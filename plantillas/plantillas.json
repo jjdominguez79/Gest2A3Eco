@@ -1,0 +1,126 @@
+{
+  "empresas": [
+    {
+      "codigo": "00423",
+      "nombre": "Empresa Demo, S.L.",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "Q=NOPROCESARFACTURA",
+        "condicion_cuenta_generica": "D=PARTICULAR",
+        "columnas": {
+          "Serie": "B",
+          "Numero Factura": "E",
+          "Fecha Asiento": "A",
+          "Fecha Expedicion": "A",
+          "Fecha Operacion": "A",
+          "Descripcion Factura": "V",
+          "NIF Cliente Proveedor": "H",
+          "Nombre Cliente Proveedor": "G",
+          "Cuenta Cliente Proveedor": "U",
+          "Cuenta Compras Ventas": "W",
+          "Cuenta IVA": "",
+          "Cuenta Retenciones": "",
+          "Base": "N",
+          "Porcentaje IVA": "O",
+          "Cuota IVA": "P",
+          "Importe": "N",
+          "Concepto": "V"
+        }
+      }
+    }
+  ],
+  "bancos": [
+    {
+      "codigo_empresa": "00423",
+      "banco": "Banco Demo",
+      "subcuenta_banco": "57200000",
+      "subcuenta_por_defecto": "62900000",
+      "digitos_plan": 8,
+      "ejercicio": 2025,
+      "conceptos": [
+        {
+          "patron": "*comi*",
+          "subcuenta": "62600000"
+        },
+        {
+          "patron": "*segu*",
+          "subcuenta": "62510000"
+        }
+      ],
+      "excel_override": false,
+      "excel": {
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "B",
+          "Importe": "C"
+        }
+      }
+    }
+  ],
+  "facturas_emitidas": [
+    {
+      "codigo_empresa": "00423",
+      "nombre": "Emitidas General",
+      "digitos_plan": 8,
+      "cliente_por_columna": true,
+      "col_cliente_codigo": "NIF",
+      "cuenta_cliente_prefijo": "430",
+      "cuenta_cliente_por_defecto": "43000000",
+      "cuenta_ingreso_por_defecto": "70000000",
+      "cuenta_iva_repercutido_defecto": "47700000",
+      "cuenta_retenciones_irpf": "47510000",
+      "tipos_iva": [
+        {
+          "porcentaje": 21,
+          "cuenta_iva": "47700000"
+        },
+        {
+          "porcentaje": 10,
+          "cuenta_iva": "47710000"
+        },
+        {
+          "porcentaje": 4,
+          "cuenta_iva": "47720000"
+        }
+      ],
+      "soporta_retencion": true,
+      "excel_override": false,
+      "excel": {
+        "columnas": {}
+      }
+    }
+  ],
+  "facturas_recibidas": [
+    {
+      "codigo_empresa": "00423",
+      "nombre": "Recibidas General",
+      "digitos_plan": 8,
+      "proveedor_por_columna": true,
+      "col_proveedor_codigo": "NIF",
+      "cuenta_proveedor_prefijo": "400",
+      "cuenta_proveedor_por_defecto": "40000000",
+      "cuenta_gasto_por_defecto": "62900000",
+      "cuenta_iva_soportado_defecto": "47200000",
+      "cuenta_retenciones_irpf": "47510000",
+      "tipos_iva": [
+        {
+          "porcentaje": 21,
+          "cuenta_iva": "47200000"
+        },
+        {
+          "porcentaje": 10,
+          "cuenta_iva": "47210000"
+        },
+        {
+          "porcentaje": 4,
+          "cuenta_iva": "47220000"
+        }
+      ],
+      "soporta_retencion": true,
+      "excel_override": false,
+      "excel": {
+        "columnas": {}
+      }
+    }
+  ]
+}
