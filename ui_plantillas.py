@@ -171,6 +171,7 @@ class ConfigPlantillaDialog(tk.Toplevel):
         self.title(f"Configurar plantilla — {tipo.capitalize()}")
         self.gestor = gestor; self.codigo = empresa_codigo; self.tipo = tipo
         self.pl = json.loads(json.dumps(plantilla))  # copy
+        self.pl.setdefault("excel", {})
         self.resizable(True, True)
 
         nb = ttk.Notebook(self); nb.pack(fill=tk.BOTH, expand=True, padx=10, pady=8)
@@ -179,6 +180,30 @@ class ConfigPlantillaDialog(tk.Toplevel):
         t_excel = ttk.Frame(nb); nb.add(t_excel, text="Excel (override)")
         self.var_override = tk.BooleanVar(value=bool(self.pl.get("excel_override", False)))
         ttk.Checkbutton(t_excel, text="Usar mapeo Excel propio", variable=self.var_override).pack(anchor=tk.W, padx=8, pady=(8,0))
+
+        empresas = [e for e in self.gestor.listar_empresas() if e.get("codigo")==self.codigo]
+        emp_excel = (empresas[0].get("excel") if empresas else {}) or {}
+
+        def _excel_val(key, default=None):
+            if key in self.pl["excel"]:
+                return self.pl["excel"].get(key)
+            return emp_excel.get(key, default)
+
+        frm_excel_cfg = ttk.Frame(t_excel); frm_excel_cfg.pack(fill=tk.X, padx=8, pady=(8,4))
+        frm_excel_cfg.columnconfigure(1, weight=1)
+
+        ttk.Label(frm_excel_cfg, text="Primera fila a procesar").grid(row=0, column=0, sticky=tk.W, pady=2)
+        self.var_primera = tk.StringVar(value=str(_excel_val("primera_fila_procesar", 2) or "2"))
+        ttk.Entry(frm_excel_cfg, textvariable=self.var_primera, width=10).grid(row=0, column=1, sticky=tk.W, pady=2)
+
+        ttk.Label(frm_excel_cfg, text="Ignorar filas (col=valor)").grid(row=1, column=0, sticky=tk.W, pady=2)
+        self.var_ignorar = tk.StringVar(value=_excel_val("ignorar_filas", "") or "")
+        ttk.Entry(frm_excel_cfg, textvariable=self.var_ignorar).grid(row=1, column=1, sticky=tk.EW, pady=2)
+
+        ttk.Label(frm_excel_cfg, text="Condición cuenta genérica").grid(row=2, column=0, sticky=tk.W, pady=2)
+        self.var_generica = tk.StringVar(value=_excel_val("condicion_cuenta_generica", "") or "")
+        ttk.Entry(frm_excel_cfg, textvariable=self.var_generica).grid(row=2, column=1, sticky=tk.EW, pady=2)
+
         self.kv_excel = KVEditor(t_excel, ("clave","letra"), ("Clave","Letra")); self.kv_excel.pack(fill=tk.BOTH, expand=True)
         self.kv_excel.load_dict(((self.pl.get("excel") or {}).get("columnas")) or {})
 
@@ -204,6 +229,15 @@ class ConfigPlantillaDialog(tk.Toplevel):
     def _save(self):
         self.pl["excel_override"] = bool(self.var_override.get())
         self.pl["excel"] = self.pl.get("excel", {})
+        try:
+            primera = int(str(self.var_primera.get()).strip() or "2")
+        except ValueError:
+            messagebox.showerror("Gest2A3Eco", "La primera fila debe ser un número entero.")
+            return
+
+        self.pl["excel"]["primera_fila_procesar"] = primera
+        self.pl["excel"]["ignorar_filas"] = self.var_ignorar.get().strip()
+        self.pl["excel"]["condicion_cuenta_generica"] = self.var_generica.get().strip()
         self.pl["excel"]["columnas"] = self.kv_excel.to_dict()
         if self.tipo == "bancos":
             self.pl["conceptos"] = self.pats.to_list()
