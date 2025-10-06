@@ -20,6 +20,59 @@ class GestorPlantillas:
     def listar_empresas(self):
         return self.data.get("empresas", [])
 
+    def obtener_empresa(self, codigo: str):
+        for empresa in self.data.get("empresas", []):
+            if empresa.get("codigo") == codigo:
+                return empresa
+        return None
+
+    def crear_empresa(self, empresa: dict):
+        codigo = empresa.get("codigo")
+        if not codigo:
+            raise ValueError("El código de empresa es obligatorio")
+        if self.obtener_empresa(codigo):
+            raise ValueError(f"Ya existe una empresa con el código {codigo}")
+        empresas = self.data.setdefault("empresas", [])
+        empresas.append(dict(empresa))
+        self.save()
+
+    def actualizar_empresa(self, codigo_actual: str, empresa_actualizada: dict):
+        empresas = self.data.setdefault("empresas", [])
+        for idx, existente in enumerate(empresas):
+            if existente.get("codigo") == codigo_actual:
+                nuevo_codigo = empresa_actualizada.get("codigo") or codigo_actual
+                if nuevo_codigo != codigo_actual and any(
+                    e.get("codigo") == nuevo_codigo for i, e in enumerate(empresas) if i != idx
+                ):
+                    raise ValueError(f"Ya existe una empresa con el código {nuevo_codigo}")
+                empresas[idx] = dict(empresa_actualizada)
+                if nuevo_codigo != codigo_actual:
+                    self._actualizar_codigo_relacionado(codigo_actual, nuevo_codigo)
+                self.save()
+                return
+        raise KeyError(f"No se encontró la empresa con código {codigo_actual}")
+
+    def eliminar_empresa(self, codigo: str):
+        empresas = [e for e in self.data.get("empresas", []) if e.get("codigo") != codigo]
+        if len(empresas) == len(self.data.get("empresas", [])):
+            raise KeyError(f"No se encontró la empresa con código {codigo}")
+        self.data["empresas"] = empresas
+        # Limpiar datos asociados
+        self.data["bancos"] = [b for b in self.data.get("bancos", []) if b.get("codigo_empresa") != codigo]
+        self.data["facturas_emitidas"] = [
+            f for f in self.data.get("facturas_emitidas", []) if f.get("codigo_empresa") != codigo
+        ]
+        self.data["facturas_recibidas"] = [
+            f for f in self.data.get("facturas_recibidas", []) if f.get("codigo_empresa") != codigo
+        ]
+        self.save()
+
+    def _actualizar_codigo_relacionado(self, codigo_viejo: str, codigo_nuevo: str):
+        for bloque in ("bancos", "facturas_emitidas", "facturas_recibidas"):
+            for item in self.data.get(bloque, []):
+                if item.get("codigo_empresa") == codigo_viejo:
+                    item["codigo_empresa"] = codigo_nuevo
+
     # Bancos
     def listar_bancos(self, codigo_empresa: str):
         return [b for b in self.data.get("bancos", []) if b.get("codigo_empresa")==codigo_empresa]

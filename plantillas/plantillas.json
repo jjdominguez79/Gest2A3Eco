@@ -2,7 +2,7 @@
   "empresas": [
     {
       "codigo": "00423",
-      "nombre": "Empresa Demo, S.L.",
+      "nombre": "Asesoria Gestinem SL",
       "excel": {
         "primera_fila_procesar": 2,
         "ignorar_filas": "Q=NOPROCESARFACTURA",
