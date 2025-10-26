@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 import pandas as pd
+from datetime import datetime
 
 from utilidades import construir_nombre_salida, col_letter_to_index
 from generador_suenlace import apuntes_extracto
@@ -83,32 +84,6 @@ class UIProcesos(ttk.Frame):
         col, val = cond.split("=", 1)
         return col.strip().upper(), val
 
-    def _resolve_excel_config(self, company_cfg, plantilla_cfg, override_columnas):
-        company_cfg = company_cfg or {}
-        plantilla_cfg = plantilla_cfg or {}
-
-        cfg = {}
-
-        if override_columnas:
-            cfg["columnas"] = dict(plantilla_cfg.get("columnas", {}))
-        else:
-            cols = company_cfg.get("columnas") or {}
-            # Permite que una plantilla sin override aporte columnas si la empresa no las definió
-            if not cols and plantilla_cfg.get("columnas"):
-                cols = plantilla_cfg.get("columnas")
-            cfg["columnas"] = dict(cols)
-
-        for key in ("primera_fila_procesar", "ignorar_filas", "condicion_cuenta_generica"):
-            if key in plantilla_cfg:
-                cfg[key] = plantilla_cfg.get(key)
-            elif key in company_cfg:
-                cfg[key] = company_cfg.get(key)
-
-        if "primera_fila_procesar" not in cfg or cfg["primera_fila_procesar"] in (None, ""):
-            cfg["primera_fila_procesar"] = 2
-
-        return cfg
-
     def _extract_by_mapping(self, xlsx_path: str, sheet: str, mapping: dict):
         raw = pd.read_excel(xlsx_path, sheet_name=sheet, header=None, dtype=object)
         def col(letter):
@@ -140,6 +115,13 @@ class UIProcesos(ttk.Frame):
             rows.append(rec)
         return rows
 
+    def _unique_dest(self, dest):
+        p = Path(dest)
+        if not p.exists():
+            return p
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        return p.with_name(f"{p.stem}_{ts}{p.suffix}")
+
     def _generar(self):
         try:
             if not self.cbo.get(): raise ValueError("Selecciona una plantilla.")
@@ -147,19 +129,16 @@ class UIProcesos(ttk.Frame):
             if not self.sheet.get(): raise ValueError("Selecciona una hoja.")
             if not self.out.get(): raise ValueError("Elige un destino.")
 
-            df = self._load_df()
-            destino = construir_nombre_salida(self.out.get(), self.codigo)
-
-            empresas = [e for e in self.gestor.listar_empresas() if e.get("codigo")==self.codigo]
-            map_emp = (empresas[0].get("excel") if empresas else {}) or {}
+            _ = self._load_df()  # vista previa
+            destino = self._unique_dest(construir_nombre_salida(self.out.get(), self.codigo))
 
             if self.tipo.get()=="bancos":
                 p = next((x for x in self.gestor.listar_bancos(self.codigo) if x.get("banco")==self.cbo.get()), None)
                 if not p: raise ValueError("Plantilla no encontrada.")
                 ndig = int(p.get("digitos_plan", 8))
 
-                excel_conf = self._resolve_excel_config(map_emp, p.get("excel"), bool(p.get("excel_override")))
-                rows = self._extract_by_mapping(self.xl.get(), self.sheet.get(), excel_conf)
+                eff_map = (p.get("excel") or {})
+                rows = self._extract_by_mapping(self.xl.get(), self.sheet.get(), eff_map)
 
                 import fnmatch
                 def subcuenta_para_concepto(concepto: str) -> str:
@@ -192,15 +171,17 @@ class UIProcesos(ttk.Frame):
                 if not conf: raise ValueError("Plantilla no encontrada.")
                 ndig = int(conf.get("digitos_plan", 8))
 
-                excel_conf = self._resolve_excel_config(map_emp, conf.get("excel"), bool(conf.get("excel_override")))
-                rows = self._extract_by_mapping(self.xl.get(), self.sheet.get(), excel_conf)
+                eff_map = (conf.get("excel") or {})
+                rows = self._extract_by_mapping(self.xl.get(), self.sheet.get(), eff_map)
 
                 from collections import defaultdict
                 groups = defaultdict(list)
                 for rec in rows:
                     serie = (rec.get("Serie") or "").strip()
-                    num = (rec.get("Numero Factura") or "").strip()
+                    num = (rec.get("Numero Factura") or rec.get("Número Factura") or "").strip()
                     key = (serie, num)
+                    if key == ("",""):  # si no hay número, procesa fila individual
+                        key = (id(rec), id(rec))
                     groups[key].append(rec)
 
                 lineas = []

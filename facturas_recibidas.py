@@ -1,4 +1,3 @@
-from decimal import Decimal
 from facturas_common import Linea, d2, cuenta_por_porcentaje, formar_tercero
 
 def generar_asiento_recibida(row, conf) -> list[Linea]:

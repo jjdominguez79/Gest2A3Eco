@@ -8,7 +8,7 @@ from utilidades import d2, fmt_fecha, fmt_importe_pos, SEP, pad_subcuenta
 class Linea:
     fecha: datetime
     subcuenta: str
-    dh: str          # 'D' o 'H'
+    dh: str
     importe: Decimal
     concepto: str
 

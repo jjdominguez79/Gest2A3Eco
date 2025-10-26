@@ -4,7 +4,7 @@ import json
 
 def _mk_labeled_entry(parent, label, var, width=18):
     fr = ttk.Frame(parent); fr.pack(fill=tk.X, pady=2)
-    ttk.Label(fr, text=label, width=22).pack(side=tk.LEFT)
+    ttk.Label(fr, text=label, width=26).pack(side=tk.LEFT)
     e = ttk.Entry(fr, textvariable=var, width=width); e.pack(side=tk.LEFT, fill=tk.X, expand=True)
     return e
 
@@ -44,7 +44,7 @@ class KVEditor(ttk.Frame):
         self.tv = ttk.Treeview(self, columns=columns, show="headings", height=10)
         for c,h in zip(columns, headers):
             self.tv.heading(c, text=h)
-            self.tv.column(c, width=240 if c==columns[0] else 120)
+            self.tv.column(c, width=260 if c==columns[0] else 140)
         self.tv.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
         fr = ttk.Frame(self); fr.pack(fill=tk.X, padx=4, pady=4)
         ttk.Button(fr, text="Añadir", command=self.add).pack(side=tk.LEFT)
@@ -85,8 +85,8 @@ class PatternEditor(ttk.Frame):
     def __init__(self, master):
         super().__init__(master)
         self.tv = ttk.Treeview(self, columns=("patron","subcuenta"), show="headings", height=10)
-        self.tv.heading("patron", text="Patrón"); self.tv.column("patron", width=280)
-        self.tv.heading("subcuenta", text="Subcuenta"); self.tv.column("subcuenta", width=140)
+        self.tv.heading("patron", text="Patrón"); self.tv.column("patron", width=320)
+        self.tv.heading("subcuenta", text="Subcuenta"); self.tv.column("subcuenta", width=160)
         self.tv.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
         fr = ttk.Frame(self); fr.pack(fill=tk.X, padx=4, pady=4)
         ttk.Button(fr, text="Añadir", command=self.add).pack(side=tk.LEFT)
@@ -126,7 +126,7 @@ class IVAEditor(ttk.Frame):
         super().__init__(master)
         self.tv = ttk.Treeview(self, columns=("porcentaje","cuenta_iva"), show="headings", height=10)
         self.tv.heading("porcentaje", text="% IVA"); self.tv.column("porcentaje", width=120)
-        self.tv.heading("cuenta_iva", text="Cuenta IVA"); self.tv.column("cuenta_iva", width=160)
+        self.tv.heading("cuenta_iva", text="Cuenta IVA"); self.tv.column("cuenta_iva", width=180)
         self.tv.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
         fr = ttk.Frame(self); fr.pack(fill=tk.X, padx=4, pady=4)
         ttk.Button(fr, text="Añadir", command=self.add).pack(side=tk.LEFT)
@@ -170,50 +170,39 @@ class ConfigPlantillaDialog(tk.Toplevel):
         super().__init__(master)
         self.title(f"Configurar plantilla — {tipo.capitalize()}")
         self.gestor = gestor; self.codigo = empresa_codigo; self.tipo = tipo
-        self.pl = json.loads(json.dumps(plantilla))  # copy
-        self.pl.setdefault("excel", {})
+        self.pl = json.loads(json.dumps(plantilla))
         self.resizable(True, True)
 
         nb = ttk.Notebook(self); nb.pack(fill=tk.BOTH, expand=True, padx=10, pady=8)
 
-        # Tab Excel override
-        t_excel = ttk.Frame(nb); nb.add(t_excel, text="Excel (override)")
-        self.var_override = tk.BooleanVar(value=bool(self.pl.get("excel_override", False)))
-        ttk.Checkbutton(t_excel, text="Usar mapeo Excel propio", variable=self.var_override).pack(anchor=tk.W, padx=8, pady=(8,0))
+        t_excel = ttk.Frame(nb); nb.add(t_excel, text="Excel")
+        frm_top = ttk.Frame(t_excel); frm_top.pack(fill=tk.X, padx=8, pady=(8, 0))
 
-        empresas = [e for e in self.gestor.listar_empresas() if e.get("codigo")==self.codigo]
-        emp_excel = (empresas[0].get("excel") if empresas else {}) or {}
+        self.var_primera = tk.StringVar(value=str(((self.pl.get("excel") or {}).get("primera_fila_procesar", 2))))
+        self.var_ignorar = tk.StringVar(value=(self.pl.get("excel") or {}).get("ignorar_filas", ""))
+        self.var_gen = tk.StringVar(value=(self.pl.get("excel") or {}).get("condicion_cuenta_generica", ""))
 
-        def _excel_val(key, default=None):
-            if key in self.pl["excel"]:
-                return self.pl["excel"].get(key)
-            return emp_excel.get(key, default)
+        row1 = ttk.Frame(frm_top); row1.pack(fill=tk.X, pady=2)
+        ttk.Label(row1, text="Primera fila procesar", width=24).pack(side=tk.LEFT)
+        ttk.Entry(row1, textvariable=self.var_primera, width=8).pack(side=tk.LEFT)
 
-        frm_excel_cfg = ttk.Frame(t_excel); frm_excel_cfg.pack(fill=tk.X, padx=8, pady=(8,4))
-        frm_excel_cfg.columnconfigure(1, weight=1)
+        row2 = ttk.Frame(frm_top); row2.pack(fill=tk.X, pady=2)
+        ttk.Label(row2, text="Ignorar filas (ej. Q=NOPROCESARFACTURA)", width=36).pack(side=tk.LEFT)
+        ttk.Entry(row2, textvariable=self.var_ignorar, width=32).pack(side=tk.LEFT)
 
-        ttk.Label(frm_excel_cfg, text="Primera fila a procesar").grid(row=0, column=0, sticky=tk.W, pady=2)
-        self.var_primera = tk.StringVar(value=str(_excel_val("primera_fila_procesar", 2) or "2"))
-        ttk.Entry(frm_excel_cfg, textvariable=self.var_primera, width=10).grid(row=0, column=1, sticky=tk.W, pady=2)
+        row3 = ttk.Frame(frm_top); row3.pack(fill=tk.X, pady=2)
+        ttk.Label(row3, text="Cond. cuenta genérica (ej. D=PARTICULAR)", width=36).pack(side=tk.LEFT)
+        ttk.Entry(row3, textvariable=self.var_gen, width=32).pack(side=tk.LEFT)
 
-        ttk.Label(frm_excel_cfg, text="Ignorar filas (col=valor)").grid(row=1, column=0, sticky=tk.W, pady=2)
-        self.var_ignorar = tk.StringVar(value=_excel_val("ignorar_filas", "") or "")
-        ttk.Entry(frm_excel_cfg, textvariable=self.var_ignorar).grid(row=1, column=1, sticky=tk.EW, pady=2)
-
-        ttk.Label(frm_excel_cfg, text="Condición cuenta genérica").grid(row=2, column=0, sticky=tk.W, pady=2)
-        self.var_generica = tk.StringVar(value=_excel_val("condicion_cuenta_generica", "") or "")
-        ttk.Entry(frm_excel_cfg, textvariable=self.var_generica).grid(row=2, column=1, sticky=tk.EW, pady=2)
-
+        ttk.Label(t_excel, text="Mapeo de columnas (Clave → Letra)").pack(anchor=tk.W, padx=8, pady=(8,0))
         self.kv_excel = KVEditor(t_excel, ("clave","letra"), ("Clave","Letra")); self.kv_excel.pack(fill=tk.BOTH, expand=True)
         self.kv_excel.load_dict(((self.pl.get("excel") or {}).get("columnas")) or {})
 
-        # Tab conceptos (bancos)
         if tipo == "bancos":
             t_conc = ttk.Frame(nb); nb.add(t_conc, text="Conceptos")
             self.pats = PatternEditor(t_conc); self.pats.pack(fill=tk.BOTH, expand=True)
             self.pats.load_list(self.pl.get("conceptos", []))
 
-        # Tab IVA (emitidas/recibidas)
         if tipo in ("emitidas","recibidas"):
             t_iva = ttk.Frame(nb); nb.add(t_iva, text="Tipos IVA")
             self.iva = IVAEditor(t_iva); self.iva.pack(fill=tk.BOTH, expand=True)
@@ -227,17 +216,10 @@ class ConfigPlantillaDialog(tk.Toplevel):
         self.wait_window(self)
 
     def _save(self):
-        self.pl["excel_override"] = bool(self.var_override.get())
         self.pl["excel"] = self.pl.get("excel", {})
-        try:
-            primera = int(str(self.var_primera.get()).strip() or "2")
-        except ValueError:
-            messagebox.showerror("Gest2A3Eco", "La primera fila debe ser un número entero.")
-            return
-
-        self.pl["excel"]["primera_fila_procesar"] = primera
+        self.pl["excel"]["primera_fila_procesar"] = int(self.var_primera.get() or "2")
         self.pl["excel"]["ignorar_filas"] = self.var_ignorar.get().strip()
-        self.pl["excel"]["condicion_cuenta_generica"] = self.var_generica.get().strip()
+        self.pl["excel"]["condicion_cuenta_generica"] = self.var_gen.get().strip()
         self.pl["excel"]["columnas"] = self.kv_excel.to_dict()
         if self.tipo == "bancos":
             self.pl["conceptos"] = self.pats.to_list()
@@ -277,46 +259,9 @@ class UIPlantillasEmpresa(ttk.Frame):
     def _build(self):
         ttk.Label(self, text=f"Plantillas de {self.nombre} ({self.codigo})", font=("Segoe UI", 12, "bold")).pack(pady=6, anchor=tk.W, padx=10)
         nb = ttk.Notebook(self); nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
-        fr_excel = ttk.Frame(nb); nb.add(fr_excel, text="Excel (Empresa)"); self._build_excel_empresa(fr_excel)
         fr_ban = ttk.Frame(nb); nb.add(fr_ban, text="Bancos"); self._build_bancos(fr_ban)
         fr_em = ttk.Frame(nb); nb.add(fr_em, text="Facturas emitidas"); self._build_emitidas(fr_em)
         fr_re = ttk.Frame(nb); nb.add(fr_re, text="Facturas recibidas"); self._build_recibidas(fr_re)
-
-    # ---- Excel Empresa
-    def _build_excel_empresa(self, frame):
-        left = ttk.Frame(frame); left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=8, pady=8)
-        right = ttk.Frame(frame); right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=8, pady=8)
-        ttk.Label(left, text="Primera Fila Procesar (1=primera fila)", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W)
-        self.emp_primera = tk.StringVar(value="2"); ttk.Entry(left, textvariable=self.emp_primera, width=8).pack(anchor=tk.W, pady=4)
-        ttk.Label(left, text="Ignorar Filas (ej. Q=NOPROCESARFACTURA)").pack(anchor=tk.W); self.emp_ignorar = tk.StringVar(); ttk.Entry(left, textvariable=self.emp_ignorar, width=40).pack(anchor=tk.W, pady=4)
-        ttk.Label(left, text="Condición cuenta genérica (ej. D=PARTICULAR)").pack(anchor=tk.W); self.emp_generica = tk.StringVar(); ttk.Entry(left, textvariable=self.emp_generica, width=40).pack(anchor=tk.W, pady=4)
-        ttk.Label(right, text="Mapeo de columnas (Clave → Letra)").pack(anchor=tk.W)
-        self.emp_map = KVEditor(right, ("clave","letra"), ("Clave","Letra")); self.emp_map.pack(fill=tk.BOTH, expand=True)
-
-        empresas = [e for e in self.gestor.listar_empresas() if e.get("codigo")==self.codigo]
-        conf = (empresas[0].get("excel") if empresas else {}) or {}
-        self.emp_primera.set(str(conf.get("primera_fila_procesar", 2)))
-        self.emp_ignorar.set(conf.get("ignorar_filas",""))
-        self.emp_generica.set(conf.get("condicion_cuenta_generica",""))
-        self.emp_map.load_dict(conf.get("columnas", {}))
-
-        ttk.Button(frame, text="Guardar configuración de empresa", command=self._excel_empresa_save).pack(side=tk.BOTTOM, pady=6)
-
-    def _excel_empresa_save(self):
-        try:
-            empresas = [e for e in self.gestor.listar_empresas() if e.get("codigo")==self.codigo]
-            if not empresas: messagebox.showerror("Gest2A3Eco","Empresa no encontrada"); return
-            emp = empresas[0]
-            emp["excel"] = {
-                "primera_fila_procesar": int(self.emp_primera.get() or "2"),
-                "ignorar_filas": self.emp_ignorar.get().strip(),
-                "condicion_cuenta_generica": self.emp_generica.get().strip(),
-                "columnas": self.emp_map.to_dict()
-            }
-            self.gestor.save()
-            messagebox.showinfo("Gest2A3Eco","Configuración Excel de empresa guardada.")
-        except Exception as e:
-            messagebox.showerror("Gest2A3Eco", str(e))
 
     # ---- Bancos
     def _build_bancos(self, frame):
@@ -325,7 +270,7 @@ class UIPlantillasEmpresa(ttk.Frame):
         cols = ("banco","subcuenta_banco","subcuenta_por_defecto")
         self.tv_ban = ttk.Treeview(left, columns=cols, show="headings", height=12)
         for c,t in zip(cols, ["Banco","Subcta banco","Subcta por defecto"]):
-            self.tv_ban.heading(c, text=t); self.tv_ban.column(c, width=160)
+            self.tv_ban.heading(c, text=t); self.tv_ban.column(c, width=180)
         self.tv_ban.pack(fill=tk.BOTH, expand=True)
         btns = ttk.Frame(left); btns.pack(fill=tk.X, pady=4)
         ttk.Button(btns, text="Nuevo", command=self._ban_nuevo).pack(side=tk.LEFT)
@@ -371,10 +316,11 @@ class UIPlantillasEmpresa(ttk.Frame):
                 "subcuenta_por_defecto": self.b_sdef.get().strip(),
                 "digitos_plan": int(self.b_dig.get().strip() or "8"),
                 "ejercicio": int(self.b_eje.get().strip() or "2025"),
+                "excel": {"primera_fila_procesar":2, "ignorar_filas":"", "condicion_cuenta_generica":"", "columnas":{}}
             }
             ex = next((x for x in self.gestor.listar_bancos(self.codigo) if x.get("banco")==plantilla["banco"]), None)
             if ex:
-                for k in ("conceptos","excel_override","excel"):
+                for k in ("conceptos","excel"):
                     if k in ex: plantilla[k] = ex[k]
             self.gestor.upsert_banco(plantilla); self._ban_refresh()
             messagebox.showinfo("Gest2A3Eco","Plantilla guardada.")
@@ -403,7 +349,7 @@ class UIPlantillasEmpresa(ttk.Frame):
         cols = ("nombre","cliente_prefijo","iva_defecto")
         self.tv_em = ttk.Treeview(left, columns=cols, show="headings", height=12)
         self.tv_em.heading("nombre", text="Nombre"); self.tv_em.heading("cliente_prefijo", text="Prefijo 430"); self.tv_em.heading("iva_defecto", text="477 defecto")
-        self.tv_em.column("nombre", width=180); self.tv_em.column("cliente_prefijo", width=120); self.tv_em.column("iva_defecto", width=120)
+        self.tv_em.column("nombre", width=200); self.tv_em.column("cliente_prefijo", width=120); self.tv_em.column("iva_defecto", width=140)
         self.tv_em.pack(fill=tk.BOTH, expand=True)
         btns = ttk.Frame(left); btns.pack(fill=tk.X, pady=4)
         ttk.Button(btns, text="Nuevo", command=self._em_nuevo).pack(side=tk.LEFT)
@@ -460,16 +406,15 @@ class UIPlantillasEmpresa(ttk.Frame):
                 "cuenta_ingreso_por_defecto": self.em_ing_def.get().strip(),
                 "cuenta_iva_repercutido_defecto": self.em_iva_def.get().strip(),
                 "cuenta_retenciones_irpf": self.em_ret.get().strip(),
+                "excel": {"primera_fila_procesar":2, "ignorar_filas":"", "condicion_cuenta_generica":"", "columnas":{}}
             }
             ex = next((x for x in self.gestor.listar_emitidas(self.codigo) if x.get("nombre")==plantilla["nombre"]), None)
             if ex:
-                for k in ("tipos_iva","excel_override","excel","soporta_retencion"):
+                for k in ("tipos_iva","excel","soporta_retencion"):
                     if k in ex: plantilla[k] = ex[k]
             else:
                 plantilla["tipos_iva"] = [{"porcentaje":21,"cuenta_iva":"47700000"}]
                 plantilla["soporta_retencion"] = True
-                plantilla["excel_override"] = False
-                plantilla["excel"] = {"columnas":{}}
             self.gestor.upsert_emitida(plantilla); self._em_refresh()
             messagebox.showinfo("Gest2A3Eco","Plantilla guardada.")
         except Exception as e:
@@ -497,7 +442,7 @@ class UIPlantillasEmpresa(ttk.Frame):
         cols = ("nombre","proveedor_prefijo","iva_defecto")
         self.tv_re = ttk.Treeview(left, columns=cols, show="headings", height=12)
         self.tv_re.heading("nombre", text="Nombre"); self.tv_re.heading("proveedor_prefijo", text="Prefijo 400"); self.tv_re.heading("iva_defecto", text="472 defecto")
-        self.tv_re.column("nombre", width=180); self.tv_re.column("proveedor_prefijo", width=120); self.tv_re.column("iva_defecto", width=120)
+        self.tv_re.column("nombre", width=200); self.tv_re.column("proveedor_prefijo", width=120); self.tv_re.column("iva_defecto", width=140)
         self.tv_re.pack(fill=tk.BOTH, expand=True)
         btns = ttk.Frame(left); btns.pack(fill=tk.X, pady=4)
         ttk.Button(btns, text="Nuevo", command=self._re_nuevo).pack(side=tk.LEFT)
@@ -554,16 +499,15 @@ class UIPlantillasEmpresa(ttk.Frame):
                 "cuenta_gasto_por_defecto": self.re_gasto_def.get().strip(),
                 "cuenta_iva_soportado_defecto": self.re_iva_def.get().strip(),
                 "cuenta_retenciones_irpf": self.re_ret.get().strip(),
+                "excel": {"primera_fila_procesar":2, "ignorar_filas":"", "condicion_cuenta_generica":"", "columnas":{}}
             }
             ex = next((x for x in self.gestor.listar_recibidas(self.codigo) if x.get("nombre")==plantilla["nombre"]), None)
             if ex:
-                for k in ("tipos_iva","excel_override","excel","soporta_retencion"):
+                for k in ("tipos_iva","excel","soporta_retencion"):
                     if k in ex: plantilla[k] = ex[k]
             else:
                 plantilla["tipos_iva"] = [{"porcentaje":21,"cuenta_iva":"47200000"}]
                 plantilla["soporta_retencion"] = True
-                plantilla["excel_override"] = False
-                plantilla["excel"] = {"columnas":{}}
             self.gestor.upsert_recibida(plantilla); self._re_refresh()
             messagebox.showinfo("Gest2A3Eco","Plantilla guardada.")
         except Exception as e:
