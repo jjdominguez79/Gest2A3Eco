@@ -2,31 +2,7 @@
   "empresas": [
     {
       "codigo": "00423",
-      "nombre": "Asesoria Gestinem SL",
-      "excel": {
-        "primera_fila_procesar": 2,
-        "ignorar_filas": "Q=NOPROCESARFACTURA",
-        "condicion_cuenta_generica": "D=PARTICULAR",
-        "columnas": {
-          "Serie": "B",
-          "Numero Factura": "E",
-          "Fecha Asiento": "A",
-          "Fecha Expedicion": "A",
-          "Fecha Operacion": "A",
-          "Descripcion Factura": "V",
-          "NIF Cliente Proveedor": "H",
-          "Nombre Cliente Proveedor": "G",
-          "Cuenta Cliente Proveedor": "U",
-          "Cuenta Compras Ventas": "W",
-          "Cuenta IVA": "",
-          "Cuenta Retenciones": "",
-          "Base": "N",
-          "Porcentaje IVA": "O",
-          "Cuota IVA": "P",
-          "Importe": "N",
-          "Concepto": "V"
-        }
-      }
+      "nombre": "Empresa Demo, S.L."
     }
   ],
   "bancos": [
@@ -47,8 +23,10 @@
           "subcuenta": "62510000"
         }
       ],
-      "excel_override": false,
       "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
         "columnas": {
           "Fecha Asiento": "A",
           "Descripcion Factura": "B",
@@ -84,9 +62,22 @@
         }
       ],
       "soporta_retencion": true,
-      "excel_override": false,
       "excel": {
-        "columnas": {}
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "Q=NOPROCESARFACTURA",
+        "condicion_cuenta_generica": "D=PARTICULAR",
+        "columnas": {
+          "Serie": "B",
+          "Numero Factura": "E",
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "V",
+          "Base": "N",
+          "Porcentaje IVA": "O",
+          "Cuota IVA": "P",
+          "NIF Cliente Proveedor": "H",
+          "Nombre Cliente Proveedor": "G",
+          "Cuenta Compras Ventas": "W"
+        }
       }
     }
   ],
@@ -117,9 +108,22 @@
         }
       ],
       "soporta_retencion": true,
-      "excel_override": false,
       "excel": {
-        "columnas": {}
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Serie": "B",
+          "Numero Factura": "E",
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "V",
+          "Base": "N",
+          "Porcentaje IVA": "O",
+          "Cuota IVA": "P",
+          "NIF Cliente Proveedor": "H",
+          "Nombre Cliente Proveedor": "G",
+          "Cuenta Compras Ventas": "W"
+        }
       }
     }
   ]
