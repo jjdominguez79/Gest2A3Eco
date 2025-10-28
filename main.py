@@ -41,7 +41,7 @@ def main():
 
         nb = ttk.Notebook(fr); nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         nb.add(UIPlantillasEmpresa(nb, gestor, codigo, nombre), text="Plantillas")
-        nb.add(UIProcesos(nb, gestor, codigo), text="Generar enlace")
+        nb.add(UIProcesos(nb, gestor, codigo, nombre), text="Generar enlace")
         return fr
 
     menubar = tk.Menu(root); root.config(menu=menubar)

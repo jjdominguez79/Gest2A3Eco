@@ -43,3 +43,11 @@ def col_letter_to_index(letter: str) -> int:
             raise ValueError(f"Columna inválida: {letter}")
         idx = idx * 26 + (ord(ch) - ord('A') + 1)
     return idx - 1
+
+# utilidades.py (añade esto si no lo tienes)
+def validar_subcuenta_longitud(sc: str, ndig: int, campo: str = "subcuenta"):
+    sc = (sc or "").strip()
+    if not sc:
+        return
+    if len(sc) != ndig:
+        raise ValueError(f"La {campo} '{sc}' debe tener {ndig} dígitos (configurado a nivel de empresa).")

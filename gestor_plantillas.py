@@ -1,3 +1,4 @@
+# gestor_plantillas.py
 import json, os, tempfile
 from pathlib import Path
 import portalocker
@@ -18,26 +19,38 @@ class GestorPlantillas:
         finally:
             try:
                 if os.path.exists(tmppath): os.remove(tmppath)
-            except Exception: pass
+            except Exception:
+                pass
 
     def _load(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if not self.path.exists():
-            self._atomic_write('{"empresas":[],"bancos":[],"facturas_emitidas":[],"facturas_recibidas":[]}')
-        with portalocker.Lock(str(self.path), mode="r", flags=portalocker.LOCK_SH, timeout=5) as f:
+            self._atomic_write('{"empresas":[],"bancos":[],"facturas_emitidas":[],"facturas_recibidas":[]}')        
+        with portalocker.Lock(str(self.path), mode="r", flags=portalocker.LOCK_SH) as f:
             txt = f.read()
         self.data = json.loads(txt or "{}")
 
     def save(self):
         new_text = json.dumps(self.data, ensure_ascii=False, indent=2)
-        with portalocker.Lock(str(self.path), mode="w", flags=portalocker.LOCK_EX, timeout=5):
-            pass
+        with portalocker.Lock(str(self.path), mode="a", flags=portalocker.LOCK_EX):
+            self._atomic_write(new_text)
         self._atomic_write(new_text)
 
+    # ---------- EMPRESAS ----------
     def listar_empresas(self):
         return self.data.get("empresas", [])
 
-    # bancos
+    def get_empresa(self, codigo: str):
+        return next((e for e in self.data.get("empresas", []) if e.get("codigo")==codigo), None)
+
+    def upsert_empresa(self, emp: dict):
+        arr = self.data.setdefault("empresas", [])
+        for i, e in enumerate(arr):
+            if e.get("codigo")==emp.get("codigo"):
+                arr[i] = emp; self.save(); return
+        arr.append(emp); self.save()
+
+    # ---------- BANCOS ----------
     def listar_bancos(self, codigo_empresa: str):
         return [b for b in self.data.get("bancos", []) if b.get("codigo_empresa")==codigo_empresa]
 
@@ -52,7 +65,7 @@ class GestorPlantillas:
         arr = [p for p in self.data.get("bancos", []) if not (p.get("codigo_empresa")==codigo_empresa and p.get("banco")==banco)]
         self.data["bancos"] = arr; self.save()
 
-    # emitidas
+    # ---------- EMITIDAS ----------
     def listar_emitidas(self, codigo_empresa: str):
         return [b for b in self.data.get("facturas_emitidas", []) if b.get("codigo_empresa")==codigo_empresa]
 
@@ -68,7 +81,7 @@ class GestorPlantillas:
         arr = [p for p in self.data.get("facturas_emitidas", []) if not (p.get("codigo_empresa")==codigo_empresa and p.get("nombre")==nombre)]
         self.data["facturas_emitidas"] = arr; self.save()
 
-    # recibidas
+    # ---------- RECIBIDAS ----------
     def listar_recibidas(self, codigo_empresa: str):
         return [b for b in self.data.get("facturas_recibidas", []) if b.get("codigo_empresa")==codigo_empresa]
 

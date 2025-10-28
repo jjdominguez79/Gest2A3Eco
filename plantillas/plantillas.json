@@ -2,7 +2,9 @@
   "empresas": [
     {
       "codigo": "00423",
-      "nombre": "Empresa Demo, S.L."
+      "nombre": "Empresa Demo, S.L.",
+      "digitos_plan": 8,
+      "ejercicio": 2025
     }
   ],
   "bancos": [
