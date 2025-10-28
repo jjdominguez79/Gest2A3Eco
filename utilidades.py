@@ -8,7 +8,7 @@ def d2(x):
 
 def fmt_fecha(dt):
     if isinstance(dt, str):
-        for fmt in ("%d/%m/%Y","%Y-%m-%d","%d-%m-%Y","%d/%m/%y"):
+        for fmt in ("%d/%m/%Y","%Y-%m-%d","%d-%m-%Y","%d/%m/%y","%Y/%m/%d"):
             try:
                 return datetime.strptime(dt.strip(), fmt).strftime("%Y%m%d")
             except Exception:

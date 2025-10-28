@@ -1,7 +1,5 @@
-import json
-import os
+import json, os, tempfile
 from pathlib import Path
-import tempfile
 import portalocker
 
 class GestorPlantillas:
@@ -15,16 +13,12 @@ class GestorPlantillas:
         fd, tmppath = tempfile.mkstemp(prefix=self.path.name + ".", dir=str(self.path.parent))
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as tmpf:
-                tmpf.write(text)
-                tmpf.flush()
-                os.fsync(tmpf.fileno())
+                tmpf.write(text); tmpf.flush(); os.fsync(tmpf.fileno())
             os.replace(tmppath, self.path)
         finally:
             try:
-                if os.path.exists(tmppath):
-                    os.remove(tmppath)
-            except Exception:
-                pass
+                if os.path.exists(tmppath): os.remove(tmppath)
+            except Exception: pass
 
     def _load(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -36,15 +30,14 @@ class GestorPlantillas:
 
     def save(self):
         new_text = json.dumps(self.data, ensure_ascii=False, indent=2)
-        # Lock exclusivo breve antes de reemplazar atómicamente
         with portalocker.Lock(str(self.path), mode="w", flags=portalocker.LOCK_EX, timeout=5):
             pass
         self._atomic_write(new_text)
 
-    # --- API ---
     def listar_empresas(self):
         return self.data.get("empresas", [])
 
+    # bancos
     def listar_bancos(self, codigo_empresa: str):
         return [b for b in self.data.get("bancos", []) if b.get("codigo_empresa")==codigo_empresa]
 
@@ -59,6 +52,7 @@ class GestorPlantillas:
         arr = [p for p in self.data.get("bancos", []) if not (p.get("codigo_empresa")==codigo_empresa and p.get("banco")==banco)]
         self.data["bancos"] = arr; self.save()
 
+    # emitidas
     def listar_emitidas(self, codigo_empresa: str):
         return [b for b in self.data.get("facturas_emitidas", []) if b.get("codigo_empresa")==codigo_empresa]
 
@@ -74,6 +68,7 @@ class GestorPlantillas:
         arr = [p for p in self.data.get("facturas_emitidas", []) if not (p.get("codigo_empresa")==codigo_empresa and p.get("nombre")==nombre)]
         self.data["facturas_emitidas"] = arr; self.save()
 
+    # recibidas
     def listar_recibidas(self, codigo_empresa: str):
         return [b for b in self.data.get("facturas_recibidas", []) if b.get("codigo_empresa")==codigo_empresa]
 

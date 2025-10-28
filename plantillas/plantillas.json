@@ -33,6 +33,27 @@
           "Importe": "C"
         }
       }
+    },
+    {
+      "codigo_empresa": "00423",
+      "banco": "Sabadell",
+      "subcuenta_banco": "572000001",
+      "subcuenta_por_defecto": "55500000",
+      "digitos_plan": 8,
+      "ejercicio": 2025,
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "",
+          "Descripcion Factura": "",
+          "Concepto": "",
+          "Importe": "",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      }
     }
   ],
   "facturas_emitidas": [

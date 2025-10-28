@@ -16,24 +16,17 @@ def main():
     gestor = GestorPlantillas(tpl_path)
 
     root = tk.Tk()
-    root.title(APP_NAME)
-    root.geometry("1200x780")
-
+    root.title(APP_NAME); root.geometry("1200x780")
     container = ttk.Frame(root); container.pack(fill=tk.BOTH, expand=True)
     current = {"frame": None, "empresa": None}
 
     def show(factory):
         if current["frame"] is not None and current["frame"].winfo_exists():
-            try:
-                current["frame"].destroy()
-            except Exception:
-                pass
-        fr = factory()
-        current["frame"] = fr
-        try:
-            fr.pack(fill=tk.BOTH, expand=True)
-        except Exception:
-            pass
+            try: current["frame"].destroy()
+            except Exception: pass
+        fr = factory(); current["frame"] = fr
+        try: fr.pack(fill=tk.BOTH, expand=True)
+        except Exception: pass
 
     def on_empresa_ok(codigo, nombre):
         current["empresa"] = (codigo, nombre)
