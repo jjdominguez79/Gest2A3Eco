@@ -12,3 +12,4 @@ venv/
 *.xls*
 *.dat
 config.json
+*.bat
