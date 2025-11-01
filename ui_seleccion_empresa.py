@@ -1,4 +1,3 @@
-# ui_seleccion_empresa.py
 import tkinter as tk
 from tkinter import ttk, messagebox
 from tkinter.simpledialog import Dialog
@@ -61,16 +60,22 @@ class UISeleccionEmpresa(ttk.Frame):
     def _nueva(self):
         dlg = EmpresaDialog(self, "Nueva empresa")
         if dlg.result:
-            self.gestor.upsert_empresa(dlg.result); self._refresh()
+            self.gestor.upsert_empresa(dlg.result)
+            self._refresh()
+            messagebox.showinfo("Gest2A3Eco", "Empresa guardada.")
 
     def _editar(self):
         sel = self.tv.selection()
-        if not sel: return
+        if not sel:
+            messagebox.showinfo("Gest2A3Eco", "Selecciona una empresa.")
+            return
         codigo, *_ = self.tv.item(sel[0], "values")
         emp = self.gestor.get_empresa(codigo)
         dlg = EmpresaDialog(self, "Editar empresa", emp)
         if dlg.result:
-            self.gestor.upsert_empresa(dlg.result); self._refresh()
+            self.gestor.upsert_empresa(dlg.result)
+            self._refresh()
+            messagebox.showinfo("Gest2A3Eco", "Cambios guardados.")
 
     def _continuar(self):
         sel = self.tv.selection()

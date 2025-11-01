@@ -2,7 +2,13 @@
   "empresas": [
     {
       "codigo": "00423",
-      "nombre": "Empresa Demo, S.L.",
+      "nombre": "Asesoria Gestinem SL",
+      "digitos_plan": 8,
+      "ejercicio": 2025
+    },
+    {
+      "codigo": "00896",
+      "nombre": "Lergiani SL",
       "digitos_plan": 8,
       "ejercicio": 2025
     }
@@ -10,36 +16,8 @@
   "bancos": [
     {
       "codigo_empresa": "00423",
-      "banco": "Banco Demo",
-      "subcuenta_banco": "57200000",
-      "subcuenta_por_defecto": "62900000",
-      "digitos_plan": 8,
-      "ejercicio": 2025,
-      "conceptos": [
-        {
-          "patron": "*comi*",
-          "subcuenta": "62600000"
-        },
-        {
-          "patron": "*segu*",
-          "subcuenta": "62510000"
-        }
-      ],
-      "excel": {
-        "primera_fila_procesar": 2,
-        "ignorar_filas": "",
-        "condicion_cuenta_generica": "",
-        "columnas": {
-          "Fecha Asiento": "A",
-          "Descripcion Factura": "B",
-          "Importe": "C"
-        }
-      }
-    },
-    {
-      "codigo_empresa": "00423",
       "banco": "Sabadell",
-      "subcuenta_banco": "572000001",
+      "subcuenta_banco": "57200001",
       "subcuenta_por_defecto": "55500000",
       "digitos_plan": 8,
       "ejercicio": 2025,
@@ -48,14 +26,35 @@
         "ignorar_filas": "",
         "condicion_cuenta_generica": "",
         "columnas": {
-          "Fecha Asiento": "",
+          "Fecha Asiento": "B",
           "Descripcion Factura": "",
-          "Concepto": "",
-          "Importe": "",
+          "Concepto": "C",
+          "Importe": "D",
           "NIF Cliente Proveedor": "",
           "Nombre Cliente Proveedor": ""
         }
-      }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "00896",
+      "banco": "Banco Santander",
+      "subcuenta_banco": "57200002",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "",
+          "Concepto": "C",
+          "Importe": "D",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": []
     }
   ],
   "facturas_emitidas": [

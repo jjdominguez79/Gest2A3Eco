@@ -1,4 +1,3 @@
-# ui_plantillas.py
 import tkinter as tk
 from tkinter import ttk, messagebox
 from tkinter.simpledialog import Dialog
@@ -42,11 +41,6 @@ def _row(parent, label, var, w=24):
     ttk.Entry(fr, textvariable=var, width=w).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
 class InlineKVEditor(ttk.Frame):
-    """
-    Editor Key→Value con edición EN LÍNEA:
-    - Doble clic sobre la celda 'Letra' para editar.
-    - Flechas Arriba/Abajo para moverse por filas (mantiene la columna).
-    """
     def __init__(self, master, columns=("clave","letra"), headers=("Clave","Letra")):
         super().__init__(master)
         self.columns = columns
@@ -55,16 +49,13 @@ class InlineKVEditor(ttk.Frame):
             self.tv.heading(c, text=h)
             self.tv.column(c, width=280 if c==columns[0] else 120, stretch=True)
         self.tv.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
-
-        # Eventos de edición inline
         self.tv.bind("<Double-1>", self._begin_edit)
         self.tv.bind("<Return>", self._apply_edit)
         self.tv.bind("<Escape>", self._cancel_edit)
         self.tv.bind("<Up>", self._nav_up)
         self.tv.bind("<Down>", self._nav_down)
-
-        self._edit_info = None  # (item, column_id, entry_widget)
-        self._last_col = None   # recordar columna editada para navegación
+        self._edit_info = None
+        self._last_col = None
 
     def load_dict(self, d):
         self.tv.delete(*self.tv.get_children())
@@ -79,17 +70,6 @@ class InlineKVEditor(ttk.Frame):
                 out[str(vals[0])] = str(vals[1])
         return out
 
-    def _col_at_x(self, x):
-        # devuelve el column-id ('#1' o '#2'...) en función del click x
-        cols = self.tv["columns"]
-        curx = 0
-        for i, c in enumerate(cols, start=1):
-            w = self.tv.column(c, option="width")
-            if curx <= x <= curx + w:
-                return f"#{i}"
-            curx += w
-        return "#2"  # por defecto la segunda (Letra)
-
     def _begin_edit(self, event):
         region = self.tv.identify("region", event.x, event.y)
         if region != "cell":
@@ -97,32 +77,24 @@ class InlineKVEditor(ttk.Frame):
         rowid = self.tv.identify_row(event.y)
         if not rowid:
             return
-        colid = self.tv.identify_column(event.x)  # '#1', '#2', ...
-        # Solo permitimos editar la columna "letra" (segunda)
+        colid = self.tv.identify_column(event.x)
         if colid != "#2":
             return
-
         self._last_col = colid
         x, y, w, h = self.tv.bbox(rowid, colid)
-        old = self.tv.set(rowid, self.columns[1])  # valor actual
-
+        old = self.tv.set(rowid, self.columns[1])
         entry = ttk.Entry(self.tv)
         entry.place(x=x, y=y, width=w, height=h)
-        entry.insert(0, old or "")
-        entry.focus_set()
-        entry.select_range(0, tk.END)
-
-        # Guardar info de edición
+        entry.insert(0, old or ""); entry.focus_set(); entry.select_range(0, tk.END)
         self._edit_info = (rowid, colid, entry)
         entry.bind("<Return>", self._apply_edit)
         entry.bind("<Escape>", self._cancel_edit)
         entry.bind("<Up>", self._nav_up)
         entry.bind("<Down>", self._nav_down)
-        entry.bind("<FocusOut>", self._apply_edit)  # aplicar al salir
+        entry.bind("<FocusOut>", self._apply_edit)
 
     def _apply_edit(self, event=None):
-        if not self._edit_info:
-            return
+        if not self._edit_info: return
         rowid, colid, entry = self._edit_info
         new_val = entry.get().strip().upper()
         entry.destroy()
@@ -130,16 +102,14 @@ class InlineKVEditor(ttk.Frame):
         self._edit_info = None
 
     def _cancel_edit(self, event=None):
-        if not self._edit_info:
-            return
+        if not self._edit_info: return
         _, _, entry = self._edit_info
         entry.destroy()
         self._edit_info = None
 
     def _move_selection(self, direction):
         items = self.tv.get_children()
-        if not items:
-            return
+        if not items: return
         sel = self.tv.selection()
         if not sel:
             target = items[0]
@@ -147,37 +117,23 @@ class InlineKVEditor(ttk.Frame):
             idx = list(items).index(sel[0])
             idx = max(0, min(len(items)-1, idx + (1 if direction>0 else -1)))
             target = items[idx]
-        self.tv.selection_set(target)
-        self.tv.see(target)
-        # re-abrir edición en la misma columna (#2)
+        self.tv.selection_set(target); self.tv.see(target)
         if self._last_col == "#2":
-            # simular doble clic centrado en la celda
             x, y, w, h = self.tv.bbox(target, "#2")
-            ev = tk.Event()
-            ev.x, ev.y = x + w//2, y + h//2
+            ev = tk.Event(); ev.x, ev.y = x + w//2, y + h//2
             self._begin_edit(ev)
 
     def _nav_up(self, event=None):
-        self._apply_edit()
-        self._move_selection(-1)
-        return "break"
+        self._apply_edit(); self._move_selection(-1); return "break"
 
     def _nav_down(self, event=None):
-        self._apply_edit()
-        self._move_selection(+1)
-        return "break"
+        self._apply_edit(); self._move_selection(+1); return "break"
 
 class ConfigPlantillaDialog(Dialog):
-    """
-    Diálogo integral para configurar una plantilla:
-    - GENERAL (subcuentas, prefijos, etc.)
-    - EXCEL (mapeo columnas + primera fila + ignorar + condición cuenta genérica)
-    - CONCEPTOS (solo Bancos: patrón → subcuenta)
-    """
     def __init__(self, parent, gestor, empresa, tipo, plantilla=None):
         self.gestor = gestor
-        self.empresa = empresa  # dict con digitos_plan
-        self.tipo = tipo        # "bancos" | "emitidas" | "recibidas"
+        self.empresa = empresa
+        self.tipo = tipo
         self.pl = dict(plantilla or {})
         super().__init__(parent, f"Configurar plantilla — {tipo.capitalize()}")
 
@@ -185,7 +141,6 @@ class ConfigPlantillaDialog(Dialog):
         self.ndig = int(self.empresa.get("digitos_plan", 8))
         nb = ttk.Notebook(master); nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
 
-        # --- pestaña GENERAL ---
         t_gen = ttk.Frame(nb); nb.add(t_gen, text="General")
         if self.tipo == "bancos":
             self.var_banco = tk.StringVar(value=self.pl.get("banco",""))
@@ -213,7 +168,6 @@ class ConfigPlantillaDialog(Dialog):
                 _row(t_gen, "Cuenta gasto defecto", self.var_gasto)
                 _row(t_gen, "IVA soportado (única cuenta)", self.var_iva_def)
 
-        # --- pestaña EXCEL ---
         t_xl = ttk.Frame(nb); nb.add(t_xl, text="Excel")
         cols = (self.pl.get("excel") or {}).get("columnas") or default_excel_columns_for(self.tipo)
         self.var_primera = tk.StringVar(value=str((self.pl.get("excel") or {}).get("primera_fila_procesar", 2)))
@@ -227,7 +181,6 @@ class ConfigPlantillaDialog(Dialog):
         self.kv.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
         self.kv.load_dict(cols)
 
-        # --- pestaña CONCEPTOS (solo Bancos) ---
         if self.tipo == "bancos":
             t_con = ttk.Frame(nb); nb.add(t_con, text="Conceptos")
             self.pats = ttk.Treeview(t_con, columns=("patron","subcuenta"), show="headings", height=10)
@@ -241,7 +194,6 @@ class ConfigPlantillaDialog(Dialog):
             ttk.Button(bar, text="Eliminar", command=lambda: self._pat_del()).pack(side=tk.LEFT)
             for it in (self.pl.get("conceptos") or []):
                 self.pats.insert("", tk.END, values=(it.get("patron",""), it.get("subcuenta","")))
-
         return master
 
     def _pat_add(self):
@@ -279,7 +231,6 @@ class ConfigPlantillaDialog(Dialog):
 
     def validate(self):
         try:
-            # Validar longitudes subcuentas con los dígitos de la empresa
             if self.tipo == "bancos":
                 validar_subcuenta_longitud(self.var_sub_banco.get(), self.ndig, "subcuenta banco")
                 validar_subcuenta_longitud(self.var_sub_def.get(), self.ndig, "subcuenta por defecto")
@@ -296,7 +247,6 @@ class ConfigPlantillaDialog(Dialog):
 
     def apply(self):
         self.pl["codigo_empresa"] = self.empresa.get("codigo")
-        # GENERAL
         if self.tipo == "bancos":
             self.pl["banco"] = self.var_banco.get().strip()
             self.pl["subcuenta_banco"] = self.var_sub_banco.get().strip()
@@ -311,22 +261,20 @@ class ConfigPlantillaDialog(Dialog):
                 self.pl["cuenta_proveedor_prefijo"] = self.var_pref.get().strip()
                 self.pl["cuenta_gasto_por_defecto"] = self.var_gasto.get().strip()
                 self.pl["cuenta_iva_soportado_defecto"] = self.var_iva_def.get().strip()
-
-        # EXCEL
         self.pl["excel"] = {
             "primera_fila_procesar": int(self.var_primera.get() or "2"),
             "ignorar_filas": self.var_ignorar.get().strip(),
             "condicion_cuenta_generica": self.var_gen.get().strip(),
             "columnas": self.kv.to_dict()
         }
-
-        # CONCEPTOS (solo bancos)
         if self.tipo == "bancos":
             arr=[]
-            for iid in self.pats.get_children():
+            for iid in getattr(self, "pats").get_children():
                 patron, sub = self.pats.item(iid, "values")
                 arr.append({"patron": str(patron), "subcuenta": str(sub)})
             self.pl["conceptos"] = arr
+        # MUY IMPORTANTE: marcar que hay resultado para que el caller persista
+        self.result = True
 
 class UIPlantillasEmpresa(ttk.Frame):
     def __init__(self, master, gestor, empresa_codigo, empresa_nombre):
@@ -347,8 +295,7 @@ class UIPlantillasEmpresa(ttk.Frame):
         frame = ttk.Frame(nb); nb.add(frame, text=title)
         tv = ttk.Treeview(frame, columns=cols, show="headings", height=12)
         for c in cols:
-            tv.heading(c, text=c.replace("_"," ").title())
-            tv.column(c, width=220)
+            tv.heading(c, text=c.replace("_"," ").title()); tv.column(c, width=220)
         tv.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         bar = ttk.Frame(frame); bar.pack(fill=tk.X, padx=6, pady=4)
         ttk.Button(bar, text="Nuevo", command=lambda t=title: self._nuevo(t)).pack(side=tk.LEFT)
@@ -357,15 +304,12 @@ class UIPlantillasEmpresa(ttk.Frame):
         return {"frame": frame, "tv": tv, "cols": cols}
 
     def _refresh_all(self):
-        # bancos
         tv = self._tab_bancos["tv"]; tv.delete(*tv.get_children())
         for p in self.gestor.listar_bancos(self.codigo):
             tv.insert("", tk.END, values=(p.get("banco"), p.get("subcuenta_banco"), p.get("subcuenta_por_defecto")))
-        # emitidas
         tv = self._tab_emitidas["tv"]; tv.delete(*tv.get_children())
         for p in self.gestor.listar_emitidas(self.codigo):
             tv.insert("", tk.END, values=(p.get("nombre"), p.get("cuenta_cliente_prefijo","430"), p.get("cuenta_iva_repercutido_defecto","47700000")))
-        # recibidas
         tv = self._tab_recibidas["tv"]; tv.delete(*tv.get_children())
         for p in self.gestor.listar_recibidas(self.codigo):
             tv.insert("", tk.END, values=(p.get("nombre"), p.get("cuenta_proveedor_prefijo","400"), p.get("cuenta_iva_soportado_defecto","47200000")))
@@ -373,15 +317,15 @@ class UIPlantillasEmpresa(ttk.Frame):
     def _nuevo(self, title):
         tipo = "bancos" if "Bancos" in title else ("emitidas" if "emitidas" in title else "recibidas")
         dlg = ConfigPlantillaDialog(self, self.gestor, self.empresa, tipo, {})
-        if dlg.result is not None:
-            pl = dlg.pl
+        if dlg.result:
             if tipo == "bancos":
-                self.gestor.upsert_banco(pl)
+                self.gestor.upsert_banco(dlg.pl)
             elif tipo == "emitidas":
-                self.gestor.upsert_emitida(pl)
+                self.gestor.upsert_emitida(dlg.pl)
             else:
-                self.gestor.upsert_recibida(pl)
+                self.gestor.upsert_recibida(dlg.pl)
             self._refresh_all()
+            messagebox.showinfo("Gest2A3Eco", "Plantilla guardada.")
 
     def _sel_key(self, tv, tipo):
         sel = tv.selection()
@@ -402,7 +346,7 @@ class UIPlantillasEmpresa(ttk.Frame):
         else:
             pl = next((x for x in self.gestor.listar_recibidas(self.codigo) if x.get("nombre")==key), None)
         dlg = ConfigPlantillaDialog(self, self.gestor, self.empresa, tipo, pl)
-        if dlg.result is not None:
+        if dlg.result:
             if tipo == "bancos":
                 self.gestor.upsert_banco(dlg.pl)
             elif tipo == "emitidas":
@@ -410,6 +354,7 @@ class UIPlantillasEmpresa(ttk.Frame):
             else:
                 self.gestor.upsert_recibida(dlg.pl)
             self._refresh_all()
+            messagebox.showinfo("Gest2A3Eco", "Cambios guardados.")
 
     def _eliminar(self, tv, title):
         tipo = "bancos" if "Bancos" in title else ("emitidas" if "emitidas" in title else "recibidas")
