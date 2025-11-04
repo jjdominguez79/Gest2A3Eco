@@ -3,7 +3,7 @@ from tkinter import ttk, filedialog, messagebox
 import pandas as pd
 import os
 from pathlib import Path
-from facturas_common import Linea, render_tabular
+from facturas_common import Linea, render_a3_een
 from utilidades import d2, SEP, pad_subcuenta
 
 class UIProcesos(ttk.Frame):
@@ -269,7 +269,7 @@ class UIProcesos(ttk.Frame):
                 messagebox.showwarning("Gest2A3Eco","No se generaron líneas.")
                 return
 
-            out_lines = render_tabular(lineas, ndig)
+            out_lines = render_a3_een(lineas)
             save_path = filedialog.asksaveasfilename(
                 title="Guardar fichero suenlace.dat",
                 defaultextension=".dat",
