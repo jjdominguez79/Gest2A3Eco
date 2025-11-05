@@ -11,6 +11,12 @@
       "nombre": "Lergiani SL",
       "digitos_plan": 8,
       "ejercicio": 2025
+    },
+    {
+      "codigo": "00020",
+      "nombre": "Jorge Portilla Luis Alfonso",
+      "digitos_plan": 8,
+      "ejercicio": 2025
     }
   ],
   "bancos": [
@@ -47,9 +53,29 @@
         "condicion_cuenta_generica": "",
         "columnas": {
           "Fecha Asiento": "A",
-          "Descripcion Factura": "",
+          "Descripcion Factura": "C",
           "Concepto": "C",
           "Importe": "D",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "00020",
+      "banco": "Caixabank",
+      "subcuenta_banco": "57200001",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "D",
+          "Concepto": "D",
+          "Importe": "E",
           "NIF Cliente Proveedor": "",
           "Nombre Cliente Proveedor": ""
         }
@@ -99,6 +125,78 @@
           "NIF Cliente Proveedor": "H",
           "Nombre Cliente Proveedor": "G",
           "Cuenta Compras Ventas": "W"
+        }
+      }
+    },
+    {
+      "codigo_empresa": "00020",
+      "nombre": "Facturas emitidas",
+      "cuenta_cliente_prefijo": "430",
+      "cuenta_ingreso_por_defecto": "70500000",
+      "cuenta_iva_repercutido_defecto": "47700000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "1",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Serie": "",
+          "Numero Factura": "A",
+          "Numero Factura Largo SII": "A",
+          "Fecha Asiento": "B",
+          "Fecha Expedicion": "B",
+          "Fecha Operacion": "B",
+          "NIF Cliente Proveedor": "F",
+          "Nombre Cliente Proveedor": "D",
+          "Descripcion Factura": "I",
+          "Observaciones": "",
+          "Cuenta Cliente Proveedor": "43000000",
+          "Cuenta Compras Ventas": "70500000",
+          "Cuenta IVA": "47700000",
+          "Cuenta Recargo": "",
+          "Cuenta Retenciones": "",
+          "Cuenta Proveedor Importacion": "",
+          "Cuenta Tesoreria Cobro Pago": "",
+          "Base": "G",
+          "Porcentaje IVA": "L",
+          "Cuota IVA": "H",
+          "Porcentaje Recargo Equivalencia": "",
+          "Cuota Recargo Equivalencia": "",
+          "Porcentaje Retencion IRPF": "",
+          "Cuota Retencion IRPF": "",
+          "Marca Factura Rectificativa": "",
+          "Fecha Original Rectificativa": "",
+          "Fecha Registro SII": "",
+          "Descripcion Ampliada Factura SII": "",
+          "Fecha Factura A Rectificar": "",
+          "Numero Factura A Rectificar": "",
+          "DUA": "",
+          "Tipo Factura SII": "",
+          "Clave Tipo Factura SII": "",
+          "NIF Representante": "",
+          "ISP Num Autofactura": "",
+          "Impreso": "",
+          "Es Toda La Factura Percibida En Metalico": "",
+          "Importe Percibido Metalico": "",
+          "Es Toda La Factura Transmision Inmueble Sujeto IVA": "",
+          "Importe Transmision Inmuebles Sujeto IVA": "",
+          "Factura Tique Inicial SII": "",
+          "Factura Tique Final SII": "",
+          "Numero Documentos Incluidos En La Serie": "",
+          "Emitida Por Terceros SII": "",
+          "Emitida Varios Destinatarios SII": "",
+          "Emitida Cupones Bonificaciones SII": "",
+          "Clave Retencion": "",
+          "Subclave Retencion": "",
+          "Naturaleza Retencion": "",
+          "Tipo FACTURA Factura Abono Rectificativa": "",
+          "Va A Iva": "",
+          "Factura En Prorrata": "",
+          "Afecta Modelo415": "",
+          "Marca Criterio Caja": "",
+          "Documento": "",
+          "Departamento Analitica": "",
+          "Porcentaje Analitica": "",
+          "Importe Analitica": ""
         }
       }
     }

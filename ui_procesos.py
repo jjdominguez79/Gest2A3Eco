@@ -1,10 +1,13 @@
+# ui_procesos.py
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import pandas as pd
 import os
-from pathlib import Path
-from facturas_common import Linea, render_a3_een
-from utilidades import d2, SEP, pad_subcuenta
+from collections import defaultdict
+
+# Importa Linea y el render TIPO 0 (512 bytes) para bancos
+from facturas_common import Linea, render_a3_tipo0_bancos
+
 
 class UIProcesos(ttk.Frame):
     def __init__(self, master, gestor, codigo_empresa, nombre_empresa):
@@ -14,7 +17,6 @@ class UIProcesos(ttk.Frame):
         self.nombre = nombre_empresa
         self.pack(fill=tk.BOTH, expand=True)
         self.excel_path = None
-        self.sheet_name = None
         self.df_preview = None
         self._build()
 
@@ -135,7 +137,6 @@ class UIProcesos(ttk.Frame):
         rows = []
         for r in range(start_idx, len(raw)):
             row = raw.iloc[r]
-            # ignorar fila
             if ign_col:
                 cidx = self._col_letter_to_index(ign_col)
                 if 0 <= cidx < len(row) and str(row.iloc[cidx]).strip() == str(ign_val):
@@ -153,135 +154,122 @@ class UIProcesos(ttk.Frame):
 
     def _generar(self):
         try:
+            # Validaciones básicas
             if not self.excel_path or not self.cb_sheet.get():
                 messagebox.showwarning("Gest2A3Eco", "Selecciona un Excel y una hoja.")
                 return
+
             tipo = self.tipo.get()
             nombre_pl = self.cb_plantilla.get().strip()
             if not nombre_pl:
                 messagebox.showwarning("Gest2A3Eco", "Selecciona una plantilla.")
                 return
 
-            # obtener plantilla
+            # Plantilla seleccionada
             if tipo == "bancos":
                 pl = next((x for x in self.gestor.listar_bancos(self.codigo) if x.get("banco")==nombre_pl), None)
             elif "emitidas" in tipo:
                 pl = next((x for x in self.gestor.listar_emitidas(self.codigo) if x.get("nombre")==nombre_pl), None)
             else:
                 pl = next((x for x in self.gestor.listar_recibidas(self.codigo) if x.get("nombre")==nombre_pl), None)
+
             if not pl:
                 messagebox.showerror("Gest2A3Eco", "Plantilla no encontrada.")
                 return
 
-            empresa = self.gestor.get_empresa(self.codigo)
-            ndig = int(empresa.get("digitos_plan", 8))
+            # Empresa (para ndig y código empresa)
+            empresa_config = self.gestor.get_empresa(self.codigo) or {}
+            ndig = int(empresa_config.get("digitos_plan", 8))
+            codigo_empresa = str(self.codigo)  # el render se encarga de formatearlo a 5 dígitos
 
+            # Leer Excel según mapeo por letras
             excel_conf = pl.get("excel") or {}
             rows = self._extract_rows_by_mapping(self.excel_path, self.cb_sheet.get(), excel_conf)
 
             lineas = []
-            # ---- Bancos ----
+
+            # =======================
+            #      B A N C O S
+            # =======================
             if tipo == "bancos":
-                sub_banco = pl.get("subcuenta_banco")
-                sub_def = pl.get("subcuenta_por_defecto")
+                sub_banco = (pl.get("subcuenta_banco") or "").strip()
+                sub_def   = (pl.get("subcuenta_por_defecto") or "").strip()
                 conceptos = pl.get("conceptos", [])
 
+                if not sub_banco:
+                    messagebox.showerror("Gest2A3Eco", "La plantilla de bancos no tiene 'Subcuenta banco'.")
+                    return
+                if not sub_def:
+                    messagebox.showerror("Gest2A3Eco", "La plantilla de bancos no tiene 'Subcuenta por defecto'.")
+                    return
+
                 import fnmatch
-                def subcuenta_por_concepto(txt):
+                def subcuenta_por_concepto(txt: str) -> str:
                     t = (str(txt) or "").lower()
-                    for cm in conceptos:
-                        if fnmatch.fnmatch(t, (cm.get("patron","*") or "*").lower()):
-                            return cm.get("subcuenta") or sub_def
+                    for cm in (conceptos or []):
+                        patron = (cm.get("patron","*") or "*").lower()
+                        if fnmatch.fnmatch(t, patron):
+                            sub = (cm.get("subcuenta") or "").strip()
+                            if sub:
+                                return sub
                     return sub_def
 
                 for rec in rows:
-                    fecha = rec.get("Fecha Asiento")
+                    fecha = rec.get("Fecha Asiento") or rec.get("Fecha Operacion") or rec.get("Fecha Expedicion")
                     concepto_txt = rec.get("Concepto") or rec.get("Descripcion Factura") or ""
                     imp_raw = rec.get("Importe")
-                    if imp_raw in (None, ""): continue
-                    try:
-                        imp = abs(float(str(imp_raw).replace(",", ".")))
-                    except:
+                    if imp_raw in (None, ""):
                         continue
-                    sub_contra = subcuenta_por_concepto(concepto_txt)
-                    # D/H decidido por el tipo de movimiento? Reglas simples: banco al H, contrapartida al D
-                    lineas.append(Linea(fecha, sub_contra, "D", d2(imp), str(concepto_txt)))
-                    lineas.append(Linea(fecha, sub_banco, "H", d2(imp), str(concepto_txt)))
+                    try:
+                        val = float(str(imp_raw).replace(",", "."))  # conserva el signo original
+                    except Exception:
+                        continue
+                    if val == 0:
+                        continue
 
-            # ---- Facturas ----
-            else:
-                from collections import defaultdict
-                def _norm(x): return (str(x).strip().upper() if x is not None else "")
+                    imp = abs(val)
+                    sub_contra = subcuenta_por_concepto(concepto_txt) or sub_def
 
-                def _group_key(rec):
-                    nfl = rec.get("Numero Factura Largo SII")
-                    if nfl not in (None, ""): return ("NFL", _norm(nfl))
-                    serie = rec.get("Serie") or ""
-                    num = rec.get("Numero Factura") or rec.get("Número Factura") or ""
-                    if (serie or num): return ("SERIE_NUM", f"{_norm(serie)}|{_norm(num)}")
-                    return ("ROW", id(rec))
+                    if val > 0:
+                        # + => Banco al Debe, Contrapartida al Haber
+                        lineas.append(Linea(fecha, sub_banco,  "D", imp, str(concepto_txt)))
+                        lineas.append(Linea(fecha, sub_contra, "H", imp, str(concepto_txt)))
+                    else:
+                        # - => Banco al Haber, Contrapartida al Debe
+                        lineas.append(Linea(fecha, sub_contra, "D", imp, str(concepto_txt)))
+                        lineas.append(Linea(fecha, sub_banco,  "H", imp, str(concepto_txt)))
 
-                groups = defaultdict(list)
-                for rec in rows:
-                    groups[_group_key(rec)].append(rec)
+                if not lineas:
+                    messagebox.showwarning("Gest2A3Eco","No se generaron líneas para bancos.")
+                    return
 
-                def to_num(x):
-                    if x in (None, "", "nan"): return 0.0
-                    try: return float(str(x).replace(",", "."))
-                    except: return 0.0
+                # Render 512 bytes (tipo 0 bancos)
+                out_lines = render_a3_tipo0_bancos(lineas, codigo_empresa, ndig_plan=ndig)
 
-                if "emitidas" in tipo:
-                    for _, grecs in groups.items():
-                        rec0 = grecs[0]
-                        fecha = rec0.get("Fecha Asiento") or rec0.get("Fecha Expedicion") or rec0.get("Fecha Operacion")
-                        desc = rec0.get("Descripcion Factura") or ""
-                        nif = rec0.get("NIF Cliente Proveedor") or ""
-                        base_total = sum(to_num(r.get("Base")) for r in grecs)
-                        iva_total = sum(to_num(r.get("Cuota IVA")) for r in grecs)
-                        ret_total = sum(to_num(r.get("Cuota Retencion IRPF")) for r in grecs)
-                        total = base_total + iva_total - ret_total
-                        pref = pl.get("cuenta_cliente_prefijo","430")
-                        cuenta_terc = (pref + nif[-(ndig-len(pref)):] if len(pref) < ndig else pref)[:ndig].zfill(ndig)
-                        cuenta_iva = pl.get("cuenta_iva_repercutido_defecto","47700000")
-                        cuenta_ing = pl.get("cuenta_ingreso_por_defecto","70000000")
-                        lineas.append(Linea(fecha, cuenta_terc, "D", d2(total), desc))
-                        if iva_total: lineas.append(Linea(fecha, cuenta_iva, "H", d2(iva_total), desc))
-                        if base_total: lineas.append(Linea(fecha, cuenta_ing, "H", d2(base_total), desc))
-                else:
-                    for _, grecs in groups.items():
-                        rec0 = grecs[0]
-                        fecha = rec0.get("Fecha Asiento") or rec0.get("Fecha Expedicion") or rec0.get("Fecha Operacion")
-                        desc = rec0.get("Descripcion Factura") or ""
-                        nif = rec0.get("NIF Cliente Proveedor") or ""
-                        base_total = sum(to_num(r.get("Base")) for r in grecs)
-                        iva_total = sum(to_num(r.get("Cuota IVA")) for r in grecs)
-                        ret_total = sum(to_num(r.get("Cuota Retencion IRPF")) for r in grecs)
-                        total = base_total + iva_total - ret_total
-                        pref = pl.get("cuenta_proveedor_prefijo","400")
-                        cuenta_terc = (pref + nif[-(ndig-len(pref)):] if len(pref) < ndig else pref)[:ndig].zfill(ndig)
-                        cuenta_iva = pl.get("cuenta_iva_soportado_defecto","47200000")
-                        cuenta_gasto = pl.get("cuenta_gasto_por_defecto","62900000")
-                        if base_total: lineas.append(Linea(fecha, cuenta_gasto, "D", d2(base_total), desc))
-                        if iva_total: lineas.append(Linea(fecha, cuenta_iva, "D", d2(iva_total), desc))
-                        lineas.append(Linea(fecha, cuenta_terc, "H", d2(total), desc))
+                save_path = filedialog.asksaveasfilename(
+                    title="Guardar fichero suenlace.dat",
+                    defaultextension=".dat",
+                    initialfile=f"suenlace_{self.codigo}.dat",
+                    filetypes=[("Ficheros DAT","*.dat")]
+                )
+                if not save_path:
+                    return
 
-            if not lineas:
-                messagebox.showwarning("Gest2A3Eco","No se generaron líneas.")
+                with open(save_path, "w", encoding="utf-8", newline="") as f:
+                    f.writelines(out_lines)
+
+                messagebox.showinfo("Gest2A3Eco", f"Fichero generado:\n{save_path}")
                 return
 
-            out_lines = render_a3_een(lineas)
-            save_path = filedialog.asksaveasfilename(
-                title="Guardar fichero suenlace.dat",
-                defaultextension=".dat",
-                initialfile=f"suenlace_{self.codigo}.dat",
-                filetypes=[("Ficheros DAT","*.dat")]
-            )
-            if not save_path:
-                return
 
-            with open(save_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(out_lines))
-            messagebox.showinfo("Gest2A3Eco", f"Fichero generado:\n{save_path}")
+            # =======================
+            #   F A C T U R A S
+            # =======================
+            # Si aún no has migrado facturas al esquema 512, deja tu lógica previa aquí
+            # (por ejemplo, usando render_a3_een o tu antiguo render) hasta que
+            # adaptemos tipo 1/9. De momento avisamos:
+            messagebox.showinfo("Gest2A3Eco", "La generación de facturas en formato 512 se añadirá a continuación. De momento, usa bancos.")
+            return
 
         except Exception as e:
             messagebox.showerror("Gest2A3Eco", f"Error en la generación:\n{e}")

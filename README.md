@@ -10,6 +10,5 @@ python main.py
 
 ## Compilar (Windows)
 ```bash
-pip install pyinstaller
-build_exe.bat
+pyinstaller --name=Gest2A3Eco --icon=icono.ico --onefile --windowed --add-data "logo.png;." main.py
 ```
