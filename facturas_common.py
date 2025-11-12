@@ -42,13 +42,28 @@ def _fecha_yyyymmdd(fecha: str) -> str:
     f = _s(fecha).strip()
     if not f:
         return "00000000"
-    f = f.replace("-", "").replace("/", "")
-    # AAAAMMDD al inicio
+    # quita separadores
+    f = f.replace("-", "").replace("/", "").replace(".", "")
+    # si trae 8 dígitos
     if len(f) >= 8 and f[:8].isdigit():
-        return f[:8]
-    # DDMMAAAA al final
+        s = f[:8]
+        yyyy = s[:4]
+        mm = s[4:6]
+        dd = s[6:8]
+        # si los 4 primeros no parecen un año (p.ej. 1011), interpretamos DDMMAAAA
+        try:
+            y = int(yyyy)
+        except:
+            y = 0
+        if y < 1900 or y > 2100:
+            # tratar como DDMMAAAA
+            dd, mm, yyyy = s[0:2], s[2:4], s[4:8]
+        # normaliza componentes a 2/4 dígitos
+        return f"{yyyy}{mm}{dd}"
+    # si los 8 últimos son dígitos (caso raro), intenta DDMMAAAA al final
     if len(f) >= 8 and f[-8:].isdigit():
-        dd, mm, yyyy = f[-8:-6], f[-6:-4], f[-4:]
+        s = f[-8:]
+        dd, mm, yyyy = s[0:2], s[2:4], s[4:8]
         return f"{yyyy}{mm}{dd}"
     return "00000000"
 
