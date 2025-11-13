@@ -1,7 +1,11 @@
 from facturas_common import Linea, d2
+
 def generar_asiento_recibida(row, conf) -> list[Linea]:
-    fecha = row["Fecha"]; desc = str(row.get("Descripcion",""))
-    base = d2(row.get("Base", 0)); cuota_iva = d2(row.get("CuotaIVA", 0)); ret = d2(row.get("CuotaRetencion", 0))
+    fecha = row["Fecha"]
+    desc = str(row.get("Descripcion",""))
+    base = d2(row.get("Base", 0))
+    cuota_iva = d2(row.get("CuotaIVA", 0))
+    ret = d2(row.get("CuotaRetencion", 0))
     total = d2(row.get("Total", base + cuota_iva - ret))
     nd = conf.get('digitos_plan',8)
     c_prov = (row.get('_cuenta_tercero_override') or (conf.get('cuenta_proveedor_por_defecto') if row.get('_usar_cuenta_generica') else conf.get('cuenta_proveedor_prefijo','400') + (row.get('NIF') or '0000'))).ljust(nd, '0')[:nd]

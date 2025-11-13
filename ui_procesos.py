@@ -109,7 +109,9 @@ class UIProcesos(ttk.Frame):
     # Helpers de mapeo por letras
     # ─────────────────────────────────────────────────────────────────────────
     def _col_letter_to_index(self, letter: str) -> int:
-        letter = (letter or "").strip().upper()
+        # Puede venir como número desde el JSON; lo pasamos siempre a str
+        letter = "" if letter is None else str(letter)
+        letter = letter.strip().upper()
         if not letter:
             return -1
         idx = 0
@@ -118,6 +120,7 @@ class UIProcesos(ttk.Frame):
                 return -1
             idx = idx * 26 + (ord(ch) - ord('A') + 1)
         return idx - 1
+
 
     def _extract_rows_by_mapping(self, xlsx_path: str, sheet: str, mapping: dict):
         """
@@ -132,8 +135,9 @@ class UIProcesos(ttk.Frame):
         first = int((mapping or {}).get("primera_fila_procesar", 2))
         start_idx = max(0, first - 1)
         cols_map = (mapping or {}).get("columnas", {}) or {}
-        ign = (mapping or {}).get("ignorar_filas", "").strip()
-        gen = (mapping or {}).get("condicion_cuenta_generica", "").strip()
+        ign = str((mapping or {}).get("ignorar_filas", "") or "").strip()
+        gen = str((mapping or {}).get("condicion_cuenta_generica", "") or "").strip()
+
 
         def pick(row, letter):
             ci = self._col_letter_to_index(letter)
@@ -171,7 +175,9 @@ class UIProcesos(ttk.Frame):
     # ─────────────────────────────────────────────────────────────────────────
     def _has_letter(self, pl_excel, key):
         cols = (pl_excel or {}).get("columnas", {})
-        return bool((cols.get(key) or "").strip())
+        # Aseguramos que siempre trabajamos con str, aunque se haya guardado un número
+        val = cols.get(key, "")
+        return bool(str(val).strip())
 
     def _require_mapeo_or_warn(self, pl, tipo, required_keys):
         pl_excel = pl.get("excel") or {}
@@ -226,8 +232,8 @@ class UIProcesos(ttk.Frame):
                 req = ["Fecha Asiento","Importe","Concepto"]
                 if not self._require_mapeo_or_warn(pl, "bancos", req): return
 
-                sub_banco = (pl.get("subcuenta_banco") or "").strip()
-                sub_def   = (pl.get("subcuenta_por_defecto") or "").strip()
+                sub_banco = str(pl.get("subcuenta_banco") or "").strip()
+                sub_def   = str(pl.get("subcuenta_por_defecto") or "").strip()
                 conceptos = pl.get("conceptos", [])
 
                 if not sub_banco:
@@ -317,8 +323,8 @@ class UIProcesos(ttk.Frame):
                     req = ["Numero Factura"] + req
                 if not self._require_mapeo_or_warn(pl, "emitidas", req): return
 
-                pref_cli = pl.get("cuenta_cliente_prefijo", "430")
-                cta_ventas_def = pl.get("cuenta_ingreso_por_defecto", "70000000")
+                pref_cli = str(pl.get("cuenta_cliente_prefijo", "430"))
+                cta_ventas_def = str(pl.get("cuenta_ingreso_por_defecto", "70000000"))
                 subtipo_def = pl.get("subtipo_emitidas", "01")
 
                 registros = []
@@ -327,8 +333,8 @@ class UIProcesos(ttk.Frame):
                     fecha = r0.get("Fecha Asiento") or r0.get("Fecha Expedicion") or r0.get("Fecha Operacion")
                     desc  = r0.get("Descripcion Factura") or ""
                     num_fact = r0.get("Numero Factura") or r0.get("Número Factura") or ""
-                    nif   = (r0.get("NIF Cliente Proveedor") or "").strip()
-                    nombre= (r0.get("Nombre Cliente Proveedor") or "").strip()
+                    nif   = str(r0.get("NIF Cliente Proveedor") or "").strip()
+                    nombre= str(r0.get("Nombre Cliente Proveedor") or "").strip()
 
                     cli8 = (pref_cli + "".join(ch for ch in nif if ch.isdigit()))[-8:].zfill(8)
 
@@ -392,8 +398,8 @@ class UIProcesos(ttk.Frame):
                     req = ["Numero Factura"] + req
                 if not self._require_mapeo_or_warn(pl, "recibidas", req): return
 
-                pref_prov = pl.get("cuenta_proveedor_prefijo", "400")
-                cta_gasto_def = pl.get("cuenta_gasto_por_defecto", "62900000")
+                pref_prov = str(pl.get("cuenta_proveedor_prefijo", "400"))
+                cta_gasto_def = str(pl.get("cuenta_gasto_por_defecto", "62900000"))
                 subtipo_def = pl.get("subtipo_recibidas", "01")
 
                 registros = []
@@ -402,11 +408,11 @@ class UIProcesos(ttk.Frame):
                     fecha = r0.get("Fecha Asiento") or r0.get("Fecha Expedicion") or r0.get("Fecha Operacion")
                     desc  = r0.get("Descripcion Factura") or ""
                     num_fact = r0.get("Numero Factura") or r0.get("Número Factura") or ""
-                    nif   = (r0.get("NIF Cliente Proveedor") or "").strip()
-                    nombre= (r0.get("Nombre Cliente Proveedor") or "").strip()
+                    nif   = str(r0.get("NIF Cliente Proveedor") or "").strip()
+                    nombre= str(r0.get("Nombre Cliente Proveedor") or "").strip()
 
                     # cuenta proveedor (si viene mapeada en 'Cuenta Cliente Proveedor', úsala)
-                    cta_prov_excel = (r0.get("Cuenta Cliente Proveedor") or "").strip()
+                    cta_prov_excel = str(r0.get("Cuenta Cliente Proveedor") or "").strip()
                     if cta_prov_excel:
                         prov8 = cta_prov_excel[-8:].zfill(8)
                     else:
