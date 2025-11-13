@@ -17,6 +17,48 @@
       "nombre": "Jorge Portilla Luis Alfonso",
       "digitos_plan": 8,
       "ejercicio": 2025
+    },
+    {
+      "codigo": "00844",
+      "nombre": "Mensajeria Express Caramañola S.L.",
+      "digitos_plan": 8,
+      "ejercicio": 2025
+    },
+    {
+      "codigo": "00505",
+      "nombre": "VAMOSRURAL MARKETING SL",
+      "digitos_plan": 8,
+      "ejercicio": 2025
+    },
+    {
+      "codigo": "00372",
+      "nombre": "PINEDO TESTA, IGNACIO",
+      "digitos_plan": 8,
+      "ejercicio": 2025
+    },
+    {
+      "codigo": "00086",
+      "nombre": "Tinas de Pechon S.L.",
+      "digitos_plan": 8,
+      "ejercicio": 2025
+    },
+    {
+      "codigo": "00352",
+      "nombre": "Marine & Hidrocomponents S.L.",
+      "digitos_plan": 8,
+      "ejercicio": 2025
+    },
+    {
+      "codigo": "00313",
+      "nombre": "FEGAR REFORMAS INTEGRALES SL",
+      "digitos_plan": 8,
+      "ejercicio": 2025
+    },
+    {
+      "codigo": "00466",
+      "nombre": "Los Pollares 2017 S.L.",
+      "digitos_plan": 8,
+      "ejercicio": 2025
     }
   ],
   "bancos": [
@@ -76,6 +118,727 @@
           "Descripcion Factura": "D",
           "Concepto": "D",
           "Importe": "E",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": [
+        {
+          "patron": "*Q2827003A005*",
+          "subcuenta": "47600000"
+        },
+        {
+          "patron": "*ON*",
+          "subcuenta": "43000000"
+        },
+        {
+          "patron": "*C.*",
+          "subcuenta": "62600001"
+        },
+        {
+          "patron": "*INGRESO CAJERO*",
+          "subcuenta": "57000000"
+        },
+        {
+          "patron": "*PR.FA*",
+          "subcuenta": "62600000"
+        },
+        {
+          "patron": "*PR.FATIDA*",
+          "subcuenta": "62600000"
+        },
+        {
+          "patron": "*TELEFONICA ESP*",
+          "subcuenta": "41000020"
+        },
+        {
+          "patron": "*TELEFONICA^*",
+          "subcuenta": "41000020"
+        },
+        {
+          "patron": "*MERCEDES BENZ*",
+          "subcuenta": "40000020"
+        },
+        {
+          "patron": "*MERCEDES*",
+          "subcuenta": "40000020"
+        },
+        {
+          "patron": "*SQUIOTECHNOLOGIES, S.L.*",
+          "subcuenta": "40000173"
+        },
+        {
+          "patron": "*SQUIOTECHNOLOGIES*",
+          "subcuenta": "40000173"
+        },
+        {
+          "patron": "*SAUL GONZALEZ CEBALLOS*",
+          "subcuenta": "40000151"
+        },
+        {
+          "patron": "*MEDIMOTORS PR.*",
+          "subcuenta": "40000154"
+        },
+        {
+          "patron": "*AD CANTABRIA*",
+          "subcuenta": "40000003"
+        },
+        {
+          "patron": "*AD*",
+          "subcuenta": "40000003"
+        },
+        {
+          "patron": "*NEUM TICOS SOL*",
+          "subcuenta": "40000018"
+        },
+        {
+          "patron": "*SOLEDAD*",
+          "subcuenta": "40000018"
+        },
+        {
+          "patron": "*NEUMATICOS SOLEDAD*",
+          "subcuenta": "40000018"
+        },
+        {
+          "patron": "*NEUMATICOS SOL*",
+          "subcuenta": "40000018"
+        },
+        {
+          "patron": "*ENI PLENITUDE*",
+          "subcuenta": "41000067"
+        },
+        {
+          "patron": "*ENI*",
+          "subcuenta": "41000067"
+        },
+        {
+          "patron": "*W RTH ESPANA*",
+          "subcuenta": "40000011"
+        },
+        {
+          "patron": "*WURTH ESPANA*",
+          "subcuenta": "40000011"
+        },
+        {
+          "patron": "*FINETWORK*",
+          "subcuenta": "41000160"
+        },
+        {
+          "patron": "*ASES.GESTINEM*",
+          "subcuenta": "41000080"
+        },
+        {
+          "patron": "*GESTINEM*",
+          "subcuenta": "41000080"
+        },
+        {
+          "patron": "*PAG NOMINAS*",
+          "subcuenta": "46500000"
+        },
+        {
+          "patron": "*NOMINAS*",
+          "subcuenta": "46500000"
+        },
+        {
+          "patron": "*MANTENIMIENTO TPV*",
+          "subcuenta": "62600000"
+        },
+        {
+          "patron": "*MANTENIMIENTO*",
+          "subcuenta": "62600000"
+        },
+        {
+          "patron": "*FATI*",
+          "subcuenta": "43000000"
+        },
+        {
+          "patron": "*AUTO GOMAS S.A*",
+          "subcuenta": "40000006"
+        },
+        {
+          "patron": "*AUTOGOMAS*",
+          "subcuenta": "40000006"
+        },
+        {
+          "patron": "*PROSEGUR*",
+          "subcuenta": "41000059"
+        },
+        {
+          "patron": "*PROSEGUR ALARM*",
+          "subcuenta": "41000059"
+        },
+        {
+          "patron": "*VIDAL DE PENA*",
+          "subcuenta": "40000063"
+        },
+        {
+          "patron": "*VIDAL*",
+          "subcuenta": "40000063"
+        },
+        {
+          "patron": "*BLENDIO DEVAUT*",
+          "subcuenta": "40000122"
+        },
+        {
+          "patron": "*DEVAUT*",
+          "subcuenta": "40000122"
+        },
+        {
+          "patron": "*AG PARAYAS S.L*",
+          "subcuenta": "40000093"
+        },
+        {
+          "patron": "*AG PARAYAS*",
+          "subcuenta": "40000093"
+        },
+        {
+          "patron": "*CUOTA AGRUPADA MYBOX*",
+          "subcuenta": "62500002"
+        },
+        {
+          "patron": "*MYBOX*",
+          "subcuenta": "62500002"
+        },
+        {
+          "patron": "*Apor. Periodicas*",
+          "subcuenta": "55100000"
+        }
+      ]
+    },
+    {
+      "codigo_empresa": "00844",
+      "banco": "BBVA",
+      "subcuenta_banco": "57200002",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "C",
+          "Descripcion Factura": "F",
+          "Concepto": "F",
+          "Importe": "I",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "00844",
+      "banco": "Caixabank",
+      "subcuenta_banco": "57200001",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "D",
+          "Concepto": "D",
+          "Importe": "",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "00505",
+      "banco": "",
+      "subcuenta_banco": "",
+      "subcuenta_por_defecto": "",
+      "excel": {
+        "primera_fila_procesar": 10,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "",
+          "Descripcion Factura": "",
+          "Concepto": "",
+          "Importe": "",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "00505",
+      "banco": "SABADELL",
+      "subcuenta_banco": "57200002",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "B",
+          "Concepto": "B",
+          "Importe": "C",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": [
+        {
+          "patron": "TRANSFERENCIA A JOSÉ MANUEL COLSA",
+          "subcuenta": "55100000"
+        },
+        {
+          "patron": "TRASPASO A 7140-00021828-30 WKEGHQF75PEIS6XF6",
+          "subcuenta": "55500000"
+        },
+        {
+          "patron": "TRASPASO 7140-00021828-30 JXCQI6WDGCNFFHO5M",
+          "subcuenta": "55500000"
+        }
+      ]
+    },
+    {
+      "codigo_empresa": "00372",
+      "banco": "BANCOFAR",
+      "subcuenta_banco": "57200001",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "C",
+          "Concepto": "C",
+          "Importe": "D",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": [
+        {
+          "patron": "*GESTINEM*",
+          "subcuenta": "41000025"
+        },
+        {
+          "patron": "*RCBO.CENFARTE*",
+          "subcuenta": "40000005"
+        },
+        {
+          "patron": "*RCBO.YOIGO - XFERA MOVILES S.A.U.*",
+          "subcuenta": "41000010"
+        },
+        {
+          "patron": "*TRF. FUNDACION HOSPITALARIAS",
+          "subcuenta": "55500000"
+        },
+        {
+          "patron": "*RCBO.SECURITAS DIRECT ESPANA S.A.U.\n*",
+          "subcuenta": "41000020"
+        },
+        {
+          "patron": "*COFARES *",
+          "subcuenta": "40000011"
+        },
+        {
+          "patron": "*RCBO.LABORATORIOS COMBIX SLU\n*",
+          "subcuenta": "40000002"
+        },
+        {
+          "patron": "RCBO.ENDESA ENERGIA, S.A.",
+          "subcuenta": "41000043"
+        },
+        {
+          "patron": "*RCBO.C.P. RESIDENCIAL LOS FAROS\n*",
+          "subcuenta": "62900003"
+        },
+        {
+          "patron": "*RCBO.CENTRO FARMACEUTICO DEL NORTE S A*",
+          "subcuenta": "40000005"
+        },
+        {
+          "patron": "*RCBO.BIDA FARMA S. COOP. AND.\n*",
+          "subcuenta": "40000033"
+        },
+        {
+          "patron": "* COLEGIO OFICIAL DE FARMACEUTICOS DE CANT\n*",
+          "subcuenta": "40000010"
+        },
+        {
+          "patron": "*RCBO.FCC AQUALIA, S.A.\n*",
+          "subcuenta": "41000004"
+        },
+        {
+          "patron": "*RCBO.TGSS. COTIZACION 001 REGIMEN GENERAL\n*",
+          "subcuenta": "64900001"
+        },
+        {
+          "patron": "TRF. IGNACIO PINEDO TESTA",
+          "subcuenta": "55100000"
+        },
+        {
+          "patron": "*TRF. ROSANA ARROYO*",
+          "subcuenta": "46500000"
+        },
+        {
+          "patron": "*RCBO.AYUNTAMIENTO DE SANTANDER\n*",
+          "subcuenta": "41000006"
+        },
+        {
+          "patron": "TRF. INSTITUTO CANTABRO DE SERVICIOS SOCIALES",
+          "subcuenta": "43000000"
+        },
+        {
+          "patron": "*TRF. LABORATORIOS CINFA, S.A.*",
+          "subcuenta": "40000001"
+        },
+        {
+          "patron": "*RCBO.AXA SEGUROS GENERALES*",
+          "subcuenta": "62500002"
+        }
+      ]
+    },
+    {
+      "codigo_empresa": "00086",
+      "banco": "Bankinter",
+      "subcuenta_banco": "57200005",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "F",
+          "Concepto": "F",
+          "Importe": "J",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "00086",
+      "banco": "Caixabank",
+      "subcuenta_banco": "57200006",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "D",
+          "Concepto": "D",
+          "Importe": "E",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "00086",
+      "banco": "Santander 9998",
+      "subcuenta_banco": "57200001",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "55500000",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "C",
+          "Concepto": "C",
+          "Importe": "D",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "00352",
+      "banco": "BBVA",
+      "subcuenta_banco": "57200002",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "",
+          "Descripcion Factura": "",
+          "Concepto": "",
+          "Importe": "",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": [
+        {
+          "patron": "*4294 RECMAR*",
+          "subcuenta": "40000015"
+        },
+        {
+          "patron": "*EXPOMARINA*",
+          "subcuenta": "40000163"
+        },
+        {
+          "patron": "*4294 EXPOMARINA*",
+          "subcuenta": "40000163"
+        },
+        {
+          "patron": "*4294 FERRETERIA*",
+          "subcuenta": "40000005"
+        },
+        {
+          "patron": "*FERRETERIA SA*",
+          "subcuenta": "40000005"
+        },
+        {
+          "patron": "*PRESTAMO*",
+          "subcuenta": "55100000"
+        },
+        {
+          "patron": "*4294 Yoigo*",
+          "subcuenta": "41000009"
+        },
+        {
+          "patron": "*Yoigo*",
+          "subcuenta": "41000009"
+        },
+        {
+          "patron": "*XFERA*",
+          "subcuenta": "41000009"
+        },
+        {
+          "patron": "*NOMINA*",
+          "subcuenta": "46500000"
+        },
+        {
+          "patron": "*AUTOTECNICA*",
+          "subcuenta": "40000195"
+        },
+        {
+          "patron": "*4294 AUTOTECNICA*",
+          "subcuenta": "40000195"
+        },
+        {
+          "patron": "*CLUB NAUTICO*",
+          "subcuenta": "41000011"
+        },
+        {
+          "patron": "*ITV*",
+          "subcuenta": "41000038"
+        },
+        {
+          "patron": "*OBRAMAT*",
+          "subcuenta": "40000001"
+        },
+        {
+          "patron": "*BRICOLAJE OBRAMAT*",
+          "subcuenta": "40000001"
+        },
+        {
+          "patron": "*LUBRICANTES*",
+          "subcuenta": "41000184"
+        },
+        {
+          "patron": "*SUMIDECANT*",
+          "subcuenta": "40000044"
+        },
+        {
+          "patron": "*SOLUCIONES*",
+          "subcuenta": "40000004"
+        },
+        {
+          "patron": "*GUCOBA*",
+          "subcuenta": "40000008"
+        },
+        {
+          "patron": "*PLASTICOS GUCOBA*",
+          "subcuenta": "40000008"
+        },
+        {
+          "patron": "*PLASTICOS*",
+          "subcuenta": "40000008"
+        }
+      ]
+    },
+    {
+      "codigo_empresa": "00372",
+      "banco": "",
+      "subcuenta_banco": "",
+      "subcuenta_por_defecto": "",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "",
+          "Descripcion Factura": "",
+          "Concepto": "",
+          "Importe": "",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "00313",
+      "banco": "SANTANDER",
+      "subcuenta_banco": "57200002",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "C",
+          "Concepto": "C",
+          "Importe": "D",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": [
+        {
+          "patron": "*NOMINA*",
+          "subcuenta": "46500000"
+        },
+        {
+          "patron": "*OBRAMAT*",
+          "subcuenta": "40000003"
+        },
+        {
+          "patron": "*AMAZON*",
+          "subcuenta": "55100000"
+        },
+        {
+          "patron": "*LADISLAO*",
+          "subcuenta": "40000023"
+        },
+        {
+          "patron": "*Hierros Y Aceros*",
+          "subcuenta": "40000009"
+        },
+        {
+          "patron": "* Electricidad Pedrin*",
+          "subcuenta": "40000041"
+        },
+        {
+          "patron": "* Drogueria Norte *",
+          "subcuenta": "40000017"
+        },
+        {
+          "patron": "*leroy merlin españa slu*",
+          "subcuenta": "41000020"
+        },
+        {
+          "patron": "*maderas sifer*",
+          "subcuenta": "40000028"
+        },
+        {
+          "patron": "*marino de la fuente*",
+          "subcuenta": "40000053"
+        },
+        {
+          "patron": "*ferreteria cubas*",
+          "subcuenta": "40000001"
+        },
+        {
+          "patron": "*acero inox caballero*",
+          "subcuenta": "40000002"
+        },
+        {
+          "patron": "*elostal y cia*",
+          "subcuenta": "40000004"
+        },
+        {
+          "patron": "*empresarios asociados marpol*",
+          "subcuenta": "40000006"
+        },
+        {
+          "patron": "*almacenes lavin*",
+          "subcuenta": "40000005"
+        },
+        {
+          "patron": "*alvares maderas*",
+          "subcuenta": "40000011"
+        },
+        {
+          "patron": "*grucoba*",
+          "subcuenta": "40000019"
+        },
+        {
+          "patron": "*vidiros jucar*",
+          "subcuenta": "40000020"
+        },
+        {
+          "patron": "*ferreteria los pedros*",
+          "subcuenta": "40000037"
+        },
+        {
+          "patron": "*ferreteria santander*",
+          "subcuenta": "40000045"
+        },
+        {
+          "patron": "*parquets eduardo *",
+          "subcuenta": "40000065"
+        },
+        {
+          "patron": "*ceramicas besaya s.l.*",
+          "subcuenta": "40000073"
+        },
+        {
+          "patron": "*e.s. el empalme sau*",
+          "subcuenta": "41000006"
+        },
+        {
+          "patron": "*gomez-lavin hermanos sa*",
+          "subcuenta": "41000016"
+        },
+        {
+          "patron": "*banco santander*",
+          "subcuenta": "41000037"
+        },
+        {
+          "patron": "*adarsa norte *",
+          "subcuenta": "41000041"
+        },
+        {
+          "patron": "*gestinem*",
+          "subcuenta": "41000058"
+        },
+        {
+          "patron": "*quieron*",
+          "subcuenta": "41000061"
+        },
+        {
+          "patron": "* Stellantis Financial *",
+          "subcuenta": "41000065"
+        }
+      ]
+    },
+    {
+      "codigo_empresa": "00466",
+      "banco": "Santander",
+      "subcuenta_banco": "57200001",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "C",
+          "Concepto": "C",
+          "Importe": "D",
           "NIF Cliente Proveedor": "",
           "Nombre Cliente Proveedor": ""
         }

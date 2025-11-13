@@ -2,6 +2,16 @@
 from dataclasses import dataclass
 from typing import List
 from decimal import Decimal
+from datetime import datetime, date, timedelta
+import re
+
+_EXCEL_EPOCH_1900 = date(1899, 12, 30)  # Excel (sistema 1900)
+_EXCEL_EPOCH_1904 = date(1904, 1, 1)    # Excel (sistema 1904, frecuente en Mac)
+
+_MONTHS_ES = {
+    "ENE": 1, "FEB": 2, "MAR": 3, "ABR": 4, "MAY": 5, "JUN": 6,
+    "JUL": 7, "AGO": 8, "SEP": 9, "SEPT": 9, "OCT": 10, "NOV": 11, "DIC": 12
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MODELO DE LÍNEA (entrada lógica)
@@ -38,33 +48,104 @@ def _empresa5(cod) -> str:
     if d == "": d = "0"
     return str(int(d)).zfill(5)[:5]
 
-def _fecha_yyyymmdd(fecha: str) -> str:
-    f = _s(fecha).strip()
-    if not f:
+def _yyyy2_to_yyyy(y2: int) -> int:
+    # 00-49 => 2000-2049, 50-99 => 1950-1999
+    return 2000 + y2 if 0 <= y2 <= 49 else 1900 + y2
+
+def _fecha_yyyymmdd(fecha) -> str:
+    """Normaliza cualquier 'fecha' a AAAAMMDD para A3."""
+    # 0) None / vacío
+    if fecha in (None, ""):
         return "00000000"
-    # quita separadores
-    f = f.replace("-", "").replace("/", "").replace(".", "")
-    # si trae 8 dígitos
-    if len(f) >= 8 and f[:8].isdigit():
-        s = f[:8]
-        yyyy = s[:4]
-        mm = s[4:6]
-        dd = s[6:8]
-        # si los 4 primeros no parecen un año (p.ej. 1011), interpretamos DDMMAAAA
+
+    # 1) pandas.Timestamp
+    try:
+        import pandas as pd
+        if isinstance(fecha, pd.Timestamp):
+            return fecha.strftime("%Y%m%d")
+    except Exception:
+        pass
+
+    # 2) datetime.date / datetime
+    if isinstance(fecha, (date, datetime)):
+        d = fecha.date() if isinstance(fecha, datetime) else fecha
+        return d.strftime("%Y%m%d")
+
+    # 3) Serial numérico de Excel (int o float). Acepta enteros y floats con fracción horaria.
+    if isinstance(fecha, (int, float)) and not isinstance(fecha, bool):
+        try:
+            serial = float(fecha)
+            days = int(serial)
+            d = _EXCEL_EPOCH_1900 + timedelta(days=days)
+            # Heurística: si año muy bajo, prueba 1904
+            if d.year < 1930:
+                d = _EXCEL_EPOCH_1904 + timedelta(days=days)
+            return d.strftime("%Y%m%d")
+        except Exception:
+            pass
+
+    # 4) Cadena: limpiar y probar formatos
+    s = _s(fecha)
+    s = s.replace("\xa0", " ").strip()   # ya lo tenías
+    s = s.strip("'\"")   
+    if not s:
+        return "00000000"
+
+    # Normaliza separadores a '/'
+    ss = s.replace(".", "/").replace("-", "/").replace("\\", "/")
+
+    # Formatos más comunes (incluye año 2 dígitos)
+    for fmt in ("%d/%m/%Y", "%Y/%m/%d", "%d/%m/%y", "%Y%m%d", "%d%m%Y"):
+        try:
+            dt = datetime.strptime(ss, fmt)
+            # si el formato fue %d/%m/%y, ajustar ventana de años
+            if fmt == "%d/%m/%y":
+                y = dt.year % 100
+                dt = dt.replace(year=_yyyy2_to_yyyy(y))
+            return dt.strftime("%Y%m%d")
+        except ValueError:
+            continue
+
+    # Mes con nombre en español (ej: "10 nov 2025", "01-ene-25", etc.)
+    try:
+        parts = [p for p in re.split(r"[ \t/\\\-\.]+", s.strip()) if p]
+        if len(parts) >= 3:
+            d1, m1, y1 = parts[0], parts[1], parts[2]
+            # ¿mes literal?
+            mm = None
+            m_up = m1.strip().upper()
+            m_up = m_up[:4] if len(m_up) >= 4 and m_up.startswith("SEPT") else m_up[:3]
+            if m_up in _MONTHS_ES:
+                mm = _MONTHS_ES[m_up]
+            if mm is not None and d1.isdigit() and y1.isdigit():
+                dd = int(d1)
+                yy = int(y1)
+                if yy < 100:
+                    yy = _yyyy2_to_yyyy(yy)
+                dt = date(yy, mm, dd)
+                return dt.strftime("%Y%m%d")
+    except Exception:
+        pass
+
+    # Solo dígitos → heurística AAAAMMDD / DDMMAAAA
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if len(digits) >= 8:
+        cand = digits[:8]
+        yyyy, mm, dd = cand[:4], cand[4:6], cand[6:8]
+        # Si el "año" no parece año, interpretar DDMMAAAA
         try:
             y = int(yyyy)
         except:
             y = 0
         if y < 1900 or y > 2100:
-            # tratar como DDMMAAAA
-            dd, mm, yyyy = s[0:2], s[2:4], s[4:8]
-        # normaliza componentes a 2/4 dígitos
+            dd, mm, yyyy = cand[0:2], cand[2:4], cand[4:8]
+        # Intenta validar; si falla, prueba intercambio dd/mm
+        try:
+            datetime(int(yyyy), int(mm), int(dd))
+        except ValueError:
+            dd, mm = mm, dd
         return f"{yyyy}{mm}{dd}"
-    # si los 8 últimos son dígitos (caso raro), intenta DDMMAAAA al final
-    if len(f) >= 8 and f[-8:].isdigit():
-        s = f[-8:]
-        dd, mm, yyyy = s[0:2], s[2:4], s[4:8]
-        return f"{yyyy}{mm}{dd}"
+
     return "00000000"
 
 def _cuenta_12(c: str, ndig_plan: int = 8) -> str:
