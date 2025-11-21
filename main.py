@@ -17,7 +17,8 @@ def main():
 
     root = tk.Tk()
     root.title(APP_NAME); root.geometry("1200x780")
-    container = ttk.Frame(root); container.pack(fill=tk.BOTH, expand=True)
+    container = ttk.Frame(root)
+    container.pack(fill=tk.BOTH, expand=True)
     current = {"frame": None, "empresa": None}
 
     def show(factory):

@@ -5,6 +5,7 @@ import portalocker
 DEFAULT_JSON = '{"empresas":[],"bancos":[],"facturas_emitidas":[],"facturas_recibidas":[]}'
 
 class GestorPlantillas:
+    
     def __init__(self, path_json: Path):
         self.path = Path(path_json)
         # lockfile separado para evitar bloquear el propio JSON

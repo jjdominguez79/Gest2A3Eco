@@ -5,12 +5,11 @@ import pandas as pd
 import os
 from collections import defaultdict
 
-from facturas_common import (
-    Linea,
-    render_a3_tipo0_bancos,
-    render_a3_tipo12_cabecera,
-    render_a3_tipo9_detalle,
-)
+from procesos.bancos import generar_bancos
+from procesos.facturas_emitidas import generar_emitidas
+from procesos.facturas_recibidas import generar_recibidas
+
+
 
 class UIProcesos(ttk.Frame):
     def __init__(self, master, gestor, codigo_empresa, nombre_empresa):
@@ -121,7 +120,6 @@ class UIProcesos(ttk.Frame):
             idx = idx * 26 + (ord(ch) - ord('A') + 1)
         return idx - 1
 
-
     def _extract_rows_by_mapping(self, xlsx_path: str, sheet: str, mapping: dict):
         """
         Lee el Excel sin encabezado (header=None) y extrae campos por letra de columna.
@@ -198,12 +196,13 @@ class UIProcesos(ttk.Frame):
             if not self.excel_path or not self.cb_sheet.get():
                 messagebox.showwarning("Gest2A3Eco", "Selecciona un Excel y una hoja.")
                 return
-            tipo = self.tipo.get()
+            
             nombre_pl = self.cb_plantilla.get().strip()
             if not nombre_pl:
                 messagebox.showwarning("Gest2A3Eco", "Selecciona una plantilla.")
                 return
-
+            
+            tipo = self.tipo.get()
             # Obtener plantilla seleccionada
             if tipo == "bancos":
                 pl = next((x for x in self.gestor.listar_bancos(self.codigo) if x.get("banco")==nombre_pl), None)
@@ -230,58 +229,25 @@ class UIProcesos(ttk.Frame):
             if tipo == "bancos":
                 # Validación mínima de mapeo (Fecha, Importe, Concepto)
                 req = ["Fecha Asiento","Importe","Concepto"]
-                if not self._require_mapeo_or_warn(pl, "bancos", req): return
-
-                sub_banco = str(pl.get("subcuenta_banco") or "").strip()
-                sub_def   = str(pl.get("subcuenta_por_defecto") or "").strip()
-                conceptos = pl.get("conceptos", [])
-
-                if not sub_banco:
-                    messagebox.showerror("Gest2A3Eco", "La plantilla de bancos no tiene 'Subcuenta banco'.")
+                if not self._require_mapeo_or_warn(pl, "bancos", req):
                     return
-                if not sub_def:
-                    messagebox.showerror("Gest2A3Eco", "La plantilla de bancos no tiene 'Subcuenta por defecto'.")
+                
+                try:
+                    out_lines, avisos = generar_bancos(rows, pl, codigo_empresa, ndig)
+                except ValueError as e:
+                    messagebox.showerror("Gest2A3Eco", str(e))
                     return
 
-                import fnmatch
-                def subcuenta_por_concepto(txt: str) -> str:
-                    t = (str(txt) or "").lower()
-                    for cm in (conceptos or []):
-                        patron = (cm.get("patron","*") or "*").lower()
-                        if fnmatch.fnmatch(t, patron):
-                            sub = (cm.get("subcuenta") or "").strip()
-                            if sub:
-                                return sub
-                    return sub_def
-
-                def fnum(x):
-                    try: return float(str(x).replace(",", "."))
-                    except: return 0.0
-
-                lineas = []
-                for rec in rows:
-                    fecha = rec.get("Fecha Asiento") or rec.get("Fecha Operacion") or rec.get("Fecha Expedicion")
-                    concepto_txt = rec.get("Concepto") or rec.get("Descripcion Factura") or ""
-                    val = fnum(rec.get("Importe"))
-                    if val == 0:
-                        continue
-                    imp = abs(val)
-                    sub_contra = subcuenta_por_concepto(concepto_txt) or sub_def
-
-                    if val > 0:
-                        # + => Banco Debe, Contrapartida Haber
-                        lineas.append(Linea(fecha, sub_banco,  "D", imp, str(concepto_txt)))
-                        lineas.append(Linea(fecha, sub_contra, "H", imp, str(concepto_txt)))
-                    else:
-                        # - => Banco Haber, Contrapartida Debe
-                        lineas.append(Linea(fecha, sub_contra, "D", imp, str(concepto_txt)))
-                        lineas.append(Linea(fecha, sub_banco,  "H", imp, str(concepto_txt)))
-
-                if not lineas:
-                    messagebox.showwarning("Gest2A3Eco","No se generaron líneas para bancos.")
+                if not out_lines:
+                    msg = "No se generaron líneas para bancos."
+                    if avisos:
+                        msg += "\n\nSe han detectado problemas de fecha en algunas filas:\n"
+                        preview = "\n".join(avisos[:10])
+                        if len(avisos) > 10:
+                            preview += f"\n... y {len(avisos)-10} filas más con fecha inválida."
+                        msg += preview
+                    messagebox.showwarning("Gest2A3Eco", msg)
                     return
-
-                out_lines = render_a3_tipo0_bancos(lineas, codigo_empresa, ndig_plan=ndig)
 
                 save_path = filedialog.asksaveasfilename(
                     title="Guardar fichero suenlace.dat",
@@ -291,11 +257,21 @@ class UIProcesos(ttk.Frame):
                 )
                 if not save_path:
                     return
-                with open(save_path, "w", encoding="utf-8", newline="") as f:
+                
+                with open(save_path, "w", encoding="latin-1", newline="") as f:
                     f.writelines(out_lines)
-                messagebox.showinfo("Gest2A3Eco", f"Fichero generado:\n{save_path}")
+                
+                msg = f"Fichero generado:\n{save_path}"
+                if avisos:
+                    msg += "\n\nATENCIÓN: se han omitido movimientos por fecha inválida:\n"
+                    preview = "\n".join(avisos[:10])
+                    if len(avisos) > 10:
+                        preview += f"\n... y {len(avisos)-10} filas más."
+                    msg += preview
+                    messagebox.showwarning("Gest2A3Eco - Bancos", msg)
+                else:
+                    messagebox.showinfo("Gest2A3Eco", msg)
                 return
-
             # =======================
             #   F A C T U R A S
             # =======================
@@ -321,57 +297,10 @@ class UIProcesos(ttk.Frame):
                     req = [k for k in req if k != "Numero Factura"] + ["Numero Factura Largo SII"]
                 else:
                     req = ["Numero Factura"] + req
-                if not self._require_mapeo_or_warn(pl, "emitidas", req): return
+                if not self._require_mapeo_or_warn(pl, "emitidas", req): 
+                    return
 
-                pref_cli = str(pl.get("cuenta_cliente_prefijo", "430"))
-                cta_ventas_def = str(pl.get("cuenta_ingreso_por_defecto", "70000000"))
-                subtipo_def = pl.get("subtipo_emitidas", "01")
-
-                registros = []
-                for (_, _id), grecs in grupos.items():
-                    r0 = grecs[0]
-                    fecha = r0.get("Fecha Asiento") or r0.get("Fecha Expedicion") or r0.get("Fecha Operacion")
-                    desc  = r0.get("Descripcion Factura") or ""
-                    num_fact = r0.get("Numero Factura") or r0.get("Número Factura") or ""
-                    nif   = str(r0.get("NIF Cliente Proveedor") or "").strip()
-                    nombre= str(r0.get("Nombre Cliente Proveedor") or "").strip()
-
-                    cli8 = (pref_cli + "".join(ch for ch in nif if ch.isdigit()))[-8:].zfill(8)
-
-                    total = 0.0
-                    for rr in grecs:
-                        base = _fv(rr.get("Base"))
-                        cuota = _fv(rr.get("Cuota IVA"))
-                        re_c = _fv(rr.get("Cuota Recargo Equivalencia"))
-                        ret_c= _fv(rr.get("Cuota Retencion IRPF"))
-                        total += base + cuota + re_c - ret_c
-
-                    registros.append(render_a3_tipo12_cabecera(
-                        codigo_empresa=codigo_empresa, fecha=fecha, tipo_registro="1",
-                        cuenta_tercero=cli8, ndig_plan=ndig,
-                        tipo_factura="1",
-                        num_factura=num_fact, desc_apunte=desc,
-                        importe_total=total, nif=nif, nombre=nombre,
-                        fecha_operacion=r0.get("Fecha Operacion") or "", 
-                        fecha_factura=r0.get("Fecha Expedicion") or "",
-                        num_factura_largo_sii=r0.get("Numero Factura Largo SII") or ""
-                    ))
-
-                    for i, rr in enumerate(grecs):
-                        base  = _fv(rr.get("Base"))
-                        cuota = _fv(rr.get("Cuota IVA"))
-                        pct   = _fv(rr.get("Porcentaje IVA"))
-                        if pct == 0 and base != 0:
-                            pct = round(abs(cuota / base * 100.0), 2)
-                        cta_ventas = cta_ventas_def
-                        registros.append(render_a3_tipo9_detalle(
-                            codigo_empresa=codigo_empresa, fecha=fecha,
-                            cuenta_base_iva=cta_ventas, ndig_plan=ndig,
-                            num_factura=num_fact, desc_apunte=desc,
-                            subtipo=str(subtipo_def),
-                            base=abs(base), pct_iva=abs(pct), cuota_iva=abs(cuota),
-                            es_ultimo=(i == len(grecs)-1)
-                        ))
+                registros = generar_emitidas(rows, pl, codigo_empresa, ndig)
 
                 # Guardar
                 if registros:
@@ -382,91 +311,51 @@ class UIProcesos(ttk.Frame):
                         filetypes=[("Ficheros DAT","*.dat")]
                     )
                     if not save_path: return
-                    with open(save_path, "w", encoding="utf-8", newline="") as f:
+                    with open(save_path, "w", encoding="latin-1", newline="") as f:
                         f.writelines(registros)
                     messagebox.showinfo("Gest2A3Eco", f"Fichero generado:\n{save_path}")
                 else:
                     messagebox.showwarning("Gest2A3Eco", "No se generaron registros para facturas emitidas.")
                 return
 
-            # ─ RECIBIDAS (compras)
+            # RECIBIDAS (compras)
             else:
                 req = ["Fecha Asiento","Descripcion Factura","Base","Cuota IVA"]
                 if not (self._has_letter(excel_conf, "Numero Factura") or self._has_letter(excel_conf, "Numero Factura Largo SII")):
                     req = [k for k in req if k != "Numero Factura"] + ["Numero Factura Largo SII"]
                 else:
                     req = ["Numero Factura"] + req
-                if not self._require_mapeo_or_warn(pl, "recibidas", req): return
+                if not self._require_mapeo_or_warn(pl, "recibidas", req):
+                    return
 
                 pref_prov = str(pl.get("cuenta_proveedor_prefijo", "400"))
                 cta_gasto_def = str(pl.get("cuenta_gasto_por_defecto", "62900000"))
-                subtipo_def = pl.get("subtipo_recibidas", "01")
+                # subtipo_def lo dejamos de momento para posible futuro detalle 9, pero aquí no se usa
 
-                registros = []
-                for (_, _id), grecs in grupos.items():
-                    r0 = grecs[0]
-                    fecha = r0.get("Fecha Asiento") or r0.get("Fecha Expedicion") or r0.get("Fecha Operacion")
-                    desc  = r0.get("Descripcion Factura") or ""
-                    num_fact = r0.get("Numero Factura") or r0.get("Número Factura") or ""
-                    nif   = str(r0.get("NIF Cliente Proveedor") or "").strip()
-                    nombre= str(r0.get("Nombre Cliente Proveedor") or "").strip()
+                out_lines, avisos = generar_recibidas(rows, pl, codigo_empresa, ndig)
 
-                    # cuenta proveedor (si viene mapeada en 'Cuenta Cliente Proveedor', úsala)
-                    cta_prov_excel = str(r0.get("Cuenta Cliente Proveedor") or "").strip()
-                    if cta_prov_excel:
-                        prov8 = cta_prov_excel[-8:].zfill(8)
-                    else:
-                        prov8 = (pref_prov + "".join(ch for ch in nif if ch.isdigit()))[-8:].zfill(8)
-
-                    total = 0.0
-                    for rr in grecs:
-                        base = _fv(rr.get("Base"))
-                        cuota = _fv(rr.get("Cuota IVA"))
-                        re_c = _fv(rr.get("Cuota Recargo Equivalencia"))
-                        ret_c= _fv(rr.get("Cuota Retencion IRPF"))
-                        total += base + cuota + re_c - ret_c
-
-                    registros.append(render_a3_tipo12_cabecera(
-                        codigo_empresa=codigo_empresa, fecha=fecha, tipo_registro="1",
-                        cuenta_tercero=prov8, ndig_plan=ndig,
-                        tipo_factura="2",
-                        num_factura=num_fact, desc_apunte=desc,
-                        importe_total=total, nif=nif, nombre=nombre,
-                        fecha_operacion=r0.get("Fecha Operacion") or "", 
-                        fecha_factura=r0.get("Fecha Expedicion") or "",
-                        num_factura_largo_sii=r0.get("Numero Factura Largo SII") or ""
-                    ))
-
-                    for i, rr in enumerate(grecs):
-                        base  = _fv(rr.get("Base"))
-                        cuota = _fv(rr.get("Cuota IVA"))
-                        pct   = _fv(rr.get("Porcentaje IVA"))
-                        if pct == 0 and base != 0:
-                            pct = round(abs(cuota / base * 100.0), 2)
-
-                        # cuenta de gasto: si Excel trae 'Cuenta Compras Ventas', úsala; si no, plantilla
-                        cta_gasto = (str(rr.get("Cuenta Compras Ventas") or "").strip() or cta_gasto_def)
-
-                        registros.append(render_a3_tipo9_detalle(
-                            codigo_empresa=codigo_empresa, fecha=fecha,
-                            cuenta_base_iva=cta_gasto, ndig_plan=ndig,
-                            num_factura=num_fact, desc_apunte=desc,
-                            subtipo=str(subtipo_def),
-                            base=abs(base), pct_iva=abs(pct), cuota_iva=abs(cuota),
-                            es_ultimo=(i == len(grecs)-1)
-                        ))
-
-                if registros:
+                if out_lines:
                     save_path = filedialog.asksaveasfilename(
                         title="Guardar fichero suenlace.dat",
                         defaultextension=".dat",
-                        initialfile=f"{self.codigo}.dat",
+                        initialfile=f"E{self.codigo}.DAT",
                         filetypes=[("Ficheros DAT","*.dat")]
                     )
-                    if not save_path: return
-                    with open(save_path, "w", encoding="utf-8", newline="") as f:
-                        f.writelines(registros)
-                    messagebox.showinfo("Gest2A3Eco", f"Fichero generado:\n{save_path}")
+                    if not save_path:
+                        return
+                    with open(save_path, "w", encoding="latin-1", newline="") as f:
+                        f.writelines(out_lines)
+                    
+                    msg = f"Fichero generado:\n{save_path}"
+                    if avisos:
+                        # Mostramos solo las primeras 10 para no saturar
+                        preview = "\n".join(avisos[:10])
+                        if len(avisos) > 10:
+                            preview += f"\n... y {len(avisos)-10} descuadres más."
+                        msg += f"\n\nATENCIÓN: se han detectado descuadres:\n{preview}"
+                        messagebox.showwarning("Gest2A3Eco - Descuadres", msg)
+                    else:
+                        messagebox.showinfo("Gest2A3Eco", msg)
                 else:
                     messagebox.showwarning("Gest2A3Eco", "No se generaron registros para facturas recibidas.")
                 return

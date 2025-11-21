@@ -301,9 +301,9 @@ def render_a3_tipo12_cabecera(*, codigo_empresa: str, fecha: str, tipo_registro:
     _set_slice(buf, 175, 189, _s(nif)[:14])         # 176..189 NIF
     _set_slice(buf, 189, 229, _s(nombre)[:40])      # 190..229 Nombre
     _set_slice(buf, 229, 235, "")                   # 230..234 reserva
-    _set_slice(buf, 235, 237, "")                   # 235..236 reserva
-    _set_slice(buf, 237, 244, _fecha_yyyymmdd(fecha_operacion))  # 237..244
-    _set_slice(buf, 244, 252, _fecha_yyyymmdd(fecha_factura))    # 245..252
+    _set_slice(buf, 235, 236, "")                   # 235..236 reserva
+    _set_slice(buf, 236, 244, _fecha_yyyymmdd(fecha_operacion))  # 236..244
+    _set_slice(buf, 244, 252, _fecha_yyyymmdd(fecha_factura))    # 244..252
     _set_slice(buf, 252, 312, _s(num_factura_largo_sii)[:60])    # 253..312
     _set_slice(buf, 312, 508, "")                   # resto reserva
     _set_slice(buf, 508, 509, "E")
