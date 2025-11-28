@@ -262,24 +262,44 @@ def _importe_14_pos(amt) -> str:
     # Igual que _importe_14 pero explícito por semántica
     return _importe_14(amt)
 
-def render_a3_tipo12_cabecera(*, codigo_empresa: str, fecha: str, tipo_registro: str,
-                              cuenta_tercero: str, ndig_plan: int,
-                              tipo_factura: str,  # '1' ventas, '2' compras, '3' bienes inversión
-                              num_factura: str, desc_apunte: str,
-                              importe_total: float,
-                              nif: str = "", nombre: str = "",
-                              fecha_operacion: str = "", fecha_factura: str = "",
-                              num_factura_largo_sii: str = "") -> str:
+def render_a3_tipo12_cabecera(*,
+        codigo_empresa: str,
+        fecha: str,
+        tipo_registro: str,
+        cuenta_tercero: str,
+        ndig_plan: int,
+        tipo_factura: str,  # '1' ventas, '2' compras, '3' bienes inversión
+        num_factura: str,
+        desc_apunte: str,
+        importe_total: float,
+        nif: str = "",
+        nombre: str = "",
+        fecha_operacion: str = "",
+        fecha_factura: str = "",
+        num_factura_largo_sii: str = ""
+    ) -> str:
+    
     """
     Registro TIPO 1 (facturas) o 2 (rectificativas). Longitud 512.
     Posiciones principales:
-      1:'5' 2-6:empresa 7-14:fecha 15:'1'/'2' 16-27:cuenta
-      58:tipo factura(1/2/3) 59-68:num doc 69:'I'
-      70-99:desc apunte 100-113:importe total (+0000000000.00)
-      176-189:NIF 190-229:Nombre
-      237-244:Fecha operación 245-252:Fecha factura
+      1:'5'
+      2-6:empresa
+      7-14:fecha 
+      15:'1'/'2'
+      16-27:cuenta
+      58:tipo factura(1/2/3)
+      59-68:num doc
+      69:'I'
+      70-99:desc apunte
+      100-113:importe total (+0000000000.00)
+      176-189:NIF
+      190-229:Nombre
+      237-244:Fecha operación
+      245-252:Fecha factura
       253-312:Núm. factura largo SII
-      509:'E' 510:'N' 511-512:CRLF
+      509:'E'
+      510:'N'
+      511-512:CRLF
     """
     buf = [" "] * 512
     emp5 = _empresa5(codigo_empresa)
@@ -321,41 +341,99 @@ def render_a3_tipo9_detalle(*, codigo_empresa: str, fecha: str,
                             es_ultimo: bool = False) -> str:
     """
     Registro TIPO 9 (detalle por línea de IVA). Longitud 512.
-    Posiciones principales:
-      1:'5' 2-6:empresa 7-14:fecha 15:'9' 16-27:cuenta (ventas/compras)
-      58:'C' (cargo) 59-68:num doc 69:'M'/'U'
-      70-99:desc 100-101:subtipo '01'..
-      102-115:Base 116-120:%IVA 121-134:Cuota IVA
-      135-139:%RE 140-153:Cuota RE 154-158:%RET 159-172:Cuota RET
-      509:'E' 510:'N' 511-512:CRLF
+
+    Estructura principal (resumen):
+      1:'5'
+      2-6 : empresa
+      7-14: fecha
+      15  : '9'
+      16-27: cuenta base/ventas/compras
+      58  : 'C'
+      59-68: nº doc
+      69  : 'M'/'U'
+      70-99: descripción
+      100-101: subtipo '01'..
+      102-115: Base
+      116-120: %IVA
+      121-134: Cuota IVA
+      135-139: %RE
+      140-153: Cuota RE
+      154-158: %RET
+      159-172: Cuota RET
+
+    Campos adicionales (según ejemplo de fichero válido):
+      176-177: 'SN'
+      178-192: espacios
+      193-204: cuenta IVA  (12 chars) → 477000000000
+      205-216: espacios
+      217-228: cuenta retención (12 chars) → 473000000000
+      229-252: espacios
+      253-255: 'NEN'
+      resto hasta 508: espacios
+      509: 'E'
+      510: 'N'
+      511-512: CRLF
     """
     buf = [" "] * 512
     emp5 = _empresa5(codigo_empresa)
     f8 = _fecha_yyyymmdd(fecha)
     cuenta12 = _cuenta_12(cuenta_base_iva, ndig_plan)
 
+    # Cabecera básica del registro 9
     _set_slice(buf, 0, 1, "5")
     _set_slice(buf, 1, 6, emp5)
     _set_slice(buf, 6, 14, f8)
     _set_slice(buf, 14, 15, "9")
     _set_slice(buf, 15, 27, cuenta12)
     _set_slice(buf, 27, 57, "")
-    _set_slice(buf, 57, 58, "C")                      # normal: 'C'
+    _set_slice(buf, 57, 58, "C")                      # Cargo
     _set_slice(buf, 58, 68, _s(num_factura)[:10])     # nº doc
     _set_slice(buf, 68, 69, ("U" if es_ultimo else "M"))
     _set_slice(buf, 69, 99, desc_apunte)
-    _set_slice(buf, 99, 101, _s(subtipo).rjust(2, "0")[-2:])  # 100..101
 
-    _set_slice(buf, 101, 115, _importe_14_pos(base))       # 102..115 base
-    _set_slice(buf, 115, 120, _porc_5(pct_iva))            # 116..120 %IVA
-    _set_slice(buf, 120, 134, _importe_14_pos(cuota_iva))  # 121..134 cuota
-    _set_slice(buf, 134, 139, _porc_5(pct_re))             # 135..139 %RE
-    _set_slice(buf, 139, 153, _importe_14_pos(cuota_re))   # 140..153 cuota RE
-    _set_slice(buf, 153, 158, _porc_5(pct_ret))            # 154..158 %RET
-    _set_slice(buf, 158, 172, _importe_14_pos(cuota_ret))  # 159..172 cuota RET
+    # Bloque de importes
+    _set_slice(buf, 99, 101, _s(subtipo).rjust(2, "0")[-2:])   # 100..101 subtipo
 
-    _set_slice(buf, 172, 508, "")
+    _set_slice(buf, 101, 115, _importe_14_pos(base))           # 102..115 base
+    _set_slice(buf, 115, 120, _porc_5(pct_iva))                # 116..120 %IVA
+    _set_slice(buf, 120, 134, _importe_14_pos(cuota_iva))      # 121..134 cuota IVA
+    _set_slice(buf, 134, 139, _porc_5(pct_re))                 # 135..139 %RE
+    _set_slice(buf, 139, 153, _importe_14_pos(cuota_re))       # 140..153 cuota RE
+    _set_slice(buf, 153, 158, _porc_5(pct_ret))                # 154..158 %RET
+    _set_slice(buf, 158, 172, _importe_14_pos(cuota_ret))      # 159..172 cuota RET
+
+    # Relleno intermedio hasta 175 (173..175 en 1-based)
+    _set_slice(buf, 172, 175, "")
+
+    # 176-177: 'SN'
+    _set_slice(buf, 175, 177, "SN")
+
+    # 178-192: espacios
+    _set_slice(buf, 177, 192, "")
+
+    # 193-204: cuenta IVA 12 chars → 477000000000
+    cta_iva12 = _cuenta_12("47700000", ndig_plan)
+    _set_slice(buf, 192, 204, cta_iva12)
+
+    # 205-216: espacios
+    _set_slice(buf, 204, 216, "")
+
+    # 217-228: cuenta retención 12 chars → 473000000000
+    cta_ret12 = _cuenta_12("47300000", ndig_plan)
+    _set_slice(buf, 216, 228, cta_ret12)
+
+    # 229-252: espacios
+    _set_slice(buf, 228, 252, "")
+
+    # 253-255: 'NEN'
+    _set_slice(buf, 252, 255, "NEN")
+
+    # 256-508: espacios
+    _set_slice(buf, 255, 508, "")
+
+    # Moneda e indicador al final
     _set_slice(buf, 508, 509, "E")
     _set_slice(buf, 509, 510, "N")
-    buf[510] = "\r"; buf[511] = "\n"
+    buf[510] = "\r"
+    buf[511] = "\n"
     return "".join(buf)
