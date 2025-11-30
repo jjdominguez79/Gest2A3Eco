@@ -1,56 +1,118 @@
 import tkinter as tk
+import os
 from tkinter import ttk
-from pathlib import Path
-import json
 
-from gestor_plantillas import GestorPlantillas
 from ui_seleccion_empresa import UISeleccionEmpresa
 from ui_plantillas import UIPlantillasEmpresa
 from ui_procesos import UIProcesos
+from gestor_plantillas import GestorPlantillas
+from ui_theme import aplicar_tema  # si ya lo tienes
 
-APP_NAME = "Gest2A3Eco"
+# ▼ datos de tu despacho (ajusta los textos)
+EMPRESA_NOMBRE   = "Asesoría Gestinem S.L."
+EMPRESA_CIF      = "B16916967"
+EMPRESA_DIRECCION= "CL Atilano Rodríguez 4, Entlo. 7, 39002 Santander (Cantabria)"
+EMPRESA_EMAIL    = "jjdominguez@gestinem.es"
+EMPRESA_TELEFONO = "942 791 404 - 691 474 519"
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+RUTA_JSON = os.path.join(BASE_DIR, "plantillas", "plantillas.json")
+
+
+def _build_header(root: tk.Tk) -> ttk.Frame:
+    """Cabecera fija con logo y datos de contacto."""
+    header = ttk.Frame(root, padding=10, style="TFrame")
+    header.pack(side="top", fill="x")
+
+    # Logo (logo.png en la misma carpeta que main.py)
+    try:
+        logo_img = tk.PhotoImage(file="logo.png", width=200, height=200)
+        root._logo_img = logo_img  # evitar que el GC lo borre
+        lbl_logo = ttk.Label(header, image=logo_img, style="TLabel")
+        lbl_logo.grid(row=0, column=0, rowspan=3, sticky="w", padx=(0, 10))
+    except Exception:
+        # Si no hay logo, simplemente no mostramos la imagen
+        pass
+
+    # Línea 1: nombre empresa
+    ttk.Label(
+        header,
+        text=EMPRESA_NOMBRE,
+        style="Header.TLabel"
+    ).grid(row=0, column=1, sticky="w")
+
+    # Línea 2: CIF + dirección
+    ttk.Label(
+        header,
+        text=f"CIF: {EMPRESA_CIF}  ·  {EMPRESA_DIRECCION}",
+        style="SubHeader.TLabel"
+    ).grid(row=1, column=1, sticky="w")
+
+    # Línea 3: contacto
+    ttk.Label(
+        header,
+        text=f"Email: {EMPRESA_EMAIL}  ·  Tel.: {EMPRESA_TELEFONO}",
+        style="SubHeader.TLabel"
+    ).grid(row=2, column=1, sticky="w")
+
+    # Que ocupe todo el ancho
+    header.columnconfigure(1, weight=1)
+
+    return header
+
 
 def main():
-    cfg = json.loads(Path("config.json").read_text(encoding="utf-8")) if Path("config.json").exists() else {"templates_path":"plantillas/plantillas.json"}
-    tpl_path = Path(cfg.get("templates_path","plantillas/plantillas.json")).resolve()
-    gestor = GestorPlantillas(tpl_path)
-
     root = tk.Tk()
-    root.title(APP_NAME); root.geometry("1200x780")
-    container = ttk.Frame(root)
-    container.pack(fill=tk.BOTH, expand=True)
-    current = {"frame": None, "empresa": None}
+    root.title("Gest2A3Eco")
+
+    aplicar_tema(root) # aplicar tema personalizado
+
+    # 1) Cabecera fija
+    _build_header(root)
+
+    # 2) Contenedor de pantallas
+    content = ttk.Frame(root, padding=10, style="TFrame")
+    content.pack(side="top", fill="both", expand=True)
+
+    gestor = GestorPlantillas(RUTA_JSON)
+
+    estado = {"frame": None}
 
     def show(factory):
-        if current["frame"] is not None and current["frame"].winfo_exists():
-            try: current["frame"].destroy()
-            except Exception: pass
-        fr = factory(); current["frame"] = fr
-        try: fr.pack(fill=tk.BOTH, expand=True)
-        except Exception: pass
+        """Destruye la pantalla actual y crea la nueva dentro de 'content'."""
+        if estado["frame"] is not None:
+            estado["frame"].destroy()
+        fr = factory(content)
+        fr.pack(fill="both", expand=True)
+        estado["frame"] = fr
 
+    # Callbacks de navegación
     def on_empresa_ok(codigo, nombre):
-        current["empresa"] = (codigo, nombre)
+        # aquí creas el "dashboard" o directamente la pantalla de procesos
+        def build_dashboard(parent):
+            nb = ttk.Notebook(parent)
+            # pestaña de plantillas
+            nb.add(
+                UIPlantillasEmpresa(nb, gestor, codigo, nombre),
+                text="Plantillas"
+            )
+            # pestaña de generación de ficheros
+            nb.add(
+                UIProcesos(nb, gestor, codigo, nombre),
+                text="Generar ficheros"
+            )
+            return nb
+
         show(build_dashboard)
 
-    def build_dashboard():
-        fr = ttk.Frame(container)
-        top = ttk.Frame(fr); top.pack(fill=tk.X, padx=10, pady=6)
-        codigo, nombre = current["empresa"]
-        ttk.Label(top, text=f"Empresa seleccionada: {nombre} ({codigo})", font=("Segoe UI", 12, "bold")).pack(side=tk.LEFT)
-        ttk.Button(top, text="Cambiar empresa", command=lambda: show(lambda: UISeleccionEmpresa(container, gestor, on_empresa_ok))).pack(side=tk.RIGHT)
+    def build_seleccion(parent):
+        return UISeleccionEmpresa(parent, gestor, on_empresa_ok)
 
-        nb = ttk.Notebook(fr); nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
-        nb.add(UIPlantillasEmpresa(nb, gestor, codigo, nombre), text="Plantillas")
-        nb.add(UIProcesos(nb, gestor, codigo, nombre), text="Generar enlace")
-        return fr
+    # Pantalla inicial: selección de empresa
+    show(build_seleccion)
 
-    menubar = tk.Menu(root); root.config(menu=menubar)
-    menubar.add_command(label="Seleccionar empresa", command=lambda: show(lambda: UISeleccionEmpresa(container, gestor, on_empresa_ok)))
-    menubar.add_command(label="Salir", command=root.destroy)
-
-    show(lambda: UISeleccionEmpresa(container, gestor, on_empresa_ok))
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()

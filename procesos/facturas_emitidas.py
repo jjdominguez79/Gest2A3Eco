@@ -1,125 +1,161 @@
 # procesos/facturas_emitidas.py
-from typing import List, Dict, Any
+
 from collections import defaultdict
-from facturas_common import render_a3_tipo12_cabecera, render_a3_tipo9_detalle
+from typing import List, Dict, Any
+
+from facturas_common import (
+    render_emitidas_cabecera_256,
+    render_emitidas_detalle_256,
+)
 
 
-def _fv(x):
-    """Convierte cualquier valor a float, usando coma o punto como separador."""
+def _fv(x) -> float:
+    """
+    Convierte un valor a float, soportando formatos 1234,56 y 1.234,56.
+    Devuelve 0.0 si no es convertible.
+    """
+    if x is None or x == "":
+        return 0.0
+    if isinstance(x, (int, float)) and not isinstance(x, bool):
+        return float(x)
+
+    s = str(x).strip()
+    if not s:
+        return 0.0
+
+    s = s.replace("\xa0", " ")
+
+    # Caso 1: tiene punto y coma -> '.' miles, ',' decimales
+    if "." in s and "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    # Caso 2: solo coma -> decimal
+    elif "," in s:
+        s = s.replace(",", ".")
+    # Caso 3: solo punto -> ya formato anglosajón
+
     try:
-        return float(str(x).replace(",", "."))
+        return float(s)
     except Exception:
         return 0.0
 
 
 def _key_factura(rec: Dict[str, Any]):
     """
-    Clave de agrupación de filas del Excel en una misma factura:
-    - Primero intenta 'Numero Factura Largo SII'
-    - Si no, usa Serie + Numero Factura
+    Agrupa las líneas del Excel por factura.
+    Preferimos 'Numero Factura Largo SII' si existe, si no, Serie+Número.
     """
     nfl = rec.get("Numero Factura Largo SII") or rec.get("Número Factura Largo SII")
     if nfl:
         return ("NFL", str(nfl).strip())
+
     serie = str(rec.get("Serie") or "").strip()
-    num = str(rec.get("Numero Factura") or rec.get("Número Factura") or "").strip()
+    num = str(
+        rec.get("Numero Factura")
+        or rec.get("Número Factura")
+        or ""
+    ).strip()
     return ("SERIE_NUM", f"{serie}|{num}")
-
-
-def _solo_digitos(s: str) -> str:
-    return "".join(ch for ch in str(s) if ch.isdigit())
-
-
-def _cta_cliente(
-    rec_cab: Dict[str, Any],
-    plantilla: Dict[str, Any],
-    nif: str,
-    ndig_plan: int
-) -> str:
-    """
-    Calcula la subcuenta del cliente con esta prioridad:
-
-      1) Si en el Excel viene una columna 'Cuenta Cliente Proveedor' mapeada,
-         usamos esa cuenta (ajustada a ndig_plan).
-
-      2) Si la plantilla tiene 'cuenta_cliente_por_defecto' (ej. 43000000),
-         usamos esa cuenta fija para todas las facturas.
-
-      3) Si no, usamos 'cuenta_cliente_prefijo' (ej. 430) + dígitos del NIF,
-         recortando POR LA IZQUIERDA y rellenando por la derecha, para
-         mantener el grupo 430 al principio.
-    """
-    # 1) Cuenta desde Excel
-    cta_excel = str(rec_cab.get("Cuenta Cliente Proveedor") or "").strip()
-    if cta_excel:
-        dig = _solo_digitos(cta_excel) or "0"
-        return dig[:ndig_plan].ljust(ndig_plan, "0")
-
-    # 2) Cuenta por defecto en la plantilla (ej. 43000000)
-    cta_def = str(plantilla.get("cuenta_cliente_por_defecto") or "").strip()
-    if cta_def:
-        dig = _solo_digitos(cta_def) or "0"
-        return dig[:ndig_plan].ljust(ndig_plan, "0")
-
-    # 3) Prefijo + NIF (manteniendo el prefijo a la izquierda)
-    pref_cli = str(plantilla.get("cuenta_cliente_prefijo", "430"))
-    dig_nif = _solo_digitos(nif)
-    base = (pref_cli + dig_nif) or pref_cli
-    dig = _solo_digitos(base) or "0"
-    return dig[:ndig_plan].ljust(ndig_plan, "0")
 
 
 def generar_emitidas(
     rows: List[Dict[str, Any]],
     plantilla: Dict[str, Any],
     codigo_empresa: str,
-    ndig_plan: int
+    ndig: int,
 ) -> List[str]:
     """
-    Genera registros tipo 1 (cabecera) + 9 (detalle) para FACTURAS EMITIDAS
-    en el formato estándar de A3 (suenlace.dat).
+    Genera registros de SUENLACE para FACTURAS EMITIDAS
+    en formato 4 / 256 bytes (tipos 1 y 9), a partir de las filas
+    ya mapeadas del Excel.
     """
-    cta_ventas_def = str(plantilla.get("cuenta_ingreso_por_defecto", "70000000"))
-    subtipo_def = plantilla.get("subtipo_emitidas", "01")
 
-    grupos = defaultdict(list)
+    # Configuración de la plantilla
+    pref_cli        = str(plantilla.get("cuenta_cliente_prefijo", "430"))
+    cta_ventas_def  = str(plantilla.get("cuenta_ingreso_por_defecto", "70000000"))
+    cta_iva_def     = str(plantilla.get("cuenta_iva_repercutido_defecto", "47700000"))
+    cta_ret_def     = str(plantilla.get("cuenta_retenciones_irpf", ""))  # normalmente vacío
+    subtipo_def     = str(plantilla.get("subtipo_emitidas", "01"))
+
+    # Agrupar líneas del Excel por factura
+    grupos: Dict[Any, List[Dict[str, Any]]] = defaultdict(list)
     for rec in rows:
         grupos[_key_factura(rec)].append(rec)
 
     registros: List[str] = []
 
     for (_, _id), grecs in grupos.items():
+        if not grecs:
+            continue
+
         r0 = grecs[0]
+
         fecha = (
             r0.get("Fecha Asiento")
             or r0.get("Fecha Expedicion")
             or r0.get("Fecha Operacion")
         )
-        desc  = r0.get("Descripcion Factura") or ""
-        num_fact = r0.get("Numero Factura") or r0.get("Número Factura") or ""
-        nif   = str(r0.get("NIF Cliente Proveedor") or "").strip()
-        nombre= str(r0.get("Nombre Cliente Proveedor") or "").strip()
+        desc = r0.get("Descripcion Factura") or r0.get("Descripcion") or ""
 
-        # Subcuenta del cliente, con la prioridad descrita arriba
-        cli_cta = _cta_cliente(r0, plantilla, nif, ndig_plan)
+        num_fact = (
+            r0.get("Numero Factura")
+            or r0.get("Número Factura")
+            or r0.get("Numero Factura Largo SII")
+            or ""
+        )
 
+        # Configuración Subcuenta Cliente Según la lógica:
+        nif = str(r0.get("NIF Cliente Proveedor") or "").strip()
+        nombre = str(r0.get("Nombre Cliente Proveedor") or "").strip()
+
+        # 1) Si el Excel trae la subcuenta explícita, la usamos
+        cta_excel = str(r0.get("Cuenta Cliente Proveedor") or "").strip()
+        if cta_excel:
+            # Nos quedamos con los dígitos, recortamos/padeamos a ndig
+            dig_cta = "".join(ch for ch in cta_excel if ch.isdigit())
+            if not dig_cta:
+                dig_cta = "0"
+            if len(dig_cta) >= ndig:
+                subcliente = dig_cta[:ndig]
+            else:
+                subcliente = dig_cta.ljust(ndig, "0")
+
+        else:
+            # 2) Si NO hay subcuenta en el Excel, usamos la lógica de la plantilla
+
+            pref_cli_raw = str(plantilla.get("cuenta_cliente_prefijo", "430"))
+            pref_digits = "".join(ch for ch in pref_cli_raw if ch.isdigit()) or "0"
+            nif_digits  = "".join(ch for ch in nif if ch.isdigit()) or "0"
+
+            if len(pref_digits) >= ndig:
+                # Caso A: han puesto una cuenta completa (ej: 43000000)
+                subcliente = pref_digits[:ndig]
+            else:
+                # Caso C: prefijo corto (ej: 430) + NIF, recortando por la DERECHA
+                base = (pref_digits + nif_digits)
+                if len(base) >= ndig:
+                    subcliente = base[:ndig]           # mantiene el prefijo al principio
+                else:
+                    subcliente = base.ljust(ndig, "0")
+
+
+        # Total factura: suma de bases + IVA + recargo - retenciones
         total = 0.0
         for rr in grecs:
-            base = _fv(rr.get("Base"))
+            base  = _fv(rr.get("Base"))
             cuota = _fv(rr.get("Cuota IVA"))
             re_c  = _fv(rr.get("Cuota Recargo Equivalencia"))
             ret_c = _fv(rr.get("Cuota Retencion IRPF"))
             total += base + cuota + re_c - ret_c
 
-        # ─ Cabecera TIPO 1 (ventas) ─
+        # CABECERA tipo 1 (formato 4/256)
         registros.append(
-            render_a3_tipo12_cabecera(
+            render_emitidas_cabecera_256(
                 codigo_empresa=codigo_empresa,
                 fecha=fecha,
-                tipo_registro="1",         # facturas normales
-                cuenta_tercero=cli_cta,    # cuenta de cliente
-                ndig_plan=ndig_plan,
-                tipo_factura="1",          # '1' = ventas
+                tipo_registro="1",           # factura normal
+                cuenta_tercero=subcliente,
+                ndig_plan=ndig,
+                tipo_factura="1",            # 1 = ventas
                 num_factura=num_fact,
                 desc_apunte=desc,
                 importe_total=total,
@@ -127,41 +163,50 @@ def generar_emitidas(
                 nombre=nombre,
                 fecha_operacion=r0.get("Fecha Operacion") or "",
                 fecha_factura=r0.get("Fecha Expedicion") or "",
-                num_factura_largo_sii="",
             )
         )
 
-        # ─ Detalles TIPO 9 (líneas de IVA) ─
+        # DETALLES tipo 9 (una por cada línea de IVA de la factura)
+        n_lineas = len(grecs)
         for i, rr in enumerate(grecs):
             base  = _fv(rr.get("Base"))
             cuota = _fv(rr.get("Cuota IVA"))
-            re_c  = _fv(rr.get("Cuota Recargo Equivalencia"))
-            ret_c = _fv(rr.get("Cuota Retencion IRPF"))
 
-            pct_iva = _fv(rr.get("Porcentaje IVA"))
-            if pct_iva == 0 and base != 0:
-                pct_iva = round(abs(cuota / base * 100.0), 2)
+            # Si no hay IVA en esta línea, la saltamos
+            if base == 0 and cuota == 0:
+                continue
 
-            pct_re  = _fv(rr.get("Porcentaje Recargo Equivalencia"))
-            pct_ret = _fv(rr.get("Porcentaje Retencion IRPF"))
+            pct   = _fv(rr.get("Porcentaje IVA"))
+            if base != 0 and pct == 0 and cuota != 0:
+                pct = round(abs(cuota / base * 100.0), 2)
+
+            re_pct = _fv(rr.get("Porcentaje Recargo Equivalencia"))
+            re_c   = _fv(rr.get("Cuota Recargo Equivalencia"))
+            ret_pct= _fv(rr.get("Porcentaje Retencion IRPF"))
+            ret_c  = _fv(rr.get("Cuota Retencion IRPF"))
 
             registros.append(
-                render_a3_tipo9_detalle(
+                render_emitidas_detalle_256(
                     codigo_empresa=codigo_empresa,
                     fecha=fecha,
-                    cuenta_base_iva=cta_ventas_def,  # cuenta de ingresos
-                    ndig_plan=ndig_plan,
+                    cuenta_base_iva=cta_ventas_def,
+                    ndig_plan=ndig,
                     num_factura=num_fact,
                     desc_apunte=desc,
-                    subtipo=str(subtipo_def),
+                    subtipo=subtipo_def,
                     base=abs(base),
-                    pct_iva=abs(pct_iva),
+                    pct_iva=abs(pct),
                     cuota_iva=abs(cuota),
-                    pct_re=abs(pct_re),
+                    pct_re=abs(re_pct),
                     cuota_re=abs(re_c),
-                    pct_ret=abs(pct_ret),
+                    pct_ret=abs(ret_pct),
                     cuota_ret=abs(ret_c),
-                    es_ultimo=(i == len(grecs) - 1),
+                    es_ultimo=(i == n_lineas - 1),
+                    cuenta_iva=cta_iva_def,
+                    cuenta_recargo="",          # si no hay recargo, lo dejamos vacío
+                    cuenta_retencion=cta_ret_def or "",
+                    impreso="",                 # campo "Impreso" en blanco
+                    operacion_sujeta_iva=True,
                 )
             )
 

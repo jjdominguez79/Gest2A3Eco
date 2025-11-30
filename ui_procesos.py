@@ -307,7 +307,7 @@ class UIProcesos(ttk.Frame):
                     save_path = filedialog.asksaveasfilename(
                         title="Guardar fichero suenlace.dat",
                         defaultextension=".dat",
-                        initialfile=f"{self.codigo}.dat",
+                        initialfile=f"{self.codigo}",
                         filetypes=[("Ficheros DAT","*.dat")]
                     )
                     if not save_path: return
@@ -338,7 +338,7 @@ class UIProcesos(ttk.Frame):
                     save_path = filedialog.asksaveasfilename(
                         title="Guardar fichero suenlace.dat",
                         defaultextension=".dat",
-                        initialfile=f"E{self.codigo}.DAT",
+                        initialfile=f"E{self.codigo}",
                         filetypes=[("Ficheros DAT","*.dat")]
                     )
                     if not save_path:

@@ -32,8 +32,8 @@ class EmpresaDialog(Dialog):
             self.result = None
 
 class UISeleccionEmpresa(ttk.Frame):
-    def __init__(self, master, gestor, on_ok):
-        super().__init__(master)
+    def __init__(self, parent, gestor, on_ok):
+        super().__init__(parent)
         self.gestor = gestor
         self.on_ok = on_ok
         self.pack(fill=tk.BOTH, expand=True)

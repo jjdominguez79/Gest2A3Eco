@@ -4,8 +4,7 @@ from tkinter.simpledialog import Dialog
 from utilidades import validar_subcuenta_longitud
 
 DEFAULT_COLS_BANCOS = [
-    "Fecha Asiento","Descripcion Factura","Concepto","Importe",
-    "NIF Cliente Proveedor","Nombre Cliente Proveedor"
+    "Fecha Asiento","Descripcion Asiento","Concepto","Importe",
 ]
 DEFAULT_COLS_FACTURAS = [
     "Serie","Numero Factura","Numero Factura Largo SII",
@@ -277,8 +276,8 @@ class ConfigPlantillaDialog(Dialog):
         self.result = True
 
 class UIPlantillasEmpresa(ttk.Frame):
-    def __init__(self, master, gestor, empresa_codigo, empresa_nombre):
-        super().__init__(master)
+    def __init__(self, parent, gestor, empresa_codigo, empresa_nombre):
+        super().__init__(parent)
         self.gestor = gestor; self.codigo = empresa_codigo; self.nombre = empresa_nombre
         self.empresa = gestor.get_empresa(empresa_codigo) or {"codigo":empresa_codigo,"digitos_plan":8}
         self._build()
