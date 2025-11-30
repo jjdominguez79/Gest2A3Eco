@@ -48,9 +48,9 @@ class UISeleccionEmpresa(ttk.Frame):
         self._refresh()
 
         bar = ttk.Frame(self); bar.pack(fill=tk.X, padx=10, pady=6)
-        ttk.Button(bar, text="Nueva empresa", command=self._nueva).pack(side=tk.LEFT)
-        ttk.Button(bar, text="Editar empresa", command=self._editar).pack(side=tk.LEFT, padx=6)
-        ttk.Button(bar, text="Continuar", command=self._continuar).pack(side=tk.RIGHT)
+        ttk.Button(bar, text="Nueva empresa", style="Primary.TButton", command=self._nueva).pack(side=tk.LEFT)
+        ttk.Button(bar, text="Editar empresa", style="Primary.TButton", command=self._editar).pack(side=tk.LEFT, padx=6)
+        ttk.Button(bar, text="Continuar", style="Primary.TButton", command=self._continuar).pack(side=tk.RIGHT)
 
     def _refresh(self):
         self.tv.delete(*self.tv.get_children())

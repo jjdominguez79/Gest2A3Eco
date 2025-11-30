@@ -286,8 +286,8 @@ class UIPlantillasEmpresa(ttk.Frame):
         ttk.Label(self, text=f"Plantillas de {self.nombre} ({self.codigo})", font=("Segoe UI", 12, "bold")).pack(pady=6, anchor="w", padx=10)
         nb = ttk.Notebook(self); nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         self._tab_bancos = self._build_tab(nb, "Bancos", ("banco","subcuenta_banco","subcuenta_por_defecto"))
-        self._tab_emitidas = self._build_tab(nb, "Facturas emitidas", ("nombre","cuenta_cliente_prefijo","cuenta_iva_repercutido_defecto"))
-        self._tab_recibidas = self._build_tab(nb, "Facturas recibidas", ("nombre","cuenta_proveedor_prefijo","cuenta_iva_soportado_defecto"))
+        self._tab_emitidas = self._build_tab(nb, "Facturas Emitidas", ("nombre","cuenta_cliente_prefijo","cuenta_iva_repercutido_defecto"))
+        self._tab_recibidas = self._build_tab(nb, "Facturas Recibidas", ("nombre","cuenta_proveedor_prefijo","cuenta_iva_soportado_defecto"))
         self._refresh_all()
 
     def _build_tab(self, nb, title, cols):
@@ -297,9 +297,9 @@ class UIPlantillasEmpresa(ttk.Frame):
             tv.heading(c, text=c.replace("_"," ").title()); tv.column(c, width=220)
         tv.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         bar = ttk.Frame(frame); bar.pack(fill=tk.X, padx=6, pady=4)
-        ttk.Button(bar, text="Nuevo", command=lambda t=title: self._nuevo(t)).pack(side=tk.LEFT)
-        ttk.Button(bar, text="Configurar…", command=lambda tv=tv, t=title: self._config(tv, t)).pack(side=tk.LEFT, padx=6)
-        ttk.Button(bar, text="Eliminar", command=lambda tv=tv, t=title: self._eliminar(tv, t)).pack(side=tk.LEFT)
+        ttk.Button(bar, text="Nueva Plantilla", style="Primary.TButton", command=lambda t=title: self._nuevo(t)).pack(side=tk.LEFT)
+        ttk.Button(bar, text="Configurar…", style="Primary.TButton", command=lambda tv=tv, t=title: self._config(tv, t)).pack(side=tk.LEFT, padx=6)
+        ttk.Button(bar, text="Eliminar Plantilla", style="Primary.TButton", command=lambda tv=tv, t=title: self._eliminar(tv, t)).pack(side=tk.LEFT)
         return {"frame": frame, "tv": tv, "cols": cols}
 
     def _refresh_all(self):

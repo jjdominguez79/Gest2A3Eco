@@ -26,13 +26,19 @@ def _build_header(root: tk.Tk) -> ttk.Frame:
 
     # Logo (logo.png en la misma carpeta que main.py)
     try:
-        logo_img = tk.PhotoImage(file="logo.png", width=200, height=200)
-        root._logo_img = logo_img  # evitar que el GC lo borre
+        logo_img = tk.PhotoImage(file="logo.png")
+
+        # Reducir tamaño si es muy alto (por ejemplo > 60 px)
+        max_h = 75
+        if logo_img.height() > max_h:
+            factor = max(1, logo_img.height() // max_h)
+            logo_img = logo_img.subsample(factor, factor)
+
+        root._logo_img = logo_img  # evitar GC
         lbl_logo = ttk.Label(header, image=logo_img, style="TLabel")
         lbl_logo.grid(row=0, column=0, rowspan=3, sticky="w", padx=(0, 10))
     except Exception:
-        # Si no hay logo, simplemente no mostramos la imagen
-        pass
+        pass  # si no existe logo, no pasa nada
 
     # Línea 1: nombre empresa
     ttk.Label(
@@ -54,6 +60,17 @@ def _build_header(root: tk.Tk) -> ttk.Frame:
         text=f"Email: {EMPRESA_EMAIL}  ·  Tel.: {EMPRESA_TELEFONO}",
         style="SubHeader.TLabel"
     ).grid(row=2, column=1, sticky="w")
+
+    # BOTÓN CERRAR APLICACIÓN (alineado derecha)
+    btn_cerrar = ttk.Button(
+        header,
+        text="Cerrar aplicación",
+        compound="left",
+        style="Secondary.TButton",  # o Primary.TButton si lo prefieres
+        command=root.destroy
+    )
+
+    btn_cerrar.grid(row=0, column=2, rowspan=3, sticky="e", padx=(20, 0))
 
     # Que ocupe todo el ancho
     header.columnconfigure(1, weight=1)

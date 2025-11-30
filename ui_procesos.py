@@ -32,23 +32,23 @@ class UIProcesos(ttk.Frame):
         form.pack(fill=tk.X, padx=10, pady=4)
 
         ttk.Label(form, text="Tipo de enlace:").grid(row=0, column=0, sticky="w")
-        self.tipo = tk.StringVar(value="bancos")
-        ttk.Combobox(form, textvariable=self.tipo, values=["bancos","facturas emitidas","facturas recibidas"], width=25).grid(row=0, column=1, sticky="w")
+        self.tipo = tk.StringVar(value="Bancos")
+        ttk.Combobox(form, textvariable=self.tipo, values=["Bancos","Facturas Emitidas","Facturas Recibidas"], width=25).grid(row=0, column=1, sticky="w")
 
         ttk.Label(form, text="Plantilla:").grid(row=1, column=0, sticky="w")
         self.cb_plantilla = ttk.Combobox(form, width=40)
         self.cb_plantilla.grid(row=1, column=1, sticky="w")
 
-        ttk.Button(form, text="Cargar Excel", command=self._cargar_excel).grid(row=2, column=0, pady=6)
+        ttk.Button(form, text="Cargar Excel", style="Primary.TButton", command=self._cargar_excel).grid(row=2, column=0, pady=6)
         self.lbl_excel = ttk.Label(form, text="Ningún archivo seleccionado")
         self.lbl_excel.grid(row=2, column=1, sticky="w")
 
-        ttk.Label(form, text="Hoja:").grid(row=3, column=0, sticky="w")
+        ttk.Label(form, text="Seleccione Hoja:").grid(row=3, column=0, sticky="w")
         self.cb_sheet = ttk.Combobox(form, width=30)
         self.cb_sheet.grid(row=3, column=1, sticky="w")
         self.cb_sheet.bind("<<ComboboxSelected>>", lambda e: self._preview_excel())
 
-        ttk.Button(self, text="Generar suenlace.dat", command=self._generar).pack(side=tk.BOTTOM, pady=10)
+        ttk.Button(self, text="Generar suenlace.dat", style="Primary.TButton", command=self._generar).pack(side=tk.BOTTOM, pady=10)
 
         self.tv = ttk.Treeview(self, show="headings")
         self.tv.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -58,9 +58,9 @@ class UIProcesos(ttk.Frame):
 
     def _refresh_plantillas(self):
         tipo = self.tipo.get()
-        if tipo == "bancos":
+        if tipo == "Bancos":
             pls = [p.get("banco") for p in self.gestor.listar_bancos(self.codigo)]
-        elif "emitidas" in tipo:
+        elif "Emitidas" in tipo:
             pls = [p.get("nombre") for p in self.gestor.listar_emitidas(self.codigo)]
         else:
             pls = [p.get("nombre") for p in self.gestor.listar_recibidas(self.codigo)]
