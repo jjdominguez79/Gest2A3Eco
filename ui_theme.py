@@ -11,8 +11,8 @@ def aplicar_tema(root: tk.Tk) -> None:
     # Colores base
     COLOR_BG = "#f5f5f7"
     COLOR_SURFACE = "#ffffff"
-    COLOR_PRIMARY = "#0d6efd"
-    COLOR_PRIMARY_DARK = "#0b5ed7"
+    COLOR_PRIMARY = "#002C57"
+    COLOR_PRIMARY_DARK = "#002C57"
     COLOR_BORDER = "#d0d0d0"
     COLOR_TEXT = "#222222"
     COLOR_MUTED = "#6c757d"

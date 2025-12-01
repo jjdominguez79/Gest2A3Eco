@@ -353,26 +353,6 @@
     },
     {
       "codigo_empresa": "00505",
-      "banco": "",
-      "subcuenta_banco": "",
-      "subcuenta_por_defecto": "",
-      "excel": {
-        "primera_fila_procesar": 10,
-        "ignorar_filas": "",
-        "condicion_cuenta_generica": "",
-        "columnas": {
-          "Fecha Asiento": "",
-          "Descripcion Factura": "",
-          "Concepto": "",
-          "Importe": "",
-          "NIF Cliente Proveedor": "",
-          "Nombre Cliente Proveedor": ""
-        }
-      },
-      "conceptos": []
-    },
-    {
-      "codigo_empresa": "00505",
       "banco": "SABADELL",
       "subcuenta_banco": "57200002",
       "subcuenta_por_defecto": "55500000",

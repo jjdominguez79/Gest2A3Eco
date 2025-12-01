@@ -48,7 +48,7 @@ class UIProcesos(ttk.Frame):
         self.cb_sheet.grid(row=3, column=1, sticky="w")
         self.cb_sheet.bind("<<ComboboxSelected>>", lambda e: self._preview_excel())
 
-        ttk.Button(self, text="Generar suenlace.dat", style="Primary.TButton", command=self._generar).pack(side=tk.BOTTOM, pady=10)
+        ttk.Button(self, text="Generar Suenlace.dat", style="Primary.TButton", command=self._generar).pack(side=tk.BOTTOM, pady=10)
 
         self.tv = ttk.Treeview(self, show="headings")
         self.tv.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -57,10 +57,10 @@ class UIProcesos(ttk.Frame):
         self._refresh_plantillas()
 
     def _refresh_plantillas(self):
-        tipo = self.tipo.get()
-        if tipo == "Bancos":
+        tipo = (self.tipo.get() or "").lower()
+        if "bancos" in tipo:
             pls = [p.get("banco") for p in self.gestor.listar_bancos(self.codigo)]
-        elif "Emitidas" in tipo:
+        elif "emitidas" in tipo:
             pls = [p.get("nombre") for p in self.gestor.listar_emitidas(self.codigo)]
         else:
             pls = [p.get("nombre") for p in self.gestor.listar_recibidas(self.codigo)]
@@ -202,9 +202,9 @@ class UIProcesos(ttk.Frame):
                 messagebox.showwarning("Gest2A3Eco", "Selecciona una plantilla.")
                 return
             
-            tipo = self.tipo.get()
+            tipo = (self.tipo.get() or "").lower()
             # Obtener plantilla seleccionada
-            if tipo == "bancos":
+            if "bancos" in tipo:
                 pl = next((x for x in self.gestor.listar_bancos(self.codigo) if x.get("banco")==nombre_pl), None)
             elif "emitidas" in tipo:
                 pl = next((x for x in self.gestor.listar_emitidas(self.codigo) if x.get("nombre")==nombre_pl), None)
@@ -226,7 +226,7 @@ class UIProcesos(ttk.Frame):
             # =======================
             #      B A N C O S
             # =======================
-            if tipo == "bancos":
+            if "bancos" in tipo:
                 # Validación mínima de mapeo (Fecha, Importe, Concepto)
                 req = ["Fecha Asiento","Importe","Concepto"]
                 if not self._require_mapeo_or_warn(pl, "bancos", req):

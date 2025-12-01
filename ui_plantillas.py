@@ -138,9 +138,12 @@ class ConfigPlantillaDialog(Dialog):
 
     def body(self, master):
         self.ndig = int(self.empresa.get("digitos_plan", 8))
-        nb = ttk.Notebook(master); nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        nb = ttk.Notebook(master)
+        nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
 
-        t_gen = ttk.Frame(nb); nb.add(t_gen, text="General")
+        t_gen = ttk.Frame(nb)
+        nb.add(t_gen, text="General")
+        
         if self.tipo == "bancos":
             self.var_banco = tk.StringVar(value=self.pl.get("banco",""))
             self.var_sub_banco = tk.StringVar(value=self.pl.get("subcuenta_banco",""))
@@ -155,17 +158,17 @@ class ConfigPlantillaDialog(Dialog):
                 self.var_ing = tk.StringVar(value=self.pl.get("cuenta_ingreso_por_defecto","70000000"))
                 self.var_iva_def = tk.StringVar(value=self.pl.get("cuenta_iva_repercutido_defecto","47700000"))
                 _row(t_gen, "Nombre plantilla", self.var_nombre)
-                _row(t_gen, "Prefijo clientes (430)", self.var_pref)
-                _row(t_gen, "Cuenta ingreso defecto", self.var_ing)
-                _row(t_gen, "IVA repercutido (única cuenta)", self.var_iva_def)
+                _row(t_gen, "Subcuenta clientes", self.var_pref)
+                _row(t_gen, "Cuenta Ingreso", self.var_ing)
+                _row(t_gen, "Cuenta IVA repercutido", self.var_iva_def)
             else:
                 self.var_pref = tk.StringVar(value=self.pl.get("cuenta_proveedor_prefijo","400"))
                 self.var_gasto = tk.StringVar(value=self.pl.get("cuenta_gasto_por_defecto","62900000"))
                 self.var_iva_def = tk.StringVar(value=self.pl.get("cuenta_iva_soportado_defecto","47200000"))
                 _row(t_gen, "Nombre plantilla", self.var_nombre)
-                _row(t_gen, "Prefijo proveedores (400)", self.var_pref)
-                _row(t_gen, "Cuenta gasto defecto", self.var_gasto)
-                _row(t_gen, "IVA soportado (única cuenta)", self.var_iva_def)
+                _row(t_gen, "Subcuenta proveedores", self.var_pref)
+                _row(t_gen, "Cuenta Gasto", self.var_gasto)
+                _row(t_gen, "Cuenta IVA soportado", self.var_iva_def)
 
         t_xl = ttk.Frame(nb); nb.add(t_xl, text="Excel")
         cols = (self.pl.get("excel") or {}).get("columnas") or default_excel_columns_for(self.tipo)
@@ -285,9 +288,9 @@ class UIPlantillasEmpresa(ttk.Frame):
     def _build(self):
         ttk.Label(self, text=f"Plantillas de {self.nombre} ({self.codigo})", font=("Segoe UI", 12, "bold")).pack(pady=6, anchor="w", padx=10)
         nb = ttk.Notebook(self); nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
-        self._tab_bancos = self._build_tab(nb, "Bancos", ("banco","subcuenta_banco","subcuenta_por_defecto"))
-        self._tab_emitidas = self._build_tab(nb, "Facturas Emitidas", ("nombre","cuenta_cliente_prefijo","cuenta_iva_repercutido_defecto"))
-        self._tab_recibidas = self._build_tab(nb, "Facturas Recibidas", ("nombre","cuenta_proveedor_prefijo","cuenta_iva_soportado_defecto"))
+        self._tab_bancos = self._build_tab(nb, "bancos", ("banco","subcuenta_banco","subcuenta_por_defecto"))
+        self._tab_emitidas = self._build_tab(nb, "emitidas", ("nombre","cuenta_cliente_prefijo","cuenta_iva_repercutido_defecto"))
+        self._tab_recibidas = self._build_tab(nb, "recibidas", ("nombre","cuenta_proveedor_prefijo","cuenta_iva_soportado_defecto"))
         self._refresh_all()
 
     def _build_tab(self, nb, title, cols):

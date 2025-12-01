@@ -6,7 +6,7 @@ from ui_seleccion_empresa import UISeleccionEmpresa
 from ui_plantillas import UIPlantillasEmpresa
 from ui_procesos import UIProcesos
 from gestor_plantillas import GestorPlantillas
-from ui_theme import aplicar_tema  # si ya lo tienes
+from ui_theme import aplicar_tema
 
 # ▼ datos de tu despacho (ajusta los textos)
 EMPRESA_NOMBRE   = "Asesoría Gestinem S.L."
@@ -19,7 +19,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RUTA_JSON = os.path.join(BASE_DIR, "plantillas", "plantillas.json")
 
 
-def _build_header(root: tk.Tk) -> ttk.Frame:
+def _build_header(root: tk.Tk, on_cambiar_empresa) -> ttk.Frame:
     """Cabecera fija con logo y datos de contacto."""
     header = ttk.Frame(root, padding=10, style="TFrame")
     header.pack(side="top", fill="x")
@@ -28,7 +28,7 @@ def _build_header(root: tk.Tk) -> ttk.Frame:
     try:
         logo_img = tk.PhotoImage(file="logo.png")
 
-        # Reducir tamaño si es muy alto (por ejemplo > 60 px)
+        # Reducir tamaño si es muy alto
         max_h = 75
         if logo_img.height() > max_h:
             factor = max(1, logo_img.height() // max_h)
@@ -61,6 +61,16 @@ def _build_header(root: tk.Tk) -> ttk.Frame:
         style="SubHeader.TLabel"
     ).grid(row=2, column=1, sticky="w")
 
+    # BOTÓN CAMBIAR EMPRESA (alineado derecha)
+    btn_cambiar = ttk.Button(
+        header,
+        text="Cambiar Empresa",
+        compound="left",
+        style="Secondary.TButton",  # o Primary.TButton si lo prefieres
+        command=on_cambiar_empresa
+    )
+    btn_cambiar.grid(row=0, column=2, sticky="e", padx=(20, 0), pady=(0, 5))
+
     # BOTÓN CERRAR APLICACIÓN (alineado derecha)
     btn_cerrar = ttk.Button(
         header,
@@ -69,8 +79,7 @@ def _build_header(root: tk.Tk) -> ttk.Frame:
         style="Secondary.TButton",  # o Primary.TButton si lo prefieres
         command=root.destroy
     )
-
-    btn_cerrar.grid(row=0, column=2, rowspan=3, sticky="e", padx=(20, 0))
+    btn_cerrar.grid(row=1, column=2, sticky="e", padx=(20, 0), pady=(5, 0))
 
     # Que ocupe todo el ancho
     header.columnconfigure(1, weight=1)
@@ -84,10 +93,10 @@ def main():
 
     aplicar_tema(root) # aplicar tema personalizado
 
-    # 1) Cabecera fija
-    _build_header(root)
+     # 1) Cabecera fija
+    _build_header(root, on_cambiar_empresa=lambda: show(build_seleccion))
 
-    # 2) Contenedor de pantallas
+    # Contenedor de pantallas debajo de la cabecera
     content = ttk.Frame(root, padding=10, style="TFrame")
     content.pack(side="top", fill="both", expand=True)
 
@@ -125,6 +134,7 @@ def main():
     def build_seleccion(parent):
         return UISeleccionEmpresa(parent, gestor, on_empresa_ok)
 
+    
     # Pantalla inicial: selección de empresa
     show(build_seleccion)
 
