@@ -1,5 +1,6 @@
+import os, sys
+import json
 import tkinter as tk
-import os
 from tkinter import ttk
 
 from ui_seleccion_empresa import UISeleccionEmpresa
@@ -8,28 +9,84 @@ from ui_procesos import UIProcesos
 from gestor_plantillas import GestorPlantillas
 from ui_theme import aplicar_tema
 
-# ▼ datos de tu despacho (ajusta los textos)
-EMPRESA_NOMBRE   = "Asesoría Gestinem S.L."
-EMPRESA_CIF      = "B16916967"
-EMPRESA_DIRECCION= "CL Atilano Rodríguez 4, Entlo. 7, 39002 Santander (Cantabria)"
-EMPRESA_EMAIL    = "jjdominguez@gestinem.es"
-EMPRESA_TELEFONO = "942 791 404 - 691 474 519"
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-RUTA_JSON = os.path.join(BASE_DIR, "plantillas", "plantillas.json")
+# ─────────────────────────────────────────────
+# Datos de la asesoría (cabecera)
+# ─────────────────────────────────────────────
+EMPRESA_NOMBRE    = "Asesoría Gestinem S.L."
+EMPRESA_CIF       = "B16916967"
+EMPRESA_DIRECCION = "CL Atilano Rodríguez 4, Entlo. 7, 39002 Santander (Cantabria)"
+EMPRESA_EMAIL     = "info@gestinem.es"
+EMPRESA_TELEFONO  = "Tel.: "
+
+# ─────────────────────────────────────────────
+# Ruta al logo compatible con .exe
+# ─────────────────────────────────────────────
+def resource_path(relpath: str) -> str:
+    """
+    Devuelve la ruta absoluta a un recurso (p.ej. 'logo.png') tanto en desarrollo
+    como en el ejecutable PyInstaller (onefile).
+    """
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        base = sys._MEIPASS  # carpeta temporal de PyInstaller
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, relpath)
+
+# ─────────────────────────────────────────────
+# Rutas robustas para script y .exe
+# ─────────────────────────────────────────────
+def app_base_dir() -> str:
+    """
+    Devuelve la carpeta base de la aplicación:
+    - Si está congelada (.exe con PyInstaller), la carpeta del ejecutable.
+    - Si es script .py, la carpeta del propio archivo.
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
 
 
+def ensure_plantillas_json(base_dir: str) -> str:
+    """
+    Asegura que existe /plantillas/plantillas.json junto a la app.
+    Si no existe, crea la carpeta y un JSON mínimo de ejemplo.
+    """
+    plantillas_dir = os.path.join(base_dir, "plantillas")
+    os.makedirs(plantillas_dir, exist_ok=True)
+    path_json = os.path.join(plantillas_dir, "plantillas.json")
+
+    if not os.path.exists(path_json):
+        ejemplo = {
+            "empresas": [],
+            "bancos": [],
+            "emitidas": [],
+            "recibidas": []
+        }
+        with open(path_json, "w", encoding="utf-8") as f:
+            json.dump(ejemplo, f, ensure_ascii=False, indent=2)
+
+    return path_json
+
+
+BASE_DIR = app_base_dir()
+RUTA_JSON = ensure_plantillas_json(BASE_DIR)
+
+
+# ─────────────────────────────────────────────
+# Cabecera común (logo + datos + botones)
+# ─────────────────────────────────────────────
 def _build_header(root: tk.Tk, on_cambiar_empresa) -> ttk.Frame:
-    """Cabecera fija con logo y datos de contacto."""
+    """Cabecera fija con logo, datos de contacto y botones globales."""
     header = ttk.Frame(root, padding=10, style="TFrame")
     header.pack(side="top", fill="x")
 
-    # Logo (logo.png en la misma carpeta que main.py)
+    # Logo
     try:
-        logo_img = tk.PhotoImage(file="logo.png")
+        logo_img = tk.PhotoImage(file=resource_path("logo.png"))
 
         # Reducir tamaño si es muy alto
-        max_h = 75
+        max_h = 48
         if logo_img.height() > max_h:
             factor = max(1, logo_img.height() // max_h)
             logo_img = logo_img.subsample(factor, factor)
@@ -38,104 +95,119 @@ def _build_header(root: tk.Tk, on_cambiar_empresa) -> ttk.Frame:
         lbl_logo = ttk.Label(header, image=logo_img, style="TLabel")
         lbl_logo.grid(row=0, column=0, rowspan=3, sticky="w", padx=(0, 10))
     except Exception:
-        pass  # si no existe logo, no pasa nada
+        pass
 
-    # Línea 1: nombre empresa
+    # Datos empresa
     ttk.Label(
         header,
         text=EMPRESA_NOMBRE,
         style="Header.TLabel"
     ).grid(row=0, column=1, sticky="w")
 
-    # Línea 2: CIF + dirección
     ttk.Label(
         header,
         text=f"CIF: {EMPRESA_CIF}  ·  {EMPRESA_DIRECCION}",
         style="SubHeader.TLabel"
     ).grid(row=1, column=1, sticky="w")
 
-    # Línea 3: contacto
     ttk.Label(
         header,
-        text=f"Email: {EMPRESA_EMAIL}  ·  Tel.: {EMPRESA_TELEFONO}",
+        text=f"Email: {EMPRESA_EMAIL}  ·  {EMPRESA_TELEFONO}",
         style="SubHeader.TLabel"
     ).grid(row=2, column=1, sticky="w")
 
-    # BOTÓN CAMBIAR EMPRESA (alineado derecha)
+    # Botón "Cambiar empresa"
     btn_cambiar = ttk.Button(
         header,
-        text="Cambiar Empresa",
-        compound="left",
-        style="Secondary.TButton",  # o Primary.TButton si lo prefieres
-        command=on_cambiar_empresa
+        text="Cambiar empresa",
+        style="Secondary.TButton",
+        command=on_cambiar_empresa,
     )
-    btn_cambiar.grid(row=0, column=2, sticky="e", padx=(20, 0), pady=(0, 5))
+    btn_cambiar.grid(
+        row=0,
+        column=2,
+        sticky="e",
+        padx=(20, 0),
+        pady=(0, 5)
+    )
 
-    # BOTÓN CERRAR APLICACIÓN (alineado derecha)
+    # Botón "Cerrar aplicación"
     btn_cerrar = ttk.Button(
         header,
         text="Cerrar aplicación",
-        compound="left",
-        style="Secondary.TButton",  # o Primary.TButton si lo prefieres
-        command=root.destroy
+        style="Secondary.TButton",
+        command=root.destroy,
     )
-    btn_cerrar.grid(row=1, column=2, sticky="e", padx=(20, 0), pady=(5, 0))
+    btn_cerrar.grid(
+        row=1,
+        column=2,
+        sticky="e",
+        padx=(20, 0),
+        pady=(5, 0)
+    )
 
-    # Que ocupe todo el ancho
+    # Que la columna central se expanda
     header.columnconfigure(1, weight=1)
 
     return header
 
 
+# ─────────────────────────────────────────────
+# Punto de entrada
+# ─────────────────────────────────────────────
 def main():
     root = tk.Tk()
     root.title("Gest2A3Eco")
 
-    aplicar_tema(root) # aplicar tema personalizado
-
-     # 1) Cabecera fija
+    # Tema visual unificado
+    aplicar_tema(root)
+    
+    # Cabecera (usa show(build_seleccion) para "Cambiar empresa")
     _build_header(root, on_cambiar_empresa=lambda: show(build_seleccion))
 
-    # Contenedor de pantallas debajo de la cabecera
+    # Contenedor de pantallas bajo la cabecera
     content = ttk.Frame(root, padding=10, style="TFrame")
     content.pack(side="top", fill="both", expand=True)
 
+    # Gestor de plantillas (ruta robusta)
     gestor = GestorPlantillas(RUTA_JSON)
 
     estado = {"frame": None}
 
     def show(factory):
-        """Destruye la pantalla actual y crea la nueva dentro de 'content'."""
+        """Destruye la pantalla actual y muestra la nueva en 'content'."""
         if estado["frame"] is not None:
             estado["frame"].destroy()
         fr = factory(content)
         fr.pack(fill="both", expand=True)
         estado["frame"] = fr
 
-    # Callbacks de navegación
+    # Callback al confirmar empresa en la pantalla de selección
     def on_empresa_ok(codigo, nombre):
-        # aquí creas el "dashboard" o directamente la pantalla de procesos
         def build_dashboard(parent):
             nb = ttk.Notebook(parent)
-            # pestaña de plantillas
+
+            # Pestaña de plantillas
             nb.add(
                 UIPlantillasEmpresa(nb, gestor, codigo, nombre),
                 text="Plantillas"
             )
-            # pestaña de generación de ficheros
+
+            # Pestaña de generación de ficheros
             nb.add(
                 UIProcesos(nb, gestor, codigo, nombre),
                 text="Generar ficheros"
             )
+
             return nb
 
         show(build_dashboard)
 
+    # Pantalla de selección de empresa
     def build_seleccion(parent):
         return UISeleccionEmpresa(parent, gestor, on_empresa_ok)
 
-    
-    # Pantalla inicial: selección de empresa
+    # Pantalla inicial
     show(build_seleccion)
 
     root.mainloop()

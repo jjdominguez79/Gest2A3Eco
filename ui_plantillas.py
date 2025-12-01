@@ -176,8 +176,8 @@ class ConfigPlantillaDialog(Dialog):
         self.var_ignorar = tk.StringVar(value=(self.pl.get("excel") or {}).get("ignorar_filas",""))
         self.var_gen = tk.StringVar(value=(self.pl.get("excel") or {}).get("condicion_cuenta_generica",""))
         _row(t_xl, "Primera fila procesar", self.var_primera, w=8)
-        _row(t_xl, "Ignorar filas (ej. Q=NOPROCESARFACTURA)", self.var_ignorar, w=28)
-        _row(t_xl, "Condición cuenta genérica (ej. D=PARTICULAR)", self.var_gen, w=28)
+        _row(t_xl, "Ignorar filas", self.var_ignorar, w=15)
+        _row(t_xl, "Condición cuenta genérica", self.var_gen, w=15)
         ttk.Label(t_xl, text="Mapeo de columnas (Clave → Letra)").pack(anchor="w", padx=6)
         self.kv = InlineKVEditor(t_xl, ("clave","letra"), ("Clave","Letra"))
         self.kv.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
@@ -281,28 +281,48 @@ class ConfigPlantillaDialog(Dialog):
 class UIPlantillasEmpresa(ttk.Frame):
     def __init__(self, parent, gestor, empresa_codigo, empresa_nombre):
         super().__init__(parent)
-        self.gestor = gestor; self.codigo = empresa_codigo; self.nombre = empresa_nombre
+        self.gestor = gestor
+        self.codigo = empresa_codigo
+        self.nombre = empresa_nombre
         self.empresa = gestor.get_empresa(empresa_codigo) or {"codigo":empresa_codigo,"digitos_plan":8}
         self._build()
 
+    # --- NUEVO MÉTODO ---
+    def _tipo_actual(self) -> str:
+        """
+        Devuelve 'bancos', 'emitidas' o 'recibidas' según la pestaña seleccionada,
+        usando el índice del Notebook (no el texto).
+        """
+        idx = self.notebook.index("current")
+        if idx == 0:
+            return "bancos"
+        elif idx == 1:
+            return "emitidas"
+        else:
+            return "recibidas"
+        
     def _build(self):
         ttk.Label(self, text=f"Plantillas de {self.nombre} ({self.codigo})", font=("Segoe UI", 12, "bold")).pack(pady=6, anchor="w", padx=10)
         nb = ttk.Notebook(self); nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
-        self._tab_bancos = self._build_tab(nb, "bancos", ("banco","subcuenta_banco","subcuenta_por_defecto"))
-        self._tab_emitidas = self._build_tab(nb, "emitidas", ("nombre","cuenta_cliente_prefijo","cuenta_iva_repercutido_defecto"))
-        self._tab_recibidas = self._build_tab(nb, "recibidas", ("nombre","cuenta_proveedor_prefijo","cuenta_iva_soportado_defecto"))
+        self._tab_bancos = self._build_tab(nb, "Bancos", ("banco","subcuenta_banco","subcuenta_por_defecto"))
+        self._tab_emitidas = self._build_tab(nb, "Facturas Emitidas", ("nombre","cuenta_cliente_prefijo","cuenta_iva_repercutido_defecto"))
+        self._tab_recibidas = self._build_tab(nb, "Facturas Recibidas", ("nombre","cuenta_proveedor_prefijo","cuenta_iva_soportado_defecto"))
         self._refresh_all()
 
     def _build_tab(self, nb, title, cols):
-        frame = ttk.Frame(nb); nb.add(frame, text=title)
+        frame = ttk.Frame(nb)
+        nb.add(frame, text=title)
         tv = ttk.Treeview(frame, columns=cols, show="headings", height=12)
         for c in cols:
-            tv.heading(c, text=c.replace("_"," ").title()); tv.column(c, width=220)
+            tv.heading(c, text=c.replace("_"," ").title())
+            tv.column(c, width=220)
         tv.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         bar = ttk.Frame(frame); bar.pack(fill=tk.X, padx=6, pady=4)
+        
         ttk.Button(bar, text="Nueva Plantilla", style="Primary.TButton", command=lambda t=title: self._nuevo(t)).pack(side=tk.LEFT)
         ttk.Button(bar, text="Configurar…", style="Primary.TButton", command=lambda tv=tv, t=title: self._config(tv, t)).pack(side=tk.LEFT, padx=6)
         ttk.Button(bar, text="Eliminar Plantilla", style="Primary.TButton", command=lambda tv=tv, t=title: self._eliminar(tv, t)).pack(side=tk.LEFT)
+        
         return {"frame": frame, "tv": tv, "cols": cols}
 
     def _refresh_all(self):
@@ -317,7 +337,16 @@ class UIPlantillasEmpresa(ttk.Frame):
             tv.insert("", tk.END, values=(p.get("nombre"), p.get("cuenta_proveedor_prefijo","400"), p.get("cuenta_iva_soportado_defecto","47200000")))
 
     def _nuevo(self, title):
-        tipo = "bancos" if "Bancos" in title else ("emitidas" if "emitidas" in title else "recibidas")
+        
+        t = (title or "").lower()
+
+        if "bancos" in t:
+            tipo = "bancos"
+        elif "emitidas" in t:
+            tipo = "emitidas"
+        else:
+            tipo = "recibidas"
+        
         dlg = ConfigPlantillaDialog(self, self.gestor, self.empresa, tipo, {})
         if dlg.result:
             if tipo == "bancos":
@@ -336,8 +365,18 @@ class UIPlantillasEmpresa(ttk.Frame):
         return v[0]
 
     def _config(self, tv, title):
-        tipo = "bancos" if "Bancos" in title else ("emitidas" if "emitidas" in title else "recibidas")
+        
+        t = (title or "").lower()
+
+        if "bancos" in t:
+            tipo = "bancos"
+        elif "emitidas" in t:
+            tipo = "emitidas"
+        else:
+            tipo = "recibidas"
+        
         key = self._sel_key(tv, tipo)
+        
         if not key:
             messagebox.showinfo("Gest2A3Eco","Selecciona una plantilla.")
             return
@@ -347,6 +386,7 @@ class UIPlantillasEmpresa(ttk.Frame):
             pl = next((x for x in self.gestor.listar_emitidas(self.codigo) if x.get("nombre")==key), None)
         else:
             pl = next((x for x in self.gestor.listar_recibidas(self.codigo) if x.get("nombre")==key), None)
+        
         dlg = ConfigPlantillaDialog(self, self.gestor, self.empresa, tipo, pl)
         if dlg.result:
             if tipo == "bancos":
