@@ -73,68 +73,6 @@ BASE_DIR = app_base_dir()
 RUTA_JSON = ensure_plantillas_json(BASE_DIR)
 
 
-def _color_bg(widget: tk.Widget) -> str:
-    """Devuelve el color de fondo actual para mezclar con las imagenes."""
-    style = ttk.Style(widget)
-    bg = style.lookup("TFrame", "background") or widget.cget("background")
-    return bg or "#f5f5f7"
-
-
-def _rounded_button_image(bg: str, fill: str, icon: str) -> tk.PhotoImage:
-    """Genera una imagen con esquinas redondeadas y un icono simple centrado."""
-    width, height, radius = 60, 25, 8
-    img = tk.PhotoImage(width=width, height=height)
-
-    # Fondo base
-    img.put(bg, to=(0, 0, width, height))
-    img.put(fill, to=(radius, 0, width - radius, height))
-    img.put(fill, to=(0, radius, width, height - radius))
-
-    cx = radius - 1
-    cy = radius - 1
-    for x in range(radius):
-        for y in range(radius):
-            if (x - cx) ** 2 + (y - cy) ** 2 <= radius * radius:
-                for px, py in (
-                    (x, y),
-                    (width - 1 - x, y),
-                    (x, height - 1 - y),
-                    (width - 1 - x, height - 1 - y),
-                ):
-                    img.put(fill, (px, py))
-
-    icon_color = "#ffffff"
-
-    def draw_line(x0, y0, x1, y1, thickness=2, color=None):
-        color = color or icon_color
-        steps = max(abs(x1 - x0), abs(y1 - y0))
-        for i in range(steps + 1):
-            x = x0 + (x1 - x0) * i // steps
-            y = y0 + (y1 - y0) * i // steps
-            img.put(color, to=(x - thickness, y - thickness, x + thickness + 1, y + thickness + 1))
-
-    def draw_arrow(x0, y0, x1, y1, direction):
-        draw_line(x0, y0, x1, y1)
-        if direction == "right":
-            draw_line(x1 - 6, y1 - 6, x1, y1)
-            draw_line(x1 - 6, y1 + 6, x1, y1)
-        else:
-            draw_line(x0, y0, x0 + 6, y0 - 6)
-            draw_line(x0, y0, x0 + 6, y0 + 6)
-
-    center_y = height // 2
-    center_x = width // 2
-
-    if icon == "swap":
-        draw_arrow(12, center_y - 4, width - 14, center_y - 4, "right")
-        draw_arrow(width - 12, center_y + 4, 14, center_y + 4, "left")
-    elif icon == "close":
-        draw_line(center_x - 8, center_y - 8, center_x + 8, center_y + 8, thickness=2)
-        draw_line(center_x - 8, center_y + 8, center_x + 8, center_y - 8, thickness=2)
-
-    return img
-
-
 # ─────────────────────────────────────────────
 # Cabecera común (logo + datos + botones)
 # ─────────────────────────────────────────────
@@ -178,49 +116,39 @@ def _build_header(root: tk.Tk, on_cambiar_empresa) -> ttk.Frame:
         style="SubHeader.TLabel"
     ).grid(row=2, column=1, sticky="w")
 
-    # Botones como imagenes, alineados en paralelo
+    # Botones (texto) apilados
     botones_frame = ttk.Frame(header, style="TFrame")
     botones_frame.grid(row=0, column=2, rowspan=3, sticky="e", padx=(20, 0))
 
-    bg_color = _color_bg(header)
-    img_cambiar = _rounded_button_image(bg_color, fill="#002C57", icon="swap")
-    img_cerrar = _rounded_button_image(bg_color, fill="#D64545", icon="close")
-
-    root._img_cambiar_empresa = img_cambiar
-    root._img_cerrar = img_cerrar
-
-    btn_cambiar = tk.Button(
+    btn_cambiar = ttk.Button(
         botones_frame,
-        image=img_cambiar,
-        relief="flat",
-        borderwidth=0,
-        highlightthickness=0,
-        bg=bg_color,
-        activebackground=bg_color,
-        cursor="hand2",
+        text="Empresas",
+        style="Primary.TButton",
         command=on_cambiar_empresa,
     )
-    btn_cambiar.grid(row=0, column=0, padx=(0, 10))
+    btn_cambiar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
 
-    btn_cerrar = tk.Button(
+    # Botón rojo personalizado para Cerrar
+    style = ttk.Style()
+    style.configure("Close.TButton", foreground="#ffffff", background="#D64545")
+    style.map("Close.TButton",
+              background=[("active", "#bb3434"), ("pressed", "#a52d2d")],
+              foreground=[("active", "#ffffff"), ("pressed", "#ffffff")])
+
+    btn_cerrar = ttk.Button(
         botones_frame,
-        image=img_cerrar,
-        relief="flat",
-        borderwidth=0,
-        highlightthickness=0,
-        bg=bg_color,
-        activebackground=bg_color,
-        cursor="hand2",
+        text="Cerrar",
+        style="Close.TButton",
         command=root.destroy,
     )
-    btn_cerrar.grid(row=0, column=1)
+    btn_cerrar.grid(row=1, column=0, sticky="ew")
+
+    botones_frame.columnconfigure(0, weight=1)
 
     # Que la columna central se expanda
     header.columnconfigure(1, weight=1)
 
     return header
-
-
 
 # ─────────────────────────────────────────────
 # Punto de entrada
@@ -228,6 +156,10 @@ def _build_header(root: tk.Tk, on_cambiar_empresa) -> ttk.Frame:
 def main():
     root = tk.Tk()
     root.title("Gest2A3Eco")
+    try:
+        root.iconbitmap(resource_path("icono.ico"))
+    except Exception:
+        pass
 
     # Tema visual unificado
     aplicar_tema(root)

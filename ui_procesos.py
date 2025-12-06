@@ -7,7 +7,7 @@ from collections import defaultdict
 
 from procesos.bancos import generar_bancos
 from procesos.facturas_emitidas import generar_emitidas
-from procesos.facturas_recibidas import generar_recibidas
+from procesos.facturas_recibidas import generar_recibidas_suenlace
 
 
 
@@ -50,8 +50,22 @@ class UIProcesos(ttk.Frame):
 
         ttk.Button(self, text="Generar Suenlace.dat", style="Primary.TButton", command=self._generar).pack(side=tk.BOTTOM, pady=10)
 
-        self.tv = ttk.Treeview(self, show="headings")
-        self.tv.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        preview_wrap = ttk.Frame(self, height=320, width=900)
+        preview_wrap.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Evita que el TreeView fuerce el tamaño de la ventana; combinamos con barras de scroll
+        preview_wrap.pack_propagate(False)
+        preview_wrap.grid_propagate(False)
+        preview_wrap.rowconfigure(0, weight=1)
+        preview_wrap.columnconfigure(0, weight=1)
+
+        self.tv = ttk.Treeview(preview_wrap, show="headings", height=12)
+        self.tv.grid(row=0, column=0, sticky="nsew")
+
+        self.vsb = ttk.Scrollbar(preview_wrap, orient="vertical", command=self.tv.yview)
+        self.vsb.grid(row=0, column=1, sticky="ns")
+        self.hsb = ttk.Scrollbar(preview_wrap, orient="horizontal", command=self.tv.xview)
+        self.hsb.grid(row=1, column=0, sticky="ew")
+        self.tv.configure(yscrollcommand=self.vsb.set, xscrollcommand=self.hsb.set)
 
         self.tipo.trace_add("write", lambda *_: self._refresh_plantillas())
         self._refresh_plantillas()
@@ -97,10 +111,13 @@ class UIProcesos(ttk.Frame):
             self.tv["columns"] = list(df.columns)
             for c in df.columns:
                 self.tv.heading(c, text=c)
-                self.tv.column(c, width=120)
-            for _, row in df.head(10).iterrows():
-                vals = [str(x) for x in row.tolist()]
+                self.tv.column(c, width=120, minwidth=80, stretch=False)
+            for row in df.itertuples(index=False):
+                vals = [str(x) for x in row]
                 self.tv.insert("", tk.END, values=vals)
+            # Reinicia la vista para que siempre aparezca desde el inicio
+            self.tv.xview_moveto(0)
+            self.tv.yview_moveto(0)
         except Exception as e:
             messagebox.showerror("Gest2A3Eco", f"Error al leer hoja:\n{e}")
 
@@ -252,7 +269,7 @@ class UIProcesos(ttk.Frame):
                 save_path = filedialog.asksaveasfilename(
                     title="Guardar fichero suenlace.dat",
                     defaultextension=".dat",
-                    initialfile=f"{self.codigo}.dat",
+                    initialfile=f"E{self.codigo}.dat",
                     filetypes=[("Ficheros DAT","*.dat")]
                 )
                 if not save_path:
@@ -307,7 +324,7 @@ class UIProcesos(ttk.Frame):
                     save_path = filedialog.asksaveasfilename(
                         title="Guardar fichero suenlace.dat",
                         defaultextension=".dat",
-                        initialfile=f"{self.codigo}",
+                        initialfile=f"E{self.codigo}",
                         filetypes=[("Ficheros DAT","*.dat")]
                     )
                     if not save_path: return
@@ -328,11 +345,9 @@ class UIProcesos(ttk.Frame):
                 if not self._require_mapeo_or_warn(pl, "recibidas", req):
                     return
 
-                pref_prov = str(pl.get("cuenta_proveedor_prefijo", "400"))
-                cta_gasto_def = str(pl.get("cuenta_gasto_por_defecto", "62900000"))
-                # subtipo_def lo dejamos de momento para posible futuro detalle 9, pero aquí no se usa
 
-                out_lines, avisos = generar_recibidas(rows, pl, codigo_empresa, ndig)
+                out_lines = generar_recibidas_suenlace(rows, pl, codigo_empresa, ndig)
+                avisos = []  # avisos de descuadres (no implementados)
 
                 if out_lines:
                     save_path = filedialog.asksaveasfilename(

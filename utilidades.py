@@ -1,11 +1,45 @@
 
 from datetime import datetime
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
+import math
 
 SEP = "\t"
 
 def d2(x):
-    return Decimal(str(x)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    """
+    Convierte a Decimal con 2 decimales de forma tolerante:
+    - None, cadenas vac¡as o NaN -> 0.00
+    - Acepta formatos "1.234,56" y "1234,56"
+    - Si no es convertible, devuelve 0.00 en vez de disparar conversionSyntax
+    """
+    if x is None:
+        return Decimal("0.00")
+
+    # N£meros (int/float) directos
+    if isinstance(x, (int, float)) and not isinstance(x, bool):
+        # Protege NaN/inf
+        if isinstance(x, float) and (math.isnan(x) or math.isinf(x)):
+            return Decimal("0.00")
+        try:
+            return Decimal(str(x)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        except (InvalidOperation, ValueError):
+            return Decimal("0.00")
+
+    s = str(x).strip()
+    if not s:
+        return Decimal("0.00")
+
+    s = s.replace("\xa0", " ").replace(" ", "")
+    # Formatos con coma/punto
+    if "." in s and "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    elif "," in s:
+        s = s.replace(",", ".")
+
+    try:
+        return Decimal(s).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except (InvalidOperation, ValueError):
+        return Decimal("0.00")
 
 def fmt_fecha(dt):
     if isinstance(dt, str):
