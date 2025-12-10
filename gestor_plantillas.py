@@ -2,7 +2,7 @@ import json, os, tempfile, time
 from pathlib import Path
 import portalocker
 
-DEFAULT_JSON = '{"empresas":[],"bancos":[],"facturas_emitidas":[],"facturas_recibidas":[]}'
+DEFAULT_JSON = '{"empresas":[],"bancos":[],"facturas_emitidas":[],"facturas_recibidas":[],"facturas_emitidas_docs":[],"terceros":[],"terceros_empresas":[]}'
 
 class GestorPlantillas:
     
@@ -60,6 +60,14 @@ class GestorPlantillas:
             with open(self.path, "r", encoding="utf-8") as f:
                 txt = f.read()
         self.data = json.loads(txt or "{}")
+        # Garantiza presencia de nuevas claves para compatibilidad hacia atrás
+        self.data.setdefault("empresas", [])
+        self.data.setdefault("bancos", [])
+        self.data.setdefault("facturas_emitidas", [])
+        self.data.setdefault("facturas_recibidas", [])
+        self.data.setdefault("facturas_emitidas_docs", [])
+        self.data.setdefault("terceros", [])
+        self.data.setdefault("terceros_empresas", [])
 
     def save(self):
         """Bloqueo exclusivo en lockfile (no en el JSON) + escritura atómica del JSON."""
@@ -125,6 +133,44 @@ class GestorPlantillas:
         self.data["facturas_emitidas"] = arr
         self.save()
 
+    # ---------- FACTURAS EMITIDAS (DOCUMENTOS) ----------
+    def listar_facturas_emitidas(self, codigo_empresa: str):
+        return [f for f in self.data.get("facturas_emitidas_docs", []) if f.get("codigo_empresa")==codigo_empresa]
+
+    def upsert_factura_emitida(self, factura: dict):
+        arr = self.data.setdefault("facturas_emitidas_docs", [])
+        fid = factura.get("id") or str(int(time.time() * 1000))
+        factura["id"] = fid
+        key = (factura.get("codigo_empresa"), fid)
+        for i, f in enumerate(arr):
+            if (f.get("codigo_empresa"), f.get("id")) == key:
+                arr[i] = factura
+                self.save()
+                return fid
+        arr.append(factura)
+        self.save()
+        return fid
+
+    def eliminar_factura_emitida(self, codigo_empresa: str, factura_id: str):
+        arr = [
+            f for f in self.data.get("facturas_emitidas_docs", [])
+            if not (f.get("codigo_empresa")==codigo_empresa and str(f.get("id"))==str(factura_id))
+        ]
+        self.data["facturas_emitidas_docs"] = arr
+        self.save()
+
+    def marcar_facturas_emitidas_generadas(self, codigo_empresa: str, ids: list, fecha: str):
+        changed = False
+        idset = set(map(str, ids or []))
+        arr = self.data.get("facturas_emitidas_docs", [])
+        for f in arr:
+            if f.get("codigo_empresa")==codigo_empresa and str(f.get("id")) in idset:
+                f["generada"] = True
+                f["fecha_generacion"] = fecha
+                changed = True
+        if changed:
+            self.save()
+
     # ---------- RECIBIDAS ----------
     def listar_recibidas(self, codigo_empresa: str):
         return [b for b in self.data.get("facturas_recibidas", []) if b.get("codigo_empresa")==codigo_empresa]
@@ -143,4 +189,51 @@ class GestorPlantillas:
     def eliminar_recibida(self, codigo_empresa: str, nombre: str):
         arr = [p for p in self.data.get("facturas_recibidas", []) if not (p.get("codigo_empresa")==codigo_empresa and p.get("nombre")==nombre)]
         self.data["facturas_recibidas"] = arr
+        self.save()
+
+    # ---------- TERCEROS (GLOBAL) ----------
+    def listar_terceros(self):
+        return self.data.get("terceros", [])
+
+    def upsert_tercero(self, tercero: dict):
+        arr = self.data.setdefault("terceros", [])
+        tid = tercero.get("id") or str(int(time.time() * 1000))
+        tercero["id"] = tid
+        for i, t in enumerate(arr):
+            if str(t.get("id")) == str(tid):
+                arr[i] = tercero
+                self.save()
+                return tid
+        arr.append(tercero)
+        self.save()
+        return tid
+
+    def eliminar_tercero(self, tercero_id: str):
+        self.data["terceros"] = [t for t in self.data.get("terceros", []) if str(t.get("id")) != str(tercero_id)]
+        self.data["terceros_empresas"] = [
+            te for te in self.data.get("terceros_empresas", [])
+            if str(te.get("tercero_id")) != str(tercero_id)
+        ]
+        self.save()
+
+    # ---------- TERCEROS x EMPRESA ----------
+    def listar_terceros_empresa(self, codigo_empresa: str):
+        return [t for t in self.data.get("terceros_empresas", []) if t.get("codigo_empresa")==codigo_empresa]
+
+    def get_tercero_empresa(self, codigo_empresa: str, tercero_id: str):
+        return next(
+            (t for t in self.data.get("terceros_empresas", [])
+             if t.get("codigo_empresa")==codigo_empresa and str(t.get("tercero_id"))==str(tercero_id)),
+            None
+        )
+
+    def upsert_tercero_empresa(self, rel: dict):
+        arr = self.data.setdefault("terceros_empresas", [])
+        key = (rel.get("codigo_empresa"), str(rel.get("tercero_id")))
+        for i, t in enumerate(arr):
+            if (t.get("codigo_empresa"), str(t.get("tercero_id"))) == key:
+                arr[i] = rel
+                self.save()
+                return
+        arr.append(rel)
         self.save()

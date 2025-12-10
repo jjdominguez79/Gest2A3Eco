@@ -6,6 +6,7 @@ from tkinter import ttk
 from ui_seleccion_empresa import UISeleccionEmpresa
 from ui_plantillas import UIPlantillasEmpresa
 from ui_procesos import UIProcesos
+from ui_facturas_emitidas import UIFacturasEmitidas
 from gestor_plantillas import GestorPlantillas
 from ui_theme import aplicar_tema
 
@@ -61,7 +62,10 @@ def ensure_plantillas_json(base_dir: str) -> str:
             "empresas": [],
             "bancos": [],
             "emitidas": [],
-            "recibidas": []
+            "recibidas": [],
+            "facturas_emitidas_docs": [],
+            "terceros": [],
+            "terceros_empresas": []
         }
         with open(path_json, "w", encoding="utf-8") as f:
             json.dump(ejemplo, f, ensure_ascii=False, indent=2)
@@ -193,6 +197,12 @@ def main():
             nb.add(
                 UIPlantillasEmpresa(nb, gestor, codigo, nombre),
                 text="Plantillas"
+            )
+
+            # Pestaña de facturas emitidas (módulo interno)
+            nb.add(
+                UIFacturasEmitidas(nb, gestor, codigo, nombre),
+                text="Facturas emitidas"
             )
 
             # Pestaña de generación de ficheros

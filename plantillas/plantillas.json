@@ -4,7 +4,9 @@
       "codigo": "00423",
       "nombre": "Asesoria Gestinem SL",
       "digitos_plan": 8,
-      "ejercicio": 2025
+      "ejercicio": 2025,
+      "serie_emitidas": "A",
+      "siguiente_num_emitidas": 1
     },
     {
       "codigo": "00896",
@@ -1066,6 +1068,30 @@
           "Importe Analitica": ""
         }
       }
+    }
+  ],
+  "facturas_emitidas_docs": [],
+  "terceros": [
+    {
+      "nif": "72044071K",
+      "nombre": "Juan Jose Dominguez Barrero",
+      "direccion": "Calle Atilano Rodriguez 4, Entlo 7",
+      "cp": "39002",
+      "poblacion": "Santander",
+      "provincia": "Cantabria",
+      "telefono": "",
+      "email": "",
+      "contacto": "",
+      "tipo": "cliente",
+      "id": "1765376641720"
+    }
+  ],
+  "terceros_empresas": [
+    {
+      "tercero_id": "1765376641720",
+      "codigo_empresa": "00423",
+      "subcuenta_cliente": "43000001",
+      "subcuenta_proveedor": ""
     }
   ]
 }
