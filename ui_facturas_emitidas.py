@@ -1,5 +1,8 @@
 
 
+import os
+import calendar
+import struct
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from datetime import date, datetime
@@ -8,7 +11,7 @@ from procesos.facturas_emitidas import generar_emitidas
 from utilidades import validar_subcuenta_longitud
 
 IVA_OPCIONES = [21, 10, 4, 0]
-IRPF_OPCIONES = [0, 1, 7, 15]
+IRPF_OPCIONES = [0, 1, 7, 15, 19]
 
 
 def _to_float(x) -> float:
@@ -25,6 +28,116 @@ def _to_float(x) -> float:
         return float(s)
     except Exception:
         return 0.0
+
+
+def _parse_date_ui(val: str) -> date:
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(val.strip(), fmt).date()
+        except Exception:
+            continue
+    return date.today()
+
+
+def _to_fecha_ui(val: str) -> str:
+    if not val:
+        return date.today().strftime("%d/%m/%Y")
+    try:
+        d = _parse_date_ui(str(val))
+        return d.strftime("%d/%m/%Y")
+    except Exception:
+        return date.today().strftime("%d/%m/%Y")
+
+
+def _to_fecha_ui_or_blank(val: str) -> str:
+    if not val:
+        return ""
+    return _to_fecha_ui(val)
+
+
+def _round2(x) -> float:
+    try:
+        return round(float(x), 2)
+    except Exception:
+        return 0.0
+
+
+class DatePicker(tk.Toplevel):
+    def __init__(self, parent, initial: date | None = None):
+        super().__init__(parent)
+        self.title("Selecciona fecha")
+        self.resizable(False, False)
+        self.result = None
+        self._current = initial or date.today()
+        self._build()
+        self.grab_set()
+        self.transient(parent)
+        self.wait_window(self)
+
+    def _build(self):
+        frm = ttk.Frame(self, padding=8)
+        frm.pack(fill="both", expand=True)
+        nav = ttk.Frame(frm)
+        nav.pack(fill="x")
+        ttk.Button(nav, text="<", width=3, command=self._prev_month).pack(side=tk.LEFT)
+        self.lbl_month = ttk.Label(nav, width=18, anchor="center")
+        self.lbl_month.pack(side=tk.LEFT, expand=True)
+        ttk.Button(nav, text=">", width=3, command=self._next_month).pack(side=tk.LEFT)
+
+        self.days_frame = ttk.Frame(frm)
+        self.days_frame.pack(pady=4)
+        for i, dname in enumerate(["Lu", "Ma", "Mi", "Ju", "Vi", "Sa", "Do"]):
+            ttk.Label(self.days_frame, text=dname, width=3, anchor="center").grid(row=0, column=i, padx=1, pady=1)
+
+        self._paint_calendar()
+
+    def _paint_calendar(self):
+        for w in self.days_frame.grid_slaves():
+            info = w.grid_info()
+            if int(info.get("row", 0)) > 0:
+                w.destroy()
+        y, m = self._current.year, self._current.month
+        meses = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+        self.lbl_month.config(text=f"{meses[m]} {y}")
+        month_days = calendar.monthcalendar(y, m)
+        for r, week in enumerate(month_days, start=1):
+            for c, day in enumerate(week):
+                if day == 0:
+                    continue
+                btn = ttk.Button(
+                    self.days_frame,
+                    text=str(day),
+                    width=3,
+                    command=lambda dd=day: self._select(dd),
+                )
+                btn.grid(row=r, column=c, padx=1, pady=1)
+
+    def _select(self, day: int):
+        try:
+            self.result = self._current.replace(day=day)
+        except ValueError:
+            self.result = None
+        self.destroy()
+
+    def _prev_month(self):
+        y, m = self._current.year, self._current.month
+        if m == 1:
+            y -= 1
+            m = 12
+        else:
+            m -= 1
+        self._current = self._current.replace(year=y, month=m, day=1)
+        self._paint_calendar()
+
+    def _next_month(self):
+        y, m = self._current.year, self._current.month
+        if m == 12:
+            y += 1
+            m = 1
+        else:
+            m += 1
+        self._current = self._current.replace(year=y, month=m, day=1)
+        self._paint_calendar()
 
 
 class TerceroFicha(tk.Toplevel):
@@ -190,7 +303,6 @@ class TercerosDialog(tk.Toplevel):
         self.gestor.upsert_tercero_empresa(rel)
         messagebox.showinfo("Gest2A3Eco", "Subcuentas guardadas.")
 
-
 class FacturaDialog(tk.Toplevel):
     def __init__(self, parent, gestor, codigo_empresa, ndig_plan, factura=None, numero_sugerido=""):
         super().__init__(parent)
@@ -208,46 +320,55 @@ class FacturaDialog(tk.Toplevel):
         frm = ttk.Frame(self, padding=10)
         frm.pack(fill="both", expand=True)
 
-        def add_row(label, var, row_idx, width=24, col=0):
+        def add_row(label, var, row_idx, width=16, col=0):
             ttk.Label(frm, text=label).grid(row=row_idx, column=col, sticky="w", padx=4, pady=3)
-            ttk.Entry(frm, textvariable=var, width=width).grid(row=row_idx, column=col + 1, padx=4, pady=3, sticky="we")
+            ttk.Entry(frm, textvariable=var, width=width).grid(row=row_idx, column=col + 1, padx=4, pady=3, sticky="w")
 
-        today = date.today().strftime("%Y-%m-%d")
+        today = date.today().strftime("%d/%m/%Y")
         self.var_serie = tk.StringVar(value=f.get("serie", ""))
         self.var_numero = tk.StringVar(value=f.get("numero", ""))
-        self.var_numero_largo = tk.StringVar(value=f.get("numero_largo_sii", ""))
-        self.var_fecha_asiento = tk.StringVar(value=f.get("fecha_asiento", today))
-        self.var_fecha_exp = tk.StringVar(value=f.get("fecha_expedicion", f.get("fecha_asiento", today)))
-        self.var_fecha_op = tk.StringVar(value=f.get("fecha_operacion", ""))
+        self.var_fecha_asiento = tk.StringVar(value=_to_fecha_ui(f.get("fecha_asiento", today)))
+        self.var_fecha_exp = tk.StringVar(value=_to_fecha_ui(f.get("fecha_expedicion", f.get("fecha_asiento", today))))
+        self.var_fecha_op = tk.StringVar(value=_to_fecha_ui(f.get("fecha_operacion", today)) if f.get("fecha_operacion") else "")
         self.var_nif = tk.StringVar(value=f.get("nif", ""))
         self.var_nombre = tk.StringVar(value=f.get("nombre", ""))
         self.var_desc = tk.StringVar(value=f.get("descripcion", ""))
         self.var_subcuenta = tk.StringVar(value=f.get("subcuenta_cliente", ""))
 
         row = 0
-        ttk.Label(frm, text="Cliente (tercero)").grid(row=row, column=0, sticky="w", padx=4, pady=3)
+        ttk.Label(frm, text="Seleccione Cliente").grid(row=row, column=0, sticky="w", padx=4, pady=3)
         self.var_tercero = tk.StringVar()
         self.cb_tercero = ttk.Combobox(frm, textvariable=self.var_tercero, width=40, state="readonly")
-        self.cb_tercero.grid(row=row, column=1, padx=4, pady=3, sticky="we")
+        self.cb_tercero.grid(row=row, column=1, padx=4, pady=3, sticky="w")
         ttk.Button(frm, text="Terceros...", command=self._gestionar_terceros).grid(row=row, column=2, padx=4, pady=3)
         row += 1
 
-        add_row("Serie", self.var_serie, row)
-        add_row("Numero", self.var_numero, row, col=2, width=16)
+        add_row("Serie", self.var_serie, row, width=8, col=0)
         row += 1
-        add_row("Numero Largo SII", self.var_numero_largo, row)
-        add_row("Subcuenta cliente", self.var_subcuenta, row, col=2, width=18)
+        
+        add_row("Numero", self.var_numero, row, width=14, col=0)
         row += 1
-        add_row("Fecha Asiento (YYYY-MM-DD)", self.var_fecha_asiento, row)
-        add_row("Fecha Expedicion", self.var_fecha_exp, row, col=2)
+        
+        add_row("Subcuenta cliente", self.var_subcuenta, row, col=0, width=18)
         row += 1
-        add_row("Fecha Operacion", self.var_fecha_op, row)
+
+        def add_date_cell(label, var, row_idx):
+            ttk.Label(frm, text=label).grid(row=row_idx, column=0, sticky="w", padx=4, pady=3)
+            cont = ttk.Frame(frm)
+            cont.grid(row=row_idx, column=1, columnspan=2, sticky="w", padx=4, pady=3)
+            ttk.Entry(cont, textvariable=var, width=14).pack(side=tk.LEFT)
+            ttk.Button(cont, text="Cal", width=4, command=lambda v=var: self._pick_date(v)).pack(side=tk.LEFT, padx=(4, 0))
+
+        add_date_cell("Fecha Factura", self.var_fecha_exp, row)
+        #add_date_cell("Fecha Expedicion", self.var_fecha_exp, row, 2)
+        #add_date_cell("Fecha Operacion", self.var_fecha_op, row, 3)
         row += 1
         add_row("NIF Cliente", self.var_nif, row)
-        add_row("Nombre Cliente", self.var_nombre, row, col=2, width=34)
         row += 1
-        add_row("Descripcion", self.var_desc, row, width=40)
+        add_row("Nombre Cliente", self.var_nombre, row, width=34)
         row += 1
+        #add_row("Descripcion", self.var_desc, row, width=40)
+        #row += 1
 
         ttk.Label(frm, text="Lineas").grid(row=row, column=0, columnspan=3, sticky="w", pady=(10, 4))
         row += 1
@@ -320,7 +441,6 @@ class FacturaDialog(tk.Toplevel):
         ttk.Button(btns, text="Guardar", style="Primary.TButton", command=self._ok).pack(side=tk.LEFT, padx=4)
         ttk.Button(btns, text="Cancelar", command=self.destroy).pack(side=tk.LEFT, padx=4)
 
-        frm.columnconfigure(1, weight=1)
         self._load_terceros()
         self._preselect_tercero(f.get("tercero_id"))
 
@@ -364,6 +484,13 @@ class FacturaDialog(tk.Toplevel):
         if sc:
             self.var_subcuenta.set(sc)
 
+    def _pick_date(self, target_var: tk.StringVar):
+        txt = (target_var.get() or "").strip()
+        initial = _parse_date_ui(txt) if txt else date.today()
+        dlg = DatePicker(self, initial)
+        if dlg.result:
+            target_var.set(dlg.result.strftime("%d/%m/%Y"))
+
     # --- line editor
     def _clear_line_editor(self):
         for v in self.line_vars.values():
@@ -385,18 +512,18 @@ class FacturaDialog(tk.Toplevel):
         ):
             messagebox.showwarning("Gest2A3Eco", "Completa concepto, unidades, precio, IVA e IRPF.")
             return None
-        base = unidades * precio
-        cuota_iva = base * iva / 100.0
-        cuota_ret = -abs(base * irpf / 100.0)
+        base = _round2(unidades * precio)
+        cuota_iva = _round2(base * iva / 100.0)
+        cuota_ret = -abs(_round2(base * irpf / 100.0))
         return {
             "concepto": concepto,
-            "unidades": unidades,
-            "precio": precio,
-            "base": base,
-            "pct_iva": iva,
-            "cuota_iva": cuota_iva,
-            "pct_irpf": irpf,
-            "cuota_irpf": cuota_ret,
+            "unidades": _round2(unidades),
+            "precio": _round2(precio),
+            "base": _round2(base),
+            "pct_iva": _round2(iva),
+            "cuota_iva": _round2(cuota_iva),
+            "pct_irpf": _round2(irpf),
+            "cuota_irpf": _round2(cuota_ret),
             "pct_re": 0.0,
             "cuota_re": 0.0,
         }
@@ -408,7 +535,7 @@ class FacturaDialog(tk.Toplevel):
         vals = (
             ln["concepto"],
             f"{ln['unidades']:.2f}",
-            f"{ln['precio']:.4f}",
+            f"{ln['precio']:.2f}",
             f"{ln['base']:.2f}",
             f"{ln['pct_iva']:.2f}",
             f"{ln['cuota_iva']:.2f}",
@@ -422,6 +549,20 @@ class FacturaDialog(tk.Toplevel):
             self.tv.insert("", tk.END, values=vals)
         self._refresh_totales()
         self._clear_line_editor()
+
+    def _insert_linea(self, ln: dict):
+        """Inserta una linea existente (editar/copiar) en la tabla."""
+        vals = (
+            ln.get("concepto", ""),
+            f"{_round2(ln.get('unidades')):.2f}",
+            f"{_round2(ln.get('precio')):.2f}",
+            f"{_round2(ln.get('base')):.2f}",
+            f"{_round2(ln.get('pct_iva')):.2f}",
+            f"{_round2(ln.get('cuota_iva')):.2f}",
+            f"{_round2(ln.get('pct_irpf')):.2f}",
+            f"{_round2(ln.get('cuota_irpf')):.2f}",
+        )
+        self.tv.insert("", tk.END, values=vals)
 
     def _on_select_linea(self, event=None):
         sel = self.tv.selection()
@@ -449,13 +590,13 @@ class FacturaDialog(tk.Toplevel):
             out.append(
                 {
                     "concepto": vals[0],
-                    "unidades": _to_float(vals[1]),
-                    "precio": _to_float(vals[2]),
-                    "base": _to_float(vals[3]),
-                    "pct_iva": _to_float(vals[4]),
-                    "cuota_iva": _to_float(vals[5]),
-                    "pct_irpf": _to_float(vals[6]),
-                    "cuota_irpf": _to_float(vals[7]),
+                    "unidades": _round2(_to_float(vals[1])),
+                    "precio": _round2(_to_float(vals[2])),
+                    "base": _round2(_to_float(vals[3])),
+                    "pct_iva": _round2(_to_float(vals[4])),
+                    "cuota_iva": _round2(_to_float(vals[5])),
+                    "pct_irpf": _round2(_to_float(vals[6])),
+                    "cuota_irpf": _round2(_to_float(vals[7])),
                     "pct_re": 0.0,
                     "cuota_re": 0.0,
                 }
@@ -468,7 +609,10 @@ class FacturaDialog(tk.Toplevel):
             base += ln["base"]
             iva += ln["cuota_iva"]
             ret += ln["cuota_irpf"]
-        total = base + iva + ret
+        base = _round2(base)
+        iva = _round2(iva)
+        ret = _round2(ret)
+        total = _round2(base + iva + ret)
         self.lbl_tot_base.config(text=f"Base: {base:.2f}")
         self.lbl_tot_iva.config(text=f"IVA: {iva:.2f}")
         self.lbl_tot_ret.config(text=f"IRPF: {ret:.2f}")
@@ -489,16 +633,17 @@ class FacturaDialog(tk.Toplevel):
         idx = self.cb_tercero.current()
         if idx >= 0:
             tercero_id = self._terceros_cache[idx].get("id")
+        fecha_common = self.var_fecha_exp.get().strip()
         self.result = {
             "id": self.factura.get("id"),
             "codigo_empresa": self.factura.get("codigo_empresa"),
             "tercero_id": tercero_id,
             "serie": self.var_serie.get().strip(),
             "numero": self.var_numero.get().strip(),
-            "numero_largo_sii": self.var_numero_largo.get().strip(),
-            "fecha_asiento": self.var_fecha_asiento.get().strip(),
-            "fecha_expedicion": self.var_fecha_exp.get().strip(),
-            "fecha_operacion": self.var_fecha_op.get().strip(),
+            "numero_largo_sii": self.factura.get("numero_largo_sii", ""),
+            "fecha_asiento": fecha_common,
+            "fecha_expedicion": fecha_common,
+            "fecha_operacion": fecha_common,
             "nif": self.var_nif.get().strip(),
             "nombre": self.var_nombre.get().strip(),
             "descripcion": self.var_desc.get().strip(),
@@ -516,7 +661,24 @@ class UIFacturasEmitidas(ttk.Frame):
         self.gestor = gestor
         self.codigo = codigo_empresa
         self.nombre = nombre_empresa
-        self.empresa_conf = gestor.get_empresa(codigo_empresa) or {"digitos_plan": 8, "serie_emitidas": "A", "siguiente_num_emitidas": 1}
+        base = {
+            "nombre": nombre_empresa,
+            "digitos_plan": 8,
+            "serie_emitidas": "A",
+            "siguiente_num_emitidas": 1,
+            "ejercicio": "",
+            "cif": "",
+            "direccion": "",
+            "poblacion": "",
+            "provincia": "",
+            "cp": "",
+            "telefono": "",
+            "email": "",
+            "logo_path": "",
+        }
+        emp_conf = gestor.get_empresa(codigo_empresa) or {}
+        base.update(emp_conf)
+        self.empresa_conf = base
         self._build()
 
     # ------------------- UI -------------------
@@ -579,7 +741,7 @@ class UIFacturasEmitidas(ttk.Frame):
                 + _to_float(ln.get("cuota_re"))
                 + _to_float(ln.get("cuota_irpf"))
             )
-        return total
+        return _round2(total)
 
     def _refresh_facturas(self):
         self.tv.delete(*self.tv.get_children())
@@ -592,7 +754,7 @@ class UIFacturasEmitidas(ttk.Frame):
                 values=(
                     fac.get("serie", ""),
                     fac.get("numero", ""),
-                    fac.get("fecha_asiento", ""),
+                    _to_fecha_ui_or_blank(fac.get("fecha_asiento", "")),
                     fac.get("nombre", ""),
                     f"{total:.2f}",
                     "Si" if fac.get("generada") else "No",
@@ -601,7 +763,11 @@ class UIFacturasEmitidas(ttk.Frame):
             )
 
     def _selected_ids(self):
-        return list(self.tv.selection())
+        sel = list(self.tv.selection())
+        if sel:
+            return sel
+        focus = self.tv.focus()
+        return [focus] if focus else []
 
     def _serie(self):
         return str(self.empresa_conf.get("serie_emitidas", "A") or "A")
@@ -689,23 +855,205 @@ class UIFacturasEmitidas(ttk.Frame):
         TercerosDialog(self, self.gestor, self.codigo, int(self.empresa_conf.get("digitos_plan", 8)))
 
     # ------------------- Exportar PDF -------------------
-    def _simple_pdf(self, path: str, titulo: str, lines: list):
-        y = 780
-        contents = ["BT\n/F1 12 Tf\n"]
-        contents.append(f"50 {y} Td ({titulo}) Tj\n")
-        y -= 20
-        for ln in lines:
-            safe_ln = ln.replace("(", "[").replace(")", "]")
-            contents.append(f"50 {y} Td ({safe_ln}) Tj\n")
+    def _pdf_escape(self, text: str) -> str:
+        return str(text or "").replace("\\", "\\\\").replace("(", "[").replace(")", "]")
+
+    def _totales_factura(self, fac: dict):
+        base = iva = re = ret = 0.0
+        for ln in fac.get("lineas", []):
+            base += _to_float(ln.get("base"))
+            iva += _to_float(ln.get("cuota_iva"))
+            re += _to_float(ln.get("cuota_re"))
+            ret += _to_float(ln.get("cuota_irpf"))
+        total = base + iva + re + ret
+        return {
+            "base": _round2(base),
+            "iva": _round2(iva),
+            "re": _round2(re),
+            "ret": _round2(ret),
+            "total": _round2(total),
+        }
+
+    def _cliente_factura(self, fac: dict):
+        cli = next(
+            (
+                t
+                for t in self.gestor.listar_terceros()
+                if str(t.get("id")) == str(fac.get("tercero_id"))
+            ),
+            {},
+        )
+        return {
+            "nombre": fac.get("nombre") or cli.get("nombre", ""),
+            "nif": fac.get("nif") or cli.get("nif", ""),
+            "direccion": cli.get("direccion", ""),
+            "cp": cli.get("cp", ""),
+            "poblacion": cli.get("poblacion", ""),
+            "provincia": cli.get("provincia", ""),
+            "telefono": cli.get("telefono", ""),
+            "email": cli.get("email", ""),
+        }
+
+    def _logo_jpeg(self):
+        path = str(self.empresa_conf.get("logo_path") or "").strip()
+        if not path or not os.path.exists(path):
+            return None
+        if not path.lower().endswith((".jpg", ".jpeg")):
+            return None
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+            # Buscar marcador SOF para dimensiones
+            i = 0
+            while i < len(data) - 9:
+                if data[i] != 0xFF:
+                    i += 1
+                    continue
+                marker = data[i + 1]
+                if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                    if i + 9 >= len(data):
+                        break
+                    h, w = struct.unpack(">HH", data[i + 5 : i + 9])
+                    comp = data[i + 9] if i + 9 < len(data) else 3
+                    return {"data": data, "w": w, "h": h, "components": comp}
+                else:
+                    if i + 4 >= len(data):
+                        break
+                    seg_len = struct.unpack(">H", data[i + 2 : i + 4])[0]
+                    i += seg_len + 2
+        except Exception:
+            return None
+        return None
+
+    def _factura_pdf(self, path: str, fac: dict):
+        cliente = self._cliente_factura(fac)
+        tot = self._totales_factura(fac)
+
+        def t(x, y, txt, size=11, bold=False):
+            font = "F2" if bold else "F1"
+            return f"BT /{font} {size} Tf 1 0 0 1 {x} {y} Tm ({self._pdf_escape(txt)}) Tj ET\n"
+
+        y = 800
+        body = []
+        logo = self._logo_jpeg()
+        logo_cmd = ""
+        if logo:
+            disp_w = 120
+            disp_h = max(40, int(logo["h"] * disp_w / max(logo["w"], 1)))
+            logo_cmd = f"q {disp_w} 0 0 {disp_h} 50 {y - disp_h + 10} cm /Im1 Do Q\n"
+            y -= disp_h + 10
+
+        body.append(t(50, y, "Factura emitida", 16, True))
+        y -= 22
+        body.append(t(50, y, f"Serie {fac.get('serie','')} - Numero {fac.get('numero','')}", 12, True))
+        body.append(t(320, y, f"Fecha: {_to_fecha_ui_or_blank(fac.get('fecha_expedicion') or fac.get('fecha_asiento',''))}", 11))
+        y -= 22
+
+        body.append(t(50, y, "Empresa emisora", 12, True))
+        y -= 14
+        emitter = self.empresa_conf
+        body.append(t(50, y, f"{emitter.get('nombre') or self.nombre} (CIF {emitter.get('cif','')})", 10))
+        y -= 12
+        dir_line = ", ".join(filter(None, [emitter.get("direccion"), emitter.get("cp"), emitter.get("poblacion")]))
+        if dir_line:
+            body.append(t(50, y, dir_line, 10))
+            y -= 12
+        prov_line = ", ".join(filter(None, [emitter.get("provincia"), emitter.get("telefono"), emitter.get("email")]))
+        if prov_line:
+            body.append(t(50, y, prov_line, 10))
+            y -= 12
+        info_eje = emitter.get("ejercicio", "")
+        body.append(t(50, y, f"Ejercicio: {info_eje}   Serie: {fac.get('serie','') or '-'}", 10))
+        y -= 18
+
+        body.append(t(50, y, "Cliente", 12, True))
+        y -= 14
+        body.append(t(50, y, f"{cliente.get('nombre','')} ({cliente.get('nif','')})", 10))
+        y -= 12
+        addr = ", ".join(filter(None, [cliente.get("direccion"), cliente.get("cp"), cliente.get("poblacion")]))
+        if addr:
+            body.append(t(50, y, addr, 10))
+            y -= 12
+        contacto = ", ".join(filter(None, [cliente.get("provincia"), cliente.get("telefono"), cliente.get("email")]))
+        if contacto:
+            body.append(t(50, y, contacto, 10))
+            y -= 12
+        y -= 10
+
+        headers = [
+            ("Concepto", 50),
+            ("Unid", 270),
+            ("P. unit", 320),
+            ("Base", 380),
+            ("% IVA", 440),
+            ("Cuota IVA", 490),
+            ("% IRPF", 545),
+        ]
+        for txt, x in headers:
+            body.append(t(x, y, txt, 11, True))
+        y -= 12
+
+        for ln in fac.get("lineas", []):
+            body.append(t(50, y, str(ln.get("concepto", ""))[:42], 10))
+            body.append(t(270, y, f"{_to_float(ln.get('unidades')):.2f}", 10))
+            body.append(t(320, y, f"{_to_float(ln.get('precio')):.2f}", 10))
+            body.append(t(380, y, f"{_to_float(ln.get('base')):.2f}", 10))
+            body.append(t(440, y, f"{_to_float(ln.get('pct_iva')):.2f}%", 10))
+            body.append(t(490, y, f"{_to_float(ln.get('cuota_iva')):.2f}", 10))
+            body.append(t(545, y, f"{_to_float(ln.get('pct_irpf')):.2f}%", 10))
+            y -= 12
+
+        y -= 16
+        body.append(t(360, y, "Base imponible:", 11, True))
+        body.append(t(500, y, f"{tot['base']:.2f}", 11))
+        y -= 14
+        body.append(t(360, y, "IVA:", 11, True))
+        body.append(t(500, y, f"{tot['iva']:.2f}", 11))
+        y -= 14
+        if abs(tot["re"]) > 0.001:
+            body.append(t(360, y, "Recargo Eq.:", 11, True))
+            body.append(t(500, y, f"{tot['re']:.2f}", 11))
+            y -= 14
+            body.append(t(360, y, "IRPF:", 11, True))
+            body.append(t(500, y, f"{tot['ret']:.2f}", 11))
             y -= 16
-        contents.append("ET\n")
-        stream = "".join(contents).encode("latin-1", "ignore")
+        body.append(t(360, y, "Total factura:", 12, True))
+        body.append(t(500, y, f"{tot['total']:.2f}", 12, True))
+
+        content_parts = []
+        if logo_cmd:
+            content_parts.append(logo_cmd)
+        content_parts.extend(body)
+        stream = "".join(content_parts).encode("latin-1", "ignore")
         objs = []
         objs.append("1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n")
         objs.append("2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n")
-        objs.append("3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj\n")
+
+        # Fuentes
+        objs.append(None)  # placeholder for page, lo rellenamos mas abajo
         objs.append(f"4 0 obj << /Length {len(stream)} >> stream\n".encode() + stream + b"endstream\nendobj\n")
         objs.append("5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n")
+        objs.append("6 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj\n")
+
+        xobject_ref = ""
+        if logo:
+            color_space = "/DeviceGray" if logo["components"] == 1 else "/DeviceRGB"
+            objs.append(
+                f"7 0 obj << /Type /XObject /Subtype /Image /Width {logo['w']} /Height {logo['h']} "
+                f"/ColorSpace {color_space} /BitsPerComponent 8 /Filter /DCTDecode /Length {len(logo['data'])} >> stream\n".encode()
+                + logo["data"]
+                + b"endstream\nendobj\n"
+            )
+            xobject_ref = "/XObject << /Im1 7 0 R >>"
+
+        res_parts = ["/Font << /F1 5 0 R /F2 6 0 R >>"]
+        if xobject_ref:
+            res_parts.append(xobject_ref)
+        page_res = "/Resources << " + " ".join(res_parts) + " >>"
+        objs[2] = (
+            "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+            f"/Contents 4 0 R {page_res} >> endobj\n"
+        )
         with open(path, "wb") as f:
             f.write(b"%PDF-1.4\n")
             offsets = []
@@ -728,21 +1076,6 @@ class UIFacturasEmitidas(ttk.Frame):
         fac = next((f for f in self.gestor.listar_facturas_emitidas(self.codigo) if str(f.get("id")) == str(sel[0])), None)
         if not fac:
             return
-        lines = [
-            f"Serie/Numero: {fac.get('serie','')}-{fac.get('numero','')}",
-            f"Fecha: {fac.get('fecha_asiento','')}",
-            f"Cliente: {fac.get('nombre','')} ({fac.get('nif','')})",
-            f"Descripcion: {fac.get('descripcion','')}",
-            f"Subcuenta: {fac.get('subcuenta_cliente','')}",
-            "",
-            "Lineas:",
-        ]
-        for ln in fac.get("lineas", []):
-            lines.append(
-                f"- {ln.get('concepto','')}: {ln.get('unidades',0)} x {ln.get('precio',0)} = {ln.get('base',0)} "
-                f"IVA {ln.get('pct_iva',0)}% ({ln.get('cuota_iva',0)}) IRPF {ln.get('pct_irpf',0)}% ({ln.get('cuota_irpf',0)})"
-            )
-        lines.append(f"Total: {self._compute_total(fac):.2f}")
 
         save_path = filedialog.asksaveasfilename(
             title="Exportar PDF",
@@ -753,7 +1086,7 @@ class UIFacturasEmitidas(ttk.Frame):
         if not save_path:
             return
         try:
-            self._simple_pdf(save_path, "Factura emitida", lines)
+            self._factura_pdf(save_path, fac)
             messagebox.showinfo("Gest2A3Eco", f"PDF generado:\n{save_path}")
         except Exception as e:
             messagebox.showerror("Gest2A3Eco", f"No se pudo generar el PDF:\n{e}")
@@ -778,13 +1111,13 @@ class UIFacturasEmitidas(ttk.Frame):
             r.update(
                 {
                     "Descripcion Linea": ln.get("concepto", "") or fac.get("descripcion", ""),
-                    "Base": _to_float(ln.get("base")),
-                    "Cuota IVA": _to_float(ln.get("cuota_iva")),
-                    "Porcentaje IVA": _to_float(ln.get("pct_iva")),
-                    "Porcentaje Recargo Equivalencia": _to_float(ln.get("pct_re")),
-                    "Cuota Recargo Equivalencia": _to_float(ln.get("cuota_re")),
-                    "Porcentaje Retencion IRPF": _to_float(ln.get("pct_irpf")),
-                    "Cuota Retencion IRPF": _to_float(ln.get("cuota_irpf")),
+                    "Base": _round2(_to_float(ln.get("base"))),
+                    "Cuota IVA": _round2(_to_float(ln.get("cuota_iva"))),
+                    "Porcentaje IVA": _round2(_to_float(ln.get("pct_iva"))),
+                    "Porcentaje Recargo Equivalencia": _round2(_to_float(ln.get("pct_re"))),
+                    "Cuota Recargo Equivalencia": _round2(_to_float(ln.get("cuota_re"))),
+                    "Porcentaje Retencion IRPF": _round2(_to_float(ln.get("pct_irpf"))),
+                    "Cuota Retencion IRPF": _round2(_to_float(ln.get("cuota_irpf"))),
                 }
             )
             rows.append(r)
@@ -804,11 +1137,22 @@ class UIFacturasEmitidas(ttk.Frame):
             messagebox.showerror("Gest2A3Eco", "Plantilla no encontrada.")
             return
 
+        facturas_sel = []
         rows = []
         for fid in sel:
             fac = next((f for f in self.gestor.listar_facturas_emitidas(self.codigo) if str(f.get("id")) == str(fid)), None)
             if fac:
+                facturas_sel.append(fac)
                 rows.extend(self._factura_to_rows(fac))
+
+        ya_generadas = [f for f in facturas_sel if f.get("generada")]
+        if ya_generadas:
+            nums = ", ".join(f"{f.get('serie','')}-{f.get('numero','')}" for f in ya_generadas)
+            if not messagebox.askyesno(
+                "Gest2A3Eco",
+                f"Las facturas {nums} ya están marcadas como generadas.\n¿Generar suenlace de todas formas?",
+            ):
+                return
 
         if not rows:
             messagebox.showwarning("Gest2A3Eco", "No hay lineas para generar.")
