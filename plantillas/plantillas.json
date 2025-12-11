@@ -4,27 +4,17 @@
       "codigo": "00423",
       "nombre": "Asesoria Gestinem SL",
       "digitos_plan": 8,
-      "ejercicio": 2025,
-      "serie_emitidas": "A",
-      "siguiente_num_emitidas": 1,
-      "cif": "B16916967",
-      "direccion": "CL ATILANO RODRIGUEZ 4, ENTLO 7",
-      "cp": "39002",
-      "poblacion": "SANTANDER",
-      "provincia": "CANTABRIA",
-      "telefono": "",
-      "email": "jjdominguez@gestinem.es",
-      "logo_path": ""
+      "ejercicio": 2025
     },
     {
       "codigo": "00896",
-      "nombre": "Lergiani SL",
+      "nombre": "LERGIANI SL",
       "digitos_plan": 8,
       "ejercicio": 2025
     },
     {
       "codigo": "00020",
-      "nombre": "Jorge Portilla Luis Alfonso",
+      "nombre": "JORGE PORTILLA LUIS ALFONSO",
       "digitos_plan": 8,
       "ejercicio": 2025
     },
@@ -48,13 +38,13 @@
     },
     {
       "codigo": "00086",
-      "nombre": "Tinas de Pechon S.L.",
+      "nombre": "TINAS DE PECHON S.L.",
       "digitos_plan": 8,
       "ejercicio": 2025
     },
     {
       "codigo": "00352",
-      "nombre": "Marine & Hidrocomponents S.L.",
+      "nombre": "MARINE &HIDROCOMPONENTS S.L.",
       "digitos_plan": 8,
       "ejercicio": 2025
     },
@@ -66,31 +56,63 @@
     },
     {
       "codigo": "00466",
-      "nombre": "Los Pollares 2017 S.L.",
+      "nombre": "LOS POLLARES 2017 S.L.",
+      "digitos_plan": 8,
+      "ejercicio": 2025
+    },
+    {
+      "codigo": "00007",
+      "nombre": "LA CASITA DE SNUPY S.C.",
       "digitos_plan": 8,
       "ejercicio": 2025
     },
     {
       "codigo": "00029",
-      "nombre": "YELLOW STAR SL",
+      "nombre": "YELOW STAR SL",
       "digitos_plan": 8,
       "ejercicio": 2025
     },
     {
-      "codigo": "00423",
-      "nombre": "Asesoria Gestinem SL",
+      "codigo": "00924",
+      "nombre": "Desbocado & Ro S.L.",
       "digitos_plan": 8,
-      "ejercicio": 2026,
-      "serie_emitidas": "A",
-      "siguiente_num_emitidas": 1,
-      "cif": "B16916967",
-      "direccion": "CL ATILANO RODRIGUEZ 4, ENTLO 7",
-      "cp": "39002",
-      "poblacion": "SANTANDER",
-      "provincia": "CANTABRIA",
-      "telefono": "691 474 519",
-      "email": "jjdominguez@gestinem.es",
-      "logo_path": ""
+      "ejercicio": 2025
+    },
+    {
+      "codigo": "00065",
+      "nombre": "Hotel Don Pablo S.L.",
+      "digitos_plan": 8,
+      "ejercicio": 2025
+    },
+    {
+      "codigo": "00087",
+      "nombre": "Contratas y Servicios Gomvic S.L.",
+      "digitos_plan": 8,
+      "ejercicio": 2025
+    },
+    {
+      "codigo": "00902",
+      "nombre": "Cargavia Express S.L.",
+      "digitos_plan": 8,
+      "ejercicio": 2025
+    },
+    {
+      "codigo": "00727",
+      "nombre": "ARNAIZ PEREZ, JUAN ALVARO",
+      "digitos_plan": 8,
+      "ejercicio": 2025
+    },
+    {
+      "codigo": "00985",
+      "nombre": "TURCANU, ANDREI",
+      "digitos_plan": 8,
+      "ejercicio": 2025
+    },
+    {
+      "codigo": "000193",
+      "nombre": "ARBEIT GESTION S.L.",
+      "digitos_plan": 8,
+      "ejercicio": 2025
     }
   ],
   "bancos": [
@@ -338,77 +360,24 @@
       ]
     },
     {
-      "codigo_empresa": "00844",
-      "banco": "BBVA",
-      "subcuenta_banco": "57200002",
-      "subcuenta_por_defecto": "55500000",
+      "codigo_empresa": "00505",
+      "banco": "",
+      "subcuenta_banco": "",
+      "subcuenta_por_defecto": "",
       "excel": {
-        "primera_fila_procesar": 2,
+        "primera_fila_procesar": 10,
         "ignorar_filas": "",
         "condicion_cuenta_generica": "",
         "columnas": {
-          "Fecha Asiento": "C",
-          "Descripcion Factura": "F",
-          "Concepto": "F",
-          "Importe": "I",
-          "NIF Cliente Proveedor": "",
-          "Nombre Cliente Proveedor": ""
-        }
-      },
-      "conceptos": []
-    },
-    {
-      "codigo_empresa": "00844",
-      "banco": "Caixabank",
-      "subcuenta_banco": "57200001",
-      "subcuenta_por_defecto": "55500000",
-      "excel": {
-        "primera_fila_procesar": 2,
-        "ignorar_filas": "",
-        "condicion_cuenta_generica": "",
-        "columnas": {
-          "Fecha Asiento": "A",
-          "Descripcion Factura": "D",
-          "Concepto": "D",
+          "Fecha Asiento": "",
+          "Descripcion Factura": "",
+          "Concepto": "",
           "Importe": "",
           "NIF Cliente Proveedor": "",
           "Nombre Cliente Proveedor": ""
         }
       },
       "conceptos": []
-    },
-    {
-      "codigo_empresa": "00505",
-      "banco": "SABADELL",
-      "subcuenta_banco": "57200002",
-      "subcuenta_por_defecto": "55500000",
-      "excel": {
-        "primera_fila_procesar": 2,
-        "ignorar_filas": "",
-        "condicion_cuenta_generica": "",
-        "columnas": {
-          "Fecha Asiento": "A",
-          "Descripcion Factura": "B",
-          "Concepto": "B",
-          "Importe": "C",
-          "NIF Cliente Proveedor": "",
-          "Nombre Cliente Proveedor": ""
-        }
-      },
-      "conceptos": [
-        {
-          "patron": "TRANSFERENCIA A JOSÉ MANUEL COLSA",
-          "subcuenta": "55100000"
-        },
-        {
-          "patron": "TRASPASO A 7140-00021828-30 WKEGHQF75PEIS6XF6",
-          "subcuenta": "55500000"
-        },
-        {
-          "patron": "TRASPASO 7140-00021828-30 JXCQI6WDGCNFFHO5M",
-          "subcuenta": "55500000"
-        }
-      ]
     },
     {
       "codigo_empresa": "00372",
@@ -524,7 +493,7 @@
           "Fecha Asiento": "A",
           "Descripcion Factura": "F",
           "Concepto": "F",
-          "Importe": "J",
+          "Importe": "I",
           "NIF Cliente Proveedor": "",
           "Nombre Cliente Proveedor": ""
         }
@@ -581,10 +550,10 @@
         "ignorar_filas": "",
         "condicion_cuenta_generica": "",
         "columnas": {
-          "Fecha Asiento": "",
-          "Descripcion Factura": "",
-          "Concepto": "",
-          "Importe": "",
+          "Fecha Asiento": "C",
+          "Descripcion Factura": "G",
+          "Concepto": "G",
+          "Importe": "I",
           "NIF Cliente Proveedor": "",
           "Nombre Cliente Proveedor": ""
         }
@@ -858,23 +827,605 @@
       "conceptos": []
     },
     {
-      "codigo_empresa": "00423",
-      "banco": "Sabadell",
+      "codigo_empresa": "00007",
+      "banco": "BBVA",
       "subcuenta_banco": "57200001",
       "subcuenta_por_defecto": "55500000",
-      "digitos_plan": 8,
-      "ejercicio": 2026,
       "excel": {
         "primera_fila_procesar": 2,
         "ignorar_filas": "",
         "condicion_cuenta_generica": "",
         "columnas": {
-          "Fecha Asiento": "B",
-          "Descripcion Factura": "",
+          "Fecha Asiento": "C",
+          "Descripcion Factura": "H",
+          "Concepto": "H",
+          "Importe": "I",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "00505",
+      "banco": "SABADELL 0002182830",
+      "subcuenta_banco": "57200001",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "B",
+          "Concepto": "B",
+          "Importe": "C",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": [
+        {
+          "patron": "TRANSFERENCIA A JOSÉ MANUEL COLSA",
+          "subcuenta": "55100000"
+        },
+        {
+          "patron": "TRASPASO A 7140-00021828-30 WKEGHQF75PEIS6XF6",
+          "subcuenta": "55500000"
+        },
+        {
+          "patron": "TRASPASO 7140-00021828-30 JXCQI6WDGCNFFHO5M",
+          "subcuenta": "55500000"
+        }
+      ]
+    },
+    {
+      "codigo_empresa": "00505",
+      "banco": "SABADELL  0002395449",
+      "subcuenta_banco": "57200002",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "B",
+          "Concepto": "B",
+          "Importe": "C",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": [
+        {
+          "patron": "TRANSFERENCIA A JOSÉ MANUEL COLSA",
+          "subcuenta": "55100000"
+        },
+        {
+          "patron": "TRASPASO A 7140-00021828-30 WKEGHQF75PEIS6XF6",
+          "subcuenta": "55500000"
+        },
+        {
+          "patron": "TRASPASO 7140-00021828-30 JXCQI6WDGCNFFHO5M",
+          "subcuenta": "55500000"
+        }
+      ]
+    },
+    {
+      "codigo_empresa": "00924",
+      "banco": "Banco Santander",
+      "subcuenta_banco": "57200001",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "C",
           "Concepto": "C",
           "Importe": "D",
           "NIF Cliente Proveedor": "",
           "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "00086",
+      "banco": "Santander 1147",
+      "subcuenta_banco": "57200007",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "C",
+          "Concepto": "C",
+          "Importe": "D",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "00065",
+      "banco": "Caixabank 0876",
+      "subcuenta_banco": "57200007",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "C",
+          "Concepto": "C",
+          "Importe": "E",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "00065",
+      "banco": "Santander 2752",
+      "subcuenta_banco": "52010001",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "C",
+          "Concepto": "C",
+          "Importe": "D",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "00087",
+      "banco": "Bankinter 2337",
+      "subcuenta_banco": "57200008",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "F",
+          "Concepto": "F",
+          "Importe": "J",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "00087",
+      "banco": "Santander 7452",
+      "subcuenta_banco": "52010003",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "C",
+          "Concepto": "C",
+          "Importe": "D",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "00087",
+      "banco": "Santander 1368",
+      "subcuenta_banco": "52010004",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "",
+          "Descripcion Factura": "",
+          "Concepto": "",
+          "Importe": "",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "00902",
+      "banco": "Caixabank 0529",
+      "subcuenta_banco": "57200001",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "D",
+          "Concepto": "D",
+          "Importe": "E",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": [
+        {
+          "patron": "*Scope* Telemetr",
+          "subcuenta": "41000012"
+        },
+        {
+          "patron": "*Nomina*",
+          "subcuenta": "46500000"
+        },
+        {
+          "patron": "*NOMINA^*",
+          "subcuenta": "46500000"
+        },
+        {
+          "patron": "Nómina*",
+          "subcuenta": "46500000"
+        },
+        {
+          "patron": "*RECIBO UNICO MYBOX*",
+          "subcuenta": "62500003"
+        },
+        {
+          "patron": "*RED ESPANOLA SERV*",
+          "subcuenta": "40000003"
+        },
+        {
+          "patron": "*ASES.GESTINEM SL*",
+          "subcuenta": "41000002"
+        },
+        {
+          "patron": "*TALLER MORENO*",
+          "subcuenta": "41000007"
+        },
+        {
+          "patron": "*TALLER MORENO E H*",
+          "subcuenta": "41000007"
+        },
+        {
+          "patron": "*TGSS.COTIZACION 1*",
+          "subcuenta": "47600000"
+        },
+        {
+          "patron": "*DIGI SPAIN TELEC.*",
+          "subcuenta": "41000010"
+        },
+        {
+          "patron": "*DIGI*",
+          "subcuenta": "41000010"
+        },
+        {
+          "patron": "*OBRAMAT SANTANDER*",
+          "subcuenta": "40000001"
+        },
+        {
+          "patron": "*OBRAMAT*",
+          "subcuenta": "40000001"
+        },
+        {
+          "patron": "*INTERES.DESCUBIERTO*",
+          "subcuenta": "62600000"
+        },
+        {
+          "patron": "*COM.RECLAM.DESCUB.*",
+          "subcuenta": "62600000"
+        },
+        {
+          "patron": "*PAG NOMINAS*",
+          "subcuenta": "46500000"
+        },
+        {
+          "patron": "*PRECIO ED. EXTRACTO*",
+          "subcuenta": "62600000"
+        },
+        {
+          "patron": "*C.BUSINESSBANK*",
+          "subcuenta": "62600000"
+        },
+        {
+          "patron": "*Q2827003A001*",
+          "subcuenta": "47600000"
+        }
+      ]
+    },
+    {
+      "codigo_empresa": "00844",
+      "banco": "Caixabank 3904",
+      "subcuenta_banco": "57200001",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Factura": "D",
+          "Concepto": "D",
+          "Importe": "",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "00844",
+      "banco": "BBVA 2175",
+      "subcuenta_banco": "57200002",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "C",
+          "Descripcion Factura": "G",
+          "Concepto": "F",
+          "Importe": "I",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": [
+        {
+          "patron": "*RET. EFECTIVO  A DEBITO CON TA*",
+          "subcuenta": "57000000"
+        },
+        {
+          "patron": "*EFECTIVO*",
+          "subcuenta": "57000000"
+        },
+        {
+          "patron": "*RET. EFECTIVO*",
+          "subcuenta": "57000000"
+        },
+        {
+          "patron": "*LIQUIDACION REMESA DE COMERCIO*",
+          "subcuenta": "43099999"
+        },
+        {
+          "patron": "*LIQUIDACION REMESA DE*",
+          "subcuenta": "43099999"
+        },
+        {
+          "patron": "*REMESA DE COMERCIO*",
+          "subcuenta": "43099999"
+        },
+        {
+          "patron": "*ADEUDO MENSUAL DE TARJETA*",
+          "subcuenta": "57200101"
+        },
+        {
+          "patron": "*ABONO POR CHEQUE INGRESADO EN*",
+          "subcuenta": "43000007"
+        },
+        {
+          "patron": "*ADEUDO DE TRANSPORTE Y LOGISTI*",
+          "subcuenta": "41000005"
+        },
+        {
+          "patron": "*LIQUIDACION DE INTERESES-COMIS*",
+          "subcuenta": "62600000"
+        },
+        {
+          "patron": "*INTERESES Y COMISIONES*",
+          "subcuenta": "62600000"
+        },
+        {
+          "patron": "*INTERESES-COMISIONES*",
+          "subcuenta": "62600000"
+        },
+        {
+          "patron": "*COMISIONES*",
+          "subcuenta": "62600000"
+        },
+        {
+          "patron": "*IBERDROLA*",
+          "subcuenta": "41000019"
+        },
+        {
+          "patron": "*ADEUDO DE IBERDROLA*",
+          "subcuenta": "41000019"
+        },
+        {
+          "patron": "*ADEUDO ORANGE-FRANCE TELECOM*",
+          "subcuenta": "55100000"
+        },
+        {
+          "patron": "*ORANGE*",
+          "subcuenta": "55100000"
+        },
+        {
+          "patron": "*Santa Lucia S.A.*",
+          "subcuenta": "55100000"
+        },
+        {
+          "patron": "*LIDL*",
+          "subcuenta": "40000007"
+        },
+        {
+          "patron": "*Estacion De Servicio Nuevsantander Es*",
+          "subcuenta": "40000001"
+        },
+        {
+          "patron": "*Estacion De Servicio NuevsantandeR*",
+          "subcuenta": "40000001"
+        },
+        {
+          "patron": "*DHL EXPRESS SPAIN*",
+          "subcuenta": "43000026"
+        },
+        {
+          "patron": "*HORNO SAN JOSE*",
+          "subcuenta": "40000012"
+        },
+        {
+          "patron": "*AMPARO*",
+          "subcuenta": "41000007"
+        },
+        {
+          "patron": "*LUIS ANTONIO*",
+          "subcuenta": "46500000"
+        },
+        {
+          "patron": "*NOMINA*",
+          "subcuenta": "46500000"
+        },
+        {
+          "patron": "*ADELANTO NOMINA*",
+          "subcuenta": "46500000"
+        },
+        {
+          "patron": "*ADRIANO*",
+          "subcuenta": "46500000"
+        },
+        {
+          "patron": "*BAR*",
+          "subcuenta": "41000007"
+        },
+        {
+          "patron": "*GASTROBAR*",
+          "subcuenta": "41000007"
+        },
+        {
+          "patron": "*RENTA BAR*",
+          "subcuenta": "41000007"
+        },
+        {
+          "patron": "*ENMANUEL*",
+          "subcuenta": "46500000"
+        },
+        {
+          "patron": "*Somahoz Sl Corrales De Bes*",
+          "subcuenta": "40000002"
+        },
+        {
+          "patron": "*Somahoz Sl*",
+          "subcuenta": "40000002"
+        },
+        {
+          "patron": "*Topcash Cndina Sntnder Santander Es*",
+          "subcuenta": "40000006"
+        },
+        {
+          "patron": "*Topcash*",
+          "subcuenta": "40000006"
+        },
+        {
+          "patron": "*Manuel calvo*",
+          "subcuenta": "46500000"
+        },
+        {
+          "patron": "*jackson andres*",
+          "subcuenta": "46500000"
+        },
+        {
+          "patron": "*Ctt Expresso Servico Postais*",
+          "subcuenta": "43000019"
+        },
+        {
+          "patron": "*CTT*",
+          "subcuenta": "43000019"
+        },
+        {
+          "patron": "*Aora Conecta*",
+          "subcuenta": "41000015"
+        }
+      ]
+    },
+    {
+      "codigo_empresa": "000193",
+      "banco": "Unicaja 9076",
+      "subcuenta_banco": "57200005",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Asiento": "B",
+          "Concepto": "B",
+          "Importe": "H"
+        }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "000193",
+      "banco": "Sabadell",
+      "subcuenta_banco": "57200001",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 1,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "B",
+          "Descripcion Asiento": "B",
+          "Concepto": "C",
+          "Importe": "I"
+        }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "000193",
+      "banco": "Santander 4793",
+      "subcuenta_banco": "57200006",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 1,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Asiento": "B",
+          "Concepto": "B",
+          "Importe": "H"
+        }
+      },
+      "conceptos": []
+    },
+    {
+      "codigo_empresa": "00896",
+      "banco": "Bankinter",
+      "subcuenta_banco": "57200001",
+      "subcuenta_por_defecto": "55500000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "A",
+          "Descripcion Asiento": "F",
+          "Concepto": "F",
+          "Importe": "K"
         }
       },
       "conceptos": []
@@ -927,13 +1478,13 @@
     },
     {
       "codigo_empresa": "00020",
-      "nombre": "Facturas Emitidas",
-      "cuenta_cliente_prefijo": "43000000",
+      "nombre": "Facturas emitidas",
+      "cuenta_cliente_prefijo": "430",
       "cuenta_ingreso_por_defecto": "70500000",
       "cuenta_iva_repercutido_defecto": "47700000",
       "excel": {
         "primera_fila_procesar": 2,
-        "ignorar_filas": "",
+        "ignorar_filas": "1",
         "condicion_cuenta_generica": "",
         "columnas": {
           "Serie": "",
@@ -944,17 +1495,17 @@
           "Fecha Operacion": "B",
           "NIF Cliente Proveedor": "F",
           "Nombre Cliente Proveedor": "D",
-          "Descripcion Factura": "L",
+          "Descripcion Factura": "I",
           "Observaciones": "",
-          "Cuenta Cliente Proveedor": "",
-          "Cuenta Compras Ventas": "",
-          "Cuenta IVA": "",
+          "Cuenta Cliente Proveedor": "43000000",
+          "Cuenta Compras Ventas": "70500000",
+          "Cuenta IVA": "47700000",
           "Cuenta Recargo": "",
           "Cuenta Retenciones": "",
           "Cuenta Proveedor Importacion": "",
           "Cuenta Tesoreria Cobro Pago": "",
           "Base": "G",
-          "Porcentaje IVA": "M",
+          "Porcentaje IVA": "L",
           "Cuota IVA": "H",
           "Porcentaje Recargo Equivalencia": "",
           "Cuota Recargo Equivalencia": "",
@@ -998,35 +1549,181 @@
       }
     },
     {
-      "codigo_empresa": "00423",
-      "nombre": "Emitidas General",
-      "digitos_plan": 8,
-      "cliente_por_columna": true,
-      "col_cliente_codigo": "NIF",
+      "codigo_empresa": "00727",
+      "nombre": "Facturas Emitidas",
       "cuenta_cliente_prefijo": "43000000",
-      "cuenta_cliente_por_defecto": "43000000",
+      "cuenta_ingreso_por_defecto": "70500000",
+      "cuenta_iva_repercutido_defecto": "47700000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Serie": "",
+          "Numero Factura": "A",
+          "Numero Factura Largo SII": "",
+          "Fecha Asiento": "B",
+          "Fecha Expedicion": "B",
+          "Fecha Operacion": "B",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": "",
+          "Descripcion Factura": "C",
+          "Observaciones": "",
+          "Cuenta Cliente Proveedor": "",
+          "Cuenta Compras Ventas": "",
+          "Cuenta IVA": "",
+          "Cuenta Recargo": "",
+          "Cuenta Retenciones": "",
+          "Cuenta Proveedor Importacion": "",
+          "Cuenta Tesoreria Cobro Pago": "",
+          "Base": "F",
+          "Porcentaje IVA": "G",
+          "Cuota IVA": "H",
+          "Porcentaje Recargo Equivalencia": "",
+          "Cuota Recargo Equivalencia": "",
+          "Porcentaje Retencion IRPF": "",
+          "Cuota Retencion IRPF": "",
+          "Marca Factura Rectificativa": "",
+          "Fecha Original Rectificativa": "",
+          "Fecha Registro SII": "",
+          "Descripcion Ampliada Factura SII": "",
+          "Fecha Factura A Rectificar": "",
+          "Numero Factura A Rectificar": "",
+          "DUA": "",
+          "Tipo Factura SII": "",
+          "Clave Tipo Factura SII": "",
+          "NIF Representante": "",
+          "ISP Num Autofactura": "",
+          "Impreso": "",
+          "Es Toda La Factura Percibida En Metalico": "",
+          "Importe Percibido Metalico": "",
+          "Es Toda La Factura Transmision Inmueble Sujeto IVA": "",
+          "Importe Transmision Inmuebles Sujeto IVA": "",
+          "Factura Tique Inicial SII": "",
+          "Factura Tique Final SII": "",
+          "Numero Documentos Incluidos En La Serie": "",
+          "Emitida Por Terceros SII": "",
+          "Emitida Varios Destinatarios SII": "",
+          "Emitida Cupones Bonificaciones SII": "",
+          "Clave Retencion": "",
+          "Subclave Retencion": "",
+          "Naturaleza Retencion": "",
+          "Tipo FACTURA Factura Abono Rectificativa": "",
+          "Va A Iva": "",
+          "Factura En Prorrata": "",
+          "Afecta Modelo415": "",
+          "Marca Criterio Caja": "",
+          "Documento": "",
+          "Departamento Analitica": "",
+          "Porcentaje Analitica": "",
+          "Importe Analitica": ""
+        }
+      }
+    },
+    {
+      "codigo_empresa": "00985",
+      "nombre": "Facturas Emitidas",
+      "cuenta_cliente_prefijo": "",
       "cuenta_ingreso_por_defecto": "70000000",
       "cuenta_iva_repercutido_defecto": "47700000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Serie": "",
+          "Numero Factura": "B",
+          "Numero Factura Largo SII": "",
+          "Fecha Asiento": "A",
+          "Fecha Expedicion": "A",
+          "Fecha Operacion": "A",
+          "NIF Cliente Proveedor": "D",
+          "Nombre Cliente Proveedor": "E",
+          "Descripcion Factura": "K",
+          "Observaciones": "",
+          "Cuenta Cliente Proveedor": "C",
+          "Cuenta Compras Ventas": "",
+          "Cuenta IVA": "",
+          "Cuenta Recargo": "",
+          "Cuenta Retenciones": "",
+          "Cuenta Proveedor Importacion": "",
+          "Cuenta Tesoreria Cobro Pago": "",
+          "Base": "F",
+          "Porcentaje IVA": "G",
+          "Cuota IVA": "H",
+          "Porcentaje Recargo Equivalencia": "",
+          "Cuota Recargo Equivalencia": "",
+          "Porcentaje Retencion IRPF": "I",
+          "Cuota Retencion IRPF": "J",
+          "Marca Factura Rectificativa": "",
+          "Fecha Original Rectificativa": "",
+          "Fecha Registro SII": "",
+          "Descripcion Ampliada Factura SII": "",
+          "Fecha Factura A Rectificar": "",
+          "Numero Factura A Rectificar": "",
+          "DUA": "",
+          "Tipo Factura SII": "",
+          "Clave Tipo Factura SII": "",
+          "NIF Representante": "",
+          "ISP Num Autofactura": "",
+          "Impreso": "",
+          "Es Toda La Factura Percibida En Metalico": "",
+          "Importe Percibido Metalico": "",
+          "Es Toda La Factura Transmision Inmueble Sujeto IVA": "",
+          "Importe Transmision Inmuebles Sujeto IVA": "",
+          "Factura Tique Inicial SII": "",
+          "Factura Tique Final SII": "",
+          "Numero Documentos Incluidos En La Serie": "",
+          "Emitida Por Terceros SII": "",
+          "Emitida Varios Destinatarios SII": "",
+          "Emitida Cupones Bonificaciones SII": "",
+          "Clave Retencion": "",
+          "Subclave Retencion": "",
+          "Naturaleza Retencion": "",
+          "Tipo FACTURA Factura Abono Rectificativa": "",
+          "Va A Iva": "",
+          "Factura En Prorrata": "",
+          "Afecta Modelo415": "",
+          "Marca Criterio Caja": "",
+          "Documento": "",
+          "Departamento Analitica": "",
+          "Porcentaje Analitica": "",
+          "Importe Analitica": ""
+        }
+      }
+    }
+  ],
+  "facturas_recibidas": [
+    {
+      "codigo_empresa": "00423",
+      "nombre": "Recibidas General",
+      "digitos_plan": 8,
+      "proveedor_por_columna": true,
+      "col_proveedor_codigo": "NIF",
+      "cuenta_proveedor_prefijo": "40000000",
+      "cuenta_proveedor_por_defecto": "40000000",
+      "cuenta_gasto_por_defecto": "62900000",
+      "cuenta_iva_soportado_defecto": "47200000",
       "cuenta_retenciones_irpf": "47510000",
       "tipos_iva": [
         {
           "porcentaje": 21,
-          "cuenta_iva": "47700000"
+          "cuenta_iva": "47200000"
         },
         {
           "porcentaje": 10,
-          "cuenta_iva": "47710000"
+          "cuenta_iva": "47210000"
         },
         {
           "porcentaje": 4,
-          "cuenta_iva": "47720000"
+          "cuenta_iva": "47220000"
         }
       ],
       "soporta_retencion": true,
       "excel": {
         "primera_fila_procesar": 2,
-        "ignorar_filas": "Q=NOPROCESARFACTURA",
-        "condicion_cuenta_generica": "D=PARTICULAR",
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
         "columnas": {
           "Serie": "B",
           "Numero Factura": "E",
@@ -1039,28 +1736,25 @@
           "Nombre Cliente Proveedor": "G",
           "Cuenta Compras Ventas": "W"
         }
-      },
-      "ejercicio": 2026
-    }
-  ],
-  "facturas_recibidas": [
+      }
+    },
     {
       "codigo_empresa": "00029",
-      "nombre": "FACTURAS RECIBIDAS COVIRAN",
+      "nombre": "FACTURAS RECIBIDAS",
       "cuenta_proveedor_prefijo": "400",
       "cuenta_gasto_por_defecto": "60000100",
       "cuenta_iva_soportado_defecto": "47200000",
       "excel": {
         "primera_fila_procesar": 2,
-        "ignorar_filas": "",
+        "ignorar_filas": "S=0",
         "condicion_cuenta_generica": "",
         "columnas": {
           "Serie": "",
           "Numero Factura": "M",
           "Numero Factura Largo SII": "",
-          "Fecha Asiento": "L",
-          "Fecha Expedicion": "L",
-          "Fecha Operacion": "L",
+          "Fecha Asiento": "K",
+          "Fecha Expedicion": "K",
+          "Fecha Operacion": "K",
           "NIF Cliente Proveedor": "",
           "Nombre Cliente Proveedor": "",
           "Descripcion Factura": "N",
@@ -1115,37 +1809,78 @@
           "Importe Analitica": ""
         }
       }
-    }
-  ],
-  "facturas_emitidas_docs": [],
-  "terceros": [
-    {
-      "nif": "72044071K",
-      "nombre": "Juan Jose Dominguez Barrero",
-      "direccion": "Calle Atilano Rodriguez 4, Entlo 7",
-      "cp": "39002",
-      "poblacion": "Santander",
-      "provincia": "Cantabria",
-      "telefono": "",
-      "email": "",
-      "contacto": "",
-      "tipo": "cliente",
-      "id": "1765376641720"
-    }
-  ],
-  "terceros_empresas": [
-    {
-      "tercero_id": "1765376641720",
-      "codigo_empresa": "00423",
-      "subcuenta_cliente": "43000001",
-      "subcuenta_proveedor": ""
     },
     {
-      "tercero_id": "1765376641720",
-      "codigo_empresa": "00423",
-      "subcuenta_cliente": "43000001",
-      "subcuenta_proveedor": "",
-      "ejercicio": 2026
+      "codigo_empresa": "00985",
+      "nombre": "Facturas Recibidas",
+      "cuenta_proveedor_prefijo": "",
+      "cuenta_gasto_por_defecto": "60000000",
+      "cuenta_iva_soportado_defecto": "47200000",
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Serie": "",
+          "Numero Factura": "J",
+          "Numero Factura Largo SII": "",
+          "Fecha Asiento": "A",
+          "Fecha Expedicion": "A",
+          "Fecha Operacion": "A",
+          "NIF Cliente Proveedor": "C",
+          "Nombre Cliente Proveedor": "D",
+          "Descripcion Factura": "K",
+          "Observaciones": "",
+          "Cuenta Cliente Proveedor": "L",
+          "Cuenta Compras Ventas": "",
+          "Cuenta IVA": "",
+          "Cuenta Recargo": "",
+          "Cuenta Retenciones": "",
+          "Cuenta Proveedor Importacion": "",
+          "Cuenta Tesoreria Cobro Pago": "",
+          "Base": "F",
+          "Porcentaje IVA": "G",
+          "Cuota IVA": "H",
+          "Porcentaje Recargo Equivalencia": "",
+          "Cuota Recargo Equivalencia": "",
+          "Porcentaje Retencion IRPF": "",
+          "Cuota Retencion IRPF": "",
+          "Marca Factura Rectificativa": "",
+          "Fecha Original Rectificativa": "",
+          "Fecha Registro SII": "",
+          "Descripcion Ampliada Factura SII": "",
+          "Fecha Factura A Rectificar": "",
+          "Numero Factura A Rectificar": "",
+          "DUA": "",
+          "Tipo Factura SII": "",
+          "Clave Tipo Factura SII": "",
+          "NIF Representante": "",
+          "ISP Num Autofactura": "",
+          "Impreso": "",
+          "Es Toda La Factura Percibida En Metalico": "",
+          "Importe Percibido Metalico": "",
+          "Es Toda La Factura Transmision Inmueble Sujeto IVA": "",
+          "Importe Transmision Inmuebles Sujeto IVA": "",
+          "Factura Tique Inicial SII": "",
+          "Factura Tique Final SII": "",
+          "Numero Documentos Incluidos En La Serie": "",
+          "Emitida Por Terceros SII": "",
+          "Emitida Varios Destinatarios SII": "",
+          "Emitida Cupones Bonificaciones SII": "",
+          "Clave Retencion": "",
+          "Subclave Retencion": "",
+          "Naturaleza Retencion": "",
+          "Tipo FACTURA Factura Abono Rectificativa": "",
+          "Va A Iva": "",
+          "Factura En Prorrata": "",
+          "Afecta Modelo415": "",
+          "Marca Criterio Caja": "",
+          "Documento": "",
+          "Departamento Analitica": "",
+          "Porcentaje Analitica": "",
+          "Importe Analitica": ""
+        }
+      }
     }
   ]
 }

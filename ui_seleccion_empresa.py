@@ -24,16 +24,20 @@ class EmpresaDialog(Dialog):
         }
         if empresa:
             base.update(empresa)
+        # Normaliza valores None a "" para evitar errores de conversión
+        for k in ("digitos_plan", "ejercicio", "serie_emitidas", "siguiente_num_emitidas"):
+            if base.get(k) is None:
+                base[k] = ""
         self.empresa = base
         super().__init__(parent, titulo)
 
     def body(self, master):
         self.var_codigo = tk.StringVar(value=str(self.empresa.get("codigo","")))
         self.var_nombre = tk.StringVar(value=str(self.empresa.get("nombre","")))
-        self.var_dig = tk.StringVar(value=str(self.empresa.get("digitos_plan",8)))
-        self.var_eje = tk.StringVar(value=str(self.empresa.get("ejercicio",2025)))
-        self.var_serie = tk.StringVar(value=str(self.empresa.get("serie_emitidas","A")))
-        self.var_next = tk.StringVar(value=str(self.empresa.get("siguiente_num_emitidas",1)))
+        self.var_dig = tk.StringVar(value=str(self.empresa.get("digitos_plan") or ""))
+        self.var_eje = tk.StringVar(value=str(self.empresa.get("ejercicio") or ""))
+        self.var_serie = tk.StringVar(value=str(self.empresa.get("serie_emitidas") or ""))
+        self.var_next = tk.StringVar(value=str(self.empresa.get("siguiente_num_emitidas") or ""))
         self.var_cif = tk.StringVar(value=str(self.empresa.get("cif","")))
         self.var_dir = tk.StringVar(value=str(self.empresa.get("direccion","")))
         self.var_cp = tk.StringVar(value=str(self.empresa.get("cp","")))
@@ -130,7 +134,7 @@ class UISeleccionEmpresa(ttk.Frame):
                 e.get("nombre"),
                 e.get("cif",""),
                 e.get("digitos_plan",8),
-                e.get("ejercicio",2025),
+                e.get("ejercicio") if e.get("ejercicio") is not None else "",
                 e.get("serie_emitidas","A"),
                 e.get("siguiente_num_emitidas",1),
             ))

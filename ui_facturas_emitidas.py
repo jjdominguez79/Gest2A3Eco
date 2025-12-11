@@ -941,6 +941,7 @@ class UIFacturasEmitidas(ttk.Frame):
     def _factura_pdf(self, path: str, fac: dict):
         cliente = self._cliente_factura(fac)
         tot = self._totales_factura(fac)
+        obs = fac.get("descripcion") or ""
 
         def t(x, y, txt, size=11, bold=False):
             font = "F2" if bold else "F1"
@@ -957,41 +958,44 @@ class UIFacturasEmitidas(ttk.Frame):
             y -= disp_h + 10
 
         body.append(t(50, y, "Factura emitida", 16, True))
-        y -= 22
-        body.append(t(50, y, f"Serie {fac.get('serie','')} - Numero {fac.get('numero','')}", 12, True))
-        body.append(t(320, y, f"Fecha: {_to_fecha_ui_or_blank(fac.get('fecha_expedicion') or fac.get('fecha_asiento',''))}", 11))
-        y -= 22
+        y -= 24
 
-        body.append(t(50, y, "Empresa emisora", 12, True))
-        y -= 14
+        # Bloque emisor (izquierda)
         emitter = self.empresa_conf
-        body.append(t(50, y, f"{emitter.get('nombre') or self.nombre} (CIF {emitter.get('cif','')})", 10))
-        y -= 12
+        body.append(t(50, y, emitter.get("nombre") or self.nombre, 12, True)); y -= 14
+        body.append(t(50, y, f"CIF: {emitter.get('cif','')}", 10)); y -= 12
         dir_line = ", ".join(filter(None, [emitter.get("direccion"), emitter.get("cp"), emitter.get("poblacion")]))
         if dir_line:
-            body.append(t(50, y, dir_line, 10))
-            y -= 12
+            body.append(t(50, y, dir_line, 10)); y -= 12
         prov_line = ", ".join(filter(None, [emitter.get("provincia"), emitter.get("telefono"), emitter.get("email")]))
         if prov_line:
-            body.append(t(50, y, prov_line, 10))
-            y -= 12
+            body.append(t(50, y, prov_line, 10)); y -= 12
         info_eje = emitter.get("ejercicio", "")
-        body.append(t(50, y, f"Ejercicio: {info_eje}   Serie: {fac.get('serie','') or '-'}", 10))
-        y -= 18
+        body.append(t(50, y, f"Ejercicio: {info_eje}  Serie: {fac.get('serie','') or '-'}", 10)); y -= 18
 
-        body.append(t(50, y, "Cliente", 12, True))
-        y -= 14
-        body.append(t(50, y, f"{cliente.get('nombre','')} ({cliente.get('nif','')})", 10))
-        y -= 12
+        # Bloque cliente (derecha en recuadro)
+        box_w, box_h = 260, 70
+        box_x, box_y = 320, y
+        body.append(f"q 1 w {box_x} {box_y - box_h} {box_w} {box_h} re S Q\n")
+        body.append(t(box_x + 8, box_y - 14, "Cliente", 12, True))
+        body.append(t(box_x + 8, box_y - 28, f"{cliente.get('nombre','')}", 10))
+        body.append(t(box_x + 8, box_y - 42, f"NIF: {cliente.get('nif','')}", 10))
         addr = ", ".join(filter(None, [cliente.get("direccion"), cliente.get("cp"), cliente.get("poblacion")]))
         if addr:
-            body.append(t(50, y, addr, 10))
-            y -= 12
+            body.append(t(box_x + 8, box_y - 56, addr, 10))
         contacto = ", ".join(filter(None, [cliente.get("provincia"), cliente.get("telefono"), cliente.get("email")]))
         if contacto:
-            body.append(t(50, y, contacto, 10))
+            body.append(t(box_x + 8, box_y - 70, contacto, 10))
+        y = min(y, box_y - box_h - 12)
+
+        # Línea de metadatos factura
+        y -= 4
+        body.append(t(50, y, f"Factura: {fac.get('serie','')}-{fac.get('numero','')}", 11, True))
+        body.append(t(260, y, f"Fecha: {_to_fecha_ui_or_blank(fac.get('fecha_expedicion') or fac.get('fecha_asiento',''))}", 11))
+        if obs:
             y -= 12
-        y -= 10
+            body.append(t(50, y, f"Observaciones: {obs}", 10))
+        y -= 16
 
         headers = [
             ("Concepto", 50),

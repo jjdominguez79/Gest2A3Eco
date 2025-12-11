@@ -7,7 +7,7 @@ from ui_seleccion_empresa import UISeleccionEmpresa
 from ui_plantillas import UIPlantillasEmpresa
 from ui_procesos import UIProcesos
 from ui_facturas_emitidas import UIFacturasEmitidas
-from gestor_plantillas import GestorPlantillas
+from gestor_sqlite import GestorSQLite
 from ui_theme import aplicar_tema
 
 
@@ -48,33 +48,11 @@ def app_base_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
-def ensure_plantillas_json(base_dir: str) -> str:
-    """
-    Asegura que existe /plantillas/plantillas.json junto a la app.
-    Si no existe, crea la carpeta y un JSON mínimo de ejemplo.
-    """
-    plantillas_dir = os.path.join(base_dir, "plantillas")
-    os.makedirs(plantillas_dir, exist_ok=True)
-    path_json = os.path.join(plantillas_dir, "plantillas.json")
-
-    if not os.path.exists(path_json):
-        ejemplo = {
-            "empresas": [],
-            "bancos": [],
-            "emitidas": [],
-            "recibidas": [],
-            "facturas_emitidas_docs": [],
-            "terceros": [],
-            "terceros_empresas": []
-        }
-        with open(path_json, "w", encoding="utf-8") as f:
-            json.dump(ejemplo, f, ensure_ascii=False, indent=2)
-
-    return path_json
-
-
 BASE_DIR = app_base_dir()
-RUTA_JSON = ensure_plantillas_json(BASE_DIR)
+PLANTILLAS_DIR = os.path.join(BASE_DIR, "plantillas")
+os.makedirs(PLANTILLAS_DIR, exist_ok=True)
+RUTA_JSON = os.path.join(PLANTILLAS_DIR, "plantillas.json")
+RUTA_DB = os.path.join(PLANTILLAS_DIR, "gest2a3eco.db")
 
 
 # ─────────────────────────────────────────────
@@ -175,8 +153,8 @@ def main():
     content = ttk.Frame(root, padding=10, style="TFrame")
     content.pack(side="top", fill="both", expand=True)
 
-    # Gestor de plantillas (ruta robusta)
-    gestor = GestorPlantillas(RUTA_JSON)
+    # Gestor de datos en SQLite (migra desde JSON si existe)
+    gestor = GestorSQLite(RUTA_DB, json_seed=RUTA_JSON)
 
     estado = {"frame": None}
 
