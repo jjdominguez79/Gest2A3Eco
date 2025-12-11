@@ -117,13 +117,15 @@ class UISeleccionEmpresa(ttk.Frame):
         bar = ttk.Frame(self); bar.pack(fill=tk.X, padx=10, pady=6)
         ttk.Button(bar, text="Nueva empresa", style="Primary.TButton", command=self._nueva).pack(side=tk.LEFT)
         ttk.Button(bar, text="Editar empresa", style="Primary.TButton", command=self._editar).pack(side=tk.LEFT, padx=6)
-        ttk.Button(bar, text="Terceros", command=self._terceros).pack(side=tk.LEFT, padx=6)
+        ttk.Button(bar, text="Copiar empresa", style="Primary.TButton", command=self._copiar).pack(side=tk.LEFT, padx=6)
+        ttk.Button(bar, text="Eliminar empresa", style="Primary.TButton", command=self._eliminar).pack(side=tk.LEFT, padx=6)
+        ttk.Button(bar, text="Terceros", style="Primary.TButton", command=self._terceros).pack(side=tk.LEFT, padx=6)
         ttk.Button(bar, text="Continuar", style="Primary.TButton", command=self._continuar).pack(side=tk.RIGHT)
 
     def _refresh(self):
         self.tv.delete(*self.tv.get_children())
         for e in self.gestor.listar_empresas():
-            self.tv.insert("", tk.END, values=(
+            self.tv.insert("", tk.END, iid=f"{e.get('codigo')}::{e.get('ejercicio')}", values=(
                 e.get("codigo"),
                 e.get("nombre"),
                 e.get("cif",""),
@@ -133,12 +135,16 @@ class UISeleccionEmpresa(ttk.Frame):
                 e.get("siguiente_num_emitidas",1),
             ))
 
-    def _sel_codigo(self):
+    def _sel_empresa(self):
         sel = self.tv.selection()
         if not sel:
-            return None
-        codigo, *_ = self.tv.item(sel[0], "values")
-        return codigo
+            return None, None
+        codigo, _, _, _, eje, *_ = self.tv.item(sel[0], "values")
+        try:
+            eje_int = int(eje)
+        except Exception:
+            eje_int = eje
+        return codigo, eje_int
 
     def _nueva(self):
         dlg = EmpresaDialog(self, "Nueva empresa")
@@ -148,29 +154,90 @@ class UISeleccionEmpresa(ttk.Frame):
             messagebox.showinfo("Gest2A3Eco", "Empresa guardada.")
 
     def _editar(self):
-        codigo = self._sel_codigo()
+        codigo, eje = self._sel_empresa()
         if not codigo:
             messagebox.showinfo("Gest2A3Eco", "Selecciona una empresa.")
             return
-        emp = self.gestor.get_empresa(codigo)
+        emp = self.gestor.get_empresa(codigo, eje)
         dlg = EmpresaDialog(self, "Editar empresa", emp)
         if dlg.result:
             self.gestor.upsert_empresa(dlg.result)
             self._refresh()
             messagebox.showinfo("Gest2A3Eco", "Cambios guardados.")
 
+    def _copiar(self):
+        codigo, eje = self._sel_empresa()
+        if not codigo:
+            messagebox.showinfo("Gest2A3Eco", "Selecciona una empresa para copiar.")
+            return
+        emp = self.gestor.get_empresa(codigo, eje)
+        if not emp:
+            messagebox.showwarning("Gest2A3Eco", "No se encontró la empresa seleccionada.")
+            return
+        # Prepara datos base para el nuevo año con numeración reiniciada
+        base = dict(emp)
+        base["codigo"] = ""
+        try:
+            base["ejercicio"] = int(emp.get("ejercicio", 0)) + 1
+        except Exception:
+            pass
+        base["siguiente_num_emitidas"] = 1
+        dlg = EmpresaDialog(self, f"Copiar {codigo}", base)
+        if not dlg.result:
+            return
+        if not dlg.result.get("codigo"):
+            messagebox.showwarning("Gest2A3Eco", "Introduce un código para la nueva empresa.")
+            return
+        if self.gestor.get_empresa(dlg.result["codigo"], dlg.result.get("ejercicio")):
+            messagebox.showwarning("Gest2A3Eco", "Ya existe una empresa con ese código y ejercicio.")
+            return
+        try:
+            self.gestor.copiar_empresa(codigo, eje, dlg.result)
+        except Exception as e:
+            messagebox.showerror("Gest2A3Eco", str(e))
+            return
+        self._refresh()
+        for iid in self.tv.get_children():
+            vals = self.tv.item(iid, "values") or []
+            if vals and vals[0] == dlg.result["codigo"]:
+                self.tv.selection_set(iid)
+                self.tv.see(iid)
+                break
+        messagebox.showinfo("Gest2A3Eco", "Empresa copiada con terceros.")
+
     def _terceros(self):
-        codigo = self._sel_codigo()
+        codigo, eje = self._sel_empresa()
         if not codigo:
             messagebox.showinfo("Gest2A3Eco", "Selecciona una empresa.")
             return
-        emp = self.gestor.get_empresa(codigo) or {"codigo":codigo,"digitos_plan":8}
-        TercerosDialog(self, self.gestor, emp.get("codigo"), emp.get("digitos_plan",8))
+        emp = self.gestor.get_empresa(codigo, eje) or {"codigo":codigo,"digitos_plan":8,"ejercicio":eje}
+        TercerosDialog(self, self.gestor, emp.get("codigo"), emp.get("digitos_plan",8), emp.get("ejercicio", eje))
 
     def _continuar(self):
-        codigo = self._sel_codigo()
+        codigo, eje = self._sel_empresa()
         if not codigo:
             messagebox.showwarning("Gest2A3Eco","Selecciona una empresa.")
             return
-        nombre = self.gestor.get_empresa(codigo).get("nombre","")
-        self.on_ok(codigo, nombre)
+        emp = self.gestor.get_empresa(codigo, eje) or {}
+        nombre = emp.get("nombre","")
+        self.on_ok(codigo, eje, nombre)
+
+    def _eliminar(self):
+        codigo, eje = self._sel_empresa()
+        if not codigo:
+            messagebox.showinfo("Gest2A3Eco", "Selecciona una empresa para eliminar.")
+            return
+        emp = self.gestor.get_empresa(codigo, eje) or {}
+        nombre = emp.get("nombre", codigo)
+        if not messagebox.askyesno(
+            "Gest2A3Eco",
+            f"IMPORTANTE:\nVas a eliminar {nombre} (código {codigo}, ejercicio {eje}).\nSe borrarán sus plantillas, facturas y subcuentas de terceros de este ejercicio.\n¿Continuar?",
+        ):
+            return
+        try:
+            self.gestor.eliminar_empresa(codigo, eje)
+        except Exception as e:
+            messagebox.showerror("Gest2A3Eco", str(e))
+            return
+        self._refresh()
+        messagebox.showinfo("Gest2A3Eco", "Empresa eliminada.")

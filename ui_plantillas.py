@@ -249,6 +249,7 @@ class ConfigPlantillaDialog(Dialog):
 
     def apply(self):
         self.pl["codigo_empresa"] = self.empresa.get("codigo")
+        self.pl["ejercicio"] = self.empresa.get("ejercicio")
         if self.tipo == "bancos":
             self.pl["banco"] = self.var_banco.get().strip()
             self.pl["subcuenta_banco"] = self.var_sub_banco.get().strip()
@@ -279,12 +280,13 @@ class ConfigPlantillaDialog(Dialog):
         self.result = True
 
 class UIPlantillasEmpresa(ttk.Frame):
-    def __init__(self, parent, gestor, empresa_codigo, empresa_nombre):
+    def __init__(self, parent, gestor, empresa_codigo, ejercicio, empresa_nombre):
         super().__init__(parent)
         self.gestor = gestor
         self.codigo = empresa_codigo
+        self.ejercicio = ejercicio
         self.nombre = empresa_nombre
-        self.empresa = gestor.get_empresa(empresa_codigo) or {"codigo":empresa_codigo,"digitos_plan":8}
+        self.empresa = gestor.get_empresa(empresa_codigo, ejercicio) or {"codigo":empresa_codigo,"digitos_plan":8,"ejercicio":ejercicio}
         self._build()
 
     # --- NUEVO MÉTODO ---
@@ -302,7 +304,7 @@ class UIPlantillasEmpresa(ttk.Frame):
             return "recibidas"
         
     def _build(self):
-        ttk.Label(self, text=f"Plantillas de {self.nombre} ({self.codigo})", font=("Segoe UI", 12, "bold")).pack(pady=6, anchor="w", padx=10)
+        ttk.Label(self, text=f"Plantillas de {self.nombre} ({self.codigo} · {self.ejercicio})", font=("Segoe UI", 12, "bold")).pack(pady=6, anchor="w", padx=10)
         nb = ttk.Notebook(self); nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         self._tab_bancos = self._build_tab(nb, "Bancos", ("banco","subcuenta_banco","subcuenta_por_defecto"))
         self._tab_emitidas = self._build_tab(nb, "Facturas Emitidas", ("nombre","cuenta_cliente_prefijo","cuenta_iva_repercutido_defecto"))
@@ -327,13 +329,13 @@ class UIPlantillasEmpresa(ttk.Frame):
 
     def _refresh_all(self):
         tv = self._tab_bancos["tv"]; tv.delete(*tv.get_children())
-        for p in self.gestor.listar_bancos(self.codigo):
+        for p in self.gestor.listar_bancos(self.codigo, self.ejercicio):
             tv.insert("", tk.END, values=(p.get("banco"), p.get("subcuenta_banco"), p.get("subcuenta_por_defecto")))
         tv = self._tab_emitidas["tv"]; tv.delete(*tv.get_children())
-        for p in self.gestor.listar_emitidas(self.codigo):
+        for p in self.gestor.listar_emitidas(self.codigo, self.ejercicio):
             tv.insert("", tk.END, values=(p.get("nombre"), p.get("cuenta_cliente_prefijo","430"), p.get("cuenta_iva_repercutido_defecto","47700000")))
         tv = self._tab_recibidas["tv"]; tv.delete(*tv.get_children())
-        for p in self.gestor.listar_recibidas(self.codigo):
+        for p in self.gestor.listar_recibidas(self.codigo, self.ejercicio):
             tv.insert("", tk.END, values=(p.get("nombre"), p.get("cuenta_proveedor_prefijo","400"), p.get("cuenta_iva_soportado_defecto","47200000")))
 
     def _nuevo(self, title):
@@ -381,11 +383,11 @@ class UIPlantillasEmpresa(ttk.Frame):
             messagebox.showinfo("Gest2A3Eco","Selecciona una plantilla.")
             return
         if tipo == "bancos":
-            pl = next((x for x in self.gestor.listar_bancos(self.codigo) if x.get("banco")==key), None)
+            pl = next((x for x in self.gestor.listar_bancos(self.codigo, self.ejercicio) if x.get("banco")==key), None)
         elif tipo == "emitidas":
-            pl = next((x for x in self.gestor.listar_emitidas(self.codigo) if x.get("nombre")==key), None)
+            pl = next((x for x in self.gestor.listar_emitidas(self.codigo, self.ejercicio) if x.get("nombre")==key), None)
         else:
-            pl = next((x for x in self.gestor.listar_recibidas(self.codigo) if x.get("nombre")==key), None)
+            pl = next((x for x in self.gestor.listar_recibidas(self.codigo, self.ejercicio) if x.get("nombre")==key), None)
         
         dlg = ConfigPlantillaDialog(self, self.gestor, self.empresa, tipo, pl)
         if dlg.result:
@@ -404,9 +406,9 @@ class UIPlantillasEmpresa(ttk.Frame):
         if not key: return
         if not messagebox.askyesno("Gest2A3Eco","¿Eliminar la plantilla seleccionada?"): return
         if tipo == "bancos":
-            self.gestor.eliminar_banco(self.codigo, key)
+            self.gestor.eliminar_banco(self.codigo, key, self.ejercicio)
         elif tipo == "emitidas":
-            self.gestor.eliminar_emitida(self.codigo, key)
+            self.gestor.eliminar_emitida(self.codigo, key, self.ejercicio)
         else:
-            self.gestor.eliminar_recibida(self.codigo, key)
+            self.gestor.eliminar_recibida(self.codigo, key, self.ejercicio)
         self._refresh_all()

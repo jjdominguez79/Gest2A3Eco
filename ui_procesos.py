@@ -12,10 +12,11 @@ from procesos.facturas_recibidas import generar_recibidas_suenlace
 
 
 class UIProcesos(ttk.Frame):
-    def __init__(self, master, gestor, codigo_empresa, nombre_empresa):
+    def __init__(self, master, gestor, codigo_empresa, ejercicio, nombre_empresa):
         super().__init__(master)
         self.gestor = gestor
         self.codigo = codigo_empresa
+        self.ejercicio = ejercicio
         self.nombre = nombre_empresa
         self.pack(fill=tk.BOTH, expand=True)
         self.excel_path = None
@@ -26,7 +27,7 @@ class UIProcesos(ttk.Frame):
     # UI
     # ─────────────────────────────────────────────────────────────────────────
     def _build(self):
-        ttk.Label(self, text=f"Generar fichero — {self.nombre} ({self.codigo})", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=10, pady=8)
+        ttk.Label(self, text=f"Generar fichero — {self.nombre} ({self.codigo} · {self.ejercicio})", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=10, pady=8)
 
         form = ttk.Frame(self)
         form.pack(fill=tk.X, padx=10, pady=4)
@@ -73,11 +74,11 @@ class UIProcesos(ttk.Frame):
     def _refresh_plantillas(self):
         tipo = (self.tipo.get() or "").lower()
         if "bancos" in tipo:
-            pls = [p.get("banco") for p in self.gestor.listar_bancos(self.codigo)]
+            pls = [p.get("banco") for p in self.gestor.listar_bancos(self.codigo, self.ejercicio)]
         elif "emitidas" in tipo:
-            pls = [p.get("nombre") for p in self.gestor.listar_emitidas(self.codigo)]
+            pls = [p.get("nombre") for p in self.gestor.listar_emitidas(self.codigo, self.ejercicio)]
         else:
-            pls = [p.get("nombre") for p in self.gestor.listar_recibidas(self.codigo)]
+            pls = [p.get("nombre") for p in self.gestor.listar_recibidas(self.codigo, self.ejercicio)]
         self.cb_plantilla["values"] = pls
         if pls:
             self.cb_plantilla.current(0)
@@ -222,17 +223,17 @@ class UIProcesos(ttk.Frame):
             tipo = (self.tipo.get() or "").lower()
             # Obtener plantilla seleccionada
             if "bancos" in tipo:
-                pl = next((x for x in self.gestor.listar_bancos(self.codigo) if x.get("banco")==nombre_pl), None)
+                pl = next((x for x in self.gestor.listar_bancos(self.codigo, self.ejercicio) if x.get("banco")==nombre_pl), None)
             elif "emitidas" in tipo:
-                pl = next((x for x in self.gestor.listar_emitidas(self.codigo) if x.get("nombre")==nombre_pl), None)
+                pl = next((x for x in self.gestor.listar_emitidas(self.codigo, self.ejercicio) if x.get("nombre")==nombre_pl), None)
             else:
-                pl = next((x for x in self.gestor.listar_recibidas(self.codigo) if x.get("nombre")==nombre_pl), None)
+                pl = next((x for x in self.gestor.listar_recibidas(self.codigo, self.ejercicio) if x.get("nombre")==nombre_pl), None)
             if not pl:
                 messagebox.showerror("Gest2A3Eco", "Plantilla no encontrada.")
                 return
 
             # Empresa (digitos plan + código)
-            empresa_config = self.gestor.get_empresa(self.codigo) or {}
+            empresa_config = self.gestor.get_empresa(self.codigo, self.ejercicio) or {}
             ndig = int(empresa_config.get("digitos_plan", 8))
             codigo_empresa = str(self.codigo)
 

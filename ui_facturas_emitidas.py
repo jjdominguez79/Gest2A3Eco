@@ -183,12 +183,13 @@ class TerceroFicha(tk.Toplevel):
 
 
 class TercerosDialog(tk.Toplevel):
-    def __init__(self, parent, gestor, codigo_empresa, ndig_plan):
+    def __init__(self, parent, gestor, codigo_empresa, ejercicio, ndig_plan):
         super().__init__(parent)
         self.title("Terceros")
         self.resizable(True, True)
         self.gestor = gestor
         self.codigo = codigo_empresa
+        self.ejercicio = ejercicio
         self.ndig = ndig_plan
         self._build()
         self.grab_set()
@@ -279,7 +280,7 @@ class TercerosDialog(tk.Toplevel):
             self.var_sub_cli.set("")
             self.var_sub_pro.set("")
             return
-        rel = self.gestor.get_tercero_empresa(self.codigo, tid) or {}
+        rel = self.gestor.get_tercero_empresa(self.codigo, tid, self.ejercicio) or {}
         self.var_sub_cli.set(rel.get("subcuenta_cliente", ""))
         self.var_sub_pro.set(rel.get("subcuenta_proveedor", ""))
 
@@ -297,6 +298,7 @@ class TercerosDialog(tk.Toplevel):
         rel = {
             "tercero_id": tid,
             "codigo_empresa": self.codigo,
+            "ejercicio": self.ejercicio,
             "subcuenta_cliente": sc,
             "subcuenta_proveedor": sp,
         }
@@ -304,15 +306,20 @@ class TercerosDialog(tk.Toplevel):
         messagebox.showinfo("Gest2A3Eco", "Subcuentas guardadas.")
 
 class FacturaDialog(tk.Toplevel):
-    def __init__(self, parent, gestor, codigo_empresa, ndig_plan, factura=None, numero_sugerido=""):
+    def __init__(self, parent, gestor, codigo_empresa, ejercicio, ndig_plan, factura=None, numero_sugerido=""):
         super().__init__(parent)
         self.title("Factura emitida")
         self.resizable(True, True)
         self.result = None
         self.gestor = gestor
         self.codigo = codigo_empresa
+        self.ejercicio = ejercicio
         self.ndig = ndig_plan
         self.factura = dict(factura or {})
+        self.factura.setdefault("codigo_empresa", codigo_empresa)
+        self.factura.setdefault("ejercicio", ejercicio)
+        if "ejercicio" not in self.factura:
+            self.factura["ejercicio"] = ejercicio
         if numero_sugerido and not self.factura.get("numero"):
             self.factura["numero"] = numero_sugerido
         f = self.factura
@@ -469,7 +476,7 @@ class FacturaDialog(tk.Toplevel):
                 return
 
     def _gestionar_terceros(self):
-        TercerosDialog(self, self.gestor, self.codigo, self.ndig)
+        TercerosDialog(self, self.gestor, self.codigo, self.ejercicio, self.ndig)
         self._load_terceros()
 
     def _on_tercero_selected(self):
@@ -479,7 +486,7 @@ class FacturaDialog(tk.Toplevel):
         t = self._terceros_cache[idx]
         self.var_nif.set(t.get("nif", ""))
         self.var_nombre.set(t.get("nombre", ""))
-        rel = self.gestor.get_tercero_empresa(self.codigo, t.get("id")) or {}
+        rel = self.gestor.get_tercero_empresa(self.codigo, t.get("id"), self.ejercicio) or {}
         sc = rel.get("subcuenta_cliente", "")
         if sc:
             self.var_subcuenta.set(sc)
@@ -636,7 +643,8 @@ class FacturaDialog(tk.Toplevel):
         fecha_common = self.var_fecha_exp.get().strip()
         self.result = {
             "id": self.factura.get("id"),
-            "codigo_empresa": self.factura.get("codigo_empresa"),
+            "codigo_empresa": self.codigo,
+            "ejercicio": self.ejercicio,
             "tercero_id": tercero_id,
             "serie": self.var_serie.get().strip(),
             "numero": self.var_numero.get().strip(),
@@ -656,10 +664,11 @@ class FacturaDialog(tk.Toplevel):
 
 
 class UIFacturasEmitidas(ttk.Frame):
-    def __init__(self, master, gestor, codigo_empresa, nombre_empresa):
+    def __init__(self, master, gestor, codigo_empresa, ejercicio, nombre_empresa):
         super().__init__(master)
         self.gestor = gestor
         self.codigo = codigo_empresa
+        self.ejercicio = ejercicio
         self.nombre = nombre_empresa
         base = {
             "nombre": nombre_empresa,
@@ -676,14 +685,14 @@ class UIFacturasEmitidas(ttk.Frame):
             "email": "",
             "logo_path": "",
         }
-        emp_conf = gestor.get_empresa(codigo_empresa) or {}
+        emp_conf = gestor.get_empresa(codigo_empresa, ejercicio) or {}
         base.update(emp_conf)
         self.empresa_conf = base
         self._build()
 
     # ------------------- UI -------------------
     def _build(self):
-        ttk.Label(self, text=f"Facturas emitidas de {self.nombre} ({self.codigo})", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=10, pady=8)
+        ttk.Label(self, text=f"Facturas emitidas de {self.nombre} ({self.codigo} · {self.ejercicio})", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=10, pady=8)
 
         top = ttk.Frame(self)
         top.pack(fill="x", padx=10)
@@ -727,7 +736,7 @@ class UIFacturasEmitidas(ttk.Frame):
 
     # ------------------- Datos -------------------
     def _refresh_plantillas(self):
-        pls = [p.get("nombre") for p in self.gestor.listar_emitidas(self.codigo)]
+        pls = [p.get("nombre") for p in self.gestor.listar_emitidas(self.codigo, self.ejercicio)]
         self.cb_plantilla["values"] = pls
         if pls:
             self.cb_plantilla.current(0)
@@ -745,7 +754,7 @@ class UIFacturasEmitidas(ttk.Frame):
 
     def _refresh_facturas(self):
         self.tv.delete(*self.tv.get_children())
-        for fac in self.gestor.listar_facturas_emitidas(self.codigo):
+        for fac in self.gestor.listar_facturas_emitidas(self.codigo, self.ejercicio):
             total = self._compute_total(fac)
             self.tv.insert(
                 "",
@@ -791,13 +800,16 @@ class UIFacturasEmitidas(ttk.Frame):
             self,
             self.gestor,
             self.codigo,
+            self.ejercicio,
             int(self.empresa_conf.get("digitos_plan", 8)),
-            {"codigo_empresa": self.codigo, "serie": self._serie(), "numero": sugerido},
+            {"codigo_empresa": self.codigo, "ejercicio": self.ejercicio, "serie": self._serie(), "numero": sugerido},
             numero_sugerido=sugerido,
         )
         if dlg.result:
             dlg.result["generada"] = False
             dlg.result["fecha_generacion"] = ""
+            dlg.result["ejercicio"] = self.ejercicio
+            dlg.result["codigo_empresa"] = self.codigo
             self.gestor.upsert_factura_emitida(dlg.result)
             self._incrementar_numeracion()
             self._refresh_facturas()
@@ -807,10 +819,10 @@ class UIFacturasEmitidas(ttk.Frame):
         if not sel:
             messagebox.showinfo("Gest2A3Eco", "Selecciona una factura.")
             return
-        fac = next((f for f in self.gestor.listar_facturas_emitidas(self.codigo) if str(f.get("id")) == str(sel[0])), None)
+        fac = next((f for f in self.gestor.listar_facturas_emitidas(self.codigo, self.ejercicio) if str(f.get("id")) == str(sel[0])), None)
         if not fac:
             return
-        dlg = FacturaDialog(self, self.gestor, self.codigo, int(self.empresa_conf.get("digitos_plan", 8)), fac)
+        dlg = FacturaDialog(self, self.gestor, self.codigo, self.ejercicio, int(self.empresa_conf.get("digitos_plan", 8)), fac)
         if dlg.result:
             self.gestor.upsert_factura_emitida(dlg.result)
             self._refresh_facturas()
@@ -819,7 +831,7 @@ class UIFacturasEmitidas(ttk.Frame):
         sel = self._selected_ids()
         if not sel:
             return
-        fac = next((f for f in self.gestor.listar_facturas_emitidas(self.codigo) if str(f.get("id")) == str(sel[0])), None)
+        fac = next((f for f in self.gestor.listar_facturas_emitidas(self.codigo, self.ejercicio) if str(f.get("id")) == str(sel[0])), None)
         if not fac:
             return
         nuevo = dict(fac)
@@ -832,6 +844,7 @@ class UIFacturasEmitidas(ttk.Frame):
             self,
             self.gestor,
             self.codigo,
+            self.ejercicio,
             int(self.empresa_conf.get("digitos_plan", 8)),
             nuevo,
             numero_sugerido=nuevo["numero"],
@@ -848,11 +861,11 @@ class UIFacturasEmitidas(ttk.Frame):
         if not messagebox.askyesno("Gest2A3Eco", "Eliminar las facturas seleccionadas?"):
             return
         for fid in sel:
-            self.gestor.eliminar_factura_emitida(self.codigo, fid)
+            self.gestor.eliminar_factura_emitida(self.codigo, fid, self.ejercicio)
         self._refresh_facturas()
 
     def _terceros(self):
-        TercerosDialog(self, self.gestor, self.codigo, int(self.empresa_conf.get("digitos_plan", 8)))
+        TercerosDialog(self, self.gestor, self.codigo, self.ejercicio, int(self.empresa_conf.get("digitos_plan", 8)))
 
     # ------------------- Exportar PDF -------------------
     def _pdf_escape(self, text: str) -> str:
@@ -1073,7 +1086,7 @@ class UIFacturasEmitidas(ttk.Frame):
         if not sel:
             messagebox.showinfo("Gest2A3Eco", "Selecciona una factura.")
             return
-        fac = next((f for f in self.gestor.listar_facturas_emitidas(self.codigo) if str(f.get("id")) == str(sel[0])), None)
+        fac = next((f for f in self.gestor.listar_facturas_emitidas(self.codigo, self.ejercicio) if str(f.get("id")) == str(sel[0])), None)
         if not fac:
             return
 
@@ -1132,7 +1145,7 @@ class UIFacturasEmitidas(ttk.Frame):
         if not pl_name:
             messagebox.showwarning("Gest2A3Eco", "Selecciona una plantilla de emitidas.")
             return
-        plantilla = next((p for p in self.gestor.listar_emitidas(self.codigo) if p.get("nombre") == pl_name), None)
+        plantilla = next((p for p in self.gestor.listar_emitidas(self.codigo, self.ejercicio) if p.get("nombre") == pl_name), None)
         if not plantilla:
             messagebox.showerror("Gest2A3Eco", "Plantilla no encontrada.")
             return
@@ -1140,7 +1153,7 @@ class UIFacturasEmitidas(ttk.Frame):
         facturas_sel = []
         rows = []
         for fid in sel:
-            fac = next((f for f in self.gestor.listar_facturas_emitidas(self.codigo) if str(f.get("id")) == str(fid)), None)
+            fac = next((f for f in self.gestor.listar_facturas_emitidas(self.codigo, self.ejercicio) if str(f.get("id")) == str(fid)), None)
             if fac:
                 facturas_sel.append(fac)
                 rows.extend(self._factura_to_rows(fac))
@@ -1175,7 +1188,6 @@ class UIFacturasEmitidas(ttk.Frame):
         with open(save_path, "w", encoding="latin-1", newline="") as f:
             f.writelines(registros)
         fecha_gen = datetime.now().strftime("%Y-%m-%d %H:%M")
-        self.gestor.marcar_facturas_emitidas_generadas(self.codigo, sel, fecha_gen)
+        self.gestor.marcar_facturas_emitidas_generadas(self.codigo, sel, fecha_gen, self.ejercicio)
         self._refresh_facturas()
         messagebox.showinfo("Gest2A3Eco", f"Fichero generado:\n{save_path}")
-

@@ -6,7 +6,7 @@
       "digitos_plan": 8,
       "ejercicio": 2025,
       "serie_emitidas": "A",
-      "siguiente_num_emitidas": 5,
+      "siguiente_num_emitidas": 1,
       "cif": "B16916967",
       "direccion": "CL ATILANO RODRIGUEZ 4, ENTLO 7",
       "cp": "39002",
@@ -75,6 +75,22 @@
       "nombre": "YELLOW STAR SL",
       "digitos_plan": 8,
       "ejercicio": 2025
+    },
+    {
+      "codigo": "00423",
+      "nombre": "Asesoria Gestinem SL",
+      "digitos_plan": 8,
+      "ejercicio": 2026,
+      "serie_emitidas": "A",
+      "siguiente_num_emitidas": 1,
+      "cif": "B16916967",
+      "direccion": "CL ATILANO RODRIGUEZ 4, ENTLO 7",
+      "cp": "39002",
+      "poblacion": "SANTANDER",
+      "provincia": "CANTABRIA",
+      "telefono": "691 474 519",
+      "email": "jjdominguez@gestinem.es",
+      "logo_path": ""
     }
   ],
   "bancos": [
@@ -840,6 +856,28 @@
         }
       },
       "conceptos": []
+    },
+    {
+      "codigo_empresa": "00423",
+      "banco": "Sabadell",
+      "subcuenta_banco": "57200001",
+      "subcuenta_por_defecto": "55500000",
+      "digitos_plan": 8,
+      "ejercicio": 2026,
+      "excel": {
+        "primera_fila_procesar": 2,
+        "ignorar_filas": "",
+        "condicion_cuenta_generica": "",
+        "columnas": {
+          "Fecha Asiento": "B",
+          "Descripcion Factura": "",
+          "Concepto": "C",
+          "Importe": "D",
+          "NIF Cliente Proveedor": "",
+          "Nombre Cliente Proveedor": ""
+        }
+      },
+      "conceptos": []
     }
   ],
   "facturas_emitidas": [
@@ -958,39 +996,37 @@
           "Importe Analitica": ""
         }
       }
-    }
-  ],
-  "facturas_recibidas": [
+    },
     {
       "codigo_empresa": "00423",
-      "nombre": "Recibidas General",
+      "nombre": "Emitidas General",
       "digitos_plan": 8,
-      "proveedor_por_columna": true,
-      "col_proveedor_codigo": "NIF",
-      "cuenta_proveedor_prefijo": "40000000",
-      "cuenta_proveedor_por_defecto": "40000000",
-      "cuenta_gasto_por_defecto": "62900000",
-      "cuenta_iva_soportado_defecto": "47200000",
+      "cliente_por_columna": true,
+      "col_cliente_codigo": "NIF",
+      "cuenta_cliente_prefijo": "43000000",
+      "cuenta_cliente_por_defecto": "43000000",
+      "cuenta_ingreso_por_defecto": "70000000",
+      "cuenta_iva_repercutido_defecto": "47700000",
       "cuenta_retenciones_irpf": "47510000",
       "tipos_iva": [
         {
           "porcentaje": 21,
-          "cuenta_iva": "47200000"
+          "cuenta_iva": "47700000"
         },
         {
           "porcentaje": 10,
-          "cuenta_iva": "47210000"
+          "cuenta_iva": "47710000"
         },
         {
           "porcentaje": 4,
-          "cuenta_iva": "47220000"
+          "cuenta_iva": "47720000"
         }
       ],
       "soporta_retencion": true,
       "excel": {
         "primera_fila_procesar": 2,
-        "ignorar_filas": "",
-        "condicion_cuenta_generica": "",
+        "ignorar_filas": "Q=NOPROCESARFACTURA",
+        "condicion_cuenta_generica": "D=PARTICULAR",
         "columnas": {
           "Serie": "B",
           "Numero Factura": "E",
@@ -1003,8 +1039,11 @@
           "Nombre Cliente Proveedor": "G",
           "Cuenta Compras Ventas": "W"
         }
-      }
-    },
+      },
+      "ejercicio": 2026
+    }
+  ],
+  "facturas_recibidas": [
     {
       "codigo_empresa": "00029",
       "nombre": "FACTURAS RECIBIDAS COVIRAN",
@@ -1078,70 +1117,7 @@
       }
     }
   ],
-  "facturas_emitidas_docs": [
-    {
-      "id": "1765397974078",
-      "codigo_empresa": "00423",
-      "tercero_id": "1765376641720",
-      "serie": "A",
-      "numero": "A000003",
-      "numero_largo_sii": "",
-      "fecha_asiento": "10/12/2025",
-      "fecha_expedicion": "10/12/2025",
-      "fecha_operacion": "10/12/2025",
-      "nif": "72044071K",
-      "nombre": "Juan Jose Dominguez Barrero",
-      "descripcion": "",
-      "subcuenta_cliente": "43000001",
-      "lineas": [
-        {
-          "concepto": "Tramites",
-          "unidades": 2.0,
-          "precio": 1000.0,
-          "base": 2000.0,
-          "pct_iva": 21.0,
-          "cuota_iva": 420.0,
-          "pct_irpf": 0.0,
-          "cuota_irpf": -0.0,
-          "pct_re": 0.0,
-          "cuota_re": 0.0
-        }
-      ],
-      "generada": true,
-      "fecha_generacion": "2025-12-10 21:20"
-    },
-    {
-      "id": "1765398038882",
-      "codigo_empresa": "00423",
-      "tercero_id": "1765376641720",
-      "serie": "A",
-      "numero": "A000004",
-      "numero_largo_sii": "",
-      "fecha_asiento": "10/12/2025",
-      "fecha_expedicion": "10/12/2025",
-      "fecha_operacion": "10/12/2025",
-      "nif": "72044071K",
-      "nombre": "Juan Jose Dominguez Barrero",
-      "descripcion": "",
-      "subcuenta_cliente": "43000001",
-      "lineas": [
-        {
-          "concepto": "Tramites",
-          "unidades": 2.0,
-          "precio": 1000.0,
-          "base": 2000.0,
-          "pct_iva": 21.0,
-          "cuota_iva": 420.0,
-          "pct_irpf": 0.0,
-          "cuota_irpf": -0.0,
-          "pct_re": 0.0,
-          "cuota_re": 0.0
-        }
-      ],
-      "generada": true,
-      "fecha_generacion": "2025-12-10 21:20"
-    }
-  ],
+  "facturas_emitidas_docs": [],
   "terceros": [
     {
       "nif": "72044071K",
@@ -1163,6 +1139,13 @@
       "codigo_empresa": "00423",
       "subcuenta_cliente": "43000001",
       "subcuenta_proveedor": ""
+    },
+    {
+      "tercero_id": "1765376641720",
+      "codigo_empresa": "00423",
+      "subcuenta_cliente": "43000001",
+      "subcuenta_proveedor": "",
+      "ejercicio": 2026
     }
   ]
 }

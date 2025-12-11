@@ -189,25 +189,25 @@ def main():
         estado["frame"] = fr
 
     # Callback al confirmar empresa en la pantalla de selección
-    def on_empresa_ok(codigo, nombre):
+    def on_empresa_ok(codigo, ejercicio, nombre):
         def build_dashboard(parent):
             nb = ttk.Notebook(parent)
 
             # Pestaña de plantillas
             nb.add(
-                UIPlantillasEmpresa(nb, gestor, codigo, nombre),
+                UIPlantillasEmpresa(nb, gestor, codigo, ejercicio, nombre),
                 text="Plantillas"
             )
 
             # Pestaña de facturas emitidas (módulo interno)
             nb.add(
-                UIFacturasEmitidas(nb, gestor, codigo, nombre),
+                UIFacturasEmitidas(nb, gestor, codigo, ejercicio, nombre),
                 text="Facturas emitidas"
             )
 
             # Pestaña de generación de ficheros
             nb.add(
-                UIProcesos(nb, gestor, codigo, nombre),
+                UIProcesos(nb, gestor, codigo, ejercicio, nombre),
                 text="Generar ficheros"
             )
 
