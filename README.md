@@ -40,6 +40,9 @@ El ejecutable quedara en `dist/Gest2A3Eco.exe`.
 - `procesos/`: logica de generacion por tipo (bancos, emitidas, recibidas).
 - `plantillas/plantillas.json`: almacenamiento de plantillas (se crea si no existe).
 
+## Contexto del proyecto
+Consulta `CONTEXT.md` para un panorama actualizado de funcionalidades, arquitectura, reglas de negocio y pasos de ejecucion.
+
 ## Notas
 - Los datos de la asesoria (nombre, CIF, contacto) estan en `main.py`.
 - Las plantillas y el maestro de terceros se guardan por empresa en `plantillas/plantillas.json`; haz copia si lo necesitas.
