@@ -1,6 +1,11 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from tkinter.simpledialog import Dialog
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+
+from import_empresas_csv import import_empresas_csv
 
 from ui_facturas_emitidas import TercerosDialog
 
@@ -100,11 +105,25 @@ class UISeleccionEmpresa(ttk.Frame):
         self.gestor = gestor
         self.on_ok = on_ok
         self.pack(fill=tk.BOTH, expand=True)
+        self.empresas_cache = []
         self._build()
 
     def _build(self):
         ttk.Label(self, text="Selecciona empresa", font=("Segoe UI", 12, "bold")).pack(pady=8)
-        self.tv = ttk.Treeview(self, columns=("codigo","nombre","cif","digitos","ejercicio","serie","next"), show="headings", height=12)
+
+        search_row = ttk.Frame(self)
+        search_row.pack(fill=tk.X, padx=10, pady=(4, 0))
+        ttk.Label(search_row, text="Buscar").pack(side=tk.LEFT)
+        self.var_buscar = tk.StringVar()
+        entry_buscar = ttk.Entry(search_row, textvariable=self.var_buscar, width=40)
+        entry_buscar.pack(side=tk.LEFT, padx=6, fill=tk.X, expand=True)
+        ttk.Button(search_row, text="Limpiar", command=lambda: self.var_buscar.set("")).pack(side=tk.LEFT)
+        self.var_buscar.trace_add("write", lambda *_: self._aplicar_filtro())
+
+        tree_frame = ttk.Frame(self)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=8)
+
+        self.tv = ttk.Treeview(tree_frame, columns=("codigo","nombre","cif","digitos","ejercicio","serie","next"), show="headings", height=12)
         for c,t,w in (
             ("codigo","Codigo",120),
             ("nombre","Nombre",320),
@@ -115,10 +134,21 @@ class UISeleccionEmpresa(ttk.Frame):
             ("next","Siguiente",90),
         ):
             self.tv.heading(c, text=t); self.tv.column(c, width=w)
-        self.tv.pack(fill=tk.BOTH, expand=True, padx=10, pady=8)
+
+        yscroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tv.yview)
+        xscroll = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.tv.xview)
+        self.tv.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+
+        self.tv.grid(row=0, column=0, sticky="nsew")
+        yscroll.grid(row=0, column=1, sticky="ns")
+        xscroll.grid(row=1, column=0, sticky="ew")
+        tree_frame.columnconfigure(0, weight=1)
+        tree_frame.rowconfigure(0, weight=1)
+
         self._refresh()
 
         bar = ttk.Frame(self); bar.pack(fill=tk.X, padx=10, pady=6)
+        ttk.Button(bar, text="Importar CSV empresas", style="Primary.TButton", command=self._importar_csv).pack(side=tk.LEFT)
         ttk.Button(bar, text="Nueva empresa", style="Primary.TButton", command=self._nueva).pack(side=tk.LEFT)
         ttk.Button(bar, text="Editar empresa", style="Primary.TButton", command=self._editar).pack(side=tk.LEFT, padx=6)
         ttk.Button(bar, text="Copiar empresa", style="Primary.TButton", command=self._copiar).pack(side=tk.LEFT, padx=6)
@@ -127,8 +157,21 @@ class UISeleccionEmpresa(ttk.Frame):
         ttk.Button(bar, text="Continuar", style="Primary.TButton", command=self._continuar).pack(side=tk.RIGHT)
 
     def _refresh(self):
+        self.empresas_cache = self.gestor.listar_empresas()
+        self._aplicar_filtro()
+
+    def _aplicar_filtro(self):
+        filtro = (self.var_buscar.get() or "").strip().lower()
         self.tv.delete(*self.tv.get_children())
-        for e in self.gestor.listar_empresas():
+        for e in self.empresas_cache:
+            texto = " ".join([
+                str(e.get("codigo","")),
+                str(e.get("nombre","")),
+                str(e.get("cif","")),
+                str(e.get("ejercicio","")),
+            ]).lower()
+            if filtro and filtro not in texto:
+                continue
             self.tv.insert("", tk.END, iid=f"{e.get('codigo')}::{e.get('ejercicio')}", values=(
                 e.get("codigo"),
                 e.get("nombre"),
@@ -149,6 +192,43 @@ class UISeleccionEmpresa(ttk.Frame):
         except Exception:
             eje_int = eje
         return codigo, eje_int
+
+    def _backup_db(self) -> Path:
+        db_path = Path(self.gestor.db_path)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        suffix = db_path.suffix or ".db"
+        backup_path = db_path.with_name(f"{stamp}_copy{suffix}")
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.gestor.conn.commit()
+        except Exception:
+            pass
+        with sqlite3.connect(backup_path) as dst:
+            self.gestor.conn.backup(dst)  # snapshot consistente aunque haya conexi¢n abierta
+        return backup_path
+
+    def _importar_csv(self):
+        csv_path = filedialog.askopenfilename(
+            title="Selecciona CSV de empresas",
+            filetypes=[("CSV", "*.csv"), ("Todos", "*.*")],
+        )
+        if not csv_path:
+            return
+        try:
+            backup_path = self._backup_db()
+        except Exception as e:
+            messagebox.showerror("Gest2A3Eco", f"No se pudo crear la copia de seguridad:\n{e}")
+            return
+        try:
+            n = import_empresas_csv(str(self.gestor.db_path), csv_path)
+        except Exception as e:
+            messagebox.showerror("Gest2A3Eco", f"Error al importar el CSV:\n{e}")
+            return
+        self._refresh()
+        messagebox.showinfo(
+            "Gest2A3Eco",
+            f"Importaci¢n completada.\nFilas procesadas: {n}.\nCopia: {backup_path.name}",
+        )
 
     def _nueva(self):
         dlg = EmpresaDialog(self, "Nueva empresa")
