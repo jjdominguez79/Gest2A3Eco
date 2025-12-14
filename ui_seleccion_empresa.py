@@ -148,7 +148,7 @@ class UISeleccionEmpresa(ttk.Frame):
         self._refresh()
 
         bar = ttk.Frame(self); bar.pack(fill=tk.X, padx=10, pady=6)
-        ttk.Button(bar, text="Importar CSV empresas", style="Primary.TButton", command=self._importar_csv).pack(side=tk.LEFT)
+        ttk.Button(bar, text="Importar CSV empresas", style="Primary.TButton", command=self._importar_csv).pack(side=tk.LEFT, padx=(0,6))
         ttk.Button(bar, text="Nueva empresa", style="Primary.TButton", command=self._nueva).pack(side=tk.LEFT)
         ttk.Button(bar, text="Editar empresa", style="Primary.TButton", command=self._editar).pack(side=tk.LEFT, padx=6)
         ttk.Button(bar, text="Copiar empresa", style="Primary.TButton", command=self._copiar).pack(side=tk.LEFT, padx=6)
@@ -287,7 +287,7 @@ class UISeleccionEmpresa(ttk.Frame):
                 self.tv.selection_set(iid)
                 self.tv.see(iid)
                 break
-        messagebox.showinfo("Gest2A3Eco", "Empresa copiada con terceros.")
+        messagebox.showinfo("Gest2A3Eco", "Empresa copiada con plantillas y terceros.")
 
     def _terceros(self):
         codigo, eje = self._sel_empresa()

@@ -181,6 +181,41 @@ class GestorSQLite:
     def _row_to_dict(self, row):
         return dict(row) if row else None
 
+    def _clonar_plantillas_si_hace_falta(self, codigo: str, ejercicio_dest: int | None):
+        """
+        Si se crea un nuevo ejercicio de una empresa, replica sus plantillas
+        (bancos/emitidas/recibidas) desde el ultimo ejercicio existente.
+        """
+        ej_dest = _ej_val(ejercicio_dest)
+        if ej_dest is None:
+            return
+
+        def _ej_origen(table: str) -> int | None:
+            cur = self.conn.execute(
+                f"SELECT DISTINCT ejercicio FROM {table} WHERE codigo_empresa=?",
+                (codigo,),
+            )
+            otros = [r[0] for r in cur.fetchall() if r[0] != ej_dest]
+            return max(otros) if otros else None
+
+        ej_src = _ej_origen("bancos")
+        ej_src_emit = _ej_origen("facturas_emitidas")
+        ej_src_rec = _ej_origen("facturas_recibidas")
+
+        # Usa el ejercicio mas reciente disponible de cada tipo
+        if ej_src is not None:
+            for b in self.listar_bancos(codigo, ej_src):
+                nb = dict(b, codigo_empresa=codigo, ejercicio=ej_dest)
+                self.upsert_banco(nb)
+        if ej_src_emit is not None:
+            for p in self.listar_emitidas(codigo, ej_src_emit):
+                np = dict(p, codigo_empresa=codigo, ejercicio=ej_dest)
+                self.upsert_emitida(np)
+        if ej_src_rec is not None:
+            for p in self.listar_recibidas(codigo, ej_src_rec):
+                np = dict(p, codigo_empresa=codigo, ejercicio=ej_dest)
+                self.upsert_recibida(np)
+
     # ---------- EMPRESAS ----------
     def listar_empresas(self):
         cur = self.conn.execute(
@@ -202,6 +237,7 @@ class GestorSQLite:
         return self._row_to_dict(cur.fetchone())
 
     def upsert_empresa(self, emp: dict):
+        existe = self.get_empresa(emp.get("codigo"), emp.get("ejercicio"))
         self.conn.execute(
             """
             INSERT INTO empresas (codigo, ejercicio, nombre, digitos_plan, serie_emitidas,
@@ -239,6 +275,8 @@ class GestorSQLite:
             ),
         )
         self.conn.commit()
+        if not existe:
+            self._clonar_plantillas_si_hace_falta(emp.get("codigo"), emp.get("ejercicio"))
 
     def copiar_empresa(self, codigo_origen: str, ejercicio_origen: int, nueva_empresa: dict):
         if not self.get_empresa(codigo_origen, ejercicio_origen):
