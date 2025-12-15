@@ -6,6 +6,7 @@ import struct
 import tempfile
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+import sys
 from datetime import date, datetime
 
 from procesos.facturas_emitidas import generar_emitidas
@@ -870,7 +871,19 @@ class UIFacturasEmitidas(ttk.Frame):
 
     # ------------------- Exportar PDF -------------------
     def _docx_template_path(self) -> str:
-        return os.path.join(os.path.dirname(os.path.abspath(__file__)), "plantilla.docx")
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        candidates = []
+        try:
+            if hasattr(sys, "_MEIPASS"):
+                candidates.append(os.path.join(getattr(sys, "_MEIPASS"), "plantilla.docx"))
+        except Exception:
+            pass
+        candidates.append(os.path.join(base_dir, "plantilla.docx"))
+        candidates.append(os.path.join(os.getcwd(), "plantilla.docx"))
+        for path in candidates:
+            if os.path.exists(path):
+                return path
+        return candidates[0]
 
     def _docx_placeholder_map(self, fac: dict):
         cli = self._cliente_factura(fac)
