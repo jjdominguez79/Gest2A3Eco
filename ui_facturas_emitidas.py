@@ -1,19 +1,21 @@
 
-
-import os
+import sys, os
 import calendar
 import struct
-import tempfile
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from datetime import date, datetime
+
+from procesos.facturas_word import (
+    build_context_emitida,
+    generar_pdf_desde_plantilla_word,
+)
 
 from procesos.facturas_emitidas import generar_emitidas
 from utilidades import validar_subcuenta_longitud
 
 IVA_OPCIONES = [21, 10, 4, 0]
 IRPF_OPCIONES = [0, 1, 7, 15, 19]
-
 
 def _to_float(x) -> float:
     try:
@@ -30,7 +32,6 @@ def _to_float(x) -> float:
     except Exception:
         return 0.0
 
-
 def _parse_date_ui(val: str) -> date:
     for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y"):
         try:
@@ -38,7 +39,6 @@ def _parse_date_ui(val: str) -> date:
         except Exception:
             continue
     return date.today()
-
 
 def _to_fecha_ui(val: str) -> str:
     if not val:
@@ -49,19 +49,16 @@ def _to_fecha_ui(val: str) -> str:
     except Exception:
         return date.today().strftime("%d/%m/%Y")
 
-
 def _to_fecha_ui_or_blank(val: str) -> str:
     if not val:
         return ""
     return _to_fecha_ui(val)
-
 
 def _round2(x) -> float:
     try:
         return round(float(x), 2)
     except Exception:
         return 0.0
-
 
 class DatePicker(tk.Toplevel):
     def __init__(self, parent, initial: date | None = None):
@@ -140,7 +137,6 @@ class DatePicker(tk.Toplevel):
         self._current = self._current.replace(year=y, month=m, day=1)
         self._paint_calendar()
 
-
 class TerceroFicha(tk.Toplevel):
     def __init__(self, parent, tercero=None):
         super().__init__(parent)
@@ -181,7 +177,6 @@ class TerceroFicha(tk.Toplevel):
         data["tipo"] = self.var_tipo.get() or "cliente"
         self.result = data
         self.destroy()
-
 
 class TercerosDialog(tk.Toplevel):
     def __init__(self, parent, gestor, codigo_empresa, ejercicio, ndig_plan):
@@ -663,7 +658,6 @@ class FacturaDialog(tk.Toplevel):
         }
         self.destroy()
 
-
 class UIFacturasEmitidas(ttk.Frame):
     def __init__(self, master, gestor, codigo_empresa, ejercicio, nombre_empresa):
         super().__init__(master)
@@ -869,163 +863,15 @@ class UIFacturasEmitidas(ttk.Frame):
         TercerosDialog(self, self.gestor, self.codigo, self.ejercicio, int(self.empresa_conf.get("digitos_plan", 8)))
 
     # ------------------- Exportar PDF -------------------
+    def _app_dir(self) -> str:
+        if getattr(sys, "frozen", False):
+            return os.path.dirname(sys.executable)  # carpeta del .exe
+        return os.path.dirname(os.path.abspath(__file__))  # modo dev
+
     def _docx_template_path(self) -> str:
-        return os.path.join(os.path.dirname(os.path.abspath(__file__)), "plantilla.docx")
-
-    def _docx_placeholder_map(self, fac: dict):
-        cli = self._cliente_factura(fac)
-        tot = self._totales_factura(fac)
-        return {
-            "{{empresa_nombre}}": self.empresa_conf.get("nombre", "") or self.nombre,
-            "{{empresa_cif}}": self.empresa_conf.get("cif", ""),
-            "{{empresa_direccion}}": self.empresa_conf.get("direccion", ""),
-            "{{empresa_cp}}": self.empresa_conf.get("cp", ""),
-            "{{empresa_poblacion}}": self.empresa_conf.get("poblacion", ""),
-            "{{empresa_provincia}}": self.empresa_conf.get("provincia", ""),
-            "{{empresa_telefono}}": self.empresa_conf.get("telefono", ""),
-            "{{empresa_email}}": self.empresa_conf.get("email", ""),
-            "{{factura_serie}}": fac.get("serie", ""),
-            "{{factura_numero}}": fac.get("numero", ""),
-            "{{factura_fecha}}": _to_fecha_ui_or_blank(fac.get("fecha_expedicion") or fac.get("fecha_asiento", "")),
-            "{{factura_fecha_operacion}}": _to_fecha_ui_or_blank(fac.get("fecha_operacion", "")),
-            "{{factura_descripcion}}": fac.get("descripcion", ""),
-            "{{cliente_nombre}}": cli.get("nombre", ""),
-            "{{cliente_nif}}": cli.get("nif", ""),
-            "{{cliente_direccion}}": cli.get("direccion", ""),
-            "{{cliente_cp}}": cli.get("cp", ""),
-            "{{cliente_poblacion}}": cli.get("poblacion", ""),
-            "{{cliente_provincia}}": cli.get("provincia", ""),
-            "{{cliente_telefono}}": cli.get("telefono", ""),
-            "{{cliente_email}}": cli.get("email", ""),
-            "{{total_base}}": f"{tot['base']:.2f}",
-            "{{total_iva}}": f"{tot['iva']:.2f}",
-            "{{total_irpf}}": f"{tot['ret']:.2f}",
-            "{{total_factura}}": f"{tot['total']:.2f}",
-            "{{observaciones}}": fac.get("descripcion", ""),
-            "{{pago_metodo}}": "",
-            "{{pago_banco}}": "",
-            "{{pago_iban}}": "",
-            "{{pago_vencimiento}}": "",
-        }
-
-    def _replace_text_runs(self, container, mapping: dict):
-        def replace_paragraph(p):
-            txt = p.text
-            changed = False
-            for key, val in mapping.items():
-                if key in txt:
-                    txt = txt.replace(key, val)
-                    changed = True
-            if not changed:
-                return
-            # Reescribir en un solo run para evitar splits de Word
-            while p.runs:
-                p.runs[0].clear()
-                p._p.remove(p.runs[0]._r)
-            run = p.add_run(txt)
-            return
-
-        for p in getattr(container, "paragraphs", []):
-            replace_paragraph(p)
-        for tbl in getattr(container, "tables", []):
-            for row in tbl.rows:
-                for cell in row.cells:
-                    self._replace_text_runs(cell, mapping)
-
-    def _linea_placeholder_map(self, ln: dict):
-        total_linea = (
-            _to_float(ln.get("base"))
-            + _to_float(ln.get("cuota_iva"))
-            + _to_float(ln.get("cuota_re"))
-            + _to_float(ln.get("cuota_irpf"))
-        )
-        return {
-            "{{linea_concepto}}": str(ln.get("concepto", "")),
-            "{{linea_unidades}}": f"{_to_float(ln.get('unidades')):.2f}",
-            "{{linea_precio}}": f"{_to_float(ln.get('precio')):.2f}",
-            "{{linea_pct_iva}}": f"{_to_float(ln.get('pct_iva')):.2f}",
-            "{{linea_cuota_iva}}": f"{_to_float(ln.get('cuota_iva')):.2f}",
-            "{{linea_pct_irpf}}": f"{_to_float(ln.get('pct_irpf')):.2f}",
-            "{{linea_cuota_irpf}}": f"{_to_float(ln.get('cuota_irpf')):.2f}",
-            "{{linea_base}}": f"{_to_float(ln.get('base')):.2f}",
-            "{{linea_total}}": f"{total_linea:.2f}",
-        }
-
-    def _fill_lineas_table(self, doc, lineas: list):
-        placeholder = "{{linea_concepto}}"
-        for table in doc.tables:
-            template_row = None
-            for row in table.rows:
-                row_text = " ".join(cell.text for cell in row.cells)
-                if placeholder in row_text:
-                    template_row = row
-                    break
-            if not template_row:
-                continue
-            template_texts = [cell.text for cell in template_row.cells]
-            if not lineas:
-                self._replace_text_runs(template_row, self._linea_placeholder_map({}))
-                return True
-            for idx, ln in enumerate(lineas):
-                target_row = template_row if idx == 0 else table.add_row()
-                if idx > 0:
-                    for c_idx, txt in enumerate(template_texts):
-                        target_row.cells[c_idx].text = txt
-                self._replace_text_runs(target_row, self._linea_placeholder_map(ln))
-            return True
-        return False
-
-    def _convert_docx_to_pdf(self, docx_path: str, pdf_path: str) -> bool:
-        try:
-            import win32com.client  # type: ignore
-        except Exception:
-            return False
-        word = None
-        try:
-            word = win32com.client.DispatchEx("Word.Application")
-            word.Visible = False
-            doc = word.Documents.Open(docx_path)
-            doc.SaveAs(pdf_path, FileFormat=17)  # 17 = wdFormatPDF
-            doc.Close(False)
-            word.Quit()
-            return True
-        except Exception:
-            if word:
-                try:
-                    word.Quit()
-                except Exception:
-                    pass
-            return False
-
-    def _export_pdf_with_template(self, fac: dict, save_path: str):
-        tpl_path = self._docx_template_path()
-        if not os.path.exists(tpl_path):
-            return False, "No se encuentra plantilla.docx en la carpeta del programa."
-        try:
-            from docx import Document  # type: ignore
-        except Exception:
-            return False, "Falta la libreria python-docx (instala requirements.txt)."
-        try:
-            doc = Document(tpl_path)
-        except Exception:
-            return False, "No se pudo abrir plantilla.docx (esta corrupto?)."
-        mapping = self._docx_placeholder_map(fac)
-        self._replace_text_runs(doc, mapping)
-        self._fill_lineas_table(doc, fac.get("lineas", []))
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
-        tmp.close()
-        try:
-            doc.save(tmp.name)
-            ok = self._convert_docx_to_pdf(tmp.name, save_path)
-            if not ok:
-                return False, "Necesitas Word con pywin32 para convertir a PDF."
-            return True, ""
-        finally:
-            try:
-                os.remove(tmp.name)
-            except Exception:
-                pass
-
+        # Recomendado: plantilla en carpeta persistente
+        return os.path.join(self._app_dir(), "plantillas", "factura_emitida_template.docx")
+                
     def _pdf_escape(self, text: str) -> str:
         return str(text or "").replace("\\", "\\\\").replace("(", "[").replace(")", "]")
 
@@ -1248,7 +1094,9 @@ class UIFacturasEmitidas(ttk.Frame):
         if not sel:
             messagebox.showinfo("Gest2A3Eco", "Selecciona una factura.")
             return
-        fac = next((f for f in self.gestor.listar_facturas_emitidas(self.codigo, self.ejercicio) if str(f.get("id")) == str(sel[0])), None)
+
+        fac = next((f for f in self.gestor.listar_facturas_emitidas(self.codigo, self.ejercicio)
+                    if str(f.get("id")) == str(sel[0])), None)
         if not fac:
             return
 
@@ -1260,20 +1108,26 @@ class UIFacturasEmitidas(ttk.Frame):
         )
         if not save_path:
             return
+
+        template_path = self._docx_template_path()
+        if not os.path.exists(template_path):
+            messagebox.showerror("Gest2A3Eco", "No se encuentra plantilla.docx en la carpeta del programa.")
+            return
+
+        cliente = self._cliente_factura(fac)
+        tot = self._totales_factura(fac)
+        context = build_context_emitida(self.empresa_conf, fac, cliente, tot)
+
         try:
-            ok_tpl, reason = self._export_pdf_with_template(fac, save_path)
-            if ok_tpl:
-                messagebox.showinfo("Gest2A3Eco", f"PDF generado con plantilla.docx:\n{save_path}")
-                return
-            if reason:
-                messagebox.showwarning("Gest2A3Eco", f"No se uso la plantilla.docx:\n{reason}\nSe intentara el PDF basico.")
-        except Exception:
-            pass
-        try:
-            self._factura_pdf(save_path, fac)
-            messagebox.showinfo("Gest2A3Eco", f"PDF generado (modo basico):\n{save_path}")
+            generar_pdf_desde_plantilla_word(
+                template_path=template_path,
+                context=context,
+                out_pdf_path=save_path,
+                guardar_docx=False,   # o True si quiere guardar también el DOCX
+            )
+            messagebox.showinfo("Gest2A3Eco", f"PDF generado desde Word:\n{save_path}")
         except Exception as e:
-            messagebox.showerror("Gest2A3Eco", f"No se pudo generar el PDF:\n{e}")
+            messagebox.showerror("Gest2A3Eco", f"No se pudo generar el PDF desde Word:\n{e}")
 
     def _factura_to_rows(self, fac: dict):
         rows = []
