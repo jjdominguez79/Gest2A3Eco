@@ -7,8 +7,8 @@
 from typing import List, Dict, Any
 
 from collections import defaultdict
-from facturas_common import Linea, render_a3_tipo12_cabecera, render_a3_tipo9_detalle
-from utilidades import d2
+from models.facturas_common import Linea, render_a3_tipo12_cabecera, render_a3_tipo9_detalle
+from utils.utilidades import d2
 
 
 def _ajustar_cuenta(raw: Any, ndig: int) -> str:

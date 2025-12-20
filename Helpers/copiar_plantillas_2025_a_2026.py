@@ -5,7 +5,7 @@ Ejecuta: python copiar_plantillas_2025_a_2026.py
 
 from pathlib import Path
 
-from gestor_sqlite import GestorSQLite
+from models.gestor_sqlite import GestorSQLite
 
 
 # Ruta a la base de datos SQLite

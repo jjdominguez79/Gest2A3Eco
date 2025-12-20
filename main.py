@@ -1,14 +1,10 @@
 import os, sys
-import json
 import tkinter as tk
 from tkinter import ttk
 
-from ui_seleccion_empresa import UISeleccionEmpresa
-from ui_plantillas import UIPlantillasEmpresa
-from ui_procesos import UIProcesos
-from ui_facturas_emitidas import UIFacturasEmitidas
-from gestor_sqlite import GestorSQLite
-from ui_theme import aplicar_tema
+from controllers.app_controller import AppController
+from models.gestor_sqlite import GestorSQLite
+from views.ui_theme import aplicar_tema
 
 
 # ─────────────────────────────────────────────
@@ -148,9 +144,6 @@ def main():
     # Tema visual unificado
     aplicar_tema(root)
     
-    # Cabecera (usa show(build_seleccion) para "Cambiar empresa")
-    _build_header(root, on_cambiar_empresa=lambda: show(build_seleccion))
-
     # Contenedor de pantallas bajo la cabecera
     content = ttk.Frame(root, padding=10, style="TFrame")
     content.pack(side="top", fill="both", expand=True)
@@ -158,49 +151,14 @@ def main():
     # Gestor de datos en SQLite (migra desde JSON si existe)
     gestor = GestorSQLite(RUTA_DB, json_seed=RUTA_JSON)
 
-    estado = {"frame": None}
+    # Controlador de navegacion entre pantallas (MVC)
+    controller = AppController(content, gestor)
 
-    def show(factory):
-        """Destruye la pantalla actual y muestra la nueva en 'content'."""
-        if estado["frame"] is not None:
-            estado["frame"].destroy()
-        fr = factory(content)
-        fr.pack(fill="both", expand=True)
-        estado["frame"] = fr
-
-    # Callback al confirmar empresa en la pantalla de selección
-    def on_empresa_ok(codigo, ejercicio, nombre):
-        def build_dashboard(parent):
-            nb = ttk.Notebook(parent)
-
-            # Pestaña de plantillas
-            nb.add(
-                UIPlantillasEmpresa(nb, gestor, codigo, ejercicio, nombre),
-                text="Plantillas"
-            )
-
-            # Pestaña de facturas emitidas (módulo interno)
-            nb.add(
-                UIFacturasEmitidas(nb, gestor, codigo, ejercicio, nombre),
-                text="Facturas emitidas"
-            )
-
-            # Pestaña de generación de ficheros
-            nb.add(
-                UIProcesos(nb, gestor, codigo, ejercicio, nombre),
-                text="Generar ficheros"
-            )
-
-            return nb
-
-        show(build_dashboard)
-
-    # Pantalla de selección de empresa
-    def build_seleccion(parent):
-        return UISeleccionEmpresa(parent, gestor, on_empresa_ok)
+    # Cabecera (usa el controlador para "Cambiar empresa")
+    _build_header(root, on_cambiar_empresa=controller.start)
 
     # Pantalla inicial
-    show(build_seleccion)
+    controller.start()
 
     root.mainloop()
 

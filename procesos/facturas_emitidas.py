@@ -4,7 +4,7 @@
 from collections import defaultdict
 from typing import List, Dict, Any
 
-from facturas_common import (
+from models.facturas_common import (
     render_emitidas_cabecera_256,
     render_emitidas_detalle_256,
 )

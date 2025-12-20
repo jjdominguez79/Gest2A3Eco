@@ -8,12 +8,25 @@ from docx2pdf import convert
 
 
 def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales: dict) -> Dict[str, Any]:
-    # Normalice aquí: strings ya formateados, números con 2 decimales, fechas dd/mm/yyyy
+    # Normaliza: numeros con miles en punto y decimales con coma (1.000,00)
     def f2(x):
         try:
-            return f"{float(x):.2f}"
+            s = f"{float(x):,.2f}"
         except Exception:
-            return "0.00"
+            s = "0.00"
+        return s.replace(",", "X").replace(".", ",").replace("X", ".")
+
+    def first_cuenta(raw):
+        raw = raw or ""
+        if not str(raw).strip():
+            return ""
+        for sep in ["\n", ";", ","]:
+            raw = str(raw).replace(sep, ",")
+        for p in str(raw).split(","):
+            p = p.strip()
+            if p:
+                return p
+        return ""
 
     lineas = []
     for ln in fac.get("lineas", []):
@@ -71,9 +84,11 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
             "total": f2(totales.get("total", 0)),
         },
         "pago": {
-            "metodo": "",
+            "metodo": fac.get("forma_pago", ""),
             "banco": "",
-            "iban": "",
+            "iban": fac.get("cuenta_bancaria")
+            or empresa_conf.get("cuenta_bancaria")
+            or first_cuenta(empresa_conf.get("cuentas_bancarias", "")),
             "vencimiento": "",
         }
     }

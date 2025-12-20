@@ -2,26 +2,26 @@
 
 ## Resumen ejecutivo
 - Gest2A3Eco es una app de escritorio en Python/Tkinter para generar ficheros `suenlace.dat` de A3ECO a partir de Excel y, adem·s, para emitir facturas desde la propia app (PDF y suenlace). Es la evoluciÛn de Gest2Bank, con foco en bancos + facturas emitidas/recibidas.
-- Punto de entrada: `main.py` crea la ventana, aplica tema (`ui_theme.py`), levanta cabecera y un Notebook con pestaÒas de plantillas, facturas emitidas y generaciÛn de ficheros. Ejecutar con `python main.py`.
+- Punto de entrada: `main.py` crea la ventana, aplica tema (`views/ui_theme.py`), levanta cabecera y un Notebook con pestaÒas de plantillas, facturas emitidas y generaciÛn de ficheros. Ejecutar con `python main.py`.
 - Datos persistentes: SQLite (`plantillas/gest2a3eco.db`) vÌa `GestorSQLite` con semilla opcional desde `plantillas/plantillas.json`. Maestro de terceros, empresas, plantillas y facturas viven en esta BD. `GestorPlantillas` (JSON con portalocker) queda como compatibilidad/semilla; no es el camino real.
 
 ## Funcionalidades principales
 - **A) Bancos/Excel → suenlace.dat (A3ECO)**  
-  - Plantillas por banco (`ui_plantillas.py` → `GestorSQLite.upsert_banco`): subcuenta del banco, subcuenta por defecto, lista de patrones de concepto con comodÌn `*` → subcuenta contrapartida.  
-  - GeneraciÛn (`ui_procesos.py` + `procesos/bancos.py`): lee Excel seg˙n mapeo por letra de columna, crea movimientos tipo 0 (512 bytes) con `facturas_common.render_a3_tipo0_bancos`. ValidaciÛn de fecha; filas sin fecha v·lida se omiten y se reportan.
+  - Plantillas por banco (`views/ui_plantillas.py` → `GestorSQLite.upsert_banco`): subcuenta del banco, subcuenta por defecto, lista de patrones de concepto con comodÌn `*` → subcuenta contrapartida.  
+  - GeneraciÛn (`views/ui_procesos.py` + `procesos/bancos.py`): lee Excel seg˙n mapeo por letra de columna, crea movimientos tipo 0 (512 bytes) con `models/facturas_common.render_a3_tipo0_bancos`. ValidaciÛn de fecha; filas sin fecha v·lida se omiten y se reportan.
 - **B) Plantillas**  
-  - Por empresa y ejercicio (`gestor_sqlite.py`, tabla `bancos`/`facturas_emitidas`/`facturas_recibidas`).  
+  - Por empresa y ejercicio (`models/gestor_sqlite.py`, tabla `bancos`/`facturas_emitidas`/`facturas_recibidas`).  
   - Configurable: cÛdigo empresa, subcuentas (banco, por defecto), prefijos/subcuentas por defecto para clientes/proveedores, dÌgitos del plan contable, mapeo Excel (`primera_fila_procesar`, `ignorar_filas` estilo `H=0`, `condicion_cuenta_generica` para forzar cuenta genÈrica).  
   - Conceptos con comodÌn `*` (fnmatch) para mapear texto → subcuenta.
 - **C) FacturaciÛn**  
   - Plantillas de emitidas/recibidas con cuentas por defecto, prefijos y mapeo Excel (tabla `facturas_emitidas`/`facturas_recibidas`).  
-  - EmisiÛn manual de facturas emitidas (`ui_facturas_emitidas.py`): alta/ediciÛn/copia, numeraciÛn por serie (`serie_emitidas` + `siguiente_num_emitidas` en tabla `empresas`), asignaciÛn de tercero maestro + subcuenta por empresa (`terceros`/`terceros_empresas`), lÌneas con IVA/IRPF, marcadores de generaciÛn, exportaciÛn a PDF, generaciÛn `suenlace.dat` 256 bytes (cabecera tipo 1 + detalle tipo 9) usando `procesos/facturas_emitidas.py`.  
+  - EmisiÛn manual de facturas emitidas (`views/ui_facturas_emitidas.py`): alta/ediciÛn/copia, numeraciÛn por serie (`serie_emitidas` + `siguiente_num_emitidas` en tabla `empresas`), asignaciÛn de tercero maestro + subcuenta por empresa (`terceros`/`terceros_empresas`), lÌneas con IVA/IRPF, marcadores de generaciÛn, exportaciÛn a PDF, generaciÛn `suenlace.dat` 256 bytes (cabecera tipo 1 + detalle tipo 9) usando `procesos/facturas_emitidas.py`.  
   - ImportaciÛn desde Excel: pestaÒa "Generar ficheros" admite facturas emitidas y recibidas (`procesos/facturas_recibidas.py` genera cabecera tipo 1/2 + detalle tipo 9, formato 254) a partir de mapeo por letras.
 
 ## Arquitectura del cÛdigo
-- **UI (Tkinter):** `main.py` (arranque, cabecera, navegaciÛn), `ui_seleccion_empresa.py` (CRUD empresa + maestro de terceros), `ui_plantillas.py` (gestiÛn de plantillas), `ui_procesos.py` (import Excel + generar suenlace), `ui_facturas_emitidas.py` (facturas emitidas, PDF, suenlace). Tema visual en `ui_theme.py`.
-- **Datos:** `gestor_sqlite.py` (SQLite; tablas `empresas`, `bancos`, `facturas_emitidas`, `facturas_recibidas`, `facturas_emitidas_docs`, `terceros`, `terceros_empresas`; migraciÛn opcional desde JSON), `gestor_plantillas.py` (legacy JSON + portalocker).
-- **Dominio/procesado:** `procesos/bancos.py`, `procesos/facturas_emitidas.py`, `procesos/facturas_recibidas.py` generan lÌneas/registros; `facturas_common.py` define modelo `Linea`, normaliza fechas y renderiza formatos A3 (512/254/256 bytes); `utilidades.py` valida subcuentas y formatea importes/fechas.
+- **UI (Tkinter):** `main.py` (arranque, cabecera, navegaciÛn), `views/ui_seleccion_empresa.py` (CRUD empresa + maestro de terceros), `views/ui_plantillas.py` (gestiÛn de plantillas), `views/ui_procesos.py` (import Excel + generar suenlace), `views/ui_facturas_emitidas.py` (facturas emitidas, PDF, suenlace). Tema visual en `views/ui_theme.py`.
+- **Datos:** `models/gestor_sqlite.py` (SQLite; tablas `empresas`, `bancos`, `facturas_emitidas`, `facturas_recibidas`, `facturas_emitidas_docs`, `terceros`, `terceros_empresas`; migraciÛn opcional desde JSON), `models/gestor_plantillas.py` (legacy JSON + portalocker).
+- **Dominio/procesado:** `procesos/bancos.py`, `procesos/facturas_emitidas.py`, `procesos/facturas_recibidas.py` generan lÌneas/registros; `models/facturas_common.py` define modelo `Linea`, normaliza fechas y renderiza formatos A3 (512/254/256 bytes); `utils/utilidades.py` valida subcuentas y formatea importes/fechas.
 - **Config/build:** `requirements.txt` (pandas, openpyxl, portalocker), `config.json` (ruta JSON legacy), `Gest2A3Eco.spec` (PyInstaller onefile con logo), `icono.ico`/`logo.png`.
 
 ## Flujo de usuario (UI real)
@@ -34,7 +34,7 @@
 - BotÛn "Empresas" en cabecera vuelve a la pantalla de selecciÛn.
 
 ## Formatos y reglas de negocio clave
-- **Fechas:** `_fecha_yyyymmdd` (`facturas_common.py`) acepta date/datetime, `pandas.Timestamp`, seriales Excel 1900/1904 y cadenas; invalida → `00000000`. Filas de bancos sin fecha v·lida se omiten con aviso.
+- **Fechas:** `_fecha_yyyymmdd` (`models/facturas_common.py`) acepta date/datetime, `pandas.Timestamp`, seriales Excel 1900/1904 y cadenas; invalida → `00000000`. Filas de bancos sin fecha v·lida se omiten con aviso.
 - **DÌgitos plan contable:** por empresa (`empresas.digitos_plan`, default 8). `validar_subcuenta_longitud` fuerza longitud exacta en UI de plantillas/terceros. `_ajustar_cuenta` en recibidas recorta o rellena con ceros a derecha.
 - **AsignaciÛn de conceptos (bancos):** `procesos/bancos.py` recorre `conceptos` con patrones `fnmatch` (comodÌn `*`); el primero que matchea define la contrapartida, si no, usa `subcuenta_por_defecto`.
 - **Construccion de subcuentas:**  
@@ -69,7 +69,7 @@
 - Worktree actual: `main.py` tiene cambios sin commitear (no revertir).
 
 ## Convenciones para contribuir
-- Mantener separaciÛn UI (`ui_*.py`) vs lÛgica de procesos (`procesos/*.py`) vs datos (`gestor_sqlite.py`). No duplicar reglas de negocio; reutilizar helpers de `facturas_common.py` y `utilidades.py`.
+- Mantener separaciÛn UI (`views/ui_*.py`) vs lÛgica de procesos (`procesos/*.py`) vs datos (`models/gestor_sqlite.py`). No duplicar reglas de negocio; reutilizar helpers de `models/facturas_common.py` y `utils/utilidades.py`.
 - Respetar `digitos_plan` y validaciones de subcuentas en nuevas pantallas. Usar el mapeo por letras existente si se amplÌan importaciones.
 - Mantener ASCII en nuevos archivos, nomenclatura en castellano como el cÛdigo actual, y evitar tocar `main.py` (datos de cabecera) salvo requerimiento explÌcito.
 - Al tocar datos, preferir operar sobre SQLite; si se necesitan seeds, sincronizar `plantillas.json` solo con cuidado.

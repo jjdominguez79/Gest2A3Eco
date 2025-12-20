@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS empresas (
   digitos_plan INTEGER,
   serie_emitidas TEXT,
   siguiente_num_emitidas INTEGER,
+  cuenta_bancaria TEXT,
+  cuentas_bancarias TEXT,
   cif TEXT,
   direccion TEXT,
   cp TEXT,
@@ -79,6 +81,8 @@ CREATE TABLE IF NOT EXISTS facturas_emitidas_docs (
   nombre TEXT,
   descripcion TEXT,
   subcuenta_cliente TEXT,
+  forma_pago TEXT,
+  cuenta_bancaria TEXT,
   generada INTEGER DEFAULT 0,
   fecha_generacion TEXT,
   lineas_json TEXT
@@ -125,6 +129,18 @@ class GestorSQLite:
     def _init_schema(self):
         self.conn.executescript(SCHEMA)
         self.conn.commit()
+        self._ensure_column("empresas", "cuenta_bancaria", "TEXT")
+        self._ensure_column("empresas", "cuentas_bancarias", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "forma_pago", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "cuenta_bancaria", "TEXT")
+        self.conn.commit()
+
+    def _ensure_column(self, table: str, column: str, col_type: str):
+        cur = self.conn.execute(f"PRAGMA table_info({table})")
+        cols = {r[1] for r in cur.fetchall()}
+        if column in cols:
+            return
+        self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
 
     def _maybe_seed_from_json(self, json_seed):
         try:
@@ -241,13 +257,15 @@ class GestorSQLite:
         self.conn.execute(
             """
             INSERT INTO empresas (codigo, ejercicio, nombre, digitos_plan, serie_emitidas,
-                siguiente_num_emitidas, cif, direccion, cp, poblacion, provincia, telefono, email, logo_path)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                siguiente_num_emitidas, cuenta_bancaria, cuentas_bancarias, cif, direccion, cp, poblacion, provincia, telefono, email, logo_path)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(codigo, ejercicio) DO UPDATE SET
                 nombre=excluded.nombre,
                 digitos_plan=excluded.digitos_plan,
                 serie_emitidas=excluded.serie_emitidas,
                 siguiente_num_emitidas=excluded.siguiente_num_emitidas,
+                cuenta_bancaria=excluded.cuenta_bancaria,
+                cuentas_bancarias=excluded.cuentas_bancarias,
                 cif=excluded.cif,
                 direccion=excluded.direccion,
                 cp=excluded.cp,
@@ -264,6 +282,8 @@ class GestorSQLite:
                 emp.get("digitos_plan"),
                 emp.get("serie_emitidas"),
                 emp.get("siguiente_num_emitidas"),
+                emp.get("cuenta_bancaria"),
+                emp.get("cuentas_bancarias"),
                 emp.get("cif"),
                 emp.get("direccion"),
                 emp.get("cp"),
@@ -445,8 +465,8 @@ class GestorSQLite:
             INSERT INTO facturas_emitidas_docs
             (id, codigo_empresa, ejercicio, tercero_id, serie, numero, numero_largo_sii,
              fecha_asiento, fecha_expedicion, fecha_operacion, nif, nombre, descripcion,
-             subcuenta_cliente, generada, fecha_generacion, lineas_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             subcuenta_cliente, forma_pago, cuenta_bancaria, generada, fecha_generacion, lineas_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -461,6 +481,8 @@ class GestorSQLite:
                 nombre=excluded.nombre,
                 descripcion=excluded.descripcion,
                 subcuenta_cliente=excluded.subcuenta_cliente,
+                forma_pago=excluded.forma_pago,
+                cuenta_bancaria=excluded.cuenta_bancaria,
                 generada=excluded.generada,
                 fecha_generacion=excluded.fecha_generacion,
                 lineas_json=excluded.lineas_json
@@ -480,6 +502,8 @@ class GestorSQLite:
                 factura.get("nombre"),
                 factura.get("descripcion"),
                 factura.get("subcuenta_cliente"),
+                factura.get("forma_pago"),
+                factura.get("cuenta_bancaria"),
                 1 if factura.get("generada") else 0,
                 factura.get("fecha_generacion"),
                 json.dumps(factura.get("lineas", []), ensure_ascii=False),
@@ -604,6 +628,19 @@ class GestorSQLite:
     def listar_terceros_empresa(self, codigo_empresa: str, ejercicio: int):
         cur = self.conn.execute(
             "SELECT * FROM terceros_empresas WHERE codigo_empresa=? AND ejercicio=?",
+            (codigo_empresa, _ej_val(ejercicio)),
+        )
+        return [self._row_to_dict(r) for r in cur.fetchall()]
+
+    def listar_terceros_por_empresa(self, codigo_empresa: str, ejercicio: int):
+        cur = self.conn.execute(
+            """
+            SELECT t.*, te.subcuenta_cliente, te.subcuenta_proveedor
+            FROM terceros t
+            JOIN terceros_empresas te ON te.tercero_id = t.id
+            WHERE te.codigo_empresa=? AND te.ejercicio=?
+            ORDER BY t.nombre
+            """,
             (codigo_empresa, _ej_val(ejercicio)),
         )
         return [self._row_to_dict(r) for r in cur.fetchall()]

@@ -9,7 +9,7 @@ Ejecutar:
 import sys
 from pathlib import Path
 
-from import_empresas_csv import actualizar_empresas_csv_todos_ejercicios
+from services.import_empresas_csv import actualizar_empresas_csv_todos_ejercicios
 
 
 def main():

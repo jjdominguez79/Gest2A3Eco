@@ -1,0 +1,899 @@
+
+import calendar
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+from datetime import date, datetime
+
+from controllers.ui_facturas_emitidas_controller import FacturasEmitidasController
+from controllers.factura_dialog_controller import FacturaDialogController
+from controllers.terceros_global_controller import TercerosGlobalController
+from controllers.terceros_empresa_controller import TercerosEmpresaController
+
+IVA_OPCIONES = [21, 10, 4, 0]
+IRPF_OPCIONES = [0, 1, 7, 15, 19]
+
+def _to_float(x) -> float:
+    try:
+        if x is None or x == "":
+            return 0.0
+        if isinstance(x, (int, float)) and not isinstance(x, bool):
+            return float(x)
+        s = str(x).strip().replace("\xa0", " ")
+        if "." in s and "," in s:
+            s = s.replace(".", "").replace(",", ".")
+        elif "," in s:
+            s = s.replace(",", ".")
+        return float(s)
+    except Exception:
+        return 0.0
+
+def _parse_date_ui(val: str) -> date:
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(val.strip(), fmt).date()
+        except Exception:
+            continue
+    return date.today()
+
+def _to_fecha_ui(val: str) -> str:
+    if not val:
+        return date.today().strftime("%d/%m/%Y")
+    try:
+        d = _parse_date_ui(str(val))
+        return d.strftime("%d/%m/%Y")
+    except Exception:
+        return date.today().strftime("%d/%m/%Y")
+
+def _to_fecha_ui_or_blank(val: str) -> str:
+    if not val:
+        return ""
+    return _to_fecha_ui(val)
+
+def _round2(x) -> float:
+    try:
+        return round(float(x), 2)
+    except Exception:
+        return 0.0
+
+class DatePicker(tk.Toplevel):
+    def __init__(self, parent, initial: date | None = None):
+        super().__init__(parent)
+        self.title("Selecciona fecha")
+        self.resizable(False, False)
+        self.result = None
+        self._current = initial or date.today()
+        self._build()
+        self.grab_set()
+        self.transient(parent)
+        self.wait_window(self)
+
+    def _build(self):
+        frm = ttk.Frame(self, padding=8)
+        frm.pack(fill="both", expand=True)
+        nav = ttk.Frame(frm)
+        nav.pack(fill="x")
+        ttk.Button(nav, text="<", width=3, command=self._prev_month).pack(side=tk.LEFT)
+        self.lbl_month = ttk.Label(nav, width=18, anchor="center")
+        self.lbl_month.pack(side=tk.LEFT, expand=True)
+        ttk.Button(nav, text=">", width=3, command=self._next_month).pack(side=tk.LEFT)
+
+        self.days_frame = ttk.Frame(frm)
+        self.days_frame.pack(pady=4)
+        for i, dname in enumerate(["Lu", "Ma", "Mi", "Ju", "Vi", "Sa", "Do"]):
+            ttk.Label(self.days_frame, text=dname, width=3, anchor="center").grid(row=0, column=i, padx=1, pady=1)
+
+        self._paint_calendar()
+
+    def _paint_calendar(self):
+        for w in self.days_frame.grid_slaves():
+            info = w.grid_info()
+            if int(info.get("row", 0)) > 0:
+                w.destroy()
+        y, m = self._current.year, self._current.month
+        meses = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+        self.lbl_month.config(text=f"{meses[m]} {y}")
+        month_days = calendar.monthcalendar(y, m)
+        for r, week in enumerate(month_days, start=1):
+            for c, day in enumerate(week):
+                if day == 0:
+                    continue
+                btn = ttk.Button(
+                    self.days_frame,
+                    text=str(day),
+                    width=3,
+                    command=lambda dd=day: self._select(dd),
+                )
+                btn.grid(row=r, column=c, padx=1, pady=1)
+
+    def _select(self, day: int):
+        try:
+            self.result = self._current.replace(day=day)
+        except ValueError:
+            self.result = None
+        self.destroy()
+
+    def _prev_month(self):
+        y, m = self._current.year, self._current.month
+        if m == 1:
+            y -= 1
+            m = 12
+        else:
+            m -= 1
+        self._current = self._current.replace(year=y, month=m, day=1)
+        self._paint_calendar()
+
+    def _next_month(self):
+        y, m = self._current.year, self._current.month
+        if m == 12:
+            y += 1
+            m = 1
+        else:
+            m += 1
+        self._current = self._current.replace(year=y, month=m, day=1)
+        self._paint_calendar()
+
+class TerceroFicha(tk.Toplevel):
+    def __init__(self, parent, tercero=None):
+        super().__init__(parent)
+        self.title("Tercero")
+        self.resizable(False, False)
+        self.result = None
+        t = tercero or {}
+        fields = [
+            ("NIF", "nif", 18),
+            ("Nombre", "nombre", 40),
+            ("Direccion", "direccion", 40),
+            ("CP", "cp", 10),
+            ("Poblacion", "poblacion", 28),
+            ("Provincia", "provincia", 28),
+            ("Telefono", "telefono", 20),
+            ("Email", "email", 28),
+            ("Contacto", "contacto", 28),
+        ]
+        self.vars = {}
+        for i, (lbl, key, width) in enumerate(fields):
+            ttk.Label(self, text=lbl).grid(row=i, column=0, sticky="w", padx=6, pady=3)
+            v = tk.StringVar(value=str(t.get(key, "")))
+            self.vars[key] = v
+            ttk.Entry(self, textvariable=v, width=width).grid(row=i, column=1, sticky="w", padx=6, pady=3)
+        ttk.Label(self, text="Tipo").grid(row=len(fields), column=0, sticky="w", padx=6, pady=3)
+        self.var_tipo = tk.StringVar(value=t.get("tipo", "cliente"))
+        ttk.Combobox(self, textvariable=self.var_tipo, values=["cliente","proveedor","ambos"], state="readonly", width=18).grid(row=len(fields), column=1, sticky="w", padx=6, pady=3)
+        btns = ttk.Frame(self)
+        btns.grid(row=len(fields)+1, column=0, columnspan=2, pady=6)
+        ttk.Button(btns, text="Guardar", style="Primary.TButton", command=self._ok).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="Cancelar", command=self.destroy).pack(side=tk.LEFT, padx=4)
+        self.grab_set()
+        self.transient(parent)
+        self.wait_window(self)
+
+    def _ok(self):
+        data = {k: v.get().strip() for k, v in self.vars.items()}
+        data["tipo"] = self.var_tipo.get() or "cliente"
+        self.result = data
+        self.destroy()
+
+class TercerosGlobalDialog(tk.Toplevel):
+    def __init__(self, parent, gestor):
+        super().__init__(parent)
+        self.title("Terceros")
+        self.resizable(True, True)
+        self.gestor = gestor
+        self.controller = TercerosGlobalController(gestor, self)
+        self._empresas_cache = []
+        self._build()
+        self.controller.refresh()
+        self.grab_set()
+        self.transient(parent)
+        self.wait_window(self)
+
+    def _build(self):
+        frm = ttk.Frame(self, padding=10)
+        frm.pack(fill="both", expand=True)
+
+        bar = ttk.Frame(frm)
+        bar.pack(fill="x", pady=(0, 6))
+        ttk.Button(bar, text="Nuevo", style="Primary.TButton", command=self.controller.nuevo).pack(side=tk.LEFT, padx=4)
+        ttk.Button(bar, text="Editar", command=self.controller.editar).pack(side=tk.LEFT, padx=4)
+        ttk.Button(bar, text="Eliminar", command=self.controller.eliminar).pack(side=tk.LEFT, padx=4)
+
+        cols = ("nif", "nombre", "tipo", "poblacion")
+        self.tv = ttk.Treeview(frm, columns=cols, show="headings", height=12, selectmode="browse")
+        self.tv.heading("nif", text="NIF")
+        self.tv.column("nif", width=120)
+        self.tv.heading("nombre", text="Nombre")
+        self.tv.column("nombre", width=240)
+        self.tv.heading("tipo", text="Tipo")
+        self.tv.column("tipo", width=100)
+        self.tv.heading("poblacion", text="Poblacion")
+        self.tv.column("poblacion", width=160)
+        self.tv.pack(fill="both", expand=True, pady=6)
+
+        asignar = ttk.LabelFrame(frm, text="Asignar a empresa")
+        asignar.pack(fill="x", pady=(4, 0))
+        ttk.Label(asignar, text="Empresa").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        self.cb_empresa = ttk.Combobox(asignar, width=50, state="readonly")
+        self.cb_empresa.grid(row=0, column=1, sticky="w", padx=6, pady=4)
+        ttk.Button(asignar, text="Asignar", style="Primary.TButton", command=self.controller.asignar_a_empresa).grid(row=0, column=2, padx=6, pady=4)
+
+    # --- helpers de vista
+    def set_terceros(self, rows):
+        self.tv.delete(*self.tv.get_children())
+        for t in rows:
+            self.tv.insert(
+                "",
+                tk.END,
+                iid=str(t.get("id")),
+                values=(t.get("nif", ""), t.get("nombre", ""), t.get("tipo", "cliente"), t.get("poblacion", "")),
+            )
+
+    def set_empresas(self, empresas):
+        self._empresas_cache = [e for e in (empresas or []) if e.get("ejercicio") is not None]
+        values = [f"{e.get('codigo','')} - {e.get('nombre','')} ({e.get('ejercicio','')})" for e in self._empresas_cache]
+        self.cb_empresa["values"] = values
+        if values:
+            self.cb_empresa.current(0)
+
+    def get_selected_tercero_id(self):
+        sel = self.tv.selection()
+        return sel[0] if sel else None
+
+    def get_selected_empresa(self):
+        idx = self.cb_empresa.current()
+        if idx < 0 or idx >= len(self._empresas_cache):
+            return None, None
+        e = self._empresas_cache[idx]
+        return e.get("codigo"), e.get("ejercicio")
+
+    def select_tercero(self, tid):
+        self.tv.selection_set(str(tid))
+
+    def open_tercero_ficha(self, tercero):
+        dlg = TerceroFicha(self, tercero)
+        return dlg.result
+
+    def ask_yes_no(self, title, message):
+        return messagebox.askyesno(title, message)
+
+    def show_info(self, title, message):
+        messagebox.showinfo(title, message)
+
+
+class TercerosEmpresaDialog(tk.Toplevel):
+    def __init__(self, parent, gestor, codigo_empresa, ejercicio, ndig_plan):
+        super().__init__(parent)
+        self.title("Terceros de empresa")
+        self.resizable(True, True)
+        self.gestor = gestor
+        self.codigo = codigo_empresa
+        self.ejercicio = ejercicio
+        self.ndig = ndig_plan
+        self.controller = TercerosEmpresaController(gestor, codigo_empresa, ejercicio, ndig_plan, self)
+        self._build()
+        self.controller.refresh()
+        self.grab_set()
+        self.transient(parent)
+        self.wait_window(self)
+
+    def _build(self):
+        frm = ttk.Frame(self, padding=10)
+        frm.pack(fill="both", expand=True)
+
+        cols = ("nif", "nombre", "tipo", "poblacion")
+        self.tv = ttk.Treeview(frm, columns=cols, show="headings", height=12, selectmode="browse")
+        self.tv.heading("nif", text="NIF")
+        self.tv.column("nif", width=120)
+        self.tv.heading("nombre", text="Nombre")
+        self.tv.column("nombre", width=240)
+        self.tv.heading("tipo", text="Tipo")
+        self.tv.column("tipo", width=100)
+        self.tv.heading("poblacion", text="Poblacion")
+        self.tv.column("poblacion", width=160)
+        self.tv.pack(fill="both", expand=True, pady=6)
+        self.tv.bind("<<TreeviewSelect>>", lambda e: self.controller.load_subcuentas())
+
+        sub = ttk.LabelFrame(frm, text=f"Subcuentas en empresa {self.codigo}")
+        sub.pack(fill="x", pady=(4, 0))
+        ttk.Label(sub, text="Subcta cliente").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(sub, text="Subcta proveedor").grid(row=1, column=0, sticky="w", padx=6, pady=4)
+        self.var_sub_cli = tk.StringVar()
+        ttk.Entry(sub, textvariable=self.var_sub_cli, width=18).grid(row=0, column=1, sticky="w", padx=6, pady=4)
+        self.var_sub_pro = tk.StringVar()
+        ttk.Entry(sub, textvariable=self.var_sub_pro, width=18).grid(row=1, column=1, sticky="w", padx=6, pady=4)
+        ttk.Button(sub, text="Guardar", style="Primary.TButton", command=self.controller.guardar_subcuentas).grid(row=0, column=2, rowspan=2, padx=6, pady=4)
+
+    # --- helpers de vista
+    def set_terceros(self, rows):
+        self.tv.delete(*self.tv.get_children())
+        for t in rows:
+            self.tv.insert(
+                "",
+                tk.END,
+                iid=str(t.get("id")),
+                values=(t.get("nif", ""), t.get("nombre", ""), t.get("tipo", "cliente"), t.get("poblacion", "")),
+            )
+
+    def clear_subcuentas(self):
+        self.var_sub_cli.set("")
+        self.var_sub_pro.set("")
+
+    def get_selected_id(self):
+        sel = self.tv.selection()
+        return sel[0] if sel else None
+
+    def get_subcuenta_cliente(self):
+        return self.var_sub_cli.get()
+
+    def get_subcuenta_proveedor(self):
+        return self.var_sub_pro.get()
+
+    def set_subcuentas(self, sc, sp):
+        self.var_sub_cli.set(sc)
+        self.var_sub_pro.set(sp)
+
+    def show_info(self, title, message):
+        messagebox.showinfo(title, message)
+class FacturaDialog(tk.Toplevel):
+    def __init__(self, parent, gestor, codigo_empresa, ejercicio, ndig_plan, factura=None, numero_sugerido=""):
+        super().__init__(parent)
+        self.title("Factura emitida")
+        self.resizable(True, True)
+        self.result = None
+        self.gestor = gestor
+        self.codigo = codigo_empresa
+        self.ejercicio = ejercicio
+        self.ndig = ndig_plan
+        self.factura = dict(factura or {})
+        self.factura.setdefault("codigo_empresa", codigo_empresa)
+        self.factura.setdefault("ejercicio", ejercicio)
+        if "ejercicio" not in self.factura:
+            self.factura["ejercicio"] = ejercicio
+        if numero_sugerido and not self.factura.get("numero"):
+            self.factura["numero"] = numero_sugerido
+        f = self.factura
+
+        self.controller = FacturaDialogController(gestor, codigo_empresa, ejercicio, ndig_plan, self.factura, self)
+
+        frm = ttk.Frame(self, padding=10)
+        frm.pack(fill="both", expand=True)
+
+        def add_row(label, var, row_idx, width=16, col=0):
+            ttk.Label(frm, text=label).grid(row=row_idx, column=col, sticky="w", padx=4, pady=3)
+            ttk.Entry(frm, textvariable=var, width=width).grid(row=row_idx, column=col + 1, padx=4, pady=3, sticky="w")
+
+        today = date.today().strftime("%d/%m/%Y")
+        self.var_serie = tk.StringVar(value=f.get("serie", ""))
+        self.var_numero = tk.StringVar(value=f.get("numero", ""))
+        self.var_fecha_asiento = tk.StringVar(value=_to_fecha_ui(f.get("fecha_asiento", today)))
+        self.var_fecha_exp = tk.StringVar(value=_to_fecha_ui(f.get("fecha_expedicion", f.get("fecha_asiento", today))))
+        self.var_fecha_op = tk.StringVar(value=_to_fecha_ui(f.get("fecha_operacion", today)) if f.get("fecha_operacion") else "")
+        self.var_nif = tk.StringVar(value=f.get("nif", ""))
+        self.var_nombre = tk.StringVar(value=f.get("nombre", ""))
+        self.var_desc = tk.StringVar(value=f.get("descripcion", ""))
+        self.var_subcuenta = tk.StringVar(value=f.get("subcuenta_cliente", ""))
+        self.var_forma_pago = tk.StringVar(value=f.get("forma_pago", ""))
+        self.var_cuenta_banco = tk.StringVar(value=f.get("cuenta_bancaria", ""))
+        self._cuentas_banco = self._parse_cuentas_banco()
+        if self.var_cuenta_banco.get().strip() and self.var_cuenta_banco.get().strip() not in self._cuentas_banco:
+            self._cuentas_banco.append(self.var_cuenta_banco.get().strip())
+        if not self.var_cuenta_banco.get().strip() and self._cuentas_banco:
+            self.var_cuenta_banco.set(self._cuentas_banco[0])
+
+        row = 0
+        ttk.Label(frm, text="Seleccione Cliente").grid(row=row, column=0, sticky="w", padx=4, pady=3)
+        self.var_tercero = tk.StringVar()
+        self.cb_tercero = ttk.Combobox(frm, textvariable=self.var_tercero, width=40, state="readonly")
+        self.cb_tercero.grid(row=row, column=1, padx=4, pady=3, sticky="w")
+        ttk.Button(frm, text="Terceros...", command=self._gestionar_terceros).grid(row=row, column=2, padx=4, pady=3)
+        row += 1
+
+        add_row("Serie", self.var_serie, row, width=8, col=0)
+        row += 1
+        
+        add_row("Numero", self.var_numero, row, width=14, col=0)
+        row += 1
+        
+        add_row("Subcuenta cliente", self.var_subcuenta, row, col=0, width=18)
+        row += 1
+
+        ttk.Label(frm, text="Forma de pago").grid(row=row, column=0, sticky="w", padx=4, pady=3)
+        ttk.Combobox(frm, textvariable=self.var_forma_pago, values=["Transferencia","Confirming","Cheque","Contado"], width=18, state="readonly").grid(row=row, column=1, padx=4, pady=3, sticky="w")
+        row += 1
+
+        ttk.Label(frm, text="Cuenta bancaria").grid(row=row, column=0, sticky="w", padx=4, pady=3)
+        self.cb_cuenta_banco = ttk.Combobox(frm, textvariable=self.var_cuenta_banco, values=self._cuentas_banco, width=28, state="readonly")
+        self.cb_cuenta_banco.grid(row=row, column=1, padx=4, pady=3, sticky="w")
+        row += 1
+
+        def add_date_cell(label, var, row_idx):
+            ttk.Label(frm, text=label).grid(row=row_idx, column=0, sticky="w", padx=4, pady=3)
+            cont = ttk.Frame(frm)
+            cont.grid(row=row_idx, column=1, columnspan=2, sticky="w", padx=4, pady=3)
+            ttk.Entry(cont, textvariable=var, width=14).pack(side=tk.LEFT)
+            ttk.Button(cont, text="Cal", width=4, command=lambda v=var: self._pick_date(v)).pack(side=tk.LEFT, padx=(4, 0))
+
+        add_date_cell("Fecha Factura", self.var_fecha_exp, row)
+        #add_date_cell("Fecha Expedicion", self.var_fecha_exp, row, 2)
+        #add_date_cell("Fecha Operacion", self.var_fecha_op, row, 3)
+        row += 1
+        add_row("NIF Cliente", self.var_nif, row)
+        row += 1
+        add_row("Nombre Cliente", self.var_nombre, row, width=34)
+        row += 1
+        #add_row("Descripcion", self.var_desc, row, width=40)
+        #row += 1
+
+        ttk.Label(frm, text="Lineas").grid(row=row, column=0, columnspan=3, sticky="w", pady=(10, 4))
+        row += 1
+
+        self.line_vars = {
+            "concepto": tk.StringVar(),
+            "unidades": tk.StringVar(),
+            "precio": tk.StringVar(),
+            "iva": tk.StringVar(),
+            "irpf": tk.StringVar(),
+        }
+        editor = ttk.Frame(frm)
+        editor.grid(row=row, column=0, columnspan=3, sticky="ew", padx=4)
+        editor.columnconfigure(8, weight=1)
+        ttk.Label(editor, text="Concepto").grid(row=0, column=0, padx=4, pady=2, sticky="w")
+        ttk.Entry(editor, textvariable=self.line_vars["concepto"], width=26).grid(row=0, column=1, padx=4, pady=2)
+        ttk.Label(editor, text="Unidades").grid(row=0, column=2, padx=4, pady=2, sticky="w")
+        ttk.Entry(editor, textvariable=self.line_vars["unidades"], width=10).grid(row=0, column=3, padx=4, pady=2)
+        ttk.Label(editor, text="Precio").grid(row=0, column=4, padx=4, pady=2, sticky="w")
+        ttk.Entry(editor, textvariable=self.line_vars["precio"], width=10).grid(row=0, column=5, padx=4, pady=2)
+        ttk.Label(editor, text="IVA %").grid(row=0, column=6, padx=4, pady=2, sticky="w")
+        ttk.Combobox(editor, textvariable=self.line_vars["iva"], values=[str(x) for x in IVA_OPCIONES], width=6, state="readonly").grid(row=0, column=7, padx=4, pady=2)
+        ttk.Label(editor, text="IRPF %").grid(row=0, column=8, padx=4, pady=2, sticky="w")
+        ttk.Combobox(editor, textvariable=self.line_vars["irpf"], values=[str(x) for x in IRPF_OPCIONES], width=6, state="readonly").grid(row=0, column=9, padx=4, pady=2)
+        ttk.Button(editor, text="Añadir/Actualizar", style="Primary.TButton", command=self._add_update_linea).grid(row=0, column=10, padx=6)
+        ttk.Button(editor, text="Limpiar", command=self._clear_line_editor).grid(row=0, column=11, padx=4)
+        row += 1
+
+        self.tv = ttk.Treeview(
+            frm,
+            columns=("concepto", "unidades", "precio", "base", "pct_iva", "cuota_iva", "pct_irpf", "cuota_irpf"),
+            show="headings",
+            height=8,
+            selectmode="browse",
+        )
+        headers = {
+            "concepto": "Concepto",
+            "unidades": "Unid",
+            "precio": "P. unit",
+            "base": "Base",
+            "pct_iva": "% IVA",
+            "cuota_iva": "Cuota IVA",
+            "pct_irpf": "% IRPF",
+            "cuota_irpf": "Ret",
+        }
+        for c, h in headers.items():
+            self.tv.heading(c, text=h)
+            self.tv.column(c, width=90 if c == "concepto" else 70, anchor="e" if c != "concepto" else "w")
+        self.tv.grid(row=row, column=0, columnspan=3, sticky="nsew", padx=4, pady=4)
+        self.tv.bind("<<TreeviewSelect>>", self._on_select_linea)
+        row += 1
+
+        bar = ttk.Frame(frm)
+        bar.grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 6))
+        ttk.Button(bar, text="Eliminar linea", command=self._del_linea).pack(side=tk.LEFT, padx=4)
+        row += 1
+
+        tot = ttk.Frame(frm)
+        tot.grid(row=row, column=0, columnspan=3, sticky="ew", pady=(2, 8))
+        self.lbl_tot_base = ttk.Label(tot, text="Base: 0.00")
+        self.lbl_tot_iva = ttk.Label(tot, text="IVA: 0.00")
+        self.lbl_tot_ret = ttk.Label(tot, text="IRPF: 0.00")
+        self.lbl_tot_total = ttk.Label(tot, text="Total: 0.00", font=("Segoe UI", 10, "bold"))
+        for i, lbl in enumerate([self.lbl_tot_base, self.lbl_tot_iva, self.lbl_tot_ret, self.lbl_tot_total]):
+            lbl.grid(row=0, column=i, padx=6)
+        row += 1
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=row, column=0, columnspan=3, pady=(6, 2))
+        ttk.Button(btns, text="Guardar", style="Primary.TButton", command=self._ok).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="Cancelar", command=self.destroy).pack(side=tk.LEFT, padx=4)
+
+        self._load_terceros()
+        self._preselect_tercero(f.get("tercero_id"))
+
+        for ln in f.get("lineas", []):
+            self._insert_linea(ln)
+        self._refresh_totales()
+
+        self.grab_set()
+        self.transient(parent)
+        self.wait_window(self)
+
+    def _parse_cuentas_banco(self):
+        emp = self.gestor.get_empresa(self.codigo, self.ejercicio) or {}
+        raw = emp.get("cuentas_bancarias") or ""
+        if not str(raw).strip():
+            raw = emp.get("cuenta_bancaria") or ""
+        parts = []
+        for sep in ["\n", ";", ","]:
+            raw = str(raw).replace(sep, ",")
+        for p in str(raw).split(","):
+            p = p.strip()
+            if p:
+                parts.append(p)
+        out = []
+        for p in parts:
+            if p not in out:
+                out.append(p)
+        return out
+
+    # --- controlador
+    def _load_terceros(self):
+        self.controller.load_terceros()
+
+    def _preselect_tercero(self, tercero_id):
+        self.controller.preselect_tercero(tercero_id)
+
+    def _gestionar_terceros(self):
+        self.controller.gestionar_terceros()
+
+    def _on_tercero_selected(self):
+        self.controller.on_tercero_selected()
+
+    def _pick_date(self, target_var: tk.StringVar):
+        self.controller.pick_date(target_var)
+
+    def _clear_line_editor(self):
+        self.controller.clear_line_editor()
+
+    def _add_update_linea(self):
+        self.controller.add_update_linea()
+
+    def _del_linea(self):
+        self.controller.del_linea()
+
+    def _refresh_totales(self):
+        self.controller.refresh_totales()
+
+    def _insert_linea(self, ln: dict):
+        self.controller.insert_linea(ln)
+
+    def _ok(self):
+        self.controller.ok()
+
+    def _on_select_linea(self, event=None):
+        sel = self.tv.selection()
+        if not sel:
+            return
+        vals = self.tv.item(sel[0], "values")
+        keys = ["concepto", "unidades", "precio", "base", "pct_iva", "cuota_iva", "pct_irpf", "cuota_irpf"]
+        for k, v in zip(keys, vals):
+            if k in self.line_vars:
+                self.line_vars[k].set(v)
+
+    # --- helpers de vista para el controlador
+    def set_terceros(self, values):
+        self.cb_tercero["values"] = values
+        self.cb_tercero.bind("<<ComboboxSelected>>", lambda e: self._on_tercero_selected())
+
+    def select_tercero_index(self, idx):
+        self.cb_tercero.current(idx)
+
+    def get_selected_tercero_index(self):
+        return self.cb_tercero.current()
+
+    def set_nif(self, value):
+        self.var_nif.set(value)
+
+    def set_nombre(self, value):
+        self.var_nombre.set(value)
+
+    def set_subcuenta(self, value):
+        self.var_subcuenta.set(value)
+
+    def set_cuenta_bancaria(self, value):
+        self.var_cuenta_banco.set(value)
+
+    def parse_date(self, text):
+        return _parse_date_ui(text)
+
+    def open_date_picker(self, initial):
+        dlg = DatePicker(self, initial)
+        return dlg.result if dlg.result else None
+
+    def clear_line_editor(self):
+        for v in self.line_vars.values():
+            v.set("")
+        self.tv.selection_remove(self.tv.selection())
+
+    def get_line_editor_values(self):
+        concepto = self.line_vars["concepto"].get().strip()
+        unidades = _to_float(self.line_vars["unidades"].get())
+        precio = _to_float(self.line_vars["precio"].get())
+        iva_raw = self.line_vars["iva"].get()
+        irpf_raw = self.line_vars["irpf"].get()
+        iva = _to_float(iva_raw)
+        irpf = _to_float(irpf_raw)
+        return concepto, unidades, precio, iva, irpf, iva_raw, irpf_raw
+
+    def upsert_line_row(self, ln: dict):
+        vals = (
+            ln["concepto"],
+            f"{ln['unidades']:.2f}",
+            f"{ln['precio']:.2f}",
+            f"{ln['base']:.2f}",
+            f"{ln['pct_iva']:.2f}",
+            f"{ln['cuota_iva']:.2f}",
+            f"{ln['pct_irpf']:.2f}",
+            f"{ln['cuota_irpf']:.2f}",
+        )
+        sel = self.tv.selection()
+        if sel:
+            self.tv.item(sel[0], values=vals)
+        else:
+            self.tv.insert("", tk.END, values=vals)
+
+    def insert_line_row(self, ln: dict):
+        vals = (
+            ln.get("concepto", ""),
+            f"{_round2(ln.get('unidades')):.2f}",
+            f"{_round2(ln.get('precio')):.2f}",
+            f"{_round2(ln.get('base')):.2f}",
+            f"{_round2(ln.get('pct_iva')):.2f}",
+            f"{_round2(ln.get('cuota_iva')):.2f}",
+            f"{_round2(ln.get('pct_irpf')):.2f}",
+            f"{_round2(ln.get('cuota_irpf')):.2f}",
+        )
+        self.tv.insert("", tk.END, values=vals)
+
+    def delete_selected_line(self):
+        sel = self.tv.selection()
+        if sel:
+            self.tv.delete(sel[0])
+            return True
+        return False
+
+    def get_lineas(self):
+        out = []
+        for iid in self.tv.get_children():
+            vals = self.tv.item(iid, "values")
+            if not vals:
+                continue
+            out.append(
+                {
+                    "concepto": vals[0],
+                    "unidades": _round2(_to_float(vals[1])),
+                    "precio": _round2(_to_float(vals[2])),
+                    "base": _round2(_to_float(vals[3])),
+                    "pct_iva": _round2(_to_float(vals[4])),
+                    "cuota_iva": _round2(_to_float(vals[5])),
+                    "pct_irpf": _round2(_to_float(vals[6])),
+                    "cuota_irpf": _round2(_to_float(vals[7])),
+                    "pct_re": 0.0,
+                    "cuota_re": 0.0,
+                }
+            )
+        return out
+
+    def set_totales(self, base, iva, ret, total):
+        self.lbl_tot_base.config(text=f"Base: {base:.2f}")
+        self.lbl_tot_iva.config(text=f"IVA: {iva:.2f}")
+        self.lbl_tot_ret.config(text=f"IRPF: {ret:.2f}")
+        self.lbl_tot_total.config(text=f"Total: {total:.2f}")
+
+    def get_numero_factura(self):
+        return self.var_numero.get().strip()
+
+    def get_subcuenta(self):
+        return self.var_subcuenta.get().strip()
+
+    def get_fecha_exp(self):
+        return self.var_fecha_exp.get().strip()
+
+    def get_serie(self):
+        return self.var_serie.get().strip()
+
+    def get_nif(self):
+        return self.var_nif.get().strip()
+
+    def get_nombre(self):
+        return self.var_nombre.get().strip()
+
+    def get_descripcion(self):
+        return self.var_desc.get().strip()
+
+    def get_forma_pago(self):
+        return self.var_forma_pago.get().strip()
+
+    def get_cuenta_bancaria(self):
+        return self.var_cuenta_banco.get().strip()
+
+    def open_terceros_dialog(self, codigo_empresa, ejercicio, ndig):
+        TercerosEmpresaDialog(self, self.gestor, codigo_empresa, ejercicio, ndig)
+
+    def show_info(self, title, message):
+        messagebox.showinfo(title, message)
+
+    def show_warning(self, title, message):
+        messagebox.showwarning(title, message)
+
+    def show_error(self, title, message):
+        messagebox.showerror(title, message)
+
+    def set_result_and_close(self, result):
+        self.result = result
+        self.destroy()
+class UIFacturasEmitidas(ttk.Frame):
+    def __init__(self, master, gestor, codigo_empresa, ejercicio, nombre_empresa):
+        super().__init__(master)
+        self.gestor = gestor
+        self.codigo = codigo_empresa
+        self.ejercicio = ejercicio
+        self.nombre = nombre_empresa
+        base = {
+            "nombre": nombre_empresa,
+            "digitos_plan": 8,
+            "serie_emitidas": "A",
+            "siguiente_num_emitidas": 1,
+            "cuenta_bancaria": "",
+            "cuentas_bancarias": "",
+            "ejercicio": "",
+            "cif": "",
+            "direccion": "",
+            "poblacion": "",
+            "provincia": "",
+            "cp": "",
+            "telefono": "",
+            "email": "",
+            "logo_path": "",
+        }
+        emp_conf = gestor.get_empresa(codigo_empresa, ejercicio) or {}
+        base.update(emp_conf)
+        self.empresa_conf = base
+        self.controller = FacturasEmitidasController(gestor, codigo_empresa, ejercicio, self.empresa_conf, self)
+        self._build()
+
+    # ------------------- UI -------------------
+    def _build(self):
+        ttk.Label(self, text=f"Facturas emitidas de {self.nombre} ({self.codigo} · {self.ejercicio})", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=10, pady=8)
+
+        top = ttk.Frame(self)
+        top.pack(fill="x", padx=10)
+        ttk.Button(top, text="Nueva", style="Primary.TButton", command=self._nueva).pack(side=tk.LEFT, padx=4)
+        ttk.Button(top, text="Editar", command=self._editar).pack(side=tk.LEFT, padx=4)
+        ttk.Button(top, text="Copiar", command=self._copiar).pack(side=tk.LEFT, padx=4)
+        ttk.Button(top, text="Eliminar", command=self._eliminar).pack(side=tk.LEFT, padx=4)
+        ttk.Button(top, text="Terceros", command=self._terceros).pack(side=tk.LEFT, padx=12)
+        ttk.Button(top, text="Exportar PDF", command=self._export_pdf).pack(side=tk.LEFT, padx=4)
+
+        self.tv = ttk.Treeview(
+            self,
+            columns=("serie", "numero", "fecha", "cliente", "total", "generada", "fecha_gen"),
+            show="headings",
+            selectmode="extended",
+            height=12,
+        )
+        cols = [
+            ("serie", "Serie", 80, "w"),
+            ("numero", "Numero", 120, "w"),
+            ("fecha", "Fecha", 100, "w"),
+            ("cliente", "Cliente", 240, "w"),
+            ("total", "Total", 100, "e"),
+            ("generada", "Generada", 90, "center"),
+            ("fecha_gen", "Fecha gen.", 110, "w"),
+        ]
+        for c, h, w, align in cols:
+            self.tv.heading(c, text=h)
+            self.tv.column(c, width=w, anchor=align)
+        self.tv.pack(fill="both", expand=True, padx=10, pady=8)
+
+        bottom = ttk.Frame(self)
+        bottom.pack(fill="x", padx=10, pady=6)
+        ttk.Button(bottom, text="Generar Suenlace.dat", style="Primary.TButton", command=self._generar).pack(side=tk.RIGHT)
+
+        self._refresh_facturas()
+
+    # ------------------- Datos -------------------
+    def _compute_total(self, fac: dict) -> float:
+        total = 0.0
+        for ln in fac.get("lineas", []):
+            total += (
+                _to_float(ln.get("base"))
+                + _to_float(ln.get("cuota_iva"))
+                + _to_float(ln.get("cuota_re"))
+                + _to_float(ln.get("cuota_irpf"))
+            )
+        return _round2(total)
+
+    def _refresh_facturas(self):
+        self.controller.refresh_facturas()
+
+    def clear_facturas(self):
+        self.tv.delete(*self.tv.get_children())
+
+    def insert_factura_row(self, fac: dict, total: float):
+        self.tv.insert(
+            "",
+            tk.END,
+            iid=str(fac.get("id")),
+            values=(
+                fac.get("serie", ""),
+                fac.get("numero", ""),
+                _to_fecha_ui_or_blank(fac.get("fecha_asiento", "")),
+                fac.get("nombre", ""),
+                f"{total:.2f}",
+                "Si" if fac.get("generada") else "No",
+                fac.get("fecha_generacion", ""),
+            ),
+        )
+
+    def get_selected_ids(self):
+        sel = list(self.tv.selection())
+        if sel:
+            return sel
+        focus = self.tv.focus()
+        return [focus] if focus else []
+
+    def open_factura_dialog(self, factura, numero_sugerido=""):
+        dlg = FacturaDialog(
+            self,
+            self.gestor,
+            self.codigo,
+            self.ejercicio,
+            int(self.empresa_conf.get("digitos_plan", 8)),
+            factura,
+            numero_sugerido=numero_sugerido,
+        )
+        return dlg.result
+
+    def open_terceros_dialog(self, codigo_empresa, ejercicio, ndig_plan):
+        TercerosEmpresaDialog(self, self.gestor, codigo_empresa, ejercicio, ndig_plan)
+
+    def ask_yes_no(self, title, message):
+        return messagebox.askyesno(title, message)
+
+    def show_info(self, title, message):
+        messagebox.showinfo(title, message)
+
+    def show_warning(self, title, message):
+        messagebox.showwarning(title, message)
+
+    def show_error(self, title, message):
+        messagebox.showerror(title, message)
+
+    def _selected_ids(self):
+        return self.get_selected_ids()
+
+    def _nueva(self):
+        self.controller.nueva()
+
+    def _editar(self):
+        self.controller.editar()
+
+    def _copiar(self):
+        self.controller.copiar()
+
+    def _eliminar(self):
+        self.controller.eliminar()
+
+    def _terceros(self):
+        self.controller.terceros()
+
+    # ------------------- Exportar PDF -------------------
+    def _export_pdf(self):
+        self.controller.export_pdf()
+
+    def _generar(self):
+        self.controller.generar_suenlace()
+
+    def ask_save_pdf_path(self, initialfile):
+        return filedialog.asksaveasfilename(
+            title="Exportar PDF",
+            defaultextension=".pdf",
+            initialfile=initialfile,
+            filetypes=[("PDF", "*.pdf")],
+        )
+
+    def ask_save_dat_path(self, initialfile):
+        return filedialog.asksaveasfilename(
+            title="Guardar fichero suenlace.dat",
+            defaultextension=".dat",
+            initialfile=initialfile,
+            filetypes=[("Ficheros DAT", "*.dat")],
+        )

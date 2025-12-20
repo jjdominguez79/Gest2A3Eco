@@ -2,7 +2,7 @@
 from typing import List, Dict, Any, Tuple
 import fnmatch
 
-from facturas_common import Linea, render_a3_tipo0_bancos, _fecha_yyyymmdd
+from models.facturas_common import Linea, render_a3_tipo0_bancos, _fecha_yyyymmdd
 
 
 def _fnum(x):
