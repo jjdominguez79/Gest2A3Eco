@@ -31,7 +31,7 @@ python main.py
 ## Compilar a .exe (PyInstaller)
 Para un arranque mas rapido usa el modo directorio (evita `--onefile`):
 ```bash
-pyinstaller --name=Gest2A3Eco --icon=icono.ico --windowed --add-data "logo.png;." main.py
+pyinstaller --name=Gest2A3Eco --icon=icono.ico --windowed --add-data "logo.png;." --add-data "plantilla.docx;." main.py
 ```
 El ejecutable quedara en `dist/Gest2A3Eco/Gest2A3Eco.exe` (junto a sus dependencias).
 
