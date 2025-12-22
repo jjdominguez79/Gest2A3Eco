@@ -1,12 +1,14 @@
 import os
 import sys
 from datetime import datetime
+import traceback
 
 from procesos.facturas_emitidas import generar_emitidas
 from procesos.facturas_word import (
     build_context_emitida,
     generar_pdf_desde_plantilla_word,
 )
+from procesos.facturas_pdf_basico import generar_pdf_basico
 
 
 class FacturasEmitidasController:
@@ -134,7 +136,20 @@ class FacturasEmitidasController:
             )
             self._view.show_info("Gest2A3Eco", f"PDF generado desde Word:\n{save_path}")
         except Exception as e:
-            self._view.show_error("Gest2A3Eco", f"No se pudo generar el PDF desde Word:\n{e}")
+            self._log_pdf_error("Error al generar PDF con Word.", e, template_path, save_path)
+            try:
+                generar_pdf_basico(self._empresa_conf, fac, cliente, tot, save_path)
+                self._view.show_warning(
+                    "Gest2A3Eco",
+                    "No se pudo generar el PDF desde Word:\n"
+                    f"{e}\n\nSe genero un PDF basico:\n{save_path}",
+                )
+            except Exception as e2:
+                self._log_pdf_error("Error al generar PDF basico.", e2, template_path, save_path)
+                self._view.show_error(
+                    "Gest2A3Eco",
+                    f"No se pudo generar el PDF:\n{e}\n{e2}",
+                )
 
     def generar_suenlace(self):
         sel = self._view.get_selected_ids()
@@ -292,6 +307,23 @@ class FacturasEmitidasController:
         else:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         return os.path.join(base_dir, "plantillas", "factura_emitida_template.docx")
+
+    def _log_pdf_error(self, msg: str, exc: Exception, template_path: str, save_path: str) -> None:
+        try:
+            if getattr(sys, "frozen", False):
+                base_dir = os.path.dirname(sys.executable)
+            else:
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            log_path = os.path.join(base_dir, "pdf_error.log")
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write("\n---- PDF ERROR ----\n")
+                f.write(f"Message: {msg}\n")
+                f.write(f"Template: {template_path}\n")
+                f.write(f"Output: {save_path}\n")
+                f.write("Exception:\n")
+                f.write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+        except Exception:
+            pass
 
     def _to_float(self, x) -> float:
         try:

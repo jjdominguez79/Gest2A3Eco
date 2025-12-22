@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import io
+import os
+import sys
 from typing import Dict, Any, Tuple
 
 from docxtpl import DocxTemplate
@@ -100,6 +103,12 @@ def render_docx(template_path: str, context: Dict[str, Any], out_docx_path: str)
 
 def convert_docx_to_pdf(docx_path: str, pdf_path: str) -> None:
     # Usa Word instalado
+    # Evita fallo en .exe sin consola (tqdm intenta escribir en None)
+    if sys.stdout is None:
+        sys.stdout = io.StringIO()
+    if sys.stderr is None:
+        sys.stderr = io.StringIO()
+    os.environ.setdefault("TQDM_DISABLE", "1")
     convert(docx_path, pdf_path)
 
 def generar_pdf_desde_plantilla_word(
