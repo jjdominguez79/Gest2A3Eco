@@ -22,7 +22,7 @@ python main.py
 1) Al abrir, selecciona la empresa con la que trabajar (pestana "Empresas").
 2) Gestiona plantillas en la pestana "Plantillas" (mapeo de columnas de Excel).
 3) (Nuevo) En la pestana "Facturas emitidas" puedes crear/editar/copiar facturas manualmente, elegir clientes desde el maestro de terceros (subcuenta por empresa), exportar a PDF y generar `suenlace.dat` con la plantilla de emitidas.
-4) En la pestana "Generar ficheros":
+4) En la pestaña "Generar ficheros":
    - Elige tipo (Bancos, Facturas Emitidas, Facturas Recibidas).
    - Selecciona plantilla, carga Excel y hoja.
    - Revisa el preview y pulsa "Generar Suenlace.dat".
@@ -35,15 +35,18 @@ pyinstaller --name=Gest2A3Eco --icon=icono.ico --windowed --add-data "logo.png;.
 ```
 El ejecutable quedara en `dist/Gest2A3Eco/Gest2A3Eco.exe` (junto a sus dependencias).
 
+## Datos y almacenamiento
+- Persistencia en SQLite: `plantillas/gest2a3eco.db`.
+- Empresas, plantillas, terceros y facturas se guardan en la base de datos (no se usa JSON).
+
 ## Estructura breve
 - `main.py`: arranque de la UI.
 - `ui_*`: pantallas Tkinter.
 - `procesos/`: logica de generacion por tipo (bancos, emitidas, recibidas).
-- `plantillas/plantillas.json`: almacenamiento de plantillas (se crea si no existe).
+- `models/gestor_sqlite.py`: capa de datos SQLite.
 
 ## Contexto del proyecto
 Consulta `CONTEXT.md` para un panorama actualizado de funcionalidades, arquitectura, reglas de negocio y pasos de ejecucion.
 
 ## Notas
 - Los datos de la asesoria (nombre, CIF, contacto) estan en `main.py`.
-- Las plantillas y el maestro de terceros se guardan por empresa en `plantillas/plantillas.json`; haz copia si lo necesitas.
