@@ -106,6 +106,8 @@ CREATE TABLE IF NOT EXISTS terceros_empresas (
   tercero_id TEXT NOT NULL,
   subcuenta_cliente TEXT,
   subcuenta_proveedor TEXT,
+  subcuenta_ingreso TEXT,
+  subcuenta_gasto TEXT,
   PRIMARY KEY (codigo_empresa, ejercicio, tercero_id)
 );
 """
@@ -133,6 +135,8 @@ class GestorSQLite:
         self._ensure_column("empresas", "cuentas_bancarias", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "forma_pago", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "cuenta_bancaria", "TEXT")
+        self._ensure_column("terceros_empresas", "subcuenta_ingreso", "TEXT")
+        self._ensure_column("terceros_empresas", "subcuenta_gasto", "TEXT")
         self.conn.commit()
 
     def _ensure_column(self, table: str, column: str, col_type: str):
@@ -238,6 +242,13 @@ class GestorSQLite:
             "SELECT * FROM empresas ORDER BY codigo, ejercicio"
         )
         return [self._row_to_dict(r) for r in cur.fetchall()]
+
+    def listar_ejercicios_empresa(self, codigo: str):
+        cur = self.conn.execute(
+            "SELECT ejercicio FROM empresas WHERE codigo=? ORDER BY ejercicio",
+            (codigo,),
+        )
+        return [r["ejercicio"] for r in cur.fetchall()]
 
     def get_empresa(self, codigo: str, ejercicio: int | None = None):
         if ejercicio is None:
@@ -658,11 +669,13 @@ class GestorSQLite:
             eje = 0
         self.conn.execute(
             """
-            INSERT INTO terceros_empresas (codigo_empresa, ejercicio, tercero_id, subcuenta_cliente, subcuenta_proveedor)
-            VALUES (?,?,?,?,?)
+            INSERT INTO terceros_empresas (codigo_empresa, ejercicio, tercero_id, subcuenta_cliente, subcuenta_proveedor, subcuenta_ingreso, subcuenta_gasto)
+            VALUES (?,?,?,?,?,?,?)
             ON CONFLICT(codigo_empresa, ejercicio, tercero_id) DO UPDATE SET
                 subcuenta_cliente=excluded.subcuenta_cliente,
-                subcuenta_proveedor=excluded.subcuenta_proveedor
+                subcuenta_proveedor=excluded.subcuenta_proveedor,
+                subcuenta_ingreso=excluded.subcuenta_ingreso,
+                subcuenta_gasto=excluded.subcuenta_gasto
             """,
             (
                 rel.get("codigo_empresa"),
@@ -670,6 +683,34 @@ class GestorSQLite:
                 rel.get("tercero_id"),
                 rel.get("subcuenta_cliente"),
                 rel.get("subcuenta_proveedor"),
+                rel.get("subcuenta_ingreso"),
+                rel.get("subcuenta_gasto"),
             ),
         )
         self.conn.commit()
+
+    def copiar_terceros_empresa(
+        self,
+        codigo_empresa: str,
+        ejercicio_origen: int,
+        ejercicio_destino: int,
+        sobrescribir: bool = False,
+    ):
+        ej_src = _ej_val(ejercicio_origen)
+        ej_dst = _ej_val(ejercicio_destino)
+        if ej_src is None or ej_dst is None or ej_src == ej_dst:
+            return 0, 0
+        copiados = 0
+        omitidos = 0
+        for rel in self.listar_terceros_empresa(codigo_empresa, ej_src):
+            if not sobrescribir:
+                existe = self.get_tercero_empresa(codigo_empresa, rel.get("tercero_id"), ej_dst)
+                if existe:
+                    omitidos += 1
+                    continue
+            nr = dict(rel)
+            nr["codigo_empresa"] = codigo_empresa
+            nr["ejercicio"] = ej_dst
+            self.upsert_tercero_empresa(nr)
+            copiados += 1
+        return copiados, omitidos

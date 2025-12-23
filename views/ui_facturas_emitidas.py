@@ -181,6 +181,8 @@ class TercerosGlobalDialog(tk.Toplevel):
         self.gestor = gestor
         self.controller = TercerosGlobalController(gestor, self)
         self._empresas_cache = []
+        self._empresas_index = {}
+        self._empresas_list = []
         self._build()
         self.controller.refresh()
         self.grab_set()
@@ -211,10 +213,24 @@ class TercerosGlobalDialog(tk.Toplevel):
 
         asignar = ttk.LabelFrame(frm, text="Asignar a empresa")
         asignar.pack(fill="x", pady=(4, 0))
-        ttk.Label(asignar, text="Empresa").grid(row=0, column=0, sticky="w", padx=6, pady=4)
-        self.cb_empresa = ttk.Combobox(asignar, width=50, state="readonly")
-        self.cb_empresa.grid(row=0, column=1, sticky="w", padx=6, pady=4)
-        ttk.Button(asignar, text="Asignar", style="Primary.TButton", command=self.controller.asignar_a_empresa).grid(row=0, column=2, padx=6, pady=4)
+        ttk.Label(asignar, text="Buscar").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        self.var_buscar_empresa = tk.StringVar()
+        entry_buscar = ttk.Entry(asignar, textvariable=self.var_buscar_empresa, width=30)
+        entry_buscar.grid(row=0, column=1, sticky="w", padx=6, pady=4)
+        self.var_buscar_empresa.trace_add("write", lambda *_: self._apply_filtro_empresas())
+
+        ttk.Label(asignar, text="Empresa").grid(row=1, column=0, sticky="w", padx=6, pady=4)
+        self.lb_empresas = tk.Listbox(asignar, height=5, exportselection=False)
+        self.lb_empresas.grid(row=1, column=1, sticky="we", padx=6, pady=4)
+        self.lb_empresas.bind("<<ListboxSelect>>", lambda e: self._update_ejercicios())
+
+        ttk.Label(asignar, text="Ejercicios").grid(row=1, column=2, sticky="w", padx=6, pady=4)
+        self.lb_ejercicios = tk.Listbox(asignar, height=5, selectmode="extended", exportselection=False)
+        self.lb_ejercicios.grid(row=1, column=3, sticky="we", padx=6, pady=4)
+
+        ttk.Button(asignar, text="Asignar", style="Primary.TButton", command=self.controller.asignar_a_empresa).grid(row=0, column=3, rowspan=1, padx=6, pady=4)
+        asignar.columnconfigure(1, weight=1)
+        asignar.columnconfigure(3, weight=1)
 
     # --- helpers de vista
     def set_terceros(self, rows):
@@ -229,21 +245,32 @@ class TercerosGlobalDialog(tk.Toplevel):
 
     def set_empresas(self, empresas):
         self._empresas_cache = [e for e in (empresas or []) if e.get("ejercicio") is not None]
-        values = [f"{e.get('codigo','')} - {e.get('nombre','')} ({e.get('ejercicio','')})" for e in self._empresas_cache]
-        self.cb_empresa["values"] = values
-        if values:
-            self.cb_empresa.current(0)
+        self._empresas_index = {}
+        for e in self._empresas_cache:
+            key = str(e.get("codigo", ""))
+            item = self._empresas_index.setdefault(key, {"codigo": key, "nombre": e.get("nombre", ""), "ejercicios": []})
+            item["ejercicios"].append(e.get("ejercicio"))
+        self._apply_filtro_empresas()
 
     def get_selected_tercero_id(self):
         sel = self.tv.selection()
         return sel[0] if sel else None
 
     def get_selected_empresa(self):
-        idx = self.cb_empresa.current()
-        if idx < 0 or idx >= len(self._empresas_cache):
-            return None, None
-        e = self._empresas_cache[idx]
-        return e.get("codigo"), e.get("ejercicio")
+        sel = self.lb_empresas.curselection()
+        if not sel:
+            return None, []
+        idx = sel[0]
+        if idx < 0 or idx >= len(self._empresas_list):
+            return None, []
+        emp = self._empresas_list[idx]
+        ejercicios = []
+        for j in self.lb_ejercicios.curselection():
+            try:
+                ejercicios.append(int(self.lb_ejercicios.get(j)))
+            except Exception:
+                pass
+        return emp.get("codigo"), ejercicios
 
     def select_tercero(self, tid):
         self.tv.selection_set(str(tid))
@@ -257,6 +284,34 @@ class TercerosGlobalDialog(tk.Toplevel):
 
     def show_info(self, title, message):
         messagebox.showinfo(title, message)
+
+    def _apply_filtro_empresas(self):
+        filtro = (self.var_buscar_empresa.get() or "").strip().lower()
+        self.lb_empresas.delete(0, tk.END)
+        self._empresas_list = []
+        for emp in self._empresas_index.values():
+            texto = f"{emp.get('codigo','')} {emp.get('nombre','')}".lower()
+            if filtro and filtro not in texto:
+                continue
+            self._empresas_list.append(emp)
+            self.lb_empresas.insert(tk.END, f"{emp.get('codigo','')} - {emp.get('nombre','')}")
+        if self._empresas_list:
+            self.lb_empresas.selection_set(0)
+            self._update_ejercicios()
+        else:
+            self.lb_ejercicios.delete(0, tk.END)
+
+    def _update_ejercicios(self):
+        sel = self.lb_empresas.curselection()
+        self.lb_ejercicios.delete(0, tk.END)
+        if not sel:
+            return
+        emp = self._empresas_list[sel[0]]
+        ejercicios = sorted(set(emp.get("ejercicios") or []))
+        for ej in ejercicios:
+            self.lb_ejercicios.insert(tk.END, str(ej))
+        if ejercicios:
+            self.lb_ejercicios.select_set(0, tk.END)
 
 
 class TercerosEmpresaDialog(tk.Toplevel):
@@ -279,6 +334,10 @@ class TercerosEmpresaDialog(tk.Toplevel):
         frm = ttk.Frame(self, padding=10)
         frm.pack(fill="both", expand=True)
 
+        bar = ttk.Frame(frm)
+        bar.pack(fill="x")
+        ttk.Button(bar, text="Copiar de ejercicio", command=self.controller.copiar_desde_ejercicio).pack(side=tk.LEFT, padx=4)
+
         cols = ("nif", "nombre", "tipo", "poblacion")
         self.tv = ttk.Treeview(frm, columns=cols, show="headings", height=12, selectmode="browse")
         self.tv.heading("nif", text="NIF")
@@ -296,11 +355,17 @@ class TercerosEmpresaDialog(tk.Toplevel):
         sub.pack(fill="x", pady=(4, 0))
         ttk.Label(sub, text="Subcta cliente").grid(row=0, column=0, sticky="w", padx=6, pady=4)
         ttk.Label(sub, text="Subcta proveedor").grid(row=1, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(sub, text="Subcta ingreso").grid(row=2, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(sub, text="Subcta gasto").grid(row=3, column=0, sticky="w", padx=6, pady=4)
         self.var_sub_cli = tk.StringVar()
         ttk.Entry(sub, textvariable=self.var_sub_cli, width=18).grid(row=0, column=1, sticky="w", padx=6, pady=4)
         self.var_sub_pro = tk.StringVar()
         ttk.Entry(sub, textvariable=self.var_sub_pro, width=18).grid(row=1, column=1, sticky="w", padx=6, pady=4)
-        ttk.Button(sub, text="Guardar", style="Primary.TButton", command=self.controller.guardar_subcuentas).grid(row=0, column=2, rowspan=2, padx=6, pady=4)
+        self.var_sub_ing = tk.StringVar()
+        ttk.Entry(sub, textvariable=self.var_sub_ing, width=18).grid(row=2, column=1, sticky="w", padx=6, pady=4)
+        self.var_sub_gas = tk.StringVar()
+        ttk.Entry(sub, textvariable=self.var_sub_gas, width=18).grid(row=3, column=1, sticky="w", padx=6, pady=4)
+        ttk.Button(sub, text="Guardar", style="Primary.TButton", command=self.controller.guardar_subcuentas).grid(row=0, column=2, rowspan=4, padx=6, pady=4)
 
     # --- helpers de vista
     def set_terceros(self, rows):
@@ -316,6 +381,8 @@ class TercerosEmpresaDialog(tk.Toplevel):
     def clear_subcuentas(self):
         self.var_sub_cli.set("")
         self.var_sub_pro.set("")
+        self.var_sub_ing.set("")
+        self.var_sub_gas.set("")
 
     def get_selected_id(self):
         sel = self.tv.selection()
@@ -327,12 +394,65 @@ class TercerosEmpresaDialog(tk.Toplevel):
     def get_subcuenta_proveedor(self):
         return self.var_sub_pro.get()
 
-    def set_subcuentas(self, sc, sp):
+    def get_subcuenta_ingreso(self):
+        return self.var_sub_ing.get()
+
+    def get_subcuenta_gasto(self):
+        return self.var_sub_gas.get()
+
+    def set_subcuentas(self, sc, sp, si, sg):
         self.var_sub_cli.set(sc)
         self.var_sub_pro.set(sp)
+        self.var_sub_ing.set(si)
+        self.var_sub_gas.set(sg)
 
     def show_info(self, title, message):
         messagebox.showinfo(title, message)
+
+    def show_error(self, title, message):
+        messagebox.showerror(title, message)
+
+    def ask_copiar_ejercicio(self, ejercicios):
+        dlg = tk.Toplevel(self)
+        dlg.title("Copiar terceros")
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        dlg.grab_set()
+
+        frm = ttk.Frame(dlg, padding=10)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="Selecciona el ejercicio de origen").pack(anchor="w")
+
+        lb = tk.Listbox(frm, height=min(8, len(ejercicios)), exportselection=False)
+        for ej in ejercicios:
+            lb.insert(tk.END, str(ej))
+        lb.pack(fill="both", expand=True, pady=6)
+        if ejercicios:
+            lb.selection_set(0)
+
+        result = {"value": None}
+
+        def _ok():
+            sel = lb.curselection()
+            if sel:
+                try:
+                    result["value"] = int(lb.get(sel[0]))
+                except Exception:
+                    result["value"] = None
+            dlg.destroy()
+
+        def _cancel():
+            dlg.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x")
+        ttk.Button(btns, text="Copiar", style="Primary.TButton", command=_ok).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="Cancelar", command=_cancel).pack(side=tk.LEFT, padx=4)
+
+        dlg.wait_window(dlg)
+        return result["value"]
+
+
 class FacturaDialog(tk.Toplevel):
     def __init__(self, parent, gestor, codigo_empresa, ejercicio, ndig_plan, factura=None, numero_sugerido=""):
         super().__init__(parent)
