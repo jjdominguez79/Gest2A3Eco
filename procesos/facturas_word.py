@@ -50,6 +50,21 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
             "total_linea": f2(total_linea),
         })
 
+    resumen = {}
+    for ln in fac.get("lineas", []):
+        pct = float(ln.get("pct_iva") or 0)
+        item = resumen.setdefault(pct, {"base": 0.0, "cuota": 0.0})
+        item["base"] += float(ln.get("base") or 0)
+        item["cuota"] += float(ln.get("cuota_iva") or 0)
+    iva_resumen = []
+    for pct in sorted(resumen.keys(), reverse=True):
+        item = resumen[pct]
+        iva_resumen.append({
+            "tipo": f"{pct:.2f}%",
+            "base": f2(item["base"]),
+            "cuota": f2(item["cuota"]),
+        })
+
     return {
         "empresa": {
             "nombre": empresa_conf.get("nombre", ""),
@@ -80,6 +95,7 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
             "observaciones": fac.get("descripcion", ""),
         },
         "lineas": lineas,
+        "iva_resumen": iva_resumen,
         "totales": {
             "base": f2(totales.get("base", 0)),
             "iva": f2(totales.get("iva", 0)),

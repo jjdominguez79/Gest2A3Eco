@@ -14,12 +14,17 @@ class SeleccionEmpresaController:
 
     def refresh(self):
         self._empresas_cache = self._gestor.listar_empresas()
+        ejercicios = sorted({e.get("ejercicio") for e in self._empresas_cache if e.get("ejercicio") is not None})
+        self._view.set_ejercicios(ejercicios)
         self.apply_filter()
 
     def apply_filter(self):
         filtro = (self._view.get_filter_text() or "").strip().lower()
+        eje_filter = self._view.get_ejercicio_filter()
         self._view.clear_empresas()
         for e in self._empresas_cache:
+            if eje_filter is not None and e.get("ejercicio") != eje_filter:
+                continue
             texto = " ".join([
                 str(e.get("codigo", "")),
                 str(e.get("nombre", "")),

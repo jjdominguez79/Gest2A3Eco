@@ -83,6 +83,9 @@ CREATE TABLE IF NOT EXISTS facturas_emitidas_docs (
   subcuenta_cliente TEXT,
   forma_pago TEXT,
   cuenta_bancaria TEXT,
+  retencion_aplica INTEGER,
+  retencion_pct REAL,
+  retencion_importe REAL,
   generada INTEGER DEFAULT 0,
   fecha_generacion TEXT,
   lineas_json TEXT
@@ -135,6 +138,9 @@ class GestorSQLite:
         self._ensure_column("empresas", "cuentas_bancarias", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "forma_pago", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "cuenta_bancaria", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "retencion_aplica", "INTEGER")
+        self._ensure_column("facturas_emitidas_docs", "retencion_pct", "REAL")
+        self._ensure_column("facturas_emitidas_docs", "retencion_importe", "REAL")
         self._ensure_column("terceros_empresas", "subcuenta_ingreso", "TEXT")
         self._ensure_column("terceros_empresas", "subcuenta_gasto", "TEXT")
         self.conn.commit()
@@ -461,6 +467,7 @@ class GestorSQLite:
             d = self._row_to_dict(r)
             d["lineas"] = json.loads(d.get("lineas_json") or "[]")
             d["generada"] = bool(d.get("generada"))
+            d["retencion_aplica"] = bool(d.get("retencion_aplica"))
             d.pop("lineas_json", None)
             out.append(d)
         return out
@@ -476,8 +483,9 @@ class GestorSQLite:
             INSERT INTO facturas_emitidas_docs
             (id, codigo_empresa, ejercicio, tercero_id, serie, numero, numero_largo_sii,
              fecha_asiento, fecha_expedicion, fecha_operacion, nif, nombre, descripcion,
-             subcuenta_cliente, forma_pago, cuenta_bancaria, generada, fecha_generacion, lineas_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             subcuenta_cliente, forma_pago, cuenta_bancaria, retencion_aplica, retencion_pct,
+             retencion_importe, generada, fecha_generacion, lineas_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -494,6 +502,9 @@ class GestorSQLite:
                 subcuenta_cliente=excluded.subcuenta_cliente,
                 forma_pago=excluded.forma_pago,
                 cuenta_bancaria=excluded.cuenta_bancaria,
+                retencion_aplica=excluded.retencion_aplica,
+                retencion_pct=excluded.retencion_pct,
+                retencion_importe=excluded.retencion_importe,
                 generada=excluded.generada,
                 fecha_generacion=excluded.fecha_generacion,
                 lineas_json=excluded.lineas_json
@@ -515,6 +526,9 @@ class GestorSQLite:
                 factura.get("subcuenta_cliente"),
                 factura.get("forma_pago"),
                 factura.get("cuenta_bancaria"),
+                1 if factura.get("retencion_aplica") else 0,
+                factura.get("retencion_pct"),
+                factura.get("retencion_importe"),
                 1 if factura.get("generada") else 0,
                 factura.get("fecha_generacion"),
                 json.dumps(factura.get("lineas", []), ensure_ascii=False),

@@ -11,6 +11,7 @@ from controllers.terceros_empresa_controller import TercerosEmpresaController
 
 IVA_OPCIONES = [21, 10, 4, 0]
 IRPF_OPCIONES = [0, 1, 7, 15, 19]
+IRPF_RET_OPCIONES = [1, 7, 15, 19]
 
 def _to_float(x) -> float:
     try:
@@ -490,6 +491,25 @@ class FacturaDialog(tk.Toplevel):
         self.var_nif = tk.StringVar(value=f.get("nif", ""))
         self.var_nombre = tk.StringVar(value=f.get("nombre", ""))
         self.var_desc = tk.StringVar(value=f.get("descripcion", ""))
+        ret_aplica = bool(f.get("retencion_aplica")) if "retencion_aplica" in f else False
+        ret_pct = f.get("retencion_pct", "")
+        ret_importe = f.get("retencion_importe", "")
+        if not ret_aplica:
+            for ln in f.get("lineas", []):
+                pct_ln = _to_float(ln.get("pct_irpf"))
+                if pct_ln > 0:
+                    ret_pct = pct_ln
+                    ret_aplica = True
+                    break
+        if ret_importe in (None, "") and f.get("lineas"):
+            ret_importe = sum(_to_float(ln.get("cuota_irpf")) for ln in f.get("lineas", []))
+        self.var_ret_aplica = tk.BooleanVar(value=ret_aplica)
+        self.var_ret_pct = tk.StringVar(value=str(int(ret_pct)) if ret_pct not in (None, "", 0) else "")
+        self.var_ret_importe = tk.StringVar(
+            value=f"{_round2(ret_importe):.2f}" if ret_importe not in (None, "") else ""
+        )
+        self._retencion_manual = bool("retencion_importe" in f and ret_importe not in (None, ""))
+        self._retencion_silent = False
         self.var_subcuenta = tk.StringVar(value=f.get("subcuenta_cliente", ""))
         self.var_forma_pago = tk.StringVar(value=f.get("forma_pago", ""))
         self.var_cuenta_banco = tk.StringVar(value=f.get("cuenta_bancaria", ""))
@@ -543,6 +563,28 @@ class FacturaDialog(tk.Toplevel):
         #add_row("Descripcion", self.var_desc, row, width=40)
         #row += 1
 
+        ret_row = ttk.Frame(frm)
+        ret_row.grid(row=row, column=0, columnspan=3, sticky="w", padx=4, pady=(6, 2))
+        ttk.Checkbutton(
+            ret_row,
+            text="Factura con retencion",
+            variable=self.var_ret_aplica,
+            command=self._on_retencion_toggle,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(ret_row, text="Tipo %").pack(side=tk.LEFT)
+        self.cb_ret_pct = ttk.Combobox(
+            ret_row,
+            textvariable=self.var_ret_pct,
+            values=[str(x) for x in IRPF_RET_OPCIONES],
+            width=6,
+            state="readonly",
+        )
+        self.cb_ret_pct.pack(side=tk.LEFT, padx=4)
+        ttk.Label(ret_row, text="Importe retencion").pack(side=tk.LEFT, padx=(8, 0))
+        self.entry_ret_importe = ttk.Entry(ret_row, textvariable=self.var_ret_importe, width=12)
+        self.entry_ret_importe.pack(side=tk.LEFT, padx=4)
+        row += 1
+
         ttk.Label(frm, text="Lineas").grid(row=row, column=0, columnspan=3, sticky="w", pady=(10, 4))
         row += 1
 
@@ -565,7 +607,14 @@ class FacturaDialog(tk.Toplevel):
         ttk.Label(editor, text="IVA %").grid(row=0, column=6, padx=4, pady=2, sticky="w")
         ttk.Combobox(editor, textvariable=self.line_vars["iva"], values=[str(x) for x in IVA_OPCIONES], width=6, state="readonly").grid(row=0, column=7, padx=4, pady=2)
         ttk.Label(editor, text="IRPF %").grid(row=0, column=8, padx=4, pady=2, sticky="w")
-        ttk.Combobox(editor, textvariable=self.line_vars["irpf"], values=[str(x) for x in IRPF_OPCIONES], width=6, state="readonly").grid(row=0, column=9, padx=4, pady=2)
+        self.cb_irpf_line = ttk.Combobox(
+            editor,
+            textvariable=self.line_vars["irpf"],
+            values=[str(x) for x in IRPF_OPCIONES],
+            width=6,
+            state="readonly",
+        )
+        self.cb_irpf_line.grid(row=0, column=9, padx=4, pady=2)
         ttk.Button(editor, text="Añadir/Actualizar", style="Primary.TButton", command=self._add_update_linea).grid(row=0, column=10, padx=6)
         ttk.Button(editor, text="Limpiar", command=self._clear_line_editor).grid(row=0, column=11, padx=4)
         row += 1
@@ -609,6 +658,23 @@ class FacturaDialog(tk.Toplevel):
             lbl.grid(row=0, column=i, padx=6)
         row += 1
 
+        iva_frame = ttk.LabelFrame(frm, text="Detalle IVA")
+        iva_frame.grid(row=row, column=0, columnspan=3, sticky="ew", padx=4, pady=(0, 8))
+        self.tv_iva = ttk.Treeview(
+            iva_frame,
+            columns=("tipo", "base", "cuota"),
+            show="headings",
+            height=4,
+        )
+        self.tv_iva.heading("tipo", text="Tipo IVA")
+        self.tv_iva.heading("base", text="Base")
+        self.tv_iva.heading("cuota", text="Cuota IVA")
+        self.tv_iva.column("tipo", width=90, anchor="w")
+        self.tv_iva.column("base", width=100, anchor="e")
+        self.tv_iva.column("cuota", width=100, anchor="e")
+        self.tv_iva.pack(fill="x", expand=True, padx=6, pady=4)
+        row += 1
+
         btns = ttk.Frame(frm)
         btns.grid(row=row, column=0, columnspan=3, pady=(6, 2))
         ttk.Button(btns, text="Guardar", style="Primary.TButton", command=self._ok).pack(side=tk.LEFT, padx=4)
@@ -619,6 +685,11 @@ class FacturaDialog(tk.Toplevel):
 
         for ln in f.get("lineas", []):
             self._insert_linea(ln)
+        self.var_ret_pct.trace_add("write", lambda *_: self._on_retencion_pct_change())
+        self.var_ret_importe.trace_add("write", lambda *_: self._on_retencion_importe_change())
+        self._update_retencion_state()
+        if self.var_ret_aplica.get():
+            self.controller.apply_retencion_header()
         self._refresh_totales()
 
         self.grab_set()
@@ -687,6 +758,33 @@ class FacturaDialog(tk.Toplevel):
             if k in self.line_vars:
                 self.line_vars[k].set(v)
 
+    def _on_retencion_toggle(self):
+        self._update_retencion_state()
+        self.controller.retencion_toggled()
+
+    def _on_retencion_pct_change(self):
+        if self._retencion_silent:
+            return
+        self._update_retencion_state()
+        self.controller.retencion_pct_changed()
+
+    def _on_retencion_importe_change(self):
+        if self._retencion_silent:
+            return
+        self._retencion_manual = True
+        self.controller.retencion_importe_changed()
+
+    def _update_retencion_state(self):
+        aplica = bool(self.var_ret_aplica.get())
+        if aplica and not (self.var_ret_pct.get() or "").strip():
+            self.set_retencion_pct(str(IRPF_RET_OPCIONES[0]))
+        self.cb_ret_pct.config(state="readonly" if aplica else "disabled")
+        self.entry_ret_importe.config(state="normal" if aplica else "disabled")
+        if hasattr(self, "cb_irpf_line"):
+            self.cb_irpf_line.config(state="disabled" if aplica else "readonly")
+            if aplica and (self.var_ret_pct.get() or "").strip():
+                self.line_vars["irpf"].set(self.var_ret_pct.get())
+
     # --- helpers de vista para el controlador
     def set_terceros(self, values):
         self.cb_tercero["values"] = values
@@ -720,6 +818,8 @@ class FacturaDialog(tk.Toplevel):
     def clear_line_editor(self):
         for v in self.line_vars.values():
             v.set("")
+        if self.get_retencion_aplica() and (self.var_ret_pct.get() or "").strip():
+            self.line_vars["irpf"].set(self.var_ret_pct.get())
         self.tv.selection_remove(self.tv.selection())
 
     def get_line_editor_values(self):
@@ -762,6 +862,11 @@ class FacturaDialog(tk.Toplevel):
         )
         self.tv.insert("", tk.END, values=vals)
 
+    def set_lineas(self, lineas):
+        self.tv.delete(*self.tv.get_children())
+        for ln in lineas or []:
+            self.insert_line_row(ln)
+
     def delete_selected_line(self):
         sel = self.tv.selection()
         if sel:
@@ -796,6 +901,40 @@ class FacturaDialog(tk.Toplevel):
         self.lbl_tot_iva.config(text=f"IVA: {iva:.2f}")
         self.lbl_tot_ret.config(text=f"IRPF: {ret:.2f}")
         self.lbl_tot_total.config(text=f"Total: {total:.2f}")
+
+    def set_iva_resumen(self, rows):
+        self.tv_iva.delete(*self.tv_iva.get_children())
+        for r in rows:
+            self.tv_iva.insert(
+                "",
+                tk.END,
+                values=(r.get("tipo", ""), f"{_round2(r.get('base')):.2f}", f"{_round2(r.get('cuota')):.2f}"),
+            )
+
+    def get_retencion_aplica(self):
+        return bool(self.var_ret_aplica.get())
+
+    def get_retencion_pct(self):
+        return _to_float(self.var_ret_pct.get())
+
+    def get_retencion_importe(self):
+        return _to_float(self.var_ret_importe.get())
+
+    def is_retencion_manual(self):
+        return self._retencion_manual
+
+    def set_retencion_manual(self, manual: bool):
+        self._retencion_manual = bool(manual)
+
+    def set_retencion_importe(self, value: str):
+        self._retencion_silent = True
+        self.var_ret_importe.set(value)
+        self._retencion_silent = False
+
+    def set_retencion_pct(self, value: str):
+        self._retencion_silent = True
+        self.var_ret_pct.set(value)
+        self._retencion_silent = False
 
     def get_numero_factura(self):
         return self.var_numero.get().strip()
@@ -902,6 +1041,31 @@ class UIFacturasEmitidas(ttk.Frame):
             self.tv.heading(c, text=h)
             self.tv.column(c, width=w, anchor=align)
         self.tv.pack(fill="both", expand=True, padx=10, pady=8)
+        self.tv.bind("<<TreeviewSelect>>", lambda e: self._on_factura_select())
+
+        detalle = ttk.LabelFrame(self, text="Detalle de factura")
+        detalle.pack(fill="x", padx=10, pady=(0, 6))
+        self.tv_detalle = ttk.Treeview(
+            detalle,
+            columns=("concepto", "unidades", "precio", "base", "pct_iva", "cuota_iva", "pct_irpf", "cuota_irpf"),
+            show="headings",
+            height=6,
+            selectmode="browse",
+        )
+        headers_det = {
+            "concepto": "Concepto",
+            "unidades": "Unid",
+            "precio": "P. unit",
+            "base": "Base",
+            "pct_iva": "% IVA",
+            "cuota_iva": "Cuota IVA",
+            "pct_irpf": "% IRPF",
+            "cuota_irpf": "Ret",
+        }
+        for c, h in headers_det.items():
+            self.tv_detalle.heading(c, text=h)
+            self.tv_detalle.column(c, width=90 if c == "concepto" else 70, anchor="e" if c != "concepto" else "w")
+        self.tv_detalle.pack(fill="x", expand=True, padx=6, pady=4)
 
         bottom = ttk.Frame(self)
         bottom.pack(fill="x", padx=10, pady=6)
@@ -926,6 +1090,7 @@ class UIFacturasEmitidas(ttk.Frame):
 
     def clear_facturas(self):
         self.tv.delete(*self.tv.get_children())
+        self.tv_detalle.delete(*self.tv_detalle.get_children())
 
     def insert_factura_row(self, fac: dict, total: float):
         self.tv.insert(
@@ -942,6 +1107,24 @@ class UIFacturasEmitidas(ttk.Frame):
                 fac.get("fecha_generacion", ""),
             ),
         )
+
+    def set_detalle_lineas(self, lineas):
+        self.tv_detalle.delete(*self.tv_detalle.get_children())
+        for ln in lineas or []:
+            self.tv_detalle.insert(
+                "",
+                tk.END,
+                values=(
+                    ln.get("concepto", ""),
+                    f"{_round2(ln.get('unidades')):.2f}",
+                    f"{_round2(ln.get('precio')):.2f}",
+                    f"{_round2(ln.get('base')):.2f}",
+                    f"{_round2(ln.get('pct_iva')):.2f}",
+                    f"{_round2(ln.get('cuota_iva')):.2f}",
+                    f"{_round2(ln.get('pct_irpf')):.2f}",
+                    f"{_round2(ln.get('cuota_irpf')):.2f}",
+                ),
+            )
 
     def get_selected_ids(self):
         sel = list(self.tv.selection())
@@ -994,6 +1177,9 @@ class UIFacturasEmitidas(ttk.Frame):
 
     def _terceros(self):
         self.controller.terceros()
+
+    def _on_factura_select(self):
+        self.controller.factura_seleccionada()
 
     # ------------------- Exportar PDF -------------------
     def _export_pdf(self):

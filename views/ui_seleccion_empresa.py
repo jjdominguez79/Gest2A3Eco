@@ -129,6 +129,11 @@ class UISeleccionEmpresa(ttk.Frame):
 
         search_row = ttk.Frame(self)
         search_row.pack(fill=tk.X, padx=10, pady=(4, 0))
+        ttk.Label(search_row, text="Ejercicio").pack(side=tk.LEFT)
+        self.var_ejercicio = tk.StringVar()
+        self.cb_ejercicio = ttk.Combobox(search_row, textvariable=self.var_ejercicio, width=8, state="readonly")
+        self.cb_ejercicio.pack(side=tk.LEFT, padx=(6, 12))
+        self.cb_ejercicio.bind("<<ComboboxSelected>>", lambda e: self.controller.apply_filter())
         ttk.Label(search_row, text="Buscar").pack(side=tk.LEFT)
         self.var_buscar = tk.StringVar()
         entry_buscar = ttk.Entry(search_row, textvariable=self.var_buscar, width=40)
@@ -172,6 +177,21 @@ class UISeleccionEmpresa(ttk.Frame):
 
     def get_filter_text(self):
         return self.var_buscar.get()
+
+    def set_ejercicios(self, ejercicios):
+        vals = ["Todos"] + [str(e) for e in ejercicios]
+        self.cb_ejercicio["values"] = vals
+        if self.var_ejercicio.get() not in vals:
+            self.var_ejercicio.set(vals[0])
+
+    def get_ejercicio_filter(self):
+        val = (self.var_ejercicio.get() or "").strip()
+        if not val or val.lower() == "todos":
+            return None
+        try:
+            return int(val)
+        except Exception:
+            return val
 
     def clear_empresas(self):
         self.tv.delete(*self.tv.get_children())

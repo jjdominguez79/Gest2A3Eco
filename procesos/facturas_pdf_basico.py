@@ -139,7 +139,29 @@ def generar_pdf_basico(empresa_conf: dict, fac: dict, cliente: dict, totales: di
         body.append(t(545, y, f"{_to_float(ln.get('pct_irpf')):.2f}%", 10))
         y -= 12
 
+    resumen = {}
+    for ln in fac.get("lineas", []):
+        pct = _round2(_to_float(ln.get("pct_iva")))
+        item = resumen.setdefault(pct, {"base": 0.0, "cuota": 0.0})
+        item["base"] += _to_float(ln.get("base"))
+        item["cuota"] += _to_float(ln.get("cuota_iva"))
+
     y -= 16
+    if resumen:
+        body.append(t(360, y, "Detalle IVA:", 11, True))
+        y -= 12
+        body.append(t(360, y, "Tipo", 10, True))
+        body.append(t(430, y, "Base", 10, True))
+        body.append(t(500, y, "Cuota", 10, True))
+        y -= 12
+        for pct in sorted(resumen.keys(), reverse=True):
+            item = resumen[pct]
+            body.append(t(360, y, f"{pct:.2f}%", 10))
+            body.append(t(430, y, f"{_round2(item['base']):.2f}", 10))
+            body.append(t(500, y, f"{_round2(item['cuota']):.2f}", 10))
+            y -= 12
+        y -= 4
+
     body.append(t(360, y, "Base imponible:", 11, True))
     body.append(t(500, y, f"{_round2(totales.get('base')):.2f}", 11))
     y -= 14
@@ -150,6 +172,7 @@ def generar_pdf_basico(empresa_conf: dict, fac: dict, cliente: dict, totales: di
         body.append(t(360, y, "Recargo Eq.:", 11, True))
         body.append(t(500, y, f"{_round2(totales.get('re')):.2f}", 11))
         y -= 14
+    if abs(_to_float(totales.get("ret"))) > 0.001:
         body.append(t(360, y, "IRPF:", 11, True))
         body.append(t(500, y, f"{_round2(totales.get('ret')):.2f}", 11))
         y -= 16

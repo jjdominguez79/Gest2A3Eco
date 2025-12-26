@@ -28,6 +28,7 @@ class FacturasEmitidasController:
         for fac in self._gestor.listar_facturas_emitidas(self._codigo, self._ejercicio):
             total = self._compute_total(fac)
             self._view.insert_factura_row(fac, total)
+        self._view.set_detalle_lineas([])
 
     def nueva(self):
         sugerido = self._proximo_numero()
@@ -100,6 +101,17 @@ class FacturasEmitidasController:
             self._ejercicio,
             int(self._empresa_conf.get("digitos_plan", 8)),
         )
+
+    def factura_seleccionada(self):
+        sel = self._view.get_selected_ids()
+        if not sel:
+            self._view.set_detalle_lineas([])
+            return
+        fac = self._get_factura_by_id(sel[0])
+        if not fac:
+            self._view.set_detalle_lineas([])
+            return
+        self._view.set_detalle_lineas(fac.get("lineas", []))
 
     def export_pdf(self):
         sel = self._view.get_selected_ids()
