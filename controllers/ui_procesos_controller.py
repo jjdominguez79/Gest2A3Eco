@@ -124,7 +124,25 @@ class ProcesosController:
                     req = ["Numero Factura"] + req
                 if not self._require_mapeo_or_warn(pl, "emitidas", req):
                     return
-                registros = generar_emitidas(rows, pl, codigo_empresa, ndig)
+                terceros = self._gestor.listar_terceros()
+                terceros_by_nif = {
+                    str(t.get("nif") or "").strip().upper(): t
+                    for t in terceros
+                    if str(t.get("nif") or "").strip()
+                }
+                terceros_empresa = self._gestor.listar_terceros_por_empresa(self._codigo, self._ejercicio)
+                for t in terceros_empresa:
+                    nif = str(t.get("nif") or "").strip().upper()
+                    if nif:
+                        terceros_by_nif[nif] = t
+                registros = generar_emitidas(
+                    rows,
+                    pl,
+                    codigo_empresa,
+                    ndig,
+                    ejercicio=self._ejercicio,
+                    terceros_by_nif=terceros_by_nif,
+                )
                 if registros:
                     save_path = self._view.ask_save_path(f"E{self._codigo}")
                     if not save_path:
@@ -143,7 +161,25 @@ class ProcesosController:
                 req = ["Numero Factura"] + req
             if not self._require_mapeo_or_warn(pl, "recibidas", req):
                 return
-            out_lines = generar_recibidas_suenlace(rows, pl, codigo_empresa, ndig)
+            terceros = self._gestor.listar_terceros()
+            terceros_by_nif = {
+                str(t.get("nif") or "").strip().upper(): t
+                for t in terceros
+                if str(t.get("nif") or "").strip()
+            }
+            terceros_empresa = self._gestor.listar_terceros_por_empresa(self._codigo, self._ejercicio)
+            for t in terceros_empresa:
+                nif = str(t.get("nif") or "").strip().upper()
+                if nif:
+                    terceros_by_nif[nif] = t
+            out_lines = generar_recibidas_suenlace(
+                rows,
+                pl,
+                codigo_empresa,
+                ndig,
+                ejercicio=self._ejercicio,
+                terceros_by_nif=terceros_by_nif,
+            )
             avisos = []
             if out_lines:
                 save_path = self._view.ask_save_path(f"E{self._codigo}")

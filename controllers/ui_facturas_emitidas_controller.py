@@ -1,4 +1,5 @@
 import os
+import shutil
 import sys
 from datetime import datetime
 import traceback
@@ -146,11 +147,13 @@ class FacturasEmitidasController:
                 out_pdf_path=save_path,
                 guardar_docx=False,
             )
+            self._store_pdf_copy(fac, save_path)
             self._view.show_info("Gest2A3Eco", f"PDF generado desde Word:\n{save_path}")
         except Exception as e:
             self._log_pdf_error("Error al generar PDF con Word.", e, template_path, save_path)
             try:
                 generar_pdf_basico(self._empresa_conf, fac, cliente, tot, save_path)
+                self._store_pdf_copy(fac, save_path)
                 self._view.show_warning(
                     "Gest2A3Eco",
                     "No se pudo generar el PDF desde Word:\n"
@@ -162,6 +165,26 @@ class FacturasEmitidasController:
                     "Gest2A3Eco",
                     f"No se pudo generar el PDF:\n{e}\n{e2}",
                 )
+
+    def abrir_pdf(self):
+        sel = self._view.get_selected_ids()
+        if not sel:
+            self._view.show_info("Gest2A3Eco", "Selecciona una factura.")
+            return
+        fac = self._get_factura_by_id(sel[0])
+        if not fac:
+            return
+        pdf_path = fac.get("pdf_path") or ""
+        if not str(pdf_path).strip():
+            self._view.show_warning("Gest2A3Eco", "La factura no tiene PDF asociado.")
+            return
+        if not os.path.exists(pdf_path):
+            self._view.show_warning("Gest2A3Eco", f"No se encuentra el PDF:\n{pdf_path}")
+            return
+        try:
+            os.startfile(pdf_path)
+        except Exception as e:
+            self._view.show_error("Gest2A3Eco", f"No se pudo abrir el PDF:\n{e}")
 
     def generar_suenlace(self):
         sel = self._view.get_selected_ids()
@@ -176,6 +199,8 @@ class FacturasEmitidasController:
         for fid in sel:
             fac = self._get_factura_by_id(fid)
             if fac:
+                fac = self._ensure_pdf_ref(fac)
+                self._ensure_internal_pdf(fac)
                 facturas_sel.append(fac)
                 rows.extend(self._factura_to_rows(fac))
 
@@ -193,7 +218,25 @@ class FacturasEmitidasController:
             return
 
         ndig = int(self._empresa_conf.get("digitos_plan", 8))
-        registros = generar_emitidas(rows, plantilla, str(self._codigo), ndig)
+        terceros = self._gestor.listar_terceros()
+        terceros_by_nif = {
+            str(t.get("nif") or "").strip().upper(): t
+            for t in terceros
+            if str(t.get("nif") or "").strip()
+        }
+        terceros_empresa = self._gestor.listar_terceros_por_empresa(self._codigo, self._ejercicio)
+        for t in terceros_empresa:
+            nif = str(t.get("nif") or "").strip().upper()
+            if nif:
+                terceros_by_nif[nif] = t
+        registros = generar_emitidas(
+            rows,
+            plantilla,
+            str(self._codigo),
+            ndig,
+            ejercicio=self._ejercicio,
+            terceros_by_nif=terceros_by_nif,
+        )
         if not registros:
             self._view.show_warning("Gest2A3Eco", "No se generaron registros.")
             return
@@ -293,6 +336,7 @@ class FacturasEmitidasController:
             "Descripcion Factura": fac.get("descripcion", ""),
             "NIF Cliente Proveedor": fac.get("nif", ""),
             "Nombre Cliente Proveedor": fac.get("nombre", ""),
+            "_pdf_ref": fac.get("pdf_ref", ""),
         }
         if fac.get("subcuenta_cliente"):
             base_row["Cuenta Cliente Proveedor"] = fac.get("subcuenta_cliente")
@@ -319,6 +363,96 @@ class FacturasEmitidasController:
         else:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         return os.path.join(base_dir, "plantillas", "factura_emitida_template.docx")
+
+    def _store_pdf_copy(self, fac: dict, src_path: str) -> None:
+        fac = self._ensure_pdf_ref(fac)
+        dest_path = self._copy_pdf_to_empresa_folder(src_path, fac.get("pdf_ref", ""))
+        if not dest_path:
+            return
+        fac = dict(fac)
+        fac["pdf_path"] = dest_path
+        self._gestor.upsert_factura_emitida(fac)
+
+    def _ensure_internal_pdf(self, fac: dict) -> None:
+        pdf_ref = str(fac.get("pdf_ref") or "").strip()
+        if not pdf_ref:
+            return
+        dest_path = self._internal_pdf_path(pdf_ref)
+        if not dest_path:
+            return
+        if os.path.exists(dest_path):
+            if fac.get("pdf_path") != dest_path:
+                upd = dict(fac)
+                upd["pdf_path"] = dest_path
+                self._gestor.upsert_factura_emitida(upd)
+            return
+        template_path = self._docx_template_path()
+        cliente = self._cliente_factura(fac)
+        tot = self._totales_factura(fac)
+        context = build_context_emitida(self._empresa_conf, fac, cliente, tot)
+        try:
+            if os.path.exists(template_path):
+                generar_pdf_desde_plantilla_word(
+                    template_path=template_path,
+                    context=context,
+                    out_pdf_path=dest_path,
+                    guardar_docx=False,
+                )
+            else:
+                generar_pdf_basico(self._empresa_conf, fac, cliente, tot, dest_path)
+        except Exception:
+            return
+        upd = dict(fac)
+        upd["pdf_path"] = dest_path
+        self._gestor.upsert_factura_emitida(upd)
+
+    def _copy_pdf_to_empresa_folder(self, src_path: str, pdf_ref: str) -> str:
+        dest_path = self._internal_pdf_path(pdf_ref)
+        if not dest_path:
+            return ""
+        filename = os.path.basename(dest_path)
+        if not filename:
+            return ""
+        try:
+            shutil.copy2(src_path, dest_path)
+        except Exception:
+            return ""
+        return dest_path
+
+    def _internal_pdf_path(self, pdf_ref: str) -> str:
+        codigo = str(self._codigo or "").strip()
+        ejercicio = str(self._ejercicio or "").strip()
+        if not codigo or not ejercicio:
+            return ""
+        base_dir = os.path.join("Z:\\", "A3", "A3ECO", f"E{codigo}", "FACTURAS", ejercicio)
+        try:
+            os.makedirs(base_dir, exist_ok=True)
+        except Exception:
+            return ""
+        ref = str(pdf_ref or "").strip()
+        filename = f"{ref}.pdf" if ref else ""
+        if not filename:
+            return ""
+        return os.path.join(base_dir, filename)
+
+    def _ensure_pdf_ref(self, fac: dict) -> dict:
+        ref = str(fac.get("pdf_ref") or "").strip()
+        if ref:
+            base_ref = ref.split("@", 1)[0].strip()
+            if base_ref and base_ref != ref:
+                fac = dict(fac)
+                fac["pdf_ref"] = base_ref
+                self._gestor.upsert_factura_emitida(fac)
+            return fac
+        raw_id = "".join(ch for ch in str(fac.get("id") or "") if ch.isdigit())
+        if not raw_id:
+            raw_id = str(int(datetime.now().timestamp() * 1000))
+        prefix = "E"
+        ref = f"{prefix}{raw_id[-8:].rjust(8, '0')}"
+        fac = dict(fac)
+        fac["pdf_ref"] = ref
+        self._gestor.upsert_factura_emitida(fac)
+        return fac
 
     def _log_pdf_error(self, msg: str, exc: Exception, template_path: str, save_path: str) -> None:
         try:

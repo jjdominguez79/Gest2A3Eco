@@ -7,7 +7,12 @@
 from typing import List, Dict, Any
 
 from collections import defaultdict
-from models.facturas_common import Linea, render_a3_tipo12_cabecera, render_a3_tipo9_detalle
+from models.facturas_common import (
+    Linea,
+    render_a3_tipo12_cabecera,
+    render_a3_tipo9_detalle,
+    render_a3_tipoC_alta_cuenta,
+)
 from utils.utilidades import d2
 
 
@@ -73,6 +78,34 @@ def _resolver_cuenta_proveedor(row: Dict[str, Any], conf: Dict[str, Any]) -> str
     nif_dig = "".join(ch for ch in str(nif) if ch.isdigit()) or "0"
     base = "".join(ch for ch in pref if ch.isdigit()) + nif_dig
     return _ajustar_cuenta(base, ndig)
+
+def _norm_nif(nif: Any) -> str:
+    return str(nif or "").strip().upper()
+
+def _datos_tercero(row: Dict[str, Any], terceros_by_nif: Dict[str, Dict[str, Any]] | None):
+    nif = _norm_nif(row.get("NIF Cliente Proveedor") or row.get("NIF"))
+    nombre = str(row.get("Nombre Cliente Proveedor") or "").strip()
+    tercero = (terceros_by_nif or {}).get(nif) if nif else None
+    if tercero:
+        nombre = str(tercero.get("nombre") or nombre).strip()
+    return {
+        "nif": nif,
+        "nombre": nombre,
+        "direccion": str((tercero or {}).get("direccion") or "").strip(),
+        "cp": str((tercero or {}).get("cp") or "").strip(),
+        "poblacion": str((tercero or {}).get("poblacion") or "").strip(),
+        "provincia": str((tercero or {}).get("provincia") or "").strip(),
+        "telefono": str((tercero or {}).get("telefono") or "").strip(),
+        "email": str((tercero or {}).get("email") or "").strip(),
+    }
+
+def _cuenta_gasto_tercero(terceros_by_nif: Dict[str, Dict[str, Any]] | None, nif: str, ndig: int) -> str:
+    if not terceros_by_nif or not nif:
+        return ""
+    raw = (terceros_by_nif.get(nif) or {}).get("subcuenta_gasto")
+    if not raw:
+        return ""
+    return _ajustar_cuenta(raw, ndig)
 
 
 def generar_asiento_recibida(row: Dict[str, Any], conf: Dict[str, Any]) -> List[Linea]:
@@ -257,6 +290,8 @@ def generar_recibidas_suenlace(
     plantilla: Dict[str, Any],
     codigo_empresa: str,
     ndig: int,
+    ejercicio: int | None = None,
+    terceros_by_nif: Dict[str, Dict[str, Any]] | None = None,
 ) -> List[str]:
     """
     Genera registros SUENLACE (cabecera tipo 1/2 + detalle tipo 9, formato 254)
@@ -270,7 +305,6 @@ def generar_recibidas_suenlace(
         grupos[_key_factura(rec)].append(rec)
 
     registros: List[str] = []
-
     for (_, _id), grecs in grupos.items():
         if not grecs:
             continue
@@ -296,8 +330,13 @@ def generar_recibidas_suenlace(
         conf_ctas["digitos_plan"] = ndig
         c_prov = _resolver_cuenta_proveedor(r0, conf_ctas)
 
-        nif = str(r0.get("NIF Cliente Proveedor") or "").strip()
-        nombre = str(r0.get("Nombre Cliente Proveedor") or "").strip()
+        datos_ter = _datos_tercero(r0, terceros_by_nif)
+        nif = datos_ter.get("nif", "")
+        nombre = datos_ter.get("nombre", "")
+        c_gasto_ter = _cuenta_gasto_tercero(terceros_by_nif, nif, ndig)
+        ref_doc = str(r0.get("_pdf_ref") or r0.get("Referencia Doc") or "").strip()
+        desc_cab = f"Su Fra Nº. {num_fact}".strip()
+        desc_det = f"Compras a {nombre}".strip() if nombre else "Compras"
 
         total = 0.0
         for rr in grecs:
@@ -310,6 +349,9 @@ def generar_recibidas_suenlace(
         total_abs = abs(total)
         tipo_registro = "2" if signo < 0 else "1"  # 2=rectificativa (abono)
 
+        cta_gasto = r0.get("Cuenta Compras Ventas") or c_gasto_ter or cta_gasto_def
+        cta_gasto = _ajustar_cuenta(cta_gasto, ndig)
+
         # CABECERA tipo 1 (factura normal) con tipo_factura = 2 (compras)
         registros.append(
             render_a3_tipo12_cabecera(
@@ -320,7 +362,8 @@ def generar_recibidas_suenlace(
                 ndig_plan=ndig,
                 tipo_factura="2",
                 num_factura=num_fact,
-                desc_apunte=desc,
+                desc_apunte=desc_cab,
+                ref_doc=ref_doc,
                 importe_total=total_abs,
                 nif=nif,
                 nombre=nombre,
@@ -352,10 +395,10 @@ def generar_recibidas_suenlace(
                 render_a3_tipo9_detalle(
                     codigo_empresa=codigo_empresa,
                     fecha=fecha,
-                    cuenta_base_iva=cta_gasto_def,
+                    cuenta_base_iva=cta_gasto,
                     ndig_plan=ndig,
                     num_factura=num_fact,
-                    desc_apunte=desc,
+                    desc_apunte=desc_det,
                     subtipo=subtipo_def,
                     base=(base if signo > 0 else -abs(base)),
                     pct_iva=abs(pct),

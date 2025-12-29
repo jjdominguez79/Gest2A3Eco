@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS empresas (
   digitos_plan INTEGER,
   serie_emitidas TEXT,
   siguiente_num_emitidas INTEGER,
+  pdf_ref_seq INTEGER,
   cuenta_bancaria TEXT,
   cuentas_bancarias TEXT,
   cif TEXT,
@@ -83,6 +84,8 @@ CREATE TABLE IF NOT EXISTS facturas_emitidas_docs (
   subcuenta_cliente TEXT,
   forma_pago TEXT,
   cuenta_bancaria TEXT,
+  pdf_path TEXT,
+  pdf_ref TEXT,
   retencion_aplica INTEGER,
   retencion_pct REAL,
   retencion_importe REAL,
@@ -136,13 +139,18 @@ class GestorSQLite:
         self.conn.commit()
         self._ensure_column("empresas", "cuenta_bancaria", "TEXT")
         self._ensure_column("empresas", "cuentas_bancarias", "TEXT")
+        self._ensure_column("empresas", "pdf_ref_seq", "INTEGER")
         self._ensure_column("facturas_emitidas_docs", "forma_pago", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "cuenta_bancaria", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "pdf_path", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "pdf_ref", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "retencion_aplica", "INTEGER")
         self._ensure_column("facturas_emitidas_docs", "retencion_pct", "REAL")
         self._ensure_column("facturas_emitidas_docs", "retencion_importe", "REAL")
         self._ensure_column("terceros_empresas", "subcuenta_ingreso", "TEXT")
         self._ensure_column("terceros_empresas", "subcuenta_gasto", "TEXT")
+        self.conn.commit()
+        self.conn.execute("UPDATE terceros SET tipo=NULL")
         self.conn.commit()
 
     def _ensure_column(self, table: str, column: str, col_type: str):
@@ -274,13 +282,14 @@ class GestorSQLite:
         self.conn.execute(
             """
             INSERT INTO empresas (codigo, ejercicio, nombre, digitos_plan, serie_emitidas,
-                siguiente_num_emitidas, cuenta_bancaria, cuentas_bancarias, cif, direccion, cp, poblacion, provincia, telefono, email, logo_path)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                siguiente_num_emitidas, pdf_ref_seq, cuenta_bancaria, cuentas_bancarias, cif, direccion, cp, poblacion, provincia, telefono, email, logo_path)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(codigo, ejercicio) DO UPDATE SET
                 nombre=excluded.nombre,
                 digitos_plan=excluded.digitos_plan,
                 serie_emitidas=excluded.serie_emitidas,
                 siguiente_num_emitidas=excluded.siguiente_num_emitidas,
+                pdf_ref_seq=excluded.pdf_ref_seq,
                 cuenta_bancaria=excluded.cuenta_bancaria,
                 cuentas_bancarias=excluded.cuentas_bancarias,
                 cif=excluded.cif,
@@ -299,6 +308,7 @@ class GestorSQLite:
                 emp.get("digitos_plan"),
                 emp.get("serie_emitidas"),
                 emp.get("siguiente_num_emitidas"),
+                emp.get("pdf_ref_seq"),
                 emp.get("cuenta_bancaria"),
                 emp.get("cuentas_bancarias"),
                 emp.get("cif"),
@@ -483,9 +493,9 @@ class GestorSQLite:
             INSERT INTO facturas_emitidas_docs
             (id, codigo_empresa, ejercicio, tercero_id, serie, numero, numero_largo_sii,
              fecha_asiento, fecha_expedicion, fecha_operacion, nif, nombre, descripcion,
-             subcuenta_cliente, forma_pago, cuenta_bancaria, retencion_aplica, retencion_pct,
+             subcuenta_cliente, forma_pago, cuenta_bancaria, pdf_path, pdf_ref, retencion_aplica, retencion_pct,
              retencion_importe, generada, fecha_generacion, lineas_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -502,6 +512,8 @@ class GestorSQLite:
                 subcuenta_cliente=excluded.subcuenta_cliente,
                 forma_pago=excluded.forma_pago,
                 cuenta_bancaria=excluded.cuenta_bancaria,
+                pdf_path=excluded.pdf_path,
+                pdf_ref=excluded.pdf_ref,
                 retencion_aplica=excluded.retencion_aplica,
                 retencion_pct=excluded.retencion_pct,
                 retencion_importe=excluded.retencion_importe,
@@ -526,6 +538,8 @@ class GestorSQLite:
                 factura.get("subcuenta_cliente"),
                 factura.get("forma_pago"),
                 factura.get("cuenta_bancaria"),
+                factura.get("pdf_path"),
+                factura.get("pdf_ref"),
                 1 if factura.get("retencion_aplica") else 0,
                 factura.get("retencion_pct"),
                 factura.get("retencion_importe"),
@@ -638,7 +652,7 @@ class GestorSQLite:
                 tercero.get("telefono"),
                 tercero.get("email"),
                 tercero.get("contacto"),
-                tercero.get("tipo"),
+                None,
             ),
         )
         self.conn.commit()
@@ -660,7 +674,7 @@ class GestorSQLite:
     def listar_terceros_por_empresa(self, codigo_empresa: str, ejercicio: int):
         cur = self.conn.execute(
             """
-            SELECT t.*, te.subcuenta_cliente, te.subcuenta_proveedor
+            SELECT t.*, te.subcuenta_cliente, te.subcuenta_proveedor, te.subcuenta_ingreso, te.subcuenta_gasto
             FROM terceros t
             JOIN terceros_empresas te ON te.tercero_id = t.id
             WHERE te.codigo_empresa=? AND te.ejercicio=?

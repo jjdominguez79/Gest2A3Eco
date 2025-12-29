@@ -286,6 +286,7 @@ def render_a3_tipo12_cabecera(*,
         tipo_factura: str,  # '1' ventas, '2' compras, '3' bienes inversión
         num_factura: str,
         desc_apunte: str,
+        ref_doc: str = "",
         importe_total: float,
         nif: str = "",
         nombre: str = "",
@@ -331,7 +332,8 @@ def render_a3_tipo12_cabecera(*,
     _set_slice(buf, 68, 69, "I")                    # 69
     _set_slice(buf, 69, 99, desc_apunte)            # 70..99
     _set_slice(buf, 99, 113, _importe_14_pos(importe_total))  # 100..113
-    _set_slice(buf, 113, 175, "")                   # 114..175 reserva
+    _set_slice(buf, 113, 143, _s(ref_doc)[:30])     # 114..143 referencia doc
+    _set_slice(buf, 143, 175, "")                   # 144..175 reserva
     _set_slice(buf, 175, 189, _s(nif)[:14])         # 176..189 NIF
     _set_slice(buf, 189, 229, _s(nombre)[:40])      # 190..229 Nombre
     _set_slice(buf, 229, 236, "")                   # 230..236 reserva
@@ -443,6 +445,86 @@ def render_a3_tipo9_detalle(*, codigo_empresa: str, fecha: str,
     buf.append("\n")
     return "".join(buf)
 
+# ÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ
+# RENDER 512 BYTES: ALTA / MODIFICACION CUENTAS (TIPO C)
+# ÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ
+def render_a3_tipoC_alta_cuenta(*,
+    codigo_empresa: str,
+    fecha_alta: str,
+    cuenta: str,
+    ndig_plan: int,
+    nombre: str,
+    nif: str = "",
+    via_tipo: str = "",
+    via: str = "",
+    numero: str = "",
+    escalera: str = "",
+    piso: str = "",
+    puerta: str = "",
+    municipio: str = "",
+    cp: str = "",
+    provincia: str = "",
+    pais: str = "011",
+    telefono: str = "",
+    extension: str = "",
+    fax: str = "",
+    email: str = "",
+    criterio_caja: str = "",
+    cuenta_contrapartida: str = "",
+    tipo_documento: str = "02",
+    actualizar_saldo: str = "N",
+    saldo_inicial: float = 0.0,
+    ampliacion: str = " ",
+    moneda: str = "E",
+    indicador: str = "N",
+) -> str:
+    """
+    Registro tipo C (alta/modificacion de cuentas y/o clientes/proveedores).
+    Longitud 512 + CRLF.
+    """
+    buf = [" "] * 512
+    emp5 = _empresa5(codigo_empresa)
+    f8 = _fecha_yyyymmdd(fecha_alta)
+    cuenta12 = _cuenta_12(cuenta, ndig_plan)
+    saldo_fmt = _importe_14_signed(saldo_inicial)
+
+    _set_slice(buf, 0, 1, "5")
+    _set_slice(buf, 1, 6, emp5)
+    _set_slice(buf, 6, 14, f8)
+    _set_slice(buf, 14, 15, "C")
+    _set_slice(buf, 15, 27, cuenta12)
+    _set_slice(buf, 27, 57, _s(nombre)[:30])
+    _set_slice(buf, 57, 58, _s(actualizar_saldo)[:1] or "N")
+    _set_slice(buf, 58, 72, saldo_fmt)
+    _set_slice(buf, 72, 73, _s(ampliacion)[:1] or " ")
+    _set_slice(buf, 73, 77, "")
+    _set_slice(buf, 77, 91, _s(nif)[:14])
+    _set_slice(buf, 91, 93, _s(via_tipo)[:2])
+    _set_slice(buf, 93, 123, _s(via)[:30])
+    _set_slice(buf, 123, 128, _s(numero)[:5])
+    _set_slice(buf, 128, 130, _s(escalera)[:2])
+    _set_slice(buf, 130, 132, _s(piso)[:2])
+    _set_slice(buf, 132, 134, _s(puerta)[:2])
+    _set_slice(buf, 134, 154, _s(municipio)[:20])
+    _set_slice(buf, 154, 159, _s(cp)[:5])
+    _set_slice(buf, 159, 174, _s(provincia)[:15])
+    _set_slice(buf, 174, 177, _s(pais)[:3])
+    _set_slice(buf, 177, 189, _s(telefono)[:12])
+    _set_slice(buf, 189, 193, _s(extension)[:4])
+    _set_slice(buf, 193, 205, _s(fax)[:12])
+    _set_slice(buf, 205, 235, _s(email)[:30])
+    _set_slice(buf, 235, 237, "")
+    _set_slice(buf, 237, 238, _s(criterio_caja)[:1])
+    _set_slice(buf, 238, 240, "")
+    _set_slice(buf, 240, 252, _cuenta_12(cuenta_contrapartida, ndig_plan) if cuenta_contrapartida else "")
+    _set_slice(buf, 252, 254, "")
+    _set_slice(buf, 254, 256, _s(tipo_documento)[:2] or "02")
+    _set_slice(buf, 256, 508, "")
+    _set_slice(buf, 508, 509, _s(moneda)[:1] or "E")
+    _set_slice(buf, 509, 510, _s(indicador)[:1] or "N")
+    buf[510] = "\r"
+    buf[511] = "\n"
+    return "".join(buf)
 # ─────────────────────────────────────────────────────────────────────────────
 # RENDER 256 BYTES: FACTURAS EMITIDAS (CABECERA TIPO 1/2) + DETALLE TIPO 9 - FORMATO 4
 # ─────────────────────────────────────────────────────────────────────────────
@@ -455,6 +537,7 @@ def render_emitidas_cabecera_256(*,
     tipo_factura: str,  # '1' ventas
     num_factura: str,
     desc_apunte: str,
+    ref_doc: str = "",
     importe_total: float,
     nif: str = "",
     nombre: str = "",
@@ -478,7 +561,8 @@ def render_emitidas_cabecera_256(*,
     _set_slice(buf, 68, 69, "I")
     _set_slice(buf, 69, 99, _s(desc_apunte)[:30])
     _set_slice(buf, 99, 113, _importe_14_pos(importe_total))
-    _set_slice(buf, 113, 175, "")
+    _set_slice(buf, 113, 143, _s(ref_doc)[:30])
+    _set_slice(buf, 143, 175, "")
     _set_slice(buf, 175, 189, _s(nif)[:14])
     _set_slice(buf, 189, 229, _s(nombre)[:40])
     _set_slice(buf, 229, 234, "")

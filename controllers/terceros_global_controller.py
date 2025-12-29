@@ -59,4 +59,8 @@ class TercerosGlobalController:
                 "subcuenta_gasto": "",
             }
             self._gestor.upsert_tercero_empresa(rel)
-        self._view.show_info("Gest2A3Eco", "Tercero asignado a los ejercicios seleccionados.")
+        self._view.show_info(
+            "Gest2A3Eco",
+            "Tercero asignado a los ejercicios seleccionados.\n"
+            "Recomendacion: traspasa los terceros a A3 desde la pantalla de terceros de empresa.",
+        )

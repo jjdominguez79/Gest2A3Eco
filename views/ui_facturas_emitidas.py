@@ -157,11 +157,8 @@ class TerceroFicha(tk.Toplevel):
             v = tk.StringVar(value=str(t.get(key, "")))
             self.vars[key] = v
             ttk.Entry(self, textvariable=v, width=width).grid(row=i, column=1, sticky="w", padx=6, pady=3)
-        ttk.Label(self, text="Tipo").grid(row=len(fields), column=0, sticky="w", padx=6, pady=3)
-        self.var_tipo = tk.StringVar(value=t.get("tipo", "cliente"))
-        ttk.Combobox(self, textvariable=self.var_tipo, values=["cliente","proveedor","ambos"], state="readonly", width=18).grid(row=len(fields), column=1, sticky="w", padx=6, pady=3)
         btns = ttk.Frame(self)
-        btns.grid(row=len(fields)+1, column=0, columnspan=2, pady=6)
+        btns.grid(row=len(fields), column=0, columnspan=2, pady=6)
         ttk.Button(btns, text="Guardar", style="Primary.TButton", command=self._ok).pack(side=tk.LEFT, padx=4)
         ttk.Button(btns, text="Cancelar", command=self.destroy).pack(side=tk.LEFT, padx=4)
         self.grab_set()
@@ -170,7 +167,6 @@ class TerceroFicha(tk.Toplevel):
 
     def _ok(self):
         data = {k: v.get().strip() for k, v in self.vars.items()}
-        data["tipo"] = self.var_tipo.get() or "cliente"
         self.result = data
         self.destroy()
 
@@ -200,14 +196,12 @@ class TercerosGlobalDialog(tk.Toplevel):
         ttk.Button(bar, text="Editar", command=self.controller.editar).pack(side=tk.LEFT, padx=4)
         ttk.Button(bar, text="Eliminar", command=self.controller.eliminar).pack(side=tk.LEFT, padx=4)
 
-        cols = ("nif", "nombre", "tipo", "poblacion")
+        cols = ("nif", "nombre", "poblacion")
         self.tv = ttk.Treeview(frm, columns=cols, show="headings", height=12, selectmode="browse")
         self.tv.heading("nif", text="NIF")
         self.tv.column("nif", width=120)
         self.tv.heading("nombre", text="Nombre")
         self.tv.column("nombre", width=240)
-        self.tv.heading("tipo", text="Tipo")
-        self.tv.column("tipo", width=100)
         self.tv.heading("poblacion", text="Poblacion")
         self.tv.column("poblacion", width=160)
         self.tv.pack(fill="both", expand=True, pady=6)
@@ -241,7 +235,7 @@ class TercerosGlobalDialog(tk.Toplevel):
                 "",
                 tk.END,
                 iid=str(t.get("id")),
-                values=(t.get("nif", ""), t.get("nombre", ""), t.get("tipo", "cliente"), t.get("poblacion", "")),
+                values=(t.get("nif", ""), t.get("nombre", ""), t.get("poblacion", "")),
             )
 
     def set_empresas(self, empresas):
@@ -285,6 +279,7 @@ class TercerosGlobalDialog(tk.Toplevel):
 
     def show_info(self, title, message):
         messagebox.showinfo(title, message)
+
 
     def _apply_filtro_empresas(self):
         filtro = (self.var_buscar_empresa.get() or "").strip().lower()
@@ -338,15 +333,14 @@ class TercerosEmpresaDialog(tk.Toplevel):
         bar = ttk.Frame(frm)
         bar.pack(fill="x")
         ttk.Button(bar, text="Copiar de ejercicio", command=self.controller.copiar_desde_ejercicio).pack(side=tk.LEFT, padx=4)
+        ttk.Button(bar, text="Suenlace terceros", command=self.controller.generar_suenlace_terceros).pack(side=tk.LEFT, padx=4)
 
-        cols = ("nif", "nombre", "tipo", "poblacion")
+        cols = ("nif", "nombre", "poblacion")
         self.tv = ttk.Treeview(frm, columns=cols, show="headings", height=12, selectmode="browse")
         self.tv.heading("nif", text="NIF")
         self.tv.column("nif", width=120)
         self.tv.heading("nombre", text="Nombre")
         self.tv.column("nombre", width=240)
-        self.tv.heading("tipo", text="Tipo")
-        self.tv.column("tipo", width=100)
         self.tv.heading("poblacion", text="Poblacion")
         self.tv.column("poblacion", width=160)
         self.tv.pack(fill="both", expand=True, pady=6)
@@ -376,7 +370,7 @@ class TercerosEmpresaDialog(tk.Toplevel):
                 "",
                 tk.END,
                 iid=str(t.get("id")),
-                values=(t.get("nif", ""), t.get("nombre", ""), t.get("tipo", "cliente"), t.get("poblacion", "")),
+                values=(t.get("nif", ""), t.get("nombre", ""), t.get("poblacion", "")),
             )
 
     def clear_subcuentas(self):
@@ -412,6 +406,14 @@ class TercerosEmpresaDialog(tk.Toplevel):
 
     def show_error(self, title, message):
         messagebox.showerror(title, message)
+
+    def ask_save_dat_path(self, initialfile):
+        return filedialog.asksaveasfilename(
+            title="Guardar fichero suenlace.dat",
+            defaultextension=".dat",
+            initialfile=initialfile,
+            filetypes=[("Ficheros DAT", "*.dat")],
+        )
 
     def ask_copiar_ejercicio(self, ejercicios):
         dlg = tk.Toplevel(self)
@@ -1020,6 +1022,7 @@ class UIFacturasEmitidas(ttk.Frame):
         ttk.Button(top, text="Eliminar", command=self._eliminar).pack(side=tk.LEFT, padx=4)
         ttk.Button(top, text="Terceros", command=self._terceros).pack(side=tk.LEFT, padx=12)
         ttk.Button(top, text="Exportar PDF", command=self._export_pdf).pack(side=tk.LEFT, padx=4)
+        ttk.Button(top, text="Abrir PDF", command=self._abrir_pdf).pack(side=tk.LEFT, padx=4)
 
         self.tv = ttk.Treeview(
             self,
@@ -1184,6 +1187,9 @@ class UIFacturasEmitidas(ttk.Frame):
     # ------------------- Exportar PDF -------------------
     def _export_pdf(self):
         self.controller.export_pdf()
+
+    def _abrir_pdf(self):
+        self.controller.abrir_pdf()
 
     def _generar(self):
         self.controller.generar_suenlace()

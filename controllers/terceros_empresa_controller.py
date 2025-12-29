@@ -1,3 +1,4 @@
+from models.facturas_common import render_a3_tipoC_alta_cuenta
 from utils.utilidades import validar_subcuenta_longitud
 
 
@@ -82,6 +83,69 @@ class TercerosEmpresaController:
             )
         else:
             self._view.show_info("Gest2A3Eco", f"Copiados {copiados} terceros desde {origen}.")
+
+    def generar_suenlace_terceros(self):
+        empresa = self._gestor.get_empresa(self._codigo, self._ejercicio) or {}
+        ndig = int(empresa.get("digitos_plan", 8))
+        terceros = self._gestor.listar_terceros_por_empresa(self._codigo, self._ejercicio)
+        if not terceros:
+            self._view.show_info("Gest2A3Eco", "No hay terceros asignados a esta empresa.")
+            return
+        registros = []
+        cuentas_usadas = set()
+        fecha_alta = f"{int(self._ejercicio):04d}0101"
+        for t in terceros:
+            nif = str(t.get("nif") or "").strip().upper()
+            nombre = str(t.get("nombre") or "").strip()
+            base_kwargs = {
+                "codigo_empresa": str(self._codigo),
+                "fecha_alta": fecha_alta,
+                "ndig_plan": ndig,
+                "nombre": nombre,
+                "nif": nif,
+                "via": str(t.get("direccion") or "").strip(),
+                "municipio": str(t.get("poblacion") or "").strip(),
+                "cp": str(t.get("cp") or "").strip(),
+                "provincia": str(t.get("provincia") or "").strip(),
+                "pais": "011",
+                "telefono": str(t.get("telefono") or "").strip(),
+                "email": str(t.get("email") or "").strip(),
+                "tipo_documento": "02",
+                "actualizar_saldo": "N",
+                "saldo_inicial": 0.0,
+                "ampliacion": " ",
+            }
+            sub_cli = str(t.get("subcuenta_cliente") or "").strip()
+            if sub_cli and sub_cli not in cuentas_usadas:
+                registros.append(
+                    render_a3_tipoC_alta_cuenta(
+                        cuenta=sub_cli,
+                        cuenta_contrapartida=str(t.get("subcuenta_ingreso") or "").strip(),
+                        **base_kwargs,
+                    )
+                )
+                registros.append(registros[-1])
+                cuentas_usadas.add(sub_cli)
+            sub_pro = str(t.get("subcuenta_proveedor") or "").strip()
+            if sub_pro and sub_pro not in cuentas_usadas:
+                registros.append(
+                    render_a3_tipoC_alta_cuenta(
+                        cuenta=sub_pro,
+                        cuenta_contrapartida=str(t.get("subcuenta_gasto") or "").strip(),
+                        **base_kwargs,
+                    )
+                )
+                registros.append(registros[-1])
+                cuentas_usadas.add(sub_pro)
+        if not registros:
+            self._view.show_info("Gest2A3Eco", "No hay subcuentas para generar.")
+            return
+        save_path = self._view.ask_save_dat_path(f"E{self._codigo}_.dat")
+        if not save_path:
+            return
+        with open(save_path, "w", encoding="latin-1", newline="") as f:
+            f.writelines(registros)
+        self._view.show_info("Gest2A3Eco", f"Fichero generado:\n{save_path}")
 
     def _subcuenta_en_uso(self, subcuenta: str, tercero_id: str, field: str) -> bool:
         if not subcuenta:

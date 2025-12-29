@@ -132,6 +132,7 @@ class FacturaDialogController:
             "retencion_aplica": self._view.get_retencion_aplica(),
             "retencion_pct": self._view.get_retencion_pct(),
             "retencion_importe": self._view.get_retencion_importe() if self._view.get_retencion_aplica() else None,
+            "pdf_ref": self._factura.get("pdf_ref", ""),
             "lineas": lineas,
             "generada": self._factura.get("generada", False),
             "fecha_generacion": self._factura.get("fecha_generacion", ""),

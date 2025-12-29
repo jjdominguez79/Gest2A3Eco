@@ -7,6 +7,7 @@ from typing import List, Dict, Any
 from models.facturas_common import (
     render_emitidas_cabecera_256,
     render_emitidas_detalle_256,
+    render_a3_tipoC_alta_cuenta,
 )
 
 
@@ -41,6 +42,42 @@ def _key_factura(rec: Dict[str, Any]):
     num = str(rec.get("Numero Factura") or "").strip()
     return ("SERIE_NUM", f"{serie}|{num}")
 
+def _ajustar_cuenta(raw: Any, ndig: int) -> str:
+    s = "" if raw is None else str(raw)
+    dig = "".join(ch for ch in s if ch.isdigit())
+    if not dig:
+        dig = "0"
+    if len(dig) > ndig:
+        return dig[:ndig]
+    return dig.ljust(ndig, "0")
+
+def _norm_nif(nif: Any) -> str:
+    return str(nif or "").strip().upper()
+
+def _datos_tercero(row: Dict[str, Any], terceros_by_nif: Dict[str, Dict[str, Any]] | None):
+    nif = _norm_nif(row.get("NIF Cliente Proveedor") or row.get("NIF"))
+    nombre = str(row.get("Nombre Cliente Proveedor") or "").strip()
+    tercero = (terceros_by_nif or {}).get(nif) if nif else None
+    if tercero:
+        nombre = str(tercero.get("nombre") or nombre).strip()
+    return {
+        "nif": nif,
+        "nombre": nombre,
+        "direccion": str((tercero or {}).get("direccion") or "").strip(),
+        "cp": str((tercero or {}).get("cp") or "").strip(),
+        "poblacion": str((tercero or {}).get("poblacion") or "").strip(),
+        "provincia": str((tercero or {}).get("provincia") or "").strip(),
+        "telefono": str((tercero or {}).get("telefono") or "").strip(),
+        "email": str((tercero or {}).get("email") or "").strip(),
+    }
+
+def _cuenta_ingreso_tercero(terceros_by_nif: Dict[str, Dict[str, Any]] | None, nif: str, ndig: int) -> str:
+    if not terceros_by_nif or not nif:
+        return ""
+    raw = (terceros_by_nif.get(nif) or {}).get("subcuenta_ingreso")
+    if not raw:
+        return ""
+    return _ajustar_cuenta(raw, ndig)
 
 
 def generar_emitidas(
@@ -48,6 +85,8 @@ def generar_emitidas(
     plantilla: Dict[str, Any],
     codigo_empresa: str,
     ndig: int,
+    ejercicio: int | None = None,
+    terceros_by_nif: Dict[str, Dict[str, Any]] | None = None,
 ) -> List[str]:
     """
     Genera registros de SUENLACE para FACTURAS EMITIDAS
@@ -65,7 +104,6 @@ def generar_emitidas(
         grupos[_key_factura(rec)].append(rec)
 
     registros: List[str] = []
-
     for (_, _id), grecs in grupos.items():
         if not grecs:
             continue
@@ -90,8 +128,13 @@ def generar_emitidas(
         )
 
         # Datos tercero
-        nif = str(r0.get("NIF Cliente Proveedor") or "").strip()
-        nombre = str(r0.get("Nombre Cliente Proveedor") or "").strip()
+        datos_ter = _datos_tercero(r0, terceros_by_nif)
+        nif = datos_ter.get("nif", "")
+        nombre = datos_ter.get("nombre", "")
+        c_ing_ter = _cuenta_ingreso_tercero(terceros_by_nif, nif, ndig)
+        ref_doc = str(r0.get("_pdf_ref") or r0.get("Referencia Doc") or "").strip()
+        desc_cab = f"Nª Fra. {num_fact}".strip()
+        desc_det = f"Ventas a {nombre}".strip() if nombre else "Ventas"
 
         # Subcuenta: prioriza la subcuenta en el registro si viene informada
         cta_excel = str(r0.get("Cuenta Cliente Proveedor") or "").strip()
@@ -129,7 +172,8 @@ def generar_emitidas(
                 ndig_plan=ndig,
                 tipo_factura="1",            # 1 = ventas
                 num_factura=num_fact,
-                desc_apunte=desc,
+                desc_apunte=desc_cab,
+                ref_doc=ref_doc,
                 importe_total=total,
                 nif=nif,
                 nombre=nombre,
@@ -140,6 +184,8 @@ def generar_emitidas(
 
         # Detalle tipo 9 por cada linea de IVA
         n_lineas = len(grecs)
+        cta_ventas = r0.get("Cuenta Compras Ventas") or c_ing_ter or cta_ventas_def
+        cta_ventas = _ajustar_cuenta(cta_ventas, ndig)
         for i, rr in enumerate(grecs):
             base  = _fv(rr.get("Base"))
             pct   = _fv(rr.get("Porcentaje IVA"))
@@ -166,21 +212,14 @@ def generar_emitidas(
             else:
                 ret_c = -abs(ret_c)
 
-            desc_linea = (
-                rr.get("Descripcion Linea")
-                or rr.get("Descripcion Factura")
-                or rr.get("Descripcion")
-                or desc
-            )
-
             registros.append(
                 render_emitidas_detalle_256(
                     codigo_empresa=codigo_empresa,
                     fecha=fecha,
-                    cuenta_base_iva=cta_ventas_def,
+                    cuenta_base_iva=cta_ventas,
                     ndig_plan=ndig,
                     num_factura=num_fact,
-                    desc_apunte=desc_linea,
+                    desc_apunte=desc_det,
                     subtipo=subtipo_def,
                     base=abs(base),
                     pct_iva=abs(pct),
