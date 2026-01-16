@@ -1,5 +1,4 @@
 import json
-import os
 import sqlite3
 import time
 from pathlib import Path
@@ -88,9 +87,38 @@ CREATE TABLE IF NOT EXISTS facturas_emitidas_docs (
   pdf_ref TEXT,
   retencion_aplica INTEGER,
   retencion_pct REAL,
+  retencion_base REAL,
   retencion_importe REAL,
   generada INTEGER DEFAULT 0,
   fecha_generacion TEXT,
+  lineas_json TEXT
+);
+CREATE TABLE IF NOT EXISTS albaranes_emitidas_docs (
+  id TEXT PRIMARY KEY,
+  codigo_empresa TEXT NOT NULL,
+  ejercicio INTEGER NOT NULL,
+  tercero_id TEXT,
+  serie TEXT,
+  numero TEXT,
+  numero_largo_sii TEXT,
+  fecha_asiento TEXT,
+  fecha_expedicion TEXT,
+  fecha_operacion TEXT,
+  nif TEXT,
+  nombre TEXT,
+  descripcion TEXT,
+  subcuenta_cliente TEXT,
+  forma_pago TEXT,
+  cuenta_bancaria TEXT,
+  pdf_path TEXT,
+  pdf_ref TEXT,
+  retencion_aplica INTEGER,
+  retencion_pct REAL,
+  retencion_base REAL,
+  retencion_importe REAL,
+  facturado INTEGER DEFAULT 0,
+  factura_id TEXT,
+  fecha_facturacion TEXT,
   lineas_json TEXT
 );
 CREATE TABLE IF NOT EXISTS terceros (
@@ -146,7 +174,19 @@ class GestorSQLite:
         self._ensure_column("facturas_emitidas_docs", "pdf_ref", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "retencion_aplica", "INTEGER")
         self._ensure_column("facturas_emitidas_docs", "retencion_pct", "REAL")
+        self._ensure_column("facturas_emitidas_docs", "retencion_base", "REAL")
         self._ensure_column("facturas_emitidas_docs", "retencion_importe", "REAL")
+        self._ensure_column("albaranes_emitidas_docs", "forma_pago", "TEXT")
+        self._ensure_column("albaranes_emitidas_docs", "cuenta_bancaria", "TEXT")
+        self._ensure_column("albaranes_emitidas_docs", "pdf_path", "TEXT")
+        self._ensure_column("albaranes_emitidas_docs", "pdf_ref", "TEXT")
+        self._ensure_column("albaranes_emitidas_docs", "retencion_aplica", "INTEGER")
+        self._ensure_column("albaranes_emitidas_docs", "retencion_pct", "REAL")
+        self._ensure_column("albaranes_emitidas_docs", "retencion_base", "REAL")
+        self._ensure_column("albaranes_emitidas_docs", "retencion_importe", "REAL")
+        self._ensure_column("albaranes_emitidas_docs", "facturado", "INTEGER")
+        self._ensure_column("albaranes_emitidas_docs", "factura_id", "TEXT")
+        self._ensure_column("albaranes_emitidas_docs", "fecha_facturacion", "TEXT")
         self._ensure_column("terceros_empresas", "subcuenta_ingreso", "TEXT")
         self._ensure_column("terceros_empresas", "subcuenta_gasto", "TEXT")
         self.conn.commit()
@@ -357,6 +397,7 @@ class GestorSQLite:
             "facturas_emitidas",
             "facturas_recibidas",
             "facturas_emitidas_docs",
+            "albaranes_emitidas_docs",
             "terceros_empresas",
         ):
             self.conn.execute(
@@ -494,8 +535,8 @@ class GestorSQLite:
             (id, codigo_empresa, ejercicio, tercero_id, serie, numero, numero_largo_sii,
              fecha_asiento, fecha_expedicion, fecha_operacion, nif, nombre, descripcion,
              subcuenta_cliente, forma_pago, cuenta_bancaria, pdf_path, pdf_ref, retencion_aplica, retencion_pct,
-             retencion_importe, generada, fecha_generacion, lineas_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             retencion_base, retencion_importe, generada, fecha_generacion, lineas_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -516,6 +557,7 @@ class GestorSQLite:
                 pdf_ref=excluded.pdf_ref,
                 retencion_aplica=excluded.retencion_aplica,
                 retencion_pct=excluded.retencion_pct,
+                retencion_base=excluded.retencion_base,
                 retencion_importe=excluded.retencion_importe,
                 generada=excluded.generada,
                 fecha_generacion=excluded.fecha_generacion,
@@ -542,6 +584,7 @@ class GestorSQLite:
                 factura.get("pdf_ref"),
                 1 if factura.get("retencion_aplica") else 0,
                 factura.get("retencion_pct"),
+                factura.get("retencion_base"),
                 factura.get("retencion_importe"),
                 1 if factura.get("generada") else 0,
                 factura.get("fecha_generacion"),
@@ -566,6 +609,113 @@ class GestorSQLite:
         self.conn.execute(
             f"UPDATE facturas_emitidas_docs SET generada=1, fecha_generacion=? WHERE codigo_empresa=? AND ejercicio=? AND id IN ({qmarks})",
             (fecha, codigo_empresa, _ej_val(ejercicio), *ids),
+        )
+        self.conn.commit()
+
+    # ---------- ALBARANES EMITIDOS ----------
+    def listar_albaranes_emitidas(self, codigo_empresa: str, ejercicio: int):
+        cur = self.conn.execute(
+            "SELECT * FROM albaranes_emitidas_docs WHERE codigo_empresa=? AND ejercicio=? ORDER BY fecha_asiento, numero",
+            (codigo_empresa, _ej_val(ejercicio)),
+        )
+        out = []
+        for r in cur.fetchall():
+            d = self._row_to_dict(r)
+            d["lineas"] = json.loads(d.get("lineas_json") or "[]")
+            d["facturado"] = bool(d.get("facturado"))
+            d["retencion_aplica"] = bool(d.get("retencion_aplica"))
+            d.pop("lineas_json", None)
+            out.append(d)
+        return out
+
+    def upsert_albaran_emitida(self, albaran: dict):
+        aid = albaran.get("id") or str(int(time.time() * 1000))
+        albaran["id"] = aid
+        eje = _ej_val(albaran.get("ejercicio"))
+        if eje is None:
+            eje = 0
+        self.conn.execute(
+            """
+            INSERT INTO albaranes_emitidas_docs
+            (id, codigo_empresa, ejercicio, tercero_id, serie, numero, numero_largo_sii,
+             fecha_asiento, fecha_expedicion, fecha_operacion, nif, nombre, descripcion,
+             subcuenta_cliente, forma_pago, cuenta_bancaria, pdf_path, pdf_ref, retencion_aplica, retencion_pct,
+             retencion_base, retencion_importe, facturado, factura_id, fecha_facturacion, lineas_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                codigo_empresa=excluded.codigo_empresa,
+                ejercicio=excluded.ejercicio,
+                tercero_id=excluded.tercero_id,
+                serie=excluded.serie,
+                numero=excluded.numero,
+                numero_largo_sii=excluded.numero_largo_sii,
+                fecha_asiento=excluded.fecha_asiento,
+                fecha_expedicion=excluded.fecha_expedicion,
+                fecha_operacion=excluded.fecha_operacion,
+                nif=excluded.nif,
+                nombre=excluded.nombre,
+                descripcion=excluded.descripcion,
+                subcuenta_cliente=excluded.subcuenta_cliente,
+                forma_pago=excluded.forma_pago,
+                cuenta_bancaria=excluded.cuenta_bancaria,
+                pdf_path=excluded.pdf_path,
+                pdf_ref=excluded.pdf_ref,
+                retencion_aplica=excluded.retencion_aplica,
+                retencion_pct=excluded.retencion_pct,
+                retencion_base=excluded.retencion_base,
+                retencion_importe=excluded.retencion_importe,
+                facturado=excluded.facturado,
+                factura_id=excluded.factura_id,
+                fecha_facturacion=excluded.fecha_facturacion,
+                lineas_json=excluded.lineas_json
+            """,
+            (
+                aid,
+                albaran.get("codigo_empresa"),
+                eje,
+                albaran.get("tercero_id"),
+                albaran.get("serie"),
+                albaran.get("numero"),
+                albaran.get("numero_largo_sii"),
+                albaran.get("fecha_asiento"),
+                albaran.get("fecha_expedicion"),
+                albaran.get("fecha_operacion"),
+                albaran.get("nif"),
+                albaran.get("nombre"),
+                albaran.get("descripcion"),
+                albaran.get("subcuenta_cliente"),
+                albaran.get("forma_pago"),
+                albaran.get("cuenta_bancaria"),
+                albaran.get("pdf_path"),
+                albaran.get("pdf_ref"),
+                1 if albaran.get("retencion_aplica") else 0,
+                albaran.get("retencion_pct"),
+                albaran.get("retencion_base"),
+                albaran.get("retencion_importe"),
+                1 if albaran.get("facturado") else 0,
+                albaran.get("factura_id"),
+                albaran.get("fecha_facturacion"),
+                json.dumps(albaran.get("lineas", []), ensure_ascii=False),
+            ),
+        )
+        self.conn.commit()
+        return aid
+
+    def eliminar_albaran_emitida(self, codigo_empresa: str, albaran_id: str, ejercicio: int):
+        self.conn.execute(
+            "DELETE FROM albaranes_emitidas_docs WHERE codigo_empresa=? AND ejercicio=? AND id=?",
+            (codigo_empresa, _ej_val(ejercicio), albaran_id),
+        )
+        self.conn.commit()
+
+    def marcar_albaranes_facturados(self, codigo_empresa: str, ids: list, factura_id: str, fecha: str, ejercicio: int):
+        ids = ids or []
+        if not ids:
+            return
+        qmarks = ",".join("?" for _ in ids)
+        self.conn.execute(
+            f"UPDATE albaranes_emitidas_docs SET facturado=1, factura_id=?, fecha_facturacion=? WHERE codigo_empresa=? AND ejercicio=? AND id IN ({qmarks})",
+            (factura_id, fecha, codigo_empresa, _ej_val(ejercicio), *ids),
         )
         self.conn.commit()
 
@@ -659,6 +809,22 @@ class GestorSQLite:
         return tid
 
     def eliminar_tercero(self, tercero_id: str):
+        tid = str(tercero_id)
+        cur = self.conn.execute(
+            "SELECT COUNT(1) AS n FROM facturas_emitidas_docs WHERE tercero_id=?",
+            (tid,),
+        )
+        if (cur.fetchone() or {}).get("n"):
+            raise ValueError("No se puede eliminar el tercero: tiene facturas emitidas asociadas.")
+        try:
+            cur = self.conn.execute(
+                "SELECT COUNT(1) AS n FROM albaranes_emitidas_docs WHERE tercero_id=?",
+                (tid,),
+            )
+            if (cur.fetchone() or {}).get("n"):
+                raise ValueError("No se puede eliminar el tercero: tiene albaranes asociados.")
+        except sqlite3.OperationalError:
+            pass
         self.conn.execute("DELETE FROM terceros WHERE id=?", (tercero_id,))
         self.conn.execute("DELETE FROM terceros_empresas WHERE tercero_id=?", (tercero_id,))
         self.conn.commit()

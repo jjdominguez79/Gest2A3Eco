@@ -1,4 +1,6 @@
 import sqlite3
+import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -58,6 +60,7 @@ class SeleccionEmpresaController:
     def nueva(self):
         result = self._view.open_empresa_dialog("Nueva empresa")
         if result:
+            result["logo_path"] = self._store_logo(result.get("logo_path"))
             self._gestor.upsert_empresa(result)
             self.refresh()
             self._view.show_info("Gest2A3Eco", "Empresa guardada.")
@@ -70,6 +73,7 @@ class SeleccionEmpresaController:
         emp = self._gestor.get_empresa(codigo, eje)
         result = self._view.open_empresa_dialog("Editar empresa", emp)
         if result:
+            result["logo_path"] = self._store_logo(result.get("logo_path"))
             self._gestor.upsert_empresa(result)
             self.refresh()
             self._view.show_info("Gest2A3Eco", "Cambios guardados.")
@@ -96,6 +100,7 @@ class SeleccionEmpresaController:
         if not result.get("codigo"):
             self._view.show_warning("Gest2A3Eco", "Introduce un codigo para la nueva empresa.")
             return
+        result["logo_path"] = self._store_logo(result.get("logo_path"))
         if self._gestor.get_empresa(result["codigo"], result.get("ejercicio")):
             self._view.show_warning("Gest2A3Eco", "Ya existe una empresa con ese codigo y ejercicio.")
             return
@@ -157,3 +162,25 @@ class SeleccionEmpresaController:
         with sqlite3.connect(backup_path) as dst:
             self._gestor.conn.backup(dst)
         return backup_path
+
+    def _store_logo(self, logo_path: str | None) -> str:
+        raw = str(logo_path or "").strip()
+        if not raw:
+            return ""
+        try:
+            p = Path(raw)
+        except Exception:
+            return raw
+        if not p.exists():
+            return raw
+        base_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
+        dest_dir = base_dir / "assets" / "logos"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest_path = dest_dir / p.name
+        if dest_path.exists() and dest_path.samefile(p):
+            return str(dest_path)
+        try:
+            shutil.copy2(p, dest_path)
+            return str(dest_path)
+        except Exception:
+            return str(p)

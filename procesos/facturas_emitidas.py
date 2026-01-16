@@ -30,6 +30,13 @@ def _fv(x) -> float:
         return 0.0
 
 
+def _r2(x) -> float:
+    try:
+        return round(float(x), 2)
+    except Exception:
+        return 0.0
+
+
 def _key_factura(rec: Dict[str, Any]):
     """
     Agrupa las lineas del Excel por factura.
@@ -162,6 +169,7 @@ def generar_emitidas(
             re_c  = _fv(rr.get("Cuota Recargo Equivalencia"))
             ret_c = _fv(rr.get("Cuota Retencion IRPF"))
             total += base + cuota + re_c + ret_c
+        total = _r2(total)
 
         registros.append(
             render_emitidas_cabecera_256(
@@ -211,6 +219,11 @@ def generar_emitidas(
                 ret_c = -abs(base * ret_pct / 100.0)
             else:
                 ret_c = -abs(ret_c)
+
+            base = _r2(base)
+            cuota = _r2(cuota)
+            re_c = _r2(re_c)
+            ret_c = _r2(ret_c)
 
             registros.append(
                 render_emitidas_detalle_256(

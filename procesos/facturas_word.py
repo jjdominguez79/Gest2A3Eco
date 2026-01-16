@@ -6,7 +6,8 @@ import os
 import sys
 from typing import Dict, Any, Tuple
 
-from docxtpl import DocxTemplate
+from docxtpl import DocxTemplate, InlineImage
+from docx.shared import Mm
 from docx2pdf import convert
 
 
@@ -17,6 +18,13 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
             s = f"{float(x):,.2f}"
         except Exception:
             s = "0.00"
+        return s.replace(",", "X").replace(".", ",").replace("X", ".")
+
+    def f4(x):
+        try:
+            s = f"{float(x):,.4f}"
+        except Exception:
+            s = "0.0000"
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
 
     def first_cuenta(raw):
@@ -41,7 +49,7 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
         lineas.append({
             "concepto": str(ln.get("concepto", "")),
             "unidades": f2(ln.get("unidades") or 0),
-            "precio": f2(ln.get("precio") or 0),
+            "precio": f4(ln.get("precio") or 0),
             "base": f2(ln.get("base") or 0),
             "pct_iva": f2(ln.get("pct_iva") or 0),
             "cuota_iva": f2(ln.get("cuota_iva") or 0),
@@ -75,6 +83,7 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
             "provincia": empresa_conf.get("provincia", ""),
             "telefono": empresa_conf.get("telefono", ""),
             "email": empresa_conf.get("email", ""),
+            "logo_path": empresa_conf.get("logo_path", ""),
         },
         "cliente": {
             "nombre": cliente.get("nombre", ""),
@@ -114,8 +123,29 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
 
 def render_docx(template_path: str, context: Dict[str, Any], out_docx_path: str) -> None:
     doc = DocxTemplate(template_path)
-    doc.render(context)
+    ctx = dict(context or {})
+    logo_path = (ctx.get("empresa") or {}).get("logo_path") or ""
+    logo_path = _resolve_logo_path(logo_path)
+    if logo_path and os.path.exists(logo_path):
+        try:
+            ctx["logo"] = InlineImage(doc, logo_path, width=Mm(45))
+        except Exception:
+            ctx["logo"] = ""
+    doc.render(ctx)
     doc.save(out_docx_path)
+
+def _resolve_logo_path(path: str) -> str:
+    raw = str(path or "").strip()
+    if not raw:
+        return ""
+    p = Path(raw)
+    if p.exists():
+        return str(p)
+    base_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
+    alt = base_dir / "assets" / "logos" / p.name
+    if alt.exists():
+        return str(alt)
+    return raw
 
 def convert_docx_to_pdf(docx_path: str, pdf_path: str) -> None:
     # Usa Word instalado

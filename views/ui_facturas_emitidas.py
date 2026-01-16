@@ -10,7 +10,6 @@ from controllers.terceros_global_controller import TercerosGlobalController
 from controllers.terceros_empresa_controller import TercerosEmpresaController
 
 IVA_OPCIONES = [21, 10, 4, 0]
-IRPF_OPCIONES = [0, 1, 7, 15, 19]
 IRPF_RET_OPCIONES = [1, 7, 15, 19]
 
 def _to_float(x) -> float:
@@ -53,6 +52,12 @@ def _to_fecha_ui_or_blank(val: str) -> str:
 def _round2(x) -> float:
     try:
         return round(float(x), 2)
+    except Exception:
+        return 0.0
+
+def _round4(x) -> float:
+    try:
+        return round(float(x), 4)
     except Exception:
         return 0.0
 
@@ -404,6 +409,12 @@ class TercerosEmpresaDialog(tk.Toplevel):
     def show_info(self, title, message):
         messagebox.showinfo(title, message)
 
+    def show_warning(self, title, message):
+        messagebox.showwarning(title, message)
+
+    def show_warning(self, title, message):
+        messagebox.showwarning(title, message)
+
     def show_error(self, title, message):
         messagebox.showerror(title, message)
 
@@ -457,9 +468,9 @@ class TercerosEmpresaDialog(tk.Toplevel):
 
 
 class FacturaDialog(tk.Toplevel):
-    def __init__(self, parent, gestor, codigo_empresa, ejercicio, ndig_plan, factura=None, numero_sugerido=""):
+    def __init__(self, parent, gestor, codigo_empresa, ejercicio, ndig_plan, factura=None, numero_sugerido="", titulo="Factura emitida"):
         super().__init__(parent)
-        self.title("Factura emitida")
+        self.title(titulo)
         self.resizable(True, True)
         self.result = None
         self.gestor = gestor
@@ -493,10 +504,12 @@ class FacturaDialog(tk.Toplevel):
         self.var_nif = tk.StringVar(value=f.get("nif", ""))
         self.var_nombre = tk.StringVar(value=f.get("nombre", ""))
         self.var_desc = tk.StringVar(value=f.get("descripcion", ""))
-        ret_aplica = bool(f.get("retencion_aplica")) if "retencion_aplica" in f else False
+        has_ret_flag = "retencion_aplica" in f
+        ret_aplica = bool(f.get("retencion_aplica")) if has_ret_flag else False
         ret_pct = f.get("retencion_pct", "")
         ret_importe = f.get("retencion_importe", "")
-        if not ret_aplica:
+        ret_base = f.get("retencion_base", "")
+        if not has_ret_flag:
             for ln in f.get("lineas", []):
                 pct_ln = _to_float(ln.get("pct_irpf"))
                 if pct_ln > 0:
@@ -505,12 +518,29 @@ class FacturaDialog(tk.Toplevel):
                     break
         if ret_importe in (None, "") and f.get("lineas"):
             ret_importe = sum(_to_float(ln.get("cuota_irpf")) for ln in f.get("lineas", []))
+        base_lineas = sum(_to_float(ln.get("base")) for ln in f.get("lineas", []))
+        if ret_base in (None, ""):
+            pct_val = _to_float(ret_pct)
+            if ret_importe not in (None, "") and pct_val:
+                ret_base = abs(_to_float(ret_importe)) * 100.0 / pct_val
+            else:
+                ret_base = base_lineas if base_lineas else ""
         self.var_ret_aplica = tk.BooleanVar(value=ret_aplica)
         self.var_ret_pct = tk.StringVar(value=str(int(ret_pct)) if ret_pct not in (None, "", 0) else "")
-        self.var_ret_importe = tk.StringVar(
-            value=f"{_round2(ret_importe):.2f}" if ret_importe not in (None, "") else ""
+        self.var_ret_base = tk.StringVar(
+            value=f"{_round2(ret_base):.2f}" if ret_base not in (None, "") else ""
         )
-        self._retencion_manual = bool("retencion_importe" in f and ret_importe not in (None, ""))
+        self._retencion_manual = False
+        if ret_aplica:
+            if ret_importe not in (None, ""):
+                self._retencion_manual = True
+            else:
+                try:
+                    if abs(_round2(ret_base) - _round2(base_lineas)) > 0.01:
+                        self._retencion_manual = True
+                except Exception:
+                    pass
+        self.var_ret_manual = tk.BooleanVar(value=self._retencion_manual)
         self._retencion_silent = False
         self.var_subcuenta = tk.StringVar(value=f.get("subcuenta_cliente", ""))
         self.var_forma_pago = tk.StringVar(value=f.get("forma_pago", ""))
@@ -573,6 +603,13 @@ class FacturaDialog(tk.Toplevel):
             variable=self.var_ret_aplica,
             command=self._on_retencion_toggle,
         ).pack(side=tk.LEFT, padx=(0, 8))
+        self.cb_ret_manual = ttk.Checkbutton(
+            ret_row,
+            text="Base IRPF manual",
+            variable=self.var_ret_manual,
+            command=self._on_retencion_manual_toggle,
+        )
+        self.cb_ret_manual.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Label(ret_row, text="Tipo %").pack(side=tk.LEFT)
         self.cb_ret_pct = ttk.Combobox(
             ret_row,
@@ -582,9 +619,9 @@ class FacturaDialog(tk.Toplevel):
             state="readonly",
         )
         self.cb_ret_pct.pack(side=tk.LEFT, padx=4)
-        ttk.Label(ret_row, text="Importe retencion").pack(side=tk.LEFT, padx=(8, 0))
-        self.entry_ret_importe = ttk.Entry(ret_row, textvariable=self.var_ret_importe, width=12)
-        self.entry_ret_importe.pack(side=tk.LEFT, padx=4)
+        ttk.Label(ret_row, text="Base IRPF").pack(side=tk.LEFT, padx=(8, 0))
+        self.entry_ret_base = ttk.Entry(ret_row, textvariable=self.var_ret_base, width=12)
+        self.entry_ret_base.pack(side=tk.LEFT, padx=4)
         row += 1
 
         ttk.Label(frm, text="Lineas").grid(row=row, column=0, columnspan=3, sticky="w", pady=(10, 4))
@@ -595,11 +632,10 @@ class FacturaDialog(tk.Toplevel):
             "unidades": tk.StringVar(),
             "precio": tk.StringVar(),
             "iva": tk.StringVar(),
-            "irpf": tk.StringVar(),
         }
         editor = ttk.Frame(frm)
         editor.grid(row=row, column=0, columnspan=3, sticky="ew", padx=4)
-        editor.columnconfigure(8, weight=1)
+        editor.columnconfigure(9, weight=1)
         ttk.Label(editor, text="Concepto").grid(row=0, column=0, padx=4, pady=2, sticky="w")
         ttk.Entry(editor, textvariable=self.line_vars["concepto"], width=26).grid(row=0, column=1, padx=4, pady=2)
         ttk.Label(editor, text="Unidades").grid(row=0, column=2, padx=4, pady=2, sticky="w")
@@ -608,22 +644,14 @@ class FacturaDialog(tk.Toplevel):
         ttk.Entry(editor, textvariable=self.line_vars["precio"], width=10).grid(row=0, column=5, padx=4, pady=2)
         ttk.Label(editor, text="IVA %").grid(row=0, column=6, padx=4, pady=2, sticky="w")
         ttk.Combobox(editor, textvariable=self.line_vars["iva"], values=[str(x) for x in IVA_OPCIONES], width=6, state="readonly").grid(row=0, column=7, padx=4, pady=2)
-        ttk.Label(editor, text="IRPF %").grid(row=0, column=8, padx=4, pady=2, sticky="w")
-        self.cb_irpf_line = ttk.Combobox(
-            editor,
-            textvariable=self.line_vars["irpf"],
-            values=[str(x) for x in IRPF_OPCIONES],
-            width=6,
-            state="readonly",
-        )
-        self.cb_irpf_line.grid(row=0, column=9, padx=4, pady=2)
-        ttk.Button(editor, text="Añadir/Actualizar", style="Primary.TButton", command=self._add_update_linea).grid(row=0, column=10, padx=6)
-        ttk.Button(editor, text="Limpiar", command=self._clear_line_editor).grid(row=0, column=11, padx=4)
+        ttk.Button(editor, text="Añadir/Actualizar", style="Primary.TButton", command=self._add_update_linea).grid(row=0, column=8, padx=6)
+        ttk.Button(editor, text="Limpiar", command=self._clear_line_editor).grid(row=0, column=9, padx=4)
         row += 1
 
         self.tv = ttk.Treeview(
             frm,
             columns=("concepto", "unidades", "precio", "base", "pct_iva", "cuota_iva", "pct_irpf", "cuota_irpf"),
+            displaycolumns=("concepto", "unidades", "precio", "base", "pct_iva", "cuota_iva"),
             show="headings",
             height=8,
             selectmode="browse",
@@ -635,8 +663,6 @@ class FacturaDialog(tk.Toplevel):
             "base": "Base",
             "pct_iva": "% IVA",
             "cuota_iva": "Cuota IVA",
-            "pct_irpf": "% IRPF",
-            "cuota_irpf": "Ret",
         }
         for c, h in headers.items():
             self.tv.heading(c, text=h)
@@ -688,7 +714,7 @@ class FacturaDialog(tk.Toplevel):
         for ln in f.get("lineas", []):
             self._insert_linea(ln)
         self.var_ret_pct.trace_add("write", lambda *_: self._on_retencion_pct_change())
-        self.var_ret_importe.trace_add("write", lambda *_: self._on_retencion_importe_change())
+        self.var_ret_base.trace_add("write", lambda *_: self._on_retencion_base_change())
         self._update_retencion_state()
         if self.var_ret_aplica.get():
             self.controller.apply_retencion_header()
@@ -755,14 +781,23 @@ class FacturaDialog(tk.Toplevel):
         if not sel:
             return
         vals = self.tv.item(sel[0], "values")
-        keys = ["concepto", "unidades", "precio", "base", "pct_iva", "cuota_iva", "pct_irpf", "cuota_irpf"]
-        for k, v in zip(keys, vals):
-            if k in self.line_vars:
-                self.line_vars[k].set(v)
+        if not vals:
+            return
+        self.line_vars["concepto"].set(vals[0])
+        self.line_vars["unidades"].set(vals[1])
+        self.line_vars["precio"].set(vals[2])
+        if len(vals) > 4:
+            self.line_vars["iva"].set(vals[4])
 
     def _on_retencion_toggle(self):
         self._update_retencion_state()
         self.controller.retencion_toggled()
+
+    def _on_retencion_manual_toggle(self):
+        self._retencion_manual = bool(self.var_ret_manual.get())
+        self._update_retencion_state()
+        if not self._retencion_manual:
+            self.controller.retencion_base_changed()
 
     def _on_retencion_pct_change(self):
         if self._retencion_silent:
@@ -770,22 +805,23 @@ class FacturaDialog(tk.Toplevel):
         self._update_retencion_state()
         self.controller.retencion_pct_changed()
 
-    def _on_retencion_importe_change(self):
+    def _on_retencion_base_change(self):
         if self._retencion_silent:
             return
-        self._retencion_manual = True
-        self.controller.retencion_importe_changed()
+        if not self._retencion_manual:
+            return
+        self.controller.retencion_base_changed()
 
     def _update_retencion_state(self):
         aplica = bool(self.var_ret_aplica.get())
         if aplica and not (self.var_ret_pct.get() or "").strip():
             self.set_retencion_pct(str(IRPF_RET_OPCIONES[0]))
         self.cb_ret_pct.config(state="readonly" if aplica else "disabled")
-        self.entry_ret_importe.config(state="normal" if aplica else "disabled")
-        if hasattr(self, "cb_irpf_line"):
-            self.cb_irpf_line.config(state="disabled" if aplica else "readonly")
-            if aplica and (self.var_ret_pct.get() or "").strip():
-                self.line_vars["irpf"].set(self.var_ret_pct.get())
+        self.cb_ret_manual.config(state="normal" if aplica else "disabled")
+        if not aplica:
+            self._retencion_manual = False
+            self.var_ret_manual.set(False)
+        self.entry_ret_base.config(state="normal" if (aplica and self._retencion_manual) else "disabled")
 
     # --- helpers de vista para el controlador
     def set_terceros(self, values):
@@ -820,8 +856,6 @@ class FacturaDialog(tk.Toplevel):
     def clear_line_editor(self):
         for v in self.line_vars.values():
             v.set("")
-        if self.get_retencion_aplica() and (self.var_ret_pct.get() or "").strip():
-            self.line_vars["irpf"].set(self.var_ret_pct.get())
         self.tv.selection_remove(self.tv.selection())
 
     def get_line_editor_values(self):
@@ -829,16 +863,14 @@ class FacturaDialog(tk.Toplevel):
         unidades = _to_float(self.line_vars["unidades"].get())
         precio = _to_float(self.line_vars["precio"].get())
         iva_raw = self.line_vars["iva"].get()
-        irpf_raw = self.line_vars["irpf"].get()
         iva = _to_float(iva_raw)
-        irpf = _to_float(irpf_raw)
-        return concepto, unidades, precio, iva, irpf, iva_raw, irpf_raw
+        return concepto, unidades, precio, iva, iva_raw
 
     def upsert_line_row(self, ln: dict):
         vals = (
             ln["concepto"],
             f"{ln['unidades']:.2f}",
-            f"{ln['precio']:.2f}",
+            f"{ln['precio']:.4f}",
             f"{ln['base']:.2f}",
             f"{ln['pct_iva']:.2f}",
             f"{ln['cuota_iva']:.2f}",
@@ -855,7 +887,7 @@ class FacturaDialog(tk.Toplevel):
         vals = (
             ln.get("concepto", ""),
             f"{_round2(ln.get('unidades')):.2f}",
-            f"{_round2(ln.get('precio')):.2f}",
+            f"{_round4(ln.get('precio')):.4f}",
             f"{_round2(ln.get('base')):.2f}",
             f"{_round2(ln.get('pct_iva')):.2f}",
             f"{_round2(ln.get('cuota_iva')):.2f}",
@@ -886,7 +918,7 @@ class FacturaDialog(tk.Toplevel):
                 {
                     "concepto": vals[0],
                     "unidades": _round2(_to_float(vals[1])),
-                    "precio": _round2(_to_float(vals[2])),
+                    "precio": _round4(_to_float(vals[2])),
                     "base": _round2(_to_float(vals[3])),
                     "pct_iva": _round2(_to_float(vals[4])),
                     "cuota_iva": _round2(_to_float(vals[5])),
@@ -919,8 +951,13 @@ class FacturaDialog(tk.Toplevel):
     def get_retencion_pct(self):
         return _to_float(self.var_ret_pct.get())
 
+    def get_retencion_base(self):
+        return _to_float(self.var_ret_base.get())
+
     def get_retencion_importe(self):
-        return _to_float(self.var_ret_importe.get())
+        base = self.get_retencion_base()
+        pct = self.get_retencion_pct()
+        return _round2(-abs(base * pct / 100.0)) if pct else 0.0
 
     def is_retencion_manual(self):
         return self._retencion_manual
@@ -928,9 +965,9 @@ class FacturaDialog(tk.Toplevel):
     def set_retencion_manual(self, manual: bool):
         self._retencion_manual = bool(manual)
 
-    def set_retencion_importe(self, value: str):
+    def set_retencion_base(self, value: str):
         self._retencion_silent = True
-        self.var_ret_importe.set(value)
+        self.var_ret_base.set(value)
         self._retencion_silent = False
 
     def set_retencion_pct(self, value: str):
@@ -1008,13 +1045,28 @@ class UIFacturasEmitidas(ttk.Frame):
         base.update(emp_conf)
         self.empresa_conf = base
         self.controller = FacturasEmitidasController(gestor, codigo_empresa, ejercicio, self.empresa_conf, self)
+        self._sort_state = {}
         self._build()
 
     # ------------------- UI -------------------
     def _build(self):
         ttk.Label(self, text=f"Facturas emitidas de {self.nombre} ({self.codigo} · {self.ejercicio})", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=10, pady=8)
 
-        top = ttk.Frame(self)
+        nb = ttk.Notebook(self)
+        nb.pack(fill="both", expand=True, padx=8, pady=6)
+        tab_facturas = ttk.Frame(nb)
+        tab_albaranes = ttk.Frame(nb)
+        nb.add(tab_facturas, text="Facturas")
+        nb.add(tab_albaranes, text="Albaranes")
+
+        self._build_facturas_tab(tab_facturas)
+        self._build_albaranes_tab(tab_albaranes)
+
+        self._refresh_facturas()
+        self._refresh_albaranes()
+
+    def _build_facturas_tab(self, parent):
+        top = ttk.Frame(parent)
         top.pack(fill="x", padx=10)
         ttk.Button(top, text="Nueva", style="Primary.TButton", command=self._nueva).pack(side=tk.LEFT, padx=4)
         ttk.Button(top, text="Editar", command=self._editar).pack(side=tk.LEFT, padx=4)
@@ -1025,7 +1077,7 @@ class UIFacturasEmitidas(ttk.Frame):
         ttk.Button(top, text="Abrir PDF", command=self._abrir_pdf).pack(side=tk.LEFT, padx=4)
 
         self.tv = ttk.Treeview(
-            self,
+            parent,
             columns=("serie", "numero", "fecha", "cliente", "total", "generada", "fecha_gen"),
             show="headings",
             selectmode="extended",
@@ -1041,16 +1093,17 @@ class UIFacturasEmitidas(ttk.Frame):
             ("fecha_gen", "Fecha gen.", 110, "w"),
         ]
         for c, h, w, align in cols:
-            self.tv.heading(c, text=h)
+            self.tv.heading(c, text=h, command=lambda col=c: self._sort_facturas(col))
             self.tv.column(c, width=w, anchor=align)
         self.tv.pack(fill="both", expand=True, padx=10, pady=8)
         self.tv.bind("<<TreeviewSelect>>", lambda e: self._on_factura_select())
 
-        detalle = ttk.LabelFrame(self, text="Detalle de factura")
+        detalle = ttk.LabelFrame(parent, text="Detalle de factura")
         detalle.pack(fill="x", padx=10, pady=(0, 6))
         self.tv_detalle = ttk.Treeview(
             detalle,
             columns=("concepto", "unidades", "precio", "base", "pct_iva", "cuota_iva", "pct_irpf", "cuota_irpf"),
+            displaycolumns=("concepto", "unidades", "precio", "base", "pct_iva", "cuota_iva"),
             show="headings",
             height=6,
             selectmode="browse",
@@ -1062,19 +1115,68 @@ class UIFacturasEmitidas(ttk.Frame):
             "base": "Base",
             "pct_iva": "% IVA",
             "cuota_iva": "Cuota IVA",
-            "pct_irpf": "% IRPF",
-            "cuota_irpf": "Ret",
         }
         for c, h in headers_det.items():
             self.tv_detalle.heading(c, text=h)
             self.tv_detalle.column(c, width=90 if c == "concepto" else 70, anchor="e" if c != "concepto" else "w")
         self.tv_detalle.pack(fill="x", expand=True, padx=6, pady=4)
 
-        bottom = ttk.Frame(self)
+        bottom = ttk.Frame(parent)
         bottom.pack(fill="x", padx=10, pady=6)
         ttk.Button(bottom, text="Generar Suenlace.dat", style="Primary.TButton", command=self._generar).pack(side=tk.RIGHT)
 
-        self._refresh_facturas()
+    def _build_albaranes_tab(self, parent):
+        top = ttk.Frame(parent)
+        top.pack(fill="x", padx=10)
+        ttk.Button(top, text="Nuevo", style="Primary.TButton", command=self._nuevo_albaran).pack(side=tk.LEFT, padx=4)
+        ttk.Button(top, text="Editar", command=self._editar_albaran).pack(side=tk.LEFT, padx=4)
+        ttk.Button(top, text="Copiar", command=self._copiar_albaran).pack(side=tk.LEFT, padx=4)
+        ttk.Button(top, text="Eliminar", command=self._eliminar_albaran).pack(side=tk.LEFT, padx=4)
+        ttk.Button(top, text="Facturar seleccionados", style="Primary.TButton", command=self._facturar_albaranes).pack(side=tk.RIGHT, padx=4)
+
+        self.tv_albaranes = ttk.Treeview(
+            parent,
+            columns=("numero", "fecha", "cliente", "total", "facturado", "factura"),
+            show="headings",
+            selectmode="extended",
+            height=12,
+        )
+        cols = [
+            ("numero", "Numero", 160, "w"),
+            ("fecha", "Fecha", 100, "w"),
+            ("cliente", "Cliente", 240, "w"),
+            ("total", "Total", 100, "e"),
+            ("facturado", "Facturado", 90, "center"),
+            ("factura", "Factura", 140, "w"),
+        ]
+        for c, h, w, align in cols:
+            self.tv_albaranes.heading(c, text=h)
+            self.tv_albaranes.column(c, width=w, anchor=align)
+        self.tv_albaranes.pack(fill="both", expand=True, padx=10, pady=8)
+        self.tv_albaranes.bind("<<TreeviewSelect>>", lambda e: self._on_albaran_select())
+
+        detalle = ttk.LabelFrame(parent, text="Detalle de albaran")
+        detalle.pack(fill="x", padx=10, pady=(0, 6))
+        self.tv_alb_detalle = ttk.Treeview(
+            detalle,
+            columns=("concepto", "unidades", "precio", "base", "pct_iva", "cuota_iva", "pct_irpf", "cuota_irpf"),
+            displaycolumns=("concepto", "unidades", "precio", "base", "pct_iva", "cuota_iva"),
+            show="headings",
+            height=6,
+            selectmode="browse",
+        )
+        headers_det = {
+            "concepto": "Concepto",
+            "unidades": "Unid",
+            "precio": "P. unit",
+            "base": "Base",
+            "pct_iva": "% IVA",
+            "cuota_iva": "Cuota IVA",
+        }
+        for c, h in headers_det.items():
+            self.tv_alb_detalle.heading(c, text=h)
+            self.tv_alb_detalle.column(c, width=90 if c == "concepto" else 70, anchor="e" if c != "concepto" else "w")
+        self.tv_alb_detalle.pack(fill="x", expand=True, padx=6, pady=4)
 
     # ------------------- Datos -------------------
     def _compute_total(self, fac: dict) -> float:
@@ -1091,9 +1193,16 @@ class UIFacturasEmitidas(ttk.Frame):
     def _refresh_facturas(self):
         self.controller.refresh_facturas()
 
+    def _refresh_albaranes(self):
+        self.controller.refresh_albaranes()
+
     def clear_facturas(self):
         self.tv.delete(*self.tv.get_children())
         self.tv_detalle.delete(*self.tv_detalle.get_children())
+
+    def clear_albaranes(self):
+        self.tv_albaranes.delete(*self.tv_albaranes.get_children())
+        self.tv_alb_detalle.delete(*self.tv_alb_detalle.get_children())
 
     def insert_factura_row(self, fac: dict, total: float):
         self.tv.insert(
@@ -1111,6 +1220,77 @@ class UIFacturasEmitidas(ttk.Frame):
             ),
         )
 
+    def insert_albaran_row(self, alb: dict, total: float):
+        factura_txt = alb.get("factura_id", "") or ""
+        if factura_txt:
+            fac = next(
+                (
+                    f
+                    for f in self.gestor.listar_facturas_emitidas(self.codigo, self.ejercicio)
+                    if str(f.get("id")) == str(factura_txt)
+                ),
+                None,
+            )
+            if fac:
+                factura_txt = f"{fac.get('serie','')}{fac.get('numero','')}"
+        self.tv_albaranes.insert(
+            "",
+            tk.END,
+            iid=str(alb.get("id")),
+            values=(
+                alb.get("numero", ""),
+                _to_fecha_ui_or_blank(alb.get("fecha_asiento", "")),
+                alb.get("nombre", ""),
+                f"{total:.2f}",
+                "Si" if alb.get("facturado") else "No",
+                factura_txt,
+            ),
+        )
+
+    def _sort_facturas(self, col):
+        items = []
+        for iid in self.tv.get_children(""):
+            val = self.tv.set(iid, col)
+            items.append((self._sort_key(col, val), iid))
+        reverse = self._sort_state.get(col, False)
+        items.sort(key=lambda x: x[0], reverse=reverse)
+        for idx, (_, iid) in enumerate(items):
+            self.tv.move(iid, "", idx)
+        self._sort_state[col] = not reverse
+
+    def _sort_key(self, col, val):
+        if col == "total":
+            return _to_float(val)
+        if col == "fecha":
+            return _parse_date_ui(val) if val else date.min
+        if col == "fecha_gen":
+            return self._parse_datetime(val)
+        if col == "generada":
+            return 1 if str(val).strip().lower() == "si" else 0
+        if col == "numero":
+            return self._numero_sort_key(val)
+        return str(val or "").strip().lower()
+
+    def _parse_datetime(self, val):
+        txt = str(val or "").strip()
+        if not txt:
+            return datetime.min
+        for fmt in ("%Y-%m-%d %H:%M", "%d/%m/%Y", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(txt, fmt)
+            except Exception:
+                continue
+        try:
+            return datetime.combine(_parse_date_ui(txt), datetime.min.time())
+        except Exception:
+            return datetime.min
+
+    def _numero_sort_key(self, val):
+        txt = str(val or "").strip()
+        digits = "".join(ch for ch in txt if ch.isdigit())
+        num = int(digits) if digits else -1
+        return (txt[:1].lower() if txt else "", num, txt.lower())
+
     def set_detalle_lineas(self, lineas):
         self.tv_detalle.delete(*self.tv_detalle.get_children())
         for ln in lineas or []:
@@ -1120,7 +1300,25 @@ class UIFacturasEmitidas(ttk.Frame):
                 values=(
                     ln.get("concepto", ""),
                     f"{_round2(ln.get('unidades')):.2f}",
-                    f"{_round2(ln.get('precio')):.2f}",
+                    f"{_round4(ln.get('precio')):.4f}",
+                    f"{_round2(ln.get('base')):.2f}",
+                    f"{_round2(ln.get('pct_iva')):.2f}",
+                    f"{_round2(ln.get('cuota_iva')):.2f}",
+                    f"{_round2(ln.get('pct_irpf')):.2f}",
+                    f"{_round2(ln.get('cuota_irpf')):.2f}",
+                ),
+            )
+
+    def set_albaran_lineas(self, lineas):
+        self.tv_alb_detalle.delete(*self.tv_alb_detalle.get_children())
+        for ln in lineas or []:
+            self.tv_alb_detalle.insert(
+                "",
+                tk.END,
+                values=(
+                    ln.get("concepto", ""),
+                    f"{_round2(ln.get('unidades')):.2f}",
+                    f"{_round4(ln.get('precio')):.4f}",
                     f"{_round2(ln.get('base')):.2f}",
                     f"{_round2(ln.get('pct_iva')):.2f}",
                     f"{_round2(ln.get('cuota_iva')):.2f}",
@@ -1136,6 +1334,13 @@ class UIFacturasEmitidas(ttk.Frame):
         focus = self.tv.focus()
         return [focus] if focus else []
 
+    def get_selected_albaran_ids(self):
+        sel = list(self.tv_albaranes.selection())
+        if sel:
+            return sel
+        focus = self.tv_albaranes.focus()
+        return [focus] if focus else []
+
     def open_factura_dialog(self, factura, numero_sugerido=""):
         dlg = FacturaDialog(
             self,
@@ -1145,6 +1350,20 @@ class UIFacturasEmitidas(ttk.Frame):
             int(self.empresa_conf.get("digitos_plan", 8)),
             factura,
             numero_sugerido=numero_sugerido,
+            titulo="Factura emitida",
+        )
+        return dlg.result
+
+    def open_albaran_dialog(self, albaran, numero_sugerido=""):
+        dlg = FacturaDialog(
+            self,
+            self.gestor,
+            self.codigo,
+            self.ejercicio,
+            int(self.empresa_conf.get("digitos_plan", 8)),
+            albaran,
+            numero_sugerido=numero_sugerido,
+            titulo="Albaran emitido",
         )
         return dlg.result
 
@@ -1178,11 +1397,29 @@ class UIFacturasEmitidas(ttk.Frame):
     def _eliminar(self):
         self.controller.eliminar()
 
+    def _nuevo_albaran(self):
+        self.controller.nuevo_albaran()
+
+    def _editar_albaran(self):
+        self.controller.editar_albaran()
+
+    def _copiar_albaran(self):
+        self.controller.copiar_albaran()
+
+    def _eliminar_albaran(self):
+        self.controller.eliminar_albaran()
+
+    def _facturar_albaranes(self):
+        self.controller.facturar_albaranes()
+
     def _terceros(self):
         self.controller.terceros()
 
     def _on_factura_select(self):
         self.controller.factura_seleccionada()
+
+    def _on_albaran_select(self):
+        self.controller.albaran_seleccionado()
 
     # ------------------- Exportar PDF -------------------
     def _export_pdf(self):

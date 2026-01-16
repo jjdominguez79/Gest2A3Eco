@@ -172,6 +172,8 @@ def _importe_14(amt) -> str:
         v = float(_s(amt).replace(",", "."))
     except Exception:
         v = 0.0
+    if not (v == v and v != float("inf") and v != float("-inf")):
+        v = 0.0
     v = abs(v)
     s = f"{v:.2f}"          # '123456.78'
     ent, dec = s.split(".")
@@ -185,6 +187,8 @@ def _importe_14_signed(amt) -> str:
     try:
         v = float(_s(amt).replace(",", "."))
     except Exception:
+        v = 0.0
+    if not (v == v and v != float("inf") and v != float("-inf")):
         v = 0.0
     sign = "-" if v < 0 else "+"
     v = abs(v)

@@ -1,4 +1,5 @@
 import os
+import traceback
 from collections import defaultdict
 
 import pandas as pd
@@ -84,6 +85,14 @@ class ProcesosController:
                 req = ["Fecha Asiento", "Importe", "Concepto"]
                 if not self._require_mapeo_or_warn(pl, "bancos", req):
                     return
+                rows = [r for r in rows if self._row_has_data(r)]
+                if not rows:
+                    self._view.show_warning(
+                        "Gest2A3Eco",
+                        "No se encontraron filas con datos en el Excel.\n"
+                        "Revisa la hoja seleccionada, 'Primera fila procesar' y el mapeo de columnas.",
+                    )
+                    return
                 try:
                     out_lines, avisos = generar_bancos(rows, pl, codigo_empresa, ndig)
                 except ValueError as e:
@@ -124,6 +133,14 @@ class ProcesosController:
                     req = ["Numero Factura"] + req
                 if not self._require_mapeo_or_warn(pl, "emitidas", req):
                     return
+                rows = [r for r in rows if self._row_has_data(r)]
+                if not rows:
+                    self._view.show_warning(
+                        "Gest2A3Eco",
+                        "No se encontraron filas con datos en el Excel.\n"
+                        "Revisa la hoja seleccionada, 'Primera fila procesar' y el mapeo de columnas.",
+                    )
+                    return
                 terceros = self._gestor.listar_terceros()
                 terceros_by_nif = {
                     str(t.get("nif") or "").strip().upper(): t
@@ -160,6 +177,14 @@ class ProcesosController:
             else:
                 req = ["Numero Factura"] + req
             if not self._require_mapeo_or_warn(pl, "recibidas", req):
+                return
+            rows = [r for r in rows if self._row_has_data(r)]
+            if not rows:
+                self._view.show_warning(
+                    "Gest2A3Eco",
+                    "No se encontraron filas con datos en el Excel.\n"
+                    "Revisa la hoja seleccionada, 'Primera fila procesar' y el mapeo de columnas.",
+                )
                 return
             terceros = self._gestor.listar_terceros()
             terceros_by_nif = {
@@ -199,6 +224,7 @@ class ProcesosController:
             else:
                 self._view.show_warning("Gest2A3Eco", "No se generaron registros para facturas recibidas.")
         except Exception as e:
+            self._log_error("Error en la generacion", e)
             self._view.show_error("Gest2A3Eco", f"Error en la generacion:\n{e}")
 
     def _has_letter(self, pl_excel, key):
@@ -218,3 +244,32 @@ class ProcesosController:
             )
             return False
         return True
+
+    def _row_has_data(self, row):
+        for k, v in (row or {}).items():
+            if str(k).startswith("_"):
+                continue
+            if v is None:
+                continue
+            try:
+                if isinstance(v, float) and (v != v):
+                    continue
+            except Exception:
+                pass
+            s = str(v).strip()
+            if not s or s.lower() == "nan":
+                continue
+            return True
+        return False
+
+    def _log_error(self, msg: str, exc: Exception) -> None:
+        try:
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            log_path = os.path.join(base_dir, "procesos_error.log")
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write("\n---- PROCESOS ERROR ----\n")
+                f.write(f"Message: {msg}\n")
+                f.write("Exception:\n")
+                f.write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+        except Exception:
+            pass

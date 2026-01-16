@@ -1,5 +1,7 @@
 import os
 import struct
+import sys
+from pathlib import Path
 
 
 def _to_float(x) -> float:
@@ -29,7 +31,21 @@ def _pdf_escape(text: str) -> str:
     return str(text or "").replace("\\", "\\\\").replace("(", "[").replace(")", "]")
 
 
+def _resolve_logo_path(path: str) -> str:
+    raw = str(path or "").strip()
+    if not raw:
+        return ""
+    p = Path(raw)
+    if p.exists():
+        return str(p)
+    base_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
+    alt = base_dir / "assets" / "logos" / p.name
+    if alt.exists():
+        return str(alt)
+    return raw
+
 def _logo_jpeg(path: str):
+    path = _resolve_logo_path(path)
     if not path or not os.path.exists(path):
         return None
     if not path.lower().endswith((".jpg", ".jpeg")):
@@ -132,7 +148,7 @@ def generar_pdf_basico(empresa_conf: dict, fac: dict, cliente: dict, totales: di
     for ln in fac.get("lineas", []):
         body.append(t(50, y, str(ln.get("concepto", ""))[:42], 10))
         body.append(t(270, y, f"{_to_float(ln.get('unidades')):.2f}", 10))
-        body.append(t(320, y, f"{_to_float(ln.get('precio')):.2f}", 10))
+        body.append(t(320, y, f"{_to_float(ln.get('precio')):.4f}", 10))
         body.append(t(380, y, f"{_to_float(ln.get('base')):.2f}", 10))
         body.append(t(440, y, f"{_to_float(ln.get('pct_iva')):.2f}%", 10))
         body.append(t(490, y, f"{_to_float(ln.get('cuota_iva')):.2f}", 10))

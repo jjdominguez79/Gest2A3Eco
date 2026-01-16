@@ -31,6 +31,13 @@ class FacturasEmitidasController:
             self._view.insert_factura_row(fac, total)
         self._view.set_detalle_lineas([])
 
+    def refresh_albaranes(self):
+        self._view.clear_albaranes()
+        for alb in self._gestor.listar_albaranes_emitidas(self._codigo, self._ejercicio):
+            total = self._compute_total(alb)
+            self._view.insert_albaran_row(alb, total)
+        self._view.set_albaran_lineas([])
+
     def nueva(self):
         sugerido = self._proximo_numero()
         cuenta_default = self._cuenta_bancaria_default()
@@ -113,6 +120,146 @@ class FacturasEmitidasController:
             self._view.set_detalle_lineas([])
             return
         self._view.set_detalle_lineas(fac.get("lineas", []))
+
+    def albaran_seleccionado(self):
+        sel = self._view.get_selected_albaran_ids()
+        if not sel:
+            self._view.set_albaran_lineas([])
+            return
+        alb = self._get_albaran_by_id(sel[0])
+        if not alb:
+            self._view.set_albaran_lineas([])
+            return
+        self._view.set_albaran_lineas(alb.get("lineas", []))
+
+    def nuevo_albaran(self):
+        sugerido = self._proximo_albaran_numero()
+        cuenta_default = self._cuenta_bancaria_default()
+        result = self._view.open_albaran_dialog(
+            {
+                "codigo_empresa": self._codigo,
+                "ejercicio": self._ejercicio,
+                "serie": "ALB",
+                "numero": sugerido,
+                "forma_pago": "",
+                "cuenta_bancaria": cuenta_default,
+            },
+            numero_sugerido=sugerido,
+        )
+        if result:
+            result["facturado"] = False
+            result["factura_id"] = ""
+            result["fecha_facturacion"] = ""
+            result["ejercicio"] = self._ejercicio
+            result["codigo_empresa"] = self._codigo
+            self._gestor.upsert_albaran_emitida(result)
+            self.refresh_albaranes()
+
+    def editar_albaran(self):
+        sel = self._view.get_selected_albaran_ids()
+        if not sel:
+            self._view.show_info("Gest2A3Eco", "Selecciona un albaran.")
+            return
+        alb = self._get_albaran_by_id(sel[0])
+        if not alb:
+            return
+        if alb.get("facturado"):
+            self._view.show_warning("Gest2A3Eco", "El albaran ya esta facturado.")
+            return
+        result = self._view.open_albaran_dialog(alb)
+        if result:
+            self._gestor.upsert_albaran_emitida(result)
+            self.refresh_albaranes()
+
+    def copiar_albaran(self):
+        sel = self._view.get_selected_albaran_ids()
+        if not sel:
+            return
+        alb = self._get_albaran_by_id(sel[0])
+        if not alb:
+            return
+        nuevo = dict(alb)
+        nuevo.pop("id", None)
+        nuevo["numero"] = self._proximo_albaran_numero()
+        nuevo["serie"] = "ALB"
+        nuevo["facturado"] = False
+        nuevo["factura_id"] = ""
+        nuevo["fecha_facturacion"] = ""
+        result = self._view.open_albaran_dialog(nuevo, numero_sugerido=nuevo["numero"])
+        if result:
+            self._gestor.upsert_albaran_emitida(result)
+            self.refresh_albaranes()
+
+    def eliminar_albaran(self):
+        sel = self._view.get_selected_albaran_ids()
+        if not sel:
+            return
+        alb = self._get_albaran_by_id(sel[0])
+        if alb and alb.get("facturado"):
+            self._view.show_warning("Gest2A3Eco", "El albaran ya esta facturado.")
+            return
+        if not self._view.ask_yes_no("Gest2A3Eco", "Eliminar los albaranes seleccionados?"):
+            return
+        for aid in sel:
+            self._gestor.eliminar_albaran_emitida(self._codigo, aid, self._ejercicio)
+        self.refresh_albaranes()
+
+    def facturar_albaranes(self):
+        sel = self._view.get_selected_albaran_ids()
+        if not sel:
+            self._view.show_warning("Gest2A3Eco", "Selecciona uno o varios albaranes.")
+            return
+        albaranes = []
+        for aid in sel:
+            alb = self._get_albaran_by_id(aid)
+            if alb:
+                if alb.get("facturado"):
+                    continue
+                albaranes.append(alb)
+        if not albaranes:
+            self._view.show_warning("Gest2A3Eco", "No hay albaranes pendientes de facturar.")
+            return
+        nifs = {str(a.get("nif") or "").strip() for a in albaranes}
+        if len(nifs) > 1:
+            self._view.show_warning("Gest2A3Eco", "Los albaranes seleccionados tienen distintos clientes.")
+            return
+        base = albaranes[0]
+        nums = ", ".join(a.get("numero", "") for a in albaranes)
+        lineas = []
+        for a in albaranes:
+            lineas.extend(a.get("lineas", []))
+        fecha = datetime.now().strftime("%d/%m/%Y")
+        factura = {
+            "codigo_empresa": self._codigo,
+            "ejercicio": self._ejercicio,
+            "tercero_id": base.get("tercero_id"),
+            "serie": self._serie(),
+            "numero": self._proximo_numero(),
+            "numero_largo_sii": "",
+            "fecha_asiento": fecha,
+            "fecha_expedicion": fecha,
+            "fecha_operacion": fecha,
+            "nif": base.get("nif", ""),
+            "nombre": base.get("nombre", ""),
+            "descripcion": f"Factura de albaranes: {nums}",
+            "subcuenta_cliente": base.get("subcuenta_cliente", ""),
+            "forma_pago": base.get("forma_pago", ""),
+            "cuenta_bancaria": base.get("cuenta_bancaria", ""),
+            "retencion_aplica": bool(base.get("retencion_aplica")),
+            "retencion_pct": base.get("retencion_pct"),
+            "retencion_base": base.get("retencion_base"),
+            "retencion_importe": base.get("retencion_importe"),
+            "lineas": lineas,
+            "generada": False,
+            "fecha_generacion": "",
+        }
+        fid = self._gestor.upsert_factura_emitida(factura)
+        self._incrementar_numeracion()
+        fecha_gen = datetime.now().strftime("%Y-%m-%d %H:%M")
+        self._gestor.marcar_albaranes_facturados(self._codigo, [a.get("id") for a in albaranes], fid, fecha_gen, self._ejercicio)
+        self.refresh_facturas()
+        self.refresh_albaranes()
+        self._view.show_info("Gest2A3Eco", f"Factura generada desde albaranes:\n{factura.get('serie','')}{factura.get('numero','')}")
 
     def export_pdf(self):
         sel = self._view.get_selected_ids()
@@ -261,6 +408,16 @@ class FacturasEmitidasController:
             None,
         )
 
+    def _get_albaran_by_id(self, aid):
+        return next(
+            (
+                a
+                for a in self._gestor.listar_albaranes_emitidas(self._codigo, self._ejercicio)
+                if str(a.get("id")) == str(aid)
+            ),
+            None,
+        )
+
     def _serie(self):
         return str(self._empresa_conf.get("serie_emitidas", "A") or "A")
 
@@ -276,6 +433,23 @@ class FacturasEmitidasController:
     def _incrementar_numeracion(self):
         self._empresa_conf["siguiente_num_emitidas"] = self._siguiente_num() + 1
         self._gestor.upsert_empresa(self._empresa_conf)
+
+    def _proximo_albaran_numero(self):
+        pref = f"Alb-{self._ejercicio}-"
+        max_n = 0
+        for a in self._gestor.listar_albaranes_emitidas(self._codigo, self._ejercicio):
+            num_txt = str(a.get("numero") or "")
+            if pref in num_txt:
+                tail = num_txt.split(pref, 1)[-1]
+            else:
+                tail = "".join(ch for ch in num_txt if ch.isdigit())
+            digits = "".join(ch for ch in tail if ch.isdigit())
+            if digits:
+                try:
+                    max_n = max(max_n, int(digits))
+                except Exception:
+                    pass
+        return f"{pref}{max_n + 1:05d}"
 
     def _compute_total(self, fac: dict) -> float:
         total = 0.0

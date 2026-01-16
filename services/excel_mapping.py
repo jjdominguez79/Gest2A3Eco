@@ -29,9 +29,13 @@ def extract_rows_by_mapping(xlsx_path: str, sheet: str, mapping: dict):
         return row.iloc[ci]
 
     def parse_cond(cond):
+        cond = "" if cond is None else str(cond)
         if "=" not in cond:
             return None, None
-        a, b = cond.split("=", 1)
+        parts = cond.split("=", 1)
+        if len(parts) < 2:
+            return None, None
+        a, b = parts
         return a.strip().upper(), b
 
     ign_col, ign_val = parse_cond(ign)

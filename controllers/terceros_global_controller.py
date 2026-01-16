@@ -33,7 +33,11 @@ class TercerosGlobalController:
             return
         if not self._view.ask_yes_no("Gest2A3Eco", "Eliminar el tercero seleccionado?"):
             return
-        self._gestor.eliminar_tercero(tid)
+        try:
+            self._gestor.eliminar_tercero(tid)
+        except Exception as e:
+            self._view.show_warning("Gest2A3Eco", str(e))
+            return
         self.refresh()
 
     def asignar_a_empresa(self):
