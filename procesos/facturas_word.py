@@ -8,7 +8,9 @@ from typing import Dict, Any, Tuple
 
 from docxtpl import DocxTemplate, InlineImage
 from docx.shared import Mm
+from docx.image.image import Image as DocxImage
 from docx2pdf import convert
+from xml.sax.saxutils import escape as _xml_escape
 
 
 def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales: dict) -> Dict[str, Any]:
@@ -84,6 +86,8 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
             "telefono": empresa_conf.get("telefono", ""),
             "email": empresa_conf.get("email", ""),
             "logo_path": empresa_conf.get("logo_path", ""),
+            "logo_max_width_mm": empresa_conf.get("logo_max_width_mm"),
+            "logo_max_height_mm": empresa_conf.get("logo_max_height_mm"),
         },
         "cliente": {
             "nombre": cliente.get("nombre", ""),
@@ -121,6 +125,10 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
         }
     }
 
+DEFAULT_LOGO_MAX_WIDTH_MM = 20
+DEFAULT_LOGO_MAX_HEIGHT_MM = 12
+
+
 def render_docx(template_path: str, context: Dict[str, Any], out_docx_path: str) -> None:
     doc = DocxTemplate(template_path)
     ctx = dict(context or {})
@@ -128,11 +136,27 @@ def render_docx(template_path: str, context: Dict[str, Any], out_docx_path: str)
     logo_path = _resolve_logo_path(logo_path)
     if logo_path and os.path.exists(logo_path):
         try:
-            ctx["logo"] = InlineImage(doc, logo_path, width=Mm(45))
+            empresa = ctx.get("empresa") or {}
+            max_w = empresa.get("logo_max_width_mm", DEFAULT_LOGO_MAX_WIDTH_MM)
+            max_h = empresa.get("logo_max_height_mm", DEFAULT_LOGO_MAX_HEIGHT_MM)
+            ctx["logo"] = _inline_logo(doc, logo_path, max_w, max_h)
         except Exception:
             ctx["logo"] = ""
+    ctx = _escape_context(ctx)
     doc.render(ctx)
     doc.save(out_docx_path)
+
+
+def _escape_context(value: Any) -> Any:
+    if isinstance(value, InlineImage):
+        return value
+    if isinstance(value, str):
+        return _xml_escape(value)
+    if isinstance(value, dict):
+        return {k: _escape_context(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_escape_context(v) for v in value]
+    return value
 
 def _resolve_logo_path(path: str) -> str:
     raw = str(path or "").strip()
@@ -146,6 +170,19 @@ def _resolve_logo_path(path: str) -> str:
     if alt.exists():
         return str(alt)
     return raw
+
+
+def _inline_logo(doc: DocxTemplate, path: str, max_width_mm: float, max_height_mm: float) -> InlineImage:
+    try:
+        image = DocxImage.from_file(path)
+        max_w = Mm(float(max_width_mm))
+        max_h = Mm(float(max_height_mm))
+        scale = min(max_w / image.width, max_h / image.height, 1.0)
+        width = int(image.width * scale)
+        height = int(image.height * scale)
+        return InlineImage(doc, path, width=width, height=height)
+    except Exception:
+        return InlineImage(doc, path, width=Mm(float(max_width_mm)))
 
 def convert_docx_to_pdf(docx_path: str, pdf_path: str) -> None:
     # Usa Word instalado

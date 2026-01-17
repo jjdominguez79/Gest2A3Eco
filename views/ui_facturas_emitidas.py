@@ -1067,14 +1067,14 @@ class UIFacturasEmitidas(ttk.Frame):
 
     def _build_facturas_tab(self, parent):
         top = ttk.Frame(parent)
-        top.pack(fill="x", padx=10)
-        ttk.Button(top, text="Nueva", style="Primary.TButton", command=self._nueva).pack(side=tk.LEFT, padx=4)
-        ttk.Button(top, text="Editar", command=self._editar).pack(side=tk.LEFT, padx=4)
-        ttk.Button(top, text="Copiar", command=self._copiar).pack(side=tk.LEFT, padx=4)
-        ttk.Button(top, text="Eliminar", command=self._eliminar).pack(side=tk.LEFT, padx=4)
+        top.pack(fill="x", padx=20, pady=(8, 0))
+        ttk.Button(top, text="Nueva", style="Primary.TButton", command=self._nueva).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Editar", command=self._editar).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Copiar", command=self._copiar).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Eliminar", command=self._eliminar).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Terceros", command=self._terceros).pack(side=tk.LEFT, padx=12)
-        ttk.Button(top, text="Exportar PDF", command=self._export_pdf).pack(side=tk.LEFT, padx=4)
-        ttk.Button(top, text="Abrir PDF", command=self._abrir_pdf).pack(side=tk.LEFT, padx=4)
+        ttk.Button(top, text="Exportar PDF", command=self._export_pdf).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Abrir PDF", command=self._abrir_pdf).pack(side=tk.LEFT, padx=8)
 
         self.tv = ttk.Treeview(
             parent,
@@ -1127,12 +1127,12 @@ class UIFacturasEmitidas(ttk.Frame):
 
     def _build_albaranes_tab(self, parent):
         top = ttk.Frame(parent)
-        top.pack(fill="x", padx=10)
-        ttk.Button(top, text="Nuevo", style="Primary.TButton", command=self._nuevo_albaran).pack(side=tk.LEFT, padx=4)
-        ttk.Button(top, text="Editar", command=self._editar_albaran).pack(side=tk.LEFT, padx=4)
-        ttk.Button(top, text="Copiar", command=self._copiar_albaran).pack(side=tk.LEFT, padx=4)
-        ttk.Button(top, text="Eliminar", command=self._eliminar_albaran).pack(side=tk.LEFT, padx=4)
-        ttk.Button(top, text="Facturar seleccionados", style="Primary.TButton", command=self._facturar_albaranes).pack(side=tk.RIGHT, padx=4)
+        top.pack(fill="x", padx=10, pady=(8, 0))
+        ttk.Button(top, text="Nuevo", style="Primary.TButton", command=self._nuevo_albaran).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Editar", command=self._editar_albaran).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Copiar", command=self._copiar_albaran).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Eliminar", command=self._eliminar_albaran).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Facturar seleccionados", style="Primary.TButton", command=self._facturar_albaranes).pack(side=tk.RIGHT, padx=8)
 
         self.tv_albaranes = ttk.Treeview(
             parent,
