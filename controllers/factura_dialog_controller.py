@@ -125,6 +125,7 @@ class FacturaDialogController:
             "nif": self._view.get_nif(),
             "nombre": self._view.get_nombre(),
             "descripcion": self._view.get_descripcion(),
+            "observaciones": self._view.get_observaciones(),
             "subcuenta_cliente": sc,
             "forma_pago": self._view.get_forma_pago(),
             "cuenta_bancaria": self._view.get_cuenta_bancaria(),

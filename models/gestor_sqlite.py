@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS facturas_emitidas_docs (
   nif TEXT,
   nombre TEXT,
   descripcion TEXT,
+  observaciones TEXT,
   subcuenta_cliente TEXT,
   forma_pago TEXT,
   cuenta_bancaria TEXT,
@@ -107,6 +108,7 @@ CREATE TABLE IF NOT EXISTS albaranes_emitidas_docs (
   nif TEXT,
   nombre TEXT,
   descripcion TEXT,
+  observaciones TEXT,
   subcuenta_cliente TEXT,
   forma_pago TEXT,
   cuenta_bancaria TEXT,
@@ -176,6 +178,7 @@ class GestorSQLite:
         self._ensure_column("facturas_emitidas_docs", "retencion_pct", "REAL")
         self._ensure_column("facturas_emitidas_docs", "retencion_base", "REAL")
         self._ensure_column("facturas_emitidas_docs", "retencion_importe", "REAL")
+        self._ensure_column("facturas_emitidas_docs", "observaciones", "TEXT")
         self._ensure_column("albaranes_emitidas_docs", "forma_pago", "TEXT")
         self._ensure_column("albaranes_emitidas_docs", "cuenta_bancaria", "TEXT")
         self._ensure_column("albaranes_emitidas_docs", "pdf_path", "TEXT")
@@ -184,6 +187,7 @@ class GestorSQLite:
         self._ensure_column("albaranes_emitidas_docs", "retencion_pct", "REAL")
         self._ensure_column("albaranes_emitidas_docs", "retencion_base", "REAL")
         self._ensure_column("albaranes_emitidas_docs", "retencion_importe", "REAL")
+        self._ensure_column("albaranes_emitidas_docs", "observaciones", "TEXT")
         self._ensure_column("albaranes_emitidas_docs", "facturado", "INTEGER")
         self._ensure_column("albaranes_emitidas_docs", "factura_id", "TEXT")
         self._ensure_column("albaranes_emitidas_docs", "fecha_facturacion", "TEXT")
@@ -533,10 +537,10 @@ class GestorSQLite:
             """
             INSERT INTO facturas_emitidas_docs
             (id, codigo_empresa, ejercicio, tercero_id, serie, numero, numero_largo_sii,
-             fecha_asiento, fecha_expedicion, fecha_operacion, nif, nombre, descripcion,
+             fecha_asiento, fecha_expedicion, fecha_operacion, nif, nombre, descripcion, observaciones,
              subcuenta_cliente, forma_pago, cuenta_bancaria, pdf_path, pdf_ref, retencion_aplica, retencion_pct,
              retencion_base, retencion_importe, generada, fecha_generacion, lineas_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -550,6 +554,7 @@ class GestorSQLite:
                 nif=excluded.nif,
                 nombre=excluded.nombre,
                 descripcion=excluded.descripcion,
+                observaciones=excluded.observaciones,
                 subcuenta_cliente=excluded.subcuenta_cliente,
                 forma_pago=excluded.forma_pago,
                 cuenta_bancaria=excluded.cuenta_bancaria,
@@ -577,6 +582,7 @@ class GestorSQLite:
                 factura.get("nif"),
                 factura.get("nombre"),
                 factura.get("descripcion"),
+                factura.get("observaciones"),
                 factura.get("subcuenta_cliente"),
                 factura.get("forma_pago"),
                 factura.get("cuenta_bancaria"),
@@ -638,10 +644,10 @@ class GestorSQLite:
             """
             INSERT INTO albaranes_emitidas_docs
             (id, codigo_empresa, ejercicio, tercero_id, serie, numero, numero_largo_sii,
-             fecha_asiento, fecha_expedicion, fecha_operacion, nif, nombre, descripcion,
+             fecha_asiento, fecha_expedicion, fecha_operacion, nif, nombre, descripcion, observaciones,
              subcuenta_cliente, forma_pago, cuenta_bancaria, pdf_path, pdf_ref, retencion_aplica, retencion_pct,
              retencion_base, retencion_importe, facturado, factura_id, fecha_facturacion, lineas_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -655,6 +661,7 @@ class GestorSQLite:
                 nif=excluded.nif,
                 nombre=excluded.nombre,
                 descripcion=excluded.descripcion,
+                observaciones=excluded.observaciones,
                 subcuenta_cliente=excluded.subcuenta_cliente,
                 forma_pago=excluded.forma_pago,
                 cuenta_bancaria=excluded.cuenta_bancaria,
@@ -683,6 +690,7 @@ class GestorSQLite:
                 albaran.get("nif"),
                 albaran.get("nombre"),
                 albaran.get("descripcion"),
+                albaran.get("observaciones"),
                 albaran.get("subcuenta_cliente"),
                 albaran.get("forma_pago"),
                 albaran.get("cuenta_bancaria"),

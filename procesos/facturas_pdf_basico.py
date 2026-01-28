@@ -126,7 +126,7 @@ def generar_pdf_basico(empresa_conf: dict, fac: dict, cliente: dict, totales: di
     y -= 4
     body.append(t(50, y, f"Factura: {fac.get('serie','')}-{fac.get('numero','')}", 11, True))
     body.append(t(260, y, f"Fecha: {fac.get('fecha_expedicion') or fac.get('fecha_asiento','')}", 11))
-    obs = fac.get("descripcion") or ""
+    obs = fac.get("observaciones") or fac.get("descripcion") or ""
     if obs:
         y -= 12
         body.append(t(50, y, f"Observaciones: {obs}", 10))

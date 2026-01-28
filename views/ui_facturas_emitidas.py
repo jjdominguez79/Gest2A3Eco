@@ -504,6 +504,10 @@ class FacturaDialog(tk.Toplevel):
         self.var_nif = tk.StringVar(value=f.get("nif", ""))
         self.var_nombre = tk.StringVar(value=f.get("nombre", ""))
         self.var_desc = tk.StringVar(value=f.get("descripcion", ""))
+        obs_val = f.get("observaciones")
+        if obs_val in (None, ""):
+            obs_val = f.get("descripcion", "")
+        self.var_obs = tk.StringVar(value=obs_val)
         has_ret_flag = "retencion_aplica" in f
         ret_aplica = bool(f.get("retencion_aplica")) if has_ret_flag else False
         ret_pct = f.get("retencion_pct", "")
@@ -592,8 +596,8 @@ class FacturaDialog(tk.Toplevel):
         row += 1
         add_row("Nombre Cliente", self.var_nombre, row, width=34)
         row += 1
-        #add_row("Descripcion", self.var_desc, row, width=40)
-        #row += 1
+        add_row("Observaciones", self.var_obs, row, width=46)
+        row += 1
 
         ret_row = ttk.Frame(frm)
         ret_row.grid(row=row, column=0, columnspan=3, sticky="w", padx=4, pady=(6, 2))
@@ -995,6 +999,9 @@ class FacturaDialog(tk.Toplevel):
 
     def get_descripcion(self):
         return self.var_desc.get().strip()
+
+    def get_observaciones(self):
+        return self.var_obs.get().strip()
 
     def get_forma_pago(self):
         return self.var_forma_pago.get().strip()

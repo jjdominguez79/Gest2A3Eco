@@ -46,7 +46,7 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
         base = float(ln.get("base") or 0)
         cuota_iva = float(ln.get("cuota_iva") or 0)
         cuota_irpf = float(ln.get("cuota_irpf") or 0)
-        total_linea = base + cuota_iva + cuota_irpf
+        total_linea = base + cuota_irpf
 
         lineas.append({
             "concepto": str(ln.get("concepto", "")),
@@ -105,7 +105,7 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
             "fecha": fac.get("fecha_expedicion") or fac.get("fecha_asiento", ""),
             "fecha_operacion": fac.get("fecha_operacion", ""),
             "descripcion": fac.get("descripcion", ""),
-            "observaciones": fac.get("descripcion", ""),
+            "observaciones": fac.get("observaciones") or fac.get("descripcion", ""),
         },
         "lineas": lineas,
         "iva_resumen": iva_resumen,
