@@ -47,6 +47,7 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
         cuota_iva = float(ln.get("cuota_iva") or 0)
         cuota_irpf = float(ln.get("cuota_irpf") or 0)
         total_linea = base + cuota_irpf
+        pct_irpf = ln.get("pct_irpf") or 0
 
         lineas.append({
             "concepto": str(ln.get("concepto", "")),
@@ -55,7 +56,8 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
             "base": f2(ln.get("base") or 0),
             "pct_iva": f2(ln.get("pct_iva") or 0),
             "cuota_iva": f2(ln.get("cuota_iva") or 0),
-            "pct_irpf": f2(ln.get("pct_irpf") or 0),
+            "pct_irpf": f2(pct_irpf),
+            "pct_irpf_pct": f"{f2(pct_irpf)}%",
             "cuota_irpf": f2(ln.get("cuota_irpf") or 0),
             "total_linea": f2(total_linea),
         })
@@ -75,9 +77,24 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
             "cuota": f2(item["cuota"]),
         })
 
+    if fac.get("retencion_aplica"):
+        ret_base = fac.get("retencion_base")
+        ret_pct = fac.get("retencion_pct")
+        ret_imp = fac.get("retencion_importe")
+        if ret_imp is None or ret_imp == "":
+            try:
+                ret_imp = -abs(float(ret_base or 0) * float(ret_pct or 0) / 100.0) if float(ret_pct or 0) else 0
+            except Exception:
+                ret_imp = 0
+    else:
+        ret_base = 0
+        ret_pct = 0
+        ret_imp = 0
+
     return {
         "empresa": {
             "nombre": empresa_conf.get("nombre", ""),
+            "codigo": empresa_conf.get("codigo") or empresa_conf.get("codigo_empresa") or "",
             "cif": empresa_conf.get("cif", ""),
             "direccion": empresa_conf.get("direccion", ""),
             "cp": empresa_conf.get("cp", ""),
@@ -114,6 +131,16 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
             "iva": f2(totales.get("iva", 0)),
             "irpf": f2(totales.get("ret", 0)),
             "total": f2(totales.get("total", 0)),
+            "ret_base": f2(ret_base or 0),
+            "ret_pct": f2(ret_pct or 0),
+            "ret_importe": f2(ret_imp or 0),
+            "ret_pct_label": f"{f2(ret_pct or 0)}%",
+        },
+        "retencion": {
+            "base": f2(ret_base or 0),
+            "pct": f2(ret_pct or 0),
+            "importe": f2(ret_imp or 0),
+            "pct_label": f"{f2(ret_pct or 0)}%",
         },
         "pago": {
             "metodo": fac.get("forma_pago", ""),
@@ -132,8 +159,9 @@ DEFAULT_LOGO_MAX_HEIGHT_MM = 12
 def render_docx(template_path: str, context: Dict[str, Any], out_docx_path: str) -> None:
     doc = DocxTemplate(template_path)
     ctx = dict(context or {})
-    logo_path = (ctx.get("empresa") or {}).get("logo_path") or ""
-    logo_path = _resolve_logo_path(logo_path)
+    empresa_ctx = ctx.get("empresa") or {}
+    logo_path = empresa_ctx.get("logo_path") or ""
+    logo_path = _resolve_logo_path(logo_path, empresa_ctx.get("codigo") or empresa_ctx.get("codigo_empresa"))
     if logo_path and os.path.exists(logo_path):
         try:
             empresa = ctx.get("empresa") or {}
@@ -158,17 +186,39 @@ def _escape_context(value: Any) -> Any:
         return [_escape_context(v) for v in value]
     return value
 
-def _resolve_logo_path(path: str) -> str:
+def _resolve_logo_path(path: str, codigo: str | None = None) -> str:
     raw = str(path or "").strip()
-    if not raw:
-        return ""
-    p = Path(raw)
-    if p.exists():
-        return str(p)
+    code = str(codigo or "").strip()
     base_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
-    alt = base_dir / "assets" / "logos" / p.name
-    if alt.exists():
-        return str(alt)
+    if raw:
+        p = Path(raw)
+        if p.exists():
+            return str(p)
+        alt = base_dir / "assets" / "logos" / p.name
+        if alt.exists():
+            return str(alt)
+    if code:
+        raw = str(code).strip()
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        candidates = []
+        if raw:
+            candidates.append(raw)
+            if not raw.upper().startswith("E"):
+                candidates.append(f"E{raw}")
+        if digits:
+            for width in (5, 6, 7, 8):
+                padded = digits.zfill(width)
+                candidates.append(padded)
+                candidates.append(f"E{padded}")
+        seen = set()
+        for name in candidates:
+            if name in seen:
+                continue
+            seen.add(name)
+            for ext in [".jpg", ".jpeg", ".png"]:
+                candidate = base_dir / "assets" / "logos" / f"{name}{ext}"
+                if candidate.exists():
+                    return str(candidate)
     return raw
 
 

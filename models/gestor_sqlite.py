@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS facturas_emitidas_docs (
   subcuenta_cliente TEXT,
   forma_pago TEXT,
   cuenta_bancaria TEXT,
+  plantilla_word TEXT,
   pdf_path TEXT,
   pdf_ref TEXT,
   retencion_aplica INTEGER,
@@ -172,6 +173,7 @@ class GestorSQLite:
         self._ensure_column("empresas", "pdf_ref_seq", "INTEGER")
         self._ensure_column("facturas_emitidas_docs", "forma_pago", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "cuenta_bancaria", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "plantilla_word", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "pdf_path", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "pdf_ref", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "retencion_aplica", "INTEGER")
@@ -538,9 +540,9 @@ class GestorSQLite:
             INSERT INTO facturas_emitidas_docs
             (id, codigo_empresa, ejercicio, tercero_id, serie, numero, numero_largo_sii,
              fecha_asiento, fecha_expedicion, fecha_operacion, nif, nombre, descripcion, observaciones,
-             subcuenta_cliente, forma_pago, cuenta_bancaria, pdf_path, pdf_ref, retencion_aplica, retencion_pct,
+             subcuenta_cliente, forma_pago, cuenta_bancaria, plantilla_word, pdf_path, pdf_ref, retencion_aplica, retencion_pct,
              retencion_base, retencion_importe, generada, fecha_generacion, lineas_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -558,6 +560,7 @@ class GestorSQLite:
                 subcuenta_cliente=excluded.subcuenta_cliente,
                 forma_pago=excluded.forma_pago,
                 cuenta_bancaria=excluded.cuenta_bancaria,
+                plantilla_word=excluded.plantilla_word,
                 pdf_path=excluded.pdf_path,
                 pdf_ref=excluded.pdf_ref,
                 retencion_aplica=excluded.retencion_aplica,
@@ -586,6 +589,7 @@ class GestorSQLite:
                 factura.get("subcuenta_cliente"),
                 factura.get("forma_pago"),
                 factura.get("cuenta_bancaria"),
+                factura.get("plantilla_word"),
                 factura.get("pdf_path"),
                 factura.get("pdf_ref"),
                 1 if factura.get("retencion_aplica") else 0,

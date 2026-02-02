@@ -245,6 +245,7 @@ class FacturasEmitidasController:
             "subcuenta_cliente": base.get("subcuenta_cliente", ""),
             "forma_pago": base.get("forma_pago", ""),
             "cuenta_bancaria": base.get("cuenta_bancaria", ""),
+            "plantilla_word": base.get("plantilla_word", ""),
             "retencion_aplica": bool(base.get("retencion_aplica")),
             "retencion_pct": base.get("retencion_pct"),
             "retencion_base": base.get("retencion_base"),
@@ -278,14 +279,14 @@ class FacturasEmitidasController:
         if not save_path:
             return
 
-        template_path = self._docx_template_path()
+        template_path = self._docx_template_path(fac, warn_missing=True)
         if not os.path.exists(template_path):
             self._view.show_error("Gest2A3Eco", "No se encuentra plantilla.docx en la carpeta del programa.")
             return
 
         cliente = self._cliente_factura(fac)
         tot = self._totales_factura(fac)
-        context = build_context_emitida(self._empresa_conf, fac, cliente, tot)
+        context = build_context_emitida(self._empresa_conf_for_word(), fac, cliente, tot)
 
         try:
             generar_pdf_desde_plantilla_word(
@@ -458,17 +459,17 @@ class FacturasEmitidasController:
                 self._to_float(ln.get("base"))
                 + self._to_float(ln.get("cuota_iva"))
                 + self._to_float(ln.get("cuota_re"))
-                + self._to_float(ln.get("cuota_irpf"))
             )
+        total += self._retencion_importe(fac)
         return self._round2(total)
 
     def _totales_factura(self, fac: dict):
-        base = iva = re = ret = 0.0
+        base = iva = re = 0.0
         for ln in fac.get("lineas", []):
             base += self._to_float(ln.get("base"))
             iva += self._to_float(ln.get("cuota_iva"))
             re += self._to_float(ln.get("cuota_re"))
-            ret += self._to_float(ln.get("cuota_irpf"))
+        ret = self._retencion_importe(fac)
         total = base + iva + re + ret
         return {
             "base": self._round2(base),
@@ -514,7 +515,11 @@ class FacturasEmitidasController:
         }
         if fac.get("subcuenta_cliente"):
             base_row["Cuenta Cliente Proveedor"] = fac.get("subcuenta_cliente")
-        for ln in fac.get("lineas", []):
+        lineas = list(fac.get("lineas", []))
+        ret_pct = self._round2(self._to_float(fac.get("retencion_pct")))
+        ret_importe = self._retencion_importe(fac)
+        for idx, ln in enumerate(lineas):
+            ret_aplica_linea = ret_importe != 0 and idx == len(lineas) - 1
             r = dict(base_row)
             r.update(
                 {
@@ -524,19 +529,39 @@ class FacturasEmitidasController:
                     "Porcentaje IVA": self._round2(self._to_float(ln.get("pct_iva"))),
                     "Porcentaje Recargo Equivalencia": self._round2(self._to_float(ln.get("pct_re"))),
                     "Cuota Recargo Equivalencia": self._round2(self._to_float(ln.get("cuota_re"))),
-                    "Porcentaje Retencion IRPF": self._round2(self._to_float(ln.get("pct_irpf"))),
-                    "Cuota Retencion IRPF": self._round2(self._to_float(ln.get("cuota_irpf"))),
+                    "Porcentaje Retencion IRPF": ret_pct if ret_aplica_linea else 0.0,
+                    "Cuota Retencion IRPF": ret_importe if ret_aplica_linea else 0.0,
                 }
             )
             rows.append(r)
         return rows
 
-    def _docx_template_path(self) -> str:
+    def _docx_template_path(self, fac: dict | None = None, warn_missing: bool = False) -> str:
         if getattr(sys, "frozen", False):
             base_dir = os.path.dirname(sys.executable)
         else:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        return os.path.join(base_dir, "plantillas", "factura_emitida_template.docx")
+        default_path = os.path.join(base_dir, "plantillas", "factura_emitida_template.docx")
+        if not fac:
+            return default_path
+        chosen = str(fac.get("plantilla_word") or "").strip()
+        if not chosen:
+            return default_path
+        candidate = os.path.join(base_dir, "plantillas", chosen)
+        if os.path.exists(candidate):
+            return candidate
+        if warn_missing:
+            self._view.show_warning(
+                "Gest2A3Eco",
+                f"No se encuentra la plantilla seleccionada:\n{chosen}\nSe usara la plantilla por defecto.",
+            )
+        return default_path
+
+    def _empresa_conf_for_word(self) -> dict:
+        emp = dict(self._empresa_conf or {})
+        emp.setdefault("codigo", self._codigo)
+        emp.setdefault("codigo_empresa", self._codigo)
+        return emp
 
     def _store_pdf_copy(self, fac: dict, src_path: str) -> None:
         fac = self._ensure_pdf_ref(fac)
@@ -560,10 +585,10 @@ class FacturasEmitidasController:
                 upd["pdf_path"] = dest_path
                 self._gestor.upsert_factura_emitida(upd)
             return
-        template_path = self._docx_template_path()
+        template_path = self._docx_template_path(fac, warn_missing=False)
         cliente = self._cliente_factura(fac)
         tot = self._totales_factura(fac)
-        context = build_context_emitida(self._empresa_conf, fac, cliente, tot)
+        context = build_context_emitida(self._empresa_conf_for_word(), fac, cliente, tot)
         try:
             if os.path.exists(template_path):
                 generar_pdf_desde_plantilla_word(
@@ -659,6 +684,21 @@ class FacturasEmitidasController:
             return float(s)
         except Exception:
             return 0.0
+
+    def _retencion_importe(self, fac: dict) -> float:
+        if not fac:
+            return 0.0
+        if not bool(fac.get("retencion_aplica")):
+            ret_lineas = 0.0
+            for ln in fac.get("lineas", []):
+                ret_lineas += self._to_float(ln.get("cuota_irpf"))
+            return self._round2(ret_lineas)
+        importe = fac.get("retencion_importe")
+        if importe is None or importe == "":
+            base = self._to_float(fac.get("retencion_base"))
+            pct = self._to_float(fac.get("retencion_pct"))
+            return self._round2(-abs(base * pct / 100.0)) if pct else 0.0
+        return self._round2(self._to_float(importe))
 
     def _safe_filename(self, value: str) -> str:
         s = (value or "").strip()

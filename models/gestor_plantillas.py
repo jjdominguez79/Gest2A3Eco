@@ -434,6 +434,13 @@ class GestorPlantillas:
         return tid
 
     def eliminar_tercero(self, tercero_id: str):
+        tid = str(tercero_id)
+        for f in self.data.get("facturas_emitidas_docs", []):
+            if str(f.get("tercero_id")) == tid:
+                raise ValueError("No se puede eliminar el tercero: tiene facturas emitidas asociadas.")
+        for a in self.data.get("albaranes_emitidas_docs", []):
+            if str(a.get("tercero_id")) == tid:
+                raise ValueError("No se puede eliminar el tercero: tiene albaranes asociados.")
         self.data["terceros"] = [t for t in self.data.get("terceros", []) if str(t.get("id")) != str(tercero_id)]
         self.data["terceros_empresas"] = [
             te for te in self.data.get("terceros_empresas", [])

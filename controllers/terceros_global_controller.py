@@ -3,15 +3,20 @@ class TercerosGlobalController:
         self._gestor = gestor
         self._view = view
         self._empresas_cache = []
+        self._terceros_cache = []
 
     def refresh(self):
-        self._view.set_terceros(self._gestor.listar_terceros())
+        self._terceros_cache = self._gestor.listar_terceros()
+        self._view.set_terceros(self._terceros_cache)
         self._empresas_cache = self._gestor.listar_empresas()
         self._view.set_empresas(self._empresas_cache)
 
     def nuevo(self):
         result = self._view.open_tercero_ficha(None)
         if result:
+            if self._nif_duplicado(result.get("nif")):
+                self._view.show_warning("Gest2A3Eco", "Ya existe un tercero con ese CIF/NIF.")
+                return
             tid = self._gestor.upsert_tercero(result)
             self.refresh()
             self._view.select_tercero(str(tid))
@@ -24,6 +29,9 @@ class TercerosGlobalController:
         result = self._view.open_tercero_ficha(ter)
         if result:
             result["id"] = tid
+            if self._nif_duplicado(result.get("nif"), exclude_id=tid):
+                self._view.show_warning("Gest2A3Eco", "Ya existe un tercero con ese CIF/NIF.")
+                return
             self._gestor.upsert_tercero(result)
             self.refresh()
 
@@ -68,3 +76,17 @@ class TercerosGlobalController:
             "Tercero asignado a los ejercicios seleccionados.\n"
             "Recomendacion: traspasa los terceros a A3 desde la pantalla de terceros de empresa.",
         )
+
+    def _nif_duplicado(self, nif: str | None, exclude_id: str | None = None) -> bool:
+        val = self._norm_nif(nif)
+        if not val:
+            return False
+        for t in self._terceros_cache:
+            if exclude_id is not None and str(t.get("id")) == str(exclude_id):
+                continue
+            if self._norm_nif(t.get("nif")) == val:
+                return True
+        return False
+
+    def _norm_nif(self, value: str | None) -> str:
+        return "".join(str(value or "").strip().upper().split())

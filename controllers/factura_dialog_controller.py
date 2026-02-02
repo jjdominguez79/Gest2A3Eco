@@ -69,19 +69,18 @@ class FacturaDialogController:
             self.clear_line_editor()
 
     def refresh_totales(self):
-        base = iva = ret = 0.0
+        base = iva = 0.0
         resumen = {}
         for ln in self._view.get_lineas():
             base += ln["base"]
             iva += ln["cuota_iva"]
-            ret += ln["cuota_irpf"]
             pct = self._round2(ln.get("pct_iva", 0))
             item = resumen.setdefault(pct, {"tipo": f"{pct:.2f}%", "base": 0.0, "cuota": 0.0})
             item["base"] += ln.get("base", 0.0)
             item["cuota"] += ln.get("cuota_iva", 0.0)
         base = self._round2(base)
         iva = self._round2(iva)
-        ret = self._round2(ret)
+        ret = self._round2(self._view.get_retencion_importe() if self._view.get_retencion_aplica() else 0.0)
         total = self._round2(base + iva + ret)
         self._view.set_totales(base, iva, ret, total)
         rows = [resumen[k] for k in sorted(resumen.keys(), reverse=True)]
@@ -129,6 +128,7 @@ class FacturaDialogController:
             "subcuenta_cliente": sc,
             "forma_pago": self._view.get_forma_pago(),
             "cuenta_bancaria": self._view.get_cuenta_bancaria(),
+            "plantilla_word": self._view.get_plantilla_word(),
             "retencion_aplica": self._view.get_retencion_aplica(),
             "retencion_pct": self._view.get_retencion_pct(),
             "retencion_base": self._view.get_retencion_base() if self._view.get_retencion_aplica() else None,
@@ -177,7 +177,6 @@ class FacturaDialogController:
         if not concepto or unidades == 0 or precio == 0 or iva_raw == "":
             self._view.show_warning("Gest2A3Eco", "Completa concepto, unidades, precio e IVA.")
             return None
-        irpf = self._view.get_retencion_pct() if self._view.get_retencion_aplica() else 0.0
         base = self._round2(unidades * precio)
         cuota_iva = self._round2(base * iva / 100.0)
         return {
@@ -187,43 +186,18 @@ class FacturaDialogController:
             "base": self._round2(base),
             "pct_iva": self._round2(iva),
             "cuota_iva": self._round2(cuota_iva),
-            "pct_irpf": self._round2(irpf),
+            "pct_irpf": 0.0,
             "cuota_irpf": 0.0,
             "pct_re": 0.0,
             "cuota_re": 0.0,
         }
 
     def _apply_retencion_to_lineas(self, lineas, pct, base_ret):
-        pct = self._round2(pct)
         if not lineas:
             return lineas
-        if pct <= 0:
-            for ln in lineas:
-                ln["pct_irpf"] = 0.0
-                ln["cuota_irpf"] = 0.0
-            return lineas
-        base_ret = self._round2(base_ret or 0.0)
-        target = -abs(self._round2(base_ret * pct / 100.0))
-        base_total = sum(ln.get("base", 0.0) for ln in lineas)
-        if abs(base_total) < 0.0001:
-            for ln in lineas[:-1]:
-                ln["pct_irpf"] = pct
-                ln["cuota_irpf"] = 0.0
-            lineas[-1]["pct_irpf"] = pct
-            lineas[-1]["cuota_irpf"] = target
-            return lineas
-        cuotas = []
-        acum = 0.0
         for ln in lineas:
-            cuota = self._round2(target * (ln.get("base", 0.0) / base_total))
-            cuotas.append(cuota)
-            acum += cuota
-        ajuste = self._round2(target - acum)
-        if cuotas:
-            cuotas[-1] = self._round2(cuotas[-1] + ajuste)
-        for ln, cuota in zip(lineas, cuotas):
-            ln["pct_irpf"] = pct
-            ln["cuota_irpf"] = cuota
+            ln["pct_irpf"] = 0.0
+            ln["cuota_irpf"] = 0.0
         return lineas
 
     def _sync_retencion(self):

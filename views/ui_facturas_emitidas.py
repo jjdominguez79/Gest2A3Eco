@@ -1,5 +1,7 @@
 
 import calendar
+import sys
+from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from datetime import date, datetime
@@ -549,6 +551,13 @@ class FacturaDialog(tk.Toplevel):
         self.var_subcuenta = tk.StringVar(value=f.get("subcuenta_cliente", ""))
         self.var_forma_pago = tk.StringVar(value=f.get("forma_pago", ""))
         self.var_cuenta_banco = tk.StringVar(value=f.get("cuenta_bancaria", ""))
+        self.var_plantilla_word = tk.StringVar(value=f.get("plantilla_word", ""))
+        self._plantillas_word = self._listar_plantillas_word()
+        if not self.var_plantilla_word.get().strip():
+            if "factura_emitida_template.docx" in self._plantillas_word:
+                self.var_plantilla_word.set("factura_emitida_template.docx")
+            elif self._plantillas_word:
+                self.var_plantilla_word.set(self._plantillas_word[0])
         self._cuentas_banco = self._parse_cuentas_banco()
         if self.var_cuenta_banco.get().strip() and self.var_cuenta_banco.get().strip() not in self._cuentas_banco:
             self._cuentas_banco.append(self.var_cuenta_banco.get().strip())
@@ -579,6 +588,17 @@ class FacturaDialog(tk.Toplevel):
         ttk.Label(frm, text="Cuenta bancaria").grid(row=row, column=0, sticky="w", padx=4, pady=3)
         self.cb_cuenta_banco = ttk.Combobox(frm, textvariable=self.var_cuenta_banco, values=self._cuentas_banco, width=28, state="readonly")
         self.cb_cuenta_banco.grid(row=row, column=1, padx=4, pady=3, sticky="w")
+        row += 1
+
+        ttk.Label(frm, text="Plantilla Word").grid(row=row, column=0, sticky="w", padx=4, pady=3)
+        self.cb_plantilla_word = ttk.Combobox(
+            frm,
+            textvariable=self.var_plantilla_word,
+            values=self._plantillas_word,
+            width=28,
+            state="readonly",
+        )
+        self.cb_plantilla_word.grid(row=row, column=1, padx=4, pady=3, sticky="w")
         row += 1
 
         def add_date_cell(label, var, row_idx):
@@ -745,6 +765,17 @@ class FacturaDialog(tk.Toplevel):
             if p not in out:
                 out.append(p)
         return out
+
+    def _listar_plantillas_word(self):
+        if getattr(sys, "frozen", False):
+            base_dir = Path(sys.executable).parent
+        else:
+            base_dir = Path(__file__).resolve().parents[1]
+        plantillas_dir = base_dir / "plantillas"
+        if not plantillas_dir.exists():
+            return []
+        items = [p.name for p in plantillas_dir.glob("*.docx") if p.is_file()]
+        return sorted(items, key=lambda s: s.lower())
 
     # --- controlador
     def _load_terceros(self):
@@ -1009,6 +1040,9 @@ class FacturaDialog(tk.Toplevel):
     def get_cuenta_bancaria(self):
         return self.var_cuenta_banco.get().strip()
 
+    def get_plantilla_word(self):
+        return self.var_plantilla_word.get().strip()
+
     def open_terceros_dialog(self, codigo_empresa, ejercicio, ndig):
         TercerosEmpresaDialog(self, self.gestor, codigo_empresa, ejercicio, ndig)
 
@@ -1193,9 +1227,24 @@ class UIFacturasEmitidas(ttk.Frame):
                 _to_float(ln.get("base"))
                 + _to_float(ln.get("cuota_iva"))
                 + _to_float(ln.get("cuota_re"))
-                + _to_float(ln.get("cuota_irpf"))
             )
+        total += self._retencion_importe(fac)
         return _round2(total)
+
+    def _retencion_importe(self, fac: dict) -> float:
+        if not fac:
+            return 0.0
+        if not bool(fac.get("retencion_aplica")):
+            ret_lineas = 0.0
+            for ln in fac.get("lineas", []):
+                ret_lineas += _to_float(ln.get("cuota_irpf"))
+            return _round2(ret_lineas)
+        importe = fac.get("retencion_importe")
+        if importe is None or importe == "":
+            base = _to_float(fac.get("retencion_base"))
+            pct = _to_float(fac.get("retencion_pct"))
+            return _round2(-abs(base * pct / 100.0)) if pct else 0.0
+        return _round2(_to_float(importe))
 
     def _refresh_facturas(self):
         self.controller.refresh_facturas()
