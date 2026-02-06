@@ -86,3 +86,59 @@ def validar_subcuenta_longitud(sc: str, ndig: int, campo: str = "subcuenta"):
         return
     if len(sc) != ndig:
         raise ValueError(f"La {campo} '{sc}' debe tener {ndig} dígitos (configurado a nivel de empresa).")
+
+def aplicar_descuento_total_lineas(lineas, tipo, valor):
+    """
+    Aplica un descuento total proporcional sobre las lineas (base e impuestos).
+    tipo: "pct" o "imp". valor: porcentaje o importe absoluto.
+    """
+    if not lineas:
+        return []
+    t = (tipo or "").strip().lower()
+    if t not in ("pct", "imp"):
+        return [dict(ln) for ln in lineas]
+    try:
+        v = float(valor or 0)
+    except Exception:
+        v = 0.0
+    if v <= 0:
+        return [dict(ln) for ln in lineas]
+
+    total_base = 0.0
+    for ln in lineas:
+        try:
+            total_base += float(ln.get("base", 0) or 0)
+        except Exception:
+            pass
+    if total_base <= 0:
+        return [dict(ln) for ln in lineas]
+
+    if t == "pct":
+        desc_total = total_base * min(max(v, 0.0), 100.0) / 100.0
+    else:
+        desc_total = min(abs(v), total_base)
+
+    out = []
+    for ln in lineas:
+        base = float(ln.get("base", 0) or 0)
+        if base <= 0:
+            out.append(dict(ln))
+            continue
+        ratio = desc_total * (base / total_base)
+        factor = max(0.0, 1.0 - (ratio / base))
+        nl = dict(ln)
+        nl["base"] = round(base * factor, 2)
+        try:
+            nl["cuota_iva"] = round(float(ln.get("cuota_iva", 0) or 0) * factor, 2)
+        except Exception:
+            nl["cuota_iva"] = 0.0
+        try:
+            nl["cuota_re"] = round(float(ln.get("cuota_re", 0) or 0) * factor, 2)
+        except Exception:
+            nl["cuota_re"] = 0.0
+        try:
+            nl["cuota_irpf"] = round(float(ln.get("cuota_irpf", 0) or 0) * factor, 2)
+        except Exception:
+            nl["cuota_irpf"] = 0.0
+        out.append(nl)
+    return out

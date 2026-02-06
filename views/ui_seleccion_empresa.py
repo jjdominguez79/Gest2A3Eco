@@ -1,9 +1,47 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-from tkinter.simpledialog import Dialog
+from datetime import date, datetime
+from tkinter.simpledialog import Dialog, askstring
 
 from views.ui_facturas_emitidas import TercerosGlobalDialog
 from controllers.ui_seleccion_controller import SeleccionEmpresaController
+
+def _parse_date_ui(val: str) -> date:
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(val.strip(), fmt).date()
+        except Exception:
+            continue
+    return date.today()
+
+def _to_fecha_ui(val: str) -> str:
+    if not val:
+        return date.today().strftime("%d/%m/%Y")
+    try:
+        d = _parse_date_ui(str(val))
+        return d.strftime("%d/%m/%Y")
+    except Exception:
+        return date.today().strftime("%d/%m/%Y")
+
+def _to_fecha_ui_or_blank(val: str) -> str:
+    if not val:
+        return ""
+    return _to_fecha_ui(val)
+
+def _parse_datetime_ui(val: str) -> datetime:
+    txt = str(val or "").strip()
+    if not txt:
+        return datetime.min
+    for fmt in ("%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M", "%Y/%m/%d %H:%M"):
+        try:
+            return datetime.strptime(txt, fmt)
+        except Exception:
+            continue
+    try:
+        d = _parse_date_ui(txt)
+        return datetime(d.year, d.month, d.day)
+    except Exception:
+        return datetime.min
 
 class EmpresaDialog(Dialog):
     def __init__(self, parent, titulo, empresa=None):
@@ -119,6 +157,7 @@ class UISeleccionEmpresa(ttk.Frame):
         super().__init__(parent)
         self.gestor = gestor
         self.on_ok = on_ok
+        self._fact_sort_state = {}
         self.pack(fill=tk.BOTH, expand=True)
         self.controller = SeleccionEmpresaController(gestor, on_ok, self)
         self._build()
@@ -171,9 +210,63 @@ class UISeleccionEmpresa(ttk.Frame):
         ttk.Button(bar, text="Nueva empresa", style="Primary.TButton", command=self.controller.nueva).pack(side=tk.LEFT)
         ttk.Button(bar, text="Editar empresa", style="Primary.TButton", command=self.controller.editar).pack(side=tk.LEFT, padx=6)
         ttk.Button(bar, text="Copiar empresa", style="Primary.TButton", command=self.controller.copiar).pack(side=tk.LEFT, padx=6)
-        ttk.Button(bar, text="Eliminar empresa", style="Primary.TButton", command=self.controller.eliminar).pack(side=tk.LEFT, padx=6)
+        ttk.Button(bar, text="Eliminar empresa", style="Danger.TButton", command=self.controller.eliminar).pack(side=tk.LEFT, padx=6)
         ttk.Button(bar, text="Terceros", style="Primary.TButton", command=self.controller.terceros).pack(side=tk.LEFT, padx=6)
-        ttk.Button(bar, text="Continuar", style="Primary.TButton", command=self.controller.continuar).pack(side=tk.RIGHT)
+        ttk.Button(bar, text="Contabilidad", style="Primary.TButton", command=self.controller.continuar_contabilidad).pack(side=tk.RIGHT, padx=(6,0))
+        ttk.Button(bar, text="Facturacion", style="Primary.TButton", command=self.controller.continuar_facturacion).pack(side=tk.RIGHT)
+
+        sep = ttk.Separator(self, orient="horizontal")
+        sep.pack(fill=tk.X, padx=10, pady=(6, 4))
+
+        ttk.Label(self, text="Facturas (todas las empresas)", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(4, 0))
+
+        fact_filter = ttk.Frame(self)
+        fact_filter.pack(fill=tk.X, padx=10, pady=(4, 0))
+        ttk.Label(fact_filter, text="Ejercicio").pack(side=tk.LEFT)
+        self.var_fact_ejercicio = tk.StringVar(value="Todos")
+        self.cb_fact_ejercicio = ttk.Combobox(fact_filter, textvariable=self.var_fact_ejercicio, width=8, state="readonly")
+        self.cb_fact_ejercicio.pack(side=tk.LEFT, padx=6)
+        self.cb_fact_ejercicio.bind("<<ComboboxSelected>>", lambda e: self.controller.apply_facturas_filter())
+
+        ttk.Label(fact_filter, text="Buscar empresa").pack(side=tk.LEFT, padx=(12, 0))
+        self.var_fact_empresa_text = tk.StringVar()
+        entry_fact_empresa_text = ttk.Entry(fact_filter, textvariable=self.var_fact_empresa_text, width=36)
+        entry_fact_empresa_text.pack(side=tk.LEFT, padx=6, fill=tk.X, expand=True)
+        self.var_fact_empresa_text.trace_add("write", lambda *_: self.controller.apply_facturas_filter())
+        ttk.Button(fact_filter, text="Limpiar", command=lambda: self.var_fact_empresa_text.set("")).pack(side=tk.LEFT, padx=6)
+        ttk.Button(fact_filter, text="Actualizar listado", style="Primary.TButton", command=self.controller.refresh_facturas_global).pack(side=tk.LEFT, padx=(6, 0))
+
+        fact_frame = ttk.Frame(self)
+        fact_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=6)
+        self.tv_facturas = ttk.Treeview(
+            fact_frame,
+            columns=("empresa", "empresa_nombre", "ejercicio", "serie", "numero", "fecha", "cliente", "total", "generada", "fecha_gen", "enviado", "fecha_envio"),
+            show="headings",
+            height=10,
+        )
+        for c, t, w, align in (
+            ("empresa", "Codigo", 90, "w"),
+            ("empresa_nombre", "Empresa", 200, "w"),
+            ("ejercicio", "Ejercicio", 80, "center"),
+            ("serie", "Serie", 70, "w"),
+            ("numero", "Numero", 120, "w"),
+            ("fecha", "Fecha", 100, "w"),
+            ("cliente", "Cliente", 240, "w"),
+            ("total", "Total", 100, "e"),
+            ("generada", "Generada", 90, "center"),
+            ("fecha_gen", "Fecha gen.", 110, "w"),
+            ("enviado", "Enviado", 90, "center"),
+            ("fecha_envio", "Fecha envio", 110, "w"),
+        ):
+            self.tv_facturas.heading(c, text=t, command=lambda col=c: self._sort_facturas_global(col))
+            self.tv_facturas.column(c, width=w, anchor=align)
+
+        f_ys = ttk.Scrollbar(fact_frame, orient="vertical", command=self.tv_facturas.yview)
+        self.tv_facturas.configure(yscrollcommand=f_ys.set)
+        self.tv_facturas.grid(row=0, column=0, sticky="nsew")
+        f_ys.grid(row=0, column=1, sticky="ns")
+        fact_frame.columnconfigure(0, weight=1)
+        fact_frame.rowconfigure(0, weight=1)
 
     def get_filter_text(self):
         return self.var_buscar.get()
@@ -232,6 +325,81 @@ class UISeleccionEmpresa(ttk.Frame):
             filetypes=[("CSV", "*.csv"), ("Todos", "*.*")],
         )
 
+    # ----- Facturas globales -----
+    def set_facturas_filters(self, ejercicios):
+        vals_ej = ["Todos"] + [str(e) for e in ejercicios]
+        self.cb_fact_ejercicio["values"] = vals_ej
+        if self.var_fact_ejercicio.get() not in vals_ej:
+            self.var_fact_ejercicio.set(vals_ej[0])
+
+    def get_facturas_filters(self):
+        eje_txt = (self.var_fact_ejercicio.get() or "").strip()
+        eje = None
+        if eje_txt and eje_txt.lower() != "todos":
+            try:
+                eje = int(eje_txt)
+            except Exception:
+                eje = None
+        empresa_txt = (self.var_fact_empresa_text.get() or "").strip().lower()
+        return eje, empresa_txt
+
+    def clear_facturas(self):
+        self.tv_facturas.delete(*self.tv_facturas.get_children())
+
+    def insert_factura_row(self, fac, total, empresa_nombre=""):
+        self.tv_facturas.insert(
+            "",
+            tk.END,
+            values=(
+                fac.get("codigo_empresa", ""),
+                empresa_nombre,
+                fac.get("ejercicio", ""),
+                fac.get("serie", ""),
+                fac.get("numero", ""),
+                _to_fecha_ui_or_blank(fac.get("fecha_asiento", "")),
+                fac.get("nombre", ""),
+                f"{total:.2f}",
+                "Si" if fac.get("generada") else "No",
+                fac.get("fecha_generacion", ""),
+                "Si" if fac.get("enviado") else "No",
+                fac.get("fecha_envio", ""),
+            ),
+        )
+
+    def _sort_facturas_global(self, col):
+        items = []
+        for iid in self.tv_facturas.get_children(""):
+            val = self.tv_facturas.set(iid, col)
+            items.append((self._fact_sort_key(col, val), iid))
+        reverse = self._fact_sort_state.get(col) == "asc"
+        items.sort(key=lambda x: x[0], reverse=reverse)
+        for idx, (_, iid) in enumerate(items):
+            self.tv_facturas.move(iid, "", idx)
+        self._fact_sort_state[col] = "desc" if reverse else "asc"
+
+    def _fact_sort_key(self, col, val):
+        if col in ("ejercicio",):
+            try:
+                return int(val)
+            except Exception:
+                return -1
+        if col in ("total",):
+            try:
+                return float(str(val).replace(",", "."))
+            except Exception:
+                return 0.0
+        if col in ("fecha",):
+            try:
+                d = _parse_date_ui(str(val))
+                return d.toordinal()
+            except Exception:
+                return 0
+        if col in ("fecha_gen", "fecha_envio"):
+            return _parse_datetime_ui(str(val)).timestamp()
+        if col in ("enviado", "generada"):
+            return 1 if str(val).lower() == "si" else 0
+        return str(val).lower()
+
     def show_info(self, title, message):
         messagebox.showinfo(title, message)
 
@@ -243,6 +411,9 @@ class UISeleccionEmpresa(ttk.Frame):
 
     def ask_yes_no(self, title, message):
         return messagebox.askyesno(title, message)
+
+    def ask_admin_password(self):
+        return askstring("Gest2A3Eco", "Contraseña de administrador:", show="*")
 
     def open_empresa_dialog(self, titulo, empresa=None):
         dlg = EmpresaDialog(self, titulo, empresa)

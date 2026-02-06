@@ -29,21 +29,24 @@ class AppController:
     def build_seleccion(self, parent):
         return UISeleccionEmpresa(parent, self._gestor, self.on_empresa_ok)
 
-    def on_empresa_ok(self, codigo, ejercicio, nombre):
-        self.show(lambda parent: self.build_dashboard(parent, codigo, ejercicio, nombre))
+    def on_empresa_ok(self, codigo, ejercicio, nombre, modulo="facturacion"):
+        self.show(lambda parent: self.build_dashboard(parent, codigo, ejercicio, nombre, modulo))
 
-    def build_dashboard(self, parent, codigo, ejercicio, nombre):
+    def build_dashboard(self, parent, codigo, ejercicio, nombre, modulo):
+        if modulo == "contabilidad":
+            nb = ttk.Notebook(parent)
+            nb.add(
+                UIPlantillasEmpresa(nb, self._gestor, codigo, ejercicio, nombre),
+                text="Plantillas",
+            )
+            nb.add(
+                UIProcesos(nb, self._gestor, codigo, ejercicio, nombre),
+                text="Generar ficheros",
+            )
+            return nb
         nb = ttk.Notebook(parent)
-        nb.add(
-            UIPlantillasEmpresa(nb, self._gestor, codigo, ejercicio, nombre),
-            text="Plantillas",
-        )
         nb.add(
             UIFacturasEmitidas(nb, self._gestor, codigo, ejercicio, nombre),
             text="Facturas emitidas",
-        )
-        nb.add(
-            UIProcesos(nb, self._gestor, codigo, ejercicio, nombre),
-            text="Generar ficheros",
         )
         return nb

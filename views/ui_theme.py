@@ -121,6 +121,26 @@ def aplicar_tema(root: tk.Tk) -> None:
         padding=(10, 4),
     )
 
+    style.configure(
+        "Danger.TButton",
+        font=("Segoe UI", 10, "bold"),
+        padding=(12, 5),
+        foreground="#ffffff",
+        background="#D64545",
+        borderwidth=0,
+    )
+    style.map(
+        "Danger.TButton",
+        background=[
+            ("active", "#bb3434"),
+            ("pressed", "#a52d2d"),
+        ],
+        foreground=[
+            ("active", "#ffffff"),
+            ("pressed", "#ffffff"),
+        ],
+    )
+
     # ====== ENTRADAS ======
     style.configure(
         "TEntry",

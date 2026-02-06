@@ -3,8 +3,9 @@ import calendar
 import sys
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog
 from datetime import date, datetime
+from utils.utilidades import aplicar_descuento_total_lineas
 
 from controllers.ui_facturas_emitidas_controller import FacturasEmitidasController
 from controllers.factura_dialog_controller import FacturaDialogController
@@ -420,6 +421,186 @@ class TercerosEmpresaDialog(tk.Toplevel):
     def show_error(self, title, message):
         messagebox.showerror(title, message)
 
+    def ask_share_channel(self):
+        dlg = tk.Toplevel(self)
+        dlg.title("Compartir factura")
+        dlg.resizable(False, False)
+        result = {"value": None}
+
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="Selecciona canal para compartir:").pack(anchor="w", pady=(0, 8))
+
+        def _set(val):
+            result["value"] = val
+            dlg.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x")
+        ttk.Button(btns, text="Email", style="Primary.TButton", command=lambda: _set("email")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="WhatsApp", style="Primary.TButton", command=lambda: _set("whatsapp")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="Cancelar", command=dlg.destroy).pack(side=tk.LEFT, padx=4)
+
+        dlg.grab_set()
+        dlg.transient(self)
+        dlg.wait_window(dlg)
+        return result["value"]
+
+    def ask_email(self, default=""):
+        return simpledialog.askstring("Gest2A3Eco", "Email de envio:", initialvalue=default)
+
+    def copy_to_clipboard(self, text: str):
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self.update()
+        except Exception:
+            pass
+
+    def ask_share_channel(self):
+        dlg = tk.Toplevel(self)
+        dlg.title("Compartir factura")
+        dlg.resizable(False, False)
+        result = {"value": None}
+
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="Selecciona canal para compartir:").pack(anchor="w", pady=(0, 8))
+
+        def _set(val):
+            result["value"] = val
+            dlg.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x")
+        ttk.Button(btns, text="Email", style="Primary.TButton", command=lambda: _set("email")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="WhatsApp", style="Primary.TButton", command=lambda: _set("whatsapp")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="Cancelar", command=dlg.destroy).pack(side=tk.LEFT, padx=4)
+
+        dlg.grab_set()
+        dlg.transient(self)
+        dlg.wait_window(dlg)
+        return result["value"]
+
+    def ask_email(self, default=""):
+        return simpledialog.askstring("Gest2A3Eco", "Email de envio:", initialvalue=default)
+
+    def copy_to_clipboard(self, text: str):
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self.update()
+        except Exception:
+            pass
+
+    def ask_share_channel(self):
+        dlg = tk.Toplevel(self)
+        dlg.title("Compartir factura")
+        dlg.resizable(False, False)
+        result = {"value": None}
+
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="Selecciona canal para compartir:").pack(anchor="w", pady=(0, 8))
+
+        def _set(val):
+            result["value"] = val
+            dlg.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x")
+        ttk.Button(btns, text="Email", style="Primary.TButton", command=lambda: _set("email")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="WhatsApp", style="Primary.TButton", command=lambda: _set("whatsapp")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="Cancelar", command=dlg.destroy).pack(side=tk.LEFT, padx=4)
+
+        dlg.grab_set()
+        dlg.transient(self)
+        dlg.wait_window(dlg)
+        return result["value"]
+
+    def ask_email(self, default=""):
+        return simpledialog.askstring("Gest2A3Eco", "Email de envio:", initialvalue=default)
+
+    def copy_to_clipboard(self, text: str):
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self.update()
+        except Exception:
+            pass
+
+    def ask_share_channel(self):
+        dlg = tk.Toplevel(self)
+        dlg.title("Compartir factura")
+        dlg.resizable(False, False)
+        result = {"value": None}
+
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="Selecciona canal para compartir:").pack(anchor="w", pady=(0, 8))
+
+        def _set(val):
+            result["value"] = val
+            dlg.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x")
+        ttk.Button(btns, text="Email", style="Primary.TButton", command=lambda: _set("email")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="WhatsApp", style="Primary.TButton", command=lambda: _set("whatsapp")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="Cancelar", command=dlg.destroy).pack(side=tk.LEFT, padx=4)
+
+        dlg.grab_set()
+        dlg.transient(self)
+        dlg.wait_window(dlg)
+        return result["value"]
+
+    def ask_email(self, default=""):
+        return simpledialog.askstring("Gest2A3Eco", "Email de envio:", initialvalue=default)
+
+    def copy_to_clipboard(self, text: str):
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self.update()
+        except Exception:
+            pass
+
+    def ask_share_channel(self):
+        dlg = tk.Toplevel(self)
+        dlg.title("Compartir factura")
+        dlg.resizable(False, False)
+        result = {"value": None}
+
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="Selecciona canal para compartir:").pack(anchor="w", pady=(0, 8))
+
+        def _set(val):
+            result["value"] = val
+            dlg.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x")
+        ttk.Button(btns, text="Email", style="Primary.TButton", command=lambda: _set("email")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="WhatsApp", style="Primary.TButton", command=lambda: _set("whatsapp")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="Cancelar", command=dlg.destroy).pack(side=tk.LEFT, padx=4)
+
+        dlg.grab_set()
+        dlg.transient(self)
+        dlg.wait_window(dlg)
+        return result["value"]
+
+    def ask_email(self, default=""):
+        return simpledialog.askstring("Gest2A3Eco", "Email de envio:", initialvalue=default)
+
+    def copy_to_clipboard(self, text: str):
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self.update()
+        except Exception:
+            pass
+
     def ask_save_dat_path(self, initialfile):
         return filedialog.asksaveasfilename(
             title="Guardar fichero suenlace.dat",
@@ -548,6 +729,14 @@ class FacturaDialog(tk.Toplevel):
                     pass
         self.var_ret_manual = tk.BooleanVar(value=self._retencion_manual)
         self._retencion_silent = False
+        dtipo = (f.get("descuento_total_tipo") or "").strip().lower()
+        dval = f.get("descuento_total_valor", "")
+        self.var_desc_total_tipo = tk.StringVar(value="Ninguno")
+        if dtipo == "pct":
+            self.var_desc_total_tipo.set("%")
+        elif dtipo == "imp":
+            self.var_desc_total_tipo.set("€")
+        self.var_desc_total_valor = tk.StringVar(value=str(dval) if dval not in (None, "") else "")
         self.var_subcuenta = tk.StringVar(value=f.get("subcuenta_cliente", ""))
         self.var_forma_pago = tk.StringVar(value=f.get("forma_pago", ""))
         self.var_cuenta_banco = tk.StringVar(value=f.get("cuenta_bancaria", ""))
@@ -648,6 +837,22 @@ class FacturaDialog(tk.Toplevel):
         self.entry_ret_base.pack(side=tk.LEFT, padx=4)
         row += 1
 
+        desc_row = ttk.Frame(frm)
+        desc_row.grid(row=row, column=0, columnspan=3, sticky="w", padx=4, pady=(2, 2))
+        ttk.Label(desc_row, text="Descuento total").pack(side=tk.LEFT, padx=(0, 6))
+        self.cb_desc_total = ttk.Combobox(
+            desc_row,
+            textvariable=self.var_desc_total_tipo,
+            values=["Ninguno", "%", "€"],
+            width=10,
+            state="readonly",
+        )
+        self.cb_desc_total.pack(side=tk.LEFT, padx=(0, 6))
+        self.entry_desc_total = ttk.Entry(desc_row, textvariable=self.var_desc_total_valor, width=12)
+        self.entry_desc_total.pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Label(desc_row, text="(aplica sobre base)").pack(side=tk.LEFT)
+        row += 1
+
         ttk.Label(frm, text="Lineas").grid(row=row, column=0, columnspan=3, sticky="w", pady=(10, 4))
         row += 1
 
@@ -656,26 +861,31 @@ class FacturaDialog(tk.Toplevel):
             "unidades": tk.StringVar(),
             "precio": tk.StringVar(),
             "iva": tk.StringVar(),
+            "desc_tipo": tk.StringVar(),
+            "desc_val": tk.StringVar(),
         }
         editor = ttk.Frame(frm)
         editor.grid(row=row, column=0, columnspan=3, sticky="ew", padx=4)
-        editor.columnconfigure(9, weight=1)
+        editor.columnconfigure(12, weight=1)
         ttk.Label(editor, text="Concepto").grid(row=0, column=0, padx=4, pady=2, sticky="w")
         ttk.Entry(editor, textvariable=self.line_vars["concepto"], width=26).grid(row=0, column=1, padx=4, pady=2)
         ttk.Label(editor, text="Unidades").grid(row=0, column=2, padx=4, pady=2, sticky="w")
         ttk.Entry(editor, textvariable=self.line_vars["unidades"], width=10).grid(row=0, column=3, padx=4, pady=2)
         ttk.Label(editor, text="Precio").grid(row=0, column=4, padx=4, pady=2, sticky="w")
         ttk.Entry(editor, textvariable=self.line_vars["precio"], width=10).grid(row=0, column=5, padx=4, pady=2)
-        ttk.Label(editor, text="IVA %").grid(row=0, column=6, padx=4, pady=2, sticky="w")
-        ttk.Combobox(editor, textvariable=self.line_vars["iva"], values=[str(x) for x in IVA_OPCIONES], width=6, state="readonly").grid(row=0, column=7, padx=4, pady=2)
-        ttk.Button(editor, text="Añadir/Actualizar", style="Primary.TButton", command=self._add_update_linea).grid(row=0, column=8, padx=6)
-        ttk.Button(editor, text="Limpiar", command=self._clear_line_editor).grid(row=0, column=9, padx=4)
+        ttk.Label(editor, text="Desc.").grid(row=0, column=6, padx=4, pady=2, sticky="w")
+        ttk.Combobox(editor, textvariable=self.line_vars["desc_tipo"], values=["", "%", "€"], width=4, state="readonly").grid(row=0, column=7, padx=4, pady=2)
+        ttk.Entry(editor, textvariable=self.line_vars["desc_val"], width=8).grid(row=0, column=8, padx=4, pady=2)
+        ttk.Label(editor, text="IVA %").grid(row=0, column=9, padx=4, pady=2, sticky="w")
+        ttk.Combobox(editor, textvariable=self.line_vars["iva"], values=[str(x) for x in IVA_OPCIONES], width=6, state="readonly").grid(row=0, column=10, padx=4, pady=2)
+        ttk.Button(editor, text="Añadir/Actualizar", style="Primary.TButton", command=self._add_update_linea).grid(row=0, column=11, padx=6)
+        ttk.Button(editor, text="Limpiar", command=self._clear_line_editor).grid(row=0, column=12, padx=4)
         row += 1
 
         self.tv = ttk.Treeview(
             frm,
-            columns=("concepto", "unidades", "precio", "base", "pct_iva", "cuota_iva", "pct_irpf", "cuota_irpf"),
-            displaycolumns=("concepto", "unidades", "precio", "base", "pct_iva", "cuota_iva"),
+            columns=("concepto", "unidades", "precio", "desc", "base", "pct_iva", "cuota_iva", "pct_irpf", "cuota_irpf", "desc_tipo", "desc_val"),
+            displaycolumns=("concepto", "unidades", "precio", "desc", "base", "pct_iva", "cuota_iva"),
             show="headings",
             height=8,
             selectmode="browse",
@@ -684,6 +894,7 @@ class FacturaDialog(tk.Toplevel):
             "concepto": "Concepto",
             "unidades": "Unid",
             "precio": "P. unit",
+            "desc": "Desc.",
             "base": "Base",
             "pct_iva": "% IVA",
             "cuota_iva": "Cuota IVA",
@@ -739,6 +950,8 @@ class FacturaDialog(tk.Toplevel):
             self._insert_linea(ln)
         self.var_ret_pct.trace_add("write", lambda *_: self._on_retencion_pct_change())
         self.var_ret_base.trace_add("write", lambda *_: self._on_retencion_base_change())
+        self.var_desc_total_tipo.trace_add("write", lambda *_: self._refresh_totales())
+        self.var_desc_total_valor.trace_add("write", lambda *_: self._refresh_totales())
         self._update_retencion_state()
         if self.var_ret_aplica.get():
             self.controller.apply_retencion_header()
@@ -821,8 +1034,16 @@ class FacturaDialog(tk.Toplevel):
         self.line_vars["concepto"].set(vals[0])
         self.line_vars["unidades"].set(vals[1])
         self.line_vars["precio"].set(vals[2])
-        if len(vals) > 4:
-            self.line_vars["iva"].set(vals[4])
+        if len(vals) > 3:
+            dt = vals[9] if len(vals) > 9 else ""
+            if dt == "pct":
+                dt = "%"
+            elif dt == "imp":
+                dt = "€"
+            self.line_vars["desc_tipo"].set(dt)
+            self.line_vars["desc_val"].set(vals[10] if len(vals) > 10 else "")
+        if len(vals) > 5:
+            self.line_vars["iva"].set(vals[5])
 
     def _on_retencion_toggle(self):
         self._update_retencion_state()
@@ -899,18 +1120,25 @@ class FacturaDialog(tk.Toplevel):
         precio = _to_float(self.line_vars["precio"].get())
         iva_raw = self.line_vars["iva"].get()
         iva = _to_float(iva_raw)
-        return concepto, unidades, precio, iva, iva_raw
+        desc_tipo_ui = (self.line_vars["desc_tipo"].get() or "").strip()
+        desc_tipo = "pct" if desc_tipo_ui == "%" else "imp" if desc_tipo_ui == "€" else ""
+        desc_val = _to_float(self.line_vars["desc_val"].get())
+        return concepto, unidades, precio, iva, iva_raw, desc_tipo, desc_val
 
     def upsert_line_row(self, ln: dict):
+        desc_txt = self._format_desc(ln)
         vals = (
             ln["concepto"],
             f"{ln['unidades']:.2f}",
             f"{ln['precio']:.4f}",
+            desc_txt,
             f"{ln['base']:.2f}",
             f"{ln['pct_iva']:.2f}",
             f"{ln['cuota_iva']:.2f}",
             f"{ln['pct_irpf']:.2f}",
             f"{ln['cuota_irpf']:.2f}",
+            ln.get("descuento_tipo", ""),
+            f"{_round2(ln.get('descuento_valor')):.2f}",
         )
         sel = self.tv.selection()
         if sel:
@@ -919,15 +1147,19 @@ class FacturaDialog(tk.Toplevel):
             self.tv.insert("", tk.END, values=vals)
 
     def insert_line_row(self, ln: dict):
+        desc_txt = self._format_desc(ln)
         vals = (
             ln.get("concepto", ""),
             f"{_round2(ln.get('unidades')):.2f}",
             f"{_round4(ln.get('precio')):.4f}",
+            desc_txt,
             f"{_round2(ln.get('base')):.2f}",
             f"{_round2(ln.get('pct_iva')):.2f}",
             f"{_round2(ln.get('cuota_iva')):.2f}",
             f"{_round2(ln.get('pct_irpf')):.2f}",
             f"{_round2(ln.get('cuota_irpf')):.2f}",
+            ln.get("descuento_tipo", ""),
+            f"{_round2(ln.get('descuento_valor')):.2f}",
         )
         self.tv.insert("", tk.END, values=vals)
 
@@ -954,11 +1186,13 @@ class FacturaDialog(tk.Toplevel):
                     "concepto": vals[0],
                     "unidades": _round2(_to_float(vals[1])),
                     "precio": _round4(_to_float(vals[2])),
-                    "base": _round2(_to_float(vals[3])),
-                    "pct_iva": _round2(_to_float(vals[4])),
-                    "cuota_iva": _round2(_to_float(vals[5])),
-                    "pct_irpf": _round2(_to_float(vals[6])),
-                    "cuota_irpf": _round2(_to_float(vals[7])),
+                    "base": _round2(_to_float(vals[4])),
+                    "pct_iva": _round2(_to_float(vals[5])),
+                    "cuota_iva": _round2(_to_float(vals[6])),
+                    "pct_irpf": _round2(_to_float(vals[7])),
+                    "cuota_irpf": _round2(_to_float(vals[8])),
+                    "descuento_tipo": vals[9] if len(vals) > 9 else "",
+                    "descuento_valor": _round2(_to_float(vals[10])) if len(vals) > 10 else 0.0,
                     "pct_re": 0.0,
                     "cuota_re": 0.0,
                 }
@@ -1009,6 +1243,24 @@ class FacturaDialog(tk.Toplevel):
         self._retencion_silent = True
         self.var_ret_pct.set(value)
         self._retencion_silent = False
+
+    def get_descuento_total(self):
+        tipo_ui = (self.var_desc_total_tipo.get() or "").strip()
+        tipo = "pct" if tipo_ui == "%" else "imp" if tipo_ui == "€" else ""
+        try:
+            valor = _to_float(self.var_desc_total_valor.get())
+        except Exception:
+            valor = 0.0
+        return tipo, valor
+
+    def _format_desc(self, ln: dict) -> str:
+        t = (ln.get("descuento_tipo") or "").strip().lower()
+        v = _round2(ln.get("descuento_valor"))
+        if not t or not v:
+            return ""
+        if t == "pct":
+            return f"{v:.2f}%"
+        return f"{v:.2f}"
 
     def get_numero_factura(self):
         return self.var_numero.get().strip()
@@ -1116,10 +1368,11 @@ class UIFacturasEmitidas(ttk.Frame):
         ttk.Button(top, text="Terceros", command=self._terceros).pack(side=tk.LEFT, padx=12)
         ttk.Button(top, text="Exportar PDF", command=self._export_pdf).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Abrir PDF", command=self._abrir_pdf).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Compartir PDF", state="disabled").pack(side=tk.LEFT, padx=8)
 
         self.tv = ttk.Treeview(
             parent,
-            columns=("serie", "numero", "fecha", "cliente", "total", "generada", "fecha_gen"),
+            columns=("serie", "numero", "fecha", "cliente", "total", "generada", "fecha_gen", "enviado", "fecha_envio"),
             show="headings",
             selectmode="extended",
             height=12,
@@ -1132,6 +1385,8 @@ class UIFacturasEmitidas(ttk.Frame):
             ("total", "Total", 100, "e"),
             ("generada", "Generada", 90, "center"),
             ("fecha_gen", "Fecha gen.", 110, "w"),
+            ("enviado", "Enviado", 90, "center"),
+            ("fecha_envio", "Fecha envio", 110, "w"),
         ]
         for c, h, w, align in cols:
             self.tv.heading(c, text=h, command=lambda col=c: self._sort_facturas(col))
@@ -1219,10 +1474,16 @@ class UIFacturasEmitidas(ttk.Frame):
             self.tv_alb_detalle.column(c, width=90 if c == "concepto" else 70, anchor="e" if c != "concepto" else "w")
         self.tv_alb_detalle.pack(fill="x", expand=True, padx=6, pady=4)
 
+
     # ------------------- Datos -------------------
     def _compute_total(self, fac: dict) -> float:
         total = 0.0
-        for ln in fac.get("lineas", []):
+        lineas = aplicar_descuento_total_lineas(
+            fac.get("lineas", []),
+            fac.get("descuento_total_tipo"),
+            fac.get("descuento_total_valor"),
+        )
+        for ln in lineas:
             total += (
                 _to_float(ln.get("base"))
                 + _to_float(ln.get("cuota_iva"))
@@ -1252,6 +1513,7 @@ class UIFacturasEmitidas(ttk.Frame):
     def _refresh_albaranes(self):
         self.controller.refresh_albaranes()
 
+
     def clear_facturas(self):
         self.tv.delete(*self.tv.get_children())
         self.tv_detalle.delete(*self.tv_detalle.get_children())
@@ -1273,6 +1535,8 @@ class UIFacturasEmitidas(ttk.Frame):
                 f"{total:.2f}",
                 "Si" if fac.get("generada") else "No",
                 fac.get("fecha_generacion", ""),
+                "Si" if fac.get("enviado") else "No",
+                fac.get("fecha_envio", ""),
             ),
         )
 
@@ -1319,9 +1583,9 @@ class UIFacturasEmitidas(ttk.Frame):
             return _to_float(val)
         if col == "fecha":
             return _parse_date_ui(val) if val else date.min
-        if col == "fecha_gen":
+        if col in ("fecha_gen", "fecha_envio"):
             return self._parse_datetime(val)
-        if col == "generada":
+        if col in ("generada", "enviado"):
             return 1 if str(val).strip().lower() == "si" else 0
         if col == "numero":
             return self._numero_sort_key(val)
@@ -1483,6 +1747,9 @@ class UIFacturasEmitidas(ttk.Frame):
 
     def _abrir_pdf(self):
         self.controller.abrir_pdf()
+
+    def _compartir_pdf(self):
+        self.controller.compartir_pdf()
 
     def _generar(self):
         self.controller.generar_suenlace()

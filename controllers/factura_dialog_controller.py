@@ -1,6 +1,6 @@
 from datetime import date
 
-from utils.utilidades import validar_subcuenta_longitud
+from utils.utilidades import validar_subcuenta_longitud, aplicar_descuento_total_lineas
 
 
 class FacturaDialogController:
@@ -71,7 +71,10 @@ class FacturaDialogController:
     def refresh_totales(self):
         base = iva = 0.0
         resumen = {}
-        for ln in self._view.get_lineas():
+        lineas = self._view.get_lineas()
+        dtipo, dvalor = self._view.get_descuento_total()
+        lineas_calc = aplicar_descuento_total_lineas(lineas, dtipo, dvalor)
+        for ln in lineas_calc:
             base += ln["base"]
             iva += ln["cuota_iva"]
             pct = self._round2(ln.get("pct_iva", 0))
@@ -133,6 +136,8 @@ class FacturaDialogController:
             "retencion_pct": self._view.get_retencion_pct(),
             "retencion_base": self._view.get_retencion_base() if self._view.get_retencion_aplica() else None,
             "retencion_importe": self._view.get_retencion_importe() if self._view.get_retencion_aplica() else None,
+            "descuento_total_tipo": self._view.get_descuento_total()[0],
+            "descuento_total_valor": self._view.get_descuento_total()[1],
             "pdf_ref": self._factura.get("pdf_ref", ""),
             "lineas": lineas,
             "generada": self._factura.get("generada", False),
@@ -173,11 +178,26 @@ class FacturaDialogController:
         self._view.set_lineas(lineas)
 
     def _line_from_editor(self):
-        concepto, unidades, precio, iva, iva_raw = self._view.get_line_editor_values()
-        if not concepto or unidades == 0 or precio == 0 or iva_raw == "":
-            self._view.show_warning("Gest2A3Eco", "Completa concepto, unidades, precio e IVA.")
+        concepto, unidades, precio, iva, iva_raw, desc_tipo, desc_val = self._view.get_line_editor_values()
+        if not concepto or unidades == 0 or iva_raw == "":
+            self._view.show_warning("Gest2A3Eco", "Completa concepto, unidades e IVA.")
             return None
+        if precio == 0:
+            self._view.show_warning("Gest2A3Eco", "La linea tiene precio 0. Se guardara con importe 0.")
         base = self._round2(unidades * precio)
+        dtipo = (desc_tipo or "").strip().lower()
+        dval = self._round2(desc_val)
+        if dtipo in ("pct", "imp") and dval > 0:
+            if dtipo == "pct":
+                pct = min(max(dval, 0.0), 100.0)
+                if pct != dval:
+                    self._view.show_warning("Gest2A3Eco", "El descuento % se ha ajustado al rango 0-100.")
+                base = self._round2(base * (1.0 - pct / 100.0))
+            else:
+                if dval > base:
+                    self._view.show_warning("Gest2A3Eco", "El descuento supera la base. Se ajusta al maximo.")
+                    dval = base
+                base = self._round2(base - dval)
         cuota_iva = self._round2(base * iva / 100.0)
         return {
             "concepto": concepto,
@@ -186,6 +206,8 @@ class FacturaDialogController:
             "base": self._round2(base),
             "pct_iva": self._round2(iva),
             "cuota_iva": self._round2(cuota_iva),
+            "descuento_tipo": dtipo if dtipo in ("pct", "imp") else "",
+            "descuento_valor": self._round2(dval) if dtipo in ("pct", "imp") else 0.0,
             "pct_irpf": 0.0,
             "cuota_irpf": 0.0,
             "pct_re": 0.0,

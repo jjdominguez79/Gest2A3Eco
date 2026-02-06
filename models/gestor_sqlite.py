@@ -87,10 +87,16 @@ CREATE TABLE IF NOT EXISTS facturas_emitidas_docs (
   plantilla_word TEXT,
   pdf_path TEXT,
   pdf_ref TEXT,
+  pdf_path_a3 TEXT,
   retencion_aplica INTEGER,
   retencion_pct REAL,
   retencion_base REAL,
   retencion_importe REAL,
+  descuento_total_tipo TEXT,
+  descuento_total_valor REAL,
+  enviado INTEGER DEFAULT 0,
+  fecha_envio TEXT,
+  canal_envio TEXT,
   generada INTEGER DEFAULT 0,
   fecha_generacion TEXT,
   lineas_json TEXT
@@ -176,10 +182,16 @@ class GestorSQLite:
         self._ensure_column("facturas_emitidas_docs", "plantilla_word", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "pdf_path", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "pdf_ref", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "pdf_path_a3", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "retencion_aplica", "INTEGER")
         self._ensure_column("facturas_emitidas_docs", "retencion_pct", "REAL")
         self._ensure_column("facturas_emitidas_docs", "retencion_base", "REAL")
         self._ensure_column("facturas_emitidas_docs", "retencion_importe", "REAL")
+        self._ensure_column("facturas_emitidas_docs", "descuento_total_tipo", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "descuento_total_valor", "REAL")
+        self._ensure_column("facturas_emitidas_docs", "enviado", "INTEGER")
+        self._ensure_column("facturas_emitidas_docs", "fecha_envio", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "canal_envio", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "observaciones", "TEXT")
         self._ensure_column("albaranes_emitidas_docs", "forma_pago", "TEXT")
         self._ensure_column("albaranes_emitidas_docs", "cuenta_bancaria", "TEXT")
@@ -524,9 +536,98 @@ class GestorSQLite:
             d = self._row_to_dict(r)
             d["lineas"] = json.loads(d.get("lineas_json") or "[]")
             d["generada"] = bool(d.get("generada"))
+            d["enviado"] = bool(d.get("enviado"))
             d["retencion_aplica"] = bool(d.get("retencion_aplica"))
             d.pop("lineas_json", None)
             out.append(d)
+        return out
+
+    def listar_facturas_emitidas_global(self, codigo_empresa: str, ejercicio: int | None = None, tercero_id: str | None = None):
+        params = [codigo_empresa]
+        where = ["codigo_empresa=?"]
+        if ejercicio is not None:
+            where.append("ejercicio=?")
+            params.append(_ej_val(ejercicio))
+        if tercero_id:
+            where.append("tercero_id=?")
+            params.append(tercero_id)
+        sql = "SELECT * FROM facturas_emitidas_docs"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY ejercicio, fecha_asiento, numero"
+        cur = self.conn.execute(sql, tuple(params))
+        out = []
+        for r in cur.fetchall():
+            d = self._row_to_dict(r)
+            d["lineas"] = json.loads(d.get("lineas_json") or "[]")
+            d["generada"] = bool(d.get("generada"))
+            d["enviado"] = bool(d.get("enviado"))
+            d["retencion_aplica"] = bool(d.get("retencion_aplica"))
+            d.pop("lineas_json", None)
+            out.append(d)
+        return out
+
+    def listar_facturas_emitidas_todas(self, codigo_empresa: str | None = None, ejercicio: int | None = None, tercero_id: str | None = None):
+        params = []
+        where = []
+        if codigo_empresa:
+            where.append("codigo_empresa=?")
+            params.append(codigo_empresa)
+        if ejercicio is not None:
+            where.append("ejercicio=?")
+            params.append(_ej_val(ejercicio))
+        if tercero_id:
+            where.append("tercero_id=?")
+            params.append(tercero_id)
+        sql = "SELECT * FROM facturas_emitidas_docs"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY codigo_empresa, ejercicio, fecha_asiento, numero"
+        cur = self.conn.execute(sql, tuple(params))
+        out = []
+        for r in cur.fetchall():
+            d = self._row_to_dict(r)
+            d["lineas"] = json.loads(d.get("lineas_json") or "[]")
+            d["generada"] = bool(d.get("generada"))
+            d["enviado"] = bool(d.get("enviado"))
+            d["retencion_aplica"] = bool(d.get("retencion_aplica"))
+            d.pop("lineas_json", None)
+            out.append(d)
+        return out
+
+    def listar_ejercicios_facturas_emitidas(self, codigo_empresa: str):
+        cur = self.conn.execute(
+            "SELECT DISTINCT ejercicio FROM facturas_emitidas_docs WHERE codigo_empresa=? ORDER BY ejercicio",
+            (codigo_empresa,),
+        )
+        return [r["ejercicio"] for r in cur.fetchall() if r["ejercicio"] is not None]
+
+    def listar_clientes_facturas_emitidas(self, codigo_empresa: str, ejercicio: int | None = None):
+        params = [codigo_empresa]
+        where = ["codigo_empresa=?"]
+        if ejercicio is not None:
+            where.append("ejercicio=?")
+            params.append(_ej_val(ejercicio))
+        sql = "SELECT tercero_id, nombre, nif FROM facturas_emitidas_docs"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY nombre"
+        cur = self.conn.execute(sql, tuple(params))
+        seen = {}
+        for r in cur.fetchall():
+            tid = str(r["tercero_id"] or "").strip()
+            key = tid or str(r["nombre"] or "").strip().upper()
+            if not key:
+                continue
+            if key in seen:
+                continue
+            seen[key] = {
+                "tercero_id": tid,
+                "nombre": r["nombre"] or "",
+                "nif": r["nif"] or "",
+            }
+        out = list(seen.values())
+        out.sort(key=lambda d: (d.get("nombre") or "").lower())
         return out
 
     def upsert_factura_emitida(self, factura: dict):
@@ -540,9 +641,9 @@ class GestorSQLite:
             INSERT INTO facturas_emitidas_docs
             (id, codigo_empresa, ejercicio, tercero_id, serie, numero, numero_largo_sii,
              fecha_asiento, fecha_expedicion, fecha_operacion, nif, nombre, descripcion, observaciones,
-             subcuenta_cliente, forma_pago, cuenta_bancaria, plantilla_word, pdf_path, pdf_ref, retencion_aplica, retencion_pct,
-             retencion_base, retencion_importe, generada, fecha_generacion, lineas_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             subcuenta_cliente, forma_pago, cuenta_bancaria, plantilla_word, pdf_path, pdf_ref, pdf_path_a3, retencion_aplica, retencion_pct,
+             retencion_base, retencion_importe, descuento_total_tipo, descuento_total_valor, enviado, fecha_envio, canal_envio, generada, fecha_generacion, lineas_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -563,10 +664,16 @@ class GestorSQLite:
                 plantilla_word=excluded.plantilla_word,
                 pdf_path=excluded.pdf_path,
                 pdf_ref=excluded.pdf_ref,
+                pdf_path_a3=excluded.pdf_path_a3,
                 retencion_aplica=excluded.retencion_aplica,
                 retencion_pct=excluded.retencion_pct,
                 retencion_base=excluded.retencion_base,
                 retencion_importe=excluded.retencion_importe,
+                descuento_total_tipo=excluded.descuento_total_tipo,
+                descuento_total_valor=excluded.descuento_total_valor,
+                enviado=excluded.enviado,
+                fecha_envio=excluded.fecha_envio,
+                canal_envio=excluded.canal_envio,
                 generada=excluded.generada,
                 fecha_generacion=excluded.fecha_generacion,
                 lineas_json=excluded.lineas_json
@@ -592,10 +699,16 @@ class GestorSQLite:
                 factura.get("plantilla_word"),
                 factura.get("pdf_path"),
                 factura.get("pdf_ref"),
+                factura.get("pdf_path_a3"),
                 1 if factura.get("retencion_aplica") else 0,
                 factura.get("retencion_pct"),
                 factura.get("retencion_base"),
                 factura.get("retencion_importe"),
+                factura.get("descuento_total_tipo"),
+                factura.get("descuento_total_valor"),
+                1 if factura.get("enviado") else 0,
+                factura.get("fecha_envio"),
+                factura.get("canal_envio"),
                 1 if factura.get("generada") else 0,
                 factura.get("fecha_generacion"),
                 json.dumps(factura.get("lineas", []), ensure_ascii=False),
@@ -619,6 +732,13 @@ class GestorSQLite:
         self.conn.execute(
             f"UPDATE facturas_emitidas_docs SET generada=1, fecha_generacion=? WHERE codigo_empresa=? AND ejercicio=? AND id IN ({qmarks})",
             (fecha, codigo_empresa, _ej_val(ejercicio), *ids),
+        )
+        self.conn.commit()
+
+    def marcar_factura_emitida_enviada(self, codigo_empresa: str, factura_id: str, fecha: str, canal: str | None, ejercicio: int):
+        self.conn.execute(
+            "UPDATE facturas_emitidas_docs SET enviado=1, fecha_envio=?, canal_envio=? WHERE codigo_empresa=? AND ejercicio=? AND id=?",
+            (fecha, canal, codigo_empresa, _ej_val(ejercicio), factura_id),
         )
         self.conn.commit()
 
