@@ -477,3 +477,29 @@ class GestorPlantillas:
                 return
         arr.append(rel)
         self.save()
+
+    def listar_empresas_de_tercero(self, tercero_id: str):
+        tid = str(tercero_id)
+        empresas = self.data.get("empresas", [])
+        resultado = []
+        for rel in self.data.get("terceros_empresas", []):
+            if str(rel.get("tercero_id")) != tid:
+                continue
+            codigo = rel.get("codigo_empresa")
+            ejercicio = rel.get("ejercicio")
+            emp = next(
+                (
+                    e for e in empresas
+                    if e.get("codigo") == codigo and (ejercicio is None or _ej_val(e.get("ejercicio")) == _ej_val(ejercicio))
+                ),
+                None,
+            )
+            resultado.append(
+                {
+                    "codigo": codigo,
+                    "nombre": (emp or {}).get("nombre", ""),
+                    "ejercicio": ejercicio if ejercicio is not None else (emp or {}).get("ejercicio"),
+                }
+            )
+        resultado.sort(key=lambda r: (str(r.get("codigo") or ""), _ej_val(r.get("ejercicio")) or 0))
+        return resultado

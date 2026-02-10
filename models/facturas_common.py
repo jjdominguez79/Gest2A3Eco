@@ -601,7 +601,8 @@ def render_emitidas_detalle_256(*,
     cuenta_iva2: str = "",
     cuenta_recargo2: str = "",
     impreso: str = "",
-    operacion_sujeta_iva: bool = True
+    operacion_sujeta_iva: bool = True,
+    keep_sign: bool = False,
 ) -> str:
     
     buf = [" "] * 256
@@ -620,13 +621,24 @@ def render_emitidas_detalle_256(*,
     _set_slice(buf, 68, 69, ("U" if es_ultimo else "M"))
     _set_slice(buf, 69, 99, _s(desc_apunte)[:30])
     _set_slice(buf, 99, 101, _s(subtipo).rjust(2, "0")[-2:])
-    _set_slice(buf, 101, 115, _importe_14_pos(base))         # 102-115
+    if keep_sign:
+        base_fmt = _importe_14_signed(base)
+        iva_fmt = _importe_14_signed(cuota_iva)
+        re_fmt = _importe_14_signed(cuota_re)
+        ret_fmt = _importe_14_signed(cuota_ret)
+    else:
+        base_fmt = _importe_14_pos(base)
+        iva_fmt = _importe_14_pos(cuota_iva)
+        re_fmt = _importe_14_pos(cuota_re)
+        ret_fmt = _importe_14_pos(cuota_ret)
+
+    _set_slice(buf, 101, 115, base_fmt)         # 102-115
     _set_slice(buf, 115, 120, _porc_5(pct_iva))              # 116-120
-    _set_slice(buf, 120, 134, _importe_14_pos(cuota_iva))    # 121-134
+    _set_slice(buf, 120, 134, iva_fmt)    # 121-134
     _set_slice(buf, 134, 139, _porc_5(pct_re))               # 135-139
-    _set_slice(buf, 139, 153, _importe_14_pos(cuota_re))     # 140-153
+    _set_slice(buf, 139, 153, re_fmt)     # 140-153
     _set_slice(buf, 153, 158, _porc_5(pct_ret))              # 154-158
-    _set_slice(buf, 158, 172, _importe_14_pos(cuota_ret))    # 159-172
+    _set_slice(buf, 158, 172, ret_fmt)    # 159-172
     _set_slice(buf, 172, 174, _s(impreso)[:2])
     _set_slice(buf, 174, 175, "S" if operacion_sujeta_iva else "N")
     _set_slice(buf, 175, 176, "")

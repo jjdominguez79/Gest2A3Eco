@@ -10,16 +10,21 @@ class TercerosGlobalController:
         self._view.set_terceros(self._terceros_cache)
         self._empresas_cache = self._gestor.listar_empresas()
         self._view.set_empresas(self._empresas_cache)
+        self._view.set_empresas_asignadas([])
 
     def nuevo(self):
         result = self._view.open_tercero_ficha(None)
         if result:
+            if not self._nif_valido(result.get("nif")):
+                self._view.show_warning("Gest2A3Eco", "NIF/CIF/NIE invalido. Revisa el formato.")
+                return
             if self._nif_duplicado(result.get("nif")):
                 self._view.show_warning("Gest2A3Eco", "Ya existe un tercero con ese CIF/NIF.")
                 return
             tid = self._gestor.upsert_tercero(result)
             self.refresh()
             self._view.select_tercero(str(tid))
+            self.load_empresas_asignadas()
 
     def editar(self):
         tid = self._view.get_selected_tercero_id()
@@ -29,11 +34,16 @@ class TercerosGlobalController:
         result = self._view.open_tercero_ficha(ter)
         if result:
             result["id"] = tid
+            if not self._nif_valido(result.get("nif")):
+                self._view.show_warning("Gest2A3Eco", "NIF/CIF/NIE invalido. Revisa el formato.")
+                return
             if self._nif_duplicado(result.get("nif"), exclude_id=tid):
                 self._view.show_warning("Gest2A3Eco", "Ya existe un tercero con ese CIF/NIF.")
                 return
             self._gestor.upsert_tercero(result)
             self.refresh()
+            self._view.select_tercero(str(tid))
+            self.load_empresas_asignadas()
 
     def eliminar(self):
         tid = self._view.get_selected_tercero_id()
@@ -76,6 +86,15 @@ class TercerosGlobalController:
             "Tercero asignado a los ejercicios seleccionados.\n"
             "Recomendacion: traspasa los terceros a A3 desde la pantalla de terceros de empresa.",
         )
+        self.load_empresas_asignadas()
+
+    def load_empresas_asignadas(self):
+        tid = self._view.get_selected_tercero_id()
+        if not tid:
+            self._view.set_empresas_asignadas([])
+            return
+        empresas = self._gestor.listar_empresas_de_tercero(tid)
+        self._view.set_empresas_asignadas(empresas)
 
     def _nif_duplicado(self, nif: str | None, exclude_id: str | None = None) -> bool:
         val = self._norm_nif(nif)
@@ -90,3 +109,8 @@ class TercerosGlobalController:
 
     def _norm_nif(self, value: str | None) -> str:
         return "".join(str(value or "").strip().upper().split())
+
+    def _nif_valido(self, nif: str | None) -> bool:
+        from utils.validaciones import validar_nif_cif_nie
+
+        return validar_nif_cif_nie(nif)

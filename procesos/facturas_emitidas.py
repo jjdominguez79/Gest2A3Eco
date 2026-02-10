@@ -170,19 +170,22 @@ def generar_emitidas(
             ret_c = _fv(rr.get("Cuota Retencion IRPF"))
             total += base + cuota + re_c + ret_c
         total = _r2(total)
+        signo = -1 if total < 0 else 1
+        total_abs = abs(total)
+        tipo_registro = "2" if signo < 0 else "1"  # 2 = rectificativa (abono)
 
         registros.append(
             render_emitidas_cabecera_256(
                 codigo_empresa=codigo_empresa,
                 fecha=fecha,
-                tipo_registro="1",           # factura normal
+                tipo_registro=tipo_registro,
                 cuenta_tercero=subcliente,
                 ndig_plan=ndig,
                 tipo_factura="1",            # 1 = ventas
                 num_factura=num_fact,
                 desc_apunte=desc_cab,
                 ref_doc=ref_doc,
-                importe_total=total,
+                importe_total=total_abs,
                 nif=nif,
                 nombre=nombre,
                 fecha_operacion=r0.get("Fecha Operacion") or "",
@@ -234,19 +237,20 @@ def generar_emitidas(
                     num_factura=num_fact,
                     desc_apunte=desc_det,
                     subtipo=subtipo_def,
-                    base=abs(base),
+                    base=(base if signo > 0 else -abs(base)),
                     pct_iva=abs(pct),
-                    cuota_iva=abs(cuota),
+                    cuota_iva=(cuota if signo > 0 else -abs(cuota)),
                     pct_re=abs(re_pct),
-                    cuota_re=abs(re_c),
+                    cuota_re=(re_c if signo > 0 else -abs(re_c)),
                     pct_ret=abs(ret_pct),
-                    cuota_ret=abs(ret_c),
+                    cuota_ret=(ret_c if signo > 0 else -abs(ret_c)),
                     es_ultimo=(i == n_lineas - 1),
                     cuenta_iva=cta_iva_def,
                     cuenta_recargo="",
                     cuenta_retencion=cta_ret_def or "",
                     impreso="",
                     operacion_sujeta_iva=True,
+                    keep_sign=True,
                 )
             )
 

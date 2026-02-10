@@ -1015,6 +1015,19 @@ class GestorSQLite:
         )
         self.conn.commit()
 
+    def listar_empresas_de_tercero(self, tercero_id: str):
+        cur = self.conn.execute(
+            """
+            SELECT e.codigo, e.nombre, te.ejercicio
+            FROM terceros_empresas te
+            JOIN empresas e ON e.codigo = te.codigo_empresa AND e.ejercicio = te.ejercicio
+            WHERE te.tercero_id=?
+            ORDER BY e.codigo, te.ejercicio
+            """,
+            (str(tercero_id),),
+        )
+        return [self._row_to_dict(r) for r in cur.fetchall()]
+
     def copiar_terceros_empresa(
         self,
         codigo_empresa: str,

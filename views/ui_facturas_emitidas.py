@@ -213,6 +213,12 @@ class TercerosGlobalDialog(tk.Toplevel):
         self.tv.heading("poblacion", text="Poblacion")
         self.tv.column("poblacion", width=160)
         self.tv.pack(fill="both", expand=True, pady=6)
+        self.tv.bind("<<TreeviewSelect>>", lambda e: self.controller.load_empresas_asignadas())
+
+        asignadas = ttk.LabelFrame(frm, text="Empresas asignadas")
+        asignadas.pack(fill="x", pady=(0, 6))
+        self.lb_empresas_asignadas = tk.Listbox(asignadas, height=4, exportselection=False)
+        self.lb_empresas_asignadas.pack(fill="x", padx=6, pady=4)
 
         asignar = ttk.LabelFrame(frm, text="Asignar a empresa")
         asignar.pack(fill="x", pady=(4, 0))
@@ -288,6 +294,19 @@ class TercerosGlobalDialog(tk.Toplevel):
     def show_info(self, title, message):
         messagebox.showinfo(title, message)
 
+    def show_warning(self, title, message):
+        messagebox.showwarning(title, message)
+
+    def set_empresas_asignadas(self, rows):
+        self.lb_empresas_asignadas.delete(0, tk.END)
+        for r in rows or []:
+            codigo = r.get("codigo", "")
+            nombre = r.get("nombre", "")
+            ejercicio = r.get("ejercicio", "")
+            texto = f"{codigo} - {nombre}"
+            if ejercicio != "" and ejercicio is not None:
+                texto = f"{texto} ({ejercicio})"
+            self.lb_empresas_asignadas.insert(tk.END, texto)
 
     def _apply_filtro_empresas(self):
         filtro = (self.var_buscar_empresa.get() or "").strip().lower()
