@@ -27,25 +27,63 @@ def _round2(x) -> float:
         return 0.0
 
 
+def _fmt_es(x, dec=2) -> str:
+    try:
+        s = f"{float(x):,.{dec}f}"
+    except Exception:
+        s = f"{0.0:,.{dec}f}"
+    return s.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
 def _pdf_escape(text: str) -> str:
     return str(text or "").replace("\\", "\\\\").replace("(", "[").replace(")", "]")
 
 
-def _resolve_logo_path(path: str) -> str:
+def _resolve_logo_path(path: str, codigo: str | None = None) -> str:
     raw = str(path or "").strip()
-    if not raw:
-        return ""
-    p = Path(raw)
-    if p.exists():
-        return str(p)
     base_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
-    alt = base_dir / "assets" / "logos" / p.name
-    if alt.exists():
-        return str(alt)
+    if raw:
+        p = Path(raw)
+        if p.exists():
+            return str(p)
+        alt = base_dir / "assets" / "logos" / p.name
+        if alt.exists():
+            return str(alt)
+        if not p.suffix:
+            for ext in [".jpg", ".jpeg", ".png"]:
+                candidate = base_dir / "assets" / "logos" / f"{p.name}{ext}"
+                if candidate.exists():
+                    return str(candidate)
+    code = str(codigo or "").strip()
+    if code:
+        digits = "".join(ch for ch in code if ch.isdigit())
+        candidates = []
+        if code:
+            candidates.append(code)
+            if not code.upper().startswith("E"):
+                candidates.append(f"E{code}")
+            if digits:
+                stripped = digits.lstrip("0") or "0"
+                candidates.append(stripped)
+                candidates.append(f"E{stripped}")
+        if digits:
+            for width in (5, 6, 7, 8):
+                padded = digits.zfill(width)
+                candidates.append(padded)
+                candidates.append(f"E{padded}")
+        seen = set()
+        for name in candidates:
+            if name in seen:
+                continue
+            seen.add(name)
+            for ext in [".jpg", ".jpeg", ".png"]:
+                candidate = base_dir / "assets" / "logos" / f"{name}{ext}"
+                if candidate.exists():
+                    return str(candidate)
     return raw
 
-def _logo_jpeg(path: str):
-    path = _resolve_logo_path(path)
+def _logo_jpeg(path: str, codigo: str | None = None):
+    path = _resolve_logo_path(path, codigo)
     if not path or not os.path.exists(path):
         return None
     if not path.lower().endswith((".jpg", ".jpeg")):
@@ -79,9 +117,18 @@ def generar_pdf_basico(empresa_conf: dict, fac: dict, cliente: dict, totales: di
         font = "F2" if bold else "F1"
         return f"BT /{font} {size} Tf 1 0 0 1 {x} {y} Tm ({_pdf_escape(txt)}) Tj ET\n"
 
+    moneda_simbolo = str(fac.get("moneda_simbolo") or "").strip()
+
+    def f2s(x, dec=2):
+        base = _fmt_es(x, dec)
+        return f"{base} {moneda_simbolo}".strip() if moneda_simbolo else base
+
     y = 800
     body = []
-    logo = _logo_jpeg(str(empresa_conf.get("logo_path") or "").strip())
+    logo = _logo_jpeg(
+        str(empresa_conf.get("logo_path") or "").strip(),
+        empresa_conf.get("codigo") or empresa_conf.get("codigo_empresa"),
+    )
     logo_cmd = ""
     if logo:
         disp_w = 120
@@ -146,17 +193,20 @@ def generar_pdf_basico(empresa_conf: dict, fac: dict, cliente: dict, totales: di
     y -= 12
 
     for ln in fac.get("lineas", []):
+        is_obs = str(ln.get("tipo") or "").strip().lower() == "obs"
         body.append(t(50, y, str(ln.get("concepto", ""))[:42], 10))
-        body.append(t(270, y, f"{_to_float(ln.get('unidades')):.2f}", 10))
-        body.append(t(320, y, f"{_to_float(ln.get('precio')):.4f}", 10))
-        body.append(t(380, y, f"{_to_float(ln.get('base')):.2f}", 10))
-        body.append(t(440, y, f"{_to_float(ln.get('pct_iva')):.2f}%", 10))
-        body.append(t(490, y, f"{_to_float(ln.get('cuota_iva')):.2f}", 10))
-        body.append(t(545, y, f"{_to_float(ln.get('pct_irpf')):.2f}%", 10))
+        body.append(t(270, y, "" if is_obs else _fmt_es(_to_float(ln.get("unidades")), 2), 10))
+        body.append(t(320, y, "" if is_obs else _fmt_es(_to_float(ln.get("precio")), 4), 10))
+        body.append(t(380, y, "" if is_obs else f2s(_to_float(ln.get("base")), 2), 10))
+        body.append(t(440, y, "" if is_obs else f"{_fmt_es(_to_float(ln.get('pct_iva')), 2)}%", 10))
+        body.append(t(490, y, "" if is_obs else f2s(_to_float(ln.get("cuota_iva")), 2), 10))
+        body.append(t(545, y, "" if is_obs else f"{_fmt_es(_to_float(ln.get('pct_irpf')), 2)}%", 10))
         y -= 12
 
     resumen = {}
     for ln in fac.get("lineas", []):
+        if str(ln.get("tipo") or "").strip().lower() == "obs":
+            continue
         pct = _round2(_to_float(ln.get("pct_iva")))
         item = resumen.setdefault(pct, {"base": 0.0, "cuota": 0.0})
         item["base"] += _to_float(ln.get("base"))
@@ -172,28 +222,28 @@ def generar_pdf_basico(empresa_conf: dict, fac: dict, cliente: dict, totales: di
         y -= 12
         for pct in sorted(resumen.keys(), reverse=True):
             item = resumen[pct]
-            body.append(t(360, y, f"{pct:.2f}%", 10))
-            body.append(t(430, y, f"{_round2(item['base']):.2f}", 10))
-            body.append(t(500, y, f"{_round2(item['cuota']):.2f}", 10))
+            body.append(t(360, y, f"{_fmt_es(pct, 2)}%", 10))
+            body.append(t(430, y, f2s(_round2(item["base"]), 2), 10))
+            body.append(t(500, y, f2s(_round2(item["cuota"]), 2), 10))
             y -= 12
         y -= 4
 
     body.append(t(360, y, "Base imponible:", 11, True))
-    body.append(t(500, y, f"{_round2(totales.get('base')):.2f}", 11))
+    body.append(t(500, y, f2s(_round2(totales.get("base")), 2), 11))
     y -= 14
     body.append(t(360, y, "IVA:", 11, True))
-    body.append(t(500, y, f"{_round2(totales.get('iva')):.2f}", 11))
+    body.append(t(500, y, f2s(_round2(totales.get("iva")), 2), 11))
     y -= 14
     if abs(_to_float(totales.get("re"))) > 0.001:
         body.append(t(360, y, "Recargo Eq.:", 11, True))
-        body.append(t(500, y, f"{_round2(totales.get('re')):.2f}", 11))
+        body.append(t(500, y, f2s(_round2(totales.get("re")), 2), 11))
         y -= 14
     if abs(_to_float(totales.get("ret"))) > 0.001:
         body.append(t(360, y, "IRPF:", 11, True))
-        body.append(t(500, y, f"{_round2(totales.get('ret')):.2f}", 11))
+        body.append(t(500, y, f2s(_round2(totales.get("ret")), 2), 11))
         y -= 16
     body.append(t(360, y, "Total factura:", 12, True))
-    body.append(t(500, y, f"{_round2(totales.get('total')):.2f}", 12, True))
+    body.append(t(500, y, f2s(_round2(totales.get("total")), 2), 12, True))
 
     content_parts = []
     if logo_cmd:

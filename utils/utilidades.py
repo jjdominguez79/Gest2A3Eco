@@ -1,9 +1,58 @@
 
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
+import json
 import math
+import sys
+from pathlib import Path
 
 SEP = "\t"
+
+DEFAULT_MONEDAS = [
+    {"codigo": "EUR", "simbolo": "€", "nombre": "Euro"},
+    {"codigo": "USD", "simbolo": "$", "nombre": "Dolar"},
+]
+
+def _config_path() -> Path:
+    base_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
+    return base_dir / "config.json"
+
+def load_app_config() -> dict:
+    cfg_path = _config_path()
+    data = {}
+    try:
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+    except Exception:
+        data = {}
+    data.setdefault("templates_path", "plantillas/plantillas.json")
+    data.setdefault("admin_password", "admin")
+    monedas = data.get("monedas")
+    if not isinstance(monedas, list) or not monedas:
+        data["monedas"] = list(DEFAULT_MONEDAS)
+    else:
+        norm = []
+        for m in monedas:
+            if not isinstance(m, dict):
+                continue
+            codigo = str(m.get("codigo") or "").strip().upper()
+            simbolo = str(m.get("simbolo") or "").strip()
+            nombre = str(m.get("nombre") or "").strip()
+            if not codigo:
+                continue
+            norm.append({"codigo": codigo, "simbolo": simbolo, "nombre": nombre})
+        data["monedas"] = norm or list(DEFAULT_MONEDAS)
+    return data
+
+def save_app_config(data: dict) -> None:
+    cfg_path = _config_path()
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(cfg_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def load_monedas() -> list:
+    return load_app_config().get("monedas") or list(DEFAULT_MONEDAS)
 
 def d2(x):
     """
@@ -56,6 +105,20 @@ def fmt_fecha(dt):
 def fmt_importe_pos(x):
     return f"{abs(float(x)):.2f}"
 
+def format_num_es(x, dec: int = 2, empty_if_none: bool = False) -> str:
+    """
+    Formatea numeros con miles en punto y decimales en coma.
+    """
+    if x is None and empty_if_none:
+        return ""
+    try:
+        s = f"{float(x):,.{dec}f}"
+    except Exception:
+        if empty_if_none:
+            return ""
+        s = f"{0.0:,.{dec}f}"
+    return s.replace(",", "X").replace(".", ",").replace("X", ".")
+
 def pad_subcuenta(sc: str, ndig: int):
     sc = (sc or "").strip()
     if len(sc) != ndig:
@@ -106,6 +169,8 @@ def aplicar_descuento_total_lineas(lineas, tipo, valor):
 
     total_base = 0.0
     for ln in lineas:
+        if str(ln.get("tipo") or "").strip().lower() == "obs":
+            continue
         try:
             total_base += float(ln.get("base", 0) or 0)
         except Exception:
@@ -120,6 +185,9 @@ def aplicar_descuento_total_lineas(lineas, tipo, valor):
 
     out = []
     for ln in lineas:
+        if str(ln.get("tipo") or "").strip().lower() == "obs":
+            out.append(dict(ln))
+            continue
         base = float(ln.get("base", 0) or 0)
         if base <= 0:
             out.append(dict(ln))

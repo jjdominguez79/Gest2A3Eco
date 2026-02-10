@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS empresas (
   telefono TEXT,
   email TEXT,
   logo_path TEXT,
+  activo INTEGER DEFAULT 1,
   PRIMARY KEY (codigo, ejercicio)
 );
 CREATE TABLE IF NOT EXISTS bancos (
@@ -94,6 +95,8 @@ CREATE TABLE IF NOT EXISTS facturas_emitidas_docs (
   retencion_importe REAL,
   descuento_total_tipo TEXT,
   descuento_total_valor REAL,
+  moneda_codigo TEXT,
+  moneda_simbolo TEXT,
   enviado INTEGER DEFAULT 0,
   fecha_envio TEXT,
   canal_envio TEXT,
@@ -125,6 +128,8 @@ CREATE TABLE IF NOT EXISTS albaranes_emitidas_docs (
   retencion_pct REAL,
   retencion_base REAL,
   retencion_importe REAL,
+  moneda_codigo TEXT,
+  moneda_simbolo TEXT,
   facturado INTEGER DEFAULT 0,
   factura_id TEXT,
   fecha_facturacion TEXT,
@@ -189,6 +194,8 @@ class GestorSQLite:
         self._ensure_column("facturas_emitidas_docs", "retencion_importe", "REAL")
         self._ensure_column("facturas_emitidas_docs", "descuento_total_tipo", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "descuento_total_valor", "REAL")
+        self._ensure_column("facturas_emitidas_docs", "moneda_codigo", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "moneda_simbolo", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "enviado", "INTEGER")
         self._ensure_column("facturas_emitidas_docs", "fecha_envio", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "canal_envio", "TEXT")
@@ -201,7 +208,10 @@ class GestorSQLite:
         self._ensure_column("albaranes_emitidas_docs", "retencion_pct", "REAL")
         self._ensure_column("albaranes_emitidas_docs", "retencion_base", "REAL")
         self._ensure_column("albaranes_emitidas_docs", "retencion_importe", "REAL")
+        self._ensure_column("albaranes_emitidas_docs", "moneda_codigo", "TEXT")
+        self._ensure_column("albaranes_emitidas_docs", "moneda_simbolo", "TEXT")
         self._ensure_column("albaranes_emitidas_docs", "observaciones", "TEXT")
+        self._ensure_column("empresas", "activo", "INTEGER")
         self._ensure_column("albaranes_emitidas_docs", "facturado", "INTEGER")
         self._ensure_column("albaranes_emitidas_docs", "factura_id", "TEXT")
         self._ensure_column("albaranes_emitidas_docs", "fecha_facturacion", "TEXT")
@@ -273,6 +283,13 @@ class GestorSQLite:
     def _row_to_dict(self, row):
         return dict(row) if row else None
 
+    def _normalize_empresa_activo(self, emp: dict | None):
+        if not emp:
+            return emp
+        if "activo" not in emp or emp.get("activo") is None:
+            emp["activo"] = 1
+        return emp
+
     def _clonar_plantillas_si_hace_falta(self, codigo: str, ejercicio_dest: int | None):
         """
         Si se crea un nuevo ejercicio de una empresa, replica sus plantillas
@@ -313,7 +330,8 @@ class GestorSQLite:
         cur = self.conn.execute(
             "SELECT * FROM empresas ORDER BY codigo, ejercicio"
         )
-        return [self._row_to_dict(r) for r in cur.fetchall()]
+        out = [self._row_to_dict(r) for r in cur.fetchall()]
+        return [self._normalize_empresa_activo(e) for e in out]
 
     def listar_ejercicios_empresa(self, codigo: str):
         cur = self.conn.execute(
@@ -333,15 +351,15 @@ class GestorSQLite:
                 "SELECT * FROM empresas WHERE codigo = ? AND ejercicio = ?",
                 (codigo, _ej_val(ejercicio)),
             )
-        return self._row_to_dict(cur.fetchone())
+        return self._normalize_empresa_activo(self._row_to_dict(cur.fetchone()))
 
     def upsert_empresa(self, emp: dict):
         existe = self.get_empresa(emp.get("codigo"), emp.get("ejercicio"))
         self.conn.execute(
             """
             INSERT INTO empresas (codigo, ejercicio, nombre, digitos_plan, serie_emitidas,
-                siguiente_num_emitidas, pdf_ref_seq, cuenta_bancaria, cuentas_bancarias, cif, direccion, cp, poblacion, provincia, telefono, email, logo_path)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                siguiente_num_emitidas, pdf_ref_seq, cuenta_bancaria, cuentas_bancarias, cif, direccion, cp, poblacion, provincia, telefono, email, logo_path, activo)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(codigo, ejercicio) DO UPDATE SET
                 nombre=excluded.nombre,
                 digitos_plan=excluded.digitos_plan,
@@ -357,7 +375,8 @@ class GestorSQLite:
                 provincia=excluded.provincia,
                 telefono=excluded.telefono,
                 email=excluded.email,
-                logo_path=excluded.logo_path
+                logo_path=excluded.logo_path,
+                activo=excluded.activo
             """,
             (
                 emp.get("codigo"),
@@ -377,6 +396,7 @@ class GestorSQLite:
                 emp.get("telefono"),
                 emp.get("email"),
                 emp.get("logo_path"),
+                1 if emp.get("activo", True) else 0,
             ),
         )
         self.conn.commit()
@@ -642,8 +662,8 @@ class GestorSQLite:
             (id, codigo_empresa, ejercicio, tercero_id, serie, numero, numero_largo_sii,
              fecha_asiento, fecha_expedicion, fecha_operacion, nif, nombre, descripcion, observaciones,
              subcuenta_cliente, forma_pago, cuenta_bancaria, plantilla_word, pdf_path, pdf_ref, pdf_path_a3, retencion_aplica, retencion_pct,
-             retencion_base, retencion_importe, descuento_total_tipo, descuento_total_valor, enviado, fecha_envio, canal_envio, generada, fecha_generacion, lineas_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             retencion_base, retencion_importe, descuento_total_tipo, descuento_total_valor, moneda_codigo, moneda_simbolo, enviado, fecha_envio, canal_envio, generada, fecha_generacion, lineas_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -671,6 +691,8 @@ class GestorSQLite:
                 retencion_importe=excluded.retencion_importe,
                 descuento_total_tipo=excluded.descuento_total_tipo,
                 descuento_total_valor=excluded.descuento_total_valor,
+                moneda_codigo=excluded.moneda_codigo,
+                moneda_simbolo=excluded.moneda_simbolo,
                 enviado=excluded.enviado,
                 fecha_envio=excluded.fecha_envio,
                 canal_envio=excluded.canal_envio,
@@ -706,6 +728,8 @@ class GestorSQLite:
                 factura.get("retencion_importe"),
                 factura.get("descuento_total_tipo"),
                 factura.get("descuento_total_valor"),
+                factura.get("moneda_codigo"),
+                factura.get("moneda_simbolo"),
                 1 if factura.get("enviado") else 0,
                 factura.get("fecha_envio"),
                 factura.get("canal_envio"),
@@ -770,8 +794,8 @@ class GestorSQLite:
             (id, codigo_empresa, ejercicio, tercero_id, serie, numero, numero_largo_sii,
              fecha_asiento, fecha_expedicion, fecha_operacion, nif, nombre, descripcion, observaciones,
              subcuenta_cliente, forma_pago, cuenta_bancaria, pdf_path, pdf_ref, retencion_aplica, retencion_pct,
-             retencion_base, retencion_importe, facturado, factura_id, fecha_facturacion, lineas_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             retencion_base, retencion_importe, moneda_codigo, moneda_simbolo, facturado, factura_id, fecha_facturacion, lineas_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -795,6 +819,8 @@ class GestorSQLite:
                 retencion_pct=excluded.retencion_pct,
                 retencion_base=excluded.retencion_base,
                 retencion_importe=excluded.retencion_importe,
+                moneda_codigo=excluded.moneda_codigo,
+                moneda_simbolo=excluded.moneda_simbolo,
                 facturado=excluded.facturado,
                 factura_id=excluded.factura_id,
                 fecha_facturacion=excluded.fecha_facturacion,
@@ -824,6 +850,8 @@ class GestorSQLite:
                 albaran.get("retencion_pct"),
                 albaran.get("retencion_base"),
                 albaran.get("retencion_importe"),
+                albaran.get("moneda_codigo"),
+                albaran.get("moneda_simbolo"),
                 1 if albaran.get("facturado") else 0,
                 albaran.get("factura_id"),
                 albaran.get("fecha_facturacion"),

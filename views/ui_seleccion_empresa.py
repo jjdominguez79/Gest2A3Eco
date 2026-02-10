@@ -4,6 +4,7 @@ from datetime import date, datetime
 from tkinter.simpledialog import Dialog, askstring
 
 from views.ui_facturas_emitidas import TercerosGlobalDialog
+from utils.utilidades import format_num_es, load_monedas
 from controllers.ui_seleccion_controller import SeleccionEmpresaController
 
 def _parse_date_ui(val: str) -> date:
@@ -27,6 +28,25 @@ def _to_fecha_ui_or_blank(val: str) -> str:
     if not val:
         return ""
     return _to_fecha_ui(val)
+
+def _to_float_es(x) -> float:
+    try:
+        if x is None or x == "":
+            return 0.0
+        if isinstance(x, (int, float)) and not isinstance(x, bool):
+            return float(x)
+        s = str(x).strip().replace("\xa0", " ")
+        s = "".join(ch for ch in s if ch.isdigit() or ch in ".,-")
+        if "." in s and "," in s:
+            s = s.replace(".", "").replace(",", ".")
+        elif "," in s:
+            s = s.replace(",", ".")
+        return float(s)
+    except Exception:
+        return 0.0
+
+def _fmt2(x) -> str:
+    return format_num_es(x, 2)
 
 def _parse_datetime_ui(val: str) -> datetime:
     txt = str(val or "").strip()
@@ -62,6 +82,7 @@ class EmpresaDialog(Dialog):
             "telefono": "",
             "email": "",
             "logo_path": "",
+            "activo": True,
         }
         if empresa:
             base.update(empresa)
@@ -89,6 +110,7 @@ class EmpresaDialog(Dialog):
         self.var_tel = tk.StringVar(value=str(self.empresa.get("telefono","")))
         self.var_mail = tk.StringVar(value=str(self.empresa.get("email","")))
         self.var_logo = tk.StringVar(value=str(self.empresa.get("logo_path","")))
+        self.var_activo = tk.BooleanVar(value=bool(self.empresa.get("activo", True)))
 
         ttk.Label(master, text="Codigo").grid(row=0, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_codigo).grid(row=0, column=1)
         ttk.Label(master, text="Nombre").grid(row=1, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_nombre, width=40).grid(row=1, column=1)
@@ -109,6 +131,7 @@ class EmpresaDialog(Dialog):
         row_logo.grid(row=14, column=1, sticky="we")
         ttk.Entry(row_logo, textvariable=self.var_logo, width=32).pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(row_logo, text="Buscar", command=self._choose_logo).pack(side=tk.LEFT, padx=4)
+        ttk.Checkbutton(master, text="Activo", variable=self.var_activo).grid(row=15, column=0, sticky="w", pady=(6, 0))
         return master
 
     def _cuenta_bancaria_default(self):
@@ -147,6 +170,7 @@ class EmpresaDialog(Dialog):
                 "telefono": self.var_tel.get().strip(),
                 "email": self.var_mail.get().strip(),
                 "logo_path": self.var_logo.get().strip(),
+                "activo": bool(self.var_activo.get()),
             }
         except Exception as e:
             messagebox.showerror("Gest2A3Eco", str(e))
@@ -158,6 +182,8 @@ class UISeleccionEmpresa(ttk.Frame):
         self.gestor = gestor
         self.on_ok = on_ok
         self._fact_sort_state = {}
+        monedas = load_monedas()
+        self._default_moneda_simbolo = str(monedas[0].get("simbolo")) if monedas else ""
         self.pack(fill=tk.BOTH, expand=True)
         self.controller = SeleccionEmpresaController(gestor, on_ok, self)
         self._build()
@@ -173,6 +199,8 @@ class UISeleccionEmpresa(ttk.Frame):
         self.cb_ejercicio = ttk.Combobox(search_row, textvariable=self.var_ejercicio, width=8, state="readonly")
         self.cb_ejercicio.pack(side=tk.LEFT, padx=(6, 12))
         self.cb_ejercicio.bind("<<ComboboxSelected>>", lambda e: self.controller.apply_filter())
+        self.var_ver_bajas = tk.BooleanVar(value=False)
+        ttk.Checkbutton(search_row, text="Ver bajas", variable=self.var_ver_bajas, command=self.controller.apply_filter).pack(side=tk.LEFT, padx=(0, 12))
         ttk.Label(search_row, text="Buscar").pack(side=tk.LEFT)
         self.var_buscar = tk.StringVar()
         entry_buscar = ttk.Entry(search_row, textvariable=self.var_buscar, width=40)
@@ -235,6 +263,7 @@ class UISeleccionEmpresa(ttk.Frame):
         self.var_fact_empresa_text.trace_add("write", lambda *_: self.controller.apply_facturas_filter())
         ttk.Button(fact_filter, text="Limpiar", command=lambda: self.var_fact_empresa_text.set("")).pack(side=tk.LEFT, padx=6)
         ttk.Button(fact_filter, text="Actualizar listado", style="Primary.TButton", command=self.controller.refresh_facturas_global).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(fact_filter, text="Copiar factura", style="Primary.TButton", command=self.controller.copiar_factura_global).pack(side=tk.LEFT, padx=(6, 0))
 
         fact_frame = ttk.Frame(self)
         fact_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=6)
@@ -268,6 +297,33 @@ class UISeleccionEmpresa(ttk.Frame):
         fact_frame.columnconfigure(0, weight=1)
         fact_frame.rowconfigure(0, weight=1)
 
+        sep2 = ttk.Separator(self, orient="horizontal")
+        sep2.pack(fill=tk.X, padx=10, pady=(6, 4))
+
+        ttk.Label(self, text="Monedas", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(4, 0))
+        monedas_frame = ttk.Frame(self)
+        monedas_frame.pack(fill=tk.X, padx=10, pady=(4, 8))
+
+        self.lb_monedas = tk.Listbox(monedas_frame, height=5, exportselection=False)
+        self.lb_monedas.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+
+        form = ttk.Frame(monedas_frame)
+        form.pack(side=tk.LEFT, fill=tk.Y)
+        ttk.Label(form, text="Codigo").grid(row=0, column=0, sticky="w")
+        ttk.Label(form, text="Simbolo").grid(row=1, column=0, sticky="w")
+        ttk.Label(form, text="Nombre").grid(row=2, column=0, sticky="w")
+        self.var_moneda_codigo = tk.StringVar()
+        self.var_moneda_simbolo = tk.StringVar()
+        self.var_moneda_nombre = tk.StringVar()
+        ttk.Entry(form, textvariable=self.var_moneda_codigo, width=10).grid(row=0, column=1, padx=4, pady=2, sticky="w")
+        ttk.Entry(form, textvariable=self.var_moneda_simbolo, width=10).grid(row=1, column=1, padx=4, pady=2, sticky="w")
+        ttk.Entry(form, textvariable=self.var_moneda_nombre, width=18).grid(row=2, column=1, padx=4, pady=2, sticky="w")
+
+        btns = ttk.Frame(form)
+        btns.grid(row=3, column=0, columnspan=2, pady=(4, 0), sticky="w")
+        ttk.Button(btns, text="Añadir", style="Primary.TButton", command=self.controller.add_moneda).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btns, text="Eliminar", command=self.controller.remove_moneda).pack(side=tk.LEFT, padx=2)
+
     def get_filter_text(self):
         return self.var_buscar.get()
 
@@ -285,6 +341,9 @@ class UISeleccionEmpresa(ttk.Frame):
             return int(val)
         except Exception:
             return val
+
+    def get_ver_bajas(self):
+        return bool(self.var_ver_bajas.get())
 
     def clear_empresas(self):
         self.tv.delete(*self.tv.get_children())
@@ -347,9 +406,11 @@ class UISeleccionEmpresa(ttk.Frame):
         self.tv_facturas.delete(*self.tv_facturas.get_children())
 
     def insert_factura_row(self, fac, total, empresa_nombre=""):
+        sym = fac.get("moneda_simbolo") or self._default_moneda_simbolo
         self.tv_facturas.insert(
             "",
             tk.END,
+            iid=f"{fac.get('codigo_empresa','')}::{fac.get('ejercicio','')}::{fac.get('id','')}",
             values=(
                 fac.get("codigo_empresa", ""),
                 empresa_nombre,
@@ -358,7 +419,7 @@ class UISeleccionEmpresa(ttk.Frame):
                 fac.get("numero", ""),
                 _to_fecha_ui_or_blank(fac.get("fecha_asiento", "")),
                 fac.get("nombre", ""),
-                f"{total:.2f}",
+                f"{_fmt2(total)} {sym}".strip() if sym else _fmt2(total),
                 "Si" if fac.get("generada") else "No",
                 fac.get("fecha_generacion", ""),
                 "Si" if fac.get("enviado") else "No",
@@ -385,7 +446,7 @@ class UISeleccionEmpresa(ttk.Frame):
                 return -1
         if col in ("total",):
             try:
-                return float(str(val).replace(",", "."))
+                return _to_float_es(val)
             except Exception:
                 return 0.0
         if col in ("fecha",):
@@ -415,9 +476,97 @@ class UISeleccionEmpresa(ttk.Frame):
     def ask_admin_password(self):
         return askstring("Gest2A3Eco", "Contraseña de administrador:", show="*")
 
+    def get_selected_factura_key(self):
+        sel = self.tv_facturas.selection()
+        if not sel:
+            return None, None, None
+        iid = sel[0]
+        parts = str(iid).split("::")
+        if len(parts) >= 3:
+            codigo = parts[0]
+            try:
+                ejercicio = int(parts[1])
+            except Exception:
+                ejercicio = parts[1]
+            fid = parts[2]
+            return codigo, ejercicio, fid
+        vals = self.tv_facturas.item(iid, "values") or []
+        if len(vals) >= 3:
+            return vals[0], vals[2], None
+        return None, None, None
+
+    def ask_copiar_factura_destino(self, empresas):
+        dlg = tk.Toplevel(self)
+        dlg.title("Copiar factura")
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        dlg.grab_set()
+
+        frm = ttk.Frame(dlg, padding=10)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="Selecciona empresa y ejercicio destino").pack(anchor="w")
+
+        lb = tk.Listbox(frm, height=min(10, len(empresas)), exportselection=False)
+        for e in empresas:
+            texto = f"{e.get('codigo','')} - {e.get('nombre','')} ({e.get('ejercicio','')})"
+            lb.insert(tk.END, texto)
+        lb.pack(fill="both", expand=True, pady=6)
+        if empresas:
+            lb.selection_set(0)
+
+        result = {"value": None}
+
+        def _ok():
+            sel = lb.curselection()
+            if sel:
+                idx = sel[0]
+                emp = empresas[idx]
+                result["value"] = (emp.get("codigo"), emp.get("ejercicio"))
+            dlg.destroy()
+
+        def _cancel():
+            dlg.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x")
+        ttk.Button(btns, text="Copiar", style="Primary.TButton", command=_ok).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="Cancelar", command=_cancel).pack(side=tk.LEFT, padx=4)
+
+        dlg.wait_window(dlg)
+        return result["value"]
+
     def open_empresa_dialog(self, titulo, empresa=None):
         dlg = EmpresaDialog(self, titulo, empresa)
         return dlg.result
 
     def open_terceros_dialog(self, gestor):
         TercerosGlobalDialog(self, gestor)
+
+    # ----- Monedas -----
+    def set_monedas(self, monedas):
+        self.lb_monedas.delete(0, tk.END)
+        for m in monedas or []:
+            codigo = str(m.get("codigo") or "").upper()
+            simbolo = str(m.get("simbolo") or "")
+            nombre = str(m.get("nombre") or "")
+            texto = f"{codigo} {simbolo}".strip()
+            if nombre:
+                texto = f"{texto} - {nombre}"
+            self.lb_monedas.insert(tk.END, texto)
+
+    def get_moneda_form(self):
+        codigo = (self.var_moneda_codigo.get() or "").strip().upper()
+        simbolo = (self.var_moneda_simbolo.get() or "").strip()
+        nombre = (self.var_moneda_nombre.get() or "").strip()
+        if not codigo:
+            self.show_warning("Gest2A3Eco", "Introduce un codigo de moneda.")
+            return None
+        return {"codigo": codigo, "simbolo": simbolo, "nombre": nombre}
+
+    def get_selected_moneda_codigo(self):
+        sel = self.lb_monedas.curselection()
+        if not sel:
+            return None
+        txt = self.lb_monedas.get(sel[0]) or ""
+        parts = txt.split()
+        return parts[0].upper() if parts else None

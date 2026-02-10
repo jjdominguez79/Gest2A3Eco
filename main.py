@@ -134,8 +134,8 @@ def _build_header(root: tk.Tk, on_cambiar_empresa) -> ttk.Frame:
 def main():
     root = tk.Tk()
     root.title("Gest2A3Eco")
-    root.geometry("1600x1000+100+50")
-    root.resizable(False, False)
+    root.geometry("1850x1100+60+30")
+    root.resizable(True, True)
     try:
         root.iconbitmap(resource_path("icono.ico"))
     except Exception:

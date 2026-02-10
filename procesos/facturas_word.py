@@ -29,6 +29,12 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
             s = "0.0000"
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
 
+    moneda_simbolo = str(fac.get("moneda_simbolo") or "").strip()
+
+    def f2s(x):
+        base = f2(x)
+        return f"{base} {moneda_simbolo}".strip() if moneda_simbolo else base
+
     def first_cuenta(raw):
         raw = raw or ""
         if not str(raw).strip():
@@ -43,6 +49,7 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
 
     lineas = []
     for ln in fac.get("lineas", []):
+        is_obs = str(ln.get("tipo") or "").strip().lower() == "obs"
         base = float(ln.get("base") or 0)
         cuota_iva = float(ln.get("cuota_iva") or 0)
         cuota_irpf = float(ln.get("cuota_irpf") or 0)
@@ -51,19 +58,21 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
 
         lineas.append({
             "concepto": str(ln.get("concepto", "")),
-            "unidades": f2(ln.get("unidades") or 0),
-            "precio": f4(ln.get("precio") or 0),
-            "base": f2(ln.get("base") or 0),
-            "pct_iva": f2(ln.get("pct_iva") or 0),
-            "cuota_iva": f2(ln.get("cuota_iva") or 0),
-            "pct_irpf": f2(pct_irpf),
-            "pct_irpf_pct": f"{f2(pct_irpf)}%",
-            "cuota_irpf": f2(ln.get("cuota_irpf") or 0),
-            "total_linea": f2(total_linea),
+            "unidades": "" if is_obs else f2(ln.get("unidades") or 0),
+            "precio": "" if is_obs else f4(ln.get("precio") or 0),
+            "base": "" if is_obs else f2s(ln.get("base") or 0),
+            "pct_iva": "" if is_obs else f2(ln.get("pct_iva") or 0),
+            "cuota_iva": "" if is_obs else f2s(ln.get("cuota_iva") or 0),
+            "pct_irpf": "" if is_obs else f2(pct_irpf),
+            "pct_irpf_pct": "" if is_obs else f"{f2(pct_irpf)}%",
+            "cuota_irpf": "" if is_obs else f2s(ln.get("cuota_irpf") or 0),
+            "total_linea": "" if is_obs else f2s(total_linea),
         })
 
     resumen = {}
     for ln in fac.get("lineas", []):
+        if str(ln.get("tipo") or "").strip().lower() == "obs":
+            continue
         pct = float(ln.get("pct_iva") or 0)
         item = resumen.setdefault(pct, {"base": 0.0, "cuota": 0.0})
         item["base"] += float(ln.get("base") or 0)
@@ -73,8 +82,8 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
         item = resumen[pct]
         iva_resumen.append({
             "tipo": f"{pct:.2f}%",
-            "base": f2(item["base"]),
-            "cuota": f2(item["cuota"]),
+            "base": f2s(item["base"]),
+            "cuota": f2s(item["cuota"]),
         })
 
     if fac.get("retencion_aplica"):
@@ -127,20 +136,24 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
         "lineas": lineas,
         "iva_resumen": iva_resumen,
         "totales": {
-            "base": f2(totales.get("base", 0)),
-            "iva": f2(totales.get("iva", 0)),
-            "irpf": f2(totales.get("ret", 0)),
-            "total": f2(totales.get("total", 0)),
-            "ret_base": f2(ret_base or 0),
+            "base": f2s(totales.get("base", 0)),
+            "iva": f2s(totales.get("iva", 0)),
+            "irpf": f2s(totales.get("ret", 0)),
+            "total": f2s(totales.get("total", 0)),
+            "ret_base": f2s(ret_base or 0),
             "ret_pct": f2(ret_pct or 0),
-            "ret_importe": f2(ret_imp or 0),
+            "ret_importe": f2s(ret_imp or 0),
             "ret_pct_label": f"{f2(ret_pct or 0)}%",
         },
         "retencion": {
-            "base": f2(ret_base or 0),
+            "base": f2s(ret_base or 0),
             "pct": f2(ret_pct or 0),
-            "importe": f2(ret_imp or 0),
+            "importe": f2s(ret_imp or 0),
             "pct_label": f"{f2(ret_pct or 0)}%",
+        },
+        "moneda": {
+            "codigo": fac.get("moneda_codigo", ""),
+            "simbolo": moneda_simbolo,
         },
         "pago": {
             "metodo": fac.get("forma_pago", ""),
@@ -205,6 +218,11 @@ def _resolve_logo_path(path: str, codigo: str | None = None) -> str:
             candidates.append(raw)
             if not raw.upper().startswith("E"):
                 candidates.append(f"E{raw}")
+            # sin ceros a la izquierda
+            if digits:
+                stripped = digits.lstrip("0") or "0"
+                candidates.append(stripped)
+                candidates.append(f"E{stripped}")
         if digits:
             for width in (5, 6, 7, 8):
                 padded = digits.zfill(width)

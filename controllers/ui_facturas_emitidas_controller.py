@@ -13,7 +13,7 @@ from procesos.facturas_word import (
     generar_pdf_desde_plantilla_word,
 )
 from procesos.facturas_pdf_basico import generar_pdf_basico
-from utils.utilidades import aplicar_descuento_total_lineas
+from utils.utilidades import aplicar_descuento_total_lineas, load_monedas
 
 
 class FacturasEmitidasController:
@@ -123,7 +123,7 @@ class FacturasEmitidasController:
         if not fac:
             self._view.set_detalle_lineas([])
             return
-        self._view.set_detalle_lineas(fac.get("lineas", []))
+        self._view.set_detalle_lineas(fac.get("lineas", []), fac.get("moneda_simbolo", ""))
 
     def albaran_seleccionado(self):
         sel = self._view.get_selected_albaran_ids()
@@ -134,7 +134,7 @@ class FacturasEmitidasController:
         if not alb:
             self._view.set_albaran_lineas([])
             return
-        self._view.set_albaran_lineas(alb.get("lineas", []))
+        self._view.set_albaran_lineas(alb.get("lineas", []), alb.get("moneda_simbolo", ""))
 
     def nuevo_albaran(self):
         sugerido = self._proximo_albaran_numero()
@@ -213,6 +213,15 @@ class FacturasEmitidasController:
         if not sel:
             self._view.show_warning("Gest2A3Eco", "Selecciona uno o varios albaranes.")
             return
+        try:
+            if int(datetime.now().strftime("%Y")) != int(self._ejercicio):
+                self._view.show_warning(
+                    "Gest2A3Eco",
+                    f"No se puede emitir factura fuera del ejercicio {self._ejercicio}.",
+                )
+                return
+        except Exception:
+            pass
         albaranes = []
         for aid in sel:
             alb = self._get_albaran_by_id(aid)
@@ -228,6 +237,13 @@ class FacturasEmitidasController:
             self._view.show_warning("Gest2A3Eco", "Los albaranes seleccionados tienen distintos clientes.")
             return
         base = albaranes[0]
+        moneda_codigo = base.get("moneda_codigo", "")
+        moneda_simbolo = base.get("moneda_simbolo", "")
+        if not moneda_codigo:
+            monedas = load_monedas()
+            if monedas:
+                moneda_codigo = str(monedas[0].get("codigo") or "").upper()
+                moneda_simbolo = str(monedas[0].get("simbolo") or "")
         nums = ", ".join(a.get("numero", "") for a in albaranes)
         lineas = []
         for a in albaranes:
@@ -249,6 +265,8 @@ class FacturasEmitidasController:
             "subcuenta_cliente": base.get("subcuenta_cliente", ""),
             "forma_pago": base.get("forma_pago", ""),
             "cuenta_bancaria": base.get("cuenta_bancaria", ""),
+            "moneda_codigo": moneda_codigo,
+            "moneda_simbolo": moneda_simbolo,
             "plantilla_word": base.get("plantilla_word", ""),
             "retencion_aplica": bool(base.get("retencion_aplica")),
             "retencion_pct": base.get("retencion_pct"),
@@ -603,8 +621,9 @@ class FacturasEmitidasController:
         )
         ret_pct = self._round2(self._to_float(fac.get("retencion_pct")))
         ret_importe = self._retencion_importe(fac)
-        for idx, ln in enumerate(lineas):
-            ret_aplica_linea = ret_importe != 0 and idx == len(lineas) - 1
+        lineas_validas = [ln for ln in lineas if str(ln.get("tipo") or "").strip().lower() != "obs"]
+        for idx, ln in enumerate(lineas_validas):
+            ret_aplica_linea = ret_importe != 0 and idx == len(lineas_validas) - 1
             r = dict(base_row)
             r.update(
                 {

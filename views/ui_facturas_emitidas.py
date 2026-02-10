@@ -5,7 +5,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 from datetime import date, datetime
-from utils.utilidades import aplicar_descuento_total_lineas
+from utils.utilidades import aplicar_descuento_total_lineas, format_num_es, load_monedas
 
 from controllers.ui_facturas_emitidas_controller import FacturasEmitidasController
 from controllers.factura_dialog_controller import FacturaDialogController
@@ -22,6 +22,7 @@ def _to_float(x) -> float:
         if isinstance(x, (int, float)) and not isinstance(x, bool):
             return float(x)
         s = str(x).strip().replace("\xa0", " ")
+        s = "".join(ch for ch in s if ch.isdigit() or ch in ".,-")
         if "." in s and "," in s:
             s = s.replace(".", "").replace(",", ".")
         elif "," in s:
@@ -63,6 +64,16 @@ def _round4(x) -> float:
         return round(float(x), 4)
     except Exception:
         return 0.0
+
+def _fmt2(x) -> str:
+    return format_num_es(x, 2)
+
+def _fmt4(x) -> str:
+    return format_num_es(x, 4)
+
+def _fmt2s(x, simbolo: str = "") -> str:
+    txt = format_num_es(x, 2)
+    return f"{txt} {simbolo}".strip() if simbolo else txt
 
 class DatePicker(tk.Toplevel):
     def __init__(self, parent, initial: date | None = None):
@@ -734,7 +745,7 @@ class FacturaDialog(tk.Toplevel):
         self.var_ret_aplica = tk.BooleanVar(value=ret_aplica)
         self.var_ret_pct = tk.StringVar(value=str(int(ret_pct)) if ret_pct not in (None, "", 0) else "")
         self.var_ret_base = tk.StringVar(
-            value=f"{_round2(ret_base):.2f}" if ret_base not in (None, "") else ""
+            value=_fmt2(_round2(ret_base)) if ret_base not in (None, "") else ""
         )
         self._retencion_manual = False
         if ret_aplica:
@@ -760,6 +771,25 @@ class FacturaDialog(tk.Toplevel):
         self.var_forma_pago = tk.StringVar(value=f.get("forma_pago", ""))
         self.var_cuenta_banco = tk.StringVar(value=f.get("cuenta_bancaria", ""))
         self.var_plantilla_word = tk.StringVar(value=f.get("plantilla_word", ""))
+        self._monedas = load_monedas()
+        self._moneda_labels = []
+        self._moneda_by_label = {}
+        for m in self._monedas:
+            codigo = str(m.get("codigo") or "").upper()
+            simbolo = str(m.get("simbolo") or "")
+            nombre = str(m.get("nombre") or "")
+            label = f"{codigo} {simbolo}".strip()
+            if nombre:
+                label = f"{label} - {nombre}"
+            self._moneda_labels.append(label)
+            self._moneda_by_label[label] = {"codigo": codigo, "simbolo": simbolo, "nombre": nombre}
+        moneda_default = ""
+        if self._monedas:
+            moneda_default = str(self._monedas[0].get("codigo") or "").upper()
+        moneda_code = str(f.get("moneda_codigo") or moneda_default).upper()
+        moneda_label = next((l for l in self._moneda_labels if l.startswith(moneda_code)), (self._moneda_labels[0] if self._moneda_labels else ""))
+        self.var_moneda = tk.StringVar(value=moneda_label)
+        self._moneda_simbolo = (self._moneda_by_label.get(moneda_label) or {}).get("simbolo", "")
         self._plantillas_word = self._listar_plantillas_word()
         if not self.var_plantilla_word.get().strip():
             if "factura_emitida_template.docx" in self._plantillas_word:
@@ -796,6 +826,12 @@ class FacturaDialog(tk.Toplevel):
         ttk.Label(frm, text="Cuenta bancaria").grid(row=row, column=0, sticky="w", padx=4, pady=3)
         self.cb_cuenta_banco = ttk.Combobox(frm, textvariable=self.var_cuenta_banco, values=self._cuentas_banco, width=28, state="readonly")
         self.cb_cuenta_banco.grid(row=row, column=1, padx=4, pady=3, sticky="w")
+        row += 1
+
+        ttk.Label(frm, text="Moneda").grid(row=row, column=0, sticky="w", padx=4, pady=3)
+        self.cb_moneda = ttk.Combobox(frm, textvariable=self.var_moneda, values=self._moneda_labels, width=28, state="readonly")
+        self.cb_moneda.grid(row=row, column=1, padx=4, pady=3, sticky="w")
+        self.cb_moneda.bind("<<ComboboxSelected>>", lambda e: self._on_moneda_change())
         row += 1
 
         ttk.Label(frm, text="Plantilla Word").grid(row=row, column=0, sticky="w", padx=4, pady=3)
@@ -883,27 +919,34 @@ class FacturaDialog(tk.Toplevel):
             "desc_tipo": tk.StringVar(),
             "desc_val": tk.StringVar(),
         }
+        self.var_line_obs = tk.BooleanVar(value=False)
         editor = ttk.Frame(frm)
         editor.grid(row=row, column=0, columnspan=3, sticky="ew", padx=4)
-        editor.columnconfigure(12, weight=1)
+        editor.columnconfigure(13, weight=1)
         ttk.Label(editor, text="Concepto").grid(row=0, column=0, padx=4, pady=2, sticky="w")
         ttk.Entry(editor, textvariable=self.line_vars["concepto"], width=26).grid(row=0, column=1, padx=4, pady=2)
         ttk.Label(editor, text="Unidades").grid(row=0, column=2, padx=4, pady=2, sticky="w")
-        ttk.Entry(editor, textvariable=self.line_vars["unidades"], width=10).grid(row=0, column=3, padx=4, pady=2)
+        self.entry_unidades = ttk.Entry(editor, textvariable=self.line_vars["unidades"], width=10)
+        self.entry_unidades.grid(row=0, column=3, padx=4, pady=2)
         ttk.Label(editor, text="Precio").grid(row=0, column=4, padx=4, pady=2, sticky="w")
-        ttk.Entry(editor, textvariable=self.line_vars["precio"], width=10).grid(row=0, column=5, padx=4, pady=2)
+        self.entry_precio = ttk.Entry(editor, textvariable=self.line_vars["precio"], width=10)
+        self.entry_precio.grid(row=0, column=5, padx=4, pady=2)
         ttk.Label(editor, text="Desc.").grid(row=0, column=6, padx=4, pady=2, sticky="w")
-        ttk.Combobox(editor, textvariable=self.line_vars["desc_tipo"], values=["", "%", "€"], width=4, state="readonly").grid(row=0, column=7, padx=4, pady=2)
-        ttk.Entry(editor, textvariable=self.line_vars["desc_val"], width=8).grid(row=0, column=8, padx=4, pady=2)
+        self.cb_desc_tipo = ttk.Combobox(editor, textvariable=self.line_vars["desc_tipo"], values=["", "%", "€"], width=4, state="readonly")
+        self.cb_desc_tipo.grid(row=0, column=7, padx=4, pady=2)
+        self.entry_desc_val = ttk.Entry(editor, textvariable=self.line_vars["desc_val"], width=8)
+        self.entry_desc_val.grid(row=0, column=8, padx=4, pady=2)
         ttk.Label(editor, text="IVA %").grid(row=0, column=9, padx=4, pady=2, sticky="w")
-        ttk.Combobox(editor, textvariable=self.line_vars["iva"], values=[str(x) for x in IVA_OPCIONES], width=6, state="readonly").grid(row=0, column=10, padx=4, pady=2)
-        ttk.Button(editor, text="Añadir/Actualizar", style="Primary.TButton", command=self._add_update_linea).grid(row=0, column=11, padx=6)
-        ttk.Button(editor, text="Limpiar", command=self._clear_line_editor).grid(row=0, column=12, padx=4)
+        self.cb_iva = ttk.Combobox(editor, textvariable=self.line_vars["iva"], values=[str(x) for x in IVA_OPCIONES], width=6, state="readonly")
+        self.cb_iva.grid(row=0, column=10, padx=4, pady=2)
+        ttk.Checkbutton(editor, text="Observacion", variable=self.var_line_obs, command=self._on_line_obs_toggle).grid(row=0, column=11, padx=6)
+        ttk.Button(editor, text="Añadir/Actualizar", style="Primary.TButton", command=self._add_update_linea).grid(row=0, column=12, padx=6)
+        ttk.Button(editor, text="Limpiar", command=self._clear_line_editor).grid(row=0, column=13, padx=4)
         row += 1
 
         self.tv = ttk.Treeview(
             frm,
-            columns=("concepto", "unidades", "precio", "desc", "base", "pct_iva", "cuota_iva", "pct_irpf", "cuota_irpf", "desc_tipo", "desc_val"),
+            columns=("concepto", "unidades", "precio", "desc", "base", "pct_iva", "cuota_iva", "pct_irpf", "cuota_irpf", "desc_tipo", "desc_val", "tipo_linea"),
             displaycolumns=("concepto", "unidades", "precio", "desc", "base", "pct_iva", "cuota_iva"),
             show="headings",
             height=8,
@@ -932,10 +975,10 @@ class FacturaDialog(tk.Toplevel):
 
         tot = ttk.Frame(frm)
         tot.grid(row=row, column=0, columnspan=3, sticky="ew", pady=(2, 8))
-        self.lbl_tot_base = ttk.Label(tot, text="Base: 0.00")
-        self.lbl_tot_iva = ttk.Label(tot, text="IVA: 0.00")
-        self.lbl_tot_ret = ttk.Label(tot, text="IRPF: 0.00")
-        self.lbl_tot_total = ttk.Label(tot, text="Total: 0.00", font=("Segoe UI", 10, "bold"))
+        self.lbl_tot_base = ttk.Label(tot, text="Base: 0,00")
+        self.lbl_tot_iva = ttk.Label(tot, text="IVA: 0,00")
+        self.lbl_tot_ret = ttk.Label(tot, text="IRPF: 0,00")
+        self.lbl_tot_total = ttk.Label(tot, text="Total: 0,00", font=("Segoe UI", 10, "bold"))
         for i, lbl in enumerate([self.lbl_tot_base, self.lbl_tot_iva, self.lbl_tot_ret, self.lbl_tot_total]):
             lbl.grid(row=0, column=i, padx=6)
         row += 1
@@ -975,6 +1018,7 @@ class FacturaDialog(tk.Toplevel):
         if self.var_ret_aplica.get():
             self.controller.apply_retencion_header()
         self._refresh_totales()
+        self._update_line_obs_state()
 
         self.grab_set()
         self.transient(parent)
@@ -1050,6 +1094,9 @@ class FacturaDialog(tk.Toplevel):
         vals = self.tv.item(sel[0], "values")
         if not vals:
             return
+        tipo = vals[11] if len(vals) > 11 else ""
+        self.var_line_obs.set(str(tipo).strip().lower() == "obs")
+        self._update_line_obs_state()
         self.line_vars["concepto"].set(vals[0])
         self.line_vars["unidades"].set(vals[1])
         self.line_vars["precio"].set(vals[2])
@@ -1063,6 +1110,23 @@ class FacturaDialog(tk.Toplevel):
             self.line_vars["desc_val"].set(vals[10] if len(vals) > 10 else "")
         if len(vals) > 5:
             self.line_vars["iva"].set(vals[5])
+
+    def _on_line_obs_toggle(self):
+        self._update_line_obs_state()
+
+    def _update_line_obs_state(self):
+        is_obs = bool(self.var_line_obs.get())
+        self.entry_unidades.config(state="disabled" if is_obs else "normal")
+        self.entry_precio.config(state="disabled" if is_obs else "normal")
+        self.entry_desc_val.config(state="disabled" if is_obs else "normal")
+        self.cb_desc_tipo.config(state="disabled" if is_obs else "readonly")
+        self.cb_iva.config(state="disabled" if is_obs else "readonly")
+        if is_obs:
+            self.line_vars["unidades"].set("")
+            self.line_vars["precio"].set("")
+            self.line_vars["iva"].set("")
+            self.line_vars["desc_tipo"].set("")
+            self.line_vars["desc_val"].set("")
 
     def _on_retencion_toggle(self):
         self._update_retencion_state()
@@ -1086,6 +1150,12 @@ class FacturaDialog(tk.Toplevel):
         if not self._retencion_manual:
             return
         self.controller.retencion_base_changed()
+
+    def _on_moneda_change(self):
+        label = self.var_moneda.get()
+        self._moneda_simbolo = (self._moneda_by_label.get(label) or {}).get("simbolo", "")
+        self.set_lineas(self.get_lineas())
+        self._refresh_totales()
 
     def _update_retencion_state(self):
         aplica = bool(self.var_ret_aplica.get())
@@ -1131,6 +1201,8 @@ class FacturaDialog(tk.Toplevel):
     def clear_line_editor(self):
         for v in self.line_vars.values():
             v.set("")
+        self.var_line_obs.set(False)
+        self._update_line_obs_state()
         self.tv.selection_remove(self.tv.selection())
 
     def get_line_editor_values(self):
@@ -1144,20 +1216,26 @@ class FacturaDialog(tk.Toplevel):
         desc_val = _to_float(self.line_vars["desc_val"].get())
         return concepto, unidades, precio, iva, iva_raw, desc_tipo, desc_val
 
+    def is_line_observacion(self):
+        return bool(self.var_line_obs.get())
+
     def upsert_line_row(self, ln: dict):
         desc_txt = self._format_desc(ln)
+        is_obs = str(ln.get("tipo") or "").strip().lower() == "obs"
+        sym = self._moneda_simbolo
         vals = (
             ln["concepto"],
-            f"{ln['unidades']:.2f}",
-            f"{ln['precio']:.4f}",
+            "" if is_obs else _fmt2(ln["unidades"]),
+            "" if is_obs else _fmt4(ln["precio"]),
             desc_txt,
-            f"{ln['base']:.2f}",
-            f"{ln['pct_iva']:.2f}",
-            f"{ln['cuota_iva']:.2f}",
-            f"{ln['pct_irpf']:.2f}",
-            f"{ln['cuota_irpf']:.2f}",
+            "" if is_obs else _fmt2s(ln["base"], sym),
+            "" if is_obs else _fmt2(ln["pct_iva"]),
+            "" if is_obs else _fmt2s(ln["cuota_iva"], sym),
+            "" if is_obs else _fmt2(ln["pct_irpf"]),
+            "" if is_obs else _fmt2s(ln["cuota_irpf"], sym),
             ln.get("descuento_tipo", ""),
-            f"{_round2(ln.get('descuento_valor')):.2f}",
+            "" if is_obs else _fmt2(_round2(ln.get("descuento_valor"))),
+            ln.get("tipo", ""),
         )
         sel = self.tv.selection()
         if sel:
@@ -1167,18 +1245,21 @@ class FacturaDialog(tk.Toplevel):
 
     def insert_line_row(self, ln: dict):
         desc_txt = self._format_desc(ln)
+        is_obs = str(ln.get("tipo") or "").strip().lower() == "obs"
+        sym = self._moneda_simbolo
         vals = (
             ln.get("concepto", ""),
-            f"{_round2(ln.get('unidades')):.2f}",
-            f"{_round4(ln.get('precio')):.4f}",
+            "" if is_obs else _fmt2(_round2(ln.get("unidades"))),
+            "" if is_obs else _fmt4(_round4(ln.get("precio"))),
             desc_txt,
-            f"{_round2(ln.get('base')):.2f}",
-            f"{_round2(ln.get('pct_iva')):.2f}",
-            f"{_round2(ln.get('cuota_iva')):.2f}",
-            f"{_round2(ln.get('pct_irpf')):.2f}",
-            f"{_round2(ln.get('cuota_irpf')):.2f}",
+            "" if is_obs else _fmt2s(_round2(ln.get("base")), sym),
+            "" if is_obs else _fmt2(_round2(ln.get("pct_iva"))),
+            "" if is_obs else _fmt2s(_round2(ln.get("cuota_iva")), sym),
+            "" if is_obs else _fmt2(_round2(ln.get("pct_irpf"))),
+            "" if is_obs else _fmt2s(_round2(ln.get("cuota_irpf")), sym),
             ln.get("descuento_tipo", ""),
-            f"{_round2(ln.get('descuento_valor')):.2f}",
+            "" if is_obs else _fmt2(_round2(ln.get("descuento_valor"))),
+            ln.get("tipo", ""),
         )
         self.tv.insert("", tk.END, values=vals)
 
@@ -1200,6 +1281,7 @@ class FacturaDialog(tk.Toplevel):
             vals = self.tv.item(iid, "values")
             if not vals:
                 continue
+            tipo = vals[11] if len(vals) > 11 else ""
             out.append(
                 {
                     "concepto": vals[0],
@@ -1214,23 +1296,26 @@ class FacturaDialog(tk.Toplevel):
                     "descuento_valor": _round2(_to_float(vals[10])) if len(vals) > 10 else 0.0,
                     "pct_re": 0.0,
                     "cuota_re": 0.0,
+                    "tipo": tipo,
                 }
             )
         return out
 
     def set_totales(self, base, iva, ret, total):
-        self.lbl_tot_base.config(text=f"Base: {base:.2f}")
-        self.lbl_tot_iva.config(text=f"IVA: {iva:.2f}")
-        self.lbl_tot_ret.config(text=f"IRPF: {ret:.2f}")
-        self.lbl_tot_total.config(text=f"Total: {total:.2f}")
+        sym = self._moneda_simbolo
+        self.lbl_tot_base.config(text=f"Base: {_fmt2s(base, sym)}")
+        self.lbl_tot_iva.config(text=f"IVA: {_fmt2s(iva, sym)}")
+        self.lbl_tot_ret.config(text=f"IRPF: {_fmt2s(ret, sym)}")
+        self.lbl_tot_total.config(text=f"Total: {_fmt2s(total, sym)}")
 
     def set_iva_resumen(self, rows):
         self.tv_iva.delete(*self.tv_iva.get_children())
+        sym = self._moneda_simbolo
         for r in rows:
             self.tv_iva.insert(
                 "",
                 tk.END,
-                values=(r.get("tipo", ""), f"{_round2(r.get('base')):.2f}", f"{_round2(r.get('cuota')):.2f}"),
+                values=(r.get("tipo", ""), _fmt2s(_round2(r.get("base")), sym), _fmt2s(_round2(r.get("cuota")), sym)),
             )
 
     def get_retencion_aplica(self):
@@ -1255,7 +1340,11 @@ class FacturaDialog(tk.Toplevel):
 
     def set_retencion_base(self, value: str):
         self._retencion_silent = True
-        self.var_ret_base.set(value)
+        try:
+            val = _to_float(value)
+            self.var_ret_base.set(_fmt2(val) if value not in ("", None) else "")
+        except Exception:
+            self.var_ret_base.set(value)
         self._retencion_silent = False
 
     def set_retencion_pct(self, value: str):
@@ -1273,13 +1362,15 @@ class FacturaDialog(tk.Toplevel):
         return tipo, valor
 
     def _format_desc(self, ln: dict) -> str:
+        if str(ln.get("tipo") or "").strip().lower() == "obs":
+            return ""
         t = (ln.get("descuento_tipo") or "").strip().lower()
         v = _round2(ln.get("descuento_valor"))
         if not t or not v:
             return ""
         if t == "pct":
-            return f"{v:.2f}%"
-        return f"{v:.2f}"
+            return f"{_fmt2(v)}%"
+        return _fmt2(v)
 
     def get_numero_factura(self):
         return self.var_numero.get().strip()
@@ -1311,6 +1402,11 @@ class FacturaDialog(tk.Toplevel):
     def get_cuenta_bancaria(self):
         return self.var_cuenta_banco.get().strip()
 
+    def get_moneda(self):
+        label = self.var_moneda.get()
+        data = self._moneda_by_label.get(label) or {}
+        return data.get("codigo", ""), data.get("simbolo", "")
+
     def get_plantilla_word(self):
         return self.var_plantilla_word.get().strip()
 
@@ -1336,6 +1432,8 @@ class UIFacturasEmitidas(ttk.Frame):
         self.codigo = codigo_empresa
         self.ejercicio = ejercicio
         self.nombre = nombre_empresa
+        monedas = load_monedas()
+        self._default_moneda_simbolo = str(monedas[0].get("simbolo")) if monedas else ""
         base = {
             "nombre": nombre_empresa,
             "digitos_plan": 8,
@@ -1542,6 +1640,7 @@ class UIFacturasEmitidas(ttk.Frame):
         self.tv_alb_detalle.delete(*self.tv_alb_detalle.get_children())
 
     def insert_factura_row(self, fac: dict, total: float):
+        sym = fac.get("moneda_simbolo") or self._default_moneda_simbolo
         self.tv.insert(
             "",
             tk.END,
@@ -1551,7 +1650,7 @@ class UIFacturasEmitidas(ttk.Frame):
                 fac.get("numero", ""),
                 _to_fecha_ui_or_blank(fac.get("fecha_asiento", "")),
                 fac.get("nombre", ""),
-                f"{total:.2f}",
+                _fmt2s(total, sym),
                 "Si" if fac.get("generada") else "No",
                 fac.get("fecha_generacion", ""),
                 "Si" if fac.get("enviado") else "No",
@@ -1560,6 +1659,7 @@ class UIFacturasEmitidas(ttk.Frame):
         )
 
     def insert_albaran_row(self, alb: dict, total: float):
+        sym = alb.get("moneda_simbolo") or self._default_moneda_simbolo
         factura_txt = alb.get("factura_id", "") or ""
         if factura_txt:
             fac = next(
@@ -1580,7 +1680,7 @@ class UIFacturasEmitidas(ttk.Frame):
                 alb.get("numero", ""),
                 _to_fecha_ui_or_blank(alb.get("fecha_asiento", "")),
                 alb.get("nombre", ""),
-                f"{total:.2f}",
+                _fmt2s(total, sym),
                 "Si" if alb.get("facturado") else "No",
                 factura_txt,
             ),
@@ -1630,39 +1730,43 @@ class UIFacturasEmitidas(ttk.Frame):
         num = int(digits) if digits else -1
         return (txt[:1].lower() if txt else "", num, txt.lower())
 
-    def set_detalle_lineas(self, lineas):
+    def set_detalle_lineas(self, lineas, simbolo: str = ""):
         self.tv_detalle.delete(*self.tv_detalle.get_children())
+        sym = simbolo or self._default_moneda_simbolo
         for ln in lineas or []:
+            is_obs = str(ln.get("tipo") or "").strip().lower() == "obs"
             self.tv_detalle.insert(
                 "",
                 tk.END,
                 values=(
                     ln.get("concepto", ""),
-                    f"{_round2(ln.get('unidades')):.2f}",
-                    f"{_round4(ln.get('precio')):.4f}",
-                    f"{_round2(ln.get('base')):.2f}",
-                    f"{_round2(ln.get('pct_iva')):.2f}",
-                    f"{_round2(ln.get('cuota_iva')):.2f}",
-                    f"{_round2(ln.get('pct_irpf')):.2f}",
-                    f"{_round2(ln.get('cuota_irpf')):.2f}",
+                    "" if is_obs else _fmt2(_round2(ln.get("unidades"))),
+                    "" if is_obs else _fmt4(_round4(ln.get("precio"))),
+                    "" if is_obs else _fmt2s(_round2(ln.get("base")), sym),
+                    "" if is_obs else _fmt2(_round2(ln.get("pct_iva"))),
+                    "" if is_obs else _fmt2s(_round2(ln.get("cuota_iva")), sym),
+                    "" if is_obs else _fmt2(_round2(ln.get("pct_irpf"))),
+                    "" if is_obs else _fmt2s(_round2(ln.get("cuota_irpf")), sym),
                 ),
             )
 
-    def set_albaran_lineas(self, lineas):
+    def set_albaran_lineas(self, lineas, simbolo: str = ""):
         self.tv_alb_detalle.delete(*self.tv_alb_detalle.get_children())
+        sym = simbolo or self._default_moneda_simbolo
         for ln in lineas or []:
+            is_obs = str(ln.get("tipo") or "").strip().lower() == "obs"
             self.tv_alb_detalle.insert(
                 "",
                 tk.END,
                 values=(
                     ln.get("concepto", ""),
-                    f"{_round2(ln.get('unidades')):.2f}",
-                    f"{_round4(ln.get('precio')):.4f}",
-                    f"{_round2(ln.get('base')):.2f}",
-                    f"{_round2(ln.get('pct_iva')):.2f}",
-                    f"{_round2(ln.get('cuota_iva')):.2f}",
-                    f"{_round2(ln.get('pct_irpf')):.2f}",
-                    f"{_round2(ln.get('cuota_irpf')):.2f}",
+                    "" if is_obs else _fmt2(_round2(ln.get("unidades"))),
+                    "" if is_obs else _fmt4(_round4(ln.get("precio"))),
+                    "" if is_obs else _fmt2s(_round2(ln.get("base")), sym),
+                    "" if is_obs else _fmt2(_round2(ln.get("pct_iva"))),
+                    "" if is_obs else _fmt2s(_round2(ln.get("cuota_iva")), sym),
+                    "" if is_obs else _fmt2(_round2(ln.get("pct_irpf"))),
+                    "" if is_obs else _fmt2s(_round2(ln.get("cuota_irpf")), sym),
                 ),
             )
 

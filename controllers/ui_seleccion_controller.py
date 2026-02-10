@@ -1,12 +1,11 @@
 import sqlite3
 import shutil
 import sys
-import json
 from datetime import datetime
 from pathlib import Path
 
 from services.import_empresas_csv import import_empresas_csv
-from utils.utilidades import aplicar_descuento_total_lineas
+from utils.utilidades import aplicar_descuento_total_lineas, load_app_config, save_app_config
 
 
 class SeleccionEmpresaController:
@@ -26,13 +25,17 @@ class SeleccionEmpresaController:
         self.apply_filter()
         self._build_empresas_index()
         self._load_facturas_global()
+        self._load_monedas()
 
     def apply_filter(self):
         filtro = (self._view.get_filter_text() or "").strip().lower()
         eje_filter = self._view.get_ejercicio_filter()
+        ver_bajas = self._view.get_ver_bajas()
         self._view.clear_empresas()
         for e in self._empresas_cache:
             if eje_filter is not None and e.get("ejercicio") != eje_filter:
+                continue
+            if not ver_bajas and not bool(e.get("activo", True)):
                 continue
             texto = " ".join([
                 str(e.get("codigo", "")),
@@ -170,6 +173,7 @@ class SeleccionEmpresaController:
 
     def apply_facturas_filter(self):
         eje_filter, empresa_txt = self._view.get_facturas_filters()
+        ver_bajas = self._view.get_ver_bajas()
         self._view.clear_facturas()
         for fac in self._facturas_cache:
             if eje_filter is not None and fac.get("ejercicio") != eje_filter:
@@ -178,6 +182,11 @@ class SeleccionEmpresaController:
                 codigo = str(fac.get("codigo_empresa", "")).lower()
                 nombre_emp = self._empresa_nombre(fac).lower()
                 if empresa_txt not in codigo and empresa_txt not in nombre_emp:
+                    continue
+            if not ver_bajas:
+                key = (str(fac.get("codigo_empresa")), fac.get("ejercicio"))
+                emp = self._empresas_by_key.get(key)
+                if emp and not bool(emp.get("activo", True)):
                     continue
             total = self._compute_total(fac)
             self._view.insert_factura_row(fac, total, empresa_nombre=self._empresa_nombre(fac))
@@ -231,6 +240,66 @@ class SeleccionEmpresaController:
         self._build_empresas_index()
         self._load_facturas_global()
 
+    def copiar_factura_global(self):
+        codigo, eje, fid = self._view.get_selected_factura_key()
+        if not codigo or not fid:
+            self._view.show_info("Gest2A3Eco", "Selecciona una factura.")
+            return
+        fac = next(
+            (
+                f
+                for f in self._facturas_cache
+                if str(f.get("id")) == str(fid)
+                and str(f.get("codigo_empresa")) == str(codigo)
+                and str(f.get("ejercicio")) == str(eje)
+            ),
+            None,
+        )
+        if not fac:
+            self._view.show_warning("Gest2A3Eco", "No se encontro la factura seleccionada.")
+            return
+
+        empresas = [e for e in self._gestor.listar_empresas() if e.get("ejercicio") is not None]
+        if not empresas:
+            self._view.show_warning("Gest2A3Eco", "No hay empresas disponibles.")
+            return
+        destino = self._view.ask_copiar_factura_destino(empresas)
+        if not destino:
+            return
+        dest_codigo, dest_eje = destino
+        emp_dest = self._gestor.get_empresa(dest_codigo, dest_eje)
+        if not emp_dest:
+            self._view.show_warning("Gest2A3Eco", "Empresa destino no encontrada.")
+            return
+
+        serie = str(emp_dest.get("serie_emitidas", "A") or "A")
+        try:
+            siguiente = int(emp_dest.get("siguiente_num_emitidas", 1))
+        except Exception:
+            siguiente = 1
+        numero = f"{serie}{siguiente:06d}"
+
+        nuevo = dict(fac)
+        nuevo.pop("id", None)
+        nuevo["codigo_empresa"] = dest_codigo
+        nuevo["ejercicio"] = dest_eje
+        nuevo["serie"] = serie
+        nuevo["numero"] = numero
+        nuevo["generada"] = False
+        nuevo["fecha_generacion"] = ""
+        nuevo["enviado"] = False
+        nuevo["fecha_envio"] = ""
+        nuevo["canal_envio"] = ""
+        nuevo["pdf_ref"] = ""
+        nuevo["pdf_path"] = ""
+        nuevo["pdf_path_a3"] = ""
+
+        self._gestor.upsert_factura_emitida(nuevo)
+        emp_dest["siguiente_num_emitidas"] = siguiente + 1
+        self._gestor.upsert_empresa(emp_dest)
+        self.refresh_facturas_global()
+        self._view.show_info("Gest2A3Eco", "Factura copiada.")
+
     def _compute_total(self, fac: dict) -> float:
         total = 0.0
         lineas = aplicar_descuento_total_lineas(
@@ -278,18 +347,44 @@ class SeleccionEmpresaController:
             return 0.0
 
     def _load_admin_password(self):
-        base_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
-        cfg_path = base_dir / "config.json"
-        try:
-            if cfg_path.exists():
-                with open(cfg_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                pwd = data.get("admin_password")
-                if pwd is not None and str(pwd).strip():
-                    return str(pwd)
-        except Exception:
-            pass
+        data = load_app_config()
+        pwd = data.get("admin_password")
+        if pwd is not None and str(pwd).strip():
+            return str(pwd)
         return "admin"
+
+    def _load_monedas(self):
+        data = load_app_config()
+        self._view.set_monedas(data.get("monedas") or [])
+
+    def add_moneda(self):
+        data = self._view.get_moneda_form()
+        if not data:
+            return
+        cfg = load_app_config()
+        monedas = cfg.get("monedas") or []
+        codigo = data.get("codigo")
+        if any(str(m.get("codigo")).upper() == codigo for m in monedas):
+            self._view.show_warning("Gest2A3Eco", "La moneda ya existe.")
+            return
+        monedas.append(data)
+        cfg["monedas"] = monedas
+        save_app_config(cfg)
+        self._load_monedas()
+
+    def remove_moneda(self):
+        codigo = self._view.get_selected_moneda_codigo()
+        if not codigo:
+            self._view.show_info("Gest2A3Eco", "Selecciona una moneda.")
+            return
+        cfg = load_app_config()
+        monedas = [m for m in (cfg.get("monedas") or []) if str(m.get("codigo") or "").upper() != codigo]
+        if not monedas:
+            self._view.show_warning("Gest2A3Eco", "Debe existir al menos una moneda.")
+            return
+        cfg["monedas"] = monedas
+        save_app_config(cfg)
+        self._load_monedas()
 
     def _build_empresas_index(self):
         self._empresas_by_key = {}

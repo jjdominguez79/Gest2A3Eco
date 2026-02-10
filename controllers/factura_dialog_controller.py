@@ -1,6 +1,6 @@
 from datetime import date
 
-from utils.utilidades import validar_subcuenta_longitud, aplicar_descuento_total_lineas
+from utils.utilidades import validar_subcuenta_longitud, aplicar_descuento_total_lineas, format_num_es
 
 
 class FacturaDialogController:
@@ -75,10 +75,12 @@ class FacturaDialogController:
         dtipo, dvalor = self._view.get_descuento_total()
         lineas_calc = aplicar_descuento_total_lineas(lineas, dtipo, dvalor)
         for ln in lineas_calc:
+            if str(ln.get("tipo") or "").strip().lower() == "obs":
+                continue
             base += ln["base"]
             iva += ln["cuota_iva"]
             pct = self._round2(ln.get("pct_iva", 0))
-            item = resumen.setdefault(pct, {"tipo": f"{pct:.2f}%", "base": 0.0, "cuota": 0.0})
+            item = resumen.setdefault(pct, {"tipo": f"{format_num_es(pct, 2)}%", "base": 0.0, "cuota": 0.0})
             item["base"] += ln.get("base", 0.0)
             item["cuota"] += ln.get("cuota_iva", 0.0)
         base = self._round2(base)
@@ -105,6 +107,17 @@ class FacturaDialogController:
         if not self._view.get_numero_factura():
             self._view.show_error("Gest2A3Eco", "Numero de factura vacio.")
             return
+        fecha_common = self._view.get_fecha_exp()
+        try:
+            d = self._view.parse_date(str(fecha_common))
+            if self._ejercicio and d.year != int(self._ejercicio):
+                self._view.show_error(
+                    "Gest2A3Eco",
+                    f"La fecha de la factura ({d.strftime('%d/%m/%Y')}) debe estar dentro del ejercicio {self._ejercicio}.",
+                )
+                return
+        except Exception:
+            pass
         sc = self._view.get_subcuenta().strip()
         if sc:
             validar_subcuenta_longitud(sc, self._ndig, "subcuenta cliente")
@@ -112,7 +125,6 @@ class FacturaDialogController:
         idx = self._view.get_selected_tercero_index()
         if idx >= 0 and idx < len(self._terceros_cache):
             tercero_id = self._terceros_cache[idx].get("id")
-        fecha_common = self._view.get_fecha_exp()
         result = {
             "id": self._factura.get("id"),
             "codigo_empresa": self._codigo,
@@ -131,6 +143,8 @@ class FacturaDialogController:
             "subcuenta_cliente": sc,
             "forma_pago": self._view.get_forma_pago(),
             "cuenta_bancaria": self._view.get_cuenta_bancaria(),
+            "moneda_codigo": self._view.get_moneda()[0],
+            "moneda_simbolo": self._view.get_moneda()[1],
             "plantilla_word": self._view.get_plantilla_word(),
             "retencion_aplica": self._view.get_retencion_aplica(),
             "retencion_pct": self._view.get_retencion_pct(),
@@ -179,6 +193,25 @@ class FacturaDialogController:
 
     def _line_from_editor(self):
         concepto, unidades, precio, iva, iva_raw, desc_tipo, desc_val = self._view.get_line_editor_values()
+        if self._view.is_line_observacion():
+            if not concepto:
+                self._view.show_warning("Gest2A3Eco", "Completa el concepto de la observacion.")
+                return None
+            return {
+                "concepto": concepto,
+                "unidades": 0.0,
+                "precio": 0.0,
+                "base": 0.0,
+                "pct_iva": 0.0,
+                "cuota_iva": 0.0,
+                "descuento_tipo": "",
+                "descuento_valor": 0.0,
+                "pct_irpf": 0.0,
+                "cuota_irpf": 0.0,
+                "pct_re": 0.0,
+                "cuota_re": 0.0,
+                "tipo": "obs",
+            }
         if not concepto or unidades == 0 or iva_raw == "":
             self._view.show_warning("Gest2A3Eco", "Completa concepto, unidades e IVA.")
             return None
@@ -212,6 +245,7 @@ class FacturaDialogController:
             "cuota_irpf": 0.0,
             "pct_re": 0.0,
             "cuota_re": 0.0,
+            "tipo": "",
         }
 
     def _apply_retencion_to_lineas(self, lineas, pct, base_ret):
