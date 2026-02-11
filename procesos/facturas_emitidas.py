@@ -2,6 +2,7 @@
 #
 # Generacion de registros SUENLACE para facturas emitidas (ventas).
 from collections import defaultdict
+from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Dict, Any
 
 from models.facturas_common import (
@@ -35,6 +36,32 @@ def _r2(x) -> float:
         return round(float(x), 2)
     except Exception:
         return 0.0
+
+def _d2(x) -> Decimal:
+    try:
+        return Decimal(str(x)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except Exception:
+        return Decimal("0.00")
+
+def _d0(x) -> Decimal:
+    try:
+        return Decimal(str(x))
+    except Exception:
+        return Decimal("0")
+
+def _norm_subtipo(val: Any) -> str:
+    s = "" if val is None else str(val).strip()
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if not digits:
+        return "01"
+    return digits.zfill(2)[-2:]
+
+def _subcuenta_generica(plantilla: Dict[str, Any], ndig: int) -> str:
+    pref_cli_raw = str(plantilla.get("cuenta_cliente_prefijo", "430") or "430")
+    pref_digits = "".join(ch for ch in pref_cli_raw if ch.isdigit()) or "0"
+    if len(pref_digits) >= ndig:
+        return pref_digits[:ndig]
+    return pref_digits.ljust(ndig, "0")
 
 
 def _key_factura(rec: Dict[str, Any]):
@@ -104,7 +131,7 @@ def generar_emitidas(
     cta_ventas_def  = str(plantilla.get("cuenta_ingreso_por_defecto", "70000000"))
     cta_iva_def     = str(plantilla.get("cuenta_iva_repercutido_defecto", "47700000"))
     cta_ret_def     = str(plantilla.get("cuenta_retenciones_irpf", ""))  # normalmente vacio
-    subtipo_def     = str(plantilla.get("subtipo_emitidas", "01"))
+    subtipo_def     = _norm_subtipo(plantilla.get("subtipo_emitidas", "01"))
 
     grupos: Dict[Any, List[Dict[str, Any]]] = defaultdict(list)
     for rec in rows:
@@ -143,35 +170,36 @@ def generar_emitidas(
         desc_cab = f"Nª Fra. {num_fact}".strip()
         desc_det = f"Ventas a {nombre}".strip() if nombre else "Ventas"
 
-        # Subcuenta: prioriza la subcuenta en el registro si viene informada
+        # Subcuenta: si no hay mapeo o no viene informada, usa generica
         cta_excel = str(r0.get("Cuenta Cliente Proveedor") or "").strip()
-        if cta_excel:
+        if cta_excel and not r0.get("_usar_cuenta_generica"):
             dig_cta = "".join(ch for ch in cta_excel if ch.isdigit()) or "0"
             subcliente = (dig_cta + "0" * ndig)[:ndig]
         else:
-            pref_cli_raw = str(plantilla.get("cuenta_cliente_prefijo", "430"))
-            pref_digits = "".join(ch for ch in pref_cli_raw if ch.isdigit()) or "0"
-            nif_digits  = "".join(ch for ch in nif if ch.isdigit()) or "0"
-            if len(pref_digits) >= ndig:
-                subcliente = pref_digits[:ndig]
-            else:
-                base = (pref_digits + nif_digits)
-                if len(base) >= ndig:
-                    subcliente = base[:ndig]
-                else:
-                    subcliente = base.ljust(ndig, "0")
+            subcliente = _subcuenta_generica(plantilla, ndig)
 
         # Total factura: suma de bases + IVA + recargo + retenciones (retenciones negativas)
-        total = 0.0
+        total = Decimal("0.00")
         for rr in grecs:
-            base  = _fv(rr.get("Base"))
-            cuota = _fv(rr.get("Cuota IVA"))
-            re_c  = _fv(rr.get("Cuota Recargo Equivalencia"))
-            ret_c = _fv(rr.get("Cuota Retencion IRPF"))
+            base  = _d2(_fv(rr.get("Base")))
+            pct   = _d0(_fv(rr.get("Porcentaje IVA")))
+            cuota = _d2(_fv(rr.get("Cuota IVA")))
+            if base != 0 and pct != 0:
+                cuota = (base * pct / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            re_pct = _d0(_fv(rr.get("Porcentaje Recargo Equivalencia")))
+            re_c   = _d2(_fv(rr.get("Cuota Recargo Equivalencia")))
+            if base != 0 and re_pct != 0:
+                re_c = (base * re_pct / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            ret_pct = _d0(_fv(rr.get("Porcentaje Retencion IRPF")))
+            ret_c   = _d2(_fv(rr.get("Cuota Retencion IRPF")))
+            if base != 0 and ret_pct != 0:
+                ret_c = -(abs(base * ret_pct / Decimal("100"))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            else:
+                ret_c = -abs(ret_c)
             total += base + cuota + re_c + ret_c
-        total = _r2(total)
+        total = _d2(total)
         signo = -1 if total < 0 else 1
-        total_abs = abs(total)
+        total_abs = abs(float(total))
         tipo_registro = "2" if signo < 0 else "1"  # 2 = rectificativa (abono)
 
         registros.append(
@@ -194,39 +222,56 @@ def generar_emitidas(
         )
 
         # Detalle tipo 9 por cada linea de IVA
-        n_lineas = len(grecs)
         cta_ventas = r0.get("Cuenta Compras Ventas") or c_ing_ter or cta_ventas_def
         cta_ventas = _ajustar_cuenta(cta_ventas, ndig)
-        for i, rr in enumerate(grecs):
-            base  = _fv(rr.get("Base"))
-            pct   = _fv(rr.get("Porcentaje IVA"))
-            cuota = _fv(rr.get("Cuota IVA"))
+        detalle_rows = []
+        for rr in grecs:
+            base  = _d2(_fv(rr.get("Base")))
+            pct   = _d0(_fv(rr.get("Porcentaje IVA")))
+            cuota = _d2(_fv(rr.get("Cuota IVA")))
             if base != 0 and pct != 0:
-                cuota = base * pct / 100.0
+                cuota = (base * pct / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-            # Si no hay IVA en la linea, la saltamos
-            if base == 0 and cuota == 0:
-                continue
-
-            if base != 0 and pct == 0 and cuota != 0:
-                pct = round(abs(cuota / base * 100.0), 2)
-
-            re_pct = _fv(rr.get("Porcentaje Recargo Equivalencia"))
-            re_c   = _fv(rr.get("Cuota Recargo Equivalencia"))
+            re_pct = _d0(_fv(rr.get("Porcentaje Recargo Equivalencia")))
+            re_c   = _d2(_fv(rr.get("Cuota Recargo Equivalencia")))
             if base != 0 and re_pct != 0:
-                re_c = base * re_pct / 100.0
+                re_c = (base * re_pct / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-            ret_pct = _fv(rr.get("Porcentaje Retencion IRPF"))
-            ret_c   = _fv(rr.get("Cuota Retencion IRPF"))
+            ret_pct = _d0(_fv(rr.get("Porcentaje Retencion IRPF")))
+            ret_c   = _d2(_fv(rr.get("Cuota Retencion IRPF")))
             if base != 0 and ret_pct != 0:
-                ret_c = -abs(base * ret_pct / 100.0)
+                ret_c = -(abs(base * ret_pct / Decimal("100"))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             else:
                 ret_c = -abs(ret_c)
 
-            base = _r2(base)
-            cuota = _r2(cuota)
-            re_c = _r2(re_c)
-            ret_c = _r2(ret_c)
+            # Si no hay base, IVA, recargo ni retención, se omite
+            if base == 0 and cuota == 0 and re_c == 0 and ret_c == 0:
+                continue
+
+            if base != 0 and pct == 0 and cuota != 0:
+                pct = _d0((abs(cuota / base) * Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+            detalle_rows.append(
+                {
+                    "base": float(base),
+                    "pct": float(pct),
+                    "cuota": float(cuota),
+                    "re_pct": float(re_pct),
+                    "re_c": float(re_c),
+                    "ret_pct": float(ret_pct),
+                    "ret_c": float(ret_c),
+                }
+            )
+
+        n_lineas = len(detalle_rows)
+        for i, rr in enumerate(detalle_rows):
+            base = rr["base"]
+            cuota = rr["cuota"]
+            re_c = rr["re_c"]
+            ret_c = rr["ret_c"]
+            re_pct = rr["re_pct"]
+            ret_pct = rr["ret_pct"]
+            pct = rr["pct"]
 
             registros.append(
                 render_emitidas_detalle_256(
@@ -245,6 +290,7 @@ def generar_emitidas(
                     pct_ret=abs(ret_pct),
                     cuota_ret=(ret_c if signo > 0 else -abs(ret_c)),
                     es_ultimo=(i == n_lineas - 1),
+                    dh=("A" if signo < 0 else "C"),
                     cuenta_iva=cta_iva_def,
                     cuenta_recargo="",
                     cuenta_retencion=cta_ret_def or "",

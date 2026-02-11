@@ -17,23 +17,37 @@ from utils.utilidades import aplicar_descuento_total_lineas, load_monedas
 
 
 class FacturasEmitidasController:
-    def __init__(self, gestor, codigo, ejercicio, empresa_conf, view):
+    def __init__(self, gestor, codigo, ejercicio, empresa_conf, view, allow_all_years: bool = False):
         self._gestor = gestor
         self._codigo = codigo
         self._ejercicio = ejercicio
         self._empresa_conf = empresa_conf
         self._view = view
+        self._allow_all_years = bool(allow_all_years)
+        self._facturas_cache = []
 
     def refresh_plantillas(self):
         pls = [p.get("nombre") for p in self._gestor.listar_emitidas(self._codigo, self._ejercicio)]
         self._view.set_plantillas(pls)
 
     def refresh_facturas(self):
+        self._facturas_cache = self._listar_facturas_base()
+        if self._allow_all_years:
+            years = sorted({y for y in (self._year_from_factura(f) for f in self._facturas_cache) if y is not None})
+            self._view.set_facturas_years(years)
+        self.apply_facturas_filter()
+        self._view.set_detalle_lineas([])
+
+    def apply_facturas_filter(self):
         self._view.clear_facturas()
-        for fac in self._gestor.listar_facturas_emitidas(self._codigo, self._ejercicio):
+        year_filter = self._view.get_facturas_year_filter() if self._allow_all_years else None
+        for fac in self._facturas_cache:
+            if year_filter is not None:
+                fyear = self._year_from_factura(fac)
+                if fyear != year_filter:
+                    continue
             total = self._compute_total(fac)
             self._view.insert_factura_row(fac, total)
-        self._view.set_detalle_lineas([])
 
     def refresh_albaranes(self):
         self._view.clear_albaranes()
@@ -43,26 +57,30 @@ class FacturasEmitidasController:
         self._view.set_albaran_lineas([])
 
     def nueva(self):
-        sugerido = self._proximo_numero()
+        fecha_sug = datetime.now().strftime("%d/%m/%Y")
+        sugerido, serie_sug, eje_sug = self._proximo_numero_por_fecha(fecha_sug, rectificativa=False)
         cuenta_default = self._cuenta_bancaria_default()
         result = self._view.open_factura_dialog(
             {
                 "codigo_empresa": self._codigo,
-                "ejercicio": self._ejercicio,
-                "serie": self._serie(),
+                "ejercicio": eje_sug if eje_sug is not None else self._ejercicio,
+                "serie": serie_sug,
                 "numero": sugerido,
                 "forma_pago": "",
                 "cuenta_bancaria": cuenta_default,
+                "fecha_asiento": fecha_sug,
             },
             numero_sugerido=sugerido,
         )
         if result:
+            result = self._ajustar_numero_por_fecha_si_aplica(result, sugerido, serie_sug, rectificativa=False)
             result["generada"] = False
             result["fecha_generacion"] = ""
-            result["ejercicio"] = self._ejercicio
+            if result.get("ejercicio") is None:
+                result["ejercicio"] = self._ejercicio
             result["codigo_empresa"] = self._codigo
             self._gestor.upsert_factura_emitida(result)
-            self._incrementar_numeracion()
+            self._incrementar_numeracion_por_factura(result, rectificativa=False)
             self.refresh_facturas()
 
     def editar(self):
@@ -87,14 +105,49 @@ class FacturasEmitidasController:
             return
         nuevo = dict(fac)
         nuevo.pop("id", None)
-        nuevo["numero"] = self._proximo_numero()
-        nuevo["serie"] = self._serie()
+        fecha_base = fac.get("fecha_asiento") or datetime.now().strftime("%d/%m/%Y")
+        sugerido, serie_sug, eje_sug = self._proximo_numero_por_fecha(fecha_base, rectificativa=False)
+        nuevo["numero"] = sugerido
+        nuevo["serie"] = serie_sug
+        nuevo["ejercicio"] = eje_sug if eje_sug is not None else self._ejercicio
         nuevo["generada"] = False
         nuevo["fecha_generacion"] = ""
         result = self._view.open_factura_dialog(nuevo, numero_sugerido=nuevo["numero"])
         if result:
+            result = self._ajustar_numero_por_fecha_si_aplica(result, sugerido, serie_sug, rectificativa=False)
             self._gestor.upsert_factura_emitida(result)
-            self._incrementar_numeracion()
+            self._incrementar_numeracion_por_factura(result, rectificativa=False)
+            self.refresh_facturas()
+
+    def rectificar(self):
+        sel = self._view.get_selected_ids()
+        if not sel:
+            self._view.show_info("Gest2A3Eco", "Selecciona una factura.")
+            return
+        fac = self._get_factura_by_id(sel[0])
+        if not fac:
+            return
+        nuevo = dict(fac)
+        nuevo.pop("id", None)
+        fecha_base = fac.get("fecha_asiento") or datetime.now().strftime("%d/%m/%Y")
+        sugerido, serie_sug, eje_sug = self._proximo_numero_por_fecha(fecha_base, rectificativa=True)
+        nuevo["numero"] = sugerido
+        nuevo["serie"] = serie_sug
+        nuevo["ejercicio"] = eje_sug if eje_sug is not None else self._ejercicio
+        nuevo["generada"] = False
+        nuevo["fecha_generacion"] = ""
+        nuevo["enviado"] = False
+        nuevo["fecha_envio"] = ""
+        nuevo["canal_envio"] = ""
+        nuevo["_allow_fecha_fuera_ejercicio"] = True
+        nuevo["lineas"] = self._negate_factura_lineas(nuevo.get("lineas", []))
+        nuevo["retencion_base"] = self._negate_value(nuevo.get("retencion_base"))
+        nuevo["retencion_importe"] = self._negate_value(nuevo.get("retencion_importe"))
+        result = self._view.open_factura_dialog(nuevo, numero_sugerido=nuevo["numero"])
+        if result:
+            result = self._ajustar_numero_por_fecha_si_aplica(result, sugerido, serie_sug, rectificativa=True)
+            self._gestor.upsert_factura_emitida(result)
+            self._incrementar_numeracion_por_factura(result, rectificativa=True)
             self.refresh_facturas()
 
     def eliminar(self):
@@ -104,7 +157,11 @@ class FacturasEmitidasController:
         if not self._view.ask_yes_no("Gest2A3Eco", "Eliminar las facturas seleccionadas?"):
             return
         for fid in sel:
-            self._gestor.eliminar_factura_emitida(self._codigo, fid, self._ejercicio)
+            fac = self._get_factura_by_id(fid)
+            if not fac:
+                continue
+            eje = fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio
+            self._gestor.eliminar_factura_emitida(self._codigo, fid, eje)
         self.refresh_facturas()
 
     def terceros(self):
@@ -249,12 +306,13 @@ class FacturasEmitidasController:
         for a in albaranes:
             lineas.extend(a.get("lineas", []))
         fecha = datetime.now().strftime("%d/%m/%Y")
+        sugerido, serie_sug, eje_sug = self._proximo_numero_por_fecha(fecha, rectificativa=False)
         factura = {
             "codigo_empresa": self._codigo,
-            "ejercicio": self._ejercicio,
+            "ejercicio": eje_sug if eje_sug is not None else self._ejercicio,
             "tercero_id": base.get("tercero_id"),
-            "serie": self._serie(),
-            "numero": self._proximo_numero(),
+            "serie": serie_sug,
+            "numero": sugerido,
             "numero_largo_sii": "",
             "fecha_asiento": fecha,
             "fecha_expedicion": fecha,
@@ -277,7 +335,7 @@ class FacturasEmitidasController:
             "fecha_generacion": "",
         }
         fid = self._gestor.upsert_factura_emitida(factura)
-        self._incrementar_numeracion()
+        self._incrementar_numeracion_por_factura(factura, rectificativa=False)
         fecha_gen = datetime.now().strftime("%Y-%m-%d %H:%M")
         self._gestor.marcar_albaranes_facturados(self._codigo, [a.get("id") for a in albaranes], fid, fecha_gen, self._ejercicio)
         self.refresh_facturas()
@@ -417,8 +475,9 @@ class FacturasEmitidasController:
 
         if self._view.ask_yes_no("Gest2A3Eco", "¿Marcar factura como enviada?"):
             fecha_envio = datetime.now().strftime("%Y-%m-%d %H:%M")
+            eje = fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio
             self._gestor.marcar_factura_emitida_enviada(
-                self._codigo, fac.get("id"), fecha_envio, canal, self._ejercicio
+                self._codigo, fac.get("id"), fecha_envio, canal, eje
             )
             self.refresh_facturas()
 
@@ -484,19 +543,52 @@ class FacturasEmitidasController:
         with open(save_path, "w", encoding="latin-1", newline="") as f:
             f.writelines(registros)
         fecha_gen = datetime.now().strftime("%Y-%m-%d %H:%M")
-        self._gestor.marcar_facturas_emitidas_generadas(self._codigo, sel, fecha_gen, self._ejercicio)
+        if self._allow_all_years:
+            grupos = {}
+            for fac in facturas_sel:
+                eje = fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio
+                grupos.setdefault(eje, []).append(fac.get("id"))
+            for eje, ids in grupos.items():
+                self._gestor.marcar_facturas_emitidas_generadas(self._codigo, ids, fecha_gen, eje)
+        else:
+            self._gestor.marcar_facturas_emitidas_generadas(self._codigo, sel, fecha_gen, self._ejercicio)
         self.refresh_facturas()
         self._view.show_info("Gest2A3Eco", f"Fichero generado:\n{save_path}")
 
     def _get_factura_by_id(self, fid):
-        return next(
-            (
-                f
-                for f in self._gestor.listar_facturas_emitidas(self._codigo, self._ejercicio)
-                if str(f.get("id")) == str(fid)
-            ),
-            None,
-        )
+        for f in self._facturas_cache or []:
+            if str(f.get("id")) == str(fid):
+                return f
+        for f in self._listar_facturas_base():
+            if str(f.get("id")) == str(fid):
+                return f
+        return None
+
+    def _listar_facturas_base(self):
+        if self._allow_all_years:
+            return self._gestor.listar_facturas_emitidas_global(self._codigo, None)
+        return self._gestor.listar_facturas_emitidas(self._codigo, self._ejercicio)
+
+    def _year_from_factura(self, fac: dict):
+        txt = str(fac.get("fecha_asiento") or fac.get("fecha_expedicion") or "").strip()
+        year = self._year_from_fecha_txt(txt)
+        if year is not None:
+            return year
+        try:
+            return int(fac.get("ejercicio"))
+        except Exception:
+            return None
+
+    def _year_from_fecha_txt(self, txt: str):
+        txt = str(txt or "").strip()
+        if not txt:
+            return None
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y"):
+            try:
+                return datetime.strptime(txt, fmt).year
+            except Exception:
+                continue
+        return None
 
     def _get_albaran_by_id(self, aid):
         return next(
@@ -523,6 +615,78 @@ class FacturasEmitidasController:
     def _incrementar_numeracion(self):
         self._empresa_conf["siguiente_num_emitidas"] = self._siguiente_num() + 1
         self._gestor.upsert_empresa(self._empresa_conf)
+
+    def _serie_for_year(self, year: int | None, rectificativa: bool = False) -> str:
+        emp = self._empresa_for_year(year)
+        if rectificativa:
+            serie = str(emp.get("serie_emitidas_rect") or "").strip()
+            if not serie:
+                serie = "R"
+            return serie
+        return str(emp.get("serie_emitidas", "A") or "A")
+
+    def _siguiente_num_for_year(self, year: int | None, rectificativa: bool = False) -> int:
+        emp = self._empresa_for_year(year)
+        key = "siguiente_num_emitidas_rect" if rectificativa else "siguiente_num_emitidas"
+        try:
+            return int(emp.get(key, 1))
+        except Exception:
+            return 1
+
+    def _proximo_numero_por_fecha(self, fecha_txt: str, rectificativa: bool = False):
+        year = self._year_from_fecha_txt(fecha_txt)
+        serie = self._serie_for_year(year, rectificativa=rectificativa)
+        num = self._siguiente_num_for_year(year, rectificativa=rectificativa)
+        return f"{serie}{num:06d}", serie, year
+
+    def _incrementar_numeracion_por_factura(self, fac: dict, rectificativa: bool = False):
+        year = self._year_from_factura(fac)
+        emp = self._empresa_for_year(year)
+        key = "siguiente_num_emitidas_rect" if rectificativa else "siguiente_num_emitidas"
+        try:
+            emp[key] = int(emp.get(key, 1)) + 1
+        except Exception:
+            emp[key] = 2
+        self._gestor.upsert_empresa(emp)
+        if year == self._ejercicio:
+            self._empresa_conf.update(emp)
+
+    def _ajustar_numero_por_fecha_si_aplica(self, fac: dict, numero_sugerido: str, serie_sugerida: str, rectificativa: bool = False):
+        num_actual = str(fac.get("numero") or "")
+        serie_actual = str(fac.get("serie") or "")
+        if num_actual == str(numero_sugerido) and serie_actual == str(serie_sugerida):
+            fecha_base = fac.get("fecha_asiento") or fac.get("fecha_expedicion") or ""
+            sugerido, serie_sug, year = self._proximo_numero_por_fecha(fecha_base, rectificativa=rectificativa)
+            fac["numero"] = sugerido
+            fac["serie"] = serie_sug
+            if year is not None:
+                fac["ejercicio"] = year
+        return fac
+
+    def _empresa_for_year(self, year: int | None):
+        if year is None:
+            return dict(self._empresa_conf)
+        emp = self._gestor.get_empresa(self._codigo, year)
+        if emp:
+            changed = False
+            if not str(emp.get("serie_emitidas_rect") or "").strip():
+                emp["serie_emitidas_rect"] = "R"
+                changed = True
+            if emp.get("siguiente_num_emitidas_rect") in (None, ""):
+                emp["siguiente_num_emitidas_rect"] = 1
+                changed = True
+            if changed:
+                self._gestor.upsert_empresa(emp)
+            return emp
+        base = dict(self._empresa_conf)
+        base["ejercicio"] = year
+        base.setdefault("serie_emitidas", "A")
+        base.setdefault("siguiente_num_emitidas", 1)
+        base.setdefault("serie_emitidas_rect", "R")
+        base.setdefault("siguiente_num_emitidas_rect", 1)
+        base["activo"] = True
+        self._gestor.upsert_empresa(base)
+        return base
 
     def _proximo_albaran_numero(self):
         pref = f"Alb-{self._ejercicio}-"
@@ -677,7 +841,10 @@ class FacturasEmitidasController:
                 upd["pdf_path"] = app_path
             except Exception:
                 pass
-        a3_path = self._a3_pdf_path(fac.get("pdf_ref", ""))
+        a3_path = self._a3_pdf_path_for(
+            fac.get("pdf_ref", ""),
+            fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio,
+        )
         if a3_path:
             try:
                 shutil.copy2(src_path, a3_path)
@@ -745,7 +912,7 @@ class FacturasEmitidasController:
         pdf_ref = str(fac.get("pdf_ref") or "").strip()
         if not pdf_ref:
             return
-        a3_path = self._a3_pdf_path(pdf_ref)
+        a3_path = self._a3_pdf_path_for(pdf_ref, fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio)
         if not a3_path:
             return
         if os.path.exists(a3_path):
@@ -803,8 +970,11 @@ class FacturasEmitidasController:
         return os.path.join(pdf_dir, emp_name, f"{filename}.pdf")
 
     def _a3_pdf_path(self, pdf_ref: str) -> str:
+        return self._a3_pdf_path_for(pdf_ref, self._ejercicio)
+
+    def _a3_pdf_path_for(self, pdf_ref: str, ejercicio) -> str:
         codigo = str(self._codigo or "").strip()
-        ejercicio = str(self._ejercicio or "").strip()
+        ejercicio = str(ejercicio or "").strip()
         if not codigo or not ejercicio:
             return ""
         base_dir = os.path.join("Z:\\", "A3", "A3ECO", f"E{codigo}", "FACTURAS", ejercicio)
@@ -883,6 +1053,31 @@ class FacturasEmitidasController:
             pct = self._to_float(fac.get("retencion_pct"))
             return self._round2(-abs(base * pct / 100.0)) if pct else 0.0
         return self._round2(self._to_float(importe))
+
+    def _negate_factura_lineas(self, lineas):
+        out = []
+        for ln in lineas or []:
+            nl = dict(ln)
+            if str(nl.get("tipo") or "").strip().lower() == "obs":
+                out.append(nl)
+                continue
+            nl["base"] = self._negate_value(nl.get("base"))
+            nl["cuota_iva"] = self._negate_value(nl.get("cuota_iva"))
+            nl["cuota_re"] = self._negate_value(nl.get("cuota_re"))
+            nl["cuota_irpf"] = self._negate_value(nl.get("cuota_irpf"))
+            out.append(nl)
+        return out
+
+    def _negate_value(self, value):
+        if value in (None, ""):
+            return value
+        try:
+            val = self._to_float(value)
+        except Exception:
+            return value
+        if val == 0:
+            return 0.0
+        return -abs(val)
 
     def _safe_filename(self, value: str) -> str:
         s = (value or "").strip()

@@ -67,22 +67,10 @@ class TercerosEmpresaController:
         self._view.show_info("Gest2A3Eco", "Subcuentas guardadas.")
 
     def copiar_desde_ejercicio(self):
-        ejercicios = [e for e in self._gestor.listar_ejercicios_empresa(self._codigo) if e != self._ejercicio]
-        if not ejercicios:
-            self._view.show_info("Gest2A3Eco", "No hay otros ejercicios disponibles para copiar.")
-            return
-        origen = self._view.ask_copiar_ejercicio(ejercicios)
-        if origen is None:
-            return
-        copiados, omitidos = self._gestor.copiar_terceros_empresa(self._codigo, origen, self._ejercicio)
-        self.refresh()
-        if omitidos:
-            self._view.show_info(
-                "Gest2A3Eco",
-                f"Copiados {copiados} terceros desde {origen}. Omitidos {omitidos} ya existentes.",
-            )
-        else:
-            self._view.show_info("Gest2A3Eco", f"Copiados {copiados} terceros desde {origen}.")
+        self._view.show_info(
+            "Gest2A3Eco",
+            "Los terceros por empresa son comunes a todos los ejercicios.\nNo es necesario copiar.",
+        )
 
     def generar_suenlace_terceros(self):
         empresa = self._gestor.get_empresa(self._codigo, self._ejercicio) or {}
@@ -146,6 +134,20 @@ class TercerosEmpresaController:
         with open(save_path, "w", encoding="latin-1", newline="") as f:
             f.writelines(registros)
         self._view.show_info("Gest2A3Eco", f"Fichero generado:\n{save_path}")
+
+    def eliminar_asignacion(self):
+        tid = self._view.get_selected_id()
+        if not tid:
+            self._view.show_info("Gest2A3Eco", "Selecciona un tercero.")
+            return
+        if not self._view.ask_yes_no("Gest2A3Eco", "Eliminar la asignacion del tercero a esta empresa?"):
+            return
+        try:
+            self._gestor.eliminar_tercero_empresa(self._codigo, tid)
+        except Exception as e:
+            self._view.show_warning("Gest2A3Eco", str(e))
+            return
+        self.refresh()
 
     def _subcuenta_en_uso(self, subcuenta: str, tercero_id: str, field: str) -> bool:
         if not subcuenta:

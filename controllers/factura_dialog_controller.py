@@ -11,6 +11,8 @@ class FacturaDialogController:
         self._ndig = ndig
         self._factura = factura
         self._view = view
+        self._allow_fecha_fuera_ejercicio = bool(factura.get("_allow_fecha_fuera_ejercicio"))
+        self._auto_ejercicio_por_fecha = bool(factura.get("_auto_ejercicio_por_fecha"))
         self._terceros_cache = []
 
     def load_terceros(self):
@@ -108,16 +110,17 @@ class FacturaDialogController:
             self._view.show_error("Gest2A3Eco", "Numero de factura vacio.")
             return
         fecha_common = self._view.get_fecha_exp()
-        try:
-            d = self._view.parse_date(str(fecha_common))
-            if self._ejercicio and d.year != int(self._ejercicio):
-                self._view.show_error(
-                    "Gest2A3Eco",
-                    f"La fecha de la factura ({d.strftime('%d/%m/%Y')}) debe estar dentro del ejercicio {self._ejercicio}.",
-                )
-                return
-        except Exception:
-            pass
+        if not self._allow_fecha_fuera_ejercicio:
+            try:
+                d = self._view.parse_date(str(fecha_common))
+                if self._ejercicio and d.year != int(self._ejercicio):
+                    self._view.show_error(
+                        "Gest2A3Eco",
+                        f"La fecha de la factura ({d.strftime('%d/%m/%Y')}) debe estar dentro del ejercicio {self._ejercicio}.",
+                    )
+                    return
+            except Exception:
+                pass
         sc = self._view.get_subcuenta().strip()
         if sc:
             validar_subcuenta_longitud(sc, self._ndig, "subcuenta cliente")
@@ -157,6 +160,12 @@ class FacturaDialogController:
             "generada": self._factura.get("generada", False),
             "fecha_generacion": self._factura.get("fecha_generacion", ""),
         }
+        if self._auto_ejercicio_por_fecha:
+            try:
+                d = self._view.parse_date(str(fecha_common))
+                result["ejercicio"] = d.year
+            except Exception:
+                pass
         self._view.set_result_and_close(result)
 
     def retencion_toggled(self):

@@ -14,34 +14,31 @@ class SeleccionEmpresaController:
         self._on_ok = on_ok
         self._view = view
         self._empresas_cache = []
+        self._empresas_grouped = []
+        self._empresa_default_ej = {}
         self._facturas_cache = []
         self._empresas_by_key = {}
         self._admin_password = self._load_admin_password()
 
     def refresh(self):
         self._empresas_cache = self._gestor.listar_empresas()
-        ejercicios = sorted({e.get("ejercicio") for e in self._empresas_cache if e.get("ejercicio") is not None})
-        self._view.set_ejercicios(ejercicios)
+        self._group_empresas()
         self.apply_filter()
         self._build_empresas_index()
         self._load_facturas_global()
-        self._load_monedas()
 
     def apply_filter(self):
         filtro = (self._view.get_filter_text() or "").strip().lower()
-        eje_filter = self._view.get_ejercicio_filter()
         ver_bajas = self._view.get_ver_bajas()
         self._view.clear_empresas()
-        for e in self._empresas_cache:
-            if eje_filter is not None and e.get("ejercicio") != eje_filter:
-                continue
+        for e in self._empresas_grouped:
             if not ver_bajas and not bool(e.get("activo", True)):
                 continue
             texto = " ".join([
                 str(e.get("codigo", "")),
                 str(e.get("nombre", "")),
                 str(e.get("cif", "")),
-                str(e.get("ejercicio", "")),
+                str(e.get("ejercicios_txt", "")),
             ]).lower()
             if filtro and filtro not in texto:
                 continue
@@ -193,6 +190,55 @@ class SeleccionEmpresaController:
 
     def _sel_empresa(self):
         return self._view.get_selected_empresa_key()
+
+    def _group_empresas(self):
+        grouped = {}
+        for e in self._empresas_cache:
+            codigo = str(e.get("codigo") or "")
+            if not codigo:
+                continue
+            grouped.setdefault(codigo, []).append(e)
+
+        self._empresas_grouped = []
+        self._empresa_default_ej = {}
+        for codigo, items in grouped.items():
+            ejercicios = []
+            for it in items:
+                ejercicios.append(it.get("ejercicio"))
+            def_ej = self._pick_default_ejercicio(ejercicios)
+            base = next((it for it in items if it.get("ejercicio") == def_ej), items[0])
+            ejercicios_txt = ", ".join(str(ej) for ej in sorted({x for x in ejercicios if x is not None}))
+            activo = any(bool(it.get("activo", True)) for it in items)
+            row = {
+                "codigo": codigo,
+                "nombre": base.get("nombre", ""),
+                "cif": base.get("cif", ""),
+                "digitos_plan": base.get("digitos_plan", 8),
+                "ejercicios_txt": ejercicios_txt,
+                "serie_emitidas": base.get("serie_emitidas", "A"),
+                "siguiente_num_emitidas": base.get("siguiente_num_emitidas", 1),
+                "ejercicio_default": def_ej,
+                "activo": activo,
+            }
+            self._empresa_default_ej[codigo] = def_ej
+            self._empresas_grouped.append(row)
+        self._empresas_grouped.sort(key=lambda r: (str(r.get("codigo") or ""), str(r.get("nombre") or "")))
+
+    def _pick_default_ejercicio(self, ejercicios):
+        nums = []
+        others = []
+        for ej in ejercicios:
+            if ej is None:
+                continue
+            try:
+                nums.append(int(ej))
+            except Exception:
+                others.append(str(ej))
+        if nums:
+            return max(nums)
+        if others:
+            return sorted(others)[-1]
+        return None
 
     def _backup_db(self) -> Path:
         db_path = Path(self._gestor.db_path)
@@ -353,38 +399,6 @@ class SeleccionEmpresaController:
             return str(pwd)
         return "admin"
 
-    def _load_monedas(self):
-        data = load_app_config()
-        self._view.set_monedas(data.get("monedas") or [])
-
-    def add_moneda(self):
-        data = self._view.get_moneda_form()
-        if not data:
-            return
-        cfg = load_app_config()
-        monedas = cfg.get("monedas") or []
-        codigo = data.get("codigo")
-        if any(str(m.get("codigo")).upper() == codigo for m in monedas):
-            self._view.show_warning("Gest2A3Eco", "La moneda ya existe.")
-            return
-        monedas.append(data)
-        cfg["monedas"] = monedas
-        save_app_config(cfg)
-        self._load_monedas()
-
-    def remove_moneda(self):
-        codigo = self._view.get_selected_moneda_codigo()
-        if not codigo:
-            self._view.show_info("Gest2A3Eco", "Selecciona una moneda.")
-            return
-        cfg = load_app_config()
-        monedas = [m for m in (cfg.get("monedas") or []) if str(m.get("codigo") or "").upper() != codigo]
-        if not monedas:
-            self._view.show_warning("Gest2A3Eco", "Debe existir al menos una moneda.")
-            return
-        cfg["monedas"] = monedas
-        save_app_config(cfg)
-        self._load_monedas()
 
     def _build_empresas_index(self):
         self._empresas_by_key = {}

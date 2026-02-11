@@ -72,6 +72,8 @@ class EmpresaDialog(Dialog):
             "ejercicio": 2025,
             "serie_emitidas": "A",
             "siguiente_num_emitidas": 1,
+            "serie_emitidas_rect": "R",
+            "siguiente_num_emitidas_rect": 1,
             "cuenta_bancaria": "",
             "cuentas_bancarias": "",
             "cif": "",
@@ -87,7 +89,7 @@ class EmpresaDialog(Dialog):
         if empresa:
             base.update(empresa)
         # Normaliza valores None a "" para evitar errores de conversión
-        for k in ("digitos_plan", "ejercicio", "serie_emitidas", "siguiente_num_emitidas"):
+        for k in ("digitos_plan", "ejercicio", "serie_emitidas", "siguiente_num_emitidas", "serie_emitidas_rect", "siguiente_num_emitidas_rect"):
             if base.get(k) is None:
                 base[k] = ""
         self.empresa = base
@@ -100,6 +102,8 @@ class EmpresaDialog(Dialog):
         self.var_eje = tk.StringVar(value=str(self.empresa.get("ejercicio") or ""))
         self.var_serie = tk.StringVar(value=str(self.empresa.get("serie_emitidas") or ""))
         self.var_next = tk.StringVar(value=str(self.empresa.get("siguiente_num_emitidas") or ""))
+        self.var_serie_rect = tk.StringVar(value=str(self.empresa.get("serie_emitidas_rect") or ""))
+        self.var_next_rect = tk.StringVar(value=str(self.empresa.get("siguiente_num_emitidas_rect") or ""))
         cuentas_raw = self.empresa.get("cuentas_bancarias") or self.empresa.get("cuenta_bancaria") or ""
         self.var_cuentas = tk.StringVar(value=str(cuentas_raw))
         self.var_cif = tk.StringVar(value=str(self.empresa.get("cif","")))
@@ -118,20 +122,22 @@ class EmpresaDialog(Dialog):
         ttk.Label(master, text="Ejercicio").grid(row=3, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_eje, width=8).grid(row=3, column=1, sticky="w")
         ttk.Label(master, text="Serie emitidas").grid(row=4, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_serie, width=10).grid(row=4, column=1, sticky="w")
         ttk.Label(master, text="Siguiente numero").grid(row=5, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_next, width=10).grid(row=5, column=1, sticky="w")
-        ttk.Label(master, text="Cuentas bancarias (coma)").grid(row=6, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_cuentas, width=40).grid(row=6, column=1, sticky="w")
-        ttk.Label(master, text="CIF/NIF").grid(row=7, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_cif, width=18).grid(row=7, column=1, sticky="w")
-        ttk.Label(master, text="Direccion").grid(row=8, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_dir, width=40).grid(row=8, column=1, sticky="w")
-        ttk.Label(master, text="CP").grid(row=9, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_cp, width=8).grid(row=9, column=1, sticky="w")
-        ttk.Label(master, text="Poblacion").grid(row=10, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_pob, width=32).grid(row=10, column=1, sticky="w")
-        ttk.Label(master, text="Provincia").grid(row=11, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_prov, width=24).grid(row=11, column=1, sticky="w")
-        ttk.Label(master, text="Telefono").grid(row=12, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_tel, width=20).grid(row=12, column=1, sticky="w")
-        ttk.Label(master, text="Email").grid(row=13, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_mail, width=30).grid(row=13, column=1, sticky="w")
-        ttk.Label(master, text="Logo (JPG)").grid(row=14, column=0, sticky="w")
+        ttk.Label(master, text="Serie rectificativas").grid(row=6, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_serie_rect, width=10).grid(row=6, column=1, sticky="w")
+        ttk.Label(master, text="Siguiente num. rectificativas").grid(row=7, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_next_rect, width=10).grid(row=7, column=1, sticky="w")
+        ttk.Label(master, text="Cuentas bancarias (coma)").grid(row=8, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_cuentas, width=40).grid(row=8, column=1, sticky="w")
+        ttk.Label(master, text="CIF/NIF").grid(row=9, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_cif, width=18).grid(row=9, column=1, sticky="w")
+        ttk.Label(master, text="Direccion").grid(row=10, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_dir, width=40).grid(row=10, column=1, sticky="w")
+        ttk.Label(master, text="CP").grid(row=11, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_cp, width=8).grid(row=11, column=1, sticky="w")
+        ttk.Label(master, text="Poblacion").grid(row=12, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_pob, width=32).grid(row=12, column=1, sticky="w")
+        ttk.Label(master, text="Provincia").grid(row=13, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_prov, width=24).grid(row=13, column=1, sticky="w")
+        ttk.Label(master, text="Telefono").grid(row=14, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_tel, width=20).grid(row=14, column=1, sticky="w")
+        ttk.Label(master, text="Email").grid(row=15, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_mail, width=30).grid(row=15, column=1, sticky="w")
+        ttk.Label(master, text="Logo (JPG)").grid(row=16, column=0, sticky="w")
         row_logo = ttk.Frame(master)
-        row_logo.grid(row=14, column=1, sticky="we")
+        row_logo.grid(row=16, column=1, sticky="we")
         ttk.Entry(row_logo, textvariable=self.var_logo, width=32).pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(row_logo, text="Buscar", command=self._choose_logo).pack(side=tk.LEFT, padx=4)
-        ttk.Checkbutton(master, text="Activo", variable=self.var_activo).grid(row=15, column=0, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(master, text="Activo", variable=self.var_activo).grid(row=17, column=0, sticky="w", pady=(6, 0))
         return master
 
     def _cuenta_bancaria_default(self):
@@ -160,6 +166,8 @@ class EmpresaDialog(Dialog):
                 "ejercicio": int(self.var_eje.get().strip() or "2025"),
                 "serie_emitidas": self.var_serie.get().strip() or "A",
                 "siguiente_num_emitidas": int(self.var_next.get().strip() or "1"),
+                "serie_emitidas_rect": self.var_serie_rect.get().strip() or "R",
+                "siguiente_num_emitidas_rect": int(self.var_next_rect.get().strip() or "1"),
                 "cuenta_bancaria": self._cuenta_bancaria_default(),
                 "cuentas_bancarias": self.var_cuentas.get().strip(),
                 "cif": self.var_cif.get().strip(),
@@ -182,6 +190,7 @@ class UISeleccionEmpresa(ttk.Frame):
         self.gestor = gestor
         self.on_ok = on_ok
         self._fact_sort_state = {}
+        self._empresa_default_ej = {}
         monedas = load_monedas()
         self._default_moneda_simbolo = str(monedas[0].get("simbolo")) if monedas else ""
         self.pack(fill=tk.BOTH, expand=True)
@@ -194,11 +203,6 @@ class UISeleccionEmpresa(ttk.Frame):
 
         search_row = ttk.Frame(self)
         search_row.pack(fill=tk.X, padx=10, pady=(4, 0))
-        ttk.Label(search_row, text="Ejercicio").pack(side=tk.LEFT)
-        self.var_ejercicio = tk.StringVar()
-        self.cb_ejercicio = ttk.Combobox(search_row, textvariable=self.var_ejercicio, width=8, state="readonly")
-        self.cb_ejercicio.pack(side=tk.LEFT, padx=(6, 12))
-        self.cb_ejercicio.bind("<<ComboboxSelected>>", lambda e: self.controller.apply_filter())
         self.var_ver_bajas = tk.BooleanVar(value=False)
         ttk.Checkbutton(search_row, text="Ver bajas", variable=self.var_ver_bajas, command=self.controller.apply_filter).pack(side=tk.LEFT, padx=(0, 12))
         ttk.Label(search_row, text="Buscar").pack(side=tk.LEFT)
@@ -211,13 +215,13 @@ class UISeleccionEmpresa(ttk.Frame):
         tree_frame = ttk.Frame(self)
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=8)
 
-        self.tv = ttk.Treeview(tree_frame, columns=("codigo","nombre","cif","digitos","ejercicio","serie","next"), show="headings", height=12)
+        self.tv = ttk.Treeview(tree_frame, columns=("codigo","nombre","cif","digitos","ejercicios","serie","next"), show="headings", height=12)
         for c,t,w in (
             ("codigo","Codigo",120),
             ("nombre","Nombre",320),
             ("cif","CIF",120),
             ("digitos","Digitos",70),
-            ("ejercicio","Ejercicio",80),
+            ("ejercicios","Ejercicios",120),
             ("serie","Serie",80),
             ("next","Siguiente",90),
         ):
@@ -297,64 +301,31 @@ class UISeleccionEmpresa(ttk.Frame):
         fact_frame.columnconfigure(0, weight=1)
         fact_frame.rowconfigure(0, weight=1)
 
-        sep2 = ttk.Separator(self, orient="horizontal")
-        sep2.pack(fill=tk.X, padx=10, pady=(6, 4))
-
-        ttk.Label(self, text="Monedas", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(4, 0))
-        monedas_frame = ttk.Frame(self)
-        monedas_frame.pack(fill=tk.X, padx=10, pady=(4, 8))
-
-        self.lb_monedas = tk.Listbox(monedas_frame, height=5, exportselection=False)
-        self.lb_monedas.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
-
-        form = ttk.Frame(monedas_frame)
-        form.pack(side=tk.LEFT, fill=tk.Y)
-        ttk.Label(form, text="Codigo").grid(row=0, column=0, sticky="w")
-        ttk.Label(form, text="Simbolo").grid(row=1, column=0, sticky="w")
-        ttk.Label(form, text="Nombre").grid(row=2, column=0, sticky="w")
-        self.var_moneda_codigo = tk.StringVar()
-        self.var_moneda_simbolo = tk.StringVar()
-        self.var_moneda_nombre = tk.StringVar()
-        ttk.Entry(form, textvariable=self.var_moneda_codigo, width=10).grid(row=0, column=1, padx=4, pady=2, sticky="w")
-        ttk.Entry(form, textvariable=self.var_moneda_simbolo, width=10).grid(row=1, column=1, padx=4, pady=2, sticky="w")
-        ttk.Entry(form, textvariable=self.var_moneda_nombre, width=18).grid(row=2, column=1, padx=4, pady=2, sticky="w")
-
-        btns = ttk.Frame(form)
-        btns.grid(row=3, column=0, columnspan=2, pady=(4, 0), sticky="w")
-        ttk.Button(btns, text="Añadir", style="Primary.TButton", command=self.controller.add_moneda).pack(side=tk.LEFT, padx=2)
-        ttk.Button(btns, text="Eliminar", command=self.controller.remove_moneda).pack(side=tk.LEFT, padx=2)
+        # Monedas: se gestionan desde el menu contextual de configuracion
 
     def get_filter_text(self):
         return self.var_buscar.get()
 
-    def set_ejercicios(self, ejercicios):
-        vals = ["Todos"] + [str(e) for e in ejercicios]
-        self.cb_ejercicio["values"] = vals
-        if self.var_ejercicio.get() not in vals:
-            self.var_ejercicio.set(vals[0])
-
     def get_ejercicio_filter(self):
-        val = (self.var_ejercicio.get() or "").strip()
-        if not val or val.lower() == "todos":
-            return None
-        try:
-            return int(val)
-        except Exception:
-            return val
+        return None
 
     def get_ver_bajas(self):
         return bool(self.var_ver_bajas.get())
 
     def clear_empresas(self):
         self.tv.delete(*self.tv.get_children())
+        self._empresa_default_ej = {}
 
     def insert_empresa(self, empresa):
-        self.tv.insert("", tk.END, iid=f"{empresa.get('codigo')}::{empresa.get('ejercicio')}", values=(
+        codigo = str(empresa.get("codigo") or "")
+        self._empresa_default_ej[codigo] = empresa.get("ejercicio_default")
+        ejercicios_txt = empresa.get("ejercicios_txt") or ""
+        self.tv.insert("", tk.END, iid=codigo, values=(
             empresa.get("codigo"),
             empresa.get("nombre"),
             empresa.get("cif", ""),
             empresa.get("digitos_plan", 8),
-            empresa.get("ejercicio") if empresa.get("ejercicio") is not None else "",
+            ejercicios_txt,
             empresa.get("serie_emitidas", "A"),
             empresa.get("siguiente_num_emitidas", 1),
         ))
@@ -363,12 +334,8 @@ class UISeleccionEmpresa(ttk.Frame):
         sel = self.tv.selection()
         if not sel:
             return None, None
-        codigo, _, _, _, eje, *_ = self.tv.item(sel[0], "values")
-        try:
-            eje_int = int(eje)
-        except Exception:
-            eje_int = eje
-        return codigo, eje_int
+        codigo = self.tv.item(sel[0], "values")[0]
+        return codigo, self._empresa_default_ej.get(codigo)
 
     def select_empresa_by_codigo(self, codigo):
         for iid in self.tv.get_children():
@@ -543,30 +510,4 @@ class UISeleccionEmpresa(ttk.Frame):
         TercerosGlobalDialog(self, gestor)
 
     # ----- Monedas -----
-    def set_monedas(self, monedas):
-        self.lb_monedas.delete(0, tk.END)
-        for m in monedas or []:
-            codigo = str(m.get("codigo") or "").upper()
-            simbolo = str(m.get("simbolo") or "")
-            nombre = str(m.get("nombre") or "")
-            texto = f"{codigo} {simbolo}".strip()
-            if nombre:
-                texto = f"{texto} - {nombre}"
-            self.lb_monedas.insert(tk.END, texto)
-
-    def get_moneda_form(self):
-        codigo = (self.var_moneda_codigo.get() or "").strip().upper()
-        simbolo = (self.var_moneda_simbolo.get() or "").strip()
-        nombre = (self.var_moneda_nombre.get() or "").strip()
-        if not codigo:
-            self.show_warning("Gest2A3Eco", "Introduce un codigo de moneda.")
-            return None
-        return {"codigo": codigo, "simbolo": simbolo, "nombre": nombre}
-
-    def get_selected_moneda_codigo(self):
-        sel = self.lb_monedas.curselection()
-        if not sel:
-            return None
-        txt = self.lb_monedas.get(sel[0]) or ""
-        parts = txt.split()
-        return parts[0].upper() if parts else None
+    # Configuracion de monedas se maneja fuera de esta pantalla

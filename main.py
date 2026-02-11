@@ -1,9 +1,11 @@
 import os, sys
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog, messagebox
 
 from controllers.app_controller import AppController
 from models.gestor_sqlite import GestorSQLite
+from utils.utilidades import load_app_config, save_app_config
+from views.ui_config_monedas import MonedasDialog
 from views.ui_theme import aplicar_tema
 
 
@@ -54,7 +56,7 @@ RUTA_DB = os.path.join(PLANTILLAS_DIR, "gest2a3eco.db")
 # ─────────────────────────────────────────────
 # Cabecera común (logo + datos + botones)
 # ─────────────────────────────────────────────
-def _build_header(root: tk.Tk, on_cambiar_empresa) -> ttk.Frame:
+def _build_header(root: tk.Tk, on_cambiar_empresa, on_cambiar_db=None, db_path: str | None = None) -> ttk.Frame:
     """Cabecera fija con logo, datos de contacto y botones globales."""
     header = ttk.Frame(root, padding=10, style="TFrame")
     header.pack(side="top", fill="x")
@@ -105,7 +107,6 @@ def _build_header(root: tk.Tk, on_cambiar_empresa) -> ttk.Frame:
         command=on_cambiar_empresa,
     )
     btn_cambiar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
-
     # Botón rojo personalizado para Cerrar
     style = ttk.Style()
     style.configure("Close.TButton", foreground="#ffffff", background="#D64545")
@@ -123,6 +124,19 @@ def _build_header(root: tk.Tk, on_cambiar_empresa) -> ttk.Frame:
 
     botones_frame.columnconfigure(0, weight=1)
 
+    # Path BD
+    if db_path:
+        try:
+            header.rowconfigure(3, weight=0)
+            ttk.Label(
+                header,
+                text=f"Base de datos: {db_path}",
+                style="SubHeader.TLabel",
+                foreground="#3f3f3f",
+            ).grid(row=3, column=1, sticky="w")
+        except Exception:
+            pass
+
     # Que la columna central se expanda
     header.columnconfigure(1, weight=1)
 
@@ -131,6 +145,37 @@ def _build_header(root: tk.Tk, on_cambiar_empresa) -> ttk.Frame:
 # ─────────────────────────────────────────────
 # Punto de entrada
 # ─────────────────────────────────────────────
+def _select_db_path(default_path: str) -> str:
+    try:
+        initial_dir = os.path.dirname(default_path)
+    except Exception:
+        initial_dir = ""
+    path = filedialog.askopenfilename(
+        title="Selecciona base de datos",
+        initialdir=initial_dir,
+        initialfile=os.path.basename(default_path),
+        filetypes=[("SQLite DB", "*.db"), ("Todos", "*.*")],
+    )
+    return path or default_path
+
+def _get_last_db_path(default_path: str) -> str:
+    cfg = load_app_config()
+    last = str(cfg.get("last_db_path") or "").strip()
+    if last and os.path.exists(last):
+        return last
+    return default_path
+
+def _set_last_db_path(path: str) -> None:
+    cfg = load_app_config()
+    cfg["last_db_path"] = path
+    save_app_config(cfg)
+
+def _restart_app():
+    try:
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    except Exception:
+        pass
+
 def main():
     root = tk.Tk()
     root.title("Gest2A3Eco")
@@ -148,14 +193,52 @@ def main():
     content = ttk.Frame(root, padding=10, style="TFrame")
     content.pack(side="top", fill="both", expand=True)
 
+    # Seleccionar base de datos (recuerda la ultima)
+    db_path = _get_last_db_path(RUTA_DB)
+    if not db_path or not os.path.exists(db_path):
+        db_path = _select_db_path(RUTA_DB)
+    _set_last_db_path(db_path)
+
     # Gestor de datos en SQLite (migra desde JSON si existe)
-    gestor = GestorSQLite(RUTA_DB, json_seed=RUTA_JSON)
+    gestor = GestorSQLite(db_path, json_seed=RUTA_JSON)
 
     # Controlador de navegacion entre pantallas (MVC)
     controller = AppController(content, gestor)
 
+    def _on_cambiar_db():
+        new_path = _select_db_path(db_path)
+        if new_path and new_path != db_path:
+            _set_last_db_path(new_path)
+            try:
+                messagebox.showinfo("Gest2A3Eco", "Base de datos cambiada. La aplicacion se reiniciara.")
+            except Exception:
+                pass
+            root.destroy()
+            _restart_app()
+
+    def _on_config_monedas():
+        MonedasDialog(root)
+
     # Cabecera (usa el controlador para "Cambiar empresa")
-    _build_header(root, on_cambiar_empresa=controller.start)
+    _build_header(root, on_cambiar_empresa=controller.start, on_cambiar_db=_on_cambiar_db, db_path=db_path)
+
+    # Menu contextual
+    ctx = tk.Menu(root, tearoff=0)
+    ctx.add_command(label="Menu principal", command=controller.start)
+    cfg_menu = tk.Menu(ctx, tearoff=0)
+    cfg_menu.add_command(label="Seleccionar base de datos", command=_on_cambiar_db)
+    cfg_menu.add_command(label="Configurar monedas", command=_on_config_monedas)
+    ctx.add_cascade(label="Configuracion", menu=cfg_menu)
+    ctx.add_separator()
+    ctx.add_command(label="Cerrar", command=root.destroy)
+
+    def _show_ctx(event):
+        try:
+            ctx.tk_popup(event.x_root, event.y_root)
+        finally:
+            ctx.grab_release()
+
+    root.bind("<Button-3>", _show_ctx)
 
     # Pantalla inicial
     controller.start()

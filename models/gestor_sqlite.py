@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS empresas (
   digitos_plan INTEGER,
   serie_emitidas TEXT,
   siguiente_num_emitidas INTEGER,
+  serie_emitidas_rect TEXT,
+  siguiente_num_emitidas_rect INTEGER,
   pdf_ref_seq INTEGER,
   cuenta_bancaria TEXT,
   cuentas_bancarias TEXT,
@@ -172,6 +174,7 @@ class GestorSQLite:
         self.conn = sqlite3.connect(str(self.db_path))
         self.conn.row_factory = sqlite3.Row
         self._init_schema()
+        self._migrate_terceros_global()
         if json_seed:
             self._maybe_seed_from_json(json_seed)
 
@@ -182,6 +185,8 @@ class GestorSQLite:
         self._ensure_column("empresas", "cuenta_bancaria", "TEXT")
         self._ensure_column("empresas", "cuentas_bancarias", "TEXT")
         self._ensure_column("empresas", "pdf_ref_seq", "INTEGER")
+        self._ensure_column("empresas", "serie_emitidas_rect", "TEXT")
+        self._ensure_column("empresas", "siguiente_num_emitidas_rect", "INTEGER")
         self._ensure_column("facturas_emitidas_docs", "forma_pago", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "cuenta_bancaria", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "plantilla_word", "TEXT")
@@ -227,6 +232,42 @@ class GestorSQLite:
         if column in cols:
             return
         self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+
+    def _migrate_terceros_global(self):
+        try:
+            cur = self.conn.execute(
+                "SELECT codigo_empresa, tercero_id, ejercicio FROM terceros_empresas ORDER BY codigo_empresa, tercero_id, ejercicio DESC"
+            )
+            rows = cur.fetchall()
+        except Exception:
+            return
+        if not rows:
+            return
+        best = {}
+        for r in rows:
+            key = (r["codigo_empresa"], r["tercero_id"])
+            if key in best:
+                continue
+            if r["ejercicio"] == 0:
+                best[key] = 0
+            else:
+                best[key] = r["ejercicio"]
+        for (codigo, tid), eje in best.items():
+            if eje == 0:
+                self.conn.execute(
+                    "DELETE FROM terceros_empresas WHERE codigo_empresa=? AND tercero_id=? AND ejercicio<>0",
+                    (codigo, tid),
+                )
+                continue
+            self.conn.execute(
+                "UPDATE terceros_empresas SET ejercicio=0 WHERE codigo_empresa=? AND tercero_id=? AND ejercicio=?",
+                (codigo, tid, eje),
+            )
+            self.conn.execute(
+                "DELETE FROM terceros_empresas WHERE codigo_empresa=? AND tercero_id=? AND ejercicio<>0",
+                (codigo, tid),
+            )
+        self.conn.commit()
 
     def _maybe_seed_from_json(self, json_seed):
         try:
@@ -358,13 +399,16 @@ class GestorSQLite:
         self.conn.execute(
             """
             INSERT INTO empresas (codigo, ejercicio, nombre, digitos_plan, serie_emitidas,
-                siguiente_num_emitidas, pdf_ref_seq, cuenta_bancaria, cuentas_bancarias, cif, direccion, cp, poblacion, provincia, telefono, email, logo_path, activo)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                siguiente_num_emitidas, serie_emitidas_rect, siguiente_num_emitidas_rect,
+                pdf_ref_seq, cuenta_bancaria, cuentas_bancarias, cif, direccion, cp, poblacion, provincia, telefono, email, logo_path, activo)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(codigo, ejercicio) DO UPDATE SET
                 nombre=excluded.nombre,
                 digitos_plan=excluded.digitos_plan,
                 serie_emitidas=excluded.serie_emitidas,
                 siguiente_num_emitidas=excluded.siguiente_num_emitidas,
+                serie_emitidas_rect=excluded.serie_emitidas_rect,
+                siguiente_num_emitidas_rect=excluded.siguiente_num_emitidas_rect,
                 pdf_ref_seq=excluded.pdf_ref_seq,
                 cuenta_bancaria=excluded.cuenta_bancaria,
                 cuentas_bancarias=excluded.cuentas_bancarias,
@@ -385,6 +429,8 @@ class GestorSQLite:
                 emp.get("digitos_plan"),
                 emp.get("serie_emitidas"),
                 emp.get("siguiente_num_emitidas"),
+                emp.get("serie_emitidas_rect"),
+                emp.get("siguiente_num_emitidas_rect"),
                 emp.get("pdf_ref_seq"),
                 emp.get("cuenta_bancaria"),
                 emp.get("cuentas_bancarias"),
@@ -436,7 +482,6 @@ class GestorSQLite:
             "facturas_recibidas",
             "facturas_emitidas_docs",
             "albaranes_emitidas_docs",
-            "terceros_empresas",
         ):
             self.conn.execute(
                 f"DELETE FROM {table} WHERE codigo_empresa=? AND ejercicio=?",
@@ -992,35 +1037,71 @@ class GestorSQLite:
     # ---------- TERCEROS x EMPRESA ----------
     def listar_terceros_empresa(self, codigo_empresa: str, ejercicio: int):
         cur = self.conn.execute(
-            "SELECT * FROM terceros_empresas WHERE codigo_empresa=? AND ejercicio=?",
-            (codigo_empresa, _ej_val(ejercicio)),
+            "SELECT * FROM terceros_empresas WHERE codigo_empresa=? AND ejercicio=0",
+            (codigo_empresa,),
+        )
+        rows = [self._row_to_dict(r) for r in cur.fetchall()]
+        if rows:
+            return rows
+        cur = self.conn.execute(
+            "SELECT * FROM terceros_empresas WHERE codigo_empresa=?",
+            (codigo_empresa,),
         )
         return [self._row_to_dict(r) for r in cur.fetchall()]
 
     def listar_terceros_por_empresa(self, codigo_empresa: str, ejercicio: int):
         cur = self.conn.execute(
             """
-            SELECT t.*, te.subcuenta_cliente, te.subcuenta_proveedor, te.subcuenta_ingreso, te.subcuenta_gasto
+            SELECT t.*, te.subcuenta_cliente, te.subcuenta_proveedor, te.subcuenta_ingreso, te.subcuenta_gasto, te.ejercicio
             FROM terceros t
             JOIN terceros_empresas te ON te.tercero_id = t.id
-            WHERE te.codigo_empresa=? AND te.ejercicio=?
+            WHERE te.codigo_empresa=? AND (te.ejercicio=0 OR te.ejercicio=?)
             ORDER BY t.nombre
             """,
             (codigo_empresa, _ej_val(ejercicio)),
         )
-        return [self._row_to_dict(r) for r in cur.fetchall()]
+        rows = [self._row_to_dict(r) for r in cur.fetchall()]
+        if not rows:
+            cur = self.conn.execute(
+                """
+                SELECT t.*, te.subcuenta_cliente, te.subcuenta_proveedor, te.subcuenta_ingreso, te.subcuenta_gasto, te.ejercicio
+                FROM terceros t
+                JOIN terceros_empresas te ON te.tercero_id = t.id
+                WHERE te.codigo_empresa=?
+                ORDER BY t.nombre
+                """,
+                (codigo_empresa,),
+            )
+            rows = [self._row_to_dict(r) for r in cur.fetchall()]
+        # Preferimos ejercicio 0 si existe
+        by_id = {}
+        for r in rows:
+            tid = str(r.get("id"))
+            cur_best = by_id.get(tid)
+            if not cur_best:
+                by_id[tid] = r
+                continue
+            ej = r.get("ejercicio")
+            if ej == 0:
+                by_id[tid] = r
+        return list(by_id.values())
 
     def get_tercero_empresa(self, codigo_empresa: str, tercero_id: str, ejercicio: int):
         cur = self.conn.execute(
-            "SELECT * FROM terceros_empresas WHERE codigo_empresa=? AND ejercicio=? AND tercero_id=?",
-            (codigo_empresa, _ej_val(ejercicio), tercero_id),
+            "SELECT * FROM terceros_empresas WHERE codigo_empresa=? AND ejercicio=0 AND tercero_id=?",
+            (codigo_empresa, tercero_id),
+        )
+        row = cur.fetchone()
+        if row:
+            return self._row_to_dict(row)
+        cur = self.conn.execute(
+            "SELECT * FROM terceros_empresas WHERE codigo_empresa=? AND tercero_id=? ORDER BY ejercicio DESC LIMIT 1",
+            (codigo_empresa, tercero_id),
         )
         return self._row_to_dict(cur.fetchone())
 
     def upsert_tercero_empresa(self, rel: dict):
-        eje = _ej_val(rel.get("ejercicio"))
-        if eje is None:
-            eje = 0
+        eje = 0
         self.conn.execute(
             """
             INSERT INTO terceros_empresas (codigo_empresa, ejercicio, tercero_id, subcuenta_cliente, subcuenta_proveedor, subcuenta_ingreso, subcuenta_gasto)
@@ -1045,16 +1126,49 @@ class GestorSQLite:
 
     def listar_empresas_de_tercero(self, tercero_id: str):
         cur = self.conn.execute(
-            """
-            SELECT e.codigo, e.nombre, te.ejercicio
-            FROM terceros_empresas te
-            JOIN empresas e ON e.codigo = te.codigo_empresa AND e.ejercicio = te.ejercicio
-            WHERE te.tercero_id=?
-            ORDER BY e.codigo, te.ejercicio
-            """,
+            "SELECT DISTINCT codigo_empresa FROM terceros_empresas WHERE tercero_id=?",
             (str(tercero_id),),
         )
-        return [self._row_to_dict(r) for r in cur.fetchall()]
+        codigos = [r["codigo_empresa"] for r in cur.fetchall()]
+        if not codigos:
+            return []
+        q = ",".join("?" for _ in codigos)
+        cur = self.conn.execute(
+            f"SELECT codigo, nombre, ejercicio FROM empresas WHERE codigo IN ({q}) ORDER BY codigo, ejercicio DESC",
+            tuple(codigos),
+        )
+        rows = [self._row_to_dict(r) for r in cur.fetchall()]
+        by_codigo = {}
+        for r in rows:
+            codigo = r.get("codigo")
+            if codigo not in by_codigo:
+                by_codigo[codigo] = r
+        return list(by_codigo.values())
+
+    def eliminar_tercero_empresa(self, codigo_empresa: str, tercero_id: str):
+        tid = str(tercero_id)
+        cur = self.conn.execute(
+            "SELECT COUNT(1) AS n FROM facturas_emitidas_docs WHERE codigo_empresa=? AND tercero_id=?",
+            (codigo_empresa, tid),
+        )
+        row = cur.fetchone()
+        if row and row["n"]:
+            raise ValueError("No se puede eliminar: hay facturas emitidas de este tercero en la empresa.")
+        try:
+            cur = self.conn.execute(
+                "SELECT COUNT(1) AS n FROM albaranes_emitidas_docs WHERE codigo_empresa=? AND tercero_id=?",
+                (codigo_empresa, tid),
+            )
+            row = cur.fetchone()
+            if row and row["n"]:
+                raise ValueError("No se puede eliminar: hay albaranes de este tercero en la empresa.")
+        except sqlite3.OperationalError:
+            pass
+        self.conn.execute(
+            "DELETE FROM terceros_empresas WHERE codigo_empresa=? AND tercero_id=?",
+            (codigo_empresa, tid),
+        )
+        self.conn.commit()
 
     def copiar_terceros_empresa(
         self,
@@ -1063,6 +1177,8 @@ class GestorSQLite:
         ejercicio_destino: int,
         sobrescribir: bool = False,
     ):
+        # Los terceros por empresa son globales para todos los ejercicios.
+        return 0, 0
         ej_src = _ej_val(ejercicio_origen)
         ej_dst = _ej_val(ejercicio_destino)
         if ej_src is None or ej_dst is None or ej_src == ej_dst:

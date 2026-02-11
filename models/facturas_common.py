@@ -595,6 +595,7 @@ def render_emitidas_detalle_256(*,
     pct_ret: float = 0.0,
     cuota_ret: float = 0.0,
     es_ultimo: bool = False,
+    dh: str = "C",
     cuenta_iva: str = "",
     cuenta_recargo: str = "",
     cuenta_retencion: str = "",
@@ -616,7 +617,8 @@ def render_emitidas_detalle_256(*,
     _set_slice(buf, 14, 15, "9")
     _set_slice(buf, 15, 27, cta12)
     _set_slice(buf, 27, 57, "")
-    _set_slice(buf, 57, 58, "C")
+    dh_flag = "A" if _s(dh).upper().startswith("A") else "C"
+    _set_slice(buf, 57, 58, dh_flag)
     _set_slice(buf, 58, 68, _s(num_factura)[:10])
     _set_slice(buf, 68, 69, ("U" if es_ultimo else "M"))
     _set_slice(buf, 69, 99, _s(desc_apunte)[:30])
@@ -639,7 +641,7 @@ def render_emitidas_detalle_256(*,
     _set_slice(buf, 139, 153, re_fmt)     # 140-153
     _set_slice(buf, 153, 158, _porc_5(pct_ret))              # 154-158
     _set_slice(buf, 158, 172, ret_fmt)    # 159-172
-    _set_slice(buf, 172, 174, _s(impreso)[:2])
+    _set_slice(buf, 172, 174, _s(subtipo).rjust(2, "0")[-2:])
     _set_slice(buf, 174, 175, "S" if operacion_sujeta_iva else "N")
     _set_slice(buf, 175, 176, "")
     _set_slice(buf, 176, 177, "")

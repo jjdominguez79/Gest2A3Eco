@@ -306,7 +306,7 @@ class UIPlantillasEmpresa(ttk.Frame):
             return "recibidas"
 
     def _build(self):
-        ttk.Label(self, text=f"Plantillas de {self.nombre} ({self.codigo} u {self.ejercicio})", font=("Segoe UI", 12, "bold")).pack(pady=6, anchor="w", padx=10)
+        ttk.Label(self, text=f"Plantillas de {self.nombre} ({self.codigo})", font=("Segoe UI", 12, "bold")).pack(pady=6, anchor="w", padx=10)
         nb = ttk.Notebook(self); nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         self.notebook = nb
         self._tab_bancos = self._build_tab(nb, "Bancos", ("banco","subcuenta_banco","subcuenta_por_defecto"))

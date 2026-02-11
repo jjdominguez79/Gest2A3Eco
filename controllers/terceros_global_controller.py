@@ -67,23 +67,19 @@ class TercerosGlobalController:
         if not codigo:
             self._view.show_info("Gest2A3Eco", "Selecciona una empresa.")
             return
-        if not ejercicios:
-            self._view.show_info("Gest2A3Eco", "Selecciona uno o varios ejercicios.")
-            return
-        for ejercicio in ejercicios:
-            rel = {
-                "tercero_id": tid,
-                "codigo_empresa": codigo,
-                "ejercicio": ejercicio,
-                "subcuenta_cliente": "",
-                "subcuenta_proveedor": "",
-                "subcuenta_ingreso": "",
-                "subcuenta_gasto": "",
-            }
-            self._gestor.upsert_tercero_empresa(rel)
+        rel = {
+            "tercero_id": tid,
+            "codigo_empresa": codigo,
+            "ejercicio": 0,
+            "subcuenta_cliente": "",
+            "subcuenta_proveedor": "",
+            "subcuenta_ingreso": "",
+            "subcuenta_gasto": "",
+        }
+        self._gestor.upsert_tercero_empresa(rel)
         self._view.show_info(
             "Gest2A3Eco",
-            "Tercero asignado a los ejercicios seleccionados.\n"
+            "Tercero asignado a la empresa (valido para todos los ejercicios).\n"
             "Recomendacion: traspasa los terceros a A3 desde la pantalla de terceros de empresa.",
         )
         self.load_empresas_asignadas()

@@ -266,6 +266,12 @@ def _fv(x) -> float:
     except Exception:
         return 0.0
 
+def _norm_subtipo(val: Any) -> str:
+    s = "" if val is None else str(val).strip()
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if not digits:
+        return "01"
+    return digits.zfill(2)[-2:]
 
 def _key_factura(rec: Dict[str, Any]):
     """
@@ -298,7 +304,7 @@ def generar_recibidas_suenlace(
     para FACTURAS RECIBIDAS a partir de las filas ya mapeadas del Excel.
     """
     cta_gasto_def  = str(plantilla.get("cuenta_gasto_por_defecto", "62900000"))
-    subtipo_def    = str(plantilla.get("subtipo_recibidas", "01"))
+    subtipo_def    = _norm_subtipo(plantilla.get("subtipo_recibidas", "01"))
 
     grupos: Dict[Any, List[Dict[str, Any]]] = defaultdict(list)
     for rec in rows:

@@ -46,7 +46,7 @@ class AppController:
             return nb
         nb = ttk.Notebook(parent)
         nb.add(
-            UIFacturasEmitidas(nb, self._gestor, codigo, ejercicio, nombre),
+            UIFacturasEmitidas(nb, self._gestor, codigo, ejercicio, nombre, allow_all_years=True),
             text="Facturas emitidas",
         )
         return nb

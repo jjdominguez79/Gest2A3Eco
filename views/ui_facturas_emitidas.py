@@ -75,6 +75,28 @@ def _fmt2s(x, simbolo: str = "") -> str:
     txt = format_num_es(x, 2)
     return f"{txt} {simbolo}".strip() if simbolo else txt
 
+def _center_window(win, parent=None):
+    try:
+        win.update_idletasks()
+        w = win.winfo_width()
+        h = win.winfo_height()
+        if parent is None:
+            sw = win.winfo_screenwidth()
+            sh = win.winfo_screenheight()
+            x = (sw - w) // 2
+            y = (sh - h) // 2
+        else:
+            parent.update_idletasks()
+            px = parent.winfo_rootx()
+            py = parent.winfo_rooty()
+            pw = parent.winfo_width()
+            ph = parent.winfo_height()
+            x = px + (pw - w) // 2
+            y = py + (ph - h) // 2
+        win.geometry(f"+{max(x,0)}+{max(y,0)}")
+    except Exception:
+        pass
+
 class DatePicker(tk.Toplevel):
     def __init__(self, parent, initial: date | None = None):
         super().__init__(parent)
@@ -85,6 +107,7 @@ class DatePicker(tk.Toplevel):
         self._build()
         self.grab_set()
         self.transient(parent)
+        _center_window(self, parent)
         self.wait_window(self)
 
     def _build(self):
@@ -182,6 +205,7 @@ class TerceroFicha(tk.Toplevel):
         ttk.Button(btns, text="Cancelar", command=self.destroy).pack(side=tk.LEFT, padx=4)
         self.grab_set()
         self.transient(parent)
+        _center_window(self, parent)
         self.wait_window(self)
 
     def _ok(self):
@@ -203,6 +227,7 @@ class TercerosGlobalDialog(tk.Toplevel):
         self.controller.refresh()
         self.grab_set()
         self.transient(parent)
+        _center_window(self, parent)
         self.wait_window(self)
 
     def _build(self):
@@ -244,10 +269,6 @@ class TercerosGlobalDialog(tk.Toplevel):
         self.lb_empresas.grid(row=1, column=1, sticky="we", padx=6, pady=4)
         self.lb_empresas.bind("<<ListboxSelect>>", lambda e: self._update_ejercicios())
 
-        ttk.Label(asignar, text="Ejercicios").grid(row=1, column=2, sticky="w", padx=6, pady=4)
-        self.lb_ejercicios = tk.Listbox(asignar, height=5, selectmode="extended", exportselection=False)
-        self.lb_ejercicios.grid(row=1, column=3, sticky="we", padx=6, pady=4)
-
         ttk.Button(asignar, text="Asignar", style="Primary.TButton", command=self.controller.asignar_a_empresa).grid(row=0, column=3, rowspan=1, padx=6, pady=4)
         asignar.columnconfigure(1, weight=1)
         asignar.columnconfigure(3, weight=1)
@@ -284,13 +305,7 @@ class TercerosGlobalDialog(tk.Toplevel):
         if idx < 0 or idx >= len(self._empresas_list):
             return None, []
         emp = self._empresas_list[idx]
-        ejercicios = []
-        for j in self.lb_ejercicios.curselection():
-            try:
-                ejercicios.append(int(self.lb_ejercicios.get(j)))
-            except Exception:
-                pass
-        return emp.get("codigo"), ejercicios
+        return emp.get("codigo"), []
 
     def select_tercero(self, tid):
         self.tv.selection_set(str(tid))
@@ -313,10 +328,7 @@ class TercerosGlobalDialog(tk.Toplevel):
         for r in rows or []:
             codigo = r.get("codigo", "")
             nombre = r.get("nombre", "")
-            ejercicio = r.get("ejercicio", "")
             texto = f"{codigo} - {nombre}"
-            if ejercicio != "" and ejercicio is not None:
-                texto = f"{texto} ({ejercicio})"
             self.lb_empresas_asignadas.insert(tk.END, texto)
 
     def _apply_filtro_empresas(self):
@@ -333,19 +345,10 @@ class TercerosGlobalDialog(tk.Toplevel):
             self.lb_empresas.selection_set(0)
             self._update_ejercicios()
         else:
-            self.lb_ejercicios.delete(0, tk.END)
+            pass
 
     def _update_ejercicios(self):
-        sel = self.lb_empresas.curselection()
-        self.lb_ejercicios.delete(0, tk.END)
-        if not sel:
-            return
-        emp = self._empresas_list[sel[0]]
-        ejercicios = sorted(set(emp.get("ejercicios") or []))
-        for ej in ejercicios:
-            self.lb_ejercicios.insert(tk.END, str(ej))
-        if ejercicios:
-            self.lb_ejercicios.select_set(0, tk.END)
+        return
 
 
 class TercerosEmpresaDialog(tk.Toplevel):
@@ -362,6 +365,7 @@ class TercerosEmpresaDialog(tk.Toplevel):
         self.controller.refresh()
         self.grab_set()
         self.transient(parent)
+        _center_window(self, parent)
         self.wait_window(self)
 
     def _build(self):
@@ -370,8 +374,8 @@ class TercerosEmpresaDialog(tk.Toplevel):
 
         bar = ttk.Frame(frm)
         bar.pack(fill="x")
-        ttk.Button(bar, text="Copiar de ejercicio", command=self.controller.copiar_desde_ejercicio).pack(side=tk.LEFT, padx=4)
         ttk.Button(bar, text="Suenlace terceros", command=self.controller.generar_suenlace_terceros).pack(side=tk.LEFT, padx=4)
+        ttk.Button(bar, text="Eliminar asignacion", command=self.controller.eliminar_asignacion).pack(side=tk.LEFT, padx=4)
 
         cols = ("nif", "nombre", "poblacion")
         self.tv = ttk.Treeview(frm, columns=cols, show="headings", height=12, selectmode="browse")
@@ -447,6 +451,9 @@ class TercerosEmpresaDialog(tk.Toplevel):
 
     def show_warning(self, title, message):
         messagebox.showwarning(title, message)
+
+    def ask_yes_no(self, title, message):
+        return messagebox.askyesno(title, message)
 
     def show_error(self, title, message):
         messagebox.showerror(title, message)
@@ -1022,6 +1029,7 @@ class FacturaDialog(tk.Toplevel):
 
         self.grab_set()
         self.transient(parent)
+        _center_window(self, parent)
         self.wait_window(self)
 
     def _parse_cuentas_banco(self):
@@ -1426,12 +1434,13 @@ class FacturaDialog(tk.Toplevel):
         self.result = result
         self.destroy()
 class UIFacturasEmitidas(ttk.Frame):
-    def __init__(self, master, gestor, codigo_empresa, ejercicio, nombre_empresa):
+    def __init__(self, master, gestor, codigo_empresa, ejercicio, nombre_empresa, allow_all_years: bool = False):
         super().__init__(master)
         self.gestor = gestor
         self.codigo = codigo_empresa
         self.ejercicio = ejercicio
         self.nombre = nombre_empresa
+        self.allow_all_years = bool(allow_all_years)
         monedas = load_monedas()
         self._default_moneda_simbolo = str(monedas[0].get("simbolo")) if monedas else ""
         base = {
@@ -1439,6 +1448,8 @@ class UIFacturasEmitidas(ttk.Frame):
             "digitos_plan": 8,
             "serie_emitidas": "A",
             "siguiente_num_emitidas": 1,
+            "serie_emitidas_rect": "R",
+            "siguiente_num_emitidas_rect": 1,
             "cuenta_bancaria": "",
             "cuentas_bancarias": "",
             "ejercicio": "",
@@ -1454,13 +1465,13 @@ class UIFacturasEmitidas(ttk.Frame):
         emp_conf = gestor.get_empresa(codigo_empresa, ejercicio) or {}
         base.update(emp_conf)
         self.empresa_conf = base
-        self.controller = FacturasEmitidasController(gestor, codigo_empresa, ejercicio, self.empresa_conf, self)
+        self.controller = FacturasEmitidasController(gestor, codigo_empresa, ejercicio, self.empresa_conf, self, allow_all_years=self.allow_all_years)
         self._sort_state = {}
         self._build()
 
     # ------------------- UI -------------------
     def _build(self):
-        ttk.Label(self, text=f"Facturas emitidas de {self.nombre} ({self.codigo} · {self.ejercicio})", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=10, pady=8)
+        ttk.Label(self, text=f"Facturas emitidas de {self.nombre} ({self.codigo})", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=10, pady=8)
 
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=8, pady=6)
@@ -1481,20 +1492,31 @@ class UIFacturasEmitidas(ttk.Frame):
         ttk.Button(top, text="Nueva", style="Primary.TButton", command=self._nueva).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Editar", command=self._editar).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Copiar", command=self._copiar).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Rectificar", command=self._rectificar).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Eliminar", command=self._eliminar).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Terceros", command=self._terceros).pack(side=tk.LEFT, padx=12)
         ttk.Button(top, text="Exportar PDF", command=self._export_pdf).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Abrir PDF", command=self._abrir_pdf).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Compartir PDF", state="disabled").pack(side=tk.LEFT, padx=8)
 
+        if self.allow_all_years:
+            filtros = ttk.Frame(parent)
+            filtros.pack(fill="x", padx=20, pady=(6, 0))
+            ttk.Label(filtros, text="Año").pack(side=tk.LEFT)
+            self.var_fact_year = tk.StringVar(value="Todos")
+            self.cb_fact_year = ttk.Combobox(filtros, textvariable=self.var_fact_year, width=8, state="readonly")
+            self.cb_fact_year.pack(side=tk.LEFT, padx=6)
+            self.cb_fact_year.bind("<<ComboboxSelected>>", lambda e: self.controller.apply_facturas_filter())
+
         self.tv = ttk.Treeview(
             parent,
-            columns=("serie", "numero", "fecha", "cliente", "total", "generada", "fecha_gen", "enviado", "fecha_envio"),
+            columns=("ejercicio", "serie", "numero", "fecha", "cliente", "total", "generada", "fecha_gen", "enviado", "fecha_envio"),
             show="headings",
             selectmode="extended",
             height=12,
         )
         cols = [
+            ("ejercicio", "Ejercicio", 90, "center"),
             ("serie", "Serie", 80, "w"),
             ("numero", "Numero", 120, "w"),
             ("fecha", "Fecha", 100, "w"),
@@ -1646,6 +1668,7 @@ class UIFacturasEmitidas(ttk.Frame):
             tk.END,
             iid=str(fac.get("id")),
             values=(
+                fac.get("ejercicio", ""),
                 fac.get("serie", ""),
                 fac.get("numero", ""),
                 _to_fecha_ui_or_blank(fac.get("fecha_asiento", "")),
@@ -1698,6 +1721,11 @@ class UIFacturasEmitidas(ttk.Frame):
         self._sort_state[col] = not reverse
 
     def _sort_key(self, col, val):
+        if col == "ejercicio":
+            try:
+                return int(val)
+            except Exception:
+                return -1
         if col == "total":
             return _to_float(val)
         if col == "fecha":
@@ -1785,17 +1813,43 @@ class UIFacturasEmitidas(ttk.Frame):
         return [focus] if focus else []
 
     def open_factura_dialog(self, factura, numero_sugerido=""):
+        ejercicio = self.ejercicio
+        if self.allow_all_years and factura.get("ejercicio") is not None:
+            ejercicio = factura.get("ejercicio")
+        if self.allow_all_years:
+            factura = dict(factura or {})
+            factura["_allow_fecha_fuera_ejercicio"] = True
+            factura["_auto_ejercicio_por_fecha"] = True
         dlg = FacturaDialog(
             self,
             self.gestor,
             self.codigo,
-            self.ejercicio,
+            ejercicio,
             int(self.empresa_conf.get("digitos_plan", 8)),
             factura,
             numero_sugerido=numero_sugerido,
             titulo="Factura emitida",
         )
         return dlg.result
+
+    def set_facturas_years(self, years):
+        if not self.allow_all_years:
+            return
+        vals = ["Todos"] + [str(y) for y in years]
+        self.cb_fact_year["values"] = vals
+        if self.var_fact_year.get() not in vals:
+            self.var_fact_year.set(vals[0])
+
+    def get_facturas_year_filter(self):
+        if not self.allow_all_years:
+            return None
+        txt = (self.var_fact_year.get() or "").strip()
+        if not txt or txt.lower() == "todos":
+            return None
+        try:
+            return int(txt)
+        except Exception:
+            return None
 
     def open_albaran_dialog(self, albaran, numero_sugerido=""):
         dlg = FacturaDialog(
@@ -1836,6 +1890,9 @@ class UIFacturasEmitidas(ttk.Frame):
 
     def _copiar(self):
         self.controller.copiar()
+
+    def _rectificar(self):
+        self.controller.rectificar()
 
     def _eliminar(self):
         self.controller.eliminar()

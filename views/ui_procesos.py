@@ -20,14 +20,19 @@ class UIProcesos(ttk.Frame):
 
     # UI
     def _build(self):
-        ttk.Label(self, text=f"Generar fichero - {self.nombre} ({self.codigo} u {self.ejercicio})", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=10, pady=8)
+        ttk.Label(self, text=f"Generar fichero - {self.nombre} ({self.codigo})", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=10, pady=8)
 
         form = ttk.Frame(self)
         form.pack(fill=tk.X, padx=10, pady=4)
 
         ttk.Label(form, text="Tipo de enlace:").grid(row=0, column=0, sticky="w")
         self.tipo = tk.StringVar(value="Bancos")
-        ttk.Combobox(form, textvariable=self.tipo, values=["Bancos","Facturas Emitidas","Facturas Recibidas"], width=25).grid(row=0, column=1, sticky="w")
+        ttk.Combobox(
+            form,
+            textvariable=self.tipo,
+            values=["Bancos", "Facturas Emitidas", "Facturas Recibidas", "Terceros (alta masiva)"],
+            width=25,
+        ).grid(row=0, column=1, sticky="w")
 
         ttk.Label(form, text="Plantilla:").grid(row=1, column=0, sticky="w")
         self.cb_plantilla = ttk.Combobox(form, width=40)
@@ -42,7 +47,13 @@ class UIProcesos(ttk.Frame):
         self.cb_sheet.grid(row=3, column=1, sticky="w")
         self.cb_sheet.bind("<<ComboboxSelected>>", lambda e: self.controller.preview_excel())
 
-        ttk.Button(self, text="Generar Suenlace.dat", style="Primary.TButton", command=lambda: self.controller.generar()).pack(side=tk.BOTTOM, pady=10)
+        self.btn_generar = ttk.Button(
+            self,
+            text="Generar Suenlace.dat",
+            style="Primary.TButton",
+            command=lambda: self.controller.generar(),
+        )
+        self.btn_generar.pack(side=tk.BOTTOM, pady=10)
 
         preview_wrap = ttk.Frame(self, height=320, width=900)
         preview_wrap.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -72,6 +83,14 @@ class UIProcesos(ttk.Frame):
         self.cb_plantilla["values"] = values
         if values:
             self.cb_plantilla.current(0)
+        else:
+            self.cb_plantilla.set("")
+
+    def set_plantilla_enabled(self, enabled: bool):
+        self.cb_plantilla.configure(state=("normal" if enabled else "disabled"))
+
+    def set_generar_text(self, text: str):
+        self.btn_generar.configure(text=text)
 
     def ask_open_excel_path(self):
         return filedialog.askopenfilename(
