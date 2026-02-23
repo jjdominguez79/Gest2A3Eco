@@ -220,6 +220,7 @@ class TercerosGlobalDialog(tk.Toplevel):
         self.resizable(True, True)
         self.gestor = gestor
         self.controller = TercerosGlobalController(gestor, self)
+        self._terceros_cache = []
         self._empresas_cache = []
         self._empresas_index = {}
         self._empresas_list = []
@@ -239,6 +240,14 @@ class TercerosGlobalDialog(tk.Toplevel):
         ttk.Button(bar, text="Nuevo", style="Primary.TButton", command=self.controller.nuevo).pack(side=tk.LEFT, padx=4)
         ttk.Button(bar, text="Editar", command=self.controller.editar).pack(side=tk.LEFT, padx=4)
         ttk.Button(bar, text="Eliminar", command=self.controller.eliminar).pack(side=tk.LEFT, padx=4)
+
+        filtro = ttk.Frame(frm)
+        filtro.pack(fill="x", pady=(0, 6))
+        ttk.Label(filtro, text="Buscar").pack(side=tk.LEFT, padx=(0, 6))
+        self.var_buscar_tercero = tk.StringVar()
+        entry_buscar = ttk.Entry(filtro, textvariable=self.var_buscar_tercero, width=30)
+        entry_buscar.pack(side=tk.LEFT, padx=(0, 6))
+        self.var_buscar_tercero.trace_add("write", lambda *_: self._apply_filtro_terceros())
 
         cols = ("nif", "nombre", "poblacion")
         self.tv = ttk.Treeview(frm, columns=cols, show="headings", height=12, selectmode="browse")
@@ -275,14 +284,8 @@ class TercerosGlobalDialog(tk.Toplevel):
 
     # --- helpers de vista
     def set_terceros(self, rows):
-        self.tv.delete(*self.tv.get_children())
-        for t in rows:
-            self.tv.insert(
-                "",
-                tk.END,
-                iid=str(t.get("id")),
-                values=(t.get("nif", ""), t.get("nombre", ""), t.get("poblacion", "")),
-            )
+        self._terceros_cache = list(rows or [])
+        self._apply_filtro_terceros()
 
     def set_empresas(self, empresas):
         self._empresas_cache = [e for e in (empresas or []) if e.get("ejercicio") is not None]
@@ -350,6 +353,26 @@ class TercerosGlobalDialog(tk.Toplevel):
     def _update_ejercicios(self):
         return
 
+    def _apply_filtro_terceros(self):
+        filtro = (self.var_buscar_tercero.get() or "").strip().lower()
+        selected = self.get_selected_tercero_id()
+        self.tv.delete(*self.tv.get_children())
+        for t in self._terceros_cache:
+            nif = str(t.get("nif", ""))
+            nombre = str(t.get("nombre", ""))
+            poblacion = str(t.get("poblacion", ""))
+            texto = f"{nif} {nombre} {poblacion}".lower()
+            if filtro and filtro not in texto:
+                continue
+            self.tv.insert(
+                "",
+                tk.END,
+                iid=str(t.get("id")),
+                values=(nif, nombre, poblacion),
+            )
+        if selected and self.tv.exists(selected):
+            self.tv.selection_set(selected)
+
 
 class TercerosEmpresaDialog(tk.Toplevel):
     def __init__(self, parent, gestor, codigo_empresa, ejercicio, ndig_plan):
@@ -361,6 +384,7 @@ class TercerosEmpresaDialog(tk.Toplevel):
         self.ejercicio = ejercicio
         self.ndig = ndig_plan
         self.controller = TercerosEmpresaController(gestor, codigo_empresa, ejercicio, ndig_plan, self)
+        self._terceros_cache = []
         self._build()
         self.controller.refresh()
         self.grab_set()
@@ -376,6 +400,14 @@ class TercerosEmpresaDialog(tk.Toplevel):
         bar.pack(fill="x")
         ttk.Button(bar, text="Suenlace terceros", command=self.controller.generar_suenlace_terceros).pack(side=tk.LEFT, padx=4)
         ttk.Button(bar, text="Eliminar asignacion", command=self.controller.eliminar_asignacion).pack(side=tk.LEFT, padx=4)
+
+        filtro = ttk.Frame(frm)
+        filtro.pack(fill="x", pady=(6, 0))
+        ttk.Label(filtro, text="Buscar").pack(side=tk.LEFT, padx=(0, 6))
+        self.var_buscar_tercero = tk.StringVar()
+        entry_buscar = ttk.Entry(filtro, textvariable=self.var_buscar_tercero, width=30)
+        entry_buscar.pack(side=tk.LEFT, padx=(0, 6))
+        self.var_buscar_tercero.trace_add("write", lambda *_: self._apply_filtro_terceros())
 
         cols = ("nif", "nombre", "poblacion")
         self.tv = ttk.Treeview(frm, columns=cols, show="headings", height=12, selectmode="browse")
@@ -406,14 +438,8 @@ class TercerosEmpresaDialog(tk.Toplevel):
 
     # --- helpers de vista
     def set_terceros(self, rows):
-        self.tv.delete(*self.tv.get_children())
-        for t in rows:
-            self.tv.insert(
-                "",
-                tk.END,
-                iid=str(t.get("id")),
-                values=(t.get("nif", ""), t.get("nombre", ""), t.get("poblacion", "")),
-            )
+        self._terceros_cache = list(rows or [])
+        self._apply_filtro_terceros()
 
     def clear_subcuentas(self):
         self.var_sub_cli.set("")
@@ -442,6 +468,26 @@ class TercerosEmpresaDialog(tk.Toplevel):
         self.var_sub_pro.set(sp)
         self.var_sub_ing.set(si)
         self.var_sub_gas.set(sg)
+
+    def _apply_filtro_terceros(self):
+        filtro = (self.var_buscar_tercero.get() or "").strip().lower()
+        selected = self.get_selected_id()
+        self.tv.delete(*self.tv.get_children())
+        for t in self._terceros_cache:
+            nif = str(t.get("nif", ""))
+            nombre = str(t.get("nombre", ""))
+            poblacion = str(t.get("poblacion", ""))
+            texto = f"{nif} {nombre} {poblacion}".lower()
+            if filtro and filtro not in texto:
+                continue
+            self.tv.insert(
+                "",
+                tk.END,
+                iid=str(t.get("id")),
+                values=(nif, nombre, poblacion),
+            )
+        if selected and self.tv.exists(selected):
+            self.tv.selection_set(selected)
 
     def show_info(self, title, message):
         messagebox.showinfo(title, message)
