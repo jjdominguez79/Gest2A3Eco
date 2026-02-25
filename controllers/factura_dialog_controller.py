@@ -93,7 +93,8 @@ class FacturaDialogController:
         rows = [resumen[k] for k in sorted(resumen.keys(), reverse=True)]
         self._view.set_iva_resumen(rows)
         if self._view.get_retencion_aplica() and not self._view.is_retencion_manual():
-            base_total = self._sum_base(self._view.get_lineas())
+            dtipo, dvalor = self._view.get_descuento_total()
+            base_total = self._sum_base_imponible(self._view.get_lineas(), dtipo, dvalor)
             self._view.set_retencion_base(f"{base_total:.2f}" if base_total else "")
 
     def insert_linea(self, ln):
@@ -269,13 +270,17 @@ class FacturaDialogController:
         if not self._view.get_retencion_aplica():
             return
         if not self._view.is_retencion_manual():
-            base = self._sum_base(self._view.get_lineas())
+            dtipo, dvalor = self._view.get_descuento_total()
+            base = self._sum_base_imponible(self._view.get_lineas(), dtipo, dvalor)
             self._view.set_retencion_base(f"{base:.2f}" if base else "")
         self.apply_retencion_header()
 
-    def _sum_base(self, lineas):
+    def _sum_base_imponible(self, lineas, dtipo, dvalor):
         total = 0.0
-        for ln in lineas:
+        lineas_calc = aplicar_descuento_total_lineas(lineas, dtipo, dvalor)
+        for ln in lineas_calc:
+            if str(ln.get("tipo") or "").strip().lower() == "obs":
+                continue
             total += ln.get("base", 0.0)
         return self._round2(total)
 

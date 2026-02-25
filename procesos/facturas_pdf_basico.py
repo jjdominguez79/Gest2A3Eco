@@ -3,6 +3,8 @@ import struct
 import sys
 from pathlib import Path
 
+from utils.utilidades import aplicar_descuento_total_lineas
+
 
 def _to_float(x) -> float:
     try:
@@ -123,6 +125,38 @@ def generar_pdf_basico(empresa_conf: dict, fac: dict, cliente: dict, totales: di
         base = _fmt_es(x, dec)
         return f"{base} {moneda_simbolo}".strip() if moneda_simbolo else base
 
+    def _line_desc_text(ln):
+        t = (ln.get("descuento_tipo") or "").strip().lower()
+        try:
+            v = float(ln.get("descuento_valor") or 0)
+        except Exception:
+            v = 0.0
+        if t not in ("pct", "imp") or v <= 0:
+            return ""
+        if t == "pct":
+            return f"{_fmt_es(v, 2)}%"
+        return f2s(v, 2)
+
+    def _calc_descuento_total(lineas):
+        t = (fac.get("descuento_total_tipo") or "").strip().lower()
+        try:
+            v = float(fac.get("descuento_total_valor") or 0)
+        except Exception:
+            v = 0.0
+        if t not in ("pct", "imp") or v <= 0:
+            return 0.0, ""
+        total_base = 0.0
+        for ln in lineas:
+            if str(ln.get("tipo") or "").strip().lower() == "obs":
+                continue
+            total_base += _to_float(ln.get("base"))
+        if total_base <= 0:
+            return 0.0, ""
+        if t == "pct":
+            pct = min(max(v, 0.0), 100.0)
+            return total_base * pct / 100.0, f"Descuento total ({_fmt_es(pct, 2)}%)"
+        return min(abs(v), total_base), "Descuento total"
+
     y = 800
     body = []
     logo = _logo_jpeg(
@@ -181,30 +215,38 @@ def generar_pdf_basico(empresa_conf: dict, fac: dict, cliente: dict, totales: di
 
     headers = [
         ("Concepto", 50),
-        ("Unid", 270),
-        ("P. unit", 320),
-        ("Base", 380),
-        ("% IVA", 440),
-        ("Cuota IVA", 490),
+        ("Unid", 260),
+        ("P. unit", 305),
+        ("Dto", 355),
+        ("Base", 400),
+        ("% IVA", 450),
+        ("Cuota IVA", 495),
         ("% IRPF", 545),
     ]
     for txt, x in headers:
         body.append(t(x, y, txt, 11, True))
     y -= 12
 
-    for ln in fac.get("lineas", []):
+    lineas_display = list(fac.get("lineas", []))
+    lineas_calc = aplicar_descuento_total_lineas(
+        lineas_display,
+        fac.get("descuento_total_tipo"),
+        fac.get("descuento_total_valor"),
+    )
+    for ln in lineas_display:
         is_obs = str(ln.get("tipo") or "").strip().lower() == "obs"
         body.append(t(50, y, str(ln.get("concepto", ""))[:42], 10))
-        body.append(t(270, y, "" if is_obs else _fmt_es(_to_float(ln.get("unidades")), 2), 10))
-        body.append(t(320, y, "" if is_obs else _fmt_es(_to_float(ln.get("precio")), 4), 10))
-        body.append(t(380, y, "" if is_obs else f2s(_to_float(ln.get("base")), 2), 10))
-        body.append(t(440, y, "" if is_obs else f"{_fmt_es(_to_float(ln.get('pct_iva')), 2)}%", 10))
-        body.append(t(490, y, "" if is_obs else f2s(_to_float(ln.get("cuota_iva")), 2), 10))
+        body.append(t(260, y, "" if is_obs else _fmt_es(_to_float(ln.get("unidades")), 2), 10))
+        body.append(t(305, y, "" if is_obs else _fmt_es(_to_float(ln.get("precio")), 4), 10))
+        body.append(t(355, y, "" if is_obs else _line_desc_text(ln), 10))
+        body.append(t(400, y, "" if is_obs else f2s(_to_float(ln.get("base")), 2), 10))
+        body.append(t(450, y, "" if is_obs else f"{_fmt_es(_to_float(ln.get('pct_iva')), 2)}%", 10))
+        body.append(t(495, y, "" if is_obs else f2s(_to_float(ln.get("cuota_iva")), 2), 10))
         body.append(t(545, y, "" if is_obs else f"{_fmt_es(_to_float(ln.get('pct_irpf')), 2)}%", 10))
         y -= 12
 
     resumen = {}
-    for ln in fac.get("lineas", []):
+    for ln in lineas_calc:
         if str(ln.get("tipo") or "").strip().lower() == "obs":
             continue
         pct = _round2(_to_float(ln.get("pct_iva")))
@@ -241,6 +283,11 @@ def generar_pdf_basico(empresa_conf: dict, fac: dict, cliente: dict, totales: di
     if abs(_to_float(totales.get("ret"))) > 0.001:
         body.append(t(360, y, "IRPF:", 11, True))
         body.append(t(500, y, f2s(_round2(totales.get("ret")), 2), 11))
+        y -= 16
+    desc_total, desc_label = _calc_descuento_total(lineas_display)
+    if abs(desc_total) > 0.001 and desc_label:
+        body.append(t(360, y, f"{desc_label}:", 11, True))
+        body.append(t(500, y, f2s(_round2(-abs(desc_total)), 2), 11))
         y -= 16
     body.append(t(360, y, "Total factura:", 12, True))
     body.append(t(500, y, f2s(_round2(totales.get("total")), 2), 12, True))

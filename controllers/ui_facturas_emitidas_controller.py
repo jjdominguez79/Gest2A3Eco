@@ -809,13 +809,15 @@ class FacturasEmitidasController:
             base_dir = os.path.dirname(sys.executable)
         else:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        default_path = os.path.join(base_dir, "plantillas", "factura_emitida_template.docx")
+        from utils.utilidades import get_word_templates_dir
+        tpl_dir = get_word_templates_dir(os.path.join(base_dir, "plantillas"))
+        default_path = os.path.join(tpl_dir, "factura_emitida_template.docx")
         if not fac:
             return default_path
         chosen = str(fac.get("plantilla_word") or "").strip()
         if not chosen:
             return default_path
-        candidate = os.path.join(base_dir, "plantillas", chosen)
+        candidate = os.path.join(tpl_dir, chosen)
         if os.path.exists(candidate):
             return candidate
         if warn_missing:
@@ -1049,10 +1051,27 @@ class FacturasEmitidasController:
             return self._round2(ret_lineas)
         importe = fac.get("retencion_importe")
         if importe is None or importe == "":
-            base = self._to_float(fac.get("retencion_base"))
+            base_raw = fac.get("retencion_base")
+            if base_raw is None or base_raw == "":
+                base = self._base_imponible_descuento(fac)
+            else:
+                base = self._to_float(base_raw)
             pct = self._to_float(fac.get("retencion_pct"))
             return self._round2(-abs(base * pct / 100.0)) if pct else 0.0
         return self._round2(self._to_float(importe))
+
+    def _base_imponible_descuento(self, fac: dict) -> float:
+        total = 0.0
+        lineas = aplicar_descuento_total_lineas(
+            fac.get("lineas", []),
+            fac.get("descuento_total_tipo"),
+            fac.get("descuento_total_valor"),
+        )
+        for ln in lineas:
+            if str(ln.get("tipo") or "").strip().lower() == "obs":
+                continue
+            total += self._to_float(ln.get("base"))
+        return self._round2(total)
 
     def _negate_factura_lineas(self, lineas):
         out = []

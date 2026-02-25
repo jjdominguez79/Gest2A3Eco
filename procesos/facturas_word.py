@@ -11,6 +11,7 @@ from docx.shared import Mm
 from docx.image.image import Image as DocxImage
 from docx2pdf import convert
 from xml.sax.saxutils import escape as _xml_escape
+from utils.utilidades import aplicar_descuento_total_lineas
 
 
 def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales: dict) -> Dict[str, Any]:
@@ -47,9 +48,56 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
                 return p
         return ""
 
+    raw_lineas = list(fac.get("lineas", []))
+    lineas_calc = aplicar_descuento_total_lineas(
+        raw_lineas,
+        fac.get("descuento_total_tipo"),
+        fac.get("descuento_total_valor"),
+    )
+
+    def _line_desc_label(ln):
+        t = (ln.get("descuento_tipo") or "").strip().lower()
+        try:
+            v = float(ln.get("descuento_valor") or 0)
+        except Exception:
+            v = 0.0
+        if t not in ("pct", "imp") or v <= 0:
+            return "", ""
+        if t == "pct":
+            return f"Dto {f2(v)}%", f"{f2(v)}%"
+        return f"Dto {f2s(v)}", f2s(v)
+
+    def _calc_descuento_total(lineas):
+        t = (fac.get("descuento_total_tipo") or "").strip().lower()
+        try:
+            v = float(fac.get("descuento_total_valor") or 0)
+        except Exception:
+            v = 0.0
+        if t not in ("pct", "imp") or v <= 0:
+            return 0.0, ""
+        total_base = 0.0
+        for ln in lineas:
+            if str(ln.get("tipo") or "").strip().lower() == "obs":
+                continue
+            try:
+                total_base += float(ln.get("base") or 0)
+            except Exception:
+                continue
+        if total_base <= 0:
+            return 0.0, ""
+        if t == "pct":
+            pct = min(max(v, 0.0), 100.0)
+            desc_total = total_base * pct / 100.0
+            return desc_total, f"Descuento total ({f2(pct)}%)"
+        return min(abs(v), total_base), "Descuento total"
+
     lineas = []
-    for ln in fac.get("lineas", []):
+    for ln in raw_lineas:
         is_obs = str(ln.get("tipo") or "").strip().lower() == "obs"
+        desc_label, desc_value = _line_desc_label(ln)
+        concepto = str(ln.get("concepto", ""))
+        if desc_label and not is_obs:
+            concepto = f"{concepto} ({desc_label})" if concepto else desc_label
         base = float(ln.get("base") or 0)
         cuota_iva = float(ln.get("cuota_iva") or 0)
         cuota_irpf = float(ln.get("cuota_irpf") or 0)
@@ -57,10 +105,12 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
         pct_irpf = ln.get("pct_irpf") or 0
 
         lineas.append({
-            "concepto": str(ln.get("concepto", "")),
+            "concepto": concepto,
             "unidades": "" if is_obs else f2(ln.get("unidades") or 0),
             "precio": "" if is_obs else f4(ln.get("precio") or 0),
             "base": "" if is_obs else f2s(ln.get("base") or 0),
+            "descuento": "" if is_obs else desc_value,
+            "descuento_label": "" if is_obs else desc_label,
             "pct_iva": "" if is_obs else f2(ln.get("pct_iva") or 0),
             "cuota_iva": "" if is_obs else f2s(ln.get("cuota_iva") or 0),
             "pct_irpf": "" if is_obs else f2(pct_irpf),
@@ -70,7 +120,7 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
         })
 
     resumen = {}
-    for ln in fac.get("lineas", []):
+    for ln in lineas_calc:
         if str(ln.get("tipo") or "").strip().lower() == "obs":
             continue
         pct = float(ln.get("pct_iva") or 0)
@@ -87,7 +137,17 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
         })
 
     if fac.get("retencion_aplica"):
+        base_imponible = 0.0
+        for ln in lineas_calc:
+            if str(ln.get("tipo") or "").strip().lower() == "obs":
+                continue
+            try:
+                base_imponible += float(ln.get("base") or 0)
+            except Exception:
+                continue
         ret_base = fac.get("retencion_base")
+        if ret_base is None or ret_base == "":
+            ret_base = base_imponible
         ret_pct = fac.get("retencion_pct")
         ret_imp = fac.get("retencion_importe")
         if ret_imp is None or ret_imp == "":
@@ -99,6 +159,17 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
         ret_base = 0
         ret_pct = 0
         ret_imp = 0
+
+    desc_total, desc_label = _calc_descuento_total(raw_lineas)
+    descuento_total_texto = f"{desc_label}: {f2s(-desc_total)}" if desc_label and desc_total > 0 else ""
+    base_sin_descuento = 0.0
+    for ln in raw_lineas:
+        if str(ln.get("tipo") or "").strip().lower() == "obs":
+            continue
+        try:
+            base_sin_descuento += float(ln.get("base") or 0)
+        except Exception:
+            continue
 
     return {
         "empresa": {
@@ -144,6 +215,9 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
             "ret_pct": f2(ret_pct or 0),
             "ret_importe": f2s(ret_imp or 0),
             "ret_pct_label": f"{f2(ret_pct or 0)}%",
+            "descuento_total_texto": descuento_total_texto,
+            "base_sin_descuento": f2s(base_sin_descuento),
+            "descuento_total_importe": f2s(-abs(desc_total)),
         },
         "retencion": {
             "base": f2s(ret_base or 0),

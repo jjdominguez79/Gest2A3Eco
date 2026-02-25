@@ -4,7 +4,7 @@ from tkinter import ttk, filedialog, messagebox
 
 from controllers.app_controller import AppController
 from models.gestor_sqlite import GestorSQLite
-from utils.utilidades import load_app_config, save_app_config
+from utils.utilidades import load_app_config, save_app_config, get_word_templates_dir, set_word_templates_dir
 from views.ui_config_monedas import MonedasDialog
 from views.ui_theme import aplicar_tema
 
@@ -56,7 +56,13 @@ RUTA_DB = os.path.join(PLANTILLAS_DIR, "gest2a3eco.db")
 # ─────────────────────────────────────────────
 # Cabecera común (logo + datos + botones)
 # ─────────────────────────────────────────────
-def _build_header(root: tk.Tk, on_cambiar_empresa, on_cambiar_db=None, db_path: str | None = None) -> ttk.Frame:
+def _build_header(
+    root: tk.Tk,
+    on_cambiar_empresa,
+    on_cambiar_db=None,
+    db_path: str | None = None,
+    word_tpl_dir: str | None = None,
+) -> ttk.Frame:
     """Cabecera fija con logo, datos de contacto y botones globales."""
     header = ttk.Frame(root, padding=10, style="TFrame")
     header.pack(side="top", fill="x")
@@ -137,6 +143,19 @@ def _build_header(root: tk.Tk, on_cambiar_empresa, on_cambiar_db=None, db_path: 
         except Exception:
             pass
 
+    # Path plantillas Word
+    if word_tpl_dir:
+        try:
+            header.rowconfigure(4, weight=0)
+            ttk.Label(
+                header,
+                text=f"Plantillas Word: {word_tpl_dir}",
+                style="SubHeader.TLabel",
+                foreground="#3f3f3f",
+            ).grid(row=4, column=1, sticky="w")
+        except Exception:
+            pass
+
     # Que la columna central se expanda
     header.columnconfigure(1, weight=1)
 
@@ -157,6 +176,14 @@ def _select_db_path(default_path: str) -> str:
         filetypes=[("SQLite DB", "*.db"), ("Todos", "*.*")],
     )
     return path or default_path
+
+def _select_word_templates_dir(default_dir: str) -> str:
+    path = filedialog.askdirectory(
+        title="Selecciona carpeta de plantillas Word",
+        initialdir=default_dir if os.path.isdir(default_dir) else "",
+        mustexist=True,
+    )
+    return path or default_dir
 
 def _get_last_db_path(default_path: str) -> str:
     cfg = load_app_config()
@@ -199,6 +226,13 @@ def main():
         db_path = _select_db_path(RUTA_DB)
     _set_last_db_path(db_path)
 
+    # Seleccionar carpeta de plantillas Word (recuerda la ultima)
+    default_tpl_dir = os.path.join(BASE_DIR, "plantillas")
+    word_tpl_dir = get_word_templates_dir(default_tpl_dir)
+    if not word_tpl_dir or not os.path.isdir(word_tpl_dir):
+        word_tpl_dir = _select_word_templates_dir(default_tpl_dir)
+    set_word_templates_dir(word_tpl_dir)
+
     # Gestor de datos en SQLite (migra desde JSON si existe)
     gestor = GestorSQLite(db_path, json_seed=RUTA_JSON)
 
@@ -216,17 +250,35 @@ def main():
             root.destroy()
             _restart_app()
 
+    def _on_cambiar_plantillas_word():
+        new_dir = _select_word_templates_dir(word_tpl_dir)
+        if new_dir and new_dir != word_tpl_dir:
+            set_word_templates_dir(new_dir)
+            try:
+                messagebox.showinfo("Gest2A3Eco", "Carpeta de plantillas Word cambiada. La aplicacion se reiniciara.")
+            except Exception:
+                pass
+            root.destroy()
+            _restart_app()
+
     def _on_config_monedas():
         MonedasDialog(root)
 
     # Cabecera (usa el controlador para "Cambiar empresa")
-    _build_header(root, on_cambiar_empresa=controller.start, on_cambiar_db=_on_cambiar_db, db_path=db_path)
+    _build_header(
+        root,
+        on_cambiar_empresa=controller.start,
+        on_cambiar_db=_on_cambiar_db,
+        db_path=db_path,
+        word_tpl_dir=word_tpl_dir,
+    )
 
     # Menu contextual
     ctx = tk.Menu(root, tearoff=0)
     ctx.add_command(label="Menu principal", command=controller.start)
     cfg_menu = tk.Menu(ctx, tearoff=0)
     cfg_menu.add_command(label="Seleccionar base de datos", command=_on_cambiar_db)
+    cfg_menu.add_command(label="Seleccionar plantillas Word", command=_on_cambiar_plantillas_word)
     cfg_menu.add_command(label="Configurar monedas", command=_on_config_monedas)
     ctx.add_cascade(label="Configuracion", menu=cfg_menu)
     ctx.add_separator()

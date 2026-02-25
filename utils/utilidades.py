@@ -27,6 +27,7 @@ def load_app_config() -> dict:
     except Exception:
         data = {}
     data.setdefault("templates_path", "plantillas/plantillas.json")
+    data.setdefault("word_templates_dir", "")
     data.setdefault("admin_password", "admin")
     monedas = data.get("monedas")
     if not isinstance(monedas, list) or not monedas:
@@ -44,6 +45,18 @@ def load_app_config() -> dict:
             norm.append({"codigo": codigo, "simbolo": simbolo, "nombre": nombre})
         data["monedas"] = norm or list(DEFAULT_MONEDAS)
     return data
+
+def get_word_templates_dir(default_dir: str) -> str:
+    cfg = load_app_config()
+    raw = str(cfg.get("word_templates_dir") or "").strip()
+    if raw and Path(raw).is_dir():
+        return raw
+    return default_dir
+
+def set_word_templates_dir(path: str) -> None:
+    cfg = load_app_config()
+    cfg["word_templates_dir"] = path
+    save_app_config(cfg)
 
 def save_app_config(data: dict) -> None:
     cfg_path = _config_path()
