@@ -241,22 +241,39 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
 
 DEFAULT_LOGO_MAX_WIDTH_MM = 20
 DEFAULT_LOGO_MAX_HEIGHT_MM = 12
+MAX_LOGO_EDGE_PX = 2000
 
 
 def render_docx(template_path: str, context: Dict[str, Any], out_docx_path: str) -> None:
     doc = DocxTemplate(template_path)
     ctx = dict(context or {})
     empresa_ctx = ctx.get("empresa") or {}
-    logo_path = empresa_ctx.get("logo_path") or ""
-    logo_path = _resolve_logo_path(logo_path, empresa_ctx.get("codigo") or empresa_ctx.get("codigo_empresa"))
-    if logo_path and os.path.exists(logo_path):
+    raw_logo_path = empresa_ctx.get("logo_path") or ""
+    logo_path = _resolve_logo_path(raw_logo_path, empresa_ctx.get("codigo") or empresa_ctx.get("codigo_empresa"))
+    logo_exists = bool(logo_path and os.path.exists(logo_path))
+    sanitized_logo_path = ""
+    logo_inline_ok = False
+    logo_inline_error = ""
+    if logo_exists:
         try:
+            sanitized_logo_path = _sanitize_logo_path(logo_path)
             empresa = ctx.get("empresa") or {}
-            max_w = empresa.get("logo_max_width_mm", DEFAULT_LOGO_MAX_WIDTH_MM)
-            max_h = empresa.get("logo_max_height_mm", DEFAULT_LOGO_MAX_HEIGHT_MM)
-            ctx["logo"] = _inline_logo(doc, logo_path, max_w, max_h)
-        except Exception:
+            max_w = empresa.get("logo_max_width_mm") or DEFAULT_LOGO_MAX_WIDTH_MM
+            max_h = empresa.get("logo_max_height_mm") or DEFAULT_LOGO_MAX_HEIGHT_MM
+            ctx["logo"] = _inline_logo(doc, sanitized_logo_path or logo_path, max_w, max_h)
+            logo_inline_ok = True
+        except Exception as exc:
             ctx["logo"] = ""
+            logo_inline_error = str(exc)
+    _maybe_write_logo_debug(
+        out_docx_path,
+        raw_logo_path,
+        logo_path,
+        sanitized_logo_path,
+        logo_exists,
+        logo_inline_ok,
+        logo_inline_error,
+    )
     ctx = _escape_context(ctx)
     doc.render(ctx)
     doc.save(out_docx_path)
@@ -326,6 +343,83 @@ def _inline_logo(doc: DocxTemplate, path: str, max_width_mm: float, max_height_m
     except Exception:
         return InlineImage(doc, path, width=Mm(float(max_width_mm)))
 
+def _maybe_write_logo_debug(
+    out_docx_path: str,
+    raw_logo_path: str,
+    resolved_logo_path: str,
+    sanitized_logo_path: str,
+    exists: bool,
+    logo_inline_ok: bool,
+    logo_inline_error: str,
+) -> None:
+    if not bool(os.environ.get("GEST2A3ECO_LOGO_DEBUG")):
+        return
+    debug_path = str(Path(out_docx_path).with_suffix(".logo_debug.txt"))
+    lines = [
+        f"raw_logo_path={raw_logo_path}",
+        f"resolved_logo_path={resolved_logo_path}",
+        f"sanitized_logo_path={sanitized_logo_path}",
+        f"resolved_exists={exists}",
+        f"logo_inline_ok={logo_inline_ok}",
+        f"logo_inline_error={logo_inline_error}",
+    ]
+    try:
+        from PIL import Image as _PilImage
+        lines.append("pil_available=True")
+    except Exception:
+        lines.append("pil_available=False")
+    if resolved_logo_path and exists:
+        try:
+            image = DocxImage.from_file(resolved_logo_path)
+            lines.append(f"image_width_emu={image.width}")
+            lines.append(f"image_height_emu={image.height}")
+            try:
+                emu_per_inch = 914400
+                mm_per_inch = 25.4
+                w_mm = (image.width / emu_per_inch) * mm_per_inch
+                h_mm = (image.height / emu_per_inch) * mm_per_inch
+                lines.append(f"image_width_mm={w_mm:.2f}")
+                lines.append(f"image_height_mm={h_mm:.2f}")
+            except Exception:
+                pass
+        except Exception as exc:
+            lines.append(f"image_error={exc}")
+    try:
+        Path(debug_path).write_text("\n".join(lines), encoding="utf-8")
+    except Exception:
+        pass
+
+def _sanitize_logo_path(path: str) -> str:
+    try:
+        from PIL import Image as PilImage
+    except Exception:
+        return ""
+    try:
+        src = Path(path)
+        if not src.exists():
+            return path
+        cache_dir = src.parent / "_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_path = cache_dir / f"{src.stem}.sanitized.png"
+        try:
+            if cache_path.exists() and cache_path.stat().st_mtime >= src.stat().st_mtime:
+                return str(cache_path)
+        except Exception:
+            pass
+        with PilImage.open(src) as im:
+            im.load()
+            if im.mode not in ("RGB", "RGBA"):
+                im = im.convert("RGBA" if "A" in im.getbands() else "RGB")
+            max_edge = max(im.size)
+            if max_edge > MAX_LOGO_EDGE_PX:
+                scale = MAX_LOGO_EDGE_PX / float(max_edge)
+                new_size = (max(1, int(im.size[0] * scale)), max(1, int(im.size[1] * scale)))
+                im = im.resize(new_size, PilImage.LANCZOS)
+            im.save(cache_path, format="PNG", optimize=True)
+        return str(cache_path)
+    except Exception:
+        return path
+
 def convert_docx_to_pdf(docx_path: str, pdf_path: str) -> None:
     # Usa Word instalado
     # Evita fallo en .exe sin consola (tqdm intenta escribir en None)
@@ -355,8 +449,9 @@ def generar_pdf_desde_plantilla_word(
     tmp_docx = str(Path(out_pdf).with_suffix(".tmp.docx"))
     render_docx(template_path, context, tmp_docx)
     convert_docx_to_pdf(tmp_docx, out_pdf)
-    try:
-        Path(tmp_docx).unlink(missing_ok=True)
-    except Exception:
-        pass
+    if not bool(os.environ.get("GEST2A3ECO_LOGO_DEBUG")):
+        try:
+            Path(tmp_docx).unlink(missing_ok=True)
+        except Exception:
+            pass
     return out_pdf, None

@@ -84,6 +84,8 @@ class EmpresaDialog(Dialog):
             "telefono": "",
             "email": "",
             "logo_path": "",
+            "logo_max_width_mm": "",
+            "logo_max_height_mm": "",
             "activo": True,
         }
         if empresa:
@@ -114,6 +116,8 @@ class EmpresaDialog(Dialog):
         self.var_tel = tk.StringVar(value=str(self.empresa.get("telefono","")))
         self.var_mail = tk.StringVar(value=str(self.empresa.get("email","")))
         self.var_logo = tk.StringVar(value=str(self.empresa.get("logo_path","")))
+        self.var_logo_w = tk.StringVar(value=str(self.empresa.get("logo_max_width_mm") or ""))
+        self.var_logo_h = tk.StringVar(value=str(self.empresa.get("logo_max_height_mm") or ""))
         self.var_activo = tk.BooleanVar(value=bool(self.empresa.get("activo", True)))
 
         ttk.Label(master, text="Codigo").grid(row=0, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_codigo).grid(row=0, column=1)
@@ -137,7 +141,11 @@ class EmpresaDialog(Dialog):
         row_logo.grid(row=16, column=1, sticky="we")
         ttk.Entry(row_logo, textvariable=self.var_logo, width=32).pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(row_logo, text="Buscar", command=self._choose_logo).pack(side=tk.LEFT, padx=4)
-        ttk.Checkbutton(master, text="Activo", variable=self.var_activo).grid(row=17, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(master, text="Logo ancho (mm)").grid(row=17, column=0, sticky="w")
+        ttk.Entry(master, textvariable=self.var_logo_w, width=10).grid(row=17, column=1, sticky="w")
+        ttk.Label(master, text="Logo alto (mm)").grid(row=18, column=0, sticky="w")
+        ttk.Entry(master, textvariable=self.var_logo_h, width=10).grid(row=18, column=1, sticky="w")
+        ttk.Checkbutton(master, text="Activo", variable=self.var_activo).grid(row=19, column=0, sticky="w", pady=(6, 0))
         return master
 
     def _cuenta_bancaria_default(self):
@@ -159,6 +167,8 @@ class EmpresaDialog(Dialog):
 
     def apply(self):
         try:
+            logo_w_txt = self.var_logo_w.get().strip()
+            logo_h_txt = self.var_logo_h.get().strip()
             self.result = {
                 "codigo": self.var_codigo.get().strip(),
                 "nombre": self.var_nombre.get().strip(),
@@ -178,6 +188,8 @@ class EmpresaDialog(Dialog):
                 "telefono": self.var_tel.get().strip(),
                 "email": self.var_mail.get().strip(),
                 "logo_path": self.var_logo.get().strip(),
+                "logo_max_width_mm": _to_float_es(logo_w_txt) if logo_w_txt else None,
+                "logo_max_height_mm": _to_float_es(logo_h_txt) if logo_h_txt else None,
                 "activo": bool(self.var_activo.get()),
             }
         except Exception as e:

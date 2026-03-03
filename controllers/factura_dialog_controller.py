@@ -150,6 +150,7 @@ class FacturaDialogController:
             "moneda_codigo": self._view.get_moneda()[0],
             "moneda_simbolo": self._view.get_moneda()[1],
             "plantilla_word": self._view.get_plantilla_word(),
+            "plantilla_emitidas": self._view.get_plantilla_emitidas(),
             "retencion_aplica": self._view.get_retencion_aplica(),
             "retencion_pct": self._view.get_retencion_pct(),
             "retencion_base": self._view.get_retencion_base() if self._view.get_retencion_aplica() else None,

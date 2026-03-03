@@ -60,7 +60,16 @@ class PlantillasController:
         tv = self._tabs["emitidas"]["tv"]
         tv.delete(*tv.get_children())
         for p in self._gestor.listar_emitidas(self._empresa.get("codigo"), self._empresa.get("ejercicio")):
-            tv.insert("", "end", values=(p.get("nombre"), p.get("cuenta_cliente_prefijo","430"), p.get("cuenta_iva_repercutido_defecto","47700000")))
+            tv.insert(
+                "",
+                "end",
+                values=(
+                    p.get("nombre"),
+                    p.get("cuenta_cliente_prefijo", "430"),
+                    p.get("cuenta_iva_repercutido_defecto", "47700000"),
+                    p.get("cuenta_retenciones_irpf", ""),
+                ),
+            )
 
     def _refresh_recibidas(self):
         tv = self._tabs["recibidas"]["tv"]

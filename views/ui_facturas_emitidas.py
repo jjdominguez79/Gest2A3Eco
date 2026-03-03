@@ -824,6 +824,7 @@ class FacturaDialog(tk.Toplevel):
         self.var_forma_pago = tk.StringVar(value=f.get("forma_pago", ""))
         self.var_cuenta_banco = tk.StringVar(value=f.get("cuenta_bancaria", ""))
         self.var_plantilla_word = tk.StringVar(value=f.get("plantilla_word", ""))
+        self.var_plantilla_emitidas = tk.StringVar(value=f.get("plantilla_emitidas", ""))
         self._monedas = load_monedas()
         self._moneda_labels = []
         self._moneda_by_label = {}
@@ -849,6 +850,9 @@ class FacturaDialog(tk.Toplevel):
                 self.var_plantilla_word.set("factura_emitida_template.docx")
             elif self._plantillas_word:
                 self.var_plantilla_word.set(self._plantillas_word[0])
+        self._plantillas_emitidas = self._listar_plantillas_emitidas()
+        if not self.var_plantilla_emitidas.get().strip() and self._plantillas_emitidas:
+            self.var_plantilla_emitidas.set(self._plantillas_emitidas[0])
         self._cuentas_banco = self._parse_cuentas_banco()
         if self.var_cuenta_banco.get().strip() and self.var_cuenta_banco.get().strip() not in self._cuentas_banco:
             self._cuentas_banco.append(self.var_cuenta_banco.get().strip())
@@ -896,6 +900,17 @@ class FacturaDialog(tk.Toplevel):
             state="readonly",
         )
         self.cb_plantilla_word.grid(row=row, column=1, padx=4, pady=3, sticky="w")
+        row += 1
+
+        ttk.Label(frm, text="Plantilla Emitidas (Suenlace)").grid(row=row, column=0, sticky="w", padx=4, pady=3)
+        self.cb_plantilla_emitidas = ttk.Combobox(
+            frm,
+            textvariable=self.var_plantilla_emitidas,
+            values=self._plantillas_emitidas,
+            width=28,
+            state="readonly",
+        )
+        self.cb_plantilla_emitidas.grid(row=row, column=1, padx=4, pady=3, sticky="w")
         row += 1
 
         def add_date_cell(label, var, row_idx):
@@ -1107,6 +1122,13 @@ class FacturaDialog(tk.Toplevel):
             return []
         items = [p.name for p in plantillas_dir.glob("*.docx") if p.is_file()]
         return sorted(items, key=lambda s: s.lower())
+
+    def _listar_plantillas_emitidas(self):
+        try:
+            items = [p.get("nombre") for p in self.gestor.listar_emitidas(self.codigo, self.ejercicio)]
+        except Exception:
+            items = []
+        return [x for x in items if str(x or "").strip()]
 
     # --- controlador
     def _load_terceros(self):
@@ -1464,6 +1486,9 @@ class FacturaDialog(tk.Toplevel):
 
     def get_plantilla_word(self):
         return self.var_plantilla_word.get().strip()
+
+    def get_plantilla_emitidas(self):
+        return self.var_plantilla_emitidas.get().strip()
 
     def open_terceros_dialog(self, codigo_empresa, ejercicio, ndig):
         TercerosEmpresaDialog(self, self.gestor, codigo_empresa, ejercicio, ndig)

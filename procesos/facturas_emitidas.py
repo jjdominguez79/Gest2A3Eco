@@ -225,6 +225,7 @@ def generar_emitidas(
         cta_ventas = r0.get("Cuenta Compras Ventas") or c_ing_ter or cta_ventas_def
         cta_ventas = _ajustar_cuenta(cta_ventas, ndig)
         detalle_rows = []
+        detalle_map = {}
         for rr in grecs:
             base  = _d2(_fv(rr.get("Base")))
             pct   = _d0(_fv(rr.get("Porcentaje IVA")))
@@ -251,17 +252,31 @@ def generar_emitidas(
             if base != 0 and pct == 0 and cuota != 0:
                 pct = _d0((abs(cuota / base) * Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
-            detalle_rows.append(
-                {
-                    "base": float(base),
+            key = (float(pct), float(re_pct), float(ret_pct))
+            agg = detalle_map.get(key)
+            if not agg:
+                agg = {
+                    "base": Decimal("0.00"),
                     "pct": float(pct),
-                    "cuota": float(cuota),
+                    "cuota": Decimal("0.00"),
                     "re_pct": float(re_pct),
-                    "re_c": float(re_c),
+                    "re_c": Decimal("0.00"),
                     "ret_pct": float(ret_pct),
-                    "ret_c": float(ret_c),
+                    "ret_c": Decimal("0.00"),
                 }
-            )
+                detalle_map[key] = agg
+                detalle_rows.append(agg)
+            agg["base"] += base
+            agg["cuota"] += cuota
+            agg["re_c"] += re_c
+            agg["ret_c"] += ret_c
+
+        # Convierte decimales agregados a float para el render
+        for rr in detalle_rows:
+            rr["base"] = float(_d2(rr["base"]))
+            rr["cuota"] = float(_d2(rr["cuota"]))
+            rr["re_c"] = float(_d2(rr["re_c"]))
+            rr["ret_c"] = float(_d2(rr["ret_c"]))
 
         n_lineas = len(detalle_rows)
         for i, rr in enumerate(detalle_rows):

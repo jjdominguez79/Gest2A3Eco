@@ -158,10 +158,12 @@ class ConfigPlantillaDialog(Dialog):
                 self.var_pref = tk.StringVar(value=self.pl.get("cuenta_cliente_prefijo","430"))
                 self.var_ing = tk.StringVar(value=self.pl.get("cuenta_ingreso_por_defecto","70000000"))
                 self.var_iva_def = tk.StringVar(value=self.pl.get("cuenta_iva_repercutido_defecto","47700000"))
+                self.var_ret = tk.StringVar(value=self.pl.get("cuenta_retenciones_irpf",""))
                 _row(t_gen, "Nombre plantilla", self.var_nombre)
                 _row(t_gen, "Subcuenta clientes", self.var_pref)
                 _row(t_gen, "Cuenta Ingreso", self.var_ing)
                 _row(t_gen, "Cuenta IVA repercutido", self.var_iva_def)
+                _row(t_gen, "Cuenta Retenciones IRPF", self.var_ret)
             else:
                 self.var_pref = tk.StringVar(value=self.pl.get("cuenta_proveedor_prefijo","400"))
                 self.var_gasto = tk.StringVar(value=self.pl.get("cuenta_gasto_por_defecto","62900000"))
@@ -241,6 +243,8 @@ class ConfigPlantillaDialog(Dialog):
                 if self.tipo == "emitidas":
                     validar_subcuenta_longitud(self.var_ing.get(), self.ndig, "cuenta ingreso")
                     validar_subcuenta_longitud(self.var_iva_def.get(), self.ndig, "cuenta IVA repercutido")
+                    if self.var_ret.get().strip():
+                        validar_subcuenta_longitud(self.var_ret.get(), self.ndig, "cuenta retenciones IRPF")
                 else:
                     validar_subcuenta_longitud(self.var_gasto.get(), self.ndig, "cuenta gasto")
                     validar_subcuenta_longitud(self.var_iva_def.get(), self.ndig, "cuenta IVA soportado")
@@ -261,6 +265,7 @@ class ConfigPlantillaDialog(Dialog):
                 self.pl["cuenta_cliente_prefijo"] = self.var_pref.get().strip()
                 self.pl["cuenta_ingreso_por_defecto"] = self.var_ing.get().strip()
                 self.pl["cuenta_iva_repercutido_defecto"] = self.var_iva_def.get().strip()
+                self.pl["cuenta_retenciones_irpf"] = self.var_ret.get().strip()
             else:
                 self.pl["cuenta_proveedor_prefijo"] = self.var_pref.get().strip()
                 self.pl["cuenta_gasto_por_defecto"] = self.var_gasto.get().strip()
@@ -310,7 +315,7 @@ class UIPlantillasEmpresa(ttk.Frame):
         nb = ttk.Notebook(self); nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         self.notebook = nb
         self._tab_bancos = self._build_tab(nb, "Bancos", ("banco","subcuenta_banco","subcuenta_por_defecto"))
-        self._tab_emitidas = self._build_tab(nb, "Facturas Emitidas", ("nombre","cuenta_cliente_prefijo","cuenta_iva_repercutido_defecto"))
+        self._tab_emitidas = self._build_tab(nb, "Facturas Emitidas", ("nombre","cuenta_cliente_prefijo","cuenta_iva_repercutido_defecto","cuenta_retenciones_irpf"))
         self._tab_recibidas = self._build_tab(nb, "Facturas Recibidas", ("nombre","cuenta_proveedor_prefijo","cuenta_iva_soportado_defecto"))
         self.controller.register_tabs(self._tab_bancos, self._tab_emitidas, self._tab_recibidas)
         self.controller.refresh_all()

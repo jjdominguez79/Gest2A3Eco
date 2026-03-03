@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS empresas (
   telefono TEXT,
   email TEXT,
   logo_path TEXT,
+  logo_max_width_mm REAL,
+  logo_max_height_mm REAL,
   activo INTEGER DEFAULT 1,
   PRIMARY KEY (codigo, ejercicio)
 );
@@ -56,6 +58,7 @@ CREATE TABLE IF NOT EXISTS facturas_emitidas (
   cuenta_cliente_prefijo TEXT,
   cuenta_ingreso_por_defecto TEXT,
   cuenta_iva_repercutido_defecto TEXT,
+  cuenta_retenciones_irpf TEXT,
   excel_json TEXT,
   PRIMARY KEY (codigo_empresa, ejercicio, nombre)
 );
@@ -88,6 +91,7 @@ CREATE TABLE IF NOT EXISTS facturas_emitidas_docs (
   forma_pago TEXT,
   cuenta_bancaria TEXT,
   plantilla_word TEXT,
+  plantilla_emitidas TEXT,
   pdf_path TEXT,
   pdf_ref TEXT,
   pdf_path_a3 TEXT,
@@ -187,9 +191,12 @@ class GestorSQLite:
         self._ensure_column("empresas", "pdf_ref_seq", "INTEGER")
         self._ensure_column("empresas", "serie_emitidas_rect", "TEXT")
         self._ensure_column("empresas", "siguiente_num_emitidas_rect", "INTEGER")
+        self._ensure_column("empresas", "logo_max_width_mm", "REAL")
+        self._ensure_column("empresas", "logo_max_height_mm", "REAL")
         self._ensure_column("facturas_emitidas_docs", "forma_pago", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "cuenta_bancaria", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "plantilla_word", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "plantilla_emitidas", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "pdf_path", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "pdf_ref", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "pdf_path_a3", "TEXT")
@@ -205,6 +212,7 @@ class GestorSQLite:
         self._ensure_column("facturas_emitidas_docs", "fecha_envio", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "canal_envio", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "observaciones", "TEXT")
+        self._ensure_column("facturas_emitidas", "cuenta_retenciones_irpf", "TEXT")
         self._ensure_column("albaranes_emitidas_docs", "forma_pago", "TEXT")
         self._ensure_column("albaranes_emitidas_docs", "cuenta_bancaria", "TEXT")
         self._ensure_column("albaranes_emitidas_docs", "pdf_path", "TEXT")
@@ -400,8 +408,9 @@ class GestorSQLite:
             """
             INSERT INTO empresas (codigo, ejercicio, nombre, digitos_plan, serie_emitidas,
                 siguiente_num_emitidas, serie_emitidas_rect, siguiente_num_emitidas_rect,
-                pdf_ref_seq, cuenta_bancaria, cuentas_bancarias, cif, direccion, cp, poblacion, provincia, telefono, email, logo_path, activo)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                pdf_ref_seq, cuenta_bancaria, cuentas_bancarias, cif, direccion, cp, poblacion, provincia, telefono, email,
+                logo_path, logo_max_width_mm, logo_max_height_mm, activo)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(codigo, ejercicio) DO UPDATE SET
                 nombre=excluded.nombre,
                 digitos_plan=excluded.digitos_plan,
@@ -420,6 +429,8 @@ class GestorSQLite:
                 telefono=excluded.telefono,
                 email=excluded.email,
                 logo_path=excluded.logo_path,
+                logo_max_width_mm=excluded.logo_max_width_mm,
+                logo_max_height_mm=excluded.logo_max_height_mm,
                 activo=excluded.activo
             """,
             (
@@ -442,6 +453,8 @@ class GestorSQLite:
                 emp.get("telefono"),
                 emp.get("email"),
                 emp.get("logo_path"),
+                emp.get("logo_max_width_mm"),
+                emp.get("logo_max_height_mm"),
                 1 if emp.get("activo", True) else 0,
             ),
         )
@@ -563,12 +576,13 @@ class GestorSQLite:
         self.conn.execute(
             """
             INSERT INTO facturas_emitidas (codigo_empresa, ejercicio, nombre, cuenta_cliente_prefijo,
-                cuenta_ingreso_por_defecto, cuenta_iva_repercutido_defecto, excel_json)
-            VALUES (?,?,?,?,?,?,?)
+                cuenta_ingreso_por_defecto, cuenta_iva_repercutido_defecto, cuenta_retenciones_irpf, excel_json)
+            VALUES (?,?,?,?,?,?,?,?)
             ON CONFLICT(codigo_empresa, ejercicio, nombre) DO UPDATE SET
                 cuenta_cliente_prefijo=excluded.cuenta_cliente_prefijo,
                 cuenta_ingreso_por_defecto=excluded.cuenta_ingreso_por_defecto,
                 cuenta_iva_repercutido_defecto=excluded.cuenta_iva_repercutido_defecto,
+                cuenta_retenciones_irpf=excluded.cuenta_retenciones_irpf,
                 excel_json=excluded.excel_json
             """,
             (
@@ -578,6 +592,7 @@ class GestorSQLite:
                 plantilla.get("cuenta_cliente_prefijo"),
                 plantilla.get("cuenta_ingreso_por_defecto"),
                 plantilla.get("cuenta_iva_repercutido_defecto"),
+                plantilla.get("cuenta_retenciones_irpf"),
                 json.dumps(plantilla.get("excel", {}), ensure_ascii=False),
             ),
         )
@@ -706,9 +721,9 @@ class GestorSQLite:
             INSERT INTO facturas_emitidas_docs
             (id, codigo_empresa, ejercicio, tercero_id, serie, numero, numero_largo_sii,
              fecha_asiento, fecha_expedicion, fecha_operacion, nif, nombre, descripcion, observaciones,
-             subcuenta_cliente, forma_pago, cuenta_bancaria, plantilla_word, pdf_path, pdf_ref, pdf_path_a3, retencion_aplica, retencion_pct,
+             subcuenta_cliente, forma_pago, cuenta_bancaria, plantilla_word, plantilla_emitidas, pdf_path, pdf_ref, pdf_path_a3, retencion_aplica, retencion_pct,
              retencion_base, retencion_importe, descuento_total_tipo, descuento_total_valor, moneda_codigo, moneda_simbolo, enviado, fecha_envio, canal_envio, generada, fecha_generacion, lineas_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -727,6 +742,7 @@ class GestorSQLite:
                 forma_pago=excluded.forma_pago,
                 cuenta_bancaria=excluded.cuenta_bancaria,
                 plantilla_word=excluded.plantilla_word,
+                plantilla_emitidas=excluded.plantilla_emitidas,
                 pdf_path=excluded.pdf_path,
                 pdf_ref=excluded.pdf_ref,
                 pdf_path_a3=excluded.pdf_path_a3,
@@ -764,6 +780,7 @@ class GestorSQLite:
                 factura.get("forma_pago"),
                 factura.get("cuenta_bancaria"),
                 factura.get("plantilla_word"),
+                factura.get("plantilla_emitidas"),
                 factura.get("pdf_path"),
                 factura.get("pdf_ref"),
                 factura.get("pdf_path_a3"),

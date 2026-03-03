@@ -326,6 +326,7 @@ class FacturasEmitidasController:
             "moneda_codigo": moneda_codigo,
             "moneda_simbolo": moneda_simbolo,
             "plantilla_word": base.get("plantilla_word", ""),
+            "plantilla_emitidas": self._default_plantilla_emitidas_name(eje_sug if eje_sug is not None else self._ejercicio),
             "retencion_aplica": bool(base.get("retencion_aplica")),
             "retencion_pct": base.get("retencion_pct"),
             "retencion_base": base.get("retencion_base"),
@@ -486,11 +487,7 @@ class FacturasEmitidasController:
         if not sel:
             self._view.show_warning("Gest2A3Eco", "Selecciona al menos una factura.")
             return
-        plantillas = self._gestor.listar_emitidas(self._codigo, self._ejercicio)
-        plantilla = plantillas[0] if plantillas else {}
-
         facturas_sel = []
-        rows = []
         for fid in sel:
             fac = self._get_factura_by_id(fid)
             if fac:
@@ -498,7 +495,6 @@ class FacturasEmitidasController:
                 self._ensure_app_pdf(fac)
                 self._ensure_a3_pdf(fac)
                 facturas_sel.append(fac)
-                rows.extend(self._factura_to_rows(fac))
 
         ya_generadas = [f for f in facturas_sel if f.get("generada")]
         if ya_generadas:
@@ -508,10 +504,6 @@ class FacturasEmitidasController:
                 "Las facturas {} ya estan marcadas como generadas.\nGenerar suenlace de todas formas?".format(nums),
             ):
                 return
-
-        if not rows:
-            self._view.show_warning("Gest2A3Eco", "No hay lineas para generar.")
-            return
 
         ndig = int(self._empresa_conf.get("digitos_plan", 8))
         terceros = self._gestor.listar_terceros()
@@ -525,14 +517,39 @@ class FacturasEmitidasController:
             nif = str(t.get("nif") or "").strip().upper()
             if nif:
                 terceros_by_nif[nif] = t
-        registros = generar_emitidas(
-            rows,
-            plantilla,
-            str(self._codigo),
-            ndig,
-            ejercicio=self._ejercicio,
-            terceros_by_nif=terceros_by_nif,
-        )
+        plantillas_cache = {}
+        missing_tpl = set()
+        no_tpl_years = set()
+        registros = []
+        for fac in facturas_sel:
+            rows = self._factura_to_rows(fac)
+            if not rows:
+                continue
+            plantilla = self._plantilla_emitidas_for_factura(fac, plantillas_cache, missing_tpl, no_tpl_years)
+            registros.extend(
+                generar_emitidas(
+                    rows,
+                    plantilla,
+                    str(self._codigo),
+                    ndig,
+                    ejercicio=self._ejercicio,
+                    terceros_by_nif=terceros_by_nif,
+                )
+            )
+        if missing_tpl:
+            nombres = ", ".join(sorted(missing_tpl))
+            self._view.show_warning(
+                "Gest2A3Eco",
+                "No se encontro la plantilla de emitidas seleccionada para alguna factura:\n"
+                f"{nombres}\nSe usara la primera disponible del ejercicio.",
+            )
+        if no_tpl_years:
+            years = ", ".join(str(x) for x in sorted(no_tpl_years))
+            self._view.show_warning(
+                "Gest2A3Eco",
+                "No hay plantillas de emitidas para los ejercicios:\n"
+                f"{years}\nSe generara con valores por defecto.",
+            )
         if not registros:
             self._view.show_warning("Gest2A3Eco", "No se generaron registros.")
             return
@@ -826,6 +843,29 @@ class FacturasEmitidasController:
                 f"No se encuentra la plantilla seleccionada:\n{chosen}\nSe usara la plantilla por defecto.",
             )
         return default_path
+
+    def _default_plantilla_emitidas_name(self, ejercicio: int | None) -> str:
+        eje = ejercicio if ejercicio is not None else self._ejercicio
+        plantillas = self._gestor.listar_emitidas(self._codigo, eje)
+        if not plantillas:
+            return ""
+        return str(plantillas[0].get("nombre") or "")
+
+    def _plantilla_emitidas_for_factura(self, fac: dict, cache: dict, missing_tpl: set, no_tpl_years: set) -> dict:
+        eje = fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio
+        if eje not in cache:
+            cache[eje] = self._gestor.listar_emitidas(self._codigo, eje)
+        plantillas = cache[eje]
+        name = str(fac.get("plantilla_emitidas") or "").strip()
+        if name:
+            for p in plantillas:
+                if str(p.get("nombre") or "").strip() == name:
+                    return p
+            missing_tpl.add(name)
+        if plantillas:
+            return plantillas[0]
+        no_tpl_years.add(eje)
+        return {}
 
     def _empresa_conf_for_word(self) -> dict:
         emp = dict(self._empresa_conf or {})
