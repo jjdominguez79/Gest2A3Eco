@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS facturas_emitidas_docs (
   serie TEXT,
   numero TEXT,
   numero_largo_sii TEXT,
+  numero_asiento TEXT,
   fecha_asiento TEXT,
   fecha_expedicion TEXT,
   fecha_operacion TEXT,
@@ -197,6 +198,7 @@ class GestorSQLite:
         self._ensure_column("facturas_emitidas_docs", "cuenta_bancaria", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "plantilla_word", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "plantilla_emitidas", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "numero_asiento", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "pdf_path", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "pdf_ref", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "pdf_path_a3", "TEXT")
@@ -719,11 +721,11 @@ class GestorSQLite:
         self.conn.execute(
             """
             INSERT INTO facturas_emitidas_docs
-            (id, codigo_empresa, ejercicio, tercero_id, serie, numero, numero_largo_sii,
+            (id, codigo_empresa, ejercicio, tercero_id, serie, numero, numero_largo_sii, numero_asiento,
              fecha_asiento, fecha_expedicion, fecha_operacion, nif, nombre, descripcion, observaciones,
              subcuenta_cliente, forma_pago, cuenta_bancaria, plantilla_word, plantilla_emitidas, pdf_path, pdf_ref, pdf_path_a3, retencion_aplica, retencion_pct,
              retencion_base, retencion_importe, descuento_total_tipo, descuento_total_valor, moneda_codigo, moneda_simbolo, enviado, fecha_envio, canal_envio, generada, fecha_generacion, lineas_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -731,6 +733,7 @@ class GestorSQLite:
                 serie=excluded.serie,
                 numero=excluded.numero,
                 numero_largo_sii=excluded.numero_largo_sii,
+                numero_asiento=excluded.numero_asiento,
                 fecha_asiento=excluded.fecha_asiento,
                 fecha_expedicion=excluded.fecha_expedicion,
                 fecha_operacion=excluded.fecha_operacion,
@@ -769,6 +772,7 @@ class GestorSQLite:
                 factura.get("serie"),
                 factura.get("numero"),
                 factura.get("numero_largo_sii"),
+                factura.get("numero_asiento"),
                 factura.get("fecha_asiento"),
                 factura.get("fecha_expedicion"),
                 factura.get("fecha_operacion"),
@@ -818,6 +822,17 @@ class GestorSQLite:
         self.conn.execute(
             f"UPDATE facturas_emitidas_docs SET generada=1, fecha_generacion=? WHERE codigo_empresa=? AND ejercicio=? AND id IN ({qmarks})",
             (fecha, codigo_empresa, _ej_val(ejercicio), *ids),
+        )
+        self.conn.commit()
+
+    def desmarcar_facturas_emitidas_generadas(self, codigo_empresa: str, ids: list, ejercicio: int):
+        ids = ids or []
+        if not ids:
+            return
+        qmarks = ",".join("?" for _ in ids)
+        self.conn.execute(
+            f"UPDATE facturas_emitidas_docs SET generada=0, fecha_generacion='' WHERE codigo_empresa=? AND ejercicio=? AND id IN ({qmarks})",
+            (codigo_empresa, _ej_val(ejercicio), *ids),
         )
         self.conn.commit()
 

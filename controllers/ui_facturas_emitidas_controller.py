@@ -13,7 +13,7 @@ from procesos.facturas_word import (
     generar_pdf_desde_plantilla_word,
 )
 from procesos.facturas_pdf_basico import generar_pdf_basico
-from utils.utilidades import aplicar_descuento_total_lineas, load_monedas
+from utils.utilidades import aplicar_descuento_total_lineas, load_app_config, load_monedas
 
 
 class FacturasEmitidasController:
@@ -105,6 +105,7 @@ class FacturasEmitidasController:
             return
         nuevo = dict(fac)
         nuevo.pop("id", None)
+        nuevo["numero_asiento"] = ""
         fecha_base = fac.get("fecha_asiento") or datetime.now().strftime("%d/%m/%Y")
         sugerido, serie_sug, eje_sug = self._proximo_numero_por_fecha(fecha_base, rectificativa=False)
         nuevo["numero"] = sugerido
@@ -162,6 +163,41 @@ class FacturasEmitidasController:
                 continue
             eje = fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio
             self._gestor.eliminar_factura_emitida(self._codigo, fid, eje)
+        self.refresh_facturas()
+
+    def desmarcar_generadas(self):
+        sel = self._view.get_selected_ids()
+        if not sel:
+            self._view.show_info("Gest2A3Eco", "Selecciona una factura.")
+            return
+        cfg = load_app_config()
+        expected_password = str(cfg.get("desmarcar_generadas_password") or "").strip()
+        if not expected_password:
+            self._view.show_warning(
+                "Gest2A3Eco",
+                "No hay contraseña configurada para desmarcar generadas.\nConfigúrala en Configuracion > Configurar monedas.",
+            )
+            return
+        provided_password = self._view.ask_desmarcar_generadas_password()
+        if provided_password is None:
+            return
+        if str(provided_password).strip() != expected_password:
+            self._view.show_error("Gest2A3Eco", "Contraseña incorrecta.")
+            return
+        if not self._view.ask_yes_no("Gest2A3Eco", "Desmarcar como enlazadas las facturas seleccionadas?"):
+            return
+        if self._allow_all_years:
+            grupos = {}
+            for fid in sel:
+                fac = self._get_factura_by_id(fid)
+                if not fac:
+                    continue
+                eje = fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio
+                grupos.setdefault(eje, []).append(fid)
+            for eje, ids in grupos.items():
+                self._gestor.desmarcar_facturas_emitidas_generadas(self._codigo, ids, eje)
+        else:
+            self._gestor.desmarcar_facturas_emitidas_generadas(self._codigo, sel, self._ejercicio)
         self.refresh_facturas()
 
     def terceros(self):
@@ -518,14 +554,13 @@ class FacturasEmitidasController:
             if nif:
                 terceros_by_nif[nif] = t
         plantillas_cache = {}
-        missing_tpl = set()
         no_tpl_years = set()
         registros = []
         for fac in facturas_sel:
             rows = self._factura_to_rows(fac)
             if not rows:
                 continue
-            plantilla = self._plantilla_emitidas_for_factura(fac, plantillas_cache, missing_tpl, no_tpl_years)
+            plantilla = self._plantilla_emitidas_for_factura(fac, plantillas_cache, no_tpl_years)
             registros.extend(
                 generar_emitidas(
                     rows,
@@ -534,14 +569,8 @@ class FacturasEmitidasController:
                     ndig,
                     ejercicio=self._ejercicio,
                     terceros_by_nif=terceros_by_nif,
+                    formato_512=True,
                 )
-            )
-        if missing_tpl:
-            nombres = ", ".join(sorted(missing_tpl))
-            self._view.show_warning(
-                "Gest2A3Eco",
-                "No se encontro la plantilla de emitidas seleccionada para alguna factura:\n"
-                f"{nombres}\nSe usara la primera disponible del ejercicio.",
             )
         if no_tpl_years:
             years = ", ".join(str(x) for x in sorted(no_tpl_years))
@@ -804,7 +833,8 @@ class FacturasEmitidasController:
         ret_importe = self._retencion_importe(fac)
         lineas_validas = [ln for ln in lineas if str(ln.get("tipo") or "").strip().lower() != "obs"]
         for idx, ln in enumerate(lineas_validas):
-            ret_aplica_linea = ret_importe != 0 and idx == len(lineas_validas) - 1
+            aplica_ret_pct = ret_pct != 0
+            ret_aplica_linea = (ret_importe != 0 and idx == len(lineas_validas) - 1) if not aplica_ret_pct else True
             r = dict(base_row)
             r.update(
                 {
@@ -814,8 +844,8 @@ class FacturasEmitidasController:
                     "Porcentaje IVA": self._round2(self._to_float(ln.get("pct_iva"))),
                     "Porcentaje Recargo Equivalencia": self._round2(self._to_float(ln.get("pct_re"))),
                     "Cuota Recargo Equivalencia": self._round2(self._to_float(ln.get("cuota_re"))),
-                    "Porcentaje Retencion IRPF": ret_pct if ret_aplica_linea else 0.0,
-                    "Cuota Retencion IRPF": ret_importe if ret_aplica_linea else 0.0,
+                    "Porcentaje Retencion IRPF": ret_pct if aplica_ret_pct else 0.0,
+                    "Cuota Retencion IRPF": 0.0 if aplica_ret_pct else (ret_importe if ret_aplica_linea else 0.0),
                 }
             )
             rows.append(r)
@@ -851,17 +881,11 @@ class FacturasEmitidasController:
             return ""
         return str(plantillas[0].get("nombre") or "")
 
-    def _plantilla_emitidas_for_factura(self, fac: dict, cache: dict, missing_tpl: set, no_tpl_years: set) -> dict:
+    def _plantilla_emitidas_for_factura(self, fac: dict, cache: dict, no_tpl_years: set) -> dict:
         eje = fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio
         if eje not in cache:
             cache[eje] = self._gestor.listar_emitidas(self._codigo, eje)
         plantillas = cache[eje]
-        name = str(fac.get("plantilla_emitidas") or "").strip()
-        if name:
-            for p in plantillas:
-                if str(p.get("nombre") or "").strip() == name:
-                    return p
-            missing_tpl.add(name)
         if plantillas:
             return plantillas[0]
         no_tpl_years.add(eje)

@@ -8,6 +8,8 @@ from typing import List, Dict, Any
 from models.facturas_common import (
     render_emitidas_cabecera_256,
     render_emitidas_detalle_256,
+    render_emitidas_cabecera_512,
+    render_emitidas_detalle_512,
     render_a3_tipoC_alta_cuenta,
 )
 
@@ -121,6 +123,7 @@ def generar_emitidas(
     ndig: int,
     ejercicio: int | None = None,
     terceros_by_nif: Dict[str, Dict[str, Any]] | None = None,
+    formato_512: bool = False,
 ) -> List[str]:
     """
     Genera registros de SUENLACE para FACTURAS EMITIDAS
@@ -138,6 +141,8 @@ def generar_emitidas(
         grupos[_key_factura(rec)].append(rec)
 
     registros: List[str] = []
+    render_cab = render_emitidas_cabecera_512 if formato_512 else render_emitidas_cabecera_256
+    render_det = render_emitidas_detalle_512 if formato_512 else render_emitidas_detalle_256
     for (_, _id), grecs in grupos.items():
         if not grecs:
             continue
@@ -160,6 +165,7 @@ def generar_emitidas(
             or r0.get("Numero Factura Largo SII")
             or ""
         )
+        num_fact_largo = r0.get("Numero Factura Largo SII") or num_fact
 
         # Datos tercero
         datos_ter = _datos_tercero(r0, terceros_by_nif)
@@ -203,7 +209,7 @@ def generar_emitidas(
         tipo_registro = "2" if signo < 0 else "1"  # 2 = rectificativa (abono)
 
         registros.append(
-            render_emitidas_cabecera_256(
+            render_cab(
                 codigo_empresa=codigo_empresa,
                 fecha=fecha,
                 tipo_registro=tipo_registro,
@@ -218,6 +224,7 @@ def generar_emitidas(
                 nombre=nombre,
                 fecha_operacion=r0.get("Fecha Operacion") or "",
                 fecha_factura=r0.get("Fecha Expedicion") or "",
+                num_factura_largo_sii=num_fact_largo,
             )
         )
 
@@ -289,7 +296,7 @@ def generar_emitidas(
             pct = rr["pct"]
 
             registros.append(
-                render_emitidas_detalle_256(
+                render_det(
                     codigo_empresa=codigo_empresa,
                     fecha=fecha,
                     cuenta_base_iva=cta_ventas,
@@ -303,7 +310,10 @@ def generar_emitidas(
                     pct_re=abs(re_pct),
                     cuota_re=(re_c if signo > 0 else -abs(re_c)),
                     pct_ret=abs(ret_pct),
-                    cuota_ret=(ret_c if signo > 0 else -abs(ret_c)),
+                    # En SUENLACE la cuota de retencion se informa en positivo.
+                    # El signo contable ya lo determina A3 por el propio campo de retencion
+                    # y, en rectificativas, por el D/H del registro.
+                    cuota_ret=abs(ret_c),
                     es_ultimo=(i == n_lineas - 1),
                     dh=("A" if signo < 0 else "C"),
                     cuenta_iva=cta_iva_def,

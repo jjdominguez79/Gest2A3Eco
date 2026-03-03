@@ -764,6 +764,7 @@ class FacturaDialog(tk.Toplevel):
         today = date.today().strftime("%d/%m/%Y")
         self.var_serie = tk.StringVar(value=f.get("serie", ""))
         self.var_numero = tk.StringVar(value=f.get("numero", ""))
+        self.var_numero_asiento = tk.StringVar(value=f.get("numero_asiento", ""))
         self.var_fecha_asiento = tk.StringVar(value=_to_fecha_ui(f.get("fecha_asiento", today)))
         self.var_fecha_exp = tk.StringVar(value=_to_fecha_ui(f.get("fecha_expedicion", f.get("fecha_asiento", today))))
         self.var_fecha_op = tk.StringVar(value=_to_fecha_ui(f.get("fecha_operacion", today)) if f.get("fecha_operacion") else "")
@@ -872,6 +873,9 @@ class FacturaDialog(tk.Toplevel):
         
         add_row("Numero", self.var_numero, row, width=14, col=0)
         row += 1
+
+        add_row("Nº asiento", self.var_numero_asiento, row, width=14, col=0)
+        row += 1
         
         add_row("Subcuenta cliente", self.var_subcuenta, row, col=0, width=18)
         row += 1
@@ -900,17 +904,6 @@ class FacturaDialog(tk.Toplevel):
             state="readonly",
         )
         self.cb_plantilla_word.grid(row=row, column=1, padx=4, pady=3, sticky="w")
-        row += 1
-
-        ttk.Label(frm, text="Plantilla Emitidas (Suenlace)").grid(row=row, column=0, sticky="w", padx=4, pady=3)
-        self.cb_plantilla_emitidas = ttk.Combobox(
-            frm,
-            textvariable=self.var_plantilla_emitidas,
-            values=self._plantillas_emitidas,
-            width=28,
-            state="readonly",
-        )
-        self.cb_plantilla_emitidas.grid(row=row, column=1, padx=4, pady=3, sticky="w")
         row += 1
 
         def add_date_cell(label, var, row_idx):
@@ -1452,6 +1445,9 @@ class FacturaDialog(tk.Toplevel):
     def get_numero_factura(self):
         return self.var_numero.get().strip()
 
+    def get_numero_asiento(self):
+        return self.var_numero_asiento.get().strip()
+
     def get_subcuenta(self):
         return self.var_subcuenta.get().strip()
 
@@ -1566,6 +1562,7 @@ class UIFacturasEmitidas(ttk.Frame):
         ttk.Button(top, text="Copiar", command=self._copiar).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Rectificar", command=self._rectificar).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Eliminar", command=self._eliminar).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Desmarcar enlazadas", command=self._desmarcar_generadas).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Terceros", command=self._terceros).pack(side=tk.LEFT, padx=12)
         ttk.Button(top, text="Exportar PDF", command=self._export_pdf).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Abrir PDF", command=self._abrir_pdf).pack(side=tk.LEFT, padx=8)
@@ -1582,7 +1579,7 @@ class UIFacturasEmitidas(ttk.Frame):
 
         self.tv = ttk.Treeview(
             parent,
-            columns=("ejercicio", "serie", "numero", "fecha", "cliente", "total", "generada", "fecha_gen", "enviado", "fecha_envio"),
+            columns=("ejercicio", "serie", "numero", "asiento", "fecha", "cliente", "total", "generada", "fecha_gen", "enviado", "fecha_envio"),
             show="headings",
             selectmode="extended",
             height=12,
@@ -1591,6 +1588,7 @@ class UIFacturasEmitidas(ttk.Frame):
             ("ejercicio", "Ejercicio", 90, "center"),
             ("serie", "Serie", 80, "w"),
             ("numero", "Numero", 120, "w"),
+            ("asiento", "Asiento", 100, "w"),
             ("fecha", "Fecha", 100, "w"),
             ("cliente", "Cliente", 240, "w"),
             ("total", "Total", 100, "e"),
@@ -1743,6 +1741,7 @@ class UIFacturasEmitidas(ttk.Frame):
                 fac.get("ejercicio", ""),
                 fac.get("serie", ""),
                 fac.get("numero", ""),
+                fac.get("numero_asiento", ""),
                 _to_fecha_ui_or_blank(fac.get("fecha_asiento", "")),
                 fac.get("nombre", ""),
                 _fmt2s(total, sym),
@@ -1942,6 +1941,14 @@ class UIFacturasEmitidas(ttk.Frame):
     def ask_yes_no(self, title, message):
         return messagebox.askyesno(title, message)
 
+    def ask_desmarcar_generadas_password(self):
+        return simpledialog.askstring(
+            "Gest2A3Eco",
+            "Contraseña para desmarcar generadas:",
+            show="*",
+            parent=self,
+        )
+
     def show_info(self, title, message):
         messagebox.showinfo(title, message)
 
@@ -1968,6 +1975,9 @@ class UIFacturasEmitidas(ttk.Frame):
 
     def _eliminar(self):
         self.controller.eliminar()
+
+    def _desmarcar_generadas(self):
+        self.controller.desmarcar_generadas()
 
     def _nuevo_albaran(self):
         self.controller.nuevo_albaran()

@@ -58,15 +58,25 @@ class MonedasDialog(tk.Toplevel):
         ttk.Entry(frm, textvariable=self.var_simbolo, width=12).grid(row=1, column=2, padx=4, pady=2, sticky="w")
         ttk.Entry(frm, textvariable=self.var_nombre, width=22).grid(row=2, column=2, padx=4, pady=2, sticky="w")
 
+        sep = ttk.Separator(frm, orient="horizontal")
+        sep.grid(row=3, column=1, columnspan=2, sticky="ew", pady=(10, 8))
+
+        ttk.Label(frm, text="Clave desmarcar").grid(row=4, column=1, sticky="w")
+        self.var_password = tk.StringVar()
+        ttk.Entry(frm, textvariable=self.var_password, width=22, show="*").grid(row=4, column=2, padx=4, pady=2, sticky="w")
+        ttk.Label(frm, text="Se pedira al quitar el marcado de generada.").grid(row=5, column=1, columnspan=2, sticky="w")
+
         btns = ttk.Frame(frm)
-        btns.grid(row=3, column=1, columnspan=2, pady=(6, 0), sticky="w")
+        btns.grid(row=6, column=1, columnspan=2, pady=(10, 0), sticky="w")
         ttk.Button(btns, text="Añadir", style="Primary.TButton", command=self._add).pack(side=tk.LEFT, padx=2)
         ttk.Button(btns, text="Eliminar", command=self._remove).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btns, text="Guardar clave", command=self._save_password).pack(side=tk.LEFT, padx=2)
         ttk.Button(btns, text="Cerrar", command=self.destroy).pack(side=tk.LEFT, padx=2)
 
     def _load(self):
         cfg = load_app_config()
         self._monedas = cfg.get("monedas") or []
+        self.var_password.set(str(cfg.get("desmarcar_generadas_password") or ""))
         self.lb.delete(0, tk.END)
         for m in self._monedas:
             codigo = str(m.get("codigo") or "").upper()
@@ -118,3 +128,10 @@ class MonedasDialog(tk.Toplevel):
         self._monedas.pop(idx)
         self._save()
         self._load()
+
+    def _save_password(self):
+        password = (self.var_password.get() or "").strip()
+        cfg = load_app_config()
+        cfg["desmarcar_generadas_password"] = password
+        save_app_config(cfg)
+        messagebox.showinfo("Gest2A3Eco", "Contraseña guardada.")

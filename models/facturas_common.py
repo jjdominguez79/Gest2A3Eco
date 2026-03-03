@@ -546,7 +546,8 @@ def render_emitidas_cabecera_256(*,
     nif: str = "",
     nombre: str = "",
     fecha_operacion: str = "",
-    fecha_factura: str = ""
+    fecha_factura: str = "",
+    num_factura_largo_sii: str = "",
 ) -> str:
     
     buf = [" "] * 256
@@ -577,6 +578,52 @@ def render_emitidas_cabecera_256(*,
     _set_slice(buf, 253, 254, "N")
     buf[254] = "\r"; buf[255] = "\n"
     
+    return "".join(buf)
+
+def render_emitidas_cabecera_512(*,
+    codigo_empresa: str,
+    fecha: str,
+    tipo_registro: str,  # '1' normal, '2' rectif
+    cuenta_tercero: str,
+    ndig_plan: int,
+    tipo_factura: str,  # '1' ventas
+    num_factura: str,
+    desc_apunte: str,
+    ref_doc: str = "",
+    importe_total: float,
+    nif: str = "",
+    nombre: str = "",
+    fecha_operacion: str = "",
+    fecha_factura: str = "",
+    num_factura_largo_sii: str = "",
+) -> str:
+    buf = [" "] * 512
+    emp5 = _empresa5(codigo_empresa)
+    f8   = _fecha_yyyymmdd(fecha)
+    cta12= _cuenta_12(cuenta_tercero, ndig_plan)
+
+    _set_slice(buf, 0, 1, "5")
+    _set_slice(buf, 1, 6, emp5)
+    _set_slice(buf, 6, 14, f8)
+    _set_slice(buf, 14, 15, str(tipo_registro))
+    _set_slice(buf, 15, 27, cta12)
+    _set_slice(buf, 27, 57, _s(nombre)[:30])
+    _set_slice(buf, 57, 58, str(tipo_factura))
+    _set_slice(buf, 58, 68, _s(num_factura)[:10])
+    _set_slice(buf, 68, 69, "I")
+    _set_slice(buf, 69, 99, _s(desc_apunte)[:30])
+    _set_slice(buf, 99, 113, _importe_14_pos(importe_total))
+    _set_slice(buf, 113, 143, _s(ref_doc)[:30])
+    _set_slice(buf, 143, 175, "")
+    _set_slice(buf, 175, 189, _s(nif)[:14])
+    _set_slice(buf, 189, 229, _s(nombre)[:40])
+    _set_slice(buf, 229, 236, "")
+    _set_slice(buf, 236, 244, _fecha_yyyymmdd(fecha_operacion))
+    _set_slice(buf, 244, 252, _fecha_yyyymmdd(fecha_factura or fecha))
+    _set_slice(buf, 252, 262, _s(num_factura_largo_sii)[:10])
+    _set_slice(buf, 508, 509, "E")
+    _set_slice(buf, 509, 510, "N")
+    buf[510] = "\r"; buf[511] = "\n"
     return "".join(buf)
 
 def render_emitidas_detalle_256(*,
@@ -655,4 +702,74 @@ def render_emitidas_detalle_256(*,
     _set_slice(buf, 252, 253, "E")
     _set_slice(buf, 253, 254, "N")
     buf[254] = "\r"; buf[255] = "\n"
+    return "".join(buf)
+
+def render_emitidas_detalle_512(*,
+    codigo_empresa: str,
+    fecha: str,
+    cuenta_base_iva: str,
+    ndig_plan: int,
+    num_factura: str,
+    desc_apunte: str,
+    subtipo: str,              # '01'.. (operaciones interiores, etc.)
+    base: float,
+    pct_iva: float,
+    cuota_iva: float,
+    pct_re: float = 0.0,
+    cuota_re: float = 0.0,
+    pct_ret: float = 0.0,
+    cuota_ret: float = 0.0,
+    es_ultimo: bool = False,
+    dh: str = "C",
+    cuenta_iva: str = "",
+    cuenta_recargo: str = "",
+    cuenta_retencion: str = "",
+    cuenta_iva2: str = "",
+    cuenta_recargo2: str = "",
+    impreso: str = "",
+    operacion_sujeta_iva: bool = True,
+    keep_sign: bool = False,
+) -> str:
+    buf = [" "] * 512
+    emp5 = _empresa5(codigo_empresa)
+    f8   = _fecha_yyyymmdd(fecha)
+    cta12= _cuenta_12(cuenta_base_iva, ndig_plan)
+
+    _set_slice(buf, 0, 1, "5")
+    _set_slice(buf, 1, 6, emp5)
+    _set_slice(buf, 6, 14, f8)
+    _set_slice(buf, 14, 15, "9")
+    _set_slice(buf, 15, 27, cta12)
+    _set_slice(buf, 27, 57, "")
+    dh_flag = "A" if _s(dh).upper().startswith("A") else "C"
+    _set_slice(buf, 57, 58, dh_flag)
+    _set_slice(buf, 58, 68, _s(num_factura)[:10])
+    _set_slice(buf, 68, 69, ("U" if es_ultimo else "M"))
+    _set_slice(buf, 69, 99, _s(desc_apunte)[:30])
+    _set_slice(buf, 99, 101, _s(subtipo).rjust(2, "0")[-2:])
+
+    if keep_sign:
+        base_fmt = _importe_14_signed(base)
+        iva_fmt = _importe_14_signed(cuota_iva)
+        re_fmt = _importe_14_signed(cuota_re)
+        ret_fmt = _importe_14_signed(cuota_ret)
+    else:
+        base_fmt = _importe_14_pos(base)
+        iva_fmt = _importe_14_pos(cuota_iva)
+        re_fmt = _importe_14_pos(cuota_re)
+        ret_fmt = _importe_14_pos(cuota_ret)
+
+    _set_slice(buf, 101, 115, base_fmt)         # 102-115
+    _set_slice(buf, 115, 120, _porc_5(pct_iva))  # 116-120
+    _set_slice(buf, 120, 134, iva_fmt)           # 121-134
+    _set_slice(buf, 134, 139, _porc_5(pct_re))   # 135-139
+    _set_slice(buf, 139, 153, re_fmt)            # 140-153
+    _set_slice(buf, 153, 158, _porc_5(pct_ret))  # 154-158
+    _set_slice(buf, 158, 172, ret_fmt)           # 159-172
+    _set_slice(buf, 172, 174, _s(subtipo).rjust(2, "0")[-2:])
+    _set_slice(buf, 174, 175, "S" if operacion_sujeta_iva else "N")
+
+    _set_slice(buf, 508, 509, "E")
+    _set_slice(buf, 509, 510, "N")
+    buf[510] = "\r"; buf[511] = "\n"
     return "".join(buf)

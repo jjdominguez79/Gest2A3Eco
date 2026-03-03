@@ -29,6 +29,7 @@ def load_app_config() -> dict:
     data.setdefault("templates_path", "plantillas/plantillas.json")
     data.setdefault("word_templates_dir", "")
     data.setdefault("admin_password", "admin")
+    data.setdefault("desmarcar_generadas_password", "")
     monedas = data.get("monedas")
     if not isinstance(monedas, list) or not monedas:
         data["monedas"] = list(DEFAULT_MONEDAS)
