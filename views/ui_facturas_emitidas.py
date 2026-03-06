@@ -14,6 +14,34 @@ from controllers.terceros_empresa_controller import TercerosEmpresaController
 
 IVA_OPCIONES = [21, 10, 4, 0]
 IRPF_RET_OPCIONES = [1, 7, 15, 19]
+TIPOS_OPERACION_EMITIDAS = [
+    ("01", "01: Operaciones interiores sujetas a IVA"),
+    ("02", "02: Operaciones exentas sin derecho a deduccion"),
+    ("03", "03: Entregas intracomunitarias"),
+    ("04", "04: Entregas intracomunitarias Ops. Triangulares"),
+    ("05", "05: Operaciones con Canarias, Ceuta y Melilla"),
+    ("06", "06: Exportaciones"),
+    ("07", "07: Operacion no sujeta a IVA, reservada a a3ges"),
+    ("08", "08: No sujetas o inversion de sujeto pasivo con derecho a deduccion"),
+    ("09", "09: Otras operaciones exentas con derecho a deduccion"),
+]
+MODELOS_FISCALES_EMITIDAS = [
+    ("", "Sin modelo asignado"),
+    ("01", "01: 347, subclave A-B, Compras-Ventas"),
+    ("02", "02: 349, B, Bienes"),
+    ("03", "03: 180, A, Dinerarias"),
+    ("04", "04: 180, B, Especie"),
+    ("05", "05: 190, G01, Profesionales dinerarias"),
+    ("06", "06: 190, G02, Profesionales en especie"),
+    ("07", "07: 190, H01, Agrarios dinerarias"),
+    ("08", "08: 190, H01, Agrarios en especie"),
+    ("09", "09: 190, H04, Modulos empresariales dinerarias"),
+    ("10", "10: 190, H04, Modulos empresariales en especie"),
+    ("11", "11: 349, S, Servicios"),
+    ("12", "12: 190, G02, Tabacaleras ag.seguros LAE dinerarias"),
+    ("13", "13: 190, G02, Tabacaleras ag.seguros LAE en especie"),
+    ("14", "14: 190, G03, Inicio actividad profesional dinerarias"),
+]
 
 def _to_float(x) -> float:
     try:
@@ -768,6 +796,20 @@ class FacturaDialog(tk.Toplevel):
         self.var_fecha_asiento = tk.StringVar(value=_to_fecha_ui(f.get("fecha_asiento", today)))
         self.var_fecha_exp = tk.StringVar(value=_to_fecha_ui(f.get("fecha_expedicion", f.get("fecha_asiento", today))))
         self.var_fecha_op = tk.StringVar(value=_to_fecha_ui(f.get("fecha_operacion", today)) if f.get("fecha_operacion") else "")
+        self._tipo_operacion_labels = [lbl for _, lbl in TIPOS_OPERACION_EMITIDAS]
+        self._tipo_operacion_by_label = {lbl: cod for cod, lbl in TIPOS_OPERACION_EMITIDAS}
+        self._tipo_operacion_by_code = {cod: lbl for cod, lbl in TIPOS_OPERACION_EMITIDAS}
+        tipo_operacion_code = str(f.get("tipo_operacion") or "01").zfill(2)[-2:]
+        self.var_tipo_operacion = tk.StringVar(
+            value=self._tipo_operacion_by_code.get(tipo_operacion_code, TIPOS_OPERACION_EMITIDAS[0][1])
+        )
+        self._modelo_fiscal_labels = [lbl for _, lbl in MODELOS_FISCALES_EMITIDAS]
+        self._modelo_fiscal_by_label = {lbl: cod for cod, lbl in MODELOS_FISCALES_EMITIDAS}
+        self._modelo_fiscal_by_code = {cod: lbl for cod, lbl in MODELOS_FISCALES_EMITIDAS}
+        modelo_fiscal_code = str(f.get("modelo_fiscal") or "").strip()
+        self.var_modelo_fiscal = tk.StringVar(
+            value=self._modelo_fiscal_by_code.get(modelo_fiscal_code, MODELOS_FISCALES_EMITIDAS[0][1])
+        )
         self.var_nif = tk.StringVar(value=f.get("nif", ""))
         self.var_nombre = tk.StringVar(value=f.get("nombre", ""))
         self.var_desc = tk.StringVar(value=f.get("descripcion", ""))
@@ -916,6 +958,26 @@ class FacturaDialog(tk.Toplevel):
         add_date_cell("Fecha Factura", self.var_fecha_exp, row)
         #add_date_cell("Fecha Expedicion", self.var_fecha_exp, row, 2)
         #add_date_cell("Fecha Operacion", self.var_fecha_op, row, 3)
+        row += 1
+        ttk.Label(frm, text="Tipo operacion").grid(row=row, column=0, sticky="w", padx=4, pady=3)
+        self.cb_tipo_operacion = ttk.Combobox(
+            frm,
+            textvariable=self.var_tipo_operacion,
+            values=self._tipo_operacion_labels,
+            width=46,
+            state="readonly",
+        )
+        self.cb_tipo_operacion.grid(row=row, column=1, columnspan=2, padx=4, pady=3, sticky="w")
+        row += 1
+        ttk.Label(frm, text="Modelo fiscal").grid(row=row, column=0, sticky="w", padx=4, pady=3)
+        self.cb_modelo_fiscal = ttk.Combobox(
+            frm,
+            textvariable=self.var_modelo_fiscal,
+            values=self._modelo_fiscal_labels,
+            width=46,
+            state="readonly",
+        )
+        self.cb_modelo_fiscal.grid(row=row, column=1, columnspan=2, padx=4, pady=3, sticky="w")
         row += 1
         add_row("NIF Cliente", self.var_nif, row)
         row += 1
@@ -1456,6 +1518,14 @@ class FacturaDialog(tk.Toplevel):
 
     def get_serie(self):
         return self.var_serie.get().strip()
+
+    def get_tipo_operacion(self):
+        label = self.var_tipo_operacion.get()
+        return self._tipo_operacion_by_label.get(label, "01")
+
+    def get_modelo_fiscal(self):
+        label = self.var_modelo_fiscal.get()
+        return self._modelo_fiscal_by_label.get(label, "")
 
     def get_nif(self):
         return self.var_nif.get().strip()

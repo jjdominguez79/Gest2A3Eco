@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS facturas_emitidas_docs (
   fecha_asiento TEXT,
   fecha_expedicion TEXT,
   fecha_operacion TEXT,
+  tipo_operacion TEXT,
+  modelo_fiscal TEXT,
   nif TEXT,
   nombre TEXT,
   descripcion TEXT,
@@ -214,6 +216,12 @@ class GestorSQLite:
         self._ensure_column("facturas_emitidas_docs", "fecha_envio", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "canal_envio", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "observaciones", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "tipo_operacion", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "modelo_fiscal", "TEXT")
+        self.conn.execute(
+            "UPDATE facturas_emitidas_docs SET tipo_operacion='01' WHERE tipo_operacion IS NULL OR TRIM(tipo_operacion)=''"
+        )
+        self.conn.commit()
         self._ensure_column("facturas_emitidas", "cuenta_retenciones_irpf", "TEXT")
         self._ensure_column("albaranes_emitidas_docs", "forma_pago", "TEXT")
         self._ensure_column("albaranes_emitidas_docs", "cuenta_bancaria", "TEXT")
@@ -620,6 +628,7 @@ class GestorSQLite:
             d["generada"] = bool(d.get("generada"))
             d["enviado"] = bool(d.get("enviado"))
             d["retencion_aplica"] = bool(d.get("retencion_aplica"))
+            self._normalizar_campos_factura_emitida(d)
             d.pop("lineas_json", None)
             out.append(d)
         return out
@@ -645,6 +654,7 @@ class GestorSQLite:
             d["generada"] = bool(d.get("generada"))
             d["enviado"] = bool(d.get("enviado"))
             d["retencion_aplica"] = bool(d.get("retencion_aplica"))
+            self._normalizar_campos_factura_emitida(d)
             d.pop("lineas_json", None)
             out.append(d)
         return out
@@ -673,9 +683,14 @@ class GestorSQLite:
             d["generada"] = bool(d.get("generada"))
             d["enviado"] = bool(d.get("enviado"))
             d["retencion_aplica"] = bool(d.get("retencion_aplica"))
+            self._normalizar_campos_factura_emitida(d)
             d.pop("lineas_json", None)
             out.append(d)
         return out
+
+    def _normalizar_campos_factura_emitida(self, factura: dict):
+        if not str(factura.get("tipo_operacion") or "").strip():
+            factura["tipo_operacion"] = "01"
 
     def listar_ejercicios_facturas_emitidas(self, codigo_empresa: str):
         cur = self.conn.execute(
@@ -715,6 +730,7 @@ class GestorSQLite:
     def upsert_factura_emitida(self, factura: dict):
         fid = factura.get("id") or str(int(time.time() * 1000))
         factura["id"] = fid
+        self._normalizar_campos_factura_emitida(factura)
         eje = _ej_val(factura.get("ejercicio"))
         if eje is None:
             eje = 0
@@ -722,10 +738,10 @@ class GestorSQLite:
             """
             INSERT INTO facturas_emitidas_docs
             (id, codigo_empresa, ejercicio, tercero_id, serie, numero, numero_largo_sii, numero_asiento,
-             fecha_asiento, fecha_expedicion, fecha_operacion, nif, nombre, descripcion, observaciones,
+             fecha_asiento, fecha_expedicion, fecha_operacion, tipo_operacion, modelo_fiscal, nif, nombre, descripcion, observaciones,
              subcuenta_cliente, forma_pago, cuenta_bancaria, plantilla_word, plantilla_emitidas, pdf_path, pdf_ref, pdf_path_a3, retencion_aplica, retencion_pct,
              retencion_base, retencion_importe, descuento_total_tipo, descuento_total_valor, moneda_codigo, moneda_simbolo, enviado, fecha_envio, canal_envio, generada, fecha_generacion, lineas_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -737,6 +753,8 @@ class GestorSQLite:
                 fecha_asiento=excluded.fecha_asiento,
                 fecha_expedicion=excluded.fecha_expedicion,
                 fecha_operacion=excluded.fecha_operacion,
+                tipo_operacion=excluded.tipo_operacion,
+                modelo_fiscal=excluded.modelo_fiscal,
                 nif=excluded.nif,
                 nombre=excluded.nombre,
                 descripcion=excluded.descripcion,
@@ -776,6 +794,8 @@ class GestorSQLite:
                 factura.get("fecha_asiento"),
                 factura.get("fecha_expedicion"),
                 factura.get("fecha_operacion"),
+                factura.get("tipo_operacion"),
+                factura.get("modelo_fiscal"),
                 factura.get("nif"),
                 factura.get("nombre"),
                 factura.get("descripcion"),

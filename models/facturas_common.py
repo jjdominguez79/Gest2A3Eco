@@ -652,7 +652,8 @@ def render_emitidas_detalle_256(*,
     operacion_sujeta_iva: bool = True,
     keep_sign: bool = False,
 ) -> str:
-    
+    imp_digits = "".join(ch for ch in _s(impreso) if ch.isdigit())
+    impreso2 = imp_digits.zfill(2)[-2:] if imp_digits else ""
     buf = [" "] * 256
     emp5 = _empresa5(codigo_empresa)
     f8   = _fecha_yyyymmdd(fecha)
@@ -690,8 +691,7 @@ def render_emitidas_detalle_256(*,
     _set_slice(buf, 158, 172, ret_fmt)    # 159-172
     _set_slice(buf, 172, 174, _s(subtipo).rjust(2, "0")[-2:])
     _set_slice(buf, 174, 175, "S" if operacion_sujeta_iva else "N")
-    _set_slice(buf, 175, 176, "")
-    _set_slice(buf, 176, 177, "")
+    _set_slice(buf, 175, 177, impreso2)
     _set_slice(buf, 177, 191, "")
     _set_slice(buf, 191, 203, _cuenta_12(cuenta_iva, ndig_plan) if cuenta_iva else "")
     _set_slice(buf, 203, 215, _cuenta_12(cuenta_recargo, ndig_plan) if cuenta_recargo else "")
@@ -730,6 +730,8 @@ def render_emitidas_detalle_512(*,
     operacion_sujeta_iva: bool = True,
     keep_sign: bool = False,
 ) -> str:
+    imp_digits = "".join(ch for ch in _s(impreso) if ch.isdigit())
+    impreso2 = imp_digits.zfill(2)[-2:] if imp_digits else ""
     buf = [" "] * 512
     emp5 = _empresa5(codigo_empresa)
     f8   = _fecha_yyyymmdd(fecha)
@@ -768,6 +770,7 @@ def render_emitidas_detalle_512(*,
     _set_slice(buf, 158, 172, ret_fmt)           # 159-172
     _set_slice(buf, 172, 174, _s(subtipo).rjust(2, "0")[-2:])
     _set_slice(buf, 174, 175, "S" if operacion_sujeta_iva else "N")
+    _set_slice(buf, 175, 177, impreso2)
 
     _set_slice(buf, 508, 509, "E")
     _set_slice(buf, 509, 510, "N")

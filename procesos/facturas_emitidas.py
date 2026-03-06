@@ -58,6 +58,13 @@ def _norm_subtipo(val: Any) -> str:
         return "01"
     return digits.zfill(2)[-2:]
 
+def _norm_modelo(val: Any) -> str:
+    s = "" if val is None else str(val).strip()
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if not digits:
+        return ""
+    return digits.zfill(2)[-2:]
+
 def _subcuenta_generica(plantilla: Dict[str, Any], ndig: int) -> str:
     pref_cli_raw = str(plantilla.get("cuenta_cliente_prefijo", "430") or "430")
     pref_digits = "".join(ch for ch in pref_cli_raw if ch.isdigit()) or "0"
@@ -147,6 +154,18 @@ def generar_emitidas(
         if not grecs:
             continue
         r0 = grecs[0]
+        subtipo = _norm_subtipo(
+            r0.get("Tipo Operacion")
+            or r0.get("Subtipo")
+            or r0.get("Subtipo Operacion")
+            or subtipo_def
+        )
+        modelo = _norm_modelo(
+            r0.get("Impreso")
+            or r0.get("Modelo")
+            or r0.get("Modelo Fiscal")
+            or ""
+        )
 
         fecha = (
             r0.get("Fecha Asiento")
@@ -303,7 +322,7 @@ def generar_emitidas(
                     ndig_plan=ndig,
                     num_factura=num_fact,
                     desc_apunte=desc_det,
-                    subtipo=subtipo_def,
+                    subtipo=subtipo,
                     base=(base if signo > 0 else -abs(base)),
                     pct_iva=abs(pct),
                     cuota_iva=(cuota if signo > 0 else -abs(cuota)),
@@ -319,7 +338,7 @@ def generar_emitidas(
                     cuenta_iva=cta_iva_def,
                     cuenta_recargo="",
                     cuenta_retencion=cta_ret_def or "",
-                    impreso="",
+                    impreso=modelo,
                     operacion_sujeta_iva=True,
                     keep_sign=True,
                 )

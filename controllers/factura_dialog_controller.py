@@ -141,6 +141,8 @@ class FacturaDialogController:
             "fecha_asiento": fecha_common,
             "fecha_expedicion": fecha_common,
             "fecha_operacion": fecha_common,
+            "tipo_operacion": self._view.get_tipo_operacion(),
+            "modelo_fiscal": self._view.get_modelo_fiscal(),
             "nif": self._view.get_nif(),
             "nombre": self._view.get_nombre(),
             "descripcion": self._view.get_descripcion(),
