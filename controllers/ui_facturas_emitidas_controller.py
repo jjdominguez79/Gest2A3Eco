@@ -383,6 +383,63 @@ class FacturasEmitidasController:
         self.refresh_albaranes()
         self._view.show_info("Gest2A3Eco", f"Factura generada desde albaranes:\n{factura.get('serie','')}{factura.get('numero','')}")
 
+    def imprimir_albaran(self):
+        sel = self._view.get_selected_albaran_ids()
+        if not sel:
+            self._view.show_info("Gest2A3Eco", "Selecciona un albaran.")
+            return
+        alb = self._get_albaran_by_id(sel[0])
+        if not alb:
+            return
+
+        safe_cliente = self._safe_filename(alb.get("nombre", ""))
+        safe_num = self._safe_filename(alb.get("numero", ""))
+        base_name = f"Albaran_{safe_num} {safe_cliente}".strip() or f"Albaran_{safe_num}"
+        save_path = self._view.ask_save_pdf_path(f"{base_name}.pdf")
+        if not save_path:
+            return
+
+        template_path = self._docx_template_path(alb, warn_missing=True, default_filename="albaran_template.docx")
+        if not os.path.exists(template_path):
+            self._view.show_error("Gest2A3Eco", "No se encuentra plantilla.docx en la carpeta del programa.")
+            return
+
+        doc = dict(alb)
+        doc.setdefault("fecha_expedicion", alb.get("fecha_asiento", ""))
+        doc.setdefault("fecha_operacion", alb.get("fecha_asiento", ""))
+        cliente = self._cliente_factura(doc)
+        tot = self._totales_factura(doc)
+        context = build_context_emitida(self._empresa_conf_for_word(), doc, cliente, tot)
+
+        try:
+            generar_pdf_desde_plantilla_word(
+                template_path=template_path,
+                context=context,
+                out_pdf_path=save_path,
+                guardar_docx=False,
+            )
+        except Exception as e:
+            self._log_pdf_error("Error al generar PDF de albaran con Word.", e, template_path, save_path)
+            try:
+                generar_pdf_basico(self._empresa_conf, doc, cliente, tot, save_path)
+            except Exception as e2:
+                self._log_pdf_error("Error al generar PDF basico de albaran.", e2, template_path, save_path)
+                self._view.show_error(
+                    "Gest2A3Eco",
+                    f"No se pudo generar el PDF del albaran:\n{e}\n{e2}",
+                )
+                return
+
+        try:
+            os.startfile(save_path, "print")
+            self._view.show_info("Gest2A3Eco", f"Albaran enviado a impresora:\n{save_path}")
+        except Exception:
+            try:
+                os.startfile(save_path)
+                self._view.show_info("Gest2A3Eco", f"PDF del albaran generado:\n{save_path}")
+            except Exception as e:
+                self._view.show_warning("Gest2A3Eco", f"PDF generado pero no se pudo abrir/imprimir:\n{e}\n\n{save_path}")
+
     def export_pdf(self):
         sel = self._view.get_selected_ids()
         if not sel:
@@ -857,14 +914,19 @@ class FacturasEmitidasController:
             rows.append(r)
         return rows
 
-    def _docx_template_path(self, fac: dict | None = None, warn_missing: bool = False) -> str:
+    def _docx_template_path(
+        self,
+        fac: dict | None = None,
+        warn_missing: bool = False,
+        default_filename: str = "factura_emitida_template.docx",
+    ) -> str:
         if getattr(sys, "frozen", False):
             base_dir = os.path.dirname(sys.executable)
         else:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         from utils.utilidades import get_word_templates_dir
         tpl_dir = get_word_templates_dir(os.path.join(base_dir, "plantillas"))
-        default_path = os.path.join(tpl_dir, "factura_emitida_template.docx")
+        default_path = os.path.join(tpl_dir, default_filename)
         if not fac:
             return default_path
         chosen = str(fac.get("plantilla_word") or "").strip()

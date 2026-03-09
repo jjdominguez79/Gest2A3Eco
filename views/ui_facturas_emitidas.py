@@ -1707,6 +1707,7 @@ class UIFacturasEmitidas(ttk.Frame):
         ttk.Button(top, text="Editar", command=self._editar_albaran).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Copiar", command=self._copiar_albaran).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Eliminar", command=self._eliminar_albaran).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Imprimir", command=self._imprimir_albaran).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Facturar seleccionados", style="Primary.TButton", command=self._facturar_albaranes).pack(side=tk.RIGHT, padx=8)
 
         self.tv_albaranes = ttk.Treeview(
@@ -2063,6 +2064,9 @@ class UIFacturasEmitidas(ttk.Frame):
 
     def _facturar_albaranes(self):
         self.controller.facturar_albaranes()
+
+    def _imprimir_albaran(self):
+        self.controller.imprimir_albaran()
 
     def _terceros(self):
         self.controller.terceros()
