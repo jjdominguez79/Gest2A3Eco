@@ -370,12 +370,24 @@ class SeleccionEmpresaController:
             for ln in fac.get("lineas", []):
                 ret_lineas += self._to_float(ln.get("cuota_irpf"))
             return round(ret_lineas, 2)
+        signo_ret = self._signo_retencion_por_factura(fac)
         importe = fac.get("retencion_importe")
         if importe is None or importe == "":
             base = self._to_float(fac.get("retencion_base"))
             pct = self._to_float(fac.get("retencion_pct"))
-            return round(-abs(base * pct / 100.0), 2) if pct else 0.0
-        return round(self._to_float(importe), 2)
+            return round(signo_ret * abs(base * pct / 100.0), 2) if pct else 0.0
+        return round(signo_ret * abs(self._to_float(importe)), 2)
+
+    def _signo_retencion_por_factura(self, fac: dict) -> float:
+        base = self._to_float(fac.get("retencion_base"))
+        if base == 0.0:
+            lineas = aplicar_descuento_total_lineas(
+                fac.get("lineas", []),
+                fac.get("descuento_total_tipo"),
+                fac.get("descuento_total_valor"),
+            )
+            base = sum(self._to_float(ln.get("base")) for ln in lineas)
+        return 1.0 if base < 0 else -1.0
 
     def _to_float(self, x) -> float:
         try:

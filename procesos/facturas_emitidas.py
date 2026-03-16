@@ -203,7 +203,10 @@ def generar_emitidas(
         else:
             subcliente = _subcuenta_generica(plantilla, ndig)
 
-        # Total factura: suma de bases + IVA + recargo + retenciones (retenciones negativas)
+        # Total factura: suma de bases + IVA + recargo + retencion.
+        # Regla de signo de retencion:
+        # - Factura positiva (base >= 0): retencion negativa.
+        # - Factura negativa/rectificativa (base < 0): retencion positiva.
         total = Decimal("0.00")
         for rr in grecs:
             base  = _d2(_fv(rr.get("Base")))
@@ -217,10 +220,11 @@ def generar_emitidas(
                 re_c = (base * re_pct / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             ret_pct = _d0(_fv(rr.get("Porcentaje Retencion IRPF")))
             ret_c   = _d2(_fv(rr.get("Cuota Retencion IRPF")))
+            sign_ret = Decimal("1") if base < 0 else Decimal("-1")
             if base != 0 and ret_pct != 0:
-                ret_c = -(abs(base * ret_pct / Decimal("100"))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                ret_c = (abs(base * ret_pct / Decimal("100")) * sign_ret).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             else:
-                ret_c = -abs(ret_c)
+                ret_c = abs(ret_c) * sign_ret
             total += base + cuota + re_c + ret_c
         total = _d2(total)
         signo = -1 if total < 0 else 1
@@ -266,10 +270,11 @@ def generar_emitidas(
 
             ret_pct = _d0(_fv(rr.get("Porcentaje Retencion IRPF")))
             ret_c   = _d2(_fv(rr.get("Cuota Retencion IRPF")))
+            sign_ret = Decimal("1") if base < 0 else Decimal("-1")
             if base != 0 and ret_pct != 0:
-                ret_c = -(abs(base * ret_pct / Decimal("100"))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                ret_c = (abs(base * ret_pct / Decimal("100")) * sign_ret).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             else:
-                ret_c = -abs(ret_c)
+                ret_c = abs(ret_c) * sign_ret
 
             # Si no hay base, IVA, recargo ni retención, se omite
             if base == 0 and cuota == 0 and re_c == 0 and ret_c == 0:

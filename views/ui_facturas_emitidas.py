@@ -260,8 +260,34 @@ class TercerosGlobalDialog(tk.Toplevel):
         self.wait_window(self)
 
     def _build(self):
-        frm = ttk.Frame(self, padding=10)
-        frm.pack(fill="both", expand=True)
+        outer = ttk.Frame(self)
+        outer.pack(fill="both", expand=True)
+        canvas = tk.Canvas(outer, highlightthickness=0, borderwidth=0)
+        vscroll = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vscroll.set)
+        canvas.pack(side=tk.LEFT, fill="both", expand=True)
+        vscroll.pack(side=tk.RIGHT, fill="y")
+        frm = ttk.Frame(canvas, padding=10)
+        canvas_window = canvas.create_window((0, 0), window=frm, anchor="nw")
+
+        def _sync_scrollregion(_event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _sync_width(_event):
+            canvas.itemconfigure(canvas_window, width=_event.width)
+
+        def _on_mousewheel(_event):
+            try:
+                delta = int(-_event.delta / 120)
+                if delta:
+                    canvas.yview_scroll(delta, "units")
+            except Exception:
+                pass
+
+        frm.bind("<Configure>", _sync_scrollregion)
+        canvas.bind("<Configure>", _sync_width)
+        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
 
         bar = ttk.Frame(frm)
         bar.pack(fill="x", pady=(0, 6))
@@ -782,8 +808,34 @@ class FacturaDialog(tk.Toplevel):
 
         self.controller = FacturaDialogController(gestor, codigo_empresa, ejercicio, ndig_plan, self.factura, self)
 
-        frm = ttk.Frame(self, padding=10)
-        frm.pack(fill="both", expand=True)
+        outer = ttk.Frame(self)
+        outer.pack(fill="both", expand=True)
+        canvas = tk.Canvas(outer, highlightthickness=0, borderwidth=0)
+        vscroll = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vscroll.set)
+        canvas.pack(side=tk.LEFT, fill="both", expand=True)
+        vscroll.pack(side=tk.RIGHT, fill="y")
+        frm = ttk.Frame(canvas, padding=10)
+        canvas_window = canvas.create_window((0, 0), window=frm, anchor="nw")
+
+        def _sync_scrollregion(_event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _sync_width(_event):
+            canvas.itemconfigure(canvas_window, width=_event.width)
+
+        def _on_mousewheel(_event):
+            try:
+                delta = int(-_event.delta / 120)
+                if delta:
+                    canvas.yview_scroll(delta, "units")
+            except Exception:
+                pass
+
+        frm.bind("<Configure>", _sync_scrollregion)
+        canvas.bind("<Configure>", _sync_width)
+        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
 
         def add_row(label, var, row_idx, width=16, col=0):
             ttk.Label(frm, text=label).grid(row=row_idx, column=col, sticky="w", padx=4, pady=3)
@@ -1462,7 +1514,8 @@ class FacturaDialog(tk.Toplevel):
     def get_retencion_importe(self):
         base = self.get_retencion_base()
         pct = self.get_retencion_pct()
-        return _round2(-abs(base * pct / 100.0)) if pct else 0.0
+        signo = 1.0 if base < 0 else -1.0
+        return _round2(signo * abs(base * pct / 100.0)) if pct else 0.0
 
     def is_retencion_manual(self):
         return self._retencion_manual
@@ -1780,12 +1833,24 @@ class UIFacturasEmitidas(ttk.Frame):
             for ln in fac.get("lineas", []):
                 ret_lineas += _to_float(ln.get("cuota_irpf"))
             return _round2(ret_lineas)
+        signo_ret = self._signo_retencion_por_factura(fac)
         importe = fac.get("retencion_importe")
         if importe is None or importe == "":
             base = _to_float(fac.get("retencion_base"))
             pct = _to_float(fac.get("retencion_pct"))
-            return _round2(-abs(base * pct / 100.0)) if pct else 0.0
-        return _round2(_to_float(importe))
+            return _round2(signo_ret * abs(base * pct / 100.0)) if pct else 0.0
+        return _round2(signo_ret * abs(_to_float(importe)))
+
+    def _signo_retencion_por_factura(self, fac: dict) -> float:
+        base = _to_float(fac.get("retencion_base"))
+        if base == 0.0:
+            lineas = aplicar_descuento_total_lineas(
+                fac.get("lineas", []),
+                fac.get("descuento_total_tipo"),
+                fac.get("descuento_total_valor"),
+            )
+            base = sum(_to_float(ln.get("base")) for ln in lineas)
+        return 1.0 if base < 0 else -1.0
 
     def _refresh_facturas(self):
         self.controller.refresh_facturas()

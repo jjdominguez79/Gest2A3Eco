@@ -638,7 +638,7 @@ class FacturasEmitidasController:
             self._view.show_warning(
                 "Gest2A3Eco",
                 "No hay plantillas de emitidas para los ejercicios:\n"
-                f"{years}\nSe generara con valores por defecto.",
+                f"{years}\nSe generara usando la plantilla tipo de facturas emitidas.",
             )
         if not registros:
             self._view.show_warning("Gest2A3Eco", "No se generaron registros.")
@@ -885,8 +885,9 @@ class FacturasEmitidasController:
             "Nombre Cliente Proveedor": fac.get("nombre", ""),
             "_pdf_ref": fac.get("pdf_ref", ""),
         }
-        if fac.get("subcuenta_cliente"):
-            base_row["Cuenta Cliente Proveedor"] = fac.get("subcuenta_cliente")
+        subcuenta_cliente = self._resolved_subcuenta_cliente(fac)
+        if subcuenta_cliente:
+            base_row["Cuenta Cliente Proveedor"] = subcuenta_cliente
         lineas = aplicar_descuento_total_lineas(
             list(fac.get("lineas", [])),
             fac.get("descuento_total_tipo"),
@@ -949,15 +950,52 @@ class FacturasEmitidasController:
             return ""
         return str(plantillas[0].get("nombre") or "")
 
+    def _resolved_subcuenta_cliente(self, fac: dict) -> str:
+        eje = fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio
+        tercero_id = str(fac.get("tercero_id") or "").strip()
+        if tercero_id:
+            rel = self._gestor.get_tercero_empresa(self._codigo, tercero_id, eje) or {}
+            subcuenta = str(rel.get("subcuenta_cliente") or "").strip()
+            if subcuenta:
+                return subcuenta
+        nif = str(fac.get("nif") or "").strip().upper()
+        if nif:
+            for tercero in self._gestor.listar_terceros_por_empresa(self._codigo, eje):
+                if str(tercero.get("nif") or "").strip().upper() == nif:
+                    subcuenta = str(tercero.get("subcuenta_cliente") or "").strip()
+                    if subcuenta:
+                        return subcuenta
+                    break
+        return str(fac.get("subcuenta_cliente") or "").strip()
+
+    def _plantilla_emitidas_tipo(self) -> dict:
+        return {
+            "nombre": "__emitidas_tipo__",
+            "codigo_empresa": self._codigo,
+            "ejercicio": self._ejercicio,
+            "cuenta_cliente_prefijo": "430",
+            "cuenta_ingreso_por_defecto": "70000000",
+            "cuenta_iva_repercutido_defecto": "47700000",
+            "cuenta_retenciones_irpf": "",
+            "excel": {},
+        }
+
     def _plantilla_emitidas_for_factura(self, fac: dict, cache: dict, no_tpl_years: set) -> dict:
         eje = fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio
         if eje not in cache:
             cache[eje] = self._gestor.listar_emitidas(self._codigo, eje)
         plantillas = cache[eje]
+        nombre_plantilla = str(fac.get("plantilla_emitidas") or "").strip()
         if plantillas:
+            if nombre_plantilla:
+                for plantilla in plantillas:
+                    if str(plantilla.get("nombre") or "").strip() == nombre_plantilla:
+                        return plantilla
             return plantillas[0]
         no_tpl_years.add(eje)
-        return {}
+        plantilla_tipo = self._plantilla_emitidas_tipo()
+        plantilla_tipo["ejercicio"] = eje
+        return plantilla_tipo
 
     def _empresa_conf_for_word(self) -> dict:
         emp = dict(self._empresa_conf or {})
@@ -1181,6 +1219,7 @@ class FacturasEmitidasController:
             for ln in fac.get("lineas", []):
                 ret_lineas += self._to_float(ln.get("cuota_irpf"))
             return self._round2(ret_lineas)
+        signo_ret = self._signo_retencion_por_factura(fac)
         importe = fac.get("retencion_importe")
         if importe is None or importe == "":
             base_raw = fac.get("retencion_base")
@@ -1189,8 +1228,16 @@ class FacturasEmitidasController:
             else:
                 base = self._to_float(base_raw)
             pct = self._to_float(fac.get("retencion_pct"))
-            return self._round2(-abs(base * pct / 100.0)) if pct else 0.0
-        return self._round2(self._to_float(importe))
+            return self._round2(signo_ret * abs(base * pct / 100.0)) if pct else 0.0
+        return self._round2(signo_ret * abs(self._to_float(importe)))
+
+    def _signo_retencion_por_factura(self, fac: dict) -> float:
+        base_raw = fac.get("retencion_base")
+        if base_raw is None or base_raw == "":
+            base = self._base_imponible_descuento(fac)
+        else:
+            base = self._to_float(base_raw)
+        return 1.0 if base < 0 else -1.0
 
     def _base_imponible_descuento(self, fac: dict) -> float:
         total = 0.0
