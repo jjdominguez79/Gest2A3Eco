@@ -197,10 +197,11 @@ class EmpresaDialog(Dialog):
             self.result = None
 
 class UISeleccionEmpresa(ttk.Frame):
-    def __init__(self, parent, gestor, on_ok):
+    def __init__(self, parent, gestor, on_ok, session=None):
         super().__init__(parent)
         self.gestor = gestor
         self.on_ok = on_ok
+        self.session = session
         self._fact_sort_state = {}
         self._empresa_default_ej = {}
         monedas = load_monedas()
@@ -250,14 +251,36 @@ class UISeleccionEmpresa(ttk.Frame):
         tree_frame.rowconfigure(0, weight=1)
 
         bar = ttk.Frame(self); bar.pack(fill=tk.X, padx=10, pady=6)
-        ttk.Button(bar, text="Importar CSV empresas", style="Primary.TButton", command=self.controller.importar_csv).pack(side=tk.LEFT, padx=(0,6))
-        ttk.Button(bar, text="Nueva empresa", style="Primary.TButton", command=self.controller.nueva).pack(side=tk.LEFT)
-        ttk.Button(bar, text="Editar empresa", style="Primary.TButton", command=self.controller.editar).pack(side=tk.LEFT, padx=6)
-        ttk.Button(bar, text="Copiar empresa", style="Primary.TButton", command=self.controller.copiar).pack(side=tk.LEFT, padx=6)
-        ttk.Button(bar, text="Eliminar empresa", style="Danger.TButton", command=self.controller.eliminar).pack(side=tk.LEFT, padx=6)
-        ttk.Button(bar, text="Terceros", style="Primary.TButton", command=self.controller.terceros).pack(side=tk.LEFT, padx=6)
-        ttk.Button(bar, text="Contabilidad", style="Primary.TButton", command=self.controller.continuar_contabilidad).pack(side=tk.RIGHT, padx=(6,0))
-        ttk.Button(bar, text="Facturacion", style="Primary.TButton", command=self.controller.continuar_facturacion).pack(side=tk.RIGHT)
+        is_admin = bool(self.session and self.session.is_admin())
+        is_cliente = bool(self.session and self.session.role.value == "cliente")
+        self.btn_importar_csv = ttk.Button(bar, text="Importar CSV empresas", style="Primary.TButton", command=self.controller.importar_csv)
+        self.btn_importar_csv.pack(side=tk.LEFT, padx=(0,6))
+        self.btn_nueva_empresa = ttk.Button(bar, text="Nueva empresa", style="Primary.TButton", command=self.controller.nueva)
+        self.btn_nueva_empresa.pack(side=tk.LEFT)
+        self.btn_editar_empresa = ttk.Button(bar, text="Editar empresa", style="Primary.TButton", command=self.controller.editar)
+        self.btn_editar_empresa.pack(side=tk.LEFT, padx=6)
+        self.btn_copiar_empresa = ttk.Button(bar, text="Copiar empresa", style="Primary.TButton", command=self.controller.copiar)
+        self.btn_copiar_empresa.pack(side=tk.LEFT, padx=6)
+        self.btn_eliminar_empresa = ttk.Button(bar, text="Eliminar empresa", style="Danger.TButton", command=self.controller.eliminar)
+        self.btn_eliminar_empresa.pack(side=tk.LEFT, padx=6)
+        self.btn_terceros = ttk.Button(bar, text="Terceros", style="Primary.TButton", command=self.controller.terceros)
+        self.btn_terceros.pack(side=tk.LEFT, padx=6)
+        self.btn_contabilidad = ttk.Button(bar, text="Contabilidad", style="Primary.TButton", command=self.controller.continuar_contabilidad)
+        self.btn_contabilidad.pack(side=tk.RIGHT, padx=(6,0))
+        self.btn_facturacion = ttk.Button(bar, text="Facturacion", style="Primary.TButton", command=self.controller.continuar_facturacion)
+        self.btn_facturacion.pack(side=tk.RIGHT)
+        if not is_admin:
+            for btn in (
+                self.btn_importar_csv,
+                self.btn_nueva_empresa,
+                self.btn_editar_empresa,
+                self.btn_copiar_empresa,
+                self.btn_eliminar_empresa,
+                self.btn_terceros,
+            ):
+                btn.pack_forget()
+        if is_cliente:
+            self.btn_contabilidad.pack_forget()
 
         sep = ttk.Separator(self, orient="horizontal")
         sep.pack(fill=tk.X, padx=10, pady=(6, 4))
@@ -279,7 +302,10 @@ class UISeleccionEmpresa(ttk.Frame):
         self.var_fact_empresa_text.trace_add("write", lambda *_: self.controller.apply_facturas_filter())
         ttk.Button(fact_filter, text="Limpiar", command=lambda: self.var_fact_empresa_text.set("")).pack(side=tk.LEFT, padx=6)
         ttk.Button(fact_filter, text="Actualizar listado", style="Primary.TButton", command=self.controller.refresh_facturas_global).pack(side=tk.LEFT, padx=(6, 0))
-        ttk.Button(fact_filter, text="Copiar factura", style="Primary.TButton", command=self.controller.copiar_factura_global).pack(side=tk.LEFT, padx=(6, 0))
+        self.btn_copiar_factura = ttk.Button(fact_filter, text="Copiar factura", style="Primary.TButton", command=self.controller.copiar_factura_global)
+        self.btn_copiar_factura.pack(side=tk.LEFT, padx=(6, 0))
+        if not is_admin:
+            self.btn_copiar_factura.pack_forget()
 
         fact_frame = ttk.Frame(self)
         fact_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=6)

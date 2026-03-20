@@ -26,6 +26,26 @@ class FacturasEmitidasController:
         self._allow_all_years = bool(allow_all_years)
         self._facturas_cache = []
 
+    def _security(self):
+        return getattr(self._gestor, "security", None)
+
+    def _can_write(self) -> bool:
+        security = self._security()
+        return True if not security else security.can_write_company(self._codigo)
+
+    def _is_cliente(self) -> bool:
+        session = getattr(self._security(), "session", None)
+        return bool(session and session.role.value == "cliente")
+
+    def _ensure_write(self, message: str | None = None) -> bool:
+        if self._can_write():
+            return True
+        self._view.show_warning(
+            "Gest2A3Eco",
+            message or "Esta empresa esta en modo solo lectura para el usuario actual.",
+        )
+        return False
+
     def refresh_plantillas(self):
         pls = [p.get("nombre") for p in self._gestor.listar_emitidas(self._codigo, self._ejercicio)]
         self._view.set_plantillas(pls)
@@ -57,6 +77,8 @@ class FacturasEmitidasController:
         self._view.set_albaran_lineas([])
 
     def nueva(self):
+        if not self._ensure_write():
+            return
         fecha_sug = datetime.now().strftime("%d/%m/%Y")
         sugerido, serie_sug, eje_sug = self._proximo_numero_por_fecha(fecha_sug, rectificativa=False)
         cuenta_default = self._cuenta_bancaria_default()
@@ -86,6 +108,8 @@ class FacturasEmitidasController:
             self.refresh_facturas()
 
     def editar(self):
+        if not self._ensure_write():
+            return
         sel = self._view.get_selected_ids()
         if not sel:
             self._view.show_info("Gest2A3Eco", "Selecciona una factura.")
@@ -99,6 +123,8 @@ class FacturasEmitidasController:
             self.refresh_facturas()
 
     def copiar(self):
+        if not self._ensure_write():
+            return
         sel = self._view.get_selected_ids()
         if not sel:
             return
@@ -123,6 +149,8 @@ class FacturasEmitidasController:
             self.refresh_facturas()
 
     def rectificar(self):
+        if not self._ensure_write():
+            return
         sel = self._view.get_selected_ids()
         if not sel:
             self._view.show_info("Gest2A3Eco", "Selecciona una factura.")
@@ -154,6 +182,8 @@ class FacturasEmitidasController:
             self.refresh_facturas()
 
     def eliminar(self):
+        if not self._ensure_write():
+            return
         sel = self._view.get_selected_ids()
         if not sel:
             return
@@ -168,6 +198,8 @@ class FacturasEmitidasController:
         self.refresh_facturas()
 
     def desmarcar_generadas(self):
+        if not self._ensure_write():
+            return
         sel = self._view.get_selected_ids()
         if not sel:
             self._view.show_info("Gest2A3Eco", "Selecciona una factura.")
@@ -203,6 +235,11 @@ class FacturasEmitidasController:
         self.refresh_facturas()
 
     def terceros(self):
+        if self._is_cliente():
+            self._view.show_warning("Gest2A3Eco", "El rol cliente no puede gestionar terceros.")
+            return
+        if not self._ensure_write("Necesitas permiso de escritura para gestionar terceros."):
+            return
         self._view.open_terceros_dialog(
             self._codigo,
             self._ejercicio,
@@ -232,6 +269,8 @@ class FacturasEmitidasController:
         self._view.set_albaran_lineas(alb.get("lineas", []), alb.get("moneda_simbolo", ""))
 
     def nuevo_albaran(self):
+        if not self._ensure_write():
+            return
         sugerido = self._proximo_albaran_numero()
         cuenta_default = self._cuenta_bancaria_default()
         result = self._view.open_albaran_dialog(
@@ -255,6 +294,8 @@ class FacturasEmitidasController:
             self.refresh_albaranes()
 
     def editar_albaran(self):
+        if not self._ensure_write():
+            return
         sel = self._view.get_selected_albaran_ids()
         if not sel:
             self._view.show_info("Gest2A3Eco", "Selecciona un albaran.")
@@ -271,6 +312,8 @@ class FacturasEmitidasController:
             self.refresh_albaranes()
 
     def copiar_albaran(self):
+        if not self._ensure_write():
+            return
         sel = self._view.get_selected_albaran_ids()
         if not sel:
             return
@@ -290,6 +333,8 @@ class FacturasEmitidasController:
             self.refresh_albaranes()
 
     def eliminar_albaran(self):
+        if not self._ensure_write():
+            return
         sel = self._view.get_selected_albaran_ids()
         if not sel:
             return
@@ -304,6 +349,8 @@ class FacturasEmitidasController:
         self.refresh_albaranes()
 
     def facturar_albaranes(self):
+        if not self._ensure_write():
+            return
         sel = self._view.get_selected_albaran_ids()
         if not sel:
             self._view.show_warning("Gest2A3Eco", "Selecciona uno o varios albaranes.")
@@ -572,6 +619,8 @@ class FacturasEmitidasController:
                 pass
 
         if self._view.ask_yes_no("Gest2A3Eco", "¿Marcar factura como enviada?"):
+            if not self._ensure_write("Necesitas permiso de escritura para marcar la factura como enviada."):
+                return
             fecha_envio = datetime.now().strftime("%Y-%m-%d %H:%M")
             eje = fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio
             self._gestor.marcar_factura_emitida_enviada(
@@ -580,6 +629,8 @@ class FacturasEmitidasController:
             self.refresh_facturas()
 
     def generar_suenlace(self):
+        if not self._ensure_write():
+            return
         sel = self._view.get_selected_ids()
         if not sel:
             self._view.show_warning("Gest2A3Eco", "Selecciona al menos una factura.")
@@ -1003,6 +1054,11 @@ class FacturasEmitidasController:
         emp.setdefault("codigo_empresa", self._codigo)
         return emp
 
+    def _persist_factura_if_allowed(self, factura: dict) -> None:
+        if not self._can_write():
+            return
+        self._gestor.upsert_factura_emitida(factura)
+
     def _store_pdf_copies(self, fac: dict, src_path: str) -> None:
         fac = self._ensure_pdf_ref(fac)
         upd = dict(fac)
@@ -1023,7 +1079,7 @@ class FacturasEmitidasController:
                 upd["pdf_path_a3"] = a3_path
             except Exception:
                 pass
-        self._gestor.upsert_factura_emitida(upd)
+        self._persist_factura_if_allowed(upd)
 
     def _ensure_app_pdf(self, fac: dict) -> None:
         pdf_ref = str(fac.get("pdf_ref") or "").strip()
@@ -1036,7 +1092,7 @@ class FacturasEmitidasController:
             if fac.get("pdf_path") != app_path:
                 upd = dict(fac)
                 upd["pdf_path"] = app_path
-                self._gestor.upsert_factura_emitida(upd)
+                self._persist_factura_if_allowed(upd)
             return
         existing_path = str(fac.get("pdf_path") or "").strip()
         if existing_path and os.path.exists(existing_path):
@@ -1046,7 +1102,7 @@ class FacturasEmitidasController:
                 if existing_path.lower().startswith("z:\\") and not fac.get("pdf_path_a3"):
                     upd["pdf_path_a3"] = existing_path
                 upd["pdf_path"] = app_path
-                self._gestor.upsert_factura_emitida(upd)
+                self._persist_factura_if_allowed(upd)
                 return
             except Exception:
                 pass
@@ -1056,7 +1112,7 @@ class FacturasEmitidasController:
                 shutil.copy2(a3_path, app_path)
                 upd = dict(fac)
                 upd["pdf_path"] = app_path
-                self._gestor.upsert_factura_emitida(upd)
+                self._persist_factura_if_allowed(upd)
                 return
             except Exception:
                 pass
@@ -1078,7 +1134,7 @@ class FacturasEmitidasController:
             return
         upd = dict(fac)
         upd["pdf_path"] = app_path
-        self._gestor.upsert_factura_emitida(upd)
+        self._persist_factura_if_allowed(upd)
 
     def _ensure_a3_pdf(self, fac: dict) -> None:
         pdf_ref = str(fac.get("pdf_ref") or "").strip()
@@ -1091,7 +1147,7 @@ class FacturasEmitidasController:
             if fac.get("pdf_path_a3") != a3_path:
                 upd = dict(fac)
                 upd["pdf_path_a3"] = a3_path
-                self._gestor.upsert_factura_emitida(upd)
+                self._persist_factura_if_allowed(upd)
             return
         app_path = str(fac.get("pdf_path") or "").strip()
         if app_path and os.path.exists(app_path):
@@ -1099,7 +1155,7 @@ class FacturasEmitidasController:
                 shutil.copy2(app_path, a3_path)
                 upd = dict(fac)
                 upd["pdf_path_a3"] = a3_path
-                self._gestor.upsert_factura_emitida(upd)
+                self._persist_factura_if_allowed(upd)
                 return
             except Exception:
                 pass
@@ -1121,7 +1177,7 @@ class FacturasEmitidasController:
             return
         upd = dict(fac)
         upd["pdf_path_a3"] = a3_path
-        self._gestor.upsert_factura_emitida(upd)
+        self._persist_factura_if_allowed(upd)
 
     def _app_pdf_path(self, fac: dict) -> str:
         if getattr(sys, "frozen", False):
@@ -1167,7 +1223,7 @@ class FacturasEmitidasController:
             if base_ref and base_ref != ref:
                 fac = dict(fac)
                 fac["pdf_ref"] = base_ref
-                self._gestor.upsert_factura_emitida(fac)
+                self._persist_factura_if_allowed(fac)
             return fac
         raw_id = "".join(ch for ch in str(fac.get("id") or "") if ch.isdigit())
         if not raw_id:
@@ -1176,7 +1232,7 @@ class FacturasEmitidasController:
         ref = f"{prefix}{raw_id[-8:].rjust(8, '0')}"
         fac = dict(fac)
         fac["pdf_ref"] = ref
-        self._gestor.upsert_factura_emitida(fac)
+        self._persist_factura_if_allowed(fac)
         return fac
 
     def _log_pdf_error(self, msg: str, exc: Exception, template_path: str, save_path: str) -> None:

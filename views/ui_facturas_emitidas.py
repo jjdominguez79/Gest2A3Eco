@@ -380,6 +380,9 @@ class TercerosGlobalDialog(tk.Toplevel):
     def show_warning(self, title, message):
         messagebox.showwarning(title, message)
 
+    def show_error(self, title, message):
+        messagebox.showerror(title, message)
+
     def set_empresas_asignadas(self, rows):
         self.lb_empresas_asignadas.delete(0, tk.END)
         for r in rows or []:
@@ -792,6 +795,17 @@ class FacturaDialog(tk.Toplevel):
         super().__init__(parent)
         self.title(titulo)
         self.resizable(True, True)
+        try:
+            screen_w = self.winfo_screenwidth()
+            screen_h = self.winfo_screenheight()
+            dialog_w = max(1080, int(screen_w * 0.72))
+            dialog_h = max(820, int(screen_h * 0.82))
+            dialog_w = min(dialog_w, max(900, screen_w - 80))
+            dialog_h = min(dialog_h, max(700, screen_h - 80))
+            self.geometry(f"{dialog_w}x{dialog_h}")
+            self.minsize(980, 720)
+        except Exception:
+            pass
         self.result = None
         self.gestor = gestor
         self.codigo = codigo_empresa
@@ -1625,13 +1639,14 @@ class FacturaDialog(tk.Toplevel):
         self.result = result
         self.destroy()
 class UIFacturasEmitidas(ttk.Frame):
-    def __init__(self, master, gestor, codigo_empresa, ejercicio, nombre_empresa, allow_all_years: bool = False):
+    def __init__(self, master, gestor, codigo_empresa, ejercicio, nombre_empresa, allow_all_years: bool = False, session=None):
         super().__init__(master)
         self.gestor = gestor
         self.codigo = codigo_empresa
         self.ejercicio = ejercicio
         self.nombre = nombre_empresa
         self.allow_all_years = bool(allow_all_years)
+        self.session = session
         monedas = load_monedas()
         self._default_moneda_simbolo = str(monedas[0].get("simbolo")) if monedas else ""
         base = {
@@ -1669,27 +1684,53 @@ class UIFacturasEmitidas(ttk.Frame):
         tab_facturas = ttk.Frame(nb)
         tab_albaranes = ttk.Frame(nb)
         nb.add(tab_facturas, text="Facturas")
-        nb.add(tab_albaranes, text="Albaranes")
+        is_cliente = bool(self.session and self.session.role.value == "cliente")
+        if not is_cliente:
+            nb.add(tab_albaranes, text="Albaranes")
 
         self._build_facturas_tab(tab_facturas)
-        self._build_albaranes_tab(tab_albaranes)
+        if not is_cliente:
+            self._build_albaranes_tab(tab_albaranes)
 
         self._refresh_facturas()
-        self._refresh_albaranes()
+        if not is_cliente:
+            self._refresh_albaranes()
 
     def _build_facturas_tab(self, parent):
         top = ttk.Frame(parent)
         top.pack(fill="x", padx=20, pady=(8, 0))
-        ttk.Button(top, text="Nueva", style="Primary.TButton", command=self._nueva).pack(side=tk.LEFT, padx=8)
-        ttk.Button(top, text="Editar", command=self._editar).pack(side=tk.LEFT, padx=8)
-        ttk.Button(top, text="Copiar", command=self._copiar).pack(side=tk.LEFT, padx=8)
-        ttk.Button(top, text="Rectificar", command=self._rectificar).pack(side=tk.LEFT, padx=8)
-        ttk.Button(top, text="Eliminar", command=self._eliminar).pack(side=tk.LEFT, padx=8)
-        ttk.Button(top, text="Desmarcar enlazadas", command=self._desmarcar_generadas).pack(side=tk.LEFT, padx=8)
-        ttk.Button(top, text="Terceros", command=self._terceros).pack(side=tk.LEFT, padx=12)
+        can_write = getattr(getattr(self.gestor, "security", None), "can_write_company", lambda _c: True)(self.codigo)
+        is_cliente = bool(self.session and self.session.role.value == "cliente")
+        self.btn_fact_nueva = ttk.Button(top, text="Nueva", style="Primary.TButton", command=self._nueva)
+        self.btn_fact_nueva.pack(side=tk.LEFT, padx=8)
+        self.btn_fact_editar = ttk.Button(top, text="Editar", command=self._editar)
+        self.btn_fact_editar.pack(side=tk.LEFT, padx=8)
+        self.btn_fact_copiar = ttk.Button(top, text="Copiar", command=self._copiar)
+        self.btn_fact_copiar.pack(side=tk.LEFT, padx=8)
+        self.btn_fact_rectificar = ttk.Button(top, text="Rectificar", command=self._rectificar)
+        self.btn_fact_rectificar.pack(side=tk.LEFT, padx=8)
+        self.btn_fact_eliminar = ttk.Button(top, text="Eliminar", command=self._eliminar)
+        self.btn_fact_eliminar.pack(side=tk.LEFT, padx=8)
+        self.btn_fact_desmarcar = ttk.Button(top, text="Desmarcar enlazadas", command=self._desmarcar_generadas)
+        self.btn_fact_desmarcar.pack(side=tk.LEFT, padx=8)
+        self.btn_fact_terceros = ttk.Button(top, text="Terceros", command=self._terceros)
+        self.btn_fact_terceros.pack(side=tk.LEFT, padx=12)
         ttk.Button(top, text="Exportar PDF", command=self._export_pdf).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Abrir PDF", command=self._abrir_pdf).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Compartir PDF", state="disabled").pack(side=tk.LEFT, padx=8)
+        if not can_write:
+            for btn in (
+                self.btn_fact_nueva,
+                self.btn_fact_editar,
+                self.btn_fact_copiar,
+                self.btn_fact_rectificar,
+                self.btn_fact_eliminar,
+                self.btn_fact_desmarcar,
+                self.btn_fact_terceros,
+            ):
+                btn.configure(state="disabled")
+        if is_cliente:
+            self.btn_fact_terceros.configure(state="disabled")
 
         if self.allow_all_years:
             filtros = ttk.Frame(parent)
@@ -1751,17 +1792,29 @@ class UIFacturasEmitidas(ttk.Frame):
 
         bottom = ttk.Frame(parent)
         bottom.pack(fill="x", padx=10, pady=6)
-        ttk.Button(bottom, text="Generar Suenlace.dat", style="Primary.TButton", command=self._generar).pack(side=tk.RIGHT)
+        self.btn_generar_suenlace = ttk.Button(bottom, text="Generar Suenlace.dat", style="Primary.TButton", command=self._generar)
+        self.btn_generar_suenlace.pack(side=tk.RIGHT)
+        if not can_write or is_cliente:
+            self.btn_generar_suenlace.configure(state="disabled")
 
     def _build_albaranes_tab(self, parent):
         top = ttk.Frame(parent)
         top.pack(fill="x", padx=10, pady=(8, 0))
-        ttk.Button(top, text="Nuevo", style="Primary.TButton", command=self._nuevo_albaran).pack(side=tk.LEFT, padx=8)
-        ttk.Button(top, text="Editar", command=self._editar_albaran).pack(side=tk.LEFT, padx=8)
-        ttk.Button(top, text="Copiar", command=self._copiar_albaran).pack(side=tk.LEFT, padx=8)
-        ttk.Button(top, text="Eliminar", command=self._eliminar_albaran).pack(side=tk.LEFT, padx=8)
+        can_write = getattr(getattr(self.gestor, "security", None), "can_write_company", lambda _c: True)(self.codigo)
+        self.btn_alb_nuevo = ttk.Button(top, text="Nuevo", style="Primary.TButton", command=self._nuevo_albaran)
+        self.btn_alb_nuevo.pack(side=tk.LEFT, padx=8)
+        self.btn_alb_editar = ttk.Button(top, text="Editar", command=self._editar_albaran)
+        self.btn_alb_editar.pack(side=tk.LEFT, padx=8)
+        self.btn_alb_copiar = ttk.Button(top, text="Copiar", command=self._copiar_albaran)
+        self.btn_alb_copiar.pack(side=tk.LEFT, padx=8)
+        self.btn_alb_eliminar = ttk.Button(top, text="Eliminar", command=self._eliminar_albaran)
+        self.btn_alb_eliminar.pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Imprimir", command=self._imprimir_albaran).pack(side=tk.LEFT, padx=8)
-        ttk.Button(top, text="Facturar seleccionados", style="Primary.TButton", command=self._facturar_albaranes).pack(side=tk.RIGHT, padx=8)
+        self.btn_alb_facturar = ttk.Button(top, text="Facturar seleccionados", style="Primary.TButton", command=self._facturar_albaranes)
+        self.btn_alb_facturar.pack(side=tk.RIGHT, padx=8)
+        if not can_write:
+            for btn in (self.btn_alb_nuevo, self.btn_alb_editar, self.btn_alb_copiar, self.btn_alb_eliminar, self.btn_alb_facturar):
+                btn.configure(state="disabled")
 
         self.tv_albaranes = ttk.Treeview(
             parent,

@@ -28,6 +28,9 @@ class TercerosEmpresaController:
         )
 
     def guardar_subcuentas(self):
+        if not self._can_write():
+            self._view.show_warning("Gest2A3Eco", "Necesitas permiso de escritura para modificar subcuentas.")
+            return
         tid = self._view.get_selected_id()
         if not tid:
             self._view.show_info("Gest2A3Eco", "Selecciona un tercero.")
@@ -73,6 +76,9 @@ class TercerosEmpresaController:
         )
 
     def generar_suenlace_terceros(self):
+        if not self._can_write():
+            self._view.show_warning("Gest2A3Eco", "Necesitas permiso de escritura para generar este fichero.")
+            return
         empresa = self._gestor.get_empresa(self._codigo, self._ejercicio) or {}
         ndig = int(empresa.get("digitos_plan", 8))
         terceros = self._gestor.listar_terceros_por_empresa(self._codigo, self._ejercicio)
@@ -136,6 +142,9 @@ class TercerosEmpresaController:
         self._view.show_info("Gest2A3Eco", f"Fichero generado:\n{save_path}")
 
     def eliminar_asignacion(self):
+        if not self._can_write():
+            self._view.show_warning("Gest2A3Eco", "Necesitas permiso de escritura para eliminar asignaciones.")
+            return
         tid = self._view.get_selected_id()
         if not tid:
             self._view.show_info("Gest2A3Eco", "Selecciona un tercero.")
@@ -158,3 +167,7 @@ class TercerosEmpresaController:
             if str(rel.get(field) or "").strip() == subcuenta:
                 return True
         return False
+
+    def _can_write(self) -> bool:
+        security = getattr(self._gestor, "security", None)
+        return True if not security else security.can_write_company(self._codigo)

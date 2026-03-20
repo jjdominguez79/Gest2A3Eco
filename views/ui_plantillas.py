@@ -286,12 +286,13 @@ class ConfigPlantillaDialog(Dialog):
         self.result = True
 
 class UIPlantillasEmpresa(ttk.Frame):
-    def __init__(self, parent, gestor, empresa_codigo, ejercicio, empresa_nombre):
+    def __init__(self, parent, gestor, empresa_codigo, ejercicio, empresa_nombre, session=None):
         super().__init__(parent)
         self.gestor = gestor
         self.codigo = empresa_codigo
         self.ejercicio = ejercicio
         self.nombre = empresa_nombre
+        self.session = session
         self.empresa = gestor.get_empresa(empresa_codigo, ejercicio) or {"codigo":empresa_codigo,"digitos_plan":8,"ejercicio":ejercicio}
         self.controller = PlantillasController(gestor, self.empresa, self)
         self._build()
@@ -330,9 +331,17 @@ class UIPlantillasEmpresa(ttk.Frame):
         tv.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         bar = ttk.Frame(frame); bar.pack(fill=tk.X, padx=6, pady=4)
 
-        ttk.Button(bar, text="Nueva Plantilla", style="Primary.TButton", command=lambda t=title: self.controller.nuevo(t)).pack(side=tk.LEFT)
-        ttk.Button(bar, text="Configurar.", style="Primary.TButton", command=lambda tv=tv, t=title: self.controller.config(tv, t)).pack(side=tk.LEFT, padx=6)
-        ttk.Button(bar, text="Eliminar Plantilla", style="Primary.TButton", command=lambda tv=tv, t=title: self.controller.eliminar(tv, t)).pack(side=tk.LEFT)
+        can_write = getattr(getattr(self.gestor, "security", None), "can_write_company", lambda _c: True)(self.codigo)
+        btn_nueva = ttk.Button(bar, text="Nueva Plantilla", style="Primary.TButton", command=lambda t=title: self.controller.nuevo(t))
+        btn_nueva.pack(side=tk.LEFT)
+        btn_conf = ttk.Button(bar, text="Configurar.", style="Primary.TButton", command=lambda tv=tv, t=title: self.controller.config(tv, t))
+        btn_conf.pack(side=tk.LEFT, padx=6)
+        btn_del = ttk.Button(bar, text="Eliminar Plantilla", style="Primary.TButton", command=lambda tv=tv, t=title: self.controller.eliminar(tv, t))
+        btn_del.pack(side=tk.LEFT)
+        if not can_write:
+            btn_nueva.configure(state="disabled")
+            btn_conf.configure(state="disabled")
+            btn_del.configure(state="disabled")
 
         return {"frame": frame, "tv": tv, "cols": cols}
 

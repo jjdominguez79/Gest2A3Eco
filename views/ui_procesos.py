@@ -7,12 +7,13 @@ from controllers.ui_procesos_controller import ProcesosController
 
 
 class UIProcesos(ttk.Frame):
-    def __init__(self, master, gestor, codigo_empresa, ejercicio, nombre_empresa):
+    def __init__(self, master, gestor, codigo_empresa, ejercicio, nombre_empresa, session=None):
         super().__init__(master)
         self.gestor = gestor
         self.codigo = codigo_empresa
         self.ejercicio = ejercicio
         self.nombre = nombre_empresa
+        self.session = session
         self.pack(fill=tk.BOTH, expand=True)
         self._build()
         self.controller = ProcesosController(gestor, codigo_empresa, ejercicio, self)

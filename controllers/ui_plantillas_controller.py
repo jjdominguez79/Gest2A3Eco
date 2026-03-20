@@ -20,6 +20,8 @@ class PlantillasController:
         self._refresh_recibidas()
 
     def nuevo(self, title):
+        if not self._can_write():
+            return
         tipo = self._tipo_from_title(title)
         result, pl = self._view.open_config_dialog(tipo, {})
         if result:
@@ -28,6 +30,8 @@ class PlantillasController:
             self._view.show_info("Gest2A3Eco", "Plantilla guardada.")
 
     def config(self, tv, title):
+        if not self._can_write():
+            return
         tipo = self._tipo_from_title(title)
         key = self._sel_key(tv)
         if not key:
@@ -41,6 +45,8 @@ class PlantillasController:
             self._view.show_info("Gest2A3Eco", "Cambios guardados.")
 
     def eliminar(self, tv, title):
+        if not self._can_write():
+            return
         tipo = self._tipo_from_title(title)
         key = self._sel_key(tv)
         if not key:
@@ -118,3 +124,12 @@ class PlantillasController:
             self._gestor.eliminar_emitida(codigo, key, ejercicio)
         else:
             self._gestor.eliminar_recibida(codigo, key, ejercicio)
+
+    def _can_write(self) -> bool:
+        security = getattr(self._gestor, "security", None)
+        if not security:
+            return True
+        if security.can_write_company(self._empresa.get("codigo")):
+            return True
+        self._view.show_info("Gest2A3Eco", "Esta empresa esta en modo solo lectura para el usuario actual.")
+        return False

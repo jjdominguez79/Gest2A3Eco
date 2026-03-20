@@ -13,6 +13,9 @@ class TercerosGlobalController:
         self._view.set_empresas_asignadas([])
 
     def nuevo(self):
+        if not self._is_admin():
+            self._view.show_error("Gest2A3Eco", "Solo el administrador puede gestionar terceros globales.")
+            return
         result = self._view.open_tercero_ficha(None)
         if result:
             if not self._nif_valido(result.get("nif")):
@@ -27,6 +30,9 @@ class TercerosGlobalController:
             self.load_empresas_asignadas()
 
     def editar(self):
+        if not self._is_admin():
+            self._view.show_error("Gest2A3Eco", "Solo el administrador puede gestionar terceros globales.")
+            return
         tid = self._view.get_selected_tercero_id()
         if not tid:
             return
@@ -46,6 +52,9 @@ class TercerosGlobalController:
             self.load_empresas_asignadas()
 
     def eliminar(self):
+        if not self._is_admin():
+            self._view.show_error("Gest2A3Eco", "Solo el administrador puede gestionar terceros globales.")
+            return
         tid = self._view.get_selected_tercero_id()
         if not tid:
             return
@@ -59,6 +68,9 @@ class TercerosGlobalController:
         self.refresh()
 
     def asignar_a_empresa(self):
+        if not self._is_admin():
+            self._view.show_error("Gest2A3Eco", "Solo el administrador puede gestionar terceros globales.")
+            return
         tid = self._view.get_selected_tercero_id()
         if not tid:
             self._view.show_info("Gest2A3Eco", "Selecciona un tercero.")
@@ -110,3 +122,7 @@ class TercerosGlobalController:
         from utils.validaciones import validar_nif_cif_nie
 
         return validar_nif_cif_nie(nif)
+
+    def _is_admin(self) -> bool:
+        security = getattr(self._gestor, "security", None)
+        return True if not security else security.can_manage_users()

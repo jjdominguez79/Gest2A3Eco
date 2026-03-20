@@ -20,6 +20,16 @@ class SeleccionEmpresaController:
         self._empresas_by_key = {}
         self._admin_password = self._load_admin_password()
 
+    def _can_manage_companies(self) -> bool:
+        security = getattr(self._gestor, "security", None)
+        return bool(security and security.can_manage_companies())
+
+    def _ensure_manage_companies(self) -> bool:
+        if self._can_manage_companies():
+            return True
+        self._view.show_error("Gest2A3Eco", "Solo el administrador puede gestionar empresas.")
+        return False
+
     def refresh(self):
         self._empresas_cache = self._gestor.listar_empresas()
         self._group_empresas()
@@ -45,6 +55,8 @@ class SeleccionEmpresaController:
             self._view.insert_empresa(e)
 
     def importar_csv(self):
+        if not self._ensure_manage_companies():
+            return
         csv_path = self._view.ask_csv_path()
         if not csv_path:
             return
@@ -65,6 +77,8 @@ class SeleccionEmpresaController:
         )
 
     def nueva(self):
+        if not self._ensure_manage_companies():
+            return
         result = self._view.open_empresa_dialog("Nueva empresa")
         if result:
             result["logo_path"] = self._store_logo(result.get("logo_path"))
@@ -73,6 +87,8 @@ class SeleccionEmpresaController:
             self._view.show_info("Gest2A3Eco", "Empresa guardada.")
 
     def editar(self):
+        if not self._ensure_manage_companies():
+            return
         codigo, eje = self._sel_empresa()
         if not codigo:
             self._view.show_info("Gest2A3Eco", "Selecciona una empresa.")
@@ -86,6 +102,8 @@ class SeleccionEmpresaController:
             self._view.show_info("Gest2A3Eco", "Cambios guardados.")
 
     def copiar(self):
+        if not self._ensure_manage_companies():
+            return
         codigo, eje = self._sel_empresa()
         if not codigo:
             self._view.show_info("Gest2A3Eco", "Selecciona una empresa para copiar.")
@@ -121,6 +139,8 @@ class SeleccionEmpresaController:
         self._view.show_info("Gest2A3Eco", "Empresa copiada con plantillas y terceros.")
 
     def terceros(self):
+        if not self._ensure_manage_companies():
+            return
         self._view.open_terceros_dialog(self._gestor)
 
     def continuar_facturacion(self):
@@ -142,15 +162,11 @@ class SeleccionEmpresaController:
         self._on_ok(codigo, eje, nombre, "contabilidad")
 
     def eliminar(self):
+        if not self._ensure_manage_companies():
+            return
         codigo, eje = self._sel_empresa()
         if not codigo:
             self._view.show_info("Gest2A3Eco", "Selecciona una empresa para eliminar.")
-            return
-        pwd = self._view.ask_admin_password()
-        if pwd is None:
-            return
-        if str(pwd) != str(self._admin_password):
-            self._view.show_error("Gest2A3Eco", "Contraseña de administrador incorrecta.")
             return
         emp = self._gestor.get_empresa(codigo, eje) or {}
         nombre = emp.get("nombre", codigo)
@@ -287,6 +303,10 @@ class SeleccionEmpresaController:
         self._load_facturas_global()
 
     def copiar_factura_global(self):
+        security = getattr(self._gestor, "security", None)
+        if not (security and security.can_manage_companies()):
+            self._view.show_error("Gest2A3Eco", "Solo el administrador puede copiar facturas entre empresas desde este listado.")
+            return
         codigo, eje, fid = self._view.get_selected_factura_key()
         if not codigo or not fid:
             self._view.show_info("Gest2A3Eco", "Selecciona una factura.")

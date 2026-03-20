@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import time
+from datetime import datetime
 from pathlib import Path
 
 
@@ -169,6 +170,33 @@ CREATE TABLE IF NOT EXISTS terceros_empresas (
 );
 """
 
+AUTH_SCHEMA = """
+CREATE TABLE IF NOT EXISTS usuarios (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  nombre TEXT NOT NULL,
+  rol TEXT NOT NULL CHECK (rol IN ('admin', 'empleado', 'cliente')),
+  activo INTEGER NOT NULL DEFAULT 1,
+  must_change_password INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS usuarios_empresas (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  usuario_id INTEGER NOT NULL,
+  empresa_codigo TEXT NOT NULL,
+  permiso TEXT NOT NULL CHECK (permiso IN ('ninguno', 'lectura', 'escritura')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(usuario_id, empresa_codigo),
+  FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_usuarios_username ON usuarios(username);
+CREATE INDEX IF NOT EXISTS idx_usuarios_empresas_usuario ON usuarios_empresas(usuario_id);
+CREATE INDEX IF NOT EXISTS idx_usuarios_empresas_empresa ON usuarios_empresas(empresa_codigo);
+"""
+
 
 class GestorSQLite:
     """
@@ -179,6 +207,7 @@ class GestorSQLite:
         self.db_path = Path(db_path)
         _ensure_dir(self.db_path)
         self.conn = sqlite3.connect(str(self.db_path))
+        self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.row_factory = sqlite3.Row
         self._init_schema()
         self._migrate_terceros_global()
@@ -187,7 +216,7 @@ class GestorSQLite:
 
     # ---------- utilidades internas ----------
     def _init_schema(self):
-        self.conn.executescript(SCHEMA)
+        self.conn.executescript(SCHEMA + AUTH_SCHEMA)
         self.conn.commit()
         self._ensure_column("empresas", "cuenta_bancaria", "TEXT")
         self._ensure_column("empresas", "cuentas_bancarias", "TEXT")
@@ -243,6 +272,8 @@ class GestorSQLite:
         self.conn.commit()
         self.conn.execute("UPDATE terceros SET tipo=NULL")
         self.conn.commit()
+        self._ensure_column("usuarios", "must_change_password", "INTEGER")
+        self.conn.commit()
 
     def _ensure_column(self, table: str, column: str, col_type: str):
         cur = self.conn.execute(f"PRAGMA table_info({table})")
@@ -250,6 +281,9 @@ class GestorSQLite:
         if column in cols:
             return
         self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+
+    def _utc_now(self) -> str:
+        return datetime.utcnow().replace(microsecond=0).isoformat()
 
     def _migrate_terceros_global(self):
         try:
@@ -1249,3 +1283,138 @@ class GestorSQLite:
             self.upsert_tercero_empresa(nr)
             copiados += 1
         return copiados, omitidos
+
+    # ---------- USUARIOS / ACL ----------
+    def hay_usuarios(self) -> bool:
+        cur = self.conn.execute("SELECT COUNT(*) AS n FROM usuarios")
+        row = cur.fetchone()
+        return bool(row and row["n"])
+
+    def crear_usuario_inicial_admin(self, password_hash: str) -> dict:
+        now = self._utc_now()
+        cur = self.conn.execute(
+            """
+            INSERT INTO usuarios (username, password_hash, nombre, rol, activo, must_change_password, created_at, updated_at)
+            VALUES (?, ?, ?, 'admin', 1, 1, ?, ?)
+            """,
+            ("admin", password_hash, "Administrador", now, now),
+        )
+        self.conn.commit()
+        return self.get_usuario(cur.lastrowid)
+
+    def listar_usuarios(self) -> list[dict]:
+        cur = self.conn.execute(
+            """
+            SELECT u.*,
+                   SUM(CASE WHEN ue.permiso IN ('lectura', 'escritura') THEN 1 ELSE 0 END) AS empresas_asignadas
+            FROM usuarios u
+            LEFT JOIN usuarios_empresas ue ON ue.usuario_id = u.id
+            GROUP BY u.id
+            ORDER BY LOWER(u.username)
+            """
+        )
+        return [self._row_to_dict(row) for row in cur.fetchall()]
+
+    def get_usuario(self, user_id: int) -> dict | None:
+        cur = self.conn.execute("SELECT * FROM usuarios WHERE id=?", (int(user_id),))
+        return self._row_to_dict(cur.fetchone())
+
+    def get_usuario_by_username(self, username: str) -> dict | None:
+        cur = self.conn.execute(
+            "SELECT * FROM usuarios WHERE LOWER(username)=LOWER(?)",
+            (str(username or "").strip(),),
+        )
+        return self._row_to_dict(cur.fetchone())
+
+    def upsert_usuario(self, usuario: dict) -> int:
+        now = self._utc_now()
+        user_id = usuario.get("id")
+        if user_id:
+            existing = self.get_usuario(int(user_id))
+            if not existing:
+                raise ValueError("Usuario no encontrado.")
+            password_hash = usuario.get("password_hash") or existing.get("password_hash")
+            self.conn.execute(
+                """
+                UPDATE usuarios
+                SET username=?,
+                    password_hash=?,
+                    nombre=?,
+                    rol=?,
+                    activo=?,
+                    must_change_password=?,
+                    updated_at=?
+                WHERE id=?
+                """,
+                (
+                    usuario.get("username"),
+                    password_hash,
+                    usuario.get("nombre"),
+                    usuario.get("rol"),
+                    1 if usuario.get("activo", True) else 0,
+                    1 if usuario.get("must_change_password") else 0,
+                    now,
+                    int(user_id),
+                ),
+            )
+            self.conn.commit()
+            return int(user_id)
+
+        password_hash = usuario.get("password_hash")
+        if not password_hash:
+            raise ValueError("La contraseña es obligatoria al crear un usuario.")
+        cur = self.conn.execute(
+            """
+            INSERT INTO usuarios (username, password_hash, nombre, rol, activo, must_change_password, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                usuario.get("username"),
+                password_hash,
+                usuario.get("nombre"),
+                usuario.get("rol"),
+                1 if usuario.get("activo", True) else 0,
+                1 if usuario.get("must_change_password") else 0,
+                now,
+                now,
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def actualizar_password_usuario(self, user_id: int, password_hash: str, *, must_change_password: bool = False) -> None:
+        self.conn.execute(
+            "UPDATE usuarios SET password_hash=?, must_change_password=?, updated_at=? WHERE id=?",
+            (password_hash, 1 if must_change_password else 0, self._utc_now(), int(user_id)),
+        )
+        self.conn.commit()
+
+    def listar_permisos_usuario(self, user_id: int) -> list[dict]:
+        cur = self.conn.execute(
+            """
+            SELECT ue.*, e.nombre AS empresa_nombre
+            FROM usuarios_empresas ue
+            LEFT JOIN (
+                SELECT codigo, MAX(nombre) AS nombre
+                FROM empresas
+                GROUP BY codigo
+            ) e ON e.codigo = ue.empresa_codigo
+            WHERE ue.usuario_id=?
+            ORDER BY ue.empresa_codigo
+            """,
+            (int(user_id),),
+        )
+        return [self._row_to_dict(row) for row in cur.fetchall()]
+
+    def reemplazar_permisos_usuario(self, user_id: int, permisos: dict[str, str]) -> None:
+        now = self._utc_now()
+        self.conn.execute("DELETE FROM usuarios_empresas WHERE usuario_id=?", (int(user_id),))
+        for codigo, permiso in (permisos or {}).items():
+            self.conn.execute(
+                """
+                INSERT INTO usuarios_empresas (usuario_id, empresa_codigo, permiso, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (int(user_id), str(codigo), str(permiso), now, now),
+            )
+        self.conn.commit()

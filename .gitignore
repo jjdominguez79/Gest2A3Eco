@@ -1,17 +1,42 @@
+# Python
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# IDE / OS
+.vscode/
+.idea/
 .DS_Store
 Thumbs.db
-dist/
-build/
-*.spec
-env/
-venv/
+
+# Logs and temp files
 *.log
 *.tmp
-*.xls*
-*.dat
+*.temp
+
+# Local runtime / generated data
 config.json
-*.bat
-plantillas/
 pdfs_emitidas/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3

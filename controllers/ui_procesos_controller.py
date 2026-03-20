@@ -69,6 +69,9 @@ class ProcesosController:
 
             tipo = (self._view.get_tipo() or "").lower()
             if "terceros" in tipo:
+                if not self._can_write():
+                    self._view.show_error("Gest2A3Eco", "Necesitas permiso de escritura para importar terceros.")
+                    return
                 self._importar_terceros()
                 return
 
@@ -487,3 +490,9 @@ class ProcesosController:
                 f.write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
         except Exception:
             pass
+
+    def _can_write(self) -> bool:
+        security = getattr(self._gestor, "security", None)
+        if not security:
+            return True
+        return security.can_write_company(self._codigo)
