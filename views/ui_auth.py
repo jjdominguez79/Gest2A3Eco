@@ -2,12 +2,22 @@ from __future__ import annotations
 
 import tkinter as tk
 from tkinter import messagebox, ttk
+from pathlib import Path
+
+try:
+    from PIL import Image, ImageTk
+except Exception:  # pragma: no cover
+    Image = None
+    ImageTk = None
 
 
 class UILogin(ttk.Frame):
-    def __init__(self, parent, on_login):
+    def __init__(self, parent, on_login, logo_path: str | None = None):
         super().__init__(parent)
         self._on_login = on_login
+        self._logo_path = str(logo_path or "").strip()
+        self._logo_img = None
+        self._logo_tk_img = None
         self.var_username = tk.StringVar()
         self.var_password = tk.StringVar()
         self.var_error = tk.StringVar()
@@ -17,9 +27,10 @@ class UILogin(ttk.Frame):
         wrapper = ttk.Frame(self)
         wrapper.place(relx=0.5, rely=0.5, anchor="center")
 
-        card = ttk.Frame(wrapper, padding=24, style="Surface.TFrame")
+        card = ttk.Frame(wrapper, padding=20, style="Surface.TFrame")
         card.pack(fill="both", expand=True)
 
+        self._build_logo(card)
         ttk.Label(card, text="Gest2A3Eco", style="Header.TLabel").pack(anchor="center", pady=(0, 6))
         ttk.Label(card, text="Acceso seguro", style="SubHeader.TLabel").pack(anchor="center", pady=(0, 18))
 
@@ -39,6 +50,41 @@ class UILogin(ttk.Frame):
         entry_user.bind("<Return>", lambda _e: entry_password.focus_set())
         entry_password.bind("<Return>", lambda _e: self._submit())
         entry_user.focus_set()
+
+    def _build_logo(self, parent):
+        if not self._logo_path:
+            return
+        path = Path(self._logo_path)
+        if not path.exists():
+            return
+        img = self._load_logo_image(path, max_h=96)
+        if img is None:
+            return
+        self._logo_img = img
+        ttk.Label(parent, image=img).pack(anchor="center", pady=(0, 10))
+
+    def _load_logo_image(self, path: Path, max_h: int):
+        try:
+            if path.suffix.lower() == ".png":
+                img = tk.PhotoImage(file=str(path))
+                if img.height() > max_h:
+                    factor = max(1, img.height() // max_h)
+                    img = img.subsample(factor, factor)
+                return img
+        except Exception:
+            pass
+        if Image is None or ImageTk is None:
+            return None
+        try:
+            pil_img = Image.open(path)
+            ratio = min(1.0, max_h / float(max(1, pil_img.height)))
+            size = (max(1, int(pil_img.width * ratio)), max(1, int(pil_img.height * ratio)))
+            if size != pil_img.size:
+                pil_img = pil_img.resize(size)
+            self._logo_tk_img = ImageTk.PhotoImage(pil_img)
+            return self._logo_tk_img
+        except Exception:
+            return None
 
     def _submit(self):
         self.var_error.set("")

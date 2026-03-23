@@ -28,6 +28,19 @@ def resource_path(relpath: str) -> str:
     return os.path.join(base, relpath)
 
 
+def find_login_logo_path() -> str:
+    candidates = [
+        resource_path("logo.png"),
+        resource_path("logo.jpg"),
+        os.path.join(BASE_DIR, "dist", "Gest2A3Eco", "_internal", "logo.png"),
+        resource_path("icono.ico"),
+    ]
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    return ""
+
+
 def app_base_dir() -> str:
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
@@ -153,11 +166,20 @@ def _clear_root(root: tk.Tk):
         child.destroy()
 
 
+def _set_window_geometry(root: tk.Tk, width: int, height: int, *, resizable: bool) -> None:
+    root.update_idletasks()
+    screen_w = root.winfo_screenwidth()
+    screen_h = root.winfo_screenheight()
+    pos_x = max(20, int((screen_w - width) / 2))
+    pos_y = max(20, int((screen_h - height) / 2))
+    root.geometry(f"{width}x{height}+{pos_x}+{pos_y}")
+    root.resizable(resizable, resizable)
+
+
 def main():
     root = tk.Tk()
     root.title("Gest2A3Eco")
-    root.geometry("1850x1100+60+30")
-    root.resizable(True, True)
+    _set_window_geometry(root, 520, 480, resizable=False)
     try:
         root.iconbitmap(resource_path("icono.ico"))
     except Exception:
@@ -231,6 +253,7 @@ def main():
 
     def _launch_authenticated_ui(session):
         _clear_root(root)
+        _set_window_geometry(root, 1850, 1100, resizable=True)
         state["session"] = session
         secured_gestor = SecuredGestorSQLite(gestor_base, AuthorizationService(session))
         content = ttk.Frame(root, padding=10, style="TFrame")
@@ -292,7 +315,8 @@ def main():
     def _show_login():
         nonlocal initial_admin_info
         _clear_root(root)
-        login = UILogin(root, _try_login)
+        _set_window_geometry(root, 520, 480, resizable=False)
+        login = UILogin(root, _try_login, logo_path=find_login_logo_path())
         login.pack(fill="both", expand=True)
         state["login_view"] = login
         state["controller"] = None

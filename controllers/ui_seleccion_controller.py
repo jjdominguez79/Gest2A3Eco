@@ -81,8 +81,9 @@ class SeleccionEmpresaController:
             return
         result = self._view.open_empresa_dialog("Nueva empresa")
         if result:
-            result["logo_path"] = self._store_logo(result.get("logo_path"))
-            self._gestor.upsert_empresa(result)
+            if result.get("_action") != "save_company":
+                return
+            self._save_company_payload(result)
             self.refresh()
             self._view.show_info("Gest2A3Eco", "Empresa guardada.")
 
@@ -96,8 +97,15 @@ class SeleccionEmpresaController:
         emp = self._gestor.get_empresa(codigo, eje)
         result = self._view.open_empresa_dialog("Editar empresa", emp)
         if result:
-            result["logo_path"] = self._store_logo(result.get("logo_path"))
-            self._gestor.upsert_empresa(result)
+            if result.get("_action") == "delete_company":
+                if not self._delete_company_all_exercises(result.get("codigo")):
+                    return
+                self.refresh()
+                self._view.show_info("Gest2A3Eco", "Empresa eliminada.")
+                return
+            if result.get("_action") != "save_company":
+                return
+            self._save_company_payload(result)
             self.refresh()
             self._view.show_info("Gest2A3Eco", "Cambios guardados.")
 
@@ -122,21 +130,56 @@ class SeleccionEmpresaController:
         result = self._view.open_empresa_dialog(f"Copiar {codigo}", base)
         if not result:
             return
+        if result.get("_action") != "save_company":
+            return
         if not result.get("codigo"):
             self._view.show_warning("Gest2A3Eco", "Introduce un codigo para la nueva empresa.")
             return
-        result["logo_path"] = self._store_logo(result.get("logo_path"))
-        if self._gestor.get_empresa(result["codigo"], result.get("ejercicio")):
-            self._view.show_warning("Gest2A3Eco", "Ya existe una empresa con ese codigo y ejercicio.")
-            return
-        try:
-            self._gestor.copiar_empresa(codigo, eje, result)
-        except Exception as e:
-            self._view.show_error("Gest2A3Eco", str(e))
+        if not self._copy_company_payload(codigo, eje, result):
             return
         self.refresh()
         self._view.select_empresa_by_codigo(result["codigo"])
         self._view.show_info("Gest2A3Eco", "Empresa copiada con plantillas y terceros.")
+
+    def _save_company_payload(self, result: dict):
+        configs = [dict(item) for item in (result.get("_exercise_configs") or [])]
+        if not configs:
+            configs = [dict(result)]
+        stored_logo = self._store_logo(result.get("logo_path"))
+        for item in configs:
+            item["logo_path"] = stored_logo
+            self._gestor.upsert_empresa(item)
+
+    def _delete_company_all_exercises(self, codigo: str) -> bool:
+        try:
+            ejercicios = self._gestor.listar_ejercicios_empresa(codigo)
+            for ejercicio in ejercicios:
+                self._gestor.eliminar_empresa(codigo, ejercicio)
+        except Exception as e:
+            self._view.show_error("Gest2A3Eco", str(e))
+            return False
+        return True
+
+    def _copy_company_payload(self, codigo_origen: str, ejercicio_origen: int, result: dict) -> bool:
+        configs = [dict(item) for item in (result.get("_exercise_configs") or [])]
+        if not configs:
+            self._view.show_warning("Gest2A3Eco", "Debes indicar al menos un ejercicio.")
+            return False
+        stored_logo = self._store_logo(result.get("logo_path"))
+        for idx, item in enumerate(configs):
+            item["logo_path"] = stored_logo
+            if self._gestor.get_empresa(item["codigo"], item.get("ejercicio")):
+                self._view.show_warning("Gest2A3Eco", "Ya existe una empresa con ese codigo y ejercicio.")
+                return False
+            try:
+                if idx == 0:
+                    self._gestor.copiar_empresa(codigo_origen, ejercicio_origen, item)
+                else:
+                    self._gestor.upsert_empresa(item)
+            except Exception as e:
+                self._view.show_error("Gest2A3Eco", str(e))
+                return False
+        return True
 
     def terceros(self):
         if not self._ensure_manage_companies():

@@ -93,6 +93,23 @@ class UserAdminDialog(tk.Toplevel):
         ).grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
 
         ttk.Label(right, text="Permisos por empresa").grid(row=5, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 4))
+        bulk = ttk.Frame(right)
+        bulk.grid(row=5, column=1, sticky="e", padx=10, pady=(10, 4))
+        ttk.Button(
+            bulk,
+            text="Quitar todas",
+            command=lambda: self._set_all_company_permissions(CompanyPermission.NONE.value),
+        ).pack(side="right")
+        ttk.Button(
+            bulk,
+            text="Todas escritura",
+            command=lambda: self._set_all_company_permissions(CompanyPermission.WRITE.value),
+        ).pack(side="right", padx=(0, 6))
+        ttk.Button(
+            bulk,
+            text="Todas lectura",
+            command=lambda: self._set_all_company_permissions(CompanyPermission.READ.value),
+        ).pack(side="right", padx=(0, 6))
         company_wrap = ttk.Frame(right)
         company_wrap.grid(row=6, column=0, columnspan=2, sticky="nsew", padx=10, pady=(0, 10))
         company_wrap.columnconfigure(0, weight=1)
@@ -175,13 +192,17 @@ class UserAdminDialog(tk.Toplevel):
     def _toggle_company_permissions(self):
         is_admin = self.var_rol.get() == UserRole.ADMIN.value
         state = "disabled" if is_admin else "readonly"
-        for _, var in self._company_rows:
-            pass
         for child in self.company_frame.winfo_children():
             if isinstance(child, ttk.Combobox):
                 child.configure(state=state)
                 if is_admin:
                     child.set(CompanyPermission.NONE.value)
+
+    def _set_all_company_permissions(self, permiso: str):
+        if self.var_rol.get() == UserRole.ADMIN.value:
+            return
+        for _, var in self._company_rows:
+            var.set(permiso)
 
     def get_form_data(self) -> dict:
         permissions = {codigo: var.get() for codigo, var in self._company_rows}

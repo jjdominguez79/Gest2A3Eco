@@ -1,9 +1,12 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from datetime import date, datetime
-from tkinter.simpledialog import Dialog, askstring
+from tkinter import simpledialog
+from tkinter.simpledialog import askstring
 
 from views.ui_facturas_emitidas import TercerosGlobalDialog
+from views.ui_empresa_dialog import EmpresaDialog as EmpresaFichaDialog
+from services.import_a3_empresa import importar_empresa_desde_a3
 from utils.utilidades import format_num_es, load_monedas
 from controllers.ui_seleccion_controller import SeleccionEmpresaController
 
@@ -63,8 +66,17 @@ def _parse_datetime_ui(val: str) -> datetime:
     except Exception:
         return datetime.min
 
-class EmpresaDialog(Dialog):
-    def __init__(self, parent, titulo, empresa=None):
+class EmpresaDialog(tk.Toplevel):
+    def __init__(self, parent, titulo, empresa=None, gestor=None):
+        super().__init__(parent)
+        self.title(titulo)
+        self.resizable(True, True)
+        self.geometry("980x720")
+        self.minsize(860, 620)
+        self.transient(parent)
+        self.grab_set()
+        self.result = None
+        self._gestor = gestor
         base = {
             "codigo": "",
             "nombre": "",
@@ -90,14 +102,19 @@ class EmpresaDialog(Dialog):
         }
         if empresa:
             base.update(empresa)
-        # Normaliza valores None a "" para evitar errores de conversión
         for k in ("digitos_plan", "ejercicio", "serie_emitidas", "siguiente_num_emitidas", "serie_emitidas_rect", "siguiente_num_emitidas_rect"):
             if base.get(k) is None:
                 base[k] = ""
         self.empresa = base
-        super().__init__(parent, titulo)
+        self._is_edit = bool(empresa and empresa.get("codigo"))
+        self._bank_items = []
+        self._delete_requested = False
+        self._build()
+        self.wait_visibility()
+        self.focus_set()
+        self.wait_window(self)
 
-    def body(self, master):
+    def _build(self):
         self.var_codigo = tk.StringVar(value=str(self.empresa.get("codigo","")))
         self.var_nombre = tk.StringVar(value=str(self.empresa.get("nombre","")))
         self.var_dig = tk.StringVar(value=str(self.empresa.get("digitos_plan") or ""))
@@ -119,37 +136,155 @@ class EmpresaDialog(Dialog):
         self.var_logo_w = tk.StringVar(value=str(self.empresa.get("logo_max_width_mm") or ""))
         self.var_logo_h = tk.StringVar(value=str(self.empresa.get("logo_max_height_mm") or ""))
         self.var_activo = tk.BooleanVar(value=bool(self.empresa.get("activo", True)))
+        root = ttk.Frame(self, padding=12)
+        root.pack(fill="both", expand=True)
+        root.columnconfigure(0, weight=1)
+        root.rowconfigure(0, weight=1)
 
-        ttk.Label(master, text="Codigo").grid(row=0, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_codigo).grid(row=0, column=1)
-        ttk.Label(master, text="Nombre").grid(row=1, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_nombre, width=40).grid(row=1, column=1)
-        ttk.Label(master, text="Digitos plan").grid(row=2, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_dig, width=8).grid(row=2, column=1, sticky="w")
-        ttk.Label(master, text="Ejercicio").grid(row=3, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_eje, width=8).grid(row=3, column=1, sticky="w")
-        ttk.Label(master, text="Serie emitidas").grid(row=4, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_serie, width=10).grid(row=4, column=1, sticky="w")
-        ttk.Label(master, text="Siguiente numero").grid(row=5, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_next, width=10).grid(row=5, column=1, sticky="w")
-        ttk.Label(master, text="Serie rectificativas").grid(row=6, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_serie_rect, width=10).grid(row=6, column=1, sticky="w")
-        ttk.Label(master, text="Siguiente num. rectificativas").grid(row=7, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_next_rect, width=10).grid(row=7, column=1, sticky="w")
-        ttk.Label(master, text="Cuentas bancarias (coma)").grid(row=8, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_cuentas, width=40).grid(row=8, column=1, sticky="w")
-        ttk.Label(master, text="CIF/NIF").grid(row=9, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_cif, width=18).grid(row=9, column=1, sticky="w")
-        ttk.Label(master, text="Direccion").grid(row=10, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_dir, width=40).grid(row=10, column=1, sticky="w")
-        ttk.Label(master, text="CP").grid(row=11, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_cp, width=8).grid(row=11, column=1, sticky="w")
-        ttk.Label(master, text="Poblacion").grid(row=12, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_pob, width=32).grid(row=12, column=1, sticky="w")
-        ttk.Label(master, text="Provincia").grid(row=13, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_prov, width=24).grid(row=13, column=1, sticky="w")
-        ttk.Label(master, text="Telefono").grid(row=14, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_tel, width=20).grid(row=14, column=1, sticky="w")
-        ttk.Label(master, text="Email").grid(row=15, column=0, sticky="w"); ttk.Entry(master, textvariable=self.var_mail, width=30).grid(row=15, column=1, sticky="w")
-        ttk.Label(master, text="Logo (JPG)").grid(row=16, column=0, sticky="w")
+        notebook = ttk.Notebook(root)
+        notebook.grid(row=0, column=0, sticky="nsew")
+
+        tab_general = ttk.Frame(notebook, padding=14)
+        tab_series = ttk.Frame(notebook, padding=14)
+        tab_bancos = ttk.Frame(notebook, padding=14)
+        tab_terceros = ttk.Frame(notebook, padding=14)
+        tab_import = ttk.Frame(notebook, padding=14)
+        notebook.add(tab_general, text="General")
+        notebook.add(tab_series, text="Series")
+        notebook.add(tab_bancos, text="Bancos")
+        notebook.add(tab_terceros, text="Terceros")
+        notebook.add(tab_import, text="Importar A3")
+
+        self._build_general_tab(tab_general)
+        self._build_series_tab(tab_series)
+        self._build_bancos_tab(tab_bancos)
+        self._build_terceros_tab(tab_terceros)
+        self._build_import_tab(tab_import)
+
+        actions = ttk.Frame(root)
+        actions.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        if self._is_edit:
+            ttk.Button(actions, text="Eliminar empresa", style="Danger.TButton", command=self._request_delete).pack(side=tk.LEFT)
+        ttk.Button(actions, text="Cancelar", command=self.destroy).pack(side=tk.RIGHT)
+        ttk.Button(actions, text="Guardar", style="Primary.TButton", command=self.apply).pack(side=tk.RIGHT, padx=(0, 8))
+
+    def _build_general_tab(self, master):
+        master.columnconfigure(1, weight=1)
+        master.columnconfigure(3, weight=1)
+        ttk.Label(master, text="Codigo").grid(row=0, column=0, sticky="w", pady=4)
+        ttk.Entry(master, textvariable=self.var_codigo, width=14).grid(row=0, column=1, sticky="w", pady=4)
+        ttk.Label(master, text="Ejercicio").grid(row=0, column=2, sticky="w", padx=(18, 0), pady=4)
+        ttk.Entry(master, textvariable=self.var_eje, width=10).grid(row=0, column=3, sticky="w", pady=4)
+        ttk.Label(master, text="Nombre").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Entry(master, textvariable=self.var_nombre).grid(row=1, column=1, columnspan=3, sticky="ew", pady=4)
+        ttk.Label(master, text="Digitos plan").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Entry(master, textvariable=self.var_dig, width=10).grid(row=2, column=1, sticky="w", pady=4)
+        ttk.Checkbutton(master, text="Activo", variable=self.var_activo).grid(row=2, column=3, sticky="w", pady=4)
+        ttk.Label(master, text="CIF/NIF").grid(row=3, column=0, sticky="w", pady=4)
+        ttk.Entry(master, textvariable=self.var_cif, width=20).grid(row=3, column=1, sticky="w", pady=4)
+        ttk.Label(master, text="Telefono").grid(row=3, column=2, sticky="w", padx=(18, 0), pady=4)
+        ttk.Entry(master, textvariable=self.var_tel, width=20).grid(row=3, column=3, sticky="w", pady=4)
+        ttk.Label(master, text="Email").grid(row=4, column=0, sticky="w", pady=4)
+        ttk.Entry(master, textvariable=self.var_mail).grid(row=4, column=1, columnspan=3, sticky="ew", pady=4)
+        ttk.Label(master, text="Direccion").grid(row=5, column=0, sticky="w", pady=4)
+        ttk.Entry(master, textvariable=self.var_dir).grid(row=5, column=1, columnspan=3, sticky="ew", pady=4)
+        ttk.Label(master, text="CP").grid(row=6, column=0, sticky="w", pady=4)
+        ttk.Entry(master, textvariable=self.var_cp, width=10).grid(row=6, column=1, sticky="w", pady=4)
+        ttk.Label(master, text="Poblacion").grid(row=6, column=2, sticky="w", padx=(18, 0), pady=4)
+        ttk.Entry(master, textvariable=self.var_pob).grid(row=6, column=3, sticky="ew", pady=4)
+        ttk.Label(master, text="Provincia").grid(row=7, column=0, sticky="w", pady=4)
+        ttk.Entry(master, textvariable=self.var_prov).grid(row=7, column=1, columnspan=3, sticky="ew", pady=4)
+        ttk.Label(master, text="Logo (JPG)").grid(row=8, column=0, sticky="w", pady=4)
         row_logo = ttk.Frame(master)
-        row_logo.grid(row=16, column=1, sticky="we")
+        row_logo.grid(row=8, column=1, columnspan=3, sticky="ew", pady=4)
+        row_logo.columnconfigure(0, weight=1)
         ttk.Entry(row_logo, textvariable=self.var_logo, width=32).pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(row_logo, text="Buscar", command=self._choose_logo).pack(side=tk.LEFT, padx=4)
-        ttk.Label(master, text="Logo ancho (mm)").grid(row=17, column=0, sticky="w")
-        ttk.Entry(master, textvariable=self.var_logo_w, width=10).grid(row=17, column=1, sticky="w")
-        ttk.Label(master, text="Logo alto (mm)").grid(row=18, column=0, sticky="w")
-        ttk.Entry(master, textvariable=self.var_logo_h, width=10).grid(row=18, column=1, sticky="w")
-        ttk.Checkbutton(master, text="Activo", variable=self.var_activo).grid(row=19, column=0, sticky="w", pady=(6, 0))
-        return master
+        ttk.Label(master, text="Logo ancho (mm)").grid(row=9, column=0, sticky="w", pady=4)
+        ttk.Entry(master, textvariable=self.var_logo_w, width=10).grid(row=9, column=1, sticky="w", pady=4)
+        ttk.Label(master, text="Logo alto (mm)").grid(row=9, column=2, sticky="w", padx=(18, 0), pady=4)
+        ttk.Entry(master, textvariable=self.var_logo_h, width=10).grid(row=9, column=3, sticky="w", pady=4)
+
+    def _build_series_tab(self, master):
+        master.columnconfigure(1, weight=1)
+        ttk.Label(
+            master,
+            text="Configuracion de numeracion para el ejercicio indicado en la ficha de empresa.",
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        ttk.Label(master, text="Serie emitidas").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Entry(master, textvariable=self.var_serie, width=14).grid(row=1, column=1, sticky="w", pady=4)
+        ttk.Label(master, text="Siguiente numero").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Entry(master, textvariable=self.var_next, width=14).grid(row=2, column=1, sticky="w", pady=4)
+        ttk.Label(master, text="Serie rectificativas").grid(row=3, column=0, sticky="w", pady=4)
+        ttk.Entry(master, textvariable=self.var_serie_rect, width=14).grid(row=3, column=1, sticky="w", pady=4)
+        ttk.Label(master, text="Siguiente num. rectificativas").grid(row=4, column=0, sticky="w", pady=4)
+        ttk.Entry(master, textvariable=self.var_next_rect, width=14).grid(row=4, column=1, sticky="w", pady=4)
+        self.lbl_series_info = ttk.Label(master, text="")
+        self.lbl_series_info.grid(row=5, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        self.var_eje.trace_add("write", lambda *_: self._refresh_series_info())
+        self._refresh_series_info()
+
+    def _build_bancos_tab(self, master):
+        master.columnconfigure(0, weight=1)
+        master.rowconfigure(1, weight=1)
+        ttk.Label(master, text="Cuentas bancarias de la empresa").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        bank_frame = ttk.Frame(master)
+        bank_frame.grid(row=1, column=0, sticky="nsew")
+        bank_frame.columnconfigure(0, weight=1)
+        bank_frame.rowconfigure(0, weight=1)
+        self.tv_bancos_empresa = ttk.Treeview(bank_frame, columns=("cuenta",), show="headings", height=10)
+        self.tv_bancos_empresa.heading("cuenta", text="Cuenta bancaria / IBAN")
+        self.tv_bancos_empresa.column("cuenta", anchor="w", width=420)
+        self.tv_bancos_empresa.grid(row=0, column=0, sticky="nsew")
+        bank_scroll = ttk.Scrollbar(bank_frame, orient="vertical", command=self.tv_bancos_empresa.yview)
+        bank_scroll.grid(row=0, column=1, sticky="ns")
+        self.tv_bancos_empresa.configure(yscrollcommand=bank_scroll.set)
+        btns = ttk.Frame(master)
+        btns.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        ttk.Button(btns, text="Anadir", style="Primary.TButton", command=self._add_bank).pack(side=tk.LEFT)
+        ttk.Button(btns, text="Editar", command=self._edit_bank).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btns, text="Eliminar", command=self._remove_bank).pack(side=tk.LEFT)
+        ttk.Label(
+            master,
+            text="La primera cuenta de la lista se usara como cuenta bancaria principal de la empresa.",
+        ).grid(row=3, column=0, sticky="w", pady=(10, 0))
+        self._load_banks_from_text(self.var_cuentas.get())
+
+    def _build_terceros_tab(self, master):
+        master.columnconfigure(0, weight=1)
+        master.rowconfigure(1, weight=1)
+        ttk.Label(master, text="Terceros asignados a esta empresa").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        self.tv_terceros_empresa = ttk.Treeview(master, columns=("nif", "nombre", "cliente", "proveedor"), show="headings")
+        for col, text, width in (
+            ("nif", "NIF", 120),
+            ("nombre", "Nombre", 320),
+            ("cliente", "Subcuenta cliente", 140),
+            ("proveedor", "Subcuenta proveedor", 140),
+        ):
+            self.tv_terceros_empresa.heading(col, text=text)
+            self.tv_terceros_empresa.column(col, width=width, anchor="w")
+        self.tv_terceros_empresa.grid(row=1, column=0, sticky="nsew")
+        self.lbl_terceros_info = ttk.Label(master, text="")
+        self.lbl_terceros_info.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        self._load_terceros()
+
+    def _build_import_tab(self, master):
+        master.columnconfigure(1, weight=1)
+        ttk.Label(master, text="Importar datos base desde A3 usando solo el codigo de empresa.").grid(
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 10)
+        )
+        ttk.Label(master, text="Codigo A3").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Entry(master, textvariable=self.var_codigo, width=14).grid(row=1, column=1, sticky="w", pady=4)
+        ttk.Button(master, text="Importar desde A3", style="Primary.TButton", command=self._import_from_a3).grid(
+            row=1, column=2, sticky="w", padx=(10, 0), pady=4
+        )
+        self.var_a3_info = tk.StringVar(value="Sin importacion realizada.")
+        ttk.Label(master, textvariable=self.var_a3_info, justify="left").grid(
+            row=2, column=0, columnspan=3, sticky="w", pady=(12, 0)
+        )
 
     def _cuenta_bancaria_default(self):
-        cuentas = self.var_cuentas.get().strip()
+        cuentas = self._banks_to_text().strip()
         if not cuentas:
             return ""
         for sep in ["\n", ";", ","]:
@@ -165,10 +300,129 @@ class EmpresaDialog(Dialog):
         if path:
             self.var_logo.set(path)
 
+    def _refresh_series_info(self):
+        ejercicio = self.var_eje.get().strip() or "sin definir"
+        self.lbl_series_info.configure(text=f"Estas series se guardaran para el ejercicio {ejercicio}.")
+
+    def _load_banks_from_text(self, text: str):
+        self._bank_items = []
+        raw = str(text or "")
+        for sep in (";", ","):
+            raw = raw.replace(sep, "\n")
+        for item in raw.splitlines():
+            value = item.strip()
+            if value:
+                self._bank_items.append(value)
+        self._refresh_banks_tree()
+
+    def _banks_to_text(self) -> str:
+        return "\n".join(self._bank_items)
+
+    def _refresh_banks_tree(self):
+        self.tv_bancos_empresa.delete(*self.tv_bancos_empresa.get_children())
+        for idx, cuenta in enumerate(self._bank_items):
+            self.tv_bancos_empresa.insert("", "end", iid=str(idx), values=(cuenta,))
+
+    def _selected_bank_index(self):
+        sel = self.tv_bancos_empresa.selection()
+        if not sel:
+            return None
+        try:
+            return int(sel[0])
+        except Exception:
+            return None
+
+    def _add_bank(self):
+        value = simpledialog.askstring("Banco empresa", "Cuenta bancaria o IBAN:", parent=self)
+        if value and value.strip():
+            self._bank_items.append(value.strip())
+            self._refresh_banks_tree()
+
+    def _edit_bank(self):
+        idx = self._selected_bank_index()
+        if idx is None:
+            return
+        current = self._bank_items[idx]
+        value = simpledialog.askstring("Banco empresa", "Cuenta bancaria o IBAN:", initialvalue=current, parent=self)
+        if value and value.strip():
+            self._bank_items[idx] = value.strip()
+            self._refresh_banks_tree()
+
+    def _remove_bank(self):
+        idx = self._selected_bank_index()
+        if idx is None:
+            return
+        del self._bank_items[idx]
+        self._refresh_banks_tree()
+
+    def _load_terceros(self):
+        self.tv_terceros_empresa.delete(*self.tv_terceros_empresa.get_children())
+        codigo = str(self.empresa.get("codigo") or "")
+        ejercicio = self.empresa.get("ejercicio")
+        if not self._gestor or not codigo:
+            self.lbl_terceros_info.configure(text="Guarda o abre una empresa existente para consultar sus terceros.")
+            return
+        try:
+            terceros = self._gestor.listar_terceros_por_empresa(codigo, ejercicio)
+        except Exception:
+            terceros = []
+        for idx, tercero in enumerate(terceros):
+            self.tv_terceros_empresa.insert(
+                "",
+                "end",
+                iid=str(idx),
+                values=(
+                    tercero.get("nif", ""),
+                    tercero.get("nombre", ""),
+                    tercero.get("subcuenta_cliente", ""),
+                    tercero.get("subcuenta_proveedor", ""),
+                ),
+            )
+        self.lbl_terceros_info.configure(text=f"Terceros asignados: {len(terceros)}")
+
+    def _import_from_a3(self):
+        try:
+            data = importar_empresa_desde_a3(self.var_codigo.get())
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self)
+            return
+        self.var_codigo.set(str(data.get("codigo") or ""))
+        if data.get("nombre"):
+            self.var_nombre.set(str(data.get("nombre") or ""))
+        if data.get("cif"):
+            self.var_cif.set(str(data.get("cif") or ""))
+        self.var_eje.set(str(data.get("ejercicio") or self.var_eje.get() or ""))
+        self.var_a3_info.set(
+            "Importacion A3 completada.\n"
+            f"{data.get('_a3_info') or 'Datos basicos detectados en la instalacion local de A3.'}"
+        )
+        self._refresh_series_info()
+
+    def _request_delete(self):
+        codigo = str(self.empresa.get("codigo") or self.var_codigo.get().strip() or "")
+        ejercicio = str(self.empresa.get("ejercicio") or self.var_eje.get().strip() or "")
+        if not codigo:
+            return
+        ok = messagebox.askyesno(
+            "Gest2A3Eco",
+            f"Se eliminara la empresa {codigo} del ejercicio {ejercicio}.\nContinuar?",
+            parent=self,
+        )
+        if not ok:
+            return
+        self.result = {
+            "_action": "delete",
+            "codigo": codigo,
+            "ejercicio": int(ejercicio) if str(ejercicio).strip().isdigit() else ejercicio,
+        }
+        self.destroy()
+
     def apply(self):
         try:
             logo_w_txt = self.var_logo_w.get().strip()
             logo_h_txt = self.var_logo_h.get().strip()
+            cuentas_text = self._banks_to_text().strip()
+            self.var_cuentas.set(cuentas_text)
             self.result = {
                 "codigo": self.var_codigo.get().strip(),
                 "nombre": self.var_nombre.get().strip(),
@@ -179,7 +433,7 @@ class EmpresaDialog(Dialog):
                 "serie_emitidas_rect": self.var_serie_rect.get().strip() or "R",
                 "siguiente_num_emitidas_rect": int(self.var_next_rect.get().strip() or "1"),
                 "cuenta_bancaria": self._cuenta_bancaria_default(),
-                "cuentas_bancarias": self.var_cuentas.get().strip(),
+                "cuentas_bancarias": cuentas_text,
                 "cif": self.var_cif.get().strip(),
                 "direccion": self.var_dir.get().strip(),
                 "cp": self.var_cp.get().strip(),
@@ -192,8 +446,9 @@ class EmpresaDialog(Dialog):
                 "logo_max_height_mm": _to_float_es(logo_h_txt) if logo_h_txt else None,
                 "activo": bool(self.var_activo.get()),
             }
+            self.destroy()
         except Exception as e:
-            messagebox.showerror("Gest2A3Eco", str(e))
+            messagebox.showerror("Gest2A3Eco", str(e), parent=self)
             self.result = None
 
 class UISeleccionEmpresa(ttk.Frame):
@@ -261,8 +516,6 @@ class UISeleccionEmpresa(ttk.Frame):
         self.btn_editar_empresa.pack(side=tk.LEFT, padx=6)
         self.btn_copiar_empresa = ttk.Button(bar, text="Copiar empresa", style="Primary.TButton", command=self.controller.copiar)
         self.btn_copiar_empresa.pack(side=tk.LEFT, padx=6)
-        self.btn_eliminar_empresa = ttk.Button(bar, text="Eliminar empresa", style="Danger.TButton", command=self.controller.eliminar)
-        self.btn_eliminar_empresa.pack(side=tk.LEFT, padx=6)
         self.btn_terceros = ttk.Button(bar, text="Terceros", style="Primary.TButton", command=self.controller.terceros)
         self.btn_terceros.pack(side=tk.LEFT, padx=6)
         self.btn_contabilidad = ttk.Button(bar, text="Contabilidad", style="Primary.TButton", command=self.controller.continuar_contabilidad)
@@ -275,7 +528,6 @@ class UISeleccionEmpresa(ttk.Frame):
                 self.btn_nueva_empresa,
                 self.btn_editar_empresa,
                 self.btn_copiar_empresa,
-                self.btn_eliminar_empresa,
                 self.btn_terceros,
             ):
                 btn.pack_forget()
@@ -541,7 +793,7 @@ class UISeleccionEmpresa(ttk.Frame):
         return result["value"]
 
     def open_empresa_dialog(self, titulo, empresa=None):
-        dlg = EmpresaDialog(self, titulo, empresa)
+        dlg = EmpresaFichaDialog(self, titulo, empresa, gestor=self.gestor)
         return dlg.result
 
     def open_terceros_dialog(self, gestor):

@@ -12,6 +12,16 @@ def _ej_val(v):
         return None
 
 
+def _codigo_empresa_a3(v) -> str:
+    raw = str(v or "").strip().upper()
+    if raw.startswith("E"):
+        raw = raw[1:]
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if not digits:
+        return ""
+    return f"E{digits.zfill(5)}"
+
+
 def _ensure_dir(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -549,6 +559,50 @@ class GestorSQLite:
             (codigo, eje),
         )
         self.conn.commit()
+
+    def normalizar_codigos_empresas_a3(self) -> dict:
+        rows = self.listar_empresas()
+        mapping = {}
+        seen = set()
+        for row in rows:
+            old_code = str(row.get("codigo") or "")
+            new_code = _codigo_empresa_a3(old_code)
+            if not new_code:
+                continue
+            key = (new_code, _ej_val(row.get("ejercicio")))
+            if key in seen and old_code != new_code:
+                raise ValueError(f"Conflicto al normalizar codigos: {old_code} y otra empresa pasan a {new_code}.")
+            seen.add(key)
+            if old_code != new_code:
+                mapping[old_code] = new_code
+
+        code_tables = (
+            ("empresas", "codigo"),
+            ("bancos", "codigo_empresa"),
+            ("facturas_emitidas", "codigo_empresa"),
+            ("facturas_recibidas", "codigo_empresa"),
+            ("facturas_emitidas_docs", "codigo_empresa"),
+            ("albaranes_emitidas_docs", "codigo_empresa"),
+            ("terceros_empresas", "codigo_empresa"),
+            ("usuarios_empresas", "empresa_codigo"),
+        )
+        for table, column in code_tables:
+            cur = self.conn.execute(f"SELECT DISTINCT {column} FROM {table}")
+            for (value,) in cur.fetchall():
+                old_code = str(value or "")
+                new_code = _codigo_empresa_a3(old_code)
+                if old_code and new_code and old_code != new_code:
+                    mapping.setdefault(old_code, new_code)
+        if not mapping:
+            return {"updated_companies": 0, "mapping": {}}
+        with self.conn:
+            for old_code, new_code in mapping.items():
+                for table, column in code_tables:
+                    self.conn.execute(
+                        f"UPDATE {table} SET {column}=? WHERE {column}=?",
+                        (new_code, old_code),
+                    )
+        return {"updated_companies": len(mapping), "mapping": mapping}
 
     # ---------- BANCOS ----------
     def listar_bancos(self, codigo_empresa: str, ejercicio: int):
