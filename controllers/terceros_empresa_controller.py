@@ -1,5 +1,6 @@
 from models.facturas_common import render_a3_tipoC_alta_cuenta
 from utils.utilidades import validar_subcuenta_longitud
+from utils.validaciones import normalizar_nif_cif
 
 
 class TercerosEmpresaController:
@@ -89,7 +90,7 @@ class TercerosEmpresaController:
         cuentas_usadas = set()
         fecha_alta = f"{int(self._ejercicio):04d}0101"
         for t in terceros:
-            nif = str(t.get("nif") or "").strip().upper()
+            nif = normalizar_nif_cif(t.get("nif"))
             nombre = str(t.get("nombre") or "").strip()
             base_kwargs = {
                 "codigo_empresa": str(self._codigo),

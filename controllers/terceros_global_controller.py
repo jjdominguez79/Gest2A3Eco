@@ -1,3 +1,6 @@
+from utils.validaciones import normalizar_nif_cif, validar_nif_cif_nie
+
+
 class TercerosGlobalController:
     def __init__(self, gestor, view):
         self._gestor = gestor
@@ -18,6 +21,7 @@ class TercerosGlobalController:
             return
         result = self._view.open_tercero_ficha(None)
         if result:
+            result["nif"] = self._norm_nif(result.get("nif"))
             if not self._nif_valido(result.get("nif")):
                 self._view.show_warning("Gest2A3Eco", "NIF/CIF/NIE invalido. Revisa el formato.")
                 return
@@ -40,6 +44,7 @@ class TercerosGlobalController:
         result = self._view.open_tercero_ficha(ter)
         if result:
             result["id"] = tid
+            result["nif"] = self._norm_nif(result.get("nif"))
             if not self._nif_valido(result.get("nif")):
                 self._view.show_warning("Gest2A3Eco", "NIF/CIF/NIE invalido. Revisa el formato.")
                 return
@@ -116,11 +121,9 @@ class TercerosGlobalController:
         return False
 
     def _norm_nif(self, value: str | None) -> str:
-        return "".join(str(value or "").strip().upper().split())
+        return normalizar_nif_cif(value)
 
     def _nif_valido(self, nif: str | None) -> bool:
-        from utils.validaciones import validar_nif_cif_nie
-
         return validar_nif_cif_nie(nif)
 
     def _is_admin(self) -> bool:

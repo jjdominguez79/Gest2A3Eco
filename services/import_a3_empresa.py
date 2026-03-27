@@ -3,6 +3,12 @@ from __future__ import annotations
 import re
 from datetime import date
 from pathlib import Path
+import unicodedata
+
+try:
+    import xlrd
+except Exception:  # pragma: no cover
+    xlrd = None
 
 
 _ID_RE = re.compile(
@@ -22,6 +28,12 @@ _SKIP_NAME_TOKENS = {
 }
 
 _PHONE_RE = re.compile(r"\b\d{9,12}\b")
+_EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+_WEB_RE = re.compile(r"\b(?:https?://|www\.)[A-Z0-9./_-]+\b", re.IGNORECASE)
+_ADDRESS_START_RE = re.compile(
+    r"\b(?:CL|C/|CALLE|AV|AVDA|AVENIDA|PZ|PL|PLAZA|PS|PASEO|CTRA|CARRETERA|BARRIO|POL|URB|TR|RONDA)\b",
+    re.IGNORECASE,
+)
 
 
 def _clean_code(codigo: str) -> str:
@@ -60,13 +72,21 @@ def _candidate_var_paths(codigo: str) -> list[Path]:
     return out
 
 
+def _candidate_dashboard_paths(codigo: str) -> list[Path]:
+    out = []
+    for folder in _candidate_dirs(codigo):
+        out.append(folder / f"INF{codigo}" / "CUADRO DE MANDO.XLS")
+        out.append(folder / f"inf{codigo}" / "CUADRO DE MANDO.XLS")
+    return out
+
+
 def _read_header_text(path: Path) -> str:
     data = path.read_bytes()[:512]
     return data.decode("latin-1", errors="ignore").replace("\x00", " ")
 
 
 def _to_printable_text(data: bytes) -> str:
-    return "".join(chr(b) if 32 <= b <= 126 else " " for b in data)
+    return "".join(chr(b) if b >= 32 else " " for b in data)
 
 
 def _read_var_blocks(path: Path) -> list[dict]:
@@ -81,7 +101,7 @@ def _read_var_blocks(path: Path) -> list[dict]:
         tag = block[2:14].decode("latin-1", errors="ignore").rstrip("\x00 ").strip()
         text = block.decode("latin-1", errors="ignore")
         printable = _to_printable_text(block)
-        blocks.append({"tag": tag, "text": text, "printable": printable})
+        blocks.append({"tag": tag, "text": text, "printable": printable, "raw": block})
     return blocks
 
 
@@ -99,53 +119,130 @@ def _extract_name_from_var(text: str) -> str:
     return candidates[-1] if candidates else ""
 
 
-def _parse_var_company_data(var_path: Path) -> dict:
-    blocks = _read_var_blocks(var_path)
-    by_tag = {}
+def _block_by_tag(blocks: list[dict], tag: str) -> dict:
     for block in blocks:
-        by_tag.setdefault(block["tag"], []).append(block)
+        if block.get("tag") == tag:
+            return block
+    return {}
 
-    emo = (by_tag.get("EMO") or [{}])[0]
-    dom = (by_tag.get("DOM") or [{}])[0]
-    emo_text = str(emo.get("text") or "")
-    dom_text = str(dom.get("text") or "")
 
-    cif = _extract_cif(emo_text)
-    telefono_match = _PHONE_RE.search(emo_text)
-    telefono = telefono_match.group(0) if telefono_match else ""
-    nombre = _extract_name_from_var(emo_text)
+def _block_by_prefix(blocks: list[dict], prefix: str) -> dict:
+    for block in blocks:
+        if str(block.get("tag") or "").startswith(prefix):
+            return block
+    return {}
 
-    sigla = emo_text[79:81].strip()
-    via = " ".join(emo_text[81:111].split()).strip()
-    numero = emo_text[111:116].strip()
-    resto = " ".join(emo_text[116:122].split()).strip()
-    direccion = " ".join(part for part in (sigla, via, numero, resto) if part).strip()
 
+def _clean_visible_text(text: str) -> str:
+    raw = str(text or "").replace("\x00", " ")
+    cleaned = []
+    for ch in raw:
+        if ch in "\r\n\t":
+            cleaned.append(" ")
+        elif ch.isalnum() or ch in " .,:;/@_()-[]":
+            cleaned.append(ch)
+        elif ch.isalpha():
+            cleaned.append(ch)
+        else:
+            cat = unicodedata.category(ch)
+            cleaned.append(ch if cat.startswith(("L", "N")) else " ")
+    return " ".join("".join(cleaned).split())
+
+
+def _extract_email(text: str) -> str:
+    match = _EMAIL_RE.search(text or "")
+    return match.group(0).strip() if match else ""
+
+
+def _extract_web(text: str) -> str:
+    match = _WEB_RE.search(text or "")
+    return match.group(0).strip() if match else ""
+
+
+def _extract_postal_code(text: str) -> str:
+    for match in re.findall(r"\b\d{5}\b", text or ""):
+        if match.startswith(("01", "02", "03", "04", "05", "06", "07", "08", "09")) or match.startswith(
+            tuple(f"{n:02d}" for n in range(10, 53))
+        ):
+            return match
+    return ""
+
+
+def _extract_city_province(dom_text: str) -> tuple[str, str]:
     poblacion = " ".join(dom_text[116:146].split()).title()
     provincia = " ".join(dom_text[146:176].split()).title()
-    if not poblacion or poblacion == "Nn":
-        dom_tokens = [
-            token.strip().title()
-            for token in re.findall(r"[A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ ]{2,}", dom_text.upper())
-            if token.strip() and token.strip() not in {"DOM", "NN"}
-        ]
-        poblacion = dom_tokens[0] if dom_tokens else ""
-        provincia = dom_tokens[1] if len(dom_tokens) > 1 else poblacion
+    if poblacion and provincia and poblacion != "Nn":
+        return poblacion, provincia
+    dom_tokens = [
+        token.strip().title()
+        for token in re.findall(r"[A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ ]{2,}", dom_text.upper())
+        if token.strip() and token.strip() not in {"DOM", "NN"}
+    ]
+    poblacion = dom_tokens[0] if dom_tokens else ""
+    provincia = dom_tokens[1] if len(dom_tokens) > 1 else poblacion
+    return poblacion, provincia
+
+
+def _extract_address_from_ban(block: dict) -> tuple[str, str]:
+    printable = str(block.get("printable") or "")
+    start = _ADDRESS_START_RE.search(printable)
+    if not start:
+        return "", ""
+    tail = printable[start.start() :]
+    parts = [part.strip(" ,.-") for part in re.split(r"\s{2,}", tail) if part.strip(" ,.-")]
+    if not parts:
+        return "", ""
+    direccion = parts[0]
+    poblacion = parts[1].title() if len(parts) > 1 else ""
+    return direccion.title(), poblacion
+
+
+def _extract_phone(text: str) -> str:
+    for match in _PHONE_RE.findall(text or ""):
+        if len(match) == 9:
+            return match
+    return ""
+
+
+def _parse_var_company_data(var_path: Path) -> dict:
+    blocks = _read_var_blocks(var_path)
+    emp = _block_by_tag(blocks, "EMP")
+    dom = _block_by_tag(blocks, "DOM")
+    ban = _block_by_prefix(blocks, "BAN")
+    full_text = "\n".join(str(block.get("text") or "") for block in blocks)
+    emp_text = str(emp.get("text") or "")
+    dom_text = str(dom.get("text") or "")
+    ban_text = str(ban.get("text") or "")
+
+    cif = _extract_cif(full_text)
+    telefono = _extract_phone(full_text)
+    email = _extract_email(full_text)
+    web = _extract_web(full_text)
+    nombre = _extract_name_from_var(full_text)
+    poblacion, provincia = _extract_city_province(dom_text)
+    direccion, poblacion_ban = _extract_address_from_ban(ban)
+    cp = _extract_postal_code(" ".join([emp_text, dom_text, ban_text]))
+    if not poblacion and poblacion_ban:
+        poblacion = poblacion_ban
 
     raw_preview_parts = []
-    for key in ("EMP", "DOM", "EMO", "IVA"):
-        for block in by_tag.get(key, [])[:1]:
-            raw_preview_parts.append(f"[{key}] {' '.join(block['printable'].split())}")
+    for key in ("EMP", "DOM", "IVA"):
+        block = _block_by_tag(blocks, key)
+        if block:
+            raw_preview_parts.append(f"[{key}] {_clean_visible_text(block['printable'])}")
+    if ban:
+        raw_preview_parts.append(f"[{ban.get('tag')}] {_clean_visible_text(ban.get('printable'))}")
 
     return {
         "nombre": nombre,
         "cif": cif,
         "direccion": direccion,
-        "cp": "",
+        "cp": cp,
         "poblacion": poblacion,
         "provincia": provincia,
         "telefono": telefono,
-        "email": "",
+        "email": email,
+        "web": web,
         "_a3_raw_header": "\n".join(raw_preview_parts).strip(),
     }
 
@@ -191,14 +288,71 @@ def _extract_year(text: str, fallback_dirs: list[Path]) -> int:
     return max(years) if years else 2025
 
 
+def _to_int(value) -> int | None:
+    try:
+        if value is None or value == "":
+            return None
+        return int(float(value))
+    except Exception:
+        return None
+
+
+def _parse_dashboard_company_data(path: Path, codigo_norm: str) -> dict:
+    if xlrd is None:
+        return {}
+    try:
+        book = xlrd.open_workbook(str(path), on_demand=True)
+    except Exception:
+        return {}
+
+    def _sheet(name: str):
+        try:
+            return book.sheet_by_name(name)
+        except Exception:
+            return None
+
+    idx_sheet = _sheet("Índice") or _sheet("Indice")
+    if idx_sheet is not None and idx_sheet.nrows:
+        headers = [str(idx_sheet.cell_value(0, col)).strip().lower() for col in range(idx_sheet.ncols)]
+        try:
+            col_empresa = headers.index("empresa")
+            col_ejercicio = headers.index("ejercicio")
+            col_nombre = headers.index("nombre empresa")
+        except ValueError:
+            col_empresa = col_ejercicio = col_nombre = -1
+        if min(col_empresa, col_ejercicio, col_nombre) >= 0:
+            selected = None
+            for row in range(1, idx_sheet.nrows):
+                empresa = _to_int(idx_sheet.cell_value(row, col_empresa))
+                ejercicio = _to_int(idx_sheet.cell_value(row, col_ejercicio))
+                nombre = str(idx_sheet.cell_value(row, col_nombre) or "").strip()
+                if not nombre:
+                    continue
+                if empresa is not None and str(empresa).zfill(5) == codigo_norm:
+                    if selected is None or (ejercicio or 0) > (selected.get("ejercicio") or 0):
+                        selected = {"nombre": nombre, "ejercicio": ejercicio}
+            if selected:
+                return selected
+
+    menu_sheet = _sheet("Menu")
+    if menu_sheet is not None:
+        for row in range(min(menu_sheet.nrows, 12)):
+            for col in range(min(menu_sheet.ncols, 8)):
+                val = str(menu_sheet.cell_value(row, col) or "").strip()
+                if len(val) >= 6 and sum(ch.isalpha() for ch in val) >= 6:
+                    return {"nombre": val}
+    return {}
+
+
 def importar_empresa_desde_a3(codigo: str) -> dict:
     codigo_norm = _clean_code(codigo)
     codigo_a3 = f"E{codigo_norm}"
-    data_path = next((path for path in _candidate_paths(codigo_norm) if path.exists()), None)
     company_dirs = [path for path in _candidate_dirs(codigo_norm) if path.exists()]
     var_path = next((path for path in _candidate_var_paths(codigo_norm) if path.exists()), None)
+    dashboard_path = next((path for path in _candidate_dashboard_paths(codigo_norm) if path.exists()), None)
+    data_path = next((path for path in _candidate_paths(codigo_norm) if path.exists()), None)
 
-    if data_path is None and not company_dirs and var_path is None:
+    if data_path is None and not company_dirs and var_path is None and dashboard_path is None:
         raise ValueError(f"No se ha encontrado la empresa {codigo_a3} en A3.")
 
     text = _read_header_text(data_path) if data_path else ""
@@ -209,7 +363,11 @@ def importar_empresa_desde_a3(codigo: str) -> dict:
             detalle_origen = _parse_var_company_data(var_path)
         except Exception:
             detalle_origen = {}
-    nombre = str(detalle_origen.get("nombre") or _extract_name(text) or "")
+    dashboard_data = {}
+    if dashboard_path:
+        dashboard_data = _parse_dashboard_company_data(dashboard_path, codigo_norm)
+
+    nombre = str(dashboard_data.get("nombre") or _extract_name(text) or "")
     cif = str(detalle_origen.get("cif") or _extract_cif(text) or "")
     direccion = str(detalle_origen.get("direccion") or "")
     cp = str(detalle_origen.get("cp") or "")
@@ -217,16 +375,24 @@ def importar_empresa_desde_a3(codigo: str) -> dict:
     provincia = str(detalle_origen.get("provincia") or "")
     telefono = str(detalle_origen.get("telefono") or "")
     email = str(detalle_origen.get("email") or "")
-    ejercicio = date.today().year
+    ejercicio = (
+        _to_int(dashboard_data.get("ejercicio"))
+        or _extract_year(text, company_dirs)
+        or date.today().year
+    )
 
     detalle = []
+    if dashboard_path:
+        detalle.append(f"Cuadro de mando A3: {dashboard_path}")
     if var_path:
         detalle.append(f"Ficha empresa VAR: {var_path}")
     if data_path:
         detalle.append(f"Ficha A3: {data_path}")
     if company_dirs:
         detalle.append(f"Carpeta A3ECO: {company_dirs[0]}")
-    detalle.append(f"Ejercicio asignado por defecto: {ejercicio} (no importado desde A3)")
+    detalle.append(f"Ejercicio detectado: {ejercicio}")
+    if detalle_origen.get("web"):
+        detalle.append(f"Web detectada: {detalle_origen.get('web')}")
 
     return {
         "codigo": codigo_a3,

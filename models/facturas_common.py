@@ -4,6 +4,7 @@ from typing import List
 from decimal import Decimal
 from datetime import datetime, date, timedelta
 import re
+import unicodedata
 
 _EXCEL_EPOCH_1900 = date(1899, 12, 30)  # Excel (sistema 1900)
 _EXCEL_EPOCH_1904 = date(1904, 1, 1)    # Excel (sistema 1904, frecuente en Mac)
@@ -30,11 +31,38 @@ class Linea:
 def _s(x) -> str:
     return "" if x is None else str(x)
 
+
+def _latin1_safe_text(value: str) -> str:
+    s = _s(value)
+    if not s:
+        return ""
+    replacements = {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2026": "...",
+        "\u00a0": " ",
+        "\u20ac": "EUR",
+    }
+    for src, dst in replacements.items():
+        s = s.replace(src, dst)
+    s = "".join(ch if ch >= " " or ch in "\r\n\t" else " " for ch in s)
+    try:
+        s.encode("latin-1")
+        return s
+    except UnicodeEncodeError:
+        normalized = unicodedata.normalize("NFKD", s)
+        normalized = normalized.encode("latin-1", "ignore").decode("latin-1")
+        return normalized
+
 def _digits(s: str) -> str:
     return "".join(ch for ch in _s(s) if ch.isdigit())
 
 def _fix_len(s: str, n: int) -> str:
-    s = _s(s)
+    s = _latin1_safe_text(s)
     return s[:n].ljust(n)
 
 def _set_slice(buf: list, start: int, end: int, value: str):

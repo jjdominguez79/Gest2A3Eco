@@ -11,6 +11,25 @@ except Exception:  # pragma: no cover
     ImageTk = None
 
 
+def _center_window(win, parent=None):
+    try:
+        win.update_idletasks()
+        width = win.winfo_width()
+        height = win.winfo_height()
+        if parent is None:
+            screen_w = win.winfo_screenwidth()
+            screen_h = win.winfo_screenheight()
+            pos_x = (screen_w - width) // 2
+            pos_y = (screen_h - height) // 2
+        else:
+            parent.update_idletasks()
+            pos_x = parent.winfo_rootx() + (parent.winfo_width() - width) // 2
+            pos_y = parent.winfo_rooty() + (parent.winfo_height() - height) // 2
+        win.geometry(f"+{max(pos_x, 0)}+{max(pos_y, 0)}")
+    except Exception:
+        pass
+
+
 class UILogin(ttk.Frame):
     def __init__(self, parent, on_login, logo_path: str | None = None):
         super().__init__(parent)
@@ -125,6 +144,7 @@ class ChangePasswordDialog(tk.Toplevel):
         self.transient(parent)
         self.grab_set()
         self.wait_visibility()
+        _center_window(self, parent)
         self.focus_set()
 
     def _ok(self):

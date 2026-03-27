@@ -4,8 +4,27 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from services.import_a3_empresa import importar_empresa_desde_a3
-from utils.validaciones import validar_nif_cif_nie
+from utils.validaciones import normalizar_nif_cif, validar_nif_cif_nie
 from views.ui_facturas_emitidas import TerceroFicha
+
+
+def _center_window(win, parent=None):
+    try:
+        win.update_idletasks()
+        width = win.winfo_width()
+        height = win.winfo_height()
+        if parent is None:
+            screen_w = win.winfo_screenwidth()
+            screen_h = win.winfo_screenheight()
+            pos_x = (screen_w - width) // 2
+            pos_y = (screen_h - height) // 2
+        else:
+            parent.update_idletasks()
+            pos_x = parent.winfo_rootx() + (parent.winfo_width() - width) // 2
+            pos_y = parent.winfo_rooty() + (parent.winfo_height() - height) // 2
+        win.geometry(f"+{max(pos_x, 0)}+{max(pos_y, 0)}")
+    except Exception:
+        pass
 
 
 def _to_float_es(x) -> float:
@@ -41,6 +60,7 @@ class EmpresaDialog(tk.Toplevel):
         self._exercise_rows = []
         self._build()
         self.wait_visibility()
+        _center_window(self, parent)
         self.focus_set()
         self.wait_window(self)
 
@@ -48,7 +68,8 @@ class EmpresaDialog(tk.Toplevel):
         self.var_codigo = tk.StringVar(value=str(self._empresa.get("codigo", "")))
         self.var_nombre = tk.StringVar(value=str(self._empresa.get("nombre", "")))
         self.var_dig = tk.StringVar(value=str(self._empresa.get("digitos_plan", 8) or "8"))
-        self.var_cif = tk.StringVar(value=str(self._empresa.get("cif", "")))
+        self.var_cif = tk.StringVar(value=normalizar_nif_cif(self._empresa.get("cif", "")))
+        self.var_cif.trace_add("write", lambda *_: self._normalize_identifier_var(self.var_cif))
         self.var_dir = tk.StringVar(value=str(self._empresa.get("direccion", "")))
         self.var_cp = tk.StringVar(value=str(self._empresa.get("cp", "")))
         self.var_pob = tk.StringVar(value=str(self._empresa.get("poblacion", "")))
@@ -73,7 +94,6 @@ class EmpresaDialog(tk.Toplevel):
         self._build_exercises_tab(ttk.Frame(nb, padding=14), nb)
         self._build_banks_tab(ttk.Frame(nb, padding=14), nb)
         self._build_third_parties_tab(ttk.Frame(nb, padding=14), nb)
-        self._build_import_tab(ttk.Frame(nb, padding=14), nb)
 
         actions = ttk.Frame(root)
         actions.grid(row=1, column=0, sticky="ew", pady=(10, 0))
@@ -86,6 +106,7 @@ class EmpresaDialog(tk.Toplevel):
         nb.add(tab, text="General")
         tab.columnconfigure(1, weight=1)
         tab.columnconfigure(3, weight=1)
+        tab.rowconfigure(11, weight=1)
         fields = [
             ("Codigo", self.var_codigo, 0, 0, 14),
             ("Nombre", self.var_nombre, 1, 0, None),
@@ -106,6 +127,9 @@ class EmpresaDialog(tk.Toplevel):
             entry = ttk.Entry(tab, **kwargs)
             span = 1 if width else 3 if row in (1, 4, 5, 7) else 1
             entry.grid(row=row, column=col + 1, columnspan=span, sticky="ew" if not width else "w", pady=4)
+        ttk.Button(tab, text="Importar datos de A3", style="Primary.TButton", command=self._import_from_a3).grid(
+            row=0, column=2, columnspan=2, sticky="e", pady=4
+        )
         ttk.Checkbutton(tab, text="Activo", variable=self.var_activo).grid(row=2, column=3, sticky="w", pady=4)
         ttk.Label(tab, text="Logo (JPG)").grid(row=8, column=0, sticky="w", pady=4)
         row_logo = ttk.Frame(tab)
@@ -117,6 +141,22 @@ class EmpresaDialog(tk.Toplevel):
         ttk.Entry(tab, textvariable=self.var_logo_w, width=10).grid(row=9, column=1, sticky="w", pady=4)
         ttk.Label(tab, text="Logo alto (mm)").grid(row=9, column=2, sticky="w", pady=4, padx=(18, 0))
         ttk.Entry(tab, textvariable=self.var_logo_h, width=10).grid(row=9, column=3, sticky="w", pady=4)
+        ttk.Label(tab, textvariable=self.var_a3_info, justify="left").grid(row=10, column=0, columnspan=4, sticky="w", pady=(12, 6))
+        preview = ttk.LabelFrame(tab, text="Detalle capturado desde A3")
+        preview.grid(row=11, column=0, columnspan=4, sticky="nsew", pady=(0, 4))
+        preview.columnconfigure(0, weight=1)
+        preview.rowconfigure(0, weight=1)
+        self.txt_a3_preview = tk.Text(preview, height=8, wrap="word", state="disabled")
+        self.txt_a3_preview.grid(row=0, column=0, sticky="nsew")
+        scroll = ttk.Scrollbar(preview, orient="vertical", command=self.txt_a3_preview.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.txt_a3_preview.configure(yscrollcommand=scroll.set)
+
+    def _normalize_identifier_var(self, var: tk.StringVar):
+        current = var.get()
+        normalized = normalizar_nif_cif(current)
+        if current != normalized:
+            var.set(normalized)
 
     def _build_exercises_tab(self, tab, nb):
         nb.add(tab, text="Ejercicios")
@@ -211,28 +251,6 @@ class EmpresaDialog(tk.Toplevel):
         self.lbl_terceros_info = ttk.Label(tab, text="")
         self.lbl_terceros_info.grid(row=3, column=0, sticky="w", pady=(8, 0))
         self._load_terceros()
-
-    def _build_import_tab(self, tab, nb):
-        nb.add(tab, text="Importar A3")
-        tab.columnconfigure(1, weight=1)
-        ttk.Label(tab, text="Importar datos base desde A3 usando solo el codigo de empresa.").grid(
-            row=0, column=0, columnspan=3, sticky="w", pady=(0, 10)
-        )
-        ttk.Label(tab, text="Codigo A3 (E00000)").grid(row=1, column=0, sticky="w")
-        ttk.Entry(tab, textvariable=self.var_codigo, width=14).grid(row=1, column=1, sticky="w")
-        ttk.Button(tab, text="Importar desde A3", style="Primary.TButton", command=self._import_from_a3).grid(row=1, column=2, sticky="w", padx=(10, 0))
-        ttk.Label(tab, textvariable=self.var_a3_info, justify="left").grid(row=2, column=0, columnspan=3, sticky="w", pady=(12, 0))
-        ttk.Label(tab, text="Detalle capturado desde A3ECO").grid(row=3, column=0, columnspan=3, sticky="w", pady=(14, 6))
-        frame = ttk.Frame(tab)
-        frame.grid(row=4, column=0, columnspan=3, sticky="nsew")
-        tab.rowconfigure(4, weight=1)
-        frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(0, weight=1)
-        self.txt_a3_preview = tk.Text(frame, height=14, wrap="word", state="disabled")
-        self.txt_a3_preview.grid(row=0, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(frame, orient="vertical", command=self.txt_a3_preview.yview)
-        scroll.grid(row=0, column=1, sticky="ns")
-        self.txt_a3_preview.configure(yscrollcommand=scroll.set)
 
     def _exercise_from_row(self, row: dict | None) -> dict:
         data = dict(row or {})
@@ -433,18 +451,19 @@ class EmpresaDialog(tk.Toplevel):
         return self.var_codigo.get().strip() or str(self._empresa.get("codigo") or "")
 
     def _nif_duplicado(self, nif: str | None, exclude_id: str | None = None) -> bool:
-        val = "".join(str(nif or "").strip().upper().split())
+        val = normalizar_nif_cif(nif)
         if not val:
             return False
         for tercero in (self._gestor.listar_terceros() if self._gestor else []):
             if exclude_id is not None and str(tercero.get("id")) == str(exclude_id):
                 continue
-            if "".join(str(tercero.get("nif") or "").strip().upper().split()) == val:
+            if normalizar_nif_cif(tercero.get("nif")) == val:
                 return True
         return False
 
     def _save_third_party(self, payload: dict, third_party_id: str | None = None):
-        nif = payload.get("nif")
+        nif = normalizar_nif_cif(payload.get("nif"))
+        payload["nif"] = nif
         if nif and not validar_nif_cif_nie(nif):
             raise ValueError("NIF/CIF/NIE invalido.")
         if self._nif_duplicado(nif, exclude_id=third_party_id):
@@ -619,7 +638,21 @@ class EmpresaDialog(tk.Toplevel):
         if data.get("nombre"):
             self.var_nombre.set(str(data.get("nombre") or ""))
         if data.get("cif"):
-            self.var_cif.set(str(data.get("cif") or ""))
+            self.var_cif.set(normalizar_nif_cif(data.get("cif") or ""))
+        if data.get("direccion"):
+            self.var_dir.set(str(data.get("direccion") or ""))
+        if data.get("cp"):
+            self.var_cp.set(str(data.get("cp") or ""))
+        if data.get("poblacion"):
+            self.var_pob.set(str(data.get("poblacion") or ""))
+        if data.get("provincia"):
+            self.var_prov.set(str(data.get("provincia") or ""))
+        if data.get("telefono"):
+            self.var_tel.set(str(data.get("telefono") or ""))
+        if data.get("email"):
+            self.var_mail.set(str(data.get("email") or ""))
+        if data.get("digitos_plan"):
+            self.var_dig.set(str(data.get("digitos_plan") or "8"))
         payload = self._exercise_from_row(data)
         current = next((row for row in self._exercise_rows if int(row["ejercicio"]) == payload["ejercicio"]), None)
         if current:
@@ -682,7 +715,7 @@ class EmpresaDialog(tk.Toplevel):
                 "digitos_plan": int(self.var_dig.get().strip() or "8"),
                 "cuenta_bancaria": self._bank_items[0] if self._bank_items else "",
                 "cuentas_bancarias": cuentas_text,
-                "cif": self.var_cif.get().strip(),
+                "cif": normalizar_nif_cif(self.var_cif.get()),
                 "direccion": self.var_dir.get().strip(),
                 "cp": self.var_cp.get().strip(),
                 "poblacion": self.var_pob.get().strip(),

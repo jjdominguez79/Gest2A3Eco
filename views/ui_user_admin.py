@@ -6,6 +6,25 @@ from tkinter import messagebox, ttk
 from models.auth import CompanyPermission, UserRole
 
 
+def _center_window(win, parent=None):
+    try:
+        win.update_idletasks()
+        width = win.winfo_width()
+        height = win.winfo_height()
+        if parent is None:
+            screen_w = win.winfo_screenwidth()
+            screen_h = win.winfo_screenheight()
+            pos_x = (screen_w - width) // 2
+            pos_y = (screen_h - height) // 2
+        else:
+            parent.update_idletasks()
+            pos_x = parent.winfo_rootx() + (parent.winfo_width() - width) // 2
+            pos_y = parent.winfo_rooty() + (parent.winfo_height() - height) // 2
+        win.geometry(f"+{max(pos_x, 0)}+{max(pos_y, 0)}")
+    except Exception:
+        pass
+
+
 class UserAdminDialog(tk.Toplevel):
     def __init__(self, parent, controller):
         super().__init__(parent)
@@ -253,6 +272,8 @@ class UserAdminDialog(tk.Toplevel):
         btns.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         ttk.Button(btns, text="Guardar", style="Primary.TButton", command=_ok).pack(side="left")
         ttk.Button(btns, text="Cancelar", command=top.destroy).pack(side="left", padx=(8, 0))
+        top.wait_visibility()
+        _center_window(top, self)
         top.wait_window()
         if result["password"] is None:
             return None

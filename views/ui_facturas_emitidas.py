@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 from datetime import date, datetime
 from utils.utilidades import aplicar_descuento_total_lineas, format_num_es, load_monedas
+from utils.validaciones import normalizar_nif_cif
 
 from controllers.ui_facturas_emitidas_controller import FacturasEmitidasController
 from controllers.factura_dialog_controller import FacturaDialogController
@@ -102,6 +103,16 @@ def _fmt4(x) -> str:
 def _fmt2s(x, simbolo: str = "") -> str:
     txt = format_num_es(x, 2)
     return f"{txt} {simbolo}".strip() if simbolo else txt
+
+
+def _bind_nif_normalizer(var: tk.StringVar):
+    def _normalize(*_args):
+        current = var.get()
+        normalized = normalizar_nif_cif(current)
+        if current != normalized:
+            var.set(normalized)
+
+    var.trace_add("write", _normalize)
 
 def _center_window(win, parent=None):
     try:
@@ -225,6 +236,8 @@ class TerceroFicha(tk.Toplevel):
         for i, (lbl, key, width) in enumerate(fields):
             ttk.Label(self, text=lbl).grid(row=i, column=0, sticky="w", padx=6, pady=3)
             v = tk.StringVar(value=str(t.get(key, "")))
+            if key == "nif":
+                _bind_nif_normalizer(v)
             self.vars[key] = v
             ttk.Entry(self, textvariable=v, width=width).grid(row=i, column=1, sticky="w", padx=6, pady=3)
         btns = ttk.Frame(self)
@@ -238,6 +251,7 @@ class TerceroFicha(tk.Toplevel):
 
     def _ok(self):
         data = {k: v.get().strip() for k, v in self.vars.items()}
+        data["nif"] = normalizar_nif_cif(data.get("nif"))
         self.result = data
         self.destroy()
 
@@ -245,6 +259,8 @@ class TercerosGlobalDialog(tk.Toplevel):
     def __init__(self, parent, gestor):
         super().__init__(parent)
         self.title("Terceros")
+        self.geometry("1320x860")
+        self.minsize(1120, 720)
         self.resizable(True, True)
         self.gestor = gestor
         self.controller = TercerosGlobalController(gestor, self)
@@ -435,6 +451,8 @@ class TercerosEmpresaDialog(tk.Toplevel):
     def __init__(self, parent, gestor, codigo_empresa, ejercicio, ndig_plan):
         super().__init__(parent)
         self.title("Terceros de empresa")
+        self.geometry("1240x820")
+        self.minsize(1040, 680)
         self.resizable(True, True)
         self.gestor = gestor
         self.codigo = codigo_empresa
@@ -876,7 +894,8 @@ class FacturaDialog(tk.Toplevel):
         self.var_modelo_fiscal = tk.StringVar(
             value=self._modelo_fiscal_by_code.get(modelo_fiscal_code, MODELOS_FISCALES_EMITIDAS[0][1])
         )
-        self.var_nif = tk.StringVar(value=f.get("nif", ""))
+        self.var_nif = tk.StringVar(value=normalizar_nif_cif(f.get("nif", "")))
+        _bind_nif_normalizer(self.var_nif)
         self.var_nombre = tk.StringVar(value=f.get("nombre", ""))
         self.var_desc = tk.StringVar(value=f.get("descripcion", ""))
         obs_val = f.get("observaciones")
@@ -1378,7 +1397,7 @@ class FacturaDialog(tk.Toplevel):
         return self.cb_tercero.current()
 
     def set_nif(self, value):
-        self.var_nif.set(value)
+        self.var_nif.set(normalizar_nif_cif(value))
 
     def set_nombre(self, value):
         self.var_nombre.set(value)
@@ -1595,7 +1614,7 @@ class FacturaDialog(tk.Toplevel):
         return self._modelo_fiscal_by_label.get(label, "")
 
     def get_nif(self):
-        return self.var_nif.get().strip()
+        return normalizar_nif_cif(self.var_nif.get())
 
     def get_nombre(self):
         return self.var_nombre.get().strip()

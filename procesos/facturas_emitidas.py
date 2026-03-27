@@ -12,6 +12,7 @@ from models.facturas_common import (
     render_emitidas_detalle_512,
     render_a3_tipoC_alta_cuenta,
 )
+from utils.validaciones import normalizar_nif_cif
 
 
 def _fv(x) -> float:
@@ -95,7 +96,7 @@ def _ajustar_cuenta(raw: Any, ndig: int) -> str:
     return dig.ljust(ndig, "0")
 
 def _norm_nif(nif: Any) -> str:
-    return str(nif or "").strip().upper()
+    return normalizar_nif_cif(nif)
 
 def _datos_tercero(row: Dict[str, Any], terceros_by_nif: Dict[str, Dict[str, Any]] | None):
     nif = _norm_nif(row.get("NIF Cliente Proveedor") or row.get("NIF"))

@@ -1,6 +1,7 @@
 from datetime import date
 
 from utils.utilidades import validar_subcuenta_longitud, aplicar_descuento_total_lineas, format_num_es
+from utils.validaciones import normalizar_nif_cif
 
 
 class FacturaDialogController:
@@ -143,7 +144,7 @@ class FacturaDialogController:
             "fecha_operacion": fecha_common,
             "tipo_operacion": self._view.get_tipo_operacion(),
             "modelo_fiscal": self._view.get_modelo_fiscal(),
-            "nif": self._view.get_nif(),
+            "nif": normalizar_nif_cif(self._view.get_nif()),
             "nombre": self._view.get_nombre(),
             "descripcion": self._view.get_descripcion(),
             "observaciones": self._view.get_observaciones(),

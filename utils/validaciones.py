@@ -7,10 +7,14 @@ _CIF_LETTER_TYPES = set("KPQS")
 _CIF_DIGIT_TYPES = set("ABEH")
 
 
-def _norm_nif(value: str | None) -> str:
+def normalizar_nif_cif(value: str | None) -> str:
     if value is None:
         return ""
     return re.sub(r"[^A-Za-z0-9]", "", str(value)).upper()
+
+
+def _norm_nif(value: str | None) -> str:
+    return normalizar_nif_cif(value)
 
 
 def _validar_dni(nif: str) -> bool:

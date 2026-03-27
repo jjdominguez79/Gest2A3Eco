@@ -3,6 +3,7 @@ import shutil
 import sys
 import webbrowser
 import subprocess
+from pathlib import Path
 from urllib.parse import quote
 from datetime import datetime
 import traceback
@@ -14,6 +15,7 @@ from procesos.facturas_word import (
 )
 from procesos.facturas_pdf_basico import generar_pdf_basico
 from utils.utilidades import aplicar_descuento_total_lineas, load_app_config, load_monedas
+from utils.validaciones import normalizar_nif_cif
 
 
 class FacturasEmitidasController:
@@ -28,6 +30,11 @@ class FacturasEmitidasController:
 
     def _security(self):
         return getattr(self._gestor, "security", None)
+
+    def _codigo_empresa_a3(self) -> str:
+        digits = "".join(ch for ch in str(self._codigo or "") if ch.isdigit())
+        digits = digits.zfill(5) if digits else "00000"
+        return f"E{digits[:5]}"
 
     def _can_write(self) -> bool:
         security = self._security()
@@ -374,7 +381,7 @@ class FacturasEmitidasController:
         if not albaranes:
             self._view.show_warning("Gest2A3Eco", "No hay albaranes pendientes de facturar.")
             return
-        nifs = {str(a.get("nif") or "").strip() for a in albaranes}
+        nifs = {normalizar_nif_cif(a.get("nif")) for a in albaranes}
         if len(nifs) > 1:
             self._view.show_warning("Gest2A3Eco", "Los albaranes seleccionados tienen distintos clientes.")
             return
@@ -404,7 +411,7 @@ class FacturasEmitidasController:
             "fecha_operacion": fecha,
             "tipo_operacion": "01",
             "modelo_fiscal": "",
-            "nif": base.get("nif", ""),
+            "nif": normalizar_nif_cif(base.get("nif", "")),
             "nombre": base.get("nombre", ""),
             "descripcion": f"Factura de albaranes: {nums}",
             "subcuenta_cliente": base.get("subcuenta_cliente", ""),
@@ -656,13 +663,13 @@ class FacturasEmitidasController:
         ndig = int(self._empresa_conf.get("digitos_plan", 8))
         terceros = self._gestor.listar_terceros()
         terceros_by_nif = {
-            str(t.get("nif") or "").strip().upper(): t
+            normalizar_nif_cif(t.get("nif")): t
             for t in terceros
-            if str(t.get("nif") or "").strip()
+            if normalizar_nif_cif(t.get("nif"))
         }
         terceros_empresa = self._gestor.listar_terceros_por_empresa(self._codigo, self._ejercicio)
         for t in terceros_empresa:
-            nif = str(t.get("nif") or "").strip().upper()
+            nif = normalizar_nif_cif(t.get("nif"))
             if nif:
                 terceros_by_nif[nif] = t
         plantillas_cache = {}
@@ -695,7 +702,7 @@ class FacturasEmitidasController:
             self._view.show_warning("Gest2A3Eco", "No se generaron registros.")
             return
 
-        save_path = self._view.ask_save_dat_path(f"E{self._codigo}.dat")
+        save_path = self._view.ask_save_dat_path(f"{self._codigo_empresa_a3()}.dat")
         if not save_path:
             return
         with open(save_path, "w", encoding="latin-1", newline="") as f:
@@ -911,7 +918,7 @@ class FacturasEmitidasController:
         )
         return {
             "nombre": fac.get("nombre") or cli.get("nombre", ""),
-            "nif": fac.get("nif") or cli.get("nif", ""),
+            "nif": normalizar_nif_cif(fac.get("nif") or cli.get("nif", "")),
             "direccion": cli.get("direccion", ""),
             "cp": cli.get("cp", ""),
             "poblacion": cli.get("poblacion", ""),
@@ -932,7 +939,7 @@ class FacturasEmitidasController:
             "Tipo Operacion": fac.get("tipo_operacion", "01"),
             "Impreso": fac.get("modelo_fiscal", ""),
             "Descripcion Factura": fac.get("descripcion", ""),
-            "NIF Cliente Proveedor": fac.get("nif", ""),
+            "NIF Cliente Proveedor": normalizar_nif_cif(fac.get("nif", "")),
             "Nombre Cliente Proveedor": fac.get("nombre", ""),
             "_pdf_ref": fac.get("pdf_ref", ""),
         }
@@ -1009,10 +1016,10 @@ class FacturasEmitidasController:
             subcuenta = str(rel.get("subcuenta_cliente") or "").strip()
             if subcuenta:
                 return subcuenta
-        nif = str(fac.get("nif") or "").strip().upper()
+        nif = normalizar_nif_cif(fac.get("nif"))
         if nif:
             for tercero in self._gestor.listar_terceros_por_empresa(self._codigo, eje):
-                if str(tercero.get("nif") or "").strip().upper() == nif:
+                if normalizar_nif_cif(tercero.get("nif")) == nif:
                     subcuenta = str(tercero.get("subcuenta_cliente") or "").strip()
                     if subcuenta:
                         return subcuenta
@@ -1201,11 +1208,11 @@ class FacturasEmitidasController:
         return self._a3_pdf_path_for(pdf_ref, self._ejercicio)
 
     def _a3_pdf_path_for(self, pdf_ref: str, ejercicio) -> str:
-        codigo = str(self._codigo or "").strip()
+        codigo = self._codigo_empresa_a3()
         ejercicio = str(ejercicio or "").strip()
         if not codigo or not ejercicio:
             return ""
-        base_dir = os.path.join("Z:\\", "A3", "A3ECO", f"E{codigo}", "FACTURAS", ejercicio)
+        base_dir = os.path.join("Z:\\", "A3", "A3ECO", codigo, "FACTURAS", ejercicio)
         try:
             os.makedirs(base_dir, exist_ok=True)
         except Exception:
@@ -1219,10 +1226,12 @@ class FacturasEmitidasController:
     def _ensure_pdf_ref(self, fac: dict) -> dict:
         ref = str(fac.get("pdf_ref") or "").strip()
         if ref:
-            base_ref = ref.split("@", 1)[0].strip()
-            if base_ref and base_ref != ref:
+            if "@" in ref:
+                return fac
+            full_ref = self._resolve_full_pdf_ref(fac, ref)
+            if full_ref and full_ref != ref:
                 fac = dict(fac)
-                fac["pdf_ref"] = base_ref
+                fac["pdf_ref"] = full_ref
                 self._persist_factura_if_allowed(fac)
             return fac
         raw_id = "".join(ch for ch in str(fac.get("id") or "") if ch.isdigit())
@@ -1234,6 +1243,28 @@ class FacturasEmitidasController:
         fac["pdf_ref"] = ref
         self._persist_factura_if_allowed(fac)
         return fac
+
+    def _resolve_full_pdf_ref(self, fac: dict, ref: str) -> str:
+        ref = str(ref or "").strip()
+        if not ref or "@" in ref:
+            return ref
+        for key in ("pdf_path_a3", "pdf_path"):
+            path = str(fac.get(key) or "").strip()
+            if not path:
+                continue
+            stem = os.path.splitext(os.path.basename(path))[0].strip()
+            if stem.startswith(ref) and "@" in stem:
+                return stem
+        a3_dir = os.path.dirname(
+            self._a3_pdf_path_for(ref, fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio)
+        )
+        if a3_dir and os.path.isdir(a3_dir):
+            patterns = [f"{ref}@*.pdf", f"{ref}@*.PDF"]
+            for pattern in patterns:
+                matches = sorted(Path(a3_dir).glob(pattern))
+                if matches:
+                    return matches[0].stem.strip()
+        return ref
 
     def _log_pdf_error(self, msg: str, exc: Exception, template_path: str, save_path: str) -> None:
         try:

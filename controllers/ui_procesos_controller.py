@@ -20,6 +20,11 @@ class ProcesosController:
         self._view = view
         self._excel_path = None
 
+    def _codigo_empresa_a3(self) -> str:
+        digits = "".join(ch for ch in str(self._codigo or "") if ch.isdigit())
+        digits = digits.zfill(5) if digits else "00000"
+        return f"E{digits[:5]}"
+
     def refresh_plantillas(self):
         tipo = (self._view.get_tipo() or "").lower()
         if "terceros" in tipo:
@@ -123,7 +128,7 @@ class ProcesosController:
                         msg += preview
                     self._view.show_warning("Gest2A3Eco", msg)
                     return
-                save_path = self._view.ask_save_path(f"E{self._codigo}.dat")
+                save_path = self._view.ask_save_path(f"{self._codigo_empresa_a3()}.dat")
                 if not save_path:
                     return
                 with open(save_path, "w", encoding="latin-1", newline="") as f:
@@ -158,13 +163,13 @@ class ProcesosController:
                     return
                 terceros = self._gestor.listar_terceros()
                 terceros_by_nif = {
-                    str(t.get("nif") or "").strip().upper(): t
+                    self._norm_nif(t.get("nif")): t
                     for t in terceros
-                    if str(t.get("nif") or "").strip()
+                    if self._norm_nif(t.get("nif"))
                 }
                 terceros_empresa = self._gestor.listar_terceros_por_empresa(self._codigo, self._ejercicio)
                 for t in terceros_empresa:
-                    nif = str(t.get("nif") or "").strip().upper()
+                    nif = self._norm_nif(t.get("nif"))
                     if nif:
                         terceros_by_nif[nif] = t
                 registros = generar_emitidas(
@@ -176,7 +181,7 @@ class ProcesosController:
                     terceros_by_nif=terceros_by_nif,
                 )
                 if registros:
-                    save_path = self._view.ask_save_path(f"E{self._codigo}")
+                    save_path = self._view.ask_save_path(f"{self._codigo_empresa_a3()}.dat")
                     if not save_path:
                         return
                     with open(save_path, "w", encoding="latin-1", newline="") as f:
@@ -203,13 +208,13 @@ class ProcesosController:
                 return
             terceros = self._gestor.listar_terceros()
             terceros_by_nif = {
-                str(t.get("nif") or "").strip().upper(): t
+                self._norm_nif(t.get("nif")): t
                 for t in terceros
-                if str(t.get("nif") or "").strip()
+                if self._norm_nif(t.get("nif"))
             }
             terceros_empresa = self._gestor.listar_terceros_por_empresa(self._codigo, self._ejercicio)
             for t in terceros_empresa:
-                nif = str(t.get("nif") or "").strip().upper()
+                nif = self._norm_nif(t.get("nif"))
                 if nif:
                     terceros_by_nif[nif] = t
             out_lines = generar_recibidas_suenlace(
@@ -222,7 +227,7 @@ class ProcesosController:
             )
             avisos = []
             if out_lines:
-                save_path = self._view.ask_save_path(f"E{self._codigo}")
+                save_path = self._view.ask_save_path(f"{self._codigo_empresa_a3()}.dat")
                 if not save_path:
                     return
                 with open(save_path, "w", encoding="latin-1", newline="") as f:
@@ -463,8 +468,9 @@ class ProcesosController:
         return s
 
     def _norm_nif(self, val):
-        s = self._norm_text(val)
-        return s.upper() if s else ""
+        from utils.validaciones import normalizar_nif_cif
+
+        return normalizar_nif_cif(self._norm_text(val))
 
     def _norm_text(self, val):
         if val is None:
