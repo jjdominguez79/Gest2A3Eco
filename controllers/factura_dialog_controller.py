@@ -71,6 +71,16 @@ class FacturaDialogController:
             self.refresh_totales()
             self.clear_line_editor()
 
+    def move_linea_up(self):
+        if self._view.move_selected_line(-1):
+            self._sync_retencion()
+            self.refresh_totales()
+
+    def move_linea_down(self):
+        if self._view.move_selected_line(1):
+            self._sync_retencion()
+            self.refresh_totales()
+
     def refresh_totales(self):
         base = iva = 0.0
         resumen = {}

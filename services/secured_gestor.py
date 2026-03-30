@@ -152,10 +152,12 @@ class SecuredGestorSQLite:
 
     def upsert_empresa(self, emp: dict):
         codigo = str(emp.get("codigo") or "")
+        if not self.security.can_manage_company_catalog():
+            raise PermissionError("Solo administradores y empleados pueden gestionar empresas.")
         if codigo and not self.security.can_manage_companies():
-            self.security.ensure_company_write(codigo)
-        elif not self.security.can_manage_companies():
-            raise PermissionError("Solo el administrador puede crear empresas.")
+            existente = self._base.get_empresa(codigo, emp.get("ejercicio"))
+            if existente:
+                self.security.ensure_company_write(codigo)
         return self._base.upsert_empresa(emp)
 
     def copiar_empresa(self, codigo_origen: str, ejercicio_origen: int, nueva_empresa: dict):

@@ -1178,6 +1178,8 @@ class FacturaDialog(tk.Toplevel):
 
         bar = ttk.Frame(frm)
         bar.grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 6))
+        ttk.Button(bar, text="Subir linea", command=self._move_linea_up).pack(side=tk.LEFT, padx=4)
+        ttk.Button(bar, text="Bajar linea", command=self._move_linea_down).pack(side=tk.LEFT, padx=4)
         ttk.Button(bar, text="Eliminar linea", command=self._del_linea).pack(side=tk.LEFT, padx=4)
         row += 1
 
@@ -1294,6 +1296,12 @@ class FacturaDialog(tk.Toplevel):
 
     def _del_linea(self):
         self.controller.del_linea()
+
+    def _move_linea_up(self):
+        self.controller.move_linea_up()
+
+    def _move_linea_down(self):
+        self.controller.move_linea_down()
 
     def _refresh_totales(self):
         self.controller.refresh_totales()
@@ -1491,6 +1499,25 @@ class FacturaDialog(tk.Toplevel):
             self.tv.delete(sel[0])
             return True
         return False
+
+    def move_selected_line(self, offset: int) -> bool:
+        sel = self.tv.selection()
+        if not sel:
+            return False
+        iid = sel[0]
+        items = list(self.tv.get_children())
+        try:
+            idx = items.index(iid)
+        except ValueError:
+            return False
+        new_idx = idx + int(offset)
+        if new_idx < 0 or new_idx >= len(items) or new_idx == idx:
+            return False
+        self.tv.move(iid, "", new_idx)
+        self.tv.selection_set(iid)
+        self.tv.focus(iid)
+        self.tv.see(iid)
+        return True
 
     def get_lineas(self):
         out = []

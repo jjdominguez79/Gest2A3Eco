@@ -30,6 +30,26 @@ class SeleccionEmpresaController:
         self._view.show_error("Gest2A3Eco", "Solo el administrador puede gestionar empresas.")
         return False
 
+    def _can_edit_company_catalog(self) -> bool:
+        security = getattr(self._gestor, "security", None)
+        return bool(security and security.can_manage_company_catalog())
+
+    def _ensure_edit_company_catalog(self) -> bool:
+        if self._can_edit_company_catalog():
+            return True
+        self._view.show_error("Gest2A3Eco", "Solo administradores y empleados pueden gestionar empresas.")
+        return False
+
+    def _can_manage_global_third_parties(self) -> bool:
+        security = getattr(self._gestor, "security", None)
+        return bool(security and security.can_manage_global_third_parties())
+
+    def _ensure_manage_global_third_parties(self) -> bool:
+        if self._can_manage_global_third_parties():
+            return True
+        self._view.show_error("Gest2A3Eco", "Solo administradores y empleados pueden gestionar terceros.")
+        return False
+
     def refresh(self):
         self._empresas_cache = self._gestor.listar_empresas()
         self._group_empresas()
@@ -77,7 +97,7 @@ class SeleccionEmpresaController:
         )
 
     def nueva(self):
-        if not self._ensure_manage_companies():
+        if not self._ensure_edit_company_catalog():
             return
         result = self._view.open_empresa_dialog("Nueva empresa")
         if result:
@@ -88,7 +108,7 @@ class SeleccionEmpresaController:
             self._view.show_info("Gest2A3Eco", "Empresa guardada.")
 
     def editar(self):
-        if not self._ensure_manage_companies():
+        if not self._ensure_edit_company_catalog():
             return
         codigo, eje = self._sel_empresa()
         if not codigo:
@@ -182,7 +202,7 @@ class SeleccionEmpresaController:
         return True
 
     def terceros(self):
-        if not self._ensure_manage_companies():
+        if not self._ensure_manage_global_third_parties():
             return
         self._view.open_terceros_dialog(self._gestor)
 

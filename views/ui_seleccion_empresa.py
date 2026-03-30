@@ -508,6 +508,9 @@ class UISeleccionEmpresa(ttk.Frame):
         bar = ttk.Frame(self); bar.pack(fill=tk.X, padx=10, pady=6)
         is_admin = bool(self.session and self.session.is_admin())
         is_cliente = bool(self.session and self.session.role.value == "cliente")
+        can_manage_company_catalog = bool(
+            self.session and self.session.role.value in ("admin", "empleado")
+        )
         self.btn_importar_csv = ttk.Button(bar, text="Importar CSV empresas", style="Primary.TButton", command=self.controller.importar_csv)
         self.btn_importar_csv.pack(side=tk.LEFT, padx=(0,6))
         self.btn_nueva_empresa = ttk.Button(bar, text="Nueva empresa", style="Primary.TButton", command=self.controller.nueva)
@@ -523,13 +526,10 @@ class UISeleccionEmpresa(ttk.Frame):
         self.btn_facturacion = ttk.Button(bar, text="Facturacion", style="Primary.TButton", command=self.controller.continuar_facturacion)
         self.btn_facturacion.pack(side=tk.RIGHT)
         if not is_admin:
-            for btn in (
-                self.btn_importar_csv,
-                self.btn_nueva_empresa,
-                self.btn_editar_empresa,
-                self.btn_copiar_empresa,
-                self.btn_terceros,
-            ):
+            for btn in (self.btn_importar_csv, self.btn_copiar_empresa):
+                btn.pack_forget()
+        if not can_manage_company_catalog:
+            for btn in (self.btn_nueva_empresa, self.btn_editar_empresa, self.btn_terceros):
                 btn.pack_forget()
         if is_cliente:
             self.btn_contabilidad.pack_forget()

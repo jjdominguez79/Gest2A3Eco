@@ -77,6 +77,12 @@ class AuthorizationService:
     def can_manage_companies(self) -> bool:
         return self._session.is_admin()
 
+    def can_manage_company_catalog(self) -> bool:
+        return self._session.role in (UserRole.ADMIN, UserRole.EMPLEADO)
+
+    def can_manage_global_third_parties(self) -> bool:
+        return self._session.role in (UserRole.ADMIN, UserRole.EMPLEADO)
+
     def permission_for_company(self, codigo_empresa: str) -> CompanyPermission:
         return self._session.permission_for_company(codigo_empresa)
 
