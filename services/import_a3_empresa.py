@@ -10,6 +10,30 @@ try:
 except Exception:  # pragma: no cover
     xlrd = None
 
+# ─── Constantes para lectura binaria de ficheros ISAM de A3Eco ───────────────
+# Descubiertas por ingeniería inversa de los DAT de A3Eco (Wolters Kluwer).
+# Todos los ficheros tienen cabecera de 128 bytes y registros de tamaño fijo.
+# El byte 0 de cada registro es el marcador:  0x40/0x41=activo, otro=borrado.
+
+_ISAM_HEADER = 128
+_ISAM_ACTIVE = {0x40, 0x41}
+
+# Fichero EM (empresa master): tamaño de registro 248 bytes
+#   bytes  5-13 : NIF/CIF (9 chars, cp850)
+#   bytes 54-73 : Razón Social (20 chars, cp850)
+_EM_REC_SIZE = 248
+_EM_NIF_SLICE = slice(5, 14)
+_EM_NAME_SLICE = slice(54, 74)
+
+# Fichero CU (cuentas / plan contable): tamaño de registro 260 bytes
+#   bytes 5-7  : número de cuenta (entero big-endian 3 bytes)
+#   bytes 8-37 : descripción (30 chars, cp850)
+_CU_REC_SIZE = 260
+_CU_CODE_SLICE = slice(5, 8)
+_CU_DESC_SLICE = slice(8, 38)
+
+_A3_ENCODING = "cp850"
+
 
 _ID_RE = re.compile(
     r"\b(?:[ABCDEFGHJNPQRSUVW]\d{7}[0-9A-J]|\d{8}[A-Z]|[XYZ]\d{7}[A-Z])\b",
@@ -69,6 +93,24 @@ def _candidate_var_paths(codigo: str) -> list[Path]:
     for folder in _candidate_dirs(codigo):
         out.append(folder / f"{codigo}VAR.DAT")
         out.append(folder / f"{codigo}VAR.dat")
+    return out
+
+
+def _candidate_em_paths(codigo: str) -> list[Path]:
+    """Localiza el fichero EM (empresa master) dentro de la carpeta E{codigo}."""
+    out = []
+    for folder in _candidate_dirs(codigo):
+        out.append(folder / f"{codigo}0EM.DAT")
+        out.append(folder / f"{codigo}0EM.dat")
+    return out
+
+
+def _candidate_cu_paths(codigo: str) -> list[Path]:
+    """Localiza el fichero CU (plan de cuentas) dentro de la carpeta E{codigo}."""
+    out = []
+    for folder in _candidate_dirs(codigo):
+        out.append(folder / f"{codigo}0CU.DAT")
+        out.append(folder / f"{codigo}0CU.dat")
     return out
 
 
@@ -202,6 +244,76 @@ def _extract_phone(text: str) -> str:
         if len(match) == 9:
             return match
     return ""
+
+
+def _decode_field(raw: bytes) -> str:
+    """Decodifica un campo de texto A3 (cp850) y elimina espacios."""
+    try:
+        text = raw.decode(_A3_ENCODING, errors="replace")
+    except Exception:
+        text = raw.decode("latin-1", errors="replace")
+    return text.strip()
+
+
+def _leer_em_binario(em_path: Path) -> dict:
+    """
+    Lee el fichero EM.DAT (empresa master) en formato ISAM binario.
+    Devuelve {'nif': ..., 'nombre': ...} con los datos del primer registro activo.
+    Layout: cabecera 128 bytes, registros de 248 bytes cada uno.
+      bytes  5-13  NIF/CIF (9 chars cp850)
+      bytes 54-73  Razón Social (20 chars cp850)
+    """
+    try:
+        data = em_path.read_bytes()
+    except OSError:
+        return {}
+    offset = _ISAM_HEADER
+    nif = ""
+    nombre = ""
+    while offset + _EM_REC_SIZE <= len(data):
+        rec = data[offset: offset + _EM_REC_SIZE]
+        if rec[0] in _ISAM_ACTIVE:
+            if not nif:
+                candidate = _decode_field(rec[_EM_NIF_SLICE])
+                # Filtrar: NIF válido tiene al menos 7 caracteres alfanuméricos
+                candidate_clean = re.sub(r"[^A-Za-z0-9]", "", candidate).upper()
+                if len(candidate_clean) >= 7:
+                    nif = candidate_clean[:9]
+            if not nombre:
+                candidate = _decode_field(rec[_EM_NAME_SLICE])
+                if len(candidate) >= 3:
+                    nombre = candidate
+            if nif and nombre:
+                break
+        offset += _EM_REC_SIZE
+    return {"nif": nif, "nombre": nombre}
+
+
+def _leer_plan_cuentas_binario(cu_path: Path) -> list[dict]:
+    """
+    Lee el fichero CU.DAT (plan de cuentas) en formato ISAM binario.
+    Devuelve lista de {'cuenta': '100', 'descripcion': 'CAPITAL SOCIAL'}.
+    Layout: cabecera 128 bytes, registros de 260 bytes.
+      bytes 5-7  número de cuenta (big-endian 3 bytes)
+      bytes 8-37 descripción (30 chars cp850)
+    """
+    try:
+        data = cu_path.read_bytes()
+    except OSError:
+        return []
+    cuentas = []
+    offset = _ISAM_HEADER
+    while offset + _CU_REC_SIZE <= len(data):
+        rec = data[offset: offset + _CU_REC_SIZE]
+        if rec[0] in _ISAM_ACTIVE:
+            code_bytes = rec[_CU_CODE_SLICE]
+            num = (code_bytes[0] << 16) | (code_bytes[1] << 8) | code_bytes[2]
+            if num > 0:
+                desc = _decode_field(rec[_CU_DESC_SLICE])
+                if desc:
+                    cuentas.append({"cuenta": str(num), "descripcion": desc})
+        offset += _CU_REC_SIZE
+    return cuentas
 
 
 def _parse_var_company_data(var_path: Path) -> dict:
@@ -349,12 +461,21 @@ def importar_empresa_desde_a3(codigo: str) -> dict:
     codigo_a3 = f"E{codigo_norm}"
     company_dirs = [path for path in _candidate_dirs(codigo_norm) if path.exists()]
     var_path = next((path for path in _candidate_var_paths(codigo_norm) if path.exists()), None)
+    em_path = next((path for path in _candidate_em_paths(codigo_norm) if path.exists()), None)
+    cu_path = next((path for path in _candidate_cu_paths(codigo_norm) if path.exists()), None)
     dashboard_path = next((path for path in _candidate_dashboard_paths(codigo_norm) if path.exists()), None)
     data_path = next((path for path in _candidate_paths(codigo_norm) if path.exists()), None)
 
-    if data_path is None and not company_dirs and var_path is None and dashboard_path is None:
+    if em_path is None and data_path is None and not company_dirs and var_path is None and dashboard_path is None:
         raise ValueError(f"No se ha encontrado la empresa {codigo_a3} en A3.")
 
+    # 1. Lectura binaria del fichero EM (más fiable para NIF y nombre)
+    em_data = _leer_em_binario(em_path) if em_path else {}
+
+    # 2. Plan de cuentas desde fichero CU binario
+    plan_cuentas = _leer_plan_cuentas_binario(cu_path) if cu_path else []
+
+    # 3. Variables empresa (VAR): web, email, domicilio, teléfono
     text = _read_header_text(data_path) if data_path else ""
     raw_preview = " ".join(text.split())
     detalle_origen = {}
@@ -367,8 +488,19 @@ def importar_empresa_desde_a3(codigo: str) -> dict:
     if dashboard_path:
         dashboard_data = _parse_dashboard_company_data(dashboard_path, codigo_norm)
 
-    nombre = str(dashboard_data.get("nombre") or _extract_name(text) or "")
-    cif = str(detalle_origen.get("cif") or _extract_cif(text) or "")
+    # Prioridad: binario EM > dashboard > VAR regex > texto cabecera
+    nombre = str(
+        dashboard_data.get("nombre")
+        or em_data.get("nombre")
+        or _extract_name(text)
+        or ""
+    )
+    cif = str(
+        em_data.get("nif")
+        or detalle_origen.get("cif")
+        or _extract_cif(text)
+        or ""
+    )
     direccion = str(detalle_origen.get("direccion") or "")
     cp = str(detalle_origen.get("cp") or "")
     poblacion = str(detalle_origen.get("poblacion") or "")
@@ -384,8 +516,12 @@ def importar_empresa_desde_a3(codigo: str) -> dict:
     detalle = []
     if dashboard_path:
         detalle.append(f"Cuadro de mando A3: {dashboard_path}")
+    if em_path:
+        detalle.append(f"Fichero EM (empresa master): {em_path}")
     if var_path:
         detalle.append(f"Ficha empresa VAR: {var_path}")
+    if cu_path:
+        detalle.append(f"Plan de cuentas CU ({len(plan_cuentas)} cuentas): {cu_path}")
     if data_path:
         detalle.append(f"Ficha A3: {data_path}")
     if company_dirs:
@@ -416,6 +552,7 @@ def importar_empresa_desde_a3(codigo: str) -> dict:
         "logo_max_width_mm": None,
         "logo_max_height_mm": None,
         "activo": True,
+        "plan_cuentas": plan_cuentas,
         "_a3_info": "\n".join(detalle),
         "_a3_raw_header": str(detalle_origen.get("_a3_raw_header") or raw_preview[:1200]),
     }

@@ -178,6 +178,15 @@ CREATE TABLE IF NOT EXISTS terceros_empresas (
   subcuenta_gasto TEXT,
   PRIMARY KEY (codigo_empresa, ejercicio, tercero_id)
 );
+CREATE TABLE IF NOT EXISTS plan_cuentas (
+  codigo_empresa TEXT NOT NULL,
+  ejercicio INTEGER NOT NULL,
+  cuenta TEXT NOT NULL,
+  descripcion TEXT,
+  PRIMARY KEY (codigo_empresa, ejercicio, cuenta)
+);
+CREATE INDEX IF NOT EXISTS idx_plan_cuentas_empresa
+  ON plan_cuentas(codigo_empresa, ejercicio);
 """
 
 AUTH_SCHEMA = """
@@ -283,6 +292,19 @@ class GestorSQLite:
         self.conn.execute("UPDATE terceros SET tipo=NULL")
         self.conn.commit()
         self._ensure_column("usuarios", "must_change_password", "INTEGER")
+        self.conn.commit()
+        # Migración: crear tabla plan_cuentas si no existe (idempotente via SCHEMA)
+        self.conn.executescript(
+            "CREATE TABLE IF NOT EXISTS plan_cuentas ("
+            "  codigo_empresa TEXT NOT NULL,"
+            "  ejercicio INTEGER NOT NULL,"
+            "  cuenta TEXT NOT NULL,"
+            "  descripcion TEXT,"
+            "  PRIMARY KEY (codigo_empresa, ejercicio, cuenta)"
+            ");"
+            "CREATE INDEX IF NOT EXISTS idx_plan_cuentas_empresa"
+            "  ON plan_cuentas(codigo_empresa, ejercicio);"
+        )
         self.conn.commit()
 
     def _ensure_column(self, table: str, column: str, col_type: str):
@@ -515,6 +537,53 @@ class GestorSQLite:
         self.conn.commit()
         if not existe:
             self._clonar_plantillas_si_hace_falta(emp.get("codigo"), emp.get("ejercicio"))
+
+    # ── Plan de Cuentas ──────────────────────────────────────────────────────
+
+    def upsert_plan_cuentas(self, codigo_empresa: str, ejercicio: int,
+                             cuentas: list[dict]) -> int:
+        """
+        Reemplaza el plan de cuentas completo de una empresa/ejercicio.
+        Cada elemento de 'cuentas' debe tener {'cuenta': str, 'descripcion': str}.
+        Devuelve el número de cuentas guardadas.
+        """
+        eje = _ej_val(ejercicio)
+        self.conn.execute(
+            "DELETE FROM plan_cuentas WHERE codigo_empresa=? AND ejercicio=?",
+            (codigo_empresa, eje),
+        )
+        if cuentas:
+            self.conn.executemany(
+                "INSERT OR REPLACE INTO plan_cuentas (codigo_empresa, ejercicio, cuenta, descripcion)"
+                " VALUES (?, ?, ?, ?)",
+                [
+                    (codigo_empresa, eje, str(c.get("cuenta", "")), str(c.get("descripcion", "")))
+                    for c in cuentas
+                    if c.get("cuenta")
+                ],
+            )
+        self.conn.commit()
+        return len(cuentas)
+
+    def get_plan_cuentas(self, codigo_empresa: str, ejercicio: int) -> list[dict]:
+        """Devuelve el plan de cuentas de una empresa/ejercicio ordenado por cuenta."""
+        eje = _ej_val(ejercicio)
+        cur = self.conn.execute(
+            "SELECT cuenta, descripcion FROM plan_cuentas"
+            " WHERE codigo_empresa=? AND ejercicio=?"
+            " ORDER BY CAST(cuenta AS INTEGER), cuenta",
+            (codigo_empresa, eje),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    def eliminar_plan_cuentas(self, codigo_empresa: str, ejercicio: int) -> None:
+        """Elimina el plan de cuentas de una empresa/ejercicio."""
+        eje = _ej_val(ejercicio)
+        self.conn.execute(
+            "DELETE FROM plan_cuentas WHERE codigo_empresa=? AND ejercicio=?",
+            (codigo_empresa, eje),
+        )
+        self.conn.commit()
 
     def copiar_empresa(self, codigo_origen: str, ejercicio_origen: int, nueva_empresa: dict):
         if not self.get_empresa(codigo_origen, ejercicio_origen):

@@ -81,6 +81,8 @@ class EmpresaDialog(tk.Toplevel):
         self.var_logo_h = tk.StringVar(value=str(self._empresa.get("logo_max_height_mm") or ""))
         self.var_activo = tk.BooleanVar(value=bool(self._empresa.get("activo", True)))
         self.var_a3_info = tk.StringVar(value="Sin importacion realizada.")
+        self.var_plan_buscar = tk.StringVar()
+        self.var_plan_ejercicio = tk.StringVar()
 
         root = ttk.Frame(self, padding=12)
         root.pack(fill="both", expand=True)
@@ -93,6 +95,7 @@ class EmpresaDialog(tk.Toplevel):
         self._build_general_tab(ttk.Frame(nb, padding=14), nb)
         self._build_exercises_tab(ttk.Frame(nb, padding=14), nb)
         self._build_banks_tab(ttk.Frame(nb, padding=14), nb)
+        self._build_account_plan_tab(ttk.Frame(nb, padding=14), nb)
         self._build_third_parties_tab(ttk.Frame(nb, padding=14), nb)
 
         actions = ttk.Frame(root)
@@ -219,6 +222,51 @@ class EmpresaDialog(tk.Toplevel):
         ttk.Button(btns, text="Eliminar", command=self._remove_bank).pack(side=tk.LEFT)
         self._load_banks_from_text(str(self._empresa.get("cuentas_bancarias") or self._empresa.get("cuenta_bancaria") or ""))
 
+    def _build_account_plan_tab(self, tab, nb):
+        nb.add(tab, text="Plan contable")
+        tab.columnconfigure(0, weight=1)
+        tab.rowconfigure(1, weight=1)
+
+        filtros = ttk.Frame(tab)
+        filtros.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        ttk.Label(filtros, text="Ejercicio").pack(side=tk.LEFT)
+        self.cb_plan_ejercicio = ttk.Combobox(
+            filtros,
+            textvariable=self.var_plan_ejercicio,
+            width=10,
+            state="readonly",
+        )
+        self.cb_plan_ejercicio.pack(side=tk.LEFT, padx=(6, 12))
+        self.cb_plan_ejercicio.bind("<<ComboboxSelected>>", lambda _e: self._load_plan_cuentas())
+        ttk.Label(filtros, text="Buscar").pack(side=tk.LEFT)
+        entry_buscar = ttk.Entry(filtros, textvariable=self.var_plan_buscar, width=34)
+        entry_buscar.pack(side=tk.LEFT, padx=(6, 0), fill="x", expand=True)
+        self.var_plan_buscar.trace_add("write", lambda *_: self._load_plan_cuentas())
+
+        frame = ttk.Frame(tab)
+        frame.grid(row=1, column=0, sticky="nsew")
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+        self.tv_plan_cuentas = ttk.Treeview(
+            frame,
+            columns=("cuenta", "descripcion"),
+            show="headings",
+            height=14,
+        )
+        self.tv_plan_cuentas.heading("cuenta", text="Cuenta")
+        self.tv_plan_cuentas.column("cuenta", width=140, anchor="w")
+        self.tv_plan_cuentas.heading("descripcion", text="Descripcion")
+        self.tv_plan_cuentas.column("descripcion", width=620, anchor="w")
+        self.tv_plan_cuentas.grid(row=0, column=0, sticky="nsew")
+        scroll = ttk.Scrollbar(frame, orient="vertical", command=self.tv_plan_cuentas.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.tv_plan_cuentas.configure(yscrollcommand=scroll.set)
+
+        self.lbl_plan_info = ttk.Label(tab, text="")
+        self.lbl_plan_info.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        self._refresh_plan_exercise_selector()
+        self._load_plan_cuentas()
+
     def _build_third_parties_tab(self, tab, nb):
         nb.add(tab, text="Terceros")
         tab.columnconfigure(0, weight=1)
@@ -288,6 +336,66 @@ class EmpresaDialog(tk.Toplevel):
                 row["siguiente_num_emitidas_rect"],
             ))
         self.lbl_ejercicios.configure(text=f"Ejercicios configurados: {len(self._exercise_rows)}")
+        self._refresh_plan_exercise_selector()
+        self._load_plan_cuentas()
+
+    def _refresh_plan_exercise_selector(self):
+        if not hasattr(self, "cb_plan_ejercicio"):
+            return
+        ejercicios = [str(int(row["ejercicio"])) for row in sorted(self._exercise_rows, key=lambda item: int(item["ejercicio"]))]
+        self.cb_plan_ejercicio["values"] = ejercicios
+        if ejercicios and self.var_plan_ejercicio.get() not in ejercicios:
+            self.var_plan_ejercicio.set(ejercicios[-1])
+        if not ejercicios:
+            self.var_plan_ejercicio.set("")
+
+    def _plan_ejercicio_actual(self):
+        txt = (self.var_plan_ejercicio.get() or "").strip()
+        if txt:
+            try:
+                return int(txt)
+            except Exception:
+                pass
+        if self._exercise_rows:
+            return int(sorted(self._exercise_rows, key=lambda item: int(item["ejercicio"]))[-1]["ejercicio"])
+        try:
+            return int(self._empresa.get("ejercicio") or 0)
+        except Exception:
+            return 0
+
+    def _load_plan_cuentas(self):
+        if not hasattr(self, "tv_plan_cuentas"):
+            return
+        self.tv_plan_cuentas.delete(*self.tv_plan_cuentas.get_children())
+        codigo = self._codigo_empresa_actual()
+        ejercicio = self._plan_ejercicio_actual()
+        if not self._gestor or not codigo or not ejercicio:
+            self.lbl_plan_info.configure(text="Guarda o abre una empresa existente para consultar su plan contable.")
+            return
+        try:
+            cuentas = self._gestor.get_plan_cuentas(codigo, ejercicio)
+        except Exception:
+            cuentas = []
+        filtro = (self.var_plan_buscar.get() or "").strip().lower()
+        visibles = []
+        for cuenta in cuentas:
+            numero = str(cuenta.get("cuenta") or "")
+            descripcion = str(cuenta.get("descripcion") or "")
+            texto = f"{numero} {descripcion}".lower()
+            if filtro and filtro not in texto:
+                continue
+            visibles.append(cuenta)
+        for idx, cuenta in enumerate(visibles):
+            self.tv_plan_cuentas.insert(
+                "",
+                "end",
+                iid=str(idx),
+                values=(cuenta.get("cuenta", ""), cuenta.get("descripcion", "")),
+            )
+        if cuentas:
+            self.lbl_plan_info.configure(text=f"Cuentas visibles: {len(visibles)} de {len(cuentas)} en el ejercicio {ejercicio}.")
+        else:
+            self.lbl_plan_info.configure(text=f"No hay plan contable importado para el ejercicio {ejercicio}.")
 
     def _exercise_editor(self, initial=None):
         data = self._exercise_from_row(initial)
@@ -422,7 +530,7 @@ class EmpresaDialog(tk.Toplevel):
 
     def _load_terceros(self):
         self.tv_terceros_empresa.delete(*self.tv_terceros_empresa.get_children())
-        codigo = str(self._empresa.get("codigo") or "")
+        codigo = self._codigo_empresa_actual()
         ejercicio = max((int(row["ejercicio"]) for row in self._exercise_rows), default=int(self._empresa.get("ejercicio") or 0))
         if not self._gestor or not codigo:
             self.lbl_terceros_info.configure(text="Guarda o abre una empresa existente para consultar sus terceros.")
@@ -581,19 +689,40 @@ class EmpresaDialog(tk.Toplevel):
         top.grab_set()
         frm = ttk.Frame(top, padding=10)
         frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="Buscar").pack(anchor="w")
+        var_buscar = tk.StringVar()
+        entry_buscar = ttk.Entry(frm, textvariable=var_buscar, width=50)
+        entry_buscar.pack(fill="x", expand=True, pady=(4, 8))
         lb = tk.Listbox(frm, height=min(12, len(terceros)), width=60, exportselection=False)
-        for tercero in terceros:
-            lb.insert(tk.END, f"{tercero.get('nombre', '')} ({tercero.get('nif', '')})")
         lb.pack(fill="both", expand=True)
-        if terceros:
-            lb.selection_set(0)
+        visibles = []
+
+        def _render_list():
+            filtro = (var_buscar.get() or "").strip().lower()
+            lb.delete(0, tk.END)
+            visibles.clear()
+            for tercero in terceros:
+                nombre = str(tercero.get("nombre", ""))
+                nif = str(tercero.get("nif", ""))
+                poblacion = str(tercero.get("poblacion", ""))
+                texto = f"{nombre} {nif} {poblacion}".lower()
+                if filtro and filtro not in texto:
+                    continue
+                visibles.append(tercero)
+                lb.insert(tk.END, f"{nombre} ({nif})")
+            if visibles:
+                lb.selection_set(0)
+
+        var_buscar.trace_add("write", lambda *_: _render_list())
+        _render_list()
+        entry_buscar.focus_set()
 
         def _ok():
             sel = lb.curselection()
             if not sel:
                 top.destroy()
                 return
-            tercero = terceros[sel[0]]
+            tercero = visibles[sel[0]]
             self._gestor.upsert_tercero_empresa(
                 {
                     "tercero_id": tercero.get("id"),
@@ -608,6 +737,7 @@ class EmpresaDialog(tk.Toplevel):
             top.destroy()
             self._load_terceros()
 
+        lb.bind("<Double-1>", lambda _e: _ok())
         btns = ttk.Frame(frm)
         btns.pack(fill="x", pady=(8, 0))
         ttk.Button(btns, text="Asignar", style="Primary.TButton", command=_ok).pack(side=tk.LEFT)
@@ -661,7 +791,26 @@ class EmpresaDialog(tk.Toplevel):
             self._exercise_rows.append(payload)
             self._exercise_rows.sort(key=lambda row: int(row["ejercicio"]))
         self._refresh_exercises_tree()
-        self.var_a3_info.set("Importacion A3 completada.\n" + str(data.get("_a3_info") or "Datos basicos detectados."))
+
+        # Guardar plan de cuentas en la base de datos si se ha importado
+        plan_cuentas = data.get("plan_cuentas") or []
+        cuentas_msg = ""
+        if plan_cuentas and self._gestor:
+            codigo = str(data.get("codigo") or "")
+            ejercicio = int(payload.get("ejercicio") or 0)
+            if codigo and ejercicio:
+                try:
+                    n = self._gestor.upsert_plan_cuentas(codigo, ejercicio, plan_cuentas)
+                    cuentas_msg = f"\nPlan de cuentas: {n} cuentas importadas (ejercicio {ejercicio})."
+                except Exception as exc_pc:
+                    cuentas_msg = f"\nAviso: no se pudo guardar el plan de cuentas: {exc_pc}"
+
+        self.var_a3_info.set(
+            "Importacion A3 completada."
+            + cuentas_msg
+            + "\n"
+            + str(data.get("_a3_info") or "Datos basicos detectados.")
+        )
         self._set_a3_preview(data)
 
     def _set_a3_preview(self, data: dict | None):
