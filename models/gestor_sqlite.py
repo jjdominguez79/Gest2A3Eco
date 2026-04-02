@@ -576,6 +576,38 @@ class GestorSQLite:
         )
         return [dict(r) for r in cur.fetchall()]
 
+    def get_plan_cuentas_con_terceros(self, codigo_empresa: str, ejercicio: int) -> list[dict]:
+        """
+        Devuelve las subcuentas (≥4 dígitos) del plan de cuentas junto con el nombre
+        y NIF del tercero asignado (si existe), usando las subcuentas definidas en
+        terceros_empresas (cliente, proveedor, ingreso o gasto).
+        """
+        eje = _ej_val(ejercicio)
+        cur = self.conn.execute(
+            """
+            SELECT
+                pc.cuenta,
+                pc.descripcion,
+                t.nombre  AS tercero_nombre,
+                t.nif     AS tercero_nif
+            FROM plan_cuentas pc
+            LEFT JOIN terceros_empresas te
+                   ON te.codigo_empresa = pc.codigo_empresa
+                  AND (te.subcuenta_cliente   = pc.cuenta
+                    OR te.subcuenta_proveedor = pc.cuenta
+                    OR te.subcuenta_ingreso   = pc.cuenta
+                    OR te.subcuenta_gasto     = pc.cuenta)
+            LEFT JOIN terceros t ON t.id = te.tercero_id
+            WHERE pc.codigo_empresa = ?
+              AND pc.ejercicio = ?
+              AND LENGTH(pc.cuenta) >= 4
+            GROUP BY pc.cuenta
+            ORDER BY CAST(pc.cuenta AS INTEGER), pc.cuenta
+            """,
+            (codigo_empresa, eje),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
     def eliminar_plan_cuentas(self, codigo_empresa: str, ejercicio: int) -> None:
         """Elimina el plan de cuentas de una empresa/ejercicio."""
         eje = _ej_val(ejercicio)

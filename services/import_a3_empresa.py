@@ -114,6 +114,119 @@ def _candidate_cu_paths(codigo: str) -> list[Path]:
     return out
 
 
+def _find_latest_cu_path(codigo_norm: str) -> "Path | None":
+    """
+    Devuelve el fichero CU del último ejercicio abierto en A3.
+    A3 genera un fichero por ejercicio: {codigo}{digit}CU.DAT.
+    Se ordena por fecha de modificación (mtime) para obtener el más reciente.
+    """
+    for folder in _candidate_dirs(codigo_norm):
+        if not folder.exists():
+            continue
+        candidates = list(folder.glob(f"{codigo_norm}?CU.DAT"))
+        if not candidates:
+            candidates = list(folder.glob(f"{codigo_norm}?CU.dat"))
+        if candidates:
+            return max(candidates, key=lambda p: p.stat().st_mtime)
+    return None
+
+
+def _candidate_tecodir_paths() -> list[Path]:
+    """Devuelve las rutas candidatas del fichero TECODIR.DAT (directorio central de empresas)."""
+    bases = [Path(r"Z:\A3\A3ECO"), Path(r"C:\A3\A3ECO"), Path(r"Z:\A3")]
+    out = []
+    for base in bases:
+        out.append(base / "TECODIR.DAT")
+        out.append(base / "tecodir.dat")
+    return out
+
+
+# ─── Constantes para lectura de TECODIR.DAT ──────────────────────────────────
+# TECODIR.DAT es el directorio central de empresas de A3ECO.
+# Registros de 516 bytes a partir del byte 128 de cabecera.
+# Byte 0 del registro = 0x42 → activo.
+_TECODIR_HEADER = 128
+_TECODIR_REC_SIZE = 516
+_TECODIR_ACTIVE = 0x42
+
+# Offsets dentro del registro (0-indexado):
+_TD_NOMBRE = slice(5, 45)         # Razón Social (40 bytes, cp850)
+_TD_CIF = slice(49, 58)           # NIF/CIF (9 bytes, cp850)
+_TD_PATH = slice(103, 140)        # Ruta A3ECO (p.ej. \A3\A3ECO\E00193\)
+_TD_TIPO_VIA = slice(165, 170)    # Tipo de vía (CL, AV, PS…)
+_TD_CALLE = slice(175, 195)       # Nombre de la calle (20 bytes)
+_TD_NUMERO = slice(231, 238)      # Número de la vía (7 bytes)
+_TD_CP_START = 257                # Código postal: 3 bytes little-endian
+_TD_CIUDAD = slice(263, 278)      # Población (15 bytes)
+_TD_PROVINCIA = slice(283, 298)   # Provincia (15 bytes)
+_TD_TELEFONO = slice(337, 346)    # Teléfono 1 (9 bytes)
+_TD_TELEFONO2 = slice(361, 370)   # Teléfono 2 (9 bytes)
+_TD_EMAIL = slice(437, 477)       # Email (40 bytes)
+
+_TIPO_VIA_EXPAND = {
+    "CL": "C/", "C/": "C/", "AV": "Av.", "AVDA": "Avda.",
+    "PS": "Paseo", "PZ": "Plaza", "PL": "Plaza", "TR": "Travesía",
+    "RD": "Ronda", "BRR": "Barrio", "POL": "Pol.", "URB": "Urb.",
+    "CR": "Ctra.", "CTRA": "Ctra.", "VIA": "Vía",
+}
+
+
+def _td_decode(rec: bytes, slc: slice) -> str:
+    return rec[slc].decode(_A3_ENCODING, errors="replace").strip()
+
+
+def _parse_tecodir(tecodir_path: Path, codigo_norm: str) -> dict:
+    """
+    Lee TECODIR.DAT y extrae los datos de la empresa con código E{codigo_norm}.
+    Devuelve un dict con: nombre, cif, direccion, cp, poblacion, provincia,
+    telefono, email. Devuelve {} si no se encuentra la empresa.
+    """
+    try:
+        data = tecodir_path.read_bytes()
+    except OSError:
+        return {}
+
+    target_path = f"E{codigo_norm}".upper()
+    offset = _TECODIR_HEADER
+    while offset + _TECODIR_REC_SIZE <= len(data):
+        rec = data[offset: offset + _TECODIR_REC_SIZE]
+        if rec[0] == _TECODIR_ACTIVE:
+            path_raw = _td_decode(rec, _TD_PATH).upper()
+            if target_path in path_raw:
+                nombre = _td_decode(rec, _TD_NOMBRE)
+                cif = _td_decode(rec, _TD_CIF)
+                tipo_via_raw = _td_decode(rec, _TD_TIPO_VIA)
+                tipo_via = _TIPO_VIA_EXPAND.get(tipo_via_raw, tipo_via_raw)
+                calle = _td_decode(rec, _TD_CALLE).title()
+                numero = _td_decode(rec, _TD_NUMERO)
+                cp_bytes = rec[_TD_CP_START: _TD_CP_START + 3]
+                cp_int = cp_bytes[0] + cp_bytes[1] * 256 + cp_bytes[2] * 65536
+                cp = str(cp_int) if cp_int else ""
+                ciudad = _td_decode(rec, _TD_CIUDAD).title()
+                provincia = _td_decode(rec, _TD_PROVINCIA).title()
+                tel1 = _td_decode(rec, _TD_TELEFONO)
+                tel2 = _td_decode(rec, _TD_TELEFONO2)
+                telefono = tel1 or tel2
+                email = _td_decode(rec, _TD_EMAIL).lower()
+
+                partes_dir = [p for p in (tipo_via, calle, numero) if p]
+                direccion = " ".join(partes_dir)
+
+                return {
+                    "nombre": nombre,
+                    "cif": cif,
+                    "direccion": direccion,
+                    "cp": cp,
+                    "poblacion": ciudad,
+                    "provincia": provincia,
+                    "telefono": telefono,
+                    "email": email,
+                    "_tecodir_path": str(tecodir_path),
+                }
+        offset += _TECODIR_REC_SIZE
+    return {}
+
+
 def _candidate_dashboard_paths(codigo: str) -> list[Path]:
     out = []
     for folder in _candidate_dirs(codigo):
@@ -145,6 +258,26 @@ def _read_var_blocks(path: Path) -> list[dict]:
         printable = _to_printable_text(block)
         blocks.append({"tag": tag, "text": text, "printable": printable, "raw": block})
     return blocks
+
+
+def _extract_ban_labels(blocks: list[dict]) -> list[str]:
+    """
+    Extrae las etiquetas descriptivas de las cuentas bancarias de los bloques BAN.
+    En el formato ISAM de A3ECO, el texto de la cuenta (p.ej. "SUrbana 7140")
+    comienza en el byte 30 del bloque (los bytes 16-29 son datos binarios propietarios
+    que no contienen el IBAN en texto plano).
+    """
+    labels = []
+    for block in blocks:
+        if not str(block.get("tag") or "").startswith("BAN"):
+            continue
+        raw = block.get("raw") or b""
+        if len(raw) < 32:
+            continue
+        label = raw[30:].decode(_A3_ENCODING, errors="replace").strip()
+        if label:
+            labels.append(label)
+    return labels
 
 
 def _extract_name_from_var(text: str) -> str:
@@ -337,6 +470,11 @@ def _parse_var_company_data(var_path: Path) -> dict:
     if not poblacion and poblacion_ban:
         poblacion = poblacion_ban
 
+    # Etiquetas bancarias detectadas (texto legible de los bloques BAN).
+    # Nota: los IBANs en A3ECO están en formato binario propietario; solo
+    # se puede extraer la etiqueta descriptiva (p.ej. "Urbana 7140").
+    ban_labels = _extract_ban_labels(blocks)
+
     raw_preview_parts = []
     for key in ("EMP", "DOM", "IVA"):
         block = _block_by_tag(blocks, key)
@@ -355,6 +493,7 @@ def _parse_var_company_data(var_path: Path) -> dict:
         "telefono": telefono,
         "email": email,
         "web": web,
+        "_ban_labels": ban_labels,
         "_a3_raw_header": "\n".join(raw_preview_parts).strip(),
     }
 
@@ -459,76 +598,98 @@ def _parse_dashboard_company_data(path: Path, codigo_norm: str) -> dict:
 def importar_empresa_desde_a3(codigo: str) -> dict:
     codigo_norm = _clean_code(codigo)
     codigo_a3 = f"E{codigo_norm}"
+
+    # 1. Directorio central de empresas (TECODIR.DAT): fuente más fiable
+    tecodir_path = next((p for p in _candidate_tecodir_paths() if p.exists()), None)
+    tecodir_data = _parse_tecodir(tecodir_path, codigo_norm) if tecodir_path else {}
+
+    # 2. Ficheros binarios por empresa: CU (plan de cuentas) y datos de respaldo
     company_dirs = [path for path in _candidate_dirs(codigo_norm) if path.exists()]
+    cu_path = _find_latest_cu_path(codigo_norm)
     var_path = next((path for path in _candidate_var_paths(codigo_norm) if path.exists()), None)
     em_path = next((path for path in _candidate_em_paths(codigo_norm) if path.exists()), None)
-    cu_path = next((path for path in _candidate_cu_paths(codigo_norm) if path.exists()), None)
     dashboard_path = next((path for path in _candidate_dashboard_paths(codigo_norm) if path.exists()), None)
     data_path = next((path for path in _candidate_paths(codigo_norm) if path.exists()), None)
 
-    if em_path is None and data_path is None and not company_dirs and var_path is None and dashboard_path is None:
+    # Verificar que al menos hay algún origen de datos
+    if (
+        not tecodir_data
+        and em_path is None
+        and data_path is None
+        and not company_dirs
+        and var_path is None
+        and dashboard_path is None
+    ):
         raise ValueError(f"No se ha encontrado la empresa {codigo_a3} en A3.")
 
-    # 1. Lectura binaria del fichero EM (más fiable para NIF y nombre)
-    em_data = _leer_em_binario(em_path) if em_path else {}
-
-    # 2. Plan de cuentas desde fichero CU binario
+    # 3. Plan de cuentas desde fichero CU binario
     plan_cuentas = _leer_plan_cuentas_binario(cu_path) if cu_path else []
 
-    # 3. Variables empresa (VAR): web, email, domicilio, teléfono
+    # 4. Fuentes de respaldo: VAR y cabecera de la ficha DAT
     text = _read_header_text(data_path) if data_path else ""
     raw_preview = " ".join(text.split())
-    detalle_origen = {}
+    var_data: dict = {}
     if var_path:
         try:
-            detalle_origen = _parse_var_company_data(var_path)
+            var_data = _parse_var_company_data(var_path)
         except Exception:
-            detalle_origen = {}
-    dashboard_data = {}
+            var_data = {}
+    dashboard_data: dict = {}
     if dashboard_path:
         dashboard_data = _parse_dashboard_company_data(dashboard_path, codigo_norm)
 
-    # Prioridad: binario EM > dashboard > VAR regex > texto cabecera
+    # 5. Prioridad de datos: TECODIR > dashboard > VAR/EM > texto cabecera
     nombre = str(
-        dashboard_data.get("nombre")
-        or em_data.get("nombre")
+        tecodir_data.get("nombre")
+        or dashboard_data.get("nombre")
+        or var_data.get("nombre")
         or _extract_name(text)
         or ""
     )
     cif = str(
-        em_data.get("nif")
-        or detalle_origen.get("cif")
+        tecodir_data.get("cif")
+        or var_data.get("cif")
         or _extract_cif(text)
         or ""
     )
-    direccion = str(detalle_origen.get("direccion") or "")
-    cp = str(detalle_origen.get("cp") or "")
-    poblacion = str(detalle_origen.get("poblacion") or "")
-    provincia = str(detalle_origen.get("provincia") or "")
-    telefono = str(detalle_origen.get("telefono") or "")
-    email = str(detalle_origen.get("email") or "")
+    direccion = str(tecodir_data.get("direccion") or var_data.get("direccion") or "")
+    cp = str(tecodir_data.get("cp") or var_data.get("cp") or "")
+    poblacion = str(tecodir_data.get("poblacion") or var_data.get("poblacion") or "")
+    provincia = str(tecodir_data.get("provincia") or var_data.get("provincia") or "")
+    telefono = str(tecodir_data.get("telefono") or var_data.get("telefono") or "")
+    email = str(tecodir_data.get("email") or var_data.get("email") or "")
     ejercicio = (
         _to_int(dashboard_data.get("ejercicio"))
         or _extract_year(text, company_dirs)
         or date.today().year
     )
 
+    # 6. Construir el texto de detalle para la UI
     detalle = []
+    if tecodir_data:
+        detalle.append(f"Directorio A3 (TECODIR): {tecodir_data.get('_tecodir_path', tecodir_path)}")
     if dashboard_path:
         detalle.append(f"Cuadro de mando A3: {dashboard_path}")
-    if em_path:
-        detalle.append(f"Fichero EM (empresa master): {em_path}")
-    if var_path:
-        detalle.append(f"Ficha empresa VAR: {var_path}")
     if cu_path:
         detalle.append(f"Plan de cuentas CU ({len(plan_cuentas)} cuentas): {cu_path}")
+    if var_path:
+        detalle.append(f"Ficha empresa VAR: {var_path}")
+    if em_path:
+        detalle.append(f"Fichero EM: {em_path}")
     if data_path:
         detalle.append(f"Ficha A3: {data_path}")
     if company_dirs:
         detalle.append(f"Carpeta A3ECO: {company_dirs[0]}")
     detalle.append(f"Ejercicio detectado: {ejercicio}")
-    if detalle_origen.get("web"):
-        detalle.append(f"Web detectada: {detalle_origen.get('web')}")
+    if var_data.get("web"):
+        detalle.append(f"Web: {var_data.get('web')}")
+
+    ban_labels = var_data.get("_ban_labels") or []
+    if ban_labels:
+        detalle.append(f"Cuentas bancarias detectadas en A3 (sin IBAN): {', '.join(ban_labels)}")
+        detalle.append("  → El IBAN/CCC en A3 está en formato binario propietario. Introducelo manualmente en la pestana Bancos.")
+
+    raw_header = str(var_data.get("_a3_raw_header") or raw_preview[:1200])
 
     return {
         "codigo": codigo_a3,
@@ -553,6 +714,7 @@ def importar_empresa_desde_a3(codigo: str) -> dict:
         "logo_max_height_mm": None,
         "activo": True,
         "plan_cuentas": plan_cuentas,
+        "_ban_labels": ban_labels,
         "_a3_info": "\n".join(detalle),
-        "_a3_raw_header": str(detalle_origen.get("_a3_raw_header") or raw_preview[:1200]),
+        "_a3_raw_header": raw_header,
     }
