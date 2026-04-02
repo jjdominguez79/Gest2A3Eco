@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import time
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -537,6 +538,35 @@ class GestorSQLite:
         self.conn.commit()
         if not existe:
             self._clonar_plantillas_si_hace_falta(emp.get("codigo"), emp.get("ejercicio"))
+
+    def next_pdf_ref(self, codigo_empresa: str, ejercicio: int | None = None) -> str:
+        eje = _ej_val(ejercicio)
+        row = self.get_empresa(codigo_empresa, eje)
+        if not row and eje is not None:
+            row = self.get_empresa(codigo_empresa, None)
+        if not row:
+            raise ValueError(f"Empresa no encontrada para generar referencia PDF: {codigo_empresa}")
+
+        seq = int(row.get("pdf_ref_seq") or 0)
+        if seq <= 0:
+            cur = self.conn.execute(
+                "SELECT pdf_ref FROM facturas_emitidas_docs WHERE codigo_empresa=? AND pdf_ref IS NOT NULL AND TRIM(pdf_ref)<>''",
+                (codigo_empresa,),
+            )
+            for item in cur.fetchall():
+                ref = str(item["pdf_ref"] or "").strip()
+                base = ref.split("@", 1)[0]
+                match = re.match(r"^E(\d{1,8})$", base, re.IGNORECASE)
+                if match:
+                    seq = max(seq, int(match.group(1)))
+
+        seq += 1
+        self.conn.execute(
+            "UPDATE empresas SET pdf_ref_seq=? WHERE codigo=? AND ejercicio=?",
+            (seq, str(row.get("codigo") or codigo_empresa), _ej_val(row.get("ejercicio"))),
+        )
+        self.conn.commit()
+        return f"E{seq:08d}"
 
     # ── Plan de Cuentas ──────────────────────────────────────────────────────
 
@@ -1572,4 +1602,18 @@ class GestorSQLite:
                 """,
                 (int(user_id), str(codigo), str(permiso), now, now),
             )
+        self.conn.commit()
+
+    def upsert_permiso_usuario_empresa(self, user_id: int, codigo_empresa: str, permiso: str) -> None:
+        now = self._utc_now()
+        self.conn.execute(
+            """
+            INSERT INTO usuarios_empresas (usuario_id, empresa_codigo, permiso, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(usuario_id, empresa_codigo) DO UPDATE SET
+                permiso=excluded.permiso,
+                updated_at=excluded.updated_at
+            """,
+            (int(user_id), str(codigo_empresa), str(permiso), now, now),
+        )
         self.conn.commit()

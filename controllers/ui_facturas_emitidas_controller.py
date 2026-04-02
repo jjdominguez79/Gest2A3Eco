@@ -560,7 +560,7 @@ class FacturasEmitidasController:
             pdf_path = self._app_pdf_path(fac)
         if not pdf_path or not os.path.exists(pdf_path):
             self._ensure_a3_pdf(fac)
-            pdf_path = str(fac.get("pdf_path_a3") or "").strip()
+            pdf_path = self._existing_a3_pdf_path(fac)
         if not pdf_path or not os.path.exists(pdf_path):
             self._view.show_warning("Gest2A3Eco", "No se encuentra el PDF asociado.")
             return
@@ -586,7 +586,7 @@ class FacturasEmitidasController:
             pdf_path = self._app_pdf_path(fac)
         if not pdf_path or not os.path.exists(pdf_path):
             self._ensure_a3_pdf(fac)
-            pdf_path = str(fac.get("pdf_path_a3") or "").strip()
+            pdf_path = self._existing_a3_pdf_path(fac)
         if not pdf_path or not os.path.exists(pdf_path):
             self._view.show_warning("Gest2A3Eco", "No se encuentra el PDF asociado.")
             return
@@ -646,10 +646,8 @@ class FacturasEmitidasController:
         for fid in sel:
             fac = self._get_factura_by_id(fid)
             if fac:
-                fac = self._ensure_pdf_ref(fac)
-                self._ensure_app_pdf(fac)
-                self._ensure_a3_pdf(fac)
                 facturas_sel.append(fac)
+        facturas_sel = self._prepare_facturas_for_suenlace(facturas_sel)
 
         ya_generadas = [f for f in facturas_sel if f.get("generada")]
         if ya_generadas:
@@ -941,7 +939,7 @@ class FacturasEmitidasController:
             "Descripcion Factura": fac.get("descripcion", ""),
             "NIF Cliente Proveedor": normalizar_nif_cif(fac.get("nif", "")),
             "Nombre Cliente Proveedor": fac.get("nombre", ""),
-            "_pdf_ref": fac.get("pdf_ref", ""),
+            "_pdf_ref": self._pdf_ref_base(fac.get("pdf_ref", "")),
         }
         subcuenta_cliente = self._resolved_subcuenta_cliente(fac)
         if subcuenta_cliente:
@@ -1089,7 +1087,7 @@ class FacturasEmitidasController:
         self._persist_factura_if_allowed(upd)
 
     def _ensure_app_pdf(self, fac: dict) -> None:
-        pdf_ref = str(fac.get("pdf_ref") or "").strip()
+        pdf_ref = self._pdf_ref_base(fac.get("pdf_ref") or "")
         if not pdf_ref:
             return
         app_path = self._app_pdf_path(fac)
@@ -1144,7 +1142,7 @@ class FacturasEmitidasController:
         self._persist_factura_if_allowed(upd)
 
     def _ensure_a3_pdf(self, fac: dict) -> None:
-        pdf_ref = str(fac.get("pdf_ref") or "").strip()
+        pdf_ref = self._pdf_ref_base(fac.get("pdf_ref") or "")
         if not pdf_ref:
             return
         a3_path = self._a3_pdf_path_for(pdf_ref, fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio)
@@ -1217,32 +1215,98 @@ class FacturasEmitidasController:
             os.makedirs(base_dir, exist_ok=True)
         except Exception:
             return ""
-        ref = str(pdf_ref or "").strip()
+        ref = self._pdf_ref_base(pdf_ref)
         filename = f"{ref}.pdf" if ref else ""
         if not filename:
             return ""
         return os.path.join(base_dir, filename)
 
     def _ensure_pdf_ref(self, fac: dict) -> dict:
-        ref = str(fac.get("pdf_ref") or "").strip()
+        ref = self._pdf_ref_base(fac.get("pdf_ref") or "")
         if ref:
-            if "@" in ref:
-                return fac
-            full_ref = self._resolve_full_pdf_ref(fac, ref)
-            if full_ref and full_ref != ref:
+            if str(fac.get("pdf_ref") or "").strip() != ref:
                 fac = dict(fac)
-                fac["pdf_ref"] = full_ref
+                fac["pdf_ref"] = ref
                 self._persist_factura_if_allowed(fac)
             return fac
-        raw_id = "".join(ch for ch in str(fac.get("id") or "") if ch.isdigit())
-        if not raw_id:
-            raw_id = str(int(datetime.now().timestamp() * 1000))
-        prefix = "E"
-        ref = f"{prefix}{raw_id[-8:].rjust(8, '0')}"
+        ref = str(
+            self._gestor.next_pdf_ref(
+                self._codigo,
+                fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio,
+            )
+        ).strip()
         fac = dict(fac)
         fac["pdf_ref"] = ref
         self._persist_factura_if_allowed(fac)
         return fac
+
+    def _prepare_facturas_for_suenlace(self, facturas: list[dict]) -> list[dict]:
+        prepared = []
+        selected_counts = {}
+        for fac in facturas:
+            base = self._pdf_ref_base(fac.get("pdf_ref") or "")
+            if base:
+                selected_counts[base] = selected_counts.get(base, 0) + 1
+
+        all_facturas = self._listar_facturas_base()
+        global_counts = {}
+        for fac in all_facturas:
+            base = self._pdf_ref_base(fac.get("pdf_ref") or "")
+            if base:
+                global_counts[base] = global_counts.get(base, 0) + 1
+
+        assigned = set()
+        for fac in facturas:
+            current = self._pdf_ref_base(fac.get("pdf_ref") or "")
+            needs_new_ref = (
+                not current
+                or selected_counts.get(current, 0) > 1
+                or global_counts.get(current, 0) > 1
+                or current in assigned
+            )
+            if needs_new_ref:
+                fac = dict(fac)
+                fac["pdf_ref"] = ""
+            fac = self._ensure_pdf_ref(fac)
+            assigned.add(self._pdf_ref_base(fac.get("pdf_ref") or ""))
+            self._ensure_app_pdf(fac)
+            self._ensure_a3_pdf(fac)
+            prepared.append(fac)
+        return prepared
+
+    def _pdf_ref_base(self, ref: str) -> str:
+        value = str(ref or "").strip()
+        if not value:
+            return ""
+        return value.split("@", 1)[0].strip()
+
+    def _existing_a3_pdf_path(self, fac: dict) -> str:
+        ref_base = self._pdf_ref_base(fac.get("pdf_ref") or "")
+        ejercicio = fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio
+        direct_path = self._a3_pdf_path_for(ref_base, ejercicio)
+        candidates = []
+
+        stored_a3 = str(fac.get("pdf_path_a3") or "").strip()
+        if stored_a3:
+            candidates.append(stored_a3)
+        if direct_path:
+            candidates.append(direct_path)
+
+        for path in candidates:
+            if path and os.path.exists(path):
+                return path
+
+        if not direct_path:
+            return ""
+        a3_dir = os.path.dirname(direct_path)
+        if not a3_dir or not os.path.isdir(a3_dir) or not ref_base:
+            return ""
+        patterns = [f"{ref_base}@*.pdf", f"{ref_base}@*.PDF"]
+        for pattern in patterns:
+            matches = sorted(Path(a3_dir).glob(pattern))
+            if matches:
+                return str(matches[0])
+        return ""
 
     def _resolve_full_pdf_ref(self, fac: dict, ref: str) -> str:
         ref = str(ref or "").strip()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from models.auth import CompanyPermission
 from services.auth_service import AuthorizationService
 
 
@@ -154,11 +155,25 @@ class SecuredGestorSQLite:
         codigo = str(emp.get("codigo") or "")
         if not self.security.can_manage_company_catalog():
             raise PermissionError("Solo administradores y empleados pueden gestionar empresas.")
+        existente = None
         if codigo and not self.security.can_manage_companies():
             existente = self._base.get_empresa(codigo, emp.get("ejercicio"))
             if existente:
                 self.security.ensure_company_write(codigo)
-        return self._base.upsert_empresa(emp)
+        result = self._base.upsert_empresa(emp)
+        if (
+            codigo
+            and not self.security.session.is_admin()
+            and not existente
+            and self.security.session.permission_for_company(codigo) != CompanyPermission.WRITE
+        ):
+            self._base.upsert_permiso_usuario_empresa(
+                self.security.session.user.id,
+                codigo,
+                CompanyPermission.WRITE.value,
+            )
+            self.security.session.company_permissions[codigo] = CompanyPermission.WRITE
+        return result
 
     def copiar_empresa(self, codigo_origen: str, ejercicio_origen: int, nueva_empresa: dict):
         self.security.ensure_admin("Solo el administrador puede copiar empresas.")
