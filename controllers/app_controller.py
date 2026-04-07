@@ -2,6 +2,7 @@ from tkinter import messagebox, ttk
 
 from controllers.user_admin_controller import UserAdminController
 from views.ui_facturas_emitidas import UIFacturasEmitidas
+from views.ui_documentos import UIDocumentos
 from views.ui_plantillas import UIPlantillasEmpresa
 from views.ui_procesos import UIProcesos
 from views.ui_seleccion_empresa import UISeleccionEmpresa
@@ -39,7 +40,13 @@ class AppController:
         self._current_frame = frame
 
     def build_seleccion(self, parent):
-        return UISeleccionEmpresa(parent, self._gestor, self.on_empresa_ok, session=self._session)
+        return UISeleccionEmpresa(
+            parent,
+            self._gestor,
+            self.on_empresa_ok,
+            session=self._session,
+            on_documentos_global=self.open_documentos_global,
+        )
 
     def on_empresa_ok(self, codigo, ejercicio, nombre, modulo="facturacion"):
         try:
@@ -80,3 +87,17 @@ class AppController:
         controller = UserAdminController(self._gestor, self._auth_service, dialog)
         dialog.controller = controller
         controller.refresh()
+
+    def open_documentos_global(self):
+        self.show(self.build_documentos_global)
+
+    def build_documentos_global(self, parent):
+        return UIDocumentos(
+            parent,
+            self._gestor,
+            "__global__",
+            0,
+            "Global",
+            session=self._session,
+            global_mode=True,
+        )

@@ -188,6 +188,91 @@ CREATE TABLE IF NOT EXISTS plan_cuentas (
 );
 CREATE INDEX IF NOT EXISTS idx_plan_cuentas_empresa
   ON plan_cuentas(codigo_empresa, ejercicio);
+CREATE TABLE IF NOT EXISTS plantillas_documentos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  codigo_empresa TEXT NOT NULL,
+  ejercicio INTEGER NOT NULL,
+  nombre TEXT NOT NULL,
+  tipo_documento TEXT,
+  descripcion TEXT,
+  ruta_template TEXT NOT NULL,
+  variables_json TEXT,
+  activa INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(codigo_empresa, ejercicio, nombre)
+);
+CREATE INDEX IF NOT EXISTS idx_plantillas_documentos_empresa
+  ON plantillas_documentos(codigo_empresa, ejercicio, nombre);
+CREATE TABLE IF NOT EXISTS intervinientes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  codigo_empresa TEXT NOT NULL,
+  ejercicio INTEGER NOT NULL,
+  tipo_persona TEXT,
+  nombre_razon_social TEXT,
+  nif TEXT,
+  domicilio TEXT,
+  municipio TEXT,
+  provincia TEXT,
+  cp TEXT,
+  telefono TEXT,
+  email TEXT,
+  representante TEXT,
+  cargo TEXT,
+  cliente_id TEXT,
+  es_cliente_habitual INTEGER NOT NULL DEFAULT 0,
+  observaciones TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_intervinientes_empresa
+  ON intervinientes(codigo_empresa, ejercicio, nombre_razon_social);
+CREATE TABLE IF NOT EXISTS operaciones (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  codigo_empresa TEXT NOT NULL,
+  ejercicio INTEGER NOT NULL,
+  titulo TEXT NOT NULL,
+  tipo_operacion TEXT,
+  cliente_id TEXT,
+  fecha_creacion TEXT,
+  descripcion TEXT,
+  estado TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_operaciones_empresa
+  ON operaciones(codigo_empresa, ejercicio, titulo);
+CREATE TABLE IF NOT EXISTS operacion_intervinientes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  operacion_id INTEGER NOT NULL,
+  interviniente_id INTEGER NOT NULL,
+  rol TEXT,
+  FOREIGN KEY (operacion_id) REFERENCES operaciones(id) ON DELETE CASCADE,
+  FOREIGN KEY (interviniente_id) REFERENCES intervinientes(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS documentos_generados (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  codigo_empresa TEXT NOT NULL,
+  ejercicio INTEGER NOT NULL,
+  plantilla_id INTEGER,
+  cliente_id TEXT,
+  operacion_id INTEGER,
+  titulo_documento TEXT NOT NULL,
+  fecha_generacion TEXT,
+  ruta_docx TEXT,
+  ruta_pdf TEXT,
+  estado TEXT,
+  observaciones TEXT,
+  json_datos_generacion TEXT,
+  FOREIGN KEY (plantilla_id) REFERENCES plantillas_documentos(id) ON DELETE SET NULL,
+  FOREIGN KEY (operacion_id) REFERENCES operaciones(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_documentos_generados_empresa
+  ON documentos_generados(codigo_empresa, ejercicio, fecha_generacion);
+CREATE TABLE IF NOT EXISTS documento_intervinientes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  documento_id INTEGER NOT NULL,
+  interviniente_id INTEGER NOT NULL,
+  rol_en_documento TEXT,
+  FOREIGN KEY (documento_id) REFERENCES documentos_generados(id) ON DELETE CASCADE,
+  FOREIGN KEY (interviniente_id) REFERENCES intervinientes(id) ON DELETE CASCADE
+);
 """
 
 AUTH_SCHEMA = """
@@ -1468,6 +1553,341 @@ class GestorSQLite:
             self.upsert_tercero_empresa(nr)
             copiados += 1
         return copiados, omitidos
+
+    # ---------- DOCUMENTOS / PLANTILLAS ----------
+    def listar_plantillas_documentos(self, codigo_empresa: str, ejercicio: int):
+        cur = self.conn.execute(
+            "SELECT * FROM plantillas_documentos WHERE codigo_empresa=? AND ejercicio=? ORDER BY LOWER(nombre)",
+            (codigo_empresa, _ej_val(ejercicio)),
+        )
+        out = []
+        for row in cur.fetchall():
+            item = self._row_to_dict(row)
+            item["variables"] = json.loads(item.get("variables_json") or "[]")
+            item.pop("variables_json", None)
+            out.append(item)
+        return out
+
+    def get_plantilla_documento(self, plantilla_id: int):
+        cur = self.conn.execute("SELECT * FROM plantillas_documentos WHERE id=?", (int(plantilla_id),))
+        row = self._row_to_dict(cur.fetchone())
+        if not row:
+            return None
+        row["variables"] = json.loads(row.get("variables_json") or "[]")
+        row.pop("variables_json", None)
+        return row
+
+    def upsert_plantilla_documento(self, plantilla: dict):
+        now = self._utc_now()
+        plantilla_id = plantilla.get("id")
+        if plantilla_id:
+            self.conn.execute(
+                """
+                UPDATE plantillas_documentos
+                SET nombre=?, tipo_documento=?, descripcion=?, ruta_template=?, variables_json=?, activa=?, updated_at=?
+                WHERE id=?
+                """,
+                (
+                    plantilla.get("nombre"),
+                    plantilla.get("tipo_documento"),
+                    plantilla.get("descripcion"),
+                    plantilla.get("ruta_template"),
+                    json.dumps(plantilla.get("variables", []), ensure_ascii=False),
+                    1 if plantilla.get("activa", True) else 0,
+                    now,
+                    int(plantilla_id),
+                ),
+            )
+            self.conn.commit()
+            return int(plantilla_id)
+        cur = self.conn.execute(
+            """
+            INSERT INTO plantillas_documentos
+            (codigo_empresa, ejercicio, nombre, tipo_documento, descripcion, ruta_template, variables_json, activa, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                plantilla.get("codigo_empresa"),
+                _ej_val(plantilla.get("ejercicio")) or 0,
+                plantilla.get("nombre"),
+                plantilla.get("tipo_documento"),
+                plantilla.get("descripcion"),
+                plantilla.get("ruta_template"),
+                json.dumps(plantilla.get("variables", []), ensure_ascii=False),
+                1 if plantilla.get("activa", True) else 0,
+                now,
+                now,
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def eliminar_plantilla_documento(self, plantilla_id: int):
+        self.conn.execute("DELETE FROM plantillas_documentos WHERE id=?", (int(plantilla_id),))
+        self.conn.commit()
+
+    def buscar_plantilla_documento_por_nombre(self, codigo_empresa: str, ejercicio: int, nombre: str):
+        cur = self.conn.execute(
+            """
+            SELECT * FROM plantillas_documentos
+            WHERE codigo_empresa=? AND ejercicio=? AND LOWER(nombre)=LOWER(?)
+            LIMIT 1
+            """,
+            (codigo_empresa, _ej_val(ejercicio), str(nombre or "").strip()),
+        )
+        row = self._row_to_dict(cur.fetchone())
+        if not row:
+            return None
+        row["variables"] = json.loads(row.get("variables_json") or "[]")
+        row.pop("variables_json", None)
+        return row
+
+    def listar_intervinientes(self, codigo_empresa: str, ejercicio: int, *, solo_habituales: bool = False):
+        sql = "SELECT * FROM intervinientes WHERE codigo_empresa=? AND ejercicio=?"
+        params = [codigo_empresa, _ej_val(ejercicio)]
+        if solo_habituales:
+            sql += " AND es_cliente_habitual=1"
+        sql += " ORDER BY LOWER(nombre_razon_social)"
+        cur = self.conn.execute(sql, tuple(params))
+        return [self._row_to_dict(row) for row in cur.fetchall()]
+
+    def get_interviniente(self, interviniente_id: int):
+        cur = self.conn.execute("SELECT * FROM intervinientes WHERE id=?", (int(interviniente_id),))
+        return self._row_to_dict(cur.fetchone())
+
+    def upsert_interviniente(self, interviniente: dict):
+        interviniente_id = interviniente.get("id")
+        if interviniente_id:
+            self.conn.execute(
+                """
+                UPDATE intervinientes
+                SET tipo_persona=?, nombre_razon_social=?, nif=?, domicilio=?, municipio=?, provincia=?, cp=?,
+                    telefono=?, email=?, representante=?, cargo=?, cliente_id=?, es_cliente_habitual=?, observaciones=?
+                WHERE id=?
+                """,
+                (
+                    interviniente.get("tipo_persona"),
+                    interviniente.get("nombre_razon_social"),
+                    interviniente.get("nif"),
+                    interviniente.get("domicilio"),
+                    interviniente.get("municipio"),
+                    interviniente.get("provincia"),
+                    interviniente.get("cp"),
+                    interviniente.get("telefono"),
+                    interviniente.get("email"),
+                    interviniente.get("representante"),
+                    interviniente.get("cargo"),
+                    interviniente.get("cliente_id"),
+                    1 if interviniente.get("es_cliente_habitual") else 0,
+                    interviniente.get("observaciones"),
+                    int(interviniente_id),
+                ),
+            )
+            self.conn.commit()
+            return int(interviniente_id)
+        cur = self.conn.execute(
+            """
+            INSERT INTO intervinientes
+            (codigo_empresa, ejercicio, tipo_persona, nombre_razon_social, nif, domicilio, municipio, provincia, cp,
+             telefono, email, representante, cargo, cliente_id, es_cliente_habitual, observaciones)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                interviniente.get("codigo_empresa"),
+                _ej_val(interviniente.get("ejercicio")) or 0,
+                interviniente.get("tipo_persona"),
+                interviniente.get("nombre_razon_social"),
+                interviniente.get("nif"),
+                interviniente.get("domicilio"),
+                interviniente.get("municipio"),
+                interviniente.get("provincia"),
+                interviniente.get("cp"),
+                interviniente.get("telefono"),
+                interviniente.get("email"),
+                interviniente.get("representante"),
+                interviniente.get("cargo"),
+                interviniente.get("cliente_id"),
+                1 if interviniente.get("es_cliente_habitual") else 0,
+                interviniente.get("observaciones"),
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def eliminar_interviniente(self, interviniente_id: int):
+        self.conn.execute("DELETE FROM intervinientes WHERE id=?", (int(interviniente_id),))
+        self.conn.commit()
+
+    def listar_operaciones(self, codigo_empresa: str, ejercicio: int):
+        cur = self.conn.execute(
+            "SELECT * FROM operaciones WHERE codigo_empresa=? AND ejercicio=? ORDER BY fecha_creacion DESC, id DESC",
+            (codigo_empresa, _ej_val(ejercicio)),
+        )
+        return [self._row_to_dict(row) for row in cur.fetchall()]
+
+    def upsert_operacion(self, operacion: dict):
+        operacion_id = operacion.get("id")
+        if operacion_id:
+            self.conn.execute(
+                """
+                UPDATE operaciones
+                SET titulo=?, tipo_operacion=?, cliente_id=?, fecha_creacion=?, descripcion=?, estado=?
+                WHERE id=?
+                """,
+                (
+                    operacion.get("titulo"),
+                    operacion.get("tipo_operacion"),
+                    operacion.get("cliente_id"),
+                    operacion.get("fecha_creacion"),
+                    operacion.get("descripcion"),
+                    operacion.get("estado"),
+                    int(operacion_id),
+                ),
+            )
+            self.conn.commit()
+            return int(operacion_id)
+        cur = self.conn.execute(
+            """
+            INSERT INTO operaciones
+            (codigo_empresa, ejercicio, titulo, tipo_operacion, cliente_id, fecha_creacion, descripcion, estado)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                operacion.get("codigo_empresa"),
+                _ej_val(operacion.get("ejercicio")) or 0,
+                operacion.get("titulo"),
+                operacion.get("tipo_operacion"),
+                operacion.get("cliente_id"),
+                operacion.get("fecha_creacion"),
+                operacion.get("descripcion"),
+                operacion.get("estado"),
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def set_operacion_intervinientes(self, operacion_id: int, items: list[dict]):
+        self.conn.execute("DELETE FROM operacion_intervinientes WHERE operacion_id=?", (int(operacion_id),))
+        for item in items or []:
+            self.conn.execute(
+                "INSERT INTO operacion_intervinientes (operacion_id, interviniente_id, rol) VALUES (?, ?, ?)",
+                (int(operacion_id), int(item.get("interviniente_id")), item.get("rol")),
+            )
+        self.conn.commit()
+
+    def listar_documentos_generados(self, codigo_empresa: str, ejercicio: int):
+        cur = self.conn.execute(
+            """
+            SELECT d.*, p.nombre AS plantilla_nombre
+            FROM documentos_generados d
+            LEFT JOIN plantillas_documentos p ON p.id = d.plantilla_id
+            WHERE d.codigo_empresa=? AND d.ejercicio=?
+            ORDER BY d.fecha_generacion DESC, d.id DESC
+            """,
+            (codigo_empresa, _ej_val(ejercicio)),
+        )
+        out = []
+        for row in cur.fetchall():
+            item = self._row_to_dict(row)
+            item["json_datos_generacion"] = json.loads(item.get("json_datos_generacion") or "{}")
+            out.append(item)
+        return out
+
+    def get_documento_generado(self, documento_id: int):
+        cur = self.conn.execute(
+            """
+            SELECT d.*, p.nombre AS plantilla_nombre
+            FROM documentos_generados d
+            LEFT JOIN plantillas_documentos p ON p.id = d.plantilla_id
+            WHERE d.id=?
+            """,
+            (int(documento_id),),
+        )
+        row = self._row_to_dict(cur.fetchone())
+        if not row:
+            return None
+        row["json_datos_generacion"] = json.loads(row.get("json_datos_generacion") or "{}")
+        row["intervinientes"] = self.listar_documento_intervinientes(int(documento_id))
+        return row
+
+    def upsert_documento_generado(self, documento: dict):
+        documento_id = documento.get("id")
+        payload_json = json.dumps(documento.get("json_datos_generacion") or {}, ensure_ascii=False)
+        if documento_id:
+            self.conn.execute(
+                """
+                UPDATE documentos_generados
+                SET plantilla_id=?, cliente_id=?, operacion_id=?, titulo_documento=?, fecha_generacion=?, ruta_docx=?,
+                    ruta_pdf=?, estado=?, observaciones=?, json_datos_generacion=?
+                WHERE id=?
+                """,
+                (
+                    documento.get("plantilla_id"),
+                    documento.get("cliente_id"),
+                    documento.get("operacion_id"),
+                    documento.get("titulo_documento"),
+                    documento.get("fecha_generacion"),
+                    documento.get("ruta_docx"),
+                    documento.get("ruta_pdf"),
+                    documento.get("estado"),
+                    documento.get("observaciones"),
+                    payload_json,
+                    int(documento_id),
+                ),
+            )
+            self.conn.commit()
+            return int(documento_id)
+        cur = self.conn.execute(
+            """
+            INSERT INTO documentos_generados
+            (codigo_empresa, ejercicio, plantilla_id, cliente_id, operacion_id, titulo_documento, fecha_generacion,
+             ruta_docx, ruta_pdf, estado, observaciones, json_datos_generacion)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                documento.get("codigo_empresa"),
+                _ej_val(documento.get("ejercicio")) or 0,
+                documento.get("plantilla_id"),
+                documento.get("cliente_id"),
+                documento.get("operacion_id"),
+                documento.get("titulo_documento"),
+                documento.get("fecha_generacion"),
+                documento.get("ruta_docx"),
+                documento.get("ruta_pdf"),
+                documento.get("estado"),
+                documento.get("observaciones"),
+                payload_json,
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def eliminar_documento_generado(self, documento_id: int):
+        self.conn.execute("DELETE FROM documentos_generados WHERE id=?", (int(documento_id),))
+        self.conn.commit()
+
+    def set_documento_intervinientes(self, documento_id: int, items: list[dict]):
+        self.conn.execute("DELETE FROM documento_intervinientes WHERE documento_id=?", (int(documento_id),))
+        for item in items or []:
+            self.conn.execute(
+                "INSERT INTO documento_intervinientes (documento_id, interviniente_id, rol_en_documento) VALUES (?, ?, ?)",
+                (int(documento_id), int(item.get("interviniente_id")), item.get("rol_en_documento")),
+            )
+        self.conn.commit()
+
+    def listar_documento_intervinientes(self, documento_id: int):
+        cur = self.conn.execute(
+            """
+            SELECT di.id, di.documento_id, di.interviniente_id, di.rol_en_documento,
+                   i.nombre_razon_social, i.nif, i.email, i.telefono, i.tipo_persona
+            FROM documento_intervinientes di
+            JOIN intervinientes i ON i.id = di.interviniente_id
+            WHERE di.documento_id=?
+            ORDER BY di.id
+            """,
+            (int(documento_id),),
+        )
+        return [self._row_to_dict(row) for row in cur.fetchall()]
 
     # ---------- USUARIOS / ACL ----------
     def hay_usuarios(self) -> bool:

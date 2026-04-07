@@ -30,6 +30,8 @@ def load_app_config() -> dict:
     data.setdefault("word_templates_dir", "")
     data.setdefault("admin_password", "admin")
     data.setdefault("desmarcar_generadas_password", "")
+    data.setdefault("documentos_output_dir", "")
+    data.setdefault("documentos_output_structure", "cliente")
     monedas = data.get("monedas")
     if not isinstance(monedas, list) or not monedas:
         data["monedas"] = list(DEFAULT_MONEDAS)
@@ -57,6 +59,29 @@ def get_word_templates_dir(default_dir: str) -> str:
 def set_word_templates_dir(path: str) -> None:
     cfg = load_app_config()
     cfg["word_templates_dir"] = path
+    save_app_config(cfg)
+
+
+def get_documentos_output_dir(default_dir: str) -> str:
+    cfg = load_app_config()
+    raw = str(cfg.get("documentos_output_dir") or "").strip()
+    if raw:
+        return raw
+    return default_dir
+
+
+def get_documentos_output_structure() -> str:
+    cfg = load_app_config()
+    raw = str(cfg.get("documentos_output_structure") or "cliente").strip().lower()
+    if raw in {"cliente", "operacion", "tipo_documento"}:
+        return raw
+    return "cliente"
+
+
+def set_documentos_output_config(path: str, structure: str) -> None:
+    cfg = load_app_config()
+    cfg["documentos_output_dir"] = str(path or "").strip()
+    cfg["documentos_output_structure"] = str(structure or "cliente").strip().lower()
     save_app_config(cfg)
 
 def save_app_config(data: dict) -> None:

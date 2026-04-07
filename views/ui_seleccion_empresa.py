@@ -452,11 +452,12 @@ class EmpresaDialog(tk.Toplevel):
             self.result = None
 
 class UISeleccionEmpresa(ttk.Frame):
-    def __init__(self, parent, gestor, on_ok, session=None):
+    def __init__(self, parent, gestor, on_ok, session=None, on_documentos_global=None):
         super().__init__(parent)
         self.gestor = gestor
         self.on_ok = on_ok
         self.session = session
+        self.on_documentos_global = on_documentos_global
         self._fact_sort_state = {}
         self._empresa_default_ej = {}
         monedas = load_monedas()
@@ -521,6 +522,7 @@ class UISeleccionEmpresa(ttk.Frame):
         self.btn_copiar_empresa.pack(side=tk.LEFT, padx=6)
         self.btn_terceros = ttk.Button(bar, text="Terceros", style="Primary.TButton", command=self.controller.terceros)
         self.btn_terceros.pack(side=tk.LEFT, padx=6)
+        self.btn_documentos_global = ttk.Button(bar, text="Documentos", style="Primary.TButton", command=self.controller.abrir_documentos_global)
         self.btn_contabilidad = ttk.Button(bar, text="Contabilidad", style="Primary.TButton", command=self.controller.continuar_contabilidad)
         self.btn_contabilidad.pack(side=tk.RIGHT, padx=(6,0))
         self.btn_facturacion = ttk.Button(bar, text="Facturacion", style="Primary.TButton", command=self.controller.continuar_facturacion)

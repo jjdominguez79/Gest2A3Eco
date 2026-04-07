@@ -206,6 +206,12 @@ class SeleccionEmpresaController:
             return
         self._view.open_terceros_dialog(self._gestor)
 
+    def abrir_documentos_global(self):
+        if not getattr(self._view, "on_documentos_global", None):
+            self._view.show_warning("Gest2A3Eco", "La vista global de documentos no esta disponible.")
+            return
+        self._view.on_documentos_global()
+
     def continuar_facturacion(self):
         codigo, eje = self._sel_empresa()
         if not codigo:

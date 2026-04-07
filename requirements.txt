@@ -4,3 +4,5 @@ openpyxl
 portalocker
 python-docx
 pillow
+docxtpl
+docx2pdf
