@@ -66,8 +66,19 @@ class Document(Base):
     )
 
     company: Mapped["Company"] = relationship(back_populates="documents")
-    uploaded_by: Mapped["User | None"] = relationship()
+    uploaded_by: Mapped["User"] = relationship()
     events: Mapped[list["DocumentEvent"]] = relationship(
         back_populates="document",
         cascade="all, delete-orphan",
     )
+    ocr_result: Mapped["DocumentOcrResult"] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    invoice_review: Mapped["InvoiceReview"] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    accounting_batch_items: Mapped[list["AccountingBatchItem"]] = relationship()

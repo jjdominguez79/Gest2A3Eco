@@ -1,0 +1,80 @@
+@baseUrl = http://127.0.0.1:8000/api/v1
+@email = smoke.phase6@gestinem.local
+@password = GestinemSmoke6!
+@companyId = REPLACE_COMPANY_ID
+@batchId = REPLACE_BATCH_ID
+
+### Login
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "{{password}}"
+}
+
+### Get A3 settings
+GET {{baseUrl}}/companies/{{companyId}}/a3-settings
+Authorization: Bearer REPLACE_TOKEN
+X-Company-Id: {{companyId}}
+
+### Update A3 settings
+PUT {{baseUrl}}/companies/{{companyId}}/a3-settings
+Authorization: Bearer REPLACE_TOKEN
+X-Company-Id: {{companyId}}
+Content-Type: application/json
+
+{
+  "a3_enabled": true,
+  "a3_company_code": "00001",
+  "a3_export_path": "\\\\SMOKE\\A3\\IMPORT",
+  "a3_import_mode": "manual"
+}
+
+### Pending accounting documents
+GET {{baseUrl}}/accounting/documents/pending
+Authorization: Bearer REPLACE_TOKEN
+X-Company-Id: {{companyId}}
+
+### Create batch draft
+POST {{baseUrl}}/accounting/batches
+Authorization: Bearer REPLACE_TOKEN
+X-Company-Id: {{companyId}}
+Content-Type: application/json
+
+{
+  "document_ids": [
+    "REPLACE_DOCUMENT_ID"
+  ],
+  "notes": "manual smoke draft"
+}
+
+### Generate batch
+POST {{baseUrl}}/accounting/batches/{{batchId}}/generate
+Authorization: Bearer REPLACE_TOKEN
+X-Company-Id: {{companyId}}
+Content-Type: application/json
+
+{
+  "notes": "manual smoke generate"
+}
+
+### Batch detail
+GET {{baseUrl}}/accounting/batches/{{batchId}}
+Authorization: Bearer REPLACE_TOKEN
+X-Company-Id: {{companyId}}
+
+### Download batch
+POST {{baseUrl}}/accounting/batches/{{batchId}}/download
+Authorization: Bearer REPLACE_TOKEN
+X-Company-Id: {{companyId}}
+
+### Mark exported
+POST {{baseUrl}}/accounting/batches/{{batchId}}/mark-exported
+Authorization: Bearer REPLACE_TOKEN
+X-Company-Id: {{companyId}}
+Content-Type: application/json
+
+{
+  "notes": "manual smoke export"
+}

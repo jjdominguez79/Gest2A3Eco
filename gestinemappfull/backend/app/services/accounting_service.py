@@ -1,0 +1,3 @@
+from app.services.accounting_batch_service import AccountingBatchService
+
+AccountingService = AccountingBatchService

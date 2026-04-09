@@ -65,4 +65,5 @@ class CompanyAccount(Base):
     )
 
     company: Mapped["Company"] = relationship(back_populates="accounts")
-    global_third_party: Mapped["GlobalThirdParty | None"] = relationship(back_populates="company_accounts")
+    global_third_party: Mapped["GlobalThirdParty"] = relationship(back_populates="company_accounts")
+    invoice_reviews: Mapped[list["InvoiceReview"]] = relationship()

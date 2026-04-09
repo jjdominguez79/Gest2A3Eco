@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import settings
 from app.models.document import Document
@@ -28,7 +28,7 @@ class DocumentService:
         workflow_status: DocumentWorkflowStatus | None = None,
         original_filename: str | None = None,
     ) -> list[Document]:
-        query = self.db.query(Document).filter(
+        query = self.db.query(Document).options(joinedload(Document.ocr_result)).filter(
             Document.company_id == company_id,
             Document.is_active.is_(True),
         )
@@ -96,17 +96,7 @@ class DocumentService:
         return document
 
     def update(self, *, company_id, document_id, current_user: User, payload: DocumentUpdate) -> Document:
-        document = (
-            self.db.query(Document)
-            .filter(
-                Document.id == document_id,
-                Document.company_id == company_id,
-                Document.is_active.is_(True),
-            )
-            .first()
-        )
-        if document is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+        document = self.get_by_id(company_id=company_id, document_id=document_id)
 
         changes: dict[str, str] = {}
         if payload.document_type and payload.document_type != document.document_type:
@@ -125,4 +115,19 @@ class DocumentService:
             )
             self.db.commit()
             self.db.refresh(document)
+        return document
+
+    def get_by_id(self, *, company_id, document_id) -> Document:
+        document = (
+            self.db.query(Document)
+            .options(joinedload(Document.ocr_result))
+            .filter(
+                Document.id == document_id,
+                Document.company_id == company_id,
+                Document.is_active.is_(True),
+            )
+            .first()
+        )
+        if document is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
         return document

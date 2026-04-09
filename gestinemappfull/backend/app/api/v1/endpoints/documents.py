@@ -8,8 +8,9 @@ from app.db.session import get_db
 from app.models.company_membership import CompanyMembership
 from app.models.enums import DocumentType, DocumentWorkflowStatus
 from app.models.user import User
-from app.schemas.document import DocumentRead, DocumentUpdate
+from app.schemas.document import DocumentClassifyRequest, DocumentOcrResultRead, DocumentRead, DocumentUpdate
 from app.services.document_service import DocumentService
+from app.services.ocr_service import OcrService
 
 
 router = APIRouter(prefix="/documents")
@@ -62,5 +63,53 @@ def update_document(
         document_id=document_id,
         current_user=current_user,
         payload=payload,
+    )
+    return DocumentRead.model_validate(item)
+
+
+@router.post("/{document_id}/run-ocr", response_model=DocumentOcrResultRead)
+def run_document_ocr(
+    document_id: UUID,
+    current_user: User = Depends(get_current_user),
+    company_id=Depends(get_active_company_id),
+    membership: CompanyMembership = Depends(get_active_membership),
+    db: Session = Depends(get_db),
+) -> DocumentOcrResultRead:
+    del membership
+    item = OcrService(db).run(
+        company_id=company_id,
+        document_id=document_id,
+        current_user=current_user,
+    )
+    return DocumentOcrResultRead.model_validate(item)
+
+
+@router.get("/{document_id}/ocr-result", response_model=DocumentOcrResultRead)
+def get_document_ocr_result(
+    document_id: UUID,
+    company_id=Depends(get_active_company_id),
+    membership: CompanyMembership = Depends(get_active_membership),
+    db: Session = Depends(get_db),
+) -> DocumentOcrResultRead:
+    del membership
+    item = OcrService(db).get_result(company_id=company_id, document_id=document_id)
+    return DocumentOcrResultRead.model_validate(item)
+
+
+@router.post("/{document_id}/classify", response_model=DocumentRead)
+def classify_document(
+    document_id: UUID,
+    payload: DocumentClassifyRequest,
+    current_user: User = Depends(get_current_user),
+    company_id=Depends(get_active_company_id),
+    membership: CompanyMembership = Depends(get_active_membership),
+    db: Session = Depends(get_db),
+) -> DocumentRead:
+    del membership
+    item = OcrService(db).classify(
+        company_id=company_id,
+        document_id=document_id,
+        current_user=current_user,
+        document_type=payload.document_type,
     )
     return DocumentRead.model_validate(item)

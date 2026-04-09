@@ -86,7 +86,7 @@ class _ThirdPartiesPageState extends State<ThirdPartiesPage> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         DropdownButtonFormField<String>(
-                          value: thirdPartyType,
+                          initialValue: thirdPartyType,
                           decoration: const InputDecoration(labelText: 'Tipo'),
                           items: const [
                             DropdownMenuItem(

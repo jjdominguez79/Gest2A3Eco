@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from difflib import SequenceMatcher
+
+from fastapi import HTTPException, status
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.global_third_party import GlobalThirdParty
+from app.schemas.quick_actions import QuickCreateThirdPartyRequest
 from app.schemas.third_party import GlobalThirdPartyCreate
 
 
@@ -43,3 +47,39 @@ class ThirdPartyService:
         self.db.commit()
         self.db.refresh(third_party)
         return third_party
+
+    def quick_create(self, payload: QuickCreateThirdPartyRequest) -> tuple[GlobalThirdParty, bool]:
+        legal_name = payload.legal_name.strip()
+        tax_id = (payload.tax_id or "").strip() or None
+        if not legal_name:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Legal name is required.")
+
+        if tax_id:
+            existing_by_tax = (
+                self.db.query(GlobalThirdParty)
+                .filter(
+                    GlobalThirdParty.is_active.is_(True),
+                    GlobalThirdParty.tax_id == tax_id,
+                )
+                .first()
+            )
+            if existing_by_tax is not None:
+                return existing_by_tax, True
+
+        candidates = self.list(legal_name=legal_name)
+        for candidate in candidates[:10]:
+            similarity = SequenceMatcher(None, candidate.legal_name.lower(), legal_name.lower()).ratio()
+            if similarity >= 0.92:
+                return candidate, True
+
+        third_party = GlobalThirdParty(
+            third_party_type=payload.third_party_type,
+            tax_id=tax_id,
+            legal_name=legal_name,
+            trade_name=(payload.trade_name or "").strip() or None,
+            is_active=True,
+        )
+        self.db.add(third_party)
+        self.db.commit()
+        self.db.refresh(third_party)
+        return third_party, False

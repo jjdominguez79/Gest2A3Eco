@@ -55,6 +55,44 @@ class DocumentWorkflowStatus(str, Enum):
     PENDING_REVIEW = "pending_review"
     PENDING_OCR = "pending_ocr"
     PENDING_ACCOUNTING = "pending_accounting"
-    ACCOUNTED = "accounted"
+    BATCHED = "batched"
+    EXPORTED = "exported"
     ARCHIVED = "archived"
     ERROR = "error"
+
+
+class DocumentOcrStatus(str, Enum):
+    PENDING = "pending"
+    PROCESSED = "processed"
+    REVIEWED = "reviewed"
+    ERROR = "error"
+
+
+class InvoiceReviewStatus(str, Enum):
+    PENDING = "pending"
+    REVIEWED = "reviewed"
+    CONFIRMED = "confirmed"
+    ERROR = "error"
+
+
+class AccountingBatchType(str, Enum):
+    INVOICE_RECEIVED = "invoice_received"
+
+
+class AccountingBatchStatus(str, Enum):
+    DRAFT = "draft"
+    GENERATED = "generated"
+    DOWNLOADED = "downloaded"
+    EXPORTED = "exported"
+    ERROR = "error"
+
+
+class AccountingBatchItemStatus(str, Enum):
+    INCLUDED = "included"
+    ERROR = "error"
+
+
+class A3ImportMode(str, Enum):
+    MANUAL = "manual"
+    SHARED_FOLDER = "shared_folder"
+    FUTURE_CONNECTOR = "future_connector"

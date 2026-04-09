@@ -33,3 +33,16 @@ class CompanyService:
         self.db.commit()
         self.db.refresh(membership)
         return membership
+
+    def get_membership(self, *, company_id, user_id) -> CompanyMembership | None:
+        return (
+            self.db.query(CompanyMembership)
+            .join(Company)
+            .filter(
+                CompanyMembership.company_id == company_id,
+                CompanyMembership.user_id == user_id,
+                CompanyMembership.is_active.is_(True),
+                Company.is_active.is_(True),
+            )
+            .first()
+        )

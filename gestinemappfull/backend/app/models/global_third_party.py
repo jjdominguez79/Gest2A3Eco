@@ -45,3 +45,4 @@ class GlobalThirdParty(Base):
     )
 
     company_accounts: Mapped[list["CompanyAccount"]] = relationship(back_populates="global_third_party")
+    invoice_reviews: Mapped[list["InvoiceReview"]] = relationship()

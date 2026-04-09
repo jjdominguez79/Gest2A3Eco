@@ -3,11 +3,22 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/state/session_controller.dart';
 import '../features/company_accounts/presentation/company_accounts_page.dart';
+import '../features/company_settings/presentation/company_a3_settings_page.dart';
+import '../features/contabilizacion/presentation/contabilizacion_page.dart';
 import '../features/dashboard/presentation/dashboard_page.dart';
 import '../features/documents/presentation/documents_page.dart';
+import '../features/ocr/presentation/ocr_page.dart';
 import '../features/third_parties/presentation/third_parties_page.dart';
 
-enum _ShellSection { dashboard, thirdParties, companyAccounts, documents }
+enum _ShellSection {
+  dashboard,
+  thirdParties,
+  companyAccounts,
+  documents,
+  ocrInvoices,
+  accounting,
+  companyA3Settings,
+}
 
 class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key});
@@ -32,11 +43,20 @@ class _AppShellState extends ConsumerState<AppShell> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    final title = switch (_section) {
+    final effectiveSection =
+        activeCompany.role != 'admin' &&
+            _section == _ShellSection.companyA3Settings
+        ? _ShellSection.dashboard
+        : _section;
+
+    final title = switch (effectiveSection) {
       _ShellSection.dashboard => 'Dashboard',
       _ShellSection.thirdParties => 'Terceros',
       _ShellSection.companyAccounts => 'Plan contable',
       _ShellSection.documents => 'Documentacion',
+      _ShellSection.ocrInvoices => 'OCR Facturas',
+      _ShellSection.accounting => 'Contabilizacion',
+      _ShellSection.companyA3Settings => 'Configuracion A3',
     };
 
     return Scaffold(
@@ -66,7 +86,7 @@ class _AppShellState extends ConsumerState<AppShell> {
                 _NavItem(
                   icon: Icons.grid_view_rounded,
                   label: 'Dashboard',
-                  selected: _section == _ShellSection.dashboard,
+                  selected: effectiveSection == _ShellSection.dashboard,
                   onTap: () =>
                       setState(() => _section = _ShellSection.dashboard),
                 ),
@@ -74,7 +94,7 @@ class _AppShellState extends ConsumerState<AppShell> {
                 _NavItem(
                   icon: Icons.people_alt_rounded,
                   label: 'Terceros',
-                  selected: _section == _ShellSection.thirdParties,
+                  selected: effectiveSection == _ShellSection.thirdParties,
                   onTap: () =>
                       setState(() => _section = _ShellSection.thirdParties),
                 ),
@@ -82,7 +102,7 @@ class _AppShellState extends ConsumerState<AppShell> {
                 _NavItem(
                   icon: Icons.account_tree_rounded,
                   label: 'Plan contable',
-                  selected: _section == _ShellSection.companyAccounts,
+                  selected: effectiveSection == _ShellSection.companyAccounts,
                   onTap: () =>
                       setState(() => _section = _ShellSection.companyAccounts),
                 ),
@@ -90,10 +110,38 @@ class _AppShellState extends ConsumerState<AppShell> {
                 _NavItem(
                   icon: Icons.folder_copy_rounded,
                   label: 'Documentacion',
-                  selected: _section == _ShellSection.documents,
+                  selected: effectiveSection == _ShellSection.documents,
                   onTap: () =>
                       setState(() => _section = _ShellSection.documents),
                 ),
+                const SizedBox(height: 8),
+                _NavItem(
+                  icon: Icons.receipt_long_rounded,
+                  label: 'OCR Facturas',
+                  selected: effectiveSection == _ShellSection.ocrInvoices,
+                  onTap: () =>
+                      setState(() => _section = _ShellSection.ocrInvoices),
+                ),
+                const SizedBox(height: 8),
+                _NavItem(
+                  icon: Icons.calculate_rounded,
+                  label: 'Contabilizacion',
+                  selected: effectiveSection == _ShellSection.accounting,
+                  onTap: () =>
+                      setState(() => _section = _ShellSection.accounting),
+                ),
+                if (activeCompany.role == 'admin') ...[
+                  const SizedBox(height: 8),
+                  _NavItem(
+                    icon: Icons.settings_input_component_rounded,
+                    label: 'Configuracion A3',
+                    selected:
+                        effectiveSection == _ShellSection.companyA3Settings,
+                    onTap: () => setState(
+                      () => _section = _ShellSection.companyA3Settings,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed: controller.backToCompanySelector,
@@ -153,7 +201,7 @@ class _AppShellState extends ConsumerState<AppShell> {
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.all(24),
-                    child: switch (_section) {
+                    child: switch (effectiveSection) {
                       _ShellSection.dashboard => DashboardPage(
                         summary: dashboard,
                       ),
@@ -169,6 +217,22 @@ class _AppShellState extends ConsumerState<AppShell> {
                       ),
                       _ShellSection.documents => DocumentsPage(
                         apiClient: apiClient,
+                        token: token,
+                        companyId: activeCompany.id,
+                        companyName: activeCompany.name,
+                      ),
+                      _ShellSection.ocrInvoices => OcrPage(
+                        apiClient: apiClient,
+                        token: token,
+                        companyId: activeCompany.id,
+                        companyName: activeCompany.name,
+                      ),
+                      _ShellSection.accounting => ContabilizacionPage(
+                        token: token,
+                        companyId: activeCompany.id,
+                        companyName: activeCompany.name,
+                      ),
+                      _ShellSection.companyA3Settings => CompanyA3SettingsPage(
                         token: token,
                         companyId: activeCompany.id,
                         companyName: activeCompany.name,

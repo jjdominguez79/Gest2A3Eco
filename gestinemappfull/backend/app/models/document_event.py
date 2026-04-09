@@ -35,4 +35,4 @@ class DocumentEvent(Base):
     )
 
     document: Mapped["Document"] = relationship(back_populates="events")
-    user: Mapped["User | None"] = relationship()
+    user: Mapped["User"] = relationship()

@@ -130,7 +130,7 @@ class _CompanyAccountsPageState extends State<CompanyAccountsPage> {
                         ),
                         const SizedBox(height: 12),
                         DropdownButtonFormField<String>(
-                          value: accountType,
+                          initialValue: accountType,
                           decoration: const InputDecoration(
                             labelText: 'Tipo de cuenta',
                           ),
@@ -172,7 +172,7 @@ class _CompanyAccountsPageState extends State<CompanyAccountsPage> {
                         ),
                         const SizedBox(height: 12),
                         DropdownButtonFormField<String?>(
-                          value: selectedThirdParty?.id,
+                          initialValue: selectedThirdParty?.id,
                           decoration: const InputDecoration(
                             labelText: 'Tercero global vinculado',
                           ),
@@ -318,7 +318,7 @@ class _CompanyAccountsPageState extends State<CompanyAccountsPage> {
             SizedBox(
               width: 220,
               child: DropdownButtonFormField<String?>(
-                value: _accountTypeFilter,
+                initialValue: _accountTypeFilter,
                 decoration: const InputDecoration(labelText: 'Tipo de cuenta'),
                 items: const [
                   DropdownMenuItem<String?>(value: null, child: Text('Todos')),

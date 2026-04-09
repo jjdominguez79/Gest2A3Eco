@@ -1,3 +1,5 @@
+import 'document_ocr_result_model.dart';
+
 class DocumentModel {
   const DocumentModel({
     required this.id,
@@ -14,6 +16,7 @@ class DocumentModel {
     required this.workflowStatus,
     required this.uploadedByUserId,
     required this.isActive,
+    required this.ocrResult,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -32,6 +35,7 @@ class DocumentModel {
   final String workflowStatus;
   final String? uploadedByUserId;
   final bool isActive;
+  final DocumentOcrResultModel? ocrResult;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -51,6 +55,11 @@ class DocumentModel {
       workflowStatus: json['workflow_status'] as String,
       uploadedByUserId: json['uploaded_by_user_id'] as String?,
       isActive: json['is_active'] as bool,
+      ocrResult: json['ocr_result'] == null
+          ? null
+          : DocumentOcrResultModel.fromJson(
+              json['ocr_result'] as Map<String, dynamic>,
+            ),
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
     );
