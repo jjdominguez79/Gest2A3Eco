@@ -2,21 +2,40 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/state/session_controller.dart';
+import '../features/company_accounts/presentation/company_accounts_page.dart';
 import '../features/dashboard/presentation/dashboard_page.dart';
+import '../features/third_parties/presentation/third_parties_page.dart';
 
-class AppShell extends ConsumerWidget {
+enum _ShellSection { dashboard, thirdParties, companyAccounts }
+
+class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends ConsumerState<AppShell> {
+  _ShellSection _section = _ShellSection.dashboard;
+
+  @override
+  Widget build(BuildContext context) {
     final session = ref.watch(sessionControllerProvider);
     final controller = ref.read(sessionControllerProvider.notifier);
+    final apiClient = ref.read(apiClientProvider);
     final activeCompany = session.activeCompany;
     final dashboard = session.dashboard;
+    final token = session.token;
 
-    if (activeCompany == null || dashboard == null) {
+    if (activeCompany == null || dashboard == null || token == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
+
+    final title = switch (_section) {
+      _ShellSection.dashboard => 'Dashboard',
+      _ShellSection.thirdParties => 'Terceros',
+      _ShellSection.companyAccounts => 'Plan contable',
+    };
 
     return Scaffold(
       body: Row(
@@ -42,10 +61,28 @@ class AppShell extends ConsumerWidget {
                   style: const TextStyle(color: Color(0xFF9FB3C8)),
                 ),
                 const SizedBox(height: 32),
-                const _NavItem(
+                _NavItem(
                   icon: Icons.grid_view_rounded,
                   label: 'Dashboard',
-                  selected: true,
+                  selected: _section == _ShellSection.dashboard,
+                  onTap: () =>
+                      setState(() => _section = _ShellSection.dashboard),
+                ),
+                const SizedBox(height: 8),
+                _NavItem(
+                  icon: Icons.people_alt_rounded,
+                  label: 'Terceros',
+                  selected: _section == _ShellSection.thirdParties,
+                  onTap: () =>
+                      setState(() => _section = _ShellSection.thirdParties),
+                ),
+                const SizedBox(height: 8),
+                _NavItem(
+                  icon: Icons.account_tree_rounded,
+                  label: 'Plan contable',
+                  selected: _section == _ShellSection.companyAccounts,
+                  onTap: () =>
+                      setState(() => _section = _ShellSection.companyAccounts),
                 ),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
@@ -75,11 +112,11 @@ class AppShell extends ConsumerWidget {
                   ),
                   child: Row(
                     children: [
-                      const Expanded(
+                      Expanded(
                         child: Text(
-                          'Dashboard',
+                          title,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 24,
                             fontWeight: FontWeight.w700,
                           ),
@@ -106,7 +143,21 @@ class AppShell extends ConsumerWidget {
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.all(24),
-                    child: DashboardPage(summary: dashboard),
+                    child: switch (_section) {
+                      _ShellSection.dashboard => DashboardPage(
+                        summary: dashboard,
+                      ),
+                      _ShellSection.thirdParties => ThirdPartiesPage(
+                        apiClient: apiClient,
+                        token: token,
+                      ),
+                      _ShellSection.companyAccounts => CompanyAccountsPage(
+                        apiClient: apiClient,
+                        token: token,
+                        companyId: activeCompany.id,
+                        companyName: activeCompany.name,
+                      ),
+                    },
                   ),
                 ),
               ],
@@ -123,32 +174,38 @@ class _NavItem extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.selected,
+    required this.onTap,
   });
 
   final IconData icon;
   final String label;
   final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: selected ? const Color(0xFF12384A) : Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      child: Row(
-        children: [
-          Icon(icon, color: Colors.white),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              label,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white, fontSize: 15),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF12384A) : Colors.transparent,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        child: Row(
+          children: [
+            Icon(icon, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white, fontSize: 15),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

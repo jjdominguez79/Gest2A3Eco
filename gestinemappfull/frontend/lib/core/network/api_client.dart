@@ -4,7 +4,9 @@ import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
 import '../models/company_model.dart';
+import '../models/company_account_model.dart';
 import '../models/dashboard_summary_model.dart';
+import '../models/global_third_party_model.dart';
 import '../models/user_model.dart';
 
 class ApiException implements Exception {
@@ -85,6 +87,122 @@ class ApiClient {
     );
     final payload = _parseResponse(response);
     return DashboardSummaryModel.fromJson(payload);
+  }
+
+  Future<List<GlobalThirdPartyModel>> getThirdParties({
+    required String token,
+    String? taxId,
+    String? legalName,
+  }) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/third-parties').replace(
+      queryParameters: {
+        if (taxId != null && taxId.isNotEmpty) 'tax_id': taxId,
+        if (legalName != null && legalName.isNotEmpty) 'legal_name': legalName,
+      },
+    );
+    final response = await _client.get(uri, headers: _authHeaders(token));
+    final payload = _parseResponse(response) as List<dynamic>;
+    return payload
+        .map(
+          (item) =>
+              GlobalThirdPartyModel.fromJson(item as Map<String, dynamic>),
+        )
+        .toList();
+  }
+
+  Future<GlobalThirdPartyModel> createThirdParty({
+    required String token,
+    required String thirdPartyType,
+    required String legalName,
+    String? taxId,
+    String? tradeName,
+    String? email,
+    String? phone,
+    String? address,
+    String? city,
+    String? postalCode,
+    String? country,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('${ApiConfig.baseUrl}/third-parties'),
+      headers: {..._authHeaders(token), 'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'third_party_type': thirdPartyType,
+        'tax_id': taxId,
+        'legal_name': legalName,
+        'trade_name': tradeName,
+        'email': email,
+        'phone': phone,
+        'address': address,
+        'city': city,
+        'postal_code': postalCode,
+        'country': country,
+      }),
+    );
+    final payload = _parseResponse(response);
+    return GlobalThirdPartyModel.fromJson(payload);
+  }
+
+  Future<List<CompanyAccountModel>> getCompanyAccounts({
+    required String token,
+    required String companyId,
+    String? accountCode,
+    String? name,
+    String? accountType,
+  }) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/company-accounts').replace(
+      queryParameters: {
+        if (accountCode != null && accountCode.isNotEmpty)
+          'account_code': accountCode,
+        if (name != null && name.isNotEmpty) 'name': name,
+        if (accountType != null && accountType.isNotEmpty)
+          'account_type': accountType,
+      },
+    );
+    final response = await _client.get(
+      uri,
+      headers: {..._authHeaders(token), 'X-Company-Id': companyId},
+    );
+    final payload = _parseResponse(response) as List<dynamic>;
+    return payload
+        .map(
+          (item) => CompanyAccountModel.fromJson(item as Map<String, dynamic>),
+        )
+        .toList();
+  }
+
+  Future<CompanyAccountModel> createCompanyAccount({
+    required String token,
+    required String companyId,
+    required String accountCode,
+    required String name,
+    required String accountType,
+    String? globalThirdPartyId,
+    String? taxId,
+    String? legalName,
+    String source = 'manual_app',
+    String syncStatus = 'not_synced',
+  }) async {
+    final response = await _client.post(
+      Uri.parse('${ApiConfig.baseUrl}/company-accounts'),
+      headers: {
+        ..._authHeaders(token),
+        'Content-Type': 'application/json',
+        'X-Company-Id': companyId,
+      },
+      body: jsonEncode({
+        'account_code': accountCode,
+        'name': name,
+        'account_type': accountType,
+        'global_third_party_id': globalThirdPartyId,
+        'tax_id': taxId,
+        'legal_name': legalName,
+        'source': source,
+        'sync_status': syncStatus,
+      }),
+    );
+    final payload = _parseResponse(response);
+    return CompanyAccountModel.fromJson(payload);
   }
 
   Map<String, String> _authHeaders(String token) {

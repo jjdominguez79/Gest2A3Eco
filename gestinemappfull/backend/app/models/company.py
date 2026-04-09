@@ -27,4 +27,7 @@ class Company(Base):
         back_populates="company",
         cascade="all, delete-orphan",
     )
-
+    accounts: Mapped[list["CompanyAccount"]] = relationship(
+        back_populates="company",
+        cascade="all, delete-orphan",
+    )
