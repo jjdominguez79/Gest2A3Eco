@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     postgres_user: str = "gestinem"
     postgres_password: str = "gestinem"
     postgres_db: str = "gestinemappfull"
+    document_storage_root: str = "storage"
 
     secret_key: str = "change-this-in-production"
     access_token_expire_minutes: int = 60

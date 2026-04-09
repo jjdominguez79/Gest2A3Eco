@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -6,6 +7,7 @@ import '../config/api_config.dart';
 import '../models/company_model.dart';
 import '../models/company_account_model.dart';
 import '../models/dashboard_summary_model.dart';
+import '../models/document_model.dart';
 import '../models/global_third_party_model.dart';
 import '../models/user_model.dart';
 
@@ -203,6 +205,76 @@ class ApiClient {
     );
     final payload = _parseResponse(response);
     return CompanyAccountModel.fromJson(payload);
+  }
+
+  Future<List<DocumentModel>> getDocuments({
+    required String token,
+    required String companyId,
+    String? documentType,
+    String? workflowStatus,
+    String? originalFilename,
+  }) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/documents').replace(
+      queryParameters: {
+        if (documentType != null && documentType.isNotEmpty)
+          'document_type': documentType,
+        if (workflowStatus != null && workflowStatus.isNotEmpty)
+          'workflow_status': workflowStatus,
+        if (originalFilename != null && originalFilename.isNotEmpty)
+          'original_filename': originalFilename,
+      },
+    );
+    final response = await _client.get(
+      uri,
+      headers: {..._authHeaders(token), 'X-Company-Id': companyId},
+    );
+    final payload = _parseResponse(response) as List<dynamic>;
+    return payload
+        .map((item) => DocumentModel.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<DocumentModel> uploadDocument({
+    required String token,
+    required String companyId,
+    required Uint8List bytes,
+    required String filename,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('${ApiConfig.baseUrl}/documents/upload'),
+    );
+    request.headers.addAll({..._authHeaders(token), 'X-Company-Id': companyId});
+    request.files.add(
+      http.MultipartFile.fromBytes('file', bytes, filename: filename),
+    );
+    final streamed = await request.send();
+    final response = await http.Response.fromStream(streamed);
+    final payload = _parseResponse(response);
+    return DocumentModel.fromJson(payload);
+  }
+
+  Future<DocumentModel> updateDocument({
+    required String token,
+    required String companyId,
+    required String documentId,
+    String? documentType,
+    String? workflowStatus,
+  }) async {
+    final response = await _client.patch(
+      Uri.parse('${ApiConfig.baseUrl}/documents/$documentId'),
+      headers: {
+        ..._authHeaders(token),
+        'X-Company-Id': companyId,
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        if (documentType != null) 'document_type': documentType,
+        if (workflowStatus != null) 'workflow_status': workflowStatus,
+      }),
+    );
+    final payload = _parseResponse(response);
+    return DocumentModel.fromJson(payload);
   }
 
   Map<String, String> _authHeaders(String token) {

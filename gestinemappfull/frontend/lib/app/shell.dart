@@ -4,9 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/state/session_controller.dart';
 import '../features/company_accounts/presentation/company_accounts_page.dart';
 import '../features/dashboard/presentation/dashboard_page.dart';
+import '../features/documents/presentation/documents_page.dart';
 import '../features/third_parties/presentation/third_parties_page.dart';
 
-enum _ShellSection { dashboard, thirdParties, companyAccounts }
+enum _ShellSection { dashboard, thirdParties, companyAccounts, documents }
 
 class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key});
@@ -35,6 +36,7 @@ class _AppShellState extends ConsumerState<AppShell> {
       _ShellSection.dashboard => 'Dashboard',
       _ShellSection.thirdParties => 'Terceros',
       _ShellSection.companyAccounts => 'Plan contable',
+      _ShellSection.documents => 'Documentacion',
     };
 
     return Scaffold(
@@ -83,6 +85,14 @@ class _AppShellState extends ConsumerState<AppShell> {
                   selected: _section == _ShellSection.companyAccounts,
                   onTap: () =>
                       setState(() => _section = _ShellSection.companyAccounts),
+                ),
+                const SizedBox(height: 8),
+                _NavItem(
+                  icon: Icons.folder_copy_rounded,
+                  label: 'Documentacion',
+                  selected: _section == _ShellSection.documents,
+                  onTap: () =>
+                      setState(() => _section = _ShellSection.documents),
                 ),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
@@ -152,6 +162,12 @@ class _AppShellState extends ConsumerState<AppShell> {
                         token: token,
                       ),
                       _ShellSection.companyAccounts => CompanyAccountsPage(
+                        apiClient: apiClient,
+                        token: token,
+                        companyId: activeCompany.id,
+                        companyName: activeCompany.name,
+                      ),
+                      _ShellSection.documents => DocumentsPage(
                         apiClient: apiClient,
                         token: token,
                         companyId: activeCompany.id,
