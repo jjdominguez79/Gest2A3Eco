@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: gestinemappfull-postgres
+    environment:
+      POSTGRES_DB: gestinemappfull
+      POSTGRES_USER: gestinem
+      POSTGRES_PASSWORD: gestinem
+    ports:
+      - "5432:5432"
+    volumes:
+      - gestinemappfull_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  gestinemappfull_postgres_data:
