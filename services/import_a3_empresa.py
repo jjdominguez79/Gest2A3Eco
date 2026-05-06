@@ -26,11 +26,15 @@ _EM_NIF_SLICE = slice(5, 14)
 _EM_NAME_SLICE = slice(54, 74)
 
 # Fichero CU (cuentas / plan contable): tamaño de registro 260 bytes
-#   bytes 5-7  : número de cuenta (entero big-endian 3 bytes)
-#   bytes 8-37 : descripción (30 chars, cp850)
+#   bytes 5-8  : número de cuenta (entero big-endian 4 bytes)
+#   bytes 9-38 : descripción (30 chars, cp850)
+# NOTA: el campo de cuenta ocupa 4 bytes (no 3). Con 3 bytes el máximo
+# representable es 16.777.215, insuficiente para planes de 8 dígitos con
+# cuentas >= 20.000.000 (grupos 2-9). El 4º byte era leído como 1er byte de
+# la descripción, corrompiendo tanto el código como el texto descriptivo.
 _CU_REC_SIZE = 260
-_CU_CODE_SLICE = slice(5, 8)
-_CU_DESC_SLICE = slice(8, 38)
+_CU_CODE_SLICE = slice(5, 9)
+_CU_DESC_SLICE = slice(9, 39)
 
 _A3_ENCODING = "cp850"
 
@@ -129,6 +133,44 @@ def _find_latest_cu_path(codigo_norm: str) -> "Path | None":
         if candidates:
             return max(candidates, key=lambda p: p.stat().st_mtime)
     return None
+
+
+def _count_active_cu_records(cu_path: Path) -> int:
+    try:
+        data = cu_path.read_bytes()
+    except OSError:
+        return 0
+    total = 0
+    offset = _ISAM_HEADER
+    while offset + _CU_REC_SIZE <= len(data):
+        rec = data[offset: offset + _CU_REC_SIZE]
+        if rec and rec[0] in _ISAM_ACTIVE:
+            total += 1
+        offset += _CU_REC_SIZE
+    return total
+
+
+def _find_best_cu_path(codigo_norm: str) -> "Path | None":
+    candidates = []
+    for folder in _candidate_dirs(codigo_norm):
+        if not folder.exists():
+            continue
+        candidates.extend(folder.glob(f"{codigo_norm}?CU.DAT"))
+        candidates.extend(folder.glob(f"{codigo_norm}?CU.dat"))
+        candidates.extend(folder.glob(f"{codigo_norm}0CU.DAT"))
+        candidates.extend(folder.glob(f"{codigo_norm}0CU.dat"))
+    if not candidates:
+        return None
+    ranked = []
+    seen = set()
+    for path in candidates:
+        key = str(path).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        ranked.append(( _count_active_cu_records(path), path.stat().st_mtime, path))
+    ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return ranked[0][2] if ranked else None
 
 
 def _candidate_tecodir_paths() -> list[Path]:
@@ -263,21 +305,87 @@ def _read_var_blocks(path: Path) -> list[dict]:
 def _extract_ban_labels(blocks: list[dict]) -> list[str]:
     """
     Extrae las etiquetas descriptivas de las cuentas bancarias de los bloques BAN.
-    En el formato ISAM de A3ECO, el texto de la cuenta (p.ej. "SUrbana 7140")
-    comienza en el byte 30 del bloque (los bytes 16-29 son datos binarios propietarios
-    que no contienen el IBAN en texto plano).
+    Estructura del bloque VAR (268 bytes):
+      bytes  0-1  : cabecera "A\\x08"
+      bytes  2-13 : tag (p.ej. "BAN001")
+      bytes 14+   : datos binarios del banco (IBAN codificado propietariamente,
+                    numero de cuenta CCC, subcuenta contable, etc.)
+    Se busca el primer fragmento de texto imprimible de longitud razonable
+    probando varios offsets candidatos dentro de los datos binarios.
     """
+    _CANDIDATE_OFFSETS = (14, 16, 20, 24, 30, 34, 40)
     labels = []
     for block in blocks:
         if not str(block.get("tag") or "").startswith("BAN"):
             continue
         raw = block.get("raw") or b""
-        if len(raw) < 32:
+        if len(raw) < 20:
             continue
-        label = raw[30:].decode(_A3_ENCODING, errors="replace").strip()
-        if label:
-            labels.append(label)
+        found = ""
+        for off in _CANDIDATE_OFFSETS:
+            if off >= len(raw):
+                continue
+            # Leer hasta 60 bytes desde el offset, limpiar nulos y no-imprimibles
+            chunk = raw[off: off + 60]
+            text = "".join(
+                chr(b) if 32 <= b < 127 or b >= 160 else "\x00"
+                for b in chunk
+            )
+            # Tomar el primer segmento antes del primer nulo
+            segment = text.split("\x00")[0].strip()
+            if len(segment) >= 4:
+                found = segment
+                break
+        if found:
+            labels.append(found)
     return labels
+
+
+def dump_ban_blocks(var_path: Path) -> str:
+    """
+    Utilidad de diagnostico: vuelca los bloques BAN del fichero VAR.DAT en
+    formato hexadecimal + texto para identificar el offset correcto del label.
+    Uso: from services.import_a3_empresa import dump_ban_blocks; from pathlib import Path
+         print(dump_ban_blocks(Path(r'Z:\\A3\\A3ECO\\E00193\\000193VAR.DAT')))
+    """
+    try:
+        data = var_path.read_bytes()
+    except OSError as exc:
+        return f"Error leyendo {var_path}: {exc}"
+    blocks = _read_var_blocks(var_path)
+    ban_blocks = [b for b in blocks if str(b.get("tag") or "").startswith("BAN")]
+    if not ban_blocks:
+        return f"No se encontraron bloques BAN en {var_path}"
+    lines = [f"Fichero: {var_path}  ({len(ban_blocks)} bloque(s) BAN)"]
+    for block in ban_blocks:
+        raw = block.get("raw") or b""
+        tag = block.get("tag", "?")
+        hex_all = " ".join(f"{b:02X}" for b in raw[:80])
+        lines.append(f"\n[{tag}] hex[0:80]:\n  {hex_all}")
+        for off in range(10, min(60, len(raw))):
+            chunk = raw[off: off + 40]
+            segment = "".join(chr(b) if 32 <= b < 127 or b >= 160 else "." for b in chunk)
+            if any(c.isalpha() for c in segment[:10]):
+                lines.append(f"  @{off}: {segment!r}")
+    return "\n".join(lines)
+
+
+def _build_bank_records_from_labels(labels: list[str]) -> list[dict]:
+    out = []
+    for idx, label in enumerate(labels or []):
+        value = str(label or "").strip()
+        if not value:
+            continue
+        out.append(
+            {
+                "descripcion": value,
+                "iban": "",
+                "subcuenta_contable": "",
+                "origen": "a3",
+                "principal": idx == 0,
+            }
+        )
+    return out
 
 
 def _extract_name_from_var(text: str) -> str:
@@ -425,10 +533,10 @@ def _leer_em_binario(em_path: Path) -> dict:
 def _leer_plan_cuentas_binario(cu_path: Path) -> list[dict]:
     """
     Lee el fichero CU.DAT (plan de cuentas) en formato ISAM binario.
-    Devuelve lista de {'cuenta': '100', 'descripcion': 'CAPITAL SOCIAL'}.
+    Devuelve lista de {'cuenta': '43000000', 'descripcion': 'CLIENTES NACIONALES'}.
     Layout: cabecera 128 bytes, registros de 260 bytes.
-      bytes 5-7  número de cuenta (big-endian 3 bytes)
-      bytes 8-37 descripción (30 chars cp850)
+      bytes 5-8  número de cuenta (big-endian 4 bytes)
+      bytes 9-38 descripción (30 chars cp850)
     """
     try:
         data = cu_path.read_bytes()
@@ -440,13 +548,58 @@ def _leer_plan_cuentas_binario(cu_path: Path) -> list[dict]:
         rec = data[offset: offset + _CU_REC_SIZE]
         if rec[0] in _ISAM_ACTIVE:
             code_bytes = rec[_CU_CODE_SLICE]
-            num = (code_bytes[0] << 16) | (code_bytes[1] << 8) | code_bytes[2]
+            num = int.from_bytes(code_bytes, "big")
             if num > 0:
                 desc = _decode_field(rec[_CU_DESC_SLICE])
                 if desc:
                     cuentas.append({"cuenta": str(num), "descripcion": desc})
         offset += _CU_REC_SIZE
     return cuentas
+
+
+def dump_cu_records(cu_path: Path, max_records: int = 20) -> str:
+    """
+    Utilidad de diagnostico: vuelca los primeros registros activos del fichero
+    CU.DAT en formato hexadecimal + texto para verificar el layout real.
+    Uso: from services.import_a3_empresa import dump_cu_records; from pathlib import Path
+         print(dump_cu_records(Path(r'Z:\\A3\\A3ECO\\E00193\\000193?CU.DAT')))
+    """
+    try:
+        data = cu_path.read_bytes()
+    except OSError as exc:
+        return f"Error leyendo {cu_path}: {exc}"
+    lines = [f"Fichero: {cu_path}  ({len(data)} bytes, {(len(data) - _ISAM_HEADER) // _CU_REC_SIZE} registros aprox.)"]
+    offset = _ISAM_HEADER
+    count = 0
+    while offset + _CU_REC_SIZE <= len(data) and count < max_records:
+        rec = data[offset: offset + _CU_REC_SIZE]
+        marker = rec[0]
+        is_active = marker in _ISAM_ACTIVE
+        hex_head = " ".join(f"{b:02X}" for b in rec[:40])
+        code_be4 = int.from_bytes(rec[5:9], "big")
+        code_be3 = int.from_bytes(rec[5:8], "big")
+        desc9 = rec[9:39].decode(_A3_ENCODING, errors="replace").strip()
+        desc8 = rec[8:38].decode(_A3_ENCODING, errors="replace").strip()
+        lines.append(
+            f"[{offset}] {'ACTIVO' if is_active else 'borrado'} "
+            f"marker=0x{marker:02X}  hex[0:40]={hex_head}\n"
+            f"    code(4B-BE)={code_be4}  code(3B-BE/anterior)={code_be3}\n"
+            f"    desc@9={desc9!r}  desc@8(anterior)={desc8!r}"
+        )
+        if is_active:
+            count += 1
+        offset += _CU_REC_SIZE
+    return "\n".join(lines)
+
+
+def _deducir_digitos_plan(plan_cuentas: list[dict]) -> int:
+    lengths = [len(str(item.get("cuenta") or "").strip()) for item in (plan_cuentas or []) if str(item.get("cuenta") or "").strip()]
+    if not lengths:
+        return 8
+    max_len = max(lengths)
+    if max_len < 4:
+        return 8
+    return max_len
 
 
 def _parse_var_company_data(var_path: Path) -> dict:
@@ -605,7 +758,7 @@ def importar_empresa_desde_a3(codigo: str) -> dict:
 
     # 2. Ficheros binarios por empresa: CU (plan de cuentas) y datos de respaldo
     company_dirs = [path for path in _candidate_dirs(codigo_norm) if path.exists()]
-    cu_path = _find_latest_cu_path(codigo_norm)
+    cu_path = _find_best_cu_path(codigo_norm) or _find_latest_cu_path(codigo_norm)
     var_path = next((path for path in _candidate_var_paths(codigo_norm) if path.exists()), None)
     em_path = next((path for path in _candidate_em_paths(codigo_norm) if path.exists()), None)
     dashboard_path = next((path for path in _candidate_dashboard_paths(codigo_norm) if path.exists()), None)
@@ -624,6 +777,7 @@ def importar_empresa_desde_a3(codigo: str) -> dict:
 
     # 3. Plan de cuentas desde fichero CU binario
     plan_cuentas = _leer_plan_cuentas_binario(cu_path) if cu_path else []
+    digitos_plan = _deducir_digitos_plan(plan_cuentas)
 
     # 4. Fuentes de respaldo: VAR y cabecera de la ficha DAT
     text = _read_header_text(data_path) if data_path else ""
@@ -685,6 +839,7 @@ def importar_empresa_desde_a3(codigo: str) -> dict:
         detalle.append(f"Web: {var_data.get('web')}")
 
     ban_labels = var_data.get("_ban_labels") or []
+    bank_records = _build_bank_records_from_labels(ban_labels)
     if ban_labels:
         detalle.append(f"Cuentas bancarias detectadas en A3 (sin IBAN): {', '.join(ban_labels)}")
         detalle.append("  → El IBAN/CCC en A3 está en formato binario propietario. Introducelo manualmente en la pestana Bancos.")
@@ -694,14 +849,14 @@ def importar_empresa_desde_a3(codigo: str) -> dict:
     return {
         "codigo": codigo_a3,
         "nombre": nombre,
-        "digitos_plan": 8,
+        "digitos_plan": digitos_plan,
         "ejercicio": ejercicio,
         "serie_emitidas": "A",
         "siguiente_num_emitidas": 1,
         "serie_emitidas_rect": "R",
         "siguiente_num_emitidas_rect": 1,
-        "cuenta_bancaria": "",
-        "cuentas_bancarias": "",
+        "cuenta_bancaria": str(ban_labels[0]) if ban_labels else "",
+        "cuentas_bancarias": "\n".join(str(x) for x in ban_labels if str(x).strip()),
         "cif": cif,
         "direccion": direccion,
         "cp": cp,
@@ -714,6 +869,7 @@ def importar_empresa_desde_a3(codigo: str) -> dict:
         "logo_max_height_mm": None,
         "activo": True,
         "plan_cuentas": plan_cuentas,
+        "bank_records": bank_records,
         "_ban_labels": ban_labels,
         "_a3_info": "\n".join(detalle),
         "_a3_raw_header": raw_header,

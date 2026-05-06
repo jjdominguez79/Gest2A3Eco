@@ -241,18 +241,6 @@ class FacturasEmitidasController:
             self._gestor.desmarcar_facturas_emitidas_generadas(self._codigo, sel, self._ejercicio)
         self.refresh_facturas()
 
-    def terceros(self):
-        if self._is_cliente():
-            self._view.show_warning("Gest2A3Eco", "El rol cliente no puede gestionar terceros.")
-            return
-        if not self._ensure_write("Necesitas permiso de escritura para gestionar terceros."):
-            return
-        self._view.open_terceros_dialog(
-            self._codigo,
-            self._ejercicio,
-            int(self._empresa_conf.get("digitos_plan", 8)),
-        )
-
     def factura_seleccionada(self):
         sel = self._view.get_selected_ids()
         if not sel:
@@ -504,9 +492,13 @@ class FacturasEmitidasController:
         if not fac:
             return
 
+        safe_serie = self._safe_filename(str(fac.get("serie", "") or ""))
+        safe_num = self._safe_filename(str(fac.get("numero", "") or ""))
+        safe_codigo = self._safe_filename(self._codigo or "")
         safe_cliente = self._safe_filename(fac.get("nombre", ""))
-        safe_num = self._safe_filename(fac.get("numero", ""))
-        base_name = f"{safe_num} {safe_cliente}".strip() or f"Factura_{safe_num}"
+        id_part = f"{safe_serie}{safe_num}" if (safe_serie or safe_num) else ""
+        _parts = [p for p in [id_part, safe_codigo, safe_cliente] if p]
+        base_name = "_".join(_parts) if _parts else f"Factura_{safe_num or fac.get('id', '')}"
         save_path = self._view.ask_save_pdf_path(f"{base_name}.pdf")
         if not save_path:
             return
@@ -580,6 +572,7 @@ class FacturasEmitidasController:
         canal = self._view.ask_share_channel()
         if not canal:
             return
+
         self._ensure_app_pdf(fac)
         pdf_path = str(fac.get("pdf_path") or "").strip()
         if not pdf_path:
@@ -597,33 +590,47 @@ class FacturasEmitidasController:
         cuerpo = f"Adjunto factura {serie}{numero}.".strip()
 
         if canal == "email":
+            from services.email_service import load_smtp_config, save_smtp_config, send_email_smtp
+
+            smtp_cfg = load_smtp_config()
+            if not smtp_cfg.get("host"):
+                smtp_cfg = self._view.ask_smtp_config(smtp_cfg or {})
+                if not smtp_cfg or not smtp_cfg.get("host"):
+                    return
+                save_smtp_config(smtp_cfg)
+
             cliente = self._cliente_factura(fac)
-            email = str(cliente.get("email") or "").strip()
-            if not email:
-                email = self._view.ask_email("")
-            if not email:
+            email_cliente = str(cliente.get("email") or "").strip()
+
+            compose = self._view.ask_email_compose(email_cliente, asunto, cuerpo, pdf_path, smtp_cfg)
+            if not compose:
                 return
+
+            new_smtp = compose.get("smtp_cfg") or {}
+            if new_smtp and new_smtp != smtp_cfg:
+                save_smtp_config(new_smtp)
+                smtp_cfg = new_smtp
+
             try:
-                url = "mailto:{}?subject={}&body={}".format(
-                    quote(email), quote(asunto), quote(cuerpo)
-                )
-                webbrowser.open(url)
-            except Exception:
-                pass
+                send_email_smtp(smtp_cfg, compose["emails"], compose["asunto"], compose["cuerpo"], pdf_path)
+                self._view.show_info("Gest2A3Eco", "Email enviado correctamente.")
+            except Exception as e:
+                self._view.show_error("Gest2A3Eco", f"Error al enviar el email:\n{e}")
+                return
+
         elif canal == "whatsapp":
             try:
                 webbrowser.open("https://web.whatsapp.com/")
             except Exception:
                 pass
-
-        self._view.copy_to_clipboard(pdf_path)
-        try:
-            subprocess.run(["explorer.exe", f"/select,{pdf_path}"], check=False)
-        except Exception:
+            self._view.copy_to_clipboard(pdf_path)
             try:
-                os.startfile(os.path.dirname(pdf_path))
+                subprocess.run(["explorer.exe", f"/select,{pdf_path}"], check=False)
             except Exception:
-                pass
+                try:
+                    os.startfile(os.path.dirname(pdf_path))
+                except Exception:
+                    pass
 
         if self._view.ask_yes_no("Gest2A3Eco", "¿Marcar factura como enviada?"):
             if not self._ensure_write("Necesitas permiso de escritura para marcar la factura como enviada."):
@@ -635,12 +642,42 @@ class FacturasEmitidasController:
             )
             self.refresh_facturas()
 
+    def _open_outlook_draft(self, email: str, asunto: str, cuerpo: str, pdf_path: str) -> bool:
+        email_ps = self._ps_single_quote(email)
+        asunto_ps = self._ps_single_quote(asunto)
+        cuerpo_ps = self._ps_single_quote(cuerpo)
+        path_ps = self._ps_single_quote(pdf_path)
+        script = (
+            "$outlook = New-Object -ComObject Outlook.Application; "
+            "$mail = $outlook.CreateItem(0); "
+            f"$mail.To = '{email_ps}'; "
+            f"$mail.Subject = '{asunto_ps}'; "
+            f"$mail.Body = '{cuerpo_ps}'; "
+            f"$mail.Attachments.Add('{path_ps}') | Out-Null; "
+            "$mail.Display()"
+        )
+        try:
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", script],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+
+    def _ps_single_quote(self, value: str) -> str:
+        return str(value or "").replace("'", "''")
+
     def generar_suenlace(self):
         if not self._ensure_write():
             return
-        sel = self._view.get_selected_ids()
+        sel = self._view.get_marked_ids()
         if not sel:
-            self._view.show_warning("Gest2A3Eco", "Selecciona al menos una factura.")
+            sel = self._view.get_selected_ids()
+        if not sel:
+            self._view.show_warning("Gest2A3Eco", "Marca o selecciona al menos una factura.")
             return
         facturas_sel = []
         for fid in sel:
@@ -715,6 +752,7 @@ class FacturasEmitidasController:
                 self._gestor.marcar_facturas_emitidas_generadas(self._codigo, ids, fecha_gen, eje)
         else:
             self._gestor.marcar_facturas_emitidas_generadas(self._codigo, sel, fecha_gen, self._ejercicio)
+        self._view.clear_marked_ids(sel)
         self.refresh_facturas()
         self._view.show_info("Gest2A3Eco", f"Fichero generado:\n{save_path}")
 
@@ -1191,9 +1229,13 @@ class FacturasEmitidasController:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         pdf_dir = os.path.join(base_dir, "pdfs_emitidas")
         emp_name = self._safe_filename(self._empresa_conf.get("nombre") or "") or "Sin_empresa"
+        serie = self._safe_filename(str(fac.get("serie", "") or ""))
+        num = self._safe_filename(str(fac.get("numero", "") or ""))
+        codigo = self._safe_filename(self._codigo or "")
         cliente = self._safe_filename(fac.get("nombre", "")) or "Sin_cliente"
-        num = self._safe_filename(f"{fac.get('numero','')}")
-        filename = f"{num} {cliente}".strip() if num or cliente else f"Factura_{fac.get('id','')}"
+        id_part = f"{serie}{num}" if (serie or num) else ""
+        parts = [p for p in [id_part, codigo, cliente] if p]
+        filename = "_".join(parts) if parts else f"Factura_{fac.get('id', '')}"
         try:
             os.makedirs(os.path.join(pdf_dir, emp_name), exist_ok=True)
         except Exception:

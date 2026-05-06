@@ -7,13 +7,14 @@ from controllers.ui_procesos_controller import ProcesosController
 
 
 class UIProcesos(ttk.Frame):
-    def __init__(self, master, gestor, codigo_empresa, ejercicio, nombre_empresa, session=None):
+    def __init__(self, master, gestor, codigo_empresa, ejercicio, nombre_empresa, session=None, initial_tipo=None):
         super().__init__(master)
         self.gestor = gestor
         self.codigo = codigo_empresa
         self.ejercicio = ejercicio
         self.nombre = nombre_empresa
         self.session = session
+        self._initial_tipo = initial_tipo or "Bancos"
         self.pack(fill=tk.BOTH, expand=True)
         self._build()
         self.controller = ProcesosController(gestor, codigo_empresa, ejercicio, self)
@@ -27,7 +28,7 @@ class UIProcesos(ttk.Frame):
         form.pack(fill=tk.X, padx=10, pady=4)
 
         ttk.Label(form, text="Tipo de enlace:").grid(row=0, column=0, sticky="w")
-        self.tipo = tk.StringVar(value="Bancos")
+        self.tipo = tk.StringVar(value=self._initial_tipo)
         ttk.Combobox(
             form,
             textvariable=self.tipo,
@@ -76,6 +77,9 @@ class UIProcesos(ttk.Frame):
 
     def get_tipo(self):
         return self.tipo.get()
+
+    def set_tipo(self, value: str):
+        self.tipo.set(value)
 
     def get_selected_plantilla(self):
         return self.cb_plantilla.get()

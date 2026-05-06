@@ -57,6 +57,7 @@ class EmpresaDialog(tk.Toplevel):
         self._empresa = dict(empresa or {})
         self._is_edit = bool(self._empresa.get("codigo"))
         self._bank_items = []
+        self._bank_records = []
         self._exercise_rows = []
         self._build()
         self.wait_visibility()
@@ -224,9 +225,20 @@ class EmpresaDialog(tk.Toplevel):
         frame.grid(row=1, column=0, sticky="nsew")
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
-        self.tv_bancos_empresa = ttk.Treeview(frame, columns=("cuenta",), show="headings", height=10)
-        self.tv_bancos_empresa.heading("cuenta", text="Cuenta bancaria / IBAN")
-        self.tv_bancos_empresa.column("cuenta", anchor="w", width=420)
+        self.tv_bancos_empresa = ttk.Treeview(
+            frame,
+            columns=("descripcion", "iban", "subcuenta", "origen"),
+            show="headings",
+            height=10,
+        )
+        self.tv_bancos_empresa.heading("descripcion", text="Descripcion")
+        self.tv_bancos_empresa.column("descripcion", anchor="w", width=220)
+        self.tv_bancos_empresa.heading("iban", text="IBAN / Cuenta")
+        self.tv_bancos_empresa.column("iban", anchor="w", width=220)
+        self.tv_bancos_empresa.heading("subcuenta", text="Subcuenta")
+        self.tv_bancos_empresa.column("subcuenta", anchor="w", width=110)
+        self.tv_bancos_empresa.heading("origen", text="Origen")
+        self.tv_bancos_empresa.column("origen", anchor="center", width=90)
         self.tv_bancos_empresa.grid(row=0, column=0, sticky="nsew")
         scroll = ttk.Scrollbar(frame, orient="vertical", command=self.tv_bancos_empresa.yview)
         scroll.grid(row=0, column=1, sticky="ns")
@@ -236,7 +248,10 @@ class EmpresaDialog(tk.Toplevel):
         ttk.Button(btns, text="Anadir", style="Primary.TButton", command=self._add_bank).pack(side=tk.LEFT)
         ttk.Button(btns, text="Editar", command=self._edit_bank).pack(side=tk.LEFT, padx=6)
         ttk.Button(btns, text="Eliminar", command=self._remove_bank).pack(side=tk.LEFT)
-        self._load_banks_from_text(str(self._empresa.get("cuentas_bancarias") or self._empresa.get("cuenta_bancaria") or ""))
+        ttk.Button(btns, text="Actualizar desde A3", command=self._update_banks_from_a3).pack(side=tk.LEFT, padx=6)
+        self.lbl_bancos_info = ttk.Label(tab, text="")
+        self.lbl_bancos_info.grid(row=3, column=0, sticky="w", pady=(8, 0))
+        self._load_bank_records()
 
     def _build_account_plan_tab(self, tab, nb):
         nb.add(tab, text="Plan contable")
@@ -250,6 +265,7 @@ class EmpresaDialog(tk.Toplevel):
         entry_buscar.pack(side=tk.LEFT, padx=(6, 0), fill="x", expand=True)
         self.var_plan_buscar.trace_add("write", lambda *_: self._load_plan_cuentas())
         ttk.Button(filtros, text="Actualizar desde A3", command=self._update_plan_from_a3).pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Button(filtros, text="Eliminar plan", command=self._delete_plan_cuentas).pack(side=tk.LEFT, padx=(6, 0))
 
         frame = ttk.Frame(tab)
         frame.grid(row=1, column=0, sticky="nsew")
@@ -357,6 +373,8 @@ class EmpresaDialog(tk.Toplevel):
         if not hasattr(self, "tv_plan_cuentas"):
             return
         self.tv_plan_cuentas.delete(*self.tv_plan_cuentas.get_children())
+        self._plan_loaded_ejercicio = None
+        self._plan_loaded_label = ""
         codigo = self._codigo_empresa_actual()
         if not self._gestor or not codigo:
             self.lbl_plan_info.configure(text="Guarda o abre una empresa existente para consultar su plan contable.")
@@ -371,6 +389,8 @@ class EmpresaDialog(tk.Toplevel):
                 cuentas = self._gestor.get_plan_cuentas_con_terceros(codigo, ultimo_ej)
                 if cuentas:
                     ej_label = str(ultimo_ej)
+        self._plan_loaded_label = ej_label
+        self._plan_loaded_ejercicio = 0 if ej_label == "base" else (int(ej_label) if str(ej_label).isdigit() else None)
 
         filtro = (self.var_plan_buscar.get() or "").strip().lower()
         visibles = [
@@ -395,6 +415,31 @@ class EmpresaDialog(tk.Toplevel):
             )
         else:
             self.lbl_plan_info.configure(text="No hay plan contable importado. Use 'Actualizar desde A3'.")
+
+    def _delete_plan_cuentas(self):
+        codigo = self._codigo_empresa_actual()
+        ejercicio = self._plan_loaded_ejercicio
+        if not self._gestor or not codigo or ejercicio is None:
+            messagebox.showinfo("Gest2A3Eco", "No hay plan contable cargado para eliminar.", parent=self)
+            return
+        label = self._plan_loaded_label or str(ejercicio)
+        if label == "base":
+            texto_plan = "plan base importado de A3"
+        else:
+            texto_plan = f"plan del ejercicio {label}"
+        if not messagebox.askyesno(
+            "Gest2A3Eco",
+            f"Se eliminara el {texto_plan} de la empresa {codigo}.\nContinuar?",
+            parent=self,
+        ):
+            return
+        try:
+            self._gestor.eliminar_plan_cuentas(codigo, ejercicio)
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self)
+            return
+        self._load_plan_cuentas()
+        messagebox.showinfo("Gest2A3Eco", "Plan contable eliminado.", parent=self)
 
     def _exercise_editor(self, initial=None):
         data = self._exercise_from_row(initial)
@@ -493,38 +538,160 @@ class EmpresaDialog(tk.Toplevel):
         self._refresh_exercises_tree()
 
     def _load_banks_from_text(self, text: str):
-        self._bank_items = [line.strip() for line in str(text or "").replace(";", "\n").replace(",", "\n").splitlines() if line.strip()]
+        self._bank_records = []
+        for idx, line in enumerate(str(text or "").replace(";", "\n").replace(",", "\n").splitlines()):
+            value = line.strip()
+            if not value:
+                continue
+            self._bank_records.append(
+                {
+                    "descripcion": value,
+                    "iban": value,
+                    "subcuenta_contable": "",
+                    "origen": "legacy",
+                    "principal": idx == 0,
+                }
+            )
+        self._sync_bank_items_from_records()
         self._refresh_banks_tree()
+
+    def _load_bank_records(self):
+        codigo = self._codigo_empresa_actual()
+        if self._gestor and codigo:
+            for ejercicio in (0, self._bank_storage_exercise()):
+                try:
+                    rows = self._gestor.listar_cuentas_bancarias(codigo, ejercicio)
+                except Exception:
+                    rows = []
+                if rows:
+                    self._bank_records = [
+                        {
+                            "descripcion": str(row.get("descripcion") or ""),
+                            "iban": str(row.get("iban") or ""),
+                            "subcuenta_contable": str(row.get("subcuenta_contable") or ""),
+                            "origen": str(row.get("origen") or ""),
+                            "principal": bool(row.get("principal")),
+                        }
+                        for row in rows
+                    ]
+                    self._sync_bank_items_from_records()
+                    self._refresh_banks_tree()
+                    return
+        self._load_banks_from_text(str(self._empresa.get("cuentas_bancarias") or self._empresa.get("cuenta_bancaria") or ""))
+
+    def _sync_bank_items_from_records(self):
+        self._bank_items = []
+        for rec in self._bank_records:
+            value = str(rec.get("iban") or rec.get("descripcion") or "").strip()
+            if value:
+                self._bank_items.append(value)
 
     def _refresh_banks_tree(self):
         self.tv_bancos_empresa.delete(*self.tv_bancos_empresa.get_children())
-        for idx, cuenta in enumerate(self._bank_items):
-            self.tv_bancos_empresa.insert("", "end", iid=str(idx), values=(cuenta,))
+        if self._bank_records:
+            for idx, rec in enumerate(self._bank_records):
+                self.tv_bancos_empresa.insert(
+                    "",
+                    "end",
+                    iid=str(idx),
+                    values=(
+                        rec.get("descripcion", ""),
+                        rec.get("iban", ""),
+                        rec.get("subcuenta_contable", ""),
+                        rec.get("origen", ""),
+                    ),
+                )
+        else:
+            for idx, cuenta in enumerate(self._bank_items):
+                self.tv_bancos_empresa.insert("", "end", iid=str(idx), values=(cuenta, cuenta, "", "legacy"))
+        if hasattr(self, "lbl_bancos_info"):
+            self.lbl_bancos_info.configure(text=f"Cuentas bancarias: {len(self._bank_records or self._bank_items)}")
 
     def _selected_bank_index(self):
         sel = self.tv_bancos_empresa.selection()
         return int(sel[0]) if sel else None
 
+    def _bank_storage_exercise(self) -> int:
+        try:
+            return max(int(row["ejercicio"]) for row in self._exercise_rows)
+        except Exception:
+            return int(self._empresa.get("ejercicio") or 0)
+
+    def _bank_editor(self, initial=None):
+        data = dict(initial or {})
+        top = tk.Toplevel(self)
+        top.title("Cuenta bancaria")
+        top.resizable(False, False)
+        top.transient(self)
+        top.grab_set()
+        frm = ttk.Frame(top, padding=12)
+        frm.pack(fill="both", expand=True)
+        vars_map = {
+            "descripcion": tk.StringVar(value=str(data.get("descripcion") or "")),
+            "iban": tk.StringVar(value=str(data.get("iban") or "")),
+            "subcuenta_contable": tk.StringVar(value=str(data.get("subcuenta_contable") or "")),
+            "origen": tk.StringVar(value=str(data.get("origen") or "manual")),
+        }
+        labels = (
+            ("descripcion", "Descripcion"),
+            ("iban", "IBAN / Cuenta"),
+            ("subcuenta_contable", "Subcuenta contable"),
+            ("origen", "Origen"),
+        )
+        for idx, (key, text) in enumerate(labels):
+            ttk.Label(frm, text=text).grid(row=idx, column=0, sticky="w", pady=4)
+            if key == "origen":
+                cb = ttk.Combobox(frm, textvariable=vars_map[key], values=("manual", "a3", "mixto"), state="readonly", width=20)
+                cb.grid(row=idx, column=1, sticky="w", pady=4)
+            else:
+                ttk.Entry(frm, textvariable=vars_map[key], width=34).grid(row=idx, column=1, sticky="w", pady=4)
+        result = {"value": None}
+
+        def _ok():
+            payload = {key: var.get().strip() for key, var in vars_map.items()}
+            if not any(payload.values()):
+                top.destroy()
+                return
+            result["value"] = payload
+            top.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=len(labels), column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        ttk.Button(btns, text="Guardar", style="Primary.TButton", command=_ok).pack(side=tk.LEFT)
+        ttk.Button(btns, text="Cancelar", command=top.destroy).pack(side=tk.LEFT, padx=(6, 0))
+        top.wait_window()
+        return result["value"]
+
     def _add_bank(self):
-        value = simpledialog.askstring("Banco empresa", "Cuenta bancaria o IBAN:", parent=self)
-        if value and value.strip():
-            self._bank_items.append(value.strip())
+        payload = self._bank_editor({"origen": "manual"})
+        if payload:
+            payload["principal"] = not self._bank_records
+            self._bank_records.append(payload)
+            self._sync_bank_items_from_records()
             self._refresh_banks_tree()
 
     def _edit_bank(self):
         idx = self._selected_bank_index()
         if idx is None:
             return
-        value = simpledialog.askstring("Banco empresa", "Cuenta bancaria o IBAN:", initialvalue=self._bank_items[idx], parent=self)
-        if value and value.strip():
-            self._bank_items[idx] = value.strip()
+        current = self._bank_records[idx] if idx < len(self._bank_records) else {"descripcion": self._bank_items[idx], "iban": self._bank_items[idx], "origen": "legacy"}
+        payload = self._bank_editor(current)
+        if payload:
+            payload["principal"] = bool(current.get("principal")) or idx == 0
+            self._bank_records[idx] = payload
+            self._sync_bank_items_from_records()
             self._refresh_banks_tree()
 
     def _remove_bank(self):
         idx = self._selected_bank_index()
         if idx is None:
             return
-        del self._bank_items[idx]
+        if idx < len(self._bank_records):
+            del self._bank_records[idx]
+            if self._bank_records:
+                self._bank_records[0]["principal"] = True
+        elif idx < len(self._bank_items):
+            del self._bank_items[idx]
         self._refresh_banks_tree()
 
     def _load_terceros(self):
@@ -783,17 +950,28 @@ class EmpresaDialog(tk.Toplevel):
         if data.get("digitos_plan"):
             self.var_dig.set(str(data.get("digitos_plan") or "8"))
 
-        # Guardar plan de cuentas en la base de datos bajo ejercicio=0 (plan base)
+        # Guardar plan de cuentas y cuentas bancarias en la base de datos bajo ejercicio=0 (base A3)
         plan_cuentas = data.get("plan_cuentas") or []
+        bank_records = data.get("bank_records") or []
         cuentas_msg = ""
-        if plan_cuentas and self._gestor:
+        if self._gestor:
             codigo = str(data.get("codigo") or "")
             if codigo:
-                try:
-                    n = self._gestor.upsert_plan_cuentas(codigo, 0, plan_cuentas)
-                    cuentas_msg = f"\nPlan de cuentas: {n} cuentas importadas."
-                except Exception as exc_pc:
-                    cuentas_msg = f"\nAviso: no se pudo guardar el plan de cuentas: {exc_pc}"
+                if plan_cuentas:
+                    try:
+                        n = self._gestor.upsert_plan_cuentas(codigo, 0, plan_cuentas)
+                        cuentas_msg = f"\nPlan de cuentas: {n} cuentas importadas."
+                    except Exception as exc_pc:
+                        cuentas_msg = f"\nAviso: no se pudo guardar el plan de cuentas: {exc_pc}"
+                if bank_records:
+                    try:
+                        self._gestor.reemplazar_cuentas_bancarias(codigo, 0, bank_records)
+                    except Exception:
+                        pass
+        if bank_records:
+            self._bank_records = [dict(item) for item in bank_records]
+            self._sync_bank_items_from_records()
+            self._refresh_banks_tree()
 
         self._load_plan_cuentas()
 
@@ -829,6 +1007,36 @@ class EmpresaDialog(tk.Toplevel):
                 return
         self._load_plan_cuentas()
 
+    def _update_banks_from_a3(self):
+        codigo = self._codigo_empresa_actual()
+        if not codigo:
+            messagebox.showwarning("Gest2A3Eco", "Introduce primero el codigo A3 de la empresa.", parent=self)
+            return
+        try:
+            data = importar_empresa_desde_a3(codigo)
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self)
+            return
+        bank_records = data.get("bank_records") or []
+        if not bank_records:
+            messagebox.showinfo("Gest2A3Eco", "No se han detectado cuentas bancarias legibles en A3.", parent=self)
+            return
+        codigo_a3 = str(data.get("codigo") or codigo)
+        if self._gestor:
+            try:
+                n = self._gestor.reemplazar_cuentas_bancarias(codigo_a3, 0, bank_records)
+            except Exception as exc:
+                messagebox.showerror("Gest2A3Eco", str(exc), parent=self)
+                return
+            messagebox.showinfo(
+                "Gest2A3Eco",
+                f"Cuentas bancarias actualizadas desde A3: {n} registros.\nCompleta manualmente el IBAN y la subcuenta contable si A3 no los expone.",
+                parent=self,
+            )
+        self._bank_records = [dict(item) for item in bank_records]
+        self._sync_bank_items_from_records()
+        self._refresh_banks_tree()
+
     def _set_a3_preview(self, data: dict | None):
         payload = dict(data or {})
         ban_labels = payload.get("_ban_labels") or []
@@ -849,6 +1057,7 @@ class EmpresaDialog(tk.Toplevel):
             f"Telefono:         {payload.get('telefono', '')}",
             f"Email:            {payload.get('email', '')}",
             f"Ejercicio:        {payload.get('ejercicio', '')}",
+            f"Digitos plan:     {payload.get('digitos_plan', '')}",
             f"Plan de cuentas:  {len(payload.get('plan_cuentas') or [])} subcuentas importadas",
             f"Bancos (A3):      {ban_text}",
             "",
@@ -878,6 +1087,7 @@ class EmpresaDialog(tk.Toplevel):
         try:
             if not self._exercise_rows:
                 raise ValueError("Debes configurar al menos un ejercicio.")
+            self._sync_bank_items_from_records()
             cuentas_text = "\n".join(self._bank_items).strip()
             logo_w_txt = self.var_logo_w.get().strip()
             logo_h_txt = self.var_logo_h.get().strip()
@@ -904,7 +1114,12 @@ class EmpresaDialog(tk.Toplevel):
                 item = dict(base)
                 item.update(row)
                 ejercicios.append(item)
-            self.result = {"_action": "save_company", "_exercise_configs": ejercicios, **ejercicios[-1]}
+            self.result = {
+                "_action": "save_company",
+                "_exercise_configs": ejercicios,
+                "_bank_records": [dict(item) for item in self._bank_records],
+                **ejercicios[-1],
+            }
             self.destroy()
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self)

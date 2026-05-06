@@ -30,9 +30,16 @@ class FacturaDialogController:
                 self.on_tercero_selected()
                 return
 
-    def gestionar_terceros(self):
-        self._view.open_terceros_dialog(self._codigo, self._ejercicio, self._ndig)
+    def configurar_empresa(self):
+        tercero_id = None
+        idx = self._view.get_selected_tercero_index()
+        if idx >= 0 and idx < len(self._terceros_cache):
+            tercero_id = self._terceros_cache[idx].get("id")
+        changed = self._view.open_company_config()
+        if not changed:
+            return
         self.load_terceros()
+        self.preselect_tercero(tercero_id)
 
     def on_tercero_selected(self):
         idx = self._view.get_selected_tercero_index()

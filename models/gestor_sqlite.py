@@ -188,6 +188,20 @@ CREATE TABLE IF NOT EXISTS plan_cuentas (
 );
 CREATE INDEX IF NOT EXISTS idx_plan_cuentas_empresa
   ON plan_cuentas(codigo_empresa, ejercicio);
+CREATE TABLE IF NOT EXISTS cuentas_bancarias (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  codigo_empresa TEXT NOT NULL,
+  ejercicio INTEGER NOT NULL,
+  descripcion TEXT,
+  iban TEXT,
+  subcuenta_contable TEXT,
+  origen TEXT,
+  principal INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cuentas_bancarias_empresa
+  ON cuentas_bancarias(codigo_empresa, ejercicio);
 CREATE TABLE IF NOT EXISTS plantillas_documentos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   codigo_empresa TEXT NOT NULL,
@@ -390,6 +404,23 @@ class GestorSQLite:
             ");"
             "CREATE INDEX IF NOT EXISTS idx_plan_cuentas_empresa"
             "  ON plan_cuentas(codigo_empresa, ejercicio);"
+        )
+        self.conn.commit()
+        self.conn.executescript(
+            "CREATE TABLE IF NOT EXISTS cuentas_bancarias ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  codigo_empresa TEXT NOT NULL,"
+            "  ejercicio INTEGER NOT NULL,"
+            "  descripcion TEXT,"
+            "  iban TEXT,"
+            "  subcuenta_contable TEXT,"
+            "  origen TEXT,"
+            "  principal INTEGER NOT NULL DEFAULT 0,"
+            "  created_at TEXT NOT NULL,"
+            "  updated_at TEXT NOT NULL"
+            ");"
+            "CREATE INDEX IF NOT EXISTS idx_cuentas_bancarias_empresa"
+            "  ON cuentas_bancarias(codigo_empresa, ejercicio);"
         )
         self.conn.commit()
 
@@ -667,18 +698,22 @@ class GestorSQLite:
             "DELETE FROM plan_cuentas WHERE codigo_empresa=? AND ejercicio=?",
             (codigo_empresa, eje),
         )
-        if cuentas:
+        normalized = []
+        seen = set()
+        for c in cuentas or []:
+            cuenta = str(c.get("cuenta", "")).strip()
+            if not cuenta or cuenta in seen:
+                continue
+            seen.add(cuenta)
+            normalized.append((codigo_empresa, eje, cuenta, str(c.get("descripcion", "")).strip()))
+        if normalized:
             self.conn.executemany(
                 "INSERT OR REPLACE INTO plan_cuentas (codigo_empresa, ejercicio, cuenta, descripcion)"
                 " VALUES (?, ?, ?, ?)",
-                [
-                    (codigo_empresa, eje, str(c.get("cuenta", "")), str(c.get("descripcion", "")))
-                    for c in cuentas
-                    if c.get("cuenta")
-                ],
+                normalized,
             )
         self.conn.commit()
-        return len(cuentas)
+        return len(normalized)
 
     def get_plan_cuentas(self, codigo_empresa: str, ejercicio: int) -> list[dict]:
         """Devuelve el plan de cuentas de una empresa/ejercicio ordenado por cuenta."""
@@ -715,13 +750,55 @@ class GestorSQLite:
             LEFT JOIN terceros t ON t.id = te.tercero_id
             WHERE pc.codigo_empresa = ?
               AND pc.ejercicio = ?
-              AND LENGTH(pc.cuenta) >= 4
             GROUP BY pc.cuenta
             ORDER BY CAST(pc.cuenta AS INTEGER), pc.cuenta
             """,
             (codigo_empresa, eje),
         )
         return [dict(r) for r in cur.fetchall()]
+
+    # ── Cuentas Bancarias ───────────────────────────────────────────────────
+
+    def listar_cuentas_bancarias(self, codigo_empresa: str, ejercicio: int) -> list[dict]:
+        eje = _ej_val(ejercicio)
+        cur = self.conn.execute(
+            """
+            SELECT id, codigo_empresa, ejercicio, descripcion, iban, subcuenta_contable, origen, principal
+            FROM cuentas_bancarias
+            WHERE codigo_empresa=? AND ejercicio=?
+            ORDER BY principal DESC, id ASC
+            """,
+            (codigo_empresa, eje),
+        )
+        return [self._row_to_dict(row) for row in cur.fetchall()]
+
+    def reemplazar_cuentas_bancarias(self, codigo_empresa: str, ejercicio: int, cuentas: list[dict]) -> int:
+        eje = _ej_val(ejercicio)
+        now = self._utc_now()
+        self.conn.execute(
+            "DELETE FROM cuentas_bancarias WHERE codigo_empresa=? AND ejercicio=?",
+            (codigo_empresa, eje),
+        )
+        inserted = 0
+        for idx, cuenta in enumerate(cuentas or []):
+            descripcion = str(cuenta.get("descripcion") or "").strip()
+            iban = str(cuenta.get("iban") or "").strip()
+            subcuenta = str(cuenta.get("subcuenta_contable") or "").strip()
+            origen = str(cuenta.get("origen") or "").strip()
+            if not (descripcion or iban or subcuenta):
+                continue
+            principal = 1 if cuenta.get("principal") or idx == 0 else 0
+            self.conn.execute(
+                """
+                INSERT INTO cuentas_bancarias
+                (codigo_empresa, ejercicio, descripcion, iban, subcuenta_contable, origen, principal, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (codigo_empresa, eje, descripcion, iban, subcuenta, origen, principal, now, now),
+            )
+            inserted += 1
+        self.conn.commit()
+        return inserted
 
     def eliminar_plan_cuentas(self, codigo_empresa: str, ejercicio: int) -> None:
         """Elimina el plan de cuentas de una empresa/ejercicio."""

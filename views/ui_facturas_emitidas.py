@@ -767,6 +767,42 @@ class TercerosEmpresaDialog(tk.Toplevel):
             filetypes=[("Ficheros DAT", "*.dat")],
         )
 
+    def ask_share_channel(self):
+        dlg = tk.Toplevel(self)
+        dlg.title("Compartir factura")
+        dlg.resizable(False, False)
+        result = {"value": None}
+
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="Selecciona canal para compartir:").pack(anchor="w", pady=(0, 8))
+
+        def _set(val):
+            result["value"] = val
+            dlg.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x")
+        ttk.Button(btns, text="Email", style="Primary.TButton", command=lambda: _set("email")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="WhatsApp", style="Primary.TButton", command=lambda: _set("whatsapp")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="Cancelar", command=dlg.destroy).pack(side=tk.LEFT, padx=4)
+
+        dlg.grab_set()
+        dlg.transient(self)
+        dlg.wait_window(dlg)
+        return result["value"]
+
+    def ask_email(self, default=""):
+        return simpledialog.askstring("Gest2A3Eco", "Email de envio:", initialvalue=default, parent=self)
+
+    def copy_to_clipboard(self, text: str):
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self.update()
+        except Exception:
+            pass
+
     def ask_copiar_ejercicio(self, ejercicios):
         dlg = tk.Toplevel(self)
         dlg.title("Copiar terceros")
@@ -809,7 +845,18 @@ class TercerosEmpresaDialog(tk.Toplevel):
 
 
 class FacturaDialog(tk.Toplevel):
-    def __init__(self, parent, gestor, codigo_empresa, ejercicio, ndig_plan, factura=None, numero_sugerido="", titulo="Factura emitida"):
+    def __init__(
+        self,
+        parent,
+        gestor,
+        codigo_empresa,
+        ejercicio,
+        ndig_plan,
+        factura=None,
+        numero_sugerido="",
+        titulo="Factura emitida",
+        on_open_company_config=None,
+    ):
         super().__init__(parent)
         self.title(titulo)
         self.resizable(True, True)
@@ -829,6 +876,7 @@ class FacturaDialog(tk.Toplevel):
         self.codigo = codigo_empresa
         self.ejercicio = ejercicio
         self.ndig = ndig_plan
+        self._on_open_company_config = on_open_company_config
         self.factura = dict(factura or {})
         self.factura.setdefault("codigo_empresa", codigo_empresa)
         self.factura.setdefault("ejercicio", ejercicio)
@@ -929,15 +977,6 @@ class FacturaDialog(tk.Toplevel):
             value=_fmt2(_round2(ret_base)) if ret_base not in (None, "") else ""
         )
         self._retencion_manual = False
-        if ret_aplica:
-            if ret_importe not in (None, ""):
-                self._retencion_manual = True
-            else:
-                try:
-                    if abs(_round2(ret_base) - _round2(base_lineas)) > 0.01:
-                        self._retencion_manual = True
-                except Exception:
-                    pass
         self.var_ret_manual = tk.BooleanVar(value=self._retencion_manual)
         self._retencion_silent = False
         dtipo = (f.get("descuento_total_tipo") or "").strip().lower()
@@ -992,7 +1031,7 @@ class FacturaDialog(tk.Toplevel):
         self.var_tercero = tk.StringVar()
         self.cb_tercero = ttk.Combobox(frm, textvariable=self.var_tercero, width=40, state="readonly")
         self.cb_tercero.grid(row=row, column=1, padx=4, pady=3, sticky="w")
-        ttk.Button(frm, text="Terceros...", command=self._gestionar_terceros).grid(row=row, column=2, padx=4, pady=3)
+        ttk.Button(frm, text="Config. empresa", command=self._configurar_empresa).grid(row=row, column=2, padx=4, pady=3)
         row += 1
 
         add_row("Serie", self.var_serie, row, width=8, col=0)
@@ -1279,8 +1318,8 @@ class FacturaDialog(tk.Toplevel):
     def _preselect_tercero(self, tercero_id):
         self.controller.preselect_tercero(tercero_id)
 
-    def _gestionar_terceros(self):
-        self.controller.gestionar_terceros()
+    def _configurar_empresa(self):
+        self.controller.configurar_empresa()
 
     def _on_tercero_selected(self):
         self.controller.on_tercero_selected()
@@ -1669,8 +1708,11 @@ class FacturaDialog(tk.Toplevel):
     def get_plantilla_emitidas(self):
         return self.var_plantilla_emitidas.get().strip()
 
-    def open_terceros_dialog(self, codigo_empresa, ejercicio, ndig):
-        TercerosEmpresaDialog(self, self.gestor, codigo_empresa, ejercicio, ndig)
+    def open_company_config(self):
+        if not self._on_open_company_config:
+            self.show_warning("Gest2A3Eco", "La configuracion de empresa no esta disponible.")
+            return False
+        return bool(self._on_open_company_config())
 
     def show_info(self, title, message):
         messagebox.showinfo(title, message)
@@ -1685,7 +1727,17 @@ class FacturaDialog(tk.Toplevel):
         self.result = result
         self.destroy()
 class UIFacturasEmitidas(ttk.Frame):
-    def __init__(self, master, gestor, codigo_empresa, ejercicio, nombre_empresa, allow_all_years: bool = False, session=None):
+    def __init__(
+        self,
+        master,
+        gestor,
+        codigo_empresa,
+        ejercicio,
+        nombre_empresa,
+        allow_all_years: bool = False,
+        session=None,
+        on_open_company_config=None,
+    ):
         super().__init__(master)
         self.gestor = gestor
         self.codigo = codigo_empresa
@@ -1693,6 +1745,8 @@ class UIFacturasEmitidas(ttk.Frame):
         self.nombre = nombre_empresa
         self.allow_all_years = bool(allow_all_years)
         self.session = session
+        self._on_open_company_config = on_open_company_config
+        self._marked_factura_ids = set()
         monedas = load_monedas()
         self._default_moneda_simbolo = str(monedas[0].get("simbolo")) if monedas else ""
         base = {
@@ -1759,11 +1813,9 @@ class UIFacturasEmitidas(ttk.Frame):
         self.btn_fact_eliminar.pack(side=tk.LEFT, padx=8)
         self.btn_fact_desmarcar = ttk.Button(top, text="Desmarcar enlazadas", command=self._desmarcar_generadas)
         self.btn_fact_desmarcar.pack(side=tk.LEFT, padx=8)
-        self.btn_fact_terceros = ttk.Button(top, text="Terceros", command=self._terceros)
-        self.btn_fact_terceros.pack(side=tk.LEFT, padx=12)
         ttk.Button(top, text="Exportar PDF", command=self._export_pdf).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Abrir PDF", command=self._abrir_pdf).pack(side=tk.LEFT, padx=8)
-        ttk.Button(top, text="Compartir PDF", state="disabled").pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Compartir PDF", command=self._compartir_pdf).pack(side=tk.LEFT, padx=8)
         if not can_write:
             for btn in (
                 self.btn_fact_nueva,
@@ -1772,11 +1824,8 @@ class UIFacturasEmitidas(ttk.Frame):
                 self.btn_fact_rectificar,
                 self.btn_fact_eliminar,
                 self.btn_fact_desmarcar,
-                self.btn_fact_terceros,
             ):
                 btn.configure(state="disabled")
-        if is_cliente:
-            self.btn_fact_terceros.configure(state="disabled")
 
         if self.allow_all_years:
             filtros = ttk.Frame(parent)
@@ -1789,12 +1838,13 @@ class UIFacturasEmitidas(ttk.Frame):
 
         self.tv = ttk.Treeview(
             parent,
-            columns=("ejercicio", "serie", "numero", "asiento", "fecha", "cliente", "total", "generada", "fecha_gen", "enviado", "fecha_envio"),
+            columns=("marcar", "ejercicio", "serie", "numero", "asiento", "fecha", "cliente", "total", "generada", "fecha_gen", "enviado", "fecha_envio"),
             show="headings",
             selectmode="extended",
             height=12,
         )
         cols = [
+            ("marcar", "Generar", 70, "center"),
             ("ejercicio", "Ejercicio", 90, "center"),
             ("serie", "Serie", 80, "w"),
             ("numero", "Numero", 120, "w"),
@@ -1812,6 +1862,7 @@ class UIFacturasEmitidas(ttk.Frame):
             self.tv.column(c, width=w, anchor=align)
         self.tv.pack(fill="both", expand=True, padx=10, pady=8)
         self.tv.bind("<<TreeviewSelect>>", lambda e: self._on_factura_select())
+        self.tv.bind("<Button-1>", self._on_factura_click, add="+")
 
         detalle = ttk.LabelFrame(parent, text="Detalle de factura")
         detalle.pack(fill="x", padx=10, pady=(0, 6))
@@ -1838,9 +1889,15 @@ class UIFacturasEmitidas(ttk.Frame):
 
         bottom = ttk.Frame(parent)
         bottom.pack(fill="x", padx=10, pady=6)
+        self.btn_marcar_facturas = ttk.Button(bottom, text="Marcar seleccionadas", command=self._marcar_facturas_seleccionadas)
+        self.btn_marcar_facturas.pack(side=tk.LEFT)
+        self.btn_desmarcar_facturas = ttk.Button(bottom, text="Desmarcar todas", command=self._desmarcar_todas_facturas)
+        self.btn_desmarcar_facturas.pack(side=tk.LEFT, padx=(8, 0))
         self.btn_generar_suenlace = ttk.Button(bottom, text="Generar Suenlace.dat", style="Primary.TButton", command=self._generar)
         self.btn_generar_suenlace.pack(side=tk.RIGHT)
         if not can_write or is_cliente:
+            self.btn_marcar_facturas.configure(state="disabled")
+            self.btn_desmarcar_facturas.configure(state="disabled")
             self.btn_generar_suenlace.configure(state="disabled")
 
     def _build_albaranes_tab(self, parent):
@@ -1968,11 +2025,13 @@ class UIFacturasEmitidas(ttk.Frame):
 
     def insert_factura_row(self, fac: dict, total: float):
         sym = fac.get("moneda_simbolo") or self._default_moneda_simbolo
+        fid = str(fac.get("id"))
         self.tv.insert(
             "",
             tk.END,
-            iid=str(fac.get("id")),
+            iid=fid,
             values=(
+                "Si" if fid in self._marked_factura_ids else "",
                 fac.get("ejercicio", ""),
                 fac.get("serie", ""),
                 fac.get("numero", ""),
@@ -2111,6 +2170,50 @@ class UIFacturasEmitidas(ttk.Frame):
         focus = self.tv.focus()
         return [focus] if focus else []
 
+    def get_marked_ids(self):
+        return [iid for iid in self.tv.get_children() if str(iid) in self._marked_factura_ids]
+
+    def clear_marked_ids(self, ids=None):
+        if ids is None:
+            self._marked_factura_ids.clear()
+        else:
+            for iid in ids:
+                self._marked_factura_ids.discard(str(iid))
+
+    def _sync_mark_visual(self, iid):
+        if not self.tv.exists(iid):
+            return
+        self.tv.set(iid, "marcar", "Si" if str(iid) in self._marked_factura_ids else "")
+
+    def _toggle_mark_factura(self, iid):
+        iid = str(iid)
+        if iid in self._marked_factura_ids:
+            self._marked_factura_ids.discard(iid)
+        else:
+            self._marked_factura_ids.add(iid)
+        self._sync_mark_visual(iid)
+
+    def _on_factura_click(self, event):
+        region = self.tv.identify("region", event.x, event.y)
+        if region != "cell":
+            return
+        col = self.tv.identify_column(event.x)
+        row = self.tv.identify_row(event.y)
+        if col == "#1" and row:
+            self._toggle_mark_factura(row)
+            return "break"
+
+    def _marcar_facturas_seleccionadas(self):
+        for iid in self.get_selected_ids():
+            self._marked_factura_ids.add(str(iid))
+            self._sync_mark_visual(str(iid))
+
+    def _desmarcar_todas_facturas(self):
+        ids = list(self._marked_factura_ids)
+        self._marked_factura_ids.clear()
+        for iid in ids:
+            self._sync_mark_visual(str(iid))
+
     def get_selected_albaran_ids(self):
         sel = list(self.tv_albaranes.selection())
         if sel:
@@ -2135,6 +2238,7 @@ class UIFacturasEmitidas(ttk.Frame):
             factura,
             numero_sugerido=numero_sugerido,
             titulo="Factura emitida",
+            on_open_company_config=self._on_open_company_config,
         )
         return dlg.result
 
@@ -2167,11 +2271,9 @@ class UIFacturasEmitidas(ttk.Frame):
             albaran,
             numero_sugerido=numero_sugerido,
             titulo="Albaran emitido",
+            on_open_company_config=self._on_open_company_config,
         )
         return dlg.result
-
-    def open_terceros_dialog(self, codigo_empresa, ejercicio, ndig_plan):
-        TercerosEmpresaDialog(self, self.gestor, codigo_empresa, ejercicio, ndig_plan)
 
     def ask_yes_no(self, title, message):
         return messagebox.askyesno(title, message)
@@ -2192,6 +2294,204 @@ class UIFacturasEmitidas(ttk.Frame):
 
     def show_error(self, title, message):
         messagebox.showerror(title, message)
+
+    def ask_share_channel(self):
+        dlg = tk.Toplevel(self)
+        dlg.title("Compartir factura")
+        dlg.resizable(False, False)
+        result = {"value": None}
+
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="Selecciona canal para compartir:").pack(anchor="w", pady=(0, 8))
+
+        def _set(val):
+            result["value"] = val
+            dlg.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x")
+        ttk.Button(btns, text="Email", style="Primary.TButton", command=lambda: _set("email")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="WhatsApp", style="Primary.TButton", command=lambda: _set("whatsapp")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="Cancelar", command=dlg.destroy).pack(side=tk.LEFT, padx=4)
+
+        dlg.update_idletasks()
+        w, h = dlg.winfo_width(), dlg.winfo_height()
+        x = (dlg.winfo_screenwidth() - w) // 2
+        y = (dlg.winfo_screenheight() - h) // 2
+        dlg.geometry(f"+{x}+{y}")
+
+        dlg.grab_set()
+        dlg.transient(self)
+        dlg.wait_window(dlg)
+        return result["value"]
+
+    def ask_email(self, default=""):
+        return simpledialog.askstring("Gest2A3Eco", "Email de envio:", initialvalue=default, parent=self)
+
+    def copy_to_clipboard(self, text: str):
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self.update()
+        except Exception:
+            pass
+
+    def ask_smtp_config(self, current_cfg: dict) -> dict | None:
+        dlg = tk.Toplevel(self)
+        dlg.title("Configuracion SMTP")
+        dlg.resizable(False, False)
+        result = {"value": None}
+
+        frm = ttk.Frame(dlg, padding=16)
+        frm.pack(fill="both", expand=True)
+        frm.columnconfigure(1, weight=1)
+
+        fields = [
+            ("Servidor SMTP:", "host", str(current_cfg.get("host") or ""), False),
+            ("Puerto:", "port", str(current_cfg.get("port") or "587"), False),
+            ("Usuario:", "user", str(current_cfg.get("user") or ""), False),
+            ("Contrasena:", "password", str(current_cfg.get("password") or ""), True),
+            ("Email remitente:", "from_addr", str(current_cfg.get("from_addr") or ""), False),
+        ]
+
+        vars_ = {}
+        for row, (label, key, default, is_password) in enumerate(fields):
+            ttk.Label(frm, text=label).grid(row=row, column=0, sticky="e", padx=(0, 8), pady=4)
+            var = tk.StringVar(value=default)
+            vars_[key] = var
+            ttk.Entry(frm, textvariable=var, width=35, show="*" if is_password else "").grid(
+                row=row, column=1, sticky="ew", pady=4
+            )
+
+        chk_row = len(fields)
+        use_tls = tk.BooleanVar(value=bool(current_cfg.get("use_tls", True)))
+        use_ssl = tk.BooleanVar(value=bool(current_cfg.get("use_ssl", False)))
+        ttk.Checkbutton(frm, text="Usar STARTTLS (puerto 587)", variable=use_tls).grid(
+            row=chk_row, column=0, columnspan=2, sticky="w", pady=2
+        )
+        ttk.Checkbutton(frm, text="Usar SSL (puerto 465)", variable=use_ssl).grid(
+            row=chk_row + 1, column=0, columnspan=2, sticky="w", pady=2
+        )
+
+        def _save():
+            try:
+                port_val = int(vars_["port"].get().strip() or "587")
+            except ValueError:
+                port_val = 587
+            result["value"] = {
+                "host": vars_["host"].get().strip(),
+                "port": port_val,
+                "user": vars_["user"].get().strip(),
+                "password": vars_["password"].get(),
+                "from_addr": vars_["from_addr"].get().strip(),
+                "use_tls": use_tls.get(),
+                "use_ssl": use_ssl.get(),
+            }
+            dlg.destroy()
+
+        btn_frm = ttk.Frame(frm)
+        btn_frm.grid(row=chk_row + 2, column=0, columnspan=2, pady=(12, 0))
+        ttk.Button(btn_frm, text="Guardar", style="Primary.TButton", command=_save).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_frm, text="Cancelar", command=dlg.destroy).pack(side=tk.LEFT, padx=4)
+
+        dlg.update_idletasks()
+        w, h = dlg.winfo_width(), dlg.winfo_height()
+        x = (dlg.winfo_screenwidth() - w) // 2
+        y = (dlg.winfo_screenheight() - h) // 2
+        dlg.geometry(f"+{x}+{y}")
+        dlg.grab_set()
+        dlg.transient(self)
+        dlg.wait_window(dlg)
+        return result["value"]
+
+    def ask_email_compose(
+        self,
+        emails_str: str,
+        asunto: str,
+        cuerpo: str,
+        pdf_path: str,
+        smtp_cfg: dict,
+    ) -> dict | None:
+        dlg = tk.Toplevel(self)
+        dlg.title("Enviar factura por email")
+        dlg.resizable(True, True)
+        result = {"value": None}
+        current_smtp = [dict(smtp_cfg)]
+
+        frm = ttk.Frame(dlg, padding=16)
+        frm.pack(fill="both", expand=True)
+        frm.columnconfigure(1, weight=1)
+
+        # PDF info + boton SMTP
+        pdf_name = Path(pdf_path).name if pdf_path else ""
+        ttk.Label(frm, text="PDF:").grid(row=0, column=0, sticky="e", padx=(0, 8), pady=4)
+        ttk.Label(frm, text=pdf_name, foreground="gray").grid(row=0, column=1, sticky="w", pady=4)
+
+        def _abrir_smtp():
+            new_cfg = self.ask_smtp_config(current_smtp[0])
+            if new_cfg:
+                current_smtp[0] = new_cfg
+
+        ttk.Button(frm, text="Configurar SMTP", command=_abrir_smtp).grid(
+            row=0, column=2, padx=(8, 0), pady=4
+        )
+
+        # Para
+        ttk.Label(frm, text="Para:").grid(row=1, column=0, sticky="e", padx=(0, 8), pady=4)
+        emails_var = tk.StringVar(value=emails_str)
+        ttk.Entry(frm, textvariable=emails_var, width=50).grid(
+            row=1, column=1, columnspan=2, sticky="ew", pady=4
+        )
+        ttk.Label(frm, text="(separar con ; o ,)", foreground="gray", font=("", 8)).grid(
+            row=2, column=1, sticky="w"
+        )
+
+        # Asunto
+        ttk.Label(frm, text="Asunto:").grid(row=3, column=0, sticky="e", padx=(0, 8), pady=4)
+        asunto_var = tk.StringVar(value=asunto)
+        ttk.Entry(frm, textvariable=asunto_var, width=50).grid(
+            row=3, column=1, columnspan=2, sticky="ew", pady=4
+        )
+
+        # Cuerpo
+        ttk.Label(frm, text="Mensaje:").grid(row=4, column=0, sticky="ne", padx=(0, 8), pady=4)
+        cuerpo_text = tk.Text(frm, height=7, width=50, wrap="word")
+        cuerpo_text.insert("1.0", cuerpo)
+        cuerpo_text.grid(row=4, column=1, columnspan=2, sticky="nsew", pady=4)
+        frm.rowconfigure(4, weight=1)
+
+        # Botones
+        btn_frm = ttk.Frame(frm)
+        btn_frm.grid(row=5, column=0, columnspan=3, pady=(12, 0))
+
+        def _enviar():
+            raw = emails_var.get()
+            emails = [e.strip() for e in raw.replace(";", ",").split(",") if e.strip()]
+            if not emails:
+                messagebox.showwarning("Gest2A3Eco", "Introduce al menos un email de destino.", parent=dlg)
+                return
+            result["value"] = {
+                "emails": emails,
+                "asunto": asunto_var.get().strip(),
+                "cuerpo": cuerpo_text.get("1.0", "end").strip(),
+                "smtp_cfg": current_smtp[0],
+            }
+            dlg.destroy()
+
+        ttk.Button(btn_frm, text="Enviar", style="Primary.TButton", command=_enviar).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_frm, text="Cancelar", command=dlg.destroy).pack(side=tk.LEFT, padx=4)
+
+        dlg.update_idletasks()
+        w = max(dlg.winfo_width(), 520)
+        h = max(dlg.winfo_height(), 380)
+        x = (dlg.winfo_screenwidth() - w) // 2
+        y = (dlg.winfo_screenheight() - h) // 2
+        dlg.geometry(f"{w}x{h}+{x}+{y}")
+        dlg.grab_set()
+        dlg.transient(self)
+        dlg.wait_window(dlg)
+        return result["value"]
 
     def _selected_ids(self):
         return self.get_selected_ids()
@@ -2231,9 +2531,6 @@ class UIFacturasEmitidas(ttk.Frame):
 
     def _imprimir_albaran(self):
         self.controller.imprimir_albaran()
-
-    def _terceros(self):
-        self.controller.terceros()
 
     def _on_factura_select(self):
         self.controller.factura_seleccionada()

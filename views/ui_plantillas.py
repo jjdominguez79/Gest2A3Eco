@@ -286,13 +286,14 @@ class ConfigPlantillaDialog(Dialog):
         self.result = True
 
 class UIPlantillasEmpresa(ttk.Frame):
-    def __init__(self, parent, gestor, empresa_codigo, ejercicio, empresa_nombre, session=None):
+    def __init__(self, parent, gestor, empresa_codigo, ejercicio, empresa_nombre, session=None, initial_tipo=None):
         super().__init__(parent)
         self.gestor = gestor
         self.codigo = empresa_codigo
         self.ejercicio = ejercicio
         self.nombre = empresa_nombre
         self.session = session
+        self._initial_tipo = initial_tipo
         self.empresa = gestor.get_empresa(empresa_codigo, ejercicio) or {"codigo":empresa_codigo,"digitos_plan":8,"ejercicio":ejercicio}
         self.controller = PlantillasController(gestor, self.empresa, self)
         self._build()
@@ -320,6 +321,7 @@ class UIPlantillasEmpresa(ttk.Frame):
         self._tab_recibidas = self._build_tab(nb, "Facturas Recibidas", ("nombre","cuenta_proveedor_prefijo","cuenta_iva_soportado_defecto"))
         self.controller.register_tabs(self._tab_bancos, self._tab_emitidas, self._tab_recibidas)
         self.controller.refresh_all()
+        self.select_tipo(self._initial_tipo)
 
     def _build_tab(self, nb, title, cols):
         frame = ttk.Frame(nb)
@@ -354,3 +356,12 @@ class UIPlantillasEmpresa(ttk.Frame):
 
     def ask_yes_no(self, title, message):
         return messagebox.askyesno(title, message)
+
+    def select_tipo(self, tipo):
+        target = (tipo or "").lower()
+        if "bancos" in target:
+            self.notebook.select(self._tab_bancos["frame"])
+        elif "emitidas" in target:
+            self.notebook.select(self._tab_emitidas["frame"])
+        elif "recibidas" in target:
+            self.notebook.select(self._tab_recibidas["frame"])

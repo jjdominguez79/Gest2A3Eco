@@ -58,6 +58,7 @@ def _build_header(
     root: tk.Tk,
     session,
     on_cambiar_empresa,
+    on_open_config=None,
     on_open_users=None,
     on_logout=None,
     db_path: str | None = None,
@@ -100,11 +101,16 @@ def _build_header(
     botones_frame.grid(row=0, column=2, rowspan=4, sticky="e", padx=(20, 0))
 
     ttk.Button(botones_frame, text="Empresas", style="Primary.TButton", command=on_cambiar_empresa).grid(row=0, column=0, sticky="ew", pady=(0, 6))
+    next_row = 1
+    if on_open_config and session.is_admin():
+        ttk.Button(botones_frame, text="Configuracion", style="Primary.TButton", command=on_open_config).grid(row=next_row, column=0, sticky="ew", pady=(0, 6))
+        next_row += 1
     if on_open_users and session.is_admin():
-        ttk.Button(botones_frame, text="Usuarios", style="Primary.TButton", command=on_open_users).grid(row=1, column=0, sticky="ew", pady=(0, 6))
-        logout_row = 2
+        ttk.Button(botones_frame, text="Usuarios", style="Primary.TButton", command=on_open_users).grid(row=next_row, column=0, sticky="ew", pady=(0, 6))
+        next_row += 1
+        logout_row = next_row
     else:
-        logout_row = 1
+        logout_row = next_row
     if on_logout:
         ttk.Button(botones_frame, text="Cerrar sesion", command=on_logout).grid(row=logout_row, column=0, sticky="ew", pady=(0, 6))
         close_row = logout_row + 1
@@ -251,6 +257,21 @@ def main():
         ctx.add_command(label="Cerrar", command=root.destroy)
         return ctx
 
+    def _show_config_menu():
+        if not state["session"] or not state["session"].is_admin():
+            messagebox.showerror("Gest2A3Eco", "Solo el administrador puede modificar la configuracion global.", parent=root)
+            return
+        menu = tk.Menu(root, tearoff=0)
+        menu.add_command(label="Seleccionar base de datos", command=_on_cambiar_db)
+        menu.add_command(label="Seleccionar plantillas Word", command=_on_cambiar_plantillas_word)
+        menu.add_command(label="Configurar monedas y clave desmarcar", command=_on_config_monedas)
+        try:
+            x = root.winfo_rootx() + root.winfo_width() - 220
+            y = root.winfo_rooty() + 110
+            menu.tk_popup(x, y)
+        finally:
+            menu.grab_release()
+
     def _launch_authenticated_ui(session):
         _clear_root(root)
         _set_window_geometry(root, 1850, 1100, resizable=True)
@@ -263,6 +284,7 @@ def main():
             root,
             session=session,
             on_cambiar_empresa=controller.start,
+            on_open_config=_show_config_menu,
             on_open_users=controller.open_user_admin,
             on_logout=_logout,
             db_path=db_path,
