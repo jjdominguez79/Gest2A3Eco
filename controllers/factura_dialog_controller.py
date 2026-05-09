@@ -118,6 +118,75 @@ class FacturaDialogController:
     def insert_linea(self, ln):
         self._view.insert_line_row(ln)
 
+    def get_series_disponibles(self) -> list:
+        return list(self._factura.get("_series_disponibles") or [])
+
+    def on_serie_selected(self, nombre_serie: str):
+        """Actualiza el numero sugerido cuando el usuario cambia la serie."""
+        try:
+            num = self._gestor.get_siguiente_serie_num(self._codigo, self._ejercicio, nombre_serie)
+            self._view.set_numero(f"{num:06d}")
+        except Exception:
+            pass
+
+    def ok_borrador(self):
+        """Guarda como borrador sin asignar numero."""
+        if self._view.get_retencion_aplica():
+            self._sync_retencion()
+        lineas = self._view.get_lineas()
+        if not lineas:
+            self._view.show_error("Gest2A3Eco", "Anade al menos una linea.")
+            return
+        fecha_common = self._view.get_fecha_exp()
+        tercero_id = None
+        idx = self._view.get_selected_tercero_index()
+        if idx >= 0 and idx < len(self._terceros_cache):
+            tercero_id = self._terceros_cache[idx].get("id")
+        result = {
+            "id": self._factura.get("id"),
+            "codigo_empresa": self._codigo,
+            "ejercicio": self._ejercicio,
+            "tercero_id": tercero_id,
+            "serie": self._view.get_serie(),
+            "numero": "",
+            "numero_asiento": self._view.get_numero_asiento(),
+            "numero_largo_sii": self._factura.get("numero_largo_sii", ""),
+            "fecha_asiento": fecha_common,
+            "fecha_expedicion": fecha_common,
+            "fecha_operacion": fecha_common,
+            "tipo_operacion": self._view.get_tipo_operacion(),
+            "modelo_fiscal": self._view.get_modelo_fiscal(),
+            "nif": normalizar_nif_cif(self._view.get_nif()),
+            "nombre": self._view.get_nombre(),
+            "descripcion": self._view.get_descripcion(),
+            "observaciones": self._view.get_observaciones(),
+            "subcuenta_cliente": self._view.get_subcuenta().strip(),
+            "forma_pago": self._view.get_forma_pago(),
+            "cuenta_bancaria": self._view.get_cuenta_bancaria(),
+            "moneda_codigo": self._view.get_moneda()[0],
+            "moneda_simbolo": self._view.get_moneda()[1],
+            "plantilla_word": self._view.get_plantilla_word(),
+            "plantilla_emitidas": self._view.get_plantilla_emitidas(),
+            "retencion_aplica": self._view.get_retencion_aplica(),
+            "retencion_pct": self._view.get_retencion_pct(),
+            "retencion_base": self._view.get_retencion_base() if self._view.get_retencion_aplica() else None,
+            "retencion_importe": self._view.get_retencion_importe() if (self._view.get_retencion_aplica() and self._view.is_retencion_manual()) else None,
+            "descuento_total_tipo": self._view.get_descuento_total()[0],
+            "descuento_total_valor": self._view.get_descuento_total()[1],
+            "pdf_ref": self._factura.get("pdf_ref", ""),
+            "lineas": lineas,
+            "generada": self._factura.get("generada", False),
+            "fecha_generacion": self._factura.get("fecha_generacion", ""),
+            "_borrador": True,
+        }
+        if self._auto_ejercicio_por_fecha:
+            try:
+                d = self._view.parse_date(str(fecha_common))
+                result["ejercicio"] = d.year
+            except Exception:
+                pass
+        self._view.set_result_and_close(result)
+
     def ok(self):
         if self._view.get_retencion_aplica():
             self._sync_retencion()

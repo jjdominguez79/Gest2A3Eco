@@ -23,6 +23,10 @@ class AppController:
         self._session = session
         self._current_frame = None
         self._empresa_service = EmpresaService(gestor)
+        # Shell persistente por empresa
+        self._company_shell: UIDashboardEmpresa | None = None
+        self._current_codigo: str | None = None
+        self._current_ejercicio: int | None = None
 
     @property
     def session(self):
@@ -33,15 +37,24 @@ class AppController:
         return self._gestor.security
 
     def start(self):
-        self.show(self.build_panel_general)
+        self._show(self.build_panel_general)
 
-    def show(self, factory):
+    def _show(self, factory):
+        """Reemplaza el contenido principal destruyendo el frame actual."""
         if self._current_frame is not None:
             self._current_frame.destroy()
+        # Al salir de la empresa, resetear el shell guardado
+        self._company_shell = None
+        self._current_codigo = None
+        self._current_ejercicio = None
         frame = factory(self._content)
         if not frame.winfo_manager():
             frame.pack(fill="both", expand=True)
         self._current_frame = frame
+
+    # Alias publico para compatibilidad con llamadas externas (header, etc.)
+    def show(self, factory):
+        self._show(factory)
 
     def build_panel_general(self, parent):
         return UIPanelGeneral(
@@ -50,6 +63,30 @@ class AppController:
             self._session,
             on_open_dashboard=self.open_company_dashboard,
         )
+
+    # ------------------------------------------------------------------ empresa
+
+    def open_company_dashboard(self, codigo, ejercicio):
+        try:
+            self.authorization.ensure_company_read(codigo)
+        except PermissionError as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self._content.winfo_toplevel())
+            return
+        shell = self._get_or_create_shell(codigo, ejercicio)
+        shell.show_dashboard()
+
+    def open_company_module(self, codigo, ejercicio, modulo="dashboard", nombre=None):
+        if modulo == "contabilidad":
+            modulo = "importaciones"
+        try:
+            self.authorization.ensure_company_read(codigo)
+        except PermissionError as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self._content.winfo_toplevel())
+            return
+        if modulo == "dashboard":
+            self.open_company_dashboard(codigo, ejercicio)
+            return
+        self._open_module_in_shell(codigo, ejercicio, modulo, nombre)
 
     def on_empresa_ok(self, codigo, ejercicio, nombre, modulo="facturacion"):
         if modulo == "contabilidad":
@@ -61,137 +98,75 @@ class AppController:
             return
         self.open_company_module(codigo, ejercicio, modulo=modulo, nombre=nombre)
 
-    def open_company_dashboard(self, codigo, ejercicio):
-        try:
-            self.authorization.ensure_company_read(codigo)
-        except PermissionError as exc:
-            messagebox.showerror("Gest2A3Eco", str(exc), parent=self._content.winfo_toplevel())
-            return
-        self.show(lambda parent: self.build_dashboard(parent, codigo, ejercicio))
+    # ------------------------------------------------------------------ shell
 
-    def open_company_module(self, codigo, ejercicio, modulo="dashboard", nombre=None):
-        if modulo == "contabilidad":
-            modulo = "importaciones"
-        try:
-            self.authorization.ensure_company_read(codigo)
-        except PermissionError as exc:
-            messagebox.showerror("Gest2A3Eco", str(exc), parent=self._content.winfo_toplevel())
-            return
-        self.show(lambda parent: self.build_company_view(parent, codigo, ejercicio, modulo, nombre=nombre))
+    def _get_or_create_shell(self, codigo, ejercicio) -> UIDashboardEmpresa:
+        """Devuelve el shell existente si es la misma empresa/ejercicio, o crea uno nuevo."""
+        if (
+            self._company_shell is not None
+            and self._current_codigo == codigo
+            and self._current_ejercicio == int(ejercicio)
+        ):
+            return self._company_shell
 
-    def build_dashboard(self, parent, codigo, ejercicio):
-        return UIDashboardEmpresa(
-            parent,
+        # Destruir frame anterior (empresa distinta o primera vez)
+        if self._current_frame is not None:
+            self._current_frame.destroy()
+
+        shell = UIDashboardEmpresa(
+            self._content,
             self._empresa_service,
             codigo,
             ejercicio,
-            on_open_facturacion=lambda: self.open_company_module(codigo, ejercicio, "facturacion"),
-            on_open_importaciones=lambda: self.open_company_module(codigo, ejercicio, "importaciones"),
-            on_open_plantillas=lambda: self.open_company_module(codigo, ejercicio, "plantillas"),
+            on_open_facturacion=lambda: self._open_module_in_shell(codigo, ejercicio, "facturacion"),
+            on_open_importaciones=lambda: self._open_module_in_shell(codigo, ejercicio, "importaciones"),
+            on_open_plantillas=lambda: self._open_module_in_shell(codigo, ejercicio, "plantillas"),
             on_open_configuracion=lambda: self.open_company_config(codigo, ejercicio),
             on_open_ocr=self.open_company_ocr_placeholder,
             on_back=self.start,
         )
+        shell.pack(fill="both", expand=True)
+        self._company_shell = shell
+        self._current_frame = shell
+        self._current_codigo = codigo
+        self._current_ejercicio = int(ejercicio)
+        return shell
 
-    def build_company_view(self, parent, codigo, ejercicio, modulo, nombre=None):
+    def _open_module_in_shell(self, codigo, ejercicio, modulo, nombre=None):
+        """Muestra un modulo dentro del shell persistente."""
+        shell = self._get_or_create_shell(codigo, ejercicio)
         empresa = self._gestor.get_empresa(codigo, ejercicio) or {}
         nombre = nombre or empresa.get("nombre") or codigo
-        if modulo == "dashboard":
-            return self.build_dashboard(parent, codigo, ejercicio)
+
+        nav_key = modulo.split("::")[0] if "::" in modulo else modulo
+        content = self._build_module_content(shell.get_content_holder(), codigo, ejercicio, modulo, nombre)
+        shell.show_module(content, nav_key=nav_key)
+
+    def _build_module_content(self, parent, codigo, ejercicio, modulo, nombre):
+        """Construye y devuelve el widget del modulo sin empaquetarlo."""
         if modulo == "importaciones":
-            return self._build_module_shell(
-                parent,
-                codigo,
-                ejercicio,
-                nombre,
-                "Excel / Importaciones",
-                lambda holder: UIProcesos(holder, self._gestor, codigo, ejercicio, nombre, session=self._session),
-            )
+            return UIProcesos(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
         if modulo == "plantillas":
-            return self._build_module_shell(
-                parent,
-                codigo,
-                ejercicio,
-                nombre,
-                "Plantillas",
-                lambda holder: UIPlantillasEmpresa(holder, self._gestor, codigo, ejercicio, nombre, session=self._session),
-            )
+            return UIPlantillasEmpresa(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
         if modulo.startswith("importaciones::"):
             tipo = modulo.split("::", 1)[1]
-            return self._build_module_shell(
-                parent,
-                codigo,
-                ejercicio,
-                nombre,
-                "Excel / Importaciones",
-                lambda holder: UIProcesos(
-                    holder,
-                    self._gestor,
-                    codigo,
-                    ejercicio,
-                    nombre,
-                    session=self._session,
-                    initial_tipo=tipo,
-                ),
-            )
+            return UIProcesos(parent, self._gestor, codigo, ejercicio, nombre, session=self._session, initial_tipo=tipo)
         if modulo.startswith("plantillas::"):
             tipo = modulo.split("::", 1)[1]
-            return self._build_module_shell(
-                parent,
-                codigo,
-                ejercicio,
-                nombre,
-                "Plantillas",
-                lambda holder: UIPlantillasEmpresa(
-                    holder,
-                    self._gestor,
-                    codigo,
-                    ejercicio,
-                    nombre,
-                    session=self._session,
-                    initial_tipo=tipo,
-                ),
-            )
-        return self._build_module_shell(
+            return UIPlantillasEmpresa(parent, self._gestor, codigo, ejercicio, nombre, session=self._session, initial_tipo=tipo)
+        # default: facturacion
+        return UIFacturasEmitidas(
             parent,
+            self._gestor,
             codigo,
             ejercicio,
             nombre,
-            "Facturacion",
-            lambda holder: UIFacturasEmitidas(
-                holder,
-                self._gestor,
-                codigo,
-                ejercicio,
-                nombre,
-                allow_all_years=True,
-                session=self._session,
-                on_open_company_config=lambda: self.configure_company_in_place(codigo, ejercicio),
-            ),
+            allow_all_years=True,
+            session=self._session,
+            on_open_company_config=lambda: self.configure_company_in_place(codigo, ejercicio),
         )
 
-    def _build_module_shell(self, parent, codigo, ejercicio, nombre, titulo, content_builder):
-        shell = ttk.Frame(parent)
-        top = ttk.Frame(shell, padding=(10, 8))
-        top.pack(fill="x")
-        ttk.Label(top, text=f"{titulo} - {nombre} ({codigo})", font=("Segoe UI", 12, "bold")).pack(side="left")
-        actions = ttk.Frame(top)
-        actions.pack(side="right")
-        buttons = (
-            ("Dashboard", lambda: self.open_company_dashboard(codigo, ejercicio)),
-            ("Facturacion", lambda: self.open_company_module(codigo, ejercicio, "facturacion")),
-            ("Importaciones", lambda: self.open_company_module(codigo, ejercicio, "importaciones")),
-            ("Plantillas", lambda: self.open_company_module(codigo, ejercicio, "plantillas")),
-            ("Config. empresa", lambda: self.open_company_config(codigo, ejercicio)),
-        )
-        for text, command in buttons:
-            ttk.Button(actions, text=text, command=command).pack(side="left", padx=3)
-        body = ttk.Frame(shell)
-        body.pack(fill="both", expand=True)
-        content = content_builder(body)
-        if not content.winfo_manager():
-            content.pack(fill="both", expand=True)
-        return shell
+    # ------------------------------------------------------------------ config
 
     def open_company_config(self, codigo, ejercicio):
         changed = self.configure_company_in_place(codigo, ejercicio)
@@ -223,6 +198,22 @@ class AppController:
             return False
         for item in result.get("_exercise_configs") or []:
             self._gestor.upsert_empresa(item)
+        series_por_ejercicio = result.get("_series_por_ejercicio") or {}
+        for eje_str, series in series_por_ejercicio.items():
+            try:
+                eje = int(eje_str)
+            except Exception:
+                continue
+            for s in (series or []):
+                try:
+                    self._gestor.upsert_serie_emitida(
+                        codigo, eje,
+                        s["nombre"],
+                        int(s.get("siguiente_num") or 1),
+                        int(s.get("es_rectificativa") or 0),
+                    )
+                except Exception:
+                    pass
         bank_records = [dict(row) for row in (result.get("_bank_records") or []) if isinstance(row, dict)]
         if bank_records:
             try:
@@ -231,6 +222,8 @@ class AppController:
                 messagebox.showerror("Gest2A3Eco", str(exc), parent=self._content.winfo_toplevel())
                 return False
         return True
+
+    # ------------------------------------------------------------------ otros
 
     def open_company_ocr_placeholder(self):
         messagebox.showinfo(

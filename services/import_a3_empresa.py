@@ -10,6 +10,12 @@ try:
 except Exception:  # pragma: no cover
     xlrd = None
 
+try:
+    from utils.utilidades import load_app_config as _load_app_config
+except Exception:  # pragma: no cover
+    def _load_app_config() -> dict:  # type: ignore[misc]
+        return {}
+
 # ─── Constantes para lectura binaria de ficheros ISAM de A3Eco ───────────────
 # Descubiertas por ingeniería inversa de los DAT de A3Eco (Wolters Kluwer).
 # Todos los ficheros tienen cabecera de 128 bytes y registros de tamaño fijo.
@@ -26,15 +32,14 @@ _EM_NIF_SLICE = slice(5, 14)
 _EM_NAME_SLICE = slice(54, 74)
 
 # Fichero CU (cuentas / plan contable): tamaño de registro 260 bytes
-#   bytes 5-8  : número de cuenta (entero big-endian 4 bytes)
-#   bytes 9-38 : descripción (30 chars, cp850)
-# NOTA: el campo de cuenta ocupa 4 bytes (no 3). Con 3 bytes el máximo
-# representable es 16.777.215, insuficiente para planes de 8 dígitos con
-# cuentas >= 20.000.000 (grupos 2-9). El 4º byte era leído como 1er byte de
-# la descripción, corrompiendo tanto el código como el texto descriptivo.
+#   bytes 5-7  : número de cuenta (entero big-endian 3 bytes, max 16.777.215)
+#   bytes 8-37 : descripción (30 chars, cp850)
+# El campo de cuenta ocupa exactamente 3 bytes. Para planes de hasta 7 dígitos
+# (max 9.999.999) esto es suficiente. Los 6 primeros bytes del registro son:
+#   [0]=marcador activo/borrado, [1-4]=cero (padding ISAM), [5-7]=código.
 _CU_REC_SIZE = 260
-_CU_CODE_SLICE = slice(5, 9)
-_CU_DESC_SLICE = slice(9, 39)
+_CU_CODE_SLICE = slice(5, 8)
+_CU_DESC_SLICE = slice(8, 38)
 
 _A3_ENCODING = "cp850"
 
@@ -74,20 +79,77 @@ def _clean_code(codigo: str) -> str:
     return txt.zfill(5)
 
 
+def _get_a3_eco_bases() -> list[Path]:
+    """
+    Devuelve las rutas base candidatas donde puede estar instalado A3ECO.
+    Prioridad: 1) ruta configurada en config.json (a3_base_path),
+               2) rutas por defecto conocidas.
+    """
+    bases: list[Path] = []
+    try:
+        cfg = _load_app_config()
+        configured = str(cfg.get("a3_base_path") or "").strip()
+        if configured:
+            p = Path(configured)
+            # La ruta configurada puede ser la carpeta A3 o directamente A3ECO
+            if (p / "A3ECO").exists():
+                bases.append(p / "A3ECO")
+            bases.append(p)
+    except Exception:
+        pass
+    # Rutas por defecto: instalacion local y unidades de red habituales
+    defaults = [
+        Path(r"C:\Users\GestinemFiscal\Documents\A3\A3ECO"),
+        Path(r"Z:\A3\A3ECO"),
+        Path(r"C:\A3\A3ECO"),
+        Path(r"Z:\A3"),
+    ]
+    seen = {str(b).lower() for b in bases}
+    for d in defaults:
+        if str(d).lower() not in seen:
+            bases.append(d)
+            seen.add(str(d).lower())
+    return bases
+
+
+def _get_a3_gesw_bases() -> list[Path]:
+    """Rutas candidatas del modulo A3GESW (para TECODIR y datos de gestion)."""
+    bases: list[Path] = []
+    try:
+        cfg = _load_app_config()
+        configured = str(cfg.get("a3_base_path") or "").strip()
+        if configured:
+            p = Path(configured)
+            if (p / "A3GESW").exists():
+                bases.append(p / "A3GESW")
+    except Exception:
+        pass
+    defaults = [
+        Path(r"C:\Users\GestinemFiscal\Documents\A3\A3GESW"),
+        Path(r"Z:\A3\A3GESW"),
+        Path(r"C:\A3\A3GESW"),
+    ]
+    seen = {str(b).lower() for b in bases}
+    for d in defaults:
+        if str(d).lower() not in seen:
+            bases.append(d)
+            seen.add(str(d).lower())
+    return bases
+
+
 def _candidate_paths(codigo: str) -> list[Path]:
-    bases = [Path(r"Z:\A3"), Path(r"Z:\A3\A3ECO"), Path(r"C:\A3")]
     out = []
-    for base in bases:
+    for base in _get_a3_eco_bases():
         out.append(base / f"E{codigo}.DAT")
         out.append(base / f"e{codigo}.DAT")
+        # tambien en subcarpeta A3ECO si la base es la raiz A3
         out.append(base / "A3ECO" / f"E{codigo}.DAT")
     return out
 
 
 def _candidate_dirs(codigo: str) -> list[Path]:
-    bases = [Path(r"Z:\A3\A3ECO"), Path(r"C:\A3\A3ECO"), Path(r"Z:\A3")]
     out = []
-    for base in bases:
+    for base in _get_a3_eco_bases():
         out.append(base / f"E{codigo}")
     return out
 
@@ -175,9 +237,17 @@ def _find_best_cu_path(codigo_norm: str) -> "Path | None":
 
 def _candidate_tecodir_paths() -> list[Path]:
     """Devuelve las rutas candidatas del fichero TECODIR.DAT (directorio central de empresas)."""
-    bases = [Path(r"Z:\A3\A3ECO"), Path(r"C:\A3\A3ECO"), Path(r"Z:\A3")]
     out = []
-    for base in bases:
+    for base in _get_a3_eco_bases():
+        out.append(base / "TECODIR.DAT")
+        out.append(base / "tecodir.dat")
+    return out
+
+
+def _candidate_tecodir_gesw_paths() -> list[Path]:
+    """Rutas candidatas de TECODIR.DAT del modulo A3GESW."""
+    out = []
+    for base in _get_a3_gesw_bases():
         out.append(base / "TECODIR.DAT")
         out.append(base / "tecodir.dat")
     return out
@@ -313,7 +383,9 @@ def _extract_ban_labels(blocks: list[dict]) -> list[str]:
     Se busca el primer fragmento de texto imprimible de longitud razonable
     probando varios offsets candidatos dentro de los datos binarios.
     """
-    _CANDIDATE_OFFSETS = (14, 16, 20, 24, 30, 34, 40)
+    # Offset 30 en bloques BAN contiene el byte de longitud del campo (0x4E=78).
+    # El texto descriptivo real empieza en offset 31.
+    _CANDIDATE_OFFSETS = (14, 16, 20, 24, 31, 30, 34, 40)
     labels = []
     for block in blocks:
         if not str(block.get("tag") or "").startswith("BAN"):
@@ -576,15 +648,12 @@ def dump_cu_records(cu_path: Path, max_records: int = 20) -> str:
         marker = rec[0]
         is_active = marker in _ISAM_ACTIVE
         hex_head = " ".join(f"{b:02X}" for b in rec[:40])
-        code_be4 = int.from_bytes(rec[5:9], "big")
-        code_be3 = int.from_bytes(rec[5:8], "big")
-        desc9 = rec[9:39].decode(_A3_ENCODING, errors="replace").strip()
+        code3 = int.from_bytes(rec[5:8], "big")
         desc8 = rec[8:38].decode(_A3_ENCODING, errors="replace").strip()
         lines.append(
             f"[{offset}] {'ACTIVO' if is_active else 'borrado'} "
             f"marker=0x{marker:02X}  hex[0:40]={hex_head}\n"
-            f"    code(4B-BE)={code_be4}  code(3B-BE/anterior)={code_be3}\n"
-            f"    desc@9={desc9!r}  desc@8(anterior)={desc8!r}"
+            f"    code={code3}  desc={desc8!r}"
         )
         if is_active:
             count += 1
@@ -748,6 +817,36 @@ def _parse_dashboard_company_data(path: Path, codigo_norm: str) -> dict:
     return {}
 
 
+def listar_empresas_a3() -> list[dict]:
+    """
+    Devuelve la lista de todas las empresas registradas en A3ECO (TECODIR.DAT).
+    Cada entrada: {'codigo': 'E00193', 'nombre': ..., 'cif': ..., ...}
+    Util para mostrar un desplegable de seleccion en la UI.
+    """
+    tecodir_path = next((p for p in _candidate_tecodir_paths() if p.exists()), None)
+    if not tecodir_path:
+        return []
+    try:
+        data = tecodir_path.read_bytes()
+    except OSError:
+        return []
+    empresas = []
+    offset = _TECODIR_HEADER
+    while offset + _TECODIR_REC_SIZE <= len(data):
+        rec = data[offset: offset + _TECODIR_REC_SIZE]
+        if rec[0] == _TECODIR_ACTIVE:
+            path_raw = _td_decode(rec, _TD_PATH).upper()
+            # Extraer codigo de empresa del path (p.ej. \A3\A3ECO\E00193\ → E00193)
+            m = re.search(r"E(\d{5})", path_raw)
+            if m:
+                codigo_norm = m.group(1)
+                nombre = _td_decode(rec, _TD_NOMBRE)
+                cif = _td_decode(rec, _TD_CIF)
+                empresas.append({"codigo": f"E{codigo_norm}", "nombre": nombre, "cif": cif})
+        offset += _TECODIR_REC_SIZE
+    return empresas
+
+
 def importar_empresa_desde_a3(codigo: str) -> dict:
     codigo_norm = _clean_code(codigo)
     codigo_a3 = f"E{codigo_norm}"
@@ -755,6 +854,24 @@ def importar_empresa_desde_a3(codigo: str) -> dict:
     # 1. Directorio central de empresas (TECODIR.DAT): fuente más fiable
     tecodir_path = next((p for p in _candidate_tecodir_paths() if p.exists()), None)
     tecodir_data = _parse_tecodir(tecodir_path, codigo_norm) if tecodir_path else {}
+
+    # 1b. Comprobar si la empresa tambien existe en A3GESW (para informes cruzados)
+    tecodir_gesw_path = next((p for p in _candidate_tecodir_gesw_paths() if p.exists()), None)
+    en_gesw = False
+    if tecodir_gesw_path:
+        try:
+            gesw_data = tecodir_gesw_path.read_bytes()
+            gesw_offset = _TECODIR_HEADER
+            while gesw_offset + _TECODIR_REC_SIZE <= len(gesw_data):
+                rec = gesw_data[gesw_offset: gesw_offset + _TECODIR_REC_SIZE]
+                if rec[0] == _TECODIR_ACTIVE:
+                    path_raw = _td_decode(rec, _TD_PATH).upper()
+                    if f"E{codigo_norm}" in path_raw:
+                        en_gesw = True
+                        break
+                gesw_offset += _TECODIR_REC_SIZE
+        except Exception:
+            pass
 
     # 2. Ficheros binarios por empresa: CU (plan de cuentas) y datos de respaldo
     company_dirs = [path for path in _candidate_dirs(codigo_norm) if path.exists()]
@@ -842,7 +959,9 @@ def importar_empresa_desde_a3(codigo: str) -> dict:
     bank_records = _build_bank_records_from_labels(ban_labels)
     if ban_labels:
         detalle.append(f"Cuentas bancarias detectadas en A3 (sin IBAN): {', '.join(ban_labels)}")
-        detalle.append("  → El IBAN/CCC en A3 está en formato binario propietario. Introducelo manualmente en la pestana Bancos.")
+        detalle.append("  → El IBAN/CCC en A3 esta en formato binario propietario. Introducelo manualmente en la pestana Bancos.")
+    if en_gesw:
+        detalle.append("Empresa presente en A3GESW (disponible para informes de gestion).")
 
     raw_header = str(var_data.get("_a3_raw_header") or raw_preview[:1200])
 
@@ -871,6 +990,7 @@ def importar_empresa_desde_a3(codigo: str) -> dict:
         "plan_cuentas": plan_cuentas,
         "bank_records": bank_records,
         "_ban_labels": ban_labels,
+        "_en_gesw": en_gesw,
         "_a3_info": "\n".join(detalle),
         "_a3_raw_header": raw_header,
     }

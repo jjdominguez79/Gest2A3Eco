@@ -63,67 +63,115 @@ def _build_header(
     on_logout=None,
     db_path: str | None = None,
     word_tpl_dir: str | None = None,
-) -> ttk.Frame:
-    header = ttk.Frame(root, padding=10, style="TFrame")
+) -> tk.Frame:
+    COLOR_PRIMARY      = "#002C57"
+    COLOR_PRIMARY_HOV  = "#1a4a7a"
+    COLOR_DANGER       = "#c0392b"
+    COLOR_DANGER_HOV   = "#a93226"
+    COLOR_WHITE        = "#ffffff"
+    COLOR_ACCENT       = "#a8c4e0"
+    COLOR_SEPARATOR    = "#d0d0d0"
+    COLOR_INFOBAR      = "#e8ecf0"
+    COLOR_MUTED        = "#6c757d"
+
+    # ── Franja principal ────────────────────────────────────────────────
+    header = tk.Frame(root, bg=COLOR_PRIMARY)
     header.pack(side="top", fill="x")
+
+    inner = tk.Frame(header, bg=COLOR_PRIMARY, padx=16, pady=10)
+    inner.pack(fill="x")
+
+    # ── Lado izquierdo: logo + datos empresa ────────────────────────────
+    left = tk.Frame(inner, bg=COLOR_PRIMARY)
+    left.pack(side="left", fill="y")
 
     try:
         logo_img = tk.PhotoImage(file=resource_path("logo.png"))
-        max_h = 72
+        max_h = 64
         if logo_img.height() > max_h:
             factor = max(1, logo_img.height() // max_h)
             logo_img = logo_img.subsample(factor, factor)
         root._logo_img = logo_img
-        ttk.Label(header, image=logo_img, style="TLabel").grid(row=0, column=0, rowspan=4, sticky="w", padx=(0, 10))
+        tk.Label(left, image=logo_img, bg=COLOR_PRIMARY).pack(side="left", padx=(0, 14), anchor="center")
     except Exception:
         pass
 
-    ttk.Label(header, text=EMPRESA_NOMBRE, style="Header.TLabel").grid(row=0, column=1, sticky="w")
-    ttk.Label(
-        header,
-        text=f"CIF: {EMPRESA_CIF}  ·  {EMPRESA_DIRECCION}",
-        style="SubHeader.TLabel",
-    ).grid(row=1, column=1, sticky="w")
-    ttk.Label(
-        header,
-        text=f"Email: {EMPRESA_EMAIL}  ·  {EMPRESA_TELEFONO}",
-        style="SubHeader.TLabel",
-    ).grid(row=2, column=1, sticky="w")
+    company = tk.Frame(left, bg=COLOR_PRIMARY)
+    company.pack(side="left", fill="y", anchor="center")
+
+    tk.Label(
+        company, text=EMPRESA_NOMBRE,
+        bg=COLOR_PRIMARY, fg=COLOR_WHITE,
+        font=("Segoe UI", 15, "bold"), anchor="w",
+    ).pack(anchor="w")
+    tk.Label(
+        company, text=f"CIF: {EMPRESA_CIF}  ·  {EMPRESA_DIRECCION}",
+        bg=COLOR_PRIMARY, fg=COLOR_ACCENT,
+        font=("Segoe UI", 9), anchor="w",
+    ).pack(anchor="w")
+    tk.Label(
+        company, text=f"{EMPRESA_EMAIL}  ·  {EMPRESA_TELEFONO}",
+        bg=COLOR_PRIMARY, fg=COLOR_ACCENT,
+        font=("Segoe UI", 9), anchor="w",
+    ).pack(anchor="w")
+
+    # ── Lado derecho: usuario + botones ─────────────────────────────────
+    right = tk.Frame(inner, bg=COLOR_PRIMARY)
+    right.pack(side="right", fill="y", anchor="center")
 
     role_label = str(getattr(session, "role", "")).replace("UserRole.", "")
-    ttk.Label(
-        header,
-        text=f"Usuario: {session.user.nombre} ({role_label})",
-        style="SubHeader.TLabel",
-    ).grid(row=3, column=1, sticky="w")
+    tk.Label(
+        right, text=f"\u25cf  {session.user.nombre}  \u2014  {role_label}",
+        bg=COLOR_PRIMARY, fg=COLOR_ACCENT,
+        font=("Segoe UI", 9), anchor="e",
+    ).pack(anchor="e", pady=(0, 8))
 
-    botones_frame = ttk.Frame(header, style="TFrame")
-    botones_frame.grid(row=0, column=2, rowspan=4, sticky="e", padx=(20, 0))
+    btn_row = tk.Frame(right, bg=COLOR_PRIMARY)
+    btn_row.pack(anchor="e")
 
-    ttk.Button(botones_frame, text="Empresas", style="Primary.TButton", command=on_cambiar_empresa).grid(row=0, column=0, sticky="ew", pady=(0, 6))
-    next_row = 1
+    def _hbtn(text, command, danger=False):
+        bg  = COLOR_DANGER      if danger else COLOR_PRIMARY_HOV
+        hov = COLOR_DANGER_HOV  if danger else "#1e5999"
+        b = tk.Button(
+            btn_row, text=text, command=command,
+            bg=bg, fg=COLOR_WHITE,
+            font=("Segoe UI", 9, "bold"),
+            relief="flat", padx=12, pady=5,
+            cursor="hand2",
+            activebackground=hov, activeforeground=COLOR_WHITE,
+            borderwidth=0,
+        )
+        b.pack(side="left", padx=(0, 6))
+        return b
+
+    _hbtn("Empresas", on_cambiar_empresa)
     if on_open_config and session.is_admin():
-        ttk.Button(botones_frame, text="Configuracion", style="Primary.TButton", command=on_open_config).grid(row=next_row, column=0, sticky="ew", pady=(0, 6))
-        next_row += 1
+        _hbtn("Configuracion", on_open_config)
     if on_open_users and session.is_admin():
-        ttk.Button(botones_frame, text="Usuarios", style="Primary.TButton", command=on_open_users).grid(row=next_row, column=0, sticky="ew", pady=(0, 6))
-        next_row += 1
-        logout_row = next_row
-    else:
-        logout_row = next_row
+        _hbtn("Usuarios", on_open_users)
     if on_logout:
-        ttk.Button(botones_frame, text="Cerrar sesion", command=on_logout).grid(row=logout_row, column=0, sticky="ew", pady=(0, 6))
-        close_row = logout_row + 1
-    else:
-        close_row = logout_row
-    ttk.Button(botones_frame, text="Cerrar", style="Danger.TButton", command=root.destroy).grid(row=close_row, column=0, sticky="ew")
-    botones_frame.columnconfigure(0, weight=1)
+        _hbtn("Cerrar sesion", on_logout)
+    _hbtn("Cerrar", root.destroy, danger=True)
 
+    # ── Separador ───────────────────────────────────────────────────────
+    tk.Frame(root, bg=COLOR_SEPARATOR, height=1).pack(side="top", fill="x")
+
+    # ── Barra de información secundaria ─────────────────────────────────
+    parts = []
     if db_path:
-        ttk.Label(header, text=f"Base de datos: {db_path}", style="SubHeader.TLabel", foreground="#3f3f3f").grid(row=4, column=1, sticky="w")
+        parts.append(f"BD: {db_path}")
     if word_tpl_dir:
-        ttk.Label(header, text=f"Plantillas Word: {word_tpl_dir}", style="SubHeader.TLabel", foreground="#3f3f3f").grid(row=5, column=1, sticky="w")
-    header.columnconfigure(1, weight=1)
+        parts.append(f"Plantillas Word: {word_tpl_dir}")
+    if parts:
+        info_bar = tk.Frame(root, bg=COLOR_INFOBAR, pady=2)
+        info_bar.pack(side="top", fill="x")
+        tk.Label(
+            info_bar, text="  ·  ".join(parts),
+            bg=COLOR_INFOBAR, fg=COLOR_MUTED,
+            font=("Segoe UI", 8), padx=12,
+        ).pack(anchor="w")
+        tk.Frame(root, bg=COLOR_SEPARATOR, height=1).pack(side="top", fill="x")
+
     return header
 
 
@@ -245,13 +293,6 @@ def main():
     def _build_context_menu(controller):
         ctx = tk.Menu(root, tearoff=0)
         ctx.add_command(label="Menu principal", command=controller.start)
-        if state["session"] and state["session"].is_admin():
-            ctx.add_command(label="Usuarios", command=controller.open_user_admin)
-            cfg_menu = tk.Menu(ctx, tearoff=0)
-            cfg_menu.add_command(label="Seleccionar base de datos", command=_on_cambiar_db)
-            cfg_menu.add_command(label="Seleccionar plantillas Word", command=_on_cambiar_plantillas_word)
-            cfg_menu.add_command(label="Configurar monedas", command=_on_config_monedas)
-            ctx.add_cascade(label="Configuracion", menu=cfg_menu)
         ctx.add_separator()
         ctx.add_command(label="Cerrar sesion", command=_logout)
         ctx.add_command(label="Cerrar", command=root.destroy)

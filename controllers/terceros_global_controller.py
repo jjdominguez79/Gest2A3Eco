@@ -21,10 +21,12 @@ class TercerosGlobalController:
             return
         result = self._view.open_tercero_ficha(None)
         if result:
-            result["nif"] = self._norm_nif(result.get("nif"))
-            if not self._nif_valido(result.get("nif")):
-                self._view.show_warning("Gest2A3Eco", "NIF/CIF/NIE invalido. Revisa el formato.")
-                return
+            nif_extranjero = bool(result.pop("_nif_extranjero", False))
+            if not nif_extranjero:
+                result["nif"] = self._norm_nif(result.get("nif"))
+                if not self._nif_valido(result.get("nif")):
+                    self._view.show_warning("Gest2A3Eco", "NIF/CIF/NIE invalido. Revisa el formato.")
+                    return
             if self._nif_duplicado(result.get("nif")):
                 self._view.show_warning("Gest2A3Eco", "Ya existe un tercero con ese CIF/NIF.")
                 return
@@ -44,10 +46,12 @@ class TercerosGlobalController:
         result = self._view.open_tercero_ficha(ter)
         if result:
             result["id"] = tid
-            result["nif"] = self._norm_nif(result.get("nif"))
-            if not self._nif_valido(result.get("nif")):
-                self._view.show_warning("Gest2A3Eco", "NIF/CIF/NIE invalido. Revisa el formato.")
-                return
+            nif_extranjero = bool(result.pop("_nif_extranjero", False))
+            if not nif_extranjero:
+                result["nif"] = self._norm_nif(result.get("nif"))
+                if not self._nif_valido(result.get("nif")):
+                    self._view.show_warning("Gest2A3Eco", "NIF/CIF/NIE invalido. Revisa el formato.")
+                    return
             if self._nif_duplicado(result.get("nif"), exclude_id=tid):
                 self._view.show_warning("Gest2A3Eco", "Ya existe un tercero con ese CIF/NIF.")
                 return

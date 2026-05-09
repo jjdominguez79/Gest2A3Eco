@@ -62,16 +62,27 @@ class FacturasEmitidasController:
         if self._allow_all_years:
             years = sorted({y for y in (self._year_from_factura(f) for f in self._facturas_cache) if y is not None})
             self._view.set_facturas_years(years)
+        series = [str(f.get("serie") or "").strip() for f in self._facturas_cache if f.get("serie")]
+        self._view.set_facturas_series(series)
         self.apply_facturas_filter()
         self._view.set_detalle_lineas([])
 
     def apply_facturas_filter(self):
         self._view.clear_facturas()
-        year_filter = self._view.get_facturas_year_filter() if self._allow_all_years else None
+        year_filter   = self._view.get_facturas_year_filter() if self._allow_all_years else None
+        serie_filter  = self._view.get_facturas_serie_filter()
+        cliente_filter = self._view.get_facturas_cliente_filter()
         for fac in self._facturas_cache:
             if year_filter is not None:
-                fyear = self._year_from_factura(fac)
-                if fyear != year_filter:
+                if self._year_from_factura(fac) != year_filter:
+                    continue
+            if serie_filter is not None:
+                if str(fac.get("serie") or "").strip() != serie_filter:
+                    continue
+            if cliente_filter:
+                nombre = (fac.get("nombre") or "").lower()
+                nif = (fac.get("nif") or "").lower()
+                if cliente_filter not in nombre and cliente_filter not in nif:
                     continue
             total = self._compute_total(fac)
             self._view.insert_factura_row(fac, total)
@@ -89,6 +100,7 @@ class FacturasEmitidasController:
         fecha_sug = datetime.now().strftime("%d/%m/%Y")
         sugerido, serie_sug, eje_sug = self._proximo_numero_por_fecha(fecha_sug, rectificativa=False)
         cuenta_default = self._cuenta_bancaria_default()
+        series_disponibles = self._listar_series_for_year(eje_sug, rectificativa=False)
         result = self._view.open_factura_dialog(
             {
                 "codigo_empresa": self._codigo,
@@ -100,19 +112,84 @@ class FacturasEmitidasController:
                 "fecha_asiento": fecha_sug,
                 "tipo_operacion": "01",
                 "modelo_fiscal": "",
+                "_series_disponibles": series_disponibles,
             },
             numero_sugerido=sugerido,
         )
         if result:
-            result = self._ajustar_numero_por_fecha_si_aplica(result, sugerido, serie_sug, rectificativa=False)
-            result["generada"] = False
-            result["fecha_generacion"] = ""
-            if result.get("ejercicio") is None:
-                result["ejercicio"] = self._ejercicio
-            result["codigo_empresa"] = self._codigo
-            self._gestor.upsert_factura_emitida(result)
-            self._incrementar_numeracion_por_factura(result, rectificativa=False)
+            es_borrador = bool(result.pop("_borrador", False))
+            if es_borrador:
+                result["numero"] = ""
+                result["serie"] = serie_sug
+                result["borrador"] = 1
+                result["generada"] = False
+                result["fecha_generacion"] = ""
+                if result.get("ejercicio") is None:
+                    result["ejercicio"] = self._ejercicio
+                result["codigo_empresa"] = self._codigo
+                self._gestor.upsert_factura_emitida(result)
+            else:
+                result = self._ajustar_numero_por_fecha_si_aplica(result, sugerido, serie_sug, rectificativa=False)
+                result["borrador"] = 0
+                result["generada"] = False
+                result["fecha_generacion"] = ""
+                if result.get("ejercicio") is None:
+                    result["ejercicio"] = self._ejercicio
+                result["codigo_empresa"] = self._codigo
+                self._gestor.upsert_factura_emitida(result)
+                self._incrementar_numeracion_por_factura(result, rectificativa=False)
             self.refresh_facturas()
+
+    def confirmar_borrador(self):
+        """Convierte borradores seleccionados en facturas con numero asignado."""
+        if not self._ensure_write():
+            return
+        sel = self._view.get_selected_ids()
+        if not sel:
+            self._view.show_info("Gest2A3Eco", "Selecciona una o mas facturas borrador.")
+            return
+        confirmadas = 0
+        for fid in sel:
+            fac = self._get_factura_by_id(fid)
+            if not fac or not fac.get("borrador"):
+                continue
+            fecha_base = fac.get("fecha_asiento") or fac.get("fecha_expedicion") or datetime.now().strftime("%d/%m/%Y")
+            serie_pref = str(fac.get("serie") or "").strip() or None
+            sugerido, serie_sug, year = self._proximo_numero_por_fecha(fecha_base, rectificativa=False, nombre_serie=serie_pref)
+            fac["numero"] = sugerido
+            fac["serie"] = serie_sug
+            fac["borrador"] = 0
+            if year is not None:
+                fac["ejercicio"] = year
+            self._gestor.upsert_factura_emitida(fac)
+            self._incrementar_numeracion_por_factura(fac, rectificativa=False)
+            confirmadas += 1
+        if confirmadas:
+            self._view.show_info("Gest2A3Eco", f"{confirmadas} factura(s) confirmada(s) con numero asignado.")
+            self.refresh_facturas()
+        else:
+            self._view.show_info("Gest2A3Eco", "Las facturas seleccionadas no son borradores.")
+
+    def _check_not_generada(self, fac: dict) -> bool:
+        """Devuelve True si se puede proceder. Si está generada pide contraseña."""
+        if not fac.get("generada"):
+            return True
+        cfg = load_app_config()
+        expected = str(cfg.get("desmarcar_generadas_password") or "").strip()
+        if not expected:
+            self._view.show_warning(
+                "Gest2A3Eco",
+                "Esta factura está marcada como generada.\n"
+                "Configura una contraseña en Configuracion > Configurar monedas para poder editarla.",
+            )
+            return False
+        provided = self._view.ask_desmarcar_generadas_password()
+        if provided is None:
+            return False
+        if str(provided).strip() != expected:
+            self._view.show_error("Gest2A3Eco", "Contraseña incorrecta.")
+            return False
+        return True
 
     def editar(self):
         if not self._ensure_write():
@@ -124,9 +201,31 @@ class FacturasEmitidasController:
         fac = self._get_factura_by_id(sel[0])
         if not fac:
             return
+        if not self._check_not_generada(fac):
+            return
+        year = self._year_from_factura(fac) or self._ejercicio
+        series_disponibles = self._listar_series_for_year(year, rectificativa=False)
+        fac["_series_disponibles"] = series_disponibles
+        era_borrador = bool(fac.get("borrador"))
+        serie_orig = str(fac.get("serie") or "").strip()
         result = self._view.open_factura_dialog(fac)
         if result:
-            self._gestor.upsert_factura_emitida(result)
+            es_borrador = bool(result.pop("_borrador", era_borrador))
+            if era_borrador and not es_borrador:
+                # Convertir borrador a factura: asignar numero
+                fecha_base = result.get("fecha_asiento") or datetime.now().strftime("%d/%m/%Y")
+                serie_pref = str(result.get("serie") or serie_orig or "").strip() or None
+                sugerido, serie_sug, yr = self._proximo_numero_por_fecha(fecha_base, rectificativa=False, nombre_serie=serie_pref)
+                result["numero"] = sugerido
+                result["serie"] = serie_sug
+                result["borrador"] = 0
+                if yr is not None:
+                    result["ejercicio"] = yr
+                self._gestor.upsert_factura_emitida(result)
+                self._incrementar_numeracion_por_factura(result, rectificativa=False)
+            else:
+                result["borrador"] = 1 if es_borrador else 0
+                self._gestor.upsert_factura_emitida(result)
             self.refresh_facturas()
 
     def copiar(self):
@@ -141,6 +240,7 @@ class FacturasEmitidasController:
         nuevo = dict(fac)
         nuevo.pop("id", None)
         nuevo["numero_asiento"] = ""
+        nuevo["borrador"] = 0
         fecha_base = fac.get("fecha_asiento") or datetime.now().strftime("%d/%m/%Y")
         sugerido, serie_sug, eje_sug = self._proximo_numero_por_fecha(fecha_base, rectificativa=False)
         nuevo["numero"] = sugerido
@@ -148,11 +248,20 @@ class FacturasEmitidasController:
         nuevo["ejercicio"] = eje_sug if eje_sug is not None else self._ejercicio
         nuevo["generada"] = False
         nuevo["fecha_generacion"] = ""
+        series_disponibles = self._listar_series_for_year(eje_sug, rectificativa=False)
+        nuevo["_series_disponibles"] = series_disponibles
         result = self._view.open_factura_dialog(nuevo, numero_sugerido=nuevo["numero"])
         if result:
-            result = self._ajustar_numero_por_fecha_si_aplica(result, sugerido, serie_sug, rectificativa=False)
-            self._gestor.upsert_factura_emitida(result)
-            self._incrementar_numeracion_por_factura(result, rectificativa=False)
+            es_borrador = bool(result.pop("_borrador", False))
+            if es_borrador:
+                result["numero"] = ""
+                result["borrador"] = 1
+                self._gestor.upsert_factura_emitida(result)
+            else:
+                result = self._ajustar_numero_por_fecha_si_aplica(result, sugerido, serie_sug, rectificativa=False)
+                result["borrador"] = 0
+                self._gestor.upsert_factura_emitida(result)
+                self._incrementar_numeracion_por_factura(result, rectificativa=False)
             self.refresh_facturas()
 
     def rectificar(self):
@@ -177,12 +286,17 @@ class FacturasEmitidasController:
         nuevo["enviado"] = False
         nuevo["fecha_envio"] = ""
         nuevo["canal_envio"] = ""
+        nuevo["borrador"] = 0
         nuevo["_allow_fecha_fuera_ejercicio"] = True
         nuevo["lineas"] = self._negate_factura_lineas(nuevo.get("lineas", []))
         nuevo["retencion_base"] = self._negate_value(nuevo.get("retencion_base"))
         nuevo["retencion_importe"] = self._negate_value(nuevo.get("retencion_importe"))
+        series_rect = self._listar_series_for_year(eje_sug, rectificativa=True)
+        nuevo["_series_disponibles"] = series_rect
         result = self._view.open_factura_dialog(nuevo, numero_sugerido=nuevo["numero"])
         if result:
+            result.pop("_borrador", None)
+            result["borrador"] = 0
             result = self._ajustar_numero_por_fecha_si_aplica(result, sugerido, serie_sug, rectificativa=True)
             self._gestor.upsert_factura_emitida(result)
             self._incrementar_numeracion_por_factura(result, rectificativa=True)
@@ -193,6 +307,15 @@ class FacturasEmitidasController:
             return
         sel = self._view.get_selected_ids()
         if not sel:
+            return
+        # Bloquear eliminacion de facturas generadas
+        generadas_sel = [fid for fid in sel if (self._get_factura_by_id(fid) or {}).get("generada")]
+        if generadas_sel:
+            self._view.show_warning(
+                "Gest2A3Eco",
+                f"{len(generadas_sel)} factura(s) seleccionada(s) están marcadas como generadas y no pueden eliminarse.\n"
+                "Desmárcalas primero para poder eliminarlas.",
+            )
             return
         if not self._view.ask_yes_no("Gest2A3Eco", "Eliminar las facturas seleccionadas?"):
             return
@@ -423,7 +546,7 @@ class FacturasEmitidasController:
         self._gestor.marcar_albaranes_facturados(self._codigo, [a.get("id") for a in albaranes], fid, fecha_gen, self._ejercicio)
         self.refresh_facturas()
         self.refresh_albaranes()
-        self._view.show_info("Gest2A3Eco", f"Factura generada desde albaranes:\n{factura.get('serie','')}{factura.get('numero','')}")
+        self._view.show_info("Gest2A3Eco", f"Factura generada desde albaranes:\n{factura.get('numero','')}")
 
     def imprimir_albaran(self):
         sel = self._view.get_selected_albaran_ids()
@@ -547,9 +670,7 @@ class FacturasEmitidasController:
         if not fac:
             return
         self._ensure_app_pdf(fac)
-        pdf_path = str(fac.get("pdf_path") or "").strip()
-        if not pdf_path:
-            pdf_path = self._app_pdf_path(fac)
+        pdf_path = self._app_pdf_path(fac)
         if not pdf_path or not os.path.exists(pdf_path):
             self._ensure_a3_pdf(fac)
             pdf_path = self._existing_a3_pdf_path(fac)
@@ -573,10 +694,9 @@ class FacturasEmitidasController:
         if not canal:
             return
 
+        # Generar el PDF igual que al exportar (usando siempre la ruta canonica de la app)
         self._ensure_app_pdf(fac)
-        pdf_path = str(fac.get("pdf_path") or "").strip()
-        if not pdf_path:
-            pdf_path = self._app_pdf_path(fac)
+        pdf_path = self._app_pdf_path(fac)
         if not pdf_path or not os.path.exists(pdf_path):
             self._ensure_a3_pdf(fac)
             pdf_path = self._existing_a3_pdf_path(fac)
@@ -584,13 +704,15 @@ class FacturasEmitidasController:
             self._view.show_warning("Gest2A3Eco", "No se encuentra el PDF asociado.")
             return
 
-        serie = str(fac.get("serie", "") or "")
         numero = str(fac.get("numero", "") or "")
-        asunto = f"Factura {serie}{numero}".strip()
-        cuerpo = f"Adjunto factura {serie}{numero}.".strip()
+        asunto = f"Factura {numero}".strip()
+        cuerpo = f"Adjunto factura {numero}.".strip()
+        cliente = self._cliente_factura(fac)
 
         if canal == "email":
-            from services.email_service import load_smtp_config, save_smtp_config, send_email_smtp
+            from services.email_service import (
+                build_html_body, load_smtp_config, save_smtp_config, send_email_smtp
+            )
 
             smtp_cfg = load_smtp_config()
             if not smtp_cfg.get("host"):
@@ -598,11 +720,13 @@ class FacturasEmitidasController:
                 if not smtp_cfg or not smtp_cfg.get("host"):
                     return
                 save_smtp_config(smtp_cfg)
-
-            cliente = self._cliente_factura(fac)
             email_cliente = str(cliente.get("email") or "").strip()
+            email_empresa = str(self._empresa_conf.get("email") or "").strip()
 
-            compose = self._view.ask_email_compose(email_cliente, asunto, cuerpo, pdf_path, smtp_cfg)
+            compose = self._view.ask_email_compose(
+                email_cliente, asunto, cuerpo, pdf_path, smtp_cfg,
+                email_empresa=email_empresa,
+            )
             if not compose:
                 return
 
@@ -611,24 +735,49 @@ class FacturasEmitidasController:
                 save_smtp_config(new_smtp)
                 smtp_cfg = new_smtp
 
+            tot = self._totales_factura(fac)
+            html_body = build_html_body(self._empresa_conf, fac, cliente, tot)
+
             try:
-                send_email_smtp(smtp_cfg, compose["emails"], compose["asunto"], compose["cuerpo"], pdf_path)
+                send_email_smtp(
+                    smtp_cfg, compose["emails"], compose["asunto"], compose["cuerpo"],
+                    pdf_path, html_body=html_body,
+                )
                 self._view.show_info("Gest2A3Eco", "Email enviado correctamente.")
             except Exception as e:
-                self._view.show_error("Gest2A3Eco", f"Error al enviar el email:\n{e}")
+                host = str(smtp_cfg.get("host") or "(vacio)").strip() or "(vacio)"
+                port = smtp_cfg.get("port", 587)
+                self._view.show_error(
+                    "Gest2A3Eco",
+                    f"Error al enviar el email:\n{e}\n\n"
+                    f"Servidor configurado: {host}:{port}\n"
+                    f"Verifica la configuracion SMTP pulsando 'Cambiar SMTP' en el dialogo de envio.",
+                )
                 return
 
         elif canal == "whatsapp":
+            telefono_cliente = str(cliente.get("telefono") or "").strip()
+            telefono_empresa = str(self._empresa_conf.get("telefono") or "").strip()
+            compose_wa = self._view.ask_whatsapp_compose(
+                telefono_cliente, cuerpo, pdf_path,
+                telefono_empresa=telefono_empresa,
+            )
+            if not compose_wa:
+                return
+            tel = compose_wa["telefono"]
+            msg = compose_wa["mensaje"]
+            from urllib.parse import quote
+            url = f"https://wa.me/{tel}?text={quote(msg)}" if tel else "https://web.whatsapp.com/"
             try:
-                webbrowser.open("https://web.whatsapp.com/")
+                webbrowser.open(url)
             except Exception:
                 pass
-            self._view.copy_to_clipboard(pdf_path)
+            pdf_norm = os.path.normpath(pdf_path)
             try:
-                subprocess.run(["explorer.exe", f"/select,{pdf_path}"], check=False)
+                subprocess.run(f'explorer.exe /select,"{pdf_norm}"', shell=True, check=False)
             except Exception:
                 try:
-                    os.startfile(os.path.dirname(pdf_path))
+                    os.startfile(os.path.dirname(pdf_norm))
                 except Exception:
                     pass
 
@@ -688,7 +837,7 @@ class FacturasEmitidasController:
 
         ya_generadas = [f for f in facturas_sel if f.get("generada")]
         if ya_generadas:
-            nums = ", ".join(f"{f.get('serie','')}-{f.get('numero','')}" for f in ya_generadas)
+            nums = ", ".join(f.get('numero','') for f in ya_generadas)
             if not self._view.ask_yes_no(
                 "Gest2A3Eco",
                 "Las facturas {} ya estan marcadas como generadas.\nGenerar suenlace de todas formas?".format(nums),
@@ -811,22 +960,45 @@ class FacturasEmitidasController:
             return 1
 
     def _proximo_numero(self):
-        return f"{self._serie()}{self._siguiente_num():06d}"
+        return f"{self._siguiente_num():06d}"
 
     def _incrementar_numeracion(self):
         self._empresa_conf["siguiente_num_emitidas"] = self._siguiente_num() + 1
         self._gestor.upsert_empresa(self._empresa_conf)
 
-    def _serie_for_year(self, year: int | None, rectificativa: bool = False) -> str:
+    def _listar_series_for_year(self, year: int | None, rectificativa: bool = False) -> list:
+        """Devuelve lista de dicts {nombre, siguiente_num} para el desplegable de series."""
+        try:
+            eje = year if year is not None else self._ejercicio
+            self._gestor.ensure_series_emitidas(self._codigo, eje)
+            series = self._gestor.listar_series_emitidas(self._codigo, eje, es_rectificativa=1 if rectificativa else 0)
+            return [s for s in series if s.get("activa", 1)]
+        except Exception:
+            return []
+
+    def _serie_for_year(self, year: int | None, rectificativa: bool = False, nombre_serie: str | None = None) -> str:
+        series = self._listar_series_for_year(year, rectificativa=rectificativa)
+        if nombre_serie:
+            match = next((s for s in series if s["nombre"] == nombre_serie), None)
+            if match:
+                return match["nombre"]
+        if series:
+            return series[0]["nombre"]
+        # Fallback a empresas
         emp = self._empresa_for_year(year)
         if rectificativa:
             serie = str(emp.get("serie_emitidas_rect") or "").strip()
-            if not serie:
-                serie = "R"
-            return serie
+            return serie or "R"
         return str(emp.get("serie_emitidas", "A") or "A")
 
-    def _siguiente_num_for_year(self, year: int | None, rectificativa: bool = False) -> int:
+    def _siguiente_num_for_year(self, year: int | None, rectificativa: bool = False, nombre_serie: str | None = None) -> int:
+        eje = year if year is not None else self._ejercicio
+        serie = nombre_serie or self._serie_for_year(year, rectificativa=rectificativa)
+        try:
+            return self._gestor.get_siguiente_serie_num(self._codigo, eje, serie)
+        except Exception:
+            pass
+        # Fallback
         emp = self._empresa_for_year(year)
         key = "siguiente_num_emitidas_rect" if rectificativa else "siguiente_num_emitidas"
         try:
@@ -834,14 +1006,23 @@ class FacturasEmitidasController:
         except Exception:
             return 1
 
-    def _proximo_numero_por_fecha(self, fecha_txt: str, rectificativa: bool = False):
+    def _proximo_numero_por_fecha(self, fecha_txt: str, rectificativa: bool = False, nombre_serie: str | None = None):
         year = self._year_from_fecha_txt(fecha_txt)
-        serie = self._serie_for_year(year, rectificativa=rectificativa)
-        num = self._siguiente_num_for_year(year, rectificativa=rectificativa)
-        return f"{serie}{num:06d}", serie, year
+        serie = self._serie_for_year(year, rectificativa=rectificativa, nombre_serie=nombre_serie)
+        num = self._siguiente_num_for_year(year, rectificativa=rectificativa, nombre_serie=serie)
+        return f"{num:06d}", serie, year
 
     def _incrementar_numeracion_por_factura(self, fac: dict, rectificativa: bool = False):
         year = self._year_from_factura(fac)
+        eje = year if year is not None else self._ejercicio
+        serie_usada = str(fac.get("serie") or "").strip()
+        if not serie_usada:
+            serie_usada = self._serie_for_year(year, rectificativa=rectificativa)
+        try:
+            self._gestor.incrementar_serie_num(self._codigo, eje, serie_usada)
+        except Exception:
+            pass
+        # Mantener compatibilidad actualizando también empresas
         emp = self._empresa_for_year(year)
         key = "siguiente_num_emitidas_rect" if rectificativa else "siguiente_num_emitidas"
         try:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from services.import_a3_empresa import importar_empresa_desde_a3
+from services.import_a3_empresa import importar_empresa_desde_a3, listar_empresas_a3
 from utils.validaciones import normalizar_nif_cif, validar_nif_cif_nie
 from views.ui_facturas_emitidas import TerceroFicha
 
@@ -134,9 +134,10 @@ class EmpresaDialog(tk.Toplevel):
                 entry.bind("<Return>", lambda _e: self._import_from_a3())
                 entry.bind("<FocusOut>", self._on_codigo_focus_out)
                 self._entry_codigo = entry
-        ttk.Button(tab, text="Importar datos de A3", style="Primary.TButton", command=self._import_from_a3).grid(
-            row=0, column=2, columnspan=2, sticky="e", pady=4
-        )
+        btn_row = ttk.Frame(tab)
+        btn_row.grid(row=0, column=2, columnspan=2, sticky="e", pady=4)
+        ttk.Button(btn_row, text="Buscar en A3...", command=self._browse_a3_companies).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_row, text="Importar datos de A3", style="Primary.TButton", command=self._import_from_a3).pack(side=tk.LEFT)
         ttk.Checkbutton(tab, text="Activo", variable=self.var_activo).grid(row=2, column=3, sticky="w", pady=4)
         ttk.Label(tab, text="Logo (JPG)").grid(row=8, column=0, sticky="w", pady=4)
         row_logo = ttk.Frame(tab)
@@ -181,39 +182,60 @@ class EmpresaDialog(tk.Toplevel):
     def _build_exercises_tab(self, tab, nb):
         nb.add(tab, text="Ejercicios")
         tab.columnconfigure(0, weight=1)
+        tab.columnconfigure(1, weight=2)
         tab.rowconfigure(1, weight=1)
-        ttk.Label(tab, text="Cada ejercicio mantiene sus propias series y contadores.").grid(row=0, column=0, sticky="w", pady=(0, 8))
-        frame = ttk.Frame(tab)
-        frame.grid(row=1, column=0, sticky="nsew")
-        frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(0, weight=1)
-        self.tv_ejercicios = ttk.Treeview(
-            frame,
-            columns=("ejercicio", "serie", "siguiente", "serie_rect", "siguiente_rect"),
+        ttk.Label(tab, text="Cada ejercicio mantiene sus propias series y contadores.").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+
+        # Panel izquierdo: ejercicios
+        lf_ej = ttk.LabelFrame(tab, text="Ejercicios")
+        lf_ej.grid(row=1, column=0, sticky="nsew", padx=(0, 6))
+        lf_ej.columnconfigure(0, weight=1)
+        lf_ej.rowconfigure(0, weight=1)
+        self.tv_ejercicios = ttk.Treeview(lf_ej, columns=("ejercicio",), show="headings", height=8)
+        self.tv_ejercicios.heading("ejercicio", text="Ejercicio")
+        self.tv_ejercicios.column("ejercicio", width=100, anchor="w")
+        self.tv_ejercicios.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        scroll_ej = ttk.Scrollbar(lf_ej, orient="vertical", command=self.tv_ejercicios.yview)
+        scroll_ej.grid(row=0, column=1, sticky="ns", pady=4)
+        self.tv_ejercicios.configure(yscrollcommand=scroll_ej.set)
+        btns_ej = ttk.Frame(lf_ej)
+        btns_ej.grid(row=1, column=0, columnspan=2, sticky="w", padx=4, pady=(0, 4))
+        ttk.Button(btns_ej, text="Anadir", style="Primary.TButton", command=self._add_exercise).pack(side=tk.LEFT)
+        ttk.Button(btns_ej, text="Eliminar", command=self._remove_exercise).pack(side=tk.LEFT, padx=6)
+        self.tv_ejercicios.bind("<<TreeviewSelect>>", lambda _e: self._on_ejercicio_selected())
+
+        # Panel derecho: series del ejercicio seleccionado
+        lf_ser = ttk.LabelFrame(tab, text="Series del ejercicio seleccionado")
+        lf_ser.grid(row=1, column=1, sticky="nsew")
+        lf_ser.columnconfigure(0, weight=1)
+        lf_ser.rowconfigure(0, weight=1)
+        self.tv_series = ttk.Treeview(
+            lf_ser,
+            columns=("nombre", "siguiente", "tipo"),
             show="headings",
-            height=10,
+            height=8,
         )
-        headings = (
-            ("ejercicio", "Ejercicio", 100),
-            ("serie", "Serie emitidas", 120),
-            ("siguiente", "Sig. emitidas", 110),
-            ("serie_rect", "Serie rect.", 120),
-            ("siguiente_rect", "Sig. rect.", 110),
-        )
-        for col, text, width in headings:
-            self.tv_ejercicios.heading(col, text=text)
-            self.tv_ejercicios.column(col, width=width, anchor="w")
-        self.tv_ejercicios.grid(row=0, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(frame, orient="vertical", command=self.tv_ejercicios.yview)
-        scroll.grid(row=0, column=1, sticky="ns")
-        self.tv_ejercicios.configure(yscrollcommand=scroll.set)
-        btns = ttk.Frame(tab)
-        btns.grid(row=2, column=0, sticky="w", pady=(8, 0))
-        ttk.Button(btns, text="Anadir ejercicio", style="Primary.TButton", command=self._add_exercise).pack(side=tk.LEFT)
-        ttk.Button(btns, text="Editar", command=self._edit_exercise).pack(side=tk.LEFT, padx=6)
-        ttk.Button(btns, text="Eliminar", command=self._remove_exercise).pack(side=tk.LEFT)
+        self.tv_series.heading("nombre", text="Nombre serie")
+        self.tv_series.column("nombre", width=120, anchor="w")
+        self.tv_series.heading("siguiente", text="Sig. numero")
+        self.tv_series.column("siguiente", width=100, anchor="center")
+        self.tv_series.heading("tipo", text="Tipo")
+        self.tv_series.column("tipo", width=120, anchor="w")
+        self.tv_series.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        scroll_ser = ttk.Scrollbar(lf_ser, orient="vertical", command=self.tv_series.yview)
+        scroll_ser.grid(row=0, column=1, sticky="ns", pady=4)
+        self.tv_series.configure(yscrollcommand=scroll_ser.set)
+        btns_ser = ttk.Frame(lf_ser)
+        btns_ser.grid(row=1, column=0, columnspan=2, sticky="w", padx=4, pady=(0, 4))
+        ttk.Button(btns_ser, text="Anadir serie", style="Primary.TButton", command=self._add_serie).pack(side=tk.LEFT)
+        ttk.Button(btns_ser, text="Editar", command=self._edit_serie).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btns_ser, text="Eliminar", command=self._remove_serie).pack(side=tk.LEFT)
+        self.lbl_series_info = ttk.Label(lf_ser, text="Selecciona un ejercicio para ver sus series.")
+        self.lbl_series_info.grid(row=2, column=0, columnspan=2, sticky="w", padx=4, pady=(0, 4))
+
         self.lbl_ejercicios = ttk.Label(tab, text="")
-        self.lbl_ejercicios.grid(row=3, column=0, sticky="w", pady=(10, 0))
+        self.lbl_ejercicios.grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        self._series_por_ejercicio = {}  # {ejercicio_int: [{nombre, siguiente_num, es_rectificativa}, ...]}
         self._load_exercises()
 
     def _build_banks_tab(self, tab, nb):
@@ -331,14 +353,31 @@ class EmpresaDialog(tk.Toplevel):
         data = dict(row or {})
         return {
             "ejercicio": int(data.get("ejercicio") or 2025),
+            # Kept for backward compat when saving to empresas table
             "serie_emitidas": str(data.get("serie_emitidas") or "A"),
             "siguiente_num_emitidas": int(data.get("siguiente_num_emitidas") or 1),
             "serie_emitidas_rect": str(data.get("serie_emitidas_rect") or "R"),
             "siguiente_num_emitidas_rect": int(data.get("siguiente_num_emitidas_rect") or 1),
         }
 
+    def _default_series_for_exercise(self, ejercicio_row: dict) -> list:
+        """Devuelve series por defecto para un ejercicio nuevo basandose en datos legacy."""
+        return [
+            {
+                "nombre": str(ejercicio_row.get("serie_emitidas") or "A"),
+                "siguiente_num": int(ejercicio_row.get("siguiente_num_emitidas") or 1),
+                "es_rectificativa": 0,
+            },
+            {
+                "nombre": str(ejercicio_row.get("serie_emitidas_rect") or "R"),
+                "siguiente_num": int(ejercicio_row.get("siguiente_num_emitidas_rect") or 1),
+                "es_rectificativa": 1,
+            },
+        ]
+
     def _load_exercises(self):
         self._exercise_rows = []
+        self._series_por_ejercicio = {}
         codigo = str(self._empresa.get("codigo") or "")
         if self._gestor and codigo:
             try:
@@ -346,25 +385,55 @@ class EmpresaDialog(tk.Toplevel):
             except Exception:
                 rows = []
             for row in sorted(rows, key=lambda item: int(item.get("ejercicio") or 0)):
-                self._exercise_rows.append(self._exercise_from_row(row))
+                ej_row = self._exercise_from_row(row)
+                self._exercise_rows.append(ej_row)
+                eje = ej_row["ejercicio"]
+                try:
+                    series_db = self._gestor.listar_series_emitidas(codigo, eje)
+                    if series_db:
+                        self._series_por_ejercicio[eje] = [
+                            {"nombre": s["nombre"], "siguiente_num": s["siguiente_num"], "es_rectificativa": int(s["es_rectificativa"])}
+                            for s in series_db
+                        ]
+                    else:
+                        self._series_por_ejercicio[eje] = self._default_series_for_exercise(ej_row)
+                except Exception:
+                    self._series_por_ejercicio[eje] = self._default_series_for_exercise(ej_row)
         if not self._exercise_rows:
-            self._exercise_rows.append(self._exercise_from_row(self._empresa))
+            ej_row = self._exercise_from_row(self._empresa)
+            self._exercise_rows.append(ej_row)
+            self._series_por_ejercicio[ej_row["ejercicio"]] = self._default_series_for_exercise(ej_row)
         self._refresh_exercises_tree()
 
     def _refresh_exercises_tree(self):
         self.tv_ejercicios.delete(*self.tv_ejercicios.get_children())
         for row in self._exercise_rows:
             ejercicio = int(row["ejercicio"])
-            self.tv_ejercicios.insert("", "end", iid=str(ejercicio), values=(
-                ejercicio,
-                row["serie_emitidas"],
-                row["siguiente_num_emitidas"],
-                row["serie_emitidas_rect"],
-                row["siguiente_num_emitidas_rect"],
-            ))
+            self.tv_ejercicios.insert("", "end", iid=str(ejercicio), values=(ejercicio,))
         self.lbl_ejercicios.configure(text=f"Ejercicios configurados: {len(self._exercise_rows)}")
+        if self._exercise_rows:
+            first = str(int(self._exercise_rows[-1]["ejercicio"]))
+            self.tv_ejercicios.selection_set(first)
+            self._refresh_series_tree(int(first))
+        else:
+            self._refresh_series_tree(None)
         self._refresh_plan_exercise_selector()
         self._load_plan_cuentas()
+
+    def _on_ejercicio_selected(self):
+        eje = self._selected_exercise()
+        self._refresh_series_tree(eje)
+
+    def _refresh_series_tree(self, ejercicio: int | None):
+        self.tv_series.delete(*self.tv_series.get_children())
+        if ejercicio is None:
+            self.lbl_series_info.configure(text="Selecciona un ejercicio para ver sus series.")
+            return
+        series = self._series_por_ejercicio.get(ejercicio, [])
+        for idx, s in enumerate(series):
+            tipo = "Rectificativa" if s["es_rectificativa"] else "Normal"
+            self.tv_series.insert("", "end", iid=str(idx), values=(s["nombre"], s["siguiente_num"], tipo))
+        self.lbl_series_info.configure(text=f"Series configuradas para {ejercicio}: {len(series)}")
 
     def _refresh_plan_exercise_selector(self):
         self._load_plan_cuentas()
@@ -441,55 +510,6 @@ class EmpresaDialog(tk.Toplevel):
         self._load_plan_cuentas()
         messagebox.showinfo("Gest2A3Eco", "Plan contable eliminado.", parent=self)
 
-    def _exercise_editor(self, initial=None):
-        data = self._exercise_from_row(initial)
-        top = tk.Toplevel(self)
-        top.title("Ejercicio")
-        top.resizable(False, False)
-        top.transient(self)
-        top.grab_set()
-        vars_map = {
-            "ejercicio": tk.StringVar(value=str(data["ejercicio"])),
-            "serie_emitidas": tk.StringVar(value=data["serie_emitidas"]),
-            "siguiente_num_emitidas": tk.StringVar(value=str(data["siguiente_num_emitidas"])),
-            "serie_emitidas_rect": tk.StringVar(value=data["serie_emitidas_rect"]),
-            "siguiente_num_emitidas_rect": tk.StringVar(value=str(data["siguiente_num_emitidas_rect"])),
-        }
-        frm = ttk.Frame(top, padding=12)
-        frm.pack(fill="both", expand=True)
-        labels = (
-            ("ejercicio", "Ejercicio"),
-            ("serie_emitidas", "Serie emitidas"),
-            ("siguiente_num_emitidas", "Sig. emitidas"),
-            ("serie_emitidas_rect", "Serie rectificativas"),
-            ("siguiente_num_emitidas_rect", "Sig. rectificativas"),
-        )
-        for idx, (key, text) in enumerate(labels):
-            ttk.Label(frm, text=text).grid(row=idx, column=0, sticky="w", pady=4)
-            ttk.Entry(frm, textvariable=vars_map[key], width=18).grid(row=idx, column=1, sticky="w", pady=4)
-        result = {"value": None}
-
-        def _ok():
-            try:
-                result["value"] = {
-                    "ejercicio": int(vars_map["ejercicio"].get().strip()),
-                    "serie_emitidas": vars_map["serie_emitidas"].get().strip() or "A",
-                    "siguiente_num_emitidas": int(vars_map["siguiente_num_emitidas"].get().strip() or "1"),
-                    "serie_emitidas_rect": vars_map["serie_emitidas_rect"].get().strip() or "R",
-                    "siguiente_num_emitidas_rect": int(vars_map["siguiente_num_emitidas_rect"].get().strip() or "1"),
-                }
-            except Exception as exc:
-                messagebox.showerror("Gest2A3Eco", str(exc), parent=top)
-                return
-            top.destroy()
-
-        btns = ttk.Frame(frm)
-        btns.grid(row=len(labels), column=0, columnspan=2, sticky="ew", pady=(10, 0))
-        ttk.Button(btns, text="Guardar", style="Primary.TButton", command=_ok).pack(side=tk.LEFT)
-        ttk.Button(btns, text="Cancelar", command=top.destroy).pack(side=tk.LEFT, padx=(6, 0))
-        top.wait_window()
-        return result["value"]
-
     def _selected_exercise(self):
         sel = self.tv_ejercicios.selection()
         if not sel:
@@ -500,32 +520,54 @@ class EmpresaDialog(tk.Toplevel):
             return None
 
     def _add_exercise(self):
-        payload = self._exercise_editor()
-        if not payload:
+        top = tk.Toplevel(self)
+        top.title("Nuevo ejercicio")
+        top.resizable(False, False)
+        top.transient(self)
+        top.grab_set()
+        frm = ttk.Frame(top, padding=12)
+        frm.pack(fill="both", expand=True)
+        var_ej = tk.StringVar(value="2025")
+        ttk.Label(frm, text="Ejercicio (año)").grid(row=0, column=0, sticky="w", pady=4)
+        ttk.Entry(frm, textvariable=var_ej, width=12).grid(row=0, column=1, sticky="w", pady=4)
+        result = {"value": None}
+
+        def _ok():
+            try:
+                eje = int(var_ej.get().strip())
+            except Exception:
+                messagebox.showerror("Gest2A3Eco", "Ejercicio invalido.", parent=top)
+                return
+            if any(int(row["ejercicio"]) == eje for row in self._exercise_rows):
+                messagebox.showwarning("Gest2A3Eco", "Ese ejercicio ya existe.", parent=top)
+                return
+            result["value"] = eje
+            top.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        ttk.Button(btns, text="Crear", style="Primary.TButton", command=_ok).pack(side=tk.LEFT)
+        ttk.Button(btns, text="Cancelar", command=top.destroy).pack(side=tk.LEFT, padx=(6, 0))
+        top.wait_window()
+        if not result["value"]:
             return
-        if any(int(row["ejercicio"]) == payload["ejercicio"] for row in self._exercise_rows):
-            messagebox.showwarning("Gest2A3Eco", "Ese ejercicio ya existe.", parent=self)
-            return
+        eje = result["value"]
+        payload = {
+            "ejercicio": eje,
+            "serie_emitidas": "A",
+            "siguiente_num_emitidas": 1,
+            "serie_emitidas_rect": "R",
+            "siguiente_num_emitidas_rect": 1,
+        }
         self._exercise_rows.append(payload)
         self._exercise_rows.sort(key=lambda row: int(row["ejercicio"]))
+        self._series_por_ejercicio[eje] = [
+            {"nombre": "A", "siguiente_num": 1, "es_rectificativa": 0},
+            {"nombre": "R", "siguiente_num": 1, "es_rectificativa": 1},
+        ]
         self._refresh_exercises_tree()
-
-    def _edit_exercise(self):
-        ejercicio = self._selected_exercise()
-        if ejercicio is None:
-            return
-        current = next((row for row in self._exercise_rows if int(row["ejercicio"]) == ejercicio), None)
-        if not current:
-            return
-        payload = self._exercise_editor(current)
-        if not payload:
-            return
-        if payload["ejercicio"] != ejercicio and any(int(row["ejercicio"]) == payload["ejercicio"] for row in self._exercise_rows):
-            messagebox.showwarning("Gest2A3Eco", "Ese ejercicio ya existe.", parent=self)
-            return
-        current.update(payload)
-        self._exercise_rows.sort(key=lambda row: int(row["ejercicio"]))
-        self._refresh_exercises_tree()
+        self.tv_ejercicios.selection_set(str(eje))
+        self._refresh_series_tree(eje)
 
     def _remove_exercise(self):
         ejercicio = self._selected_exercise()
@@ -535,7 +577,109 @@ class EmpresaDialog(tk.Toplevel):
             messagebox.showwarning("Gest2A3Eco", "Debe existir al menos un ejercicio.", parent=self)
             return
         self._exercise_rows = [row for row in self._exercise_rows if int(row["ejercicio"]) != ejercicio]
+        self._series_por_ejercicio.pop(ejercicio, None)
         self._refresh_exercises_tree()
+
+    # ── Series management ────────────────────────────────────────────────────
+
+    def _selected_serie_index(self):
+        sel = self.tv_series.selection()
+        if not sel:
+            return None
+        try:
+            return int(sel[0])
+        except Exception:
+            return None
+
+    def _serie_editor(self, initial=None):
+        data = dict(initial or {"nombre": "", "siguiente_num": 1, "es_rectificativa": 0})
+        top = tk.Toplevel(self)
+        top.title("Serie")
+        top.resizable(False, False)
+        top.transient(self)
+        top.grab_set()
+        frm = ttk.Frame(top, padding=12)
+        frm.pack(fill="both", expand=True)
+        var_nombre = tk.StringVar(value=str(data.get("nombre") or ""))
+        var_sig = tk.StringVar(value=str(data.get("siguiente_num") or 1))
+        var_rect = tk.BooleanVar(value=bool(data.get("es_rectificativa")))
+        ttk.Label(frm, text="Nombre serie").grid(row=0, column=0, sticky="w", pady=4)
+        ttk.Entry(frm, textvariable=var_nombre, width=16).grid(row=0, column=1, sticky="w", pady=4)
+        ttk.Label(frm, text="Siguiente numero").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Entry(frm, textvariable=var_sig, width=10).grid(row=1, column=1, sticky="w", pady=4)
+        ttk.Label(frm, text="Es rectificativa").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Checkbutton(frm, variable=var_rect).grid(row=2, column=1, sticky="w", pady=4)
+        result = {"value": None}
+
+        def _ok():
+            nombre = var_nombre.get().strip()
+            if not nombre:
+                messagebox.showerror("Gest2A3Eco", "El nombre de la serie no puede estar vacio.", parent=top)
+                return
+            try:
+                sig = int(var_sig.get().strip() or "1")
+            except Exception:
+                messagebox.showerror("Gest2A3Eco", "Siguiente numero invalido.", parent=top)
+                return
+            result["value"] = {"nombre": nombre, "siguiente_num": sig, "es_rectificativa": 1 if var_rect.get() else 0}
+            top.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        ttk.Button(btns, text="Guardar", style="Primary.TButton", command=_ok).pack(side=tk.LEFT)
+        ttk.Button(btns, text="Cancelar", command=top.destroy).pack(side=tk.LEFT, padx=(6, 0))
+        top.wait_window()
+        return result["value"]
+
+    def _add_serie(self):
+        ejercicio = self._selected_exercise()
+        if ejercicio is None:
+            messagebox.showwarning("Gest2A3Eco", "Selecciona un ejercicio primero.", parent=self)
+            return
+        payload = self._serie_editor()
+        if not payload:
+            return
+        series = self._series_por_ejercicio.setdefault(ejercicio, [])
+        if any(s["nombre"] == payload["nombre"] for s in series):
+            messagebox.showwarning("Gest2A3Eco", "Ya existe una serie con ese nombre en este ejercicio.", parent=self)
+            return
+        series.append(payload)
+        self._refresh_series_tree(ejercicio)
+
+    def _edit_serie(self):
+        ejercicio = self._selected_exercise()
+        if ejercicio is None:
+            return
+        idx = self._selected_serie_index()
+        if idx is None:
+            return
+        series = self._series_por_ejercicio.get(ejercicio, [])
+        if idx >= len(series):
+            return
+        payload = self._serie_editor(series[idx])
+        if not payload:
+            return
+        if payload["nombre"] != series[idx]["nombre"] and any(s["nombre"] == payload["nombre"] for s in series):
+            messagebox.showwarning("Gest2A3Eco", "Ya existe una serie con ese nombre en este ejercicio.", parent=self)
+            return
+        series[idx] = payload
+        self._refresh_series_tree(ejercicio)
+
+    def _remove_serie(self):
+        ejercicio = self._selected_exercise()
+        if ejercicio is None:
+            return
+        idx = self._selected_serie_index()
+        if idx is None:
+            return
+        series = self._series_por_ejercicio.get(ejercicio, [])
+        if idx >= len(series):
+            return
+        if len(series) <= 1:
+            messagebox.showwarning("Gest2A3Eco", "Debe existir al menos una serie por ejercicio.", parent=self)
+            return
+        del series[idx]
+        self._refresh_series_tree(ejercicio)
 
     def _load_banks_from_text(self, text: str):
         self._bank_records = []
@@ -736,10 +880,14 @@ class EmpresaDialog(tk.Toplevel):
         return False
 
     def _save_third_party(self, payload: dict, third_party_id: str | None = None):
-        nif = normalizar_nif_cif(payload.get("nif"))
+        nif_extranjero = bool(payload.pop("_nif_extranjero", False))
+        if nif_extranjero:
+            nif = str(payload.get("nif") or "").strip().upper()
+        else:
+            nif = normalizar_nif_cif(payload.get("nif"))
+            if nif and not validar_nif_cif_nie(nif):
+                raise ValueError("NIF/CIF/NIE invalido.")
         payload["nif"] = nif
-        if nif and not validar_nif_cif_nie(nif):
-            raise ValueError("NIF/CIF/NIE invalido.")
         if self._nif_duplicado(nif, exclude_id=third_party_id):
             raise ValueError("Ya existe un tercero con ese CIF/NIF.")
         if third_party_id:
@@ -923,6 +1071,85 @@ class EmpresaDialog(tk.Toplevel):
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self)
             return
         self._load_terceros()
+
+    def _browse_a3_companies(self):
+        """Abre un dialogo para seleccionar empresa del directorio A3 (TECODIR)."""
+        try:
+            empresas = listar_empresas_a3()
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", f"No se pudo leer el directorio A3: {exc}", parent=self)
+            return
+        if not empresas:
+            messagebox.showinfo("Gest2A3Eco", "No se ha encontrado ningun directorio de empresas A3 (TECODIR.DAT).\nVerifica que la ruta A3 es accesible.", parent=self)
+            return
+
+        top = tk.Toplevel(self)
+        top.title("Seleccionar empresa A3")
+        top.transient(self)
+        top.grab_set()
+        top.resizable(True, True)
+        frm = ttk.Frame(top, padding=10)
+        frm.pack(fill="both", expand=True)
+        frm.columnconfigure(0, weight=1)
+        frm.rowconfigure(1, weight=1)
+
+        var_buscar = tk.StringVar()
+        ttk.Label(frm, text="Buscar por nombre, CIF o codigo:").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        entry_buscar = ttk.Entry(frm, textvariable=var_buscar, width=60)
+        entry_buscar.grid(row=0, column=1, sticky="ew", pady=(0, 4), padx=(6, 0))
+
+        cols = ("codigo", "nombre", "cif")
+        tree = ttk.Treeview(frm, columns=cols, show="headings", selectmode="browse", height=18)
+        tree.heading("codigo", text="Codigo")
+        tree.heading("nombre", text="Nombre")
+        tree.heading("cif", text="CIF/NIF")
+        tree.column("codigo", width=80, stretch=False)
+        tree.column("nombre", width=340)
+        tree.column("cif", width=100, stretch=False)
+        tree.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(6, 0))
+        scroll = ttk.Scrollbar(frm, orient="vertical", command=tree.yview)
+        scroll.grid(row=1, column=2, sticky="ns", pady=(6, 0))
+        tree.configure(yscrollcommand=scroll.set)
+
+        selected_code = [None]
+        visibles: list[dict] = []
+
+        def _render():
+            filtro = (var_buscar.get() or "").strip().lower()
+            for item in tree.get_children():
+                tree.delete(item)
+            visibles.clear()
+            for emp in empresas:
+                texto = f"{emp.get('codigo','')} {emp.get('nombre','')} {emp.get('cif','')}".lower()
+                if filtro and filtro not in texto:
+                    continue
+                visibles.append(emp)
+                tree.insert("", tk.END, iid=emp["codigo"], values=(emp["codigo"], emp.get("nombre", ""), emp.get("cif", "")))
+
+        def _on_select_ok(_event=None):
+            sel = tree.selection()
+            if not sel:
+                return
+            selected_code[0] = sel[0]
+            top.destroy()
+
+        var_buscar.trace_add("write", lambda *_: _render())
+        tree.bind("<Double-1>", _on_select_ok)
+        tree.bind("<Return>", _on_select_ok)
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        ttk.Button(btns, text="Seleccionar", style="Primary.TButton", command=_on_select_ok).pack(side=tk.LEFT)
+        ttk.Button(btns, text="Cancelar", command=top.destroy).pack(side=tk.LEFT, padx=(6, 0))
+
+        _render()
+        _center_window(top, self)
+        entry_buscar.focus_set()
+        top.wait_window()
+
+        if selected_code[0]:
+            self.var_codigo.set(selected_code[0])
+            self._import_from_a3()
 
     def _import_from_a3(self):
         try:
@@ -1113,10 +1340,22 @@ class EmpresaDialog(tk.Toplevel):
             for row in sorted(self._exercise_rows, key=lambda item: int(item["ejercicio"])):
                 item = dict(base)
                 item.update(row)
+                # Sync serie_emitidas legacy fields from first series in series_por_ejercicio
+                eje = int(row["ejercicio"])
+                series = self._series_por_ejercicio.get(eje, [])
+                normales = [s for s in series if not s["es_rectificativa"]]
+                rectif = [s for s in series if s["es_rectificativa"]]
+                if normales:
+                    item["serie_emitidas"] = normales[0]["nombre"]
+                    item["siguiente_num_emitidas"] = normales[0]["siguiente_num"]
+                if rectif:
+                    item["serie_emitidas_rect"] = rectif[0]["nombre"]
+                    item["siguiente_num_emitidas_rect"] = rectif[0]["siguiente_num"]
                 ejercicios.append(item)
             self.result = {
                 "_action": "save_company",
                 "_exercise_configs": ejercicios,
+                "_series_por_ejercicio": dict(self._series_por_ejercicio),
                 "_bank_records": [dict(item) for item in self._bank_records],
                 **ejercicios[-1],
             }

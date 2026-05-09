@@ -75,7 +75,7 @@ class EmpresaService:
         total_facturas = len(emitidas)
         generadas = sum(1 for fac in emitidas if fac.get("generada"))
         enviadas = sum(1 for fac in emitidas if fac.get("enviado"))
-        pendientes = max(0, total_facturas - generadas)
+        borradores = sum(1 for fac in emitidas if fac.get("borrador"))
         cuentas_bancarias = []
         if cuentas_bancarias_struct:
             for item in cuentas_bancarias_struct:
@@ -136,7 +136,7 @@ class EmpresaService:
             "can_write": self._can_write_company(codigo),
             "resumen_facturacion": {
                 "total": total_facturas,
-                "borrador": pendientes,
+                "borrador": borradores,
                 "generadas": generadas,
                 "enviadas": enviadas,
             },

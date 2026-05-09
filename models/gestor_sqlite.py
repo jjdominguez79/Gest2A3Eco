@@ -287,6 +287,18 @@ CREATE TABLE IF NOT EXISTS documento_intervinientes (
   FOREIGN KEY (documento_id) REFERENCES documentos_generados(id) ON DELETE CASCADE,
   FOREIGN KEY (interviniente_id) REFERENCES intervinientes(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS series_emitidas (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  codigo_empresa TEXT NOT NULL,
+  ejercicio INTEGER NOT NULL,
+  nombre TEXT NOT NULL,
+  siguiente_num INTEGER NOT NULL DEFAULT 1,
+  es_rectificativa INTEGER NOT NULL DEFAULT 0,
+  activa INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(codigo_empresa, ejercicio, nombre)
+);
+CREATE INDEX IF NOT EXISTS idx_series_emitidas_empresa
+  ON series_emitidas(codigo_empresa, ejercicio);
 """
 
 AUTH_SCHEMA = """
@@ -423,6 +435,23 @@ class GestorSQLite:
             "  ON cuentas_bancarias(codigo_empresa, ejercicio);"
         )
         self.conn.commit()
+        self._ensure_column("facturas_emitidas_docs", "borrador", "INTEGER")
+        self.conn.executescript(
+            "CREATE TABLE IF NOT EXISTS series_emitidas ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  codigo_empresa TEXT NOT NULL,"
+            "  ejercicio INTEGER NOT NULL,"
+            "  nombre TEXT NOT NULL,"
+            "  siguiente_num INTEGER NOT NULL DEFAULT 1,"
+            "  es_rectificativa INTEGER NOT NULL DEFAULT 0,"
+            "  activa INTEGER NOT NULL DEFAULT 1,"
+            "  UNIQUE(codigo_empresa, ejercicio, nombre)"
+            ");"
+            "CREATE INDEX IF NOT EXISTS idx_series_emitidas_empresa"
+            "  ON series_emitidas(codigo_empresa, ejercicio);"
+        )
+        self.conn.commit()
+        self._migrate_series_emitidas()
 
     def _ensure_column(self, table: str, column: str, col_type: str):
         cur = self.conn.execute(f"PRAGMA table_info({table})")
@@ -433,6 +462,121 @@ class GestorSQLite:
 
     def _utc_now(self) -> str:
         return datetime.utcnow().replace(microsecond=0).isoformat()
+
+    def _migrate_series_emitidas(self):
+        """Migra series existentes en empresas a la tabla series_emitidas si aun no existen."""
+        try:
+            cur = self.conn.execute("SELECT codigo, ejercicio, serie_emitidas, siguiente_num_emitidas, serie_emitidas_rect, siguiente_num_emitidas_rect FROM empresas")
+            rows = cur.fetchall()
+        except Exception:
+            return
+        for row in rows:
+            codigo = row[0]
+            ejercicio = row[1]
+            if not codigo or ejercicio is None:
+                continue
+            count = self.conn.execute(
+                "SELECT COUNT(*) FROM series_emitidas WHERE codigo_empresa=? AND ejercicio=?",
+                (codigo, ejercicio)
+            ).fetchone()[0]
+            if count > 0:
+                continue
+            serie = str(row[2] or "A").strip() or "A"
+            sig = int(row[3] or 1)
+            serie_rect = str(row[4] or "R").strip() or "R"
+            sig_rect = int(row[5] or 1)
+            self.conn.execute(
+                "INSERT OR IGNORE INTO series_emitidas (codigo_empresa, ejercicio, nombre, siguiente_num, es_rectificativa, activa) VALUES (?,?,?,?,0,1)",
+                (codigo, ejercicio, serie, sig)
+            )
+            self.conn.execute(
+                "INSERT OR IGNORE INTO series_emitidas (codigo_empresa, ejercicio, nombre, siguiente_num, es_rectificativa, activa) VALUES (?,?,?,?,1,1)",
+                (codigo, ejercicio, serie_rect, sig_rect)
+            )
+        self.conn.commit()
+
+    # ── Series emitidas ─────────────────────────────────────────────────────
+
+    def listar_series_emitidas(self, codigo: str, ejercicio: int, es_rectificativa: int | None = None):
+        """Devuelve lista de series para una empresa+ejercicio."""
+        if es_rectificativa is None:
+            cur = self.conn.execute(
+                "SELECT id, nombre, siguiente_num, es_rectificativa, activa FROM series_emitidas WHERE codigo_empresa=? AND ejercicio=? ORDER BY es_rectificativa, nombre",
+                (codigo, _ej_val(ejercicio))
+            )
+        else:
+            cur = self.conn.execute(
+                "SELECT id, nombre, siguiente_num, es_rectificativa, activa FROM series_emitidas WHERE codigo_empresa=? AND ejercicio=? AND es_rectificativa=? ORDER BY nombre",
+                (codigo, _ej_val(ejercicio), int(es_rectificativa))
+            )
+        return [dict(r) for r in cur.fetchall()]
+
+    def upsert_serie_emitida(self, codigo: str, ejercicio: int, nombre: str, siguiente_num: int = 1, es_rectificativa: int = 0, activa: int = 1) -> int:
+        """Crea o actualiza una serie. Devuelve el id."""
+        self.conn.execute(
+            """INSERT INTO series_emitidas (codigo_empresa, ejercicio, nombre, siguiente_num, es_rectificativa, activa)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT(codigo_empresa, ejercicio, nombre) DO UPDATE SET
+                 siguiente_num=excluded.siguiente_num,
+                 es_rectificativa=excluded.es_rectificativa,
+                 activa=excluded.activa""",
+            (codigo, _ej_val(ejercicio), nombre, int(siguiente_num), int(es_rectificativa), int(activa))
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT id FROM series_emitidas WHERE codigo_empresa=? AND ejercicio=? AND nombre=?",
+            (codigo, _ej_val(ejercicio), nombre)
+        ).fetchone()
+        return row[0] if row else None
+
+    def eliminar_serie_emitida(self, serie_id: int):
+        self.conn.execute("DELETE FROM series_emitidas WHERE id=?", (serie_id,))
+        self.conn.commit()
+
+    def incrementar_serie_num(self, codigo: str, ejercicio: int, nombre: str) -> int:
+        """Incrementa el contador de la serie y devuelve el nuevo valor."""
+        self.conn.execute(
+            "UPDATE series_emitidas SET siguiente_num = siguiente_num + 1 WHERE codigo_empresa=? AND ejercicio=? AND nombre=?",
+            (codigo, _ej_val(ejercicio), nombre)
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT siguiente_num FROM series_emitidas WHERE codigo_empresa=? AND ejercicio=? AND nombre=?",
+            (codigo, _ej_val(ejercicio), nombre)
+        ).fetchone()
+        return row[0] if row else 1
+
+    def get_siguiente_serie_num(self, codigo: str, ejercicio: int, nombre: str) -> int:
+        row = self.conn.execute(
+            "SELECT siguiente_num FROM series_emitidas WHERE codigo_empresa=? AND ejercicio=? AND nombre=?",
+            (codigo, _ej_val(ejercicio), nombre)
+        ).fetchone()
+        return row[0] if row else 1
+
+    def ensure_series_emitidas(self, codigo: str, ejercicio: int):
+        """Asegura que existan series para empresa+ejercicio. Crea series por defecto si no existen."""
+        count = self.conn.execute(
+            "SELECT COUNT(*) FROM series_emitidas WHERE codigo_empresa=? AND ejercicio=?",
+            (codigo, _ej_val(ejercicio))
+        ).fetchone()[0]
+        if count > 0:
+            return
+        emp = self.get_empresa(codigo, ejercicio)
+        if not emp:
+            return
+        serie = str(emp.get("serie_emitidas") or "A").strip() or "A"
+        sig = int(emp.get("siguiente_num_emitidas") or 1)
+        serie_rect = str(emp.get("serie_emitidas_rect") or "R").strip() or "R"
+        sig_rect = int(emp.get("siguiente_num_emitidas_rect") or 1)
+        self.conn.execute(
+            "INSERT OR IGNORE INTO series_emitidas (codigo_empresa, ejercicio, nombre, siguiente_num, es_rectificativa, activa) VALUES (?,?,?,?,0,1)",
+            (codigo, _ej_val(ejercicio), serie, sig)
+        )
+        self.conn.execute(
+            "INSERT OR IGNORE INTO series_emitidas (codigo_empresa, ejercicio, nombre, siguiente_num, es_rectificativa, activa) VALUES (?,?,?,?,1,1)",
+            (codigo, _ej_val(ejercicio), serie_rect, sig_rect)
+        )
+        self.conn.commit()
 
     def _migrate_terceros_global(self):
         try:
@@ -1009,6 +1153,7 @@ class GestorSQLite:
             d["generada"] = bool(d.get("generada"))
             d["enviado"] = bool(d.get("enviado"))
             d["retencion_aplica"] = bool(d.get("retencion_aplica"))
+            d["borrador"] = bool(d.get("borrador"))
             self._normalizar_campos_factura_emitida(d)
             d.pop("lineas_json", None)
             out.append(d)
@@ -1121,8 +1266,8 @@ class GestorSQLite:
             (id, codigo_empresa, ejercicio, tercero_id, serie, numero, numero_largo_sii, numero_asiento,
              fecha_asiento, fecha_expedicion, fecha_operacion, tipo_operacion, modelo_fiscal, nif, nombre, descripcion, observaciones,
              subcuenta_cliente, forma_pago, cuenta_bancaria, plantilla_word, plantilla_emitidas, pdf_path, pdf_ref, pdf_path_a3, retencion_aplica, retencion_pct,
-             retencion_base, retencion_importe, descuento_total_tipo, descuento_total_valor, moneda_codigo, moneda_simbolo, enviado, fecha_envio, canal_envio, generada, fecha_generacion, lineas_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             retencion_base, retencion_importe, descuento_total_tipo, descuento_total_valor, moneda_codigo, moneda_simbolo, enviado, fecha_envio, canal_envio, generada, fecha_generacion, lineas_json, borrador)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -1161,7 +1306,8 @@ class GestorSQLite:
                 canal_envio=excluded.canal_envio,
                 generada=excluded.generada,
                 fecha_generacion=excluded.fecha_generacion,
-                lineas_json=excluded.lineas_json
+                lineas_json=excluded.lineas_json,
+                borrador=excluded.borrador
             """,
             (
                 fid,
@@ -1203,6 +1349,7 @@ class GestorSQLite:
                 1 if factura.get("generada") else 0,
                 factura.get("fecha_generacion"),
                 json.dumps(factura.get("lineas", []), ensure_ascii=False),
+                1 if factura.get("borrador") else 0,
             ),
         )
         self.conn.commit()
