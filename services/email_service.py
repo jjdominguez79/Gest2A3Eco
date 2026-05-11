@@ -1,9 +1,11 @@
 import os
 import smtplib
 import ssl
+import sys
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from pathlib import Path
 
 from utils.utilidades import load_app_config, save_app_config
 
@@ -62,6 +64,27 @@ DEFAULT_HTML_TEMPLATE = """\
 """
 
 
+def _base_dir() -> Path:
+    """Directorio raiz de la aplicacion (junto al .exe o al proyecto en desarrollo)."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path(__file__).resolve().parents[1]
+
+
+def get_template_html_path() -> Path:
+    """Ruta del fichero de plantilla HTML editable por el usuario."""
+    return _base_dir() / "plantillas" / "email_factura.html"
+
+
+def ensure_template_file() -> Path:
+    """Crea el fichero de plantilla si no existe. Devuelve su ruta."""
+    path = get_template_html_path()
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(DEFAULT_HTML_TEMPLATE, encoding="utf-8")
+    return path
+
+
 def load_smtp_config() -> dict:
     return load_app_config().get("smtp") or {}
 
@@ -73,15 +96,19 @@ def save_smtp_config(cfg: dict) -> None:
 
 
 def load_email_html_template() -> str:
-    """Carga la plantilla HTML de email desde la configuracion (o la por defecto)."""
-    cfg = load_app_config()
-    return str(cfg.get("email_html_template") or DEFAULT_HTML_TEMPLATE)
+    """Carga la plantilla HTML desde el fichero externo (plantillas/email_factura.html).
+    Si no existe lo crea con el contenido por defecto."""
+    path = ensure_template_file()
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception:
+        return DEFAULT_HTML_TEMPLATE
 
 
 def save_email_html_template(template: str) -> None:
-    cfg = load_app_config()
-    cfg["email_html_template"] = template
-    save_app_config(cfg)
+    """Guarda la plantilla en el fichero externo (y por compatibilidad en config.json)."""
+    path = ensure_template_file()
+    path.write_text(template, encoding="utf-8")
 
 
 def build_html_body(empresa_conf: dict, fac: dict, cliente: dict, totales: dict) -> str:

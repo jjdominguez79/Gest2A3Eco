@@ -97,12 +97,12 @@ def _get_a3_eco_bases() -> list[Path]:
             bases.append(p)
     except Exception:
         pass
-    # Rutas por defecto: instalacion local y unidades de red habituales
+    # Rutas por defecto: unidad de red primero, luego instalacion local
     defaults = [
-        Path(r"C:\Users\GestinemFiscal\Documents\A3\A3ECO"),
         Path(r"Z:\A3\A3ECO"),
-        Path(r"C:\A3\A3ECO"),
         Path(r"Z:\A3"),
+        Path(r"C:\Users\GestinemFiscal\Documents\A3\A3ECO"),
+        Path(r"C:\A3\A3ECO"),
     ]
     seen = {str(b).lower() for b in bases}
     for d in defaults:
@@ -125,8 +125,8 @@ def _get_a3_gesw_bases() -> list[Path]:
     except Exception:
         pass
     defaults = [
-        Path(r"C:\Users\GestinemFiscal\Documents\A3\A3GESW"),
         Path(r"Z:\A3\A3GESW"),
+        Path(r"C:\Users\GestinemFiscal\Documents\A3\A3GESW"),
         Path(r"C:\A3\A3GESW"),
     ]
     seen = {str(b).lower() for b in bases}

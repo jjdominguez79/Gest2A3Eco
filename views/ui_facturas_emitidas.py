@@ -2572,9 +2572,26 @@ class UIFacturasEmitidas(ttk.Frame):
             if new_cfg:
                 current_smtp[0] = new_cfg
 
-        ttk.Button(frm, text="Configurar SMTP", command=_abrir_smtp).grid(
-            row=0, column=2, padx=(8, 0), pady=4
-        )
+        def _editar_plantilla_html():
+            from services.email_service import ensure_template_file
+            import subprocess
+            path = ensure_template_file()
+            try:
+                subprocess.Popen(["notepad.exe", str(path)])
+                messagebox.showinfo(
+                    "Plantilla HTML",
+                    f"Fichero abierto en el Bloc de notas:\n{path}\n\n"
+                    "Guarda los cambios y vuelve a enviar la factura para aplicarlos.\n"
+                    "Los cambios se aplican en el siguiente envio sin reiniciar la aplicacion.",
+                    parent=dlg,
+                )
+            except Exception as exc:
+                messagebox.showerror("Gest2A3Eco", f"No se pudo abrir el editor:\n{exc}", parent=dlg)
+
+        btn_row_top = ttk.Frame(frm)
+        btn_row_top.grid(row=0, column=2, padx=(8, 0), pady=4, sticky="e")
+        ttk.Button(btn_row_top, text="Configurar SMTP", command=_abrir_smtp).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(btn_row_top, text="Editar plantilla HTML", command=_editar_plantilla_html).pack(side=tk.LEFT)
 
         # --- Destinatarios ---
         ttk.Label(frm, text="Destinatarios:").grid(row=1, column=0, sticky="ne", padx=(0, 8), pady=(8, 2))

@@ -270,7 +270,7 @@ class EmpresaDialog(tk.Toplevel):
         ttk.Button(btns, text="Anadir", style="Primary.TButton", command=self._add_bank).pack(side=tk.LEFT)
         ttk.Button(btns, text="Editar", command=self._edit_bank).pack(side=tk.LEFT, padx=6)
         ttk.Button(btns, text="Eliminar", command=self._remove_bank).pack(side=tk.LEFT)
-        ttk.Button(btns, text="Actualizar desde A3", command=self._update_banks_from_a3).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btns, text="Actualizar desde A3", command=self._update_banks_from_a3, state="disabled").pack(side=tk.LEFT, padx=6)
         self.lbl_bancos_info = ttk.Label(tab, text="")
         self.lbl_bancos_info.grid(row=3, column=0, sticky="w", pady=(8, 0))
         self._load_bank_records()
@@ -286,7 +286,7 @@ class EmpresaDialog(tk.Toplevel):
         entry_buscar = ttk.Entry(filtros, textvariable=self.var_plan_buscar, width=34)
         entry_buscar.pack(side=tk.LEFT, padx=(6, 0), fill="x", expand=True)
         self.var_plan_buscar.trace_add("write", lambda *_: self._load_plan_cuentas())
-        ttk.Button(filtros, text="Actualizar desde A3", command=self._update_plan_from_a3).pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Button(filtros, text="Actualizar desde A3", command=self._update_plan_from_a3, state="disabled").pack(side=tk.LEFT, padx=(12, 0))
         ttk.Button(filtros, text="Eliminar plan", command=self._delete_plan_cuentas).pack(side=tk.LEFT, padx=(6, 0))
 
         frame = ttk.Frame(tab)
@@ -1177,34 +1177,8 @@ class EmpresaDialog(tk.Toplevel):
         if data.get("digitos_plan"):
             self.var_dig.set(str(data.get("digitos_plan") or "8"))
 
-        # Guardar plan de cuentas y cuentas bancarias en la base de datos bajo ejercicio=0 (base A3)
-        plan_cuentas = data.get("plan_cuentas") or []
-        bank_records = data.get("bank_records") or []
-        cuentas_msg = ""
-        if self._gestor:
-            codigo = str(data.get("codigo") or "")
-            if codigo:
-                if plan_cuentas:
-                    try:
-                        n = self._gestor.upsert_plan_cuentas(codigo, 0, plan_cuentas)
-                        cuentas_msg = f"\nPlan de cuentas: {n} cuentas importadas."
-                    except Exception as exc_pc:
-                        cuentas_msg = f"\nAviso: no se pudo guardar el plan de cuentas: {exc_pc}"
-                if bank_records:
-                    try:
-                        self._gestor.reemplazar_cuentas_bancarias(codigo, 0, bank_records)
-                    except Exception:
-                        pass
-        if bank_records:
-            self._bank_records = [dict(item) for item in bank_records]
-            self._sync_bank_items_from_records()
-            self._refresh_banks_tree()
-
-        self._load_plan_cuentas()
-
         self.var_a3_info.set(
             "Importacion A3 completada."
-            + cuentas_msg
             + "\n"
             + str(data.get("_a3_info") or "Datos basicos detectados.")
         )

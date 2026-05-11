@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from controllers.app_controller import AppController
+from services.email_service import ensure_template_file
 from models.gestor_sqlite import GestorSQLite
 from services.auth_service import AuthService, AuthorizationService
 from services.secured_gestor import SecuredGestorSQLite
@@ -231,6 +232,7 @@ def _set_window_geometry(root: tk.Tk, width: int, height: int, *, resizable: boo
 
 
 def main():
+    ensure_template_file()  # Crea plantillas/email_factura.html si no existe
     root = tk.Tk()
     root.title("Gest2A3Eco")
     _set_window_geometry(root, 520, 480, resizable=False)
