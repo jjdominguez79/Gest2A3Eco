@@ -11,6 +11,7 @@ from models.facturas_common import (
     render_emitidas_cabecera_512,
     render_emitidas_detalle_512,
     render_a3_tipoC_alta_cuenta,
+    render_a3_tipo6_id,
 )
 from utils.validaciones import normalizar_nif_cif
 
@@ -347,6 +348,18 @@ def generar_emitidas(
                     impreso=modelo,
                     operacion_sujeta_iva=True,
                     keep_sign=True,
+                )
+            )
+
+        # Registro tipo 6: ID de factura en origen (trazabilidad Gest2A3Eco <-> A3ECO)
+        if ref_doc:
+            registros.append(
+                render_a3_tipo6_id(
+                    codigo_empresa=codigo_empresa,
+                    fecha=fecha,
+                    id_factura=ref_doc,
+                    app_id="G2A",
+                    formato_512=formato_512,
                 )
             )
 

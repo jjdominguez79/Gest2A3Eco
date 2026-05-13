@@ -12,6 +12,7 @@ from models.facturas_common import (
     render_a3_tipo12_cabecera,
     render_a3_tipo9_detalle,
     render_a3_tipoC_alta_cuenta,
+    render_a3_tipo6_id,
 )
 from utils.utilidades import d2
 
@@ -213,30 +214,6 @@ def generar_asiento_recibida(row: Dict[str, Any], conf: Dict[str, Any]) -> List[
     return lineas
 
 
-def generar_recibidas(
-    rows: List[Dict[str, Any]],
-    conf: Dict[str, Any],
-    codigo_empresa: str | None = None,
-    ndig_plan: int | None = None,
-) -> List[Linea]:
-    """
-    Función de alto nivel que algunas partes de la aplicación importan:
-
-        from procesos.facturas_recibidas import generar_recibidas
-
-    En muchas llamadas antiguas se le pasan 4 parámetros:
-      (rows, conf, codigo_empresa, ndig_plan)
-
-    Aquí aceptamos también esos dos últimos, aunque no los necesitamos
-    para construir las Linea, para mantener compatibilidad.
-    """
-    todas: List[Linea] = []
-    for row in rows:
-        lineas = generar_asiento_recibida(row, conf)
-        if lineas:
-            todas.extend(lineas)
-    return todas
-
 
 def _fv(x) -> float:
     """
@@ -416,6 +393,18 @@ def generar_recibidas_suenlace(
                     es_ultimo=(i == n_lineas - 1),
                     dh=("A" if signo < 0 else "C"),
                     keep_sign=True,
+                )
+            )
+
+        # Registro tipo 6: ID de factura en origen (trazabilidad Gest2A3Eco <-> A3ECO)
+        if ref_doc:
+            registros.append(
+                render_a3_tipo6_id(
+                    codigo_empresa=codigo_empresa,
+                    fecha=fecha,
+                    id_factura=ref_doc,
+                    app_id="G2A",
+                    formato_512=False,
                 )
             )
 

@@ -6,3 +6,4 @@ python-docx
 pillow
 docxtpl
 docx2pdf
+pypdf

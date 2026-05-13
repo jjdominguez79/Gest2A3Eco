@@ -1871,6 +1871,8 @@ class UIFacturasEmitidas(ttk.Frame):
         is_cliente = bool(self.session and self.session.role.value == "cliente")
         self.btn_fact_nueva = ttk.Button(top, text="Nueva", style="Primary.TButton", command=self._nueva)
         self.btn_fact_nueva.pack(side=tk.LEFT, padx=8)
+        self.btn_fact_nueva_rect = ttk.Button(top, text="Nueva Rectif.", command=self._nueva_rectificativa)
+        self.btn_fact_nueva_rect.pack(side=tk.LEFT, padx=8)
         self.btn_fact_editar = ttk.Button(top, text="Editar", command=self._editar)
         self.btn_fact_editar.pack(side=tk.LEFT, padx=8)
         self.btn_fact_copiar = ttk.Button(top, text="Copiar", command=self._copiar)
@@ -1886,9 +1888,11 @@ class UIFacturasEmitidas(ttk.Frame):
         ttk.Button(top, text="Exportar PDF", command=self._export_pdf).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Abrir PDF", command=self._abrir_pdf).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Compartir PDF", command=self._compartir_pdf).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="PDF seleccion", command=self._export_pdf_multiple).pack(side=tk.LEFT, padx=8)
         if not can_write:
             for btn in (
                 self.btn_fact_nueva,
+                self.btn_fact_nueva_rect,
                 self.btn_fact_editar,
                 self.btn_fact_copiar,
                 self.btn_fact_rectificar,
@@ -2831,6 +2835,9 @@ class UIFacturasEmitidas(ttk.Frame):
     def _copiar(self):
         self.controller.copiar()
 
+    def _nueva_rectificativa(self):
+        self.controller.nueva_rectificativa()
+
     def _rectificar(self):
         self.controller.rectificar()
 
@@ -2876,6 +2883,9 @@ class UIFacturasEmitidas(ttk.Frame):
 
     def _compartir_pdf(self):
         self.controller.compartir_pdf()
+
+    def _export_pdf_multiple(self):
+        self.controller.export_pdf_multiple()
 
     def _generar(self):
         self.controller.generar_suenlace()

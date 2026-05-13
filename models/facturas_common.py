@@ -732,6 +732,54 @@ def render_emitidas_detalle_256(*,
     buf[254] = "\r"; buf[255] = "\n"
     return "".join(buf)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# RENDER: IDENTIFICADOR DE FACTURA EN ORIGEN (TIPO 6)
+# ─────────────────────────────────────────────────────────────────────────────
+def render_a3_tipo6_id(*,
+    codigo_empresa: str,
+    fecha: str,
+    id_factura: str,
+    app_id: str = "G2A",
+    formato_512: bool = False,
+) -> str:
+    """
+    Registro tipo 6 (identificador de factura en origen).
+    Va despues del ultimo tipo 9 de cada factura para permitir trazabilidad
+    entre Gest2A3Eco y A3ECO tras el enlace.
+
+    Posiciones 1-based (spec A3ECO suenlace.dat 9.80):
+      1      : '4'/'5' (fichero 256/512 bytes)
+      2-6    : empresa (5)
+      7-14   : fecha (8)
+      15     : '6' (tipo)
+      59-94  : ID de factura (36 chars, izquierda + espacios)
+      95-97  : ID de aplicacion de origen (3 chars)
+    """
+    size = 512 if formato_512 else 256
+    buf = [" "] * size
+    emp5 = _empresa5(codigo_empresa)
+    f8 = _fecha_yyyymmdd(fecha)
+
+    _set_slice(buf, 0, 1, "5" if formato_512 else "4")
+    _set_slice(buf, 1, 6, emp5)
+    _set_slice(buf, 6, 14, f8)
+    _set_slice(buf, 14, 15, "6")
+    # pos 59-94 (0-based 58-93): ID de factura, 36 chars
+    _set_slice(buf, 58, 94, _s(id_factura)[:36])
+    # pos 95-97 (0-based 94-96): ID de aplicacion, 3 chars
+    _set_slice(buf, 94, 97, _s(app_id)[:3].ljust(3))
+
+    if formato_512:
+        _set_slice(buf, 508, 509, "E")
+        _set_slice(buf, 509, 510, "N")
+        buf[510] = "\r"; buf[511] = "\n"
+    else:
+        _set_slice(buf, 252, 253, "E")
+        _set_slice(buf, 253, 254, "N")
+        buf[254] = "\r"; buf[255] = "\n"
+
+    return "".join(buf)
+
 def render_emitidas_detalle_512(*,
     codigo_empresa: str,
     fecha: str,
