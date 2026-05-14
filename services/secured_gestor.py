@@ -50,6 +50,26 @@ class SecuredGestorSQLite:
         self.security.ensure_company_read(codigo_empresa)
         return self._base.listar_facturas_emitidas(codigo_empresa, ejercicio)
 
+    def listar_facturas_recibidas_docs(self, codigo_empresa: str, ejercicio: int):
+        self.security.ensure_company_read(codigo_empresa)
+        return self._base.listar_facturas_recibidas_docs(codigo_empresa, ejercicio)
+
+    def get_factura_recibida_doc(self, doc_id: str):
+        doc = self._base.get_factura_recibida_doc(doc_id)
+        if doc:
+            self.security.ensure_company_read(doc.get("codigo_empresa"))
+        return doc
+
+    def listar_asientos_contables(self, codigo_empresa: str, ejercicio: int):
+        self.security.ensure_company_read(codigo_empresa)
+        return self._base.listar_asientos_contables(codigo_empresa, ejercicio)
+
+    def get_asiento_contable_por_documento(self, documento_id: str):
+        asiento = self._base.get_asiento_contable_por_documento(documento_id)
+        if asiento:
+            self.security.ensure_company_read(asiento.get("codigo_empresa"))
+        return asiento
+
     def listar_facturas_emitidas_global(self, codigo_empresa: str, ejercicio: int | None = None, tercero_id: str | None = None):
         self.security.ensure_company_read(codigo_empresa)
         return self._base.listar_facturas_emitidas_global(codigo_empresa, ejercicio, tercero_id)
@@ -114,6 +134,21 @@ class SecuredGestorSQLite:
     def upsert_factura_emitida(self, factura: dict):
         self.security.ensure_company_write(factura.get("codigo_empresa"))
         return self._base.upsert_factura_emitida(factura)
+
+    def upsert_factura_recibida_doc(self, doc: dict):
+        self.security.ensure_company_write(doc.get("codigo_empresa"))
+        return self._base.upsert_factura_recibida_doc(doc)
+
+    def eliminar_factura_recibida_doc(self, doc_id: str):
+        doc = self._base.get_factura_recibida_doc(doc_id)
+        if not doc:
+            return None
+        self.security.ensure_company_write(doc.get("codigo_empresa"))
+        return self._base.eliminar_factura_recibida_doc(doc_id)
+
+    def upsert_asiento_contable(self, asiento: dict):
+        self.security.ensure_company_write(asiento.get("codigo_empresa"))
+        return self._base.upsert_asiento_contable(asiento)
 
     def eliminar_factura_emitida(self, codigo_empresa: str, factura_id: str, ejercicio: int):
         self.security.ensure_company_write(codigo_empresa)

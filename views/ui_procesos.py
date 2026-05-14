@@ -32,7 +32,7 @@ class UIProcesos(ttk.Frame):
         ttk.Combobox(
             form,
             textvariable=self.tipo,
-            values=["Bancos", "Facturas Emitidas", "Facturas Recibidas", "Terceros (alta masiva)"],
+            values=["Bancos", "Facturas Emitidas", "Facturas Recibidas"],
             width=25,
         ).grid(row=0, column=1, sticky="w")
 

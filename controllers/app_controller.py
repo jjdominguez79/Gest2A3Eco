@@ -2,8 +2,10 @@ from tkinter import messagebox, ttk
 
 from controllers.user_admin_controller import UserAdminController
 from services.empresa_service import EmpresaService
+from views.ui_contabilidad import UIContabilidad
 from views.ui_dashboard_empresa import UIDashboardEmpresa
 from views.ui_facturas_emitidas import UIFacturasEmitidas
+from views.ui_ocr_facturas import UIOcrFacturas
 from views.ui_empresa_dialog import EmpresaDialog
 from views.ui_panel_general import UIPanelGeneral
 from views.ui_plantillas import UIPlantillasEmpresa
@@ -76,8 +78,6 @@ class AppController:
         shell.show_dashboard()
 
     def open_company_module(self, codigo, ejercicio, modulo="dashboard", nombre=None):
-        if modulo == "contabilidad":
-            modulo = "importaciones"
         try:
             self.authorization.ensure_company_read(codigo)
         except PermissionError as exc:
@@ -89,8 +89,6 @@ class AppController:
         self._open_module_in_shell(codigo, ejercicio, modulo, nombre)
 
     def on_empresa_ok(self, codigo, ejercicio, nombre, modulo="facturacion"):
-        if modulo == "contabilidad":
-            modulo = "importaciones"
         try:
             self.authorization.ensure_company_read(codigo)
         except PermissionError as exc:
@@ -119,10 +117,11 @@ class AppController:
             codigo,
             ejercicio,
             on_open_facturacion=lambda: self._open_module_in_shell(codigo, ejercicio, "facturacion"),
+            on_open_contabilidad=lambda: self._open_module_in_shell(codigo, ejercicio, "contabilidad"),
             on_open_importaciones=lambda: self._open_module_in_shell(codigo, ejercicio, "importaciones"),
             on_open_plantillas=lambda: self._open_module_in_shell(codigo, ejercicio, "plantillas"),
             on_open_configuracion=lambda: self.open_company_config(codigo, ejercicio),
-            on_open_ocr=self.open_company_ocr_placeholder,
+            on_open_ocr=lambda: self._open_module_in_shell(codigo, ejercicio, "ocr"),
             on_back=self.start,
         )
         shell.pack(fill="both", expand=True)
@@ -146,6 +145,10 @@ class AppController:
         """Construye y devuelve el widget del modulo sin empaquetarlo."""
         if modulo == "importaciones":
             return UIProcesos(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
+        if modulo == "ocr":
+            return UIOcrFacturas(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
+        if modulo == "contabilidad":
+            return UIContabilidad(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
         if modulo == "plantillas":
             return UIPlantillasEmpresa(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
         if modulo.startswith("importaciones::"):
@@ -224,13 +227,6 @@ class AppController:
         return True
 
     # ------------------------------------------------------------------ otros
-
-    def open_company_ocr_placeholder(self):
-        messagebox.showinfo(
-            "Gest2A3Eco",
-            "El modulo OCR se integrara en una fase posterior. Esta fase 1 deja preparado el acceso desde el dashboard.",
-            parent=self._content.winfo_toplevel(),
-        )
 
     def open_user_admin(self):
         try:

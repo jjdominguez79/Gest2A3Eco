@@ -26,6 +26,7 @@ class UIDashboardEmpresa(ttk.Frame):
         ("inicio",        "\u2190", "Inicio",             "inicio"),
         ("facturacion",   "\u25a3", "Facturacion",        "facturacion"),
         ("ocr",           "\u25ce", "OCR",                "ocr"),
+        ("contabilidad",  "\u25a0", "Contabilidad",       "contabilidad"),
         ("importaciones", "\u25a4", "Importaciones",      "importaciones"),
         ("plantillas",    "\u2630", "Plantillas",         "plantillas"),
         ("configuracion", "\u2699", "Configuracion",      "configuracion"),
@@ -48,6 +49,7 @@ class UIDashboardEmpresa(ttk.Frame):
         *,
         on_open_facturacion,
         on_open_importaciones,
+        on_open_contabilidad,
         on_open_plantillas,
         on_open_configuracion,
         on_open_ocr,
@@ -62,6 +64,7 @@ class UIDashboardEmpresa(ttk.Frame):
             "inicio":        self._go_dashboard,
             "facturacion":   on_open_facturacion,
             "ocr":           on_open_ocr,
+            "contabilidad":  on_open_contabilidad,
             "importaciones": on_open_importaciones,
             "plantillas":    on_open_plantillas,
             "configuracion": on_open_configuracion,
@@ -337,7 +340,7 @@ class UIDashboardEmpresa(ttk.Frame):
 
         # Permissions
         can_write = bool(self._ctx.get("can_write"))
-        for key in ("configuracion", "plantillas", "importaciones"):
+        for key in ("configuracion", "plantillas", "importaciones", "ocr", "contabilidad"):
             self._set_nav_enabled(key, can_write)
 
     def _set_stat(self, key: str, value):

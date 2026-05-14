@@ -84,6 +84,64 @@ CREATE TABLE IF NOT EXISTS facturas_recibidas (
   excel_json TEXT,
   PRIMARY KEY (codigo_empresa, ejercicio, nombre)
 );
+CREATE TABLE IF NOT EXISTS facturas_recibidas_docs (
+  id TEXT PRIMARY KEY,
+  codigo_empresa TEXT NOT NULL,
+  ejercicio INTEGER NOT NULL,
+  tercero_id TEXT,
+  origen_path TEXT,
+  pdf_path TEXT,
+  texto_ocr TEXT,
+  estado_ocr TEXT,
+  estado_validacion TEXT,
+  estado_contable TEXT,
+  proveedor_nif TEXT,
+  proveedor_nombre TEXT,
+  numero_factura TEXT,
+  fecha_factura TEXT,
+  fecha_operacion TEXT,
+  fecha_asiento TEXT,
+  descripcion TEXT,
+  moneda_codigo TEXT,
+  base_imponible REAL,
+  cuota_iva REAL,
+  cuota_recargo REAL,
+  cuota_retencion REAL,
+  total REAL,
+  cuenta_gasto TEXT,
+  cuenta_iva TEXT,
+  cuenta_proveedor TEXT,
+  pdf_ref TEXT,
+  numero_asiento TEXT,
+  generada INTEGER DEFAULT 0,
+  fecha_generacion TEXT,
+  confianza_ocr REAL,
+  datos_extra_json TEXT,
+  lineas_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_facturas_recibidas_docs_empresa
+  ON facturas_recibidas_docs(codigo_empresa, ejercicio, fecha_asiento);
+CREATE TABLE IF NOT EXISTS asientos_contables (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  documento_id TEXT NOT NULL,
+  codigo_empresa TEXT NOT NULL,
+  ejercicio INTEGER NOT NULL,
+  fecha_asiento TEXT,
+  numero_asiento TEXT,
+  descripcion TEXT,
+  estado TEXT,
+  total_debe REAL,
+  total_haber REAL,
+  lineas_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(documento_id),
+  FOREIGN KEY (documento_id) REFERENCES facturas_recibidas_docs(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_asientos_contables_empresa
+  ON asientos_contables(codigo_empresa, ejercicio, fecha_asiento);
 CREATE TABLE IF NOT EXISTS facturas_emitidas_docs (
   id TEXT PRIMARY KEY,
   codigo_empresa TEXT NOT NULL,
@@ -1551,6 +1609,201 @@ class GestorSQLite:
             (codigo_empresa, _ej_val(ejercicio), nombre),
         )
         self.conn.commit()
+
+    # ---------- RECIBIDAS (documentos OCR / contabilidad) ----------
+    def listar_facturas_recibidas_docs(self, codigo_empresa: str, ejercicio: int):
+        cur = self.conn.execute(
+            """
+            SELECT d.*, a.id AS asiento_id, a.estado AS asiento_estado, a.total_debe, a.total_haber
+            FROM facturas_recibidas_docs d
+            LEFT JOIN asientos_contables a ON a.documento_id = d.id
+            WHERE d.codigo_empresa=? AND d.ejercicio=?
+            ORDER BY d.fecha_asiento DESC, d.updated_at DESC
+            """,
+            (codigo_empresa, _ej_val(ejercicio)),
+        )
+        return [self._row_to_factura_recibida_doc(r) for r in cur.fetchall()]
+
+    def get_factura_recibida_doc(self, doc_id: str):
+        cur = self.conn.execute(
+            """
+            SELECT d.*, a.id AS asiento_id, a.estado AS asiento_estado, a.total_debe, a.total_haber
+            FROM facturas_recibidas_docs d
+            LEFT JOIN asientos_contables a ON a.documento_id = d.id
+            WHERE d.id=?
+            """,
+            (str(doc_id),),
+        )
+        return self._row_to_factura_recibida_doc(cur.fetchone())
+
+    def upsert_factura_recibida_doc(self, doc: dict):
+        now = self._utc_now()
+        doc_id = str(doc.get("id") or int(time.time() * 1000))
+        doc["id"] = doc_id
+        self.conn.execute(
+            """
+            INSERT INTO facturas_recibidas_docs
+            (id, codigo_empresa, ejercicio, tercero_id, origen_path, pdf_path, texto_ocr, estado_ocr, estado_validacion,
+             estado_contable, proveedor_nif, proveedor_nombre, numero_factura, fecha_factura, fecha_operacion, fecha_asiento,
+             descripcion, moneda_codigo, base_imponible, cuota_iva, cuota_recargo, cuota_retencion, total, cuenta_gasto,
+             cuenta_iva, cuenta_proveedor, pdf_ref, numero_asiento, generada, fecha_generacion, confianza_ocr, datos_extra_json,
+             lineas_json, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                codigo_empresa=excluded.codigo_empresa,
+                ejercicio=excluded.ejercicio,
+                tercero_id=excluded.tercero_id,
+                origen_path=excluded.origen_path,
+                pdf_path=excluded.pdf_path,
+                texto_ocr=excluded.texto_ocr,
+                estado_ocr=excluded.estado_ocr,
+                estado_validacion=excluded.estado_validacion,
+                estado_contable=excluded.estado_contable,
+                proveedor_nif=excluded.proveedor_nif,
+                proveedor_nombre=excluded.proveedor_nombre,
+                numero_factura=excluded.numero_factura,
+                fecha_factura=excluded.fecha_factura,
+                fecha_operacion=excluded.fecha_operacion,
+                fecha_asiento=excluded.fecha_asiento,
+                descripcion=excluded.descripcion,
+                moneda_codigo=excluded.moneda_codigo,
+                base_imponible=excluded.base_imponible,
+                cuota_iva=excluded.cuota_iva,
+                cuota_recargo=excluded.cuota_recargo,
+                cuota_retencion=excluded.cuota_retencion,
+                total=excluded.total,
+                cuenta_gasto=excluded.cuenta_gasto,
+                cuenta_iva=excluded.cuenta_iva,
+                cuenta_proveedor=excluded.cuenta_proveedor,
+                pdf_ref=excluded.pdf_ref,
+                numero_asiento=excluded.numero_asiento,
+                generada=excluded.generada,
+                fecha_generacion=excluded.fecha_generacion,
+                confianza_ocr=excluded.confianza_ocr,
+                datos_extra_json=excluded.datos_extra_json,
+                lineas_json=excluded.lineas_json,
+                updated_at=excluded.updated_at
+            """,
+            (
+                doc_id,
+                doc.get("codigo_empresa"),
+                _ej_val(doc.get("ejercicio")) or 0,
+                doc.get("tercero_id"),
+                doc.get("origen_path"),
+                doc.get("pdf_path"),
+                doc.get("texto_ocr"),
+                doc.get("estado_ocr"),
+                doc.get("estado_validacion"),
+                doc.get("estado_contable"),
+                doc.get("proveedor_nif"),
+                doc.get("proveedor_nombre"),
+                doc.get("numero_factura"),
+                doc.get("fecha_factura"),
+                doc.get("fecha_operacion"),
+                doc.get("fecha_asiento"),
+                doc.get("descripcion"),
+                doc.get("moneda_codigo"),
+                doc.get("base_imponible"),
+                doc.get("cuota_iva"),
+                doc.get("cuota_recargo"),
+                doc.get("cuota_retencion"),
+                doc.get("total"),
+                doc.get("cuenta_gasto"),
+                doc.get("cuenta_iva"),
+                doc.get("cuenta_proveedor"),
+                doc.get("pdf_ref"),
+                doc.get("numero_asiento"),
+                1 if doc.get("generada") else 0,
+                doc.get("fecha_generacion"),
+                doc.get("confianza_ocr"),
+                json.dumps(doc.get("datos_extra") or {}, ensure_ascii=False),
+                json.dumps(doc.get("lineas") or [], ensure_ascii=False),
+                doc.get("created_at") or now,
+                now,
+            ),
+        )
+        self.conn.commit()
+        return doc_id
+
+    def eliminar_factura_recibida_doc(self, doc_id: str):
+        self.conn.execute("DELETE FROM facturas_recibidas_docs WHERE id=?", (str(doc_id),))
+        self.conn.commit()
+
+    def get_asiento_contable_por_documento(self, documento_id: str):
+        cur = self.conn.execute(
+            "SELECT * FROM asientos_contables WHERE documento_id=?",
+            (str(documento_id),),
+        )
+        return self._row_to_asiento_contable(cur.fetchone())
+
+    def listar_asientos_contables(self, codigo_empresa: str, ejercicio: int):
+        cur = self.conn.execute(
+            """
+            SELECT a.*, d.proveedor_nombre, d.numero_factura
+            FROM asientos_contables a
+            LEFT JOIN facturas_recibidas_docs d ON d.id = a.documento_id
+            WHERE a.codigo_empresa=? AND a.ejercicio=?
+            ORDER BY a.fecha_asiento DESC, a.updated_at DESC
+            """,
+            (codigo_empresa, _ej_val(ejercicio)),
+        )
+        return [self._row_to_asiento_contable(r) for r in cur.fetchall()]
+
+    def upsert_asiento_contable(self, asiento: dict):
+        now = self._utc_now()
+        self.conn.execute(
+            """
+            INSERT INTO asientos_contables
+            (documento_id, codigo_empresa, ejercicio, fecha_asiento, numero_asiento, descripcion, estado,
+             total_debe, total_haber, lineas_json, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(documento_id) DO UPDATE SET
+                codigo_empresa=excluded.codigo_empresa,
+                ejercicio=excluded.ejercicio,
+                fecha_asiento=excluded.fecha_asiento,
+                numero_asiento=excluded.numero_asiento,
+                descripcion=excluded.descripcion,
+                estado=excluded.estado,
+                total_debe=excluded.total_debe,
+                total_haber=excluded.total_haber,
+                lineas_json=excluded.lineas_json,
+                updated_at=excluded.updated_at
+            """,
+            (
+                asiento.get("documento_id"),
+                asiento.get("codigo_empresa"),
+                _ej_val(asiento.get("ejercicio")) or 0,
+                asiento.get("fecha_asiento"),
+                asiento.get("numero_asiento"),
+                asiento.get("descripcion"),
+                asiento.get("estado"),
+                asiento.get("total_debe"),
+                asiento.get("total_haber"),
+                json.dumps(asiento.get("lineas") or [], ensure_ascii=False),
+                asiento.get("created_at") or now,
+                now,
+            ),
+        )
+        self.conn.commit()
+
+    def _row_to_factura_recibida_doc(self, row):
+        item = self._row_to_dict(row)
+        if not item:
+            return None
+        item["generada"] = bool(item.get("generada"))
+        item["lineas"] = json.loads(item.get("lineas_json") or "[]")
+        item["datos_extra"] = json.loads(item.get("datos_extra_json") or "{}")
+        item.pop("lineas_json", None)
+        item.pop("datos_extra_json", None)
+        return item
+
+    def _row_to_asiento_contable(self, row):
+        item = self._row_to_dict(row)
+        if not item:
+            return None
+        item["lineas"] = json.loads(item.get("lineas_json") or "[]")
+        item.pop("lineas_json", None)
+        return item
 
     # ---------- TERCEROS (global) ----------
     def listar_terceros(self):

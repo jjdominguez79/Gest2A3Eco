@@ -1,7 +1,5 @@
 import os
 import traceback
-from collections import defaultdict
-import unicodedata
 
 import pandas as pd
 
@@ -9,7 +7,6 @@ from procesos.bancos import generar_bancos
 from procesos.facturas_emitidas import generar_emitidas
 from procesos.facturas_recibidas import generar_recibidas_suenlace
 from services.excel_mapping import extract_rows_by_mapping
-from utils.utilidades import validar_subcuenta_longitud
 
 
 class ProcesosController:
@@ -27,11 +24,6 @@ class ProcesosController:
 
     def refresh_plantillas(self):
         tipo = (self._view.get_tipo() or "").lower()
-        if "terceros" in tipo:
-            self._view.set_plantillas([])
-            self._view.set_plantilla_enabled(False)
-            self._view.set_generar_text("Importar terceros")
-            return
         if "bancos" in tipo:
             pls = [p.get("banco") for p in self._gestor.listar_bancos(self._codigo, self._ejercicio)]
         elif "emitidas" in tipo:
@@ -73,12 +65,6 @@ class ProcesosController:
                 return
 
             tipo = (self._view.get_tipo() or "").lower()
-            if "terceros" in tipo:
-                if not self._can_write():
-                    self._view.show_error("Gest2A3Eco", "Necesitas permiso de escritura para importar terceros.")
-                    return
-                self._importar_terceros()
-                return
 
             nombre_pl = (self._view.get_selected_plantilla() or "").strip()
             if not nombre_pl:
@@ -282,209 +268,6 @@ class ProcesosController:
             return True
         return False
 
-    def _importar_terceros(self):
-        hoja = self._view.get_selected_sheet()
-        if not hoja or not self._excel_path:
-            self._view.show_warning("Gest2A3Eco", "Selecciona un Excel y una hoja.")
-            return
-
-        try:
-            df = pd.read_excel(self._excel_path, sheet_name=hoja, header=0, dtype=object)
-        except Exception as e:
-            self._view.show_error("Gest2A3Eco", f"Error al leer hoja:\n{e}")
-            return
-
-        col_map = self._map_terceros_columns(df.columns)
-        if not col_map.get("nif") and not col_map.get("nombre"):
-            self._view.show_error(
-                "Gest2A3Eco",
-                "No se encontraron columnas 'NIF' o 'Nombre' en el Excel.",
-            )
-            return
-
-        empresa_config = self._gestor.get_empresa(self._codigo, self._ejercicio) or {}
-        ndig = int(empresa_config.get("digitos_plan", 8))
-
-        terceros = self._gestor.listar_terceros()
-        terceros_by_nif = {
-            self._norm_nif(t.get("nif")): t
-            for t in terceros
-            if self._norm_nif(t.get("nif"))
-        }
-
-        creados = 0
-        actualizados = 0
-        vinculados = 0
-        omitidos = 0
-        avisos = []
-
-        for idx, row in enumerate(df.to_dict(orient="records"), start=2):
-            rec = self._row_to_tercero_dict(row, col_map)
-            if not self._row_has_data(rec):
-                omitidos += 1
-                continue
-
-            nif = self._norm_nif(rec.get("nif"))
-            nombre = self._norm_text(rec.get("nombre"))
-            if not nif and not nombre:
-                omitidos += 1
-                continue
-            if not nif:
-                avisos.append(f"Fila {idx}: NIF vacío, se creó/actualizó por nombre.")
-
-            existing = terceros_by_nif.get(nif) if nif else None
-            if existing:
-                tercero = self._merge_tercero(existing, rec)
-                actualizados += 1
-            else:
-                tercero = self._build_tercero(rec)
-                creados += 1
-
-            self._gestor.upsert_tercero(tercero)
-            if nif:
-                terceros_by_nif[nif] = tercero
-
-            tercero_id = tercero.get("id")
-            if tercero_id:
-                merged = self._merge_subcuentas(
-                    tercero_id,
-                    rec,
-                    ndig,
-                    avisos,
-                    idx,
-                )
-                self._gestor.upsert_tercero_empresa(merged)
-                vinculados += 1
-
-        msg = (
-            f"Importación finalizada.\n\n"
-            f"Filas procesadas: {len(df)}\n"
-            f"Creados: {creados}\n"
-            f"Actualizados: {actualizados}\n"
-            f"Vinculados a empresa: {vinculados}\n"
-            f"Omitidos: {omitidos}"
-        )
-        if avisos:
-            preview = "\n".join(avisos[:10])
-            if len(avisos) > 10:
-                preview += f"\n... y {len(avisos)-10} avisos mas."
-            msg += f"\n\nAvisos:\n{preview}"
-            self._view.show_warning("Gest2A3Eco", msg)
-        else:
-            self._view.show_info("Gest2A3Eco", msg)
-
-    def _map_terceros_columns(self, columns):
-        mapping = {}
-        aliases = {
-            "nif": [
-                "nif", "cif", "dni", "vat", "taxid", "tax_id", "identificacion",
-                "nifclienteproveedor", "nifcliente", "nifproveedor",
-            ],
-            "nombre": [
-                "nombre", "razonsocial", "razon_social", "razon",
-                "nombreclienteproveedor", "nombrecliente", "nombreproveedor",
-            ],
-            "direccion": ["direccion", "direccion1", "domicilio", "dir", "address"],
-            "cp": ["cp", "codigo_postal", "codigopostal", "postal"],
-            "poblacion": ["poblacion", "ciudad", "localidad", "municipio"],
-            "provincia": ["provincia", "prov"],
-            "telefono": ["telefono", "tel", "movil", "phone"],
-            "email": ["email", "correo", "mail"],
-            "contacto": ["contacto", "persona_contacto"],
-            "subcuenta_cliente": ["subcuenta_cliente", "subcuenta_cliente_proveedor", "cta_cliente", "cuenta_cliente"],
-            "subcuenta_proveedor": ["subcuenta_proveedor", "cta_proveedor", "cuenta_proveedor"],
-            "subcuenta_ingreso": ["subcuenta_ingreso", "cta_ingreso", "cuenta_ingreso"],
-            "subcuenta_gasto": ["subcuenta_gasto", "cta_gasto", "cuenta_gasto"],
-        }
-        normalized = {self._norm_col(c): c for c in columns}
-        for key, names in aliases.items():
-            for n in names:
-                col = normalized.get(self._norm_col(n))
-                if col and key not in mapping:
-                    mapping[key] = col
-        return mapping
-
-    def _row_to_tercero_dict(self, row, col_map):
-        out = {}
-        for key, col in col_map.items():
-            try:
-                out[key] = row.get(col)
-            except Exception:
-                out[key] = None
-        return out
-
-    def _build_tercero(self, rec: dict):
-        return {
-            "nif": self._norm_nif(rec.get("nif")),
-            "nombre": self._norm_text(rec.get("nombre")),
-            "direccion": self._norm_text(rec.get("direccion")),
-            "cp": self._norm_text(rec.get("cp")),
-            "poblacion": self._norm_text(rec.get("poblacion")),
-            "provincia": self._norm_text(rec.get("provincia")),
-            "telefono": self._norm_text(rec.get("telefono")),
-            "email": self._norm_text(rec.get("email")),
-            "contacto": self._norm_text(rec.get("contacto")),
-        }
-
-    def _merge_tercero(self, existing: dict, rec: dict):
-        tercero = dict(existing)
-        for k in ("nif", "nombre", "direccion", "cp", "poblacion", "provincia", "telefono", "email", "contacto"):
-            val = self._norm_text(rec.get(k))
-            if k == "nif":
-                val = self._norm_nif(rec.get(k))
-            if val:
-                tercero[k] = val
-        return tercero
-
-    def _merge_subcuentas(self, tercero_id, rec, ndig, avisos, idx):
-        existing = self._gestor.get_tercero_empresa(self._codigo, tercero_id, self._ejercicio) or {}
-        def pick(field, label):
-            val = self._norm_text(rec.get(field))
-            if not val:
-                return existing.get(field)
-            try:
-                validar_subcuenta_longitud(val, ndig, label)
-            except Exception as e:
-                avisos.append(f"Fila {idx}: {e}")
-                return existing.get(field)
-            return val
-
-        return {
-            "codigo_empresa": self._codigo,
-            "ejercicio": self._ejercicio,
-            "tercero_id": tercero_id,
-            "subcuenta_cliente": pick("subcuenta_cliente", "subcuenta cliente"),
-            "subcuenta_proveedor": pick("subcuenta_proveedor", "subcuenta proveedor"),
-            "subcuenta_ingreso": pick("subcuenta_ingreso", "subcuenta ingreso"),
-            "subcuenta_gasto": pick("subcuenta_gasto", "subcuenta gasto"),
-        }
-
-    def _norm_col(self, name):
-        s = "" if name is None else str(name)
-        s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
-        s = s.strip().lower()
-        for ch in (" ", "-", "_", ".", "/", "\\"):
-            s = s.replace(ch, "")
-        return s
-
-    def _norm_nif(self, val):
-        from utils.validaciones import normalizar_nif_cif
-
-        return normalizar_nif_cif(self._norm_text(val))
-
-    def _norm_text(self, val):
-        if val is None:
-            return ""
-        if isinstance(val, float):
-            if val != val:
-                return ""
-            if val.is_integer():
-                return str(int(val))
-        s = str(val).strip()
-        if s.lower() == "nan":
-            return ""
-        return s
-
     def _log_error(self, msg: str, exc: Exception) -> None:
         try:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -496,9 +279,3 @@ class ProcesosController:
                 f.write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
         except Exception:
             pass
-
-    def _can_write(self) -> bool:
-        security = getattr(self._gestor, "security", None)
-        if not security:
-            return True
-        return security.can_write_company(self._codigo)

@@ -64,6 +64,7 @@ class EmpresaService:
         bancos = self._safe_list(lambda: self._gestor.listar_bancos(codigo, ejercicio))
         plantillas_emitidas = self._safe_list(lambda: self._gestor.listar_emitidas(codigo, ejercicio))
         plantillas_recibidas = self._safe_list(lambda: self._gestor.listar_recibidas(codigo, ejercicio))
+        recibidas_docs = self._safe_list(lambda: self._gestor.listar_facturas_recibidas_docs(codigo, ejercicio))
         terceros = self._safe_list(lambda: self._gestor.listar_terceros_por_empresa(codigo, ejercicio))
         plan_cuentas = self._safe_list(lambda: self._gestor.get_plan_cuentas(codigo, 0))
         cuentas_bancarias_struct = self._safe_list(lambda: self._gestor.listar_cuentas_bancarias(codigo, 0))
@@ -114,6 +115,14 @@ class EmpresaService:
                     "estado": estado,
                 }
             )
+        for doc in recibidas_docs:
+            ultimos_procesos.append(
+                {
+                    "fecha": doc.get("fecha_generacion") or doc.get("updated_at") or doc.get("fecha_asiento") or "",
+                    "descripcion": f"OCR recibida {doc.get('numero_factura', '')} - {doc.get('proveedor_nombre', '')}".strip(" -"),
+                    "estado": doc.get("estado_contable") or doc.get("estado_validacion") or doc.get("estado_ocr") or "PENDIENTE",
+                }
+            )
         ultimos_procesos.sort(key=lambda item: self._sort_datetime(item.get("fecha")), reverse=True)
         ultimos_procesos = ultimos_procesos[:8]
 
@@ -141,10 +150,10 @@ class EmpresaService:
                 "enviadas": enviadas,
             },
             "resumen_ocr": {
-                "total": 0,
-                "pendientes": 0,
-                "validadas": 0,
-                "estado": "Preparado para V2",
+                "total": len(recibidas_docs),
+                "pendientes": sum(1 for doc in recibidas_docs if (doc.get("estado_validacion") or "") != "validada"),
+                "validadas": sum(1 for doc in recibidas_docs if (doc.get("estado_validacion") or "") == "validada"),
+                "estado": "Activo" if recibidas_docs else "Sin documentos",
             },
             "resumen_contabilidad": {
                 "plantillas_bancos": len(bancos),
