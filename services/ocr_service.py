@@ -29,12 +29,18 @@ class OCRService:
             raise ValueError("El fichero indicado no existe.")
 
         texto = ""
-        backend = "local"
+        backend = ""
         confianza = 0.0
         avisos = []
+        source_type = self._detect_source_type(path)
 
         endpoint = str(self._cfg.get("ocr_endpoint") or "").strip()
-        if endpoint:
+        if source_type == "pdf":
+            texto = self._extract_pdf_text(path)
+            backend = "pdf_text"
+            if texto.strip():
+                confianza = 0.92
+        if not texto and endpoint:
             try:
                 texto, confianza = self._extract_via_http(path, endpoint)
                 backend = "http"
@@ -42,32 +48,37 @@ class OCRService:
                 avisos.append(f"No se pudo usar el backend OCR configurado: {exc}")
 
         if not texto:
-            if path.suffix.lower() != ".pdf":
-                raise ValueError(
-                    "Solo se admiten PDFs en esta version. Configura un backend OCR externo para imagenes o PDFs escaneados."
-                )
-            texto = self._extract_pdf_text(path)
-            backend = "pdf_text"
-            if texto.strip():
-                confianza = 0.92
-            else:
+            if source_type == "pdf":
                 avisos.append("El PDF no tiene texto embebido. Sera necesaria revision manual o un backend OCR externo.")
+            elif source_type == "image":
+                avisos.append("La imagen requiere backend OCR externo o revision manual.")
+            else:
+                avisos.append("Tipo de documento no soportado para OCR automatico.")
 
         parsed = self._parse_invoice_text(texto)
         parsed.update(
             {
                 "backend": backend,
+                "source_type": source_type,
                 "texto_ocr": texto,
                 "confianza_ocr": confianza,
                 "avisos": avisos,
-                "pdf_path": str(path),
+                "pdf_path": str(path) if source_type == "pdf" else "",
                 "origen_path": str(path),
                 "estado_ocr": "procesado" if texto.strip() else "pendiente",
                 "estado_validacion": "pendiente",
-                "estado_contable": "pendiente",
+                "estado_contable": "",
             }
         )
         return parsed
+
+    def _detect_source_type(self, path: Path) -> str:
+        ext = path.suffix.lower()
+        if ext == ".pdf":
+            return "pdf"
+        if ext in {".png", ".jpg", ".jpeg", ".tif", ".tiff"}:
+            return "image"
+        return "other"
 
     def _extract_via_http(self, path: Path, endpoint: str) -> tuple[str, float]:
         payload = json.dumps({"file_path": str(path)}).encode("utf-8")

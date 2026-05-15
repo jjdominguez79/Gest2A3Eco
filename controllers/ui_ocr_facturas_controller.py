@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+import os
 from pathlib import Path
+import re
+import subprocess
 
 from utils.validaciones import normalizar_nif_cif
+from services.ocr_recibidas_service import generate_suenlace_for_docs, mark_docs_as_generated
 from services.ocr_service import OCRService
 
 
@@ -94,6 +98,43 @@ class UIOcrFacturasController:
         else:
             self._view.show_info("Gest2A3Eco", msg)
 
+    def generar_suenlace_seleccionadas(self):
+        selected_ids = self._view.get_selected_document_ids()
+        if not selected_ids:
+            self._view.show_warning("Gest2A3Eco", "Selecciona uno o varios documentos.")
+            return
+        docs = []
+        invalid = []
+        for doc_id in selected_ids:
+            doc = self._gestor.get_factura_recibida_doc(doc_id)
+            if not doc:
+                invalid.append(f"{doc_id}: documento no encontrado")
+                continue
+            if str(doc.get("estado_contable") or "").strip().lower() != "pendiente_contabilizar":
+                invalid.append(f"{doc.get('numero_factura') or doc_id}: no esta pendiente de contabilizar")
+                continue
+            docs.append(doc)
+        if not docs:
+            self._view.show_warning("Gest2A3Eco", "No hay documentos validos para generar suenlace.")
+            return
+        regs = generate_suenlace_for_docs(self._gestor, self._codigo, self._ejercicio, docs)
+        if not regs:
+            self._view.show_warning("Gest2A3Eco", "No se generaron registros para los documentos seleccionados.")
+            return
+        save_path = self._view.ask_save_path(f"{self._codigo}.dat")
+        if not save_path:
+            return
+        with open(save_path, "w", encoding="latin-1", newline="") as f:
+            f.writelines(regs)
+        mark_docs_as_generated(self._gestor, docs, estado_contable="contabilizada")
+        self.refresh(select_id=docs[-1].get("id"))
+        msg = f"Fichero generado:\n{save_path}\n\nDocumentos contabilizados: {len(docs)}"
+        if invalid:
+            msg += "\n\nOmitidos:\n- " + "\n- ".join(invalid[:8])
+            self._view.show_warning("Gest2A3Eco", msg)
+        else:
+            self._view.show_info("Gest2A3Eco", msg)
+
     def select_document(self, doc_id: str):
         doc = self._gestor.get_factura_recibida_doc(doc_id)
         if not doc:
@@ -117,6 +158,10 @@ class UIOcrFacturasController:
             payload["tercero_id"] = tercero.get("id")
             if not payload.get("proveedor_nombre"):
                 payload["proveedor_nombre"] = tercero.get("nombre")
+        errors = self._validate_editable_fields(payload)
+        if errors:
+            self._view.show_warning("Gest2A3Eco", "Revisa los datos del documento:\n- " + "\n- ".join(errors))
+            return
         payload["estado_validacion"] = payload.get("estado_validacion") or "pendiente"
         self._gestor.upsert_factura_recibida_doc(payload)
         self.refresh(select_id=self._selected_id)
@@ -127,10 +172,25 @@ class UIOcrFacturasController:
         if not doc:
             self._view.show_warning("Gest2A3Eco", "Selecciona un documento.")
             return
-        doc["estado_validacion"] = "validada"
-        self._gestor.upsert_factura_recibida_doc(doc)
+        draft = self._gestor.get_factura_recibida_doc(self._selected_id) or {}
+        form_updates = self._view.get_form_data() or {}
+        draft.update(form_updates)
+        draft["proveedor_nif"] = normalizar_nif_cif(draft.get("proveedor_nif"))
+        tercero = self._resolve_tercero(draft.get("proveedor_nif"))
+        if tercero:
+            draft["tercero_id"] = tercero.get("id")
+            if not draft.get("proveedor_nombre"):
+                draft["proveedor_nombre"] = tercero.get("nombre")
+        errors = self._validate_before_mark_validada(draft)
+        if errors:
+            self._view.show_warning("Gest2A3Eco", "No se puede marcar como validada:\n- " + "\n- ".join(errors))
+            return
+        draft["estado_ocr"] = draft.get("estado_ocr") or "procesado"
+        draft["estado_validacion"] = "validada"
+        draft["estado_contable"] = "pendiente_contabilizar"
+        self._gestor.upsert_factura_recibida_doc(draft)
         self.refresh(select_id=self._selected_id)
-        self._view.show_info("Gest2A3Eco", "Documento marcado como validado.")
+        self._view.show_info("Gest2A3Eco", "Documento validado y pendiente de contabilizar.")
 
     def eliminar_actual(self):
         if not self._selected_id:
@@ -141,6 +201,23 @@ class UIOcrFacturasController:
         self._gestor.eliminar_factura_recibida_doc(self._selected_id)
         self._selected_id = None
         self.refresh()
+
+    def abrir_documento_actual(self):
+        doc = self._current_doc()
+        if not doc:
+            self._view.show_warning("Gest2A3Eco", "Selecciona un documento.")
+            return
+        path = Path(str(doc.get("origen_path") or doc.get("pdf_path") or "").strip())
+        if not path.exists():
+            self._view.show_warning("Gest2A3Eco", "No se encuentra el documento en disco.")
+            return
+        try:
+            if os.name == "nt":
+                os.startfile(str(path))
+            else:
+                subprocess.Popen([str(path)])
+        except Exception as exc:
+            self._view.show_error("Gest2A3Eco", f"No se pudo abrir el documento:\n{exc}")
 
     def _resolve_tercero(self, nif: str | None):
         normalized = normalizar_nif_cif(nif or "")
@@ -228,6 +305,7 @@ class UIOcrFacturasController:
                 "lineas": result.get("lineas") or [],
                 "datos_extra": {
                     "backend": result.get("backend"),
+                    "source_type": result.get("source_type"),
                     "avisos": result.get("avisos") or [],
                     "ultimo_procesado_at": datetime.now().isoformat(timespec="seconds"),
                     "nombre_fichero": Path(source_path).name,
@@ -248,3 +326,71 @@ class UIOcrFacturasController:
         payload["estado_ocr"] = "error"
         payload["datos_extra"] = extra
         return payload
+
+    def _current_doc(self):
+        if not self._selected_id:
+            return None
+        return self._gestor.get_factura_recibida_doc(self._selected_id)
+
+    def _validate_before_mark_validada(self, doc: dict) -> list[str]:
+        errors = self._validate_editable_fields(doc)
+        if not str(doc.get("proveedor_nif") or "").strip():
+            errors.append("El NIF del proveedor es obligatorio.")
+        if not str(doc.get("numero_factura") or "").strip():
+            errors.append("El numero de factura es obligatorio.")
+        return errors
+
+    def _validate_editable_fields(self, doc: dict) -> list[str]:
+        errors = []
+        for field, label in (
+            ("fecha_factura", "Fecha factura"),
+            ("fecha_operacion", "Fecha operacion"),
+            ("fecha_asiento", "Fecha asiento"),
+        ):
+            value = str(doc.get(field) or "").strip()
+            if value and not self._is_valid_date(value):
+                errors.append(f"{label}: formato invalido ({value}). Usa YYYY-MM-DD o DD/MM/YYYY.")
+        for field, label in (
+            ("base_imponible", "Base imponible"),
+            ("cuota_iva", "Cuota IVA"),
+            ("cuota_recargo", "Cuota recargo"),
+            ("cuota_retencion", "Cuota retencion"),
+            ("total", "Total"),
+        ):
+            raw = doc.get(field)
+            if not self._is_valid_amount(raw):
+                errors.append(f"{label}: importe invalido.")
+        return errors
+
+    def _is_valid_date(self, value: str) -> bool:
+        txt = str(value or "").strip()
+        if not txt:
+            return True
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", txt):
+            try:
+                datetime.strptime(txt, "%Y-%m-%d")
+                return True
+            except Exception:
+                return False
+        if re.fullmatch(r"\d{2}/\d{2}/\d{4}", txt):
+            try:
+                datetime.strptime(txt, "%d/%m/%Y")
+                return True
+            except Exception:
+                return False
+        return False
+
+    def _is_valid_amount(self, value) -> bool:
+        if value is None or value == "":
+            return True
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return True
+        txt = str(value).strip()
+        if not txt:
+            return True
+        txt = txt.replace(".", "").replace(",", ".")
+        try:
+            float(txt)
+            return True
+        except Exception:
+            return False

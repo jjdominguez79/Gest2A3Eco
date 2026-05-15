@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime
-
-from procesos.facturas_recibidas import generar_asiento_recibida, generar_recibidas_suenlace
+from procesos.facturas_recibidas import generar_asiento_recibida
+from services.ocr_recibidas_service import (
+    doc_to_row,
+    generate_suenlace_for_docs,
+    mark_docs_as_generated,
+    resolve_recibidas_template,
+)
 
 
 class UIContabilidadController:
@@ -89,25 +93,7 @@ class UIContabilidadController:
         if not doc:
             self._view.show_warning("Gest2A3Eco", "Selecciona un documento.")
             return
-        plantilla = self._resolve_plantilla()
-        empresa = self._gestor.get_empresa(self._codigo, self._ejercicio) or {}
-        ndig = int(empresa.get("digitos_plan") or 8)
-        terceros_empresa = self._gestor.listar_terceros_por_empresa(self._codigo, self._ejercicio)
-        terceros_by_nif = {}
-        for tercero in terceros_empresa:
-            nif = str(tercero.get("nif") or "").strip().upper()
-            if nif:
-                terceros_by_nif[nif] = tercero
-        row = self._doc_to_row(doc)
-        rows = [row]
-        regs = generar_recibidas_suenlace(
-            rows,
-            plantilla,
-            str(self._codigo),
-            ndig,
-            ejercicio=self._ejercicio,
-            terceros_by_nif=terceros_by_nif,
-        )
+        regs = generate_suenlace_for_docs(self._gestor, self._codigo, self._ejercicio, [doc])
         if not regs:
             self._view.show_warning("Gest2A3Eco", "No se generaron registros para el documento seleccionado.")
             return
@@ -116,19 +102,10 @@ class UIContabilidadController:
             return
         with open(save_path, "w", encoding="latin-1", newline="") as f:
             f.writelines(regs)
-        now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        doc["generada"] = True
-        doc["fecha_generacion"] = now
-        doc["estado_contable"] = "enlazada"
         doc["numero_asiento"] = self._view.get_numero_asiento() or doc.get("numero_asiento")
         doc["fecha_asiento"] = self._view.get_fecha_asiento() or doc.get("fecha_asiento")
         self._gestor.upsert_factura_recibida_doc(doc)
-        asiento = self._gestor.get_asiento_contable_por_documento(doc.get("id"))
-        if asiento:
-            asiento["estado"] = "exportado"
-            asiento["numero_asiento"] = doc.get("numero_asiento")
-            asiento["fecha_asiento"] = doc.get("fecha_asiento")
-            self._gestor.upsert_asiento_contable(asiento)
+        mark_docs_as_generated(self._gestor, [doc], estado_contable="contabilizada")
         self.refresh(select_id=self._selected_id)
         self._view.show_info("Gest2A3Eco", f"Fichero generado:\n{save_path}")
 
@@ -138,33 +115,7 @@ class UIContabilidadController:
         return self._gestor.get_factura_recibida_doc(self._selected_id)
 
     def _resolve_plantilla(self):
-        plantillas = self._gestor.listar_recibidas(self._codigo, self._ejercicio)
-        if plantillas:
-            return dict(plantillas[0])
-        return {
-            "nombre": "OCR",
-            "cuenta_proveedor_prefijo": "400",
-            "cuenta_gasto_por_defecto": "62900000",
-            "cuenta_iva_soportado_defecto": "47200000",
-            "subtipo_recibidas": "01",
-        }
+        return resolve_recibidas_template(self._gestor, self._codigo, self._ejercicio)
 
     def _doc_to_row(self, doc: dict):
-        return {
-            "Fecha Asiento": doc.get("fecha_asiento") or doc.get("fecha_factura"),
-            "Fecha Expedicion": doc.get("fecha_factura"),
-            "Fecha Operacion": doc.get("fecha_operacion") or doc.get("fecha_factura"),
-            "Descripcion Factura": doc.get("descripcion") or f"Factura {doc.get('numero_factura') or ''}".strip(),
-            "Numero Factura": doc.get("numero_factura"),
-            "NIF Cliente Proveedor": doc.get("proveedor_nif"),
-            "Nombre Cliente Proveedor": doc.get("proveedor_nombre"),
-            "Base": doc.get("base_imponible") or 0.0,
-            "Cuota IVA": doc.get("cuota_iva") or 0.0,
-            "Cuota Recargo Equivalencia": doc.get("cuota_recargo") or 0.0,
-            "Cuota Retencion IRPF": doc.get("cuota_retencion") or 0.0,
-            "Total": doc.get("total") or 0.0,
-            "_cuenta_tercero_override": doc.get("cuenta_proveedor") or "",
-            "_cuenta_py_gv_override": doc.get("cuenta_gasto") or "",
-            "_cuenta_iva_override": doc.get("cuenta_iva") or "",
-            "_pdf_ref": doc.get("id"),
-        }
+        return doc_to_row(doc)

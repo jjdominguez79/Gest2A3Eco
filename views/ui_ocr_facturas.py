@@ -1,5 +1,12 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from pathlib import Path
+
+try:
+    from PIL import Image, ImageTk
+except Exception:  # pragma: no cover
+    Image = None
+    ImageTk = None
 
 from controllers.ui_ocr_facturas_controller import UIOcrFacturasController
 
@@ -15,6 +22,7 @@ class UIOcrFacturas(ttk.Frame):
         self._docs = []
         self._suspend_select_event = False
         self._pending_select_after = None
+        self._preview_image = None
         self.controller = UIOcrFacturasController(gestor, codigo_empresa, ejercicio, self)
         self._build()
         self.after_idle(lambda: self.controller.refresh(auto_select_first=False))
@@ -37,6 +45,7 @@ class UIOcrFacturas(ttk.Frame):
         ttk.Button(left, text="Procesar OCR seleccionados", command=self.controller.procesar_seleccionados).pack(fill="x", pady=(6, 0))
         ttk.Button(left, text="Guardar", command=self.controller.guardar_actual).pack(fill="x", pady=(6, 0))
         ttk.Button(left, text="Marcar validada", command=self.controller.marcar_validada).pack(fill="x", pady=(6, 0))
+        ttk.Button(left, text="Generar suenlace seleccionadas", command=self.controller.generar_suenlace_seleccionadas).pack(fill="x", pady=(6, 0))
         ttk.Button(left, text="Eliminar", style="Danger.TButton", command=self.controller.eliminar_actual).pack(fill="x", pady=(6, 0))
 
         self.tv = ttk.Treeview(
@@ -62,6 +71,16 @@ class UIOcrFacturas(ttk.Frame):
         right.grid(row=0, column=1, sticky="nsew")
         right.columnconfigure(1, weight=1)
 
+        preview_box = ttk.LabelFrame(right, text="Documento")
+        preview_box.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        preview_box.columnconfigure(0, weight=1)
+        self.lbl_preview_status = ttk.Label(preview_box, text="Sin documento seleccionado")
+        self.lbl_preview_status.grid(row=0, column=0, sticky="w", padx=8, pady=(8, 4))
+        self.lbl_preview = ttk.Label(preview_box, text="", anchor="center")
+        self.lbl_preview.grid(row=1, column=0, sticky="ew", padx=8, pady=4)
+        self.btn_open_document = ttk.Button(preview_box, text="Abrir documento", command=self.controller.abrir_documento_actual)
+        self.btn_open_document.grid(row=2, column=0, sticky="w", padx=8, pady=(4, 8))
+
         self.vars = {
             "proveedor_nombre": tk.StringVar(),
             "proveedor_nif": tk.StringVar(),
@@ -80,6 +99,7 @@ class UIOcrFacturas(ttk.Frame):
             "cuenta_proveedor": tk.StringVar(),
             "estado_ocr": tk.StringVar(),
             "estado_validacion": tk.StringVar(),
+            "estado_contable": tk.StringVar(),
         }
         fields = [
             ("Proveedor", "proveedor_nombre"),
@@ -99,15 +119,18 @@ class UIOcrFacturas(ttk.Frame):
             ("Cuenta proveedor", "cuenta_proveedor"),
             ("Estado OCR", "estado_ocr"),
             ("Estado validacion", "estado_validacion"),
+            ("Estado contable", "estado_contable"),
         ]
         for idx, (label, key) in enumerate(fields):
-            ttk.Label(right, text=label).grid(row=idx, column=0, sticky="w", padx=(0, 8), pady=4)
-            ttk.Entry(right, textvariable=self.vars[key]).grid(row=idx, column=1, sticky="ew", pady=4)
+            row = idx + 1
+            ttk.Label(right, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
+            ttk.Entry(right, textvariable=self.vars[key]).grid(row=row, column=1, sticky="ew", pady=4)
 
-        ttk.Label(right, text="Texto OCR").grid(row=len(fields), column=0, sticky="nw", padx=(0, 8), pady=(10, 4))
+        text_row = len(fields) + 1
+        ttk.Label(right, text="Texto OCR").grid(row=text_row, column=0, sticky="nw", padx=(0, 8), pady=(10, 4))
         self.txt_ocr = tk.Text(right, height=16, wrap="word")
-        self.txt_ocr.grid(row=len(fields), column=1, sticky="nsew", pady=(10, 4))
-        right.rowconfigure(len(fields), weight=1)
+        self.txt_ocr.grid(row=text_row, column=1, sticky="nsew", pady=(10, 4))
+        right.rowconfigure(text_row, weight=1)
 
     def set_documents(self, docs: list[dict]):
         self._docs = docs or []
@@ -136,11 +159,13 @@ class UIOcrFacturas(ttk.Frame):
             var.set("" if value is None else str(value))
         self.txt_ocr.delete("1.0", tk.END)
         self.txt_ocr.insert("1.0", str(doc.get("texto_ocr") or ""))
+        self.render_preview(doc)
 
     def clear_form(self):
         for var in self.vars.values():
             var.set("")
         self.txt_ocr.delete("1.0", tk.END)
+        self.clear_preview()
 
     def get_form_data(self):
         selected = self.tv.selection()
@@ -180,6 +205,14 @@ class UIOcrFacturas(ttk.Frame):
             ],
         )
 
+    def ask_save_path(self, initialfile):
+        return filedialog.asksaveasfilename(
+            title="Guardar fichero suenlace.dat",
+            defaultextension=".dat",
+            initialfile=initialfile,
+            filetypes=[("Ficheros DAT", "*.dat")],
+        )
+
     def ask_yes_no(self, title, message):
         return messagebox.askyesno(title, message)
 
@@ -191,6 +224,34 @@ class UIOcrFacturas(ttk.Frame):
 
     def show_error(self, title, message):
         messagebox.showerror(title, message)
+
+    def render_preview(self, doc: dict):
+        path = Path(str(doc.get("origen_path") or doc.get("pdf_path") or "").strip())
+        if not path.exists():
+            self.clear_preview("Documento no disponible.")
+            return
+        self.lbl_preview_status.configure(text=path.name)
+        if path.suffix.lower() == ".pdf":
+            self._preview_image = None
+            self.lbl_preview.configure(image="", text="Vista previa PDF no disponible.\nUsa 'Abrir documento'.")
+            return
+        if Image is None or ImageTk is None:
+            self._preview_image = None
+            self.lbl_preview.configure(image="", text="Vista previa de imagen no disponible en este entorno.")
+            return
+        try:
+            img = Image.open(path)
+            img.thumbnail((420, 260))
+            self._preview_image = ImageTk.PhotoImage(img)
+            self.lbl_preview.configure(image=self._preview_image, text="")
+        except Exception:
+            self._preview_image = None
+            self.lbl_preview.configure(image="", text="No se pudo generar la vista previa.")
+
+    def clear_preview(self, message: str = "Sin documento seleccionado"):
+        self._preview_image = None
+        self.lbl_preview_status.configure(text=message)
+        self.lbl_preview.configure(image="", text="")
 
     def _on_select(self):
         if self._suspend_select_event:
