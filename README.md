@@ -36,6 +36,32 @@ pyinstaller Gest2A3Eco.spec
 # Salida: dist/Gest2A3Eco/Gest2A3Eco.exe
 ```
 
+La build empaqueta los recursos necesarios de runtime:
+- `logo.png`
+- `icono.ico`
+- `assets/`
+- `plantillas/email_factura.html`
+- `config.example.json`
+
+No incluye datos reales del entorno:
+- `plantillas/gest2a3eco.db`
+- `pdfs_emitidas/`
+- `config.local.json`
+- `config.json`
+
+## Probar el ejecutable generado
+
+```bash
+dist/Gest2A3Eco/Gest2A3Eco.exe
+```
+
+Comprobaciones minimas en Windows:
+- abre la ventana de login con logo e icono
+- crea `plantillas/email_factura.html` si falta
+- permite abrir la aplicacion sin requerir `config.local.json`
+- genera PDF correctamente cuando exista plantilla Word valida en la carpeta configurada
+- no arrastra la base de datos real del proyecto al directorio `dist/`
+
 ---
 
 ## Flujo de arranque

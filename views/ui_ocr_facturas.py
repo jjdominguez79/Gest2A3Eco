@@ -13,9 +13,11 @@ class UIOcrFacturas(ttk.Frame):
         self.nombre = nombre_empresa
         self.session = session
         self._docs = []
+        self._suspend_select_event = False
+        self._pending_select_after = None
         self.controller = UIOcrFacturasController(gestor, codigo_empresa, ejercicio, self)
         self._build()
-        self.controller.refresh()
+        self.after_idle(lambda: self.controller.refresh(auto_select_first=False))
 
     def _build(self):
         ttk.Label(
@@ -31,21 +33,25 @@ class UIOcrFacturas(ttk.Frame):
 
         left = ttk.Frame(top)
         left.grid(row=0, column=0, sticky="nsw", padx=(0, 10))
-        ttk.Button(left, text="Cargar PDF", style="Primary.TButton", command=self.controller.cargar_documento).pack(fill="x")
+        ttk.Button(left, text="Cargar documentos", style="Primary.TButton", command=self.controller.cargar_documentos).pack(fill="x")
+        ttk.Button(left, text="Procesar OCR seleccionados", command=self.controller.procesar_seleccionados).pack(fill="x", pady=(6, 0))
         ttk.Button(left, text="Guardar", command=self.controller.guardar_actual).pack(fill="x", pady=(6, 0))
         ttk.Button(left, text="Marcar validada", command=self.controller.marcar_validada).pack(fill="x", pady=(6, 0))
         ttk.Button(left, text="Eliminar", style="Danger.TButton", command=self.controller.eliminar_actual).pack(fill="x", pady=(6, 0))
 
         self.tv = ttk.Treeview(
             left,
-            columns=("proveedor", "numero", "estado"),
+            columns=("proveedor", "numero", "estado_ocr", "estado_validacion", "estado_contable"),
             show="headings",
             height=16,
+            selectmode="extended",
         )
         for col, txt, width in (
             ("proveedor", "Proveedor", 180),
             ("numero", "Factura", 100),
-            ("estado", "Estado", 100),
+            ("estado_ocr", "Estado OCR", 100),
+            ("estado_validacion", "Validacion", 100),
+            ("estado_contable", "Contable", 120),
         ):
             self.tv.heading(col, text=txt)
             self.tv.column(col, width=width, anchor="w")
@@ -105,15 +111,22 @@ class UIOcrFacturas(ttk.Frame):
 
     def set_documents(self, docs: list[dict]):
         self._docs = docs or []
+        self._suspend_select_event = True
         self.tv.delete(*self.tv.get_children())
         for doc in self._docs:
-            estado = doc.get("estado_contable") or doc.get("estado_validacion") or doc.get("estado_ocr") or ""
             self.tv.insert(
                 "",
                 "end",
                 iid=str(doc.get("id")),
-                values=(doc.get("proveedor_nombre", ""), doc.get("numero_factura", ""), estado),
+                values=(
+                    doc.get("proveedor_nombre", ""),
+                    doc.get("numero_factura", ""),
+                    doc.get("estado_ocr", ""),
+                    doc.get("estado_validacion", ""),
+                    doc.get("estado_contable", ""),
+                ),
             )
+        self._suspend_select_event = False
 
     def load_document(self, doc: dict):
         for key, var in self.vars.items():
@@ -123,10 +136,6 @@ class UIOcrFacturas(ttk.Frame):
             var.set("" if value is None else str(value))
         self.txt_ocr.delete("1.0", tk.END)
         self.txt_ocr.insert("1.0", str(doc.get("texto_ocr") or ""))
-        iid = str(doc.get("id"))
-        if iid in self.tv.get_children():
-            self.tv.selection_set(iid)
-            self.tv.focus(iid)
 
     def clear_form(self):
         for var in self.vars.values():
@@ -158,10 +167,17 @@ class UIOcrFacturas(ttk.Frame):
             "texto_ocr": self.txt_ocr.get("1.0", tk.END).strip(),
         }
 
-    def ask_open_document_path(self):
-        return filedialog.askopenfilename(
-            title="Seleccionar factura PDF",
-            filetypes=[("PDF", "*.pdf")],
+    def get_selected_document_ids(self):
+        return [str(x) for x in self.tv.selection()]
+
+    def ask_open_document_paths(self):
+        return filedialog.askopenfilenames(
+            title="Seleccionar documentos de factura",
+            filetypes=[
+                ("Documentos soportados", "*.pdf *.png *.jpg *.jpeg"),
+                ("PDF", "*.pdf"),
+                ("Imagenes", "*.png *.jpg *.jpeg"),
+            ],
         )
 
     def ask_yes_no(self, title, message):
@@ -177,9 +193,21 @@ class UIOcrFacturas(ttk.Frame):
         messagebox.showerror(title, message)
 
     def _on_select(self):
+        if self._suspend_select_event:
+            return
         sel = self.tv.selection()
         if sel:
-            self.controller.select_document(str(sel[0]))
+            if self._pending_select_after is not None:
+                try:
+                    self.after_cancel(self._pending_select_after)
+                except Exception:
+                    pass
+            doc_id = str(sel[0])
+            self._pending_select_after = self.after_idle(lambda did=doc_id: self._dispatch_select(did))
+
+    def _dispatch_select(self, doc_id: str):
+        self._pending_select_after = None
+        self.controller.select_document(doc_id)
 
     def _to_float(self, value: str) -> float:
         txt = str(value or "").strip().replace(".", "").replace(",", ".")
