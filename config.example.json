@@ -3,11 +3,6 @@
   "a3_base_path": "",
   "last_db_path": "",
   "word_templates_dir": "",
-  "documentos_output_dir": "",
-  "documentos_output_structure": "cliente",
-  "document_auto_scan_enabled": false,
-  "document_auto_scan_interval_sec": 300,
-  "document_auto_scan_process_ocr": true,
   "ocr_endpoint": "",
   "monedas": [
     {

@@ -260,6 +260,8 @@ CREATE TABLE IF NOT EXISTS cuentas_bancarias (
 );
 CREATE INDEX IF NOT EXISTS idx_cuentas_bancarias_empresa
   ON cuentas_bancarias(codigo_empresa, ejercicio);
+-- Legacy documental retirado de la aplicacion activa.
+-- Estas tablas se conservan para compatibilidad con bases de datos existentes.
 CREATE TABLE IF NOT EXISTS plantillas_documentos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   codigo_empresa TEXT NOT NULL,
@@ -2031,7 +2033,7 @@ class GestorSQLite:
             copiados += 1
         return copiados, omitidos
 
-    # ---------- DOCUMENTOS / PLANTILLAS ----------
+    # ---------- LEGACY DOCUMENTAL (retirado de la aplicacion activa) ----------
     def listar_plantillas_documentos(self, codigo_empresa: str, ejercicio: int):
         cur = self.conn.execute(
             "SELECT * FROM plantillas_documentos WHERE codigo_empresa=? AND ejercicio=? ORDER BY LOWER(nombre)",

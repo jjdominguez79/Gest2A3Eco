@@ -37,9 +37,9 @@
 
 ## Estado actual
 - El flujo antiguo de seleccion de empresa independiente y el modulo documental se han retirado.
+- El esquema documental legacy sigue presente en SQLite solo por compatibilidad con bases de datos existentes.
 - No existe vista dedicada de centro contable; esa informacion se integra en dashboard/configuracion.
 - No hay UI especifica para facturas recibidas; su tratamiento operativo sigue en importaciones.
-- Hay cambios locales sin commitear en el repositorio; no revertirlos automaticamente.
 
 ## Verificacion manual minima
 - Abrir `python main.py`.

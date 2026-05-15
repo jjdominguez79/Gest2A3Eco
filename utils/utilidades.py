@@ -59,7 +59,6 @@ def _apply_env_overrides(data: dict) -> dict:
         "GEST2A3ECO_A3_BASE_PATH": "a3_base_path",
         "GEST2A3ECO_LAST_DB_PATH": "last_db_path",
         "GEST2A3ECO_WORD_TEMPLATES_DIR": "word_templates_dir",
-        "GEST2A3ECO_DOCUMENTOS_OUTPUT_DIR": "documentos_output_dir",
         "GEST2A3ECO_OCR_ENDPOINT": "ocr_endpoint",
         "GEST2A3ECO_ADMIN_PASSWORD": "admin_password",
         "GEST2A3ECO_INITIAL_ADMIN_PASSWORD": "initial_admin_password",
@@ -103,8 +102,6 @@ def _normalize_config(data: dict) -> dict:
     out = dict(data or {})
     out.setdefault("templates_path", "plantillas/plantillas.json")
     out.setdefault("word_templates_dir", "")
-    out.setdefault("documentos_output_dir", "")
-    out.setdefault("documentos_output_structure", "cliente")
     out.setdefault("a3_base_path", "")
     out.setdefault("last_db_path", "")
     out.setdefault("ocr_endpoint", "")
@@ -155,29 +152,6 @@ def get_word_templates_dir(default_dir: str) -> str:
 def set_word_templates_dir(path: str) -> None:
     cfg = load_app_config()
     cfg["word_templates_dir"] = path
-    save_app_config(cfg)
-
-
-def get_documentos_output_dir(default_dir: str) -> str:
-    cfg = load_app_config()
-    raw = str(cfg.get("documentos_output_dir") or "").strip()
-    if raw:
-        return raw
-    return default_dir
-
-
-def get_documentos_output_structure() -> str:
-    cfg = load_app_config()
-    raw = str(cfg.get("documentos_output_structure") or "cliente").strip().lower()
-    if raw in {"cliente", "operacion", "tipo_documento"}:
-        return raw
-    return "cliente"
-
-
-def set_documentos_output_config(path: str, structure: str) -> None:
-    cfg = load_app_config()
-    cfg["documentos_output_dir"] = str(path or "").strip()
-    cfg["documentos_output_structure"] = str(structure or "cliente").strip().lower()
     save_app_config(cfg)
 
 def save_app_config(data: dict) -> None:
