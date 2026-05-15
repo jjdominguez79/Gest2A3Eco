@@ -1,0 +1,33 @@
+{
+  "templates_path": "plantillas/plantillas.json",
+  "a3_base_path": "",
+  "last_db_path": "",
+  "word_templates_dir": "",
+  "documentos_output_dir": "",
+  "documentos_output_structure": "cliente",
+  "document_auto_scan_enabled": false,
+  "document_auto_scan_interval_sec": 300,
+  "document_auto_scan_process_ocr": true,
+  "ocr_endpoint": "",
+  "monedas": [
+    {
+      "codigo": "EUR",
+      "simbolo": "€",
+      "nombre": "Euro"
+    },
+    {
+      "codigo": "USD",
+      "simbolo": "$",
+      "nombre": "Dolar"
+    }
+  ],
+  "smtp": {
+    "host": "",
+    "port": 587,
+    "user": "",
+    "password": "",
+    "from_addr": "",
+    "use_tls": true,
+    "use_ssl": false
+  }
+}

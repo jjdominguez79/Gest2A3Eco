@@ -6,6 +6,18 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 from datetime import date, datetime
 from utils.utilidades import aplicar_descuento_total_lineas, format_num_es, load_monedas
+from utils.ui_facturas_emitidas_helpers import (
+    fmt2,
+    fmt2s,
+    fmt4,
+    normalizar_telefono,
+    parse_date_ui,
+    round2,
+    round4,
+    to_fecha_ui,
+    to_fecha_ui_or_blank,
+    to_float,
+)
 from utils.validaciones import normalizar_nif_cif
 
 from controllers.ui_facturas_emitidas_controller import FacturasEmitidasController
@@ -44,66 +56,6 @@ MODELOS_FISCALES_EMITIDAS = [
     ("14", "14: 190, G03, Inicio actividad profesional dinerarias"),
 ]
 
-def _to_float(x) -> float:
-    try:
-        if x is None or x == "":
-            return 0.0
-        if isinstance(x, (int, float)) and not isinstance(x, bool):
-            return float(x)
-        s = str(x).strip().replace("\xa0", " ")
-        s = "".join(ch for ch in s if ch.isdigit() or ch in ".,-")
-        if "." in s and "," in s:
-            s = s.replace(".", "").replace(",", ".")
-        elif "," in s:
-            s = s.replace(",", ".")
-        return float(s)
-    except Exception:
-        return 0.0
-
-def _parse_date_ui(val: str) -> date:
-    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y"):
-        try:
-            return datetime.strptime(val.strip(), fmt).date()
-        except Exception:
-            continue
-    return date.today()
-
-def _to_fecha_ui(val: str) -> str:
-    if not val:
-        return date.today().strftime("%d/%m/%Y")
-    try:
-        d = _parse_date_ui(str(val))
-        return d.strftime("%d/%m/%Y")
-    except Exception:
-        return date.today().strftime("%d/%m/%Y")
-
-def _to_fecha_ui_or_blank(val: str) -> str:
-    if not val:
-        return ""
-    return _to_fecha_ui(val)
-
-def _round2(x) -> float:
-    try:
-        return round(float(x), 2)
-    except Exception:
-        return 0.0
-
-def _round4(x) -> float:
-    try:
-        return round(float(x), 4)
-    except Exception:
-        return 0.0
-
-def _fmt2(x) -> str:
-    return format_num_es(x, 2)
-
-def _fmt4(x) -> str:
-    return format_num_es(x, 4)
-
-def _fmt2s(x, simbolo: str = "") -> str:
-    txt = format_num_es(x, 2)
-    return f"{txt} {simbolo}".strip() if simbolo else txt
-
 
 def _bind_nif_normalizer(var: tk.StringVar):
     def _normalize(*_args):
@@ -113,12 +65,6 @@ def _bind_nif_normalizer(var: tk.StringVar):
             var.set(normalized)
 
     var.trace_add("write", _normalize)
-
-def _normalizar_telefono(tel: str) -> str:
-    """Normaliza un numero de telefono para wa.me: elimina espacios, guiones y '+'.
-    Ej: '+34 612-345 678' -> '34612345678'"""
-    import re
-    return re.sub(r"[\s\-\+\(\)]", "", str(tel or "").strip())
 
 
 def _center_window(win, parent=None):
@@ -976,9 +922,9 @@ class FacturaDialog(tk.Toplevel):
         self.var_serie = tk.StringVar(value=f.get("serie", ""))
         self.var_numero = tk.StringVar(value=f.get("numero", ""))
         self.var_numero_asiento = tk.StringVar(value=f.get("numero_asiento", ""))
-        self.var_fecha_asiento = tk.StringVar(value=_to_fecha_ui(f.get("fecha_asiento", today)))
-        self.var_fecha_exp = tk.StringVar(value=_to_fecha_ui(f.get("fecha_expedicion", f.get("fecha_asiento", today))))
-        self.var_fecha_op = tk.StringVar(value=_to_fecha_ui(f.get("fecha_operacion", today)) if f.get("fecha_operacion") else "")
+        self.var_fecha_asiento = tk.StringVar(value=to_fecha_ui(f.get("fecha_asiento", today)))
+        self.var_fecha_exp = tk.StringVar(value=to_fecha_ui(f.get("fecha_expedicion", f.get("fecha_asiento", today))))
+        self.var_fecha_op = tk.StringVar(value=to_fecha_ui(f.get("fecha_operacion", today)) if f.get("fecha_operacion") else "")
         self._tipo_operacion_labels = [lbl for _, lbl in TIPOS_OPERACION_EMITIDAS]
         self._tipo_operacion_by_label = {lbl: cod for cod, lbl in TIPOS_OPERACION_EMITIDAS}
         self._tipo_operacion_by_code = {cod: lbl for cod, lbl in TIPOS_OPERACION_EMITIDAS}
@@ -1008,24 +954,24 @@ class FacturaDialog(tk.Toplevel):
         ret_base = f.get("retencion_base", "")
         if not has_ret_flag:
             for ln in f.get("lineas", []):
-                pct_ln = _to_float(ln.get("pct_irpf"))
+                pct_ln = to_float(ln.get("pct_irpf"))
                 if pct_ln > 0:
                     ret_pct = pct_ln
                     ret_aplica = True
                     break
         if ret_importe in (None, "") and f.get("lineas"):
-            ret_importe = sum(_to_float(ln.get("cuota_irpf")) for ln in f.get("lineas", []))
-        base_lineas = sum(_to_float(ln.get("base")) for ln in f.get("lineas", []))
+            ret_importe = sum(to_float(ln.get("cuota_irpf")) for ln in f.get("lineas", []))
+        base_lineas = sum(to_float(ln.get("base")) for ln in f.get("lineas", []))
         if ret_base in (None, ""):
-            pct_val = _to_float(ret_pct)
+            pct_val = to_float(ret_pct)
             if ret_importe not in (None, "") and pct_val:
-                ret_base = abs(_to_float(ret_importe)) * 100.0 / pct_val
+                ret_base = abs(to_float(ret_importe)) * 100.0 / pct_val
             else:
                 ret_base = base_lineas if base_lineas else ""
         self.var_ret_aplica = tk.BooleanVar(value=ret_aplica)
         self.var_ret_pct = tk.StringVar(value=str(int(ret_pct)) if ret_pct not in (None, "", 0) else "")
         self.var_ret_base = tk.StringVar(
-            value=_fmt2(_round2(ret_base)) if ret_base not in (None, "") else ""
+            value=fmt2(round2(ret_base)) if ret_base not in (None, "") else ""
         )
         self._retencion_manual = False
         self.var_ret_manual = tk.BooleanVar(value=self._retencion_manual)
@@ -1524,7 +1470,7 @@ class FacturaDialog(tk.Toplevel):
         self.var_cuenta_banco.set(value)
 
     def parse_date(self, text):
-        return _parse_date_ui(text)
+        return parse_date_ui(text)
 
     def open_date_picker(self, initial):
         dlg = DatePicker(self, initial)
@@ -1539,13 +1485,13 @@ class FacturaDialog(tk.Toplevel):
 
     def get_line_editor_values(self):
         concepto = self.line_vars["concepto"].get().strip()
-        unidades = _to_float(self.line_vars["unidades"].get())
-        precio = _to_float(self.line_vars["precio"].get())
+        unidades = to_float(self.line_vars["unidades"].get())
+        precio = to_float(self.line_vars["precio"].get())
         iva_raw = self.line_vars["iva"].get()
-        iva = _to_float(iva_raw)
+        iva = to_float(iva_raw)
         desc_tipo_ui = (self.line_vars["desc_tipo"].get() or "").strip()
         desc_tipo = "pct" if desc_tipo_ui == "%" else "imp" if desc_tipo_ui == "€" else ""
-        desc_val = _to_float(self.line_vars["desc_val"].get())
+        desc_val = to_float(self.line_vars["desc_val"].get())
         return concepto, unidades, precio, iva, iva_raw, desc_tipo, desc_val
 
     def is_line_observacion(self):
@@ -1557,16 +1503,16 @@ class FacturaDialog(tk.Toplevel):
         sym = self._moneda_simbolo
         vals = (
             ln["concepto"],
-            "" if is_obs else _fmt2(ln["unidades"]),
-            "" if is_obs else _fmt4(ln["precio"]),
+            "" if is_obs else fmt2(ln["unidades"]),
+            "" if is_obs else fmt4(ln["precio"]),
             desc_txt,
-            "" if is_obs else _fmt2s(ln["base"], sym),
-            "" if is_obs else _fmt2(ln["pct_iva"]),
-            "" if is_obs else _fmt2s(ln["cuota_iva"], sym),
-            "" if is_obs else _fmt2(ln["pct_irpf"]),
-            "" if is_obs else _fmt2s(ln["cuota_irpf"], sym),
+            "" if is_obs else fmt2s(ln["base"], sym),
+            "" if is_obs else fmt2(ln["pct_iva"]),
+            "" if is_obs else fmt2s(ln["cuota_iva"], sym),
+            "" if is_obs else fmt2(ln["pct_irpf"]),
+            "" if is_obs else fmt2s(ln["cuota_irpf"], sym),
             ln.get("descuento_tipo", ""),
-            "" if is_obs else _fmt2(_round2(ln.get("descuento_valor"))),
+            "" if is_obs else fmt2(round2(ln.get("descuento_valor"))),
             ln.get("tipo", ""),
         )
         sel = self.tv.selection()
@@ -1581,16 +1527,16 @@ class FacturaDialog(tk.Toplevel):
         sym = self._moneda_simbolo
         vals = (
             ln.get("concepto", ""),
-            "" if is_obs else _fmt2(_round2(ln.get("unidades"))),
-            "" if is_obs else _fmt4(_round4(ln.get("precio"))),
+            "" if is_obs else fmt2(round2(ln.get("unidades"))),
+            "" if is_obs else fmt4(round4(ln.get("precio"))),
             desc_txt,
-            "" if is_obs else _fmt2s(_round2(ln.get("base")), sym),
-            "" if is_obs else _fmt2(_round2(ln.get("pct_iva"))),
-            "" if is_obs else _fmt2s(_round2(ln.get("cuota_iva")), sym),
-            "" if is_obs else _fmt2(_round2(ln.get("pct_irpf"))),
-            "" if is_obs else _fmt2s(_round2(ln.get("cuota_irpf")), sym),
+            "" if is_obs else fmt2s(round2(ln.get("base")), sym),
+            "" if is_obs else fmt2(round2(ln.get("pct_iva"))),
+            "" if is_obs else fmt2s(round2(ln.get("cuota_iva")), sym),
+            "" if is_obs else fmt2(round2(ln.get("pct_irpf"))),
+            "" if is_obs else fmt2s(round2(ln.get("cuota_irpf")), sym),
             ln.get("descuento_tipo", ""),
-            "" if is_obs else _fmt2(_round2(ln.get("descuento_valor"))),
+            "" if is_obs else fmt2(round2(ln.get("descuento_valor"))),
             ln.get("tipo", ""),
         )
         self.tv.insert("", tk.END, values=vals)
@@ -1636,15 +1582,15 @@ class FacturaDialog(tk.Toplevel):
             out.append(
                 {
                     "concepto": vals[0],
-                    "unidades": _round2(_to_float(vals[1])),
-                    "precio": _round4(_to_float(vals[2])),
-                    "base": _round2(_to_float(vals[4])),
-                    "pct_iva": _round2(_to_float(vals[5])),
-                    "cuota_iva": _round2(_to_float(vals[6])),
-                    "pct_irpf": _round2(_to_float(vals[7])),
-                    "cuota_irpf": _round2(_to_float(vals[8])),
+                    "unidades": round2(to_float(vals[1])),
+                    "precio": round4(to_float(vals[2])),
+                    "base": round2(to_float(vals[4])),
+                    "pct_iva": round2(to_float(vals[5])),
+                    "cuota_iva": round2(to_float(vals[6])),
+                    "pct_irpf": round2(to_float(vals[7])),
+                    "cuota_irpf": round2(to_float(vals[8])),
                     "descuento_tipo": vals[9] if len(vals) > 9 else "",
-                    "descuento_valor": _round2(_to_float(vals[10])) if len(vals) > 10 else 0.0,
+                    "descuento_valor": round2(to_float(vals[10])) if len(vals) > 10 else 0.0,
                     "pct_re": 0.0,
                     "cuota_re": 0.0,
                     "tipo": tipo,
@@ -1654,10 +1600,10 @@ class FacturaDialog(tk.Toplevel):
 
     def set_totales(self, base, iva, ret, total):
         sym = self._moneda_simbolo
-        self.lbl_tot_base.config(text=f"Base: {_fmt2s(base, sym)}")
-        self.lbl_tot_iva.config(text=f"IVA: {_fmt2s(iva, sym)}")
-        self.lbl_tot_ret.config(text=f"IRPF: {_fmt2s(ret, sym)}")
-        self.lbl_tot_total.config(text=f"Total: {_fmt2s(total, sym)}")
+        self.lbl_tot_base.config(text=f"Base: {fmt2s(base, sym)}")
+        self.lbl_tot_iva.config(text=f"IVA: {fmt2s(iva, sym)}")
+        self.lbl_tot_ret.config(text=f"IRPF: {fmt2s(ret, sym)}")
+        self.lbl_tot_total.config(text=f"Total: {fmt2s(total, sym)}")
 
     def set_iva_resumen(self, rows):
         self.tv_iva.delete(*self.tv_iva.get_children())
@@ -1666,23 +1612,23 @@ class FacturaDialog(tk.Toplevel):
             self.tv_iva.insert(
                 "",
                 tk.END,
-                values=(r.get("tipo", ""), _fmt2s(_round2(r.get("base")), sym), _fmt2s(_round2(r.get("cuota")), sym)),
+                values=(r.get("tipo", ""), fmt2s(round2(r.get("base")), sym), fmt2s(round2(r.get("cuota")), sym)),
             )
 
     def get_retencion_aplica(self):
         return bool(self.var_ret_aplica.get())
 
     def get_retencion_pct(self):
-        return _to_float(self.var_ret_pct.get())
+        return to_float(self.var_ret_pct.get())
 
     def get_retencion_base(self):
-        return _to_float(self.var_ret_base.get())
+        return to_float(self.var_ret_base.get())
 
     def get_retencion_importe(self):
         base = self.get_retencion_base()
         pct = self.get_retencion_pct()
         signo = 1.0 if base < 0 else -1.0
-        return _round2(signo * abs(base * pct / 100.0)) if pct else 0.0
+        return round2(signo * abs(base * pct / 100.0)) if pct else 0.0
 
     def is_retencion_manual(self):
         return self._retencion_manual
@@ -1693,8 +1639,8 @@ class FacturaDialog(tk.Toplevel):
     def set_retencion_base(self, value: str):
         self._retencion_silent = True
         try:
-            val = _to_float(value)
-            self.var_ret_base.set(_fmt2(val) if value not in ("", None) else "")
+            val = to_float(value)
+            self.var_ret_base.set(fmt2(val) if value not in ("", None) else "")
         except Exception:
             self.var_ret_base.set(value)
         self._retencion_silent = False
@@ -1708,7 +1654,7 @@ class FacturaDialog(tk.Toplevel):
         tipo_ui = (self.var_desc_total_tipo.get() or "").strip()
         tipo = "pct" if tipo_ui == "%" else "imp" if tipo_ui == "€" else ""
         try:
-            valor = _to_float(self.var_desc_total_valor.get())
+            valor = to_float(self.var_desc_total_valor.get())
         except Exception:
             valor = 0.0
         return tipo, valor
@@ -1717,12 +1663,12 @@ class FacturaDialog(tk.Toplevel):
         if str(ln.get("tipo") or "").strip().lower() == "obs":
             return ""
         t = (ln.get("descuento_tipo") or "").strip().lower()
-        v = _round2(ln.get("descuento_valor"))
+        v = round2(ln.get("descuento_valor"))
         if not t or not v:
             return ""
         if t == "pct":
-            return f"{_fmt2(v)}%"
-        return _fmt2(v)
+            return f"{fmt2(v)}%"
+        return fmt2(v)
 
     def get_numero_factura(self):
         return self.var_numero.get().strip()
@@ -2059,12 +2005,12 @@ class UIFacturasEmitidas(ttk.Frame):
         )
         for ln in lineas:
             total += (
-                _to_float(ln.get("base"))
-                + _to_float(ln.get("cuota_iva"))
-                + _to_float(ln.get("cuota_re"))
+                to_float(ln.get("base"))
+                + to_float(ln.get("cuota_iva"))
+                + to_float(ln.get("cuota_re"))
             )
         total += self._retencion_importe(fac)
-        return _round2(total)
+        return round2(total)
 
     def _retencion_importe(self, fac: dict) -> float:
         if not fac:
@@ -2072,25 +2018,25 @@ class UIFacturasEmitidas(ttk.Frame):
         if not bool(fac.get("retencion_aplica")):
             ret_lineas = 0.0
             for ln in fac.get("lineas", []):
-                ret_lineas += _to_float(ln.get("cuota_irpf"))
-            return _round2(ret_lineas)
+                ret_lineas += to_float(ln.get("cuota_irpf"))
+            return round2(ret_lineas)
         signo_ret = self._signo_retencion_por_factura(fac)
         importe = fac.get("retencion_importe")
         if importe is None or importe == "":
-            base = _to_float(fac.get("retencion_base"))
-            pct = _to_float(fac.get("retencion_pct"))
-            return _round2(signo_ret * abs(base * pct / 100.0)) if pct else 0.0
-        return _round2(signo_ret * abs(_to_float(importe)))
+            base = to_float(fac.get("retencion_base"))
+            pct = to_float(fac.get("retencion_pct"))
+            return round2(signo_ret * abs(base * pct / 100.0)) if pct else 0.0
+        return round2(signo_ret * abs(to_float(importe)))
 
     def _signo_retencion_por_factura(self, fac: dict) -> float:
-        base = _to_float(fac.get("retencion_base"))
+        base = to_float(fac.get("retencion_base"))
         if base == 0.0:
             lineas = aplicar_descuento_total_lineas(
                 fac.get("lineas", []),
                 fac.get("descuento_total_tipo"),
                 fac.get("descuento_total_valor"),
             )
-            base = sum(_to_float(ln.get("base")) for ln in lineas)
+            base = sum(to_float(ln.get("base")) for ln in lineas)
         return 1.0 if base < 0 else -1.0
 
     def _refresh_facturas(self):
@@ -2129,9 +2075,9 @@ class UIFacturasEmitidas(ttk.Frame):
                 serie_val,
                 numero_display,
                 fac.get("numero_asiento", ""),
-                _to_fecha_ui_or_blank(fac.get("fecha_asiento", "")),
+                to_fecha_ui_or_blank(fac.get("fecha_asiento", "")),
                 fac.get("nombre", ""),
-                _fmt2s(total, sym),
+                fmt2s(total, sym),
                 "Si" if fac.get("generada") else "No",
                 fac.get("fecha_generacion", ""),
                 "Si" if fac.get("enviado") else "No",
@@ -2159,9 +2105,9 @@ class UIFacturasEmitidas(ttk.Frame):
             iid=str(alb.get("id")),
             values=(
                 alb.get("numero", ""),
-                _to_fecha_ui_or_blank(alb.get("fecha_asiento", "")),
+                to_fecha_ui_or_blank(alb.get("fecha_asiento", "")),
                 alb.get("nombre", ""),
-                _fmt2s(total, sym),
+                fmt2s(total, sym),
                 "Si" if alb.get("facturado") else "No",
                 factura_txt,
             ),
@@ -2185,9 +2131,9 @@ class UIFacturasEmitidas(ttk.Frame):
             except Exception:
                 return -1
         if col == "total":
-            return _to_float(val)
+            return to_float(val)
         if col == "fecha":
-            return _parse_date_ui(val) if val else date.min
+            return parse_date_ui(val) if val else date.min
         if col in ("fecha_gen", "fecha_envio"):
             return self._parse_datetime(val)
         if col in ("generada", "enviado"):
@@ -2206,7 +2152,7 @@ class UIFacturasEmitidas(ttk.Frame):
             except Exception:
                 continue
         try:
-            return datetime.combine(_parse_date_ui(txt), datetime.min.time())
+            return datetime.combine(parse_date_ui(txt), datetime.min.time())
         except Exception:
             return datetime.min
 
@@ -2226,13 +2172,13 @@ class UIFacturasEmitidas(ttk.Frame):
                 tk.END,
                 values=(
                     ln.get("concepto", ""),
-                    "" if is_obs else _fmt2(_round2(ln.get("unidades"))),
-                    "" if is_obs else _fmt4(_round4(ln.get("precio"))),
-                    "" if is_obs else _fmt2s(_round2(ln.get("base")), sym),
-                    "" if is_obs else _fmt2(_round2(ln.get("pct_iva"))),
-                    "" if is_obs else _fmt2s(_round2(ln.get("cuota_iva")), sym),
-                    "" if is_obs else _fmt2(_round2(ln.get("pct_irpf"))),
-                    "" if is_obs else _fmt2s(_round2(ln.get("cuota_irpf")), sym),
+                    "" if is_obs else fmt2(round2(ln.get("unidades"))),
+                    "" if is_obs else fmt4(round4(ln.get("precio"))),
+                    "" if is_obs else fmt2s(round2(ln.get("base")), sym),
+                    "" if is_obs else fmt2(round2(ln.get("pct_iva"))),
+                    "" if is_obs else fmt2s(round2(ln.get("cuota_iva")), sym),
+                    "" if is_obs else fmt2(round2(ln.get("pct_irpf"))),
+                    "" if is_obs else fmt2s(round2(ln.get("cuota_irpf")), sym),
                 ),
             )
 
@@ -2246,13 +2192,13 @@ class UIFacturasEmitidas(ttk.Frame):
                 tk.END,
                 values=(
                     ln.get("concepto", ""),
-                    "" if is_obs else _fmt2(_round2(ln.get("unidades"))),
-                    "" if is_obs else _fmt4(_round4(ln.get("precio"))),
-                    "" if is_obs else _fmt2s(_round2(ln.get("base")), sym),
-                    "" if is_obs else _fmt2(_round2(ln.get("pct_iva"))),
-                    "" if is_obs else _fmt2s(_round2(ln.get("cuota_iva")), sym),
-                    "" if is_obs else _fmt2(_round2(ln.get("pct_irpf"))),
-                    "" if is_obs else _fmt2s(_round2(ln.get("cuota_irpf")), sym),
+                    "" if is_obs else fmt2(round2(ln.get("unidades"))),
+                    "" if is_obs else fmt4(round4(ln.get("precio"))),
+                    "" if is_obs else fmt2s(round2(ln.get("base")), sym),
+                    "" if is_obs else fmt2(round2(ln.get("pct_iva"))),
+                    "" if is_obs else fmt2s(round2(ln.get("cuota_iva")), sym),
+                    "" if is_obs else fmt2(round2(ln.get("pct_irpf"))),
+                    "" if is_obs else fmt2s(round2(ln.get("cuota_irpf")), sym),
                 ),
             )
 
@@ -2799,7 +2745,7 @@ class UIFacturasEmitidas(ttk.Frame):
                 raw = telefono_empresa
             else:
                 raw = var_otro_tel.get()
-            tel = _normalizar_telefono(raw)
+            tel = normalizar_telefono(raw)
             if not tel:
                 messagebox.showwarning(
                     "Gest2A3Eco", "Introduce o selecciona un numero de telefono.", parent=dlg

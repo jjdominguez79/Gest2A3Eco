@@ -1,9 +1,10 @@
 
-from datetime import datetime
-from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 import json
 import math
+import os
 import sys
+from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from pathlib import Path
 
 SEP = "\t"
@@ -13,28 +14,116 @@ DEFAULT_MONEDAS = [
     {"codigo": "USD", "simbolo": "$", "nombre": "Dolar"},
 ]
 
-def _config_path() -> Path:
-    base_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
-    return base_dir / "config.json"
+def _base_dir() -> Path:
+    return Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
 
-def load_app_config() -> dict:
-    cfg_path = _config_path()
-    data = {}
+
+def _config_example_path() -> Path:
+    return _base_dir() / "config.example.json"
+
+
+def _legacy_config_path() -> Path:
+    return _base_dir() / "config.json"
+
+
+def _config_local_path() -> Path:
+    return _base_dir() / "config.local.json"
+
+
+def _load_json_file(path: Path) -> dict:
     try:
-        if cfg_path.exists():
-            with open(cfg_path, "r", encoding="utf-8") as f:
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f) or {}
+                if isinstance(data, dict):
+                    return data
     except Exception:
-        data = {}
-    data.setdefault("templates_path", "plantillas/plantillas.json")
-    data.setdefault("word_templates_dir", "")
-    data.setdefault("admin_password", "admin")
-    data.setdefault("desmarcar_generadas_password", "")
-    data.setdefault("documentos_output_dir", "")
-    data.setdefault("documentos_output_structure", "cliente")
-    monedas = data.get("monedas")
+        pass
+    return {}
+
+
+def _merge_dicts(base: dict, override: dict) -> dict:
+    out = dict(base)
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _merge_dicts(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def _apply_env_overrides(data: dict) -> dict:
+    out = dict(data)
+
+    direct_map = {
+        "GEST2A3ECO_A3_BASE_PATH": "a3_base_path",
+        "GEST2A3ECO_LAST_DB_PATH": "last_db_path",
+        "GEST2A3ECO_WORD_TEMPLATES_DIR": "word_templates_dir",
+        "GEST2A3ECO_DOCUMENTOS_OUTPUT_DIR": "documentos_output_dir",
+        "GEST2A3ECO_OCR_ENDPOINT": "ocr_endpoint",
+        "GEST2A3ECO_ADMIN_PASSWORD": "admin_password",
+        "GEST2A3ECO_INITIAL_ADMIN_PASSWORD": "initial_admin_password",
+        "GEST2A3ECO_DESMARCAR_GENERADAS_PASSWORD": "desmarcar_generadas_password",
+    }
+    for env_name, config_key in direct_map.items():
+        value = os.getenv(env_name)
+        if value is not None:
+            out[config_key] = value
+
+    smtp_cfg = dict(out.get("smtp") or {})
+    smtp_map = {
+        "GEST2A3ECO_SMTP_HOST": "host",
+        "GEST2A3ECO_SMTP_PORT": "port",
+        "GEST2A3ECO_SMTP_USER": "user",
+        "GEST2A3ECO_SMTP_PASSWORD": "password",
+        "GEST2A3ECO_SMTP_FROM_ADDR": "from_addr",
+        "GEST2A3ECO_SMTP_USE_TLS": "use_tls",
+        "GEST2A3ECO_SMTP_USE_SSL": "use_ssl",
+    }
+    for env_name, config_key in smtp_map.items():
+        value = os.getenv(env_name)
+        if value is None:
+            continue
+        if config_key == "port":
+            try:
+                smtp_cfg[config_key] = int(value)
+            except Exception:
+                continue
+        elif config_key in {"use_tls", "use_ssl"}:
+            smtp_cfg[config_key] = str(value).strip().lower() in {"1", "true", "yes", "si"}
+        else:
+            smtp_cfg[config_key] = value
+    if smtp_cfg:
+        out["smtp"] = smtp_cfg
+
+    return out
+
+
+def _normalize_config(data: dict) -> dict:
+    out = dict(data or {})
+    out.setdefault("templates_path", "plantillas/plantillas.json")
+    out.setdefault("word_templates_dir", "")
+    out.setdefault("documentos_output_dir", "")
+    out.setdefault("documentos_output_structure", "cliente")
+    out.setdefault("a3_base_path", "")
+    out.setdefault("last_db_path", "")
+    out.setdefault("ocr_endpoint", "")
+
+    smtp = out.get("smtp")
+    if not isinstance(smtp, dict):
+        smtp = {}
+    smtp.setdefault("host", "")
+    smtp.setdefault("port", 587)
+    smtp.setdefault("user", "")
+    smtp.setdefault("password", "")
+    smtp.setdefault("from_addr", "")
+    smtp.setdefault("use_tls", True)
+    smtp.setdefault("use_ssl", False)
+    out["smtp"] = smtp
+
+    monedas = out.get("monedas")
     if not isinstance(monedas, list) or not monedas:
-        data["monedas"] = list(DEFAULT_MONEDAS)
+        out["monedas"] = list(DEFAULT_MONEDAS)
     else:
         norm = []
         for m in monedas:
@@ -46,8 +135,15 @@ def load_app_config() -> dict:
             if not codigo:
                 continue
             norm.append({"codigo": codigo, "simbolo": simbolo, "nombre": nombre})
-        data["monedas"] = norm or list(DEFAULT_MONEDAS)
-    return data
+        out["monedas"] = norm or list(DEFAULT_MONEDAS)
+    return out
+
+def load_app_config() -> dict:
+    data = {}
+    for path in (_config_example_path(), _legacy_config_path(), _config_local_path()):
+        data = _merge_dicts(data, _load_json_file(path))
+    data = _apply_env_overrides(data)
+    return _normalize_config(data)
 
 def get_word_templates_dir(default_dir: str) -> str:
     cfg = load_app_config()
@@ -85,10 +181,12 @@ def set_documentos_output_config(path: str, structure: str) -> None:
     save_app_config(cfg)
 
 def save_app_config(data: dict) -> None:
-    cfg_path = _config_path()
+    cfg_path = _config_local_path()
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    current = _load_json_file(cfg_path)
+    payload = _merge_dicts(current, dict(data or {}))
     with open(cfg_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(payload, f, ensure_ascii=False, indent=2)
 
 def load_monedas() -> list:
     return load_app_config().get("monedas") or list(DEFAULT_MONEDAS)

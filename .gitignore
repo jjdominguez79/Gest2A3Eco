@@ -35,6 +35,9 @@ Thumbs.db
 
 # Local runtime / generated data
 config.json
+config.local.json
+.env
+.env.*
 pdfs_emitidas/
 plantillas/gest2a3eco.db
 
