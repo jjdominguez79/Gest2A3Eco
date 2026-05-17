@@ -7,3 +7,4 @@ pillow
 docxtpl
 docx2pdf
 pypdf
+pymupdf

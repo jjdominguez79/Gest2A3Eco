@@ -61,6 +61,7 @@ def _build_header(
     on_cambiar_empresa,
     on_open_config=None,
     on_open_users=None,
+    on_open_terceros=None,
     on_logout=None,
     db_path: str | None = None,
     word_tpl_dir: str | None = None,
@@ -146,6 +147,8 @@ def _build_header(
         return b
 
     _hbtn("Empresas", on_cambiar_empresa)
+    if on_open_terceros:
+        _hbtn("Terceros", on_open_terceros)
     if on_open_config and session.is_admin():
         _hbtn("Configuracion", on_open_config)
     if on_open_users and session.is_admin():
@@ -327,6 +330,7 @@ def main():
             root,
             session=session,
             on_cambiar_empresa=controller.start,
+            on_open_terceros=controller.open_terceros,
             on_open_config=_show_config_menu,
             on_open_users=controller.open_user_admin,
             on_logout=_logout,

@@ -1026,8 +1026,10 @@ class FacturaDialog(tk.Toplevel):
         row = 0
         ttk.Label(frm, text="Seleccione Cliente").grid(row=row, column=0, sticky="w", padx=4, pady=3)
         self.var_tercero = tk.StringVar()
-        self.cb_tercero = ttk.Combobox(frm, textvariable=self.var_tercero, width=40, state="readonly")
+        self._all_tercero_values: list = []
+        self.cb_tercero = ttk.Combobox(frm, textvariable=self.var_tercero, width=44)
         self.cb_tercero.grid(row=row, column=1, padx=4, pady=3, sticky="w")
+        self.cb_tercero.bind("<KeyRelease>", lambda e: self._filter_clientes_cb())
         ttk.Button(frm, text="Config. empresa", command=self._configurar_empresa).grid(row=row, column=2, padx=4, pady=3)
         row += 1
 
@@ -1446,16 +1448,29 @@ class FacturaDialog(tk.Toplevel):
             self.var_ret_manual.set(False)
         self.entry_ret_base.config(state="normal" if (aplica and self._retencion_manual) else "disabled")
 
+    def _filter_clientes_cb(self):
+        typed = self.var_tercero.get().lower()
+        filtered = [v for v in self._all_tercero_values if typed in v.lower()]
+        self.cb_tercero["values"] = filtered
+        if filtered and not self.cb_tercero.winfo_ismapped():
+            return
+        # Auto-fill si el texto coincide exactamente con una entrada
+        exact = self.var_tercero.get()
+        if exact in self._all_tercero_values:
+            self._on_tercero_selected()
+
     # --- helpers de vista para el controlador
     def set_terceros(self, values):
+        self._all_tercero_values = list(values)
         self.cb_tercero["values"] = values
         self.cb_tercero.bind("<<ComboboxSelected>>", lambda e: self._on_tercero_selected())
 
-    def select_tercero_index(self, idx):
-        self.cb_tercero.current(idx)
+    def get_selected_tercero_display(self) -> str:
+        return self.var_tercero.get()
 
-    def get_selected_tercero_index(self):
-        return self.cb_tercero.current()
+    def set_tercero_display(self, label: str):
+        self.var_tercero.set(label)
+        self.cb_tercero["values"] = self._all_tercero_values
 
     def set_nif(self, value):
         self.var_nif.set(normalizar_nif_cif(value))

@@ -2,14 +2,17 @@ from tkinter import messagebox, ttk
 
 from controllers.user_admin_controller import UserAdminController
 from services.empresa_service import EmpresaService
+from views.ui_configuracion_empresa import UIConfiguracionEmpresa
 from views.ui_contabilidad import UIContabilidad
 from views.ui_dashboard_empresa import UIDashboardEmpresa
-from views.ui_facturas_emitidas import UIFacturasEmitidas
-from views.ui_ocr_facturas import UIOcrFacturas
 from views.ui_empresa_dialog import EmpresaDialog
+from views.ui_facturas_emitidas import UIFacturasEmitidas
+from views.ui_maestro_cuentas import UIMaestroCuentas
+from views.ui_ocr_facturas import UIOcrFacturas
 from views.ui_panel_general import UIPanelGeneral
 from views.ui_plantillas import UIPlantillasEmpresa
 from views.ui_procesos import UIProcesos
+from views.ui_terceros_globales import UITercerosGlobales
 from views.ui_user_admin import UserAdminDialog
 
 
@@ -120,8 +123,10 @@ class AppController:
             on_open_contabilidad=lambda: self._open_module_in_shell(codigo, ejercicio, "contabilidad"),
             on_open_importaciones=lambda: self._open_module_in_shell(codigo, ejercicio, "importaciones"),
             on_open_plantillas=lambda: self._open_module_in_shell(codigo, ejercicio, "plantillas"),
-            on_open_configuracion=lambda: self.open_company_config(codigo, ejercicio),
+            on_open_configuracion=lambda: self._open_module_in_shell(codigo, ejercicio, "configuracion"),
             on_open_ocr=lambda: self._open_module_in_shell(codigo, ejercicio, "ocr"),
+            on_open_terceros=lambda: self._open_module_in_shell(codigo, ejercicio, "terceros"),
+            on_open_maestro_cuentas=lambda: self._open_module_in_shell(codigo, ejercicio, "maestro_cuentas"),
             on_back=self.start,
         )
         shell.pack(fill="both", expand=True)
@@ -143,6 +148,20 @@ class AppController:
 
     def _build_module_content(self, parent, codigo, ejercicio, modulo, nombre):
         """Construye y devuelve el widget del modulo sin empaquetarlo."""
+        if modulo == "configuracion":
+            shell = self._company_shell
+            def _back_to_dashboard():
+                if shell is not None:
+                    shell.refresh()
+                    shell.show_dashboard()
+                else:
+                    self.start()
+            return UIConfiguracionEmpresa(
+                parent, self._gestor, codigo, ejercicio, nombre,
+                on_back=_back_to_dashboard,
+                on_deleted=self.start,
+                session=self._session,
+            )
         if modulo == "importaciones":
             return UIProcesos(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
         if modulo == "ocr":
@@ -151,6 +170,10 @@ class AppController:
             return UIContabilidad(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
         if modulo == "plantillas":
             return UIPlantillasEmpresa(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
+        if modulo == "terceros":
+            return UITercerosGlobales(parent, self._gestor, session=self._session)
+        if modulo == "maestro_cuentas":
+            return UIMaestroCuentas(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
         if modulo.startswith("importaciones::"):
             tipo = modulo.split("::", 1)[1]
             return UIProcesos(parent, self._gestor, codigo, ejercicio, nombre, session=self._session, initial_tipo=tipo)
@@ -218,15 +241,21 @@ class AppController:
                 except Exception:
                     pass
         bank_records = [dict(row) for row in (result.get("_bank_records") or []) if isinstance(row, dict)]
-        if bank_records:
-            try:
-                self._gestor.reemplazar_cuentas_bancarias(codigo, 0, bank_records)
-            except Exception as exc:
-                messagebox.showerror("Gest2A3Eco", str(exc), parent=self._content.winfo_toplevel())
-                return False
+        try:
+            # Siempre guardar/limpiar (aunque este vacia) para que el DELETE persista
+            self._gestor.reemplazar_cuentas_bancarias(codigo, 0, bank_records)
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self._content.winfo_toplevel())
+            return False
         return True
 
     # ------------------------------------------------------------------ otros
+
+    def open_terceros(self):
+        if self._company_shell is not None:
+            self._open_module_in_shell(self._current_codigo, self._current_ejercicio, "terceros")
+        else:
+            self._show(lambda parent: UITercerosGlobales(parent, self._gestor, session=self._session))
 
     def open_user_admin(self):
         try:

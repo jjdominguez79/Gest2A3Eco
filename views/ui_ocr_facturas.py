@@ -1,14 +1,31 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from pathlib import Path
-
-try:
-    from PIL import Image, ImageTk
-except Exception:  # pragma: no cover
-    Image = None
-    ImageTk = None
 
 from controllers.ui_ocr_facturas_controller import UIOcrFacturasController
+
+# Bandejas: (clave_estado, titulo_tab)
+BANDEJAS = [
+    ("procesando",              "Procesando"),
+    ("error",                   "Errores"),
+    ("pendiente_revision",      "Pte. revision"),
+    ("pendiente_contabilizar",  "Pte. contabilizar"),
+    ("contabilizada",           "Contabilizadas"),
+]
+
+# Columnas de la tabla: (id, cabecera, ancho_px, anchor)
+COLUMNAS = [
+    ("fecha_subida",     "Subida",       90,  "w"),
+    ("tipo_documento",   "Tipo",         130, "w"),
+    ("proveedor_nombre", "Proveedor",    170, "w"),
+    ("proveedor_nif",    "NIF",          90,  "w"),
+    ("numero_factura",   "Factura",      100, "w"),
+    ("fecha_factura",    "F.Factura",    85,  "w"),
+    ("total",            "Total",        80,  "e"),
+    ("estado_ocr",       "Estado OCR",   95,  "w"),
+    ("error_mensaje",    "Aviso/Error",  200, "w"),
+    ("confianza_ocr",    "Confianza",    70,  "e"),
+]
+COL_IDS = [c[0] for c in COLUMNAS]
 
 
 class UIOcrFacturas(ttk.Frame):
@@ -19,181 +36,178 @@ class UIOcrFacturas(ttk.Frame):
         self.ejercicio = ejercicio
         self.nombre = nombre_empresa
         self.session = session
-        self._docs = []
-        self._suspend_select_event = False
-        self._pending_select_after = None
-        self._preview_image = None
+        self._tvs: dict[str, ttk.Treeview] = {}
         self.controller = UIOcrFacturasController(gestor, codigo_empresa, ejercicio, self)
         self._build()
-        self.after_idle(lambda: self.controller.refresh(auto_select_first=False))
+        self.after_idle(self.controller.refresh_all)
+
+    # ── Construccion UI ───────────────────────────────────────────────────────
 
     def _build(self):
+        header = ttk.Frame(self)
+        header.pack(fill="x", padx=10, pady=(8, 4))
         ttk.Label(
-            self,
-            text=f"OCR de facturas recibidas - {self.nombre} ({self.codigo})",
+            header,
+            text=f"Captura documental  —  {self.nombre} ({self.codigo})",
             font=("Segoe UI", 12, "bold"),
-        ).pack(anchor="w", padx=10, pady=8)
+        ).pack(side="left")
+        ttk.Button(
+            header,
+            text="Cargar documentos",
+            style="Primary.TButton",
+            command=self.controller.cargar_documentos,
+        ).pack(side="right")
 
-        top = ttk.Frame(self)
-        top.pack(fill="both", expand=True, padx=10, pady=8)
-        top.columnconfigure(1, weight=1)
-        top.rowconfigure(0, weight=1)
+        self.nb = ttk.Notebook(self)
+        self.nb.pack(fill="both", expand=True, padx=10, pady=4)
+        for estado, titulo in BANDEJAS:
+            frame = ttk.Frame(self.nb)
+            self.nb.add(frame, text=titulo)
+            self._build_bandeja(frame, estado)
+        self.nb.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
-        left = ttk.Frame(top)
-        left.grid(row=0, column=0, sticky="nsw", padx=(0, 10))
-        ttk.Button(left, text="Cargar documentos", style="Primary.TButton", command=self.controller.cargar_documentos).pack(fill="x")
-        ttk.Button(left, text="Procesar OCR seleccionados", command=self.controller.procesar_seleccionados).pack(fill="x", pady=(6, 0))
-        ttk.Button(left, text="Guardar", command=self.controller.guardar_actual).pack(fill="x", pady=(6, 0))
-        ttk.Button(left, text="Marcar validada", command=self.controller.marcar_validada).pack(fill="x", pady=(6, 0))
-        ttk.Button(left, text="Generar suenlace seleccionadas", command=self.controller.generar_suenlace_seleccionadas).pack(fill="x", pady=(6, 0))
-        ttk.Button(left, text="Eliminar", style="Danger.TButton", command=self.controller.eliminar_actual).pack(fill="x", pady=(6, 0))
+        status_bar = ttk.Frame(self)
+        status_bar.pack(fill="x", padx=10, pady=(0, 6))
+        self._lbl_status = ttk.Label(status_bar, text="", foreground="#555555")
+        self._lbl_status.pack(side="left")
 
-        self.tv = ttk.Treeview(
-            left,
-            columns=("proveedor", "numero", "estado_ocr", "estado_validacion", "estado_contable"),
+    def _build_bandeja(self, parent: ttk.Frame, estado: str):
+        bar = ttk.Frame(parent)
+        bar.pack(fill="x", padx=6, pady=(6, 2))
+        self._build_toolbar(bar, estado)
+
+        tv_frame = ttk.Frame(parent)
+        tv_frame.pack(fill="both", expand=True, padx=6, pady=(2, 6))
+
+        tv = ttk.Treeview(
+            tv_frame,
+            columns=COL_IDS,
             show="headings",
-            height=16,
             selectmode="extended",
         )
-        for col, txt, width in (
-            ("proveedor", "Proveedor", 180),
-            ("numero", "Factura", 100),
-            ("estado_ocr", "Estado OCR", 100),
-            ("estado_validacion", "Validacion", 100),
-            ("estado_contable", "Contable", 120),
-        ):
-            self.tv.heading(col, text=txt)
-            self.tv.column(col, width=width, anchor="w")
-        self.tv.pack(fill="both", expand=True, pady=(10, 0))
-        self.tv.bind("<<TreeviewSelect>>", lambda _e: self._on_select())
+        for col_id, col_txt, col_w, anchor in COLUMNAS:
+            tv.heading(col_id, text=col_txt)
+            stretch = col_id in ("proveedor_nombre", "error_mensaje")
+            tv.column(col_id, width=col_w, anchor=anchor, stretch=stretch)
 
-        right = ttk.Frame(top)
-        right.grid(row=0, column=1, sticky="nsew")
-        right.columnconfigure(1, weight=1)
+        vsb = ttk.Scrollbar(tv_frame, orient="vertical", command=tv.yview)
+        hsb = ttk.Scrollbar(tv_frame, orient="horizontal", command=tv.xview)
+        tv.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        vsb.pack(side="right", fill="y")
+        hsb.pack(side="bottom", fill="x")
+        tv.pack(fill="both", expand=True)
 
-        preview_box = ttk.LabelFrame(right, text="Documento")
-        preview_box.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
-        preview_box.columnconfigure(0, weight=1)
-        self.lbl_preview_status = ttk.Label(preview_box, text="Sin documento seleccionado")
-        self.lbl_preview_status.grid(row=0, column=0, sticky="w", padx=8, pady=(8, 4))
-        self.lbl_preview = ttk.Label(preview_box, text="", anchor="center")
-        self.lbl_preview.grid(row=1, column=0, sticky="ew", padx=8, pady=4)
-        self.btn_open_document = ttk.Button(preview_box, text="Abrir documento", command=self.controller.abrir_documento_actual)
-        self.btn_open_document.grid(row=2, column=0, sticky="w", padx=8, pady=(4, 8))
+        tv.bind("<Double-1>", lambda _e, est=estado: self.controller.abrir_documento_seleccionado(est))
+        tv.tag_configure("row_error", foreground="#c0392b")
+        tv.tag_configure("row_pending", foreground="#7f8c8d")
+        self._tvs[estado] = tv
 
-        self.vars = {
-            "proveedor_nombre": tk.StringVar(),
-            "proveedor_nif": tk.StringVar(),
-            "numero_factura": tk.StringVar(),
-            "fecha_factura": tk.StringVar(),
-            "fecha_operacion": tk.StringVar(),
-            "fecha_asiento": tk.StringVar(),
-            "descripcion": tk.StringVar(),
-            "base_imponible": tk.StringVar(),
-            "cuota_iva": tk.StringVar(),
-            "cuota_recargo": tk.StringVar(),
-            "cuota_retencion": tk.StringVar(),
-            "total": tk.StringVar(),
-            "cuenta_gasto": tk.StringVar(),
-            "cuenta_iva": tk.StringVar(),
-            "cuenta_proveedor": tk.StringVar(),
-            "estado_ocr": tk.StringVar(),
-            "estado_validacion": tk.StringVar(),
-            "estado_contable": tk.StringVar(),
-        }
-        fields = [
-            ("Proveedor", "proveedor_nombre"),
-            ("NIF", "proveedor_nif"),
-            ("Numero factura", "numero_factura"),
-            ("Fecha factura", "fecha_factura"),
-            ("Fecha operacion", "fecha_operacion"),
-            ("Fecha asiento", "fecha_asiento"),
-            ("Descripcion", "descripcion"),
-            ("Base", "base_imponible"),
-            ("IVA", "cuota_iva"),
-            ("Recargo", "cuota_recargo"),
-            ("Retencion", "cuota_retencion"),
-            ("Total", "total"),
-            ("Cuenta gasto", "cuenta_gasto"),
-            ("Cuenta IVA", "cuenta_iva"),
-            ("Cuenta proveedor", "cuenta_proveedor"),
-            ("Estado OCR", "estado_ocr"),
-            ("Estado validacion", "estado_validacion"),
-            ("Estado contable", "estado_contable"),
-        ]
-        for idx, (label, key) in enumerate(fields):
-            row = idx + 1
-            ttk.Label(right, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
-            ttk.Entry(right, textvariable=self.vars[key]).grid(row=row, column=1, sticky="ew", pady=4)
+    def _build_toolbar(self, bar: ttk.Frame, estado: str):
+        if estado == "procesando":
+            ttk.Label(bar, text="Los documentos se procesan automaticamente al cargar.").pack(side="left")
+            return
 
-        text_row = len(fields) + 1
-        ttk.Label(right, text="Texto OCR").grid(row=text_row, column=0, sticky="nw", padx=(0, 8), pady=(10, 4))
-        self.txt_ocr = tk.Text(right, height=16, wrap="word")
-        self.txt_ocr.grid(row=text_row, column=1, sticky="nsew", pady=(10, 4))
-        right.rowconfigure(text_row, weight=1)
+        if estado == "error":
+            ttk.Button(bar, text="Reintentar OCR",
+                       command=lambda: self.controller.reintentar_seleccionados(estado)).pack(side="left", padx=(0, 4))
+            ttk.Button(bar, text="Abrir documento",
+                       command=lambda: self.controller.abrir_documento_seleccionado(estado)).pack(side="left", padx=(0, 4))
+            ttk.Button(bar, text="Eliminar", style="Danger.TButton",
+                       command=lambda: self.controller.eliminar_seleccionado(estado)).pack(side="left")
 
-    def set_documents(self, docs: list[dict]):
-        self._docs = docs or []
-        self._suspend_select_event = True
-        self.tv.delete(*self.tv.get_children())
-        for doc in self._docs:
-            self.tv.insert(
-                "",
-                "end",
-                iid=str(doc.get("id")),
-                values=(
-                    doc.get("proveedor_nombre", ""),
-                    doc.get("numero_factura", ""),
-                    doc.get("estado_ocr", ""),
-                    doc.get("estado_validacion", ""),
-                    doc.get("estado_contable", ""),
-                ),
+        elif estado == "pendiente_revision":
+            ttk.Button(bar, text="Abrir y revisar", style="Primary.TButton",
+                       command=lambda: self.controller.abrir_documento_seleccionado(estado)).pack(side="left", padx=(0, 4))
+            ttk.Button(bar, text="Marcar validada",
+                       command=lambda: self.controller.marcar_validada_seleccionado(estado)).pack(side="left", padx=(0, 4))
+            ttk.Button(bar, text="Enviar a Errores",
+                       command=lambda: self.controller.enviar_a_error_seleccionado(estado)).pack(side="left", padx=(0, 4))
+            ttk.Button(bar, text="Eliminar", style="Danger.TButton",
+                       command=lambda: self.controller.eliminar_seleccionado(estado)).pack(side="left")
+
+        elif estado == "pendiente_contabilizar":
+            ttk.Button(bar, text="Generar suenlace seleccionadas", style="Primary.TButton",
+                       command=self.controller.generar_suenlace_seleccionadas).pack(side="left", padx=(0, 4))
+            ttk.Button(bar, text="Abrir documento",
+                       command=lambda: self.controller.abrir_documento_seleccionado(estado)).pack(side="left", padx=(0, 4))
+            ttk.Button(bar, text="Enviar a Errores",
+                       command=lambda: self.controller.enviar_a_error_seleccionado(estado)).pack(side="left")
+
+        elif estado == "contabilizada":
+            ttk.Button(bar, text="Abrir documento",
+                       command=lambda: self.controller.abrir_documento_seleccionado(estado)).pack(side="left")
+
+    # ── Poblado de bandejas ───────────────────────────────────────────────────
+
+    def set_bandeja_docs(self, estado: str, docs: list[dict]):
+        tv = self._tvs.get(estado)
+        if not tv:
+            return
+        prev_sel = set(tv.selection())
+        tv.delete(*tv.get_children())
+        for doc in docs:
+            fecha = str(doc.get("created_at") or "")[:10]
+            total = doc.get("total") or 0.0
+            confianza = doc.get("confianza_ocr") or 0.0
+            vals = (
+                fecha,
+                doc.get("tipo_documento") or "factura_recibida",
+                doc.get("proveedor_nombre") or "",
+                doc.get("proveedor_nif") or "",
+                doc.get("numero_factura") or "",
+                doc.get("fecha_factura") or "",
+                f"{total:.2f}",
+                doc.get("estado_ocr") or "",
+                doc.get("error_mensaje") or "",
+                f"{confianza:.0%}" if confianza else "",
             )
-        self._suspend_select_event = False
+            tags = ("row_error",) if doc.get("estado_ocr") == "error" else (
+                ("row_pending",) if doc.get("estado_ocr") in ("pendiente", "procesando") else ()
+            )
+            tv.insert("", "end", iid=str(doc["id"]), values=vals, tags=tags)
+        for iid in prev_sel:
+            if tv.exists(iid):
+                tv.selection_add(iid)
+        self._update_tab_count(estado, len(docs))
 
-    def load_document(self, doc: dict):
-        for key, var in self.vars.items():
-            value = doc.get(key, "")
-            if isinstance(value, float):
-                value = f"{value:.2f}"
-            var.set("" if value is None else str(value))
-        self.txt_ocr.delete("1.0", tk.END)
-        self.txt_ocr.insert("1.0", str(doc.get("texto_ocr") or ""))
-        self.render_preview(doc)
+    def _update_tab_count(self, estado: str, count: int):
+        for idx, (est, titulo) in enumerate(BANDEJAS):
+            if est == estado:
+                badge = f" ({count})" if count else ""
+                self.nb.tab(idx, text=titulo + badge)
+                break
 
-    def clear_form(self):
-        for var in self.vars.values():
-            var.set("")
-        self.txt_ocr.delete("1.0", tk.END)
-        self.clear_preview()
+    # ── Navegacion ────────────────────────────────────────────────────────────
 
-    def get_form_data(self):
-        selected = self.tv.selection()
-        if not selected:
-            return None
-        return {
-            "proveedor_nombre": self.vars["proveedor_nombre"].get().strip(),
-            "proveedor_nif": self.vars["proveedor_nif"].get().strip(),
-            "numero_factura": self.vars["numero_factura"].get().strip(),
-            "fecha_factura": self.vars["fecha_factura"].get().strip(),
-            "fecha_operacion": self.vars["fecha_operacion"].get().strip(),
-            "fecha_asiento": self.vars["fecha_asiento"].get().strip(),
-            "descripcion": self.vars["descripcion"].get().strip(),
-            "base_imponible": self._to_float(self.vars["base_imponible"].get()),
-            "cuota_iva": self._to_float(self.vars["cuota_iva"].get()),
-            "cuota_recargo": self._to_float(self.vars["cuota_recargo"].get()),
-            "cuota_retencion": self._to_float(self.vars["cuota_retencion"].get()),
-            "total": self._to_float(self.vars["total"].get()),
-            "cuenta_gasto": self.vars["cuenta_gasto"].get().strip(),
-            "cuenta_iva": self.vars["cuenta_iva"].get().strip(),
-            "cuenta_proveedor": self.vars["cuenta_proveedor"].get().strip(),
-            "estado_ocr": self.vars["estado_ocr"].get().strip(),
-            "estado_validacion": self.vars["estado_validacion"].get().strip(),
-            "texto_ocr": self.txt_ocr.get("1.0", tk.END).strip(),
-        }
+    def switch_to_bandeja(self, estado: str):
+        for idx, (est, _) in enumerate(BANDEJAS):
+            if est == estado:
+                self.nb.select(idx)
+                break
 
-    def get_selected_document_ids(self):
-        return [str(x) for x in self.tv.selection()]
+    def _current_estado(self) -> str:
+        try:
+            idx = self.nb.index(self.nb.select())
+            return BANDEJAS[idx][0]
+        except Exception:
+            return "procesando"
+
+    def _on_tab_changed(self, _e):
+        estado = self._current_estado()
+        self.controller.refresh_bandeja(estado)
+
+    # ── Consulta de seleccion ─────────────────────────────────────────────────
+
+    def get_selected_ids(self, estado: str) -> list[str]:
+        tv = self._tvs.get(estado)
+        return list(tv.selection()) if tv else []
+
+    # ── Indicador de estado OCR ───────────────────────────────────────────────
+
+    def set_ocr_running(self, running: bool, message: str = ""):
+        self._lbl_status.configure(text=message if running else "")
+
+    # ── Dialogos ─────────────────────────────────────────────────────────────
 
     def ask_open_document_paths(self):
         return filedialog.askopenfilenames(
@@ -205,7 +219,7 @@ class UIOcrFacturas(ttk.Frame):
             ],
         )
 
-    def ask_save_path(self, initialfile):
+    def ask_save_path(self, initialfile: str):
         return filedialog.asksaveasfilename(
             title="Guardar fichero suenlace.dat",
             defaultextension=".dat",
@@ -213,68 +227,14 @@ class UIOcrFacturas(ttk.Frame):
             filetypes=[("Ficheros DAT", "*.dat")],
         )
 
-    def ask_yes_no(self, title, message):
+    def ask_yes_no(self, title: str, message: str) -> bool:
         return messagebox.askyesno(title, message)
 
-    def show_info(self, title, message):
+    def show_info(self, title: str, message: str):
         messagebox.showinfo(title, message)
 
-    def show_warning(self, title, message):
+    def show_warning(self, title: str, message: str):
         messagebox.showwarning(title, message)
 
-    def show_error(self, title, message):
+    def show_error(self, title: str, message: str):
         messagebox.showerror(title, message)
-
-    def render_preview(self, doc: dict):
-        path = Path(str(doc.get("origen_path") or doc.get("pdf_path") or "").strip())
-        if not path.exists():
-            self.clear_preview("Documento no disponible.")
-            return
-        self.lbl_preview_status.configure(text=path.name)
-        if path.suffix.lower() == ".pdf":
-            self._preview_image = None
-            self.lbl_preview.configure(image="", text="Vista previa PDF no disponible.\nUsa 'Abrir documento'.")
-            return
-        if Image is None or ImageTk is None:
-            self._preview_image = None
-            self.lbl_preview.configure(image="", text="Vista previa de imagen no disponible en este entorno.")
-            return
-        try:
-            img = Image.open(path)
-            img.thumbnail((420, 260))
-            self._preview_image = ImageTk.PhotoImage(img)
-            self.lbl_preview.configure(image=self._preview_image, text="")
-        except Exception:
-            self._preview_image = None
-            self.lbl_preview.configure(image="", text="No se pudo generar la vista previa.")
-
-    def clear_preview(self, message: str = "Sin documento seleccionado"):
-        self._preview_image = None
-        self.lbl_preview_status.configure(text=message)
-        self.lbl_preview.configure(image="", text="")
-
-    def _on_select(self):
-        if self._suspend_select_event:
-            return
-        sel = self.tv.selection()
-        if sel:
-            if self._pending_select_after is not None:
-                try:
-                    self.after_cancel(self._pending_select_after)
-                except Exception:
-                    pass
-            doc_id = str(sel[0])
-            self._pending_select_after = self.after_idle(lambda did=doc_id: self._dispatch_select(did))
-
-    def _dispatch_select(self, doc_id: str):
-        self._pending_select_after = None
-        self.controller.select_document(doc_id)
-
-    def _to_float(self, value: str) -> float:
-        txt = str(value or "").strip().replace(".", "").replace(",", ".")
-        if not txt:
-            return 0.0
-        try:
-            return round(float(txt), 2)
-        except Exception:
-            return 0.0

@@ -671,6 +671,60 @@ def _deducir_digitos_plan(plan_cuentas: list[dict]) -> int:
     return max_len
 
 
+def _filtrar_plan_cuentas_por_digitos(plan_cuentas: list[dict], ndig: int) -> list[dict]:
+    """Conserva cuentas hoja y las normaliza al nivel exacto del plan.
+
+    El fichero CU de A3 no siempre guarda las subcuentas con todos los digitos
+    del plan. Es habitual encontrar niveles compactos como `4300`, `140000`
+    o `1000000`. Para Gest2A3Eco interesan las cuentas hoja del plan y deben
+    verse al ancho exacto del plan de la empresa.
+
+    Regla aplicada:
+    - se eliminan cuentas vacias/no numericas;
+    - se descartan cuentas padre si existe otra mas larga que empiece por ellas;
+    - las cuentas hoja resultantes se rellenan con ceros a la derecha hasta
+      `ndig`;
+    - si alguna excede `ndig`, se ignora por seguridad.
+    """
+    if ndig <= 0:
+        return []
+
+    cleaned: list[dict] = []
+    for item in plan_cuentas or []:
+        cuenta = "".join(ch for ch in str(item.get("cuenta") or "").strip() if ch.isdigit())
+        if not cuenta:
+            continue
+        cleaned.append({
+            "cuenta": cuenta,
+            "descripcion": str(item.get("descripcion") or "").strip(),
+        })
+
+    raw_codes = sorted({item["cuenta"] for item in cleaned}, key=lambda x: (len(x), x))
+    leaf_codes = {
+        code for code in raw_codes
+        if not any(other != code and other.startswith(code) for other in raw_codes)
+    }
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for item in cleaned:
+        cuenta = item["cuenta"]
+        if cuenta not in leaf_codes:
+            continue
+        if len(cuenta) > ndig:
+            continue
+        cuenta_norm = cuenta.ljust(ndig, "0")
+        if cuenta_norm in seen:
+            continue
+        seen.add(cuenta_norm)
+        out.append({
+            "cuenta": cuenta_norm,
+            "descripcion": item["descripcion"],
+        })
+    out.sort(key=lambda x: (int(x["cuenta"]), x["cuenta"]))
+    return out
+
+
 def _parse_var_company_data(var_path: Path) -> dict:
     blocks = _read_var_blocks(var_path)
     emp = _block_by_tag(blocks, "EMP")
@@ -847,7 +901,7 @@ def listar_empresas_a3() -> list[dict]:
     return empresas
 
 
-def importar_empresa_desde_a3(codigo: str) -> dict:
+def importar_empresa_desde_a3(codigo: str, digitos_plan_objetivo: int | None = None) -> dict:
     codigo_norm = _clean_code(codigo)
     codigo_a3 = f"E{codigo_norm}"
 
@@ -875,7 +929,8 @@ def importar_empresa_desde_a3(codigo: str) -> dict:
 
     # 2. Ficheros binarios por empresa: CU (plan de cuentas) y datos de respaldo
     company_dirs = [path for path in _candidate_dirs(codigo_norm) if path.exists()]
-    cu_path = _find_best_cu_path(codigo_norm) or _find_latest_cu_path(codigo_norm)
+    # Priorizamos el CU del ultimo ejercicio abierto/modificado en A3.
+    cu_path = _find_latest_cu_path(codigo_norm) or _find_best_cu_path(codigo_norm)
     var_path = next((path for path in _candidate_var_paths(codigo_norm) if path.exists()), None)
     em_path = next((path for path in _candidate_em_paths(codigo_norm) if path.exists()), None)
     dashboard_path = next((path for path in _candidate_dashboard_paths(codigo_norm) if path.exists()), None)
@@ -893,8 +948,10 @@ def importar_empresa_desde_a3(codigo: str) -> dict:
         raise ValueError(f"No se ha encontrado la empresa {codigo_a3} en A3.")
 
     # 3. Plan de cuentas desde fichero CU binario
-    plan_cuentas = _leer_plan_cuentas_binario(cu_path) if cu_path else []
-    digitos_plan = _deducir_digitos_plan(plan_cuentas)
+    plan_cuentas_raw = _leer_plan_cuentas_binario(cu_path) if cu_path else []
+    digitos_detectados = _deducir_digitos_plan(plan_cuentas_raw)
+    digitos_plan = int(digitos_plan_objetivo or digitos_detectados or 8)
+    plan_cuentas = _filtrar_plan_cuentas_por_digitos(plan_cuentas_raw, digitos_plan)
 
     # 4. Fuentes de respaldo: VAR y cabecera de la ficha DAT
     text = _read_header_text(data_path) if data_path else ""
@@ -942,7 +999,10 @@ def importar_empresa_desde_a3(codigo: str) -> dict:
     if dashboard_path:
         detalle.append(f"Cuadro de mando A3: {dashboard_path}")
     if cu_path:
-        detalle.append(f"Plan de cuentas CU ({len(plan_cuentas)} cuentas): {cu_path}")
+        detalle.append(
+            f"Plan de cuentas CU ({len(plan_cuentas)} subcuentas de {digitos_plan} digitos"
+            f" de {len(plan_cuentas_raw)} cuentas leidas): {cu_path}"
+        )
     if var_path:
         detalle.append(f"Ficha empresa VAR: {var_path}")
     if em_path:

@@ -33,24 +33,75 @@ def build_terceros_by_nif(gestor, codigo: str, ejercicio: int) -> dict[str, dict
 
 
 def doc_to_row(doc: dict) -> dict:
+    """Convierte un doc en una unica fila (sin lineas fiscales multi-tramo)."""
     return {
-        "Fecha Asiento": doc.get("fecha_asiento") or doc.get("fecha_factura"),
-        "Fecha Expedicion": doc.get("fecha_factura"),
-        "Fecha Operacion": doc.get("fecha_operacion") or doc.get("fecha_factura"),
-        "Descripcion Factura": doc.get("descripcion") or f"Factura {doc.get('numero_factura') or ''}".strip(),
-        "Numero Factura": doc.get("numero_factura"),
-        "NIF Cliente Proveedor": doc.get("proveedor_nif"),
-        "Nombre Cliente Proveedor": doc.get("proveedor_nombre"),
-        "Base": doc.get("base_imponible") or 0.0,
-        "Cuota IVA": doc.get("cuota_iva") or 0.0,
+        "Fecha Asiento":             doc.get("fecha_asiento") or doc.get("fecha_factura"),
+        "Fecha Expedicion":          doc.get("fecha_factura"),
+        "Fecha Operacion":           doc.get("fecha_operacion") or doc.get("fecha_factura"),
+        "Descripcion Factura":       doc.get("descripcion") or f"Factura {doc.get('numero_factura') or ''}".strip(),
+        "Numero Factura":            doc.get("numero_factura"),
+        "NIF Cliente Proveedor":     doc.get("proveedor_nif"),
+        "Nombre Cliente Proveedor":  doc.get("proveedor_nombre"),
+        "Base":                      doc.get("base_imponible") or 0.0,
+        "Cuota IVA":                 doc.get("cuota_iva") or 0.0,
         "Cuota Recargo Equivalencia": doc.get("cuota_recargo") or 0.0,
-        "Cuota Retencion IRPF": doc.get("cuota_retencion") or 0.0,
-        "Total": doc.get("total") or 0.0,
-        "_cuenta_tercero_override": doc.get("cuenta_proveedor") or "",
-        "_cuenta_py_gv_override": doc.get("cuenta_gasto") or "",
-        "_cuenta_iva_override": doc.get("cuenta_iva") or "",
-        "_pdf_ref": doc.get("id"),
+        "Cuota Retencion IRPF":      doc.get("cuota_retencion") or 0.0,
+        "Total":                     doc.get("total") or 0.0,
+        "_cuenta_tercero_override":  doc.get("cuenta_proveedor") or "",
+        "_cuenta_py_gv_override":    doc.get("cuenta_gasto") or "",
+        "_cuenta_iva_override":      doc.get("cuenta_iva") or "",
+        "_pdf_ref":                  doc.get("id"),
     }
+
+
+def doc_to_rows(doc: dict, lineas: list[dict] | None = None) -> list[dict]:
+    """Expande un doc en una fila por tramo fiscal (multi-base IVA).
+
+    Si 'lineas' esta vacia o no se proporciona, devuelve [doc_to_row(doc)]
+    para mantener compatibilidad con documentos sin lineas fiscales detalladas.
+
+    Los campos comunes (fechas, NIF, descripcion, cuentas override) se replican
+    en cada fila; solo los importes y porcentajes vienen de cada linea.
+    """
+    _lineas = [
+        ln for ln in (lineas or [])
+        if (ln.get("base_imponible") or ln.get("cuota_iva")
+            or ln.get("cuota_recargo") or ln.get("cuota_retencion"))
+    ]
+    if not _lineas:
+        return [doc_to_row(doc)]
+
+    base_row = {
+        "Fecha Asiento":             doc.get("fecha_asiento") or doc.get("fecha_factura"),
+        "Fecha Expedicion":          doc.get("fecha_factura"),
+        "Fecha Operacion":           doc.get("fecha_operacion") or doc.get("fecha_factura"),
+        "Descripcion Factura":       doc.get("descripcion") or f"Factura {doc.get('numero_factura') or ''}".strip(),
+        "Numero Factura":            doc.get("numero_factura"),
+        "NIF Cliente Proveedor":     doc.get("proveedor_nif"),
+        "Nombre Cliente Proveedor":  doc.get("proveedor_nombre"),
+        "_cuenta_tercero_override":  doc.get("cuenta_proveedor") or "",
+        "_cuenta_py_gv_override":    doc.get("cuenta_gasto") or "",
+        "_cuenta_iva_override":      doc.get("cuenta_iva") or "",
+        "_pdf_ref":                  doc.get("id"),
+    }
+
+    rows = []
+    for linea in _lineas:
+        row = dict(base_row)
+        row["Base"]                        = linea.get("base_imponible") or 0.0
+        row["Porcentaje IVA"]              = linea.get("tipo_iva") or 0.0
+        row["Cuota IVA"]                   = linea.get("cuota_iva") or 0.0
+        row["Porcentaje Recargo Equivalencia"] = linea.get("tipo_recargo") or 0.0
+        row["Cuota Recargo Equivalencia"]  = linea.get("cuota_recargo") or 0.0
+        row["Porcentaje Retencion IRPF"]   = linea.get("tipo_retencion") or 0.0
+        row["Cuota Retencion IRPF"]        = linea.get("cuota_retencion") or 0.0
+        # Cuentas contables a nivel de linea (opcionales)
+        if linea.get("cuenta_base"):
+            row["Cuenta Compras Ventas"] = linea["cuenta_base"]
+        if linea.get("cuenta_iva"):
+            row["_cuenta_iva_override"] = linea["cuenta_iva"]
+        rows.append(row)
+    return rows
 
 
 def generate_suenlace_for_docs(gestor, codigo: str, ejercicio: int, docs: list[dict]) -> list[str]:
@@ -60,7 +111,17 @@ def generate_suenlace_for_docs(gestor, codigo: str, ejercicio: int, docs: list[d
     empresa = gestor.get_empresa(codigo, ejercicio) or {}
     ndig = int(empresa.get("digitos_plan") or 8)
     terceros_by_nif = build_terceros_by_nif(gestor, codigo, ejercicio)
-    rows = [doc_to_row(doc) for doc in docs]
+
+    rows: list[dict] = []
+    for doc in docs:
+        # Cargar lineas fiscales desde DB si el doc no las trae ya en memoria
+        lineas = doc.get("lineas") or []
+        if not lineas:
+            doc_id = doc.get("id")
+            if doc_id:
+                lineas = gestor.listar_ocr_lineas_doc(str(doc_id)) or []
+        rows.extend(doc_to_rows(doc, lineas))
+
     return generar_recibidas_suenlace(
         rows,
         plantilla,

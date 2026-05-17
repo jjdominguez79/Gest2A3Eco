@@ -402,6 +402,7 @@ class GestorSQLite:
         self.conn.row_factory = sqlite3.Row
         self._init_schema()
         self._migrate_terceros_global()
+        self._migrate_maestro_subcuentas()
         if json_seed:
             self._maybe_seed_from_json(json_seed)
 
@@ -512,6 +513,127 @@ class GestorSQLite:
         )
         self.conn.commit()
         self._migrate_series_emitidas()
+        # Fase 1: campos nuevos en facturas_recibidas_docs
+        self._ensure_column("facturas_recibidas_docs", "tipo_documento", "TEXT")
+        self._ensure_column("facturas_recibidas_docs", "tipo_operacion", "TEXT")
+        self._ensure_column("facturas_recibidas_docs", "fecha_vencimiento", "TEXT")
+        self._ensure_column("facturas_recibidas_docs", "fecha_contabilizacion", "TEXT")
+        self._ensure_column("facturas_recibidas_docs", "fecha_ocr", "TEXT")
+        self._ensure_column("facturas_recibidas_docs", "fecha_validacion", "TEXT")
+        self._ensure_column("facturas_recibidas_docs", "lote_generacion", "TEXT")
+        self._ensure_column("facturas_recibidas_docs", "error_mensaje", "TEXT")
+        self.conn.commit()
+        # Fase 1: tabla de líneas fiscales OCR
+        self.conn.executescript(
+            "CREATE TABLE IF NOT EXISTS ocr_lineas_fiscales ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  doc_id TEXT NOT NULL,"
+            "  orden INTEGER NOT NULL DEFAULT 0,"
+            "  tipo_iva REAL,"
+            "  base_imponible REAL,"
+            "  cuota_iva REAL,"
+            "  tipo_recargo REAL,"
+            "  cuota_recargo REAL,"
+            "  tipo_retencion REAL,"
+            "  cuota_retencion REAL,"
+            "  cuenta_base TEXT,"
+            "  cuenta_iva TEXT,"
+            "  cuenta_retencion TEXT,"
+            "  tipo_operacion_linea TEXT,"
+            "  FOREIGN KEY (doc_id) REFERENCES facturas_recibidas_docs(id) ON DELETE CASCADE"
+            ");"
+            "CREATE INDEX IF NOT EXISTS idx_ocr_lineas_fiscales_doc"
+            "  ON ocr_lineas_fiscales(doc_id, orden);"
+        )
+        self.conn.commit()
+        # ── Fase 2: columnas nuevas en terceros (maestro global enriquecido) ──────
+        self._ensure_column("terceros", "nif_normalizado", "TEXT")
+        self._ensure_column("terceros", "nombre_legal", "TEXT")
+        self._ensure_column("terceros", "nombre_comercial", "TEXT")
+        self._ensure_column("terceros", "tipo_identificacion", "TEXT")
+        self._ensure_column("terceros", "pais", "TEXT")
+        self._ensure_column("terceros", "codigo_postal", "TEXT")
+        self._ensure_column("terceros", "observaciones", "TEXT")
+        self._ensure_column("terceros", "origen", "TEXT")
+        self._ensure_column("terceros", "activo", "INTEGER")
+        self._ensure_column("terceros", "fecha_creacion", "TEXT")
+        self._ensure_column("terceros", "fecha_actualizacion", "TEXT")
+        self.conn.execute(
+            "UPDATE terceros SET nombre_legal=nombre WHERE nombre_legal IS NULL AND nombre IS NOT NULL"
+        )
+        self.conn.execute(
+            "UPDATE terceros SET nif_normalizado=UPPER(REPLACE(REPLACE(nif,'-',''),' ',''))"
+            " WHERE nif_normalizado IS NULL AND nif IS NOT NULL AND TRIM(nif)!=''"
+        )
+        self.conn.execute("UPDATE terceros SET activo=1 WHERE activo IS NULL")
+        self.conn.execute("UPDATE terceros SET pais='ES' WHERE pais IS NULL")
+        self.conn.commit()
+        # ── Fase 2: columnas nuevas en ocr_lineas_fiscales ────────────────────────
+        self._ensure_column("ocr_lineas_fiscales", "cuota_iva_manual", "INTEGER")
+        self._ensure_column("ocr_lineas_fiscales", "cuota_recargo_manual", "INTEGER")
+        self._ensure_column("ocr_lineas_fiscales", "subcuenta_base_id", "TEXT")
+        self._ensure_column("ocr_lineas_fiscales", "subcuenta_iva_id", "TEXT")
+        self._ensure_column("ocr_lineas_fiscales", "subcuenta_recargo_id", "TEXT")
+        self._ensure_column("ocr_lineas_fiscales", "observaciones", "TEXT")
+        # ── Fase 2: columnas nuevas en plan_cuentas ───────────────────────────────
+        self._ensure_column("plan_cuentas", "tipo_cuenta", "TEXT")
+        self._ensure_column("plan_cuentas", "tercero_id", "TEXT")
+        self._ensure_column("plan_cuentas", "pendiente_alta_a3", "INTEGER")
+        self._ensure_column("plan_cuentas", "origen_cuenta", "TEXT")
+        self._ensure_column("plan_cuentas", "activo", "INTEGER")
+        self.conn.commit()
+        # ── Fase 2: tabla maestro_subcuentas_empresa ──────────────────────────────
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS maestro_subcuentas_empresa (
+                id                                INTEGER PRIMARY KEY AUTOINCREMENT,
+                codigo_empresa                    TEXT NOT NULL,
+                tercero_id                        TEXT,
+                subcuenta                         TEXT NOT NULL,
+                nombre_subcuenta                  TEXT,
+                tipo_subcuenta                    TEXT,
+                tipo_operacion_predeterminada     TEXT,
+                cuenta_gasto_predeterminada_id    TEXT,
+                cuenta_ingreso_predeterminada_id  TEXT,
+                cuenta_iva_predeterminada_id      TEXT,
+                cuenta_retencion_predeterminada_id TEXT,
+                nif_snapshot                      TEXT,
+                activo                            INTEGER NOT NULL DEFAULT 1,
+                origen                            TEXT DEFAULT 'manual',
+                fecha_importacion                 TEXT,
+                creado_en_gest2a3eco              INTEGER NOT NULL DEFAULT 0,
+                pendiente_alta_a3                 INTEGER NOT NULL DEFAULT 0,
+                fecha_alta_a3                     TEXT,
+                lote_alta_a3                      TEXT,
+                observaciones                     TEXT,
+                created_at                        TEXT,
+                updated_at                        TEXT,
+                UNIQUE(codigo_empresa, subcuenta)
+            );
+            CREATE INDEX IF NOT EXISTS idx_mse_empresa_tercero
+                ON maestro_subcuentas_empresa(codigo_empresa, tercero_id);
+            CREATE INDEX IF NOT EXISTS idx_mse_empresa_tipo
+                ON maestro_subcuentas_empresa(codigo_empresa, tipo_subcuenta);
+            CREATE INDEX IF NOT EXISTS idx_mse_empresa_nif
+                ON maestro_subcuentas_empresa(codigo_empresa, nif_snapshot);
+        """)
+        self.conn.commit()
+        # ── Fase 2: tabla retenciones por documento OCR ───────────────────────────
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS captura_documental_retenciones (
+                id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+                documento_id           TEXT NOT NULL,
+                base_retencion         REAL NOT NULL DEFAULT 0.0,
+                tipo_retencion         REAL NOT NULL DEFAULT 0.0,
+                cuota_retencion        REAL NOT NULL DEFAULT 0.0,
+                cuota_retencion_manual INTEGER NOT NULL DEFAULT 0,
+                tipo_retencion_fiscal  TEXT,
+                subcuenta_retencion_id TEXT,
+                observaciones          TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_cdr_documento
+                ON captura_documental_retenciones(documento_id);
+        """)
+        self.conn.commit()
 
     def _ensure_column(self, table: str, column: str, col_type: str):
         cur = self.conn.execute(f"PRAGMA table_info({table})")
@@ -672,6 +794,44 @@ class GestorSQLite:
                 "DELETE FROM terceros_empresas WHERE codigo_empresa=? AND tercero_id=? AND ejercicio<>0",
                 (codigo, tid),
             )
+        self.conn.commit()
+
+    def _migrate_maestro_subcuentas(self):
+        """Puebla maestro_subcuentas_empresa desde terceros_empresas (idempotente via INSERT OR IGNORE)."""
+        try:
+            rows = self.conn.execute(
+                """SELECT te.codigo_empresa, te.tercero_id,
+                          te.subcuenta_cliente, te.subcuenta_proveedor,
+                          te.subcuenta_ingreso, te.subcuenta_gasto,
+                          t.nif, t.nombre
+                   FROM terceros_empresas te
+                   LEFT JOIN terceros t ON t.id = te.tercero_id
+                   WHERE te.ejercicio = 0"""
+            ).fetchall()
+        except Exception:
+            return
+        now = self._utc_now()
+        campo_tipo = {
+            "subcuenta_proveedor": "proveedor",
+            "subcuenta_cliente": "cliente",
+            "subcuenta_ingreso": "ingreso",
+            "subcuenta_gasto": "gasto",
+        }
+        for r in rows:
+            for campo, tipo in campo_tipo.items():
+                subcuenta = r[campo]
+                if not subcuenta or not str(subcuenta).strip():
+                    continue
+                nif = r["nif"] or ""
+                nif_norm = nif.upper().replace("-", "").replace(" ", "") if nif else ""
+                self.conn.execute(
+                    """INSERT OR IGNORE INTO maestro_subcuentas_empresa
+                       (codigo_empresa, tercero_id, subcuenta, nombre_subcuenta, tipo_subcuenta,
+                        nif_snapshot, activo, origen, creado_en_gest2a3eco, created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,1,'importacion_a3',0,?,?)""",
+                    (r["codigo_empresa"], r["tercero_id"], str(subcuenta).strip(),
+                     r["nombre"], tipo, nif_norm, now, now),
+                )
         self.conn.commit()
 
     def _maybe_seed_from_json(self, json_seed):
@@ -930,6 +1090,15 @@ class GestorSQLite:
         )
         return [dict(r) for r in cur.fetchall()]
 
+    def buscar_cuentas_en_plan(self, codigo_empresa: str, ejercicio: int, prefijo: str) -> list[str]:
+        """Devuelve cuentas del plan que empiezan por 'prefijo'. Util para propuesta de subcuenta."""
+        eje = _ej_val(ejercicio)
+        cur = self.conn.execute(
+            "SELECT cuenta FROM plan_cuentas WHERE codigo_empresa=? AND ejercicio=? AND cuenta LIKE ?",
+            (codigo_empresa, eje, prefijo + "%"),
+        )
+        return [r[0] for r in cur.fetchall()]
+
     def get_plan_cuentas_con_terceros(self, codigo_empresa: str, ejercicio: int) -> list[dict]:
         """
         Devuelve las subcuentas (≥4 dígitos) del plan de cuentas junto con el nombre
@@ -979,9 +1148,11 @@ class GestorSQLite:
     def reemplazar_cuentas_bancarias(self, codigo_empresa: str, ejercicio: int, cuentas: list[dict]) -> int:
         eje = _ej_val(ejercicio)
         now = self._utc_now()
+        # Borra TODOS los registros de la empresa (cualquier ejercicio) antes de insertar
+        # para evitar que registros en otros ejercicios reaparezcan tras un borrado
         self.conn.execute(
-            "DELETE FROM cuentas_bancarias WHERE codigo_empresa=? AND ejercicio=?",
-            (codigo_empresa, eje),
+            "DELETE FROM cuentas_bancarias WHERE codigo_empresa=?",
+            (codigo_empresa,),
         )
         inserted = 0
         for idx, cuenta in enumerate(cuentas or []):
@@ -1626,6 +1797,38 @@ class GestorSQLite:
         )
         return [self._row_to_factura_recibida_doc(r) for r in cur.fetchall()]
 
+    def listar_facturas_recibidas_docs_filtrado(self, codigo_empresa: str, ejercicio: int, estado: str | None = None):
+        """Devuelve documentos OCR filtrados por estado compuesto (bandeja).
+
+        estado puede ser:
+          'procesando'            -> estado_ocr IN ('pendiente', 'procesando')
+          'error'                 -> estado_ocr = 'error'
+          'pendiente_revision'    -> estado_ocr = 'procesado' AND estado_validacion = 'pendiente'
+          'pendiente_contabilizar'-> estado_validacion = 'validada' AND estado_contable = 'pendiente_contabilizar'
+          'contabilizada'         -> estado_contable = 'contabilizada'
+          None                    -> todos
+        """
+        base_sql = """
+            SELECT d.*, a.id AS asiento_id, a.estado AS asiento_estado, a.total_debe, a.total_haber
+            FROM facturas_recibidas_docs d
+            LEFT JOIN asientos_contables a ON a.documento_id = d.id
+            WHERE d.codigo_empresa=? AND d.ejercicio=?
+        """
+        params: list = [codigo_empresa, _ej_val(ejercicio)]
+        if estado == "procesando":
+            base_sql += " AND d.estado_ocr IN ('pendiente', 'procesando')"
+        elif estado == "error":
+            base_sql += " AND d.estado_ocr = 'error'"
+        elif estado == "pendiente_revision":
+            base_sql += " AND d.estado_ocr = 'procesado' AND (d.estado_validacion IS NULL OR d.estado_validacion = 'pendiente')"
+        elif estado == "pendiente_contabilizar":
+            base_sql += " AND d.estado_validacion = 'validada' AND d.estado_contable = 'pendiente_contabilizar'"
+        elif estado == "contabilizada":
+            base_sql += " AND d.estado_contable = 'contabilizada'"
+        base_sql += " ORDER BY d.updated_at DESC"
+        cur = self.conn.execute(base_sql, params)
+        return [self._row_to_factura_recibida_doc(r) for r in cur.fetchall()]
+
     def get_factura_recibida_doc(self, doc_id: str):
         cur = self.conn.execute(
             """
@@ -1649,8 +1852,10 @@ class GestorSQLite:
              estado_contable, proveedor_nif, proveedor_nombre, numero_factura, fecha_factura, fecha_operacion, fecha_asiento,
              descripcion, moneda_codigo, base_imponible, cuota_iva, cuota_recargo, cuota_retencion, total, cuenta_gasto,
              cuenta_iva, cuenta_proveedor, pdf_ref, numero_asiento, generada, fecha_generacion, confianza_ocr, datos_extra_json,
-             lineas_json, created_at, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             lineas_json, tipo_documento, tipo_operacion, fecha_vencimiento, fecha_contabilizacion,
+             fecha_ocr, fecha_validacion, lote_generacion, error_mensaje,
+             created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -1684,6 +1889,14 @@ class GestorSQLite:
                 confianza_ocr=excluded.confianza_ocr,
                 datos_extra_json=excluded.datos_extra_json,
                 lineas_json=excluded.lineas_json,
+                tipo_documento=excluded.tipo_documento,
+                tipo_operacion=excluded.tipo_operacion,
+                fecha_vencimiento=excluded.fecha_vencimiento,
+                fecha_contabilizacion=excluded.fecha_contabilizacion,
+                fecha_ocr=excluded.fecha_ocr,
+                fecha_validacion=excluded.fecha_validacion,
+                lote_generacion=excluded.lote_generacion,
+                error_mensaje=excluded.error_mensaje,
                 updated_at=excluded.updated_at
             """,
             (
@@ -1720,6 +1933,14 @@ class GestorSQLite:
                 doc.get("confianza_ocr"),
                 json.dumps(doc.get("datos_extra") or {}, ensure_ascii=False),
                 json.dumps(doc.get("lineas") or [], ensure_ascii=False),
+                doc.get("tipo_documento") or "factura_recibida",
+                doc.get("tipo_operacion") or "interior",
+                doc.get("fecha_vencimiento"),
+                doc.get("fecha_contabilizacion"),
+                doc.get("fecha_ocr"),
+                doc.get("fecha_validacion"),
+                doc.get("lote_generacion"),
+                doc.get("error_mensaje"),
                 doc.get("created_at") or now,
                 now,
             ),
@@ -1729,6 +1950,109 @@ class GestorSQLite:
 
     def eliminar_factura_recibida_doc(self, doc_id: str):
         self.conn.execute("DELETE FROM facturas_recibidas_docs WHERE id=?", (str(doc_id),))
+        self.conn.commit()
+
+    # ---------- LÍNEAS FISCALES OCR ----------
+
+    def listar_ocr_lineas_doc(self, doc_id: str) -> list[dict]:
+        cur = self.conn.execute(
+            "SELECT * FROM ocr_lineas_fiscales WHERE doc_id=? ORDER BY orden",
+            (str(doc_id),),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    def upsert_ocr_linea(self, linea: dict) -> int:
+        linea_id = linea.get("id")
+        if linea_id:
+            self.conn.execute(
+                """
+                UPDATE ocr_lineas_fiscales SET
+                    orden=?, tipo_iva=?, base_imponible=?, cuota_iva=?,
+                    tipo_recargo=?, cuota_recargo=?, tipo_retencion=?, cuota_retencion=?,
+                    cuenta_base=?, cuenta_iva=?, cuenta_retencion=?, tipo_operacion_linea=?
+                WHERE id=?
+                """,
+                (
+                    linea.get("orden", 0),
+                    linea.get("tipo_iva"),
+                    linea.get("base_imponible"),
+                    linea.get("cuota_iva"),
+                    linea.get("tipo_recargo"),
+                    linea.get("cuota_recargo"),
+                    linea.get("tipo_retencion"),
+                    linea.get("cuota_retencion"),
+                    linea.get("cuenta_base"),
+                    linea.get("cuenta_iva"),
+                    linea.get("cuenta_retencion"),
+                    linea.get("tipo_operacion_linea"),
+                    linea_id,
+                ),
+            )
+            self.conn.commit()
+            return linea_id
+        cur = self.conn.execute(
+            """
+            INSERT INTO ocr_lineas_fiscales
+            (doc_id, orden, tipo_iva, base_imponible, cuota_iva,
+             tipo_recargo, cuota_recargo, tipo_retencion, cuota_retencion,
+             cuenta_base, cuenta_iva, cuenta_retencion, tipo_operacion_linea)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                str(linea["doc_id"]),
+                linea.get("orden", 0),
+                linea.get("tipo_iva"),
+                linea.get("base_imponible"),
+                linea.get("cuota_iva"),
+                linea.get("tipo_recargo"),
+                linea.get("cuota_recargo"),
+                linea.get("tipo_retencion"),
+                linea.get("cuota_retencion"),
+                linea.get("cuenta_base"),
+                linea.get("cuenta_iva"),
+                linea.get("cuenta_retencion"),
+                linea.get("tipo_operacion_linea"),
+            ),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def eliminar_ocr_linea(self, linea_id: int):
+        self.conn.execute("DELETE FROM ocr_lineas_fiscales WHERE id=?", (linea_id,))
+        self.conn.commit()
+
+    def reemplazar_ocr_lineas_doc(self, doc_id: str, lineas: list[dict]):
+        """Borra todas las líneas del documento y las reinserta en orden."""
+        self.conn.execute("DELETE FROM ocr_lineas_fiscales WHERE doc_id=?", (str(doc_id),))
+        for idx, linea in enumerate(lineas):
+            linea = dict(linea)
+            linea.pop("id", None)
+            linea["doc_id"] = str(doc_id)
+            linea["orden"] = idx
+            self.conn.execute(
+                """
+                INSERT INTO ocr_lineas_fiscales
+                (doc_id, orden, tipo_iva, base_imponible, cuota_iva,
+                 tipo_recargo, cuota_recargo, tipo_retencion, cuota_retencion,
+                 cuenta_base, cuenta_iva, cuenta_retencion, tipo_operacion_linea)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    linea["doc_id"],
+                    linea["orden"],
+                    linea.get("tipo_iva"),
+                    linea.get("base_imponible"),
+                    linea.get("cuota_iva"),
+                    linea.get("tipo_recargo"),
+                    linea.get("cuota_recargo"),
+                    linea.get("tipo_retencion"),
+                    linea.get("cuota_retencion"),
+                    linea.get("cuenta_base"),
+                    linea.get("cuenta_iva"),
+                    linea.get("cuenta_retencion"),
+                    linea.get("tipo_operacion_linea"),
+                ),
+            )
         self.conn.commit()
 
     def get_asiento_contable_por_documento(self, documento_id: str):
@@ -2515,4 +2839,227 @@ class GestorSQLite:
             """,
             (int(user_id), str(codigo_empresa), str(permiso), now, now),
         )
+        self.conn.commit()
+
+    # ── Fase 2: MAESTRO SUBCUENTAS EMPRESA ───────────────────────────────────────
+
+    def upsert_maestro_subcuenta(self, datos: dict) -> int:
+        """Inserta o actualiza una subcuenta en el maestro. Devuelve el id."""
+        now = self._utc_now()
+        sub_id = datos.get("id")
+        if sub_id:
+            self.conn.execute(
+                """UPDATE maestro_subcuentas_empresa SET
+                       tercero_id=?, nombre_subcuenta=?, tipo_subcuenta=?,
+                       tipo_operacion_predeterminada=?,
+                       cuenta_gasto_predeterminada_id=?,
+                       cuenta_ingreso_predeterminada_id=?,
+                       cuenta_iva_predeterminada_id=?,
+                       cuenta_retencion_predeterminada_id=?,
+                       nif_snapshot=?, activo=?, origen=?,
+                       pendiente_alta_a3=?, lote_alta_a3=?,
+                       fecha_alta_a3=?, observaciones=?, updated_at=?
+                   WHERE id=?""",
+                (
+                    datos.get("tercero_id"), datos.get("nombre_subcuenta"),
+                    datos.get("tipo_subcuenta"),
+                    datos.get("tipo_operacion_predeterminada"),
+                    datos.get("cuenta_gasto_predeterminada_id"),
+                    datos.get("cuenta_ingreso_predeterminada_id"),
+                    datos.get("cuenta_iva_predeterminada_id"),
+                    datos.get("cuenta_retencion_predeterminada_id"),
+                    datos.get("nif_snapshot"),
+                    int(datos.get("activo", 1)),
+                    datos.get("origen", "manual"),
+                    int(datos.get("pendiente_alta_a3", 0)),
+                    datos.get("lote_alta_a3"),
+                    datos.get("fecha_alta_a3"),
+                    datos.get("observaciones"),
+                    now, int(sub_id),
+                ),
+            )
+            self.conn.commit()
+            return int(sub_id)
+        self.conn.execute(
+            """INSERT INTO maestro_subcuentas_empresa
+               (codigo_empresa, tercero_id, subcuenta, nombre_subcuenta, tipo_subcuenta,
+                tipo_operacion_predeterminada, cuenta_gasto_predeterminada_id,
+                cuenta_ingreso_predeterminada_id, cuenta_iva_predeterminada_id,
+                cuenta_retencion_predeterminada_id, nif_snapshot, activo, origen,
+                fecha_importacion, creado_en_gest2a3eco, pendiente_alta_a3,
+                observaciones, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(codigo_empresa, subcuenta) DO UPDATE SET
+                   tercero_id=excluded.tercero_id,
+                   nombre_subcuenta=excluded.nombre_subcuenta,
+                   tipo_subcuenta=excluded.tipo_subcuenta,
+                   tipo_operacion_predeterminada=excluded.tipo_operacion_predeterminada,
+                   cuenta_gasto_predeterminada_id=excluded.cuenta_gasto_predeterminada_id,
+                   cuenta_ingreso_predeterminada_id=excluded.cuenta_ingreso_predeterminada_id,
+                   cuenta_iva_predeterminada_id=excluded.cuenta_iva_predeterminada_id,
+                   cuenta_retencion_predeterminada_id=excluded.cuenta_retencion_predeterminada_id,
+                   nif_snapshot=excluded.nif_snapshot,
+                   activo=excluded.activo,
+                   origen=excluded.origen,
+                   pendiente_alta_a3=excluded.pendiente_alta_a3,
+                   observaciones=excluded.observaciones,
+                   updated_at=excluded.updated_at""",
+            (
+                datos.get("codigo_empresa"), datos.get("tercero_id"),
+                datos.get("subcuenta"), datos.get("nombre_subcuenta"),
+                datos.get("tipo_subcuenta"),
+                datos.get("tipo_operacion_predeterminada"),
+                datos.get("cuenta_gasto_predeterminada_id"),
+                datos.get("cuenta_ingreso_predeterminada_id"),
+                datos.get("cuenta_iva_predeterminada_id"),
+                datos.get("cuenta_retencion_predeterminada_id"),
+                datos.get("nif_snapshot"),
+                int(datos.get("activo", 1)),
+                datos.get("origen", "manual"),
+                datos.get("fecha_importacion"),
+                int(datos.get("creado_en_gest2a3eco", 0)),
+                int(datos.get("pendiente_alta_a3", 0)),
+                datos.get("observaciones"),
+                now, now,
+            ),
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT id FROM maestro_subcuentas_empresa WHERE codigo_empresa=? AND subcuenta=?",
+            (datos.get("codigo_empresa"), datos.get("subcuenta")),
+        ).fetchone()
+        return row[0] if row else None
+
+    def get_maestro_subcuenta_por_subcuenta(self, codigo_empresa: str, subcuenta: str) -> dict | None:
+        cur = self.conn.execute(
+            "SELECT * FROM maestro_subcuentas_empresa WHERE codigo_empresa=? AND subcuenta=?",
+            (str(codigo_empresa), str(subcuenta)),
+        )
+        return self._row_to_dict(cur.fetchone())
+
+    def listar_maestro_subcuentas_empresa(
+        self, codigo_empresa: str, tipo: str | None = None, activo: bool | None = True
+    ) -> list:
+        clauses = ["codigo_empresa=?"]
+        params: list = [str(codigo_empresa)]
+        if tipo:
+            clauses.append("tipo_subcuenta=?")
+            params.append(str(tipo))
+        if activo is not None:
+            clauses.append("activo=?")
+            params.append(1 if activo else 0)
+        where = " AND ".join(clauses)
+        cur = self.conn.execute(
+            f"SELECT * FROM maestro_subcuentas_empresa WHERE {where} ORDER BY subcuenta",
+            params,
+        )
+        return [self._row_to_dict(r) for r in cur.fetchall()]
+
+    def listar_maestro_subcuentas_por_tercero(self, codigo_empresa: str, tercero_id: str) -> list:
+        cur = self.conn.execute(
+            "SELECT * FROM maestro_subcuentas_empresa"
+            " WHERE codigo_empresa=? AND tercero_id=? ORDER BY subcuenta",
+            (str(codigo_empresa), str(tercero_id)),
+        )
+        return [self._row_to_dict(r) for r in cur.fetchall()]
+
+    def listar_maestro_subcuentas_por_nif(self, codigo_empresa: str, nif: str) -> list:
+        nif_norm = nif.upper().replace("-", "").replace(" ", "") if nif else ""
+        cur = self.conn.execute(
+            "SELECT * FROM maestro_subcuentas_empresa"
+            " WHERE codigo_empresa=? AND nif_snapshot=? ORDER BY subcuenta",
+            (str(codigo_empresa), nif_norm),
+        )
+        return [self._row_to_dict(r) for r in cur.fetchall()]
+
+    def marcar_maestro_subcuenta_alta_a3(self, subcuenta_id: int, lote: str | None = None) -> None:
+        now = self._utc_now()
+        self.conn.execute(
+            "UPDATE maestro_subcuentas_empresa"
+            " SET pendiente_alta_a3=0, fecha_alta_a3=?, lote_alta_a3=?, updated_at=? WHERE id=?",
+            (now, lote, now, int(subcuenta_id)),
+        )
+        self.conn.commit()
+
+    def eliminar_maestro_subcuenta(self, subcuenta_id: int) -> None:
+        self.conn.execute(
+            "DELETE FROM maestro_subcuentas_empresa WHERE id=?", (int(subcuenta_id),)
+        )
+        self.conn.commit()
+
+    # ── Fase 2: RETENCIONES DE DOCUMENTO OCR ─────────────────────────────────────
+
+    def upsert_captura_retencion(self, datos: dict) -> int:
+        """Inserta o actualiza una retención de documento OCR. Devuelve el id."""
+        ret_id = datos.get("id")
+        if ret_id:
+            self.conn.execute(
+                """UPDATE captura_documental_retenciones SET
+                       base_retencion=?, tipo_retencion=?, cuota_retencion=?,
+                       cuota_retencion_manual=?, tipo_retencion_fiscal=?,
+                       subcuenta_retencion_id=?, observaciones=?
+                   WHERE id=?""",
+                (
+                    float(datos.get("base_retencion") or 0),
+                    float(datos.get("tipo_retencion") or 0),
+                    float(datos.get("cuota_retencion") or 0),
+                    int(datos.get("cuota_retencion_manual") or 0),
+                    datos.get("tipo_retencion_fiscal"),
+                    datos.get("subcuenta_retencion_id"),
+                    datos.get("observaciones"),
+                    int(ret_id),
+                ),
+            )
+            self.conn.commit()
+            return int(ret_id)
+        self.conn.execute(
+            """INSERT INTO captura_documental_retenciones
+               (documento_id, base_retencion, tipo_retencion, cuota_retencion,
+                cuota_retencion_manual, tipo_retencion_fiscal,
+                subcuenta_retencion_id, observaciones)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (
+                str(datos.get("documento_id", "")),
+                float(datos.get("base_retencion") or 0),
+                float(datos.get("tipo_retencion") or 0),
+                float(datos.get("cuota_retencion") or 0),
+                int(datos.get("cuota_retencion_manual") or 0),
+                datos.get("tipo_retencion_fiscal"),
+                datos.get("subcuenta_retencion_id"),
+                datos.get("observaciones"),
+            ),
+        )
+        self.conn.commit()
+        return self.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+    def listar_captura_retenciones_doc(self, documento_id: str) -> list:
+        cur = self.conn.execute(
+            "SELECT * FROM captura_documental_retenciones WHERE documento_id=?",
+            (str(documento_id),),
+        )
+        return [self._row_to_dict(r) for r in cur.fetchall()]
+
+    def reemplazar_captura_retenciones_doc(self, documento_id: str, retenciones: list) -> None:
+        self.conn.execute(
+            "DELETE FROM captura_documental_retenciones WHERE documento_id=?",
+            (str(documento_id),),
+        )
+        for r in retenciones:
+            self.conn.execute(
+                """INSERT INTO captura_documental_retenciones
+                   (documento_id, base_retencion, tipo_retencion, cuota_retencion,
+                    cuota_retencion_manual, tipo_retencion_fiscal,
+                    subcuenta_retencion_id, observaciones)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (
+                    str(documento_id),
+                    float(r.get("base_retencion") or 0),
+                    float(r.get("tipo_retencion") or 0),
+                    float(r.get("cuota_retencion") or 0),
+                    int(r.get("cuota_retencion_manual") or 0),
+                    r.get("tipo_retencion_fiscal"),
+                    r.get("subcuenta_retencion_id"),
+                    r.get("observaciones"),
+                ),
+            )
         self.conn.commit()

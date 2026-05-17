@@ -23,13 +23,14 @@ class UIDashboardEmpresa(ttk.Frame):
 
     # Nav items: (key, unicode_icon, label, cb_key)
     _NAV = [
-        ("inicio",        "\u2190", "Inicio",             "inicio"),
-        ("facturacion",   "\u25a3", "Facturacion",        "facturacion"),
-        ("ocr",           "\u25ce", "OCR",                "ocr"),
-        ("contabilidad",  "\u25a0", "Contabilidad",       "contabilidad"),
-        ("importaciones", "\u25a4", "Importaciones",      "importaciones"),
-        ("plantillas",    "\u2630", "Plantillas",         "plantillas"),
-        ("configuracion", "\u2699", "Configuracion",      "configuracion"),
+        ("inicio",         "\u2190", "Inicio",            "inicio"),
+        ("facturacion",    "\u25a3", "Facturacion",       "facturacion"),
+        ("ocr",            "\u25ce", "Captura documental","ocr"),
+        ("contabilidad",   "\u25a0", "Contabilidad",      "contabilidad"),
+        ("importaciones",  "\u25a4", "Importaciones",     "importaciones"),
+        ("plantillas",     "\u2630", "Plantillas",        "plantillas"),
+        ("maestro_cuentas","\u25a1", "Maestro cuentas",  "maestro_cuentas"),
+        ("configuracion",  "\u2699", "Configuracion",     "configuracion"),
     ]
 
     # Stat cards: (key, label, color)
@@ -53,6 +54,8 @@ class UIDashboardEmpresa(ttk.Frame):
         on_open_plantillas,
         on_open_configuracion,
         on_open_ocr,
+        on_open_terceros=None,
+        on_open_maestro_cuentas=None,
         on_back,
     ):
         super().__init__(parent)
@@ -61,13 +64,15 @@ class UIDashboardEmpresa(ttk.Frame):
         self._ejercicio = ejercicio
         self._on_back = on_back  # usado solo desde el boton Empresas del header
         self._callbacks = {
-            "inicio":        self._go_dashboard,
-            "facturacion":   on_open_facturacion,
-            "ocr":           on_open_ocr,
-            "contabilidad":  on_open_contabilidad,
-            "importaciones": on_open_importaciones,
-            "plantillas":    on_open_plantillas,
-            "configuracion": on_open_configuracion,
+            "inicio":          self._go_dashboard,
+            "facturacion":     on_open_facturacion,
+            "ocr":             on_open_ocr,
+            "contabilidad":    on_open_contabilidad,
+            "importaciones":   on_open_importaciones,
+            "plantillas":      on_open_plantillas,
+            "terceros":        on_open_terceros or (lambda: None),
+            "maestro_cuentas": on_open_maestro_cuentas or (lambda: None),
+            "configuracion":   on_open_configuracion,
         }
         self._ctx = {}
         self._nav_items: dict[str, dict] = {}
@@ -80,16 +85,16 @@ class UIDashboardEmpresa(ttk.Frame):
     # ------------------------------------------------------------------ build
 
     def _build(self):
-        self._build_sidebar()
-        # Area de contenido intercambiable (derecha)
-        self._content_holder = tk.Frame(self, bg=self._M_BG)
+        body = tk.Frame(self, bg=self._S_BG)
+        body.pack(fill="both", expand=True)
+        self._build_sidebar(body)
+        self._content_holder = tk.Frame(body, bg=self._M_BG)
         self._content_holder.pack(side="left", fill="both", expand=True)
-        # Frame del dashboard (pre-construido, se oculta/muestra)
         self._dashboard_frame = tk.Frame(self._content_holder, bg=self._M_BG)
         self._build_main_into(self._dashboard_frame)
 
-    def _build_sidebar(self):
-        sb = tk.Frame(self, bg=self._S_BG, width=210)
+    def _build_sidebar(self, parent):
+        sb = tk.Frame(parent, bg=self._S_BG, width=210)
         sb.pack(side="left", fill="y")
         sb.pack_propagate(False)
 

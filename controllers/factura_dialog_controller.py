@@ -15,41 +15,53 @@ class FacturaDialogController:
         self._allow_fecha_fuera_ejercicio = bool(factura.get("_allow_fecha_fuera_ejercicio"))
         self._auto_ejercicio_por_fecha = bool(factura.get("_auto_ejercicio_por_fecha"))
         self._terceros_cache = []
+        self._display_to_tercero: dict = {}
 
     def load_terceros(self):
-        self._terceros_cache = self._gestor.listar_terceros_por_empresa(self._codigo, self._ejercicio)
-        disp = [f"{t.get('nombre','')} ({t.get('nif','')})" for t in self._terceros_cache]
+        all_terceros = self._gestor.listar_terceros_por_empresa(self._codigo, self._ejercicio)
+        # Solo clientes: terceros con subcuenta_cliente asignada en esta empresa
+        self._terceros_cache = [
+            t for t in all_terceros
+            if str(t.get("subcuenta_cliente") or "").strip()
+        ]
+        self._display_to_tercero = {}
+        disp = []
+        for t in self._terceros_cache:
+            label = f"{t.get('nombre', '')} ({t.get('nif', '')})"
+            self._display_to_tercero[label] = t
+            disp.append(label)
         self._view.set_terceros(disp)
+
+    def _get_selected_tercero(self):
+        label = self._view.get_selected_tercero_display()
+        return self._display_to_tercero.get(label)
 
     def preselect_tercero(self, tercero_id):
         if not tercero_id:
             return
-        for idx, t in enumerate(self._terceros_cache):
+        for label, t in self._display_to_tercero.items():
             if str(t.get("id")) == str(tercero_id):
-                self._view.select_tercero_index(idx)
+                self._view.set_tercero_display(label)
                 self.on_tercero_selected()
                 return
 
     def configurar_empresa(self):
-        tercero_id = None
-        idx = self._view.get_selected_tercero_index()
-        if idx >= 0 and idx < len(self._terceros_cache):
-            tercero_id = self._terceros_cache[idx].get("id")
+        t = self._get_selected_tercero()
+        tercero_id = t.get("id") if t else None
         changed = self._view.open_company_config()
         if not changed:
             return
         self.load_terceros()
-        self.preselect_tercero(tercero_id)
+        if tercero_id:
+            self.preselect_tercero(tercero_id)
 
     def on_tercero_selected(self):
-        idx = self._view.get_selected_tercero_index()
-        if idx < 0:
+        t = self._get_selected_tercero()
+        if not t:
             return
-        t = self._terceros_cache[idx]
         self._view.set_nif(t.get("nif", ""))
         self._view.set_nombre(t.get("nombre", ""))
-        rel = self._gestor.get_tercero_empresa(self._codigo, t.get("id"), self._ejercicio) or {}
-        sc = rel.get("subcuenta_cliente", "")
+        sc = str(t.get("subcuenta_cliente") or "")
         if sc:
             self._view.set_subcuenta(sc)
 
@@ -138,10 +150,8 @@ class FacturaDialogController:
             self._view.show_error("Gest2A3Eco", "Anade al menos una linea.")
             return
         fecha_common = self._view.get_fecha_exp()
-        tercero_id = None
-        idx = self._view.get_selected_tercero_index()
-        if idx >= 0 and idx < len(self._terceros_cache):
-            tercero_id = self._terceros_cache[idx].get("id")
+        t_sel = self._get_selected_tercero()
+        tercero_id = t_sel.get("id") if t_sel else None
         result = {
             "id": self._factura.get("id"),
             "codigo_empresa": self._codigo,
@@ -212,10 +222,8 @@ class FacturaDialogController:
         sc = self._view.get_subcuenta().strip()
         if sc:
             validar_subcuenta_longitud(sc, self._ndig, "subcuenta cliente")
-        tercero_id = None
-        idx = self._view.get_selected_tercero_index()
-        if idx >= 0 and idx < len(self._terceros_cache):
-            tercero_id = self._terceros_cache[idx].get("id")
+        t_sel = self._get_selected_tercero()
+        tercero_id = t_sel.get("id") if t_sel else None
         result = {
             "id": self._factura.get("id"),
             "codigo_empresa": self._codigo,

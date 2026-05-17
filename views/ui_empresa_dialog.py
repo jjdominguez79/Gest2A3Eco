@@ -270,7 +270,6 @@ class EmpresaDialog(tk.Toplevel):
         ttk.Button(btns, text="Anadir", style="Primary.TButton", command=self._add_bank).pack(side=tk.LEFT)
         ttk.Button(btns, text="Editar", command=self._edit_bank).pack(side=tk.LEFT, padx=6)
         ttk.Button(btns, text="Eliminar", command=self._remove_bank).pack(side=tk.LEFT)
-        ttk.Button(btns, text="Actualizar desde A3", command=self._update_banks_from_a3, state="disabled").pack(side=tk.LEFT, padx=6)
         self.lbl_bancos_info = ttk.Label(tab, text="")
         self.lbl_bancos_info.grid(row=3, column=0, sticky="w", pady=(8, 0))
         self._load_bank_records()
@@ -286,7 +285,7 @@ class EmpresaDialog(tk.Toplevel):
         entry_buscar = ttk.Entry(filtros, textvariable=self.var_plan_buscar, width=34)
         entry_buscar.pack(side=tk.LEFT, padx=(6, 0), fill="x", expand=True)
         self.var_plan_buscar.trace_add("write", lambda *_: self._load_plan_cuentas())
-        ttk.Button(filtros, text="Actualizar desde A3", command=self._update_plan_from_a3, state="disabled").pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Button(filtros, text="Actualizar desde A3", command=self._update_plan_from_a3).pack(side=tk.LEFT, padx=(12, 0))
         ttk.Button(filtros, text="Eliminar plan", command=self._delete_plan_cuentas).pack(side=tk.LEFT, padx=(6, 0))
 
         frame = ttk.Frame(tab)
@@ -449,15 +448,16 @@ class EmpresaDialog(tk.Toplevel):
             self.lbl_plan_info.configure(text="Guarda o abre una empresa existente para consultar su plan contable.")
             return
 
-        # Prioridad: plan base (ejercicio=0, importado de A3); fallback al último ejercicio manual
-        cuentas = self._gestor.get_plan_cuentas_con_terceros(codigo, 0)
+        # Prioridad: ultimo ejercicio configurado en la empresa; fallback a plan base legacy.
+        ultimo_ej = max((int(r["ejercicio"]) for r in self._exercise_rows), default=0)
+        cuentas = []
         ej_label = "base"
+        if ultimo_ej:
+            cuentas = self._gestor.get_plan_cuentas_con_terceros(codigo, ultimo_ej)
+            if cuentas:
+                ej_label = str(ultimo_ej)
         if not cuentas:
-            ultimo_ej = max((int(r["ejercicio"]) for r in self._exercise_rows), default=0)
-            if ultimo_ej:
-                cuentas = self._gestor.get_plan_cuentas_con_terceros(codigo, ultimo_ej)
-                if cuentas:
-                    ej_label = str(ultimo_ej)
+            cuentas = self._gestor.get_plan_cuentas_con_terceros(codigo, 0)
         self._plan_loaded_label = ej_label
         self._plan_loaded_ejercicio = 0 if ej_label == "base" else (int(ej_label) if str(ej_label).isdigit() else None)
 
@@ -761,8 +761,48 @@ class EmpresaDialog(tk.Toplevel):
         except Exception:
             return int(self._empresa.get("ejercicio") or 0)
 
-    def _bank_editor(self, initial=None):
+    def _bank_editor(self, initial=None, excluding_subcuenta: str = ""):
         data = dict(initial or {})
+
+        # Subcuentas tipo banco del maestro con su descripcion
+        banco_info: list[tuple[str, str]] = []  # (subcuenta, nombre)
+        try:
+            codigo = self._codigo_empresa_actual()
+            if self._gestor and codigo:
+                rows = self._gestor.listar_maestro_subcuentas_empresa(
+                    codigo, tipo="banco", activo=None
+                )
+                banco_info = [
+                    (str(r.get("subcuenta") or ""), str(r.get("nombre_subcuenta") or ""))
+                    for r in rows if r.get("subcuenta")
+                ]
+        except Exception:
+            banco_info = []
+
+        # Subcuentas ya asignadas a otras cuentas bancarias
+        used: set[str] = {
+            str(r.get("subcuenta_contable") or "").strip()
+            for r in self._bank_records
+            if str(r.get("subcuenta_contable") or "").strip()
+        }
+        exc = (excluding_subcuenta or "").strip()
+        if exc:
+            used.discard(exc)
+
+        # Mapas display <-> subcuenta para las disponibles
+        display_to_sub: dict[str, str] = {}
+        sub_to_display: dict[str, str] = {}
+        for sub, nombre in banco_info:
+            if sub in used:
+                continue
+            display = f"{sub}  —  {nombre}" if nombre else sub
+            display_to_sub[display] = sub
+            sub_to_display[sub] = display
+
+        available_displays = list(display_to_sub.keys())
+        current_sub = str(data.get("subcuenta_contable") or "")
+        current_display = sub_to_display.get(current_sub, current_sub)
+
         top = tk.Toplevel(self)
         top.title("Cuenta bancaria")
         top.resizable(False, False)
@@ -771,43 +811,69 @@ class EmpresaDialog(tk.Toplevel):
         frm = ttk.Frame(top, padding=12)
         frm.pack(fill="both", expand=True)
         vars_map = {
-            "descripcion": tk.StringVar(value=str(data.get("descripcion") or "")),
-            "iban": tk.StringVar(value=str(data.get("iban") or "")),
-            "subcuenta_contable": tk.StringVar(value=str(data.get("subcuenta_contable") or "")),
-            "origen": tk.StringVar(value=str(data.get("origen") or "manual")),
+            "descripcion":        tk.StringVar(value=str(data.get("descripcion") or "")),
+            "iban":               tk.StringVar(value=str(data.get("iban") or "")),
+            "subcuenta_contable": tk.StringVar(value=current_display),
+            "origen":             tk.StringVar(value=str(data.get("origen") or "manual")),
         }
         labels = (
-            ("descripcion", "Descripcion"),
-            ("iban", "IBAN / Cuenta"),
+            ("descripcion",        "Descripcion"),
+            ("iban",               "IBAN / Cuenta"),
             ("subcuenta_contable", "Subcuenta contable"),
-            ("origen", "Origen"),
+            ("origen",             "Origen"),
         )
         for idx, (key, text) in enumerate(labels):
-            ttk.Label(frm, text=text).grid(row=idx, column=0, sticky="w", pady=4)
+            ttk.Label(frm, text=text).grid(row=idx, column=0, sticky="w", pady=4, padx=(0, 8))
             if key == "origen":
-                cb = ttk.Combobox(frm, textvariable=vars_map[key], values=("manual", "a3", "mixto"), state="readonly", width=20)
-                cb.grid(row=idx, column=1, sticky="w", pady=4)
+                ttk.Combobox(frm, textvariable=vars_map[key],
+                             values=("manual", "a3", "mixto"),
+                             state="readonly", width=20).grid(
+                    row=idx, column=1, columnspan=2, sticky="w", pady=4)
+            elif key == "subcuenta_contable":
+                ttk.Combobox(frm, textvariable=vars_map[key],
+                             values=available_displays, width=42).grid(
+                    row=idx, column=1, sticky="w", pady=4, padx=(0, 6))
+                if not banco_info:
+                    hint = "(Sin cuentas tipo banco en el maestro)"
+                elif not available_displays:
+                    hint = "(Todas las cuentas banco ya asignadas)"
+                else:
+                    hint = ""
+                if hint:
+                    ttk.Label(frm, text=hint, foreground="#94a3b8").grid(
+                        row=idx, column=2, sticky="w", pady=4)
             else:
-                ttk.Entry(frm, textvariable=vars_map[key], width=34).grid(row=idx, column=1, sticky="w", pady=4)
+                ttk.Entry(frm, textvariable=vars_map[key], width=34).grid(
+                    row=idx, column=1, columnspan=2, sticky="w", pady=4)
         result = {"value": None}
 
         def _ok():
-            payload = {key: var.get().strip() for key, var in vars_map.items()}
-            if not any(payload.values()):
+            raw = {k: v.get().strip() for k, v in vars_map.items()}
+            if not any(raw.values()):
                 top.destroy()
                 return
-            result["value"] = payload
+            sub_display = raw.get("subcuenta_contable", "")
+            sub = display_to_sub.get(sub_display, sub_display)
+            if sub and sub in used:
+                messagebox.showwarning(
+                    "Subcuenta en uso",
+                    f"La subcuenta {sub} ya esta asignada a otra cuenta bancaria.",
+                    parent=top,
+                )
+                return
+            raw["subcuenta_contable"] = sub
+            result["value"] = raw
             top.destroy()
 
         btns = ttk.Frame(frm)
-        btns.grid(row=len(labels), column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        btns.grid(row=len(labels), column=0, columnspan=3, sticky="ew", pady=(10, 0))
         ttk.Button(btns, text="Guardar", style="Primary.TButton", command=_ok).pack(side=tk.LEFT)
         ttk.Button(btns, text="Cancelar", command=top.destroy).pack(side=tk.LEFT, padx=(6, 0))
         top.wait_window()
         return result["value"]
 
     def _add_bank(self):
-        payload = self._bank_editor({"origen": "manual"})
+        payload = self._bank_editor({"origen": "manual"}, excluding_subcuenta="")
         if payload:
             payload["principal"] = not self._bank_records
             self._bank_records.append(payload)
@@ -819,7 +885,10 @@ class EmpresaDialog(tk.Toplevel):
         if idx is None:
             return
         current = self._bank_records[idx] if idx < len(self._bank_records) else {"descripcion": self._bank_items[idx], "iban": self._bank_items[idx], "origen": "legacy"}
-        payload = self._bank_editor(current)
+        payload = self._bank_editor(
+            current,
+            excluding_subcuenta=str(current.get("subcuenta_contable") or ""),
+        )
         if payload:
             payload["principal"] = bool(current.get("principal")) or idx == 0
             self._bank_records[idx] = payload
@@ -1190,7 +1259,11 @@ class EmpresaDialog(tk.Toplevel):
             messagebox.showwarning("Gest2A3Eco", "Introduce primero el codigo A3 de la empresa.", parent=self)
             return
         try:
-            data = importar_empresa_desde_a3(codigo)
+            digitos_objetivo = int((self.var_dig.get() or "8").strip() or "8")
+        except Exception:
+            digitos_objetivo = 8
+        try:
+            data = importar_empresa_desde_a3(codigo, digitos_plan_objetivo=digitos_objetivo)
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self)
             return
@@ -1200,9 +1273,16 @@ class EmpresaDialog(tk.Toplevel):
             return
         if self._gestor:
             codigo_a3 = str(data.get("codigo") or codigo)
+            ejercicio_plan = int(data.get("ejercicio") or 0) or 0
             try:
-                n = self._gestor.upsert_plan_cuentas(codigo_a3, 0, plan_cuentas)
-                messagebox.showinfo("Gest2A3Eco", f"Plan de cuentas actualizado: {n} cuentas.", parent=self)
+                n = self._gestor.upsert_plan_cuentas(codigo_a3, ejercicio_plan, plan_cuentas)
+                messagebox.showinfo(
+                    "Gest2A3Eco",
+                    f"Plan de cuentas actualizado: {n} subcuentas.\n"
+                    f"Ejercicio importado: {ejercicio_plan or 'base'}\n"
+                    f"Digitos del plan: {digitos_objetivo}",
+                    parent=self,
+                )
             except Exception as exc:
                 messagebox.showerror("Gest2A3Eco", str(exc), parent=self)
                 return

@@ -2,6 +2,38 @@
 import tkinter as tk
 from tkinter import ttk
 
+def _instalar_centrado_toplevels() -> None:
+    """Parcha tk.Toplevel para que todos los dialogos se centren en pantalla automaticamente."""
+    if getattr(tk.Toplevel, "_centrado_instalado", False):
+        return
+    _orig_init = tk.Toplevel.__init__
+
+    def _patched_init(self, master=None, **kw):
+        _orig_init(self, master, **kw)
+
+        def _center():
+            try:
+                self.update_idletasks()
+                w = self.winfo_width()
+                h = self.winfo_height()
+                if w <= 1:
+                    w = self.winfo_reqwidth()
+                if h <= 1:
+                    h = self.winfo_reqheight()
+                sw = self.winfo_screenwidth()
+                sh = self.winfo_screenheight()
+                x = max(0, (sw - w) // 2)
+                y = max(0, (sh - h) // 2)
+                self.geometry(f"+{x}+{y}")
+            except Exception:
+                pass
+
+        self.after(0, _center)
+
+    tk.Toplevel.__init__ = _patched_init
+    tk.Toplevel._centrado_instalado = True  # type: ignore[attr-defined]
+
+
 def aplicar_tema(root: tk.Tk) -> None:
     """
     Aplica un tema visual unificado a toda la app:
@@ -163,3 +195,5 @@ def aplicar_tema(root: tk.Tk) -> None:
         padding=(10, 4),
         font=("Segoe UI", 10),
     )
+
+    _instalar_centrado_toplevels()
