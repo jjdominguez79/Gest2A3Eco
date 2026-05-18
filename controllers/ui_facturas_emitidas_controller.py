@@ -548,10 +548,8 @@ class FacturasEmitidasController:
             if monedas:
                 moneda_codigo = str(monedas[0].get("codigo") or "").upper()
                 moneda_simbolo = str(monedas[0].get("simbolo") or "")
-        nums = ", ".join(a.get("numero", "") for a in albaranes)
-        lineas = []
-        for a in albaranes:
-            lineas.extend(a.get("lineas", []))
+        descripcion_factura = self._descripcion_factura_desde_albaranes(albaranes)
+        lineas = self._build_factura_lineas_desde_albaranes(albaranes)
         fecha = datetime.now().strftime("%d/%m/%Y")
         sugerido, serie_sug, eje_sug = self._proximo_numero_por_fecha(fecha, rectificativa=False)
         factura = {
@@ -568,7 +566,7 @@ class FacturasEmitidasController:
             "modelo_fiscal": "",
             "nif": normalizar_nif_cif(base.get("nif", "")),
             "nombre": base.get("nombre", ""),
-            "descripcion": f"Factura de albaranes: {nums}",
+            "descripcion": descripcion_factura,
             "subcuenta_cliente": base.get("subcuenta_cliente", ""),
             "forma_pago": base.get("forma_pago", ""),
             "cuenta_bancaria": base.get("cuenta_bancaria", ""),
@@ -779,9 +777,32 @@ class FacturasEmitidasController:
             self._view.show_warning("Gest2A3Eco", "No se pudo generar el PDF.")
             return
 
+        related_albaranes = self._albaranes_de_factura(fac)
+        attachment_paths = [pdf_path]
+        include_albaranes = False
+        if related_albaranes:
+            cantidad = len(related_albaranes)
+            texto_docs = "el albaran y la factura" if cantidad == 1 else f"los {cantidad} albaranes y la factura"
+            include_albaranes = self._view.ask_yes_no(
+                "Gest2A3Eco",
+                f"¿Quieres enviar {texto_docs}?",
+            )
+            if include_albaranes:
+                for alb in related_albaranes:
+                    alb_pdf_path = self._resolve_albaran_pdf(alb)
+                    if alb_pdf_path:
+                        attachment_paths.append(alb_pdf_path)
+
         numero = str(fac.get("numero", "") or "")
         asunto = f"Factura {numero}".strip()
-        cuerpo = f"Adjunto factura {numero}.".strip()
+        if include_albaranes:
+            cuerpo = (
+                f"Adjunto factura {numero} y el albaran relacionado."
+                if len(related_albaranes) == 1
+                else f"Adjunto factura {numero} y los albaranes relacionados."
+            ).strip()
+        else:
+            cuerpo = f"Adjunto factura {numero}.".strip()
         cliente = self._cliente_factura(fac)
 
         if canal == "email":
@@ -816,7 +837,7 @@ class FacturasEmitidasController:
             try:
                 send_email_smtp(
                     smtp_cfg, compose["emails"], compose["asunto"], compose["cuerpo"],
-                    pdf_path, html_body=html_body,
+                    pdf_path, attachment_paths=attachment_paths[1:], html_body=html_body,
                 )
                 self._view.show_info("Gest2A3Eco", "Email enviado correctamente.")
             except Exception as e:
@@ -847,14 +868,10 @@ class FacturasEmitidasController:
                 webbrowser.open(url)
             except Exception:
                 pass
-            pdf_norm = os.path.normpath(pdf_path)
             try:
-                subprocess.run(f'explorer.exe /select,"{pdf_norm}"', shell=True, check=False)
+                self._open_attachments_in_explorer(attachment_paths)
             except Exception:
-                try:
-                    os.startfile(os.path.dirname(pdf_norm))
-                except Exception:
-                    pass
+                pass
 
         if self._view.ask_yes_no("Gest2A3Eco", "¿Marcar factura como enviada?"):
             if not self._ensure_write("Necesitas permiso de escritura para marcar la factura como enviada."):
@@ -996,6 +1013,153 @@ class FacturasEmitidasController:
             ),
             None,
         )
+
+    def _albaranes_de_factura(self, fac: dict) -> list[dict]:
+        factura_id = str(fac.get("id") or "").strip()
+        eje = fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio
+        if not factura_id:
+            return []
+        return [
+            alb
+            for alb in self._gestor.listar_albaranes_emitidas(self._codigo, eje)
+            if str(alb.get("factura_id") or "").strip() == factura_id
+        ]
+
+    def _descripcion_factura_desde_albaranes(self, albaranes: list[dict]) -> str:
+        albaranes = [a for a in (albaranes or []) if a]
+        if not albaranes:
+            return "Factura correspondiente al albaran."
+        if len(albaranes) == 1:
+            alb = albaranes[0]
+            numero = str(alb.get("numero") or "").strip()
+            fecha = self._format_fecha_descripcion(alb.get("fecha_asiento") or alb.get("fecha_expedicion"))
+            return f"Factura correspondiente al albaran {numero} de fecha {fecha}."
+        refs = []
+        for alb in albaranes:
+            numero = str(alb.get("numero") or "").strip()
+            fecha = self._format_fecha_descripcion(alb.get("fecha_asiento") or alb.get("fecha_expedicion"))
+            refs.append(f"{numero} de fecha {fecha}".strip())
+        return f"Factura correspondiente a los albaranes: {'; '.join(refs)}."
+
+    def _build_factura_lineas_desde_albaranes(self, albaranes: list[dict]) -> list[dict]:
+        descripcion = self._descripcion_factura_desde_albaranes(albaranes)
+        grouped = {}
+        for alb in albaranes or []:
+            for ln in alb.get("lineas", []) or []:
+                if str(ln.get("tipo") or "").strip().lower() == "obs":
+                    continue
+                key = (
+                    self._round4(self._to_float(ln.get("pct_iva"))),
+                    self._round4(self._to_float(ln.get("pct_re"))),
+                    self._round4(self._to_float(ln.get("pct_irpf"))),
+                )
+                item = grouped.setdefault(
+                    key,
+                    {
+                        "concepto": descripcion,
+                        "tipo": "",
+                        "unidades": 1.0,
+                        "precio": 0.0,
+                        "base": 0.0,
+                        "pct_iva": 0.0,
+                        "cuota_iva": 0.0,
+                        "pct_re": 0.0,
+                        "cuota_re": 0.0,
+                        "pct_irpf": 0.0,
+                        "cuota_irpf": 0.0,
+                    },
+                )
+                item["base"] += self._to_float(ln.get("base"))
+                item["cuota_iva"] += self._to_float(ln.get("cuota_iva"))
+                item["cuota_re"] += self._to_float(ln.get("cuota_re"))
+                item["cuota_irpf"] += self._to_float(ln.get("cuota_irpf"))
+                item["pct_iva"] = self._round4(self._to_float(ln.get("pct_iva")))
+                item["pct_re"] = self._round4(self._to_float(ln.get("pct_re")))
+                item["pct_irpf"] = self._round4(self._to_float(ln.get("pct_irpf")))
+        out = []
+        for item in grouped.values():
+            item["base"] = self._round2(item["base"])
+            item["cuota_iva"] = self._round2(item["cuota_iva"])
+            item["cuota_re"] = self._round2(item["cuota_re"])
+            item["cuota_irpf"] = self._round2(item["cuota_irpf"])
+            item["precio"] = item["base"]
+            out.append(item)
+        return out
+
+    def _format_fecha_descripcion(self, fecha_txt: str) -> str:
+        value = str(fecha_txt or "").strip()
+        if not value:
+            return ""
+        for fmt_in in ("%d/%m/%Y", "%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y"):
+            try:
+                dt = datetime.strptime(value, fmt_in)
+                return dt.strftime("%d/%m/%Y")
+            except Exception:
+                continue
+        return value
+
+    def _albaran_app_pdf_path(self, alb: dict) -> str:
+        if getattr(sys, "frozen", False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        pdf_dir = os.path.join(base_dir, "pdfs_emitidas")
+        emp_name = self._safe_filename(self._empresa_conf.get("nombre") or "") or "Sin_empresa"
+        safe_num = self._safe_filename(str(alb.get("numero", "") or ""))
+        safe_codigo = self._safe_filename(self._codigo or "")
+        safe_cliente = self._safe_filename(alb.get("nombre", "")) or "Sin_cliente"
+        parts = [p for p in [f"Albaran_{safe_num}" if safe_num else "", safe_codigo, safe_cliente] if p]
+        filename = "_".join(parts) if parts else f"Albaran_{alb.get('id', '')}"
+        try:
+            os.makedirs(os.path.join(pdf_dir, emp_name), exist_ok=True)
+        except Exception:
+            return ""
+        return os.path.join(pdf_dir, emp_name, f"{filename}.pdf")
+
+    def _resolve_albaran_pdf(self, alb: dict) -> str:
+        pdf_path = str(alb.get("pdf_path") or "").strip()
+        if pdf_path and os.path.exists(pdf_path):
+            return pdf_path
+        app_path = self._albaran_app_pdf_path(alb)
+        if not app_path:
+            return ""
+        if os.path.exists(app_path):
+            if pdf_path != app_path and self._can_write():
+                upd = dict(alb)
+                upd["pdf_path"] = app_path
+                self._gestor.upsert_albaran_emitida(upd)
+            return app_path
+        doc = dict(alb)
+        doc.setdefault("fecha_expedicion", alb.get("fecha_asiento", ""))
+        doc.setdefault("fecha_operacion", alb.get("fecha_asiento", ""))
+        try:
+            self._generar_pdf_word(doc, app_path, default_template="albaran_template.docx")
+        except Exception as e:
+            self._log_pdf_error("Error al generar PDF de albaran.", e, "", app_path)
+            return ""
+        if self._can_write():
+            upd = dict(alb)
+            upd["pdf_path"] = app_path
+            self._gestor.upsert_albaran_emitida(upd)
+        return app_path if os.path.exists(app_path) else ""
+
+    def _open_attachments_in_explorer(self, attachment_paths: list[str]) -> None:
+        valid_paths = []
+        for path in attachment_paths or []:
+            norm = os.path.normpath(str(path or "").strip())
+            if norm and os.path.exists(norm) and norm not in valid_paths:
+                valid_paths.append(norm)
+        if not valid_paths:
+            return
+        if len(valid_paths) == 1:
+            try:
+                subprocess.run(f'explorer.exe /select,"{valid_paths[0]}"', shell=True, check=False)
+                return
+            except Exception:
+                pass
+        folder = os.path.dirname(valid_paths[0])
+        if folder:
+            os.startfile(folder)
 
     def _serie(self):
         return str(self._empresa_conf.get("serie_emitidas", "A") or "A")
@@ -1674,5 +1838,11 @@ class FacturasEmitidasController:
     def _round2(self, x) -> float:
         try:
             return round(float(x), 2)
+        except Exception:
+            return 0.0
+
+    def _round4(self, x) -> float:
+        try:
+            return round(float(x), 4)
         except Exception:
             return 0.0

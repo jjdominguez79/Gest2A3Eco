@@ -165,6 +165,7 @@ def send_email_smtp(
     subject: str,
     body: str,
     attachment_path: str = None,
+    attachment_paths: list[str] | None = None,
     html_body: str = None,
 ) -> None:
     host      = str(smtp_cfg.get("host") or "").strip()
@@ -194,10 +195,19 @@ def send_email_smtp(
     else:
         msg.attach(MIMEText(body, "plain", "utf-8"))
 
-    if attachment_path and os.path.exists(attachment_path):
-        with open(attachment_path, "rb") as f:
-            part = MIMEApplication(f.read(), Name=os.path.basename(attachment_path))
-        part["Content-Disposition"] = f'attachment; filename="{os.path.basename(attachment_path)}"'
+    all_attachments = []
+    if attachment_path:
+        all_attachments.append(attachment_path)
+    for extra_path in attachment_paths or []:
+        if extra_path and extra_path not in all_attachments:
+            all_attachments.append(extra_path)
+
+    for file_path in all_attachments:
+        if not os.path.exists(file_path):
+            continue
+        with open(file_path, "rb") as f:
+            part = MIMEApplication(f.read(), Name=os.path.basename(file_path))
+        part["Content-Disposition"] = f'attachment; filename="{os.path.basename(file_path)}"'
         msg.attach(part)
 
     if use_ssl:

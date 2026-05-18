@@ -7,6 +7,7 @@ from procesos.bancos import generar_bancos
 from procesos.facturas_emitidas import generar_emitidas
 from procesos.facturas_recibidas import generar_recibidas_suenlace
 from services.excel_mapping import extract_rows_by_mapping
+from utils.validaciones import normalizar_nif_cif
 
 
 class ProcesosController:
@@ -267,6 +268,9 @@ class ProcesosController:
                 continue
             return True
         return False
+
+    def _norm_nif(self, value) -> str:
+        return normalizar_nif_cif(value)
 
     def _log_error(self, msg: str, exc: Exception) -> None:
         try:
