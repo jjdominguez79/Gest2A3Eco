@@ -3,6 +3,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from services.terceros_empresa_fiscal_service import (
+    build_doc_proveedor_fiscal_data,
+    ocr_tipo_to_proveedor,
+    proveedor_tipo_to_ocr,
+)
 from utils.validaciones import normalizar_nif_cif
 from services.terceros_ocr_service import TercerosOcrService
 
@@ -59,15 +64,15 @@ class UIOcrDetalleController:
                     self._view.set_tercero_info(
                         f"Tercero localizado: {tercero.get('nombre')} — subcuenta {sub}"
                     )
-                    if sub and not self._current_doc.get("cuenta_proveedor"):
-                        self._view.set_cuenta_proveedor(sub)
+                    self._aplicar_configuracion_proveedor(tercero, force_missing_only=True)
 
     # ── Guardado ──────────────────────────────────────────────────────────────
 
     def guardar(self):
         if self._current_doc is None:
             return
-        self._apply_form()
+        if not self._apply_form_safe():
+            return
         self._persist()
         self._view.show_info("Gest2A3Eco", "Cambios guardados.")
 
@@ -75,7 +80,8 @@ class UIOcrDetalleController:
         """Persiste sin dialogo (al navegar prev/next o al cerrar)."""
         if self._current_doc is None:
             return
-        self._apply_form()
+        if not self._apply_form_safe():
+            return
         self._persist()
 
     def _apply_form(self):
@@ -84,6 +90,18 @@ class UIOcrDetalleController:
             if k != "lineas":
                 self._current_doc[k] = v
         self._current_doc["lineas"] = form["lineas"]
+        self._current_doc["proveedor_tipo_operacion_iva"] = (
+            self._current_doc.get("proveedor_tipo_operacion_iva")
+            or ocr_tipo_to_proveedor(self._current_doc.get("tipo_operacion"))
+        )
+
+    def _apply_form_safe(self) -> bool:
+        try:
+            self._apply_form()
+            return True
+        except ValueError as exc:
+            self._view.show_warning("Gest2A3Eco", str(exc))
+            return False
 
     def _persist(self):
         lineas = self._current_doc.pop("lineas", [])
@@ -96,7 +114,8 @@ class UIOcrDetalleController:
     def validar(self):
         if self._current_doc is None:
             return
-        self._apply_form()
+        if not self._apply_form_safe():
+            return
         errors = self._validate_para_contabilizar(self._current_doc)
         if errors:
             self._view.show_warning(
@@ -118,12 +137,7 @@ class UIOcrDetalleController:
             self._current_doc["tercero_id"] = tercero.get("id")
             if not self._current_doc.get("proveedor_nombre"):
                 self._current_doc["proveedor_nombre"] = tercero.get("nombre")
-            if not self._current_doc.get("cuenta_proveedor"):
-                self._current_doc["cuenta_proveedor"] = (
-                    tercero.get("subcuenta_proveedor")
-                    or tercero.get("subcuenta_cliente")
-                    or ""
-                )
+            self._aplicar_configuracion_proveedor(tercero, force_missing_only=True)
 
         self._current_doc["estado_ocr"] = (
             self._current_doc.get("estado_ocr") or "procesado"
@@ -140,7 +154,8 @@ class UIOcrDetalleController:
     def enviar_a_error(self):
         if self._current_doc is None:
             return
-        self._apply_form()
+        if not self._apply_form_safe():
+            return
         self._current_doc["estado_ocr"]    = "error"
         self._current_doc["error_mensaje"] = "Enviado manualmente a errores."
         self._persist()
@@ -150,7 +165,8 @@ class UIOcrDetalleController:
     def enviar_pendiente_contabilizar(self):
         if self._current_doc is None:
             return
-        self._apply_form()
+        if not self._apply_form_safe():
+            return
         errors = self._validate_para_contabilizar(self._current_doc)
         if errors:
             self._view.show_warning(
@@ -193,8 +209,7 @@ class UIOcrDetalleController:
         self._view.set_tercero_info(
             f"Encontrado: {nombre_encontrado or nombre} — subcuenta {sub or '(sin asignar)'}"
         )
-        if sub and not form.get("cuenta_proveedor"):
-            self._view.set_cuenta_proveedor(sub)
+        self._aplicar_configuracion_proveedor(tercero, force_missing_only=True)
 
     def crear_tercero(self):
         if self._current_doc is None:
@@ -245,7 +260,7 @@ class UIOcrDetalleController:
         )
         self._current_doc["tercero_id"] = tercero.get("id")
         self._view.set_tercero_info(f"Creado: {nombre} — subcuenta {subcuenta}")
-        self._view.set_cuenta_proveedor(subcuenta)
+        self._aplicar_configuracion_proveedor(tercero, force_missing_only=False)
         self._view.show_info(
             "Gest2A3Eco", f"Tercero '{nombre}' ({tipo}) creado con subcuenta {subcuenta}."
         )
@@ -263,3 +278,36 @@ class UIOcrDetalleController:
         if (doc.get("total") or 0.0) == 0.0:
             errors.append("Total 0,00: revisa los importes.")
         return errors
+
+    def _aplicar_configuracion_proveedor(self, tercero: dict, *, force_missing_only: bool):
+        payload = build_doc_proveedor_fiscal_data(
+            tercero,
+            cuenta_gasto=self._current_doc.get("cuenta_gasto") if force_missing_only else "",
+            cuenta_proveedor=self._current_doc.get("cuenta_proveedor") if force_missing_only else "",
+        )
+        if force_missing_only:
+            if not self._current_doc.get("cuenta_proveedor"):
+                self._current_doc["cuenta_proveedor"] = payload["cuenta_proveedor"]
+                self._view.set_cuenta_proveedor(payload["cuenta_proveedor"])
+            if not self._current_doc.get("cuenta_gasto"):
+                self._current_doc["cuenta_gasto"] = payload["cuenta_gasto"]
+                self._view.set_cuenta_gasto(payload["cuenta_gasto"])
+            if not self._current_doc.get("proveedor_tipo_operacion_iva"):
+                self._current_doc["proveedor_tipo_operacion_iva"] = payload["proveedor_tipo_operacion_iva"]
+                self._view.set_proveedor_fiscal_config(
+                    payload["proveedor_tipo_operacion_iva"],
+                    payload["proveedor_iva_deducible"],
+                    payload["proveedor_porcentaje_deduccion_iva"],
+                    proveedor_tipo_to_ocr(payload["proveedor_tipo_operacion_iva"]),
+                )
+            return
+        self._current_doc.update(payload)
+        self._current_doc["tipo_operacion"] = proveedor_tipo_to_ocr(payload["proveedor_tipo_operacion_iva"])
+        self._view.set_cuenta_proveedor(payload["cuenta_proveedor"])
+        self._view.set_cuenta_gasto(payload["cuenta_gasto"])
+        self._view.set_proveedor_fiscal_config(
+            payload["proveedor_tipo_operacion_iva"],
+            payload["proveedor_iva_deducible"],
+            payload["proveedor_porcentaje_deduccion_iva"],
+            self._current_doc["tipo_operacion"],
+        )

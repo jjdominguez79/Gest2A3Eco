@@ -66,6 +66,33 @@ def test_ocr_lineas_fiscales_columnas_fase2(tmp_path):
         assert col in cols, f"Columna 'ocr_lineas_fiscales.{col}' no existe"
 
 
+def test_terceros_empresas_columnas_configuracion_fiscal(tmp_path):
+    g = _gestor(tmp_path)
+    cols = _columns(g, "terceros_empresas")
+    for col in (
+        "cliente_tipo_operacion_iva",
+        "cliente_intracomunitaria_clase",
+        "cliente_iva_deducible",
+        "cliente_porcentaje_deduccion_iva",
+        "proveedor_tipo_operacion_iva",
+        "proveedor_intracomunitaria_clase",
+        "proveedor_iva_deducible",
+        "proveedor_porcentaje_deduccion_iva",
+    ):
+        assert col in cols, f"Columna 'terceros_empresas.{col}' no existe"
+
+
+def test_facturas_recibidas_docs_columnas_configuracion_fiscal(tmp_path):
+    g = _gestor(tmp_path)
+    cols = _columns(g, "facturas_recibidas_docs")
+    for col in (
+        "proveedor_tipo_operacion_iva",
+        "proveedor_iva_deducible",
+        "proveedor_porcentaje_deduccion_iva",
+    ):
+        assert col in cols, f"Columna 'facturas_recibidas_docs.{col}' no existe"
+
+
 # ── Columnas nuevas en plan_cuentas ──────────────────────────────────────────
 
 def test_plan_cuentas_columnas_fase2(tmp_path):

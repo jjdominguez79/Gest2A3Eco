@@ -4,6 +4,17 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import messagebox, ttk
 
+from services.terceros_empresa_fiscal_service import (
+    DEDUCCION_NO,
+    DEDUCCION_PARCIAL,
+    DEDUCCION_TOTAL,
+    PROVEEDOR_TIPOS_IVA,
+    TIPO_IVA_TOOLTIPS,
+    apply_proveedor_deduction_mode,
+    get_proveedor_deduction_mode,
+    ocr_tipo_to_proveedor,
+)
+
 TIPOS_DOCUMENTO = [
     "factura_recibida",
     "factura_simplificada",
@@ -17,6 +28,13 @@ TIPOS_OPERACION = [
     "importacion",
     "exterior",
 ]
+
+DEDUCCION_LABELS = {
+    DEDUCCION_TOTAL: "Si",
+    DEDUCCION_NO: "No",
+    DEDUCCION_PARCIAL: "Parcial",
+}
+DEDUCCION_LABELS_INV = {label: key for key, label in DEDUCCION_LABELS.items()}
 
 _LINEA_COLS = [
     ("tipo_iva",        "%IVA",   5),
@@ -112,6 +130,9 @@ class UIOcrDetalle(tk.Toplevel):
         )
         self._lbl_avisos.pack(fill="x", padx=10, pady=(2, 4))
 
+    def _attach_tooltip(self, widget, text: str):
+        _Tooltip(widget, text)
+
     def _build_right_scrollable(self, outer: ttk.Frame):
         canvas = tk.Canvas(outer, highlightthickness=0)
         vsb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
@@ -154,6 +175,9 @@ class UIOcrDetalle(tk.Toplevel):
         self._v_cta_gasto   = tk.StringVar()
         self._v_cta_iva     = tk.StringVar()
         self._v_cta_prov    = tk.StringVar()
+        self._v_prov_tipo_iva = tk.StringVar(value=PROVEEDOR_TIPOS_IVA[0])
+        self._v_prov_ded_mode = tk.StringVar(value=DEDUCCION_LABELS[DEDUCCION_TOTAL])
+        self._v_prov_pct_ded = tk.StringVar(value="100")
         self._v_descripcion = tk.StringVar()
         self._v_tercero_info = tk.StringVar()
 
@@ -262,6 +286,42 @@ class UIOcrDetalle(tk.Toplevel):
             row=row, column=1, sticky="ew", **pad)
         row += 1
 
+        row = self._section(parent, row, "FISCALIDAD PROVEEDOR", pad)
+
+        lbl_tipo_iva = ttk.Label(parent, text="Tipo operacion IVA:")
+        lbl_tipo_iva.grid(row=row, column=0, sticky="w", **pad)
+        self._cb_prov_tipo_iva = ttk.Combobox(
+            parent,
+            textvariable=self._v_prov_tipo_iva,
+            values=list(PROVEEDOR_TIPOS_IVA),
+            state="readonly",
+            width=24,
+        )
+        self._cb_prov_tipo_iva.grid(row=row, column=1, sticky="ew", **pad)
+        self._cb_prov_tipo_iva.bind("<<ComboboxSelected>>", lambda _e: self._refresh_fiscal_tooltip())
+        self._attach_tooltip(lbl_tipo_iva, "Configuracion fiscal de compras aplicada al documento.")
+        row += 1
+
+        ttk.Label(parent, text="IVA deducible:").grid(row=row, column=0, sticky="w", **pad)
+        self._cb_prov_ded = ttk.Combobox(
+            parent,
+            textvariable=self._v_prov_ded_mode,
+            values=list(DEDUCCION_LABELS.values()),
+            state="readonly",
+            width=14,
+        )
+        self._cb_prov_ded.grid(row=row, column=1, sticky="w", **pad)
+        self._cb_prov_ded.bind("<<ComboboxSelected>>", lambda _e: self._on_ded_mode_changed())
+        ttk.Label(parent, text="% deduccion IVA:").grid(row=row, column=2, sticky="w", **pad)
+        self._entry_prov_pct = ttk.Entry(parent, textvariable=self._v_prov_pct_ded, width=12)
+        self._entry_prov_pct.grid(row=row, column=3, sticky="ew", **pad)
+        self._v_prov_pct_ded.trace_add("write", lambda *_: self._on_ded_pct_changed())
+        row += 1
+
+        self._lbl_fiscal_hint = ttk.Label(parent, text="", foreground="#64748b", font=("Segoe UI", 8))
+        self._lbl_fiscal_hint.grid(row=row, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 4))
+        row += 1
+
         # ── Descripcion ───────────────────────────────────────────────────────
         row = self._section(parent, row, "DESCRIPCION", pad)
 
@@ -271,6 +331,8 @@ class UIOcrDetalle(tk.Toplevel):
 
         parent.columnconfigure(1, weight=1)
         parent.columnconfigure(3, weight=1)
+        self._refresh_fiscal_tooltip()
+        self._on_ded_mode_changed()
 
     def _section(self, parent, row: int, title: str, pad: dict) -> int:
         ttk.Separator(parent, orient="horizontal").grid(
@@ -357,6 +419,13 @@ class UIOcrDetalle(tk.Toplevel):
         self._v_cta_gasto.set(doc.get("cuenta_gasto") or "")
         self._v_cta_iva.set(doc.get("cuenta_iva") or "")
         self._v_cta_prov.set(doc.get("cuenta_proveedor") or "")
+        proveedor_tipo = doc.get("proveedor_tipo_operacion_iva") or ocr_tipo_to_proveedor(doc.get("tipo_operacion"))
+        self.set_proveedor_fiscal_config(
+            proveedor_tipo,
+            int(doc.get("proveedor_iva_deducible", 1) or 0),
+            float(doc.get("proveedor_porcentaje_deduccion_iva", 100.0) or 0.0),
+            doc.get("tipo_operacion") or None,
+        )
         self._v_descripcion.set(doc.get("descripcion") or "")
         self._v_tercero_info.set("")
 
@@ -384,6 +453,14 @@ class UIOcrDetalle(tk.Toplevel):
         )
 
     def get_form_data(self) -> dict:
+        ded_mode = DEDUCCION_LABELS_INV.get(self._v_prov_ded_mode.get(), DEDUCCION_TOTAL)
+        fiscal = apply_proveedor_deduction_mode(
+            {
+                "proveedor_tipo_operacion_iva": self._v_prov_tipo_iva.get(),
+            },
+            ded_mode,
+            self._v_prov_pct_ded.get(),
+        )
         return {
             "proveedor_nif":    self._v_nif.get().strip(),
             "proveedor_nombre": self._v_nombre.get().strip(),
@@ -399,6 +476,9 @@ class UIOcrDetalle(tk.Toplevel):
             "cuenta_gasto":     self._v_cta_gasto.get().strip(),
             "cuenta_iva":       self._v_cta_iva.get().strip(),
             "cuenta_proveedor": self._v_cta_prov.get().strip(),
+            "proveedor_tipo_operacion_iva": fiscal["proveedor_tipo_operacion_iva"],
+            "proveedor_iva_deducible": fiscal["proveedor_iva_deducible"],
+            "proveedor_porcentaje_deduccion_iva": fiscal["proveedor_porcentaje_deduccion_iva"],
             "descripcion":      self._v_descripcion.get().strip(),
             "lineas":           self.get_lineas(),
         }
@@ -408,6 +488,64 @@ class UIOcrDetalle(tk.Toplevel):
 
     def set_cuenta_proveedor(self, subcuenta: str):
         self._v_cta_prov.set(subcuenta)
+
+    def set_cuenta_gasto(self, subcuenta: str):
+        self._v_cta_gasto.set(subcuenta)
+
+    def set_proveedor_fiscal_config(self, tipo_iva: str, iva_deducible: int, porcentaje: float, tipo_operacion_ocr: str | None = None):
+        self._v_prov_tipo_iva.set(tipo_iva or PROVEEDOR_TIPOS_IVA[0])
+        rel = {
+            "proveedor_iva_deducible": iva_deducible,
+            "proveedor_porcentaje_deduccion_iva": porcentaje,
+        }
+        mode = get_proveedor_deduction_mode(rel)
+        self._v_prov_ded_mode.set(DEDUCCION_LABELS[mode])
+        pct_val = 100.0 if porcentaje in (None, "") else float(porcentaje)
+        pct_txt = str(int(pct_val)) if pct_val == int(pct_val) else str(pct_val)
+        self._v_prov_pct_ded.set(pct_txt)
+        if tipo_operacion_ocr:
+            self._v_tipo_op.set(tipo_operacion_ocr)
+        self._refresh_fiscal_tooltip()
+        self._on_ded_mode_changed()
+
+    def _on_ded_mode_changed(self):
+        mode = DEDUCCION_LABELS_INV.get(self._v_prov_ded_mode.get(), DEDUCCION_TOTAL)
+        if mode == DEDUCCION_NO:
+            self._v_prov_pct_ded.set("0")
+            self._entry_prov_pct.configure(state="disabled")
+        elif mode == DEDUCCION_TOTAL:
+            self._v_prov_pct_ded.set("100")
+            self._entry_prov_pct.configure(state="disabled")
+        else:
+            self._entry_prov_pct.configure(state="normal")
+            if not self._v_prov_pct_ded.get().strip():
+                self._v_prov_pct_ded.set("50")
+        self._refresh_fiscal_tooltip()
+
+    def _on_ded_pct_changed(self):
+        if DEDUCCION_LABELS_INV.get(self._v_prov_ded_mode.get(), DEDUCCION_TOTAL) != DEDUCCION_PARCIAL:
+            return
+        try:
+            value = float((self._v_prov_pct_ded.get() or "").replace(",", "."))
+        except Exception:
+            self._lbl_fiscal_hint.configure(text="Introduce un porcentaje numerico entre 0 y 100.", foreground="#b45309")
+            return
+        if value < 0 or value > 100:
+            self._lbl_fiscal_hint.configure(text="El porcentaje de deduccion IVA debe estar entre 0 y 100.", foreground="#b91c1c")
+            return
+        self._refresh_fiscal_tooltip()
+
+    def _refresh_fiscal_tooltip(self):
+        tipo = self._v_prov_tipo_iva.get()
+        mode = DEDUCCION_LABELS_INV.get(self._v_prov_ded_mode.get(), DEDUCCION_TOTAL)
+        base_text = TIPO_IVA_TOOLTIPS.get(tipo, "Configuracion fiscal del proveedor.")
+        if mode == DEDUCCION_NO:
+            extra = "El IVA no deducible se integrara como mayor gasto."
+        elif mode == DEDUCCION_PARCIAL:
+            extra = "Se repartira automaticamente entre 472 y mayor gasto."
+        else:
+            extra = "El IVA deducible ira integro a 472."
+        self._lbl_fiscal_hint.configure(text=f"{base_text} {extra}", foreground="#64748b")
 
     # ── Visor de documentos ───────────────────────────────────────────────────
 
@@ -706,3 +844,38 @@ def _fmt_amount(val) -> str:
         return f"{f:.2f}" if f != 0.0 else ""
     except (ValueError, TypeError):
         return ""
+
+
+class _Tooltip:
+    def __init__(self, widget, text: str):
+        self._widget = widget
+        self._text = text
+        self._tip = None
+        widget.bind("<Enter>", self._show, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+
+    def _show(self, _event=None):
+        if self._tip or not self._text:
+            return
+        x = self._widget.winfo_rootx() + 16
+        y = self._widget.winfo_rooty() + self._widget.winfo_height() + 4
+        tip = tk.Toplevel(self._widget)
+        tip.wm_overrideredirect(True)
+        tip.wm_geometry(f"+{x}+{y}")
+        tk.Label(
+            tip,
+            text=self._text,
+            background="#fff7ed",
+            foreground="#7c2d12",
+            relief="solid",
+            borderwidth=1,
+            wraplength=280,
+            padx=6,
+            pady=6,
+        ).pack()
+        self._tip = tip
+
+    def _hide(self, _event=None):
+        if self._tip:
+            self._tip.destroy()
+            self._tip = None

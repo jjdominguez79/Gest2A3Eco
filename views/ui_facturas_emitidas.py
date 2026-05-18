@@ -18,12 +18,32 @@ from utils.ui_facturas_emitidas_helpers import (
     to_fecha_ui_or_blank,
     to_float,
 )
-from utils.validaciones import normalizar_nif_cif
+from utils.validaciones import (
+    inferir_pais_desde_identificacion,
+    normalizar_codigo_pais,
+    normalizar_nif_cif,
+    validar_nif_o_nif_iva_intracomunitario,
+)
+
+TIPOS_IDENTIFICACION_TERCERO = [
+    ("auto", "Auto"),
+    ("nacional", "Documento español"),
+    ("vat", "NIF-IVA intracomunitario"),
+    ("foreign", "Extranjero / otro"),
+]
 
 from controllers.ui_facturas_emitidas_controller import FacturasEmitidasController
 from controllers.factura_dialog_controller import FacturaDialogController
 from controllers.terceros_global_controller import TercerosGlobalController
 from controllers.terceros_empresa_controller import TercerosEmpresaController
+from services.terceros_empresa_fiscal_service import (
+    DEDUCCION_LABELS,
+    DEDUCCION_LABELS_INV,
+    PROVEEDOR_TIPOS_IVA,
+    CLIENTE_TIPOS_IVA,
+    TIPO_IVA_TOOLTIPS,
+    get_proveedor_deduction_mode,
+)
 
 IVA_OPCIONES = [21, 10, 4, 0]
 IRPF_RET_OPCIONES = [1, 7, 15, 19]
@@ -177,6 +197,7 @@ class TerceroFicha(tk.Toplevel):
         fields = [
             ("NIF", "nif", 18),
             ("Nombre", "nombre", 40),
+            ("Pais", "pais", 8),
             ("Direccion", "direccion", 40),
             ("CP", "cp", 10),
             ("Poblacion", "poblacion", 28),
@@ -197,25 +218,31 @@ class TerceroFicha(tk.Toplevel):
             if key == "nif":
                 self._nif_entry = entry
                 self._nif_normalizer_id = v.trace_add("write", lambda *_: self._on_nif_change())
-        # Casilla para NIF extranjero (omitir validacion española)
+            if key == "pais":
+                v.trace_add("write", lambda *_: self._on_pais_change())
+        # Selector de identificacion
         nif_actual = str(t.get("nif") or "")
-        from utils.validaciones import validar_nif_cif_nie as _val
-        nif_no_valido = bool(nif_actual) and not _val(normalizar_nif_cif(nif_actual))
-        self.var_nif_extranjero = tk.BooleanVar(value=nif_no_valido)
+        tipo_ident = self._infer_tipo_identificacion_ui(t.get("tipo_identificacion"), nif_actual)
+        self.var_tipo_ident = tk.StringVar(value=tipo_ident)
+        self.var_nif_extranjero = tk.BooleanVar(value=(self._current_tipo_ident_key() == "foreign"))
         row_extra = len(fields)
-        cb_ext = ttk.Checkbutton(
+        ttk.Label(self, text="Tipo identificacion").grid(row=row_extra, column=0, sticky="w", padx=6, pady=(2, 4))
+        self.cb_tipo_ident = ttk.Combobox(
             self,
-            text="NIF/CIF extranjero (omitir validacion española)",
-            variable=self.var_nif_extranjero,
-            command=self._on_extranjero_toggle,
+            textvariable=self.var_tipo_ident,
+            values=[label for _, label in TIPOS_IDENTIFICACION_TERCERO],
+            state="readonly",
+            width=28,
         )
-        cb_ext.grid(row=row_extra, column=0, columnspan=2, sticky="w", padx=6, pady=(2, 4))
+        self.cb_tipo_ident.grid(row=row_extra, column=1, sticky="w", padx=6, pady=(2, 4))
+        self.cb_tipo_ident.bind("<<ComboboxSelected>>", lambda _e: self._on_tipo_ident_change())
         btns = ttk.Frame(self)
         btns.grid(row=row_extra + 1, column=0, columnspan=2, pady=6)
         ttk.Button(btns, text="Guardar", style="Primary.TButton", command=self._ok).pack(side=tk.LEFT, padx=4)
         ttk.Button(btns, text="Cancelar", command=self.destroy).pack(side=tk.LEFT, padx=4)
         self.grab_set()
         self.transient(parent)
+        self._on_tipo_ident_change()
         _center_window(self, parent)
         self.wait_window(self)
 
@@ -234,21 +261,62 @@ class TerceroFicha(tk.Toplevel):
             v.set(normalizar_nif_cif(v.get()))
 
     def _on_nif_change(self):
-        if self.var_nif_extranjero.get():
+        if self._current_tipo_ident_key() == "foreign":
             return
         v = self.vars["nif"]
         current = v.get()
         normalized = normalizar_nif_cif(current)
         if current != normalized:
             v.set(normalized)
+        if not self.vars["pais"].get().strip():
+            inferred = inferir_pais_desde_identificacion(normalized)
+            if inferred:
+                self.vars["pais"].set(inferred)
+
+    def _on_pais_change(self):
+        current = self.vars["pais"].get()
+        normalized = normalizar_codigo_pais(current)
+        if current != normalized:
+            self.vars["pais"].set(normalized)
+
+    def _on_tipo_ident_change(self):
+        key = self._current_tipo_ident_key()
+        self.var_nif_extranjero.set(key == "foreign")
+        self._on_extranjero_toggle()
+        if key in ("nacional", "vat") and not self.vars["pais"].get().strip():
+            inferred = inferir_pais_desde_identificacion(self.vars["nif"].get())
+            if inferred:
+                self.vars["pais"].set(inferred)
+
+    def _current_tipo_ident_key(self) -> str:
+        label = self.var_tipo_ident.get()
+        for key, text in TIPOS_IDENTIFICACION_TERCERO:
+            if text == label:
+                return key
+        return "auto"
+
+    def _infer_tipo_identificacion_ui(self, tipo_identificacion, nif_actual: str) -> str:
+        tipo = str(tipo_identificacion or "").strip().lower()
+        if tipo == "vat":
+            return "NIF-IVA intracomunitario"
+        if tipo in ("nif", "cif", "nie"):
+            return "Documento español"
+        nif_norm = normalizar_nif_cif(nif_actual)
+        if inferir_pais_desde_identificacion(nif_norm) and inferir_pais_desde_identificacion(nif_norm) != "ES":
+            return "NIF-IVA intracomunitario"
+        return "Auto"
 
     def _ok(self):
         data = {k: v.get().strip() for k, v in self.vars.items()}
-        if not self.var_nif_extranjero.get():
+        tipo_key = self._current_tipo_ident_key()
+        if tipo_key != "foreign":
             data["nif"] = normalizar_nif_cif(data.get("nif"))
         else:
             data["nif"] = str(data.get("nif") or "").strip().upper()
-        data["_nif_extranjero"] = bool(self.var_nif_extranjero.get())
+        if not data.get("pais"):
+            data["pais"] = inferir_pais_desde_identificacion(data.get("nif"))
+        data["_nif_extranjero"] = bool(tipo_key == "foreign")
+        data["_tipo_identificacion_selector"] = tipo_key
         self.result = data
         self.destroy()
 
@@ -492,21 +560,50 @@ class TercerosEmpresaDialog(tk.Toplevel):
         self.tv.pack(fill="both", expand=True, pady=6)
         self.tv.bind("<<TreeviewSelect>>", lambda e: self.controller.load_subcuentas())
 
-        sub = ttk.LabelFrame(frm, text=f"Subcuentas en empresa {self.codigo}")
+        sub = ttk.LabelFrame(frm, text=f"Configuracion empresa-tercero {self.codigo}")
         sub.pack(fill="x", pady=(4, 0))
-        ttk.Label(sub, text="Subcta cliente").grid(row=0, column=0, sticky="w", padx=6, pady=4)
-        ttk.Label(sub, text="Subcta proveedor").grid(row=1, column=0, sticky="w", padx=6, pady=4)
-        ttk.Label(sub, text="Subcta ingreso").grid(row=2, column=0, sticky="w", padx=6, pady=4)
-        ttk.Label(sub, text="Subcta gasto").grid(row=3, column=0, sticky="w", padx=6, pady=4)
         self.var_sub_cli = tk.StringVar()
-        ttk.Entry(sub, textvariable=self.var_sub_cli, width=18).grid(row=0, column=1, sticky="w", padx=6, pady=4)
         self.var_sub_pro = tk.StringVar()
-        ttk.Entry(sub, textvariable=self.var_sub_pro, width=18).grid(row=1, column=1, sticky="w", padx=6, pady=4)
         self.var_sub_ing = tk.StringVar()
-        ttk.Entry(sub, textvariable=self.var_sub_ing, width=18).grid(row=2, column=1, sticky="w", padx=6, pady=4)
         self.var_sub_gas = tk.StringVar()
-        ttk.Entry(sub, textvariable=self.var_sub_gas, width=18).grid(row=3, column=1, sticky="w", padx=6, pady=4)
-        ttk.Button(sub, text="Guardar", style="Primary.TButton", command=self.controller.guardar_subcuentas).grid(row=0, column=2, rowspan=4, padx=6, pady=4)
+        self.var_cli_tipo_iva = tk.StringVar(value=CLIENTE_TIPOS_IVA[0])
+        self.var_prov_tipo_iva = tk.StringVar(value=PROVEEDOR_TIPOS_IVA[0])
+        self.var_prov_ded_mode = tk.StringVar(value=DEDUCCION_LABELS["total"])
+        self.var_prov_pct = tk.StringVar(value="100")
+
+        cli = ttk.LabelFrame(sub, text="Configuracion cliente")
+        cli.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        ttk.Label(cli, text="Subcuenta cliente").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        ttk.Entry(cli, textvariable=self.var_sub_cli, width=18).grid(row=0, column=1, sticky="w", padx=6, pady=4)
+        ttk.Label(cli, text="Subcuenta ingreso").grid(row=1, column=0, sticky="w", padx=6, pady=4)
+        ttk.Entry(cli, textvariable=self.var_sub_ing, width=18).grid(row=1, column=1, sticky="w", padx=6, pady=4)
+        ttk.Label(cli, text="Tipo operacion IVA ventas").grid(row=2, column=0, sticky="w", padx=6, pady=4)
+        ttk.Combobox(cli, textvariable=self.var_cli_tipo_iva, values=list(CLIENTE_TIPOS_IVA), state="readonly", width=24).grid(row=2, column=1, sticky="w", padx=6, pady=4)
+
+        prov = ttk.LabelFrame(sub, text="Configuracion proveedor")
+        prov.grid(row=0, column=1, sticky="nsew", padx=8, pady=8)
+        ttk.Label(prov, text="Subcuenta proveedor").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        ttk.Entry(prov, textvariable=self.var_sub_pro, width=18).grid(row=0, column=1, sticky="w", padx=6, pady=4)
+        ttk.Label(prov, text="Subcuenta gasto").grid(row=1, column=0, sticky="w", padx=6, pady=4)
+        ttk.Entry(prov, textvariable=self.var_sub_gas, width=18).grid(row=1, column=1, sticky="w", padx=6, pady=4)
+        ttk.Label(prov, text="Tipo operacion IVA compras").grid(row=2, column=0, sticky="w", padx=6, pady=4)
+        ttk.Combobox(prov, textvariable=self.var_prov_tipo_iva, values=list(PROVEEDOR_TIPOS_IVA), state="readonly", width=24).grid(row=2, column=1, sticky="w", padx=6, pady=4)
+        ttk.Label(prov, text="IVA deducible").grid(row=3, column=0, sticky="w", padx=6, pady=4)
+        self.cb_prov_ded_mode = ttk.Combobox(prov, textvariable=self.var_prov_ded_mode, values=list(DEDUCCION_LABELS.values()), state="readonly", width=12)
+        self.cb_prov_ded_mode.grid(row=3, column=1, sticky="w", padx=6, pady=4)
+        self.cb_prov_ded_mode.bind("<<ComboboxSelected>>", lambda _e: self._refresh_ded_ui())
+        ttk.Label(prov, text="% deduccion IVA").grid(row=4, column=0, sticky="w", padx=6, pady=4)
+        self.entry_prov_pct = ttk.Entry(prov, textvariable=self.var_prov_pct, width=12)
+        self.entry_prov_pct.grid(row=4, column=1, sticky="w", padx=6, pady=4)
+        self.var_prov_pct.trace_add("write", lambda *_: self._refresh_hint())
+        self.lbl_prov_hint = ttk.Label(prov, text="", foreground="#64748b", font=("Segoe UI", 8))
+        self.lbl_prov_hint.grid(row=5, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
+
+        ttk.Button(sub, text="Guardar", style="Primary.TButton", command=self.controller.guardar_subcuentas).grid(row=1, column=0, columnspan=2, sticky="e", padx=8, pady=(0, 8))
+        sub.columnconfigure(0, weight=1)
+        sub.columnconfigure(1, weight=1)
+        self.var_prov_tipo_iva.trace_add("write", lambda *_: self._refresh_hint())
+        self._refresh_ded_ui()
 
     # --- helpers de vista
     def set_terceros(self, rows):
@@ -518,6 +615,10 @@ class TercerosEmpresaDialog(tk.Toplevel):
         self.var_sub_pro.set("")
         self.var_sub_ing.set("")
         self.var_sub_gas.set("")
+        self.var_cli_tipo_iva.set(CLIENTE_TIPOS_IVA[0])
+        self.var_prov_tipo_iva.set(PROVEEDOR_TIPOS_IVA[0])
+        self.var_prov_ded_mode.set(DEDUCCION_LABELS["total"])
+        self.var_prov_pct.set("100")
 
     def get_selected_id(self):
         sel = self.tv.selection()
@@ -535,11 +636,57 @@ class TercerosEmpresaDialog(tk.Toplevel):
     def get_subcuenta_gasto(self):
         return self.var_sub_gas.get()
 
-    def set_subcuentas(self, sc, sp, si, sg):
+    def set_subcuentas(self, sc, sp, si, sg, rel=None):
         self.var_sub_cli.set(sc)
         self.var_sub_pro.set(sp)
         self.var_sub_ing.set(si)
         self.var_sub_gas.set(sg)
+        rel = rel or {}
+        self.var_cli_tipo_iva.set(rel.get("cliente_tipo_operacion_iva") or CLIENTE_TIPOS_IVA[0])
+        self.var_prov_tipo_iva.set(rel.get("proveedor_tipo_operacion_iva") or PROVEEDOR_TIPOS_IVA[0])
+        mode = get_proveedor_deduction_mode(rel)
+        self.var_prov_ded_mode.set(DEDUCCION_LABELS[mode])
+        pct = rel.get("proveedor_porcentaje_deduccion_iva", 100)
+        try:
+            pct_val = float(pct)
+            self.var_prov_pct.set(str(int(pct_val)) if pct_val == int(pct_val) else str(pct_val))
+        except Exception:
+            self.var_prov_pct.set("100")
+        self._refresh_ded_ui()
+
+    def get_cliente_tipo_operacion_iva(self):
+        return self.var_cli_tipo_iva.get().strip()
+
+    def get_proveedor_tipo_operacion_iva(self):
+        return self.var_prov_tipo_iva.get().strip()
+
+    def get_proveedor_iva_deducible(self):
+        return 0 if DEDUCCION_LABELS_INV.get(self.var_prov_ded_mode.get(), "total") == "no" else 1
+
+    def get_proveedor_porcentaje_deduccion_iva(self):
+        mode = DEDUCCION_LABELS_INV.get(self.var_prov_ded_mode.get(), "total")
+        if mode == "no":
+            return 0.0
+        if mode == "total":
+            return 100.0
+        return float((self.var_prov_pct.get() or "0").replace(",", "."))
+
+    def _refresh_ded_ui(self):
+        mode = DEDUCCION_LABELS_INV.get(self.var_prov_ded_mode.get(), "total")
+        if mode == "no":
+            self.var_prov_pct.set("0")
+            self.entry_prov_pct.configure(state="disabled")
+        elif mode == "total":
+            self.var_prov_pct.set("100")
+            self.entry_prov_pct.configure(state="disabled")
+        else:
+            self.entry_prov_pct.configure(state="normal")
+        self._refresh_hint()
+
+    def _refresh_hint(self):
+        tipo = self.var_prov_tipo_iva.get().strip()
+        base = TIPO_IVA_TOOLTIPS.get(tipo, "Configuracion fiscal del proveedor.")
+        self.lbl_prov_hint.configure(text=base)
 
     def _apply_filtro_terceros(self):
         filtro = (self.var_buscar_tercero.get() or "").strip().lower()
@@ -852,7 +999,6 @@ class FacturaDialog(tk.Toplevel):
         factura=None,
         numero_sugerido="",
         titulo="Factura emitida",
-        on_open_company_config=None,
     ):
         super().__init__(parent)
         self.title(titulo)
@@ -873,7 +1019,6 @@ class FacturaDialog(tk.Toplevel):
         self.codigo = codigo_empresa
         self.ejercicio = ejercicio
         self.ndig = ndig_plan
-        self._on_open_company_config = on_open_company_config
         self.factura = dict(factura or {})
         self.factura.setdefault("codigo_empresa", codigo_empresa)
         self.factura.setdefault("ejercicio", ejercicio)
@@ -1030,7 +1175,7 @@ class FacturaDialog(tk.Toplevel):
         self.cb_tercero = ttk.Combobox(frm, textvariable=self.var_tercero, width=44)
         self.cb_tercero.grid(row=row, column=1, padx=4, pady=3, sticky="w")
         self.cb_tercero.bind("<KeyRelease>", lambda e: self._filter_clientes_cb())
-        ttk.Button(frm, text="Config. empresa", command=self._configurar_empresa).grid(row=row, column=2, padx=4, pady=3)
+        ttk.Button(frm, text="Crear tercero", command=self._crear_tercero).grid(row=row, column=2, padx=4, pady=3)
         row += 1
 
         ttk.Label(frm, text="Serie").grid(row=row, column=0, sticky="w", padx=4, pady=3)
@@ -1323,8 +1468,8 @@ class FacturaDialog(tk.Toplevel):
     def _preselect_tercero(self, tercero_id):
         self.controller.preselect_tercero(tercero_id)
 
-    def _configurar_empresa(self):
-        self.controller.configurar_empresa()
+    def _crear_tercero(self):
+        self.controller.crear_tercero()
 
     def _on_tercero_selected(self):
         self.controller.on_tercero_selected()
@@ -1480,6 +1625,14 @@ class FacturaDialog(tk.Toplevel):
 
     def set_subcuenta(self, value):
         self.var_subcuenta.set(value)
+
+    def set_tipo_operacion(self, code: str):
+        code = str(code or "01").zfill(2)[-2:]
+        self.var_tipo_operacion.set(self._tipo_operacion_by_code.get(code, TIPOS_OPERACION_EMITIDAS[0][1]))
+
+    def set_modelo_fiscal(self, code: str):
+        code = str(code or "").strip()
+        self.var_modelo_fiscal.set(self._modelo_fiscal_by_code.get(code, MODELOS_FISCALES_EMITIDAS[0][1]))
 
     def set_cuenta_bancaria(self, value):
         self.var_cuenta_banco.set(value)
@@ -1737,11 +1890,9 @@ class FacturaDialog(tk.Toplevel):
     def get_plantilla_emitidas(self):
         return self.var_plantilla_emitidas.get().strip()
 
-    def open_company_config(self):
-        if not self._on_open_company_config:
-            self.show_warning("Gest2A3Eco", "La configuracion de empresa no esta disponible.")
-            return False
-        return bool(self._on_open_company_config())
+    def open_create_third_party_dialog(self, tercero=None):
+        dlg = TerceroFicha(self, tercero)
+        return dlg.result
 
     def show_info(self, title, message):
         messagebox.showinfo(title, message)
@@ -1765,7 +1916,6 @@ class UIFacturasEmitidas(ttk.Frame):
         nombre_empresa,
         allow_all_years: bool = False,
         session=None,
-        on_open_company_config=None,
     ):
         super().__init__(master)
         self.gestor = gestor
@@ -1774,7 +1924,6 @@ class UIFacturasEmitidas(ttk.Frame):
         self.nombre = nombre_empresa
         self.allow_all_years = bool(allow_all_years)
         self.session = session
-        self._on_open_company_config = on_open_company_config
         self._marked_factura_ids = set()
         monedas = load_monedas()
         self._default_moneda_simbolo = str(monedas[0].get("simbolo")) if monedas else ""
@@ -2292,7 +2441,6 @@ class UIFacturasEmitidas(ttk.Frame):
             factura,
             numero_sugerido=numero_sugerido,
             titulo="Factura emitida",
-            on_open_company_config=self._on_open_company_config,
         )
         return dlg.result
 
@@ -2338,7 +2486,6 @@ class UIFacturasEmitidas(ttk.Frame):
             albaran,
             numero_sugerido=numero_sugerido,
             titulo="Albaran emitido",
-            on_open_company_config=self._on_open_company_config,
         )
         return dlg.result
 

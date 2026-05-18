@@ -1,4 +1,9 @@
-from utils.validaciones import normalizar_nif_cif, validar_nif_cif_nie
+from utils.validaciones import (
+    inferir_pais_desde_identificacion,
+    normalizar_codigo_pais,
+    normalizar_nif_cif,
+    validar_nif_o_nif_iva_intracomunitario,
+)
 
 
 class TercerosGlobalController:
@@ -27,6 +32,12 @@ class TercerosGlobalController:
                 if not self._nif_valido(result.get("nif")):
                     self._view.show_warning("Gest2A3Eco", "NIF/CIF/NIE invalido. Revisa el formato.")
                     return
+            result["pais"] = normalizar_codigo_pais(result.get("pais")) or inferir_pais_desde_identificacion(result.get("nif"))
+            result["tipo_identificacion"] = {
+                "vat": "vat",
+                "foreign": "foreign",
+                "nacional": "nif",
+            }.get(result.get("_tipo_identificacion_selector"))
             if self._nif_duplicado(result.get("nif")):
                 self._view.show_warning("Gest2A3Eco", "Ya existe un tercero con ese CIF/NIF.")
                 return
@@ -52,6 +63,12 @@ class TercerosGlobalController:
                 if not self._nif_valido(result.get("nif")):
                     self._view.show_warning("Gest2A3Eco", "NIF/CIF/NIE invalido. Revisa el formato.")
                     return
+            result["pais"] = normalizar_codigo_pais(result.get("pais")) or inferir_pais_desde_identificacion(result.get("nif"))
+            result["tipo_identificacion"] = {
+                "vat": "vat",
+                "foreign": "foreign",
+                "nacional": "nif",
+            }.get(result.get("_tipo_identificacion_selector"))
             if self._nif_duplicado(result.get("nif"), exclude_id=tid):
                 self._view.show_warning("Gest2A3Eco", "Ya existe un tercero con ese CIF/NIF.")
                 return
@@ -128,7 +145,7 @@ class TercerosGlobalController:
         return normalizar_nif_cif(value)
 
     def _nif_valido(self, nif: str | None) -> bool:
-        return validar_nif_cif_nie(nif)
+        return validar_nif_o_nif_iva_intracomunitario(nif)
 
     def _can_manage_global_third_parties(self) -> bool:
         security = getattr(self._gestor, "security", None)

@@ -3,8 +3,22 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
+from services.terceros_empresa_fiscal_service import (
+    CLIENTE_TIPOS_IVA,
+    DEDUCCION_LABELS,
+    DEDUCCION_LABELS_INV,
+    PROVEEDOR_TIPOS_IVA,
+    TIPO_IVA_TOOLTIPS,
+    get_proveedor_deduction_mode,
+    validate_tercero_empresa_rel,
+)
 from services.import_a3_empresa import importar_empresa_desde_a3, listar_empresas_a3
-from utils.validaciones import normalizar_nif_cif, validar_nif_cif_nie
+from utils.validaciones import (
+    inferir_pais_desde_identificacion,
+    normalizar_codigo_pais,
+    normalizar_nif_cif,
+    validar_nif_o_nif_iva_intracomunitario,
+)
 from views.ui_facturas_emitidas import TerceroFicha
 
 
@@ -322,16 +336,19 @@ class EmpresaDialog(tk.Toplevel):
         ttk.Label(tab, text="Terceros asignados a esta empresa").grid(row=0, column=0, sticky="w", pady=(0, 8))
         self.tv_terceros_empresa = ttk.Treeview(
             tab,
-            columns=("nif", "nombre", "cliente", "proveedor", "ingreso", "gasto"),
+            columns=("nif", "nombre", "cliente", "proveedor", "ingreso", "gasto", "iva_ventas", "iva_compras", "ded_iva"),
             show="headings",
         )
         for col, text, width in (
             ("nif", "NIF", 120),
-            ("nombre", "Nombre", 320),
-            ("cliente", "Subcuenta cliente", 140),
-            ("proveedor", "Subcuenta proveedor", 140),
-            ("ingreso", "Subcuenta ingreso", 140),
-            ("gasto", "Subcuenta gasto", 140),
+            ("nombre", "Nombre", 240),
+            ("cliente", "Subcuenta cliente", 120),
+            ("proveedor", "Subcuenta proveedor", 120),
+            ("ingreso", "Subcuenta ingreso", 120),
+            ("gasto", "Subcuenta gasto", 120),
+            ("iva_ventas", "IVA ventas", 140),
+            ("iva_compras", "IVA compras", 150),
+            ("ded_iva", "Deduccion IVA", 110),
         ):
             self.tv_terceros_empresa.heading(col, text=text)
             self.tv_terceros_empresa.column(col, width=width, anchor="w")
@@ -342,7 +359,7 @@ class EmpresaDialog(tk.Toplevel):
         ttk.Button(btns, text="Nuevo tercero", style="Primary.TButton", command=self._new_third_party).pack(side=tk.LEFT)
         ttk.Button(btns, text="Asignar existente", command=self._assign_existing_third_party).pack(side=tk.LEFT, padx=6)
         ttk.Button(btns, text="Editar", command=self._edit_third_party).pack(side=tk.LEFT)
-        ttk.Button(btns, text="Subcuentas", command=self._edit_third_party_accounts).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btns, text="Config. fiscal y contable", command=self._edit_third_party_accounts).pack(side=tk.LEFT, padx=6)
         ttk.Button(btns, text="Quitar asignacion", command=self._remove_third_party_assignment).pack(side=tk.LEFT, padx=6)
         self.lbl_terceros_info = ttk.Label(tab, text="")
         self.lbl_terceros_info.grid(row=3, column=0, sticky="w", pady=(8, 0))
@@ -920,6 +937,20 @@ class EmpresaDialog(tk.Toplevel):
             terceros = []
         for idx, tercero in enumerate(terceros):
             tid = str(tercero.get("id") or idx)
+            rel = validate_tercero_empresa_rel(tercero)
+            ded_mode = get_proveedor_deduction_mode(rel)
+            pct = rel.get("proveedor_porcentaje_deduccion_iva", 100)
+            if ded_mode == "no":
+                ded_txt = "No"
+            elif ded_mode == "parcial":
+                try:
+                    pct_val = float(pct)
+                    pct_txt = str(int(pct_val)) if pct_val == int(pct_val) else str(pct_val)
+                except Exception:
+                    pct_txt = str(pct)
+                ded_txt = f"Parcial {pct_txt}%"
+            else:
+                ded_txt = "Si 100%"
             self.tv_terceros_empresa.insert("", "end", iid=tid, values=(
                 tercero.get("nif", ""),
                 tercero.get("nombre", ""),
@@ -927,8 +958,13 @@ class EmpresaDialog(tk.Toplevel):
                 tercero.get("subcuenta_proveedor", ""),
                 tercero.get("subcuenta_ingreso", ""),
                 tercero.get("subcuenta_gasto", ""),
+                rel.get("cliente_tipo_operacion_iva", ""),
+                rel.get("proveedor_tipo_operacion_iva", ""),
+                ded_txt,
             ))
-        self.lbl_terceros_info.configure(text=f"Terceros asignados: {len(terceros)}")
+        self.lbl_terceros_info.configure(
+            text=f"Terceros asignados: {len(terceros)}. Doble clic o 'Config. fiscal y contable' para editar IVA y subcuentas."
+        )
 
     def _selected_third_party_id(self):
         sel = self.tv_terceros_empresa.selection()
@@ -954,9 +990,15 @@ class EmpresaDialog(tk.Toplevel):
             nif = str(payload.get("nif") or "").strip().upper()
         else:
             nif = normalizar_nif_cif(payload.get("nif"))
-            if nif and not validar_nif_cif_nie(nif):
-                raise ValueError("NIF/CIF/NIE invalido.")
+            if nif and not validar_nif_o_nif_iva_intracomunitario(nif):
+                raise ValueError("NIF/CIF/NIE o NIF-IVA intracomunitario invalido.")
         payload["nif"] = nif
+        payload["pais"] = normalizar_codigo_pais(payload.get("pais")) or inferir_pais_desde_identificacion(nif)
+        payload["tipo_identificacion"] = {
+            "vat": "vat",
+            "foreign": "foreign",
+            "nacional": "nif",
+        }.get(payload.get("_tipo_identificacion_selector"))
         if self._nif_duplicado(nif, exclude_id=third_party_id):
             raise ValueError("Ya existe un tercero con ese CIF/NIF.")
         if third_party_id:
@@ -1008,10 +1050,10 @@ class EmpresaDialog(tk.Toplevel):
         codigo = self._codigo_empresa_actual()
         if not tid or not codigo or not self._gestor:
             return
-        rel = self._gestor.get_tercero_empresa(codigo, tid, 0) or {}
+        rel = validate_tercero_empresa_rel(self._gestor.get_tercero_empresa(codigo, tid, 0) or {})
         tercero = next((row for row in self._gestor.listar_terceros() if str(row.get("id")) == tid), None) or {}
         top = tk.Toplevel(self)
-        top.title("Subcuentas del tercero")
+        top.title("Configuracion fiscal y contable del tercero")
         top.resizable(False, False)
         top.transient(self)
         top.grab_set()
@@ -1023,34 +1065,83 @@ class EmpresaDialog(tk.Toplevel):
             "subcuenta_proveedor": tk.StringVar(value=str(rel.get("subcuenta_proveedor") or "")),
             "subcuenta_ingreso": tk.StringVar(value=str(rel.get("subcuenta_ingreso") or "")),
             "subcuenta_gasto": tk.StringVar(value=str(rel.get("subcuenta_gasto") or "")),
+            "cliente_tipo_operacion_iva": tk.StringVar(value=str(rel.get("cliente_tipo_operacion_iva") or CLIENTE_TIPOS_IVA[0])),
+            "proveedor_tipo_operacion_iva": tk.StringVar(value=str(rel.get("proveedor_tipo_operacion_iva") or PROVEEDOR_TIPOS_IVA[0])),
+            "proveedor_ded_mode": tk.StringVar(value=DEDUCCION_LABELS[get_proveedor_deduction_mode(rel)]),
+            "proveedor_porcentaje_deduccion_iva": tk.StringVar(value=str(int(float(rel.get("proveedor_porcentaje_deduccion_iva", 100))) if float(rel.get("proveedor_porcentaje_deduccion_iva", 100)) == int(float(rel.get("proveedor_porcentaje_deduccion_iva", 100))) else float(rel.get("proveedor_porcentaje_deduccion_iva", 100)))),
         }
-        labels = (
-            ("subcuenta_cliente", "Subcuenta cliente"),
-            ("subcuenta_proveedor", "Subcuenta proveedor"),
-            ("subcuenta_ingreso", "Subcuenta ingreso"),
-            ("subcuenta_gasto", "Subcuenta gasto"),
-        )
-        for idx, (key, text) in enumerate(labels, start=1):
-            ttk.Label(frm, text=text).grid(row=idx, column=0, sticky="w", pady=4)
-            ttk.Entry(frm, textvariable=vars_map[key], width=24).grid(row=idx, column=1, sticky="w", pady=4)
+        cli = ttk.LabelFrame(frm, text="Configuracion cliente", padding=10)
+        cli.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        ttk.Label(cli, text="Subcuenta cliente").grid(row=0, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Entry(cli, textvariable=vars_map["subcuenta_cliente"], width=24).grid(row=0, column=1, sticky="w", pady=4)
+        ttk.Label(cli, text="Subcuenta ingreso").grid(row=1, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Entry(cli, textvariable=vars_map["subcuenta_ingreso"], width=24).grid(row=1, column=1, sticky="w", pady=4)
+        ttk.Label(cli, text="Tipo operacion IVA ventas").grid(row=2, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Combobox(cli, textvariable=vars_map["cliente_tipo_operacion_iva"], values=list(CLIENTE_TIPOS_IVA), state="readonly", width=24).grid(row=2, column=1, sticky="w", pady=4)
+
+        prov = ttk.LabelFrame(frm, text="Configuracion proveedor", padding=10)
+        prov.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        ttk.Label(prov, text="Subcuenta proveedor").grid(row=0, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Entry(prov, textvariable=vars_map["subcuenta_proveedor"], width=24).grid(row=0, column=1, sticky="w", pady=4)
+        ttk.Label(prov, text="Subcuenta gasto").grid(row=1, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Entry(prov, textvariable=vars_map["subcuenta_gasto"], width=24).grid(row=1, column=1, sticky="w", pady=4)
+        ttk.Label(prov, text="Tipo operacion IVA compras").grid(row=2, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Combobox(prov, textvariable=vars_map["proveedor_tipo_operacion_iva"], values=list(PROVEEDOR_TIPOS_IVA), state="readonly", width=24).grid(row=2, column=1, sticky="w", pady=4)
+        ttk.Label(prov, text="IVA deducible").grid(row=3, column=0, sticky="w", pady=4, padx=(0, 8))
+        cb_ded = ttk.Combobox(prov, textvariable=vars_map["proveedor_ded_mode"], values=list(DEDUCCION_LABELS.values()), state="readonly", width=12)
+        cb_ded.grid(row=3, column=1, sticky="w", pady=4)
+        ttk.Label(prov, text="% deduccion IVA").grid(row=4, column=0, sticky="w", pady=4, padx=(0, 8))
+        entry_pct = ttk.Entry(prov, textvariable=vars_map["proveedor_porcentaje_deduccion_iva"], width=12)
+        entry_pct.grid(row=4, column=1, sticky="w", pady=4)
+        lbl_hint = ttk.Label(prov, text="", foreground="#64748b", font=("Segoe UI", 8))
+        lbl_hint.grid(row=5, column=0, columnspan=2, sticky="w", pady=(0, 2))
+
+        def _refresh_deduccion(*_args):
+            mode = DEDUCCION_LABELS_INV.get(vars_map["proveedor_ded_mode"].get(), "total")
+            if mode == "no":
+                vars_map["proveedor_porcentaje_deduccion_iva"].set("0")
+                entry_pct.configure(state="disabled")
+            elif mode == "total":
+                vars_map["proveedor_porcentaje_deduccion_iva"].set("100")
+                entry_pct.configure(state="disabled")
+            else:
+                entry_pct.configure(state="normal")
+            lbl_hint.configure(text=TIPO_IVA_TOOLTIPS.get(vars_map["proveedor_tipo_operacion_iva"].get(), "Configuracion fiscal del proveedor."))
+
+        vars_map["proveedor_ded_mode"].trace_add("write", _refresh_deduccion)
+        vars_map["proveedor_tipo_operacion_iva"].trace_add("write", _refresh_deduccion)
+        _refresh_deduccion()
 
         def _ok():
-            self._gestor.upsert_tercero_empresa(
-                {
-                    "tercero_id": tid,
-                    "codigo_empresa": codigo,
-                    "ejercicio": 0,
-                    "subcuenta_cliente": vars_map["subcuenta_cliente"].get().strip(),
-                    "subcuenta_proveedor": vars_map["subcuenta_proveedor"].get().strip(),
-                    "subcuenta_ingreso": vars_map["subcuenta_ingreso"].get().strip(),
-                    "subcuenta_gasto": vars_map["subcuenta_gasto"].get().strip(),
-                }
-            )
+            try:
+                pct = float((vars_map["proveedor_porcentaje_deduccion_iva"].get() or "0").replace(",", "."))
+            except Exception:
+                messagebox.showerror("Gest2A3Eco", "El porcentaje de deduccion IVA debe ser numerico.", parent=top)
+                return
+            payload = {
+                **rel,
+                "tercero_id": tid,
+                "codigo_empresa": codigo,
+                "ejercicio": 0,
+                "subcuenta_cliente": vars_map["subcuenta_cliente"].get().strip(),
+                "subcuenta_proveedor": vars_map["subcuenta_proveedor"].get().strip(),
+                "subcuenta_ingreso": vars_map["subcuenta_ingreso"].get().strip(),
+                "subcuenta_gasto": vars_map["subcuenta_gasto"].get().strip(),
+                "cliente_tipo_operacion_iva": vars_map["cliente_tipo_operacion_iva"].get().strip(),
+                "proveedor_tipo_operacion_iva": vars_map["proveedor_tipo_operacion_iva"].get().strip(),
+                "proveedor_iva_deducible": 0 if DEDUCCION_LABELS_INV.get(vars_map["proveedor_ded_mode"].get(), "total") == "no" else 1,
+                "proveedor_porcentaje_deduccion_iva": pct,
+            }
+            try:
+                self._gestor.upsert_tercero_empresa(payload)
+            except Exception as exc:
+                messagebox.showerror("Gest2A3Eco", str(exc), parent=top)
+                return
             top.destroy()
             self._load_terceros()
 
         btns = ttk.Frame(frm)
-        btns.grid(row=len(labels) + 1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        btns.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         ttk.Button(btns, text="Guardar", style="Primary.TButton", command=_ok).pack(side=tk.LEFT)
         ttk.Button(btns, text="Cancelar", command=top.destroy).pack(side=tk.LEFT, padx=(6, 0))
         top.wait_window()

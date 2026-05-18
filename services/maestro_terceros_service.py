@@ -14,7 +14,7 @@ import re
 import time
 import unicodedata
 
-from utils.validaciones import normalizar_nif_cif
+from utils.validaciones import inferir_pais_desde_identificacion, normalizar_codigo_pais, normalizar_nif_cif
 
 
 # ── Tipos de identificacion reconocidos ──────────────────────────────────────
@@ -209,7 +209,7 @@ class MaestroTercerosService:
                 nombre_legal,
                 datos.get("nombre_comercial") or None,
                 tipo_id,
-                datos.get("pais") or "ES",
+                normalizar_codigo_pais(datos.get("pais")) or inferir_pais_desde_identificacion(nif_norm) or None,
                 cp,
                 datos.get("observaciones") or None,
                 datos.get("origen") or "manual",

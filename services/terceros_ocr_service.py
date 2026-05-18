@@ -22,6 +22,7 @@ import re
 import unicodedata
 
 from utils.validaciones import normalizar_nif_cif
+from services.terceros_empresa_fiscal_service import DEFAULT_REL_CONFIG
 
 
 # ── Prefijos contables por tipo de tercero ────────────────────────────────────
@@ -195,6 +196,12 @@ class TercerosOcrService:
             "subcuenta_proveedor": subcuenta if campo == "subcuenta_proveedor" else None,
             "subcuenta_ingreso":   None,
             "subcuenta_gasto":     None,
+            "cliente_tipo_operacion_iva": DEFAULT_REL_CONFIG["cliente_tipo_operacion_iva"],
+            "cliente_iva_deducible": DEFAULT_REL_CONFIG["cliente_iva_deducible"],
+            "cliente_porcentaje_deduccion_iva": DEFAULT_REL_CONFIG["cliente_porcentaje_deduccion_iva"],
+            "proveedor_tipo_operacion_iva": DEFAULT_REL_CONFIG["proveedor_tipo_operacion_iva"],
+            "proveedor_iva_deducible": DEFAULT_REL_CONFIG["proveedor_iva_deducible"],
+            "proveedor_porcentaje_deduccion_iva": DEFAULT_REL_CONFIG["proveedor_porcentaje_deduccion_iva"],
         }
         gestor.upsert_tercero_empresa(rel)
 

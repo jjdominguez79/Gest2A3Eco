@@ -1,4 +1,5 @@
 from models.facturas_common import render_a3_tipoC_alta_cuenta
+from services.terceros_empresa_fiscal_service import validate_tercero_empresa_rel
 from utils.utilidades import validar_subcuenta_longitud
 from utils.validaciones import normalizar_nif_cif
 
@@ -18,14 +19,17 @@ class TercerosEmpresaController:
     def load_subcuentas(self):
         tid = self._view.get_selected_id()
         if not tid:
-            self._view.set_subcuentas("", "", "", "")
+            self._view.set_subcuentas("", "", "", "", {})
             return
-        rel = self._gestor.get_tercero_empresa(self._codigo, tid, self._ejercicio) or {}
+        rel = validate_tercero_empresa_rel(
+            self._gestor.get_tercero_empresa(self._codigo, tid, self._ejercicio) or {}
+        )
         self._view.set_subcuentas(
             rel.get("subcuenta_cliente", ""),
             rel.get("subcuenta_proveedor", ""),
             rel.get("subcuenta_ingreso", ""),
             rel.get("subcuenta_gasto", ""),
+            rel,
         )
 
     def guardar_subcuentas(self):
@@ -58,15 +62,25 @@ class TercerosEmpresaController:
         if self._subcuenta_en_uso(sp, tid, "subcuenta_proveedor"):
             self._view.show_error("Gest2A3Eco", f"La subcuenta proveedor {sp} ya esta asignada en esta empresa.")
             return
-        rel = {
-            "tercero_id": tid,
-            "codigo_empresa": self._codigo,
-            "ejercicio": self._ejercicio,
-            "subcuenta_cliente": sc,
-            "subcuenta_proveedor": sp,
-            "subcuenta_ingreso": si,
-            "subcuenta_gasto": sg,
-        }
+        try:
+            rel_actual = self._gestor.get_tercero_empresa(self._codigo, tid, self._ejercicio) or {}
+            rel = validate_tercero_empresa_rel({
+                **rel_actual,
+                "tercero_id": tid,
+                "codigo_empresa": self._codigo,
+                "ejercicio": self._ejercicio,
+                "subcuenta_cliente": sc,
+                "subcuenta_proveedor": sp,
+                "subcuenta_ingreso": si,
+                "subcuenta_gasto": sg,
+                "cliente_tipo_operacion_iva": self._view.get_cliente_tipo_operacion_iva(),
+                "proveedor_tipo_operacion_iva": self._view.get_proveedor_tipo_operacion_iva(),
+                "proveedor_iva_deducible": self._view.get_proveedor_iva_deducible(),
+                "proveedor_porcentaje_deduccion_iva": self._view.get_proveedor_porcentaje_deduccion_iva(),
+            })
+        except Exception as e:
+            self._view.show_error("Gest2A3Eco", str(e))
+            return
         self._gestor.upsert_tercero_empresa(rel)
         self._view.show_info("Gest2A3Eco", "Subcuentas guardadas.")
 

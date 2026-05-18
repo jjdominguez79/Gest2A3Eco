@@ -14,6 +14,7 @@ from models.facturas_common import (
     render_a3_tipoC_alta_cuenta,
     render_a3_tipo6_id,
 )
+from services.terceros_empresa_fiscal_service import split_iva_deducible
 from utils.utilidades import d2
 
 
@@ -135,6 +136,8 @@ def generar_asiento_recibida(row: Dict[str, Any], conf: Dict[str, Any]) -> List[
     cuota_iva = d2(row.get("Cuota IVA", 0))
     cuota_re = d2(row.get("Cuota Recargo Equivalencia", 0))
     ret = d2(row.get("Cuota Retencion IRPF", 0))
+    pct_deduccion_iva = row.get("_proveedor_porcentaje_deduccion_iva", 100.0)
+    iva_deducible, iva_no_deducible = split_iva_deducible(cuota_iva, pct_deduccion_iva)
 
     # Total = base + iva + recargo - retención (si no viene)
     total = d2(
@@ -168,15 +171,17 @@ def generar_asiento_recibida(row: Dict[str, Any], conf: Dict[str, Any]) -> List[
 
     lineas: List[Linea] = []
 
-    # Debe: gasto
-    if base != d2(0):
+    gasto_total = d2(base + iva_no_deducible)
+
+    # Debe: gasto (incluye IVA no deducible)
+    if gasto_total != d2(0):
         dh_base = "D" if signo > 0 else "H"
-        lineas.append(Linea(fecha, c_gasto, dh_base, abs(base), desc))
+        lineas.append(Linea(fecha, c_gasto, dh_base, abs(gasto_total), desc))
 
     # Debe: IVA soportado
-    if cuota_iva != d2(0):
+    if iva_deducible != d2(0):
         dh_iva = "D" if signo > 0 else "H"
-        lineas.append(Linea(fecha, c_iva, dh_iva, abs(cuota_iva), desc))
+        lineas.append(Linea(fecha, c_iva, dh_iva, abs(iva_deducible), desc))
 
     # Debe: recargo de equivalencia (si hay y hay cuenta configurada)
     if cuota_re != d2(0) and c_re:

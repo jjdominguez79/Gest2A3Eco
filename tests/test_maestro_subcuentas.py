@@ -270,3 +270,42 @@ def test_migracion_ignora_subcuentas_nulas(tmp_path):
     rows = g.listar_maestro_subcuentas_por_nif("E00570", "B99999999")
     assert len(rows) == 1
     assert rows[0]["tipo_subcuenta"] == "cliente"
+
+
+def test_tercero_empresa_defaults_fiscales(tmp_path):
+    g = _make_gestor(tmp_path)
+    tid = g.upsert_tercero({"id": None, "nif": "B12345678", "nombre": "Proveedor Fiscal",
+                             "direccion": "", "cp": "", "poblacion": "", "provincia": "",
+                             "telefono": "", "email": "", "contacto": "", "tipo": None})
+    g.upsert_tercero_empresa({
+        "codigo_empresa": "E00570", "ejercicio": 0, "tercero_id": str(tid),
+        "subcuenta_proveedor": "40000001",
+        "subcuenta_cliente": None, "subcuenta_ingreso": None, "subcuenta_gasto": "62900000",
+    })
+    rel = g.get_tercero_empresa("E00570", str(tid), 2026)
+    assert rel["cliente_tipo_operacion_iva"] == "INTERIOR_IVA"
+    assert rel["cliente_intracomunitaria_clase"] == ""
+    assert rel["proveedor_tipo_operacion_iva"] == "INTERIOR_DEDUCIBLE"
+    assert rel["proveedor_intracomunitaria_clase"] == ""
+    assert rel["proveedor_porcentaje_deduccion_iva"] == 100
+
+
+def test_tercero_empresa_guarda_deduccion_parcial(tmp_path):
+    g = _make_gestor(tmp_path)
+    tid = g.upsert_tercero({"id": None, "nif": "B87654321", "nombre": "Proveedor Mixto",
+                             "direccion": "", "cp": "", "poblacion": "", "provincia": "",
+                             "telefono": "", "email": "", "contacto": "", "tipo": None})
+    g.upsert_tercero_empresa({
+        "codigo_empresa": "E00570",
+        "ejercicio": 0,
+        "tercero_id": str(tid),
+        "subcuenta_proveedor": "40000005",
+        "subcuenta_gasto": "62100000",
+        "proveedor_tipo_operacion_iva": "GASTO_PRORRATA",
+        "proveedor_iva_deducible": 1,
+        "proveedor_porcentaje_deduccion_iva": 50,
+    })
+    rel = g.get_tercero_empresa("E00570", str(tid), 2026)
+    assert rel["proveedor_tipo_operacion_iva"] == "GASTO_PRORRATA"
+    assert rel["proveedor_iva_deducible"] == 1
+    assert rel["proveedor_porcentaje_deduccion_iva"] == 50

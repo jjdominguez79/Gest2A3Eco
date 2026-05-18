@@ -179,3 +179,14 @@ def test_generate_suenlace_multibase_produce_dos_tipo9(tmp_path):
 def test_generate_suenlace_lista_vacia(tmp_path):
     g = _make_gestor(tmp_path)
     assert generate_suenlace_for_docs(g, "E00570", 2026, []) == []
+
+
+def test_doc_to_row_transporta_configuracion_fiscal_proveedor():
+    row = doc_to_row(_base_doc(
+        proveedor_tipo_operacion_iva="GASTO_PRORRATA",
+        proveedor_iva_deducible=1,
+        proveedor_porcentaje_deduccion_iva=50.0,
+    ))
+    assert row["_proveedor_tipo_operacion_iva"] == "GASTO_PRORRATA"
+    assert row["_proveedor_iva_deducible"] == 1
+    assert row["_proveedor_porcentaje_deduccion_iva"] == 50.0

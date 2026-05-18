@@ -5,6 +5,9 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from services.terceros_empresa_fiscal_service import validate_tercero_empresa_rel
+from utils.validaciones import inferir_pais_desde_identificacion, normalizar_codigo_pais
+
 
 def _ej_val(v):
     try:
@@ -111,6 +114,9 @@ CREATE TABLE IF NOT EXISTS facturas_recibidas_docs (
   cuenta_gasto TEXT,
   cuenta_iva TEXT,
   cuenta_proveedor TEXT,
+  proveedor_tipo_operacion_iva TEXT,
+  proveedor_iva_deducible INTEGER,
+  proveedor_porcentaje_deduccion_iva REAL,
   pdf_ref TEXT,
   numero_asiento TEXT,
   generada INTEGER DEFAULT 0,
@@ -235,6 +241,14 @@ CREATE TABLE IF NOT EXISTS terceros_empresas (
   subcuenta_proveedor TEXT,
   subcuenta_ingreso TEXT,
   subcuenta_gasto TEXT,
+  cliente_tipo_operacion_iva TEXT DEFAULT 'INTERIOR_IVA',
+  cliente_intracomunitaria_clase TEXT,
+  cliente_iva_deducible INTEGER DEFAULT 0,
+  cliente_porcentaje_deduccion_iva REAL,
+  proveedor_tipo_operacion_iva TEXT DEFAULT 'INTERIOR_DEDUCIBLE',
+  proveedor_intracomunitaria_clase TEXT,
+  proveedor_iva_deducible INTEGER DEFAULT 1,
+  proveedor_porcentaje_deduccion_iva REAL DEFAULT 100,
   PRIMARY KEY (codigo_empresa, ejercicio, tercero_id)
 );
 CREATE TABLE IF NOT EXISTS plan_cuentas (
@@ -461,6 +475,39 @@ class GestorSQLite:
         self._ensure_column("albaranes_emitidas_docs", "fecha_facturacion", "TEXT")
         self._ensure_column("terceros_empresas", "subcuenta_ingreso", "TEXT")
         self._ensure_column("terceros_empresas", "subcuenta_gasto", "TEXT")
+        self._ensure_column("terceros_empresas", "cliente_tipo_operacion_iva", "TEXT")
+        self._ensure_column("terceros_empresas", "cliente_intracomunitaria_clase", "TEXT")
+        self._ensure_column("terceros_empresas", "cliente_iva_deducible", "INTEGER")
+        self._ensure_column("terceros_empresas", "cliente_porcentaje_deduccion_iva", "REAL")
+        self._ensure_column("terceros_empresas", "proveedor_tipo_operacion_iva", "TEXT")
+        self._ensure_column("terceros_empresas", "proveedor_intracomunitaria_clase", "TEXT")
+        self._ensure_column("terceros_empresas", "proveedor_iva_deducible", "INTEGER")
+        self._ensure_column("terceros_empresas", "proveedor_porcentaje_deduccion_iva", "REAL")
+        self.conn.commit()
+        self.conn.execute(
+            "UPDATE terceros_empresas SET cliente_tipo_operacion_iva='INTERIOR_IVA' "
+            "WHERE cliente_tipo_operacion_iva IS NULL OR TRIM(cliente_tipo_operacion_iva)=''"
+        )
+        self.conn.execute(
+            "UPDATE terceros_empresas SET cliente_iva_deducible=0 "
+            "WHERE cliente_iva_deducible IS NULL"
+        )
+        self.conn.execute(
+            "UPDATE terceros_empresas SET proveedor_tipo_operacion_iva='INTERIOR_DEDUCIBLE' "
+            "WHERE proveedor_tipo_operacion_iva IS NULL OR TRIM(proveedor_tipo_operacion_iva)=''"
+        )
+        self.conn.execute(
+            "UPDATE terceros_empresas SET proveedor_iva_deducible=1 "
+            "WHERE proveedor_iva_deducible IS NULL"
+        )
+        self.conn.execute(
+            "UPDATE terceros_empresas SET proveedor_porcentaje_deduccion_iva=100 "
+            "WHERE proveedor_porcentaje_deduccion_iva IS NULL"
+        )
+        self.conn.execute(
+            "UPDATE terceros_empresas SET proveedor_porcentaje_deduccion_iva=0 "
+            "WHERE COALESCE(proveedor_iva_deducible, 0)=0"
+        )
         self.conn.commit()
         self.conn.execute("UPDATE terceros SET tipo=NULL")
         self.conn.commit()
@@ -516,12 +563,27 @@ class GestorSQLite:
         # Fase 1: campos nuevos en facturas_recibidas_docs
         self._ensure_column("facturas_recibidas_docs", "tipo_documento", "TEXT")
         self._ensure_column("facturas_recibidas_docs", "tipo_operacion", "TEXT")
+        self._ensure_column("facturas_recibidas_docs", "proveedor_tipo_operacion_iva", "TEXT")
+        self._ensure_column("facturas_recibidas_docs", "proveedor_iva_deducible", "INTEGER")
+        self._ensure_column("facturas_recibidas_docs", "proveedor_porcentaje_deduccion_iva", "REAL")
         self._ensure_column("facturas_recibidas_docs", "fecha_vencimiento", "TEXT")
         self._ensure_column("facturas_recibidas_docs", "fecha_contabilizacion", "TEXT")
         self._ensure_column("facturas_recibidas_docs", "fecha_ocr", "TEXT")
         self._ensure_column("facturas_recibidas_docs", "fecha_validacion", "TEXT")
         self._ensure_column("facturas_recibidas_docs", "lote_generacion", "TEXT")
         self._ensure_column("facturas_recibidas_docs", "error_mensaje", "TEXT")
+        self.conn.execute(
+            "UPDATE facturas_recibidas_docs SET proveedor_tipo_operacion_iva='INTERIOR_DEDUCIBLE' "
+            "WHERE proveedor_tipo_operacion_iva IS NULL OR TRIM(proveedor_tipo_operacion_iva)=''"
+        )
+        self.conn.execute(
+            "UPDATE facturas_recibidas_docs SET proveedor_iva_deducible=1 "
+            "WHERE proveedor_iva_deducible IS NULL"
+        )
+        self.conn.execute(
+            "UPDATE facturas_recibidas_docs SET proveedor_porcentaje_deduccion_iva=100 "
+            "WHERE proveedor_porcentaje_deduccion_iva IS NULL"
+        )
         self.conn.commit()
         # Fase 1: tabla de líneas fiscales OCR
         self.conn.executescript(
@@ -566,7 +628,6 @@ class GestorSQLite:
             " WHERE nif_normalizado IS NULL AND nif IS NOT NULL AND TRIM(nif)!=''"
         )
         self.conn.execute("UPDATE terceros SET activo=1 WHERE activo IS NULL")
-        self.conn.execute("UPDATE terceros SET pais='ES' WHERE pais IS NULL")
         self.conn.commit()
         # ── Fase 2: columnas nuevas en ocr_lineas_fiscales ────────────────────────
         self._ensure_column("ocr_lineas_fiscales", "cuota_iva_manual", "INTEGER")
@@ -1845,17 +1906,25 @@ class GestorSQLite:
         now = self._utc_now()
         doc_id = str(doc.get("id") or int(time.time() * 1000))
         doc["id"] = doc_id
+        doc["proveedor_tipo_operacion_iva"] = (
+            doc.get("proveedor_tipo_operacion_iva") or "INTERIOR_DEDUCIBLE"
+        )
+        if doc.get("proveedor_iva_deducible") is None:
+            doc["proveedor_iva_deducible"] = 1
+        if doc.get("proveedor_porcentaje_deduccion_iva") is None:
+            doc["proveedor_porcentaje_deduccion_iva"] = 100.0
         self.conn.execute(
             """
             INSERT INTO facturas_recibidas_docs
             (id, codigo_empresa, ejercicio, tercero_id, origen_path, pdf_path, texto_ocr, estado_ocr, estado_validacion,
              estado_contable, proveedor_nif, proveedor_nombre, numero_factura, fecha_factura, fecha_operacion, fecha_asiento,
              descripcion, moneda_codigo, base_imponible, cuota_iva, cuota_recargo, cuota_retencion, total, cuenta_gasto,
-             cuenta_iva, cuenta_proveedor, pdf_ref, numero_asiento, generada, fecha_generacion, confianza_ocr, datos_extra_json,
+             cuenta_iva, cuenta_proveedor, proveedor_tipo_operacion_iva, proveedor_iva_deducible, proveedor_porcentaje_deduccion_iva,
+             pdf_ref, numero_asiento, generada, fecha_generacion, confianza_ocr, datos_extra_json,
              lineas_json, tipo_documento, tipo_operacion, fecha_vencimiento, fecha_contabilizacion,
              fecha_ocr, fecha_validacion, lote_generacion, error_mensaje,
              created_at, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -1882,6 +1951,9 @@ class GestorSQLite:
                 cuenta_gasto=excluded.cuenta_gasto,
                 cuenta_iva=excluded.cuenta_iva,
                 cuenta_proveedor=excluded.cuenta_proveedor,
+                proveedor_tipo_operacion_iva=excluded.proveedor_tipo_operacion_iva,
+                proveedor_iva_deducible=excluded.proveedor_iva_deducible,
+                proveedor_porcentaje_deduccion_iva=excluded.proveedor_porcentaje_deduccion_iva,
                 pdf_ref=excluded.pdf_ref,
                 numero_asiento=excluded.numero_asiento,
                 generada=excluded.generada,
@@ -1926,6 +1998,9 @@ class GestorSQLite:
                 doc.get("cuenta_gasto"),
                 doc.get("cuenta_iva"),
                 doc.get("cuenta_proveedor"),
+                doc.get("proveedor_tipo_operacion_iva"),
+                doc.get("proveedor_iva_deducible"),
+                doc.get("proveedor_porcentaje_deduccion_iva"),
                 doc.get("pdf_ref"),
                 doc.get("numero_asiento"),
                 1 if doc.get("generada") else 0,
@@ -2139,10 +2214,22 @@ class GestorSQLite:
     def upsert_tercero(self, tercero: dict):
         tid = tercero.get("id") or str(int(time.time() * 1000))
         tercero["id"] = tid
+        nif = tercero.get("nif")
+        nif_norm = tercero.get("nif_normalizado")
+        if nif_norm is None:
+            nif_norm = re.sub(r"[^A-Za-z0-9]", "", str(nif or "")).upper() or None
+        pais = normalizar_codigo_pais(tercero.get("pais"))
+        if not pais:
+            pais = inferir_pais_desde_identificacion(nif)
+        nombre = tercero.get("nombre")
         self.conn.execute(
             """
-            INSERT INTO terceros (id, nif, nombre, direccion, cp, poblacion, provincia, telefono, email, contacto, tipo)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO terceros (
+                id, nif, nombre, direccion, cp, poblacion, provincia, telefono, email, contacto, tipo,
+                nif_normalizado, nombre_legal, nombre_comercial, tipo_identificacion, pais,
+                codigo_postal, observaciones, origen, activo, fecha_creacion, fecha_actualizacion
+            )
+            VALUES (?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 nif=excluded.nif,
                 nombre=excluded.nombre,
@@ -2153,12 +2240,22 @@ class GestorSQLite:
                 telefono=excluded.telefono,
                 email=excluded.email,
                 contacto=excluded.contacto,
-                tipo=excluded.tipo
+                tipo=excluded.tipo,
+                nif_normalizado=excluded.nif_normalizado,
+                nombre_legal=excluded.nombre_legal,
+                nombre_comercial=excluded.nombre_comercial,
+                tipo_identificacion=excluded.tipo_identificacion,
+                pais=excluded.pais,
+                codigo_postal=excluded.codigo_postal,
+                observaciones=excluded.observaciones,
+                origen=excluded.origen,
+                activo=excluded.activo,
+                fecha_actualizacion=excluded.fecha_actualizacion
             """,
             (
                 tid,
-                tercero.get("nif"),
-                tercero.get("nombre"),
+                nif,
+                nombre,
                 tercero.get("direccion"),
                 tercero.get("cp"),
                 tercero.get("poblacion"),
@@ -2167,6 +2264,17 @@ class GestorSQLite:
                 tercero.get("email"),
                 tercero.get("contacto"),
                 None,
+                nif_norm,
+                tercero.get("nombre_legal") or nombre,
+                tercero.get("nombre_comercial"),
+                tercero.get("tipo_identificacion"),
+                pais or None,
+                tercero.get("codigo_postal") or tercero.get("cp"),
+                tercero.get("observaciones"),
+                tercero.get("origen"),
+                1 if tercero.get("activo", True) else 0,
+                tercero.get("fecha_creacion") or self._utc_now(),
+                tercero.get("fecha_actualizacion") or self._utc_now(),
             ),
         )
         self.conn.commit()
@@ -2211,7 +2319,10 @@ class GestorSQLite:
     def listar_terceros_por_empresa(self, codigo_empresa: str, ejercicio: int):
         cur = self.conn.execute(
             """
-            SELECT t.*, te.subcuenta_cliente, te.subcuenta_proveedor, te.subcuenta_ingreso, te.subcuenta_gasto, te.ejercicio
+            SELECT t.*, te.subcuenta_cliente, te.subcuenta_proveedor, te.subcuenta_ingreso, te.subcuenta_gasto,
+                   te.cliente_tipo_operacion_iva, te.cliente_intracomunitaria_clase, te.cliente_iva_deducible, te.cliente_porcentaje_deduccion_iva,
+                   te.proveedor_tipo_operacion_iva, te.proveedor_intracomunitaria_clase, te.proveedor_iva_deducible, te.proveedor_porcentaje_deduccion_iva,
+                   te.ejercicio
             FROM terceros t
             JOIN terceros_empresas te ON te.tercero_id = t.id
             WHERE te.codigo_empresa=? AND (te.ejercicio=0 OR te.ejercicio=?)
@@ -2223,7 +2334,10 @@ class GestorSQLite:
         if not rows:
             cur = self.conn.execute(
                 """
-                SELECT t.*, te.subcuenta_cliente, te.subcuenta_proveedor, te.subcuenta_ingreso, te.subcuenta_gasto, te.ejercicio
+                SELECT t.*, te.subcuenta_cliente, te.subcuenta_proveedor, te.subcuenta_ingreso, te.subcuenta_gasto,
+                       te.cliente_tipo_operacion_iva, te.cliente_intracomunitaria_clase, te.cliente_iva_deducible, te.cliente_porcentaje_deduccion_iva,
+                       te.proveedor_tipo_operacion_iva, te.proveedor_intracomunitaria_clase, te.proveedor_iva_deducible, te.proveedor_porcentaje_deduccion_iva,
+                       te.ejercicio
                 FROM terceros t
                 JOIN terceros_empresas te ON te.tercero_id = t.id
                 WHERE te.codigo_empresa=?
@@ -2261,15 +2375,29 @@ class GestorSQLite:
 
     def upsert_tercero_empresa(self, rel: dict):
         eje = 0
+        rel = validate_tercero_empresa_rel(rel)
         self.conn.execute(
             """
-            INSERT INTO terceros_empresas (codigo_empresa, ejercicio, tercero_id, subcuenta_cliente, subcuenta_proveedor, subcuenta_ingreso, subcuenta_gasto)
-            VALUES (?,?,?,?,?,?,?)
+            INSERT INTO terceros_empresas (
+                codigo_empresa, ejercicio, tercero_id,
+                subcuenta_cliente, subcuenta_proveedor, subcuenta_ingreso, subcuenta_gasto,
+                cliente_tipo_operacion_iva, cliente_intracomunitaria_clase, cliente_iva_deducible, cliente_porcentaje_deduccion_iva,
+                proveedor_tipo_operacion_iva, proveedor_intracomunitaria_clase, proveedor_iva_deducible, proveedor_porcentaje_deduccion_iva
+            )
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(codigo_empresa, ejercicio, tercero_id) DO UPDATE SET
                 subcuenta_cliente=excluded.subcuenta_cliente,
                 subcuenta_proveedor=excluded.subcuenta_proveedor,
                 subcuenta_ingreso=excluded.subcuenta_ingreso,
-                subcuenta_gasto=excluded.subcuenta_gasto
+                subcuenta_gasto=excluded.subcuenta_gasto,
+                cliente_tipo_operacion_iva=excluded.cliente_tipo_operacion_iva,
+                cliente_intracomunitaria_clase=excluded.cliente_intracomunitaria_clase,
+                cliente_iva_deducible=excluded.cliente_iva_deducible,
+                cliente_porcentaje_deduccion_iva=excluded.cliente_porcentaje_deduccion_iva,
+                proveedor_tipo_operacion_iva=excluded.proveedor_tipo_operacion_iva,
+                proveedor_intracomunitaria_clase=excluded.proveedor_intracomunitaria_clase,
+                proveedor_iva_deducible=excluded.proveedor_iva_deducible,
+                proveedor_porcentaje_deduccion_iva=excluded.proveedor_porcentaje_deduccion_iva
             """,
             (
                 rel.get("codigo_empresa"),
@@ -2279,6 +2407,14 @@ class GestorSQLite:
                 rel.get("subcuenta_proveedor"),
                 rel.get("subcuenta_ingreso"),
                 rel.get("subcuenta_gasto"),
+                rel.get("cliente_tipo_operacion_iva"),
+                rel.get("cliente_intracomunitaria_clase"),
+                rel.get("cliente_iva_deducible"),
+                rel.get("cliente_porcentaje_deduccion_iva"),
+                rel.get("proveedor_tipo_operacion_iva"),
+                rel.get("proveedor_intracomunitaria_clase"),
+                rel.get("proveedor_iva_deducible"),
+                rel.get("proveedor_porcentaje_deduccion_iva"),
             ),
         )
         self.conn.commit()

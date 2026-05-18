@@ -5,6 +5,14 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from controllers.terceros_global_controller import TercerosGlobalController
+from utils.validaciones import inferir_pais_desde_identificacion, normalizar_codigo_pais, normalizar_nif_cif
+
+_TIPOS_IDENTIFICACION = [
+    ("auto", "Auto"),
+    ("nacional", "Documento español"),
+    ("vat", "NIF-IVA intracomunitario"),
+    ("foreign", "Extranjero / otro"),
+]
 
 
 class UITercerosGlobales(tk.Frame):
@@ -191,7 +199,7 @@ class UITercerosGlobales(tk.Frame):
             email = str(t.get("email") or "")
             if q and q not in nif.lower() and q not in nombre.lower() and q not in email.lower():
                 continue
-            pais = str(t.get("pais") or "ES")
+            pais = str(t.get("pais") or "")
             self.tv.insert(
                 "", tk.END, iid=str(t["id"]),
                 values=(nif, nombre, pais, email),
@@ -206,6 +214,7 @@ class _TerceroFichaDialog(tk.Toplevel):
     _FIELDS = [
         ("nif",       "NIF / CIF"),
         ("nombre",    "Nombre / Razon social"),
+        ("pais",      "Pais"),
         ("direccion", "Direccion"),
         ("cp",        "Codigo postal"),
         ("poblacion", "Poblacion"),
@@ -223,6 +232,7 @@ class _TerceroFichaDialog(tk.Toplevel):
         self.result: dict | None = None
         self._vars: dict[str, tk.StringVar] = {}
         self._nif_extranjero_var = tk.BooleanVar()
+        self._tipo_ident_var = tk.StringVar(value=self._infer_tipo(ter))
 
         frm = ttk.Frame(self, padding=16)
         frm.pack(fill="both", expand=True)
@@ -234,13 +244,22 @@ class _TerceroFichaDialog(tk.Toplevel):
             self._vars[key] = var
             ttk.Entry(frm, textvariable=var, width=38).grid(
                 row=i, column=1, sticky="ew", pady=3)
+            if key == "nif":
+                var.trace_add("write", lambda *_: self._on_nif_change())
+            if key == "pais":
+                var.trace_add("write", lambda *_: self._on_pais_change())
 
         row_extra = len(self._FIELDS)
-        ttk.Checkbutton(
+        ttk.Label(frm, text="Tipo identificacion:").grid(row=row_extra, column=0, sticky="w", pady=(6, 0), padx=(0, 8))
+        cb_tipo = ttk.Combobox(
             frm,
-            text="NIF extranjero (omitir validacion espanola)",
-            variable=self._nif_extranjero_var,
-        ).grid(row=row_extra, column=0, columnspan=2, sticky="w", pady=(6, 0))
+            textvariable=self._tipo_ident_var,
+            values=[label for _, label in _TIPOS_IDENTIFICACION],
+            state="readonly",
+            width=24,
+        )
+        cb_tipo.grid(row=row_extra, column=1, sticky="w", pady=(6, 0))
+        cb_tipo.bind("<<ComboboxSelected>>", lambda _e: self._sync_tipo())
 
         btn_row = ttk.Frame(frm)
         btn_row.grid(row=row_extra + 1, column=0, columnspan=2, pady=(12, 0), sticky="e")
@@ -249,9 +268,52 @@ class _TerceroFichaDialog(tk.Toplevel):
 
         frm.columnconfigure(1, weight=1)
         self.transient(parent)
+        self._sync_tipo()
         self.wait_window()
 
     def _save(self):
         self.result = {k: v.get().strip() for k, v in self._vars.items()}
-        self.result["_nif_extranjero"] = self._nif_extranjero_var.get()
+        self.result["nif"] = self._vars["nif"].get().strip().upper() if self._current_tipo() == "foreign" else normalizar_nif_cif(self._vars["nif"].get())
+        self.result["pais"] = normalizar_codigo_pais(self._vars["pais"].get()) or inferir_pais_desde_identificacion(self.result.get("nif"))
+        self.result["_nif_extranjero"] = self._current_tipo() == "foreign"
+        self.result["_tipo_identificacion_selector"] = self._current_tipo()
         self.destroy()
+
+    def _current_tipo(self) -> str:
+        label = self._tipo_ident_var.get()
+        for key, text in _TIPOS_IDENTIFICACION:
+            if text == label:
+                return key
+        return "auto"
+
+    def _infer_tipo(self, ter: dict | None) -> str:
+        ter = ter or {}
+        tipo = str(ter.get("tipo_identificacion") or "").strip().lower()
+        if tipo == "vat":
+            return "NIF-IVA intracomunitario"
+        if tipo in ("nif", "cif", "nie"):
+            return "Documento español"
+        if tipo == "foreign":
+            return "Extranjero / otro"
+        return "Auto"
+
+    def _sync_tipo(self):
+        self._nif_extranjero_var.set(self._current_tipo() == "foreign")
+
+    def _on_nif_change(self):
+        if self._current_tipo() == "foreign":
+            return
+        current = self._vars["nif"].get()
+        normalized = normalizar_nif_cif(current)
+        if current != normalized:
+            self._vars["nif"].set(normalized)
+        if not self._vars["pais"].get().strip():
+            inferred = inferir_pais_desde_identificacion(normalized)
+            if inferred:
+                self._vars["pais"].set(inferred)
+
+    def _on_pais_change(self):
+        current = self._vars["pais"].get()
+        normalized = normalizar_codigo_pais(current)
+        if current != normalized:
+            self._vars["pais"].set(normalized)

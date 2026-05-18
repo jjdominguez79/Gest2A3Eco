@@ -5,7 +5,6 @@ from services.empresa_service import EmpresaService
 from views.ui_configuracion_empresa import UIConfiguracionEmpresa
 from views.ui_contabilidad import UIContabilidad
 from views.ui_dashboard_empresa import UIDashboardEmpresa
-from views.ui_empresa_dialog import EmpresaDialog
 from views.ui_facturas_emitidas import UIFacturasEmitidas
 from views.ui_maestro_cuentas import UIMaestroCuentas
 from views.ui_ocr_facturas import UIOcrFacturas
@@ -189,64 +188,15 @@ class AppController:
             nombre,
             allow_all_years=True,
             session=self._session,
-            on_open_company_config=lambda: self.configure_company_in_place(codigo, ejercicio),
         )
 
     # ------------------------------------------------------------------ config
 
     def open_company_config(self, codigo, ejercicio):
-        changed = self.configure_company_in_place(codigo, ejercicio)
-        if changed:
-            self.open_company_dashboard(codigo, ejercicio)
+        self.open_company_module(codigo, ejercicio, modulo="configuracion")
 
     def configure_company_in_place(self, codigo, ejercicio):
-        empresa = self._gestor.get_empresa(codigo, ejercicio)
-        if not empresa:
-            messagebox.showerror("Gest2A3Eco", "Empresa no encontrada.", parent=self._content.winfo_toplevel())
-            return False
-        if self._session.role.value not in ("admin", "empleado"):
-            messagebox.showerror("Gest2A3Eco", "Solo administradores y empleados pueden configurar empresas.", parent=self._content.winfo_toplevel())
-            return False
-        dialog = EmpresaDialog(self._content.winfo_toplevel(), f"Configurar {codigo}", empresa, gestor=self._gestor)
-        result = dialog.result
-        if not result:
-            return False
-        if result.get("_action") == "delete_company":
-            try:
-                for eje in self._gestor.listar_ejercicios_empresa(codigo):
-                    self._gestor.eliminar_empresa(codigo, eje)
-            except Exception as exc:
-                messagebox.showerror("Gest2A3Eco", str(exc), parent=self._content.winfo_toplevel())
-                return False
-            self.start()
-            return True
-        if result.get("_action") != "save_company":
-            return False
-        for item in result.get("_exercise_configs") or []:
-            self._gestor.upsert_empresa(item)
-        series_por_ejercicio = result.get("_series_por_ejercicio") or {}
-        for eje_str, series in series_por_ejercicio.items():
-            try:
-                eje = int(eje_str)
-            except Exception:
-                continue
-            for s in (series or []):
-                try:
-                    self._gestor.upsert_serie_emitida(
-                        codigo, eje,
-                        s["nombre"],
-                        int(s.get("siguiente_num") or 1),
-                        int(s.get("es_rectificativa") or 0),
-                    )
-                except Exception:
-                    pass
-        bank_records = [dict(row) for row in (result.get("_bank_records") or []) if isinstance(row, dict)]
-        try:
-            # Siempre guardar/limpiar (aunque este vacia) para que el DELETE persista
-            self._gestor.reemplazar_cuentas_bancarias(codigo, 0, bank_records)
-        except Exception as exc:
-            messagebox.showerror("Gest2A3Eco", str(exc), parent=self._content.winfo_toplevel())
-            return False
+        self.open_company_module(codigo, ejercicio, modulo="configuracion")
         return True
 
     # ------------------------------------------------------------------ otros

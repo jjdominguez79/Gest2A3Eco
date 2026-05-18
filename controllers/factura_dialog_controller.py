@@ -1,7 +1,13 @@
 from datetime import date
 
+from services.terceros_empresa_fiscal_service import build_cliente_factura_defaults
 from utils.utilidades import validar_subcuenta_longitud, aplicar_descuento_total_lineas, format_num_es
-from utils.validaciones import normalizar_nif_cif
+from utils.validaciones import (
+    inferir_pais_desde_identificacion,
+    normalizar_codigo_pais,
+    normalizar_nif_cif,
+    validar_nif_o_nif_iva_intracomunitario,
+)
 
 
 class FacturaDialogController:
@@ -16,14 +22,31 @@ class FacturaDialogController:
         self._auto_ejercicio_por_fecha = bool(factura.get("_auto_ejercicio_por_fecha"))
         self._terceros_cache = []
         self._display_to_tercero: dict = {}
+        self._editing_existing = bool(factura.get("id"))
 
     def load_terceros(self):
         all_terceros = self._gestor.listar_terceros_por_empresa(self._codigo, self._ejercicio)
-        # Solo clientes: terceros con subcuenta_cliente asignada en esta empresa
-        self._terceros_cache = [
-            t for t in all_terceros
-            if str(t.get("subcuenta_cliente") or "").strip()
-        ]
+        self._terceros_cache = list(all_terceros or [])
+        current_tercero_id = str(self._factura.get("tercero_id") or "").strip()
+        current_nif = normalizar_nif_cif(self._factura.get("nif"))
+        known_ids = {str(t.get("id")) for t in self._terceros_cache if t.get("id") is not None}
+        if current_tercero_id and current_tercero_id not in known_ids:
+            extra = next(
+                (t for t in self._gestor.listar_terceros() if str(t.get("id")) == current_tercero_id),
+                None,
+            )
+            if extra:
+                self._terceros_cache.append(extra)
+                known_ids.add(current_tercero_id)
+        if current_nif:
+            has_nif = any(normalizar_nif_cif(t.get("nif")) == current_nif for t in self._terceros_cache)
+            if not has_nif:
+                extra = next(
+                    (t for t in self._gestor.listar_terceros() if normalizar_nif_cif(t.get("nif")) == current_nif),
+                    None,
+                )
+                if extra:
+                    self._terceros_cache.append(extra)
         self._display_to_tercero = {}
         disp = []
         for t in self._terceros_cache:
@@ -45,15 +68,57 @@ class FacturaDialogController:
                 self.on_tercero_selected()
                 return
 
-    def configurar_empresa(self):
-        t = self._get_selected_tercero()
-        tercero_id = t.get("id") if t else None
-        changed = self._view.open_company_config()
-        if not changed:
+    def crear_tercero(self):
+        payload = self._view.open_create_third_party_dialog({
+            "nif": self._view.get_nif(),
+            "nombre": self._view.get_nombre(),
+        })
+        if not payload:
             return
+        nif_extranjero = bool(payload.pop("_nif_extranjero", False))
+        nif = str(payload.get("nif") or "").strip().upper() if nif_extranjero else normalizar_nif_cif(payload.get("nif"))
+        if nif and not nif_extranjero and not validar_nif_o_nif_iva_intracomunitario(nif):
+            self._view.show_error("Gest2A3Eco", "NIF/CIF/NIE o NIF-IVA intracomunitario invalido.")
+            return
+        existente = None
+        if nif:
+            for tercero in self._gestor.listar_terceros():
+                if normalizar_nif_cif(tercero.get("nif")) == nif:
+                    existente = tercero
+                    break
+        tercero_payload = dict(payload)
+        tercero_payload["nif"] = nif
+        tercero_payload["pais"] = normalizar_codigo_pais(tercero_payload.get("pais")) or inferir_pais_desde_identificacion(nif)
+        tercero_payload["tipo_identificacion"] = {
+            "vat": "vat",
+            "foreign": "foreign",
+            "nacional": "nif",
+        }.get(payload.get("_tipo_identificacion_selector"))
+        tercero_id = str(existente.get("id")) if existente else self._gestor.upsert_tercero(tercero_payload)
+        rel_actual = self._gestor.get_tercero_empresa(self._codigo, tercero_id, self._ejercicio) or {}
+        self._gestor.upsert_tercero_empresa(
+            {
+                "tercero_id": tercero_id,
+                "codigo_empresa": self._codigo,
+                "ejercicio": 0,
+                "subcuenta_cliente": rel_actual.get("subcuenta_cliente", ""),
+                "subcuenta_proveedor": rel_actual.get("subcuenta_proveedor", ""),
+                "subcuenta_ingreso": rel_actual.get("subcuenta_ingreso", ""),
+                "subcuenta_gasto": rel_actual.get("subcuenta_gasto", ""),
+                "cliente_tipo_operacion_iva": rel_actual.get("cliente_tipo_operacion_iva"),
+                "cliente_intracomunitaria_clase": rel_actual.get("cliente_intracomunitaria_clase"),
+                "proveedor_tipo_operacion_iva": rel_actual.get("proveedor_tipo_operacion_iva"),
+                "proveedor_intracomunitaria_clase": rel_actual.get("proveedor_intracomunitaria_clase"),
+                "proveedor_iva_deducible": rel_actual.get("proveedor_iva_deducible"),
+                "proveedor_porcentaje_deduccion_iva": rel_actual.get("proveedor_porcentaje_deduccion_iva"),
+            }
+        )
         self.load_terceros()
-        if tercero_id:
-            self.preselect_tercero(tercero_id)
+        self.preselect_tercero(tercero_id)
+        self._view.show_info(
+            "Gest2A3Eco",
+            "Tercero creado y asignado a la empresa. Configura su subcuenta/IVA en Maestro de Cuentas si lo necesitas.",
+        )
 
     def on_tercero_selected(self):
         t = self._get_selected_tercero()
@@ -64,6 +129,10 @@ class FacturaDialogController:
         sc = str(t.get("subcuenta_cliente") or "")
         if sc:
             self._view.set_subcuenta(sc)
+        if not self._editing_existing:
+            defaults = build_cliente_factura_defaults(t)
+            self._view.set_tipo_operacion(defaults.get("tipo_operacion") or "01")
+            self._view.set_modelo_fiscal(defaults.get("modelo_fiscal") or "")
 
     def pick_date(self, target_var):
         txt = (target_var.get() or "").strip()
