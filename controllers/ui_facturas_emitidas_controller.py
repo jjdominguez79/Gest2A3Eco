@@ -1359,7 +1359,7 @@ class FacturasEmitidasController:
         rows = []
         base_row = {
             "Serie": fac.get("serie", ""),
-            "Numero Factura": fac.get("numero", ""),
+            "Numero Factura": self._numero_factura_contable(fac),
             "Numero Factura Largo SII": fac.get("numero_largo_sii", ""),
             "Fecha Asiento": fac.get("fecha_asiento", ""),
             "Fecha Expedicion": fac.get("fecha_expedicion") or fac.get("fecha_asiento", ""),
@@ -1400,6 +1400,15 @@ class FacturasEmitidasController:
             )
             rows.append(r)
         return rows
+
+    def _numero_factura_contable(self, fac: dict) -> str:
+        serie = str(fac.get("serie") or "").strip()
+        numero = str(fac.get("numero") or "").strip()
+        if not serie:
+            return numero
+        if not numero:
+            return serie
+        return f"{serie}{numero}"
 
     def _docx_template_path(
         self,

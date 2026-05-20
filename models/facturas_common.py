@@ -648,7 +648,9 @@ def render_emitidas_cabecera_512(*,
     _set_slice(buf, 229, 236, "")
     _set_slice(buf, 236, 244, _fecha_yyyymmdd(fecha_operacion))
     _set_slice(buf, 244, 252, _fecha_yyyymmdd(fecha_factura or fecha))
-    _set_slice(buf, 252, 262, _s(num_factura_largo_sii)[:10])
+    # El identificador ampliado SII no cabe en 10 caracteres.
+    # Si se trunca, A3 pierde la referencia completa para casar factura/asiento.
+    _set_slice(buf, 252, 292, _s(num_factura_largo_sii)[:40])
     _set_slice(buf, 508, 509, "E")
     _set_slice(buf, 509, 510, "N")
     buf[510] = "\r"; buf[511] = "\n"
