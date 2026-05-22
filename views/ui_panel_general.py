@@ -11,11 +11,13 @@ class UIPanelGeneral(ttk.Frame):
         empresa_service,
         session,
         on_open_dashboard,
+        on_create_company=None,
     ):
         super().__init__(parent)
         self._empresa_service = empresa_service
         self._session = session
         self._on_open_dashboard = on_open_dashboard
+        self._on_create_company = on_create_company
         self._empresas = []
         self.var_buscar = tk.StringVar()
         self.var_ver_bajas = tk.BooleanVar(value=False)
@@ -42,6 +44,13 @@ class UIPanelGeneral(ttk.Frame):
             variable=self.var_ver_bajas,
             command=self.refresh,
         ).pack(side=tk.LEFT, padx=(12, 0))
+        if self._on_create_company is not None:
+            ttk.Button(
+                filtros,
+                text="Crear empresa",
+                style="Primary.TButton",
+                command=self._on_create_company,
+            ).pack(side=tk.LEFT, padx=6)
         ttk.Button(filtros, text="Actualizar", style="Primary.TButton", command=self.refresh).pack(side=tk.LEFT, padx=6)
         ttk.Button(filtros, text="Abrir empresa", style="Primary.TButton", command=self.open_selected).pack(side=tk.LEFT, padx=6)
         self.var_buscar.trace_add("write", lambda *_: self.refresh())

@@ -1,3 +1,4 @@
+from datetime import datetime
 from tkinter import messagebox, ttk
 
 from controllers.user_admin_controller import UserAdminController
@@ -61,11 +62,13 @@ class AppController:
         self._show(factory)
 
     def build_panel_general(self, parent):
+        on_create_company = self.open_new_company_config if self.authorization.can_manage_company_catalog() else None
         return UIPanelGeneral(
             parent,
             self._empresa_service,
             self._session,
             on_open_dashboard=self.open_company_dashboard,
+            on_create_company=on_create_company,
         )
 
     # ------------------------------------------------------------------ empresa
@@ -198,6 +201,27 @@ class AppController:
     def configure_company_in_place(self, codigo, ejercicio):
         self.open_company_module(codigo, ejercicio, modulo="configuracion")
         return True
+
+    def open_new_company_config(self):
+        try:
+            if not self.authorization.can_manage_company_catalog():
+                raise PermissionError("No tienes permisos para crear empresas.")
+        except PermissionError as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self._content.winfo_toplevel())
+            return
+        current_year = datetime.now().year
+        self._show(
+            lambda parent: UIConfiguracionEmpresa(
+                parent,
+                self._gestor,
+                "",
+                current_year,
+                "",
+                on_back=self.start,
+                on_deleted=self.start,
+                session=self._session,
+            )
+        )
 
     # ------------------------------------------------------------------ otros
 

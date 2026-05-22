@@ -1,6 +1,7 @@
 """Pantalla integrada de configuracion de empresa (reemplaza EmpresaDialog modal)."""
 from __future__ import annotations
 
+from datetime import datetime
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -49,7 +50,8 @@ class UIConfiguracionEmpresa(ttk.Frame):
         self._gestor = gestor
         self._codigo = codigo
         self._ejercicio = ejercicio
-        empresa = gestor.get_empresa(codigo, ejercicio) or {}
+        empresa = gestor.get_empresa(codigo, ejercicio) if codigo else {}
+        empresa = empresa or {}
         self._empresa = dict(empresa)
         self._bank_items: list = []
         self._bank_records: list = []
@@ -84,11 +86,14 @@ class UIConfiguracionEmpresa(ttk.Frame):
         bar.pack(fill="x", padx=16, pady=(12, 0))
         ttk.Label(
             bar,
-            text=f"Configuracion — {self._empresa.get('nombre', self._codigo)}",
+            text=f"Configuracion — {self._empresa.get('nombre') or self._codigo or 'Nueva empresa'}",
             font=("Segoe UI", 11, "bold"),
         ).pack(side="left")
-        ttk.Button(bar, text="Eliminar empresa", style="Danger.TButton",
-                   command=self._request_delete).pack(side="left", padx=(24, 0))
+        self.btn_delete = ttk.Button(bar, text="Eliminar empresa", style="Danger.TButton",
+                                     command=self._request_delete)
+        self.btn_delete.pack(side="left", padx=(24, 0))
+        if not self._empresa.get("codigo"):
+            self.btn_delete.state(["disabled"])
         ttk.Button(bar, text="Volver", command=self._on_back).pack(side="right")
         ttk.Button(bar, text="Guardar", style="Primary.TButton",
                    command=self._save).pack(side="right", padx=(0, 8))
@@ -354,7 +359,7 @@ class UIConfiguracionEmpresa(ttk.Frame):
     def _exercise_from_row(self, row: dict) -> dict:
         data = dict(row)
         return {
-            "ejercicio":                    int(data.get("ejercicio") or 2025),
+            "ejercicio":                    int(data.get("ejercicio") or self._ejercicio or datetime.now().year),
             "serie_emitidas":               str(data.get("serie_emitidas") or "A"),
             "siguiente_num_emitidas":       int(data.get("siguiente_num_emitidas") or 1),
             "serie_emitidas_rect":          str(data.get("serie_emitidas_rect") or "R"),
