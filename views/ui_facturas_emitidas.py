@@ -739,7 +739,7 @@ class TercerosEmpresaDialog(tk.Toplevel):
 
         btns = ttk.Frame(frm)
         btns.pack(fill="x")
-        ttk.Button(btns, text="Email", style="Primary.TButton", command=lambda: _set("email")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="Outlook", style="Primary.TButton", command=lambda: _set("email")).pack(side=tk.LEFT, padx=4)
         ttk.Button(btns, text="WhatsApp", style="Primary.TButton", command=lambda: _set("whatsapp")).pack(side=tk.LEFT, padx=4)
         ttk.Button(btns, text="Cancelar", command=dlg.destroy).pack(side=tk.LEFT, padx=4)
 
@@ -2663,9 +2663,14 @@ class UIFacturasEmitidas(ttk.Frame):
         smtp_cfg: dict,
         *,
         email_empresa: str = "",
+        email_mode: str = "outlook",
+        default_cc: str = "",
+        default_bcc: str = "",
+        email_signature: str = "",
     ) -> dict | None:
         dlg = tk.Toplevel(self)
-        dlg.title("Enviar factura por email")
+        using_outlook = str(email_mode or "outlook").strip().lower() != "smtp"
+        dlg.title("Preparar email en Outlook" if using_outlook else "Enviar factura por email")
         dlg.resizable(True, True)
         result = {"value": None}
         current_smtp = [dict(smtp_cfg)]
@@ -2702,7 +2707,8 @@ class UIFacturasEmitidas(ttk.Frame):
 
         btn_row_top = ttk.Frame(frm)
         btn_row_top.grid(row=0, column=2, padx=(8, 0), pady=4, sticky="e")
-        ttk.Button(btn_row_top, text="Configurar SMTP", command=_abrir_smtp).pack(side=tk.LEFT, padx=(0, 4))
+        if not using_outlook:
+            ttk.Button(btn_row_top, text="Configurar SMTP", command=_abrir_smtp).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(btn_row_top, text="Editar plantilla HTML", command=_editar_plantilla_html).pack(side=tk.LEFT)
 
         # --- Destinatarios ---
@@ -2748,6 +2754,14 @@ class UIFacturasEmitidas(ttk.Frame):
             row=3, column=1, sticky="w"
         )
 
+        ttk.Label(dest_frm, text="CC:").grid(row=4, column=0, sticky="w", pady=(8, 0))
+        cc_var = tk.StringVar(value=default_cc)
+        ttk.Entry(dest_frm, textvariable=cc_var, width=36).grid(row=4, column=1, sticky="ew", pady=(8, 0))
+
+        ttk.Label(dest_frm, text="BCC:").grid(row=5, column=0, sticky="w", pady=(6, 0))
+        bcc_var = tk.StringVar(value=default_bcc)
+        ttk.Entry(dest_frm, textvariable=bcc_var, width=36).grid(row=5, column=1, sticky="ew", pady=(6, 0))
+
         # Asunto
         ttk.Label(frm, text="Asunto:").grid(row=2, column=0, sticky="e", padx=(0, 8), pady=(8, 4))
         asunto_var = tk.StringVar(value=asunto)
@@ -2762,9 +2776,15 @@ class UIFacturasEmitidas(ttk.Frame):
         cuerpo_text.grid(row=3, column=1, columnspan=2, sticky="nsew", pady=4)
         frm.rowconfigure(3, weight=1)
 
+        ttk.Label(frm, text="Firma:").grid(row=4, column=0, sticky="ne", padx=(0, 8), pady=4)
+        firma_text = tk.Text(frm, height=4, width=50, wrap="word")
+        firma_text.insert("1.0", email_signature)
+        firma_text.grid(row=4, column=1, columnspan=2, sticky="nsew", pady=4)
+        frm.rowconfigure(4, weight=1)
+
         # Botones
         btn_frm = ttk.Frame(frm)
-        btn_frm.grid(row=4, column=0, columnspan=3, pady=(12, 0))
+        btn_frm.grid(row=5, column=0, columnspan=3, pady=(12, 0))
 
         def _enviar():
             emails = []
@@ -2786,11 +2806,19 @@ class UIFacturasEmitidas(ttk.Frame):
                 "emails": emails,
                 "asunto": asunto_var.get().strip(),
                 "cuerpo": cuerpo_text.get("1.0", "end").strip(),
+                "cc": cc_var.get().strip(),
+                "bcc": bcc_var.get().strip(),
+                "signature": firma_text.get("1.0", "end").strip(),
                 "smtp_cfg": current_smtp[0],
             }
             dlg.destroy()
 
-        ttk.Button(btn_frm, text="Enviar", style="Primary.TButton", command=_enviar).pack(side=tk.LEFT, padx=4)
+        ttk.Button(
+            btn_frm,
+            text="Abrir correo en Outlook" if using_outlook else "Enviar",
+            style="Primary.TButton",
+            command=_enviar,
+        ).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frm, text="Cancelar", command=dlg.destroy).pack(side=tk.LEFT, padx=4)
 
         dlg.update_idletasks()

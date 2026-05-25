@@ -30,6 +30,13 @@ def _config_local_path() -> Path:
     return _base_dir() / "config.local.json"
 
 
+def _user_roaming_config_path() -> Path:
+    appdata = os.getenv("APPDATA")
+    if appdata:
+        return Path(appdata) / "Gest2A3Eco" / "config.json"
+    return Path.home() / "AppData" / "Roaming" / "Gest2A3Eco" / "config.json"
+
+
 def _load_json_file(path: Path) -> dict:
     try:
         if path.exists():
@@ -135,12 +142,30 @@ def _normalize_config(data: dict) -> dict:
         out["monedas"] = norm or list(DEFAULT_MONEDAS)
     return out
 
+
+def _normalize_user_config(data: dict) -> dict:
+    out = dict(data or {})
+    out.setdefault("email_mode", "outlook")
+    out.setdefault("default_cc", "")
+    out.setdefault("default_bcc", "")
+    out.setdefault("email_signature", "")
+    out.setdefault("open_outlook_before_send", True)
+    return out
+
 def load_app_config() -> dict:
     data = {}
     for path in (_config_example_path(), _legacy_config_path(), _config_local_path()):
         data = _merge_dicts(data, _load_json_file(path))
     data = _apply_env_overrides(data)
     return _normalize_config(data)
+
+
+def load_user_config() -> dict:
+    cfg_path = _user_roaming_config_path()
+    data = _normalize_user_config(_load_json_file(cfg_path))
+    if not cfg_path.exists():
+        save_user_config(data)
+    return data
 
 def get_word_templates_dir(default_dir: str) -> str:
     cfg = load_app_config()
@@ -159,6 +184,15 @@ def save_app_config(data: dict) -> None:
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     current = _load_json_file(cfg_path)
     payload = _merge_dicts(current, dict(data or {}))
+    with open(cfg_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+def save_user_config(data: dict) -> None:
+    cfg_path = _user_roaming_config_path()
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    current = _load_json_file(cfg_path)
+    payload = _normalize_user_config(_merge_dicts(current, dict(data or {})))
     with open(cfg_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 

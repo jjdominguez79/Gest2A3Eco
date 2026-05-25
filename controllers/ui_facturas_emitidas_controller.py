@@ -807,49 +807,101 @@ class FacturasEmitidasController:
 
         if canal == "email":
             from services.email_service import (
-                build_html_body, load_smtp_config, save_smtp_config, send_email_smtp
+                build_html_body,
+                build_outlook_bodies,
+                load_email_preferences,
+                load_smtp_config,
+                open_outlook_email,
+                save_email_preferences,
+                save_smtp_config,
+                send_email_smtp,
             )
+            email_cliente = str(cliente.get("email") or "").strip()
+            email_empresa = str(self._empresa_conf.get("email") or "").strip()
+            email_prefs = load_email_preferences()
+            email_mode = str(email_prefs.get("email_mode") or "outlook").strip().lower() or "outlook"
+            smtp_cfg = load_smtp_config() if email_mode == "smtp" else {}
 
-            smtp_cfg = load_smtp_config()
-            if not smtp_cfg.get("host"):
+            if email_mode == "smtp" and not smtp_cfg.get("host"):
                 smtp_cfg = self._view.ask_smtp_config(smtp_cfg or {})
                 if not smtp_cfg or not smtp_cfg.get("host"):
                     return
                 save_smtp_config(smtp_cfg)
-            email_cliente = str(cliente.get("email") or "").strip()
-            email_empresa = str(self._empresa_conf.get("email") or "").strip()
 
             compose = self._view.ask_email_compose(
                 email_cliente, asunto, cuerpo, pdf_path, smtp_cfg,
                 email_empresa=email_empresa,
+                email_mode=email_mode,
+                default_cc=str(email_prefs.get("default_cc") or ""),
+                default_bcc=str(email_prefs.get("default_bcc") or ""),
+                email_signature=str(email_prefs.get("email_signature") or ""),
             )
             if not compose:
                 return
 
-            new_smtp = compose.get("smtp_cfg") or {}
-            if new_smtp and new_smtp != smtp_cfg:
-                save_smtp_config(new_smtp)
-                smtp_cfg = new_smtp
-
             tot = self._totales_factura(fac)
             html_body = build_html_body(self._empresa_conf, fac, cliente, tot)
+            plain_body, outlook_html_body = build_outlook_bodies(
+                compose["cuerpo"],
+                html_body=html_body,
+                signature=compose.get("signature") or "",
+            )
 
-            try:
-                send_email_smtp(
-                    smtp_cfg, compose["emails"], compose["asunto"], compose["cuerpo"],
-                    pdf_path, attachment_paths=attachment_paths[1:], html_body=html_body,
-                )
-                self._view.show_info("Gest2A3Eco", "Email enviado correctamente.")
-            except Exception as e:
-                host = str(smtp_cfg.get("host") or "(vacio)").strip() or "(vacio)"
-                port = smtp_cfg.get("port", 587)
-                self._view.show_error(
-                    "Gest2A3Eco",
-                    f"Error al enviar el email:\n{e}\n\n"
-                    f"Servidor configurado: {host}:{port}\n"
-                    f"Verifica la configuracion SMTP pulsando 'Cambiar SMTP' en el dialogo de envio.",
-                )
-                return
+            save_email_preferences(
+                {
+                    "email_mode": email_mode,
+                    "default_cc": compose.get("cc", ""),
+                    "default_bcc": compose.get("bcc", ""),
+                    "email_signature": compose.get("signature", ""),
+                    "open_outlook_before_send": True,
+                }
+            )
+
+            if email_mode == "smtp":
+                new_smtp = compose.get("smtp_cfg") or {}
+                if new_smtp and new_smtp != smtp_cfg:
+                    save_smtp_config(new_smtp)
+                    smtp_cfg = new_smtp
+                try:
+                    send_email_smtp(
+                        smtp_cfg, compose["emails"], compose["asunto"], plain_body,
+                        pdf_path, attachment_paths=attachment_paths[1:], html_body=outlook_html_body,
+                    )
+                    self._view.show_info("Gest2A3Eco", "Email enviado correctamente.")
+                except Exception as e:
+                    host = str(smtp_cfg.get("host") or "(vacio)").strip() or "(vacio)"
+                    port = smtp_cfg.get("port", 587)
+                    self._view.show_error(
+                        "Gest2A3Eco",
+                        f"Error al enviar el email:\n{e}\n\n"
+                        f"Servidor configurado: {host}:{port}\n"
+                        f"Verifica la configuracion SMTP pulsando 'Cambiar SMTP' en el dialogo de envio.",
+                    )
+                    return
+            else:
+                try:
+                    open_outlook_email(
+                        to="; ".join(compose["emails"]),
+                        subject=compose["asunto"],
+                        body=plain_body,
+                        attachments=attachment_paths,
+                        cc=compose.get("cc", ""),
+                        bcc=compose.get("bcc", ""),
+                        html_body=outlook_html_body,
+                    )
+                    self._view.show_info(
+                        "Gest2A3Eco",
+                        "Se ha abierto Outlook con el correo preparado. Revise el mensaje y pulse Enviar desde Outlook.",
+                    )
+                except FileNotFoundError as e:
+                    self._view.show_error("Gest2A3Eco", str(e))
+                    return
+                except Exception as e:
+                    self._view.show_error(
+                        "Gest2A3Eco",
+                        f"{e}\n\nEl correo no se ha enviado y la aplicacion puede seguir utilizandose.",
+                    )
+                    return
 
         elif canal == "whatsapp":
             telefono_cliente = str(cliente.get("telefono") or "").strip()

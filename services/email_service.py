@@ -2,12 +2,14 @@ import os
 import smtplib
 import ssl
 import sys
+import traceback
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from html import escape
 from pathlib import Path
 
-from utils.utilidades import load_app_config, save_app_config
+from utils.utilidades import load_app_config, load_user_config, save_app_config, save_user_config
 
 # ── Plantilla HTML por defecto ───────────────────────────────────────────────
 DEFAULT_HTML_TEMPLATE = """\
@@ -91,8 +93,18 @@ def load_smtp_config() -> dict:
 
 def save_smtp_config(cfg: dict) -> None:
     app_cfg = load_app_config()
-    app_cfg["smtp"] = cfg
+    sanitized = dict(cfg or {})
+    sanitized["password"] = ""
+    app_cfg["smtp"] = sanitized
     save_app_config(app_cfg)
+
+
+def load_email_preferences() -> dict:
+    return load_user_config()
+
+
+def save_email_preferences(cfg: dict) -> None:
+    save_user_config(cfg)
 
 
 def load_email_html_template() -> str:
@@ -144,6 +156,89 @@ def build_html_body(empresa_conf: dict, fac: dict, cliente: dict, totales: dict)
     except KeyError:
         # Si la plantilla tiene llaves desconocidas, devolver sin sustituir
         return template
+
+
+def build_outlook_bodies(
+    plain_body: str,
+    *,
+    html_body: str = "",
+    signature: str = "",
+) -> tuple[str, str]:
+    plain = str(plain_body or "").strip()
+    sign = str(signature or "").strip()
+    if sign:
+        plain = f"{plain}\n\n{sign}".strip() if plain else sign
+
+    html = str(html_body or "").strip()
+    extra_blocks = []
+    if plain_body:
+        escaped = escape(str(plain_body or "").strip()).replace("\n", "<br>")
+        extra_blocks.append(f"<p style=\"margin:16px 0 0;color:#555;font-size:14px;line-height:1.6;\">{escaped}</p>")
+    if sign:
+        escaped_sign = escape(sign).replace("\n", "<br>")
+        extra_blocks.append(f"<p style=\"margin:16px 0 0;color:#333;font-size:13px;line-height:1.5;\">{escaped_sign}</p>")
+
+    if html:
+        insert_html = "".join(extra_blocks)
+        if insert_html:
+            if "</body>" in html:
+                html = html.replace("</body>", f"{insert_html}</body>", 1)
+            else:
+                html = f"{html}{insert_html}"
+    elif plain:
+        html = f"<html><body>{escape(plain).replace(chr(10), '<br>')}</body></html>"
+
+    return plain, html
+
+
+def open_outlook_email(
+    to: str,
+    subject: str,
+    body: str,
+    attachments: list[str] | None = None,
+    cc: str = "",
+    bcc: str = "",
+    html_body: str = "",
+) -> None:
+    attachments = attachments or []
+    resolved_attachments = []
+    for attachment in attachments:
+        if not attachment:
+            continue
+        path = Path(attachment).expanduser()
+        if not path.exists():
+            raise FileNotFoundError(f"No existe el archivo adjunto: {path}")
+        resolved_attachments.append(str(path.resolve()))
+
+    try:
+        import win32com.client  # type: ignore[import-untyped]
+    except Exception as exc:
+        _log_email_error("Outlook no disponible", exc)
+        raise RuntimeError(
+            "No se ha podido abrir Microsoft Outlook. Revise que Outlook este instalado y configurado en este equipo."
+        ) from exc
+
+    try:
+        outlook = win32com.client.Dispatch("Outlook.Application")
+        mail = outlook.CreateItem(0)
+        mail.To = to or ""
+        mail.CC = cc or ""
+        mail.BCC = bcc or ""
+        mail.Subject = subject or ""
+        if html_body:
+            mail.HTMLBody = html_body
+        else:
+            mail.Body = body or ""
+        for attachment in resolved_attachments:
+            mail.Attachments.Add(attachment)
+        mail.Display()
+    except FileNotFoundError:
+        raise
+    except Exception as exc:
+        _log_email_error("Error al abrir correo en Outlook", exc)
+        raise RuntimeError(
+            "No se ha podido abrir Microsoft Outlook. Revise que Outlook este instalado y configurado en este equipo."
+        ) from exc
 
 
 def _fmt_total(totales: dict, fac: dict | None = None) -> str:
@@ -225,3 +320,17 @@ def send_email_smtp(
             if user:
                 server.login(user, password)
             server.sendmail(from_addr, to_addrs, msg.as_bytes())
+
+
+def _log_email_error(message: str, exc: Exception) -> None:
+    try:
+        log_dir = Path(os.getenv("APPDATA") or Path.home() / "AppData" / "Roaming") / "Gest2A3Eco"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "email_error.log"
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write("\n---- EMAIL ERROR ----\n")
+            f.write(f"Message: {message}\n")
+            f.write("Exception:\n")
+            f.write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+    except Exception:
+        pass

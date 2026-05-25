@@ -8,3 +8,4 @@ docxtpl
 docx2pdf
 pypdf
 pymupdf
+pywin32
