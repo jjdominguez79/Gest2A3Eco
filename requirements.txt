@@ -9,3 +9,5 @@ docx2pdf
 pypdf
 pymupdf
 pywin32
+requests
+packaging

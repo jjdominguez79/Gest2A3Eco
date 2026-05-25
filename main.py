@@ -12,6 +12,7 @@ from utils.utilidades import get_word_templates_dir, load_app_config, save_app_c
 from views.ui_auth import ChangePasswordDialog, UILogin
 from views.ui_config_monedas import MonedasDialog
 from views.ui_theme import aplicar_tema
+from update_checker import check_for_updates
 
 
 EMPRESA_NOMBRE = "Asesoria Gestinem S.L."
@@ -237,6 +238,7 @@ def _set_window_geometry(root: tk.Tk, width: int, height: int, *, resizable: boo
 def main():
     ensure_template_file()  # Crea plantillas/email_factura.html si no existe
     root = tk.Tk()
+    root.withdraw()  # ocultar ventana vacia durante inicializacion y comprobacion de actualizaciones
     root.title("Gest2A3Eco")
     _set_window_geometry(root, 520, 480, resizable=False)
     try:
@@ -398,6 +400,10 @@ def main():
         root.unbind("<Button-3>")
         _show_login()
 
+    if not check_for_updates(root):
+        root.destroy()
+        return
+    root.deiconify()
     _show_login()
     root.mainloop()
 
