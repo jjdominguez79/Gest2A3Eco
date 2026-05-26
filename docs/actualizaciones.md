@@ -1,58 +1,51 @@
-# Sistema de actualizaciones automáticas — Gest2A3Eco
+# Sistema de actualizaciones automáticas - Gest2A3Eco
 
 ## Resumen del flujo
 
-```
+```text
 Nueva versión lista
-       │
-       ▼
-1. Actualizar APP_VERSION en app_version.py
+       |
+       v
+1. Mantener APP_VERSION en app_version.py
 2. Compilar .exe con PyInstaller
 3. Generar instalador .exe con Inno Setup
-4. Subir el instalador al servidor web
-5. Actualizar version.json en el servidor
-       │
-       ▼
-Al arrancar la app (usuario final):
-  update_checker.py descarga version.json
-  Si hay actualización obligatoria → bloquea y ofrece descargar
-  Si hay actualización opcional    → ofrece descargar, permite omitir
-  Si no hay conexión               → continúa sin interrupciones
+4. Crear tag vX.Y.Z
+5. Publicar release en GitHub
+6. Subir el instalador como asset del release
+7. Actualizar updates/version.json
+       |
+       v
+Al arrancar la app:
+  update_checker.py descarga version.json desde GitHub Raw
+  Si hay actualización obligatoria -> bloquea y ofrece descargar
+  Si hay actualización opcional    -> ofrece descargar, permite omitir
+  Si no hay conexión               -> continúa sin interrupciones
 ```
 
----
+## 1. Versión actual de la aplicación
 
-## 1. Cambiar la versión de la aplicación
-
-Editar el archivo `app_version.py` en la raíz del proyecto:
+La versión actual se mantiene en [app_version.py](/C:/Users/GestinemFiscal/Gest2A3Eco/app_version.py:1):
 
 ```python
-APP_VERSION = "1.2.0"   # ← nueva versión
-UPDATE_CHECK_URL = "https://actualizaciones.gestinem.es/gest2a3eco/version.json"
+APP_VERSION = "1.1.0"
+UPDATE_CHECK_URL = "https://raw.githubusercontent.com/jjdominguez79/Gest2A3Eco/main/updates/version.json"
 ```
 
-Usar siempre formato **semver** (`MAJOR.MINOR.PATCH`). Ejemplos válidos:
-`1.0.0`, `1.0.1`, `1.1.0`, `2.0.0`.
+Usar siempre formato semver: `MAJOR.MINOR.PATCH`.
 
----
+## 2. Dónde se publica `version.json`
 
-## 2. Configurar la URL de actualizaciones
+El archivo [updates/version.json](/C:/Users/GestinemFiscal/Gest2A3Eco/updates/version.json:1) vive en el repositorio y debe quedar accesible mediante GitHub Raw:
 
-La constante `UPDATE_CHECK_URL` en `app_version.py` apunta al `version.json` público.
-Cambiarla al servidor real antes de distribuir la primera versión:
-
-```python
-UPDATE_CHECK_URL = "https://mi-servidor.com/gest2a3eco/version.json"
+```text
+https://raw.githubusercontent.com/jjdominguez79/Gest2A3Eco/main/updates/version.json
 ```
 
-El servidor debe servir el archivo con `Content-Type: application/json`
-y ser accesible por HTTPS desde la red del cliente.
-
----
+Ese es el endpoint que consulta la aplicación al iniciarse.
 
 ## 3. Generar el ejecutable con PyInstaller
 
-**Requisitos previos:**
+Requisitos previos:
 
 ```bash
 python -m venv .venv
@@ -61,254 +54,108 @@ pip install -r requirements.txt
 pip install pyinstaller
 ```
 
-**Compilar:**
+Compilación:
 
 ```bash
 pyinstaller Gest2A3Eco.spec
 ```
 
-Los archivos resultantes quedan en `dist\Gest2A3Eco\`.
-El ejecutable principal es `dist\Gest2A3Eco\Gest2A3Eco.exe`.
-
-**Verificar que funciona antes de empaquetar:**
-
-```bash
-dist\Gest2A3Eco\Gest2A3Eco.exe
-```
-
----
+El ejecutable principal queda en `dist\Gest2A3Eco\Gest2A3Eco.exe`.
 
 ## 4. Generar el instalador con Inno Setup
 
-**Requisitos previos:**
-
-- Inno Setup 6.x instalado: https://jrsoftware.org/isinfo.php
-- El paso 3 (PyInstaller) completado con éxito.
-
-**Actualizar la versión en `setup.iss`** (debe coincidir con `app_version.py`):
+La versión de [setup.iss](/C:/Users/GestinemFiscal/Gest2A3Eco/setup.iss:17) debe coincidir con `APP_VERSION`:
 
 ```iss
-#define MyAppVersion   "1.2.0"
+#define MyAppVersion   "1.1.0"
 ```
 
-**Compilar el instalador:**
+Compilación:
 
 ```bash
-# Opción A: línea de comandos
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup.iss
-
-# Opción B: IDE de Inno Setup
-# Abrir setup.iss → menú Build → Compile (F9)
 ```
 
-El instalador resultante se guarda en:
+El instalador esperado para esta versión es:
 
-```
-dist_installer\Setup_Gest2A3Eco_1.2.0.exe
-```
-
-**Crear la carpeta si no existe:**
-
-```bash
-mkdir dist_installer
+```text
+dist_installer\Setup_Gest2A3Eco_1.1.0.exe
 ```
 
----
+## 5. Publicar releases en GitHub
 
-## 5. Subir el instalador al servidor
+Cada versión distribuible debe publicarse como GitHub Release.
 
-Copiar el instalador al servidor web accesible públicamente:
+Reglas obligatorias:
 
+- Cada release debe tener un tag con formato `vX.Y.Z`, por ejemplo `v1.1.0`.
+- El instalador debe subirse como asset del release, no al repositorio normal.
+- No deben subirse instaladores `.exe` al árbol del repositorio ni a commits de `main`.
+- El nombre del instalador debe coincidir exactamente con el indicado en `download_url`.
+
+Para la versión `1.1.0`, la URL de descarga queda así:
+
+```text
+https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.1.0/Setup_Gest2A3Eco_1.1.0.exe
 ```
-https://actualizaciones.gestinem.es/gest2a3eco/Setup_Gest2A3Eco_1.2.0.exe
-```
 
-La URL exacta debe coincidir con el campo `download_url` del `version.json`.
+## 6. Estructura de `version.json`
 
----
-
-## 6. Actualizar el archivo `version.json` remoto
-
-Este es el archivo que consulta la aplicación al arrancar.
-Debe estar publicado en la URL definida en `UPDATE_CHECK_URL`.
-
-**Estructura del archivo:**
+Contenido inicial de [updates/version.json](/C:/Users/GestinemFiscal/Gest2A3Eco/updates/version.json:1):
 
 ```json
 {
-  "latest_version": "1.2.0",
-  "minimum_required_version": "1.0.0",
-  "download_url": "https://actualizaciones.gestinem.es/gest2a3eco/Setup_Gest2A3Eco_1.2.0.exe",
-  "changelog": "- Corrección de error en normalización de NIF\n- Mejoras en el dashboard\n- Nueva gestión de terceros",
+  "latest_version": "1.1.0",
+  "minimum_required_version": "1.1.0",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.1.0/Setup_Gest2A3Eco_1.1.0.exe",
+  "changelog": "Primera versión con sistema de actualización automática.",
   "force_update": false
 }
 ```
 
-**Campos:**
+Campos:
 
 | Campo | Tipo | Descripción |
 |---|---|---|
 | `latest_version` | string | Versión más reciente disponible |
-| `minimum_required_version` | string | Versión mínima permitida (inferior → bloqueo) |
-| `download_url` | string | URL directa al instalador .exe |
-| `changelog` | string | Texto libre con las novedades (soporta `\n`) |
-| `force_update` | boolean | `true` fuerza actualización aunque cumpla mínimo |
+| `minimum_required_version` | string | Versión mínima permitida |
+| `download_url` | string | URL exacta del asset del release |
+| `changelog` | string | Novedades visibles para el usuario |
+| `force_update` | boolean | Si es `true`, obliga a actualizar |
 
----
+## 7. Checklist de nueva versión
 
-## 7. Forzar una actualización obligatoria
-
-Hay **dos mecanismos** para obligar a actualizar:
-
-### Mecanismo A — `minimum_required_version`
-
-Si la versión instalada en el cliente es **inferior** a `minimum_required_version`,
-la aplicación **bloquea el acceso** y solo ofrece "Descargar e instalar" o "Salir".
-
-Ejemplo: forzar que todos los clientes con versión < 1.2.0 actualicen:
-
-```json
-{
-  "latest_version": "1.2.0",
-  "minimum_required_version": "1.2.0",
-  "download_url": "...",
-  "changelog": "Actualización de seguridad obligatoria.",
-  "force_update": false
-}
-```
-
-### Mecanismo B — `force_update: true`
-
-Si `force_update` es `true`, **todos los clientes** con cualquier versión anterior
-a `latest_version` son bloqueados, independientemente de `minimum_required_version`.
-
-```json
-{
-  "latest_version": "1.2.0",
-  "minimum_required_version": "1.0.0",
-  "download_url": "...",
-  "changelog": "Cambio de base de datos obligatorio.",
-  "force_update": true
-}
-```
-
-**Cuándo usar cada uno:**
-
-- `minimum_required_version`: cuando solo algunas versiones antiguas son incompatibles.
-- `force_update: true`: cuando TODOS deben actualizar sin excepción (migración de BD, cambio de protocolo, etc.).
-
----
-
-## 8. Publicar una actualización opcional
-
-Si `force_update` es `false` y la versión instalada es mayor o igual que
-`minimum_required_version`, la actualización es **opcional**:
-el usuario puede pulsar "Ahora no" y continuar usando la aplicación.
-
-```json
-{
-  "latest_version": "1.2.0",
-  "minimum_required_version": "1.0.0",
-  "download_url": "...",
-  "changelog": "Mejoras de rendimiento y correcciones menores.",
-  "force_update": false
-}
-```
-
----
-
-## 9. Flujo completo paso a paso (checklist de nueva versión)
-
-```
+```text
 [ ] 1. Desarrollar y probar los cambios
 [ ] 2. Actualizar APP_VERSION en app_version.py
 [ ] 3. Actualizar #define MyAppVersion en setup.iss
-[ ] 4. Hacer commit y push (git tag vX.Y.Z recomendado)
-[ ] 5. pyinstaller Gest2A3Eco.spec
-[ ] 6. Probar dist\Gest2A3Eco\Gest2A3Eco.exe manualmente
-[ ] 7. ISCC.exe setup.iss
-[ ] 8. Subir dist_installer\Setup_Gest2A3Eco_X.Y.Z.exe al servidor
-[ ] 9. Actualizar version.json en el servidor
-[ ] 10. Verificar que la URL de descarga es accesible públicamente
-[ ] 11. Probar el flujo de actualización desde una versión anterior
+[ ] 4. Generar el tag vX.Y.Z
+[ ] 5. Ejecutar pyinstaller Gest2A3Eco.spec
+[ ] 6. Probar dist\Gest2A3Eco\Gest2A3Eco.exe
+[ ] 7. Compilar setup.iss con ISCC
+[ ] 8. Crear GitHub Release para el tag vX.Y.Z
+[ ] 9. Subir Setup_Gest2A3Eco_X.Y.Z.exe como asset del release
+[ ] 10. Actualizar updates/version.json
+[ ] 11. Verificar GitHub Raw y la URL del asset
+[ ] 12. Probar la actualización desde una versión anterior
 ```
 
----
+## 8. Estructura de archivos relevantes
 
-## 10. Estructura de archivos relevantes
-
-```
+```text
 Gest2A3Eco/
-├── app_version.py          ← versión actual y URL de comprobación
-├── update_checker.py       ← lógica de comprobación y diálogo de actualización
-├── main.py                 ← integración del check al inicio de la app
-├── setup.iss               ← script de Inno Setup para generar el instalador
-├── Gest2A3Eco.spec         ← configuración de PyInstaller
-├── requirements.txt        ← dependencias Python (incluye requests, packaging)
-└── docs/
-    └── actualizaciones.md  ← este documento
+|-- app_version.py
+|-- update_checker.py
+|-- setup.iss
+|-- Gest2A3Eco.spec
+|-- updates/
+|   `-- version.json
+`-- docs/
+    `-- actualizaciones.md
 ```
 
----
+## 9. Notas operativas
 
-## 11. Dependencias Python necesarias
-
-El sistema de actualizaciones requiere:
-
-```
-requests    — consulta HTTP a version.json y descarga del instalador
-packaging   — comparación correcta de versiones semánticas (PEP 440)
-```
-
-Ambas están incluidas en `requirements.txt`. Para instalarlas manualmente:
-
-```bash
-pip install requests packaging
-```
-
-PyInstaller las incluye automáticamente en el .exe al compilar con `Gest2A3Eco.spec`.
-
----
-
-## 12. Comportamiento sin conexión a internet
-
-Si `version.json` no es accesible (sin red, servidor caído, timeout):
-
-- La aplicación **continúa iniciándose con normalidad**.
-- Se registra un aviso en el log (`logging.WARNING`).
-- No se muestra ningún diálogo al usuario.
-
-El timeout de la comprobación es de **5 segundos** (configurable en `_TIMEOUT_CHECK`
-dentro de `update_checker.py`).
-
----
-
-## 13. Localización del log de actualizaciones
-
-Los mensajes del sistema de actualizaciones se registran con el logger:
-
-```python
-logging.getLogger("update_checker")
-```
-
-Para verlos, añadir un handler al arrancar la aplicación:
-
-```python
-import logging
-logging.basicConfig(level=logging.INFO)
-```
-
----
-
-## 14. Datos del usuario preservados durante una actualización
-
-El instalador de Inno Setup **no sobreescribe** la carpeta `plantillas\`:
-
-- `plantillas\gest2a3eco.db` — base de datos SQLite (conservada)
-- `plantillas\plantillas.json` — semilla JSON (conservada)
-- `plantillas\email_factura.html` — plantilla de email (conservada)
-- `config.json` — configuración SMTP y rutas (conservada)
-- `config.local.json` — configuración local (conservada)
-- `pdfs_emitidas\` — PDFs generados (conservados)
-
-Solo se actualizan los archivos binarios de la aplicación.
+- `update_checker.py` no necesita cambios para este flujo mientras `version.json` siga teniendo la misma estructura.
+- Si `version.json` no es accesible, la aplicación continúa iniciándose con normalidad.
+- `requests` consulta tanto `version.json` como el instalador remoto.
