@@ -8,7 +8,18 @@ from services.email_service import ensure_template_file
 from models.gestor_sqlite import GestorSQLite
 from services.auth_service import AuthService, AuthorizationService
 from services.secured_gestor import SecuredGestorSQLite
-from utils.utilidades import get_word_templates_dir, load_app_config, save_app_config, set_word_templates_dir
+from utils.utilidades import (
+    get_default_db_path,
+    get_default_templates_dir,
+    get_seed_json_path,
+    get_word_templates_dir,
+    load_app_config,
+    log_exception,
+    save_app_config,
+    set_configured_db_path,
+    set_word_templates_dir,
+    validate_sqlite_db_path,
+)
 from views.ui_auth import ChangePasswordDialog, UILogin
 from views.ui_config_monedas import MonedasDialog
 from views.ui_theme import aplicar_tema
@@ -31,29 +42,17 @@ def resource_path(relpath: str) -> str:
 
 
 def find_login_logo_path() -> str:
+    project_dir = os.path.dirname(os.path.abspath(__file__))
     candidates = [
         resource_path("logo.png"),
         resource_path("logo.jpg"),
-        os.path.join(BASE_DIR, "dist", "Gest2A3Eco", "_internal", "logo.png"),
+        os.path.join(project_dir, "dist", "Gest2A3Eco", "_internal", "logo.png"),
         resource_path("icono.ico"),
     ]
     for path in candidates:
         if path and os.path.exists(path):
             return path
     return ""
-
-
-def app_base_dir() -> str:
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
-
-
-BASE_DIR = app_base_dir()
-PLANTILLAS_DIR = os.path.join(BASE_DIR, "plantillas")
-os.makedirs(PLANTILLAS_DIR, exist_ok=True)
-RUTA_JSON = os.path.join(PLANTILLAS_DIR, "plantillas.json")
-RUTA_DB = os.path.join(PLANTILLAS_DIR, "gest2a3eco.db")
 
 
 def _build_header(
@@ -181,11 +180,12 @@ def _build_header(
 
 
 def _select_db_path(default_path: str) -> str:
-    path = filedialog.askopenfilename(
-        title="Selecciona base de datos",
+    path = filedialog.asksaveasfilename(
+        title="Selecciona o crea base de datos",
         initialdir=os.path.dirname(default_path),
         initialfile=os.path.basename(default_path),
         filetypes=[("SQLite DB", "*.db"), ("Todos", "*.*")],
+        defaultextension=".db",
     )
     return path or default_path
 
@@ -197,20 +197,6 @@ def _select_word_templates_dir(default_dir: str) -> str:
         mustexist=True,
     )
     return path or default_dir
-
-
-def _get_last_db_path(default_path: str) -> str:
-    cfg = load_app_config()
-    last = str(cfg.get("last_db_path") or "").strip()
-    if last and os.path.exists(last):
-        return last
-    return default_path
-
-
-def _set_last_db_path(path: str) -> None:
-    cfg = load_app_config()
-    cfg["last_db_path"] = path
-    save_app_config(cfg)
 
 
 def _restart_app():
@@ -247,19 +233,40 @@ def main():
         pass
     aplicar_tema(root)
 
-    db_path = _get_last_db_path(RUTA_DB)
-    if not db_path:
-        db_path = RUTA_DB
-    _set_last_db_path(db_path)
+    cfg = load_app_config()
+    db_path = str(cfg.get("db_path") or cfg.get("last_db_path") or "").strip() or str(get_default_db_path())
+    word_tpl_dir = get_word_templates_dir(str(get_default_templates_dir()))
+    if not str(cfg.get("db_path") or "").strip():
+        cfg["db_path"] = db_path
+    if not str(cfg.get("last_db_path") or "").strip():
+        cfg["last_db_path"] = db_path
+    if not str(cfg.get("word_templates_dir") or "").strip():
+        cfg["word_templates_dir"] = word_tpl_dir
+    save_app_config(cfg)
 
-    default_tpl_dir = os.path.join(BASE_DIR, "plantillas")
-    word_tpl_dir = get_word_templates_dir(default_tpl_dir)
-    if not word_tpl_dir:
-        word_tpl_dir = default_tpl_dir
-    os.makedirs(word_tpl_dir, exist_ok=True)
-    set_word_templates_dir(word_tpl_dir)
+    try:
+        db_path = validate_sqlite_db_path(db_path, allow_create=True)
+    except Exception as exc:
+        log_exception("Error validando la base de datos SQLite al iniciar.", exc, extra={"db_path": db_path})
+        messagebox.showerror(
+            "Gest2A3Eco",
+            f"No se puede usar la base de datos SQLite configurada:\n{db_path}\n\nDetalle: {exc}",
+            parent=root,
+        )
+        root.destroy()
+        return
 
-    gestor_base = GestorSQLite(db_path, json_seed=RUTA_JSON)
+    try:
+        gestor_base = GestorSQLite(db_path, json_seed=get_seed_json_path())
+    except Exception as exc:
+        log_exception("Error abriendo la base de datos SQLite.", exc, extra={"db_path": db_path})
+        messagebox.showerror(
+            "Gest2A3Eco",
+            f"No se ha podido abrir la base de datos SQLite:\n{db_path}\n\nDetalle: {exc}",
+            parent=root,
+        )
+        root.destroy()
+        return
     auth_service = AuthService(gestor_base)
     initial_admin_info = auth_service.ensure_initial_admin(
         os.getenv("GEST2A3ECO_ADMIN_PASSWORD")
@@ -275,7 +282,17 @@ def main():
             return
         new_path = _select_db_path(db_path)
         if new_path and new_path != db_path:
-            _set_last_db_path(new_path)
+            try:
+                validated = validate_sqlite_db_path(new_path, allow_create=True)
+            except Exception as exc:
+                log_exception("Error validando una base de datos seleccionada manualmente.", exc, extra={"db_path": new_path})
+                messagebox.showerror(
+                    "Gest2A3Eco",
+                    f"No se puede usar la base de datos seleccionada:\n{new_path}\n\nDetalle: {exc}",
+                    parent=root,
+                )
+                return
+            set_configured_db_path(validated)
             messagebox.showinfo("Gest2A3Eco", "Base de datos cambiada. La aplicacion se reiniciara.", parent=root)
             root.destroy()
             _restart_app()

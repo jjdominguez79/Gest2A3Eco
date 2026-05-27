@@ -1443,12 +1443,8 @@ class FacturaDialog(tk.Toplevel):
         return out
 
     def _listar_plantillas_word(self):
-        if getattr(sys, "frozen", False):
-            base_dir = Path(sys.executable).parent
-        else:
-            base_dir = Path(__file__).resolve().parents[1]
         from utils.utilidades import get_word_templates_dir
-        plantillas_dir = Path(get_word_templates_dir(str(base_dir / "plantillas")))
+        plantillas_dir = Path(get_word_templates_dir())
         if not plantillas_dir.exists():
             return []
         items = [p.name for p in plantillas_dir.glob("*.docx") if p.is_file()]

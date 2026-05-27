@@ -30,6 +30,14 @@ def _ensure_dir(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
+class DatabaseOpenError(RuntimeError):
+    def __init__(self, db_path: Path, action: str, original: Exception):
+        self.db_path = Path(db_path)
+        self.action = action
+        self.original = original
+        super().__init__(f"No se pudo {action} la base de datos SQLite en '{self.db_path}': {original}")
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS empresas (
   codigo TEXT NOT NULL,
@@ -410,15 +418,25 @@ class GestorSQLite:
 
     def __init__(self, db_path: str | Path, json_seed: str | Path | None = None):
         self.db_path = Path(db_path)
-        _ensure_dir(self.db_path)
-        self.conn = sqlite3.connect(str(self.db_path))
-        self.conn.execute("PRAGMA foreign_keys = ON")
-        self.conn.row_factory = sqlite3.Row
-        self._init_schema()
-        self._migrate_terceros_global()
-        self._migrate_maestro_subcuentas()
-        if json_seed:
-            self._maybe_seed_from_json(json_seed)
+        try:
+            _ensure_dir(self.db_path)
+        except Exception as exc:
+            raise DatabaseOpenError(self.db_path, "preparar la carpeta de", exc) from exc
+        try:
+            self.conn = sqlite3.connect(str(self.db_path))
+            self.conn.execute("PRAGMA foreign_keys = ON")
+            self.conn.row_factory = sqlite3.Row
+            self._init_schema()
+            self._migrate_terceros_global()
+            self._migrate_maestro_subcuentas()
+            if json_seed:
+                self._maybe_seed_from_json(json_seed)
+        except Exception as exc:
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+            raise DatabaseOpenError(self.db_path, "abrir", exc) from exc
 
     # ---------- utilidades internas ----------
     def _init_schema(self):

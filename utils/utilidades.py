@@ -2,12 +2,16 @@
 import json
 import math
 import os
+import sqlite3
 import sys
+import traceback
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from pathlib import Path
 
 SEP = "\t"
+APP_VENDOR = "Gestinem"
+APP_NAME = "Gest2A3Eco"
 
 DEFAULT_MONEDAS = [
     {"codigo": "EUR", "simbolo": "€", "nombre": "Euro"},
@@ -18,6 +22,68 @@ def _base_dir() -> Path:
     return Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
 
 
+def get_install_dir() -> Path:
+    return _base_dir()
+
+
+def get_app_data_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        root = Path(os.getenv("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+        path = root / APP_VENDOR / APP_NAME
+    else:
+        path = _base_dir()
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def get_logs_dir() -> Path:
+    path = get_app_data_dir() / "logs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def get_log_path(filename: str = "app.log") -> Path:
+    return get_logs_dir() / filename
+
+
+def get_user_config_path() -> Path:
+    return get_app_data_dir() / "config.local.json"
+
+
+def get_user_preferences_path() -> Path:
+    return get_app_data_dir() / "user.config.json"
+
+
+def get_default_templates_dir() -> Path:
+    path = get_app_data_dir() / "plantillas"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def get_default_output_dir() -> Path:
+    path = get_app_data_dir() / "pdfs_emitidas"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def get_default_db_path() -> Path:
+    return get_app_data_dir() / "gest2a3eco.db"
+
+
+def get_packaged_templates_dir() -> Path:
+    return get_install_dir() / "plantillas"
+
+
+def get_packaged_email_template_path() -> Path | None:
+    path = get_packaged_templates_dir() / "email_factura.html"
+    return path if path.exists() else None
+
+
+def get_seed_json_path() -> Path | None:
+    path = get_packaged_templates_dir() / "plantillas.json"
+    return path if path.exists() else None
+
+
 def _config_example_path() -> Path:
     return _base_dir() / "config.example.json"
 
@@ -26,15 +92,12 @@ def _legacy_config_path() -> Path:
     return _base_dir() / "config.json"
 
 
-def _config_local_path() -> Path:
+def _legacy_local_config_path() -> Path:
     return _base_dir() / "config.local.json"
 
 
-def _user_roaming_config_path() -> Path:
-    appdata = os.getenv("APPDATA")
-    if appdata:
-        return Path(appdata) / "Gest2A3Eco" / "config.json"
-    return Path.home() / "AppData" / "Roaming" / "Gest2A3Eco" / "config.json"
+def _config_local_path() -> Path:
+    return get_user_config_path()
 
 
 def _load_json_file(path: Path) -> dict:
@@ -57,6 +120,23 @@ def _merge_dicts(base: dict, override: dict) -> dict:
         else:
             out[key] = value
     return out
+
+
+def _write_json_file(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+def _ensure_local_config_migrated() -> None:
+    cfg_path = get_user_config_path()
+    if cfg_path.exists():
+        return
+    legacy_data = {}
+    for path in (_legacy_config_path(), _legacy_local_config_path()):
+        legacy_data = _merge_dicts(legacy_data, _load_json_file(path))
+    if legacy_data:
+        _write_json_file(cfg_path, legacy_data)
 
 
 def _apply_env_overrides(data: dict) -> dict:
@@ -107,11 +187,20 @@ def _apply_env_overrides(data: dict) -> dict:
 
 def _normalize_config(data: dict) -> dict:
     out = dict(data or {})
-    out.setdefault("templates_path", "plantillas/plantillas.json")
+    out.setdefault("templates_path", "")
     out.setdefault("word_templates_dir", "")
     out.setdefault("a3_base_path", "")
+    out.setdefault("db_path", "")
     out.setdefault("last_db_path", "")
     out.setdefault("ocr_endpoint", "")
+    out.setdefault("documentos_output_dir", "")
+
+    if not str(out.get("db_path") or "").strip():
+        out["db_path"] = str(out.get("last_db_path") or "").strip()
+    if not str(out.get("last_db_path") or "").strip():
+        out["last_db_path"] = str(out.get("db_path") or "").strip()
+    if not str(out.get("documentos_output_dir") or "").strip():
+        out["documentos_output_dir"] = str(get_default_output_dir())
 
     smtp = out.get("smtp")
     if not isinstance(smtp, dict):
@@ -152,7 +241,9 @@ def _normalize_user_config(data: dict) -> dict:
     out.setdefault("open_outlook_before_send", True)
     return out
 
+
 def load_app_config() -> dict:
+    _ensure_local_config_migrated()
     data = {}
     for path in (_config_example_path(), _legacy_config_path(), _config_local_path()):
         data = _merge_dicts(data, _load_json_file(path))
@@ -161,40 +252,106 @@ def load_app_config() -> dict:
 
 
 def load_user_config() -> dict:
-    cfg_path = _user_roaming_config_path()
+    cfg_path = get_user_preferences_path()
     data = _normalize_user_config(_load_json_file(cfg_path))
     if not cfg_path.exists():
         save_user_config(data)
     return data
 
-def get_word_templates_dir(default_dir: str) -> str:
+def get_word_templates_dir(default_dir: str | None = None) -> str:
     cfg = load_app_config()
     raw = str(cfg.get("word_templates_dir") or "").strip()
-    if raw and Path(raw).is_dir():
-        return raw
-    return default_dir
+    if raw:
+        path = Path(raw)
+        if path.exists() and path.is_dir():
+            return str(path)
+    fallback = Path(default_dir) if default_dir else get_default_templates_dir()
+    fallback.mkdir(parents=True, exist_ok=True)
+    return str(fallback)
 
 def set_word_templates_dir(path: str) -> None:
     cfg = load_app_config()
     cfg["word_templates_dir"] = path
     save_app_config(cfg)
 
+
+def get_configured_db_path() -> str:
+    cfg = load_app_config()
+    raw = str(cfg.get("db_path") or cfg.get("last_db_path") or "").strip()
+    return raw or str(get_default_db_path())
+
+
+def set_configured_db_path(path: str) -> None:
+    cfg = load_app_config()
+    cfg["db_path"] = path
+    cfg["last_db_path"] = path
+    save_app_config(cfg)
+
+
+def validate_sqlite_db_path(path: str, *, allow_create: bool = True) -> str:
+    raw = str(path or "").strip().strip('"')
+    if not raw:
+        raise ValueError("Debes indicar una ruta para la base de datos SQLite.")
+
+    db_path = Path(raw).expanduser()
+    parent = db_path.parent
+    if not str(parent):
+        raise ValueError(f"Ruta de base de datos no válida: {raw}")
+    if not parent.exists():
+        if allow_create:
+            raise FileNotFoundError(f"No existe la carpeta de la base de datos:\n{parent}")
+        raise FileNotFoundError(f"No existe la base de datos:\n{db_path}")
+    if not parent.is_dir():
+        raise NotADirectoryError(f"La carpeta de la base de datos no es válida:\n{parent}")
+    if db_path.exists() and db_path.is_dir():
+        raise IsADirectoryError(f"La ruta seleccionada es una carpeta, no un fichero SQLite:\n{db_path}")
+    if not db_path.exists() and not allow_create:
+        raise FileNotFoundError(f"No existe la base de datos seleccionada:\n{db_path}")
+
+    conn = None
+    try:
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("CREATE TABLE IF NOT EXISTS __gest2a3eco_access_check__ (id INTEGER PRIMARY KEY)")
+        conn.execute("DROP TABLE IF EXISTS __gest2a3eco_access_check__")
+        conn.commit()
+    except Exception as exc:
+        raise PermissionError(
+            f"No se puede abrir la base de datos con permisos de lectura y escritura:\n{db_path}\n\nDetalle: {exc}"
+        ) from exc
+    finally:
+        if conn is not None:
+            conn.close()
+    return str(db_path)
+
+
 def save_app_config(data: dict) -> None:
     cfg_path = _config_local_path()
-    cfg_path.parent.mkdir(parents=True, exist_ok=True)
     current = _load_json_file(cfg_path)
-    payload = _merge_dicts(current, dict(data or {}))
-    with open(cfg_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
+    payload = _normalize_config(_merge_dicts(current, dict(data or {})))
+    _write_json_file(cfg_path, payload)
 
 
 def save_user_config(data: dict) -> None:
-    cfg_path = _user_roaming_config_path()
-    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg_path = get_user_preferences_path()
     current = _load_json_file(cfg_path)
     payload = _normalize_user_config(_merge_dicts(current, dict(data or {})))
-    with open(cfg_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
+    _write_json_file(cfg_path, payload)
+
+
+def log_exception(message: str, exc: Exception | None = None, *, log_name: str = "app.log", extra: dict | None = None) -> None:
+    try:
+        path = get_log_path(log_name)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("\n---- ERROR ----\n")
+            f.write(f"Message: {message}\n")
+            if extra:
+                for key, value in extra.items():
+                    f.write(f"{key}: {value}\n")
+            if exc is not None:
+                f.write("Exception:\n")
+                f.write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+    except Exception:
+        pass
 
 def load_monedas() -> list:
     return load_app_config().get("monedas") or list(DEFAULT_MONEDAS)

@@ -14,7 +14,7 @@
 ; =============================================================================
 
 #define MyAppName      "Gest2A3Eco"
-#define MyAppVersion   "1.1.2"
+#define MyAppVersion   "1.1.3"
 #define MyAppPublisher "Asesoria Gestinem S.L."
 #define MyAppURL       "https://www.gestinem.es"
 #define MyAppExeName   "Gest2A3Eco.exe"
@@ -73,12 +73,13 @@ Name: "desktopicon"; Description: "Crear icono en el escritorio"; \
 [Files]
 ; -------------------------------------------------------------------------
 ; Archivos de la aplicacion generados por PyInstaller.
-; Se excluye la carpeta plantillas/ para preservar la base de datos SQLite
-; y la configuracion del usuario entre actualizaciones.
+; En {app} solo se instalan binarios y recursos de solo lectura.
+; La configuracion local, PDFs generados y base de datos por defecto viven en
+; %LOCALAPPDATA%\Gestinem\Gest2A3Eco\ y no deben sobrescribirse aqui.
 ; -------------------------------------------------------------------------
 Source: "dist\Gest2A3Eco\*"; DestDir: "{app}"; \
   Flags: ignoreversion recursesubdirs createallsubdirs; \
-  Excludes: "plantillas,plantillas\*"
+  Excludes: "plantillas\gest2a3eco.db,plantillas\email_factura.html,config.json,config.local.json,pdfs_emitidas,pdfs_emitidas\*"
 
 [Icons]
 ; Acceso directo en el Menu Inicio
@@ -106,7 +107,7 @@ Filename: "{app}\{#MyAppExeName}"; \
 [InstallDelete]
 ; Limpiar los archivos binarios de PyInstaller de la instalacion anterior
 ; para evitar conflictos con DLLs y .pyd obsoletos.
-; La carpeta plantillas/ y config.json NO se tocan (datos del usuario).
+; No se tocan configuraciones del usuario ni bases de datos externas.
 Type: filesandordirs; Name: "{app}\_internal"
 
 [UninstallDelete]
@@ -147,7 +148,7 @@ begin
     begin
       WizardForm.WelcomeLabel2.Caption :=
         'Esta instalacion actualizara Gest2A3Eco a la version {#MyAppVersion}.' + #13#10#13#10 +
-        'Los datos de la aplicacion (base de datos, configuracion) se conservaran.' + #13#10#13#10 +
+        'Los datos locales del usuario y la ruta de base de datos configurada se conservaran.' + #13#10#13#10 +
         'Se recomienda cerrar la aplicacion antes de continuar.';
     end;
   end;

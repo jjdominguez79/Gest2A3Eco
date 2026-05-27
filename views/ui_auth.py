@@ -4,6 +4,8 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from pathlib import Path
 
+from app_version import APP_VERSION
+
 try:
     from PIL import Image, ImageTk
 except Exception:  # pragma: no cover
@@ -65,6 +67,7 @@ class UILogin(ttk.Frame):
         lbl_error.pack(anchor="w", pady=(0, 12))
 
         ttk.Button(card, text="Iniciar sesion", style="Primary.TButton", command=self._submit).pack(fill="x")
+        ttk.Label(card, text=f"Versión {APP_VERSION}").pack(anchor="center", pady=(14, 0))
 
         entry_user.bind("<Return>", lambda _e: entry_password.focus_set())
         entry_password.bind("<Return>", lambda _e: self._submit())

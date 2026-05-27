@@ -1,7 +1,7 @@
 import os
+import shutil
 import smtplib
 import ssl
-import sys
 import traceback
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
@@ -9,7 +9,15 @@ from email.mime.text import MIMEText
 from html import escape
 from pathlib import Path
 
-from utils.utilidades import load_app_config, load_user_config, save_app_config, save_user_config
+from utils.utilidades import (
+    get_default_templates_dir,
+    get_log_path,
+    get_packaged_email_template_path,
+    load_app_config,
+    load_user_config,
+    save_app_config,
+    save_user_config,
+)
 
 # ── Plantilla HTML por defecto ───────────────────────────────────────────────
 DEFAULT_HTML_TEMPLATE = """\
@@ -65,17 +73,9 @@ DEFAULT_HTML_TEMPLATE = """\
 </html>
 """
 
-
-def _base_dir() -> Path:
-    """Directorio raiz de la aplicacion (junto al .exe o al proyecto en desarrollo)."""
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parents[1]
-
-
 def get_template_html_path() -> Path:
     """Ruta del fichero de plantilla HTML editable por el usuario."""
-    return _base_dir() / "plantillas" / "email_factura.html"
+    return get_default_templates_dir() / "email_factura.html"
 
 
 def ensure_template_file() -> Path:
@@ -83,7 +83,11 @@ def ensure_template_file() -> Path:
     path = get_template_html_path()
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(DEFAULT_HTML_TEMPLATE, encoding="utf-8")
+        packaged = get_packaged_email_template_path()
+        if packaged and packaged.exists():
+            shutil.copy2(packaged, path)
+        else:
+            path.write_text(DEFAULT_HTML_TEMPLATE, encoding="utf-8")
     return path
 
 
@@ -108,8 +112,7 @@ def save_email_preferences(cfg: dict) -> None:
 
 
 def load_email_html_template() -> str:
-    """Carga la plantilla HTML desde el fichero externo (plantillas/email_factura.html).
-    Si no existe lo crea con el contenido por defecto."""
+    """Carga la plantilla HTML editable desde AppData y la crea si no existe."""
     path = ensure_template_file()
     try:
         return path.read_text(encoding="utf-8")
@@ -118,7 +121,7 @@ def load_email_html_template() -> str:
 
 
 def save_email_html_template(template: str) -> None:
-    """Guarda la plantilla en el fichero externo (y por compatibilidad en config.json)."""
+    """Guarda la plantilla HTML editable en AppData."""
     path = ensure_template_file()
     path.write_text(template, encoding="utf-8")
 
@@ -324,9 +327,7 @@ def send_email_smtp(
 
 def _log_email_error(message: str, exc: Exception) -> None:
     try:
-        log_dir = Path(os.getenv("APPDATA") or Path.home() / "AppData" / "Roaming") / "Gest2A3Eco"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = log_dir / "email_error.log"
+        log_path = get_log_path("email_error.log")
         with open(log_path, "a", encoding="utf-8") as f:
             f.write("\n---- EMAIL ERROR ----\n")
             f.write(f"Message: {message}\n")

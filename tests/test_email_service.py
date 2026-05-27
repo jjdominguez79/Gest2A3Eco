@@ -32,12 +32,16 @@ def test_open_outlook_email_valida_adjuntos_antes_de_outlook(tmp_path):
         raise AssertionError("Se esperaba FileNotFoundError")
 
 
-def test_load_user_config_crea_archivo_en_roaming(monkeypatch, tmp_path):
-    roaming = tmp_path / "Roaming"
-    monkeypatch.setenv("APPDATA", str(roaming))
+def test_load_user_config_crea_archivo_en_localappdata(monkeypatch, tmp_path):
+    install_dir = tmp_path / "install"
+    localappdata = tmp_path / "LocalAppData"
+    install_dir.mkdir()
+    monkeypatch.setattr(utilidades.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(utilidades.sys, "executable", str(install_dir / "Gest2A3Eco.exe"))
+    monkeypatch.setenv("LOCALAPPDATA", str(localappdata))
 
     cfg = utilidades.load_user_config()
-    cfg_path = roaming / "Gest2A3Eco" / "config.json"
+    cfg_path = localappdata / "Gestinem" / "Gest2A3Eco" / "user.config.json"
 
     assert cfg_path.exists()
     assert cfg["email_mode"] == "outlook"

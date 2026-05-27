@@ -12,7 +12,14 @@ from procesos.facturas_word import (
     build_context_emitida,
     generar_pdf_desde_plantilla_word,
 )
-from utils.utilidades import aplicar_descuento_total_lineas, load_app_config, load_monedas
+from utils.utilidades import (
+    aplicar_descuento_total_lineas,
+    get_default_output_dir,
+    get_log_path,
+    get_word_templates_dir,
+    load_app_config,
+    load_monedas,
+)
 from utils.validaciones import normalizar_nif_cif
 
 
@@ -1151,11 +1158,7 @@ class FacturasEmitidasController:
         return value
 
     def _albaran_app_pdf_path(self, alb: dict) -> str:
-        if getattr(sys, "frozen", False):
-            base_dir = os.path.dirname(sys.executable)
-        else:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        pdf_dir = os.path.join(base_dir, "pdfs_emitidas")
+        pdf_dir = str(get_default_output_dir())
         emp_name = self._safe_filename(self._empresa_conf.get("nombre") or "") or "Sin_empresa"
         safe_num = self._safe_filename(str(alb.get("numero", "") or ""))
         safe_codigo = self._safe_filename(self._codigo or "")
@@ -1468,12 +1471,7 @@ class FacturasEmitidasController:
         warn_missing: bool = False,
         default_filename: str = "factura_emitida_template.docx",
     ) -> str:
-        if getattr(sys, "frozen", False):
-            base_dir = os.path.dirname(sys.executable)
-        else:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        from utils.utilidades import get_word_templates_dir
-        tpl_dir = get_word_templates_dir(os.path.join(base_dir, "plantillas"))
+        tpl_dir = get_word_templates_dir()
         default_path = os.path.join(tpl_dir, default_filename)
         if not fac:
             return default_path
@@ -1676,11 +1674,7 @@ class FacturasEmitidasController:
         self._persist_factura_if_allowed(upd)
 
     def _app_pdf_path(self, fac: dict) -> str:
-        if getattr(sys, "frozen", False):
-            base_dir = os.path.dirname(sys.executable)
-        else:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        pdf_dir = os.path.join(base_dir, "pdfs_emitidas")
+        pdf_dir = str(get_default_output_dir())
         emp_name = self._safe_filename(self._empresa_conf.get("nombre") or "") or "Sin_empresa"
         serie = self._safe_filename(str(fac.get("serie", "") or ""))
         num = self._safe_filename(str(fac.get("numero", "") or ""))
@@ -1777,11 +1771,7 @@ class FacturasEmitidasController:
 
     def _log_pdf_error(self, msg: str, exc: Exception, template_path: str, save_path: str) -> None:
         try:
-            if getattr(sys, "frozen", False):
-                base_dir = os.path.dirname(sys.executable)
-            else:
-                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            log_path = os.path.join(base_dir, "pdf_error.log")
+            log_path = get_log_path("pdf_error.log")
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write("\n---- PDF ERROR ----\n")
                 f.write(f"Message: {msg}\n")
