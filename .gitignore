@@ -51,3 +51,7 @@ z_tecodir_*.txt
 *.db
 *.sqlite
 *.sqlite3
+
+# Instaladores
+dist_installer/
+*.exe

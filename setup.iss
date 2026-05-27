@@ -47,7 +47,7 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 OutputDir=dist_installer
 OutputBaseFilename=Setup_{#MyAppName}_{#MyAppVersion}
-SetupIconFile=icono.ico
+; SetupIconFile=icono.ico
 
 ; Permisos: requiere administrador (necesario para instalar en Program Files)
 PrivilegesRequired=admin
@@ -67,7 +67,7 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 
 [Tasks]
 ; Icono de escritorio (opcional, desmarcado por defecto)
-Name: "desktopicon"; Description: "Crear icono en el {cm:DesktopFolder}"; \
+Name: "desktopicon"; Description: "Crear icono en el escritorio"; \
   GroupDescription: "Iconos adicionales:"; Flags: unchecked
 
 [Files]
@@ -138,10 +138,6 @@ end;
 // =========================================================================
 // Mensaje informativo al actualizar (cuando ya hay una version instalada)
 // =========================================================================
-function InitializeWizard(): Boolean;
-begin
-  Result := True;
-end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
