@@ -3,5 +3,5 @@
   "minimum_required_version": "1.1.1",
   "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.1.1/Setup_Gest2A3Eco_1.1.1.exe",
   "changelog": "Primera versión con sistema de actualización automática.",
-  "force_update": false
+  "force_update": true
 }
