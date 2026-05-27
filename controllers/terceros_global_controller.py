@@ -16,7 +16,7 @@ class TercerosGlobalController:
     def refresh(self):
         self._terceros_cache = self._gestor.listar_terceros()
         self._view.set_terceros(self._terceros_cache)
-        self._empresas_cache = self._gestor.listar_empresas()
+        self._empresas_cache = self._listar_empresas_unicas()
         self._view.set_empresas(self._empresas_cache)
         self._view.set_empresas_asignadas([])
 
@@ -150,3 +150,21 @@ class TercerosGlobalController:
     def _can_manage_global_third_parties(self) -> bool:
         security = getattr(self._gestor, "security", None)
         return True if not security else security.can_manage_global_third_parties()
+
+    def _listar_empresas_unicas(self) -> list[dict]:
+        rows = self._gestor.listar_empresas()
+        by_code = {}
+        for row in rows:
+            codigo = str(row.get("codigo") or "").strip()
+            if not codigo:
+                continue
+            current = by_code.get(codigo)
+            if current is None:
+                by_code[codigo] = {
+                    "codigo": codigo,
+                    "nombre": row.get("nombre", ""),
+                }
+                continue
+            if not current.get("nombre") and row.get("nombre"):
+                current["nombre"] = row.get("nombre")
+        return sorted(by_code.values(), key=lambda item: (item["codigo"], str(item.get("nombre") or "")))

@@ -24,6 +24,7 @@ class UITercerosGlobales(tk.Frame):
         self._session = session
         self._terceros: list[dict] = []
         self._empresas: list[dict] = []
+        self._empresas_filtradas: list[dict] = []
         self._build()
         self._controller = TercerosGlobalController(gestor, self)
         self._controller.refresh()
@@ -107,6 +108,12 @@ class UITercerosGlobales(tk.Frame):
                  bg="#ffffff", fg="#0f172a",
                  font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=12, pady=(12, 4))
 
+        search_emp_row = tk.Frame(right, bg="#ffffff")
+        search_emp_row.pack(fill="x", padx=8, pady=(0, 6))
+        self.var_search_empresas = tk.StringVar()
+        self.var_search_empresas.trace_add("write", lambda *_: self._filter_empresas())
+        ttk.Entry(search_emp_row, textvariable=self.var_search_empresas, width=28).pack(fill="x")
+
         self.lb_empresas = tk.Listbox(
             right, height=8, selectmode="single",
             bg="#ffffff", fg="#475569",
@@ -144,10 +151,20 @@ class UITercerosGlobales(tk.Frame):
 
     def set_empresas(self, rows: list[dict]):
         self._empresas = rows
+        self._filter_empresas()
+
+    def _filter_empresas(self):
+        q = self.var_search_empresas.get().strip().lower() if hasattr(self, "var_search_empresas") else ""
+        self._empresas_filtradas = []
         self.lb_empresas.delete(0, tk.END)
-        for e in rows:
+        for e in self._empresas:
+            codigo = str(e.get("codigo") or "")
+            nombre = str(e.get("nombre") or "")
+            if q and q not in codigo.lower() and q not in nombre.lower():
+                continue
+            self._empresas_filtradas.append(e)
             self.lb_empresas.insert(
-                tk.END, f"{e.get('codigo', '')}  {e.get('nombre', '')}"
+                tk.END, f"{codigo}  {nombre}"
             )
 
     def set_empresas_asignadas(self, rows: list[dict]):
@@ -165,7 +182,7 @@ class UITercerosGlobales(tk.Frame):
         idx = self.lb_empresas.curselection()
         if not idx:
             return None, []
-        return self._empresas[idx[0]].get("codigo"), []
+        return self._empresas_filtradas[idx[0]].get("codigo"), []
 
     def select_tercero(self, tid: str):
         tid_str = str(tid)

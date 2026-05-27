@@ -116,6 +116,7 @@ class UIMaestroCuentas(tk.Frame):
         ttk.Button(bar, text="Actualizar", command=self.refresh).pack(side="left", padx=(0, 4))
         ttk.Button(bar, text="Configurar subcuenta", command=self._configurar_subcuenta_empresa).pack(side="left", padx=(0, 4))
         ttk.Button(bar, text="Nueva subcuenta", command=self._nueva).pack(side="left", padx=(0, 4))
+        ttk.Button(bar, text="Eliminar subcuenta", command=self._eliminar).pack(side="left", padx=(0, 4))
         ttk.Button(bar, text="Importar Excel", command=self._importar_excel).pack(side="left", padx=(0, 4))
         ttk.Button(bar, text="Marcar alta A3", command=self._marcar_alta_a3).pack(side="left")
 
@@ -429,6 +430,27 @@ class UIMaestroCuentas(tk.Frame):
         except Exception as exc:
             messagebox.showerror("Error", str(exc), parent=self.winfo_toplevel())
 
+    def _eliminar(self):
+        sel = self.tv.selection()
+        if not sel:
+            messagebox.showinfo("Gest2A3Eco", "Selecciona una subcuenta.", parent=self.winfo_toplevel())
+            return
+        rec = next((r for r in self._rows if str(r["id"]) == sel[0]), None)
+        if not rec:
+            return
+        subcuenta = str(rec.get("subcuenta") or "").strip()
+        if not messagebox.askyesno(
+            "Confirmar",
+            f"Eliminar la subcuenta {subcuenta}?\n\nEsta accion no se puede deshacer.",
+            parent=self.winfo_toplevel(),
+        ):
+            return
+        try:
+            self._svc.eliminar_subcuenta_empresa(self._gestor, int(rec["id"]))
+            self.refresh()
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+
     def _importar_excel(self):
         path = filedialog.askopenfilename(
             parent=self.winfo_toplevel(),
@@ -471,6 +493,8 @@ class _SubcuentaDialog(tk.Toplevel):
         self._gestor = gestor
         self._codigo = codigo_empresa
         self._ndig = digitos_plan
+        self._terceros_cache = list(self._gestor.listar_terceros() or [])
+        self._coincidencias_tercero: list[dict] = []
 
         frm = ttk.Frame(self, padding=16)
         frm.pack(fill="both", expand=True)
@@ -495,29 +519,52 @@ class _SubcuentaDialog(tk.Toplevel):
         ttk.Label(frm, text="Nombre:").grid(row=2, column=0, sticky="w", pady=4, padx=(0, 8))
         self.var_nombre = tk.StringVar(value=str(rec.get("nombre_subcuenta") or "") if rec else "")
         ttk.Entry(frm, textvariable=self.var_nombre, width=38).grid(row=2, column=1, sticky="ew", pady=4)
+        self.var_nombre.trace_add("write", lambda *_: self._sync_tercero_match())
 
         # NIF
         ttk.Label(frm, text="NIF:").grid(row=3, column=0, sticky="w", pady=4, padx=(0, 8))
         self.var_nif = tk.StringVar(value=str(rec.get("nif_snapshot") or "") if rec else "")
         ttk.Entry(frm, textvariable=self.var_nif, width=22).grid(row=3, column=1, sticky="w", pady=4)
+        self.var_nif.trace_add("write", lambda *_: self._sync_tercero_match())
 
         # Tercero ID
         ttk.Label(frm, text="Tercero ID:").grid(row=4, column=0, sticky="w", pady=4, padx=(0, 8))
         self.var_tercero = tk.StringVar(value=str(rec.get("tercero_id") or "") if rec else "")
         ttk.Entry(frm, textvariable=self.var_tercero, width=22).grid(row=4, column=1, sticky="w", pady=4)
 
+        self.lbl_tercero_match = ttk.Label(frm, text="", foreground="#64748b")
+        self.lbl_tercero_match.grid(row=5, column=0, columnspan=2, sticky="w", pady=(2, 4))
+
+        self.lb_terceros = tk.Listbox(
+            frm,
+            height=4,
+            exportselection=False,
+            bg="#ffffff",
+            fg="#334155",
+            font=("Segoe UI", 9),
+        )
+        self.lb_terceros.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0, 4))
+        self.lb_terceros.bind("<Double-Button-1>", lambda _e: self._usar_tercero_seleccionado())
+
+        tercero_btns = ttk.Frame(frm)
+        tercero_btns.grid(row=7, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        ttk.Button(tercero_btns, text="Buscar tercero", command=self._sync_tercero_match).pack(side="left", padx=(0, 6))
+        ttk.Button(tercero_btns, text="Usar tercero seleccionado", command=self._usar_tercero_seleccionado).pack(side="left", padx=(0, 6))
+        ttk.Button(tercero_btns, text="Dar de alta tercero", command=self._alta_tercero).pack(side="left")
+
         # Observaciones
-        ttk.Label(frm, text="Observaciones:").grid(row=5, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Label(frm, text="Observaciones:").grid(row=8, column=0, sticky="w", pady=4, padx=(0, 8))
         self.var_obs = tk.StringVar(value=str(rec.get("observaciones") or "") if rec else "")
-        ttk.Entry(frm, textvariable=self.var_obs, width=38).grid(row=5, column=1, sticky="ew", pady=4)
+        ttk.Entry(frm, textvariable=self.var_obs, width=38).grid(row=8, column=1, sticky="ew", pady=4)
 
         btn_row = ttk.Frame(frm)
-        btn_row.grid(row=6, column=0, columnspan=2, pady=(12, 0), sticky="e")
+        btn_row.grid(row=9, column=0, columnspan=2, pady=(12, 0), sticky="e")
         ttk.Button(btn_row, text="Guardar", command=self._save).pack(side="left", padx=(0, 6))
         ttk.Button(btn_row, text="Cancelar", command=self.destroy).pack(side="left")
 
         frm.columnconfigure(1, weight=1)
         self.transient(parent)
+        self._sync_tercero_match()
         self.wait_window()
 
     def _auto_tipo(self, *_):
@@ -537,11 +584,147 @@ class _SubcuentaDialog(tk.Toplevel):
         except Exception:
             pass
 
+    def _buscar_tercero_existente(self) -> dict | None:
+        tercero_id = self.var_tercero.get().strip()
+        if tercero_id:
+            return next((t for t in self._terceros_cache if str(t.get("id")) == tercero_id), None)
+        nif = normalizar_nif_cif(self.var_nif.get())
+        if nif:
+            tercero = next(
+                (t for t in self._terceros_cache if normalizar_nif_cif(t.get("nif")) == nif),
+                None,
+            )
+            if tercero:
+                return tercero
+        nombre = self.var_nombre.get().strip().lower()
+        if nombre:
+            return next(
+                (
+                    t for t in self._terceros_cache
+                    if str(t.get("nombre_legal") or t.get("nombre") or "").strip().lower() == nombre
+                ),
+                None,
+            )
+        return None
+
+    def _buscar_posibles_terceros(self) -> list[dict]:
+        nif = normalizar_nif_cif(self.var_nif.get())
+        nombre = self.var_nombre.get().strip().lower()
+        if not nif and not nombre:
+            return []
+        matches = []
+        for tercero in self._terceros_cache:
+            t_nif = normalizar_nif_cif(tercero.get("nif"))
+            t_nombre = str(tercero.get("nombre_legal") or tercero.get("nombre") or "").strip()
+            t_nombre_l = t_nombre.lower()
+            if nif and t_nif == nif:
+                matches.append(tercero)
+                continue
+            if nombre and (nombre in t_nombre_l or t_nombre_l in nombre):
+                matches.append(tercero)
+        seen = set()
+        out = []
+        for tercero in matches:
+            tid = str(tercero.get("id") or "")
+            if tid in seen:
+                continue
+            seen.add(tid)
+            out.append(tercero)
+        return out[:20]
+
+    def _refresh_terceros_list(self):
+        self._coincidencias_tercero = self._buscar_posibles_terceros()
+        self.lb_terceros.delete(0, tk.END)
+        for tercero in self._coincidencias_tercero:
+            nombre = str(tercero.get("nombre_legal") or tercero.get("nombre") or "").strip()
+            nif = str(tercero.get("nif") or "").strip()
+            self.lb_terceros.insert(tk.END, f"{nombre} ({nif})")
+
+    def _aplicar_tercero(self, tercero: dict):
+        self.var_tercero.set(str(tercero.get("id") or ""))
+        self.var_nombre.set(str(tercero.get("nombre_legal") or tercero.get("nombre") or "").strip())
+        self.var_nif.set(str(tercero.get("nif") or "").strip())
+        self._sync_tercero_match()
+
+    def _usar_tercero_seleccionado(self):
+        idx = self.lb_terceros.curselection()
+        if not idx:
+            tercero = self._buscar_tercero_existente()
+            if tercero:
+                self._aplicar_tercero(tercero)
+            return
+        self._aplicar_tercero(self._coincidencias_tercero[idx[0]])
+
+    def _sync_tercero_match(self):
+        self._refresh_terceros_list()
+        tercero = self._buscar_tercero_existente()
+        if tercero:
+            self.var_tercero.set(str(tercero.get("id") or ""))
+            nombre = str(tercero.get("nombre_legal") or tercero.get("nombre") or "").strip()
+            nif = str(tercero.get("nif") or "").strip()
+            self.lbl_tercero_match.configure(text=f"Tercero existente: {nombre} ({nif})")
+            return tercero
+        if self.var_tercero.get().strip():
+            self.var_tercero.set("")
+        texto = "No existe en el maestro de terceros."
+        if self._coincidencias_tercero:
+            texto = f"{len(self._coincidencias_tercero)} posible(s) tercero(s) encontrado(s). Selecciona uno para copiarlo."
+        if self.var_nombre.get().strip() or self.var_nif.get().strip():
+            texto += " Puedes darlo de alta."
+        self.lbl_tercero_match.configure(text=texto)
+        return None
+
+    def _alta_tercero(self):
+        tercero = self._buscar_tercero_existente()
+        if tercero:
+            self.var_tercero.set(str(tercero.get("id") or ""))
+            self._sync_tercero_match()
+            messagebox.showinfo("Gest2A3Eco", "Ese tercero ya existe en el maestro.", parent=self)
+            return
+        tercero_base = {
+            "nif": self.var_nif.get().strip(),
+            "nombre": self.var_nombre.get().strip(),
+            "nombre_legal": self.var_nombre.get().strip(),
+            "pais": inferir_pais_desde_identificacion(self.var_nif.get().strip()) or "",
+        }
+        dlg = TerceroFicha(self, tercero_base)
+        payload = dlg.result
+        if not payload:
+            return
+        nif_extranjero = bool(payload.pop("_nif_extranjero", False))
+        nif = str(payload.get("nif") or "").strip().upper() if nif_extranjero else normalizar_nif_cif(payload.get("nif"))
+        if nif and not nif_extranjero and not validar_nif_o_nif_iva_intracomunitario(nif):
+            messagebox.showerror("Gest2A3Eco", "NIF/CIF/NIE o NIF-IVA intracomunitario invalido.", parent=self)
+            return
+        existente = None
+        if nif:
+            existente = next(
+                (t for t in self._terceros_cache if normalizar_nif_cif(t.get("nif")) == nif),
+                None,
+            )
+        tercero_payload = dict(payload)
+        tercero_payload["nif"] = nif
+        tercero_payload["pais"] = normalizar_codigo_pais(tercero_payload.get("pais")) or inferir_pais_desde_identificacion(nif)
+        tercero_payload["tipo_identificacion"] = {
+            "vat": "vat",
+            "foreign": "foreign",
+            "nacional": "nif",
+        }.get(payload.get("_tipo_identificacion_selector"))
+        tercero_id = str(existente.get("id")) if existente else str(self._gestor.upsert_tercero(tercero_payload))
+        self._terceros_cache = list(self._gestor.listar_terceros() or [])
+        tercero = next((t for t in self._terceros_cache if str(t.get("id")) == tercero_id), None)
+        if tercero:
+            self.var_tercero.set(tercero_id)
+            self.var_nombre.set(str(tercero.get("nombre_legal") or tercero.get("nombre") or "").strip())
+            self.var_nif.set(str(tercero.get("nif") or "").strip())
+        self._sync_tercero_match()
+
     def _save(self):
         sub = self.var_subcuenta.get().strip()
         if not sub:
             messagebox.showwarning("Gest2A3Eco", "La subcuenta es obligatoria.", parent=self)
             return
+        self._sync_tercero_match()
         self.result = {
             "subcuenta":        sub,
             "tipo_subcuenta":   self.var_tipo.get() or None,
@@ -624,6 +807,7 @@ class _RelacionTerceroEmpresaDialog(tk.Toplevel):
         ttk.Label(box, text="Subcuenta ingreso").grid(row=1, column=0, sticky="w", pady=4, padx=(0, 8))
         self.cb_sub_ingreso = ttk.Combobox(box, textvariable=self.vars["subcuenta_ingreso"], width=32)
         self.cb_sub_ingreso.grid(row=1, column=1, sticky="w", pady=4)
+        self.cb_sub_ingreso.configure(postcommand=lambda: self._filter_account_values("ingreso"))
         self.cb_sub_ingreso.bind("<KeyRelease>", lambda _e: self._filter_account_values("ingreso"))
         self.cb_sub_ingreso.bind("<<ComboboxSelected>>", lambda _e: self._normalize_account_selection("ingreso"))
         ttk.Button(box, text="Alta", width=6, command=lambda: self._create_related_account("ingreso")).grid(row=1, column=2, sticky="w", padx=(6, 0), pady=4)
@@ -636,6 +820,7 @@ class _RelacionTerceroEmpresaDialog(tk.Toplevel):
         self.lbl_hint.grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
         self.vars["cliente_tipo_operacion_iva"].trace_add("write", lambda *_: self._sync_cliente_state())
         self.vars["cliente_intracomunitaria_clase"].trace_add("write", lambda *_: self._sync_cliente_state())
+        self.cb_sub_ingreso["values"] = self._matching_account_values("ingreso", "")
         self._filter_account_values("ingreso")
         self._sync_cliente_state()
 
@@ -647,6 +832,7 @@ class _RelacionTerceroEmpresaDialog(tk.Toplevel):
         ttk.Label(box, text="Subcuenta gasto").grid(row=1, column=0, sticky="w", pady=4, padx=(0, 8))
         self.cb_sub_gasto = ttk.Combobox(box, textvariable=self.vars["subcuenta_gasto"], width=32)
         self.cb_sub_gasto.grid(row=1, column=1, sticky="w", pady=4)
+        self.cb_sub_gasto.configure(postcommand=lambda: self._filter_account_values("gasto"))
         self.cb_sub_gasto.bind("<KeyRelease>", lambda _e: self._filter_account_values("gasto"))
         self.cb_sub_gasto.bind("<<ComboboxSelected>>", lambda _e: self._normalize_account_selection("gasto"))
         ttk.Button(box, text="Alta", width=6, command=lambda: self._create_related_account("gasto")).grid(row=1, column=2, sticky="w", padx=(6, 0), pady=4)
@@ -666,6 +852,7 @@ class _RelacionTerceroEmpresaDialog(tk.Toplevel):
         self.vars["proveedor_ded_mode"].trace_add("write", lambda *_: self._sync_proveedor_state())
         self.vars["proveedor_tipo_operacion_iva"].trace_add("write", lambda *_: self._sync_proveedor_state())
         self.vars["proveedor_intracomunitaria_clase"].trace_add("write", lambda *_: self._sync_proveedor_state())
+        self.cb_sub_gasto["values"] = self._matching_account_values("gasto", "")
         self._filter_account_values("gasto")
         self._sync_proveedor_state()
 
@@ -678,7 +865,8 @@ class _RelacionTerceroEmpresaDialog(tk.Toplevel):
 
     def _load_account_catalog(self, tipo: str) -> list[dict]:
         return [
-            row for row in (self._gestor.listar_maestro_subcuentas_empresa(self._codigo, activo=True) or [])
+            row for row in (self._gestor.listar_maestro_subcuentas_empresa(self._codigo, activo=None) or [])
+            if int(row.get("activo", 1) or 0) == 1
             if str(row.get("tipo_subcuenta") or "") == tipo
         ]
 

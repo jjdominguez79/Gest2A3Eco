@@ -168,6 +168,86 @@ def test_eliminar_subcuenta(tmp_path):
     assert g.get_maestro_subcuenta_por_subcuenta("E00570", "40000001") is None
 
 
+def test_eliminar_subcuenta_no_reaparece_tras_reabrir_si_estaba_en_tercero_empresa(tmp_path):
+    db_path = tmp_path / "no-reaparece.db"
+    g = GestorSQLite(db_path)
+    g.upsert_empresa({"codigo": "E00570", "ejercicio": 2026, "nombre": "Demo", "digitos_plan": 8, "activo": 1})
+    tid = g.upsert_tercero(
+        {
+            "id": None,
+            "nif": "B12345678",
+            "nombre": "Proveedor Demo",
+            "direccion": "",
+            "cp": "",
+            "poblacion": "",
+            "provincia": "",
+            "telefono": "",
+            "email": "",
+            "contacto": "",
+            "tipo": None,
+        }
+    )
+    g.upsert_tercero_empresa(
+        {
+            "codigo_empresa": "E00570",
+            "ejercicio": 0,
+            "tercero_id": str(tid),
+            "subcuenta_proveedor": "40000001",
+            "subcuenta_cliente": None,
+            "subcuenta_ingreso": None,
+            "subcuenta_gasto": None,
+        }
+    )
+    g._migrate_maestro_subcuentas()
+    sub = g.get_maestro_subcuenta_por_subcuenta("E00570", "40000001")
+    g.eliminar_maestro_subcuenta(sub["id"])
+    g.conn.close()
+
+    g2 = GestorSQLite(db_path)
+    assert g2.get_maestro_subcuenta_por_subcuenta("E00570", "40000001") is None
+    rel = g2.get_tercero_empresa("E00570", str(tid), 2026)
+    assert not str(rel.get("subcuenta_proveedor") or "").strip()
+
+
+def test_no_elimina_subcuenta_usada_en_factura_emitida(tmp_path):
+    g = _make_gestor(tmp_path)
+    sub_id = g.upsert_maestro_subcuenta(_base_subcuenta(subcuenta="43000001", tipo_subcuenta="cliente"))
+    g.upsert_factura_emitida(
+        {
+            "id": "fe-1",
+            "codigo_empresa": "E00570",
+            "ejercicio": 2026,
+            "serie": "A",
+            "numero": "1",
+            "nombre": "Cliente Demo",
+            "subcuenta_cliente": "43000001",
+            "lineas": [],
+        }
+    )
+
+    with pytest.raises(ValueError, match="usada en facturas"):
+        g.eliminar_maestro_subcuenta(sub_id)
+
+
+def test_no_elimina_subcuenta_usada_en_factura_recibida(tmp_path):
+    g = _make_gestor(tmp_path)
+    sub_id = g.upsert_maestro_subcuenta(_base_subcuenta(subcuenta="62900000", tipo_subcuenta="gasto"))
+    g.upsert_factura_recibida_doc(
+        {
+            "id": "fr-1",
+            "codigo_empresa": "E00570",
+            "ejercicio": 2026,
+            "numero_factura": "R-1",
+            "proveedor_nombre": "Proveedor Demo",
+            "cuenta_gasto": "62900000",
+            "lineas": [],
+        }
+    )
+
+    with pytest.raises(ValueError, match="usada en facturas"):
+        g.eliminar_maestro_subcuenta(sub_id)
+
+
 # ── Retencion CRUD ────────────────────────────────────────────────────────────
 
 def test_reemplazar_retenciones_round_trip(tmp_path):

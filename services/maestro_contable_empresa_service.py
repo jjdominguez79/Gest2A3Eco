@@ -277,6 +277,10 @@ class MaestroContableEmpresaService:
         """Marca la subcuenta como ya dada de alta en A3 (pendiente_alta_a3 → 0)."""
         gestor.marcar_maestro_subcuenta_alta_a3(subcuenta_id, lote=lote)
 
+    def eliminar_subcuenta_empresa(self, gestor, subcuenta_id: int) -> None:
+        """Elimina una subcuenta si no esta usada en facturas."""
+        gestor.eliminar_maestro_subcuenta(subcuenta_id)
+
 
 # ── Utilidades ────────────────────────────────────────────────────────────────
 

@@ -3135,7 +3135,139 @@ class GestorSQLite:
         )
         self.conn.commit()
 
+    def get_referencias_subcuenta_en_facturas(self, codigo_empresa: str, subcuenta: str) -> list[dict]:
+        codigo = str(codigo_empresa or "").strip()
+        cuenta = str(subcuenta or "").strip()
+        if not codigo or not cuenta:
+            return []
+
+        refs: list[dict] = []
+        emitidas = self.conn.execute(
+            """
+            SELECT id, ejercicio, serie, numero, nombre
+            FROM facturas_emitidas_docs
+            WHERE codigo_empresa=? AND subcuenta_cliente=?
+            ORDER BY ejercicio, serie, numero, id
+            """,
+            (codigo, cuenta),
+        ).fetchall()
+        for row in emitidas:
+            refs.append(
+                {
+                    "tipo": "factura_emitida",
+                    "id": row["id"],
+                    "ejercicio": row["ejercicio"],
+                    "descripcion": f"Factura emitida {str(row['serie'] or '').strip()}{str(row['numero'] or '').strip()}".strip(),
+                    "nombre": row["nombre"] or "",
+                }
+            )
+
+        recibidas = self.conn.execute(
+            """
+            SELECT id, ejercicio, numero_factura, proveedor_nombre,
+                   cuenta_gasto, cuenta_iva, cuenta_proveedor
+            FROM facturas_recibidas_docs
+            WHERE codigo_empresa=?
+              AND (cuenta_gasto=? OR cuenta_iva=? OR cuenta_proveedor=?)
+            ORDER BY ejercicio, numero_factura, id
+            """,
+            (codigo, cuenta, cuenta, cuenta),
+        ).fetchall()
+        for row in recibidas:
+            campos = []
+            if str(row["cuenta_gasto"] or "").strip() == cuenta:
+                campos.append("gasto")
+            if str(row["cuenta_iva"] or "").strip() == cuenta:
+                campos.append("IVA")
+            if str(row["cuenta_proveedor"] or "").strip() == cuenta:
+                campos.append("proveedor")
+            refs.append(
+                {
+                    "tipo": "factura_recibida",
+                    "id": row["id"],
+                    "ejercicio": row["ejercicio"],
+                    "descripcion": f"Factura recibida {str(row['numero_factura'] or '').strip()}".strip(),
+                    "nombre": row["proveedor_nombre"] or "",
+                    "campos": campos,
+                }
+            )
+
+        ocr_lineas = self.conn.execute(
+            """
+            SELECT o.doc_id, d.ejercicio, d.numero_factura, d.proveedor_nombre,
+                   o.cuenta_base, o.cuenta_iva, o.cuenta_retencion
+            FROM ocr_lineas_fiscales o
+            JOIN facturas_recibidas_docs d ON d.id = o.doc_id
+            WHERE d.codigo_empresa=?
+              AND (o.cuenta_base=? OR o.cuenta_iva=? OR o.cuenta_retencion=?)
+            ORDER BY d.ejercicio, d.numero_factura, o.doc_id
+            """,
+            (codigo, cuenta, cuenta, cuenta),
+        ).fetchall()
+        vistos = {(r["tipo"], str(r["id"])) for r in refs}
+        for row in ocr_lineas:
+            key = ("factura_recibida", str(row["doc_id"]))
+            if key in vistos:
+                continue
+            campos = []
+            if str(row["cuenta_base"] or "").strip() == cuenta:
+                campos.append("base")
+            if str(row["cuenta_iva"] or "").strip() == cuenta:
+                campos.append("IVA")
+            if str(row["cuenta_retencion"] or "").strip() == cuenta:
+                campos.append("retencion")
+            refs.append(
+                {
+                    "tipo": "factura_recibida",
+                    "id": row["doc_id"],
+                    "ejercicio": row["ejercicio"],
+                    "descripcion": f"Factura recibida {str(row['numero_factura'] or '').strip()}".strip(),
+                    "nombre": row["proveedor_nombre"] or "",
+                    "campos": campos,
+                }
+            )
+        return refs
+
     def eliminar_maestro_subcuenta(self, subcuenta_id: int) -> None:
+        row = self.conn.execute(
+            "SELECT codigo_empresa, subcuenta, tipo_subcuenta, tercero_id FROM maestro_subcuentas_empresa WHERE id=?",
+            (int(subcuenta_id),),
+        ).fetchone()
+        if not row:
+            return
+        refs = self.get_referencias_subcuenta_en_facturas(row["codigo_empresa"], row["subcuenta"])
+        if refs:
+            detalle = []
+            for ref in refs[:5]:
+                label = ref.get("descripcion") or "Factura"
+                nombre = str(ref.get("nombre") or "").strip()
+                if nombre:
+                    label = f"{label} ({nombre})"
+                detalle.append(f"- {label}")
+            raise ValueError(
+                f"No se puede eliminar la subcuenta {row['subcuenta']} porque esta usada en facturas.\n\n"
+                + "\n".join(detalle)
+            )
+        tercero_id = str(row["tercero_id"] or "").strip()
+        if tercero_id:
+            field_map = {
+                "cliente": "subcuenta_cliente",
+                "deudor": "subcuenta_cliente",
+                "proveedor": "subcuenta_proveedor",
+                "acreedor": "subcuenta_proveedor",
+                "ingreso": "subcuenta_ingreso",
+                "gasto": "subcuenta_gasto",
+            }
+            field_name = field_map.get(str(row["tipo_subcuenta"] or "").strip())
+            if field_name:
+                self.conn.execute(
+                    f"""
+                    UPDATE terceros_empresas
+                    SET {field_name}=NULL
+                    WHERE codigo_empresa=? AND tercero_id=? AND {field_name}=?
+                    """,
+                    (row["codigo_empresa"], tercero_id, row["subcuenta"]),
+                )
         self.conn.execute(
             "DELETE FROM maestro_subcuentas_empresa WHERE id=?", (int(subcuenta_id),)
         )
