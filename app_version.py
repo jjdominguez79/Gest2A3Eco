@@ -1,4 +1,4 @@
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 
 # URL publica donde se aloja el archivo version.json con la info de actualizaciones.
 # Se publica en GitHub Raw a partir del archivo updates/version.json del repositorio.
