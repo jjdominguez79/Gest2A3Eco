@@ -18,14 +18,16 @@ El archivo remoto version.json debe tener esta estructura:
 """
 import json
 import logging
+import os
 import subprocess
 import sys
 import tempfile
 import threading
+import traceback
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from typing import Callable, Optional
 
 try:
@@ -41,8 +43,8 @@ except ImportError:
     _HAS_PACKAGING = False
 
 from app_version import APP_VERSION, UPDATE_CHECK_URL
-
 log = logging.getLogger(__name__)
+_diag_log = logging.getLogger("update_checker.diagnostic")
 
 _TIMEOUT_CHECK = 5    # segundos para consultar version.json
 _TIMEOUT_DL    = 120  # segundos maximo para descargar el instalador
@@ -57,6 +59,62 @@ _C_DANGER_H = "#a93226"
 _C_OK       = "#27ae60"
 _C_OK_H     = "#219150"
 _FONT       = "Segoe UI"
+_UPDATE_LOG_FILE = "update_checker.log"
+
+
+def _get_diag_log_path() -> Path:
+    root = Path(os.getenv("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+    path = root / "Gestinem" / "Gest2A3Eco" / "logs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path / _UPDATE_LOG_FILE
+
+
+def _ensure_diag_logger() -> logging.Logger:
+    if _diag_log.handlers:
+        return _diag_log
+
+    log_path = _get_diag_log_path()
+    handler = logging.FileHandler(log_path, encoding="utf-8")
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(message)s",
+        "%Y-%m-%d %H:%M:%S",
+    ))
+    _diag_log.setLevel(logging.INFO)
+    _diag_log.addHandler(handler)
+    _diag_log.propagate = False
+    return _diag_log
+
+
+def _diag_info(message: str, *args) -> None:
+    _ensure_diag_logger().info(message, *args)
+
+
+def _diag_exception(message: str, exc: BaseException) -> None:
+    _ensure_diag_logger().error(
+        "%s\n%s",
+        message,
+        "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+    )
+
+
+def _show_startup_diagnostic(
+    local_version: str,
+    url: str,
+    latest_version: str,
+    mandatory: bool,
+) -> None:
+    try:
+        messagebox.showinfo(
+            "Diagnostico de actualizacion",
+            (
+                f"Version local: {local_version}\n"
+                f"URL consultada: {url}\n"
+                f"latest_version remota: {latest_version}\n"
+                f"mandatory: {'si' if mandatory else 'no'}"
+            ),
+        )
+    except Exception as exc:
+        _diag_exception("No se pudo mostrar el messagebox de diagnostico.", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -78,29 +136,50 @@ class _UpdateInfo:
 
 def _fetch_info(url: str) -> Optional[_UpdateInfo]:
     """Descarga y parsea el archivo version.json remoto. Retorna None ante cualquier error."""
+    _diag_info("---- Inicio comprobacion de actualizaciones ----")
+    _diag_info("APP_VERSION local: %s", APP_VERSION)
+    _diag_info("UPDATE_CHECK_URL: %s", url)
+
     if not _HAS_REQUESTS:
         log.warning("Libreria 'requests' no disponible; omitiendo comprobacion de actualizaciones.")
+        _diag_info("requests disponible: no")
         return None
+
+    _diag_info("requests disponible: si")
     try:
         resp = requests.get(url, timeout=_TIMEOUT_CHECK)
+        _diag_info(
+            "Respuesta HTTP: %s %s | headers=%s",
+            resp.status_code,
+            resp.reason,
+            dict(resp.headers),
+        )
         resp.raise_for_status()
+        _diag_info("Contenido recibido de version.json: %s", resp.text)
         data = resp.json()
-        return _UpdateInfo(
+        info = _UpdateInfo(
             latest_version           = str(data["latest_version"]),
             minimum_required_version = str(data["minimum_required_version"]),
             download_url             = str(data["download_url"]),
             changelog                = str(data.get("changelog", "")),
             force_update             = bool(data.get("force_update", False)),
         )
-    except requests.exceptions.ConnectionError:
+        _diag_info("latest_version: %s", info.latest_version)
+        _diag_info("minimum_required_version: %s", info.minimum_required_version)
+        _diag_info("force_update remoto: %s", info.force_update)
+        return info
+    except requests.exceptions.ConnectionError as exc:
         log.info("Sin conexion a internet; omitiendo comprobacion de actualizaciones.")
-    except requests.exceptions.Timeout:
+        _diag_exception("Sin conexion a internet al consultar version.json.", exc)
+    except requests.exceptions.Timeout as exc:
         log.warning("Timeout al consultar version.json.")
-    except (requests.exceptions.HTTPError,
-            json.JSONDecodeError, KeyError, ValueError) as exc:
+        _diag_exception("Timeout al consultar version.json.", exc)
+    except (requests.exceptions.HTTPError, json.JSONDecodeError, KeyError, ValueError) as exc:
         log.warning("Respuesta invalida de version.json: %s", exc)
+        _diag_exception("Respuesta invalida al consultar version.json.", exc)
     except Exception as exc:
         log.error("Error inesperado en comprobacion de actualizaciones: %s", exc)
+        _diag_exception("Error inesperado en comprobacion de actualizaciones.", exc)
     return None
 
 
@@ -382,22 +461,33 @@ def check_for_updates(root: tk.Tk) -> bool:
     """
     if not (_HAS_REQUESTS and _HAS_PACKAGING):
         log.warning("'requests' o 'packaging' no disponibles; omitiendo actualizaciones.")
+        _diag_info("'requests' o 'packaging' no disponibles; no se comprueban actualizaciones.")
+        _show_startup_diagnostic(APP_VERSION, UPDATE_CHECK_URL, "no disponible", False)
         return True
 
     log.info("Comprobando actualizaciones: %s", UPDATE_CHECK_URL)
     info = _fetch_info(UPDATE_CHECK_URL)
 
     if info is None:
+        _diag_info("Decision final: no mostrar dialogo (sin informacion remota valida).")
+        _show_startup_diagnostic(APP_VERSION, UPDATE_CHECK_URL, "no disponible", False)
         return True  # Sin conexion o error no critico; continuar
 
     cmp_min = _cmp(APP_VERSION, info.minimum_required_version)
     cmp_lat = _cmp(APP_VERSION, info.latest_version)
+    mandatory = cmp_min < 0 or info.force_update
+
+    _diag_info("Resultado de la comparacion con minimum_required_version: %s", cmp_min)
+    _diag_info("Resultado de la comparacion con latest_version: %s", cmp_lat)
+    _diag_info("mandatory: %s", mandatory)
+    _show_startup_diagnostic(APP_VERSION, UPDATE_CHECK_URL, info.latest_version, mandatory)
 
     if cmp_min >= 0 and cmp_lat >= 0:
         log.info("Aplicacion actualizada (v%s).", APP_VERSION)
+        _diag_info("Si se decide mostrar o no el dialogo: no")
         return True
 
-    mandatory = cmp_min < 0 or info.force_update
+    _diag_info("Si se decide mostrar o no el dialogo: si")
     log.info(
         "Actualizacion %s disponible: v%s -> v%s",
         "obligatoria" if mandatory else "opcional",
