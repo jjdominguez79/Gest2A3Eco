@@ -19,6 +19,7 @@ El archivo remoto version.json debe tener esta estructura:
 import json
 import logging
 import os
+import queue
 import subprocess
 import sys
 import tempfile
@@ -187,9 +188,18 @@ def _download_background(
             on_error("La libreria 'requests' no esta instalada.")
             return
         try:
+            _diag_info("Inicio de descarga del instalador. url=%s dest=%s", url, dest)
+            if dest.exists():
+                dest.unlink()
             with requests.get(url, stream=True, timeout=_TIMEOUT_DL) as resp:
                 resp.raise_for_status()
                 total = int(resp.headers.get("content-length", 0))
+                _diag_info(
+                    "Descarga HTTP iniciada. status=%s total_bytes=%s headers=%s",
+                    resp.status_code,
+                    total,
+                    dict(resp.headers),
+                )
                 done  = 0
                 with dest.open("wb") as f:
                     for chunk in resp.iter_content(65_536):
@@ -198,19 +208,32 @@ def _download_background(
                             done += len(chunk)
                             if total:
                                 on_progress(min(99, int(done * 100 / total)))
+                _diag_info("Descarga finalizada. bytes_descargados=%s", done)
             on_progress(100)
             on_done()
         except requests.exceptions.ConnectionError:
+            if dest.exists():
+                dest.unlink(missing_ok=True)
             on_error("Sin conexion a internet.")
         except requests.exceptions.Timeout:
+            if dest.exists():
+                dest.unlink(missing_ok=True)
             on_error("Tiempo de espera agotado durante la descarga.")
         except requests.exceptions.HTTPError as exc:
+            if dest.exists():
+                dest.unlink(missing_ok=True)
             on_error(f"Error del servidor ({exc.response.status_code}).")
         except PermissionError:
+            if dest.exists():
+                dest.unlink(missing_ok=True)
             on_error("Sin permisos de escritura en la carpeta temporal.")
         except OSError as exc:
+            if dest.exists():
+                dest.unlink(missing_ok=True)
             on_error(f"Error de disco: {exc}")
         except Exception as exc:
+            if dest.exists():
+                dest.unlink(missing_ok=True)
             on_error(f"Error inesperado: {exc}")
 
     threading.Thread(target=_run, daemon=True).start()
@@ -257,6 +280,8 @@ class _UpdateDialog(tk.Toplevel):
         self._info      = info
         self._mandatory = mandatory
         self.installed  = False          # True tras iniciar instalacion con exito
+        self._downloading = False
+        self._download_events: "queue.Queue[tuple[str, object]]" = queue.Queue()
         self._dest: Optional[Path] = None
         self._parent_withdrawn = str(parent.state()) == "withdrawn"
 
@@ -396,6 +421,7 @@ class _UpdateDialog(tk.Toplevel):
 
     def _on_download(self):
         _diag_info("Usuario ha pulsado 'Descargar e instalar'.")
+        self._downloading = True
         self._btn_ok.config(state="disabled")
         self._btn_cancel.config(state="disabled")
         self._elbl.config(text="")
@@ -408,20 +434,42 @@ class _UpdateDialog(tk.Toplevel):
         self._pf.pack(fill="x", pady=(0, 4), before=self._elbl)
         self._plbl.config(text="Preparando descarga...")
         self._pvar.set(0)
+        self.after(100, self._poll_download_events)
 
         _download_background(
             url       = self._info.download_url,
             dest      = self._dest,
-            on_progress = lambda p: self.after(0, self._set_progress, p),
-            on_error    = lambda m: self.after(0, self._show_error, m),
-            on_done     = lambda:   self.after(0, self._on_done),
+            on_progress = lambda p: self._download_events.put(("progress", p)),
+            on_error    = lambda m: self._download_events.put(("error", m)),
+            on_done     = lambda:   self._download_events.put(("done", None)),
         )
+
+    def _poll_download_events(self):
+        if not self.winfo_exists():
+            return
+
+        while True:
+            try:
+                event, payload = self._download_events.get_nowait()
+            except queue.Empty:
+                break
+
+            if event == "progress":
+                self._set_progress(int(payload))
+            elif event == "error":
+                self._show_error(str(payload))
+            elif event == "done":
+                self._on_done()
+
+        if self._downloading:
+            self.after(100, self._poll_download_events)
 
     def _set_progress(self, pct: int):
         self._pvar.set(pct)
         self._plbl.config(text=f"Descargando actualizacion... {pct}%")
 
     def _show_error(self, msg: str):
+        self._downloading = False
         self._pf.pack_forget()
         self._elbl.config(text=f"Error en la descarga: {msg}")
         self._btn_ok.config(state="normal")
@@ -430,12 +478,17 @@ class _UpdateDialog(tk.Toplevel):
         _diag_info("Error mostrado en el dialogo de actualizacion: %s", msg)
 
     def _on_done(self):
+        self._downloading = False
         self._plbl.config(text="Descarga completa. Iniciando instalacion...")
         self.installed = True
         _diag_info("Descarga completada; cerrando dialogo para lanzar instalador.")
         self.after(1200, self.destroy)
 
     def _on_close(self):
+        if self._downloading:
+            self._elbl.config(text="La descarga esta en curso. Espera a que termine.")
+            _diag_info("Intento de cerrar el dialogo ignorado porque la descarga sigue en curso.")
+            return
         _diag_info(
             "Dialogo de actualizacion cerrado. mandatory=%s installed=%s",
             self._mandatory,
