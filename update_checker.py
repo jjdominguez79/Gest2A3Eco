@@ -27,7 +27,7 @@ import traceback
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import ttk
 from typing import Callable, Optional
 
 try:
@@ -95,26 +95,6 @@ def _diag_exception(message: str, exc: BaseException) -> None:
         message,
         "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
     )
-
-
-def _show_startup_diagnostic(
-    local_version: str,
-    url: str,
-    latest_version: str,
-    mandatory: bool,
-) -> None:
-    try:
-        messagebox.showinfo(
-            "Diagnostico de actualizacion",
-            (
-                f"Version local: {local_version}\n"
-                f"URL consultada: {url}\n"
-                f"latest_version remota: {latest_version}\n"
-                f"mandatory: {'si' if mandatory else 'no'}"
-            ),
-        )
-    except Exception as exc:
-        _diag_exception("No se pudo mostrar el messagebox de diagnostico.", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -278,16 +258,29 @@ class _UpdateDialog(tk.Toplevel):
         self._mandatory = mandatory
         self.installed  = False          # True tras iniciar instalacion con exito
         self._dest: Optional[Path] = None
+        self._parent_withdrawn = str(parent.state()) == "withdrawn"
 
         self.title("Actualizacion — Gest2A3Eco")
         self.resizable(False, False)
-        self.transient(parent)
+        if not self._parent_withdrawn:
+            self.transient(parent)
         self.grab_set()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self._build()
         self._center(parent)
+        self.lift()
+        if self._parent_withdrawn:
+            # Cuando root esta oculto, el dialogo necesita forzarse al frente o
+            # puede quedar sin foco aparente mientras wait_window() bloquea.
+            self.attributes("-topmost", True)
+            self.after(250, lambda: self.attributes("-topmost", False))
         self.focus_force()
+        _diag_info(
+            "Dialogo de actualizacion creado. parent_withdrawn=%s mandatory=%s",
+            self._parent_withdrawn,
+            self._mandatory,
+        )
 
     # ── Construccion de la interfaz ──────────────────────────────────────
 
@@ -402,6 +395,7 @@ class _UpdateDialog(tk.Toplevel):
     # ── Acciones ──────────────────────────────────────────────────────────
 
     def _on_download(self):
+        _diag_info("Usuario ha pulsado 'Descargar e instalar'.")
         self._btn_ok.config(state="disabled")
         self._btn_cancel.config(state="disabled")
         self._elbl.config(text="")
@@ -433,13 +427,20 @@ class _UpdateDialog(tk.Toplevel):
         self._btn_ok.config(state="normal")
         self._btn_cancel.config(state="normal")
         log.error("Error al descargar actualizacion: %s", msg)
+        _diag_info("Error mostrado en el dialogo de actualizacion: %s", msg)
 
     def _on_done(self):
         self._plbl.config(text="Descarga completa. Iniciando instalacion...")
         self.installed = True
+        _diag_info("Descarga completada; cerrando dialogo para lanzar instalador.")
         self.after(1200, self.destroy)
 
     def _on_close(self):
+        _diag_info(
+            "Dialogo de actualizacion cerrado. mandatory=%s installed=%s",
+            self._mandatory,
+            self.installed,
+        )
         self.destroy()
 
 
@@ -462,7 +463,6 @@ def check_for_updates(root: tk.Tk) -> bool:
     if not (_HAS_REQUESTS and _HAS_PACKAGING):
         log.warning("'requests' o 'packaging' no disponibles; omitiendo actualizaciones.")
         _diag_info("'requests' o 'packaging' no disponibles; no se comprueban actualizaciones.")
-        _show_startup_diagnostic(APP_VERSION, UPDATE_CHECK_URL, "no disponible", False)
         return True
 
     log.info("Comprobando actualizaciones: %s", UPDATE_CHECK_URL)
@@ -470,7 +470,6 @@ def check_for_updates(root: tk.Tk) -> bool:
 
     if info is None:
         _diag_info("Decision final: no mostrar dialogo (sin informacion remota valida).")
-        _show_startup_diagnostic(APP_VERSION, UPDATE_CHECK_URL, "no disponible", False)
         return True  # Sin conexion o error no critico; continuar
 
     cmp_min = _cmp(APP_VERSION, info.minimum_required_version)
@@ -480,7 +479,6 @@ def check_for_updates(root: tk.Tk) -> bool:
     _diag_info("Resultado de la comparacion con minimum_required_version: %s", cmp_min)
     _diag_info("Resultado de la comparacion con latest_version: %s", cmp_lat)
     _diag_info("mandatory: %s", mandatory)
-    _show_startup_diagnostic(APP_VERSION, UPDATE_CHECK_URL, info.latest_version, mandatory)
 
     if cmp_min >= 0 and cmp_lat >= 0:
         log.info("Aplicacion actualizada (v%s).", APP_VERSION)
@@ -494,8 +492,14 @@ def check_for_updates(root: tk.Tk) -> bool:
         APP_VERSION, info.latest_version,
     )
 
+    _diag_info("Entrando en wait_window() del dialogo de actualizacion.")
     dlg = _UpdateDialog(root, info, mandatory=mandatory)
     root.wait_window(dlg)
+    _diag_info(
+        "wait_window() finalizado. installed=%s dest=%s",
+        dlg.installed,
+        dlg._dest,
+    )
 
     if dlg.installed and dlg._dest and dlg._dest.exists():
         _run_installer(dlg._dest)   # llama sys.exit(0) si el lanzamiento tiene exito

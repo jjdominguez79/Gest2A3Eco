@@ -1,12 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import collect_submodules
+
+
+hiddenimports = collect_submodules('requests') + collect_submodules('packaging')
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
     datas=[('logo.png', '.')],
-    hiddenimports=[],
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
