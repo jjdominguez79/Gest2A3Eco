@@ -487,6 +487,9 @@ class GestorSQLite:
         self._ensure_column("albaranes_emitidas_docs", "moneda_codigo", "TEXT")
         self._ensure_column("albaranes_emitidas_docs", "moneda_simbolo", "TEXT")
         self._ensure_column("albaranes_emitidas_docs", "observaciones", "TEXT")
+        self._ensure_column("albaranes_emitidas_docs", "tipo_operacion", "TEXT")
+        self._ensure_column("albaranes_emitidas_docs", "plantilla_emitidas", "TEXT")
+        self._ensure_column("albaranes_emitidas_docs", "plantilla_word", "TEXT")
         self._ensure_column("empresas", "activo", "INTEGER")
         self._ensure_column("albaranes_emitidas_docs", "facturado", "INTEGER")
         self._ensure_column("albaranes_emitidas_docs", "factura_id", "TEXT")
@@ -1729,8 +1732,9 @@ class GestorSQLite:
             (id, codigo_empresa, ejercicio, tercero_id, serie, numero, numero_largo_sii,
              fecha_asiento, fecha_expedicion, fecha_operacion, nif, nombre, descripcion, observaciones,
              subcuenta_cliente, forma_pago, cuenta_bancaria, pdf_path, pdf_ref, retencion_aplica, retencion_pct,
-             retencion_base, retencion_importe, moneda_codigo, moneda_simbolo, facturado, factura_id, fecha_facturacion, lineas_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             retencion_base, retencion_importe, moneda_codigo, moneda_simbolo, facturado, factura_id, fecha_facturacion,
+             tipo_operacion, plantilla_emitidas, plantilla_word, lineas_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -1759,6 +1763,9 @@ class GestorSQLite:
                 facturado=excluded.facturado,
                 factura_id=excluded.factura_id,
                 fecha_facturacion=excluded.fecha_facturacion,
+                tipo_operacion=excluded.tipo_operacion,
+                plantilla_emitidas=excluded.plantilla_emitidas,
+                plantilla_word=excluded.plantilla_word,
                 lineas_json=excluded.lineas_json
             """,
             (
@@ -1790,6 +1797,9 @@ class GestorSQLite:
                 1 if albaran.get("facturado") else 0,
                 albaran.get("factura_id"),
                 albaran.get("fecha_facturacion"),
+                albaran.get("tipo_operacion") or "01",
+                albaran.get("plantilla_emitidas"),
+                albaran.get("plantilla_word"),
                 json.dumps(albaran.get("lineas", []), ensure_ascii=False),
             ),
         )

@@ -1002,6 +1002,7 @@ class FacturaDialog(tk.Toplevel):
     ):
         super().__init__(parent)
         self.title(titulo)
+        self._titulo = titulo
         self.resizable(True, True)
         try:
             screen_w = self.winfo_screenwidth()
@@ -1400,7 +1401,8 @@ class FacturaDialog(tk.Toplevel):
 
         btns = ttk.Frame(frm)
         btns.grid(row=row, column=0, columnspan=3, pady=(6, 2))
-        ttk.Button(btns, text="Guardar factura", style="Primary.TButton", command=self._ok).pack(side=tk.LEFT, padx=4)
+        _lbl_guardar = "Guardar albaran" if "albaran" in self._titulo.lower() else "Guardar factura"
+        ttk.Button(btns, text=_lbl_guardar, style="Primary.TButton", command=self._ok).pack(side=tk.LEFT, padx=4)
         ttk.Button(btns, text="Guardar borrador", command=self._ok_borrador).pack(side=tk.LEFT, padx=4)
         ttk.Button(btns, text="Cancelar", command=self.destroy).pack(side=tk.LEFT, padx=4)
 
@@ -1947,6 +1949,7 @@ class UIFacturasEmitidas(ttk.Frame):
         self.empresa_conf = base
         self.controller = FacturasEmitidasController(gestor, codigo_empresa, ejercicio, self.empresa_conf, self, allow_all_years=self.allow_all_years)
         self._sort_state = {}
+        self._sort_albaranes_state = {}
         self._build()
 
     # ------------------- UI -------------------
@@ -2084,6 +2087,7 @@ class UIFacturasEmitidas(ttk.Frame):
         self.btn_marcar_facturas.pack(side=tk.LEFT)
         self.btn_desmarcar_facturas = ttk.Button(bottom, text="Desmarcar todas", command=self._desmarcar_todas_facturas)
         self.btn_desmarcar_facturas.pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(bottom, text="Exportar Excel", command=self._export_facturas_excel).pack(side=tk.LEFT, padx=(8, 0))
         self.btn_generar_suenlace = ttk.Button(bottom, text="Generar Suenlace.dat", style="Primary.TButton", command=self._generar)
         self.btn_generar_suenlace.pack(side=tk.RIGHT)
         if not can_write or is_cliente:
@@ -2126,7 +2130,7 @@ class UIFacturasEmitidas(ttk.Frame):
             ("factura", "Factura", 140, "w"),
         ]
         for c, h, w, align in cols:
-            self.tv_albaranes.heading(c, text=h)
+            self.tv_albaranes.heading(c, text=h, command=lambda col=c: self._sort_albaranes(col))
             self.tv_albaranes.column(c, width=w, anchor=align)
         self.tv_albaranes.pack(fill="both", expand=True, padx=10, pady=8)
         self.tv_albaranes.bind("<<TreeviewSelect>>", lambda e: self._on_albaran_select())
@@ -2154,6 +2158,9 @@ class UIFacturasEmitidas(ttk.Frame):
             self.tv_alb_detalle.column(c, width=90 if c == "concepto" else 70, anchor="e" if c != "concepto" else "w")
         self.tv_alb_detalle.pack(fill="x", expand=True, padx=6, pady=4)
 
+        bottom_alb = ttk.Frame(parent)
+        bottom_alb.pack(fill="x", padx=10, pady=6)
+        ttk.Button(bottom_alb, text="Exportar Excel", command=self._export_albaranes_excel).pack(side=tk.LEFT)
 
     # ------------------- Datos -------------------
     def _compute_total(self, fac: dict) -> float:
@@ -2321,6 +2328,39 @@ class UIFacturasEmitidas(ttk.Frame):
         digits = "".join(ch for ch in txt if ch.isdigit())
         num = int(digits) if digits else -1
         return (txt[:1].lower() if txt else "", num, txt.lower())
+
+    def _sort_albaranes(self, col):
+        items = []
+        for iid in self.tv_albaranes.get_children(""):
+            val = self.tv_albaranes.set(iid, col)
+            items.append((self._sort_key(col, val), iid))
+        reverse = self._sort_albaranes_state.get(col, False)
+        items.sort(key=lambda x: x[0], reverse=reverse)
+        for idx, (_, iid) in enumerate(items):
+            self.tv_albaranes.move(iid, "", idx)
+        self._sort_albaranes_state[col] = not reverse
+
+    def auto_sort_facturas(self):
+        items = [(self._sort_key("numero", self.tv.set(iid, "numero")), iid) for iid in self.tv.get_children("")]
+        items.sort(key=lambda x: x[0])
+        for idx, (_, iid) in enumerate(items):
+            self.tv.move(iid, "", idx)
+
+    def auto_sort_albaranes(self):
+        items = [(self._sort_key("numero", self.tv_albaranes.set(iid, "numero")), iid) for iid in self.tv_albaranes.get_children("")]
+        items.sort(key=lambda x: x[0])
+        for idx, (_, iid) in enumerate(items):
+            self.tv_albaranes.move(iid, "", idx)
+
+    def _export_facturas_excel(self):
+        dlg = _ExportExcelDialog(self, "Exportar facturas a Excel")
+        if dlg.result:
+            self.controller.exportar_facturas_excel(**dlg.result)
+
+    def _export_albaranes_excel(self):
+        dlg = _ExportExcelDialog(self, "Exportar albaranes a Excel")
+        if dlg.result:
+            self.controller.exportar_albaranes_excel(**dlg.result)
 
     def set_detalle_lineas(self, lineas, simbolo: str = ""):
         self.tv_detalle.delete(*self.tv_detalle.get_children())
@@ -3037,3 +3077,43 @@ class UIFacturasEmitidas(ttk.Frame):
             initialfile=initialfile,
             filetypes=[("Ficheros DAT", "*.dat")],
         )
+
+
+class _ExportExcelDialog(tk.Toplevel):
+    def __init__(self, parent, titulo="Exportar a Excel"):
+        super().__init__(parent)
+        self.title(titulo)
+        self.resizable(False, False)
+        self.result = None
+
+        frm = ttk.Frame(self, padding=16)
+        frm.pack(fill="both", expand=True)
+
+        ttk.Label(frm, text="Fecha desde (DD/MM/AAAA):").grid(row=0, column=0, sticky="w", pady=6)
+        self.var_desde = tk.StringVar()
+        ttk.Entry(frm, textvariable=self.var_desde, width=14).grid(row=0, column=1, padx=8, sticky="w")
+
+        ttk.Label(frm, text="Fecha hasta (DD/MM/AAAA):").grid(row=1, column=0, sticky="w", pady=6)
+        self.var_hasta = tk.StringVar()
+        ttk.Entry(frm, textvariable=self.var_hasta, width=14).grid(row=1, column=1, padx=8, sticky="w")
+
+        ttk.Label(frm, text="Cliente (nombre o NIF):").grid(row=2, column=0, sticky="w", pady=6)
+        self.var_cliente = tk.StringVar()
+        ttk.Entry(frm, textvariable=self.var_cliente, width=26).grid(row=2, column=1, padx=8, sticky="w")
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=3, column=0, columnspan=2, pady=(14, 0))
+        ttk.Button(btns, text="Exportar", style="Primary.TButton", command=self._ok).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="Cancelar", command=self.destroy).pack(side=tk.LEFT, padx=4)
+
+        self.grab_set()
+        self.transient(parent)
+        self.wait_window()
+
+    def _ok(self):
+        self.result = {
+            "fecha_desde": self.var_desde.get().strip(),
+            "fecha_hasta": self.var_hasta.get().strip(),
+            "cliente_filter": self.var_cliente.get().strip().lower(),
+        }
+        self.destroy()

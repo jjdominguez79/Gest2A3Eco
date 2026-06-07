@@ -91,12 +91,14 @@ class FacturasEmitidasController:
                     continue
             total = self._compute_total(fac)
             self._view.insert_factura_row(fac, total)
+        self._view.auto_sort_facturas()
 
     def refresh_albaranes(self):
         self._view.clear_albaranes()
         for alb in self._gestor.listar_albaranes_emitidas(self._codigo, self._ejercicio):
             total = self._compute_total(alb)
             self._view.insert_albaran_row(alb, total)
+        self._view.auto_sort_albaranes()
         self._view.set_albaran_lineas([])
 
     def nueva(self):
@@ -440,26 +442,31 @@ class FacturasEmitidasController:
     def nuevo_albaran(self):
         if not self._ensure_write():
             return
-        sugerido = self._proximo_albaran_numero()
+        fecha_sug = datetime.now().strftime("%d/%m/%Y")
+        sugerido, serie_sug, eje_sug = self._proximo_numero_por_fecha(fecha_sug, rectificativa=False)
         cuenta_default = self._cuenta_bancaria_default()
         result = self._view.open_albaran_dialog(
             {
                 "codigo_empresa": self._codigo,
-                "ejercicio": self._ejercicio,
-                "serie": "ALB",
+                "ejercicio": eje_sug if eje_sug is not None else self._ejercicio,
+                "serie": serie_sug,
                 "numero": sugerido,
                 "forma_pago": "",
                 "cuenta_bancaria": cuenta_default,
+                "fecha_asiento": fecha_sug,
             },
             numero_sugerido=sugerido,
         )
         if result:
+            result = self._ajustar_numero_por_fecha_si_aplica(result, sugerido, serie_sug, rectificativa=False)
             result["facturado"] = False
             result["factura_id"] = ""
             result["fecha_facturacion"] = ""
-            result["ejercicio"] = self._ejercicio
+            if result.get("ejercicio") is None:
+                result["ejercicio"] = self._ejercicio
             result["codigo_empresa"] = self._codigo
             self._gestor.upsert_albaran_emitida(result)
+            self._incrementar_numeracion_por_factura(result, rectificativa=False)
             self.refresh_albaranes()
 
     def editar_albaran(self):
@@ -491,14 +498,18 @@ class FacturasEmitidasController:
             return
         nuevo = dict(alb)
         nuevo.pop("id", None)
-        nuevo["numero"] = self._proximo_albaran_numero()
-        nuevo["serie"] = "ALB"
+        fecha_sug = datetime.now().strftime("%d/%m/%Y")
+        sugerido, serie_sug, eje_sug = self._proximo_numero_por_fecha(fecha_sug, rectificativa=False)
+        nuevo["numero"] = sugerido
+        nuevo["serie"] = serie_sug
         nuevo["facturado"] = False
         nuevo["factura_id"] = ""
         nuevo["fecha_facturacion"] = ""
-        result = self._view.open_albaran_dialog(nuevo, numero_sugerido=nuevo["numero"])
+        result = self._view.open_albaran_dialog(nuevo, numero_sugerido=sugerido)
         if result:
+            result = self._ajustar_numero_por_fecha_si_aplica(result, sugerido, serie_sug, rectificativa=False)
             self._gestor.upsert_albaran_emitida(result)
+            self._incrementar_numeracion_por_factura(result, rectificativa=False)
             self.refresh_albaranes()
 
     def eliminar_albaran(self):
@@ -558,19 +569,30 @@ class FacturasEmitidasController:
         descripcion_factura = self._descripcion_factura_desde_albaranes(albaranes)
         lineas = self._build_factura_lineas_desde_albaranes(albaranes)
         fecha = datetime.now().strftime("%d/%m/%Y")
-        sugerido, serie_sug, eje_sug = self._proximo_numero_por_fecha(fecha, rectificativa=False)
+        # Si es un unico albaran, la factura hereda su numero/serie (ya consumio el contador).
+        # Si son varios albaranes agrupados en una factura, se usa el siguiente numero del contador.
+        if len(albaranes) == 1:
+            numero_fac = str(albaranes[0].get("numero") or "").strip()
+            serie_fac = str(albaranes[0].get("serie") or "").strip()
+            eje_fac = albaranes[0].get("ejercicio") or self._ejercicio
+            incrementar_contador = False
+        else:
+            sugerido, serie_fac, eje_sug = self._proximo_numero_por_fecha(fecha, rectificativa=False)
+            numero_fac = sugerido
+            eje_fac = eje_sug if eje_sug is not None else self._ejercicio
+            incrementar_contador = True
         factura = {
             "codigo_empresa": self._codigo,
-            "ejercicio": eje_sug if eje_sug is not None else self._ejercicio,
+            "ejercicio": eje_fac,
             "tercero_id": base.get("tercero_id"),
-            "serie": serie_sug,
-            "numero": sugerido,
+            "serie": serie_fac,
+            "numero": numero_fac,
             "numero_largo_sii": "",
             "fecha_asiento": fecha,
             "fecha_expedicion": fecha,
             "fecha_operacion": fecha,
-            "tipo_operacion": "01",
-            "modelo_fiscal": "",
+            "tipo_operacion": base.get("tipo_operacion") or "01",
+            "modelo_fiscal": base.get("modelo_fiscal") or "",
             "nif": normalizar_nif_cif(base.get("nif", "")),
             "nombre": base.get("nombre", ""),
             "descripcion": descripcion_factura,
@@ -579,8 +601,8 @@ class FacturasEmitidasController:
             "cuenta_bancaria": base.get("cuenta_bancaria", ""),
             "moneda_codigo": moneda_codigo,
             "moneda_simbolo": moneda_simbolo,
-            "plantilla_word": base.get("plantilla_word", ""),
-            "plantilla_emitidas": self._default_plantilla_emitidas_name(eje_sug if eje_sug is not None else self._ejercicio),
+            "plantilla_word": base.get("plantilla_word") or "",
+            "plantilla_emitidas": base.get("plantilla_emitidas") or self._default_plantilla_emitidas_name(eje_fac),
             "retencion_aplica": bool(base.get("retencion_aplica")),
             "retencion_pct": base.get("retencion_pct"),
             "retencion_base": base.get("retencion_base"),
@@ -590,7 +612,8 @@ class FacturasEmitidasController:
             "fecha_generacion": "",
         }
         fid = self._gestor.upsert_factura_emitida(factura)
-        self._incrementar_numeracion_por_factura(factura, rectificativa=False)
+        if incrementar_contador:
+            self._incrementar_numeracion_por_factura(factura, rectificativa=False)
         fecha_gen = datetime.now().strftime("%Y-%m-%d %H:%M")
         self._gestor.marcar_albaranes_facturados(self._codigo, [a.get("id") for a in albaranes], fid, fecha_gen, self._ejercicio)
         self.refresh_facturas()
@@ -1897,3 +1920,169 @@ class FacturasEmitidasController:
             return round(float(x), 4)
         except Exception:
             return 0.0
+
+    # ------------------- Exportacion Excel -------------------
+
+    def exportar_facturas_excel(self, fecha_desde: str, fecha_hasta: str, cliente_filter: str):
+        from tkinter import filedialog
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from utils.ui_facturas_emitidas_helpers import parse_date_ui
+
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel", "*.xlsx")],
+            initialfile=f"facturas_{self._ejercicio}.xlsx",
+            parent=self._view,
+        )
+        if not filepath:
+            return
+
+        desde = None
+        hasta = None
+        try:
+            if fecha_desde:
+                desde = parse_date_ui(fecha_desde)
+        except Exception:
+            pass
+        try:
+            if fecha_hasta:
+                hasta = parse_date_ui(fecha_hasta)
+        except Exception:
+            pass
+
+        rows = []
+        for fac in self._facturas_cache:
+            if cliente_filter:
+                nombre = (fac.get("nombre") or "").lower()
+                nif = (fac.get("nif") or "").lower()
+                if cliente_filter not in nombre and cliente_filter not in nif:
+                    continue
+            if desde or hasta:
+                try:
+                    fd = parse_date_ui(fac.get("fecha_asiento", ""))
+                    if desde and fd < desde:
+                        continue
+                    if hasta and fd > hasta:
+                        continue
+                except Exception:
+                    pass
+            rows.append(fac)
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Facturas"
+        headers = ["Ejercicio", "Serie", "Numero", "Fecha", "Cliente", "NIF", "Base", "IVA", "RE", "Total", "Generada"]
+        hdr_font = Font(bold=True, color="FFFFFF")
+        hdr_fill = PatternFill("solid", fgColor="2563EB")
+        hdr_align = Alignment(horizontal="center")
+        for ci, h in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=ci, value=h)
+            cell.font = hdr_font
+            cell.fill = hdr_fill
+            cell.alignment = hdr_align
+        for fac in rows:
+            tots = self._totales_factura(fac)
+            ws.append([
+                fac.get("ejercicio", ""),
+                str(fac.get("serie") or "").strip(),
+                str(fac.get("numero") or "").strip(),
+                fac.get("fecha_asiento", ""),
+                fac.get("nombre", ""),
+                fac.get("nif", ""),
+                tots["base"],
+                tots["iva"],
+                tots["re"],
+                tots["total"],
+                "Si" if fac.get("generada") else "No",
+            ])
+        col_widths = [10, 8, 14, 12, 35, 16, 12, 12, 10, 12, 10]
+        for ci, w in enumerate(col_widths, 1):
+            ws.column_dimensions[ws.cell(1, ci).column_letter].width = w
+        wb.save(filepath)
+        self._view.show_info("Gest2A3Eco", f"Exportadas {len(rows)} facturas.")
+
+    def exportar_albaranes_excel(self, fecha_desde: str, fecha_hasta: str, cliente_filter: str):
+        from tkinter import filedialog
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from utils.ui_facturas_emitidas_helpers import parse_date_ui
+
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel", "*.xlsx")],
+            initialfile=f"albaranes_{self._ejercicio}.xlsx",
+            parent=self._view,
+        )
+        if not filepath:
+            return
+
+        desde = None
+        hasta = None
+        try:
+            if fecha_desde:
+                desde = parse_date_ui(fecha_desde)
+        except Exception:
+            pass
+        try:
+            if fecha_hasta:
+                hasta = parse_date_ui(fecha_hasta)
+        except Exception:
+            pass
+
+        albaranes = self._gestor.listar_albaranes_emitidas(self._codigo, self._ejercicio)
+        facturas_map = {
+            str(f.get("id")): str(f.get("numero") or "").strip()
+            for f in self._gestor.listar_facturas_emitidas(self._codigo, self._ejercicio)
+        }
+
+        rows = []
+        for alb in albaranes:
+            if cliente_filter:
+                nombre = (alb.get("nombre") or "").lower()
+                nif = (alb.get("nif") or "").lower()
+                if cliente_filter not in nombre and cliente_filter not in nif:
+                    continue
+            if desde or hasta:
+                try:
+                    fd = parse_date_ui(alb.get("fecha_asiento", ""))
+                    if desde and fd < desde:
+                        continue
+                    if hasta and fd > hasta:
+                        continue
+                except Exception:
+                    pass
+            rows.append(alb)
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Albaranes"
+        headers = ["Numero", "Fecha", "Cliente", "NIF", "Base", "IVA", "RE", "Total", "Facturado", "Factura"]
+        hdr_font = Font(bold=True, color="FFFFFF")
+        hdr_fill = PatternFill("solid", fgColor="2563EB")
+        hdr_align = Alignment(horizontal="center")
+        for ci, h in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=ci, value=h)
+            cell.font = hdr_font
+            cell.fill = hdr_fill
+            cell.alignment = hdr_align
+        for alb in rows:
+            tots = self._totales_factura(alb)
+            factura_txt = facturas_map.get(str(alb.get("factura_id") or ""), "")
+            ws.append([
+                str(alb.get("numero") or "").strip(),
+                alb.get("fecha_asiento", ""),
+                alb.get("nombre", ""),
+                alb.get("nif", ""),
+                tots["base"],
+                tots["iva"],
+                tots["re"],
+                tots["total"],
+                "Si" if alb.get("facturado") else "No",
+                factura_txt,
+            ])
+        col_widths = [18, 12, 35, 16, 12, 12, 10, 12, 10, 14]
+        for ci, w in enumerate(col_widths, 1):
+            ws.column_dimensions[ws.cell(1, ci).column_letter].width = w
+        wb.save(filepath)
+        self._view.show_info("Gest2A3Eco", f"Exportados {len(rows)} albaranes.")
