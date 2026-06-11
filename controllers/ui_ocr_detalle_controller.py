@@ -4,7 +4,6 @@ from __future__ import annotations
 from datetime import datetime
 
 from services.terceros_empresa_fiscal_service import (
-    build_doc_proveedor_fiscal_data,
     ocr_tipo_to_proveedor,
     proveedor_tipo_to_ocr,
 )
@@ -280,34 +279,72 @@ class UIOcrDetalleController:
         return errors
 
     def _aplicar_configuracion_proveedor(self, tercero: dict, *, force_missing_only: bool):
-        payload = build_doc_proveedor_fiscal_data(
-            tercero,
-            cuenta_gasto=self._current_doc.get("cuenta_gasto") if force_missing_only else "",
-            cuenta_proveedor=self._current_doc.get("cuenta_proveedor") if force_missing_only else "",
+        cuenta_proveedor = str(
+            tercero.get("subcuenta_proveedor")
+            or tercero.get("subcuenta_cliente")
+            or tercero.get("subcuenta")
+            or ""
+        ).strip()
+        cuenta_gasto = str(
+            tercero.get("subcuenta_gasto")
+            or tercero.get("cuenta_gasto_predeterminada_id")
+            or ""
+        ).strip()
+        has_config = self._tercero_tiene_configuracion_proveedor(tercero)
+        warning = (
+            ""
+            if has_config
+            else "La subcuenta seleccionada no tiene configuracion fiscal/contable completa. Puede continuar, pero algunos campos deberan revisarse manualmente."
         )
+        self._view.set_subcuenta_warning(warning)
         if force_missing_only:
-            if not self._current_doc.get("cuenta_proveedor"):
-                self._current_doc["cuenta_proveedor"] = payload["cuenta_proveedor"]
-                self._view.set_cuenta_proveedor(payload["cuenta_proveedor"])
-            if not self._current_doc.get("cuenta_gasto"):
-                self._current_doc["cuenta_gasto"] = payload["cuenta_gasto"]
-                self._view.set_cuenta_gasto(payload["cuenta_gasto"])
-            if not self._current_doc.get("proveedor_tipo_operacion_iva"):
-                self._current_doc["proveedor_tipo_operacion_iva"] = payload["proveedor_tipo_operacion_iva"]
+            if cuenta_proveedor and not self._current_doc.get("cuenta_proveedor"):
+                self._current_doc["cuenta_proveedor"] = cuenta_proveedor
+                self._view.set_cuenta_proveedor(cuenta_proveedor)
+            if has_config and cuenta_gasto and not self._current_doc.get("cuenta_gasto"):
+                self._current_doc["cuenta_gasto"] = cuenta_gasto
+                self._view.set_cuenta_gasto(cuenta_gasto)
+            if has_config and not self._current_doc.get("proveedor_tipo_operacion_iva"):
+                tipo_iva = str(tercero.get("proveedor_tipo_operacion_iva") or "").strip()
+                iva_deducible = int(bool(tercero.get("proveedor_iva_deducible")))
+                pct_deduccion = float(tercero.get("proveedor_porcentaje_deduccion_iva") or 0.0)
+                self._current_doc["proveedor_tipo_operacion_iva"] = tipo_iva
                 self._view.set_proveedor_fiscal_config(
-                    payload["proveedor_tipo_operacion_iva"],
-                    payload["proveedor_iva_deducible"],
-                    payload["proveedor_porcentaje_deduccion_iva"],
-                    proveedor_tipo_to_ocr(payload["proveedor_tipo_operacion_iva"]),
+                    tipo_iva,
+                    iva_deducible,
+                    pct_deduccion,
+                    proveedor_tipo_to_ocr(tipo_iva),
                 )
             return
-        self._current_doc.update(payload)
-        self._current_doc["tipo_operacion"] = proveedor_tipo_to_ocr(payload["proveedor_tipo_operacion_iva"])
-        self._view.set_cuenta_proveedor(payload["cuenta_proveedor"])
-        self._view.set_cuenta_gasto(payload["cuenta_gasto"])
+        if cuenta_proveedor:
+            self._current_doc["cuenta_proveedor"] = cuenta_proveedor
+            self._view.set_cuenta_proveedor(cuenta_proveedor)
+        if cuenta_gasto:
+            self._current_doc["cuenta_gasto"] = cuenta_gasto
+            self._view.set_cuenta_gasto(cuenta_gasto)
+        if not has_config:
+            return
+        tipo_iva = str(tercero.get("proveedor_tipo_operacion_iva") or "").strip()
+        iva_deducible = int(bool(tercero.get("proveedor_iva_deducible")))
+        pct_deduccion = float(tercero.get("proveedor_porcentaje_deduccion_iva") or 0.0)
+        self._current_doc["proveedor_tipo_operacion_iva"] = tipo_iva
+        self._current_doc["proveedor_iva_deducible"] = iva_deducible
+        self._current_doc["proveedor_porcentaje_deduccion_iva"] = pct_deduccion
+        self._current_doc["tipo_operacion"] = proveedor_tipo_to_ocr(tipo_iva)
         self._view.set_proveedor_fiscal_config(
-            payload["proveedor_tipo_operacion_iva"],
-            payload["proveedor_iva_deducible"],
-            payload["proveedor_porcentaje_deduccion_iva"],
+            tipo_iva,
+            iva_deducible,
+            pct_deduccion,
             self._current_doc["tipo_operacion"],
         )
+
+    def _tercero_tiene_configuracion_proveedor(self, tercero: dict) -> bool:
+        keys = (
+            "subcuenta_gasto",
+            "cuenta_gasto_predeterminada_id",
+            "proveedor_tipo_operacion_iva",
+            "proveedor_intracomunitaria_clase",
+            "proveedor_iva_deducible",
+            "proveedor_porcentaje_deduccion_iva",
+        )
+        return any(tercero.get(k) not in (None, "") for k in keys)

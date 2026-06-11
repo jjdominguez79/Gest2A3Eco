@@ -113,6 +113,24 @@ def test_listar_no_cruza_empresa(tmp_path):
     assert all(r["codigo_empresa"] == "E00570" for r in rows)
 
 
+def test_listar_subcuentas_facturacion_devuelve_maestro_sin_configuracion_extra(tmp_path):
+    g = _make_gestor(tmp_path)
+    g.upsert_maestro_subcuenta(
+        _base_subcuenta(
+            subcuenta="43000001",
+            tipo_subcuenta="cliente",
+            nombre_subcuenta="Cliente Maestro",
+            nif_snapshot="12345678A",
+            tercero_id=None,
+        )
+    )
+    rows = g.listar_subcuentas_facturacion("E00570", ["cliente"])
+    assert len(rows) == 1
+    assert rows[0]["subcuenta"] == "43000001"
+    assert rows[0]["nombre_subcuenta"] == "Cliente Maestro"
+    assert rows[0]["cliente_tipo_operacion_iva"] is None
+
+
 # ── listar_maestro_subcuentas_por_nif ─────────────────────────────────────────
 
 def test_listar_por_nif_exacto(tmp_path):

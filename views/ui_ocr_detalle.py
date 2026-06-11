@@ -203,6 +203,15 @@ class UIOcrDetalle(tk.Toplevel):
         ttk.Label(btn_f, textvariable=self._v_tercero_info,
                   foreground="#27ae60", font=("Segoe UI", 8)).pack(side="left", padx=(8, 0))
         row += 1
+        self._lbl_subcuenta_warning = ttk.Label(
+            parent,
+            text="",
+            foreground="#b45309",
+            font=("Segoe UI", 8),
+            wraplength=520,
+        )
+        self._lbl_subcuenta_warning.grid(row=row, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 4))
+        row += 1
 
         # ── Factura ───────────────────────────────────────────────────────────
         row = self._section(parent, row, "FACTURA", pad)
@@ -428,6 +437,7 @@ class UIOcrDetalle(tk.Toplevel):
         )
         self._v_descripcion.set(doc.get("descripcion") or "")
         self._v_tercero_info.set("")
+        self.set_subcuenta_warning("")
 
         self.clear_lineas()
         for linea in doc.get("lineas") or []:
@@ -485,6 +495,9 @@ class UIOcrDetalle(tk.Toplevel):
 
     def set_tercero_info(self, texto: str):
         self._v_tercero_info.set(texto)
+
+    def set_subcuenta_warning(self, texto: str):
+        self._lbl_subcuenta_warning.configure(text=str(texto or ""))
 
     def set_cuenta_proveedor(self, subcuenta: str):
         self._v_cta_prov.set(subcuenta)

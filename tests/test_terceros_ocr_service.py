@@ -138,6 +138,27 @@ def test_resolver_tercero_incluye_subcuenta(tmp_path):
     assert t.get("subcuenta_proveedor") == "40000007"
 
 
+def test_resolver_tercero_desde_maestro_sin_relacion_fiscal(tmp_path):
+    svc = TercerosOcrService()
+    g = _make_gestor(tmp_path)
+    g.upsert_maestro_subcuenta(
+        {
+            "codigo_empresa": "E00570",
+            "subcuenta": "40000009",
+            "nombre_subcuenta": "Proveedor Solo Maestro",
+            "tipo_subcuenta": "proveedor",
+            "nif_snapshot": "B12345678",
+            "activo": 1,
+            "origen": "manual",
+            "creado_en_gest2a3eco": 1,
+        }
+    )
+    t = svc.resolver_tercero(g, "B12345678", "", "E00570", 2026)
+    assert t is not None
+    assert t.get("subcuenta_proveedor") == "40000009"
+    assert t.get("proveedor_tipo_operacion_iva") is None
+
+
 # ── Creacion de tercero ───────────────────────────────────────────────────────
 
 def test_crear_tercero_persiste_y_devuelve_subcuenta(tmp_path):

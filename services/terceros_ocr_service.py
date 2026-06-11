@@ -62,7 +62,33 @@ class TercerosOcrService:
         nif_norm = _norm_nif(nif)
         nombre_norm = _norm_nombre(nombre)
 
-        empresa_terceros = gestor.listar_terceros_por_empresa(codigo, ejercicio)
+        empresa_terceros = [
+            self._normalizar_candidato_facturacion(t)
+            for t in gestor.listar_subcuentas_facturacion(
+                codigo,
+                ["proveedor", "acreedor", "cliente", "deudor"],
+                activo=True,
+            )
+        ]
+        legacy_terceros = list(gestor.listar_terceros_por_empresa(codigo, ejercicio) or [])
+        if legacy_terceros:
+            seen = {
+                (
+                    _norm_nif(t.get("nif")),
+                    _norm_nombre(t.get("nombre") or ""),
+                    str(t.get("subcuenta_proveedor") or t.get("subcuenta_cliente") or "").strip(),
+                )
+                for t in empresa_terceros
+            }
+            for t in legacy_terceros:
+                key = (
+                    _norm_nif(t.get("nif")),
+                    _norm_nombre(t.get("nombre") or ""),
+                    str(t.get("subcuenta_proveedor") or t.get("subcuenta_cliente") or "").strip(),
+                )
+                if key not in seen:
+                    empresa_terceros.append(t)
+                    seen.add(key)
 
         # 1. NIF exacto en terceros de la empresa
         if nif_norm:
@@ -91,6 +117,33 @@ class TercerosOcrService:
                     return t
 
         return None
+
+    def _normalizar_candidato_facturacion(self, item: dict) -> dict:
+        out = dict(item or {})
+        tercero_id = str(out.get("tercero_global_id") or out.get("tercero_id") or "").strip()
+        tipo = str(out.get("tipo_subcuenta") or "").strip()
+        subcuenta = str(out.get("subcuenta") or "").strip()
+        if tercero_id:
+            out["id"] = tercero_id
+            out["tercero_id"] = tercero_id
+        out["nombre"] = (
+            out.get("tercero_nombre_legal")
+            or out.get("tercero_nombre")
+            or out.get("nombre_subcuenta")
+            or out.get("nombre")
+            or ""
+        )
+        out["nif"] = (
+            out.get("tercero_nif")
+            or out.get("nif_snapshot")
+            or out.get("nif")
+            or ""
+        )
+        if tipo in {"proveedor", "acreedor"} and not str(out.get("subcuenta_proveedor") or "").strip():
+            out["subcuenta_proveedor"] = subcuenta
+        if tipo in {"cliente", "deudor"} and not str(out.get("subcuenta_cliente") or "").strip():
+            out["subcuenta_cliente"] = subcuenta
+        return out
 
     # ── Propuesta de subcuenta ────────────────────────────────────────────────
 

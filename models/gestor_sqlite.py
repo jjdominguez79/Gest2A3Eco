@@ -429,6 +429,7 @@ class GestorSQLite:
             self._init_schema()
             self._migrate_terceros_global()
             self._migrate_maestro_subcuentas()
+            self._migrate_notificaciones()
             if json_seed:
                 self._maybe_seed_from_json(json_seed)
         except Exception as exc:
@@ -714,6 +715,92 @@ class GestorSQLite:
             );
             CREATE INDEX IF NOT EXISTS idx_cdr_documento
                 ON captura_documental_retenciones(documento_id);
+        """)
+        self.conn.commit()
+        # ── Fase 3: tablas del nuevo modulo OCR tipado ───────────────────────────
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS documentos_ocr (
+                id               TEXT PRIMARY KEY,
+                empresa_id       TEXT NOT NULL,
+                ruta_original    TEXT,
+                nombre_archivo   TEXT,
+                hash_archivo     TEXT,
+                tipo_documento   TEXT,
+                estado           TEXT,
+                fecha_alta       TEXT,
+                fecha_procesado  TEXT,
+                motor_ocr        TEXT,
+                confianza_global REAL,
+                error_ocr        TEXT,
+                texto_extraido   TEXT,
+                json_ocr         TEXT
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_doc_ocr_hash
+                ON documentos_ocr(empresa_id, hash_archivo);
+            CREATE INDEX IF NOT EXISTS idx_doc_ocr_empresa
+                ON documentos_ocr(empresa_id, estado);
+
+            CREATE TABLE IF NOT EXISTS facturas_recibidas_ocr (
+                id                TEXT PRIMARY KEY,
+                documento_id      TEXT NOT NULL REFERENCES documentos_ocr(id) ON DELETE CASCADE,
+                empresa_id        TEXT NOT NULL,
+                proveedor_id      TEXT,
+                nif_proveedor     TEXT,
+                nombre_proveedor  TEXT,
+                numero_factura    TEXT,
+                fecha_factura     TEXT,
+                fecha_operacion   TEXT,
+                fecha_vencimiento TEXT,
+                total_factura     REAL,
+                base_total        REAL,
+                iva_total         REAL,
+                retencion_total   REAL,
+                estado_validacion TEXT DEFAULT 'pendiente',
+                observaciones     TEXT
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_fro_unicidad
+                ON facturas_recibidas_ocr(empresa_id, nif_proveedor, numero_factura, fecha_factura, total_factura);
+            CREATE INDEX IF NOT EXISTS idx_fro_empresa
+                ON facturas_recibidas_ocr(empresa_id, estado_validacion);
+
+            CREATE TABLE IF NOT EXISTS facturas_recibidas_ocr_lineas_iva (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                factura_id          TEXT NOT NULL REFERENCES facturas_recibidas_ocr(id) ON DELETE CASCADE,
+                tipo_iva            REAL,
+                base                REAL,
+                cuota_iva           REAL,
+                tipo_recargo        REAL,
+                cuota_recargo       REAL,
+                deducible           INTEGER DEFAULT 1,
+                porcentaje_deduccion REAL DEFAULT 100,
+                cuenta_gasto        TEXT,
+                tipo_operacion_iva  TEXT DEFAULT 'INTERIOR_DEDUCIBLE'
+            );
+            CREATE INDEX IF NOT EXISTS idx_froli_factura
+                ON facturas_recibidas_ocr_lineas_iva(factura_id);
+
+            CREATE TABLE IF NOT EXISTS facturas_recibidas_ocr_retenciones (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                factura_id          TEXT NOT NULL REFERENCES facturas_recibidas_ocr(id) ON DELETE CASCADE,
+                base_retencion      REAL DEFAULT 0,
+                tipo_retencion      REAL DEFAULT 0,
+                importe_retencion   REAL DEFAULT 0,
+                clase_retencion     TEXT DEFAULT 'PROFESIONAL'
+            );
+            CREATE INDEX IF NOT EXISTS idx_fror_factura
+                ON facturas_recibidas_ocr_retenciones(factura_id);
+
+            CREATE TABLE IF NOT EXISTS ocr_correcciones (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                factura_id       TEXT NOT NULL,
+                campo            TEXT,
+                valor_ocr        TEXT,
+                valor_corregido  TEXT,
+                fecha_correccion TEXT,
+                usuario          TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_ocr_corr_factura
+                ON ocr_correcciones(factura_id);
         """)
         self.conn.commit()
 
@@ -3136,6 +3223,63 @@ class GestorSQLite:
         )
         return [self._row_to_dict(r) for r in cur.fetchall()]
 
+    def listar_subcuentas_facturacion(
+        self,
+        codigo_empresa: str,
+        tipos: list[str] | tuple[str, ...],
+        activo: bool | None = True,
+        subcuenta: str | None = None,
+    ) -> list[dict]:
+        tipos_norm = [str(t).strip() for t in (tipos or []) if str(t).strip()]
+        if not tipos_norm:
+            return []
+        placeholders = ",".join("?" for _ in tipos_norm)
+        clauses = [
+            "m.codigo_empresa=?",
+            f"m.tipo_subcuenta IN ({placeholders})",
+        ]
+        params: list = [str(codigo_empresa), *tipos_norm]
+        if activo is not None:
+            clauses.append("m.activo=?")
+            params.append(1 if activo else 0)
+        if subcuenta is not None:
+            clauses.append("m.subcuenta=?")
+            params.append(str(subcuenta))
+        where = " AND ".join(clauses)
+        cur = self.conn.execute(
+            f"""
+            SELECT
+                m.*,
+                t.id AS tercero_global_id,
+                t.nif AS tercero_nif,
+                t.nombre AS tercero_nombre,
+                t.nombre_legal AS tercero_nombre_legal,
+                te.subcuenta_cliente,
+                te.subcuenta_proveedor,
+                te.subcuenta_ingreso,
+                te.subcuenta_gasto,
+                te.cliente_tipo_operacion_iva,
+                te.cliente_intracomunitaria_clase,
+                te.cliente_iva_deducible,
+                te.cliente_porcentaje_deduccion_iva,
+                te.proveedor_tipo_operacion_iva,
+                te.proveedor_intracomunitaria_clase,
+                te.proveedor_iva_deducible,
+                te.proveedor_porcentaje_deduccion_iva
+            FROM maestro_subcuentas_empresa m
+            LEFT JOIN terceros t
+                   ON t.id = m.tercero_id
+            LEFT JOIN terceros_empresas te
+                   ON te.codigo_empresa = m.codigo_empresa
+                  AND te.tercero_id = m.tercero_id
+                  AND te.ejercicio = 0
+            WHERE {where}
+            ORDER BY m.subcuenta
+            """,
+            params,
+        )
+        return [self._row_to_dict(r) for r in cur.fetchall()]
+
     def marcar_maestro_subcuenta_alta_a3(self, subcuenta_id: int, lote: str | None = None) -> None:
         now = self._utc_now()
         self.conn.execute(
@@ -3359,3 +3503,1067 @@ class GestorSQLite:
                 ),
             )
         self.conn.commit()
+
+    # ── CRUD: tablas del nuevo modulo OCR tipado (Fase 3) ────────────────────
+
+    # documentos_ocr ──────────────────────────────────────────────────────────
+
+    def upsert_documento_ocr(self, doc: dict) -> str:
+        """Inserta o actualiza un documento OCR. Devuelve el id."""
+        self.conn.execute(
+            """
+            INSERT INTO documentos_ocr
+              (id, empresa_id, ruta_original, nombre_archivo, hash_archivo,
+               tipo_documento, estado, fecha_alta, fecha_procesado,
+               motor_ocr, confianza_global, error_ocr, texto_extraido, json_ocr)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+              estado=excluded.estado,
+              fecha_procesado=excluded.fecha_procesado,
+              motor_ocr=excluded.motor_ocr,
+              confianza_global=excluded.confianza_global,
+              error_ocr=excluded.error_ocr,
+              texto_extraido=excluded.texto_extraido,
+              json_ocr=excluded.json_ocr
+            """,
+            (
+                doc["id"], doc.get("empresa_id"), doc.get("ruta_original"),
+                doc.get("nombre_archivo"), doc.get("hash_archivo"),
+                doc.get("tipo_documento", "factura_recibida"),
+                doc.get("estado", "pendiente_revision"),
+                doc.get("fecha_alta"), doc.get("fecha_procesado"),
+                doc.get("motor_ocr", ""), float(doc.get("confianza_global") or 0.0),
+                doc.get("error_ocr", ""), doc.get("texto_extraido", ""),
+                doc.get("json_ocr", ""),
+            ),
+        )
+        self.conn.commit()
+        return doc["id"]
+
+    def get_documento_ocr(self, doc_id: str) -> dict | None:
+        cur = self.conn.execute(
+            "SELECT * FROM documentos_ocr WHERE id=?", (str(doc_id),)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        cols = [c[0] for c in cur.description]
+        return dict(zip(cols, row))
+
+    def buscar_documento_ocr_por_hash(self, empresa_id: str, hash_archivo: str) -> dict | None:
+        cur = self.conn.execute(
+            "SELECT * FROM documentos_ocr WHERE empresa_id=? AND hash_archivo=?",
+            (empresa_id, hash_archivo),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        cols = [c[0] for c in cur.description]
+        return dict(zip(cols, row))
+
+    def listar_documentos_ocr(self, empresa_id: str, estado: str | None = None) -> list[dict]:
+        if estado:
+            cur = self.conn.execute(
+                "SELECT * FROM documentos_ocr WHERE empresa_id=? AND estado=? ORDER BY fecha_alta DESC",
+                (empresa_id, estado),
+            )
+        else:
+            cur = self.conn.execute(
+                "SELECT * FROM documentos_ocr WHERE empresa_id=? ORDER BY fecha_alta DESC",
+                (empresa_id,),
+            )
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    # facturas_recibidas_ocr ──────────────────────────────────────────────────
+
+    def upsert_factura_recibida_ocr(self, factura: dict) -> str:
+        """Inserta o actualiza una factura recibida OCR. Devuelve el id."""
+        self.conn.execute(
+            """
+            INSERT INTO facturas_recibidas_ocr
+              (id, documento_id, empresa_id, proveedor_id, nif_proveedor,
+               nombre_proveedor, numero_factura, fecha_factura, fecha_operacion,
+               fecha_vencimiento, total_factura, base_total, iva_total,
+               retencion_total, estado_validacion, observaciones)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+              proveedor_id=excluded.proveedor_id,
+              nif_proveedor=excluded.nif_proveedor,
+              nombre_proveedor=excluded.nombre_proveedor,
+              numero_factura=excluded.numero_factura,
+              fecha_factura=excluded.fecha_factura,
+              fecha_operacion=excluded.fecha_operacion,
+              fecha_vencimiento=excluded.fecha_vencimiento,
+              total_factura=excluded.total_factura,
+              base_total=excluded.base_total,
+              iva_total=excluded.iva_total,
+              retencion_total=excluded.retencion_total,
+              estado_validacion=excluded.estado_validacion,
+              observaciones=excluded.observaciones
+            """,
+            (
+                factura["id"], factura.get("documento_id"), factura.get("empresa_id"),
+                factura.get("proveedor_id"), factura.get("nif_proveedor"),
+                factura.get("nombre_proveedor"), factura.get("numero_factura"),
+                factura.get("fecha_factura"), factura.get("fecha_operacion"),
+                factura.get("fecha_vencimiento"),
+                float(factura.get("total_factura") or 0.0),
+                float(factura.get("base_total") or 0.0),
+                float(factura.get("iva_total") or 0.0),
+                float(factura.get("retencion_total") or 0.0),
+                factura.get("estado_validacion", "pendiente"),
+                factura.get("observaciones", ""),
+            ),
+        )
+        self.conn.commit()
+        return factura["id"]
+
+    def get_factura_recibida_ocr(self, factura_id: str) -> dict | None:
+        cur = self.conn.execute(
+            "SELECT * FROM facturas_recibidas_ocr WHERE id=?", (str(factura_id),)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        cols = [c[0] for c in cur.description]
+        return dict(zip(cols, row))
+
+    def listar_facturas_recibidas_ocr(
+        self, empresa_id: str, estado: str | None = None
+    ) -> list[dict]:
+        if estado:
+            cur = self.conn.execute(
+                "SELECT * FROM facturas_recibidas_ocr WHERE empresa_id=? AND estado_validacion=? "
+                "ORDER BY fecha_factura DESC",
+                (empresa_id, estado),
+            )
+        else:
+            cur = self.conn.execute(
+                "SELECT * FROM facturas_recibidas_ocr WHERE empresa_id=? ORDER BY fecha_factura DESC",
+                (empresa_id,),
+            )
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    # facturas_recibidas_ocr_lineas_iva ───────────────────────────────────────
+
+    def upsert_linea_iva_ocr(self, linea: dict) -> int:
+        cur = self.conn.execute(
+            """
+            INSERT INTO facturas_recibidas_ocr_lineas_iva
+              (factura_id, tipo_iva, base, cuota_iva, tipo_recargo, cuota_recargo,
+               deducible, porcentaje_deduccion, cuenta_gasto, tipo_operacion_iva)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                str(linea["factura_id"]),
+                float(linea.get("tipo_iva") or 0.0),
+                float(linea.get("base") or 0.0),
+                float(linea.get("cuota_iva") or 0.0),
+                float(linea.get("tipo_recargo") or 0.0),
+                float(linea.get("cuota_recargo") or 0.0),
+                int(linea.get("deducible", 1)),
+                float(linea.get("porcentaje_deduccion", 100.0)),
+                linea.get("cuenta_gasto", ""),
+                linea.get("tipo_operacion_iva", "INTERIOR_DEDUCIBLE"),
+            ),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def listar_lineas_iva_ocr(self, factura_id: str) -> list[dict]:
+        cur = self.conn.execute(
+            "SELECT * FROM facturas_recibidas_ocr_lineas_iva WHERE factura_id=?",
+            (str(factura_id),),
+        )
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def eliminar_lineas_iva_ocr(self, factura_id: str):
+        self.conn.execute(
+            "DELETE FROM facturas_recibidas_ocr_lineas_iva WHERE factura_id=?",
+            (str(factura_id),),
+        )
+        self.conn.commit()
+
+    # facturas_recibidas_ocr_retenciones ──────────────────────────────────────
+
+    def upsert_retencion_ocr(self, ret: dict) -> int:
+        cur = self.conn.execute(
+            """
+            INSERT INTO facturas_recibidas_ocr_retenciones
+              (factura_id, base_retencion, tipo_retencion, importe_retencion, clase_retencion)
+            VALUES (?,?,?,?,?)
+            """,
+            (
+                str(ret["factura_id"]),
+                float(ret.get("base_retencion") or 0.0),
+                float(ret.get("tipo_retencion") or 0.0),
+                float(ret.get("importe_retencion") or 0.0),
+                ret.get("clase_retencion", "PROFESIONAL"),
+            ),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def listar_retenciones_ocr(self, factura_id: str) -> list[dict]:
+        cur = self.conn.execute(
+            "SELECT * FROM facturas_recibidas_ocr_retenciones WHERE factura_id=?",
+            (str(factura_id),),
+        )
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    # ocr_correcciones ────────────────────────────────────────────────────────
+
+    def upsert_correccion_ocr(self, corr: dict) -> int:
+        cur = self.conn.execute(
+            """
+            INSERT INTO ocr_correcciones
+              (factura_id, campo, valor_ocr, valor_corregido, fecha_correccion, usuario)
+            VALUES (?,?,?,?,?,?)
+            """,
+            (
+                str(corr["factura_id"]),
+                corr.get("campo", ""),
+                corr.get("valor_ocr", ""),
+                corr.get("valor_corregido", ""),
+                corr.get("fecha_correccion", ""),
+                corr.get("usuario", ""),
+            ),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def listar_correcciones_ocr(self, factura_id: str) -> list[dict]:
+        cur = self.conn.execute(
+            "SELECT * FROM ocr_correcciones WHERE factura_id=? ORDER BY fecha_correccion",
+            (str(factura_id),),
+        )
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+        self.conn.commit()
+
+    # ── Notificaciones Electronicas ──────────────────────────────────────────
+
+    def _migrate_notificaciones(self):
+        """Crea las tablas del modulo Notificaciones Electronicas (idempotente)."""
+        self.conn.executescript("""
+            -- v1: registro de envios salientes
+            CREATE TABLE IF NOT EXISTS notificaciones (
+                id              TEXT PRIMARY KEY,
+                codigo_empresa  TEXT NOT NULL,
+                ejercicio       INTEGER NOT NULL,
+                tipo_documento  TEXT NOT NULL DEFAULT 'MANUAL',
+                documento_id    TEXT,
+                tipo_notif      TEXT NOT NULL,
+                canal           TEXT NOT NULL,
+                destinatario    TEXT NOT NULL,
+                asunto          TEXT,
+                estado          TEXT NOT NULL DEFAULT 'PENDIENTE',
+                fecha_envio     TEXT,
+                fecha_intento   TEXT,
+                intentos        INTEGER NOT NULL DEFAULT 0,
+                error_detalle   TEXT,
+                payload_json    TEXT,
+                respuesta_json  TEXT,
+                created_at      TEXT NOT NULL,
+                updated_at      TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_notificaciones_empresa
+                ON notificaciones(codigo_empresa, ejercicio, estado);
+            CREATE TABLE IF NOT EXISTS notificaciones_config (
+                codigo_empresa  TEXT NOT NULL,
+                ejercicio       INTEGER NOT NULL,
+                canal           TEXT NOT NULL,
+                activo          INTEGER NOT NULL DEFAULT 0,
+                config_json     TEXT,
+                PRIMARY KEY (codigo_empresa, ejercicio, canal)
+            );
+            -- v2: gestion de certificados, organismos, buzones y bandeja
+            CREATE TABLE IF NOT EXISTS notif_certificados (
+                id              TEXT PRIMARY KEY,
+                codigo_empresa  TEXT NOT NULL,
+                nombre          TEXT NOT NULL,
+                nif_titular     TEXT NOT NULL,
+                tipo            TEXT NOT NULL DEFAULT 'PFX',
+                ruta_archivo    TEXT,
+                fecha_emision   TEXT,
+                fecha_caducidad TEXT,
+                notas           TEXT,
+                activo          INTEGER NOT NULL DEFAULT 1,
+                created_at      TEXT NOT NULL,
+                updated_at      TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_notif_cert_empresa
+                ON notif_certificados(codigo_empresa, activo);
+            CREATE TABLE IF NOT EXISTS notif_organismos (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                codigo      TEXT NOT NULL UNIQUE,
+                nombre      TEXT NOT NULL,
+                tipo        TEXT NOT NULL DEFAULT 'AAPP',
+                url_portal  TEXT,
+                descripcion TEXT,
+                activo      INTEGER NOT NULL DEFAULT 1,
+                created_at  TEXT NOT NULL,
+                updated_at  TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_notif_org_activo
+                ON notif_organismos(activo);
+            CREATE TABLE IF NOT EXISTS notif_buzones (
+                id              TEXT PRIMARY KEY,
+                codigo_empresa  TEXT NOT NULL,
+                nombre          TEXT NOT NULL,
+                organismo_id    INTEGER,
+                tipo_buzon      TEXT NOT NULL DEFAULT 'DEH',
+                nif_titular     TEXT,
+                certificado_id  TEXT,
+                activo          INTEGER NOT NULL DEFAULT 1,
+                ultima_consulta TEXT,
+                created_at      TEXT NOT NULL,
+                updated_at      TEXT NOT NULL,
+                FOREIGN KEY (organismo_id)   REFERENCES notif_organismos(id),
+                FOREIGN KEY (certificado_id) REFERENCES notif_certificados(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_notif_buzones_empresa
+                ON notif_buzones(codigo_empresa, activo);
+            CREATE INDEX IF NOT EXISTS idx_notif_buzones_organismo
+                ON notif_buzones(organismo_id);
+            CREATE TABLE IF NOT EXISTS notif_bandeja (
+                id                       TEXT PRIMARY KEY,
+                codigo_empresa           TEXT NOT NULL,
+                ejercicio                INTEGER NOT NULL,
+                buzon_id                 TEXT,
+                organismo_id             INTEGER,
+                asunto                   TEXT NOT NULL,
+                descripcion              TEXT,
+                tipo_acto                TEXT,
+                referencia               TEXT,
+                nif_interesado           TEXT,
+                nombre_interesado        TEXT,
+                fecha_puesta_disposicion TEXT,
+                fecha_vencimiento        TEXT,
+                fecha_aceptacion         TEXT,
+                fecha_rechazo            TEXT,
+                estado                   TEXT NOT NULL DEFAULT 'PENDIENTE',
+                pdf_path                 TEXT,
+                metadatos_json           TEXT,
+                created_at               TEXT NOT NULL,
+                updated_at               TEXT NOT NULL,
+                FOREIGN KEY (buzon_id)      REFERENCES notif_buzones(id),
+                FOREIGN KEY (organismo_id)  REFERENCES notif_organismos(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_notif_bandeja_empresa
+                ON notif_bandeja(codigo_empresa, ejercicio, estado, fecha_puesta_disposicion);
+        """)
+        self.conn.commit()
+
+    def listar_notificaciones(
+        self,
+        codigo_empresa: str,
+        ejercicio: int,
+        estado: str | None = None,
+        canal: str | None = None,
+    ) -> list[dict]:
+        sql = "SELECT * FROM notificaciones WHERE codigo_empresa=? AND ejercicio=?"
+        params: list = [codigo_empresa, int(ejercicio)]
+        if estado:
+            sql += " AND estado=?"
+            params.append(estado)
+        if canal:
+            sql += " AND canal=?"
+            params.append(canal)
+        sql += " ORDER BY created_at DESC"
+        cur = self.conn.execute(sql, params)
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def get_notificacion(self, notificacion_id: str) -> dict | None:
+        cur = self.conn.execute(
+            "SELECT * FROM notificaciones WHERE id=?", (notificacion_id,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        cols = [c[0] for c in cur.description]
+        return dict(zip(cols, row))
+
+    def upsert_notificacion(self, notif: dict) -> str:
+        """Inserta o actualiza una notificacion. Devuelve el id."""
+        now      = self._utc_now()
+        notif_id = str(notif.get("id") or "")
+        if not notif_id:
+            raise ValueError("upsert_notificacion: el campo 'id' es obligatorio.")
+        self.conn.execute(
+            """
+            INSERT INTO notificaciones
+                (id, codigo_empresa, ejercicio, tipo_documento, documento_id,
+                 tipo_notif, canal, destinatario, asunto, estado,
+                 fecha_envio, fecha_intento, intentos, error_detalle,
+                 payload_json, respuesta_json, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                estado         = excluded.estado,
+                fecha_envio    = excluded.fecha_envio,
+                fecha_intento  = excluded.fecha_intento,
+                intentos       = excluded.intentos,
+                error_detalle  = excluded.error_detalle,
+                respuesta_json = excluded.respuesta_json,
+                updated_at     = excluded.updated_at
+            """,
+            (
+                notif_id,
+                notif.get("codigo_empresa"),
+                int(notif.get("ejercicio") or 0),
+                notif.get("tipo_documento", "MANUAL"),
+                notif.get("documento_id"),
+                notif.get("tipo_notif", ""),
+                notif.get("canal", ""),
+                notif.get("destinatario", ""),
+                notif.get("asunto"),
+                notif.get("estado", "PENDIENTE"),
+                notif.get("fecha_envio"),
+                notif.get("fecha_intento"),
+                int(notif.get("intentos") or 0),
+                notif.get("error_detalle"),
+                notif.get("payload_json"),
+                notif.get("respuesta_json"),
+                notif.get("created_at", now),
+                now,
+            ),
+        )
+        self.conn.commit()
+        return notif_id
+
+    def eliminar_notificacion(self, codigo_empresa: str, notificacion_id: str) -> None:
+        self.conn.execute(
+            "DELETE FROM notificaciones WHERE id=? AND codigo_empresa=?",
+            (notificacion_id, codigo_empresa),
+        )
+        self.conn.commit()
+
+    def get_notificaciones_config(self, codigo_empresa: str, ejercicio: int) -> list[dict]:
+        cur = self.conn.execute(
+            "SELECT * FROM notificaciones_config WHERE codigo_empresa=? AND ejercicio=?",
+            (codigo_empresa, int(ejercicio)),
+        )
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def upsert_notificaciones_config(self, config: dict) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO notificaciones_config
+                (codigo_empresa, ejercicio, canal, activo, config_json)
+            VALUES (?,?,?,?,?)
+            ON CONFLICT(codigo_empresa, ejercicio, canal) DO UPDATE SET
+                activo      = excluded.activo,
+                config_json = excluded.config_json
+            """,
+            (
+                config.get("codigo_empresa"),
+                int(config.get("ejercicio") or 0),
+                config.get("canal", ""),
+                int(config.get("activo") or 0),
+                config.get("config_json"),
+            ),
+        )
+        self.conn.commit()
+
+    # ── notif_certificados ───────────────────────────────────────────────────
+
+    def listar_notif_certificados(self, codigo_empresa: str, solo_activos: bool = False) -> list[dict]:
+        sql = "SELECT * FROM notif_certificados WHERE codigo_empresa=?"
+        params: list = [codigo_empresa]
+        if solo_activos:
+            sql += " AND activo=1"
+        sql += " ORDER BY nombre"
+        cur = self.conn.execute(sql, params)
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def get_notif_certificado(self, cert_id: str) -> dict | None:
+        cur = self.conn.execute("SELECT * FROM notif_certificados WHERE id=?", (cert_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        cols = [c[0] for c in cur.description]
+        return dict(zip(cols, row))
+
+    def upsert_notif_certificado(self, cert: dict) -> str:
+        import uuid as _uuid
+        now     = self._utc_now()
+        cert_id = str(cert.get("id") or _uuid.uuid4())
+        self.conn.execute(
+            """
+            INSERT INTO notif_certificados
+                (id, codigo_empresa, nombre, nif_titular, tipo,
+                 ruta_archivo, fecha_emision, fecha_caducidad, notas, activo,
+                 created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                nombre          = excluded.nombre,
+                nif_titular     = excluded.nif_titular,
+                tipo            = excluded.tipo,
+                ruta_archivo    = excluded.ruta_archivo,
+                fecha_emision   = excluded.fecha_emision,
+                fecha_caducidad = excluded.fecha_caducidad,
+                notas           = excluded.notas,
+                activo          = excluded.activo,
+                updated_at      = excluded.updated_at
+            """,
+            (
+                cert_id,
+                cert.get("codigo_empresa"),
+                cert.get("nombre", ""),
+                cert.get("nif_titular", ""),
+                cert.get("tipo", "PFX"),
+                cert.get("ruta_archivo"),
+                cert.get("fecha_emision"),
+                cert.get("fecha_caducidad"),
+                cert.get("notas"),
+                int(cert.get("activo", 1)),
+                cert.get("created_at", now),
+                now,
+            ),
+        )
+        self.conn.commit()
+        return cert_id
+
+    def eliminar_notif_certificado(self, codigo_empresa: str, cert_id: str) -> None:
+        self.conn.execute(
+            "DELETE FROM notif_certificados WHERE id=? AND codigo_empresa=?",
+            (cert_id, codigo_empresa),
+        )
+        self.conn.commit()
+
+    # ── notif_organismos ─────────────────────────────────────────────────────
+
+    def listar_notif_organismos(self, solo_activos: bool = False) -> list[dict]:
+        sql = "SELECT * FROM notif_organismos"
+        if solo_activos:
+            sql += " WHERE activo=1"
+        sql += " ORDER BY nombre"
+        cur = self.conn.execute(sql)
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def get_notif_organismo(self, org_id: int) -> dict | None:
+        cur = self.conn.execute("SELECT * FROM notif_organismos WHERE id=?", (org_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        cols = [c[0] for c in cur.description]
+        return dict(zip(cols, row))
+
+    def upsert_notif_organismo(self, org: dict) -> int:
+        now = self._utc_now()
+        org_id = org.get("id")
+        if org_id:
+            self.conn.execute(
+                """
+                INSERT INTO notif_organismos
+                    (id, codigo, nombre, tipo, url_portal, descripcion, activo, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET
+                    codigo      = excluded.codigo,
+                    nombre      = excluded.nombre,
+                    tipo        = excluded.tipo,
+                    url_portal  = excluded.url_portal,
+                    descripcion = excluded.descripcion,
+                    activo      = excluded.activo,
+                    updated_at  = excluded.updated_at
+                """,
+                (
+                    int(org_id),
+                    org.get("codigo", "").upper().strip(),
+                    org.get("nombre", ""),
+                    org.get("tipo", "AAPP"),
+                    org.get("url_portal"),
+                    org.get("descripcion"),
+                    int(org.get("activo", 1)),
+                    org.get("created_at", now),
+                    now,
+                ),
+            )
+        else:
+            self.conn.execute(
+                """
+                INSERT INTO notif_organismos
+                    (codigo, nombre, tipo, url_portal, descripcion, activo, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?)
+                ON CONFLICT(codigo) DO UPDATE SET
+                    nombre      = excluded.nombre,
+                    tipo        = excluded.tipo,
+                    url_portal  = excluded.url_portal,
+                    descripcion = excluded.descripcion,
+                    activo      = excluded.activo,
+                    updated_at  = excluded.updated_at
+                """,
+                (
+                    org.get("codigo", "").upper().strip(),
+                    org.get("nombre", ""),
+                    org.get("tipo", "AAPP"),
+                    org.get("url_portal"),
+                    org.get("descripcion"),
+                    int(org.get("activo", 1)),
+                    now,
+                    now,
+                ),
+            )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT id FROM notif_organismos WHERE codigo=?",
+            (org.get("codigo", "").upper().strip(),),
+        ).fetchone()
+        return row[0] if row else 0
+
+    def eliminar_notif_organismo(self, org_id: int) -> None:
+        self.conn.execute("DELETE FROM notif_organismos WHERE id=?", (org_id,))
+        self.conn.commit()
+
+    # ── notif_buzones ────────────────────────────────────────────────────────
+
+    def listar_notif_buzones(self, codigo_empresa: str, solo_activos: bool = False) -> list[dict]:
+        sql = """
+            SELECT b.*, o.nombre AS organismo_nombre, o.codigo AS organismo_codigo,
+                   c.nombre AS certificado_nombre
+            FROM notif_buzones b
+            LEFT JOIN notif_organismos o ON b.organismo_id = o.id
+            LEFT JOIN notif_certificados c ON b.certificado_id = c.id
+            WHERE b.codigo_empresa=?
+        """
+        params: list = [codigo_empresa]
+        if solo_activos:
+            sql += " AND b.activo=1"
+        sql += " ORDER BY b.nombre"
+        cur = self.conn.execute(sql, params)
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def get_notif_buzon(self, buzon_id: str) -> dict | None:
+        cur = self.conn.execute(
+            """
+            SELECT b.*, o.nombre AS organismo_nombre, o.codigo AS organismo_codigo,
+                   c.nombre AS certificado_nombre
+            FROM notif_buzones b
+            LEFT JOIN notif_organismos o ON b.organismo_id = o.id
+            LEFT JOIN notif_certificados c ON b.certificado_id = c.id
+            WHERE b.id=?
+            """,
+            (buzon_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        cols = [c[0] for c in cur.description]
+        return dict(zip(cols, row))
+
+    def upsert_notif_buzon(self, buzon: dict) -> str:
+        import uuid as _uuid
+        now      = self._utc_now()
+        buzon_id = str(buzon.get("id") or _uuid.uuid4())
+        self.conn.execute(
+            """
+            INSERT INTO notif_buzones
+                (id, codigo_empresa, nombre, organismo_id, tipo_buzon,
+                 nif_titular, certificado_id, activo, ultima_consulta, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                nombre          = excluded.nombre,
+                organismo_id    = excluded.organismo_id,
+                tipo_buzon      = excluded.tipo_buzon,
+                nif_titular     = excluded.nif_titular,
+                certificado_id  = excluded.certificado_id,
+                activo          = excluded.activo,
+                ultima_consulta = excluded.ultima_consulta,
+                updated_at      = excluded.updated_at
+            """,
+            (
+                buzon_id,
+                buzon.get("codigo_empresa"),
+                buzon.get("nombre", ""),
+                buzon.get("organismo_id"),
+                buzon.get("tipo_buzon", "DEH"),
+                buzon.get("nif_titular"),
+                buzon.get("certificado_id"),
+                int(buzon.get("activo", 1)),
+                buzon.get("ultima_consulta"),
+                buzon.get("created_at", now),
+                now,
+            ),
+        )
+        self.conn.commit()
+        return buzon_id
+
+    def eliminar_notif_buzon(self, codigo_empresa: str, buzon_id: str) -> None:
+        self.conn.execute(
+            "DELETE FROM notif_buzones WHERE id=? AND codigo_empresa=?",
+            (buzon_id, codigo_empresa),
+        )
+        self.conn.commit()
+
+    # ── notif_bandeja ────────────────────────────────────────────────────────
+
+    def listar_notif_bandeja(
+        self,
+        codigo_empresa: str,
+        ejercicio: int,
+        estado: str | None = None,
+        organismo_id: int | None = None,
+    ) -> list[dict]:
+        sql = """
+            SELECT nb.*, o.nombre AS organismo_nombre, o.codigo AS organismo_codigo,
+                   bz.nombre AS buzon_nombre
+            FROM notif_bandeja nb
+            LEFT JOIN notif_organismos o  ON nb.organismo_id = o.id
+            LEFT JOIN notif_buzones    bz ON nb.buzon_id     = bz.id
+            WHERE nb.codigo_empresa=? AND nb.ejercicio=?
+        """
+        params: list = [codigo_empresa, int(ejercicio)]
+        if estado:
+            sql += " AND nb.estado=?"
+            params.append(estado)
+        if organismo_id:
+            sql += " AND nb.organismo_id=?"
+            params.append(int(organismo_id))
+        sql += " ORDER BY nb.fecha_puesta_disposicion DESC, nb.created_at DESC"
+        cur = self.conn.execute(sql, params)
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def get_notif_bandeja_item(self, item_id: str) -> dict | None:
+        cur = self.conn.execute(
+            """
+            SELECT nb.*, o.nombre AS organismo_nombre, o.codigo AS organismo_codigo,
+                   bz.nombre AS buzon_nombre
+            FROM notif_bandeja nb
+            LEFT JOIN notif_organismos o  ON nb.organismo_id = o.id
+            LEFT JOIN notif_buzones    bz ON nb.buzon_id     = bz.id
+            WHERE nb.id=?
+            """,
+            (item_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        cols = [c[0] for c in cur.description]
+        return dict(zip(cols, row))
+
+    def upsert_notif_bandeja_item(self, item: dict) -> str:
+        import uuid as _uuid
+        now     = self._utc_now()
+        item_id = str(item.get("id") or _uuid.uuid4())
+        self.conn.execute(
+            """
+            INSERT INTO notif_bandeja
+                (id, codigo_empresa, ejercicio, buzon_id, organismo_id,
+                 asunto, descripcion, tipo_acto, referencia,
+                 nif_interesado, nombre_interesado,
+                 fecha_puesta_disposicion, fecha_vencimiento,
+                 fecha_aceptacion, fecha_rechazo, estado,
+                 pdf_path, metadatos_json, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                buzon_id                 = excluded.buzon_id,
+                organismo_id             = excluded.organismo_id,
+                asunto                   = excluded.asunto,
+                descripcion              = excluded.descripcion,
+                tipo_acto                = excluded.tipo_acto,
+                referencia               = excluded.referencia,
+                nif_interesado           = excluded.nif_interesado,
+                nombre_interesado        = excluded.nombre_interesado,
+                fecha_puesta_disposicion = excluded.fecha_puesta_disposicion,
+                fecha_vencimiento        = excluded.fecha_vencimiento,
+                fecha_aceptacion         = excluded.fecha_aceptacion,
+                fecha_rechazo            = excluded.fecha_rechazo,
+                estado                   = excluded.estado,
+                pdf_path                 = excluded.pdf_path,
+                metadatos_json           = excluded.metadatos_json,
+                updated_at               = excluded.updated_at
+            """,
+            (
+                item_id,
+                item.get("codigo_empresa"),
+                int(item.get("ejercicio") or 0),
+                item.get("buzon_id"),
+                item.get("organismo_id"),
+                item.get("asunto", ""),
+                item.get("descripcion"),
+                item.get("tipo_acto"),
+                item.get("referencia"),
+                item.get("nif_interesado"),
+                item.get("nombre_interesado"),
+                item.get("fecha_puesta_disposicion"),
+                item.get("fecha_vencimiento"),
+                item.get("fecha_aceptacion"),
+                item.get("fecha_rechazo"),
+                item.get("estado", "PENDIENTE"),
+                item.get("pdf_path"),
+                item.get("metadatos_json"),
+                item.get("created_at", now),
+                now,
+            ),
+        )
+        self.conn.commit()
+        return item_id
+
+    def cambiar_estado_notif_bandeja(
+        self, codigo_empresa: str, item_id: str, estado: str, fecha: str
+    ) -> None:
+        now = self._utc_now()
+        fecha_col = "fecha_aceptacion" if estado == "ACEPTADA" else "fecha_rechazo"
+        self.conn.execute(
+            f"UPDATE notif_bandeja SET estado=?, {fecha_col}=?, updated_at=? "
+            "WHERE id=? AND codigo_empresa=?",
+            (estado, fecha, now, item_id, codigo_empresa),
+        )
+        self.conn.commit()
+
+    def eliminar_notif_bandeja_item(self, codigo_empresa: str, item_id: str) -> None:
+        self.conn.execute(
+            "DELETE FROM notif_bandeja WHERE id=? AND codigo_empresa=?",
+            (item_id, codigo_empresa),
+        )
+        self.conn.commit()
+
+    # ── Seeder de datos simulados ────────────────────────────────────────────
+
+    def sembrar_organismos_simulados(self) -> None:
+        """Inserta el catalogo estandar de organismos si esta vacio (idempotente)."""
+        count = self.conn.execute("SELECT COUNT(*) FROM notif_organismos").fetchone()[0]
+        if count > 0:
+            return
+        now = self._utc_now()
+        organismos = [
+            ("AEAT",      "Agencia Estatal de Administracion Tributaria",  "HACIENDA",   "https://sede.agenciatributaria.gob.es"),
+            ("TGSS",      "Tesoreria General de la Seguridad Social",       "SS",         "https://sede.seg-social.gob.es"),
+            ("DGT",       "Direccion General de Trafico",                   "TRANSPORTE", "https://sede.dgt.gob.es"),
+            ("SEPE",      "Servicio Publico de Empleo Estatal",             "EMPLEO",     "https://sede.sepe.gob.es"),
+            ("AEPD",      "Agencia Espanola de Proteccion de Datos",        "CONTROL",    "https://www.aepd.es"),
+            ("MHACIENDA", "Ministerio de Hacienda",                         "HACIENDA",   "https://www.hacienda.gob.es"),
+            ("MINTRA",    "Ministerio de Trabajo y Economia Social",        "TRABAJO",    "https://www.mites.gob.es"),
+            ("AYTO",      "Ayuntamiento (generico)",                        "LOCAL",      ""),
+        ]
+        for codigo, nombre, tipo, url in organismos:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO notif_organismos "
+                "(codigo, nombre, tipo, url_portal, activo, created_at, updated_at) "
+                "VALUES (?,?,?,?,1,?,?)",
+                (codigo, nombre, tipo, url, now, now),
+            )
+        self.conn.commit()
+
+    def sembrar_datos_empresa_simulados(self, codigo_empresa: str, ejercicio: int) -> None:
+        """
+        Inserta certificados, buzones y bandeja simulados para una empresa.
+        Solo actua si no existen datos previos para esa empresa (idempotente).
+        """
+        import uuid as _uuid
+
+        now = self._utc_now()
+
+        # Obtener CIF de la empresa (para NIF titular)
+        emp = self.get_empresa(codigo_empresa, ejercicio)
+        nif = (emp or {}).get("cif") or "B00000000"
+
+        # --- certificados ---
+        existing_certs = self.listar_notif_certificados(codigo_empresa)
+        if not existing_certs:
+            for cert in [
+                {
+                    "id": str(_uuid.uuid4()), "codigo_empresa": codigo_empresa,
+                    "nombre": "Certificado FNMT Empresa (vigente)",
+                    "nif_titular": nif, "tipo": "PFX",
+                    "fecha_emision": "2024-01-15", "fecha_caducidad": "2027-01-15",
+                    "notas": "Certificado principal emitido por FNMT-RCM.",
+                    "activo": 1, "created_at": now, "updated_at": now,
+                },
+                {
+                    "id": str(_uuid.uuid4()), "codigo_empresa": codigo_empresa,
+                    "nombre": "Certificado FNMT por vencer",
+                    "nif_titular": nif, "tipo": "PFX",
+                    "fecha_emision": "2023-07-01", "fecha_caducidad": "2026-07-01",
+                    "notas": "Proximo a caducar. Renovar antes del 01/07/2026.",
+                    "activo": 1, "created_at": now, "updated_at": now,
+                },
+                {
+                    "id": str(_uuid.uuid4()), "codigo_empresa": codigo_empresa,
+                    "nombre": "Certificado antiguo 2021 (caducado)",
+                    "nif_titular": nif, "tipo": "PFX",
+                    "fecha_emision": "2021-06-01", "fecha_caducidad": "2023-06-01",
+                    "notas": "Caducado. Conservado como referencia historica.",
+                    "activo": 0, "created_at": now, "updated_at": now,
+                },
+            ]:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO notif_certificados "
+                    "(id,codigo_empresa,nombre,nif_titular,tipo,ruta_archivo,"
+                    "fecha_emision,fecha_caducidad,notas,activo,created_at,updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        cert["id"], cert["codigo_empresa"], cert["nombre"],
+                        cert["nif_titular"], cert["tipo"], None,
+                        cert["fecha_emision"], cert["fecha_caducidad"],
+                        cert["notas"], cert["activo"],
+                        cert["created_at"], cert["updated_at"],
+                    ),
+                )
+            self.conn.commit()
+
+        # --- buzones ---
+        existing_buzones = self.listar_notif_buzones(codigo_empresa)
+        if not existing_buzones:
+            self.sembrar_organismos_simulados()
+            cert_activo = next(
+                (c for c in self.listar_notif_certificados(codigo_empresa) if c.get("activo")),
+                None,
+            )
+            cert_id = cert_activo["id"] if cert_activo else None
+            org_map = {o["codigo"]: o["id"] for o in self.listar_notif_organismos()}
+            for buzon in [
+                {
+                    "id": str(_uuid.uuid4()), "codigo_empresa": codigo_empresa,
+                    "nombre": "DEH AEAT Principal", "organismo_id": org_map.get("AEAT"),
+                    "tipo_buzon": "DEH", "nif_titular": nif,
+                    "certificado_id": cert_id, "activo": 1,
+                    "ultima_consulta": "2026-06-09T10:30:00",
+                },
+                {
+                    "id": str(_uuid.uuid4()), "codigo_empresa": codigo_empresa,
+                    "nombre": "DEH Seguridad Social", "organismo_id": org_map.get("TGSS"),
+                    "tipo_buzon": "DEH", "nif_titular": nif,
+                    "certificado_id": cert_id, "activo": 1,
+                    "ultima_consulta": "2026-06-09T10:31:00",
+                },
+                {
+                    "id": str(_uuid.uuid4()), "codigo_empresa": codigo_empresa,
+                    "nombre": "060 AGE General", "organismo_id": org_map.get("MHACIENDA"),
+                    "tipo_buzon": "060", "nif_titular": nif,
+                    "certificado_id": cert_id, "activo": 1,
+                    "ultima_consulta": None,
+                },
+            ]:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO notif_buzones "
+                    "(id,codigo_empresa,nombre,organismo_id,tipo_buzon,nif_titular,"
+                    "certificado_id,activo,ultima_consulta,created_at,updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        buzon["id"], buzon["codigo_empresa"], buzon["nombre"],
+                        buzon["organismo_id"], buzon["tipo_buzon"], buzon["nif_titular"],
+                        buzon["certificado_id"], buzon["activo"], buzon["ultima_consulta"],
+                        now, now,
+                    ),
+                )
+            self.conn.commit()
+
+        # --- bandeja ---
+        existing_bandeja = self.conn.execute(
+            "SELECT COUNT(*) FROM notif_bandeja WHERE codigo_empresa=? AND ejercicio=?",
+            (codigo_empresa, int(ejercicio)),
+        ).fetchone()[0]
+        if not existing_bandeja:
+            self.sembrar_organismos_simulados()
+            org_map   = {o["codigo"]: o["id"] for o in self.listar_notif_organismos()}
+            buzon_map = {b["organismo_codigo"]: b["id"] for b in self.listar_notif_buzones(codigo_empresa) if b.get("organismo_codigo")}
+            for item in [
+                {
+                    "organismo": "AEAT", "asunto": "Requerimiento - Modelo 347 ejercicio 2024",
+                    "tipo_acto": "Requerimiento", "referencia": "REQ-2025-00123456",
+                    "nif_interesado": nif, "nombre_interesado": (emp or {}).get("nombre", ""),
+                    "fecha_puesta_disposicion": "2025-09-01", "fecha_vencimiento": "2025-10-01",
+                    "estado": "VENCIDA",
+                    "descripcion": "Se requiere informacion sobre operaciones con terceros."
+                        " Importe declarado en IVA difiere con informacion de terceros.",
+                },
+                {
+                    "organismo": "AEAT", "asunto": "Notificacion inicio actuaciones de comprobacion limitada",
+                    "tipo_acto": "Notificacion", "referencia": "NOT-2026-00789012",
+                    "nif_interesado": nif, "nombre_interesado": (emp or {}).get("nombre", ""),
+                    "fecha_puesta_disposicion": "2026-05-28", "fecha_vencimiento": "2026-06-28",
+                    "estado": "PENDIENTE",
+                    "descripcion": "Inicio de actuaciones de comprobacion limitada en relacion"
+                        " con el Impuesto sobre el Valor Anadido, periodo 01/2026.",
+                },
+                {
+                    "organismo": "AEAT", "asunto": "Propuesta de liquidacion - IRPF 2024",
+                    "tipo_acto": "Propuesta", "referencia": "PRL-2026-00445566",
+                    "nif_interesado": nif, "nombre_interesado": (emp or {}).get("nombre", ""),
+                    "fecha_puesta_disposicion": "2026-06-01", "fecha_vencimiento": "2026-07-15",
+                    "estado": "PENDIENTE",
+                    "descripcion": "Propuesta de liquidacion provisional del IRPF correspondiente"
+                        " al ejercicio 2024. Diferencia a ingresar: 1.234,56 EUR.",
+                },
+                {
+                    "organismo": "TGSS", "asunto": "Acta de liquidacion de cuotas - Trimestre 1/2026",
+                    "tipo_acto": "Acta", "referencia": "ACT-2026-SS-00456789",
+                    "nif_interesado": nif, "nombre_interesado": (emp or {}).get("nombre", ""),
+                    "fecha_puesta_disposicion": "2026-04-15", "fecha_vencimiento": "2026-05-15",
+                    "fecha_aceptacion": "2026-04-18",
+                    "estado": "ACEPTADA",
+                    "descripcion": "Acta de liquidacion por diferencias en la cotizacion de"
+                        " trabajadores. Cuotas regularizadas: 3 trabajadores.",
+                },
+                {
+                    "organismo": "TGSS", "asunto": "Resolucion sobre aplazamiento de deuda",
+                    "tipo_acto": "Resolucion", "referencia": "RES-2026-SS-00112233",
+                    "nif_interesado": nif, "nombre_interesado": (emp or {}).get("nombre", ""),
+                    "fecha_puesta_disposicion": "2026-03-01", "fecha_vencimiento": "2026-04-01",
+                    "fecha_aceptacion": "2026-03-05",
+                    "estado": "ACEPTADA",
+                    "descripcion": "Resolucion estimatoria de la solicitud de aplazamiento"
+                        " de deuda por cuotas de Seguridad Social. Concedido fraccionamiento en 6 plazos.",
+                },
+                {
+                    "organismo": "DGT", "asunto": "Notificacion expediente sancionador - Vehiculo de empresa",
+                    "tipo_acto": "Expediente sancionador", "referencia": "EXP-DGT-2026-00778899",
+                    "nif_interesado": nif, "nombre_interesado": (emp or {}).get("nombre", ""),
+                    "fecha_puesta_disposicion": "2026-01-10", "fecha_vencimiento": "2026-02-10",
+                    "fecha_rechazo": "2026-01-15",
+                    "estado": "RECHAZADA",
+                    "descripcion": "Notificacion de inicio de expediente sancionador por"
+                        " exceso de velocidad. Vehiculo matricula 0000-ZZZ. Sancion propuesta: 300 EUR.",
+                },
+                {
+                    "organismo": "SEPE", "asunto": "Comunicacion - Solicitud de informacion prestaciones",
+                    "tipo_acto": "Comunicacion", "referencia": "COM-SEPE-2026-00334455",
+                    "nif_interesado": nif, "nombre_interesado": (emp or {}).get("nombre", ""),
+                    "fecha_puesta_disposicion": "2026-06-05", "fecha_vencimiento": "2026-07-05",
+                    "estado": "PENDIENTE",
+                    "descripcion": "Solicitud de informacion sobre prestaciones por desempleo"
+                        " percibidas por trabajadores durante el ejercicio 2025.",
+                },
+                {
+                    "organismo": "AEAT", "asunto": "Diligencia de embargo - Cuenta bancaria",
+                    "tipo_acto": "Diligencia de embargo", "referencia": "EMB-2026-00991122",
+                    "nif_interesado": nif, "nombre_interesado": (emp or {}).get("nombre", ""),
+                    "fecha_puesta_disposicion": "2026-06-08", "fecha_vencimiento": "2026-06-18",
+                    "estado": "PENDIENTE",
+                    "descripcion": "Diligencia de embargo de cuentas bancarias por deuda tributaria"
+                        " pendiente de pago. Importe: 5.678,90 EUR. Plazo de alegaciones: 10 dias.",
+                },
+            ]:
+                org_id   = org_map.get(item["organismo"])
+                buzon_id = buzon_map.get(item["organismo"])
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO notif_bandeja "
+                    "(id,codigo_empresa,ejercicio,buzon_id,organismo_id,asunto,descripcion,"
+                    "tipo_acto,referencia,nif_interesado,nombre_interesado,"
+                    "fecha_puesta_disposicion,fecha_vencimiento,fecha_aceptacion,fecha_rechazo,"
+                    "estado,pdf_path,metadatos_json,created_at,updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        str(_uuid.uuid4()), codigo_empresa, int(ejercicio),
+                        buzon_id, org_id,
+                        item["asunto"], item.get("descripcion", ""),
+                        item["tipo_acto"], item["referencia"],
+                        item["nif_interesado"], item["nombre_interesado"],
+                        item["fecha_puesta_disposicion"], item["fecha_vencimiento"],
+                        item.get("fecha_aceptacion"), item.get("fecha_rechazo"),
+                        item["estado"], None, None,
+                        now, now,
+                    ),
+                )
+            self.conn.commit()

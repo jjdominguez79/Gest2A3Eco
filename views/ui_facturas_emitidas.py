@@ -1178,6 +1178,9 @@ class FacturaDialog(tk.Toplevel):
         self.cb_tercero.bind("<KeyRelease>", lambda e: self._filter_clientes_cb())
         ttk.Button(frm, text="Crear tercero", command=self._crear_tercero).grid(row=row, column=2, padx=4, pady=3)
         row += 1
+        self._lbl_subcuenta_warning = ttk.Label(frm, text="", foreground="#b45309", wraplength=520)
+        self._lbl_subcuenta_warning.grid(row=row, column=0, columnspan=3, sticky="w", padx=4, pady=(0, 4))
+        row += 1
 
         ttk.Label(frm, text="Serie").grid(row=row, column=0, sticky="w", padx=4, pady=3)
         series_disponibles = list(f.get("_series_disponibles") or [])
@@ -1623,6 +1626,9 @@ class FacturaDialog(tk.Toplevel):
 
     def set_subcuenta(self, value):
         self.var_subcuenta.set(value)
+
+    def set_subcuenta_warning(self, message: str):
+        self._lbl_subcuenta_warning.config(text=str(message or ""))
 
     def set_tipo_operacion(self, code: str):
         code = str(code or "01").zfill(2)[-2:]

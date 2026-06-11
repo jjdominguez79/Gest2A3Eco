@@ -25,11 +25,25 @@ class FacturaDialogController:
         self._editing_existing = bool(factura.get("id"))
 
     def load_terceros(self):
-        all_terceros = self._gestor.listar_terceros_por_empresa(self._codigo, self._ejercicio)
+        all_terceros = self._gestor.listar_subcuentas_facturacion(
+            self._codigo,
+            ["cliente", "deudor"],
+            activo=True,
+        )
         self._terceros_cache = list(all_terceros or [])
         current_tercero_id = str(self._factura.get("tercero_id") or "").strip()
         current_nif = normalizar_nif_cif(self._factura.get("nif"))
-        known_ids = {str(t.get("id")) for t in self._terceros_cache if t.get("id") is not None}
+        current_subcuenta = str(self._factura.get("subcuenta_cliente") or "").strip()
+        if current_subcuenta and not any(str(t.get("subcuenta") or "").strip() == current_subcuenta for t in self._terceros_cache):
+            extra = self._gestor.listar_subcuentas_facturacion(
+                self._codigo,
+                ["cliente", "deudor"],
+                activo=None,
+                subcuenta=current_subcuenta,
+            )
+            if extra:
+                self._terceros_cache.extend(extra)
+        known_ids = {str(t.get("tercero_global_id") or t.get("id") or "") for t in self._terceros_cache}
         if current_tercero_id and current_tercero_id not in known_ids:
             extra = next(
                 (t for t in self._gestor.listar_terceros() if str(t.get("id")) == current_tercero_id),
@@ -37,20 +51,17 @@ class FacturaDialogController:
             )
             if extra:
                 self._terceros_cache.append(extra)
-                known_ids.add(current_tercero_id)
-        if current_nif:
-            has_nif = any(normalizar_nif_cif(t.get("nif")) == current_nif for t in self._terceros_cache)
-            if not has_nif:
-                extra = next(
-                    (t for t in self._gestor.listar_terceros() if normalizar_nif_cif(t.get("nif")) == current_nif),
-                    None,
-                )
-                if extra:
-                    self._terceros_cache.append(extra)
+        if current_nif and not any(self._nif_tercero(t) == current_nif for t in self._terceros_cache):
+            extra = next(
+                (t for t in self._gestor.listar_terceros() if normalizar_nif_cif(t.get("nif")) == current_nif),
+                None,
+            )
+            if extra:
+                self._terceros_cache.append(extra)
         self._display_to_tercero = {}
         disp = []
         for t in self._terceros_cache:
-            label = f"{t.get('nombre', '')} ({t.get('nif', '')})"
+            label = self._build_display_label(t)
             self._display_to_tercero[label] = t
             disp.append(label)
         self._view.set_terceros(disp)
@@ -59,11 +70,42 @@ class FacturaDialogController:
         label = self._view.get_selected_tercero_display()
         return self._display_to_tercero.get(label)
 
+    def _build_display_label(self, tercero: dict) -> str:
+        subcuenta = str(tercero.get("subcuenta") or "").strip()
+        nombre = self._nombre_tercero(tercero)
+        nif = self._nif_tercero(tercero)
+        suffix = f" ({nif})" if nif else ""
+        return f"{subcuenta} - {nombre}{suffix}" if subcuenta else f"{nombre}{suffix}"
+
+    def _nombre_tercero(self, tercero: dict) -> str:
+        return str(
+            tercero.get("tercero_nombre_legal")
+            or tercero.get("tercero_nombre")
+            or tercero.get("nombre")
+            or tercero.get("nombre_subcuenta")
+            or ""
+        ).strip()
+
+    def _nif_tercero(self, tercero: dict) -> str:
+        return normalizar_nif_cif(
+            tercero.get("tercero_nif")
+            or tercero.get("nif")
+            or tercero.get("nif_snapshot")
+            or ""
+        )
+
+    def _has_cliente_autofill_config(self, tercero: dict) -> bool:
+        return bool(str(tercero.get("cliente_tipo_operacion_iva") or "").strip())
+
     def preselect_tercero(self, tercero_id):
-        if not tercero_id:
-            return
+        tercero_id = str(tercero_id or "").strip()
+        current_subcuenta = str(self._factura.get("subcuenta_cliente") or "").strip()
         for label, t in self._display_to_tercero.items():
-            if str(t.get("id")) == str(tercero_id):
+            if tercero_id and str(t.get("tercero_global_id") or t.get("id") or "").strip() == tercero_id:
+                self._view.set_tercero_display(label)
+                self.on_tercero_selected()
+                return
+            if current_subcuenta and str(t.get("subcuenta") or "").strip() == current_subcuenta:
                 self._view.set_tercero_display(label)
                 self.on_tercero_selected()
                 return
@@ -124,15 +166,20 @@ class FacturaDialogController:
         t = self._get_selected_tercero()
         if not t:
             return
-        self._view.set_nif(t.get("nif", ""))
-        self._view.set_nombre(t.get("nombre", ""))
-        sc = str(t.get("subcuenta_cliente") or "")
+        self._view.set_nif(self._nif_tercero(t))
+        self._view.set_nombre(self._nombre_tercero(t))
+        sc = str(t.get("subcuenta") or t.get("subcuenta_cliente") or "")
         if sc:
             self._view.set_subcuenta(sc)
-        if not self._editing_existing:
+        if not self._editing_existing and self._has_cliente_autofill_config(t):
             defaults = build_cliente_factura_defaults(t)
             self._view.set_tipo_operacion(defaults.get("tipo_operacion") or "01")
             self._view.set_modelo_fiscal(defaults.get("modelo_fiscal") or "")
+        self._view.set_subcuenta_warning(
+            ""
+            if self._has_cliente_autofill_config(t)
+            else "La subcuenta seleccionada no tiene configuracion fiscal/contable completa. Puede continuar, pero algunos campos deberan revisarse manualmente."
+        )
 
     def pick_date(self, target_var):
         txt = (target_var.get() or "").strip()

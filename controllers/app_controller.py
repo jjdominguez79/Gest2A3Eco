@@ -9,6 +9,8 @@ from views.ui_dashboard_empresa import UIDashboardEmpresa
 from views.ui_facturas_emitidas import UIFacturasEmitidas
 from views.ui_maestro_cuentas import UIMaestroCuentas
 from views.ui_ocr_facturas import UIOcrFacturas
+from views.ui_facturas_recibidas_ocr import UIFacturasRecibidasOcr
+from views.ui_notificaciones import UINotificaciones
 from views.ui_panel_general import UIPanelGeneral
 from views.ui_plantillas import UIPlantillasEmpresa
 from views.ui_procesos import UIProcesos
@@ -129,6 +131,7 @@ class AppController:
             on_open_ocr=lambda: self._open_module_in_shell(codigo, ejercicio, "ocr"),
             on_open_terceros=lambda: self._open_module_in_shell(codigo, ejercicio, "terceros"),
             on_open_maestro_cuentas=lambda: self._open_module_in_shell(codigo, ejercicio, "maestro_cuentas"),
+            on_open_notificaciones=lambda: self._open_module_in_shell(codigo, ejercicio, "notificaciones"),
             on_back=self.start,
         )
         shell.pack(fill="both", expand=True)
@@ -167,13 +170,17 @@ class AppController:
         if modulo == "importaciones":
             return UIProcesos(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
         if modulo == "ocr":
-            return UIOcrFacturas(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
+            return _OcrModuleContainer(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
         if modulo == "contabilidad":
             return UIContabilidad(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
         if modulo == "plantillas":
             return UIPlantillasEmpresa(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
         if modulo == "terceros":
             return UITercerosGlobales(parent, self._gestor, session=self._session)
+        if modulo == "notificaciones":
+            return UINotificaciones(
+                parent, self._gestor, codigo, ejercicio, nombre, session=self._session
+            )
         if modulo == "maestro_cuentas":
             return UIMaestroCuentas(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
         if modulo.startswith("importaciones::"):
@@ -241,3 +248,34 @@ class AppController:
         controller = UserAdminController(self._gestor, self._auth_service, dialog)
         dialog.controller = controller
         controller.refresh()
+
+
+# ── Contenedor OCR: pestana nueva (tipada) + pestana legado ──────────────────
+
+class _OcrModuleContainer(ttk.Frame):
+    """
+    Contenedor del modulo OCR con dos pestanas:
+      - "Nuevo OCR"   — UIFacturasRecibidasOcr (services/ocr/ tipado, nuevas tablas)
+      - "Importaciones anteriores" — UIOcrFacturas (flujo legado facturas_recibidas_docs)
+
+    Permite usar el nuevo modulo sin perder acceso a documentos existentes.
+    """
+
+    def __init__(self, master, gestor, codigo, ejercicio, nombre, session=None):
+        super().__init__(master)
+        nb = ttk.Notebook(self)
+        nb.pack(fill="both", expand=True)
+
+        # Pestana 1: nuevo modulo OCR tipado
+        tab_nuevo = ttk.Frame(nb)
+        nb.add(tab_nuevo, text="Captura documental")
+        UIFacturasRecibidasOcr(
+            tab_nuevo, gestor, codigo, ejercicio, nombre, session=session
+        ).pack(fill="both", expand=True)
+
+        # Pestana 2: flujo legado (documentos ya procesados con sistema anterior)
+        tab_legado = ttk.Frame(nb)
+        nb.add(tab_legado, text="Importaciones anteriores")
+        UIOcrFacturas(
+            tab_legado, gestor, codigo, ejercicio, nombre, session=session
+        ).pack(fill="both", expand=True)

@@ -245,3 +245,68 @@ class SecuredGestorSQLite:
     def actualizar_password_usuario(self, user_id: int, password_hash: str, *, must_change_password: bool = False):
         self.security.ensure_admin("Solo el administrador puede gestionar usuarios.")
         return self._base.actualizar_password_usuario(user_id, password_hash, must_change_password=must_change_password)
+
+    # ── Notificaciones Electronicas ──────────────────────────────────────────
+    # Las operaciones de lectura se resuelven via __getattr__ sin comprobacion
+    # adicional (el filtro de empresa ya esta en listar_notificaciones).
+    # Solo se exponen explicitamente los metodos de escritura.
+
+    def upsert_notificacion(self, notif: dict) -> str:
+        self.security.ensure_company_write(notif.get("codigo_empresa"))
+        return self._base.upsert_notificacion(notif)
+
+    def eliminar_notificacion(self, codigo_empresa: str, notificacion_id: str) -> None:
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.eliminar_notificacion(codigo_empresa, notificacion_id)
+
+    def upsert_notificaciones_config(self, config: dict) -> None:
+        self.security.ensure_company_write(config.get("codigo_empresa"))
+        return self._base.upsert_notificaciones_config(config)
+
+    # ── notif_certificados ───────────────────────────────────────────────────
+    # lectura: via __getattr__ (no requiere empresa especifica al leer lista)
+
+    def upsert_notif_certificado(self, cert: dict) -> str:
+        self.security.ensure_company_write(cert.get("codigo_empresa"))
+        return self._base.upsert_notif_certificado(cert)
+
+    def eliminar_notif_certificado(self, codigo_empresa: str, cert_id: str) -> None:
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.eliminar_notif_certificado(codigo_empresa, cert_id)
+
+    # ── notif_organismos ─────────────────────────────────────────────────────
+    # lectura: via __getattr__; escritura requiere admin (catalogo global)
+
+    def upsert_notif_organismo(self, org: dict) -> int:
+        self.security.ensure_admin("Solo el administrador puede gestionar el catalogo de organismos.")
+        return self._base.upsert_notif_organismo(org)
+
+    def eliminar_notif_organismo(self, org_id: int) -> None:
+        self.security.ensure_admin("Solo el administrador puede gestionar el catalogo de organismos.")
+        return self._base.eliminar_notif_organismo(org_id)
+
+    # ── notif_buzones ────────────────────────────────────────────────────────
+
+    def upsert_notif_buzon(self, buzon: dict) -> str:
+        self.security.ensure_company_write(buzon.get("codigo_empresa"))
+        return self._base.upsert_notif_buzon(buzon)
+
+    def eliminar_notif_buzon(self, codigo_empresa: str, buzon_id: str) -> None:
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.eliminar_notif_buzon(codigo_empresa, buzon_id)
+
+    # ── notif_bandeja ────────────────────────────────────────────────────────
+
+    def upsert_notif_bandeja_item(self, item: dict) -> str:
+        self.security.ensure_company_write(item.get("codigo_empresa"))
+        return self._base.upsert_notif_bandeja_item(item)
+
+    def cambiar_estado_notif_bandeja(
+        self, codigo_empresa: str, item_id: str, estado: str, fecha: str
+    ) -> None:
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.cambiar_estado_notif_bandeja(codigo_empresa, item_id, estado, fecha)
+
+    def eliminar_notif_bandeja_item(self, codigo_empresa: str, item_id: str) -> None:
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.eliminar_notif_bandeja_item(codigo_empresa, item_id)
