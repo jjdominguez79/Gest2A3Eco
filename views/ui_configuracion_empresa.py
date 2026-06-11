@@ -7,6 +7,8 @@ from tkinter import filedialog, messagebox, ttk
 
 from services.import_a3_empresa import importar_empresa_desde_a3, listar_empresas_a3
 from utils.validaciones import normalizar_nif_cif
+from views.ui_buzones import UIBuzones
+from views.ui_certificados import UICertificados
 
 
 def _center_window(win, parent=None):
@@ -59,6 +61,7 @@ class UIConfiguracionEmpresa(ttk.Frame):
         self._series_por_ejercicio: dict = {}
         self._on_back = on_back
         self._on_deleted = on_deleted or on_back
+        self._session = session
         self._build()
 
     # ── Build ──────────────────────────────────────────────────────────────────
@@ -106,6 +109,7 @@ class UIConfiguracionEmpresa(ttk.Frame):
         self._build_general_tab(ttk.Frame(nb, padding=14), nb)
         self._build_exercises_tab(ttk.Frame(nb, padding=14), nb)
         self._build_banks_tab(ttk.Frame(nb, padding=14), nb)
+        self._build_notificaciones_tab(ttk.Frame(nb, padding=14), nb)
 
     # ── Pestana General ────────────────────────────────────────────────────────
 
@@ -270,6 +274,33 @@ class UIConfiguracionEmpresa(ttk.Frame):
         self.lbl_bancos_info = ttk.Label(tab, text="")
         self.lbl_bancos_info.grid(row=3, column=0, sticky="w", pady=(8, 0))
         self._load_bank_records()
+
+    # ── Pestana Notificaciones electronicas ─────────────────────────────────────
+
+    def _build_notificaciones_tab(self, tab, nb):
+        nb.add(tab, text="Notificaciones electronicas")
+        codigo = self._empresa.get("codigo") or self._codigo
+        if not codigo:
+            ttk.Label(
+                tab,
+                text="Guarda la empresa antes de configurar las notificaciones electronicas.",
+                font=("Segoe UI", 10),
+            ).pack(anchor="w", pady=20)
+            return
+        ejercicio = self._empresa.get("ejercicio") or self._ejercicio
+        try:
+            self._gestor.sembrar_organismos_simulados()
+            self._gestor.sembrar_datos_empresa_simulados(codigo, ejercicio)
+        except Exception:
+            pass
+        sub_nb = ttk.Notebook(tab)
+        sub_nb.pack(fill="both", expand=True)
+        tab_cert = ttk.Frame(sub_nb)
+        sub_nb.add(tab_cert, text="Certificados")
+        UICertificados(tab_cert, self._gestor, codigo, session=self._session).pack(fill="both", expand=True)
+        tab_buz = ttk.Frame(sub_nb)
+        sub_nb.add(tab_buz, text="Buzones")
+        UIBuzones(tab_buz, self._gestor, codigo, session=self._session).pack(fill="both", expand=True)
 
     # ── Guardado ───────────────────────────────────────────────────────────────
 

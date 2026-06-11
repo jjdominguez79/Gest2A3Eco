@@ -10,6 +10,7 @@ import tkinter as tk
 from datetime import date, datetime
 from tkinter import filedialog, messagebox, ttk
 
+from utils.crypto_utils import cifrar_password
 from views.notificaciones_theme import *  # noqa: F401,F403
 
 TIPOS_CERT = ["PFX", "PEM", "P12", "PKCS12", "Renovacion", "Otro"]
@@ -42,6 +43,7 @@ class UICertificados(ttk.Frame):
         ("fecha_emision",   "Emitido",           100, "center"),
         ("fecha_caducidad", "Caduca",            100, "center"),
         ("vigencia",        "Estado vigencia",   120, "center"),
+        ("clave",           "Clave",              60, "center"),
     ]
 
     def __init__(self, master, gestor, codigo: str, session=None):
@@ -189,6 +191,7 @@ class UICertificados(ttk.Frame):
                 r.get("fecha_emision", "") or "",
                 r.get("fecha_caducidad", "") or "",
                 vig_label,
+                "Si" if r.get("password_cifrada") else "-",
             ), tags=(vig_tag,))
 
         # Banner de advertencia
@@ -234,14 +237,15 @@ class _CertificadoDialog(tk.Toplevel):
         frm = ttk.Frame(self, padding=16)
         frm.pack(fill="both", expand=True)
 
-        self._var_nombre  = tk.StringVar(value=self._cert.get("nombre", ""))
-        self._var_nif     = tk.StringVar(value=self._cert.get("nif_titular", ""))
-        self._var_tipo    = tk.StringVar(value=self._cert.get("tipo", "PFX"))
-        self._var_ruta    = tk.StringVar(value=self._cert.get("ruta_archivo", "") or "")
-        self._var_emision = tk.StringVar(value=self._cert.get("fecha_emision", "") or "")
-        self._var_cad     = tk.StringVar(value=self._cert.get("fecha_caducidad", "") or "")
-        self._var_notas   = tk.StringVar(value=self._cert.get("notas", "") or "")
-        self._var_activo  = tk.BooleanVar(value=bool(self._cert.get("activo", True)))
+        self._var_nombre   = tk.StringVar(value=self._cert.get("nombre", ""))
+        self._var_nif      = tk.StringVar(value=self._cert.get("nif_titular", ""))
+        self._var_tipo     = tk.StringVar(value=self._cert.get("tipo", "PFX"))
+        self._var_ruta     = tk.StringVar(value=self._cert.get("ruta_archivo", "") or "")
+        self._var_emision  = tk.StringVar(value=self._cert.get("fecha_emision", "") or "")
+        self._var_cad      = tk.StringVar(value=self._cert.get("fecha_caducidad", "") or "")
+        self._var_notas    = tk.StringVar(value=self._cert.get("notas", "") or "")
+        self._var_password = tk.StringVar(value="")
+        self._var_activo   = tk.BooleanVar(value=bool(self._cert.get("activo", True)))
 
         rows = [
             ("Nombre *",          self._var_nombre,  ttk.Entry,    {"width": 44}),
@@ -263,8 +267,13 @@ class _CertificadoDialog(tk.Toplevel):
         ttk.Entry(ruta_frm, textvariable=self._var_ruta, width=34).pack(side="left")
         ttk.Button(ruta_frm, text="...", width=3, command=self._browse_file).pack(side="left", padx=(4, 0))
 
+        # Fila contrasena (siempre vacia: no se muestra el valor descifrado)
+        pwd_label = "Contrasena" if not self._cert.get("password_cifrada") else "Contrasena\n(dejar en blanco\npara mantener)"
+        ttk.Label(frm, text=pwd_label, anchor="e", justify="right").grid(row=r + 1, column=0, sticky="e", **pad)
+        ttk.Entry(frm, textvariable=self._var_password, width=24, show="*").grid(row=r + 1, column=1, sticky="w", **pad)
+
         ttk.Checkbutton(frm, text="Activo", variable=self._var_activo).grid(
-            row=r + 1, column=1, sticky="w", **pad)
+            row=r + 2, column=1, sticky="w", **pad)
 
         btn_row = ttk.Frame(self, padding=(16, 8))
         btn_row.pack(fill="x")
@@ -289,6 +298,12 @@ class _CertificadoDialog(tk.Toplevel):
         if not nif:
             messagebox.showerror("Gest2A3Eco", "El NIF titular es obligatorio.", parent=self)
             return
+        pwd = self._var_password.get()
+        if pwd:
+            password_cifrada = cifrar_password(pwd)
+        else:
+            password_cifrada = self._cert.get("password_cifrada")
+
         self.result = {
             "codigo_empresa": self._empresa,
             "nombre":         nombre,
@@ -298,6 +313,7 @@ class _CertificadoDialog(tk.Toplevel):
             "fecha_emision":  self._var_emision.get().strip() or None,
             "fecha_caducidad":self._var_cad.get().strip() or None,
             "notas":          self._var_notas.get().strip() or None,
+            "password_cifrada": password_cifrada,
             "activo":         1 if self._var_activo.get() else 0,
         }
         if self._cert.get("id"):

@@ -10,7 +10,7 @@ from views.ui_facturas_emitidas import UIFacturasEmitidas
 from views.ui_maestro_cuentas import UIMaestroCuentas
 from views.ui_ocr_facturas import UIOcrFacturas
 from views.ui_facturas_recibidas_ocr import UIFacturasRecibidasOcr
-from views.ui_notificaciones import UINotificaciones
+from views.ui_notificaciones_global import UINotificacionesGlobal
 from views.ui_panel_general import UIPanelGeneral
 from views.ui_plantillas import UIPlantillasEmpresa
 from views.ui_procesos import UIProcesos
@@ -131,7 +131,6 @@ class AppController:
             on_open_ocr=lambda: self._open_module_in_shell(codigo, ejercicio, "ocr"),
             on_open_terceros=lambda: self._open_module_in_shell(codigo, ejercicio, "terceros"),
             on_open_maestro_cuentas=lambda: self._open_module_in_shell(codigo, ejercicio, "maestro_cuentas"),
-            on_open_notificaciones=lambda: self._open_module_in_shell(codigo, ejercicio, "notificaciones"),
             on_back=self.start,
         )
         shell.pack(fill="both", expand=True)
@@ -177,10 +176,6 @@ class AppController:
             return UIPlantillasEmpresa(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
         if modulo == "terceros":
             return UITercerosGlobales(parent, self._gestor, session=self._session)
-        if modulo == "notificaciones":
-            return UINotificaciones(
-                parent, self._gestor, codigo, ejercicio, nombre, session=self._session
-            )
         if modulo == "maestro_cuentas":
             return UIMaestroCuentas(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
         if modulo.startswith("importaciones::"):
@@ -237,6 +232,14 @@ class AppController:
             self._open_module_in_shell(self._current_codigo, self._current_ejercicio, "terceros")
         else:
             self._show(lambda parent: UITercerosGlobales(parent, self._gestor, session=self._session))
+
+    def open_notificaciones_global(self):
+        self._show(
+            lambda parent: UINotificacionesGlobal(
+                parent, self._gestor, session=self._session,
+                on_open_empresa=self.open_company_dashboard,
+            )
+        )
 
     def open_user_admin(self):
         try:

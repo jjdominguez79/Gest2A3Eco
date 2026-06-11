@@ -13,6 +13,17 @@ from views.notificaciones_theme import *  # noqa: F401,F403
 
 TIPOS_BUZON = ["DEH", "060", "NOTIFIC@", "SNE", "CARPETA CIUDADANA", "OTRO"]
 
+PERIODICIDADES = ["MANUAL", "DIARIA", "SEMANAL", "QUINCENAL", "MENSUAL"]
+
+MODOS_DESCARGA = ["SOLO_DETECTAR", "DETECTAR_Y_AVISAR", "DESCARGA_MANUAL", "DESCARGA_AUTOMATICA"]
+
+LABELS_MODO_DESCARGA = {
+    "SOLO_DETECTAR": "Solo detectar",
+    "DETECTAR_Y_AVISAR": "Detectar y avisar",
+    "DESCARGA_MANUAL": "Descarga manual",
+    "DESCARGA_AUTOMATICA": "Descarga automatica",
+}
+
 
 class UIBuzones(ttk.Frame):
     """Pantalla de gestion de buzones de notificacion electronica."""
@@ -23,6 +34,7 @@ class UIBuzones(ttk.Frame):
         ("tipo_buzon",      "Tipo",             70, "center"),
         ("nif_titular",     "NIF Titular",       90, "center"),
         ("certificado",     "Certificado",      160, "w"),
+        ("modo_descarga",   "Modo descarga",   140, "center"),
         ("ultima_consulta", "Ultima consulta",  120, "center"),
         ("activo",          "Estado",            70, "center"),
     ]
@@ -154,10 +166,11 @@ class UIBuzones(ttk.Frame):
             org    = r.get("organismo_nombre") or r.get("organismo_codigo") or ""
             cert   = r.get("certificado_nombre") or ""
             ultima = (r.get("ultima_consulta") or "")[:16].replace("T", " ")
+            modo = LABELS_MODO_DESCARGA.get(r.get("modo_descarga"), r.get("modo_descarga", ""))
             self._tv.insert("", tk.END, values=(
                 r["id"], org, r.get("nombre", ""),
                 r.get("tipo_buzon", ""), r.get("nif_titular", "") or "",
-                cert, ultima, estado,
+                cert, modo, ultima, estado,
             ), tags=(tag,))
         n = len(rows)
         self._lbl_count.configure(text=f"{n} buzon{'es' if n != 1 else ''}")
@@ -204,7 +217,18 @@ class _BuzonDialog(tk.Toplevel):
         self._var_nombre     = tk.StringVar(value=self._buzon.get("nombre", ""))
         self._var_tipo       = tk.StringVar(value=self._buzon.get("tipo_buzon", "DEH"))
         self._var_nif        = tk.StringVar(value=self._buzon.get("nif_titular", "") or "")
+        self._var_periodicidad = tk.StringVar(value=self._buzon.get("periodicidad_sync", "MANUAL"))
+        self._var_email      = tk.StringVar(value=self._buzon.get("email_aviso", "") or "")
+        self._var_responsable = tk.StringVar(value=self._buzon.get("responsable_interno", "") or "")
+        self._var_envio_auto = tk.BooleanVar(value=bool(self._buzon.get("envio_automatico_cliente", False)))
         self._var_activo     = tk.BooleanVar(value=bool(self._buzon.get("activo", True)))
+
+        # Modo de descarga (combo de etiquetas)
+        self._modo_values = MODOS_DESCARGA
+        self._modo_labels = [LABELS_MODO_DESCARGA[m] for m in self._modo_values]
+        modo_actual = self._buzon.get("modo_descarga", "SOLO_DETECTAR")
+        idx_modo = self._modo_values.index(modo_actual) if modo_actual in self._modo_values else 0
+        self._var_modo = tk.StringVar(value=self._modo_labels[idx_modo])
 
         # Organismo combo
         curr_org_id  = self._buzon.get("organismo_id")
@@ -222,13 +246,19 @@ class _BuzonDialog(tk.Toplevel):
             ("Tipo buzon",   self._var_tipo,   ttk.Combobox, {"width": 22, "values": TIPOS_BUZON, "state": "readonly"}),
             ("NIF Titular",  self._var_nif,    ttk.Entry,    {"width": 22}),
             ("Certificado",  self._var_cert,   ttk.Combobox, {"width": 36, "values": self._cert_nombres, "state": "readonly"}),
+            ("Periodicidad sincronizacion", self._var_periodicidad, ttk.Combobox, {"width": 22, "values": PERIODICIDADES, "state": "readonly"}),
+            ("Modo de descarga", self._var_modo, ttk.Combobox, {"width": 22, "values": self._modo_labels, "state": "readonly"}),
+            ("Email de aviso", self._var_email, ttk.Entry, {"width": 36}),
+            ("Responsable interno", self._var_responsable, ttk.Entry, {"width": 36}),
         ]
         for i, (lbl, var, cls, kw) in enumerate(rows_def):
             ttk.Label(frm, text=lbl, anchor="e").grid(row=i, column=0, sticky="e", **pad)
             cls(frm, textvariable=var, **kw).grid(row=i, column=1, sticky="w", **pad)
 
-        ttk.Checkbutton(frm, text="Activo", variable=self._var_activo).grid(
+        ttk.Checkbutton(frm, text="Envio automatico al cliente", variable=self._var_envio_auto).grid(
             row=len(rows_def), column=1, sticky="w", **pad)
+        ttk.Checkbutton(frm, text="Activo", variable=self._var_activo).grid(
+            row=len(rows_def) + 1, column=1, sticky="w", **pad)
 
         btn_row = ttk.Frame(self, padding=(16, 8))
         btn_row.pack(fill="x")
@@ -253,6 +283,10 @@ class _BuzonDialog(tk.Toplevel):
             idx = next((i for i, n in enumerate(self._cert_nombres) if n == cert_text), 0)
             cert_id = self._cert_ids[idx] if idx < len(self._cert_ids) else None
 
+        modo_label = self._var_modo.get()
+        idx_modo = self._modo_labels.index(modo_label) if modo_label in self._modo_labels else 0
+        modo_descarga = self._modo_values[idx_modo]
+
         self.result = {
             "codigo_empresa": self._empresa,
             "nombre":         nombre,
@@ -260,8 +294,15 @@ class _BuzonDialog(tk.Toplevel):
             "tipo_buzon":     self._var_tipo.get().strip() or "DEH",
             "nif_titular":    self._var_nif.get().strip().upper() or None,
             "certificado_id": cert_id,
+            "periodicidad_sync": self._var_periodicidad.get().strip() or "MANUAL",
+            "modo_descarga":  modo_descarga,
+            "envio_automatico_cliente": 1 if self._var_envio_auto.get() else 0,
+            "email_aviso":    self._var_email.get().strip() or None,
+            "responsable_interno": self._var_responsable.get().strip() or None,
             "activo":         1 if self._var_activo.get() else 0,
         }
         if self._buzon.get("id"):
             self.result["id"] = self._buzon["id"]
+        if self._buzon.get("ultima_consulta"):
+            self.result["ultima_consulta"] = self._buzon["ultima_consulta"]
         self.destroy()

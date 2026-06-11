@@ -30,7 +30,6 @@ class UIDashboardEmpresa(ttk.Frame):
         ("importaciones",  "\u25a4", "Importaciones",     "importaciones"),
         ("plantillas",     "\u2630", "Plantillas",        "plantillas"),
         ("maestro_cuentas",    "\u25a1", "Maestro cuentas",       "maestro_cuentas"),
-        ("notificaciones",     "\u2709", "Notificaciones",        "notificaciones"),
         ("configuracion",      "\u2699", "Configuracion",         "configuracion"),
     ]
 
@@ -57,7 +56,6 @@ class UIDashboardEmpresa(ttk.Frame):
         on_open_ocr,
         on_open_terceros=None,
         on_open_maestro_cuentas=None,
-        on_open_notificaciones=None,
         on_back,
     ):
         super().__init__(parent)
@@ -74,7 +72,6 @@ class UIDashboardEmpresa(ttk.Frame):
             "plantillas":      on_open_plantillas,
             "terceros":        on_open_terceros or (lambda: None),
             "maestro_cuentas": on_open_maestro_cuentas or (lambda: None),
-            "notificaciones":  on_open_notificaciones or (lambda: None),
             "configuracion":   on_open_configuracion,
         }
         self._ctx = {}
@@ -348,7 +345,7 @@ class UIDashboardEmpresa(ttk.Frame):
 
         # Permissions
         can_write = bool(self._ctx.get("can_write"))
-        for key in ("configuracion", "plantillas", "importaciones", "ocr", "contabilidad", "notificaciones"):
+        for key in ("configuracion", "plantillas", "importaciones", "ocr", "contabilidad"):
             self._set_nav_enabled(key, can_write)
 
     def _set_stat(self, key: str, value):

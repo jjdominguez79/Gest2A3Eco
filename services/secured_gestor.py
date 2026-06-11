@@ -310,3 +310,57 @@ class SecuredGestorSQLite:
     def eliminar_notif_bandeja_item(self, codigo_empresa: str, item_id: str) -> None:
         self.security.ensure_company_write(codigo_empresa)
         return self._base.eliminar_notif_bandeja_item(codigo_empresa, item_id)
+
+    def archivar_notif_bandeja_item(self, codigo_empresa: str, item_id: str, archivada: bool = True) -> None:
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.archivar_notif_bandeja_item(codigo_empresa, item_id, archivada)
+
+    def marcar_notif_bandeja_enviada_cliente(self, codigo_empresa: str, item_id: str, fecha: str) -> None:
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.marcar_notif_bandeja_enviada_cliente(codigo_empresa, item_id, fecha)
+
+    def asignar_responsable_notif_bandeja(self, codigo_empresa: str, item_id: str, responsable: str | None) -> None:
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.asignar_responsable_notif_bandeja(codigo_empresa, item_id, responsable)
+
+    # ── Notificaciones: listados globales (modulo global) ───────────────────
+    # No usan __getattr__ porque deben filtrarse por empresa segun permisos
+    # del usuario (igual que listar_empresas / listar_facturas_emitidas_todas).
+
+    def listar_empresas_resumen(self):
+        rows = self._base.listar_empresas_resumen()
+        if self.security.session.is_admin():
+            return rows
+        return [row for row in rows if self.security.can_read_company(str(row.get("codigo") or ""))]
+
+    def listar_notif_bandeja_global(self, filtros: dict | None = None):
+        rows = self._base.listar_notif_bandeja_global(filtros)
+        if self.security.session.is_admin():
+            return rows
+        return [row for row in rows if self.security.can_read_company(str(row.get("codigo_empresa") or ""))]
+
+    def listar_notif_certificados_global(self, filtros: dict | None = None):
+        rows = self._base.listar_notif_certificados_global(filtros)
+        if self.security.session.is_admin():
+            return rows
+        return [row for row in rows if self.security.can_read_company(str(row.get("codigo_empresa") or ""))]
+
+    def listar_notif_buzones_global(self, filtros: dict | None = None):
+        rows = self._base.listar_notif_buzones_global(filtros)
+        if self.security.session.is_admin():
+            return rows
+        return [row for row in rows if self.security.can_read_company(str(row.get("codigo_empresa") or ""))]
+
+    def listar_notif_sync_logs(self, filtros: dict | None = None):
+        rows = self._base.listar_notif_sync_logs(filtros)
+        if self.security.session.is_admin():
+            return rows
+        return [row for row in rows if self.security.can_read_company(str(row.get("codigo_empresa") or ""))]
+
+    def upsert_notif_sync_log(self, log: dict) -> str:
+        codigo_empresa = log.get("codigo_empresa")
+        if codigo_empresa:
+            self.security.ensure_company_write(codigo_empresa)
+        else:
+            self.security.ensure_admin("Solo el administrador puede registrar sincronizaciones globales.")
+        return self._base.upsert_notif_sync_log(log)

@@ -3856,7 +3856,34 @@ class GestorSQLite:
             );
             CREATE INDEX IF NOT EXISTS idx_notif_bandeja_empresa
                 ON notif_bandeja(codigo_empresa, ejercicio, estado, fecha_puesta_disposicion);
+            -- v2.1: historico de sincronizaciones
+            CREATE TABLE IF NOT EXISTS notif_sync_logs (
+                id              TEXT PRIMARY KEY,
+                codigo_empresa  TEXT,
+                organismo_id    INTEGER,
+                buzon_id        TEXT,
+                fecha_hora      TEXT NOT NULL,
+                resultado       TEXT NOT NULL DEFAULT 'OK',
+                error_detalle   TEXT,
+                notificaciones_detectadas INTEGER NOT NULL DEFAULT 0,
+                created_at      TEXT NOT NULL,
+                FOREIGN KEY (organismo_id) REFERENCES notif_organismos(id),
+                FOREIGN KEY (buzon_id)     REFERENCES notif_buzones(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_notif_sync_logs_fecha
+                ON notif_sync_logs(fecha_hora);
         """)
+        # v2.1: columnas adicionales para certificados, buzones y bandeja
+        self._ensure_column("notif_certificados", "password_cifrada", "TEXT")
+        self._ensure_column("notif_buzones", "periodicidad_sync", "TEXT NOT NULL DEFAULT 'MANUAL'")
+        self._ensure_column("notif_buzones", "modo_descarga", "TEXT NOT NULL DEFAULT 'SOLO_DETECTAR'")
+        self._ensure_column("notif_buzones", "envio_automatico_cliente", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("notif_buzones", "email_aviso", "TEXT")
+        self._ensure_column("notif_buzones", "responsable_interno", "TEXT")
+        self._ensure_column("notif_bandeja", "responsable", "TEXT")
+        self._ensure_column("notif_bandeja", "archivada", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("notif_bandeja", "enviada_cliente", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("notif_bandeja", "fecha_envio_cliente", "TEXT")
         self.conn.commit()
 
     def listar_notificaciones(
@@ -4000,18 +4027,19 @@ class GestorSQLite:
             INSERT INTO notif_certificados
                 (id, codigo_empresa, nombre, nif_titular, tipo,
                  ruta_archivo, fecha_emision, fecha_caducidad, notas, activo,
-                 created_at, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                 password_cifrada, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
-                nombre          = excluded.nombre,
-                nif_titular     = excluded.nif_titular,
-                tipo            = excluded.tipo,
-                ruta_archivo    = excluded.ruta_archivo,
-                fecha_emision   = excluded.fecha_emision,
-                fecha_caducidad = excluded.fecha_caducidad,
-                notas           = excluded.notas,
-                activo          = excluded.activo,
-                updated_at      = excluded.updated_at
+                nombre            = excluded.nombre,
+                nif_titular       = excluded.nif_titular,
+                tipo              = excluded.tipo,
+                ruta_archivo      = excluded.ruta_archivo,
+                fecha_emision     = excluded.fecha_emision,
+                fecha_caducidad   = excluded.fecha_caducidad,
+                notas             = excluded.notas,
+                activo            = excluded.activo,
+                password_cifrada  = excluded.password_cifrada,
+                updated_at        = excluded.updated_at
             """,
             (
                 cert_id,
@@ -4024,6 +4052,7 @@ class GestorSQLite:
                 cert.get("fecha_caducidad"),
                 cert.get("notas"),
                 int(cert.get("activo", 1)),
+                cert.get("password_cifrada"),
                 cert.get("created_at", now),
                 now,
             ),
@@ -4168,17 +4197,24 @@ class GestorSQLite:
             """
             INSERT INTO notif_buzones
                 (id, codigo_empresa, nombre, organismo_id, tipo_buzon,
-                 nif_titular, certificado_id, activo, ultima_consulta, created_at, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                 nif_titular, certificado_id, activo, ultima_consulta,
+                 periodicidad_sync, modo_descarga, envio_automatico_cliente,
+                 email_aviso, responsable_interno, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
-                nombre          = excluded.nombre,
-                organismo_id    = excluded.organismo_id,
-                tipo_buzon      = excluded.tipo_buzon,
-                nif_titular     = excluded.nif_titular,
-                certificado_id  = excluded.certificado_id,
-                activo          = excluded.activo,
-                ultima_consulta = excluded.ultima_consulta,
-                updated_at      = excluded.updated_at
+                nombre                   = excluded.nombre,
+                organismo_id             = excluded.organismo_id,
+                tipo_buzon               = excluded.tipo_buzon,
+                nif_titular              = excluded.nif_titular,
+                certificado_id           = excluded.certificado_id,
+                activo                   = excluded.activo,
+                ultima_consulta          = excluded.ultima_consulta,
+                periodicidad_sync        = excluded.periodicidad_sync,
+                modo_descarga            = excluded.modo_descarga,
+                envio_automatico_cliente = excluded.envio_automatico_cliente,
+                email_aviso              = excluded.email_aviso,
+                responsable_interno      = excluded.responsable_interno,
+                updated_at               = excluded.updated_at
             """,
             (
                 buzon_id,
@@ -4190,6 +4226,11 @@ class GestorSQLite:
                 buzon.get("certificado_id"),
                 int(buzon.get("activo", 1)),
                 buzon.get("ultima_consulta"),
+                buzon.get("periodicidad_sync", "MANUAL"),
+                buzon.get("modo_descarga", "SOLO_DETECTAR"),
+                int(buzon.get("envio_automatico_cliente", 0)),
+                buzon.get("email_aviso"),
+                buzon.get("responsable_interno"),
                 buzon.get("created_at", now),
                 now,
             ),
@@ -4327,6 +4368,159 @@ class GestorSQLite:
             (item_id, codigo_empresa),
         )
         self.conn.commit()
+
+    def archivar_notif_bandeja_item(self, codigo_empresa: str, item_id: str, archivada: bool = True) -> None:
+        now = self._utc_now()
+        self.conn.execute(
+            "UPDATE notif_bandeja SET archivada=?, updated_at=? WHERE id=? AND codigo_empresa=?",
+            (1 if archivada else 0, now, item_id, codigo_empresa),
+        )
+        self.conn.commit()
+
+    def marcar_notif_bandeja_enviada_cliente(self, codigo_empresa: str, item_id: str, fecha: str) -> None:
+        now = self._utc_now()
+        self.conn.execute(
+            "UPDATE notif_bandeja SET enviada_cliente=1, fecha_envio_cliente=?, updated_at=? "
+            "WHERE id=? AND codigo_empresa=?",
+            (fecha, now, item_id, codigo_empresa),
+        )
+        self.conn.commit()
+
+    def asignar_responsable_notif_bandeja(self, codigo_empresa: str, item_id: str, responsable: str | None) -> None:
+        now = self._utc_now()
+        self.conn.execute(
+            "UPDATE notif_bandeja SET responsable=?, updated_at=? WHERE id=? AND codigo_empresa=?",
+            (responsable, now, item_id, codigo_empresa),
+        )
+        self.conn.commit()
+
+    # ── Notificaciones: listados globales (modulo global) ───────────────────
+    # Estos metodos no filtran por empresa: el filtrado por permisos de
+    # usuario se aplica en services/secured_gestor.py.
+
+    def listar_empresas_resumen(self) -> list[dict]:
+        cur = self.conn.execute(
+            "SELECT codigo, nombre, cif, MAX(ejercicio) AS ejercicio "
+            "FROM empresas GROUP BY codigo ORDER BY nombre"
+        )
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def listar_notif_bandeja_global(self, filtros: dict | None = None) -> list[dict]:
+        sql = """
+            SELECT nb.*, o.nombre AS organismo_nombre, o.codigo AS organismo_codigo,
+                   bz.nombre AS buzon_nombre,
+                   e.nombre AS empresa_nombre, e.cif AS empresa_cif
+            FROM notif_bandeja nb
+            LEFT JOIN notif_organismos o  ON nb.organismo_id = o.id
+            LEFT JOIN notif_buzones    bz ON nb.buzon_id     = bz.id
+            LEFT JOIN (SELECT codigo, nombre, cif, MAX(ejercicio) AS ejercicio
+                       FROM empresas GROUP BY codigo) e ON e.codigo = nb.codigo_empresa
+            WHERE 1=1
+        """
+        params: list = []
+        filtros = filtros or {}
+        if filtros.get("codigo_empresa"):
+            sql += " AND nb.codigo_empresa=?"
+            params.append(filtros["codigo_empresa"])
+        sql += " ORDER BY nb.fecha_puesta_disposicion DESC, nb.created_at DESC"
+        cur = self.conn.execute(sql, params)
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def listar_notif_certificados_global(self, filtros: dict | None = None) -> list[dict]:
+        sql = """
+            SELECT c.*, e.nombre AS empresa_nombre, e.cif AS empresa_cif
+            FROM notif_certificados c
+            LEFT JOIN (SELECT codigo, nombre, cif, MAX(ejercicio) AS ejercicio
+                       FROM empresas GROUP BY codigo) e ON e.codigo = c.codigo_empresa
+            WHERE 1=1
+        """
+        params: list = []
+        filtros = filtros or {}
+        if filtros.get("codigo_empresa"):
+            sql += " AND c.codigo_empresa=?"
+            params.append(filtros["codigo_empresa"])
+        sql += " ORDER BY e.nombre, c.nombre"
+        cur = self.conn.execute(sql, params)
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def listar_notif_buzones_global(self, filtros: dict | None = None) -> list[dict]:
+        sql = """
+            SELECT b.*, o.nombre AS organismo_nombre, o.codigo AS organismo_codigo,
+                   c.nombre AS certificado_nombre,
+                   e.nombre AS empresa_nombre, e.cif AS empresa_cif
+            FROM notif_buzones b
+            LEFT JOIN notif_organismos o   ON b.organismo_id = o.id
+            LEFT JOIN notif_certificados c ON b.certificado_id = c.id
+            LEFT JOIN (SELECT codigo, nombre, cif, MAX(ejercicio) AS ejercicio
+                       FROM empresas GROUP BY codigo) e ON e.codigo = b.codigo_empresa
+            WHERE 1=1
+        """
+        params: list = []
+        filtros = filtros or {}
+        if filtros.get("codigo_empresa"):
+            sql += " AND b.codigo_empresa=?"
+            params.append(filtros["codigo_empresa"])
+        sql += " ORDER BY e.nombre, b.nombre"
+        cur = self.conn.execute(sql, params)
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    # ── notif_sync_logs ──────────────────────────────────────────────────────
+
+    def listar_notif_sync_logs(self, filtros: dict | None = None) -> list[dict]:
+        sql = """
+            SELECT l.*, o.nombre AS organismo_nombre, o.codigo AS organismo_codigo,
+                   bz.nombre AS buzon_nombre,
+                   e.nombre AS empresa_nombre, e.cif AS empresa_cif
+            FROM notif_sync_logs l
+            LEFT JOIN notif_organismos o  ON l.organismo_id = o.id
+            LEFT JOIN notif_buzones    bz ON l.buzon_id     = bz.id
+            LEFT JOIN (SELECT codigo, nombre, cif, MAX(ejercicio) AS ejercicio
+                       FROM empresas GROUP BY codigo) e ON e.codigo = l.codigo_empresa
+            WHERE 1=1
+        """
+        params: list = []
+        filtros = filtros or {}
+        if filtros.get("codigo_empresa"):
+            sql += " AND l.codigo_empresa=?"
+            params.append(filtros["codigo_empresa"])
+        sql += " ORDER BY l.fecha_hora DESC"
+        cur = self.conn.execute(sql, params)
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def upsert_notif_sync_log(self, log: dict) -> str:
+        import uuid as _uuid
+        now    = self._utc_now()
+        log_id = str(log.get("id") or _uuid.uuid4())
+        self.conn.execute(
+            """
+            INSERT INTO notif_sync_logs
+                (id, codigo_empresa, organismo_id, buzon_id, fecha_hora,
+                 resultado, error_detalle, notificaciones_detectadas, created_at)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                resultado                 = excluded.resultado,
+                error_detalle             = excluded.error_detalle,
+                notificaciones_detectadas = excluded.notificaciones_detectadas
+            """,
+            (
+                log_id,
+                log.get("codigo_empresa"),
+                log.get("organismo_id"),
+                log.get("buzon_id"),
+                log.get("fecha_hora", now),
+                log.get("resultado", "OK"),
+                log.get("error_detalle"),
+                int(log.get("notificaciones_detectadas") or 0),
+                log.get("created_at", now),
+            ),
+        )
+        self.conn.commit()
+        return log_id
 
     # ── Seeder de datos simulados ────────────────────────────────────────────
 
