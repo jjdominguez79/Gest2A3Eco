@@ -472,6 +472,7 @@ class GestorSQLite:
         self._ensure_column("facturas_emitidas_docs", "observaciones", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "tipo_operacion", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "modelo_fiscal", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "estado_contable", "TEXT")
         self.conn.execute(
             "UPDATE facturas_emitidas_docs SET tipo_operacion='01' WHERE tipo_operacion IS NULL OR TRIM(tipo_operacion)=''"
         )
@@ -1541,6 +1542,37 @@ class GestorSQLite:
         self.conn.commit()
 
     # ---------- FACTURAS EMITIDAS (DOCUMENTOS) ----------
+    def enviar_facturas_emitidas_a_contabilidad(self, codigo_empresa: str, ejercicio: int, ids: list):
+        """Marca las facturas como pendientes de generar suenlace en el módulo de contabilidad."""
+        ids = ids or []
+        if not ids:
+            return
+        qmarks = ",".join("?" for _ in ids)
+        self.conn.execute(
+            f"UPDATE facturas_emitidas_docs SET estado_contable='pendiente' WHERE codigo_empresa=? AND ejercicio=? AND (estado_contable IS NULL OR estado_contable='') AND id IN ({qmarks})",
+            (codigo_empresa, _ej_val(ejercicio), *ids),
+        )
+        self.conn.commit()
+
+    def listar_facturas_emitidas_en_contabilidad(self, codigo_empresa: str, ejercicio: int):
+        """Devuelve las facturas emitidas con estado_contable pendiente o generado."""
+        cur = self.conn.execute(
+            "SELECT * FROM facturas_emitidas_docs WHERE codigo_empresa=? AND ejercicio=? AND estado_contable IS NOT NULL AND estado_contable != '' ORDER BY fecha_asiento, numero",
+            (codigo_empresa, _ej_val(ejercicio)),
+        )
+        out = []
+        for r in cur.fetchall():
+            d = self._row_to_dict(r)
+            d["lineas"] = json.loads(d.get("lineas_json") or "[]")
+            d["generada"] = bool(d.get("generada"))
+            d["enviado"] = bool(d.get("enviado"))
+            d["retencion_aplica"] = bool(d.get("retencion_aplica"))
+            d["borrador"] = bool(d.get("borrador"))
+            self._normalizar_campos_factura_emitida(d)
+            d.pop("lineas_json", None)
+            out.append(d)
+        return out
+
     def listar_facturas_emitidas(self, codigo_empresa: str, ejercicio: int):
         cur = self.conn.execute(
             "SELECT * FROM facturas_emitidas_docs WHERE codigo_empresa=? AND ejercicio=? ORDER BY fecha_asiento, numero",
@@ -1770,6 +1802,10 @@ class GestorSQLite:
         self.conn.execute(
             f"UPDATE facturas_emitidas_docs SET generada=1, fecha_generacion=? WHERE codigo_empresa=? AND ejercicio=? AND id IN ({qmarks})",
             (fecha, codigo_empresa, _ej_val(ejercicio), *ids),
+        )
+        self.conn.execute(
+            f"UPDATE facturas_emitidas_docs SET estado_contable='generado' WHERE codigo_empresa=? AND ejercicio=? AND estado_contable='pendiente' AND id IN ({qmarks})",
+            (codigo_empresa, _ej_val(ejercicio), *ids),
         )
         self.conn.commit()
 

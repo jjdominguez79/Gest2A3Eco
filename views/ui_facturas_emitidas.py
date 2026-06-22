@@ -25,6 +25,8 @@ from utils.validaciones import (
     validar_nif_o_nif_iva_intracomunitario,
 )
 
+_ESTADO_LABELS = {"pendiente": "Pendiente", "generado": "Generado"}
+
 TIPOS_IDENTIFICACION_TERCERO = [
     ("auto", "Auto"),
     ("nacional", "Documento español"),
@@ -2037,7 +2039,7 @@ class UIFacturasEmitidas(ttk.Frame):
 
         self.tv = ttk.Treeview(
             parent,
-            columns=("marcar", "ejercicio", "serie", "numero", "asiento", "fecha", "cliente", "total", "generada", "fecha_gen", "enviado", "fecha_envio"),
+            columns=("marcar", "ejercicio", "serie", "numero", "asiento", "cont_estado", "fecha", "cliente", "total", "generada", "fecha_gen", "enviado", "fecha_envio"),
             show="headings",
             selectmode="extended",
             height=12,
@@ -2048,6 +2050,7 @@ class UIFacturasEmitidas(ttk.Frame):
             ("serie", "Serie", 70, "center"),
             ("numero", "Numero", 110, "w"),
             ("asiento", "Asiento", 100, "w"),
+            ("cont_estado", "Contab.", 90, "center"),
             ("fecha", "Fecha", 100, "w"),
             ("cliente", "Cliente", 240, "w"),
             ("total", "Total", 100, "e"),
@@ -2094,12 +2097,15 @@ class UIFacturasEmitidas(ttk.Frame):
         self.btn_desmarcar_facturas = ttk.Button(bottom, text="Desmarcar todas", command=self._desmarcar_todas_facturas)
         self.btn_desmarcar_facturas.pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(bottom, text="Exportar Excel", command=self._export_facturas_excel).pack(side=tk.LEFT, padx=(8, 0))
-        self.btn_generar_suenlace = ttk.Button(bottom, text="Generar Suenlace.dat", style="Primary.TButton", command=self._generar)
-        self.btn_generar_suenlace.pack(side=tk.RIGHT)
+        self.btn_enviar_contabilidad = ttk.Button(bottom, text="Enviar a contabilidad", command=self._enviar_a_contabilidad)
+        self.btn_enviar_contabilidad.pack(side=tk.LEFT, padx=(8, 0))
+        self.btn_capturar_asiento = ttk.Button(bottom, text="Capturar nº asiento de A3", command=self._capturar_asiento_a3)
+        self.btn_capturar_asiento.pack(side=tk.RIGHT, padx=(0, 8))
         if not can_write or is_cliente:
             self.btn_marcar_facturas.configure(state="disabled")
             self.btn_desmarcar_facturas.configure(state="disabled")
-            self.btn_generar_suenlace.configure(state="disabled")
+            self.btn_enviar_contabilidad.configure(state="disabled")
+            self.btn_capturar_asiento.configure(state="disabled")
 
     def _build_albaranes_tab(self, parent):
         top = ttk.Frame(parent)
@@ -2248,6 +2254,7 @@ class UIFacturasEmitidas(ttk.Frame):
                 serie_val,
                 numero_display,
                 fac.get("numero_asiento", ""),
+                _ESTADO_LABELS.get(fac.get("estado_contable") or "", ""),
                 to_fecha_ui_or_blank(fac.get("fecha_asiento", "")),
                 fac.get("nombre", ""),
                 fmt2s(total, sym),
@@ -3067,6 +3074,12 @@ class UIFacturasEmitidas(ttk.Frame):
 
     def _generar(self):
         self.controller.generar_suenlace()
+
+    def _enviar_a_contabilidad(self):
+        self.controller.enviar_a_contabilidad()
+
+    def _capturar_asiento_a3(self):
+        self.controller.capturar_numero_asiento_desde_a3()
 
     def ask_save_pdf_path(self, initialfile):
         return filedialog.asksaveasfilename(

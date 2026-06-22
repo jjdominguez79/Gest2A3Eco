@@ -2,6 +2,9 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from controllers.ui_contabilidad_controller import UIContabilidadController
+from controllers.ui_contabilidad_emitidas_controller import UIContabilidadEmitidasController
+
+_ESTADO_LABELS = {"pendiente": "Pendiente", "generado": "Generado"}
 
 
 class UIContabilidad(ttk.Frame):
@@ -13,18 +16,33 @@ class UIContabilidad(ttk.Frame):
         self.nombre = nombre_empresa
         self.session = session
         self._docs = []
+        self._emitidas_docs = []
         self.controller = UIContabilidadController(gestor, codigo_empresa, ejercicio, self)
+        self.emitidas_ctrl = UIContabilidadEmitidasController(gestor, codigo_empresa, ejercicio, self)
         self._build()
         self.controller.refresh()
+        self.emitidas_ctrl.refresh()
 
     def _build(self):
         ttk.Label(
             self,
-            text=f"Contabilidad - facturas recibidas - {self.nombre} ({self.codigo})",
+            text=f"Contabilidad - {self.nombre} ({self.codigo})",
             font=("Segoe UI", 12, "bold"),
         ).pack(anchor="w", padx=10, pady=8)
 
-        wrap = ttk.Frame(self)
+        nb = ttk.Notebook(self)
+        nb.pack(fill="both", expand=True, padx=8, pady=4)
+
+        tab_recibidas = ttk.Frame(nb)
+        nb.add(tab_recibidas, text="Facturas recibidas")
+        self._build_recibidas(tab_recibidas)
+
+        tab_emitidas = ttk.Frame(nb)
+        nb.add(tab_emitidas, text="Facturas emitidas")
+        self._build_emitidas(tab_emitidas)
+
+    def _build_recibidas(self, parent):
+        wrap = ttk.Frame(parent)
         wrap.pack(fill="both", expand=True, padx=10, pady=8)
         wrap.columnconfigure(1, weight=1)
         wrap.rowconfigure(1, weight=1)
@@ -80,13 +98,89 @@ class UIContabilidad(ttk.Frame):
             self.tv_asiento.column(col, width=width, anchor="w")
         self.tv_asiento.grid(row=1, column=0, sticky="nsew")
 
+    def _build_emitidas(self, parent):
+        bar = ttk.Frame(parent)
+        bar.pack(fill="x", padx=10, pady=(8, 4))
+        ttk.Button(
+            bar, text="Generar Suenlace.dat", style="Primary.TButton",
+            command=self.emitidas_ctrl.generar_suenlace,
+        ).pack(side=tk.LEFT)
+        ttk.Label(
+            bar,
+            text="Selecciona facturas y genera el suenlace para importar en A3ECO.",
+            foreground="#555",
+        ).pack(side=tk.LEFT, padx=12)
+
+        self.tv_emitidas = ttk.Treeview(
+            parent,
+            columns=("numero", "fecha", "cliente", "total", "estado"),
+            show="headings",
+            selectmode="extended",
+            height=18,
+        )
+        for col, txt, width, anchor in (
+            ("numero", "Nº Factura", 130, "w"),
+            ("fecha", "Fecha", 100, "w"),
+            ("cliente", "Cliente", 260, "w"),
+            ("total", "Total", 100, "e"),
+            ("estado", "Estado contable", 130, "center"),
+        ):
+            self.tv_emitidas.heading(col, text=txt)
+            self.tv_emitidas.column(col, width=width, anchor=anchor)
+        self.tv_emitidas.pack(fill="both", expand=True, padx=10, pady=(0, 8))
+        self.tv_emitidas.tag_configure("generado", foreground="#2a7a2a")
+        self.tv_emitidas.tag_configure("pendiente", foreground="#b85c00")
+
+    # ── Emitidas tab interface ──────────────────────────────────────────────
+
+    def set_emitidas(self, docs: list[dict]):
+        self._emitidas_docs = docs or []
+        self.tv_emitidas.delete(*self.tv_emitidas.get_children())
+        for doc in self._emitidas_docs:
+            estado = doc.get("estado_contable") or ""
+            serie = str(doc.get("serie") or "").strip()
+            numero = str(doc.get("numero") or "").strip()
+            num_display = f"{serie}{numero}" if serie else numero
+            try:
+                total = float(doc.get("total") or 0)
+            except Exception:
+                total = 0.0
+            tag = estado if estado in ("pendiente", "generado") else ""
+            self.tv_emitidas.insert(
+                "", tk.END,
+                iid=str(doc.get("id")),
+                tags=(tag,) if tag else (),
+                values=(
+                    num_display,
+                    str(doc.get("fecha_asiento") or doc.get("fecha_expedicion") or ""),
+                    str(doc.get("nombre") or ""),
+                    f"{total:.2f}",
+                    _ESTADO_LABELS.get(estado, estado),
+                ),
+            )
+
+    def get_selected_emitida_ids(self) -> list[str]:
+        return list(self.tv_emitidas.selection())
+
+    def ask_yes_no(self, title: str, message: str) -> bool:
+        return messagebox.askyesno(title, message)
+
+    def ask_save_dat_path(self, initialfile: str) -> str:
+        return filedialog.asksaveasfilename(
+            title="Guardar fichero suenlace.dat",
+            defaultextension=".dat",
+            initialfile=initialfile,
+            filetypes=[("Ficheros DAT", "*.dat")],
+        )
+
+    # ── Recibidas tab interface (UIContabilidadController) ──────────────────
+
     def set_documents(self, docs: list[dict]):
         self._docs = docs or []
         self.tv.delete(*self.tv.get_children())
         for doc in self._docs:
             self.tv.insert(
-                "",
-                "end",
+                "", "end",
                 iid=str(doc.get("id")),
                 values=(
                     doc.get("proveedor_nombre", ""),
@@ -111,8 +205,7 @@ class UIContabilidad(ttk.Frame):
         if asiento:
             for idx, line in enumerate(asiento.get("lineas") or []):
                 self.tv_asiento.insert(
-                    "",
-                    "end",
+                    "", "end",
                     iid=f"{doc.get('id')}::{idx}",
                     values=(
                         line.get("subcuenta", ""),

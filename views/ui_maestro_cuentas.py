@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import tkinter as tk
+from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 
+from models.facturas_common import render_a3_tipoC_alta_cuenta
+from services.import_a3_empresa import importar_empresa_desde_a3
 from services.maestro_contable_empresa_service import (
     TIPOS_SUBCUENTA,
     MaestroContableEmpresaService,
@@ -86,7 +89,7 @@ class UIMaestroCuentas(tk.Frame):
                  font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=20, pady=(14, 2))
         tk.Label(
             header,
-            text=f"Subcuentas contables de {self._nombre or self._codigo}.",
+            text=f"Plan contable de {self._nombre or self._codigo}.",
             bg="#ffffff", fg="#64748b",
             font=("Segoe UI", 9),
         ).pack(anchor="w", padx=20, pady=(0, 12))
@@ -114,10 +117,13 @@ class UIMaestroCuentas(tk.Frame):
         ).pack(side="left", padx=(0, 10))
 
         ttk.Button(bar, text="Actualizar", command=self.refresh).pack(side="left", padx=(0, 4))
+        ttk.Button(bar, text="Importar desde A3", style="Primary.TButton",
+                   command=self._importar_plan_desde_a3).pack(side="left", padx=(0, 4))
         ttk.Button(bar, text="Configurar subcuenta", command=self._configurar_subcuenta_empresa).pack(side="left", padx=(0, 4))
         ttk.Button(bar, text="Nueva subcuenta", command=self._nueva).pack(side="left", padx=(0, 4))
         ttk.Button(bar, text="Eliminar subcuenta", command=self._eliminar).pack(side="left", padx=(0, 4))
         ttk.Button(bar, text="Importar Excel", command=self._importar_excel).pack(side="left", padx=(0, 4))
+        ttk.Button(bar, text="Enviar a A3", command=self._enviar_a3).pack(side="left", padx=(0, 4))
         ttk.Button(bar, text="Marcar alta A3", command=self._marcar_alta_a3).pack(side="left")
 
         # Treeview
@@ -451,6 +457,118 @@ class UIMaestroCuentas(tk.Frame):
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
 
+    def _enviar_a3(self):
+        """Genera un fichero SUENLACE DAT con registros tipo C para las subcuentas
+        pendientes seleccionadas (o todas las pendientes si no hay seleccion) y las
+        marca como enlazadas a A3."""
+        sel = self.tv.selection()
+        if sel:
+            candidatas = [r for r in self._rows if str(r["id"]) in sel]
+        else:
+            candidatas = [r for r in self._rows if r.get("pendiente_alta_a3")]
+
+        pendientes = [r for r in candidatas if r.get("pendiente_alta_a3")]
+        if not pendientes:
+            messagebox.showinfo(
+                "Gest2A3Eco",
+                "No hay subcuentas pendientes de envio a A3.\n"
+                "Crea una subcuenta nueva o filtra por 'Solo pendientes A3'.",
+                parent=self.winfo_toplevel(),
+            )
+            return
+
+        empresa = self._gestor.get_empresa(self._codigo, self._ejercicio) or {}
+        ndig = int(empresa.get("digitos_plan") or 8)
+        fecha_hoy = datetime.now().strftime("%d/%m/%Y")
+
+        registros = []
+        for r in pendientes:
+            subcuenta = str(r.get("subcuenta") or "").strip()
+            nombre = str(r.get("nombre_subcuenta") or "").strip()[:30]
+            nif = str(r.get("nif_snapshot") or "").strip()
+            # Datos de domicilio opcionales desde tercero enlazado
+            tercero_id = str(r.get("tercero_id") or "").strip()
+            tercero = {}
+            if tercero_id:
+                try:
+                    tercero = self._gestor.get_tercero(tercero_id) or {}
+                except Exception:
+                    pass
+            registros.append(render_a3_tipoC_alta_cuenta(
+                codigo_empresa=self._codigo,
+                fecha_alta=fecha_hoy,
+                cuenta=subcuenta,
+                ndig_plan=ndig,
+                nombre=nombre,
+                nif=nif,
+                via=str(tercero.get("direccion") or "")[:30],
+                municipio=str(tercero.get("poblacion") or "")[:20],
+                cp=str(tercero.get("cp") or "")[:5],
+                provincia=str(tercero.get("provincia") or "")[:15],
+                telefono=str(tercero.get("telefono") or "")[:12],
+                email=str(tercero.get("email") or "")[:30],
+            ))
+
+        save_path = filedialog.asksaveasfilename(
+            parent=self.winfo_toplevel(),
+            title="Guardar fichero de alta de cuentas para A3",
+            defaultextension=".dat",
+            filetypes=[("DAT", "*.dat"), ("Todos", "*.*")],
+            initialfile=f"{self._codigo}_cuentas.dat",
+        )
+        if not save_path:
+            return
+
+        with open(save_path, "w", encoding="latin-1", newline="") as f:
+            f.writelines(registros)
+
+        # Marcar como enlazadas
+        lote = datetime.now().strftime("%Y%m%d%H%M%S")
+        ids_enviados = [r["id"] for r in pendientes]
+        for rid in ids_enviados:
+            try:
+                self._svc.marcar_subcuenta_alta_a3_realizada(self._gestor, rid, lote=lote)
+            except Exception:
+                pass
+
+        self.refresh()
+        messagebox.showinfo(
+            "Gest2A3Eco",
+            f"Fichero generado con {len(pendientes)} subcuenta(s):\n{save_path}\n\n"
+            "Importa el fichero en A3ECO y las subcuentas quedaran marcadas como enlazadas.",
+            parent=self.winfo_toplevel(),
+        )
+
+    def _importar_plan_desde_a3(self):
+        """Lee CU.DAT de A3 y abre una ventana de previsualizacion antes de guardar."""
+        empresa = self._gestor.get_empresa(self._codigo, self._ejercicio) or {}
+        ndig = int(empresa.get("digitos_plan") or 8)
+        try:
+            data = importar_empresa_desde_a3(self._codigo, digitos_plan_objetivo=ndig)
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+            return
+        plan = data.get("plan_cuentas") or []
+        if not plan:
+            messagebox.showinfo(
+                "Gest2A3Eco",
+                "No se ha encontrado plan de cuentas en A3.\n"
+                "Comprueba que el codigo de empresa y la ruta a A3ECO son correctos.",
+                parent=self.winfo_toplevel(),
+            )
+            return
+        codigo_a3 = str(data.get("codigo") or self._codigo)
+        ejercicio_plan = int(data.get("ejercicio") or 0) or 0
+        _PrevisualizacionPlanDialog(
+            self.winfo_toplevel(),
+            plan=plan,
+            codigo_empresa=codigo_a3,
+            ejercicio=ejercicio_plan,
+            digitos=ndig,
+            gestor=self._gestor,
+            on_confirm=self.refresh,
+        )
+
     def _importar_excel(self):
         path = filedialog.askopenfilename(
             parent=self.winfo_toplevel(),
@@ -476,6 +594,288 @@ class UIMaestroCuentas(tk.Frame):
             self.refresh()
         except Exception as exc:
             messagebox.showerror("Error de importacion", str(exc), parent=self.winfo_toplevel())
+
+
+# ── Helpers para deteccion de descripciones sospechosas ───────────────────────
+
+import re as _re
+
+_SUFIJOS_ENTIDAD = _re.compile(
+    r"\b(S\.?L\.?|S\.?A\.?|S\.?L\.?U\.?|S\.?A\.?U\.?|S\.?C\.?|C\.?B\.?|"
+    r"S\.?L\.?P\.?|S\.?R\.?L\.?|S\.?L\.?L\.?|A\.?I\.?E\.?|"
+    r"SL|SA|SLU|SAU|SC|CB|SLP|SRL|SLL|AIE)\b",
+    _re.IGNORECASE,
+)
+
+_PALABRAS_ENTIDAD = _re.compile(
+    r"\b(ASESORIA|ASESORES|GESTORIA|CONSULTORIA|CONTABILIDAD|EMPRESA|"
+    r"GRUPO|SERVICIOS|SOLUCIONES|SOCIEDAD|COMUNIDAD|COMUNITAT|"
+    r"INVERSIONES|INMOBILIARIA|CONSTRUCCIONES|TRANSPORTES|DISTRIBUCIONES|"
+    r"COMERCIAL|INDUSTRIAL|TECNOLOGIAS|INFORMATICA|INFORMATIQUES)\b",
+    _re.IGNORECASE,
+)
+
+
+def _parece_nombre_entidad(descripcion: str) -> bool:
+    """Devuelve True si la descripcion parece un nombre de empresa/persona en lugar
+    de un concepto contable del PGC (ej. 'ASESORIA GESTINEM SL' en vez de 'CAPITAL SOCIAL')."""
+    d = (descripcion or "").strip()
+    if not d:
+        return False
+    # Si contiene un sufijo juridico tipico (S.L., S.A., etc.) -> muy sospechoso
+    if _SUFIJOS_ENTIDAD.search(d):
+        return True
+    # Si contiene palabras que suelen ser parte de nombres de empresas
+    if _PALABRAS_ENTIDAD.search(d):
+        return True
+    return False
+
+
+# ── Previsualizacion de plan contable desde A3 ────────────────────────────────
+
+class _PrevisualizacionPlanDialog(tk.Toplevel):
+    """Muestra las cuentas leidas del CU.DAT de A3 antes de confirmar la importacion.
+
+    Doble clic sobre una fila (o F2) permite editar la descripcion o el codigo de cuenta
+    directamente en la previsualizacion antes de guardar.
+    """
+
+    def __init__(self, parent, *, plan: list[dict], codigo_empresa: str,
+                 ejercicio: int, digitos: int, gestor, on_confirm=None):
+        super().__init__(parent)
+        self.title(f"Previa importacion plan contable — {codigo_empresa}")
+        self.resizable(True, True)
+        self.grab_set()
+        # Copia editable del plan: lista de dicts con 'cuenta' y 'descripcion'
+        self._plan: list[dict] = [dict(c) for c in plan]
+        self._codigo = codigo_empresa
+        self._ejercicio = ejercicio
+        self._digitos = digitos
+        self._gestor = gestor
+        self._on_confirm = on_confirm
+        self._edit_entry: tk.Entry | None = None
+        self._build()
+        self.geometry("920x640")
+        try:
+            self.update_idletasks()
+            pw = parent.winfo_rootx() + (parent.winfo_width() - 920) // 2
+            ph = parent.winfo_rooty() + (parent.winfo_height() - 640) // 2
+            self.geometry(f"+{max(pw, 0)}+{max(ph, 0)}")
+        except Exception:
+            pass
+
+    # ── UI ────────────────────────────────────────────────────────────────────
+
+    def _build(self):
+        # Cabecera con resumen
+        info = tk.Frame(self, bg="#f0f9ff", pady=8)
+        info.pack(fill="x")
+        self._lbl_resumen = tk.Label(
+            info, bg="#f0f9ff", fg="#0369a1", font=("Segoe UI", 9), anchor="w",
+        )
+        self._lbl_resumen.pack(anchor="w", padx=12)
+        tk.Label(
+            info,
+            text="  Doble clic o F2 sobre una fila para editar su descripcion antes de importar.",
+            bg="#f0f9ff", fg="#64748b", font=("Segoe UI", 8), anchor="w",
+        ).pack(anchor="w", padx=12)
+
+        # Barra de busqueda + botones
+        bar = tk.Frame(self)
+        bar.pack(fill="x", padx=12, pady=(8, 4))
+        tk.Label(bar, text="Buscar:").pack(side="left")
+        self._var_buscar = tk.StringVar()
+        self._var_buscar.trace_add("write", lambda *_: self._filtrar())
+        ttk.Entry(bar, textvariable=self._var_buscar, width=30).pack(side="left", padx=(6, 12))
+        self._var_solo_sospechosas = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            bar, text="Solo sospechosas",
+            variable=self._var_solo_sospechosas,
+            command=self._filtrar,
+        ).pack(side="left", padx=(0, 12))
+        self._lbl_conteo = tk.Label(bar, text="", fg="#64748b", font=("Segoe UI", 8))
+        self._lbl_conteo.pack(side="left")
+
+        # Treeview
+        wrap = tk.Frame(self)
+        wrap.pack(fill="both", expand=True, padx=12, pady=4)
+        wrap.rowconfigure(0, weight=1)
+        wrap.columnconfigure(0, weight=1)
+        self._tv = ttk.Treeview(
+            wrap,
+            columns=("cuenta", "descripcion"),
+            show="headings",
+        )
+        self._tv.heading("cuenta", text="Cuenta", anchor="w")
+        self._tv.column("cuenta", width=150, anchor="w", stretch=False)
+        self._tv.heading("descripcion", text="Descripcion  (doble clic para editar)", anchor="w")
+        self._tv.column("descripcion", width=700, anchor="w")
+        self._tv.grid(row=0, column=0, sticky="nsew")
+        vsb = ttk.Scrollbar(wrap, orient="vertical", command=self._tv.yview)
+        vsb.grid(row=0, column=1, sticky="ns")
+        self._tv.configure(yscrollcommand=vsb.set)
+        self._tv.bind("<Double-Button-1>", self._on_double_click)
+        self._tv.bind("<F2>", lambda _e: self._editar_seleccion())
+
+        # Tags de color para cuentas sospechosas
+        self._tv.tag_configure("sospechosa", background="#fef3c7", foreground="#92400e")
+
+        # Leyenda
+        leyenda = tk.Frame(self)
+        leyenda.pack(fill="x", padx=12, pady=(0, 2))
+        tk.Label(
+            leyenda, width=2, bg="#fef3c7", relief="solid", bd=1,
+        ).pack(side="left")
+        self._lbl_sospechosas = tk.Label(
+            leyenda,
+            text="  Descripcion posiblemente incorrecta (nombre de empresa/persona). "
+                 "Edita antes de importar.",
+            fg="#92400e", font=("Segoe UI", 8), anchor="w",
+        )
+        self._lbl_sospechosas.pack(side="left", padx=(4, 0))
+
+        # Botones de accion
+        btns = tk.Frame(self)
+        btns.pack(fill="x", padx=12, pady=(4, 12))
+        ttk.Button(
+            btns, text="Confirmar importacion", style="Primary.TButton",
+            command=self._confirmar,
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(btns, text="Cancelar", command=self.destroy).pack(side="left")
+
+        self._filtrar()
+
+    # ── Filtro y refresco ─────────────────────────────────────────────────────
+
+    def _filtrar(self):
+        q = (self._var_buscar.get() or "").strip().lower()
+        self._tv.delete(*self._tv.get_children())
+        solo_sospechosas = self._var_solo_sospechosas.get()
+        n_sospechosas = 0
+        for c in self._plan:
+            cuenta = c.get("cuenta", "")
+            desc = c.get("descripcion", "")
+            if q and q not in f"{cuenta} {desc}".lower():
+                continue
+            sospechosa = _parece_nombre_entidad(desc)
+            if sospechosa:
+                n_sospechosas += 1
+            if solo_sospechosas and not sospechosa:
+                continue
+            self._tv.insert(
+                "", tk.END, iid=cuenta, values=(cuenta, desc),
+                tags=("sospechosa",) if sospechosa else (),
+            )
+        visibles = len(self._tv.get_children())
+        self._lbl_conteo.configure(text=f"{visibles} de {len(self._plan)} cuentas")
+        if n_sospechosas:
+            self._lbl_sospechosas.configure(
+                text=f"  {n_sospechosas} descripcion{'es' if n_sospechosas != 1 else ''} "
+                     f"posiblemente incorrecta{'s' if n_sospechosas != 1 else ''} "
+                     f"(nombre de empresa/persona). Edita antes de importar."
+            )
+        else:
+            self._lbl_sospechosas.configure(text="  Sin descripciones sospechosas detectadas.")
+        self._lbl_resumen.configure(
+            text=f"  {len(self._plan)} cuentas leidas de A3  |  "
+                 f"Empresa: {self._codigo}  |  "
+                 f"Ejercicio: {self._ejercicio or 'base'}  |  "
+                 f"Digitos plan: {self._digitos}"
+        )
+
+    # ── Edicion inline ────────────────────────────────────────────────────────
+
+    def _on_double_click(self, event: tk.Event):
+        region = self._tv.identify_region(event.x, event.y)
+        if region != "cell":
+            return
+        col = self._tv.identify_column(event.x)
+        row_id = self._tv.identify_row(event.y)
+        if not row_id:
+            return
+        # Solo editar la columna descripcion (#2); para cuenta usar col #1
+        col_idx = int(col.replace("#", "")) - 1  # 0-based
+        self._abrir_editor(row_id, col_idx)
+
+    def _editar_seleccion(self):
+        sel = self._tv.selection()
+        if sel:
+            self._abrir_editor(sel[0], 1)  # edita descripcion por defecto
+
+    def _abrir_editor(self, row_id: str, col_idx: int):
+        """Coloca un Entry encima de la celda seleccionada para edicion inline."""
+        self._cerrar_editor()
+
+        # Coordenadas de la celda
+        col_name = ("#1", "#2")[col_idx]
+        x, y, w, h = self._tv.bbox(row_id, col_name)
+        if not w:
+            return
+
+        valor_actual = self._tv.set(row_id, col_name)
+        var = tk.StringVar(value=valor_actual)
+        entry = tk.Entry(self._tv, textvariable=var, font=("Segoe UI", 9))
+        entry.place(x=x, y=y, width=w, height=h)
+        entry.select_range(0, tk.END)
+        entry.focus_set()
+        self._edit_entry = entry
+
+        def _aplicar(_event=None):
+            nuevo = var.get().strip()
+            self._cerrar_editor()
+            if nuevo == valor_actual:
+                return
+            # Actualizar la lista _plan en memoria
+            cuenta_key = row_id  # iid = codigo de cuenta
+            for item in self._plan:
+                if item.get("cuenta") == cuenta_key:
+                    if col_idx == 0:
+                        item["cuenta"] = nuevo
+                    else:
+                        item["descripcion"] = nuevo
+                    break
+            # Refrescar la fila en el treeview
+            vals = list(self._tv.item(row_id, "values"))
+            vals[col_idx] = nuevo
+            self._tv.item(row_id, values=vals)
+            # Si cambio el codigo de cuenta, actualizar el iid es complejo;
+            # refrescamos el treeview completo para mantener consistencia
+            if col_idx == 0:
+                self._filtrar()
+
+        def _cancelar(_event=None):
+            self._cerrar_editor()
+
+        entry.bind("<Return>", _aplicar)
+        entry.bind("<Tab>", _aplicar)
+        entry.bind("<Escape>", _cancelar)
+        entry.bind("<FocusOut>", _aplicar)
+
+    def _cerrar_editor(self):
+        if self._edit_entry is not None:
+            try:
+                self._edit_entry.destroy()
+            except Exception:
+                pass
+            self._edit_entry = None
+
+    # ── Confirmacion ──────────────────────────────────────────────────────────
+
+    def _confirmar(self):
+        self._cerrar_editor()
+        try:
+            n = self._gestor.upsert_plan_cuentas(self._codigo, self._ejercicio, self._plan)
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self)
+            return
+        self.destroy()
+        if self._on_confirm:
+            self._on_confirm()
+        messagebox.showinfo(
+            "Gest2A3Eco",
+            f"Plan contable importado: {n} cuentas.\n"
+            f"Ejercicio: {self._ejercicio or 'base'}  |  Digitos: {self._digitos}",
+        )
 
 
 # ── Dialog de subcuenta ────────────────────────────────────────────────────────

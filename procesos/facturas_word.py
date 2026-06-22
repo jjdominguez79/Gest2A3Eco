@@ -188,13 +188,18 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
         },
         "cliente": {
             "nombre": cliente.get("nombre", ""),
+            "nombre_legal": cliente.get("nombre_legal") or cliente.get("nombre", ""),
+            "nombre_comercial": cliente.get("nombre_comercial") or cliente.get("nombre", ""),
             "nif": cliente.get("nif", ""),
             "direccion": cliente.get("direccion", ""),
             "cp": cliente.get("cp", ""),
             "poblacion": cliente.get("poblacion", ""),
             "provincia": cliente.get("provincia", ""),
+            "pais": cliente.get("pais", ""),
             "telefono": cliente.get("telefono", ""),
             "email": cliente.get("email", ""),
+            "contacto": cliente.get("contacto", ""),
+            "direccion_completa": cliente.get("direccion_completa", ""),
         },
         "factura": {
             "serie": fac.get("serie", ""),

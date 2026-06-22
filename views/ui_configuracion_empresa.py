@@ -275,8 +275,6 @@ class UIConfiguracionEmpresa(ttk.Frame):
         self.lbl_bancos_info.grid(row=3, column=0, sticky="w", pady=(8, 0))
         self._load_bank_records()
 
-    # ── Pestana Notificaciones electronicas ─────────────────────────────────────
-
     def _build_notificaciones_tab(self, tab, nb):
         nb.add(tab, text="Notificaciones electronicas")
         codigo = self._empresa.get("codigo") or self._codigo

@@ -267,7 +267,7 @@ class FacturaDialogController:
             return
         fecha_common = self._view.get_fecha_exp()
         t_sel = self._get_selected_tercero()
-        tercero_id = t_sel.get("id") if t_sel else None
+        tercero_id = (t_sel.get("tercero_global_id") or t_sel.get("id")) if t_sel else None
         result = {
             "id": self._factura.get("id"),
             "codigo_empresa": self._codigo,
@@ -339,7 +339,7 @@ class FacturaDialogController:
         if sc:
             validar_subcuenta_longitud(sc, self._ndig, "subcuenta cliente")
         t_sel = self._get_selected_tercero()
-        tercero_id = t_sel.get("id") if t_sel else None
+        tercero_id = (t_sel.get("tercero_global_id") or t_sel.get("id")) if t_sel else None
         result = {
             "id": self._factura.get("id"),
             "codigo_empresa": self._codigo,

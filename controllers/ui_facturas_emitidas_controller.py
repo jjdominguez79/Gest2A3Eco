@@ -8,6 +8,7 @@ from datetime import datetime
 import traceback
 
 from procesos.facturas_emitidas import generar_emitidas
+from services.import_a3_empresa import leer_numero_asiento_desde_a3
 from procesos.facturas_word import (
     build_context_emitida,
     generar_pdf_desde_plantilla_word,
@@ -1051,6 +1052,58 @@ class FacturasEmitidasController:
         self.refresh_facturas()
         self._view.show_info("Gest2A3Eco", f"Fichero generado:\n{save_path}")
 
+    def capturar_numero_asiento_desde_a3(self):
+        """
+        Busca en los ficheros *A.DAT de A3ECO el número de asiento para cada
+        factura seleccionada/marcada y actualiza el campo numero_asiento en BD.
+        Requiere que el suenlace haya sido importado previamente por A3ECO.
+        """
+        if not self._ensure_write():
+            return
+        sel = self._view.get_marked_ids() or self._view.get_selected_ids()
+        if not sel:
+            self._view.show_warning("Gest2A3Eco", "Marca o selecciona al menos una factura.")
+            return
+        codigo_a3 = self._codigo_empresa_a3()
+        actualizadas = []
+        sin_asiento = []
+        for fid in sel:
+            fac = self._get_factura_by_id(fid)
+            if not fac:
+                continue
+            # num_factura en A3ECO = serie + numero (igual que en el suenlace)
+            num_factura = self._numero_factura_contable(fac)
+            descripcion = str(fac.get("descripcion") or "").strip()
+            asiento = leer_numero_asiento_desde_a3(codigo_a3, self._ejercicio, num_factura, descripcion)
+            if asiento:
+                fac["numero_asiento"] = asiento
+                self._gestor.upsert_factura_emitida(fac)
+                actualizadas.append(f"{num_factura} → asiento {asiento}")
+            else:
+                sin_asiento.append(num_factura or str(fid))
+        self.refresh_facturas()
+        partes = []
+        if actualizadas:
+            partes.append("Asientos capturados:\n" + "\n".join(f"  {r}" for r in actualizadas))
+        if sin_asiento:
+            partes.append(
+                "No encontradas en A3ECO (importa el suenlace primero):\n"
+                + "\n".join(f"  {n}" for n in sin_asiento)
+            )
+        self._view.show_info("Gest2A3Eco", "\n\n".join(partes) if partes else "Sin cambios.")
+
+    def enviar_a_contabilidad(self):
+        """Marca las facturas seleccionadas/marcadas como pendientes en el módulo de contabilidad."""
+        if not self._ensure_write():
+            return
+        sel = self._view.get_marked_ids() or self._view.get_selected_ids()
+        if not sel:
+            self._view.show_warning("Gest2A3Eco", "Marca o selecciona al menos una factura.")
+            return
+        self._gestor.enviar_facturas_emitidas_a_contabilidad(self._codigo, self._ejercicio, sel)
+        self.refresh_facturas()
+        self._view.show_info("Gest2A3Eco", f"{len(sel)} factura(s) enviadas al módulo de contabilidad.")
+
     def _get_factura_by_id(self, fid):
         for f in self._facturas_cache or []:
             if str(f.get("id")) == str(fid):
@@ -1422,15 +1475,28 @@ class FacturasEmitidasController:
             ),
             {},
         )
+        cp = cli.get("cp", "")
+        poblacion = cli.get("poblacion", "")
+        provincia = cli.get("provincia", "")
+        direccion = cli.get("direccion", "")
+        cp_pob = ", ".join(p for p in [cp, poblacion] if p)
+        direccion_completa = "\n".join(p for p in [direccion, cp_pob, provincia] if p)
+        nombre = fac.get("nombre") or cli.get("nombre", "")
+        nombre_legal = cli.get("nombre_legal") or cli.get("nombre_comercial") or nombre
         return {
-            "nombre": fac.get("nombre") or cli.get("nombre", ""),
+            "nombre": nombre,
+            "nombre_legal": nombre_legal,
+            "nombre_comercial": cli.get("nombre_comercial") or nombre,
             "nif": normalizar_nif_cif(fac.get("nif") or cli.get("nif", "")),
-            "direccion": cli.get("direccion", ""),
-            "cp": cli.get("cp", ""),
-            "poblacion": cli.get("poblacion", ""),
-            "provincia": cli.get("provincia", ""),
+            "direccion": direccion,
+            "cp": cp,
+            "poblacion": poblacion,
+            "provincia": provincia,
+            "pais": cli.get("pais", ""),
             "telefono": cli.get("telefono", ""),
             "email": cli.get("email", ""),
+            "contacto": cli.get("contacto", ""),
+            "direccion_completa": direccion_completa,
         }
 
     def _factura_to_rows(self, fac: dict):
@@ -1486,6 +1552,9 @@ class FacturasEmitidasController:
             return numero
         if not numero:
             return serie
+        # Evitar duplicar la serie si 'numero' ya la lleva como prefijo (ej. "A000001" + serie "A")
+        if numero.upper().startswith(serie.upper()):
+            numero = numero[len(serie):]
         return f"{serie}{numero}"
 
     def _docx_template_path(

@@ -629,6 +629,244 @@ def _leer_plan_cuentas_binario(cu_path: Path) -> list[dict]:
     return cuentas
 
 
+def _isam_rec_size_from_header(data: bytes) -> int:
+    """
+    Lee el tamaño maximo de registro del header ISAM (bytes 54-57, big-endian)
+    y le suma 4 bytes de overhead ISAM que preceden a cada registro en el fichero.
+    Devuelve 0 si el header no es legible.
+    """
+    if len(data) < 58:
+        return 0
+    max_len = int.from_bytes(data[54:58], "big")
+    return (max_len + 4) if max_len > 0 else 0
+
+
+def _candidate_asiento_paths(codigo_norm: str, ejercicio: int) -> list[Path]:
+    """
+    Localiza los ficheros de asientos {codigo}{ej_digit}{mes}A.DAT
+    de un ejercicio dado. A3ECO genera un fichero por mes:
+      1..9 = enero..septiembre, O=octubre, N=noviembre, D=diciembre, I=cierre.
+    """
+    ej_digit = str(ejercicio % 10)
+    meses = list("123456789") + ["O", "N", "D", "I"]
+    seen: set[str] = set()
+    out: list[Path] = []
+    for folder in _candidate_dirs(codigo_norm):
+        for mes in meses:
+            for variant in (mes.upper(), mes.lower()):
+                path = folder / f"{codigo_norm}{ej_digit}{variant}A.DAT"
+                key = str(path).lower()
+                if key not in seen:
+                    seen.add(key)
+                    out.append(path)
+    return out
+
+
+def dump_asiento_records(codigo: str, ejercicio: int, max_records: int = 3) -> str:
+    """
+    Utilidad de diagnostico: vuelca los primeros registros activos de los
+    ficheros de asientos *A.DAT de A3ECO en formato hexadecimal + texto,
+    anotando las posiciones de byte candidatas a contener campos de interes
+    (concepto, numero de factura, numero de asiento, subcuenta, importe).
+
+    Uso:
+        from services.import_a3_empresa import dump_asiento_records
+        print(dump_asiento_records('E00193', 2025))
+
+    La salida permite identificar los offsets exactos necesarios para implementar
+    la captura automatica del numero de asiento tras el enlace con A3ECO.
+    """
+    codigo_norm = _clean_code(codigo)
+    ficheros_encontrados = 0
+    out: list[str] = []
+
+    for path in _candidate_asiento_paths(codigo_norm, ejercicio):
+        if not path.exists():
+            continue
+        ficheros_encontrados += 1
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            out.append(f"\nError leyendo {path}: {exc}")
+            continue
+
+        if len(data) <= _ISAM_HEADER:
+            out.append(f"\n{path}: fichero vacio o solo cabecera ({len(data)} bytes)")
+            continue
+
+        rec_size = _isam_rec_size_from_header(data)
+        if rec_size <= 4:
+            out.append(
+                f"\n{path}: tamaño de registro no determinado "
+                f"(header[54:58]={data[54:58].hex()})"
+            )
+            continue
+
+        max_len = rec_size - 4
+        total_recs = (len(data) - _ISAM_HEADER) // rec_size
+        active_count = sum(
+            1 for i in range(total_recs)
+            if len(data) >= _ISAM_HEADER + (i + 1) * rec_size
+            and data[_ISAM_HEADER + i * rec_size] in _ISAM_ACTIVE
+        )
+
+        org  = data[39] if len(data) > 39 else "?"
+        comp = data[41] if len(data) > 41 else "?"
+        mode = data[48] if len(data) > 48 else "?"
+
+        out.append(
+            f"\n{'=' * 74}\n"
+            f"Fichero   : {path}\n"
+            f"Bytes     : {len(data)}  |  rec_size={rec_size} bytes "
+            f"(max_len={max_len} + 4 overhead ISAM)\n"
+            f"Registros : {total_recs} totales, {active_count} activos\n"
+            f"Header    : organización={org}  comprimido={comp}  modo={mode}\n"
+            f"{'=' * 74}"
+        )
+
+        count = 0
+        offset = _ISAM_HEADER
+        while offset + rec_size <= len(data) and count < max_records:
+            rec = data[offset: offset + rec_size]
+            marker = rec[0]
+            if marker not in _ISAM_ACTIVE:
+                offset += rec_size
+                continue
+
+            # ── Hex + texto del registro completo en bloques de 16 bytes ──────
+            out.append(f"\n  Registro #{count + 1}  @  offset_fichero={offset}  marker=0x{marker:02X}")
+            out.append(f"  {'byte':>5}  {'hex (16 bytes)':49}  texto")
+            out.append(f"  {'─' * 5}  {'─' * 48}  {'─' * 20}")
+            for row_start in range(0, min(rec_size, 256), 16):
+                chunk = rec[row_start: row_start + 16]
+                hex_col = " ".join(f"{b:02X}" for b in chunk).ljust(47)
+                txt_col = "".join(
+                    chr(b) if 32 <= b < 127 else ("·" if b == 0 else "?")
+                    for b in chunk
+                )
+                out.append(f"  {row_start:>5}  {hex_col}  {txt_col}")
+
+            # ── Campos de texto candidatos ────────────────────────────────────
+            # Busca secuencias de caracteres imprimibles cp850 de longitud >= 4
+            # para ayudar a identificar visualmente los campos.
+            out.append(f"\n  Campos de texto detectados (byte_inicio → contenido):")
+            i = 0
+            while i < min(rec_size, 256):
+                b = rec[i]
+                # cp850: 0x20-0x7E + 0x80-0xFF (Latin extendido)
+                if (0x20 <= b <= 0x7E) or (0x80 <= b <= 0xFF):
+                    j = i
+                    while j < min(rec_size, 256) and ((0x20 <= rec[j] <= 0x7E) or (0x80 <= rec[j] <= 0xFF)):
+                        j += 1
+                    if j - i >= 4:
+                        try:
+                            fragment = rec[i:j].decode(_A3_ENCODING, errors="replace").strip()
+                        except Exception:
+                            fragment = rec[i:j].decode("latin-1", errors="replace").strip()
+                        if fragment:
+                            out.append(f"    byte {i:3d}-{j - 1:3d} (len={j - i:3d}): {fragment!r}")
+                    i = j
+                else:
+                    i += 1
+
+            # ── Interpretación de posibles enteros ───────────────────────────
+            out.append(f"\n  Enteros candidatos a numero de asiento / subcuenta:")
+            for start_b in range(0, min(rec_size, 230), 1):
+                for nbytes in (2, 3, 4):
+                    if start_b + nbytes > rec_size:
+                        break
+                    val = int.from_bytes(rec[start_b: start_b + nbytes], "big")
+                    if 1 <= val <= 999999:
+                        out.append(
+                            f"    byte {start_b:3d} len={nbytes}: {val:>8d}  "
+                            f"(hex {rec[start_b:start_b + nbytes].hex()})"
+                        )
+
+            count += 1
+            offset += rec_size
+
+        if count == 0:
+            out.append("  (no se encontraron registros activos en este fichero)")
+
+    if not ficheros_encontrados:
+        rutas = "\n".join(
+            f"  {p}" for p in _candidate_asiento_paths(codigo_norm, ejercicio)
+        )
+        return (
+            f"No se encontraron ficheros de asientos para empresa {codigo_norm}, "
+            f"ejercicio {ejercicio}.\n"
+            f"Rutas buscadas:\n{rutas}"
+        )
+
+    return "\n".join(out)
+
+
+# ── Offsets confirmados por diagnóstico sobre 0042361A.DAT (enero 2026) ───────
+_AS_CONCEPTO = slice(15, 45)   # 30 chars cp850 — descripción del apunte
+_AS_NUM_FRA  = slice(45, 55)   # 10 chars cp850 — número de factura (campo búsqueda)
+_AS_APUNTE   = slice(110, 112) # 2 bytes big-endian — número de asiento ← clave
+
+
+def leer_numero_asiento_desde_a3(
+    codigo: str,
+    ejercicio: int,
+    num_factura: str,
+    descripcion: str = "",
+) -> str | None:
+    """
+    Busca el número de asiento en los ficheros *A.DAT de A3ECO tras procesar
+    el suenlace.
+
+    Parámetros
+    ----------
+    codigo      : Código de empresa tal como aparece en TECODIR (ej. 'E00423').
+    ejercicio   : Año del ejercicio (ej. 2026).
+    num_factura : Número de factura escrito en el suenlace (máx. 10 chars).
+                  Se busca en el campo num_fra de cada registro (bytes 45-54).
+    descripcion : Cadena alternativa que se busca en el campo concepto (bytes
+                  15-44) si num_factura no produce coincidencia exacta.
+                  Se comparan los primeros 10 caracteres.
+
+    Retorna
+    -------
+    El número de asiento como cadena (ej. '15') o None si no se encuentra.
+    El número de asiento es el mismo para todos los apuntes de un mismo asiento,
+    por lo que se devuelve el primero que coincida con cualquier apunte del
+    asiento buscado.
+    """
+    codigo_norm = _clean_code(codigo)
+    num_fra_limpio = str(num_factura or "").strip()[:10]
+    desc_prefix = str(descripcion or "").strip()[:10]
+
+    for path in _candidate_asiento_paths(codigo_norm, ejercicio):
+        if not path.exists():
+            continue
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+
+        rec_size = _isam_rec_size_from_header(data) or 132
+        offset = _ISAM_HEADER
+
+        while offset + rec_size <= len(data):
+            rec = data[offset: offset + rec_size]
+            if rec[0] in _ISAM_ACTIVE:
+                num_fra_rec = rec[_AS_NUM_FRA].decode(_A3_ENCODING, errors="replace").strip()
+                match_num_fra = num_fra_limpio and num_fra_rec == num_fra_limpio
+                match_concepto = False
+                if not match_num_fra and desc_prefix:
+                    concepto_rec = rec[_AS_CONCEPTO].decode(_A3_ENCODING, errors="replace").strip()
+                    match_concepto = desc_prefix in concepto_rec
+                if match_num_fra or match_concepto:
+                    apunte = int.from_bytes(rec[_AS_APUNTE], "big")
+                    if apunte > 0:
+                        return str(apunte)
+            offset += rec_size
+
+    return None
+
+
 def dump_cu_records(cu_path: Path, max_records: int = 20) -> str:
     """
     Utilidad de diagnostico: vuelca los primeros registros activos del fichero
@@ -659,6 +897,87 @@ def dump_cu_records(cu_path: Path, max_records: int = 20) -> str:
             count += 1
         offset += _CU_REC_SIZE
     return "\n".join(lines)
+
+
+_SUFIJOS_ENTIDAD_SVC = re.compile(
+    r"\b(S\.?L\.?U?\.?|S\.?A\.?U?\.?|S\.?C\.?|C\.?B\.?|S\.?L\.?P\.?|S\.?R\.?L\.?|"
+    r"SL|SA|SLU|SAU|SC|CB|SLP|SRL)\b",
+    re.IGNORECASE,
+)
+_PALABRAS_ENTIDAD_SVC = re.compile(
+    r"\b(ASESORIA|ASESORES|GESTORIA|CONSULTORIA|CONTABILIDAD|EMPRESA|GRUPO|SERVICIOS|"
+    r"SOLUCIONES|SOCIEDAD|COMUNIDAD|INVERSIONES|INMOBILIARIA|CONSTRUCCIONES|TRANSPORTES|"
+    r"DISTRIBUCIONES|COMERCIAL|INDUSTRIAL|TECNOLOGIAS|INFORMATICA)\b",
+    re.IGNORECASE,
+)
+
+# Descripciones estándar del PGC (Plan General Contable) por prefijo de cuenta.
+# Se usan para corregir descripciones que A3ECO rellena con la razón social
+# de la empresa (comportamiento habitual en cuentas de capital y reservas).
+_PGC_DESCRIPCIONES: list[tuple[str, str]] = [
+    # Grupo 1 - Financiación básica
+    ("10000", "Capital"),
+    ("1000",  "Capital"),
+    ("100",   "Capital"),
+    ("1010",  "Capital social pendiente de inscripcion"),
+    ("101",   "Capital social pendiente de inscripcion"),
+    ("1020",  "Capital"),
+    ("102",   "Capital"),
+    ("1030",  "Socios por desembolsos no exigidos"),
+    ("103",   "Socios por desembolsos no exigidos"),
+    ("1040",  "Socios por aportaciones no dinerarias pendientes"),
+    ("104",   "Socios por aportaciones no dinerarias pendientes"),
+    ("110",   "Prima de emision o asuncion"),
+    ("111",   "Otros instrumentos de patrimonio neto"),
+    ("112",   "Constitucion"),
+    ("113",   "Reservas voluntarias"),
+    ("114",   "Reservas especiales"),
+    ("115",   "Reservas por perdidas y ganancias actuariales"),
+    ("116",   "Reservas para acciones o participaciones de la sociedad dominante"),
+    ("117",   "Reservas por acciones propias aceptadas en garantia"),
+    ("118",   "Aportaciones de socios o propietarios"),
+    ("119",   "Diferencias por ajuste del capital a euros"),
+    ("120",   "Remanente"),
+    ("121",   "Resultados negativos de ejercicios anteriores"),
+    ("129",   "Resultado del ejercicio"),
+    ("130",   "Subvenciones oficiales de capital"),
+    ("131",   "Donaciones y legados de capital"),
+    ("132",   "Otras subvenciones"),
+    ("133",   "Ajustes por valoracion en activos financieros disponibles para la venta"),
+    ("134",   "Operaciones de cobertura"),
+    ("135",   "Ajustes por valoracion en activos no corrientes en venta"),
+    ("136",   "Diferencia de conversion"),
+    ("137",   "Ingresos fiscales a distribuir en varios ejercicios"),
+]
+
+def _parece_nombre_entidad_svc(descripcion: str) -> bool:
+    """Devuelve True si la descripcion parece una razon social en lugar de un concepto contable."""
+    d = (descripcion or "").strip()
+    if not d:
+        return False
+    if _SUFIJOS_ENTIDAD_SVC.search(d):
+        return True
+    if _PALABRAS_ENTIDAD_SVC.search(d):
+        return True
+    return False
+
+
+def _corregir_descripcion_pgc(cuenta: str, descripcion: str) -> str:
+    """
+    Si la descripcion de una cuenta parece una razon social (A3ECO la rellena
+    con el nombre de la empresa en cuentas de capital y reservas), la sustituye
+    por la descripcion estandar del PGC correspondiente al prefijo de la cuenta.
+
+    Solo actua cuando la descripcion es sospechosa Y existe un mapeo PGC conocido.
+    """
+    if not _parece_nombre_entidad_svc(descripcion):
+        return descripcion
+    codigo = str(cuenta or "").strip()
+    # Buscar el prefijo mas largo que coincida
+    for prefijo, desc_pgc in _PGC_DESCRIPCIONES:
+        if codigo.startswith(prefijo):
+            return desc_pgc
+    return descripcion
 
 
 def _deducir_digitos_plan(plan_cuentas: list[dict]) -> int:
@@ -717,9 +1036,10 @@ def _filtrar_plan_cuentas_por_digitos(plan_cuentas: list[dict], ndig: int) -> li
         if cuenta_norm in seen:
             continue
         seen.add(cuenta_norm)
+        desc_corregida = _corregir_descripcion_pgc(cuenta_norm, item["descripcion"])
         out.append({
             "cuenta": cuenta_norm,
-            "descripcion": item["descripcion"],
+            "descripcion": desc_corregida,
         })
     out.sort(key=lambda x: (int(x["cuenta"]), x["cuenta"]))
     return out
