@@ -1,9 +1,13 @@
 """Vista integrada del maestro de subcuentas contables de empresa."""
 from __future__ import annotations
 
+import logging
+import threading
 import tkinter as tk
 from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
+
+_log = logging.getLogger(__name__)
 
 from models.facturas_common import render_a3_tipoC_alta_cuenta
 from services.import_a3_empresa import importar_empresa_desde_a3
@@ -120,6 +124,7 @@ class UIMaestroCuentas(tk.Frame):
         ttk.Button(bar, text="Importar desde A3", style="Primary.TButton",
                    command=self._importar_plan_desde_a3).pack(side="left", padx=(0, 4))
         ttk.Button(bar, text="Configurar subcuenta", command=self._configurar_subcuenta_empresa).pack(side="left", padx=(0, 4))
+        ttk.Button(bar, text="Ficha tercero", command=self._abrir_ficha_tercero_global).pack(side="left", padx=(0, 4))
         ttk.Button(bar, text="Nueva subcuenta", command=self._nueva).pack(side="left", padx=(0, 4))
         ttk.Button(bar, text="Eliminar subcuenta", command=self._eliminar).pack(side="left", padx=(0, 4))
         ttk.Button(bar, text="Importar Excel", command=self._importar_excel).pack(side="left", padx=(0, 4))
@@ -577,23 +582,259 @@ class UIMaestroCuentas(tk.Frame):
         )
         if not path:
             return
+
+        # Leer DataFrame (operacion bloqueante pero rapida)
         try:
             import pandas as pd
             df = pd.read_csv(path, dtype=str) if path.endswith(".csv") else _read_excel_autodetect(path)
-            resultado = self._svc.importar_subcuentas_desde_dataframe(
+        except Exception as exc:
+            messagebox.showerror(
+                "Error de importacion", f"No se pudo leer el fichero:\n{exc}",
+                parent=self.winfo_toplevel(),
+            )
+            return
+
+        # Detectar duplicados ANTES de importar
+        try:
+            duplicados = self._svc.detectar_duplicados_en_dataframe(
                 self._gestor, self._codigo, df
             )
-            msg = (
-                f"Importadas: {resultado['importadas']}\n"
-                f"Actualizadas: {resultado['actualizadas']}\n"
-                f"Errores: {resultado['errores']}"
+        except Exception:
+            duplicados = []
+
+        actualizar_duplicados = True
+        if duplicados:
+            n = len(duplicados)
+            ejemplos = ", ".join(duplicados[:5])
+            if n > 5:
+                ejemplos += f" ... y {n - 5} mas"
+            resp = messagebox.askyesnocancel(
+                "Subcuentas duplicadas",
+                f"Se han encontrado {n} subcuenta(s) que ya existen en el maestro:\n\n"
+                f"  {ejemplos}\n\n"
+                "  Si      → Actualizar los registros existentes con los nuevos datos\n"
+                "  No      → Conservar los existentes e importar solo las nuevas\n"
+                "  Cancelar → Cancelar toda la importacion",
+                parent=self.winfo_toplevel(),
             )
-            if resultado["detalles_error"]:
-                msg += "\n\nErrores:\n" + "\n".join(resultado["detalles_error"][:10])
-            messagebox.showinfo("Importacion completada", msg, parent=self.winfo_toplevel())
+            if resp is None:
+                _log.info("Importacion Excel cancelada por el usuario (duplicados).")
+                return
+            actualizar_duplicados = bool(resp)
+
+        # Lanzar importacion en hilo con dialogo de progreso
+        _ProgressImportDialog(
+            self.winfo_toplevel(),
+            svc=self._svc,
+            gestor=self._gestor,
+            codigo=self._codigo,
+            df=df,
+            actualizar_duplicados=actualizar_duplicados,
+            on_complete=lambda r: (self.after(0, self.refresh), self.after(0, lambda: self._mostrar_resumen_importacion(r))),
+        )
+
+    def _mostrar_resumen_importacion(self, resultado: dict):
+        msg = (
+            f"Importacion completada:\n\n"
+            f"  Nuevas:      {resultado.get('importadas', 0)}\n"
+            f"  Actualizadas: {resultado.get('actualizadas', 0)}\n"
+            f"  Omitidas:    {resultado.get('omitidas', 0)}\n"
+            f"  Errores:     {resultado.get('errores', 0)}"
+        )
+        errores = resultado.get("detalles_error") or []
+        if errores:
+            msg += "\n\nDetalle de errores:\n" + "\n".join(errores[:10])
+            if len(errores) > 10:
+                msg += f"\n... y {len(errores) - 10} error(es) mas"
+        messagebox.showinfo("Importacion completada", msg, parent=self.winfo_toplevel())
+
+    def _abrir_ficha_tercero_global(self):
+        """Abre la ficha global del tercero vinculado a la subcuenta seleccionada."""
+        sel = self.tv.selection()
+        if not sel:
+            messagebox.showinfo(
+                "Gest2A3Eco", "Selecciona una subcuenta.", parent=self.winfo_toplevel()
+            )
+            return
+        rec = next((r for r in self._rows if str(r["id"]) == sel[0]), None)
+        if not rec:
+            return
+
+        tercero = self._resolver_tercero_para_subcuenta(rec)
+        if not tercero:
+            if not messagebox.askyesno(
+                "Gest2A3Eco",
+                "La subcuenta no tiene tercero global vinculado.\n\n"
+                "Quieres crear o vincular un tercero global ahora?",
+                parent=self.winfo_toplevel(),
+            ):
+                return
+            tercero = self._crear_tercero_global_desde_subcuenta(rec)
+            if not tercero:
+                return
+            # Actualizar el vinculo en la subcuenta
+            tercero_id = str(tercero.get("id") or "").strip()
+            if tercero_id:
+                try:
+                    self._gestor.upsert_maestro_subcuenta({
+                        "id": rec.get("id"),
+                        "codigo_empresa": self._codigo,
+                        "subcuenta": rec.get("subcuenta"),
+                        "tercero_id": tercero_id,
+                        "nombre_subcuenta": rec.get("nombre_subcuenta"),
+                        "tipo_subcuenta": rec.get("tipo_subcuenta"),
+                        "nif_snapshot": rec.get("nif_snapshot"),
+                        "activo": rec.get("activo", 1),
+                        "origen": rec.get("origen"),
+                        "creado_en_gest2a3eco": rec.get("creado_en_gest2a3eco", 0),
+                        "pendiente_alta_a3": rec.get("pendiente_alta_a3", 0),
+                        "observaciones": rec.get("observaciones"),
+                    })
+                    _log.info("Tercero %s vinculado a subcuenta %s", tercero_id, rec.get("subcuenta"))
+                except Exception as exc:
+                    _log.warning("No se pudo actualizar vinculo tercero-subcuenta: %s", exc)
             self.refresh()
+            return
+
+        # Abrir ficha global del tercero para edicion
+        dlg = TerceroFicha(self.winfo_toplevel(), tercero)
+        payload = dlg.result
+        if not payload:
+            return
+
+        nif_extranjero = bool(payload.pop("_nif_extranjero", False))
+        nif = (
+            str(payload.get("nif") or "").strip().upper()
+            if nif_extranjero
+            else normalizar_nif_cif(payload.get("nif"))
+        )
+        if nif and not nif_extranjero and not validar_nif_o_nif_iva_intracomunitario(nif):
+            messagebox.showerror(
+                "Gest2A3Eco", "NIF/CIF/NIE o NIF-IVA intracomunitario invalido.",
+                parent=self.winfo_toplevel(),
+            )
+            return
+
+        payload["nif"] = nif
+        payload["id"] = tercero.get("id")
+        tipo_ident_key = payload.pop("_tipo_identificacion_selector", None)
+        if tipo_ident_key:
+            payload["tipo_identificacion"] = {
+                "vat": "vat", "foreign": "foreign", "nacional": "nif",
+            }.get(tipo_ident_key)
+
+        try:
+            self._gestor.upsert_tercero(payload)
+            _log.info("Tercero global actualizado: id=%s nif=%s", tercero.get("id"), nif)
+            self.refresh()
+            messagebox.showinfo(
+                "Gest2A3Eco", "Ficha del tercero actualizada correctamente.",
+                parent=self.winfo_toplevel(),
+            )
         except Exception as exc:
-            messagebox.showerror("Error de importacion", str(exc), parent=self.winfo_toplevel())
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+
+
+# ── Dialogo de progreso para importacion Excel ────────────────────────────────
+
+class _ProgressImportDialog(tk.Toplevel):
+    """Dialogo modal que ejecuta la importacion de subcuentas en un hilo de fondo
+    y muestra una barra de progreso indeterminada mientras dura la operacion.
+
+    Al finalizar llama a on_complete(resultado) desde el hilo principal.
+    """
+
+    def __init__(self, parent, *, svc, gestor, codigo, df, actualizar_duplicados, on_complete):
+        super().__init__(parent)
+        self.title("Importando subcuentas...")
+        self.resizable(False, False)
+        self.grab_set()
+        self.protocol("WM_DELETE_WINDOW", lambda: None)  # No cerrar durante importacion
+
+        self._on_complete = on_complete
+        self._resultado = None
+        self._error = None
+
+        frm = tk.Frame(self, padx=24, pady=20, bg="#f1f5f9")
+        frm.pack(fill="both", expand=True)
+
+        tk.Label(
+            frm,
+            text="Importando subcuentas desde Excel...",
+            bg="#f1f5f9", fg="#0f172a",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(anchor="w", pady=(0, 10))
+
+        self.lbl_estado = tk.Label(
+            frm,
+            text="Preparando importacion...",
+            bg="#f1f5f9", fg="#475569",
+            font=("Segoe UI", 9),
+        )
+        self.lbl_estado.pack(anchor="w", pady=(0, 8))
+
+        self.pb = ttk.Progressbar(frm, mode="indeterminate", length=340)
+        self.pb.pack(fill="x", pady=(0, 8))
+        self.pb.start(12)
+
+        self.lbl_progreso = tk.Label(
+            frm,
+            text="",
+            bg="#f1f5f9", fg="#64748b",
+            font=("Segoe UI", 8),
+        )
+        self.lbl_progreso.pack(anchor="w")
+
+        try:
+            self.update_idletasks()
+            pw = parent.winfo_rootx() + (parent.winfo_width() - 400) // 2
+            ph = parent.winfo_rooty() + (parent.winfo_height() - 160) // 2
+            self.geometry(f"400x160+{max(pw, 0)}+{max(ph, 0)}")
+        except Exception:
+            self.geometry("400x160")
+
+        # Iniciar hilo
+        t = threading.Thread(
+            target=self._run,
+            args=(svc, gestor, codigo, df, actualizar_duplicados),
+            daemon=True,
+        )
+        t.start()
+
+    def _progress_cb(self, idx: int, total: int):
+        """Callback desde el hilo de importacion para actualizar la etiqueta."""
+        try:
+            pct = int(idx * 100 / total) if total > 0 else 0
+            self.after(0, lambda: self.lbl_progreso.configure(
+                text=f"Procesando fila {idx} de {total} ({pct}%)"
+            ))
+        except Exception:
+            pass
+
+    def _run(self, svc, gestor, codigo, df, actualizar_duplicados):
+        try:
+            resultado = svc.importar_subcuentas_desde_dataframe(
+                gestor, codigo, df,
+                actualizar_duplicados=actualizar_duplicados,
+                progress_callback=self._progress_cb,
+            )
+            self._resultado = resultado
+        except Exception as exc:
+            self._error = exc
+        self.after(0, self._finalizar)
+
+    def _finalizar(self):
+        self.pb.stop()
+        self.destroy()
+        if self._error:
+            import tkinter.messagebox as mb
+            mb.showerror("Error de importacion", str(self._error))
+            return
+        if self._on_complete and self._resultado is not None:
+            try:
+                self._on_complete(self._resultado)
+            except Exception:
+                pass
 
 
 # ── Helpers para deteccion de descripciones sospechosas ───────────────────────

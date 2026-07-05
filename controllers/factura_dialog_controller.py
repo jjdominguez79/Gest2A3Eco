@@ -110,57 +110,26 @@ class FacturaDialogController:
                 self.on_tercero_selected()
                 return
 
-    def crear_tercero(self):
-        payload = self._view.open_create_third_party_dialog({
-            "nif": self._view.get_nif(),
-            "nombre": self._view.get_nombre(),
-        })
-        if not payload:
+    def get_tercero_full_data(self, tercero_global_id: str) -> dict:
+        """Devuelve los datos completos del tercero (incluye direccion, telefono, email, etc.)."""
+        if not tercero_global_id:
+            return {}
+        t = self._gestor.get_tercero(tercero_global_id)
+        return t or {}
+
+    def actualizar_tercero(self, tercero_id: str, datos: dict):
+        """Persiste los cambios del panel de datos del tercero en la tabla terceros."""
+        if not tercero_id:
+            self._view.show_warning("Gest2A3Eco", "No hay ningun tercero seleccionado para actualizar.")
             return
-        nif_extranjero = bool(payload.pop("_nif_extranjero", False))
-        nif = str(payload.get("nif") or "").strip().upper() if nif_extranjero else normalizar_nif_cif(payload.get("nif"))
-        if nif and not nif_extranjero and not validar_nif_o_nif_iva_intracomunitario(nif):
-            self._view.show_error("Gest2A3Eco", "NIF/CIF/NIE o NIF-IVA intracomunitario invalido.")
+        existing = self._gestor.get_tercero(tercero_id)
+        if not existing:
+            self._view.show_warning("Gest2A3Eco", "No se encontro el tercero en la base de datos.")
             return
-        existente = None
-        if nif:
-            for tercero in self._gestor.listar_terceros():
-                if normalizar_nif_cif(tercero.get("nif")) == nif:
-                    existente = tercero
-                    break
-        tercero_payload = dict(payload)
-        tercero_payload["nif"] = nif
-        tercero_payload["pais"] = normalizar_codigo_pais(tercero_payload.get("pais")) or inferir_pais_desde_identificacion(nif)
-        tercero_payload["tipo_identificacion"] = {
-            "vat": "vat",
-            "foreign": "foreign",
-            "nacional": "nif",
-        }.get(payload.get("_tipo_identificacion_selector"))
-        tercero_id = str(existente.get("id")) if existente else self._gestor.upsert_tercero(tercero_payload)
-        rel_actual = self._gestor.get_tercero_empresa(self._codigo, tercero_id, self._ejercicio) or {}
-        self._gestor.upsert_tercero_empresa(
-            {
-                "tercero_id": tercero_id,
-                "codigo_empresa": self._codigo,
-                "ejercicio": 0,
-                "subcuenta_cliente": rel_actual.get("subcuenta_cliente", ""),
-                "subcuenta_proveedor": rel_actual.get("subcuenta_proveedor", ""),
-                "subcuenta_ingreso": rel_actual.get("subcuenta_ingreso", ""),
-                "subcuenta_gasto": rel_actual.get("subcuenta_gasto", ""),
-                "cliente_tipo_operacion_iva": rel_actual.get("cliente_tipo_operacion_iva"),
-                "cliente_intracomunitaria_clase": rel_actual.get("cliente_intracomunitaria_clase"),
-                "proveedor_tipo_operacion_iva": rel_actual.get("proveedor_tipo_operacion_iva"),
-                "proveedor_intracomunitaria_clase": rel_actual.get("proveedor_intracomunitaria_clase"),
-                "proveedor_iva_deducible": rel_actual.get("proveedor_iva_deducible"),
-                "proveedor_porcentaje_deduccion_iva": rel_actual.get("proveedor_porcentaje_deduccion_iva"),
-            }
-        )
-        self.load_terceros()
-        self.preselect_tercero(tercero_id)
-        self._view.show_info(
-            "Gest2A3Eco",
-            "Tercero creado y asignado a la empresa. Configura su subcuenta/IVA en Maestro de Cuentas si lo necesitas.",
-        )
+        payload = dict(existing)
+        payload.update({k: v for k, v in datos.items() if v is not None})
+        self._gestor.upsert_tercero(payload)
+        self._view.show_info("Gest2A3Eco", "Datos del tercero actualizados correctamente.")
 
     def on_tercero_selected(self):
         t = self._get_selected_tercero()
@@ -180,6 +149,10 @@ class FacturaDialogController:
             if self._has_cliente_autofill_config(t)
             else "La subcuenta seleccionada no tiene configuracion fiscal/contable completa. Puede continuar, pero algunos campos deberan revisarse manualmente."
         )
+        # Rellenar panel de datos completos del tercero
+        tercero_global_id = str(t.get("tercero_global_id") or t.get("id") or "").strip()
+        full = self.get_tercero_full_data(tercero_global_id) if tercero_global_id else t
+        self._view.set_tercero_panel(full, tercero_global_id)
 
     def pick_date(self, target_var):
         txt = (target_var.get() or "").strip()

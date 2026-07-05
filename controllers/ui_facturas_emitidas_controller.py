@@ -3,6 +3,7 @@ import shutil
 import sys
 import webbrowser
 import subprocess
+from contextlib import contextmanager
 from urllib.parse import quote
 from datetime import datetime
 import traceback
@@ -33,6 +34,49 @@ class FacturasEmitidasController:
         self._view = view
         self._allow_all_years = bool(allow_all_years)
         self._facturas_cache = []
+
+    @contextmanager
+    def _busy_dialog(self, msg="Procesando, por favor espere..."):
+        """Muestra un dialogo de espera mientras se ejecuta la operacion pesada.
+        Bloquea el hilo principal pero al menos informa al usuario de que algo ocurre."""
+        import tkinter as tk
+        from tkinter import ttk as _ttk
+        parent = None
+        dlg = None
+        try:
+            parent = self._view.winfo_toplevel()
+        except Exception:
+            pass
+        try:
+            dlg = tk.Toplevel(parent)
+            dlg.title("Gest2A3Eco")
+            dlg.resizable(False, False)
+            if parent:
+                dlg.transient(parent)
+                try:
+                    parent.config(cursor="wait")
+                except Exception:
+                    pass
+            tk.Label(dlg, text=msg, pady=14, padx=24).pack()
+            pb = _ttk.Progressbar(dlg, mode="indeterminate", length=280)
+            pb.pack(padx=24, pady=(0, 14))
+            pb.start(10)
+            dlg.update()
+        except Exception:
+            dlg = None
+        try:
+            yield
+        finally:
+            if dlg is not None:
+                try:
+                    dlg.destroy()
+                except Exception:
+                    pass
+            if parent is not None:
+                try:
+                    parent.config(cursor="")
+                except Exception:
+                    pass
 
     def _security(self):
         return getattr(self._gestor, "security", None)
@@ -75,9 +119,10 @@ class FacturasEmitidasController:
 
     def apply_facturas_filter(self):
         self._view.clear_facturas()
-        year_filter   = self._view.get_facturas_year_filter() if self._allow_all_years else None
-        serie_filter  = self._view.get_facturas_serie_filter()
+        year_filter    = self._view.get_facturas_year_filter() if self._allow_all_years else None
+        serie_filter   = self._view.get_facturas_serie_filter()
         cliente_filter = self._view.get_facturas_cliente_filter()
+        estado_filter  = self._view.get_facturas_estado_filter()
         for fac in self._facturas_cache:
             if year_filter is not None:
                 if self._year_from_factura(fac) != year_filter:
@@ -89,6 +134,17 @@ class FacturasEmitidasController:
                 nombre = (fac.get("nombre") or "").lower()
                 nif = (fac.get("nif") or "").lower()
                 if cliente_filter not in nombre and cliente_filter not in nif:
+                    continue
+            if estado_filter is not None:
+                ec = (fac.get("estado_contable") or "").strip().lower()
+                # "pendiente" → sin estado contable (null/vacio en BD)
+                # "contabilidad" → estado_contable='pendiente'
+                # "generado" → estado_contable='generado'
+                if estado_filter == "pendiente" and ec != "":
+                    continue
+                elif estado_filter == "contabilidad" and ec != "pendiente":
+                    continue
+                elif estado_filter == "generado" and ec != "generado":
                     continue
             total = self._compute_total(fac)
             self._view.insert_factura_row(fac, total)
@@ -680,7 +736,8 @@ class FacturasEmitidasController:
             return
 
         try:
-            self._generar_pdf_word(fac, save_path)
+            with self._busy_dialog("Generando PDF, por favor espere..."):
+                self._generar_pdf_word(fac, save_path)
         except Exception as e:
             self._log_pdf_error("Error al generar PDF.", e, "", save_path)
             self._view.show_error("Gest2A3Eco", f"No se pudo generar el PDF:\n{e}")
@@ -734,27 +791,28 @@ class FacturasEmitidasController:
         tmp_files = []
         errores = []
         try:
-            for fac in facturas:
-                tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
-                tmp.close()
-                tmp_files.append(tmp.name)
+            with self._busy_dialog(f"Generando PDF ({len(facturas)} facturas), por favor espere..."):
+                for fac in facturas:
+                    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+                    tmp.close()
+                    tmp_files.append(tmp.name)
 
-                try:
-                    self._generar_pdf_word(fac, tmp.name)
-                except Exception as e:
-                    num = fac.get("numero", fac.get("id", "?"))
-                    self._log_pdf_error(f"Error al generar PDF factura {num}.", e, "", tmp.name)
-                    errores.append(f"Factura {num}: {e}")
-                    tmp_files.pop()
-                    continue
+                    try:
+                        self._generar_pdf_word(fac, tmp.name)
+                    except Exception as e:
+                        num = fac.get("numero", fac.get("id", "?"))
+                        self._log_pdf_error(f"Error al generar PDF factura {num}.", e, "", tmp.name)
+                        errores.append(f"Factura {num}: {e}")
+                        tmp_files.pop()
+                        continue
 
-                try:
-                    reader = PdfReader(tmp.name)
-                    for page in reader.pages:
-                        writer.add_page(page)
-                except Exception as e:
-                    num = fac.get("numero", fac.get("id", "?"))
-                    errores.append(f"Factura {num} (lectura PDF): {e}")
+                    try:
+                        reader = PdfReader(tmp.name)
+                        for page in reader.pages:
+                            writer.add_page(page)
+                    except Exception as e:
+                        num = fac.get("numero", fac.get("id", "?"))
+                        errores.append(f"Factura {num} (lectura PDF): {e}")
 
             if writer.pages:
                 with open(save_path, "wb") as f:
@@ -980,7 +1038,6 @@ class FacturasEmitidasController:
             fac = self._get_factura_by_id(fid)
             if fac:
                 facturas_sel.append(fac)
-        facturas_sel = self._prepare_facturas_for_suenlace(facturas_sel)
 
         ya_generadas = [f for f in facturas_sel if f.get("generada")]
         if ya_generadas:
@@ -1006,22 +1063,24 @@ class FacturasEmitidasController:
         plantillas_cache = {}
         no_tpl_years = set()
         registros = []
-        for fac in facturas_sel:
-            rows = self._factura_to_rows(fac)
-            if not rows:
-                continue
-            plantilla = self._plantilla_emitidas_for_factura(fac, plantillas_cache, no_tpl_years)
-            registros.extend(
-                generar_emitidas(
-                    rows,
-                    plantilla,
-                    str(self._codigo),
-                    ndig,
-                    ejercicio=self._ejercicio,
-                    terceros_by_nif=terceros_by_nif,
-                    formato_512=True,
+        with self._busy_dialog("Generando suenlace.dat, por favor espere..."):
+            facturas_sel = self._prepare_facturas_for_suenlace(facturas_sel)
+            for fac in facturas_sel:
+                rows = self._factura_to_rows(fac)
+                if not rows:
+                    continue
+                plantilla = self._plantilla_emitidas_for_factura(fac, plantillas_cache, no_tpl_years)
+                registros.extend(
+                    generar_emitidas(
+                        rows,
+                        plantilla,
+                        str(self._codigo),
+                        ndig,
+                        ejercicio=self._ejercicio,
+                        terceros_by_nif=terceros_by_nif,
+                        formato_512=True,
+                    )
                 )
-            )
         if no_tpl_years:
             years = ", ".join(str(x) for x in sorted(no_tpl_years))
             self._view.show_warning(
@@ -1103,6 +1162,36 @@ class FacturasEmitidasController:
         self._gestor.enviar_facturas_emitidas_a_contabilidad(self._codigo, self._ejercicio, sel)
         self.refresh_facturas()
         self._view.show_info("Gest2A3Eco", f"{len(sel)} factura(s) enviadas al módulo de contabilidad.")
+
+    def ver_asiento_factura(self):
+        """Muestra el asiento contable generado por la factura seleccionada (mejora 6)."""
+        from views.ui_asiento_emitida_dialog import AsientoEmitidaDialog
+        sel = self._view.get_selected_ids()
+        if not sel:
+            self._view.show_info("Gest2A3Eco", "Selecciona una factura.")
+            return
+        fac = self._get_factura_by_id(sel[0])
+        if not fac:
+            return
+
+        # Obtener plantilla de la factura
+        plantilla = self._plantilla_emitidas_for_factura(fac, {}, set())
+        ndig = int(self._empresa_conf.get("digitos_plan", 8))
+
+        parent_win = None
+        try:
+            parent_win = self._view.winfo_toplevel()
+        except Exception:
+            pass
+        AsientoEmitidaDialog(
+            parent_win,
+            fac=fac,
+            plantilla=plantilla,
+            gestor=self._gestor,
+            codigo_empresa=self._codigo,
+            ndig=ndig,
+            on_save=lambda _f: self.refresh_facturas(),
+        )
 
     def _get_factura_by_id(self, fid):
         for f in self._facturas_cache or []:
@@ -1467,14 +1556,19 @@ class FacturasEmitidasController:
         }
 
     def _cliente_factura(self, fac: dict):
-        cli = next(
-            (
-                t
-                for t in self._gestor.listar_terceros()
-                if str(t.get("id")) == str(fac.get("tercero_id"))
-            ),
-            {},
-        )
+        fac_tercero_id = str(fac.get("tercero_id") or "").strip()
+        cli = None
+        if fac_tercero_id:
+            cli = next(
+                (t for t in self._gestor.listar_terceros() if str(t.get("id")) == fac_tercero_id),
+                None,
+            )
+        if cli is None:
+            fac_nif = normalizar_nif_cif(str(fac.get("nif") or ""))
+            if fac_nif:
+                cli = self._gestor.get_tercero_by_nif(fac_nif)
+        if cli is None:
+            cli = {}
         cp = cli.get("cp", "")
         poblacion = cli.get("poblacion", "")
         provincia = cli.get("provincia", "")
@@ -1635,7 +1729,17 @@ class FacturasEmitidasController:
         return plantilla_tipo
 
     def _empresa_conf_for_word(self) -> dict:
+        # Lee datos frescos de la BD para garantizar que el PDF usa la config actual
+        fresh = self._gestor.get_empresa(self._codigo, self._ejercicio) or {}
+        # Si la config fresca no tiene domicilio, intentar con el ejercicio mas reciente
+        if not any(fresh.get(f) for f in ("direccion", "cp", "poblacion", "provincia")):
+            fallback = self._gestor.get_empresa(self._codigo, None) or {}
+            for f in ("direccion", "cp", "poblacion", "provincia", "cif", "telefono", "email", "logo_path",
+                      "logo_max_width_mm", "logo_max_height_mm"):
+                if not fresh.get(f) and fallback.get(f):
+                    fresh[f] = fallback[f]
         emp = dict(self._empresa_conf or {})
+        emp.update(fresh)
         emp.setdefault("codigo", self._codigo)
         emp.setdefault("codigo_empresa", self._codigo)
         return emp
@@ -1673,12 +1777,61 @@ class FacturasEmitidasController:
         )
 
     def _resolve_app_pdf(self, fac: dict) -> str:
-        """Devuelve la ruta del PDF en la carpeta de la app, generandolo si no existe."""
+        """Devuelve la ruta del PDF en la carpeta de la app, generandolo si no existe o esta obsoleto.
+
+        Mejora 3: si la factura tiene updated_at mas reciente que el fichero PDF, el PDF
+        se considera obsoleto y se regenera automaticamente.
+        """
+        import logging as _logging
+        _pdf_log = _logging.getLogger(__name__)
+
         app_path = self._app_pdf_path(fac)
         if not app_path:
             return ""
+
         if os.path.exists(app_path):
-            return app_path
+            # Comprobar si la factura fue modificada despues de que se genero el PDF
+            fac_updated = str(fac.get("updated_at") or "").strip()
+            pdf_obsoleto = False
+            if fac_updated:
+                try:
+                    pdf_mtime = datetime.fromtimestamp(os.path.getmtime(app_path))
+                    # updated_at puede incluir 'T', 'Z' u offset; normalizar a YYYY-MM-DD HH:MM:SS
+                    fac_str = fac_updated.replace("T", " ").replace("Z", "").strip()[:19]
+                    fac_dt = datetime.strptime(fac_str, "%Y-%m-%d %H:%M:%S")
+                    if fac_dt > pdf_mtime:
+                        pdf_obsoleto = True
+                        _pdf_log.info(
+                            "PDF obsoleto para factura id=%s (updated_at=%s > pdf_mtime=%s);"
+                            " regenerando: %s",
+                            fac.get("id"), fac_dt, pdf_mtime, app_path,
+                        )
+                except Exception:
+                    pass  # Si no podemos comparar, usamos el PDF existente
+
+            # Comprobar si la config de empresa cambio despues de que se genero el PDF
+            if not pdf_obsoleto:
+                try:
+                    emp_fresh = self._gestor.get_empresa(self._codigo, self._ejercicio) or {}
+                    emp_cached = self._empresa_conf or {}
+                    _addr_fields = ("direccion", "cp", "poblacion", "provincia", "nombre", "cif")
+                    if any(str(emp_fresh.get(f) or "") != str(emp_cached.get(f) or "") for f in _addr_fields):
+                        pdf_obsoleto = True
+                        _pdf_log.info(
+                            "PDF obsoleto para factura id=%s: config empresa ha cambiado; regenerando: %s",
+                            fac.get("id"), app_path,
+                        )
+                except Exception:
+                    pass
+
+            if pdf_obsoleto:
+                try:
+                    os.unlink(app_path)
+                except Exception as _e:
+                    _pdf_log.warning("No se pudo eliminar PDF obsoleto %s: %s", app_path, _e)
+            else:
+                return app_path
+
         try:
             self._generar_pdf_word(fac, app_path)
         except Exception as e:

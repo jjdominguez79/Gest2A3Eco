@@ -25,7 +25,7 @@ from utils.validaciones import (
     validar_nif_o_nif_iva_intracomunitario,
 )
 
-_ESTADO_LABELS = {"pendiente": "Pendiente", "generado": "Generado"}
+_ESTADO_LABELS = {"pendiente": "Contabilidad", "generado": "Generado"}
 
 TIPOS_IDENTIFICACION_TERCERO = [
     ("auto", "Auto"),
@@ -35,6 +35,7 @@ TIPOS_IDENTIFICACION_TERCERO = [
 ]
 
 from controllers.ui_facturas_emitidas_controller import FacturasEmitidasController
+from controllers.ui_cuotas_controller import CuotasController
 from controllers.factura_dialog_controller import FacturaDialogController
 from controllers.terceros_global_controller import TercerosGlobalController
 from controllers.terceros_empresa_controller import TercerosEmpresaController
@@ -1178,10 +1179,51 @@ class FacturaDialog(tk.Toplevel):
         self.cb_tercero = ttk.Combobox(frm, textvariable=self.var_tercero, width=44)
         self.cb_tercero.grid(row=row, column=1, padx=4, pady=3, sticky="w")
         self.cb_tercero.bind("<KeyRelease>", lambda e: self._filter_clientes_cb())
-        ttk.Button(frm, text="Crear tercero", command=self._crear_tercero).grid(row=row, column=2, padx=4, pady=3)
         row += 1
         self._lbl_subcuenta_warning = ttk.Label(frm, text="", foreground="#b45309", wraplength=520)
         self._lbl_subcuenta_warning.grid(row=row, column=0, columnspan=3, sticky="w", padx=4, pady=(0, 4))
+        row += 1
+
+        # Panel de datos del tercero
+        self._tercero_panel_id = None  # tercero_global_id del tercero seleccionado actualmente
+        panel = ttk.LabelFrame(frm, text="Datos del tercero", padding=6)
+        panel.grid(row=row, column=0, columnspan=3, sticky="ew", padx=4, pady=(0, 8))
+        panel.columnconfigure(1, weight=1)
+        panel.columnconfigure(3, weight=1)
+
+        self.var_tp_direccion = tk.StringVar()
+        self.var_tp_cp = tk.StringVar()
+        self.var_tp_poblacion = tk.StringVar()
+        self.var_tp_provincia = tk.StringVar()
+        self.var_tp_pais = tk.StringVar()
+        self.var_tp_telefono = tk.StringVar()
+        self.var_tp_email = tk.StringVar()
+        self.var_tp_contacto = tk.StringVar()
+
+        r = 0
+        ttk.Label(panel, text="Direccion").grid(row=r, column=0, sticky="w", padx=(0, 4), pady=2)
+        ttk.Entry(panel, textvariable=self.var_tp_direccion, width=38).grid(row=r, column=1, columnspan=3, sticky="ew", padx=(0, 8), pady=2)
+        r += 1
+        ttk.Label(panel, text="CP").grid(row=r, column=0, sticky="w", padx=(0, 4), pady=2)
+        ttk.Entry(panel, textvariable=self.var_tp_cp, width=8).grid(row=r, column=1, sticky="w", padx=(0, 8), pady=2)
+        ttk.Label(panel, text="Poblacion").grid(row=r, column=2, sticky="w", padx=(0, 4), pady=2)
+        ttk.Entry(panel, textvariable=self.var_tp_poblacion, width=22).grid(row=r, column=3, sticky="ew", pady=2)
+        r += 1
+        ttk.Label(panel, text="Provincia").grid(row=r, column=0, sticky="w", padx=(0, 4), pady=2)
+        ttk.Entry(panel, textvariable=self.var_tp_provincia, width=20).grid(row=r, column=1, sticky="w", padx=(0, 8), pady=2)
+        ttk.Label(panel, text="Pais").grid(row=r, column=2, sticky="w", padx=(0, 4), pady=2)
+        ttk.Entry(panel, textvariable=self.var_tp_pais, width=6).grid(row=r, column=3, sticky="w", pady=2)
+        r += 1
+        ttk.Label(panel, text="Telefono").grid(row=r, column=0, sticky="w", padx=(0, 4), pady=2)
+        ttk.Entry(panel, textvariable=self.var_tp_telefono, width=18).grid(row=r, column=1, sticky="w", padx=(0, 8), pady=2)
+        ttk.Label(panel, text="Email").grid(row=r, column=2, sticky="w", padx=(0, 4), pady=2)
+        ttk.Entry(panel, textvariable=self.var_tp_email, width=26).grid(row=r, column=3, sticky="ew", pady=2)
+        r += 1
+        ttk.Label(panel, text="Contacto").grid(row=r, column=0, sticky="w", padx=(0, 4), pady=2)
+        ttk.Entry(panel, textvariable=self.var_tp_contacto, width=28).grid(row=r, column=1, columnspan=3, sticky="w", pady=2)
+        r += 1
+        ttk.Button(panel, text="Actualizar tercero", command=self._actualizar_tercero).grid(
+            row=r, column=0, columnspan=4, sticky="w", pady=(6, 2))
         row += 1
 
         ttk.Label(frm, text="Serie").grid(row=row, column=0, sticky="w", padx=4, pady=3)
@@ -1471,8 +1513,9 @@ class FacturaDialog(tk.Toplevel):
     def _preselect_tercero(self, tercero_id):
         self.controller.preselect_tercero(tercero_id)
 
-    def _crear_tercero(self):
-        self.controller.crear_tercero()
+    def _actualizar_tercero(self):
+        datos = self.get_tercero_panel_data()
+        self.controller.actualizar_tercero(self._tercero_panel_id, datos)
 
     def _on_tercero_selected(self):
         self.controller.on_tercero_selected()
@@ -1628,6 +1671,31 @@ class FacturaDialog(tk.Toplevel):
 
     def set_subcuenta(self, value):
         self.var_subcuenta.set(value)
+
+    def set_tercero_panel(self, datos: dict, tercero_id: str):
+        """Rellena el panel de datos del tercero con los campos del dict dado."""
+        self._tercero_panel_id = tercero_id or None
+        self.var_tp_direccion.set(str(datos.get("direccion") or ""))
+        self.var_tp_cp.set(str(datos.get("cp") or datos.get("codigo_postal") or ""))
+        self.var_tp_poblacion.set(str(datos.get("poblacion") or ""))
+        self.var_tp_provincia.set(str(datos.get("provincia") or ""))
+        self.var_tp_pais.set(str(datos.get("pais") or ""))
+        self.var_tp_telefono.set(str(datos.get("telefono") or ""))
+        self.var_tp_email.set(str(datos.get("email") or ""))
+        self.var_tp_contacto.set(str(datos.get("contacto") or ""))
+
+    def get_tercero_panel_data(self) -> dict:
+        """Devuelve los datos actuales del panel del tercero."""
+        return {
+            "direccion": self.var_tp_direccion.get().strip(),
+            "cp": self.var_tp_cp.get().strip(),
+            "poblacion": self.var_tp_poblacion.get().strip(),
+            "provincia": self.var_tp_provincia.get().strip(),
+            "pais": self.var_tp_pais.get().strip(),
+            "telefono": self.var_tp_telefono.get().strip(),
+            "email": self.var_tp_email.get().strip(),
+            "contacto": self.var_tp_contacto.get().strip(),
+        }
 
     def set_subcuenta_warning(self, message: str):
         self._lbl_subcuenta_warning.config(text=str(message or ""))
@@ -1956,6 +2024,10 @@ class UIFacturasEmitidas(ttk.Frame):
         base.update(emp_conf)
         self.empresa_conf = base
         self.controller = FacturasEmitidasController(gestor, codigo_empresa, ejercicio, self.empresa_conf, self, allow_all_years=self.allow_all_years)
+        self.cuotas_controller = CuotasController(
+            gestor, codigo_empresa, ejercicio, self.empresa_conf,
+            facturas_controller=self.controller,
+        )
         self._sort_state = {}
         self._sort_albaranes_state = {}
         self._build()
@@ -1973,6 +2045,20 @@ class UIFacturasEmitidas(ttk.Frame):
         if not is_cliente:
             nb.add(tab_albaranes, text="Albaranes")
 
+        if not is_cliente:
+            from views.ui_cuotas_tab import UICuotasTab
+            self._tab_cuotas = UICuotasTab(
+                nb,
+                gestor=self.gestor,
+                codigo=self.codigo,
+                ejercicio=self.ejercicio,
+                empresa_conf=self.empresa_conf,
+                session=self.session,
+            )
+            nb.add(self._tab_cuotas, text="Cuotas")
+            self._tab_cuotas.controller = self.cuotas_controller
+            self.cuotas_controller.set_view(self._tab_cuotas)
+
         self._build_facturas_tab(tab_facturas)
         if not is_cliente:
             self._build_albaranes_tab(tab_albaranes)
@@ -1980,6 +2066,7 @@ class UIFacturasEmitidas(ttk.Frame):
         self._refresh_facturas()
         if not is_cliente:
             self._refresh_albaranes()
+            self.cuotas_controller.refresh_cuotas()
 
     def _build_facturas_tab(self, parent):
         top = ttk.Frame(parent)
@@ -2036,10 +2123,21 @@ class UIFacturasEmitidas(ttk.Frame):
         self.var_fact_cliente_filter = tk.StringVar()
         self.var_fact_cliente_filter.trace_add("write", lambda *_: self.controller.apply_facturas_filter())
         ttk.Entry(filtros, textvariable=self.var_fact_cliente_filter, width=28).pack(side=tk.LEFT, padx=6)
+        ttk.Label(filtros, text="Estado:").pack(side=tk.LEFT, padx=(12, 0))
+        self.var_fact_estado_filter = tk.StringVar(value="Todos")
+        self.cb_fact_estado = ttk.Combobox(
+            filtros,
+            textvariable=self.var_fact_estado_filter,
+            values=["Todos", "Pendiente", "Contabilidad", "Generado"],
+            state="readonly",
+            width=12,
+        )
+        self.cb_fact_estado.pack(side=tk.LEFT, padx=6)
+        self.cb_fact_estado.bind("<<ComboboxSelected>>", lambda e: self.controller.apply_facturas_filter())
 
         self.tv = ttk.Treeview(
             parent,
-            columns=("marcar", "ejercicio", "serie", "numero", "asiento", "cont_estado", "fecha", "cliente", "total", "generada", "fecha_gen", "enviado", "fecha_envio"),
+            columns=("marcar", "ejercicio", "serie", "numero", "asiento", "cont_estado", "fecha", "cliente", "total", "enviado", "fecha_envio"),
             show="headings",
             selectmode="extended",
             height=12,
@@ -2050,12 +2148,10 @@ class UIFacturasEmitidas(ttk.Frame):
             ("serie", "Serie", 70, "center"),
             ("numero", "Numero", 110, "w"),
             ("asiento", "Asiento", 100, "w"),
-            ("cont_estado", "Contab.", 90, "center"),
+            ("cont_estado", "Estado", 100, "center"),
             ("fecha", "Fecha", 100, "w"),
             ("cliente", "Cliente", 240, "w"),
             ("total", "Total", 100, "e"),
-            ("generada", "Generada", 90, "center"),
-            ("fecha_gen", "Fecha gen.", 110, "w"),
             ("enviado", "Enviado", 90, "center"),
             ("fecha_envio", "Fecha envio", 110, "w"),
         ]
@@ -2092,16 +2188,19 @@ class UIFacturasEmitidas(ttk.Frame):
 
         bottom = ttk.Frame(parent)
         bottom.pack(fill="x", padx=10, pady=6)
-        self.btn_marcar_facturas = ttk.Button(bottom, text="Marcar seleccionadas", command=self._marcar_facturas_seleccionadas)
-        self.btn_marcar_facturas.pack(side=tk.LEFT)
+        self.btn_marcar_todas_facturas = ttk.Button(bottom, text="Marcar todas", command=self._marcar_todas_facturas)
+        self.btn_marcar_todas_facturas.pack(side=tk.LEFT)
         self.btn_desmarcar_facturas = ttk.Button(bottom, text="Desmarcar todas", command=self._desmarcar_todas_facturas)
         self.btn_desmarcar_facturas.pack(side=tk.LEFT, padx=(8, 0))
+        self.btn_marcar_facturas = ttk.Button(bottom, text="Marcar seleccionadas", command=self._marcar_facturas_seleccionadas)
+        self.btn_marcar_facturas.pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(bottom, text="Exportar Excel", command=self._export_facturas_excel).pack(side=tk.LEFT, padx=(8, 0))
         self.btn_enviar_contabilidad = ttk.Button(bottom, text="Enviar a contabilidad", command=self._enviar_a_contabilidad)
         self.btn_enviar_contabilidad.pack(side=tk.LEFT, padx=(8, 0))
         self.btn_capturar_asiento = ttk.Button(bottom, text="Capturar nº asiento de A3", command=self._capturar_asiento_a3)
         self.btn_capturar_asiento.pack(side=tk.RIGHT, padx=(0, 8))
         if not can_write or is_cliente:
+            self.btn_marcar_todas_facturas.configure(state="disabled")
             self.btn_marcar_facturas.configure(state="disabled")
             self.btn_desmarcar_facturas.configure(state="disabled")
             self.btn_enviar_contabilidad.configure(state="disabled")
@@ -2254,12 +2353,10 @@ class UIFacturasEmitidas(ttk.Frame):
                 serie_val,
                 numero_display,
                 fac.get("numero_asiento", ""),
-                _ESTADO_LABELS.get(fac.get("estado_contable") or "", ""),
+                _ESTADO_LABELS.get(fac.get("estado_contable") or "", "Pendiente"),
                 to_fecha_ui_or_blank(fac.get("fecha_asiento", "")),
                 fac.get("nombre", ""),
                 fmt2s(total, sym),
-                "Si" if fac.get("generada") else "No",
-                fac.get("fecha_generacion", ""),
                 "Si" if fac.get("enviado") else "No",
                 fac.get("fecha_envio", ""),
             ),
@@ -2314,9 +2411,9 @@ class UIFacturasEmitidas(ttk.Frame):
             return to_float(val)
         if col == "fecha":
             return parse_date_ui(val) if val else date.min
-        if col in ("fecha_gen", "fecha_envio"):
+        if col == "fecha_envio":
             return self._parse_datetime(val)
-        if col in ("generada", "enviado"):
+        if col == "enviado":
             return 1 if str(val).strip().lower() == "si" else 0
         if col == "numero":
             return self._numero_sort_key(val)
@@ -2455,6 +2552,11 @@ class UIFacturasEmitidas(ttk.Frame):
             self._toggle_mark_factura(row)
             return "break"
 
+    def _marcar_todas_facturas(self):
+        for iid in self.tv.get_children():
+            self._marked_factura_ids.add(str(iid))
+            self._sync_mark_visual(str(iid))
+
     def _marcar_facturas_seleccionadas(self):
         for iid in self.get_selected_ids():
             self._marked_factura_ids.add(str(iid))
@@ -2514,6 +2616,13 @@ class UIFacturasEmitidas(ttk.Frame):
 
     def get_facturas_cliente_filter(self):
         return (self.var_fact_cliente_filter.get() or "").strip().lower()
+
+    def get_facturas_estado_filter(self) -> str | None:
+        """Devuelve None (sin filtro), o uno de: 'pendiente', 'contabilidad', 'generado'."""
+        txt = (self.var_fact_estado_filter.get() or "").strip().lower()
+        if not txt or txt == "todos":
+            return None
+        return txt
 
     def set_facturas_series(self, series: list[str]):
         vals = ["Todas"] + sorted(set(series))

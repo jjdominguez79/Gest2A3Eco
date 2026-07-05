@@ -82,7 +82,9 @@ def generar_bancos(
             continue
 
         imp = abs(val)
-        sub_contra = subcuenta_por_concepto(concepto_txt) or sub_def
+        # Permitir override manual de contrapartida por fila (mejora 7)
+        sub_contra_override = str(rec.get("_subcuenta_override") or "").strip()
+        sub_contra = sub_contra_override or subcuenta_por_concepto(concepto_txt) or sub_def
 
         # Guardamos la fecha ya normalizada AAAAMMDD en la Linea
         # (render_a3_tipo0_bancos volverá a pasarla por _fecha_yyyymmdd, pero es idempotente)

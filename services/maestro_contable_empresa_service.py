@@ -207,10 +207,35 @@ class MaestroContableEmpresaService:
         gestor.upsert_maestro_subcuenta(payload)
         return gestor.get_maestro_subcuenta_por_subcuenta(codigo, subcuenta) or payload
 
+    # ── Deteccion de duplicados ───────────────────────────────────────────────
+
+    def detectar_duplicados_en_dataframe(
+        self, gestor, codigo_empresa: str, df
+    ) -> list[str]:
+        """Devuelve los codigos de subcuenta del DataFrame que ya existen en el maestro."""
+        col_map = {_normalize_colname(c): c for c in df.columns}
+        col_sub = col_map.get("subcuenta") or col_map.get("cuenta")
+        if not col_sub:
+            return []
+        duplicados = []
+        for _, row in df.iterrows():
+            subcuenta = _normalizar_codigo_subcuenta(row.get(col_sub))
+            if not subcuenta:
+                continue
+            if gestor.get_maestro_subcuenta_por_subcuenta(codigo_empresa, subcuenta):
+                duplicados.append(subcuenta)
+        return duplicados
+
     # ── Importacion desde DataFrame ───────────────────────────────────────────
 
     def importar_subcuentas_desde_dataframe(
-        self, gestor, codigo_empresa: str, df, origen: str = "importacion_excel"
+        self,
+        gestor,
+        codigo_empresa: str,
+        df,
+        origen: str = "importacion_excel",
+        actualizar_duplicados: bool = True,
+        progress_callback=None,
     ) -> dict:
         """Importa subcuentas desde un DataFrame de pandas.
 
@@ -219,7 +244,11 @@ class MaestroContableEmpresaService:
           'descripcion' o 'nombre' — nombre de la cuenta
           'nif'                    — NIF del tercero vinculado (opcional)
 
-        Devuelve dict con: importadas, actualizadas, errores, detalles_error.
+        Parametros:
+          actualizar_duplicados — True: sobreescribe existentes; False: las omite.
+          progress_callback     — callable(idx, total) para actualizar progreso.
+
+        Devuelve dict con: importadas, actualizadas, omitidas, errores, detalles_error.
         """
         col_map = {_normalize_colname(c): c for c in df.columns}
         col_sub  = col_map.get("subcuenta") or col_map.get("cuenta")
@@ -229,13 +258,19 @@ class MaestroContableEmpresaService:
         if not col_sub:
             raise ValueError("El DataFrame debe tener columna 'subcuenta' o 'cuenta'")
 
-        importadas = actualizadas = errores = 0
+        importadas = actualizadas = errores = omitidas = 0
         detalles_error: list[str] = []
+        filas = list(df.iterrows())
+        total = len(filas)
 
-        for _, row in df.iterrows():
-            subcuenta_raw = row.get(col_sub)
-            subcuenta = "" if subcuenta_raw is None else str(subcuenta_raw).strip()
-            if not subcuenta or subcuenta.lower() in ("nan", "none", "null"):
+        for idx, (_, row) in enumerate(filas):
+            if progress_callback:
+                try:
+                    progress_callback(idx, total)
+                except Exception:
+                    pass
+            subcuenta = _normalizar_codigo_subcuenta(row.get(col_sub))
+            if not subcuenta:
                 continue
             descripcion = str(row.get(col_desc, "") or "") if col_desc else ""
             nif_raw     = str(row.get(col_nif, "") or "") if col_nif else ""
@@ -243,6 +278,9 @@ class MaestroContableEmpresaService:
                 existente = gestor.get_maestro_subcuenta_por_subcuenta(
                     codigo_empresa, subcuenta
                 )
+                if existente and not actualizar_duplicados:
+                    omitidas += 1
+                    continue
                 payload = {
                     "codigo_empresa":       codigo_empresa,
                     "subcuenta":            subcuenta,
@@ -262,9 +300,17 @@ class MaestroContableEmpresaService:
                 errores += 1
                 detalles_error.append(f"{subcuenta}: {exc}")
 
+        # Notificar progreso final
+        if progress_callback:
+            try:
+                progress_callback(total, total)
+            except Exception:
+                pass
+
         return {
             "importadas":     importadas,
             "actualizadas":   actualizadas,
+            "omitidas":       omitidas,
             "errores":        errores,
             "detalles_error": detalles_error,
         }
@@ -293,3 +339,27 @@ def _normalize_colname(s: str) -> str:
 
 def _es_del_prefijo(val: str, prefijo: str, ndig: int) -> bool:
     return val.startswith(prefijo) and val.isdigit() and len(val) == ndig
+
+
+def _normalizar_codigo_subcuenta(raw) -> str:
+    """Normaliza un codigo de subcuenta procedente de Excel.
+
+    Excel puede representar cuentas como numeros flotantes ("43000001.0") o
+    como enteros (43000001). Extrae solo los digitos y elimina decimales.
+    Devuelve "" si el valor es nulo o no tiene digitos validos.
+    """
+    if raw is None:
+        return ""
+    s = str(raw).strip()
+    if not s or s.lower() in ("nan", "none", "null", ""):
+        return ""
+    # Excel puede dar "43000001.0" por convertir de integer a float → quitar decimal
+    if "." in s:
+        try:
+            s = str(int(float(s)))
+        except (ValueError, OverflowError):
+            # Si falla, continuar con el string original
+            pass
+    # Extraer solo digitos (eliminar espacios, guiones, puntos residuales)
+    digits = "".join(ch for ch in s if ch.isdigit())
+    return digits

@@ -444,13 +444,58 @@ def col_letter_to_index(letter: str) -> int:
         idx = idx * 26 + (ord(ch) - ord('A') + 1)
     return idx - 1
 
-# utilidades.py (añade esto si no lo tienes)
 def validar_subcuenta_longitud(sc: str, ndig: int, campo: str = "subcuenta"):
+    """Valida que la subcuenta tenga exactamente ndig digitos.
+
+    Acepta cuentas con menos digitos solo si son todos numericos (se normalizarian
+    rellenando con ceros a la derecha). Lanza ValueError si la longitud es erronea
+    y no es normalizable, o si contiene caracteres no numericos.
+    """
     sc = (sc or "").strip()
     if not sc:
         return
-    if len(sc) != ndig:
-        raise ValueError(f"La {campo} '{sc}' debe tener {ndig} dígitos (configurado a nivel de empresa).")
+    # Extraer solo digitos para comprobar si es un codigo numerico
+    digits_only = "".join(ch for ch in sc if ch.isdigit())
+    if not digits_only or digits_only != sc:
+        raise ValueError(
+            f"La {campo} '{sc}' debe contener solo digitos numericos."
+        )
+    if len(sc) == ndig:
+        return
+    if len(sc) < ndig:
+        raise ValueError(
+            f"La {campo} '{sc}' tiene {len(sc)} digito(s) pero la empresa usa {ndig}.\n"
+            f"Rellena con ceros a la derecha: '{sc.ljust(ndig, chr(48))}'."
+        )
+    # Mayor que ndig
+    raise ValueError(
+        f"La {campo} '{sc}' tiene {len(sc)} digitos pero la empresa usa {ndig}.\n"
+        f"Acorta a los primeros {ndig} digitos: '{sc[:ndig]}'."
+    )
+
+
+def normalizar_subcuenta_a_plan(sc: str, ndig: int) -> str:
+    """Normaliza un codigo de subcuenta al numero de digitos del plan de la empresa.
+
+    - Si es mas corta: rellena con ceros a la derecha.
+    - Si es mas larga: toma los primeros ndig digitos.
+    - Solo extrae digitos (compatible con Excel que puede dar floats).
+    """
+    if not sc:
+        return ""
+    s = str(sc).strip()
+    # Eliminar decimal de Excel: "43000001.0" -> "43000001"
+    if "." in s:
+        try:
+            s = str(int(float(s)))
+        except (ValueError, OverflowError):
+            pass
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if not digits:
+        return ""
+    if len(digits) > ndig:
+        return digits[:ndig]
+    return digits.ljust(ndig, "0")
 
 def aplicar_descuento_total_lineas(lineas, tipo, valor):
     """

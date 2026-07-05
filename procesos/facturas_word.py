@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import io
 import os
 import sys
 from typing import Dict, Any, Tuple
@@ -9,7 +8,6 @@ from typing import Dict, Any, Tuple
 from docxtpl import DocxTemplate, InlineImage
 from docx.shared import Mm
 from docx.image.image import Image as DocxImage
-from docx2pdf import convert
 from xml.sax.saxutils import escape as _xml_escape
 from utils.utilidades import aplicar_descuento_total_lineas
 
@@ -171,15 +169,24 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
         except Exception:
             continue
 
+    _emp_direccion = str(empresa_conf.get("direccion") or "")
+    _emp_cp = str(empresa_conf.get("cp") or "")
+    _emp_poblacion = str(empresa_conf.get("poblacion") or "")
+    _emp_provincia = str(empresa_conf.get("provincia") or "")
+    _emp_domicilio_completo = ", ".join(p for p in [_emp_direccion, _emp_cp, _emp_poblacion, _emp_provincia] if p)
+
     return {
         "empresa": {
             "nombre": empresa_conf.get("nombre", ""),
             "codigo": empresa_conf.get("codigo") or empresa_conf.get("codigo_empresa") or "",
             "cif": empresa_conf.get("cif", ""),
-            "direccion": empresa_conf.get("direccion", ""),
-            "cp": empresa_conf.get("cp", ""),
-            "poblacion": empresa_conf.get("poblacion", ""),
-            "provincia": empresa_conf.get("provincia", ""),
+            "direccion": _emp_direccion,
+            "domicilio": _emp_direccion,
+            "cp": _emp_cp,
+            "poblacion": _emp_poblacion,
+            "municipio": _emp_poblacion,
+            "provincia": _emp_provincia,
+            "domicilio_completo": _emp_domicilio_completo,
             "telefono": empresa_conf.get("telefono", ""),
             "email": empresa_conf.get("email", ""),
             "logo_path": empresa_conf.get("logo_path", ""),
@@ -192,8 +199,10 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
             "nombre_comercial": cliente.get("nombre_comercial") or cliente.get("nombre", ""),
             "nif": cliente.get("nif", ""),
             "direccion": cliente.get("direccion", ""),
+            "domicilio": cliente.get("direccion", ""),
             "cp": cliente.get("cp", ""),
             "poblacion": cliente.get("poblacion", ""),
+            "municipio": cliente.get("poblacion", ""),
             "provincia": cliente.get("provincia", ""),
             "pais": cliente.get("pais", ""),
             "telefono": cliente.get("telefono", ""),
@@ -426,14 +435,42 @@ def _sanitize_logo_path(path: str) -> str:
         return path
 
 def convert_docx_to_pdf(docx_path: str, pdf_path: str) -> None:
-    # Usa Word instalado
-    # Evita fallo en .exe sin consola (tqdm intenta escribir en None)
-    if sys.stdout is None:
-        sys.stdout = io.StringIO()
-    if sys.stderr is None:
-        sys.stderr = io.StringIO()
-    os.environ.setdefault("TQDM_DISABLE", "1")
-    convert(docx_path, pdf_path)
+    """Convierte docx a PDF usando Word COM directamente (win32com).
+    Crea una instancia aislada de Word (DispatchEx) con alertas desactivadas
+    y la cierra correctamente al terminar, evitando instancias huerfanas."""
+    import pythoncom
+    import win32com.client as _wc
+
+    abs_docx = os.path.abspath(docx_path)
+    abs_pdf = os.path.abspath(pdf_path)
+    pythoncom.CoInitialize()
+    word = None
+    doc = None
+    try:
+        word = _wc.DispatchEx("Word.Application")
+        word.Visible = False
+        word.DisplayAlerts = 0   # wdAlertsNone
+        word.ScreenUpdating = False
+        doc = word.Documents.Open(abs_docx, ReadOnly=False)
+        try:
+            doc.ExportAsFixedFormat(abs_pdf, ExportFormat=17)  # wdExportFormatPDF
+        except Exception:
+            doc.SaveAs2(abs_pdf, FileFormat=17)               # fallback
+    finally:
+        if doc is not None:
+            try:
+                doc.Close(0)   # wdDoNotSaveChanges
+            except Exception:
+                pass
+        if word is not None:
+            try:
+                word.Quit(0)
+            except Exception:
+                pass
+        try:
+            pythoncom.CoUninitialize()
+        except Exception:
+            pass
 
 def generar_pdf_desde_plantilla_word(
     template_path: str,

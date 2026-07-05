@@ -17,6 +17,11 @@ class ProcesosController:
         self._ejercicio = ejercicio
         self._view = view
         self._excel_path = None
+        # Mejora 7: cache de filas extraidas y overrides de contrapartida por fila
+        self._cached_rows: list[dict] | None = None
+        self._cached_plantilla: dict | None = None
+        self._cached_tipo: str = ""
+        self._contrapartida_overrides: dict[int, str] = {}  # idx_fila -> subcuenta
 
     def _codigo_empresa_a3(self) -> str:
         digits = "".join(ch for ch in str(self._codigo or "") if ch.isdigit())
@@ -58,6 +63,70 @@ class ProcesosController:
             self._view.render_preview(df)
         except Exception as e:
             self._view.show_error("Gest2A3Eco", f"Error al leer hoja:\n{e}")
+            return
+
+        # Mejora 7: para Bancos, calcular contrapartidas y mostrar en preview
+        self._cached_rows = None
+        self._contrapartida_overrides = {}
+        tipo = (self._view.get_tipo() or "").lower()
+        if "bancos" in tipo:
+            self._cargar_contrapartidas_preview()
+
+    def _cargar_contrapartidas_preview(self):
+        """Carga las filas mapeadas y calcula las contrapartidas por defecto para la preview."""
+        import fnmatch
+        try:
+            nombre_pl = (self._view.get_selected_plantilla() or "").strip()
+            if not nombre_pl:
+                return
+            pl = next(
+                (x for x in self._gestor.listar_bancos(self._codigo, self._ejercicio) if x.get("banco") == nombre_pl),
+                None,
+            )
+            if not pl:
+                return
+            excel_conf = pl.get("excel") or {}
+            rows = extract_rows_by_mapping(self._excel_path, self._view.get_selected_sheet(), excel_conf)
+            rows = [r for r in rows if self._row_has_data(r)]
+            if not rows:
+                return
+
+            sub_def   = str(pl.get("subcuenta_por_defecto") or "").strip()
+            conceptos = pl.get("conceptos") or []
+
+            def _sub_por_concepto(txt: str) -> str:
+                t = (str(txt) or "").lower()
+                for cm in conceptos:
+                    patron = (cm.get("patron", "*") or "*").lower()
+                    if fnmatch.fnmatch(t, patron):
+                        sub = (cm.get("subcuenta") or "").strip()
+                        if sub:
+                            return sub
+                return sub_def
+
+            # Calcular contrapartida por defecto para cada fila
+            for row in rows:
+                concepto = str(row.get("Concepto") or row.get("Descripcion Factura") or "")
+                row["_contrapartida_defecto"] = _sub_por_concepto(concepto)
+
+            self._cached_rows = rows
+            self._cached_plantilla = pl
+            self._cached_tipo = "bancos"
+
+            # Notificar a la vista para mostrar la columna de contrapartida
+            try:
+                self._view.mostrar_contrapartidas_preview(rows)
+            except AttributeError:
+                pass  # Vista antigua, sin soporte para contrapartidas
+        except Exception:
+            pass
+
+    def set_contrapartida_override(self, idx_fila: int, subcuenta: str):
+        """Guarda el override de contrapartida para una fila especifica."""
+        if subcuenta:
+            self._contrapartida_overrides[idx_fila] = str(subcuenta).strip()
+        elif idx_fila in self._contrapartida_overrides:
+            del self._contrapartida_overrides[idx_fila]
 
     def generar(self):
         try:
@@ -92,7 +161,20 @@ class ProcesosController:
                 req = ["Fecha Asiento", "Importe", "Concepto"]
                 if not self._require_mapeo_or_warn(pl, "bancos", req):
                     return
-                rows = [r for r in rows if self._row_has_data(r)]
+                # Mejora 7: usar filas cacheadas con overrides de contrapartida si existen
+                if (
+                    self._cached_rows is not None
+                    and self._cached_tipo == "bancos"
+                    and self._cached_plantilla
+                    and self._cached_plantilla.get("banco") == pl.get("banco")
+                ):
+                    rows = [dict(r) for r in self._cached_rows]
+                    # Aplicar overrides de contrapartida
+                    for idx, sub_override in self._contrapartida_overrides.items():
+                        if 0 <= idx < len(rows):
+                            rows[idx]["_subcuenta_override"] = sub_override
+                else:
+                    rows = [r for r in rows if self._row_has_data(r)]
                 if not rows:
                     self._view.show_warning(
                         "Gest2A3Eco",

@@ -99,50 +99,163 @@ class UIContabilidad(ttk.Frame):
         self.tv_asiento.grid(row=1, column=0, sticky="nsew")
 
     def _build_emitidas(self, parent):
-        bar = ttk.Frame(parent)
-        bar.pack(fill="x", padx=10, pady=(8, 4))
+        # Split horizontally: lista (izq) | asiento (der)
+        paned = ttk.PanedWindow(parent, orient=tk.HORIZONTAL)
+        paned.pack(fill="both", expand=True, padx=6, pady=4)
+
+        # ── Panel izquierdo: lista de facturas ──────────────────────────────
+        left = ttk.Frame(paned)
+        paned.add(left, weight=2)
+
+        bar = ttk.Frame(left)
+        bar.pack(fill="x", pady=(0, 4))
         ttk.Button(
             bar, text="Generar Suenlace.dat", style="Primary.TButton",
             command=self.emitidas_ctrl.generar_suenlace,
         ).pack(side=tk.LEFT)
+        ttk.Button(
+            bar, text="Quitar de contabilidad",
+            command=self.emitidas_ctrl.quitar_de_contabilidad,
+        ).pack(side=tk.LEFT, padx=6)
         ttk.Label(
             bar,
-            text="Selecciona facturas y genera el suenlace para importar en A3ECO.",
-            foreground="#555",
-        ).pack(side=tk.LEFT, padx=12)
+            text="Ctrl+clic / Shift+clic para seleccion multiple",
+            foreground="#888", font=("Segoe UI", 8),
+        ).pack(side=tk.LEFT, padx=8)
+        ttk.Separator(bar, orient="vertical").pack(side=tk.LEFT, fill="y", padx=8)
+        ttk.Label(bar, text="Filtrar:").pack(side=tk.LEFT)
+        self.cmb_filtro_emitidas = ttk.Combobox(
+            bar,
+            values=["Todos", "Pendiente", "Generado"],
+            state="readonly",
+            width=12,
+        )
+        self.cmb_filtro_emitidas.set("Todos")
+        self.cmb_filtro_emitidas.pack(side=tk.LEFT, padx=(4, 8))
+        self.cmb_filtro_emitidas.bind("<<ComboboxSelected>>", self._aplicar_filtro_emitidas)
+        ttk.Button(
+            bar, text="Seleccionar todas",
+            command=self._seleccionar_todas_emitidas,
+        ).pack(side=tk.LEFT)
+
+        tv_wrap = ttk.Frame(left)
+        tv_wrap.pack(fill="both", expand=True)
+        tv_wrap.rowconfigure(0, weight=1)
+        tv_wrap.columnconfigure(0, weight=1)
 
         self.tv_emitidas = ttk.Treeview(
-            parent,
+            tv_wrap,
             columns=("numero", "fecha", "cliente", "total", "estado"),
             show="headings",
             selectmode="extended",
             height=18,
         )
         for col, txt, width, anchor in (
-            ("numero", "Nº Factura", 130, "w"),
-            ("fecha", "Fecha", 100, "w"),
-            ("cliente", "Cliente", 260, "w"),
-            ("total", "Total", 100, "e"),
-            ("estado", "Estado contable", 130, "center"),
+            ("numero", "Nº Factura", 110, "w"),
+            ("fecha", "Fecha", 90, "w"),
+            ("cliente", "Cliente", 200, "w"),
+            ("total", "Total", 90, "e"),
+            ("estado", "Estado", 100, "center"),
         ):
             self.tv_emitidas.heading(col, text=txt)
             self.tv_emitidas.column(col, width=width, anchor=anchor)
-        self.tv_emitidas.pack(fill="both", expand=True, padx=10, pady=(0, 8))
+        self.tv_emitidas.grid(row=0, column=0, sticky="nsew")
+        vsb_e = ttk.Scrollbar(tv_wrap, orient="vertical", command=self.tv_emitidas.yview)
+        vsb_e.grid(row=0, column=1, sticky="ns")
+        self.tv_emitidas.configure(yscrollcommand=vsb_e.set)
         self.tv_emitidas.tag_configure("generado", foreground="#2a7a2a")
         self.tv_emitidas.tag_configure("pendiente", foreground="#b85c00")
+        self.tv_emitidas.bind("<<TreeviewSelect>>", self._on_emitida_select)
+
+        # ── Panel derecho: asiento de la factura seleccionada ───────────────
+        right = ttk.Frame(paned)
+        paned.add(right, weight=3)
+
+        hdr_right = ttk.Frame(right)
+        hdr_right.pack(fill="x", pady=(0, 4))
+        ttk.Label(hdr_right, text="Asiento contable", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
+        ttk.Button(
+            hdr_right, text="Editar subcuentas",
+            command=self.emitidas_ctrl.editar_asiento_seleccionada,
+        ).pack(side=tk.RIGHT)
+
+        self.lbl_asiento_fac = ttk.Label(
+            right,
+            text="Selecciona una factura para ver su asiento.",
+            foreground="#888",
+        )
+        self.lbl_asiento_fac.pack(anchor="w", padx=4)
+
+        asiento_wrap = ttk.Frame(right)
+        asiento_wrap.pack(fill="both", expand=True)
+        asiento_wrap.rowconfigure(0, weight=1)
+        asiento_wrap.columnconfigure(0, weight=1)
+
+        self.tv_asiento_emitidas = ttk.Treeview(
+            asiento_wrap,
+            columns=("subcuenta", "descripcion", "dh", "importe", "concepto"),
+            show="headings",
+            height=14,
+        )
+        for col, txt, width, anchor in (
+            ("subcuenta",    "Subcuenta",   110, "w"),
+            ("descripcion",  "Descripcion", 170, "w"),
+            ("dh",           "D/H",          50, "center"),
+            ("importe",      "Importe",      95, "e"),
+            ("concepto",     "Concepto",    260, "w"),
+        ):
+            self.tv_asiento_emitidas.heading(col, text=txt)
+            self.tv_asiento_emitidas.column(col, width=width, anchor=anchor)
+        self.tv_asiento_emitidas.grid(row=0, column=0, sticky="nsew")
+        vsb_a = ttk.Scrollbar(asiento_wrap, orient="vertical", command=self.tv_asiento_emitidas.yview)
+        vsb_a.grid(row=0, column=1, sticky="ns")
+        self.tv_asiento_emitidas.configure(yscrollcommand=vsb_a.set)
+        self.tv_asiento_emitidas.tag_configure("debe",  background="#eff6ff")
+        self.tv_asiento_emitidas.tag_configure("haber", background="#f0fdf4")
+
+        self.lbl_balance_emitidas = ttk.Label(right, text="", foreground="#475569")
+        self.lbl_balance_emitidas.pack(anchor="w", padx=4, pady=2)
 
     # ── Emitidas tab interface ──────────────────────────────────────────────
 
+    def _on_emitida_select(self, _event=None):
+        sel = self.tv_emitidas.selection()
+        if sel:
+            self.emitidas_ctrl.on_seleccionar(str(sel[0]))
+        else:
+            self.tv_asiento_emitidas.delete(*self.tv_asiento_emitidas.get_children())
+            self.lbl_asiento_fac.configure(text="Selecciona una factura para ver su asiento.")
+            self.lbl_balance_emitidas.configure(text="")
+
     def set_emitidas(self, docs: list[dict]):
         self._emitidas_docs = docs or []
+        self.cmb_filtro_emitidas.set("Todos")
+        self._aplicar_filtro_emitidas()
+
+    def _aplicar_filtro_emitidas(self, _event=None):
+        filtro = self.cmb_filtro_emitidas.get()
         self.tv_emitidas.delete(*self.tv_emitidas.get_children())
-        for doc in self._emitidas_docs:
+        for doc in (self._emitidas_docs or []):
             estado = doc.get("estado_contable") or ""
+            if filtro == "Pendiente" and estado != "pendiente":
+                continue
+            if filtro == "Generado" and estado != "generado":
+                continue
             serie = str(doc.get("serie") or "").strip()
             numero = str(doc.get("numero") or "").strip()
             num_display = f"{serie}{numero}" if serie else numero
             try:
                 total = float(doc.get("total") or 0)
+                if not total:
+                    for ln in (doc.get("lineas") or []):
+                        if str(ln.get("tipo") or "").strip().lower() == "obs":
+                            continue
+                        try:
+                            total += float(ln.get("base") or 0)
+                            total += float(ln.get("cuota_iva") or 0)
+                            total += float(ln.get("cuota_re") or 0)
+                        except Exception:
+                            pass
             except Exception:
                 total = 0.0
             tag = estado if estado in ("pendiente", "generado") else ""
@@ -159,8 +272,46 @@ class UIContabilidad(ttk.Frame):
                 ),
             )
 
+    def _seleccionar_todas_emitidas(self):
+        ids = self.tv_emitidas.get_children()
+        if ids:
+            self.tv_emitidas.selection_set(ids)
+
     def get_selected_emitida_ids(self) -> list[str]:
         return list(self.tv_emitidas.selection())
+
+    def set_asiento_emitida(self, lineas: list[dict], label: str = ""):
+        """Muestra las lineas del asiento en el panel derecho de emitidas."""
+        self.lbl_asiento_fac.configure(text=label or "")
+        self.tv_asiento_emitidas.delete(*self.tv_asiento_emitidas.get_children())
+        total_debe = 0.0
+        total_haber = 0.0
+        for ln in lineas:
+            dh = ln.get("dh", "")
+            imp = float(ln.get("importe") or 0)
+            if dh == "D":
+                total_debe += imp
+            else:
+                total_haber += imp
+            tag = "debe" if dh == "D" else "haber"
+            self.tv_asiento_emitidas.insert(
+                "", tk.END,
+                values=(
+                    str(ln.get("subcuenta") or ""),
+                    str(ln.get("descripcion") or ""),
+                    dh,
+                    f"{imp:.2f}",
+                    str(ln.get("concepto") or ""),
+                ),
+                tags=(tag,),
+            )
+        dif = round(total_debe - total_haber, 2)
+        ok = dif == 0
+        self.lbl_balance_emitidas.configure(
+            text=f"Debe: {total_debe:.2f}   Haber: {total_haber:.2f}   "
+                 f"Dif: {dif:.2f}{'  ✓ Cuadrado' if ok else '  ✗ No cuadra'}",
+            foreground="#16a34a" if ok else "#991b1b",
+        )
 
     def ask_yes_no(self, title: str, message: str) -> bool:
         return messagebox.askyesno(title, message)

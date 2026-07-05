@@ -567,6 +567,9 @@ class GestorSQLite:
         )
         self.conn.commit()
         self._ensure_column("facturas_emitidas_docs", "borrador", "INTEGER")
+        self._ensure_column("facturas_emitidas_docs", "subcuenta_ingreso", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "subcuenta_iva", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "subcuenta_retencion", "TEXT")
         self.conn.executescript(
             "CREATE TABLE IF NOT EXISTS series_emitidas ("
             "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -802,6 +805,47 @@ class GestorSQLite:
             );
             CREATE INDEX IF NOT EXISTS idx_ocr_corr_factura
                 ON ocr_correcciones(factura_id);
+        """)
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS cuotas_periodicas (
+                id              TEXT PRIMARY KEY,
+                codigo_empresa  TEXT NOT NULL,
+                ejercicio       INTEGER NOT NULL,
+                tercero_id      TEXT,
+                nif             TEXT,
+                nombre          TEXT,
+                descripcion     TEXT,
+                serie           TEXT,
+                periodicidad    TEXT NOT NULL DEFAULT 'mensual',
+                fecha_inicio    TEXT,
+                fecha_fin       TEXT,
+                activa          INTEGER NOT NULL DEFAULT 1,
+                subcuenta_cliente TEXT,
+                cuenta_bancaria TEXT,
+                forma_pago      TEXT,
+                plantilla_word  TEXT,
+                plantilla_emitidas TEXT,
+                tipo_operacion  TEXT DEFAULT '01',
+                modelo_fiscal   TEXT,
+                retencion_aplica INTEGER DEFAULT 0,
+                retencion_pct   REAL,
+                descuento_total_tipo TEXT,
+                descuento_total_valor REAL,
+                moneda_codigo   TEXT,
+                moneda_simbolo  TEXT,
+                observaciones   TEXT,
+                lineas_json     TEXT,
+                created_at      TEXT,
+                updated_at      TEXT
+            );
+            CREATE TABLE IF NOT EXISTS cuotas_periodicas_generadas (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                cuota_id    TEXT NOT NULL,
+                periodo     TEXT NOT NULL,
+                factura_id  TEXT,
+                fecha_registro TEXT,
+                UNIQUE(cuota_id, periodo)
+            );
         """)
         self.conn.commit()
 
@@ -1573,6 +1617,19 @@ class GestorSQLite:
             out.append(d)
         return out
 
+    def quitar_facturas_emitidas_de_contabilidad(self, codigo_empresa: str, ejercicio: int, ids: list):
+        """Quita del modulo de contabilidad las facturas en estado pendiente (sin suenlace generado)."""
+        ids = ids or []
+        if not ids:
+            return 0
+        qmarks = ",".join("?" for _ in ids)
+        cur = self.conn.execute(
+            f"UPDATE facturas_emitidas_docs SET estado_contable=NULL WHERE codigo_empresa=? AND ejercicio=? AND estado_contable='pendiente' AND id IN ({qmarks})",
+            (codigo_empresa, _ej_val(ejercicio), *ids),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
     def listar_facturas_emitidas(self, codigo_empresa: str, ejercicio: int):
         cur = self.conn.execute(
             "SELECT * FROM facturas_emitidas_docs WHERE codigo_empresa=? AND ejercicio=? ORDER BY fecha_asiento, numero",
@@ -1698,8 +1755,9 @@ class GestorSQLite:
             (id, codigo_empresa, ejercicio, tercero_id, serie, numero, numero_largo_sii, numero_asiento,
              fecha_asiento, fecha_expedicion, fecha_operacion, tipo_operacion, modelo_fiscal, nif, nombre, descripcion, observaciones,
              subcuenta_cliente, forma_pago, cuenta_bancaria, plantilla_word, plantilla_emitidas, pdf_path, pdf_ref, pdf_path_a3, retencion_aplica, retencion_pct,
-             retencion_base, retencion_importe, descuento_total_tipo, descuento_total_valor, moneda_codigo, moneda_simbolo, enviado, fecha_envio, canal_envio, generada, fecha_generacion, lineas_json, borrador)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             retencion_base, retencion_importe, descuento_total_tipo, descuento_total_valor, moneda_codigo, moneda_simbolo, enviado, fecha_envio, canal_envio, generada, fecha_generacion, lineas_json, borrador,
+             subcuenta_ingreso, subcuenta_iva, subcuenta_retencion)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -1739,7 +1797,10 @@ class GestorSQLite:
                 generada=excluded.generada,
                 fecha_generacion=excluded.fecha_generacion,
                 lineas_json=excluded.lineas_json,
-                borrador=excluded.borrador
+                borrador=excluded.borrador,
+                subcuenta_ingreso=excluded.subcuenta_ingreso,
+                subcuenta_iva=excluded.subcuenta_iva,
+                subcuenta_retencion=excluded.subcuenta_retencion
             """,
             (
                 fid,
@@ -1782,6 +1843,9 @@ class GestorSQLite:
                 factura.get("fecha_generacion"),
                 json.dumps(factura.get("lineas", []), ensure_ascii=False),
                 1 if factura.get("borrador") else 0,
+                factura.get("subcuenta_ingreso"),
+                factura.get("subcuenta_iva"),
+                factura.get("subcuenta_retencion"),
             ),
         )
         self.conn.commit()
@@ -2358,6 +2422,14 @@ class GestorSQLite:
         return item
 
     # ---------- TERCEROS (global) ----------
+    def get_tercero(self, tercero_id: str) -> dict | None:
+        row = self.conn.execute("SELECT * FROM terceros WHERE id=?", (str(tercero_id),)).fetchone()
+        return self._row_to_dict(row) if row else None
+
+    def get_tercero_by_nif(self, nif: str) -> dict | None:
+        row = self.conn.execute("SELECT * FROM terceros WHERE nif=? LIMIT 1", (str(nif).strip(),)).fetchone()
+        return self._row_to_dict(row) if row else None
+
     def listar_terceros(self):
         cur = self.conn.execute("SELECT * FROM terceros ORDER BY nombre")
         return [self._row_to_dict(r) for r in cur.fetchall()]
@@ -4797,3 +4869,94 @@ class GestorSQLite:
                     ),
                 )
             self.conn.commit()
+
+    # ── CUOTAS PERIODICAS ─────────────────────────────────────────────────────
+
+    def upsert_cuota_periodica(self, datos: dict):
+        import json as _json
+        now = self._utc_now()
+        cid = datos.get("id") or str(int(__import__("time").time() * 1000))
+        lineas = datos.get("lineas") or datos.get("lineas_json") or []
+        if isinstance(lineas, list):
+            lineas_json = _json.dumps(lineas, ensure_ascii=False)
+        else:
+            lineas_json = str(lineas)
+        self.conn.execute(
+            """
+            INSERT INTO cuotas_periodicas
+              (id, codigo_empresa, ejercicio, tercero_id, nif, nombre, descripcion,
+               serie, periodicidad, fecha_inicio, fecha_fin, activa,
+               subcuenta_cliente, cuenta_bancaria, forma_pago,
+               plantilla_word, plantilla_emitidas, tipo_operacion, modelo_fiscal,
+               retencion_aplica, retencion_pct, descuento_total_tipo, descuento_total_valor,
+               moneda_codigo, moneda_simbolo, observaciones, lineas_json,
+               created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+              tercero_id=excluded.tercero_id, nif=excluded.nif, nombre=excluded.nombre,
+              descripcion=excluded.descripcion, serie=excluded.serie,
+              periodicidad=excluded.periodicidad, fecha_inicio=excluded.fecha_inicio,
+              fecha_fin=excluded.fecha_fin, activa=excluded.activa,
+              subcuenta_cliente=excluded.subcuenta_cliente,
+              cuenta_bancaria=excluded.cuenta_bancaria, forma_pago=excluded.forma_pago,
+              plantilla_word=excluded.plantilla_word,
+              plantilla_emitidas=excluded.plantilla_emitidas,
+              tipo_operacion=excluded.tipo_operacion, modelo_fiscal=excluded.modelo_fiscal,
+              retencion_aplica=excluded.retencion_aplica, retencion_pct=excluded.retencion_pct,
+              descuento_total_tipo=excluded.descuento_total_tipo,
+              descuento_total_valor=excluded.descuento_total_valor,
+              moneda_codigo=excluded.moneda_codigo, moneda_simbolo=excluded.moneda_simbolo,
+              observaciones=excluded.observaciones, lineas_json=excluded.lineas_json,
+              updated_at=excluded.updated_at
+            """,
+            (
+                cid, datos.get("codigo_empresa"), datos.get("ejercicio"),
+                datos.get("tercero_id"), datos.get("nif"), datos.get("nombre"),
+                datos.get("descripcion"), datos.get("serie"),
+                datos.get("periodicidad", "mensual"),
+                datos.get("fecha_inicio"), datos.get("fecha_fin"),
+                int(datos.get("activa", 1)),
+                datos.get("subcuenta_cliente"), datos.get("cuenta_bancaria"),
+                datos.get("forma_pago"), datos.get("plantilla_word"),
+                datos.get("plantilla_emitidas"),
+                datos.get("tipo_operacion", "01"), datos.get("modelo_fiscal"),
+                int(datos.get("retencion_aplica") or 0), datos.get("retencion_pct"),
+                datos.get("descuento_total_tipo"), datos.get("descuento_total_valor"),
+                datos.get("moneda_codigo"), datos.get("moneda_simbolo"),
+                datos.get("observaciones"), lineas_json, now, now,
+            ),
+        )
+        self.conn.commit()
+        datos["id"] = cid
+
+    def listar_cuotas_periodicas(self, codigo_empresa: str, ejercicio: int) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM cuotas_periodicas WHERE codigo_empresa=? AND ejercicio=? ORDER BY nombre",
+            (codigo_empresa, int(ejercicio)),
+        ).fetchall()
+        return [self._row_to_dict(r) for r in rows]
+
+    def get_cuota_periodica(self, cuota_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM cuotas_periodicas WHERE id=?", (str(cuota_id),)
+        ).fetchone()
+        return self._row_to_dict(row) if row else None
+
+    def eliminar_cuota_periodica(self, cuota_id: str):
+        self.conn.execute("DELETE FROM cuotas_periodicas_generadas WHERE cuota_id=?", (str(cuota_id),))
+        self.conn.execute("DELETE FROM cuotas_periodicas WHERE id=?", (str(cuota_id),))
+        self.conn.commit()
+
+    def listar_periodos_generados(self, cuota_id: str) -> list[str]:
+        rows = self.conn.execute(
+            "SELECT periodo FROM cuotas_periodicas_generadas WHERE cuota_id=? ORDER BY periodo",
+            (str(cuota_id),),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def registrar_periodo_generado(self, cuota_id: str, periodo: str, factura_id: str, fecha: str):
+        self.conn.execute(
+            "INSERT OR IGNORE INTO cuotas_periodicas_generadas (cuota_id, periodo, factura_id, fecha_registro) VALUES (?,?,?,?)",
+            (str(cuota_id), periodo, str(factura_id), fecha),
+        )
+        self.conn.commit()
