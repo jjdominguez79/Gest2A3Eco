@@ -117,6 +117,10 @@ class UIContabilidad(ttk.Frame):
             bar, text="Quitar de contabilidad",
             command=self.emitidas_ctrl.quitar_de_contabilidad,
         ).pack(side=tk.LEFT, padx=6)
+        ttk.Button(
+            bar, text="Resetear a no generado",
+            command=self.emitidas_ctrl.resetear_generadas,
+        ).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Label(
             bar,
             text="Ctrl+clic / Shift+clic para seleccion multiple",

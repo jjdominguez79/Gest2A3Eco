@@ -1,15 +1,11 @@
 """
-Vista: Buzones globales (modulo "Notificaciones Electronicas").
+Vista: Buzones globales (modulo "Notificaciones Electronicas") - SOLO LECTURA.
 
-Listado de los buzones de notificacion de TODOS los clientes, con filtros
-por cliente, organismo y estado. El alta y la edicion reutilizan el mismo
-dialogo que la pestana de buzones de la ficha de cliente; ambas vistas
-trabajan contra la misma tabla `notif_buzones`. La baja es logica
-(activo/inactivo), no se elimina el registro.
-
-"Sincronizar ahora" es una simulacion: registra una entrada en
-`notif_sync_logs` y actualiza la fecha de ultima consulta del buzon. No se
-implementan conectores reales todavia.
+Listado de los buzones de notificacion de TODOS los clientes, con filtros por
+cliente, organismo y estado. Esta pantalla NO permite crear, editar ni activar/
+desactivar buzones: eso se hace en la ficha de cada cliente (pestana
+"Notificaciones electronicas"). Aqui solo se consulta y se puede solicitar la
+SINCRONIZACION MANUAL (de un buzon seleccionado o de todos los activos).
 """
 from __future__ import annotations
 
@@ -19,16 +15,15 @@ from tkinter import messagebox, ttk
 
 from views.notificaciones_theme import *  # noqa: F401,F403
 from views.ui_bandeja_notificaciones import LABEL_ESTADO, _fmt_fecha
-from views.ui_buzones import LABELS_MODO_DESCARGA, _BuzonDialog
-from views.ui_notificaciones_shared import seleccionar_cliente
+from views.ui_buzones import LABELS_MODO_DESCARGA
 
 
 class UIBuzonesGlobal(ttk.Frame):
-    """Listado global de buzones de notificacion de todos los clientes."""
+    """Listado global de buzones (solo lectura + sincronizacion manual)."""
 
     _COLS = [
         ("cliente",         "Cliente",          170, "w"),
-        ("organismo",       "Organismo",        130, "w"),
+        ("organismo",       "Organismo",        150, "w"),
         ("nombre",          "Nombre buzon",     150, "w"),
         ("tipo_buzon",      "Tipo",              70, "center"),
         ("certificado",     "Certificado",      140, "w"),
@@ -46,7 +41,6 @@ class UIBuzonesGlobal(ttk.Frame):
         self.refresh()
 
     # ------------------------------------------------------------------ build
-
     def _build(self) -> None:
         self._build_header()
         self._build_filter_bar()
@@ -59,7 +53,7 @@ class UIBuzonesGlobal(ttk.Frame):
         hdr.pack(fill="x")
         tk.Label(hdr, text="▦  Buzones (todos los clientes)", bg=_HDR_BG, fg=_HDR_FG,
                  font=("Segoe UI", 11, "bold"), anchor="w").pack(side="left", padx=16, pady=10)
-        tk.Label(hdr, text="Canales de recepcion de notificaciones de todos los clientes",
+        tk.Label(hdr, text="Solo lectura. La configuracion se hace en la ficha de cada cliente.",
                  bg=_HDR_BG, fg=_HDR_SUB, font=("Segoe UI", 9)).pack(side="left", pady=10)
 
     def _build_filter_bar(self) -> None:
@@ -89,16 +83,12 @@ class UIBuzonesGlobal(ttk.Frame):
         tb = tk.Frame(self, bg=_BG, pady=6)
         tb.pack(fill="x", padx=8)
         btn = dict(font=("Segoe UI", 9), relief="flat", cursor="hand2", padx=10, pady=4)
-        tk.Button(tb, text="+ Nuevo", bg=_PRIMARY, fg="white", command=self._on_nuevo, **btn).pack(side="left", padx=(0, 5))
-        self._btn_editar = tk.Button(tb, text="Editar", bg="#475569", fg="white",
-                                      command=self._on_editar, state="disabled", **btn)
-        self._btn_editar.pack(side="left", padx=(0, 5))
-        self._btn_toggle = tk.Button(tb, text="Activar/Desactivar", bg="#475569", fg="white",
-                                      command=self._on_toggle_activo, state="disabled", **btn)
-        self._btn_toggle.pack(side="left", padx=(0, 5))
-        self._btn_sync = tk.Button(tb, text="↻ Sincronizar ahora (simulado)", bg="#0ea5e9", fg="white",
+        self._btn_sync = tk.Button(tb, text="↻ Sincronizar seleccionado", bg="#0ea5e9", fg="white",
                                     command=self._on_sincronizar, state="disabled", **btn)
         self._btn_sync.pack(side="left", padx=(0, 5))
+        self._btn_sync_all = tk.Button(tb, text="↻ Sincronizar todos", bg="#0284c7", fg="white",
+                                       command=self._on_sincronizar_todos, **btn)
+        self._btn_sync_all.pack(side="left", padx=(0, 5))
         self._btn_ver_notif = tk.Button(tb, text="Ver notificaciones", bg="#475569", fg="white",
                                          command=self._on_ver_notificaciones, state="disabled", **btn)
         self._btn_ver_notif.pack(side="left", padx=(0, 5))
@@ -123,7 +113,7 @@ class UIBuzonesGlobal(ttk.Frame):
         sb_h.pack(side="bottom", fill="x")
         self._tv.pack(fill="both", expand=True)
         self._tv.bind("<<TreeviewSelect>>", self._on_select)
-        self._tv.bind("<Double-1>", lambda _e: self._on_editar())
+        self._tv.bind("<Double-1>", lambda _e: self._on_ver_notificaciones())
 
     def _build_statusbar(self) -> None:
         sb = tk.Frame(self, bg=_BG, height=22)
@@ -132,7 +122,6 @@ class UIBuzonesGlobal(ttk.Frame):
         self._lbl_status.pack(side="left", padx=8)
 
     # ----------------------------------------------------------------- helpers
-
     def _row_seleccionada(self) -> dict | None:
         sel = self._tv.selection()
         if not sel:
@@ -140,82 +129,115 @@ class UIBuzonesGlobal(ttk.Frame):
         buzon_id = self._tv.set(sel[0], "_id")
         return next((b for b in self._cache if str(b.get("id")) == str(buzon_id)), None)
 
-    # ----------------------------------------------------------------- eventos
-
     def _on_select(self, _e=None) -> None:
         ok = bool(self._tv.selection())
         s = "normal" if ok else "disabled"
-        self._btn_editar.configure(state=s)
-        self._btn_toggle.configure(state=s)
         self._btn_sync.configure(state=s)
         self._btn_ver_notif.configure(state=s)
 
-    def _on_nuevo(self) -> None:
-        empresa = seleccionar_cliente(self.winfo_toplevel(), self._gestor)
-        if not empresa:
-            return
-        dlg = _BuzonDialog(self.winfo_toplevel(), None, self._gestor, empresa["codigo"])
-        if dlg.result:
-            try:
-                self._gestor.upsert_notif_buzon(dlg.result)
-            except Exception as exc:
-                messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
-                return
-            self.refresh()
-
-    def _on_editar(self) -> None:
-        buzon = self._row_seleccionada()
-        if not buzon:
-            return
-        dlg = _BuzonDialog(self.winfo_toplevel(), buzon, self._gestor, buzon["codigo_empresa"])
-        if dlg.result:
-            try:
-                self._gestor.upsert_notif_buzon(dlg.result)
-            except Exception as exc:
-                messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
-                return
-            self.refresh()
-
-    def _on_toggle_activo(self) -> None:
-        buzon = self._row_seleccionada()
-        if not buzon:
-            return
-        nuevo = dict(buzon)
-        nuevo["activo"] = 0 if buzon.get("activo") else 1
-        try:
-            self._gestor.upsert_notif_buzon(nuevo)
-        except Exception as exc:
-            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
-            return
-        self.refresh()
-
+    # ----------------------------------------------------------------- sync (manual)
     def _on_sincronizar(self) -> None:
         buzon = self._row_seleccionada()
         if not buzon:
             return
-        ahora = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         try:
-            self._gestor.upsert_notif_sync_log({
-                "codigo_empresa": buzon["codigo_empresa"],
-                "organismo_id":   buzon.get("organismo_id"),
-                "buzon_id":       buzon["id"],
-                "fecha_hora":     ahora,
-                "resultado":      "OK",
-                "notificaciones_detectadas": 0,
-            })
-            actualizado = dict(buzon)
-            actualizado["ultima_consulta"] = ahora
-            self._gestor.upsert_notif_buzon(actualizado)
+            from services.aapp.sync_service import sincronizar_buzon
+            from services.aapp.base import OpcionesSync
         except Exception as exc:
-            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+            self._sync_no_disponible(str(exc))
             return
+        if not messagebox.askyesno(
+            "Sincronizar buzon",
+            f"Se accedera al organismo con el certificado del buzon "
+            f"'{buzon.get('nombre')}' para buscar notificaciones pendientes.\n\n"
+            "El proceso puede tardar unos segundos. Continuar?",
+            parent=self.winfo_toplevel(),
+        ):
+            return
+        self._set_busy(True)
+        import threading
+
+        def _worker():
+            res = sincronizar_buzon(self._gestor, buzon, OpcionesSync(headless=True))
+            self.after(0, lambda: self._sync_fin(res))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_sincronizar_todos(self) -> None:
+        try:
+            from services.aapp.sync_service import sincronizar_buzones
+            from services.aapp.base import OpcionesSync
+        except Exception as exc:
+            self._sync_no_disponible(str(exc))
+            return
+        activos = [b for b in self._cache if b.get("activo")]
+        if not activos:
+            messagebox.showinfo("Sincronizar", "No hay buzones activos que sincronizar.",
+                                parent=self.winfo_toplevel())
+            return
+        if not messagebox.askyesno(
+            "Sincronizar todos",
+            f"Se sincronizaran {len(activos)} buzon(es) activo(s) de todos los clientes.\n\n"
+            "Puede tardar bastante. Continuar?",
+            parent=self.winfo_toplevel(),
+        ):
+            return
+        self._set_busy(True)
+        import threading
+
+        def _worker():
+            glob = sincronizar_buzones(self._gestor, activos, OpcionesSync(headless=True))
+            self.after(0, lambda: self._sync_todos_fin(glob))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _sync_fin(self, res) -> None:
+        self._set_busy(False)
+        if getattr(res, "ok", False):
+            messagebox.showinfo(
+                "Sincronizacion completada",
+                f"Buzon '{res.buzon_nombre}':\n"
+                f"{res.total_detectadas} notificacion(es) detectada(s), {res.nuevas} nueva(s).",
+                parent=self.winfo_toplevel(),
+            )
+        else:
+            messagebox.showerror(
+                "Sincronizacion con errores",
+                f"Buzon '{getattr(res, 'buzon_nombre', '?')}':\n{getattr(res, 'mensaje', '')}",
+                parent=self.winfo_toplevel(),
+            )
+        self.refresh()
+
+    def _sync_todos_fin(self, glob) -> None:
+        self._set_busy(False)
+        errores = getattr(glob, "con_error", [])
         messagebox.showinfo(
-            "Sincronizar (simulado)",
-            f"Sincronizacion simulada completada para el buzon '{buzon.get('nombre')}'.\n\n"
-            "No se han detectado notificaciones nuevas (sin conector real configurado).",
+            "Sincronizacion completada",
+            f"Buzones procesados: {len(glob.resultados)}\n"
+            f"Notificaciones nuevas: {glob.total_nuevas}\n"
+            f"Con error: {len(errores)}",
             parent=self.winfo_toplevel(),
         )
         self.refresh()
+
+    def _set_busy(self, busy: bool) -> None:
+        st = "disabled" if busy else "normal"
+        try:
+            self._btn_sync_all.configure(state=st)
+            self._btn_sync.configure(state=st if self._tv.selection() else "disabled")
+        except Exception:
+            pass
+
+    def _sync_no_disponible(self, motivo: str = "") -> None:
+        messagebox.showwarning(
+            "Sincronizar no disponible",
+            "El conector de notificaciones no esta disponible en este equipo.\n\n"
+            f"Detalle: {motivo}\n\n"
+            "Instala las dependencias:\n"
+            "  pip install cryptography playwright\n"
+            "  playwright install chromium",
+            parent=self.winfo_toplevel(),
+        )
 
     def _on_ver_notificaciones(self) -> None:
         buzon = self._row_seleccionada()
@@ -251,7 +273,6 @@ class UIBuzonesGlobal(ttk.Frame):
         dlg.grab_set()
 
     # ----------------------------------------------------------------- refresh
-
     def refresh(self) -> None:
         self._cache = self._gestor.listar_notif_buzones_global()
         clientes = sorted({b.get("empresa_nombre") or b.get("codigo_empresa") or "" for b in self._cache} - {""})
@@ -297,7 +318,5 @@ class UIBuzonesGlobal(ttk.Frame):
             text=f"Total: {len(self._cache)}  |  Activos: {sum(1 for b in self._cache if b.get('activo'))}  |  "
                  f"Inactivos: {sum(1 for b in self._cache if not b.get('activo'))}"
         )
-        self._btn_editar.configure(state="disabled")
-        self._btn_toggle.configure(state="disabled")
         self._btn_sync.configure(state="disabled")
         self._btn_ver_notif.configure(state="disabled")

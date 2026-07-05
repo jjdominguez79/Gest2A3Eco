@@ -135,6 +135,39 @@ class UIContabilidadEmitidasController:
             "Vuelven a aparecer como pendientes en el modulo de facturacion.",
         )
 
+    def resetear_generadas(self):
+        """Revierte el estado 'generado' a NULL de las facturas seleccionadas para poder regenerar el suenlace."""
+        sel = self._view.get_selected_emitida_ids()
+        if not sel:
+            self._view.show_warning(
+                "Gest2A3Eco",
+                "Selecciona al menos una factura para resetear.",
+            )
+            return
+        docs_map = {str(d.get("id")): d for d in (self._view._emitidas_docs or [])}
+        generadas = [fid for fid in sel if (docs_map.get(fid) or {}).get("estado_contable") == "generado"]
+        if not generadas:
+            self._view.show_warning(
+                "Gest2A3Eco",
+                "Ninguna de las facturas seleccionadas tiene estado 'Generado'.",
+            )
+            return
+        if not self._view.ask_yes_no(
+            "Resetear estado",
+            f"Se van a resetear {len(generadas)} factura(s) a 'No generado'.\n"
+            "Esto permite volver a incluirlas en el modulo de contabilidad y regenerar el suenlace.\n\n"
+            "¿Continuar?",
+        ):
+            return
+        reseteadas = self._gestor.resetear_facturas_emitidas_generadas(
+            self._codigo, self._ejercicio, generadas
+        )
+        self.refresh()
+        self._view.show_info(
+            "Gest2A3Eco",
+            f"{reseteadas} factura(s) reseteadas a 'No generado'.",
+        )
+
     def on_seleccionar(self, fac_id: str):
         """Calcula y muestra el asiento de la factura seleccionada en el panel derecho."""
         from views.ui_asiento_emitida_dialog import calcular_asiento_emitida

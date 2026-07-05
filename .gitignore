@@ -32,6 +32,7 @@ Thumbs.db
 *.log
 *.tmp
 *.temp
+logs/
 
 # Local runtime / generated data
 config.json
@@ -40,6 +41,10 @@ config.local.json
 .env.*
 pdfs_emitidas/
 plantillas/gest2a3eco.db
+
+# Clave de cifrado de contrasenas de certificados (NUNCA subir al repo)
+plantillas/.notif_key
+.notif_key
 
 # Local AI / analysis workspace files
 CLAUDE.md

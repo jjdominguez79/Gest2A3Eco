@@ -11,3 +11,7 @@ pymupdf
 pywin32
 requests
 packaging
+cryptography
+# Notificaciones electronicas (Opcion A, conector por navegador):
+#   tras instalar, ejecutar tambien:  playwright install chromium
+playwright

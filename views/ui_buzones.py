@@ -3,6 +3,10 @@ Vista: Gestion de Buzones de Notificacion.
 
 Un buzon es la combinacion empresa + organismo + tipo de servicio (DEH, 060...)
 que permite recibir notificaciones electronicas. Operativo sobre SQLite local.
+
+Modelo de certificado unico: el buzon NO elige certificado; usa automaticamente
+el unico certificado digital del cliente (empresa). El NIF del titular tambien se
+toma de ese certificado.
 """
 from __future__ import annotations
 
@@ -10,6 +14,12 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from views.notificaciones_theme import *  # noqa: F401,F403
+
+try:
+    from views.ui_certificados import _vigencia
+except Exception:  # pragma: no cover
+    def _vigencia(_f):
+        return ("", "neutro")
 
 TIPOS_BUZON = ["DEH", "060", "NOTIFIC@", "SNE", "CARPETA CIUDADANA", "OTRO"]
 
@@ -48,7 +58,6 @@ class UIBuzones(ttk.Frame):
         self.refresh()
 
     # ------------------------------------------------------------------ build
-
     def _build(self) -> None:
         self._build_header()
         self._build_toolbar()
@@ -58,7 +67,7 @@ class UIBuzones(ttk.Frame):
     def _build_header(self) -> None:
         hdr = tk.Frame(self, bg=_HDR_BG)
         hdr.pack(fill="x")
-        tk.Label(hdr, text="\u25a6  Buzones", bg=_HDR_BG, fg=_HDR_FG,
+        tk.Label(hdr, text="▦  Buzones", bg=_HDR_BG, fg=_HDR_FG,
                  font=("Segoe UI", 11, "bold"), anchor="w").pack(side="left", padx=16, pady=10)
         tk.Label(hdr, text="Canales de recepcion de notificaciones electronicas",
                  bg=_HDR_BG, fg=_HDR_SUB, font=("Segoe UI", 9)).pack(side="left", pady=10)
@@ -72,7 +81,7 @@ class UIBuzones(ttk.Frame):
         self._btn_editar.pack(side="left", padx=(0, 5))
         self._btn_eliminar = tk.Button(tb, text="Eliminar", bg=_DANGER,   fg="white", command=self._on_eliminar, state="disabled", **btn)
         self._btn_eliminar.pack(side="left", padx=(0, 5))
-        tk.Button(tb, text="\u21bb Actualizar", bg="#64748b", fg="white", command=self.refresh, **btn).pack(side="left")
+        tk.Button(tb, text="↻ Actualizar", bg="#64748b", fg="white", command=self.refresh, **btn).pack(side="left")
         self._lbl_count = tk.Label(tb, text="", bg=_BG, fg=_SUB, font=("Segoe UI", 9))
         self._lbl_count.pack(side="right", padx=8)
 
@@ -104,7 +113,6 @@ class UIBuzones(ttk.Frame):
         self._lbl_status.pack(side="left", padx=8)
 
     # ----------------------------------------------------------------- eventos
-
     def _on_select(self, _e=None) -> None:
         ok = bool(self._tv.selection())
         s  = "normal" if ok else "disabled"
@@ -156,7 +164,6 @@ class UIBuzones(ttk.Frame):
         self.refresh()
 
     # ----------------------------------------------------------------- refresh
-
     def refresh(self) -> None:
         rows = self._gestor.listar_notif_buzones(self._codigo)
         self._tv.delete(*self._tv.get_children())
@@ -183,9 +190,8 @@ class UIBuzones(ttk.Frame):
 
 
 # ── Dialog ───────────────────────────────────────────────────────────────────
-
 class _BuzonDialog(tk.Toplevel):
-    """Dialogo de creacion/edicion de buzon."""
+    """Dialogo de creacion/edicion de buzon (usa el certificado unico del cliente)."""
 
     def __init__(self, parent, buzon: dict | None, gestor, codigo_empresa: str):
         super().__init__(parent)
@@ -195,9 +201,12 @@ class _BuzonDialog(tk.Toplevel):
         self._buzon   = buzon or {}
         self._gestor  = gestor
         self._empresa = codigo_empresa
-        # Listas de organismos y certificados para los combos
-        self._organismos  = gestor.listar_notif_organismos(solo_activos=True)
-        self._certificados = gestor.listar_notif_certificados(codigo_empresa, solo_activos=True)
+        self._organismos = gestor.listar_notif_organismos(solo_activos=True)
+        # Certificado unico del cliente (si existe)
+        certs = gestor.listar_notif_certificados(codigo_empresa, solo_activos=True)
+        if not certs:
+            certs = gestor.listar_notif_certificados(codigo_empresa)
+        self._cert = certs[0] if certs else None
         self._build()
         self.grab_set()
         self.transient(parent)
@@ -208,44 +217,31 @@ class _BuzonDialog(tk.Toplevel):
         frm = ttk.Frame(self, padding=16)
         frm.pack(fill="both", expand=True)
 
-        # Mapas id → nombre para los combos
-        self._org_nombres  = [""] + [f"{o['codigo']} - {o['nombre']}" for o in self._organismos]
-        self._org_ids      = [None] + [o["id"] for o in self._organismos]
-        self._cert_nombres = ["(sin certificado)"] + [c["nombre"] for c in self._certificados]
-        self._cert_ids     = [None] + [c["id"] for c in self._certificados]
+        self._org_nombres = [""] + [f"{o['codigo']} - {o['nombre']}" for o in self._organismos]
+        self._org_ids     = [None] + [o["id"] for o in self._organismos]
 
         self._var_nombre     = tk.StringVar(value=self._buzon.get("nombre", ""))
         self._var_tipo       = tk.StringVar(value=self._buzon.get("tipo_buzon", "DEH"))
-        self._var_nif        = tk.StringVar(value=self._buzon.get("nif_titular", "") or "")
         self._var_periodicidad = tk.StringVar(value=self._buzon.get("periodicidad_sync", "MANUAL"))
         self._var_email      = tk.StringVar(value=self._buzon.get("email_aviso", "") or "")
         self._var_responsable = tk.StringVar(value=self._buzon.get("responsable_interno", "") or "")
         self._var_envio_auto = tk.BooleanVar(value=bool(self._buzon.get("envio_automatico_cliente", False)))
         self._var_activo     = tk.BooleanVar(value=bool(self._buzon.get("activo", True)))
 
-        # Modo de descarga (combo de etiquetas)
         self._modo_values = MODOS_DESCARGA
         self._modo_labels = [LABELS_MODO_DESCARGA[m] for m in self._modo_values]
         modo_actual = self._buzon.get("modo_descarga", "SOLO_DETECTAR")
         idx_modo = self._modo_values.index(modo_actual) if modo_actual in self._modo_values else 0
         self._var_modo = tk.StringVar(value=self._modo_labels[idx_modo])
 
-        # Organismo combo
-        curr_org_id  = self._buzon.get("organismo_id")
-        org_sel      = next((f"{o['codigo']} - {o['nombre']}" for o in self._organismos if o["id"] == curr_org_id), "")
+        curr_org_id = self._buzon.get("organismo_id")
+        org_sel     = next((f"{o['codigo']} - {o['nombre']}" for o in self._organismos if o["id"] == curr_org_id), "")
         self._var_org = tk.StringVar(value=org_sel)
-
-        # Certificado combo
-        curr_cert_id = self._buzon.get("certificado_id")
-        cert_sel     = next((c["nombre"] for c in self._certificados if c["id"] == curr_cert_id), "(sin certificado)")
-        self._var_cert = tk.StringVar(value=cert_sel)
 
         rows_def = [
             ("Nombre *",     self._var_nombre, ttk.Entry,    {"width": 36}),
             ("Organismo",    self._var_org,    ttk.Combobox, {"width": 36, "values": self._org_nombres, "state": "readonly"}),
             ("Tipo buzon",   self._var_tipo,   ttk.Combobox, {"width": 22, "values": TIPOS_BUZON, "state": "readonly"}),
-            ("NIF Titular",  self._var_nif,    ttk.Entry,    {"width": 22}),
-            ("Certificado",  self._var_cert,   ttk.Combobox, {"width": 36, "values": self._cert_nombres, "state": "readonly"}),
             ("Periodicidad sincronizacion", self._var_periodicidad, ttk.Combobox, {"width": 22, "values": PERIODICIDADES, "state": "readonly"}),
             ("Modo de descarga", self._var_modo, ttk.Combobox, {"width": 22, "values": self._modo_labels, "state": "readonly"}),
             ("Email de aviso", self._var_email, ttk.Entry, {"width": 36}),
@@ -255,10 +251,24 @@ class _BuzonDialog(tk.Toplevel):
             ttk.Label(frm, text=lbl, anchor="e").grid(row=i, column=0, sticky="e", **pad)
             cls(frm, textvariable=var, **kw).grid(row=i, column=1, sticky="w", **pad)
 
+        # Info del certificado del cliente (automatico, no editable)
+        r = len(rows_def)
+        ttk.Label(frm, text="Certificado", anchor="e").grid(row=r, column=0, sticky="e", **pad)
+        if self._cert:
+            lbl_vig, tag = _vigencia(self._cert.get("fecha_caducidad"))
+            color = {"vigente": _SUCCESS, "por_vencer": _WARNING,
+                     "caducado": _DANGER, "neutro": _SUB}.get(tag, _SUB)
+            txt = f"{self._cert.get('nombre','')}  (NIF {self._cert.get('nif_titular','') or '-'})  ·  {lbl_vig}"
+            tk.Label(frm, text=txt, fg=color, anchor="w", justify="left",
+                     wraplength=320).grid(row=r, column=1, sticky="w", **pad)
+        else:
+            tk.Label(frm, text="Este cliente no tiene certificado. Configuralo en la pestana 'Certificado'.",
+                     fg=_DANGER, anchor="w", justify="left", wraplength=320).grid(row=r, column=1, sticky="w", **pad)
+
         ttk.Checkbutton(frm, text="Envio automatico al cliente", variable=self._var_envio_auto).grid(
-            row=len(rows_def), column=1, sticky="w", **pad)
+            row=r + 1, column=1, sticky="w", **pad)
         ttk.Checkbutton(frm, text="Activo", variable=self._var_activo).grid(
-            row=len(rows_def) + 1, column=1, sticky="w", **pad)
+            row=r + 2, column=1, sticky="w", **pad)
 
         btn_row = ttk.Frame(self, padding=(16, 8))
         btn_row.pack(fill="x")
@@ -277,22 +287,20 @@ class _BuzonDialog(tk.Toplevel):
             idx = next((i for i, n in enumerate(self._org_nombres) if n == org_text), 0)
             org_id = self._org_ids[idx] if idx < len(self._org_ids) else None
 
-        cert_text = self._var_cert.get()
-        cert_id   = None
-        if cert_text and cert_text != "(sin certificado)":
-            idx = next((i for i, n in enumerate(self._cert_nombres) if n == cert_text), 0)
-            cert_id = self._cert_ids[idx] if idx < len(self._cert_ids) else None
-
         modo_label = self._var_modo.get()
         idx_modo = self._modo_labels.index(modo_label) if modo_label in self._modo_labels else 0
         modo_descarga = self._modo_values[idx_modo]
+
+        # Certificado unico del cliente: se asigna automaticamente.
+        cert_id = self._cert["id"] if self._cert else None
+        nif     = (self._cert.get("nif_titular") if self._cert else None) or None
 
         self.result = {
             "codigo_empresa": self._empresa,
             "nombre":         nombre,
             "organismo_id":   org_id,
             "tipo_buzon":     self._var_tipo.get().strip() or "DEH",
-            "nif_titular":    self._var_nif.get().strip().upper() or None,
+            "nif_titular":    nif,
             "certificado_id": cert_id,
             "periodicidad_sync": self._var_periodicidad.get().strip() or "MANUAL",
             "modo_descarga":  modo_descarga,

@@ -438,11 +438,13 @@ class GestorSQLite:
         try:
             self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
             self.conn.execute("PRAGMA foreign_keys = ON")
+            self.conn.execute("PRAGMA busy_timeout = 5000")
             self.conn.row_factory = sqlite3.Row
             self._init_schema()
             self._migrate_terceros_global()
             self._migrate_maestro_subcuentas()
             self._migrate_notificaciones()
+            self._migrate_seguridad_social()
             if json_seed:
                 self._maybe_seed_from_json(json_seed)
         except Exception as exc:
@@ -1210,8 +1212,8 @@ class GestorSQLite:
             INSERT INTO empresas (codigo, ejercicio, nombre, digitos_plan, serie_emitidas,
                 siguiente_num_emitidas, serie_emitidas_rect, siguiente_num_emitidas_rect,
                 pdf_ref_seq, cuenta_bancaria, cuentas_bancarias, cif, direccion, cp, poblacion, provincia, pais, telefono, email,
-                logo_path, logo_max_width_mm, logo_max_height_mm, activo)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                logo_path, logo_max_width_mm, logo_max_height_mm, activo, naf)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(codigo, ejercicio) DO UPDATE SET
                 nombre=excluded.nombre,
                 digitos_plan=excluded.digitos_plan,
@@ -1233,7 +1235,8 @@ class GestorSQLite:
                 logo_path=excluded.logo_path,
                 logo_max_width_mm=excluded.logo_max_width_mm,
                 logo_max_height_mm=excluded.logo_max_height_mm,
-                activo=excluded.activo
+                activo=excluded.activo,
+                naf=excluded.naf
             """,
             (
                 emp.get("codigo"),
@@ -1259,11 +1262,76 @@ class GestorSQLite:
                 emp.get("logo_max_width_mm"),
                 emp.get("logo_max_height_mm"),
                 1 if emp.get("activo", True) else 0,
+                emp.get("naf"),
             ),
         )
         self.conn.commit()
         if not existe:
             self._clonar_plantillas_si_hace_falta(emp.get("codigo"), emp.get("ejercicio"))
+
+    # ---------- Seguridad Social: NAF / CCC ----------
+    def _migrate_seguridad_social(self):
+        self._ensure_column("empresas", "naf", "TEXT")
+        self.conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS empresa_ccc (
+                id             TEXT PRIMARY KEY,
+                codigo_empresa TEXT NOT NULL,
+                ccc            TEXT NOT NULL,
+                descripcion    TEXT,
+                activo         INTEGER NOT NULL DEFAULT 1,
+                created_at     TEXT NOT NULL,
+                updated_at     TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_empresa_ccc_emp
+                ON empresa_ccc(codigo_empresa, activo);
+            """
+        )
+        self.conn.commit()
+
+    def listar_ccc(self, codigo_empresa: str, solo_activos: bool = False) -> list:
+        sql = "SELECT * FROM empresa_ccc WHERE codigo_empresa=?"
+        params = [codigo_empresa]
+        if solo_activos:
+            sql += " AND activo=1"
+        sql += " ORDER BY ccc"
+        cur = self.conn.execute(sql, params)
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def upsert_ccc(self, ccc: dict) -> str:
+        import uuid as _uuid
+        now = self._utc_now()
+        cid = str(ccc.get("id") or _uuid.uuid4())
+        self.conn.execute(
+            """
+            INSERT INTO empresa_ccc (id, codigo_empresa, ccc, descripcion, activo, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                ccc         = excluded.ccc,
+                descripcion = excluded.descripcion,
+                activo      = excluded.activo,
+                updated_at  = excluded.updated_at
+            """,
+            (
+                cid,
+                ccc.get("codigo_empresa"),
+                (ccc.get("ccc") or "").strip(),
+                ccc.get("descripcion"),
+                int(ccc.get("activo", 1)),
+                ccc.get("created_at", now),
+                now,
+            ),
+        )
+        self.conn.commit()
+        return cid
+
+    def eliminar_ccc(self, codigo_empresa: str, ccc_id: str) -> None:
+        self.conn.execute(
+            "DELETE FROM empresa_ccc WHERE id=? AND codigo_empresa=?",
+            (ccc_id, codigo_empresa),
+        )
+        self.conn.commit()
 
     def next_pdf_ref(self, codigo_empresa: str, ejercicio: int | None = None) -> str:
         eje = _ej_val(ejercicio)
@@ -1657,6 +1725,19 @@ class GestorSQLite:
         qmarks = ",".join("?" for _ in ids)
         cur = self.conn.execute(
             f"UPDATE facturas_emitidas_docs SET estado_contable=NULL WHERE codigo_empresa=? AND ejercicio=? AND estado_contable='pendiente' AND id IN ({qmarks})",
+            (codigo_empresa, _ej_val(ejercicio), *ids),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
+    def resetear_facturas_emitidas_generadas(self, codigo_empresa: str, ejercicio: int, ids: list):
+        """Revierte el estado 'generado' a NULL para permitir regenerar el suenlace."""
+        ids = ids or []
+        if not ids:
+            return 0
+        qmarks = ",".join("?" for _ in ids)
+        cur = self.conn.execute(
+            f"UPDATE facturas_emitidas_docs SET estado_contable=NULL WHERE codigo_empresa=? AND ejercicio=? AND estado_contable='generado' AND id IN ({qmarks})",
             (codigo_empresa, _ej_val(ejercicio), *ids),
         )
         self.conn.commit()
@@ -4698,28 +4779,74 @@ class GestorSQLite:
     # ── Seeder de datos simulados ────────────────────────────────────────────
 
     def sembrar_organismos_simulados(self) -> None:
-        """Inserta el catalogo estandar de organismos si esta vacio (idempotente)."""
-        count = self.conn.execute("SELECT COUNT(*) FROM notif_organismos").fetchone()[0]
-        if count > 0:
-            return
+        """Asegura el catalogo de organismos (buzones estilo Portal NEOS). Idempotente."""
         now = self._utc_now()
         organismos = [
-            ("AEAT",      "Agencia Estatal de Administracion Tributaria",  "HACIENDA",   "https://sede.agenciatributaria.gob.es"),
-            ("TGSS",      "Tesoreria General de la Seguridad Social",       "SS",         "https://sede.seg-social.gob.es"),
-            ("DGT",       "Direccion General de Trafico",                   "TRANSPORTE", "https://sede.dgt.gob.es"),
-            ("SEPE",      "Servicio Publico de Empleo Estatal",             "EMPLEO",     "https://sede.sepe.gob.es"),
-            ("AEPD",      "Agencia Espanola de Proteccion de Datos",        "CONTROL",    "https://www.aepd.es"),
-            ("MHACIENDA", "Ministerio de Hacienda",                         "HACIENDA",   "https://www.hacienda.gob.es"),
-            ("MINTRA",    "Ministerio de Trabajo y Economia Social",        "TRABAJO",    "https://www.mites.gob.es"),
-            ("AYTO",      "Ayuntamiento (generico)",                        "LOCAL",      ""),
+            # (codigo, nombre, tipo, url_portal, descripcion)
+            ("DEHU", "Direccion Electronica Habilitada Unica (DEHu)", "ESTATAL",
+             "https://dehu.redsara.es/", "Punto unico: AEAT, Seguridad Social y otros"),
+            ("TGSS", "Seguridad Social", "ESTATAL",
+             "https://sede.seg-social.gob.es/wps/portal/sede/sede/Inicio/NotificacionesTelematicas",
+             "SS - Sede electronica"),
+            ("DGT", "Direccion General de Trafico", "ESTATAL",
+             "https://sede.dgt.gob.es/es/", "DGT - Sede Electronica"),
+            ("ENOTUM", "eNotum", "AUTONOMICO",
+             "https://api.enotum.cat:8443/", "eNotum (Catalunya)"),
+            ("DFGIPUZKOA", "Diputacion Foral de Gipuzkoa", "FORAL",
+             "https://w390w.gipuzkoa.net/WAS/HACI/WATGipuzkoatariaWEB/inicio.do?idioma=C&app=BUZON",
+             "Sede electronica de la Diputacion Foral de Gipuzkoa"),
+            ("GVA", "Generalitat Valenciana", "AUTONOMICO",
+             "https://www.comunicaciones.gva.es/comunicaciones/login.html", "Generalitat Valenciana"),
+            ("XUNTA", "Xunta de Galicia", "AUTONOMICO",
+             "https://notifica.xunta.gal/notificaciones/portal/portada", "Xunta de Galicia"),
+            ("MADRID", "Comunidad de Madrid", "AUTONOMICO",
+             "https://gestiona3.madrid.org/", "Comunidad de Madrid"),
+            ("DPSEVILLA", "Diputacion Provincial de Sevilla", "PROVINCIAL",
+             "https://sedeelectronicadipusevilla.es/opencms/opencms/sede", "Diputacion Provincial de Sevilla"),
+            ("DFBIZKAIA", "Diputacion Foral de Bizkaia - eBizkaia", "FORAL",
+             "https://www.ebizkaia.eus/es/mi-perfil", "Diputacion Foral de Bizkaia - eBizkaia"),
+            ("EUSKADI", "Comunidad Autonoma de Pais Vasco", "AUTONOMICO",
+             "https://www.euskadi.eus/notificaciones/", "Comunidad Autonoma de Pais Vasco"),
+            ("JANDALUCIA", "Junta de Andalucia", "AUTONOMICO",
+             "https://ws020.juntadeandalucia.es/", "Junta de Andalucia"),
+            ("LPGC", "Ayuntamiento de Las Palmas de Gran Canaria", "LOCAL",
+             "https://sedeelectronica.laspalmasgc.es/web/inicioWebc.do?opcion=noreg",
+             "Ayuntamiento de Las Palmas de Gran Canaria"),
         ]
-        for codigo, nombre, tipo, url in organismos:
+        for codigo, nombre, tipo, url, descr in organismos:
             self.conn.execute(
-                "INSERT OR IGNORE INTO notif_organismos "
-                "(codigo, nombre, tipo, url_portal, activo, created_at, updated_at) "
-                "VALUES (?,?,?,?,1,?,?)",
-                (codigo, nombre, tipo, url, now, now),
+                """
+                INSERT INTO notif_organismos
+                    (codigo, nombre, tipo, url_portal, descripcion, activo, created_at, updated_at)
+                VALUES (?,?,?,?,?,1,?,?)
+                ON CONFLICT(codigo) DO UPDATE SET
+                    nombre      = excluded.nombre,
+                    tipo        = excluded.tipo,
+                    url_portal  = excluded.url_portal,
+                    descripcion = excluded.descripcion,
+                    activo      = 1,
+                    updated_at  = excluded.updated_at
+                """,
+                (codigo, nombre, tipo, url, descr, now, now),
             )
+        # Eliminar los organismos de demo antiguos (y sus datos dependientes)
+        # que no forman parte del catalogo de Portal NEOS.
+        legacy = ("AEAT", "SEPE", "AEPD", "MHACIENDA", "MINTRA", "AYTO")
+        ph = ",".join("?" for _ in legacy)
+        ids = [r[0] for r in self.conn.execute(
+            "SELECT id FROM notif_organismos WHERE codigo IN (%s)" % ph, legacy).fetchall()]
+        if ids:
+            iph = ",".join("?" for _ in ids)
+            buz = [r[0] for r in self.conn.execute(
+                "SELECT id FROM notif_buzones WHERE organismo_id IN (%s)" % iph, ids).fetchall()]
+            if buz:
+                bph = ",".join("?" for _ in buz)
+                self.conn.execute("DELETE FROM notif_bandeja WHERE buzon_id IN (%s)" % bph, buz)
+                self.conn.execute("DELETE FROM notif_sync_logs WHERE buzon_id IN (%s)" % bph, buz)
+            self.conn.execute("DELETE FROM notif_bandeja WHERE organismo_id IN (%s)" % iph, ids)
+            self.conn.execute("DELETE FROM notif_sync_logs WHERE organismo_id IN (%s)" % iph, ids)
+            self.conn.execute("DELETE FROM notif_buzones WHERE organismo_id IN (%s)" % iph, ids)
+            self.conn.execute("DELETE FROM notif_organismos WHERE id IN (%s)" % iph, ids)
         self.conn.commit()
 
     def sembrar_datos_empresa_simulados(self, codigo_empresa: str, ejercicio: int) -> None:

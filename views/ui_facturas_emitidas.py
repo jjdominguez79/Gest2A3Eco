@@ -2076,12 +2076,16 @@ class UIFacturasEmitidas(ttk.Frame):
             self.cuotas_controller.refresh_cuotas()
 
     def _build_facturas_tab(self, parent):
-        top = ttk.Frame(parent)
-        top.pack(fill="x", padx=20, pady=(8, 0))
+        toolbar = ttk.Frame(parent)
+        toolbar.pack(fill="x", padx=20, pady=(8, 0))
+        top = ttk.Frame(toolbar)
+        top.pack(fill="x")
+        top2 = ttk.Frame(toolbar)
+        top2.pack(fill="x", pady=(4, 0))
         can_write = getattr(getattr(self.gestor, "security", None), "can_write_company", lambda _c: True)(self.codigo)
         is_cliente = bool(self.session and self.session.role.value == "cliente")
         self.btn_fact_nueva = ttk.Button(top, text="Nueva", style="Primary.TButton", command=self._nueva)
-        self.btn_fact_nueva.pack(side=tk.LEFT, padx=8)
+        self.btn_fact_nueva.pack(side=tk.LEFT, padx=(0, 8))
         self.btn_fact_nueva_rect = ttk.Button(top, text="Nueva Rectif.", command=self._nueva_rectificativa)
         self.btn_fact_nueva_rect.pack(side=tk.LEFT, padx=8)
         self.btn_fact_editar = ttk.Button(top, text="Editar", command=self._editar)
@@ -2096,11 +2100,11 @@ class UIFacturasEmitidas(ttk.Frame):
         self.btn_fact_confirmar.pack(side=tk.LEFT, padx=8)
         self.btn_fact_desmarcar = ttk.Button(top, text="Desmarcar enlazadas", command=self._desmarcar_generadas)
         self.btn_fact_desmarcar.pack(side=tk.LEFT, padx=8)
-        ttk.Button(top, text="Exportar PDF", command=self._export_pdf).pack(side=tk.LEFT, padx=8)
-        ttk.Button(top, text="Abrir PDF", command=self._abrir_pdf).pack(side=tk.LEFT, padx=8)
-        ttk.Button(top, text="Compartir PDF", command=self._compartir_pdf).pack(side=tk.LEFT, padx=8)
-        ttk.Button(top, text="Generar Facturae/FACe", command=self._generar_facturae).pack(side=tk.LEFT, padx=8)
-        ttk.Button(top, text="PDF seleccion", command=self._export_pdf_multiple).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top2, text="Exportar PDF", command=self._export_pdf).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(top2, text="Abrir PDF", command=self._abrir_pdf).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top2, text="Compartir PDF", command=self._compartir_pdf).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top2, text="Generar FACe", command=self._generar_facturae).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top2, text="PDF seleccion", command=self._export_pdf_multiple).pack(side=tk.LEFT, padx=8)
         if not can_write:
             for btn in (
                 self.btn_fact_nueva,

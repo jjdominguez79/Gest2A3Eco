@@ -9,6 +9,7 @@ from services.import_a3_empresa import importar_empresa_desde_a3, listar_empresa
 from utils.validaciones import normalizar_codigo_pais, normalizar_nif_cif
 from views.ui_buzones import UIBuzones
 from views.ui_certificados import UICertificados
+from views.ui_notificaciones_cliente import UINotificacionesCliente
 
 
 def _center_window(win, parent=None):
@@ -84,6 +85,7 @@ class UIConfiguracionEmpresa(ttk.Frame):
         self.var_logo_w  = tk.StringVar(value=str(self._empresa.get("logo_max_width_mm") or ""))
         self.var_logo_h  = tk.StringVar(value=str(self._empresa.get("logo_max_height_mm") or ""))
         self.var_activo  = tk.BooleanVar(value=bool(self._empresa.get("activo", True)))
+        self.var_naf     = tk.StringVar(value=str(self._empresa.get("naf", "") or ""))
         self.var_a3_info = tk.StringVar(value="Sin importacion realizada.")
 
         # Barra de acciones superior
@@ -112,6 +114,7 @@ class UIConfiguracionEmpresa(ttk.Frame):
         self._build_exercises_tab(ttk.Frame(nb, padding=14), nb)
         self._build_banks_tab(ttk.Frame(nb, padding=14), nb)
         self._build_notificaciones_tab(ttk.Frame(nb, padding=14), nb)
+        self._build_seguridad_social_tab(ttk.Frame(nb, padding=14), nb)
 
     # ── Pestana General ────────────────────────────────────────────────────────
 
@@ -278,6 +281,146 @@ class UIConfiguracionEmpresa(ttk.Frame):
         self.lbl_bancos_info.grid(row=3, column=0, sticky="w", pady=(8, 0))
         self._load_bank_records()
 
+    def _build_seguridad_social_tab(self, tab, nb):
+        nb.add(tab, text="Seguridad Social")
+        tab.columnconfigure(1, weight=1)
+        tab.rowconfigure(4, weight=1)
+
+        ttk.Label(tab, text="NAF (Numero de Afiliacion)").grid(row=0, column=0, sticky="w", pady=6)
+        ttk.Entry(tab, textvariable=self.var_naf, width=26).grid(row=0, column=1, sticky="w", pady=6)
+        ttk.Label(tab, text="Opcional. Se guarda al pulsar 'Guardar'.",
+                  foreground="#64748b").grid(row=1, column=0, columnspan=2, sticky="w")
+
+        self._codigo_para_ccc = self._empresa.get("codigo") or self._codigo
+
+        lf = ttk.LabelFrame(tab, text="Codigos de Cuenta de Cotizacion (CCC)")
+        lf.grid(row=4, column=0, columnspan=2, sticky="nsew", pady=(10, 4))
+        lf.columnconfigure(0, weight=1)
+        lf.rowconfigure(0, weight=1)
+        self.tv_ccc = ttk.Treeview(lf, columns=("_id", "ccc", "descripcion", "activo"),
+                                   show="headings", selectmode="browse", height=8)
+        self.tv_ccc.column("_id", width=0, stretch=False)
+        self.tv_ccc.heading("_id", text="")
+        for key, txt, w in (("ccc", "CCC", 170), ("descripcion", "Descripcion", 240), ("activo", "Activo", 70)):
+            self.tv_ccc.heading(key, text=txt)
+            self.tv_ccc.column(key, width=w, anchor="w")
+        self.tv_ccc.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        sb = ttk.Scrollbar(lf, orient="vertical", command=self.tv_ccc.yview)
+        sb.grid(row=0, column=1, sticky="ns", pady=4)
+        self.tv_ccc.configure(yscrollcommand=sb.set)
+        self.tv_ccc.bind("<Double-1>", lambda _e: self._edit_ccc())
+
+        btns = ttk.Frame(lf)
+        btns.grid(row=1, column=0, columnspan=2, sticky="w", padx=4, pady=(0, 4))
+        self._btns_ccc = btns
+        ttk.Button(btns, text="Anadir", style="Primary.TButton", command=self._add_ccc).pack(side=tk.LEFT)
+        ttk.Button(btns, text="Editar", command=self._edit_ccc).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btns, text="Eliminar", command=self._del_ccc).pack(side=tk.LEFT)
+
+        if not self._codigo_para_ccc:
+            for w in btns.winfo_children():
+                try:
+                    w.configure(state="disabled")
+                except Exception:
+                    pass
+            ttk.Label(tab, text="Guarda la empresa antes de anadir CCC.",
+                      foreground="#b45309").grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        self._refresh_ccc()
+
+    def _refresh_ccc(self):
+        if not getattr(self, "tv_ccc", None):
+            return
+        self.tv_ccc.delete(*self.tv_ccc.get_children())
+        cod = getattr(self, "_codigo_para_ccc", None)
+        if not cod:
+            return
+        try:
+            filas = self._gestor.listar_ccc(cod)
+        except Exception:
+            filas = []
+        for c in filas:
+            self.tv_ccc.insert("", "end", values=(
+                c["id"], c.get("ccc", ""), c.get("descripcion", "") or "",
+                "Si" if c.get("activo", 1) else "No",
+            ))
+
+    def _ccc_seleccionado(self):
+        sel = self.tv_ccc.selection()
+        if not sel:
+            return None
+        return {
+            "id": self.tv_ccc.set(sel[0], "_id"),
+            "ccc": self.tv_ccc.set(sel[0], "ccc"),
+            "descripcion": self.tv_ccc.set(sel[0], "descripcion"),
+        }
+
+    def _ccc_dialog(self, inicial=None):
+        inicial = inicial or {}
+        dlg = tk.Toplevel(self)
+        dlg.title("Codigo de Cuenta de Cotizacion")
+        dlg.resizable(False, False)
+        var_ccc = tk.StringVar(value=inicial.get("ccc", ""))
+        var_desc = tk.StringVar(value=inicial.get("descripcion", ""))
+        res = {}
+        frm = ttk.Frame(dlg, padding=16)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="CCC *").grid(row=0, column=0, sticky="e", padx=6, pady=4)
+        ttk.Entry(frm, textvariable=var_ccc, width=28).grid(row=0, column=1, sticky="w", pady=4)
+        ttk.Label(frm, text="Descripcion").grid(row=1, column=0, sticky="e", padx=6, pady=4)
+        ttk.Entry(frm, textvariable=var_desc, width=28).grid(row=1, column=1, sticky="w", pady=4)
+
+        def _ok():
+            if not var_ccc.get().strip():
+                messagebox.showerror("Gest2A3Eco", "El CCC es obligatorio.", parent=dlg)
+                return
+            res["ccc"] = var_ccc.get().strip()
+            res["descripcion"] = var_desc.get().strip() or None
+            dlg.destroy()
+
+        br = ttk.Frame(dlg, padding=(16, 8))
+        br.pack(fill="x")
+        ttk.Button(br, text="Cancelar", command=dlg.destroy).pack(side="right", padx=(6, 0))
+        ttk.Button(br, text="Guardar", command=_ok).pack(side="right")
+        dlg.grab_set()
+        dlg.transient(self.winfo_toplevel())
+        dlg.wait_window()
+        return res or None
+
+    def _add_ccc(self):
+        cod = getattr(self, "_codigo_para_ccc", None)
+        if not cod:
+            return
+        data = self._ccc_dialog()
+        if not data:
+            return
+        data["codigo_empresa"] = cod
+        self._gestor.upsert_ccc(data)
+        self._refresh_ccc()
+
+    def _edit_ccc(self):
+        cod = getattr(self, "_codigo_para_ccc", None)
+        sel = self._ccc_seleccionado()
+        if not cod or not sel:
+            return
+        data = self._ccc_dialog(sel)
+        if not data:
+            return
+        data["id"] = sel["id"]
+        data["codigo_empresa"] = cod
+        self._gestor.upsert_ccc(data)
+        self._refresh_ccc()
+
+    def _del_ccc(self):
+        cod = getattr(self, "_codigo_para_ccc", None)
+        sel = self._ccc_seleccionado()
+        if not cod or not sel:
+            return
+        if not messagebox.askyesno("Eliminar CCC", "Eliminar el CCC '" + str(sel.get("ccc")) + "'?",
+                                   parent=self.winfo_toplevel()):
+            return
+        self._gestor.eliminar_ccc(cod, sel["id"])
+        self._refresh_ccc()
+
     def _build_notificaciones_tab(self, tab, nb):
         nb.add(tab, text="Notificaciones electronicas")
         codigo = self._empresa.get("codigo") or self._codigo
@@ -291,17 +434,9 @@ class UIConfiguracionEmpresa(ttk.Frame):
         ejercicio = self._empresa.get("ejercicio") or self._ejercicio
         try:
             self._gestor.sembrar_organismos_simulados()
-            self._gestor.sembrar_datos_empresa_simulados(codigo, ejercicio)
         except Exception:
             pass
-        sub_nb = ttk.Notebook(tab)
-        sub_nb.pack(fill="both", expand=True)
-        tab_cert = ttk.Frame(sub_nb)
-        sub_nb.add(tab_cert, text="Certificados")
-        UICertificados(tab_cert, self._gestor, codigo, session=self._session).pack(fill="both", expand=True)
-        tab_buz = ttk.Frame(sub_nb)
-        sub_nb.add(tab_buz, text="Buzones")
-        UIBuzones(tab_buz, self._gestor, codigo, session=self._session).pack(fill="both", expand=True)
+        UINotificacionesCliente(tab, self._gestor, codigo, session=self._session).pack(fill="both", expand=True)
 
     # ── Guardado ───────────────────────────────────────────────────────────────
 
@@ -330,6 +465,7 @@ class UIConfiguracionEmpresa(ttk.Frame):
                 "logo_max_width_mm": _to_float_es(logo_w_txt) if logo_w_txt else None,
                 "logo_max_height_mm": _to_float_es(logo_h_txt) if logo_h_txt else None,
                 "activo": bool(self.var_activo.get()),
+                "naf": self.var_naf.get().strip() or None,
             }
             for row in sorted(self._exercise_rows, key=lambda r: int(r["ejercicio"])):
                 item = dict(base)

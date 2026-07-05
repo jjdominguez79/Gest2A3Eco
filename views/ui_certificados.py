@@ -1,11 +1,16 @@
 """
-Vista: Gestion de Certificados Digitales.
+Vista: Certificado Digital del cliente (uno solo por empresa).
 
-Permite registrar, editar y controlar los certificados digitales de la empresa
-usados para autenticarse en los portales de organismos. Operativo sobre SQLite local.
+Cada cliente tiene UN unico certificado digital. Al seleccionar el fichero .pfx
+y su contrasena, la aplicacion abre el certificado y detecta automaticamente sus
+propiedades (titular, NIF, fecha de emision y de caducidad); el usuario no las
+teclea. Si el certificado esta caducado (o proximo a caducar), se avisa.
+
+Requiere la libreria 'cryptography' para leer el .pfx.
 """
 from __future__ import annotations
 
+import os
 import tkinter as tk
 from datetime import date, datetime
 from tkinter import filedialog, messagebox, ttk
@@ -13,309 +18,269 @@ from tkinter import filedialog, messagebox, ttk
 from utils.crypto_utils import cifrar_password
 from views.notificaciones_theme import *  # noqa: F401,F403
 
-TIPOS_CERT = ["PFX", "PEM", "P12", "PKCS12", "Renovacion", "Otro"]
 
-
-def _vigencia(fecha_caducidad_str: str | None) -> tuple[str, str]:
+def _vigencia(fecha_caducidad_str):
     """Devuelve (label, tag) segun la fecha de caducidad."""
     if not fecha_caducidad_str:
         return "Sin fecha", "neutro"
     try:
-        cad = datetime.strptime(fecha_caducidad_str[:10], "%Y-%m-%d").date()
-        hoy = date.today()
-        dias = (cad - hoy).days
+        cad = datetime.strptime(str(fecha_caducidad_str)[:10], "%Y-%m-%d").date()
+        dias = (cad - date.today()).days
         if dias < 0:
-            return "Caducado", "caducado"
+            return "CADUCADO", "caducado"
         if dias <= 30:
-            return f"Vence en {dias}d", "por_vencer"
-        return f"Vigente ({dias}d)", "vigente"
+            return f"Vence en {dias} dias", "por_vencer"
+        return f"Vigente ({dias} dias)", "vigente"
     except ValueError:
-        return fecha_caducidad_str, "neutro"
+        return str(fecha_caducidad_str), "neutro"
+
+
+def leer_metadatos_pfx(ruta, password):
+    """Abre un .pfx/.p12 y devuelve (info, error).
+
+    info = {cn, nif, fecha_emision, fecha_caducidad}  o  None si error.
+    """
+    try:
+        from services.aapp.cert_store import CertStore, CertMaterial
+    except Exception as exc:
+        return None, f"No se pudo cargar el lector de certificados: {exc}"
+    store = CertStore.__new__(CertStore)  # sin gestor: solo lectura
+    mat = CertMaterial(cert_id="", nombre="", nif_titular=None,
+                       ruta_archivo=ruta, password=password or None)
+    try:
+        return store.info(mat), None
+    except Exception as exc:
+        return None, str(exc)
 
 
 class UICertificados(ttk.Frame):
-    """Pantalla de gestion de certificados digitales de una empresa."""
+    """Panel del certificado digital (unico) de una empresa."""
 
-    _COLS = [
-        ("nombre",          "Nombre",           200, "w"),
-        ("nif_titular",     "NIF Titular",        90, "center"),
-        ("tipo",            "Tipo",               60, "center"),
-        ("fecha_emision",   "Emitido",           100, "center"),
-        ("fecha_caducidad", "Caduca",            100, "center"),
-        ("vigencia",        "Estado vigencia",   120, "center"),
-        ("clave",           "Clave",              60, "center"),
-    ]
-
-    def __init__(self, master, gestor, codigo: str, session=None):
+    def __init__(self, master, gestor, codigo, session=None):
         super().__init__(master)
-        self._gestor  = gestor
-        self._codigo  = codigo
+        self._gestor = gestor
+        self._codigo = codigo
         self._session = session
+        self._cert = None
         self._build()
         self.refresh()
 
     # ------------------------------------------------------------------ build
-
-    def _build(self) -> None:
-        self._build_header()
-        self._build_alert_banner()
-        self._build_toolbar()
-        self._build_tree()
-        self._build_statusbar()
-
-    def _build_header(self) -> None:
+    def _build(self):
         hdr = tk.Frame(self, bg=_HDR_BG)
         hdr.pack(fill="x")
-        tk.Label(hdr, text="\u2460  Certificados Digitales", bg=_HDR_BG, fg=_HDR_FG,
+        tk.Label(hdr, text="\U0001F510  Certificado Digital", bg=_HDR_BG, fg=_HDR_FG,
                  font=("Segoe UI", 11, "bold"), anchor="w").pack(side="left", padx=16, pady=10)
-        tk.Label(hdr, text="Certificados de autenticacion ante organismos",
+        tk.Label(hdr, text="Un unico certificado por cliente (autodeteccion de propiedades)",
                  bg=_HDR_BG, fg=_HDR_SUB, font=("Segoe UI", 9)).pack(side="left", pady=10)
 
-    def _build_alert_banner(self) -> None:
         self._banner = tk.Frame(self, bg=_WARNING)
-        self._lbl_banner = tk.Label(
-            self._banner, text="", bg=_WARNING, fg="white",
-            font=("Segoe UI", 9, "bold"), anchor="w",
-        )
+        self._lbl_banner = tk.Label(self._banner, text="", bg=_WARNING, fg="white",
+                                    font=("Segoe UI", 9, "bold"), anchor="w")
         self._lbl_banner.pack(side="left", padx=12, pady=5)
 
-    def _build_toolbar(self) -> None:
-        tb = tk.Frame(self, bg=_BG, pady=6)
-        tb.pack(fill="x", padx=8)
-        btn = dict(font=("Segoe UI", 9), relief="flat", cursor="hand2", padx=10, pady=4)
-        tk.Button(tb, text="+ Nuevo",   bg=_PRIMARY, fg="white", command=self._on_nuevo,   **btn).pack(side="left", padx=(0, 5))
-        self._btn_editar   = tk.Button(tb, text="Editar",   bg="#475569", fg="white", command=self._on_editar,   state="disabled", **btn)
-        self._btn_editar.pack(side="left", padx=(0, 5))
-        self._btn_eliminar = tk.Button(tb, text="Eliminar", bg=_DANGER,   fg="white", command=self._on_eliminar, state="disabled", **btn)
-        self._btn_eliminar.pack(side="left", padx=(0, 5))
-        tk.Button(tb, text="\u21bb Actualizar", bg="#64748b", fg="white", command=self.refresh, **btn).pack(side="left")
-        self._lbl_count = tk.Label(tb, text="", bg=_BG, fg=_SUB, font=("Segoe UI", 9))
-        self._lbl_count.pack(side="right", padx=8)
+        # Panel de propiedades (solo lectura)
+        card = tk.Frame(self, bg=_BG)
+        card.pack(fill="x", padx=16, pady=12)
+        self._vals = {}
+        campos = [
+            ("titular",   "Titular"),
+            ("nif",       "NIF"),
+            ("emision",   "Fecha de emision"),
+            ("caducidad", "Fecha de caducidad"),
+            ("estado",    "Estado"),
+            ("ruta",      "Fichero"),
+            ("clave",     "Contrasena guardada"),
+        ]
+        for i, (key, label) in enumerate(campos):
+            tk.Label(card, text=label + ":", bg=_BG, fg=_SUB, font=("Segoe UI", 9, "bold"),
+                     anchor="e", width=20).grid(row=i, column=0, sticky="e", padx=(0, 10), pady=3)
+            val = tk.Label(card, text="-", bg=_BG, fg="#0f172a", font=("Segoe UI", 9),
+                           anchor="w", justify="left", wraplength=520)
+            val.grid(row=i, column=1, sticky="w", pady=3)
+            self._vals[key] = val
 
-    def _build_tree(self) -> None:
-        wrapper = tk.Frame(self, bg=_BG)
-        wrapper.pack(fill="both", expand=True, padx=8, pady=4)
-        col_ids = ["_id"] + [c[0] for c in self._COLS]
-        self._tv = ttk.Treeview(wrapper, columns=col_ids, show="headings", selectmode="browse")
-        self._tv.column("_id", width=0, stretch=False)
-        self._tv.heading("_id", text="")
-        for key, header, width, anchor in self._COLS:
-            self._tv.heading(key, text=header)
-            self._tv.column(key, width=width, anchor=anchor, stretch=(key == "nombre"))
-        self._tv.tag_configure("vigente",    foreground=_SUCCESS)
-        self._tv.tag_configure("por_vencer", foreground=_WARNING)
-        self._tv.tag_configure("caducado",   foreground=_DANGER)
-        self._tv.tag_configure("neutro",     foreground=_SUB)
-        sb_v = ttk.Scrollbar(wrapper, orient="vertical",   command=self._tv.yview)
-        sb_h = ttk.Scrollbar(wrapper, orient="horizontal", command=self._tv.xview)
-        self._tv.configure(yscrollcommand=sb_v.set, xscrollcommand=sb_h.set)
-        sb_v.pack(side="right", fill="y")
-        sb_h.pack(side="bottom", fill="x")
-        self._tv.pack(fill="both", expand=True)
-        self._tv.bind("<<TreeviewSelect>>", self._on_select)
-        self._tv.bind("<Double-1>", lambda _e: self._on_editar())
+        # Botones
+        tb = tk.Frame(self, bg=_BG)
+        tb.pack(fill="x", padx=16, pady=(0, 10))
+        btn = dict(font=("Segoe UI", 9), relief="flat", cursor="hand2", padx=12, pady=5)
+        self._btn_set = tk.Button(tb, text="Seleccionar certificado...", bg=_PRIMARY, fg="white",
+                                  command=self._on_seleccionar, **btn)
+        self._btn_set.pack(side="left", padx=(0, 6))
+        self._btn_del = tk.Button(tb, text="Eliminar", bg=_DANGER, fg="white",
+                                  command=self._on_eliminar, state="disabled", **btn)
+        self._btn_del.pack(side="left", padx=(0, 6))
+        tk.Button(tb, text="↻ Actualizar", bg="#64748b", fg="white",
+                  command=self.refresh, **btn).pack(side="left")
 
-    def _build_statusbar(self) -> None:
-        sb = tk.Frame(self, bg=_BG, height=22)
-        sb.pack(fill="x", side="bottom")
-        self._lbl_status = tk.Label(sb, text="", bg=_BG, fg=_SUB, font=("Segoe UI", 8), anchor="w")
-        self._lbl_status.pack(side="left", padx=8)
+    # ------------------------------------------------------------------ refresh
+    def refresh(self):
+        rows = self._gestor.listar_notif_certificados(self._codigo)
+        self._cert = rows[0] if rows else None
 
-    # ----------------------------------------------------------------- eventos
-
-    def _on_select(self, _e=None) -> None:
-        ok = bool(self._tv.selection())
-        s  = "normal" if ok else "disabled"
-        self._btn_editar.configure(state=s)
-        self._btn_eliminar.configure(state=s)
-
-    def _on_nuevo(self) -> None:
-        dlg = _CertificadoDialog(self.winfo_toplevel(), None, self._codigo)
-        if dlg.result:
+        # Limpieza de duplicados historicos: dejar solo el primero.
+        for extra in rows[1:]:
             try:
-                self._gestor.upsert_notif_certificado(dlg.result)
-            except Exception as exc:
-                messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
-                return
-            self.refresh()
+                self._gestor.eliminar_notif_certificado(self._codigo, extra["id"])
+            except Exception:
+                pass
 
-    def _on_editar(self) -> None:
-        sel = self._tv.selection()
-        if not sel:
+        if not self._cert:
+            for v in self._vals.values():
+                v.configure(text="-", fg="#0f172a")
+            self._vals["estado"].configure(text="Sin certificado", fg=_SUB)
+            self._btn_set.configure(text="Seleccionar certificado...")
+            self._btn_del.configure(state="disabled")
+            self._banner.pack_forget()
             return
-        cert_id = self._tv.set(sel[0], "_id")
-        cert    = self._gestor.get_notif_certificado(cert_id)
-        if not cert:
-            return
-        dlg = _CertificadoDialog(self.winfo_toplevel(), cert, self._codigo)
-        if dlg.result:
-            try:
-                self._gestor.upsert_notif_certificado(dlg.result)
-            except Exception as exc:
-                messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
-                return
-            self.refresh()
 
-    def _on_eliminar(self) -> None:
-        sel = self._tv.selection()
-        if not sel:
+        c = self._cert
+        lbl, tag = _vigencia(c.get("fecha_caducidad"))
+        color = {"vigente": _SUCCESS, "por_vencer": _WARNING,
+                 "caducado": _DANGER, "neutro": _SUB}.get(tag, _SUB)
+        self._vals["titular"].configure(text=c.get("nombre", "") or "-")
+        self._vals["nif"].configure(text=c.get("nif_titular", "") or "-")
+        self._vals["emision"].configure(text=c.get("fecha_emision", "") or "-")
+        self._vals["caducidad"].configure(text=c.get("fecha_caducidad", "") or "-")
+        self._vals["estado"].configure(text=lbl, fg=color)
+        self._vals["ruta"].configure(text=c.get("ruta_archivo", "") or "-")
+        self._vals["clave"].configure(text="Si" if c.get("password_cifrada") else "No")
+        self._btn_set.configure(text="Reemplazar certificado...")
+        self._btn_del.configure(state="normal")
+
+        if tag == "caducado":
+            self._lbl_banner.configure(bg=_DANGER, text="⚠  Certificado CADUCADO. Debes renovarlo para poder acceder a los organismos.")
+            self._banner.configure(bg=_DANGER)
+            self._banner.pack(fill="x", after=self.winfo_children()[0])
+        elif tag == "por_vencer":
+            self._lbl_banner.configure(bg=_WARNING, text=f"⚠  Certificado {lbl.lower()}. Conviene renovarlo pronto.")
+            self._banner.configure(bg=_WARNING)
+            self._banner.pack(fill="x", after=self.winfo_children()[0])
+        else:
+            self._banner.pack_forget()
+
+    # ------------------------------------------------------------------ eventos
+    def _on_seleccionar(self):
+        dlg = _SeleccionCertDialog(self.winfo_toplevel())
+        if not dlg.result:
             return
-        cert_id = self._tv.set(sel[0], "_id")
-        nombre  = self._tv.set(sel[0], "nombre")
-        if not messagebox.askyesno("Eliminar certificado",
-                                   f"Eliminar el certificado '{nombre}'?",
-                                   parent=self.winfo_toplevel()):
+        ruta, password = dlg.result["ruta"], dlg.result["password"]
+
+        info, error = leer_metadatos_pfx(ruta, password)
+        if error or info is None:
+            messagebox.showerror(
+                "No se pudo leer el certificado",
+                "Revisa el fichero y la contrasena.\n\nDetalle: " + (error or "desconocido"),
+                parent=self.winfo_toplevel(),
+            )
+            return
+
+        tipo = "PFX" if ruta.lower().endswith((".pfx", ".p12")) else "OTRO"
+        cert = {
+            "codigo_empresa":  self._codigo,
+            "nombre":          info.get("cn") or "Certificado",
+            "nif_titular":     info.get("nif") or "",
+            "tipo":            tipo,
+            "ruta_archivo":    ruta,
+            "fecha_emision":   info.get("fecha_emision"),
+            "fecha_caducidad": info.get("fecha_caducidad"),
+            "notas":           None,
+            "password_cifrada": cifrar_password(password),
+            "activo":          1,
+        }
+        # Mantener un unico registro: reutilizar el id existente si lo hay.
+        if self._cert and self._cert.get("id"):
+            cert["id"] = self._cert["id"]
+
+        try:
+            self._gestor.upsert_notif_certificado(cert)
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+            return
+
+        # Aviso segun vigencia detectada.
+        lbl, tag = _vigencia(cert["fecha_caducidad"])
+        if tag == "caducado":
+            messagebox.showwarning(
+                "Certificado caducado",
+                f"El certificado de '{cert['nombre']}' esta CADUCADO "
+                f"(caduco el {cert['fecha_caducidad']}).\n\nGuardado, pero debes renovarlo.",
+                parent=self.winfo_toplevel(),
+            )
+        elif tag == "por_vencer":
+            messagebox.showwarning(
+                "Certificado por vencer",
+                f"El certificado de '{cert['nombre']}' {lbl.lower()}.",
+                parent=self.winfo_toplevel(),
+            )
+        else:
+            messagebox.showinfo(
+                "Certificado guardado",
+                f"Titular: {cert['nombre']}\nNIF: {cert['nif_titular']}\n"
+                f"Emitido: {cert['fecha_emision']}\nCaduca: {cert['fecha_caducidad']}",
+                parent=self.winfo_toplevel(),
+            )
+        self.refresh()
+
+    def _on_eliminar(self):
+        if not self._cert:
+            return
+        if not messagebox.askyesno(
+            "Eliminar certificado",
+            f"Eliminar el certificado de '{self._cert.get('nombre')}'?",
+            parent=self.winfo_toplevel(),
+        ):
             return
         try:
-            self._gestor.eliminar_notif_certificado(self._codigo, cert_id)
+            self._gestor.eliminar_notif_certificado(self._codigo, self._cert["id"])
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
             return
         self.refresh()
 
-    # ----------------------------------------------------------------- refresh
 
-    def refresh(self) -> None:
-        rows = self._gestor.listar_notif_certificados(self._codigo)
-        self._tv.delete(*self._tv.get_children())
-        urgentes = 0
-        for r in rows:
-            vig_label, vig_tag = _vigencia(r.get("fecha_caducidad"))
-            if vig_tag == "por_vencer":
-                urgentes += 1
-            self._tv.insert("", tk.END, values=(
-                r["id"],
-                r.get("nombre", ""),
-                r.get("nif_titular", ""),
-                r.get("tipo", ""),
-                r.get("fecha_emision", "") or "",
-                r.get("fecha_caducidad", "") or "",
-                vig_label,
-                "Si" if r.get("password_cifrada") else "-",
-            ), tags=(vig_tag,))
-
-        # Banner de advertencia
-        if urgentes > 0:
-            self._lbl_banner.configure(
-                text=f"\u26a0  {urgentes} certificado{'s' if urgentes > 1 else ''} "
-                     f"vence{'n' if urgentes > 1 else ''} en menos de 30 dias. Revisa y renueva."
-            )
-            self._banner.pack(fill="x", after=self.winfo_children()[0])
-        else:
-            self._banner.pack_forget()
-
-        n = len(rows)
-        self._lbl_count.configure(text=f"{n} certificado{'s' if n != 1 else ''}")
-        self._lbl_status.configure(
-            text=f"Vigentes: {sum(1 for r in rows if _vigencia(r.get('fecha_caducidad'))[1] == 'vigente')}  "
-                 f"Por vencer: {urgentes}  "
-                 f"Caducados: {sum(1 for r in rows if _vigencia(r.get('fecha_caducidad'))[1] == 'caducado')}"
-        )
-        self._btn_editar.configure(state="disabled")
-        self._btn_eliminar.configure(state="disabled")
-
-
-# ── Dialog ───────────────────────────────────────────────────────────────────
-
-class _CertificadoDialog(tk.Toplevel):
-    """Dialogo de creacion/edicion de certificado digital."""
-
-    def __init__(self, parent, cert: dict | None, codigo_empresa: str):
+# ── Dialogo de seleccion (fichero + contrasena) ─────────────────────────────
+class _SeleccionCertDialog(tk.Toplevel):
+    def __init__(self, parent):
         super().__init__(parent)
-        self.title("Nuevo certificado" if cert is None else "Editar certificado")
+        self.title("Seleccionar certificado")
         self.resizable(False, False)
-        self.result: dict | None = None
-        self._cert    = cert or {}
-        self._empresa = codigo_empresa
+        self.result = None
+        self._var_ruta = tk.StringVar()
+        self._var_pwd = tk.StringVar()
         self._build()
         self.grab_set()
         self.transient(parent)
         self.wait_window()
 
-    def _build(self) -> None:
-        pad = dict(padx=12, pady=4)
+    def _build(self):
         frm = ttk.Frame(self, padding=16)
         frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="Fichero del certificado (.pfx / .p12)").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        ttk.Entry(frm, textvariable=self._var_ruta, width=46).grid(row=1, column=0, sticky="w")
+        ttk.Button(frm, text="...", width=3, command=self._browse).grid(row=1, column=1, padx=(4, 0))
+        ttk.Label(frm, text="Contrasena del certificado").grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 4))
+        self._ent_pwd = ttk.Entry(frm, textvariable=self._var_pwd, width=30, show="*")
+        self._ent_pwd.grid(row=3, column=0, sticky="w")
+        ttk.Label(frm, text="(Las propiedades se detectan automaticamente al guardar.)",
+                  foreground="#64748b").grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        btns = ttk.Frame(self, padding=(16, 8))
+        btns.pack(fill="x")
+        ttk.Button(btns, text="Cancelar", command=self.destroy).pack(side="right", padx=(6, 0))
+        ttk.Button(btns, text="Guardar", command=self._on_ok).pack(side="right")
 
-        self._var_nombre   = tk.StringVar(value=self._cert.get("nombre", ""))
-        self._var_nif      = tk.StringVar(value=self._cert.get("nif_titular", ""))
-        self._var_tipo     = tk.StringVar(value=self._cert.get("tipo", "PFX"))
-        self._var_ruta     = tk.StringVar(value=self._cert.get("ruta_archivo", "") or "")
-        self._var_emision  = tk.StringVar(value=self._cert.get("fecha_emision", "") or "")
-        self._var_cad      = tk.StringVar(value=self._cert.get("fecha_caducidad", "") or "")
-        self._var_notas    = tk.StringVar(value=self._cert.get("notas", "") or "")
-        self._var_password = tk.StringVar(value="")
-        self._var_activo   = tk.BooleanVar(value=bool(self._cert.get("activo", True)))
-
-        rows = [
-            ("Nombre *",          self._var_nombre,  ttk.Entry,    {"width": 44}),
-            ("NIF Titular *",     self._var_nif,     ttk.Entry,    {"width": 20}),
-            ("Tipo",              self._var_tipo,    ttk.Combobox, {"width": 18, "values": TIPOS_CERT, "state": "readonly"}),
-            ("Fecha emision\n(AAAA-MM-DD)", self._var_emision, ttk.Entry, {"width": 14}),
-            ("Fecha caducidad\n(AAAA-MM-DD)", self._var_cad, ttk.Entry,   {"width": 14}),
-            ("Notas",             self._var_notas,   ttk.Entry,    {"width": 44}),
-        ]
-        for i, (lbl, var, cls, kw) in enumerate(rows):
-            ttk.Label(frm, text=lbl, anchor="e", justify="right").grid(row=i, column=0, sticky="e", **pad)
-            cls(frm, textvariable=var, **kw).grid(row=i, column=1, sticky="w", **pad)
-
-        # Fila ruta con boton examinar
-        r = len(rows)
-        ttk.Label(frm, text="Ruta archivo", anchor="e").grid(row=r, column=0, sticky="e", **pad)
-        ruta_frm = tk.Frame(frm)
-        ruta_frm.grid(row=r, column=1, sticky="w", **pad)
-        ttk.Entry(ruta_frm, textvariable=self._var_ruta, width=34).pack(side="left")
-        ttk.Button(ruta_frm, text="...", width=3, command=self._browse_file).pack(side="left", padx=(4, 0))
-
-        # Fila contrasena (siempre vacia: no se muestra el valor descifrado)
-        pwd_label = "Contrasena" if not self._cert.get("password_cifrada") else "Contrasena\n(dejar en blanco\npara mantener)"
-        ttk.Label(frm, text=pwd_label, anchor="e", justify="right").grid(row=r + 1, column=0, sticky="e", **pad)
-        ttk.Entry(frm, textvariable=self._var_password, width=24, show="*").grid(row=r + 1, column=1, sticky="w", **pad)
-
-        ttk.Checkbutton(frm, text="Activo", variable=self._var_activo).grid(
-            row=r + 2, column=1, sticky="w", **pad)
-
-        btn_row = ttk.Frame(self, padding=(16, 8))
-        btn_row.pack(fill="x")
-        ttk.Button(btn_row, text="Cancelar", command=self.destroy).pack(side="right", padx=(6, 0))
-        ttk.Button(btn_row, text="Guardar", command=self._on_ok).pack(side="right")
-
-    def _browse_file(self) -> None:
+    def _browse(self):
         path = filedialog.askopenfilename(
-            parent=self,
-            title="Seleccionar fichero de certificado",
-            filetypes=[("Certificados", "*.pfx *.p12 *.pem *.cer"), ("Todos", "*.*")],
+            parent=self, title="Seleccionar certificado",
+            filetypes=[("Certificados", "*.pfx *.p12"), ("Todos", "*.*")],
         )
         if path:
             self._var_ruta.set(path)
 
-    def _on_ok(self) -> None:
-        nombre = self._var_nombre.get().strip()
-        nif    = self._var_nif.get().strip().upper()
-        if not nombre:
-            messagebox.showerror("Gest2A3Eco", "El nombre es obligatorio.", parent=self)
+    def _on_ok(self):
+        ruta = self._var_ruta.get().strip()
+        if not ruta or not os.path.isfile(ruta):
+            messagebox.showerror("Gest2A3Eco", "Selecciona un fichero de certificado valido.", parent=self)
             return
-        if not nif:
-            messagebox.showerror("Gest2A3Eco", "El NIF titular es obligatorio.", parent=self)
-            return
-        pwd = self._var_password.get()
-        if pwd:
-            password_cifrada = cifrar_password(pwd)
-        else:
-            password_cifrada = self._cert.get("password_cifrada")
-
-        self.result = {
-            "codigo_empresa": self._empresa,
-            "nombre":         nombre,
-            "nif_titular":    nif,
-            "tipo":           self._var_tipo.get().strip() or "PFX",
-            "ruta_archivo":   self._var_ruta.get().strip() or None,
-            "fecha_emision":  self._var_emision.get().strip() or None,
-            "fecha_caducidad":self._var_cad.get().strip() or None,
-            "notas":          self._var_notas.get().strip() or None,
-            "password_cifrada": password_cifrada,
-            "activo":         1 if self._var_activo.get() else 0,
-        }
-        if self._cert.get("id"):
-            self.result["id"] = self._cert["id"]
+        self.result = {"ruta": ruta, "password": self._var_pwd.get()}
         self.destroy()

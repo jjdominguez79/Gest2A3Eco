@@ -487,11 +487,15 @@ def generar_pdf_desde_plantilla_word(
         convert_docx_to_pdf(out_docx, out_pdf)
         return out_pdf, out_docx
 
-    # si no guarda DOCX, crea uno temporal junto al pdf y lo elimina si quiere (aquí lo dejamos simple)
-    tmp_docx = str(Path(out_pdf).with_suffix(".tmp.docx"))
-    render_docx(template_path, context, tmp_docx)
-    convert_docx_to_pdf(tmp_docx, out_pdf)
-    if not bool(os.environ.get("GEST2A3ECO_LOGO_DEBUG")):
+    # Usa un fichero temporal en el directorio del sistema para evitar conflictos
+    # de bloqueo cuando Word falla y deja el .tmp.docx anterior sin cerrar.
+    import tempfile
+    tmp_fd, tmp_docx = tempfile.mkstemp(suffix=".docx", prefix="gest2a3_")
+    try:
+        os.close(tmp_fd)
+        render_docx(template_path, context, tmp_docx)
+        convert_docx_to_pdf(tmp_docx, out_pdf)
+    finally:
         try:
             Path(tmp_docx).unlink(missing_ok=True)
         except Exception:

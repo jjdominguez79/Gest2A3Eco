@@ -1960,18 +1960,23 @@ class FacturasEmitidasController:
                 pass
         try:
             self._generar_pdf_word(fac, app_path)
-        except Exception:
+        except Exception as e:
+            self._log_pdf_error("_ensure_app_pdf: error Word.", e, "", app_path)
             return
         upd = dict(fac)
         upd["pdf_path"] = app_path
         self._persist_factura_if_allowed(upd)
 
     def _ensure_a3_pdf(self, fac: dict) -> None:
+        import logging as _logging
+        _a3_log = _logging.getLogger(__name__)
         pdf_ref = self._pdf_ref_base(fac.get("pdf_ref") or "")
         if not pdf_ref:
+            _a3_log.warning("_ensure_a3_pdf: factura id=%s sin pdf_ref, saltada.", fac.get("id"))
             return
         a3_path = self._a3_pdf_path_for(pdf_ref, fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio)
         if not a3_path:
+            _a3_log.warning("_ensure_a3_pdf: factura id=%s pdf_ref=%s -> a3_path vacio (Z: no accesible?).", fac.get("id"), pdf_ref)
             return
         if os.path.exists(a3_path):
             if fac.get("pdf_path_a3") != a3_path:
@@ -1987,11 +1992,12 @@ class FacturasEmitidasController:
                 upd["pdf_path_a3"] = a3_path
                 self._persist_factura_if_allowed(upd)
                 return
-            except Exception:
-                pass
+            except Exception as e:
+                _a3_log.warning("_ensure_a3_pdf: error copiando desde app_path para id=%s: %s", fac.get("id"), e)
         try:
             self._generar_pdf_word(fac, a3_path)
-        except Exception:
+        except Exception as e:
+            self._log_pdf_error("_ensure_a3_pdf: error Word.", e, "", a3_path)
             return
         upd = dict(fac)
         upd["pdf_path_a3"] = a3_path
@@ -2083,6 +2089,13 @@ class FacturasEmitidasController:
             fac = self._ensure_pdf_ref(fac)
             assigned.add(self._pdf_ref_base(fac.get("pdf_ref") or ""))
             self._ensure_app_pdf(fac)
+            # Despues de ensure_app_pdf el dict fac no se actualiza en memoria,
+            # pero el PDF ya existe en disco. Actualizamos pdf_path en el dict
+            # para que ensure_a3_pdf pueda copiar desde ahi en vez de regenerar.
+            app_path = self._app_pdf_path(fac)
+            if app_path and os.path.exists(app_path) and not fac.get("pdf_path"):
+                fac = dict(fac)
+                fac["pdf_path"] = app_path
             self._ensure_a3_pdf(fac)
             prepared.append(fac)
         return prepared
