@@ -6,10 +6,12 @@ import subprocess
 from contextlib import contextmanager
 from urllib.parse import quote
 from datetime import datetime
+from pathlib import Path
 import traceback
 
 from procesos.facturas_emitidas import generar_emitidas
 from services.import_a3_empresa import leer_numero_asiento_desde_a3
+from services.facturae import FacturaeExporter
 from procesos.facturas_word import (
     build_context_emitida,
     generar_pdf_desde_plantilla_word,
@@ -22,7 +24,7 @@ from utils.utilidades import (
     load_app_config,
     load_monedas,
 )
-from utils.validaciones import normalizar_nif_cif
+from utils.validaciones import inferir_pais_desde_identificacion, normalizar_nif_cif
 
 
 class FacturasEmitidasController:
@@ -34,6 +36,7 @@ class FacturasEmitidasController:
         self._view = view
         self._allow_all_years = bool(allow_all_years)
         self._facturas_cache = []
+        self._facturae_exporter = FacturaeExporter()
 
     @contextmanager
     def _busy_dialog(self, msg="Procesando, por favor espere..."):
@@ -832,6 +835,53 @@ class FacturasEmitidasController:
                 except Exception:
                     pass
 
+    def generar_facturae(self):
+        sel = self._view.get_selected_ids()
+        if not sel:
+            self._view.show_info("Gest2A3Eco", "Selecciona una factura emitida.")
+            return
+        fac = self._get_factura_by_id(sel[0])
+        if not fac:
+            return
+
+        emisor = self._empresa_facturae()
+        receptor = self._cliente_factura(fac)
+        relacion = self._cliente_relacion_factura(fac)
+        errores = self._facturae_exporter.validate(fac, emisor, receptor, relacion)
+        if errores:
+            upd = dict(fac)
+            upd["facturae_status"] = "error_validacion"
+            upd["facturae_error"] = "\n".join(errores)
+            upd["facturae_generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self._persist_factura_if_allowed(upd)
+            self.refresh_facturas()
+            self._view.show_error("Gest2A3Eco", "No se puede generar Facturae/FACe:\n\n- " + "\n- ".join(errores))
+            return
+
+        nif_emisor = self._safe_filename(normalizar_nif_cif(emisor.get("nif", ""))) or "SINNIF"
+        numero = self._safe_filename(self._numero_factura_contable(fac)) or "SINNUMERO"
+        save_path = self._view.ask_save_xml_path(f"FACTURAE_{nif_emisor}_{numero}.xml")
+        if not save_path:
+            return
+
+        result = self._facturae_exporter.export(fac, emisor, receptor, save_path, relacion)
+        if not result.ok:
+            upd = self._facturae_exporter.build_factura_persistence_update(fac, result)
+            self._persist_factura_if_allowed(upd)
+            self.refresh_facturas()
+            self._view.show_error("Gest2A3Eco", "No se pudo generar el XML Facturae:\n\n- " + "\n- ".join(result.errors))
+            return
+
+        upd = self._facturae_exporter.build_factura_persistence_update(fac, result)
+        self._persist_factura_if_allowed(upd)
+        self.refresh_facturas()
+        self._view.show_info("Gest2A3Eco", f"XML Facturae generado:\n{result.output_path}\n\n{result.warning}")
+        if self._view.ask_yes_no("Gest2A3Eco", "Abrir la carpeta destino del XML Facturae?"):
+            try:
+                os.startfile(str(Path(result.output_path).parent))
+            except Exception as exc:
+                self._view.show_warning("Gest2A3Eco", f"No se pudo abrir la carpeta destino:\n{exc}")
+
     def abrir_pdf(self):
         sel = self._view.get_selected_ids()
         if not sel:
@@ -1577,6 +1627,7 @@ class FacturasEmitidasController:
         direccion_completa = "\n".join(p for p in [direccion, cp_pob, provincia] if p)
         nombre = fac.get("nombre") or cli.get("nombre", "")
         nombre_legal = cli.get("nombre_legal") or cli.get("nombre_comercial") or nombre
+        pais = cli.get("pais", "") or inferir_pais_desde_identificacion(cli.get("nif") or fac.get("nif")) or "ES"
         return {
             "nombre": nombre,
             "nombre_legal": nombre_legal,
@@ -1586,11 +1637,39 @@ class FacturasEmitidasController:
             "cp": cp,
             "poblacion": poblacion,
             "provincia": provincia,
-            "pais": cli.get("pais", ""),
+            "pais": pais,
             "telefono": cli.get("telefono", ""),
             "email": cli.get("email", ""),
             "contacto": cli.get("contacto", ""),
             "direccion_completa": direccion_completa,
+        }
+
+    def _cliente_relacion_factura(self, fac: dict) -> dict:
+        eje = fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio
+        tercero_id = str(fac.get("tercero_id") or "").strip()
+        if tercero_id:
+            return self._gestor.get_tercero_empresa(self._codigo, tercero_id, eje) or {}
+        nif = normalizar_nif_cif(fac.get("nif"))
+        if nif:
+            for tercero in self._gestor.listar_terceros_por_empresa(self._codigo, eje):
+                if normalizar_nif_cif(tercero.get("nif")) == nif:
+                    return tercero
+        return {}
+
+    def _empresa_facturae(self) -> dict:
+        emp = self._empresa_conf_for_word()
+        pais = str(emp.get("pais") or "").strip().upper() or "ES"
+        return {
+            "nombre": emp.get("nombre", ""),
+            "nombre_legal": emp.get("nombre", ""),
+            "nif": normalizar_nif_cif(emp.get("cif", "")),
+            "direccion": emp.get("direccion", ""),
+            "cp": emp.get("cp", ""),
+            "poblacion": emp.get("poblacion", ""),
+            "provincia": emp.get("provincia", ""),
+            "pais": pais,
+            "telefono": emp.get("telefono", ""),
+            "email": emp.get("email", ""),
         }
 
     def _factura_to_rows(self, fac: dict):

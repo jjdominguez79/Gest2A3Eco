@@ -54,6 +54,14 @@ DEFAULT_REL_CONFIG = {
     "proveedor_intracomunitaria_clase": "",
     "proveedor_iva_deducible": 1,
     "proveedor_porcentaje_deduccion_iva": 100.0,
+    "facturae_es_administracion_publica": 0,
+    "facturae_dir3_oficina_contable": "",
+    "facturae_dir3_organo_gestor": "",
+    "facturae_dir3_unidad_tramitadora": "",
+    "facturae_dir3_organo_proponente": "",
+    "facturae_referencia_expediente": "",
+    "facturae_referencia_contrato": "",
+    "facturae_referencia_pedido": "",
 }
 
 TIPOS_OPERACION_OCR_MAP = {
@@ -159,6 +167,17 @@ def normalize_tercero_empresa_rel(rel: dict | None) -> dict:
     out["proveedor_intracomunitaria_clase"] = proveedor_clase if proveedor_clase in CLASES_INTRACOMUNITARIA else ""
     out["cliente_iva_deducible"] = 0
     out["cliente_porcentaje_deduccion_iva"] = None
+    out["facturae_es_administracion_publica"] = 1 if out.get("facturae_es_administracion_publica") else 0
+    for key in (
+        "facturae_dir3_oficina_contable",
+        "facturae_dir3_organo_gestor",
+        "facturae_dir3_unidad_tramitadora",
+        "facturae_dir3_organo_proponente",
+        "facturae_referencia_expediente",
+        "facturae_referencia_contrato",
+        "facturae_referencia_pedido",
+    ):
+        out[key] = str(out.get(key) or "").strip().upper() if "dir3" in key else str(out.get(key) or "").strip()
     if proveedor_tipo == "INTERIOR_NO_DEDUCIBLE" and raw.get("proveedor_iva_deducible") is None:
         out["proveedor_iva_deducible"] = 0
         out["proveedor_porcentaje_deduccion_iva"] = 0.0
@@ -178,6 +197,17 @@ def validate_tercero_empresa_rel(rel: dict | None) -> dict:
     if out["proveedor_tipo_operacion_iva"] == "INTRACOMUNITARIA" and out["proveedor_intracomunitaria_clase"] not in CLASES_INTRACOMUNITARIA:
         raise ValueError("Debes indicar si la operacion intracomunitaria de proveedor es de bienes o servicios.")
     normalize_percentage(out.get("proveedor_porcentaje_deduccion_iva"), default=100.0)
+    if out.get("facturae_es_administracion_publica"):
+        missing = [
+            key for key in (
+                "facturae_dir3_oficina_contable",
+                "facturae_dir3_organo_gestor",
+                "facturae_dir3_unidad_tramitadora",
+            )
+            if not out.get(key)
+        ]
+        if missing:
+            raise ValueError("Faltan los codigos DIR3 minimos para clientes de Administracion Publica.")
     return out
 
 

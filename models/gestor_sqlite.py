@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS empresas (
   cp TEXT,
   poblacion TEXT,
   provincia TEXT,
+  pais TEXT,
   telefono TEXT,
   email TEXT,
   logo_path TEXT,
@@ -195,7 +196,11 @@ CREATE TABLE IF NOT EXISTS facturas_emitidas_docs (
   canal_envio TEXT,
   generada INTEGER DEFAULT 0,
   fecha_generacion TEXT,
-  lineas_json TEXT
+  lineas_json TEXT,
+  facturae_xml_path TEXT,
+  facturae_generated_at TEXT,
+  facturae_status TEXT,
+  facturae_error TEXT
 );
 CREATE TABLE IF NOT EXISTS albaranes_emitidas_docs (
   id TEXT PRIMARY KEY,
@@ -257,6 +262,14 @@ CREATE TABLE IF NOT EXISTS terceros_empresas (
   proveedor_intracomunitaria_clase TEXT,
   proveedor_iva_deducible INTEGER DEFAULT 1,
   proveedor_porcentaje_deduccion_iva REAL DEFAULT 100,
+  facturae_es_administracion_publica INTEGER DEFAULT 0,
+  facturae_dir3_oficina_contable TEXT,
+  facturae_dir3_organo_gestor TEXT,
+  facturae_dir3_unidad_tramitadora TEXT,
+  facturae_dir3_organo_proponente TEXT,
+  facturae_referencia_expediente TEXT,
+  facturae_referencia_contrato TEXT,
+  facturae_referencia_pedido TEXT,
   PRIMARY KEY (codigo_empresa, ejercicio, tercero_id)
 );
 CREATE TABLE IF NOT EXISTS plan_cuentas (
@@ -423,7 +436,7 @@ class GestorSQLite:
         except Exception as exc:
             raise DatabaseOpenError(self.db_path, "preparar la carpeta de", exc) from exc
         try:
-            self.conn = sqlite3.connect(str(self.db_path))
+            self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
             self.conn.execute("PRAGMA foreign_keys = ON")
             self.conn.row_factory = sqlite3.Row
             self._init_schema()
@@ -450,6 +463,7 @@ class GestorSQLite:
         self._ensure_column("empresas", "siguiente_num_emitidas_rect", "INTEGER")
         self._ensure_column("empresas", "logo_max_width_mm", "REAL")
         self._ensure_column("empresas", "logo_max_height_mm", "REAL")
+        self._ensure_column("empresas", "pais", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "forma_pago", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "cuenta_bancaria", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "plantilla_word", "TEXT")
@@ -506,6 +520,14 @@ class GestorSQLite:
         self._ensure_column("terceros_empresas", "proveedor_intracomunitaria_clase", "TEXT")
         self._ensure_column("terceros_empresas", "proveedor_iva_deducible", "INTEGER")
         self._ensure_column("terceros_empresas", "proveedor_porcentaje_deduccion_iva", "REAL")
+        self._ensure_column("terceros_empresas", "facturae_es_administracion_publica", "INTEGER")
+        self._ensure_column("terceros_empresas", "facturae_dir3_oficina_contable", "TEXT")
+        self._ensure_column("terceros_empresas", "facturae_dir3_organo_gestor", "TEXT")
+        self._ensure_column("terceros_empresas", "facturae_dir3_unidad_tramitadora", "TEXT")
+        self._ensure_column("terceros_empresas", "facturae_dir3_organo_proponente", "TEXT")
+        self._ensure_column("terceros_empresas", "facturae_referencia_expediente", "TEXT")
+        self._ensure_column("terceros_empresas", "facturae_referencia_contrato", "TEXT")
+        self._ensure_column("terceros_empresas", "facturae_referencia_pedido", "TEXT")
         self.conn.commit()
         self.conn.execute(
             "UPDATE terceros_empresas SET cliente_tipo_operacion_iva='INTERIOR_IVA' "
@@ -530,6 +552,10 @@ class GestorSQLite:
         self.conn.execute(
             "UPDATE terceros_empresas SET proveedor_porcentaje_deduccion_iva=0 "
             "WHERE COALESCE(proveedor_iva_deducible, 0)=0"
+        )
+        self.conn.execute(
+            "UPDATE empresas SET pais='ES' "
+            "WHERE (pais IS NULL OR TRIM(pais)='') AND cif IS NOT NULL AND TRIM(cif)!=''"
         )
         self.conn.commit()
         self.conn.execute("UPDATE terceros SET tipo=NULL")
@@ -570,6 +596,10 @@ class GestorSQLite:
         self._ensure_column("facturas_emitidas_docs", "subcuenta_ingreso", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "subcuenta_iva", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "subcuenta_retencion", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "facturae_xml_path", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "facturae_generated_at", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "facturae_status", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "facturae_error", "TEXT")
         self.conn.executescript(
             "CREATE TABLE IF NOT EXISTS series_emitidas ("
             "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -1179,9 +1209,9 @@ class GestorSQLite:
             """
             INSERT INTO empresas (codigo, ejercicio, nombre, digitos_plan, serie_emitidas,
                 siguiente_num_emitidas, serie_emitidas_rect, siguiente_num_emitidas_rect,
-                pdf_ref_seq, cuenta_bancaria, cuentas_bancarias, cif, direccion, cp, poblacion, provincia, telefono, email,
+                pdf_ref_seq, cuenta_bancaria, cuentas_bancarias, cif, direccion, cp, poblacion, provincia, pais, telefono, email,
                 logo_path, logo_max_width_mm, logo_max_height_mm, activo)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(codigo, ejercicio) DO UPDATE SET
                 nombre=excluded.nombre,
                 digitos_plan=excluded.digitos_plan,
@@ -1197,6 +1227,7 @@ class GestorSQLite:
                 cp=excluded.cp,
                 poblacion=excluded.poblacion,
                 provincia=excluded.provincia,
+                pais=excluded.pais,
                 telefono=excluded.telefono,
                 email=excluded.email,
                 logo_path=excluded.logo_path,
@@ -1221,6 +1252,7 @@ class GestorSQLite:
                 emp.get("cp"),
                 emp.get("poblacion"),
                 emp.get("provincia"),
+                emp.get("pais"),
                 emp.get("telefono"),
                 emp.get("email"),
                 emp.get("logo_path"),
@@ -1756,8 +1788,8 @@ class GestorSQLite:
              fecha_asiento, fecha_expedicion, fecha_operacion, tipo_operacion, modelo_fiscal, nif, nombre, descripcion, observaciones,
              subcuenta_cliente, forma_pago, cuenta_bancaria, plantilla_word, plantilla_emitidas, pdf_path, pdf_ref, pdf_path_a3, retencion_aplica, retencion_pct,
              retencion_base, retencion_importe, descuento_total_tipo, descuento_total_valor, moneda_codigo, moneda_simbolo, enviado, fecha_envio, canal_envio, generada, fecha_generacion, lineas_json, borrador,
-             subcuenta_ingreso, subcuenta_iva, subcuenta_retencion)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             subcuenta_ingreso, subcuenta_iva, subcuenta_retencion, facturae_xml_path, facturae_generated_at, facturae_status, facturae_error)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -1800,7 +1832,11 @@ class GestorSQLite:
                 borrador=excluded.borrador,
                 subcuenta_ingreso=excluded.subcuenta_ingreso,
                 subcuenta_iva=excluded.subcuenta_iva,
-                subcuenta_retencion=excluded.subcuenta_retencion
+                subcuenta_retencion=excluded.subcuenta_retencion,
+                facturae_xml_path=excluded.facturae_xml_path,
+                facturae_generated_at=excluded.facturae_generated_at,
+                facturae_status=excluded.facturae_status,
+                facturae_error=excluded.facturae_error
             """,
             (
                 fid,
@@ -1846,6 +1882,10 @@ class GestorSQLite:
                 factura.get("subcuenta_ingreso"),
                 factura.get("subcuenta_iva"),
                 factura.get("subcuenta_retencion"),
+                factura.get("facturae_xml_path"),
+                factura.get("facturae_generated_at"),
+                factura.get("facturae_status"),
+                factura.get("facturae_error"),
             ),
         )
         self.conn.commit()
@@ -2545,6 +2585,9 @@ class GestorSQLite:
             SELECT t.*, te.subcuenta_cliente, te.subcuenta_proveedor, te.subcuenta_ingreso, te.subcuenta_gasto,
                    te.cliente_tipo_operacion_iva, te.cliente_intracomunitaria_clase, te.cliente_iva_deducible, te.cliente_porcentaje_deduccion_iva,
                    te.proveedor_tipo_operacion_iva, te.proveedor_intracomunitaria_clase, te.proveedor_iva_deducible, te.proveedor_porcentaje_deduccion_iva,
+                   te.facturae_es_administracion_publica, te.facturae_dir3_oficina_contable, te.facturae_dir3_organo_gestor,
+                   te.facturae_dir3_unidad_tramitadora, te.facturae_dir3_organo_proponente, te.facturae_referencia_expediente,
+                   te.facturae_referencia_contrato, te.facturae_referencia_pedido,
                    te.ejercicio
             FROM terceros t
             JOIN terceros_empresas te ON te.tercero_id = t.id
@@ -2560,6 +2603,9 @@ class GestorSQLite:
                 SELECT t.*, te.subcuenta_cliente, te.subcuenta_proveedor, te.subcuenta_ingreso, te.subcuenta_gasto,
                        te.cliente_tipo_operacion_iva, te.cliente_intracomunitaria_clase, te.cliente_iva_deducible, te.cliente_porcentaje_deduccion_iva,
                        te.proveedor_tipo_operacion_iva, te.proveedor_intracomunitaria_clase, te.proveedor_iva_deducible, te.proveedor_porcentaje_deduccion_iva,
+                       te.facturae_es_administracion_publica, te.facturae_dir3_oficina_contable, te.facturae_dir3_organo_gestor,
+                       te.facturae_dir3_unidad_tramitadora, te.facturae_dir3_organo_proponente, te.facturae_referencia_expediente,
+                       te.facturae_referencia_contrato, te.facturae_referencia_pedido,
                        te.ejercicio
                 FROM terceros t
                 JOIN terceros_empresas te ON te.tercero_id = t.id
@@ -2605,9 +2651,12 @@ class GestorSQLite:
                 codigo_empresa, ejercicio, tercero_id,
                 subcuenta_cliente, subcuenta_proveedor, subcuenta_ingreso, subcuenta_gasto,
                 cliente_tipo_operacion_iva, cliente_intracomunitaria_clase, cliente_iva_deducible, cliente_porcentaje_deduccion_iva,
-                proveedor_tipo_operacion_iva, proveedor_intracomunitaria_clase, proveedor_iva_deducible, proveedor_porcentaje_deduccion_iva
+                proveedor_tipo_operacion_iva, proveedor_intracomunitaria_clase, proveedor_iva_deducible, proveedor_porcentaje_deduccion_iva,
+                facturae_es_administracion_publica, facturae_dir3_oficina_contable, facturae_dir3_organo_gestor,
+                facturae_dir3_unidad_tramitadora, facturae_dir3_organo_proponente, facturae_referencia_expediente,
+                facturae_referencia_contrato, facturae_referencia_pedido
             )
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(codigo_empresa, ejercicio, tercero_id) DO UPDATE SET
                 subcuenta_cliente=excluded.subcuenta_cliente,
                 subcuenta_proveedor=excluded.subcuenta_proveedor,
@@ -2620,7 +2669,15 @@ class GestorSQLite:
                 proveedor_tipo_operacion_iva=excluded.proveedor_tipo_operacion_iva,
                 proveedor_intracomunitaria_clase=excluded.proveedor_intracomunitaria_clase,
                 proveedor_iva_deducible=excluded.proveedor_iva_deducible,
-                proveedor_porcentaje_deduccion_iva=excluded.proveedor_porcentaje_deduccion_iva
+                proveedor_porcentaje_deduccion_iva=excluded.proveedor_porcentaje_deduccion_iva,
+                facturae_es_administracion_publica=excluded.facturae_es_administracion_publica,
+                facturae_dir3_oficina_contable=excluded.facturae_dir3_oficina_contable,
+                facturae_dir3_organo_gestor=excluded.facturae_dir3_organo_gestor,
+                facturae_dir3_unidad_tramitadora=excluded.facturae_dir3_unidad_tramitadora,
+                facturae_dir3_organo_proponente=excluded.facturae_dir3_organo_proponente,
+                facturae_referencia_expediente=excluded.facturae_referencia_expediente,
+                facturae_referencia_contrato=excluded.facturae_referencia_contrato,
+                facturae_referencia_pedido=excluded.facturae_referencia_pedido
             """,
             (
                 rel.get("codigo_empresa"),
@@ -2638,6 +2695,14 @@ class GestorSQLite:
                 rel.get("proveedor_intracomunitaria_clase"),
                 rel.get("proveedor_iva_deducible"),
                 rel.get("proveedor_porcentaje_deduccion_iva"),
+                1 if rel.get("facturae_es_administracion_publica") else 0,
+                rel.get("facturae_dir3_oficina_contable"),
+                rel.get("facturae_dir3_organo_gestor"),
+                rel.get("facturae_dir3_unidad_tramitadora"),
+                rel.get("facturae_dir3_organo_proponente"),
+                rel.get("facturae_referencia_expediente"),
+                rel.get("facturae_referencia_contrato"),
+                rel.get("facturae_referencia_pedido"),
             ),
         )
         self.conn.commit()

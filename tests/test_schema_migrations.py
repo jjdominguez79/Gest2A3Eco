@@ -78,8 +78,25 @@ def test_terceros_empresas_columnas_configuracion_fiscal(tmp_path):
         "proveedor_intracomunitaria_clase",
         "proveedor_iva_deducible",
         "proveedor_porcentaje_deduccion_iva",
+        "facturae_es_administracion_publica",
+        "facturae_dir3_oficina_contable",
+        "facturae_dir3_organo_gestor",
+        "facturae_dir3_unidad_tramitadora",
+        "facturae_dir3_organo_proponente",
+        "facturae_referencia_expediente",
+        "facturae_referencia_contrato",
+        "facturae_referencia_pedido",
     ):
         assert col in cols, f"Columna 'terceros_empresas.{col}' no existe"
+
+
+def test_empresas_y_facturas_emitidas_docs_columnas_facturae(tmp_path):
+    g = _gestor(tmp_path)
+    empresas_cols = _columns(g, "empresas")
+    assert "pais" in empresas_cols
+    emitidas_cols = _columns(g, "facturas_emitidas_docs")
+    for col in ("facturae_xml_path", "facturae_generated_at", "facturae_status", "facturae_error"):
+        assert col in emitidas_cols, f"Columna 'facturas_emitidas_docs.{col}' no existe"
 
 
 def test_facturas_recibidas_docs_columnas_configuracion_fiscal(tmp_path):

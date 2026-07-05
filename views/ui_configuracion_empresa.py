@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from services.import_a3_empresa import importar_empresa_desde_a3, listar_empresas_a3
-from utils.validaciones import normalizar_nif_cif
+from utils.validaciones import normalizar_codigo_pais, normalizar_nif_cif
 from views.ui_buzones import UIBuzones
 from views.ui_certificados import UICertificados
 
@@ -76,6 +76,8 @@ class UIConfiguracionEmpresa(ttk.Frame):
         self.var_cp      = tk.StringVar(value=str(self._empresa.get("cp", "")))
         self.var_pob     = tk.StringVar(value=str(self._empresa.get("poblacion", "")))
         self.var_prov    = tk.StringVar(value=str(self._empresa.get("provincia", "")))
+        self.var_pais    = tk.StringVar(value=str(self._empresa.get("pais", "ES") or "ES"))
+        self.var_pais.trace_add("write", lambda *_: self._normalize_country_var(self.var_pais))
         self.var_tel     = tk.StringVar(value=str(self._empresa.get("telefono", "")))
         self.var_mail    = tk.StringVar(value=str(self._empresa.get("email", "")))
         self.var_logo    = tk.StringVar(value=str(self._empresa.get("logo_path", "")))
@@ -129,6 +131,7 @@ class UIConfiguracionEmpresa(ttk.Frame):
             ("CP", self.var_cp, 6, 0, 10),
             ("Poblacion", self.var_pob, 6, 2, None),
             ("Provincia", self.var_prov, 7, 0, None),
+            ("Pais", self.var_pais, 7, 2, 8),
         ]
         for text, var, row, col, width in fields:
             ttk.Label(tab, text=text).grid(row=row, column=col, sticky="w", pady=4,
@@ -320,6 +323,7 @@ class UIConfiguracionEmpresa(ttk.Frame):
                 "cp": self.var_cp.get().strip(),
                 "poblacion": self.var_pob.get().strip(),
                 "provincia": self.var_prov.get().strip(),
+                "pais": normalizar_codigo_pais(self.var_pais.get()) or "ES",
                 "telefono": self.var_tel.get().strip(),
                 "email": self.var_mail.get().strip(),
                 "logo_path": self.var_logo.get().strip(),
@@ -834,6 +838,12 @@ class UIConfiguracionEmpresa(ttk.Frame):
     def _normalize_identifier_var(self, var: tk.StringVar):
         current = var.get()
         normalized = normalizar_nif_cif(current)
+        if current != normalized:
+            var.set(normalized)
+
+    def _normalize_country_var(self, var: tk.StringVar):
+        current = var.get()
+        normalized = normalizar_codigo_pais(current) or "ES"
         if current != normalized:
             var.set(normalized)
 

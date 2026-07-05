@@ -26,6 +26,13 @@ from utils.validaciones import (
 )
 
 _ESTADO_LABELS = {"pendiente": "Contabilidad", "generado": "Generado"}
+_FACTURAE_LABELS = {
+    "no_generado": "No generado",
+    "generado": "Generado",
+    "error_validacion": "Error validacion",
+    "firmado": "Firmado",
+    "presentado": "Presentado",
+}
 
 TIPOS_IDENTIFICACION_TERCERO = [
     ("auto", "Auto"),
@@ -2092,6 +2099,7 @@ class UIFacturasEmitidas(ttk.Frame):
         ttk.Button(top, text="Exportar PDF", command=self._export_pdf).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Abrir PDF", command=self._abrir_pdf).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="Compartir PDF", command=self._compartir_pdf).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="Generar Facturae/FACe", command=self._generar_facturae).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="PDF seleccion", command=self._export_pdf_multiple).pack(side=tk.LEFT, padx=8)
         if not can_write:
             for btn in (
@@ -2137,7 +2145,7 @@ class UIFacturasEmitidas(ttk.Frame):
 
         self.tv = ttk.Treeview(
             parent,
-            columns=("marcar", "ejercicio", "serie", "numero", "asiento", "cont_estado", "fecha", "cliente", "total", "enviado", "fecha_envio"),
+            columns=("marcar", "ejercicio", "serie", "numero", "asiento", "cont_estado", "fecha", "cliente", "total", "enviado", "fecha_envio", "facturae_estado"),
             show="headings",
             selectmode="extended",
             height=12,
@@ -2154,6 +2162,7 @@ class UIFacturasEmitidas(ttk.Frame):
             ("total", "Total", 100, "e"),
             ("enviado", "Enviado", 90, "center"),
             ("fecha_envio", "Fecha envio", 110, "w"),
+            ("facturae_estado", "Facturae", 120, "center"),
         ]
         for c, h, w, align in cols:
             self.tv.heading(c, text=h, command=lambda col=c: self._sort_facturas(col))
@@ -2359,6 +2368,7 @@ class UIFacturasEmitidas(ttk.Frame):
                 fmt2s(total, sym),
                 "Si" if fac.get("enviado") else "No",
                 fac.get("fecha_envio", ""),
+                _FACTURAE_LABELS.get(str(fac.get("facturae_status") or "").strip().lower(), "No generado"),
             ),
         )
 
@@ -3181,6 +3191,9 @@ class UIFacturasEmitidas(ttk.Frame):
     def _export_pdf_multiple(self):
         self.controller.export_pdf_multiple()
 
+    def _generar_facturae(self):
+        self.controller.generar_facturae()
+
     def _generar(self):
         self.controller.generar_suenlace()
 
@@ -3196,6 +3209,14 @@ class UIFacturasEmitidas(ttk.Frame):
             defaultextension=".pdf",
             initialfile=initialfile,
             filetypes=[("PDF", "*.pdf")],
+        )
+
+    def ask_save_xml_path(self, initialfile):
+        return filedialog.asksaveasfilename(
+            title="Guardar Facturae/FACe",
+            defaultextension=".xml",
+            initialfile=initialfile,
+            filetypes=[("XML Facturae", "*.xml")],
         )
 
     def ask_save_dat_path(self, initialfile):

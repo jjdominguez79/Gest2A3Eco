@@ -89,6 +89,8 @@ class EmpresaDialog(tk.Toplevel):
         self.var_cp = tk.StringVar(value=str(self._empresa.get("cp", "")))
         self.var_pob = tk.StringVar(value=str(self._empresa.get("poblacion", "")))
         self.var_prov = tk.StringVar(value=str(self._empresa.get("provincia", "")))
+        self.var_pais = tk.StringVar(value=str(self._empresa.get("pais", "ES") or "ES"))
+        self.var_pais.trace_add("write", lambda *_: self._normalize_country_var(self.var_pais))
         self.var_tel = tk.StringVar(value=str(self._empresa.get("telefono", "")))
         self.var_mail = tk.StringVar(value=str(self._empresa.get("email", "")))
         self.var_logo = tk.StringVar(value=str(self._empresa.get("logo_path", "")))
@@ -135,6 +137,7 @@ class EmpresaDialog(tk.Toplevel):
             ("CP", self.var_cp, 6, 0, 10),
             ("Poblacion", self.var_pob, 6, 2, None),
             ("Provincia", self.var_prov, 7, 0, None),
+            ("Pais", self.var_pais, 7, 2, 8),
         ]
         for text, var, row, col, width in fields:
             ttk.Label(tab, text=text).grid(row=row, column=col, sticky="w", pady=4, padx=(18 if col else 0, 0))
@@ -190,6 +193,12 @@ class EmpresaDialog(tk.Toplevel):
     def _normalize_identifier_var(self, var: tk.StringVar):
         current = var.get()
         normalized = normalizar_nif_cif(current)
+        if current != normalized:
+            var.set(normalized)
+
+    def _normalize_country_var(self, var: tk.StringVar):
+        current = var.get()
+        normalized = normalizar_codigo_pais(current) or "ES"
         if current != normalized:
             var.set(normalized)
 
@@ -1069,6 +1078,14 @@ class EmpresaDialog(tk.Toplevel):
             "proveedor_tipo_operacion_iva": tk.StringVar(value=str(rel.get("proveedor_tipo_operacion_iva") or PROVEEDOR_TIPOS_IVA[0])),
             "proveedor_ded_mode": tk.StringVar(value=DEDUCCION_LABELS[get_proveedor_deduction_mode(rel)]),
             "proveedor_porcentaje_deduccion_iva": tk.StringVar(value=str(int(float(rel.get("proveedor_porcentaje_deduccion_iva", 100))) if float(rel.get("proveedor_porcentaje_deduccion_iva", 100)) == int(float(rel.get("proveedor_porcentaje_deduccion_iva", 100))) else float(rel.get("proveedor_porcentaje_deduccion_iva", 100)))),
+            "facturae_es_administracion_publica": tk.BooleanVar(value=bool(rel.get("facturae_es_administracion_publica"))),
+            "facturae_dir3_oficina_contable": tk.StringVar(value=str(rel.get("facturae_dir3_oficina_contable") or "")),
+            "facturae_dir3_organo_gestor": tk.StringVar(value=str(rel.get("facturae_dir3_organo_gestor") or "")),
+            "facturae_dir3_unidad_tramitadora": tk.StringVar(value=str(rel.get("facturae_dir3_unidad_tramitadora") or "")),
+            "facturae_dir3_organo_proponente": tk.StringVar(value=str(rel.get("facturae_dir3_organo_proponente") or "")),
+            "facturae_referencia_expediente": tk.StringVar(value=str(rel.get("facturae_referencia_expediente") or "")),
+            "facturae_referencia_contrato": tk.StringVar(value=str(rel.get("facturae_referencia_contrato") or "")),
+            "facturae_referencia_pedido": tk.StringVar(value=str(rel.get("facturae_referencia_pedido") or "")),
         }
         cli = ttk.LabelFrame(frm, text="Configuracion cliente", padding=10)
         cli.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
@@ -1095,6 +1112,24 @@ class EmpresaDialog(tk.Toplevel):
         entry_pct.grid(row=4, column=1, sticky="w", pady=4)
         lbl_hint = ttk.Label(prov, text="", foreground="#64748b", font=("Segoe UI", 8))
         lbl_hint.grid(row=5, column=0, columnspan=2, sticky="w", pady=(0, 2))
+
+        face = ttk.LabelFrame(frm, text="Facturae / FACe", padding=10)
+        face.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        ttk.Checkbutton(face, text="Es Administracion Publica", variable=vars_map["facturae_es_administracion_publica"]).grid(row=0, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Label(face, text="Oficina contable DIR3").grid(row=1, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Entry(face, textvariable=vars_map["facturae_dir3_oficina_contable"], width=24).grid(row=1, column=1, sticky="w", pady=4)
+        ttk.Label(face, text="Organo gestor DIR3").grid(row=2, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Entry(face, textvariable=vars_map["facturae_dir3_organo_gestor"], width=24).grid(row=2, column=1, sticky="w", pady=4)
+        ttk.Label(face, text="Unidad tramitadora DIR3").grid(row=3, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Entry(face, textvariable=vars_map["facturae_dir3_unidad_tramitadora"], width=24).grid(row=3, column=1, sticky="w", pady=4)
+        ttk.Label(face, text="Organo proponente").grid(row=4, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Entry(face, textvariable=vars_map["facturae_dir3_organo_proponente"], width=24).grid(row=4, column=1, sticky="w", pady=4)
+        ttk.Label(face, text="Referencia expediente").grid(row=5, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Entry(face, textvariable=vars_map["facturae_referencia_expediente"], width=30).grid(row=5, column=1, sticky="w", pady=4)
+        ttk.Label(face, text="Referencia contrato").grid(row=6, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Entry(face, textvariable=vars_map["facturae_referencia_contrato"], width=30).grid(row=6, column=1, sticky="w", pady=4)
+        ttk.Label(face, text="Referencia pedido").grid(row=7, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Entry(face, textvariable=vars_map["facturae_referencia_pedido"], width=30).grid(row=7, column=1, sticky="w", pady=4)
 
         def _refresh_deduccion(*_args):
             mode = DEDUCCION_LABELS_INV.get(vars_map["proveedor_ded_mode"].get(), "total")
@@ -1131,6 +1166,14 @@ class EmpresaDialog(tk.Toplevel):
                 "proveedor_tipo_operacion_iva": vars_map["proveedor_tipo_operacion_iva"].get().strip(),
                 "proveedor_iva_deducible": 0 if DEDUCCION_LABELS_INV.get(vars_map["proveedor_ded_mode"].get(), "total") == "no" else 1,
                 "proveedor_porcentaje_deduccion_iva": pct,
+                "facturae_es_administracion_publica": bool(vars_map["facturae_es_administracion_publica"].get()),
+                "facturae_dir3_oficina_contable": vars_map["facturae_dir3_oficina_contable"].get().strip(),
+                "facturae_dir3_organo_gestor": vars_map["facturae_dir3_organo_gestor"].get().strip(),
+                "facturae_dir3_unidad_tramitadora": vars_map["facturae_dir3_unidad_tramitadora"].get().strip(),
+                "facturae_dir3_organo_proponente": vars_map["facturae_dir3_organo_proponente"].get().strip(),
+                "facturae_referencia_expediente": vars_map["facturae_referencia_expediente"].get().strip(),
+                "facturae_referencia_contrato": vars_map["facturae_referencia_contrato"].get().strip(),
+                "facturae_referencia_pedido": vars_map["facturae_referencia_pedido"].get().strip(),
             }
             try:
                 self._gestor.upsert_tercero_empresa(payload)
@@ -1141,7 +1184,7 @@ class EmpresaDialog(tk.Toplevel):
             self._load_terceros()
 
         btns = ttk.Frame(frm)
-        btns.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        btns.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         ttk.Button(btns, text="Guardar", style="Primary.TButton", command=_ok).pack(side=tk.LEFT)
         ttk.Button(btns, text="Cancelar", command=top.destroy).pack(side=tk.LEFT, padx=(6, 0))
         top.wait_window()
@@ -1474,6 +1517,7 @@ class EmpresaDialog(tk.Toplevel):
                 "cp": self.var_cp.get().strip(),
                 "poblacion": self.var_pob.get().strip(),
                 "provincia": self.var_prov.get().strip(),
+                "pais": normalizar_codigo_pais(self.var_pais.get()) or "ES",
                 "telefono": self.var_tel.get().strip(),
                 "email": self.var_mail.get().strip(),
                 "logo_path": self.var_logo.get().strip(),
