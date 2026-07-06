@@ -62,6 +62,13 @@ class OpcionesSync:
     # (Cl@ve/@firma piden el certificado en SU dominio, no en el de DEHu).
     origenes_certificado: list = field(default_factory=list)
     capturar_red: bool = True
+    # Filtrar las notificaciones al NIF/CIF de este cliente (evita mezclar y
+    # duplicar cuando el certificado ve las de varios titulares, p.ej. RED de la SS).
+    nif_filtro: str | None = None
+    # Datos de Seguridad Social del cliente (NAF/CCC) para tramites TGSS.
+    datos_ss: dict = field(default_factory=dict)
+    # Ruta destino donde el proveedor debe guardar el PDF del certificado.
+    ruta_pdf_destino: str | None = None
 
     def trace(self, msg: str) -> None:
         if self.log:

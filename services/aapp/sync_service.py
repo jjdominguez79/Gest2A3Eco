@@ -88,6 +88,14 @@ def sincronizar_buzon(gestor, buzon: dict, opciones: OpcionesSync | None = None,
                 f"No hay conector disponible para el organismo '{org_codigo or '(desconocido)'}'."
             )
 
+        # Filtrar al NIF/CIF del cliente: evita mezclar y duplicar cuando el
+        # certificado ve notificaciones de varios titulares (p.ej. RED de la SS).
+        try:
+            _emp = gestor.get_empresa(codigo_empresa)
+            opciones.nif_filtro = (_emp or {}).get("cif") or None
+        except Exception:
+            opciones.nif_filtro = None
+
         # 3) Ejecutar
         res = conector.sincronizar(buzon, material, opciones)
         total = res.total

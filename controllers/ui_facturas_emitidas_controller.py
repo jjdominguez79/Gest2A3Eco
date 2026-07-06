@@ -1098,7 +1098,7 @@ class FacturasEmitidasController:
             ):
                 return
 
-        ndig = int(self._empresa_conf.get("digitos_plan", 8))
+        ndig = int(self._empresa_conf.get("digitos_plan") or 8)
         terceros = self._gestor.listar_terceros()
         terceros_by_nif = {
             normalizar_nif_cif(t.get("nif")): t
@@ -1226,7 +1226,7 @@ class FacturasEmitidasController:
 
         # Obtener plantilla de la factura
         plantilla = self._plantilla_emitidas_for_factura(fac, {}, set())
-        ndig = int(self._empresa_conf.get("digitos_plan", 8))
+        ndig = int(self._empresa_conf.get("digitos_plan") or 8)
 
         parent_win = None
         try:

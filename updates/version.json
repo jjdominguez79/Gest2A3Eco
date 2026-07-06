@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.1.5",
-  "minimum_required_version": "1.1.5",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.1.5/Setup_Gest2A3Eco_1.1.5.exe",
+  "latest_version": "1.2.0",
+  "minimum_required_version": "1.2.0",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.2.0/Setup_Gest2A3Eco_1.2.0.exe",
   "changelog": "Correcciones al fichero de actualización.",
   "force_update": true
 }

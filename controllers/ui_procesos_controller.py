@@ -22,6 +22,10 @@ class ProcesosController:
         self._cached_plantilla: dict | None = None
         self._cached_tipo: str = ""
         self._contrapartida_overrides: dict[int, str] = {}  # idx_fila -> subcuenta
+        self._subcuenta_overrides: dict[int, str] = {}
+        self._subcuenta_cached_rows: list[dict] | None = None
+        self._subcuenta_cached_tipo: str = ""
+        self._subcuenta_cached_plantilla: dict | None = None
 
     def _codigo_empresa_a3(self) -> str:
         digits = "".join(ch for ch in str(self._codigo or "") if ch.isdigit())
@@ -71,6 +75,17 @@ class ProcesosController:
         tipo = (self._view.get_tipo() or "").lower()
         if "bancos" in tipo:
             self._cargar_contrapartidas_preview()
+        elif "emitidas" in tipo or "recibidas" in tipo:
+            self._subcuenta_cached_rows = None
+            self._subcuenta_overrides = {}
+            nombre_pl = (self._view.get_selected_plantilla() or "").strip()
+            if nombre_pl:
+                if "emitidas" in tipo:
+                    pl_prev = next((x for x in self._gestor.listar_emitidas(self._codigo, self._ejercicio) if x.get("nombre") == nombre_pl), None)
+                else:
+                    pl_prev = next((x for x in self._gestor.listar_recibidas(self._codigo, self._ejercicio) if x.get("nombre") == nombre_pl), None)
+                if pl_prev:
+                    self._cargar_subcuentas_preview(tipo, pl_prev)
 
     def _cargar_contrapartidas_preview(self):
         """Carga las filas mapeadas y calcula las contrapartidas por defecto para la preview."""
@@ -128,6 +143,55 @@ class ProcesosController:
         elif idx_fila in self._contrapartida_overrides:
             del self._contrapartida_overrides[idx_fila]
 
+    def set_subcuenta_override(self, idx_fila: int, subcuenta: str):
+        if subcuenta:
+            self._subcuenta_overrides[idx_fila] = str(subcuenta).strip()
+        elif idx_fila in self._subcuenta_overrides:
+            del self._subcuenta_overrides[idx_fila]
+
+    def _cargar_subcuentas_preview(self, tipo: str, pl: dict):
+        """Carga las filas mapeadas y calcula las subcuentas por defecto desde terceros para emitidas/recibidas."""
+        try:
+            excel_conf = pl.get("excel") or {}
+            rows = extract_rows_by_mapping(self._excel_path, self._view.get_selected_sheet(), excel_conf)
+            rows = [r for r in rows if self._row_has_data(r)]
+            if not rows:
+                return
+
+            # Construir diccionario NIF -> tercero
+            terceros = self._gestor.listar_terceros()
+            terceros_by_nif = {
+                self._norm_nif(t.get("nif")): t
+                for t in terceros
+                if self._norm_nif(t.get("nif"))
+            }
+            terceros_empresa = self._gestor.listar_terceros_por_empresa(self._codigo, self._ejercicio)
+            for t in terceros_empresa:
+                nif = self._norm_nif(t.get("nif"))
+                if nif:
+                    terceros_by_nif[nif] = t
+
+            # Calcular subcuenta por defecto para cada fila
+            es_emitidas = "emitidas" in tipo
+            col_label = "Subcuenta cliente" if es_emitidas else "Subcuenta proveedor"
+            sub_key = "subcuenta_cliente" if es_emitidas else "subcuenta_proveedor"
+            for row in rows:
+                nif = self._norm_nif(row.get("NIF Cliente Proveedor") or row.get("NIF"))
+                tercero = terceros_by_nif.get(nif) if nif else None
+                row["_subcuenta_defecto"] = str((tercero or {}).get(sub_key) or "")
+
+            self._subcuenta_cached_rows = rows
+            self._subcuenta_cached_tipo = tipo
+            self._subcuenta_cached_plantilla = pl
+            self._subcuenta_overrides = {}
+
+            try:
+                self._view.mostrar_subcuentas_preview(rows, col_label)
+            except AttributeError:
+                pass
+        except Exception:
+            pass
+
     def generar(self):
         try:
             if not self._excel_path or not self._view.get_selected_sheet():
@@ -151,7 +215,7 @@ class ProcesosController:
                 return
 
             empresa_config = self._gestor.get_empresa(self._codigo, self._ejercicio) or {}
-            ndig = int(empresa_config.get("digitos_plan", 8))
+            ndig = int(empresa_config.get("digitos_plan") or 8)
             codigo_empresa = str(self._codigo)
 
             excel_conf = pl.get("excel") or {}
@@ -222,7 +286,18 @@ class ProcesosController:
                     req = ["Numero Factura"] + req
                 if not self._require_mapeo_or_warn(pl, "emitidas", req):
                     return
-                rows = [r for r in rows if self._row_has_data(r)]
+                if (
+                    self._subcuenta_cached_rows is not None
+                    and self._subcuenta_cached_tipo == "emitidas"
+                    and self._subcuenta_cached_plantilla
+                    and self._subcuenta_cached_plantilla.get("nombre") == pl.get("nombre")
+                ):
+                    rows = [dict(r) for r in self._subcuenta_cached_rows]
+                    for idx, sub_override in self._subcuenta_overrides.items():
+                        if 0 <= idx < len(rows):
+                            rows[idx]["_subcuenta_cliente_override"] = sub_override
+                else:
+                    rows = [r for r in rows if self._row_has_data(r)]
                 if not rows:
                     self._view.show_warning(
                         "Gest2A3Eco",
@@ -267,7 +342,18 @@ class ProcesosController:
                 req = ["Numero Factura"] + req
             if not self._require_mapeo_or_warn(pl, "recibidas", req):
                 return
-            rows = [r for r in rows if self._row_has_data(r)]
+            if (
+                self._subcuenta_cached_rows is not None
+                and self._subcuenta_cached_tipo == "recibidas"
+                and self._subcuenta_cached_plantilla
+                and self._subcuenta_cached_plantilla.get("nombre") == pl.get("nombre")
+            ):
+                rows = [dict(r) for r in self._subcuenta_cached_rows]
+                for idx, sub_override in self._subcuenta_overrides.items():
+                    if 0 <= idx < len(rows):
+                        rows[idx]["_cuenta_tercero_override"] = sub_override
+            else:
+                rows = [r for r in rows if self._row_has_data(r)]
             if not rows:
                 self._view.show_warning(
                     "Gest2A3Eco",

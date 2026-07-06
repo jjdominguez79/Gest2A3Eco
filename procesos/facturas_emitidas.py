@@ -198,12 +198,17 @@ def generar_emitidas(
         desc_det = f"Ventas a {nombre}".strip() if nombre else "Ventas"
 
         # Subcuenta: si no hay mapeo o no viene informada, usa generica
-        cta_excel = str(r0.get("Cuenta Cliente Proveedor") or "").strip()
-        if cta_excel and not r0.get("_usar_cuenta_generica"):
-            dig_cta = "".join(ch for ch in cta_excel if ch.isdigit()) or "0"
-            subcliente = (dig_cta + "0" * ndig)[:ndig]
+        # Override manual por fila (desde preview de importacion)
+        subcliente_override = str(r0.get("_subcuenta_cliente_override") or "").strip()
+        if subcliente_override:
+            subcliente = _ajustar_cuenta(subcliente_override, ndig)
         else:
-            subcliente = _subcuenta_generica(plantilla, ndig)
+            cta_excel = str(r0.get("Cuenta Cliente Proveedor") or "").strip()
+            if cta_excel and not r0.get("_usar_cuenta_generica"):
+                dig_cta = "".join(ch for ch in cta_excel if ch.isdigit()) or "0"
+                subcliente = (dig_cta + "0" * ndig)[:ndig]
+            else:
+                subcliente = _subcuenta_generica(plantilla, ndig)
 
         # Total factura: suma de bases + IVA + recargo + retencion.
         # Regla de signo de retencion:

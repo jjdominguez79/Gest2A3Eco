@@ -138,7 +138,7 @@ class ConfigPlantillaDialog(Dialog):
         super().__init__(parent, f"Configurar plantilla — {tipo.capitalize()}")
 
     def body(self, master):
-        self.ndig = int(self.empresa.get("digitos_plan", 8))
+        self.ndig = int(self.empresa.get("digitos_plan") or 8)
         nb = ttk.Notebook(master)
         nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
 

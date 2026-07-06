@@ -26,6 +26,7 @@ from views.notificaciones_theme import *  # noqa: F401,F403
 from views.ui_bandeja_global import UIBandejaGlobal
 from views.ui_buzones_global import UIBuzonesGlobal
 from views.ui_certificados_global import UICertificadosGlobal
+from views.ui_certificados_obtenidos import UICertificadosObtenidos
 from views.ui_organismos import UIOrganismos
 from views.ui_sync_logs import UISyncLogs
 
@@ -62,13 +63,16 @@ class UINotificacionesGlobal(ttk.Frame):
         buzones = UIBuzonesGlobal(nb, self._gestor, session=self._session)
         nb.add(buzones, text="Buzones")
 
+        cert_obt = UICertificadosObtenidos(nb, self._gestor, session=self._session)
+        nb.add(cert_obt, text="Obtencion de certificados")
+
         organismos = UIOrganismos(nb, self._gestor, session=self._session)
         nb.add(organismos, text="Organismos")
 
         logs = UISyncLogs(nb, self._gestor, session=self._session)
         nb.add(logs, text="Sincronizaciones / Logs")
 
-        self._views = [bandeja, certificados, buzones, organismos, logs]
+        self._views = [bandeja, certificados, buzones, cert_obt, organismos, logs]
         nb.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
     def _on_tab_changed(self, _e=None) -> None:

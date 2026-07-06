@@ -95,7 +95,7 @@ class TercerosEmpresaController:
             self._view.show_warning("Gest2A3Eco", "Necesitas permiso de escritura para generar este fichero.")
             return
         empresa = self._gestor.get_empresa(self._codigo, self._ejercicio) or {}
-        ndig = int(empresa.get("digitos_plan", 8))
+        ndig = int(empresa.get("digitos_plan") or 8)
         terceros = self._gestor.listar_terceros_por_empresa(self._codigo, self._ejercicio)
         if not terceros:
             self._view.show_info("Gest2A3Eco", "No hay terceros asignados a esta empresa.")

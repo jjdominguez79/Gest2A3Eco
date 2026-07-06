@@ -48,7 +48,7 @@ def _resolver_cuenta_proveedor(row: Dict[str, Any], conf: Dict[str, Any]) -> str
     dígitos del plan ('digitos_plan') para que A3 la acepte y, si no existe,
     la cree automáticamente al importar el fichero.
     """
-    ndig = int(conf.get("digitos_plan", 8))
+    ndig = int(conf.get("digitos_plan") or 8)
 
     # 1) Override explícito en la fila
     override = row.get("_cuenta_tercero_override")
@@ -146,7 +146,7 @@ def generar_asiento_recibida(row: Dict[str, Any], conf: Dict[str, Any]) -> List[
     signo = -1 if total < 0 else 1
 
     # Configuración de cuentas
-    nd = int(conf.get("digitos_plan", 8))
+    nd = int(conf.get("digitos_plan") or 8)
 
     c_prov = _resolver_cuenta_proveedor(row, conf)
 

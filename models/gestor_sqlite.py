@@ -1140,6 +1140,8 @@ class GestorSQLite:
             return emp
         if "activo" not in emp or emp.get("activo") is None:
             emp["activo"] = 1
+        if emp.get("digitos_plan") is None:
+            emp["digitos_plan"] = 8
         return emp
 
     def _clonar_plantillas_si_hace_falta(self, codigo: str, ejercicio_dest: int | None):
@@ -1285,6 +1287,23 @@ class GestorSQLite:
             );
             CREATE INDEX IF NOT EXISTS idx_empresa_ccc_emp
                 ON empresa_ccc(codigo_empresa, activo);
+            CREATE TABLE IF NOT EXISTS cert_solicitudes (
+                id              TEXT PRIMARY KEY,
+                codigo_empresa  TEXT NOT NULL,
+                tipo            TEXT NOT NULL,
+                organismo       TEXT,
+                estado          TEXT NOT NULL DEFAULT 'PENDIENTE',
+                resultado       TEXT,
+                fecha_solicitud TEXT,
+                fecha_obtencion TEXT,
+                pdf_path        TEXT,
+                referencia      TEXT,
+                mensaje         TEXT,
+                created_at      TEXT NOT NULL,
+                updated_at      TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_cert_sol_emp
+                ON cert_solicitudes(codigo_empresa, tipo, estado);
             """
         )
         self.conn.commit()
@@ -1332,6 +1351,83 @@ class GestorSQLite:
             (ccc_id, codigo_empresa),
         )
         self.conn.commit()
+
+    # ---------- Solicitudes / obtencion de certificados administrativos ----------
+    def listar_cert_solicitudes(self, codigo_empresa: str, tipo: str | None = None) -> list:
+        sql = "SELECT * FROM cert_solicitudes WHERE codigo_empresa=?"
+        params = [codigo_empresa]
+        if tipo:
+            sql += " AND tipo=?"
+            params.append(tipo)
+        sql += " ORDER BY fecha_solicitud DESC, created_at DESC"
+        cur = self.conn.execute(sql, params)
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def upsert_cert_solicitud(self, sol: dict) -> str:
+        import uuid as _uuid
+        now = self._utc_now()
+        sid = str(sol.get("id") or _uuid.uuid4())
+        self.conn.execute(
+            """
+            INSERT INTO cert_solicitudes
+                (id, codigo_empresa, tipo, organismo, estado, resultado,
+                 fecha_solicitud, fecha_obtencion, pdf_path, referencia, mensaje,
+                 created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                tipo            = excluded.tipo,
+                organismo       = excluded.organismo,
+                estado          = excluded.estado,
+                resultado       = excluded.resultado,
+                fecha_solicitud = excluded.fecha_solicitud,
+                fecha_obtencion = excluded.fecha_obtencion,
+                pdf_path        = excluded.pdf_path,
+                referencia      = excluded.referencia,
+                mensaje         = excluded.mensaje,
+                updated_at      = excluded.updated_at
+            """,
+            (
+                sid, sol.get("codigo_empresa"), sol.get("tipo"), sol.get("organismo"),
+                sol.get("estado", "PENDIENTE"), sol.get("resultado"),
+                sol.get("fecha_solicitud"), sol.get("fecha_obtencion"),
+                sol.get("pdf_path"), sol.get("referencia"), sol.get("mensaje"),
+                sol.get("created_at", now), now,
+            ),
+        )
+        self.conn.commit()
+        return sid
+
+    def eliminar_cert_solicitud(self, codigo_empresa: str, sid: str) -> None:
+        self.conn.execute(
+            "DELETE FROM cert_solicitudes WHERE id=? AND codigo_empresa=?",
+            (sid, codigo_empresa),
+        )
+        self.conn.commit()
+
+    def listar_cert_solicitudes_global(self, filtros: dict | None = None) -> list:
+        sql = """
+            SELECT s.*, e.nombre AS empresa_nombre, e.cif AS empresa_cif, e.email AS empresa_email
+            FROM cert_solicitudes s
+            LEFT JOIN (SELECT codigo, nombre, cif, email, MAX(ejercicio) AS ejercicio
+                       FROM empresas GROUP BY codigo) e ON e.codigo = s.codigo_empresa
+            WHERE 1=1
+        """
+        params: list = []
+        filtros = filtros or {}
+        if filtros.get("codigo_empresa"):
+            sql += " AND s.codigo_empresa=?"
+            params.append(filtros["codigo_empresa"])
+        if filtros.get("tipo"):
+            sql += " AND s.tipo=?"
+            params.append(filtros["tipo"])
+        if filtros.get("estado"):
+            sql += " AND s.estado=?"
+            params.append(filtros["estado"])
+        sql += " ORDER BY s.fecha_solicitud DESC, s.created_at DESC"
+        cur = self.conn.execute(sql, params)
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
 
     def next_pdf_ref(self, codigo_empresa: str, ejercicio: int | None = None) -> str:
         eje = _ej_val(ejercicio)
@@ -2549,6 +2645,13 @@ class GestorSQLite:
 
     def get_tercero_by_nif(self, nif: str) -> dict | None:
         row = self.conn.execute("SELECT * FROM terceros WHERE nif=? LIMIT 1", (str(nif).strip(),)).fetchone()
+        return self._row_to_dict(row) if row else None
+
+    def get_tercero_by_nif_normalizado(self, nif_normalizado: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM terceros WHERE nif_normalizado=? LIMIT 1",
+            (str(nif_normalizado).strip().upper(),)
+        ).fetchone()
         return self._row_to_dict(row) if row else None
 
     def listar_terceros(self):

@@ -139,7 +139,7 @@ class UIMaestroCuentas(tk.Frame):
 
         self.tv = ttk.Treeview(
             tree_wrap,
-            columns=("subcuenta", "nombre", "tipo", "nif", "cta_ingreso", "cta_gasto", "iva_ventas", "iva_compras", "ded_iva", "pendiente_a3"),
+            columns=("subcuenta", "nombre", "tipo", "nif", "vinculado", "cta_ingreso", "cta_gasto", "iva_ventas", "iva_compras", "ded_iva", "pendiente_a3"),
             show="headings", height=22,
         )
         for col, txt, width, anchor in [
@@ -147,6 +147,7 @@ class UIMaestroCuentas(tk.Frame):
             ("nombre",       "Nombre",      230, "w"),
             ("tipo",         "Tipo",        110, "center"),
             ("nif",          "NIF",         120, "w"),
+            ("vinculado",    "Vinculado",    70, "center"),
             ("cta_ingreso",  "Cta ingreso", 100, "w"),
             ("cta_gasto",    "Cta gasto",   100, "w"),
             ("iva_ventas",   "IVA ventas",  150, "w"),
@@ -200,6 +201,7 @@ class UIMaestroCuentas(tk.Frame):
             if solo_pend and not r.get("pendiente_alta_a3"):
                 continue
             pend = "Si" if r.get("pendiente_alta_a3") else "No"
+            vinculado = "Si" if r.get("tercero_id") else "No"
             iva_ventas = rel.get("cliente_tipo_operacion_iva", "") if tercero_id else ""
             iva_compras = rel.get("proveedor_tipo_operacion_iva", "") if tercero_id else ""
             cta_ingreso = rel.get("subcuenta_ingreso", "") if tercero_id else ""
@@ -207,7 +209,7 @@ class UIMaestroCuentas(tk.Frame):
             ded_iva = self._deduccion_label(rel) if tercero_id else ""
             self.tv.insert(
                 "", tk.END, iid=str(r["id"]),
-                values=(subcuenta, nombre, tipo, nif, cta_ingreso, cta_gasto, iva_ventas, iva_compras, ded_iva, pend),
+                values=(subcuenta, nombre, tipo, nif, vinculado, cta_ingreso, cta_gasto, iva_ventas, iva_compras, ded_iva, pend),
             )
             count += 1
         self.lbl_status.configure(
@@ -639,7 +641,8 @@ class UIMaestroCuentas(tk.Frame):
             f"  Nuevas:      {resultado.get('importadas', 0)}\n"
             f"  Actualizadas: {resultado.get('actualizadas', 0)}\n"
             f"  Omitidas:    {resultado.get('omitidas', 0)}\n"
-            f"  Errores:     {resultado.get('errores', 0)}"
+            f"  Errores:     {resultado.get('errores', 0)}\n"
+            f"  Vinculadas:  {resultado.get('vinculadas', 0)}"
         )
         errores = resultado.get("detalles_error") or []
         if errores:

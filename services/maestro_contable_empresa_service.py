@@ -258,7 +258,7 @@ class MaestroContableEmpresaService:
         if not col_sub:
             raise ValueError("El DataFrame debe tener columna 'subcuenta' o 'cuenta'")
 
-        importadas = actualizadas = errores = omitidas = 0
+        importadas = actualizadas = errores = omitidas = vinculadas = 0
         detalles_error: list[str] = []
         filas = list(df.iterrows())
         total = len(filas)
@@ -281,17 +281,30 @@ class MaestroContableEmpresaService:
                 if existente and not actualizar_duplicados:
                     omitidas += 1
                     continue
+                nif_snapshot = normalizar_nif_cif(nif_raw) or None
+                # Buscar tercero vinculado por NIF normalizado
+                tercero_id = None
+                if nif_snapshot:
+                    try:
+                        ter = gestor.get_tercero_by_nif_normalizado(nif_snapshot)
+                        if ter:
+                            tercero_id = str(ter.get("id") or "").strip() or None
+                    except Exception:
+                        pass
                 payload = {
                     "codigo_empresa":       codigo_empresa,
                     "subcuenta":            subcuenta,
                     "nombre_subcuenta":     descripcion,
                     "tipo_subcuenta":       clasificar_tipo_subcuenta(subcuenta),
-                    "nif_snapshot":         normalizar_nif_cif(nif_raw) or None,
+                    "nif_snapshot":         nif_snapshot,
+                    "tercero_id":           tercero_id,
                     "origen":               origen,
                     "creado_en_gest2a3eco": 0,
                     "pendiente_alta_a3":    0,
                 }
                 gestor.upsert_maestro_subcuenta(payload)
+                if tercero_id:
+                    vinculadas += 1
                 if existente:
                     actualizadas += 1
                 else:
@@ -312,6 +325,7 @@ class MaestroContableEmpresaService:
             "actualizadas":   actualizadas,
             "omitidas":       omitidas,
             "errores":        errores,
+            "vinculadas":     vinculadas,
             "detalles_error": detalles_error,
         }
 

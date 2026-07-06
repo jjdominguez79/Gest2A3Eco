@@ -179,7 +179,7 @@ class UIContabilidadEmitidasController:
         if not fac:
             return
 
-        ndig = int(self._empresa_conf.get("digitos_plan", 8))
+        ndig = int(self._empresa_conf.get("digitos_plan") or 8)
         plantilla = self._get_plantilla_para_factura(fac)
         lineas = calcular_asiento_emitida(fac, plantilla, ndig)
 
@@ -212,7 +212,7 @@ class UIContabilidadEmitidasController:
         if not fac:
             return
 
-        ndig = int(self._empresa_conf.get("digitos_plan", 8))
+        ndig = int(self._empresa_conf.get("digitos_plan") or 8)
         plantilla = self._get_plantilla_para_factura(fac)
 
         parent_win = None

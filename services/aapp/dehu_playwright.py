@@ -6,22 +6,20 @@ Realidad tecnica del portal (verificada con volcados reales)
 ------------------------------------------------------------
 - DEHu (https://dehu.redsara.es) es una aplicacion Angular (SPA).
 - El acceso ("Acceder a DEHu") redirige a Cl@ve; se elige "DNIe / Certificado
-  electronico". El certificado TLS lo pide Cl@ve/@firma (*.clave.gob.es), por
-  eso se ofrece el certificado tambien para esos origenes (ORIGENES_CLAVE).
-- Ya autenticado, la lista de notificaciones se carga por XHR/fetch (API interna)
-  al pulsar "Notificaciones pendientes" DENTRO de la app (routing Angular): no
-  basta con navegar por URL. Por eso capturamos toda XHR/fetch JSON y abrimos la
-  seccion pulsando el enlace.
+  electronico". El certificado TLS lo pide Cl@ve/@firma (*.clave.gob.es).
+- Ya autenticado, los datos se sirven por una API REST interna:
+    GET /api/v1/notifications?limit=&page=            -> pendientes  {count,total,limit,page,items[]}
+    GET /api/v1/realized_notifications?limit=&page=   -> realizadas
+  Campos de cada item: identifier, concept, emitterEntity, emitterSourceEntity,
+  nifTitular, sentReference, availabilityDate, expirationDate, bondType, state...
+  Por eso, tras autenticar, llamamos DIRECTAMENTE a esa API (reutilizando la
+  sesion del navegador) y paginamos, en lugar de raspar el DOM.
 
 Puesta en marcha (modo aprendizaje)
 -----------------------------------
-Navegador visible + pausa para identificarte a mano con el certificado. Durante
-la pausa, PULSA "Notificaciones pendientes": se graba la XHR con los datos en la
-carpeta de diagnostico (dehu_api_*.json) para fijar el mapeo definitivo.
-
-    OpcionesSync(headless=False, pausa_login_segundos=150, modo_diagnostico=True)
-
-Requiere:  pip install playwright  &&  playwright install chromium
+La 1a vez: navegador visible + pausa para identificarte a mano con el certificado.
+Se graba la API en la carpeta de diagnostico. Requiere:
+    pip install playwright && playwright install chromium
 """
 from __future__ import annotations
 
@@ -48,8 +46,10 @@ ORIGENES_CLAVE = [
     "https://componentes.clave.gob.es",
 ]
 
-# Ruido a ignorar en la captura de red (analitica/APM).
 _RED_IGNORAR = re.compile(r"(visitas-web|ruxit|ruxitagent|action_name=|/beacon|google|matomo)", re.I)
+
+# Endpoints REST de DEHu (pendientes y realizadas).
+_ENDPOINTS = ("/api/v1/notifications", "/api/v1/realized_notifications")
 
 
 class ConectorDEHU(ConectorOrganismo):
@@ -137,24 +137,98 @@ class ConectorDEHU(ConectorOrganismo):
 
         if opciones.pausa_login_segundos > 0:
             opciones.trace(
-                "[DEHU] MODO APRENDIZAJE: 1) identificate con el certificado; "
-                "2) pulsa 'Notificaciones pendientes'. Grabando la API hasta "
-                f"{opciones.pausa_login_segundos}s..."
+                "[DEHU] MODO APRENDIZAJE: identificate con el certificado en la ventana. "
+                f"Esperando hasta {opciones.pausa_login_segundos}s..."
             )
-            self._esperar_datos(page, opciones, capturas)
+            self._esperar_login(page, base, opciones)
             self._diagnostico(page, opciones, "04_autenticado", capturas, forzar=True)
 
-        # Abrir la seccion de notificaciones DENTRO de la app (dispara la XHR).
-        self._abrir_notificaciones(page, base, opciones)
-        page.wait_for_timeout(2500)
+        # Fuente principal: API REST interna (reutiliza la sesion autenticada).
+        registros = self._fetch_api(page, base, opciones)
         self._diagnostico(page, opciones, "05_listado", capturas, forzar=True)
-
-        notifs = self._desde_capturas(capturas, cert_material)
+        if registros:
+            return self._map_registros(registros, cert_material, opciones.nif_filtro)
+        # Respaldo: lo capturado por red o el DOM.
+        notifs = self._desde_capturas(capturas, cert_material, opciones.nif_filtro)
         if not notifs:
+            self._abrir_notificaciones(page, base, opciones)
             notifs = self._extraer_tabla(page, buzon, cert_material)
         return notifs
 
-    # ── captura de red ────────────────────────────────────────────────
+    # ── API REST ───────────────────────────────────────────────────────
+    def _fetch_api(self, page, base, opciones):
+        """Llama a los endpoints REST paginando. Devuelve lista de items dict."""
+        registros = []
+        try:
+            req = page.context.request
+        except Exception:
+            return registros
+        nif_raw = (opciones.nif_filtro or "").strip().upper()
+        filtro = f"&titularNif={nif_raw}" if nif_raw else ""
+        for endpoint in _ENDPOINTS:
+            page_num = 1
+            while True:
+                url = f"{base}{endpoint}?limit=100&page={page_num}{filtro}"
+                try:
+                    resp = req.get(url, timeout=opciones.timeout_ms)
+                    if not resp.ok:
+                        opciones.trace(f"[DEHU][api] {resp.status} {url}")
+                        break
+                    data = resp.json()
+                except Exception as exc:
+                    opciones.trace(f"[DEHU][api] error {endpoint}: {exc}")
+                    break
+                items = data.get("items") if isinstance(data, dict) else None
+                if not items:
+                    break
+                for it in items:
+                    if isinstance(it, dict):
+                        it["_endpoint"] = endpoint
+                registros.extend(items)
+                total = (data.get("total") or 0) if isinstance(data, dict) else 0
+                limit = (data.get("limit") or 100) if isinstance(data, dict) else 100
+                opciones.trace(f"[DEHU][api] {endpoint} pagina {page_num}: {len(items)} (total {total})")
+                if page_num * (limit or 100) >= total:
+                    break
+                page_num += 1
+        return registros
+
+    def _map_registros(self, registros, cert_material, nif_filtro=None):
+        objetivo = _norm_nif(nif_filtro) if nif_filtro else None
+        notifs = []
+        vistos = set()
+        for r in registros:
+            if not isinstance(r, dict):
+                continue
+            if objetivo and _norm_nif(r.get("nifTitular")) != objetivo:
+                continue
+            ref = r.get("identifier") or r.get("sentReference")
+            if not ref or ref in vistos:
+                continue
+            vistos.add(ref)
+            realizada = "realized" in (r.get("_endpoint") or "")
+            estado = r.get("state") or ("REALIZADA" if realizada else "PENDIENTE")
+            notifs.append(NotificacionDTO(
+                referencia=str(ref),
+                asunto=r.get("concept") or "(sin asunto)",
+                descripcion=r.get("emitterEntity"),
+                tipo_acto=r.get("bondType"),
+                nif_interesado=r.get("nifTitular") or cert_material.nif_titular,
+                nombre_interesado=cert_material.nombre,
+                fecha_puesta_disposicion=_norm_fecha(r.get("availabilityDate")),
+                fecha_vencimiento=_norm_fecha(r.get("expirationDate")),
+                estado=_map_estado(estado),
+                metadatos={
+                    "emitterSourceEntity": r.get("emitterSourceEntity"),
+                    "sentReference": r.get("sentReference"),
+                    "endpoint": r.get("_endpoint"),
+                    "finalDate": r.get("finalDate"),
+                    "raw": r,
+                },
+            ))
+        return notifs
+
+    # ── red / captura (respaldo y diagnostico) ─────────────────────────
     def _instalar_captura_red(self, page, capturas, opciones):
         def _on_response(resp):
             try:
@@ -184,71 +258,32 @@ class ConectorDEHU(ConectorOrganismo):
                 pass
         page.on("response", _on_response)
 
-    def _esperar_datos(self, page, opciones, capturas):
-        """Espera durante la pausa; corta antes si ya llego una lista de registros."""
+    def _esperar_login(self, page, base, opciones):
+        """Espera a que la sesion quede autenticada (la API responde 200)."""
         fin = time.time() + opciones.pausa_login_segundos
         while time.time() < fin:
             page.wait_for_timeout(2000)
-            for c in capturas:
-                if isinstance(c.get("body"), (list, dict)) and _buscar_lista_registros(c["body"]):
-                    page.wait_for_timeout(1500)
+            try:
+                resp = page.context.request.get(f"{base}/api/v1/notifications?limit=1&page=1",
+                                                 timeout=8000)
+                if resp.ok:
+                    page.wait_for_timeout(1000)
                     return
-
-    # ── navegacion dentro de la app ───────────────────────────────────
-    def _abrir_notificaciones(self, page, base, opciones):
-        selectores = [
-            'text=Notificaciones pendientes',
-            'a:has-text("Notificaciones pendientes")',
-            'a:has-text("Notificaciones")',
-            'text=Notificaciones',
-        ]
-        for sel in selectores:
-            try:
-                el = page.locator(sel)
-                if el.count() > 0:
-                    el.first.click(timeout=6000)
-                    page.wait_for_load_state("networkidle")
-                    opciones.trace(f"[DEHU] abierto 'Notificaciones' via '{sel}'")
-                    return True
             except Exception:
                 continue
-        for ruta in ("/es/notificaciones", "/notificaciones"):
-            try:
-                page.goto(base + ruta, wait_until="networkidle", timeout=15000)
-                return True
-            except Exception:
-                continue
-        return False
 
-    def _desde_capturas(self, capturas, cert_material):
-        notifs = []
+    def _desde_capturas(self, capturas, cert_material, nif_filtro=None):
+        registros = []
         for cap in capturas:
-            for reg in _buscar_lista_registros(cap.get("body")):
-                if not isinstance(reg, dict):
-                    continue
-                ref = _first(reg, ["identificador", "id", "localizador", "codigoNotificacion", "referencia"])
-                if not ref:
-                    continue
-                notifs.append(NotificacionDTO(
-                    referencia=str(ref),
-                    asunto=_first(reg, ["concepto", "asunto", "titulo", "descripcion"]) or "(sin asunto)",
-                    descripcion=_first(reg, ["organismoEmisor", "emisor", "organismo"]),
-                    tipo_acto=_first(reg, ["tipo", "tipoEnvio", "tipoActo"]),
-                    nif_interesado=_first(reg, ["nifTitular", "nif", "documentoIdentificativo"]) or cert_material.nif_titular,
-                    nombre_interesado=_first(reg, ["nombreTitular", "titular", "razonSocial"]) or cert_material.nombre,
-                    fecha_puesta_disposicion=_norm_fecha(_first(reg, ["fechaPuestaDisposicion", "fechaPuesta", "fechaEnvio", "fecha"])),
-                    fecha_vencimiento=_norm_fecha(_first(reg, ["fechaCaducidad", "fechaLimite", "fechaVencimiento"])),
-                    estado=(_first(reg, ["estado", "situacion"]) or "PENDIENTE"),
-                    metadatos={"api_url": cap.get("url"), "raw": reg},
-                ))
-        vistos, unicas = set(), []
-        for n in notifs:
-            if n.referencia in vistos:
-                continue
-            vistos.add(n.referencia)
-            unicas.append(n)
-        return unicas
+            body = cap.get("body")
+            if isinstance(body, dict) and isinstance(body.get("items"), list):
+                for it in body["items"]:
+                    if isinstance(it, dict):
+                        it.setdefault("_endpoint", cap.get("url", ""))
+                registros.extend(body["items"])
+        return self._map_registros(registros, cert_material, nif_filtro)
 
+    # ── clicks tolerantes ──────────────────────────────────────────────
     def _click_acceder(self, page, opciones):
         selectores = [
             '[aria-label="Acceder a DEHú"]',
@@ -288,6 +323,18 @@ class ConectorDEHU(ConectorOrganismo):
             except Exception:
                 continue
 
+    def _abrir_notificaciones(self, page, base, opciones):
+        for sel in ('text=Notificaciones pendientes', 'a:has-text("Notificaciones")', 'text=Notificaciones'):
+            try:
+                el = page.locator(sel)
+                if el.count() > 0:
+                    el.first.click(timeout=6000)
+                    page.wait_for_load_state("networkidle")
+                    return True
+            except Exception:
+                continue
+        return False
+
     def _hay_tabla(self, page):
         try:
             return page.locator("table tbody tr, [role='row']").count() > 0
@@ -312,10 +359,9 @@ class ConectorDEHU(ConectorOrganismo):
                     textos.append("")
             if not any(textos):
                 continue
-            asunto = textos[1] if len(textos) > 1 else textos[0]
             notifs.append(NotificacionDTO(
-                referencia=_ref_dom(fila, textos),
-                asunto=asunto or "(sin asunto)",
+                referencia="DEHU-DOM-" + str(i),
+                asunto=(textos[1] if len(textos) > 1 else textos[0]) or "(sin asunto)",
                 descripcion=textos[0] if textos else None,
                 nif_interesado=cert_material.nif_titular,
                 nombre_interesado=cert_material.nombre,
@@ -342,16 +388,9 @@ class ConectorDEHU(ConectorOrganismo):
             opciones.trace(f"[DEHU] no se pudo guardar diagnostico '{etiqueta}': {exc}")
 
 
+# ── helpers ────────────────────────────────────────────────────────────────
 _FECHA_RE = re.compile(r"\b(\d{2})[/-](\d{2})[/-](\d{4})\b")
 _ISO_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})")
-
-
-def _first(d, claves):
-    for k in claves:
-        for kk in (k, k.lower(), k.upper()):
-            if kk in d and d[kk] not in (None, ""):
-                return d[kk]
-    return None
 
 
 def _norm_fecha(v):
@@ -376,36 +415,19 @@ def _primera_fecha(textos):
     return None
 
 
-def _buscar_lista_registros(body, _prof=0):
-    if _prof > 6 or body is None:
-        return []
-    if isinstance(body, list):
-        if body and isinstance(body[0], dict):
-            return body
-        return []
-    if isinstance(body, dict):
-        for clave in ("notificaciones", "comunicaciones", "content", "items", "data",
-                      "resultado", "resultados", "listaNotificaciones", "envios", "elementos"):
-            v = body.get(clave)
-            if isinstance(v, list) and v and isinstance(v[0], dict):
-                return v
-        for v in body.values():
-            res = _buscar_lista_registros(v, _prof + 1)
-            if res:
-                return res
-    return []
+def _norm_nif(v):
+    return re.sub(r"[^0-9A-Z]", "", str(v or "").upper())
 
 
-def _ref_dom(fila, textos):
-    for attr in ("data-id", "data-referencia", "id"):
-        try:
-            val = fila.get_attribute(attr)
-            if val:
-                return val
-        except Exception:
-            pass
-    import hashlib
-    return "DEHU-" + hashlib.sha1("|".join(textos).encode("utf-8", "ignore")).hexdigest()[:16]
+def _map_estado(s):
+    s = (s or "").upper()
+    if "ACEPTAD" in s:
+        return "ACEPTADA"
+    if "RECHAZ" in s:
+        return "RECHAZADA"
+    if "LEID" in s or "LEÍD" in s:
+        return "LEIDA"
+    return "PENDIENTE"
 
 
 registrar_conector(ConectorDEHU())

@@ -170,7 +170,11 @@ class UIProcesos(ttk.Frame):
             vals.append(contra)
             self.tv.insert("", tk.END, values=vals, tags=("contra_ok",))
 
-        # Guardar referencia de columnas para el editor
+        # Guardar referencia de columnas y estado del editor editable
+        self._preview_editable_col = "Contrapartida"
+        self._preview_ok_tag = "contra_ok"
+        self._preview_mod_tag = "contra_mod"
+        self._preview_override_fn = self.controller.set_contrapartida_override
         self._preview_cols = cols
 
         try:
@@ -179,6 +183,46 @@ class UIProcesos(ttk.Frame):
             pass
         self.tv.bind("<Double-1>", self._on_preview_double_click)
 
+        self.tv.xview_moveto(0)
+        self.tv.yview_moveto(0)
+
+    def mostrar_subcuentas_preview(self, rows: list, col_label: str = "Subcuenta"):
+        """Muestra filas mapeadas con columna de subcuenta editable (emitidas/recibidas)."""
+        self.tv.delete(*self.tv.get_children())
+        if not rows:
+            self.tv["columns"] = []
+            return
+
+        visible_keys = [k for k in rows[0].keys() if not k.startswith("_")]
+        cols = visible_keys + [col_label]
+        self.tv["columns"] = cols
+        for c in cols:
+            self.tv.heading(c, text=c)
+            w = 160 if c == col_label else 120
+            self.tv.column(c, width=w, minwidth=80, stretch=False)
+
+        self.tv.tag_configure("sub_ok",    foreground="#1a5276")
+        self.tv.tag_configure("sub_mod",   foreground="#922b21")
+        self.tv.tag_configure("sub_empty", foreground="#94a3b8")
+
+        self._preview_editable_col = col_label
+        self._preview_ok_tag = "sub_ok"
+        self._preview_mod_tag = "sub_mod"
+        self._preview_override_fn = self.controller.set_subcuenta_override
+        self._preview_cols = cols
+
+        for row in rows:
+            vals = [str(row.get(k, "") or "") for k in visible_keys]
+            defecto = str(row.get("_subcuenta_defecto") or "")
+            vals.append(defecto)
+            tag = "sub_ok" if defecto else "sub_empty"
+            self.tv.insert("", tk.END, values=vals, tags=(tag,))
+
+        try:
+            self.tv.unbind("<Double-1>")
+        except Exception:
+            pass
+        self.tv.bind("<Double-1>", self._on_preview_double_click)
         self.tv.xview_moveto(0)
         self.tv.yview_moveto(0)
 
@@ -199,7 +243,8 @@ class UIProcesos(ttk.Frame):
             col_idx = int(col_id.replace("#", "")) - 1  # 0-based
         except ValueError:
             return
-        if col_idx < 0 or col_idx >= len(cols) or cols[col_idx] != "Contrapartida":
+        editable_col = getattr(self, "_preview_editable_col", "Contrapartida")
+        if col_idx < 0 or col_idx >= len(cols) or cols[col_idx] != editable_col:
             return
 
         all_items = self.tv.get_children()
@@ -208,7 +253,7 @@ class UIProcesos(ttk.Frame):
         except ValueError:
             return
 
-        current_val = self.tv.set(row_id, "Contrapartida")
+        current_val = self.tv.set(row_id, editable_col)
         self._abrir_autocomplete_subcuenta(row_id, row_idx, col_id, current_val)
 
     def _cargar_catalogo_subcuentas(self) -> list[dict]:
@@ -282,10 +327,14 @@ class UIProcesos(ttk.Frame):
                 popup.destroy()
             except Exception:
                 pass
-            self.tv.set(row_id, "Contrapartida", code)
-            tag = "contra_mod" if code else "contra_ok"
+            editable_col = getattr(self, "_preview_editable_col", "Contrapartida")
+            ok_tag = getattr(self, "_preview_ok_tag", "contra_ok")
+            mod_tag = getattr(self, "_preview_mod_tag", "contra_mod")
+            override_fn = getattr(self, "_preview_override_fn", self.controller.set_contrapartida_override)
+            self.tv.set(row_id, editable_col, code)
+            tag = mod_tag if code else ok_tag
             self.tv.item(row_id, tags=(tag,))
-            self.controller.set_contrapartida_override(row_idx, code)
+            override_fn(row_idx, code)
 
         def _on_entry_return(event=None):
             txt = entry_var.get().strip()
