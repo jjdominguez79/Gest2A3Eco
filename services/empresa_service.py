@@ -66,10 +66,8 @@ class EmpresaService:
         plantillas_recibidas = self._safe_list(lambda: self._gestor.listar_recibidas(codigo, ejercicio))
         recibidas_docs = self._safe_list(lambda: self._gestor.listar_facturas_recibidas_docs(codigo, ejercicio))
         terceros = self._safe_list(lambda: self._gestor.listar_terceros_por_empresa(codigo, ejercicio))
-        plan_cuentas = self._safe_list(lambda: self._gestor.get_plan_cuentas(codigo, 0))
+        maestro_cuentas = self._safe_list(lambda: self._gestor.listar_maestro_subcuentas_empresa(codigo, activo=None))
         cuentas_bancarias_struct = self._safe_list(lambda: self._gestor.listar_cuentas_bancarias(codigo, 0))
-        if not plan_cuentas:
-            plan_cuentas = self._safe_list(lambda: self._gestor.get_plan_cuentas(codigo, ejercicio))
         if not cuentas_bancarias_struct:
             cuentas_bancarias_struct = self._safe_list(lambda: self._gestor.listar_cuentas_bancarias(codigo, ejercicio))
 
@@ -89,7 +87,7 @@ class EmpresaService:
         checks = {
             "empresa": bool(empresa.get("nombre")) and bool(empresa.get("cif")),
             "bancos": bool(cuentas_bancarias),
-            "plan": bool(plan_cuentas),
+            "plan": bool(maestro_cuentas),
             "facturacion": bool(plantillas_emitidas),
             "importaciones": bool(bancos or plantillas_recibidas),
         }
@@ -128,7 +126,7 @@ class EmpresaService:
 
         avisos = []
         if not checks["plan"]:
-            avisos.append("Plan contable no importado desde A3.")
+            avisos.append("Maestro contable vacio. Importa el plan desde A3.")
         if not checks["bancos"]:
             avisos.append("No hay cuentas bancarias configuradas.")
         if not checks["facturacion"]:
@@ -159,7 +157,7 @@ class EmpresaService:
                 "plantillas_bancos": len(bancos),
                 "plantillas_emitidas": len(plantillas_emitidas),
                 "plantillas_recibidas": len(plantillas_recibidas),
-                "plan_cuentas": len(plan_cuentas),
+                "plan_cuentas": len(maestro_cuentas),
             },
             "estado_configuracion": estado_config,
             "terceros_count": len(terceros),

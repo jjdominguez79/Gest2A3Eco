@@ -5,7 +5,7 @@ Clasificacion automatica por prefijo de 3 digitos (PGC espanol):
   430 → cliente            400 → proveedor         410 → acreedor
   440 → deudor
   600-629 (selectivo) → gasto
-  700-759 (selectivo) → ingreso
+  700-759 (selectivo) → ingreso   438 → ingreso (clientes con ingreso diferenciado)
   472 → iva_soportado      477 → iva_repercutido
   475 → hacienda           476 → seguridad_social
   465 → personal           572 → banco              570 → caja
@@ -38,6 +38,7 @@ _TIPO_POR_PREFIJO: list[tuple[str, str]] = [
     ("759", "ingreso"), ("752", "ingreso"), ("709", "ingreso"), ("708", "ingreso"),
     ("706", "ingreso"), ("705", "ingreso"), ("702", "ingreso"), ("701", "ingreso"),
     ("700", "ingreso"),
+    ("438", "ingreso"),
     ("472", "iva_soportado"),
     ("477", "iva_repercutido"),
     ("475", "hacienda"),
@@ -138,19 +139,6 @@ class MaestroContableEmpresaService:
             val = str(sub.get("subcuenta") or "").strip()
             if _es_del_prefijo(val, prefijo, digitos_plan):
                 usadas.add(int(val))
-
-        try:
-            rows = gestor.conn.execute(
-                "SELECT cuenta FROM plan_cuentas"
-                " WHERE codigo_empresa=? AND cuenta LIKE ?",
-                (codigo_empresa, prefijo + "%"),
-            ).fetchall()
-            for row in rows:
-                val = str(row[0]).strip()
-                if _es_del_prefijo(val, prefijo, digitos_plan):
-                    usadas.add(int(val))
-        except Exception:
-            pass
 
         primera = int(prefijo) * (10 ** (digitos_plan - len(prefijo))) + 1
         candidato = primera

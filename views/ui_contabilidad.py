@@ -108,7 +108,7 @@ class UIContabilidad(ttk.Frame):
         paned.add(left, weight=2)
 
         bar = ttk.Frame(left)
-        bar.pack(fill="x", pady=(0, 4))
+        bar.pack(fill="x", pady=(0, 2))
         ttk.Button(
             bar, text="Generar Suenlace.dat", style="Primary.TButton",
             command=self.emitidas_ctrl.generar_suenlace,
@@ -116,20 +116,31 @@ class UIContabilidad(ttk.Frame):
         ttk.Button(
             bar, text="Quitar de contabilidad",
             command=self.emitidas_ctrl.quitar_de_contabilidad,
-        ).pack(side=tk.LEFT, padx=6)
+        ).pack(side=tk.LEFT, padx=(6, 0))
         ttk.Button(
             bar, text="Resetear a no generado",
             command=self.emitidas_ctrl.resetear_generadas,
+        ).pack(side=tk.LEFT, padx=6)
+        ttk.Button(
+            bar, text="Capturar asiento de A3",
+            command=self.emitidas_ctrl.capturar_numero_asiento_desde_a3,
         ).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(
+            bar, text="Marcar con asiento como generadas",
+            command=self.emitidas_ctrl.marcar_con_asiento_como_generadas,
+        ).pack(side=tk.LEFT)
+
+        bar2 = ttk.Frame(left)
+        bar2.pack(fill="x", pady=(2, 4))
         ttk.Label(
-            bar,
+            bar2,
             text="Ctrl+clic / Shift+clic para seleccion multiple",
             foreground="#888", font=("Segoe UI", 8),
-        ).pack(side=tk.LEFT, padx=8)
-        ttk.Separator(bar, orient="vertical").pack(side=tk.LEFT, fill="y", padx=8)
-        ttk.Label(bar, text="Filtrar:").pack(side=tk.LEFT)
+        ).pack(side=tk.LEFT)
+        ttk.Separator(bar2, orient="vertical").pack(side=tk.LEFT, fill="y", padx=8)
+        ttk.Label(bar2, text="Filtrar:").pack(side=tk.LEFT)
         self.cmb_filtro_emitidas = ttk.Combobox(
-            bar,
+            bar2,
             values=["Todos", "Pendiente", "Generado"],
             state="readonly",
             width=12,
@@ -138,7 +149,7 @@ class UIContabilidad(ttk.Frame):
         self.cmb_filtro_emitidas.pack(side=tk.LEFT, padx=(4, 8))
         self.cmb_filtro_emitidas.bind("<<ComboboxSelected>>", self._aplicar_filtro_emitidas)
         ttk.Button(
-            bar, text="Seleccionar todas",
+            bar2, text="Seleccionar todas",
             command=self._seleccionar_todas_emitidas,
         ).pack(side=tk.LEFT)
 

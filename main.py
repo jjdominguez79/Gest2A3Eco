@@ -151,7 +151,7 @@ def _build_header(
     if on_open_terceros:
         _hbtn("Terceros", on_open_terceros)
     if on_open_notificaciones:
-        _hbtn("Notificaciones", on_open_notificaciones)
+        _hbtn("Notificaciones/Certificados", on_open_notificaciones)
     if on_open_config and session.is_admin():
         _hbtn("Configuracion", on_open_config)
     if on_open_users and session.is_admin():

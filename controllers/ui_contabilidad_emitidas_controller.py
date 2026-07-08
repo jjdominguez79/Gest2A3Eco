@@ -135,6 +135,26 @@ class UIContabilidadEmitidasController:
             "Vuelven a aparecer como pendientes en el modulo de facturacion.",
         )
 
+    def marcar_con_asiento_como_generadas(self):
+        """Marca como 'generado' todas las facturas pendientes que ya tienen numero de asiento."""
+        if not self._view.ask_yes_no(
+            "Marcar como generadas",
+            "Se van a marcar como 'Generado' todas las facturas pendientes\n"
+            "que ya tienen numero de asiento registrado.\n\n"
+            "¿Continuar?",
+        ):
+            return
+        n = self._gestor.marcar_generadas_con_asiento(self._codigo, self._ejercicio)
+        self.refresh()
+        self._view.show_info(
+            "Gest2A3Eco",
+            f"{n} factura(s) marcadas como 'Generado'.",
+        )
+
+    def capturar_numero_asiento_desde_a3(self):
+        """Delega en el controlador interno de facturas emitidas."""
+        self._fac_ctrl.capturar_numero_asiento_desde_a3()
+
     def resetear_generadas(self):
         """Revierte el estado 'generado' a NULL de las facturas seleccionadas para poder regenerar el suenlace."""
         sel = self._view.get_selected_emitida_ids()

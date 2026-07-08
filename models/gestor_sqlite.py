@@ -1826,6 +1826,19 @@ class GestorSQLite:
         self.conn.commit()
         return cur.rowcount
 
+    def marcar_generadas_con_asiento(self, codigo_empresa: str, ejercicio: int) -> int:
+        """Marca como 'generado' todas las facturas en contabilidad con numero_asiento relleno."""
+        cur = self.conn.execute(
+            """UPDATE facturas_emitidas_docs
+               SET estado_contable='generado'
+               WHERE codigo_empresa=? AND ejercicio=?
+                 AND estado_contable='pendiente'
+                 AND numero_asiento IS NOT NULL AND TRIM(numero_asiento) != ''""",
+            (codigo_empresa, _ej_val(ejercicio)),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
     def resetear_facturas_emitidas_generadas(self, codigo_empresa: str, ejercicio: int, ids: list):
         """Revierte el estado 'generado' a NULL para permitir regenerar el suenlace."""
         ids = ids or []

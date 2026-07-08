@@ -98,7 +98,6 @@ class EmpresaDialog(tk.Toplevel):
         self.var_logo_h = tk.StringVar(value=str(self._empresa.get("logo_max_height_mm") or ""))
         self.var_activo = tk.BooleanVar(value=bool(self._empresa.get("activo", True)))
         self.var_a3_info = tk.StringVar(value="Sin importacion realizada.")
-        self.var_plan_buscar = tk.StringVar()
 
         root = ttk.Frame(self, padding=12)
         root.pack(fill="both", expand=True)
@@ -111,7 +110,6 @@ class EmpresaDialog(tk.Toplevel):
         self._build_general_tab(ttk.Frame(nb, padding=14), nb)
         self._build_exercises_tab(ttk.Frame(nb, padding=14), nb)
         self._build_banks_tab(ttk.Frame(nb, padding=14), nb)
-        self._build_account_plan_tab(ttk.Frame(nb, padding=14), nb)
         self._build_third_parties_tab(ttk.Frame(nb, padding=14), nb)
 
         actions = ttk.Frame(root)
@@ -297,47 +295,6 @@ class EmpresaDialog(tk.Toplevel):
         self.lbl_bancos_info.grid(row=3, column=0, sticky="w", pady=(8, 0))
         self._load_bank_records()
 
-    def _build_account_plan_tab(self, tab, nb):
-        nb.add(tab, text="Plan contable")
-        tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(1, weight=1)
-
-        filtros = ttk.Frame(tab)
-        filtros.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        ttk.Label(filtros, text="Buscar").pack(side=tk.LEFT)
-        entry_buscar = ttk.Entry(filtros, textvariable=self.var_plan_buscar, width=34)
-        entry_buscar.pack(side=tk.LEFT, padx=(6, 0), fill="x", expand=True)
-        self.var_plan_buscar.trace_add("write", lambda *_: self._load_plan_cuentas())
-        ttk.Button(filtros, text="Actualizar desde A3", command=self._update_plan_from_a3).pack(side=tk.LEFT, padx=(12, 0))
-        ttk.Button(filtros, text="Eliminar plan", command=self._delete_plan_cuentas).pack(side=tk.LEFT, padx=(6, 0))
-
-        frame = ttk.Frame(tab)
-        frame.grid(row=1, column=0, sticky="nsew")
-        frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(0, weight=1)
-        self.tv_plan_cuentas = ttk.Treeview(
-            frame,
-            columns=("cuenta", "descripcion", "tercero", "nif"),
-            show="headings",
-            height=14,
-        )
-        self.tv_plan_cuentas.heading("cuenta", text="Cuenta")
-        self.tv_plan_cuentas.column("cuenta", width=110, anchor="w")
-        self.tv_plan_cuentas.heading("descripcion", text="Descripcion")
-        self.tv_plan_cuentas.column("descripcion", width=340, anchor="w")
-        self.tv_plan_cuentas.heading("tercero", text="Tercero")
-        self.tv_plan_cuentas.column("tercero", width=220, anchor="w")
-        self.tv_plan_cuentas.heading("nif", text="NIF/CIF")
-        self.tv_plan_cuentas.column("nif", width=110, anchor="w")
-        self.tv_plan_cuentas.grid(row=0, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(frame, orient="vertical", command=self.tv_plan_cuentas.yview)
-        scroll.grid(row=0, column=1, sticky="ns")
-        self.tv_plan_cuentas.configure(yscrollcommand=scroll.set)
-
-        self.lbl_plan_info = ttk.Label(tab, text="")
-        self.lbl_plan_info.grid(row=2, column=0, sticky="w", pady=(8, 0))
-        self._load_plan_cuentas()
-
     def _build_third_parties_tab(self, tab, nb):
         nb.add(tab, text="Terceros")
         tab.columnconfigure(0, weight=1)
@@ -442,9 +399,6 @@ class EmpresaDialog(tk.Toplevel):
             self._refresh_series_tree(int(first))
         else:
             self._refresh_series_tree(None)
-        self._refresh_plan_exercise_selector()
-        self._load_plan_cuentas()
-
     def _on_ejercicio_selected(self):
         eje = self._selected_exercise()
         self._refresh_series_tree(eje)
@@ -459,82 +413,6 @@ class EmpresaDialog(tk.Toplevel):
             tipo = "Rectificativa" if s["es_rectificativa"] else "Normal"
             self.tv_series.insert("", "end", iid=str(idx), values=(s["nombre"], s["siguiente_num"], tipo))
         self.lbl_series_info.configure(text=f"Series configuradas para {ejercicio}: {len(series)}")
-
-    def _refresh_plan_exercise_selector(self):
-        self._load_plan_cuentas()
-
-    def _load_plan_cuentas(self):
-        if not hasattr(self, "tv_plan_cuentas"):
-            return
-        self.tv_plan_cuentas.delete(*self.tv_plan_cuentas.get_children())
-        self._plan_loaded_ejercicio = None
-        self._plan_loaded_label = ""
-        codigo = self._codigo_empresa_actual()
-        if not self._gestor or not codigo:
-            self.lbl_plan_info.configure(text="Guarda o abre una empresa existente para consultar su plan contable.")
-            return
-
-        # Prioridad: ultimo ejercicio configurado en la empresa; fallback a plan base legacy.
-        ultimo_ej = max((int(r["ejercicio"]) for r in self._exercise_rows), default=0)
-        cuentas = []
-        ej_label = "base"
-        if ultimo_ej:
-            cuentas = self._gestor.get_plan_cuentas_con_terceros(codigo, ultimo_ej)
-            if cuentas:
-                ej_label = str(ultimo_ej)
-        if not cuentas:
-            cuentas = self._gestor.get_plan_cuentas_con_terceros(codigo, 0)
-        self._plan_loaded_label = ej_label
-        self._plan_loaded_ejercicio = 0 if ej_label == "base" else (int(ej_label) if str(ej_label).isdigit() else None)
-
-        filtro = (self.var_plan_buscar.get() or "").strip().lower()
-        visibles = [
-            c for c in cuentas
-            if not filtro or filtro in f"{c.get('cuenta','')} {c.get('descripcion','')} {c.get('tercero_nombre','')} {c.get('tercero_nif','')}".lower()
-        ]
-        for idx, cuenta in enumerate(visibles):
-            self.tv_plan_cuentas.insert(
-                "",
-                "end",
-                iid=str(idx),
-                values=(
-                    cuenta.get("cuenta", ""),
-                    cuenta.get("descripcion", ""),
-                    cuenta.get("tercero_nombre") or "",
-                    cuenta.get("tercero_nif") or "",
-                ),
-            )
-        if cuentas:
-            self.lbl_plan_info.configure(
-                text=f"Subcuentas visibles: {len(visibles)} de {len(cuentas)} (plan {ej_label})."
-            )
-        else:
-            self.lbl_plan_info.configure(text="No hay plan contable importado. Use 'Actualizar desde A3'.")
-
-    def _delete_plan_cuentas(self):
-        codigo = self._codigo_empresa_actual()
-        ejercicio = self._plan_loaded_ejercicio
-        if not self._gestor or not codigo or ejercicio is None:
-            messagebox.showinfo("Gest2A3Eco", "No hay plan contable cargado para eliminar.", parent=self)
-            return
-        label = self._plan_loaded_label or str(ejercicio)
-        if label == "base":
-            texto_plan = "plan base importado de A3"
-        else:
-            texto_plan = f"plan del ejercicio {label}"
-        if not messagebox.askyesno(
-            "Gest2A3Eco",
-            f"Se eliminara el {texto_plan} de la empresa {codigo}.\nContinuar?",
-            parent=self,
-        ):
-            return
-        try:
-            self._gestor.eliminar_plan_cuentas(codigo, ejercicio)
-        except Exception as exc:
-            messagebox.showerror("Gest2A3Eco", str(exc), parent=self)
-            return
-        self._load_plan_cuentas()
-        messagebox.showinfo("Gest2A3Eco", "Plan contable eliminado.", parent=self)
 
     def _selected_exercise(self):
         sel = self.tv_ejercicios.selection()
@@ -1386,41 +1264,6 @@ class EmpresaDialog(tk.Toplevel):
             + str(data.get("_a3_info") or "Datos basicos detectados.")
         )
         self._set_a3_preview(data)
-
-    def _update_plan_from_a3(self):
-        codigo = self._codigo_empresa_actual()
-        if not codigo:
-            messagebox.showwarning("Gest2A3Eco", "Introduce primero el codigo A3 de la empresa.", parent=self)
-            return
-        try:
-            digitos_objetivo = int((self.var_dig.get() or "8").strip() or "8")
-        except Exception:
-            digitos_objetivo = 8
-        try:
-            data = importar_empresa_desde_a3(codigo, digitos_plan_objetivo=digitos_objetivo)
-        except Exception as exc:
-            messagebox.showerror("Gest2A3Eco", str(exc), parent=self)
-            return
-        plan_cuentas = data.get("plan_cuentas") or []
-        if not plan_cuentas:
-            messagebox.showinfo("Gest2A3Eco", "No se ha encontrado plan de cuentas en A3.", parent=self)
-            return
-        if self._gestor:
-            codigo_a3 = str(data.get("codigo") or codigo)
-            ejercicio_plan = int(data.get("ejercicio") or 0) or 0
-            try:
-                n = self._gestor.upsert_plan_cuentas(codigo_a3, ejercicio_plan, plan_cuentas)
-                messagebox.showinfo(
-                    "Gest2A3Eco",
-                    f"Plan de cuentas actualizado: {n} subcuentas.\n"
-                    f"Ejercicio importado: {ejercicio_plan or 'base'}\n"
-                    f"Digitos del plan: {digitos_objetivo}",
-                    parent=self,
-                )
-            except Exception as exc:
-                messagebox.showerror("Gest2A3Eco", str(exc), parent=self)
-                return
-        self._load_plan_cuentas()
 
     def _update_banks_from_a3(self):
         codigo = self._codigo_empresa_actual()

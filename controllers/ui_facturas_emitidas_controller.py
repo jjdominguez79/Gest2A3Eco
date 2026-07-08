@@ -1180,8 +1180,16 @@ class FacturasEmitidasController:
             fac = self._get_factura_by_id(fid)
             if not fac:
                 continue
-            # num_factura en A3ECO = serie + numero (igual que en el suenlace)
-            num_factura = self._numero_factura_contable(fac)
+            # A3ECO almacena el num_fra de forma distinta segun el tipo de serie:
+            #   - Series numericas ("1", "2"): guarda "1/0001365" (con barra)
+            #   - Series alfanumericas ("A", "B"): guarda "A000031" (sin barra)
+            # Construimos el formato correcto segun si la serie es un digito.
+            serie = str(fac.get("serie") or "").strip()
+            num_contable = self._numero_factura_contable(fac)
+            if serie and serie.isdigit() and num_contable.startswith(serie):
+                num_factura = f"{serie}/{num_contable[len(serie):]}"
+            else:
+                num_factura = num_contable
             descripcion = str(fac.get("descripcion") or "").strip()
             asiento = leer_numero_asiento_desde_a3(codigo_a3, self._ejercicio, num_factura, descripcion)
             if asiento:
@@ -1842,7 +1850,7 @@ class FacturasEmitidasController:
 
     def _generar_pdf_word(self, fac: dict, out_path: str, default_template: str | None = None) -> None:
         """Genera un PDF usando siempre la plantilla Word. Lanza excepcion si no hay plantilla o falla."""
-        template_path = self._docx_template_path(fac, warn_missing=False, default_filename=default_template or "plantilla.docx")
+        template_path = self._docx_template_path(fac, warn_missing=False, default_filename=default_template or "factura_emitida_template.docx")
         if not os.path.exists(template_path):
             raise FileNotFoundError(f"No se encuentra la plantilla Word:\n{template_path}")
         cliente = self._cliente_factura(fac)
@@ -2092,8 +2100,11 @@ class FacturasEmitidasController:
             # Despues de ensure_app_pdf el dict fac no se actualiza en memoria,
             # pero el PDF ya existe en disco. Actualizamos pdf_path en el dict
             # para que ensure_a3_pdf pueda copiar desde ahi en vez de regenerar.
+            # Se actualiza siempre que el fichero exista en app_path y el dict
+            # apunte a una ruta distinta (o vacia/obsoleta), evitando que una
+            # ruta antigua heredada bloquee la copia al directorio de A3ECO.
             app_path = self._app_pdf_path(fac)
-            if app_path and os.path.exists(app_path) and not fac.get("pdf_path"):
+            if app_path and os.path.exists(app_path) and fac.get("pdf_path") != app_path:
                 fac = dict(fac)
                 fac["pdf_path"] = app_path
             self._ensure_a3_pdf(fac)

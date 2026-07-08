@@ -181,12 +181,6 @@ class TercerosOcrService:
             if _es_subcuenta_valida(sub, prefijo, ndig):
                 usadas.add(int(sub))
 
-        # 3. plan_cuentas
-        for cuenta in gestor.buscar_cuentas_en_plan(codigo, ejercicio, prefijo):
-            cuenta = str(cuenta).strip()
-            if _es_subcuenta_valida(cuenta, prefijo, ndig):
-                usadas.add(int(cuenta))
-
         primera = int(prefijo) * (10 ** (ndig - len(prefijo))) + 1
         candidato = primera
         while candidato in usadas:

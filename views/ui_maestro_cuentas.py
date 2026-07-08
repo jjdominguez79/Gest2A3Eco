@@ -547,33 +547,37 @@ class UIMaestroCuentas(tk.Frame):
         )
 
     def _importar_plan_desde_a3(self):
-        """Lee CU.DAT de A3 y abre una ventana de previsualizacion antes de guardar."""
+        """Lee CU.DAT de A3 en hilo de fondo y abre una ventana de previsualizacion."""
         empresa = self._gestor.get_empresa(self._codigo, self._ejercicio) or {}
         ndig = int(empresa.get("digitos_plan") or 8)
-        try:
-            data = importar_empresa_desde_a3(self._codigo, digitos_plan_objetivo=ndig)
-        except Exception as exc:
-            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
-            return
-        plan = data.get("plan_cuentas") or []
-        if not plan:
-            messagebox.showinfo(
-                "Gest2A3Eco",
-                "No se ha encontrado plan de cuentas en A3.\n"
-                "Comprueba que el codigo de empresa y la ruta a A3ECO son correctos.",
-                parent=self.winfo_toplevel(),
+
+        def _on_data(data):
+            plan = data.get("plan_cuentas") or []
+            if not plan:
+                messagebox.showinfo(
+                    "Gest2A3Eco",
+                    "No se ha encontrado plan de cuentas en A3.\n"
+                    "Comprueba que el codigo de empresa y la ruta a A3ECO son correctos.",
+                    parent=self.winfo_toplevel(),
+                )
+                return
+            codigo_a3 = str(data.get("codigo") or self._codigo)
+            ejercicio_plan = int(data.get("ejercicio") or 0) or 0
+            _PrevisualizacionPlanDialog(
+                self.winfo_toplevel(),
+                plan=plan,
+                codigo_empresa=codigo_a3,
+                ejercicio=ejercicio_plan,
+                digitos=ndig,
+                gestor=self._gestor,
+                on_confirm=self.refresh,
             )
-            return
-        codigo_a3 = str(data.get("codigo") or self._codigo)
-        ejercicio_plan = int(data.get("ejercicio") or 0) or 0
-        _PrevisualizacionPlanDialog(
+
+        _ProgressA3Dialog(
             self.winfo_toplevel(),
-            plan=plan,
-            codigo_empresa=codigo_a3,
-            ejercicio=ejercicio_plan,
-            digitos=ndig,
-            gestor=self._gestor,
-            on_confirm=self.refresh,
+            codigo=self._codigo,
+            digitos_plan_objetivo=ndig,
+            on_complete=_on_data,
         )
 
     def _importar_excel(self):
@@ -736,6 +740,97 @@ class UIMaestroCuentas(tk.Frame):
             )
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+
+
+# ── Dialogo de progreso para importacion desde A3 ─────────────────────────────
+
+class _ProgressA3Dialog(tk.Toplevel):
+    """Dialogo modal que ejecuta la importacion de A3 en un hilo de fondo
+    y muestra una barra de progreso indeterminada mientras dura la operacion.
+
+    Al finalizar llama a on_complete(data) desde el hilo principal, donde
+    data es el dict devuelto por importar_empresa_desde_a3.
+    """
+
+    def __init__(self, parent, *, codigo, digitos_plan_objetivo, on_complete):
+        super().__init__(parent)
+        self.title("Importando desde A3...")
+        self.resizable(False, False)
+        self.grab_set()
+        self.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        self._on_complete = on_complete
+        self._resultado = None
+        self._error = None
+
+        frm = tk.Frame(self, padx=24, pady=20, bg="#f1f5f9")
+        frm.pack(fill="both", expand=True)
+
+        tk.Label(
+            frm,
+            text="Leyendo plan contable desde A3ECO...",
+            bg="#f1f5f9", fg="#0f172a",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(anchor="w", pady=(0, 10))
+
+        self.lbl_estado = tk.Label(
+            frm,
+            text=f"Empresa {codigo} — leyendo fichero CU.DAT...",
+            bg="#f1f5f9", fg="#475569",
+            font=("Segoe UI", 9),
+        )
+        self.lbl_estado.pack(anchor="w", pady=(0, 8))
+
+        self.pb = ttk.Progressbar(frm, mode="indeterminate", length=340)
+        self.pb.pack(fill="x", pady=(0, 8))
+        self.pb.start(12)
+
+        tk.Label(
+            frm,
+            text="Esto puede tardar unos segundos en redes lentas.",
+            bg="#f1f5f9", fg="#94a3b8",
+            font=("Segoe UI", 8),
+        ).pack(anchor="w")
+
+        try:
+            self.update_idletasks()
+            pw = parent.winfo_rootx() + (parent.winfo_width() - 420) // 2
+            ph = parent.winfo_rooty() + (parent.winfo_height() - 150) // 2
+            self.geometry(f"420x150+{max(pw, 0)}+{max(ph, 0)}")
+        except Exception:
+            self.geometry("420x150")
+
+        # Forzar render completo antes de lanzar el hilo, para que la barra
+        # sea visible aunque la operacion termine muy rapidamente.
+        self.update()
+
+        self.after(20, lambda: threading.Thread(
+            target=self._run,
+            args=(codigo, digitos_plan_objetivo),
+            daemon=True,
+        ).start())
+
+    def _run(self, codigo, digitos_plan_objetivo):
+        try:
+            self._resultado = importar_empresa_desde_a3(
+                codigo, digitos_plan_objetivo=digitos_plan_objetivo
+            )
+        except Exception as exc:
+            self._error = exc
+        self.after(0, self._finalizar)
+
+    def _finalizar(self):
+        self.pb.stop()
+        self.destroy()
+        if self._error:
+            import tkinter.messagebox as mb
+            mb.showerror("Error de importacion", str(self._error))
+            return
+        if self._on_complete and self._resultado is not None:
+            try:
+                self._on_complete(self._resultado)
+            except Exception:
+                pass
 
 
 # ── Dialogo de progreso para importacion Excel ────────────────────────────────
@@ -1107,18 +1202,130 @@ class _PrevisualizacionPlanDialog(tk.Toplevel):
 
     def _confirmar(self):
         self._cerrar_editor()
-        try:
-            n = self._gestor.upsert_plan_cuentas(self._codigo, self._ejercicio, self._plan)
-        except Exception as exc:
-            messagebox.showerror("Gest2A3Eco", str(exc), parent=self)
-            return
+        plan = list(self._plan)
+        gestor = self._gestor
+        codigo = self._codigo
+        ejercicio = self._ejercicio
+        digitos = self._digitos
+        on_confirm = self._on_confirm
+        parent = self.master
         self.destroy()
-        if self._on_confirm:
-            self._on_confirm()
+        _ProgressGuardadoPlanDialog(
+            parent,
+            plan=plan,
+            gestor=gestor,
+            codigo=codigo,
+            ejercicio=ejercicio,
+            digitos=digitos,
+            on_complete=on_confirm,
+        )
+
+
+# ── Dialogo de progreso al guardar el plan en el maestro ──────────────────────
+
+class _ProgressGuardadoPlanDialog(tk.Toplevel):
+    """Guarda el plan en maestro_subcuentas_empresa en un hilo de fondo
+    mostrando progreso determinado mientras dura la operacion."""
+
+    def __init__(self, parent, *, plan, gestor, codigo, ejercicio, digitos, on_complete):
+        super().__init__(parent)
+        self.title("Importando plan contable...")
+        self.resizable(False, False)
+        self.grab_set()
+        self.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        self._on_complete = on_complete
+        self._n = 0
+        self._total = len(plan)
+
+        frm = tk.Frame(self, padx=24, pady=20, bg="#f1f5f9")
+        frm.pack(fill="both", expand=True)
+
+        tk.Label(
+            frm,
+            text="Guardando cuentas en el maestro contable...",
+            bg="#f1f5f9", fg="#0f172a",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(anchor="w", pady=(0, 8))
+
+        self.lbl_estado = tk.Label(
+            frm, text="Preparando...",
+            bg="#f1f5f9", fg="#475569", font=("Segoe UI", 9),
+        )
+        self.lbl_estado.pack(anchor="w", pady=(0, 6))
+
+        self.pb = ttk.Progressbar(frm, mode="determinate", length=360, maximum=max(self._total, 1))
+        self.pb.pack(fill="x", pady=(0, 6))
+
+        self.lbl_pct = tk.Label(frm, text="0 %", bg="#f1f5f9", fg="#64748b", font=("Segoe UI", 8))
+        self.lbl_pct.pack(anchor="e")
+
+        try:
+            self.update_idletasks()
+            pw = parent.winfo_rootx() + (parent.winfo_width() - 420) // 2
+            ph = parent.winfo_rooty() + (parent.winfo_height() - 160) // 2
+            self.geometry(f"420x160+{max(pw, 0)}+{max(ph, 0)}")
+        except Exception:
+            self.geometry("420x160")
+
+        self.update()
+
+        self.after(20, lambda: threading.Thread(
+            target=self._run,
+            args=(plan, gestor, codigo, ejercicio, digitos),
+            daemon=True,
+        ).start())
+
+    def _run(self, plan, gestor, codigo, ejercicio, digitos):
+        n = 0
+        total = len(plan)
+        for i, cuenta_dict in enumerate(plan, 1):
+            try:
+                nif_snapshot = normalizar_nif_cif(cuenta_dict.get("nif") or "") or None
+                tercero_id = None
+                if nif_snapshot:
+                    try:
+                        ter = gestor.get_tercero_by_nif_normalizado(nif_snapshot)
+                        if ter:
+                            tercero_id = str(ter.get("id") or "").strip() or None
+                    except Exception:
+                        pass
+                gestor.upsert_maestro_subcuenta({
+                    "codigo_empresa": codigo,
+                    "subcuenta": cuenta_dict["cuenta"],
+                    "nombre_subcuenta": cuenta_dict["descripcion"],
+                    "tipo_subcuenta": clasificar_tipo_subcuenta(cuenta_dict["cuenta"]),
+                    "nif_snapshot": nif_snapshot,
+                    "tercero_id": tercero_id,
+                    "activo": 1,
+                    "origen": "a3",
+                    "creado_en_gest2a3eco": 0,
+                    "pendiente_alta_a3": 0,
+                })
+                n += 1
+            except Exception:
+                pass
+            if i % 20 == 0 or i == total:
+                pct = int(i * 100 / total)
+                self.after(0, lambda v=i, p=pct: (
+                    self.pb.configure(value=v),
+                    self.lbl_estado.configure(text=f"Cuenta {v} de {total}..."),
+                    self.lbl_pct.configure(text=f"{p} %"),
+                ))
+        self._n = n
+        self.after(0, lambda: self._finalizar(n, ejercicio, digitos))
+
+    def _finalizar(self, n, ejercicio, digitos):
+        self.destroy()
+        if self._on_complete:
+            try:
+                self._on_complete()
+            except Exception:
+                pass
         messagebox.showinfo(
             "Gest2A3Eco",
-            f"Plan contable importado: {n} cuentas.\n"
-            f"Ejercicio: {self._ejercicio or 'base'}  |  Digitos: {self._digitos}",
+            f"Plan contable importado: {n} cuentas al maestro.\n"
+            f"Ejercicio: {ejercicio or 'base'}  |  Digitos: {digitos}",
         )
 
 

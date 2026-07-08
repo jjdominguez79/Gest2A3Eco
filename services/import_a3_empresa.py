@@ -32,16 +32,17 @@ _EM_NIF_SLICE = slice(5, 14)
 _EM_NAME_SLICE = slice(54, 74)
 
 # Fichero CU (cuentas / plan contable): tamaño de registro 260 bytes
-#   bytes 5-7  : número de cuenta (entero big-endian 3 bytes, max 16.777.215)
+#   bytes 4-7  : número de cuenta (entero big-endian 4 bytes, max 99.999.999)
 #   bytes 8-37 : descripción (30 chars, cp850)
-# El campo de cuenta ocupa exactamente 3 bytes. Para planes de hasta 7 dígitos
-# (max 9.999.999) esto es suficiente. Los 6 primeros bytes del registro son:
-#   [0]=marcador activo/borrado, [1-4]=cero (padding ISAM), [5-7]=código.
+# Diagnostico sobre 004236CU.DAT confirma que bytes 4-7 contienen el codigo
+# como entero big-endian de 4 bytes. El byte 4 es el byte alto (necesario para
+# cuentas >= 16.777.216, es decir, cualquier subcuenta de 8 digitos en grupos
+# 2+ como 21000000, 43000000, 57200000, etc.).
 _CU_REC_SIZE = 260
-_CU_CODE_SLICE = slice(5, 8)
+_CU_CODE_SLICE = slice(4, 8)
 _CU_DESC_SLICE = slice(8, 38)
 
-_A3_ENCODING = "cp850"
+_A3_ENCODING = "cp1252"
 
 
 _ID_RE = re.compile(
@@ -605,10 +606,16 @@ def _leer_em_binario(em_path: Path) -> dict:
 def _leer_plan_cuentas_binario(cu_path: Path) -> list[dict]:
     """
     Lee el fichero CU.DAT (plan de cuentas) en formato ISAM binario.
-    Devuelve lista de {'cuenta': '43000000', 'descripcion': 'CLIENTES NACIONALES'}.
-    Layout: cabecera 128 bytes, registros de 260 bytes.
-      bytes 5-8  número de cuenta (big-endian 4 bytes)
-      bytes 9-38 descripción (30 chars cp850)
+    Devuelve lista de {'cuenta': '4300', 'descripcion': 'CLIENTES (EUROS)'}.
+
+    Layout del registro (260 bytes):
+      byte  0    : marcador activo/borrado (0x41 o 0x40)
+      bytes 1-3  : punteros ISAM internos. Cuando son 0x000000 el registro
+                   corresponde a una cuenta del plan contable. Cuando son
+                   distintos de cero es una subcuenta individual (cliente,
+                   proveedor, activo) que NO debe importarse como plan.
+      bytes 4-7  : código de cuenta big-endian (1-4 dígitos en PGC estándar)
+      bytes 8-37 : descripción (30 chars, cp850)
     """
     try:
         data = cu_path.read_bytes()
@@ -618,7 +625,7 @@ def _leer_plan_cuentas_binario(cu_path: Path) -> list[dict]:
     offset = _ISAM_HEADER
     while offset + _CU_REC_SIZE <= len(data):
         rec = data[offset: offset + _CU_REC_SIZE]
-        if rec[0] in _ISAM_ACTIVE:
+        if rec[0] in _ISAM_ACTIVE and rec[1:4] == b'\x00\x00\x00':
             code_bytes = rec[_CU_CODE_SLICE]
             num = int.from_bytes(code_bytes, "big")
             if num > 0:
@@ -627,6 +634,105 @@ def _leer_plan_cuentas_binario(cu_path: Path) -> list[dict]:
                     cuentas.append({"cuenta": str(num), "descripcion": desc})
         offset += _CU_REC_SIZE
     return cuentas
+
+
+def _leer_subcuentas_binario(cu_path: Path, ndig: int) -> list[dict]:
+    """
+    Lee las subcuentas individuales (clientes, proveedores, inmovilizado...)
+    del fichero CU.DAT y reconstruye su codigo completo de ndig digitos.
+
+    En los registros de subcuenta (bytes 1-3 != 0x000000):
+      bytes 1-3 : cuenta padre en PGC (4 digitos, p.ej. 4300 para Clientes)
+      bytes 4-7 : indice secuencial * 10^(ndig-4)
+                  (p.ej. 10000 -> cliente #1, 20000 -> cliente #2 para ndig=8)
+
+    Formula: full_account = b13 * 10^(ndig-4) + code4 // 10^(ndig-4)
+    Ejemplo (ndig=8): b13=4300, code4=10000 -> 4300*10000 + 1 = 43000001
+    """
+    if ndig < 4:
+        return []
+    try:
+        data = cu_path.read_bytes()
+    except OSError:
+        return []
+    multiplier = 10 ** (ndig - 4)
+    subcuentas: list[dict] = []
+    offset = _ISAM_HEADER
+    while offset + _CU_REC_SIZE <= len(data):
+        rec = data[offset: offset + _CU_REC_SIZE]
+        if rec[0] in _ISAM_ACTIVE and rec[1:4] != b'\x00\x00\x00':
+            b13 = int.from_bytes(rec[1:4], "big")
+            code4 = int.from_bytes(rec[4:8], "big")
+            if b13 > 0 and code4 > 0 and code4 % multiplier == 0:
+                sequential = code4 // multiplier
+                full_account = b13 * multiplier + sequential
+                full_str = str(full_account)
+                if len(full_str) == ndig:
+                    desc = _decode_field(rec[_CU_DESC_SLICE])
+                    if desc:
+                        subcuentas.append({"cuenta": full_str, "descripcion": desc})
+        offset += _CU_REC_SIZE
+    return subcuentas
+
+
+# ─── Constantes para lectura de DA.DAT (datos de terceros) ──────────────────
+# DA.DAT: registros de 260 bytes, cabecera 128 bytes, NIF en byte 53 del registro.
+# El nombre del tercero empieza antes del byte 53, pero su longitud exacta varia.
+# Estrategia: leer 48 bytes antes del NIF (bytes 5-52 del registro) como contexto
+# de nombre, y buscar la descripcion de CU.DAT como subcadena de ese contexto.
+# Esto cubre tanto nombres cortos (<= 30 chars) como nombres largos (> 30 chars)
+# donde CU.DAT almacena los primeros 30 chars y DA.DAT puede almacenar mas.
+_DA_CONTEXT_BYTES = 48   # bytes de contexto antes del NIF (queda dentro del mismo registro)
+_DA_MIN_NAME_LEN  = 6    # minimo de chars para intentar el match (evita falsos positivos)
+
+_NIF_BYTES_RE = re.compile(
+    rb'(?:[ABCDEFGHJNPQRSUVW]\d{7}[0-9A-J]|\d{8}[A-Z]|[XYZ]\d{7}[A-Z])',
+)
+
+
+def _find_best_da_path(codigo_norm: str) -> "Path | None":
+    """Devuelve el DA.DAT mas reciente (ejercicio mas alto) de la empresa."""
+    candidates = []
+    for folder in _candidate_dirs(codigo_norm):
+        if not folder.exists():
+            continue
+        candidates.extend(folder.glob(f"{codigo_norm}?DA.DAT"))
+        candidates.extend(folder.glob(f"{codigo_norm}?DA.dat"))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
+def _leer_nifs_desde_da(da_path: Path) -> "list[tuple[str, str]]":
+    """
+    Escanea DA.DAT buscando patrones NIF/CIF en el stream de bytes.
+    Para cada NIF encontrado devuelve (contexto_nombre_mayusculas, nif).
+    El contexto son los 48 bytes antes del NIF decodificados en cp1252,
+    que contienen el campo nombre completo del tercero en A3.
+
+    Los registros de DA.DAT son 260 bytes con el NIF en el byte 53,
+    por lo que 48 bytes hacia atras queda siempre dentro del mismo registro
+    y captura el inicio del campo nombre.
+
+    Uso: buscar la descripcion de CU.DAT como subcadena del contexto.
+    """
+    try:
+        data = da_path.read_bytes()
+    except OSError:
+        return []
+    entries: list[tuple[str, str]] = []
+    for m in _NIF_BYTES_RE.finditer(data):
+        pos = m.start()
+        if pos < _DA_CONTEXT_BYTES:
+            continue
+        ctx_bytes = data[pos - _DA_CONTEXT_BYTES: pos]
+        try:
+            ctx = ctx_bytes.decode(_A3_ENCODING, errors="replace")
+        except Exception:
+            ctx = ctx_bytes.decode("latin-1", errors="replace")
+        nif = m.group(0).decode("ascii", errors="replace").upper()
+        entries.append((ctx.upper(), nif))
+    return entries
 
 
 def _isam_rec_size_from_header(data: bytes) -> int:
@@ -801,10 +907,14 @@ def dump_asiento_records(codigo: str, ejercicio: int, max_records: int = 3) -> s
     return "\n".join(out)
 
 
-# ── Offsets confirmados por diagnóstico sobre 0042361A.DAT (enero 2026) ───────
-_AS_CONCEPTO = slice(15, 45)   # 30 chars cp850 — descripción del apunte
-_AS_NUM_FRA  = slice(45, 55)   # 10 chars cp850 — número de factura (campo búsqueda)
-_AS_APUNTE   = slice(110, 112) # 2 bytes big-endian — número de asiento ← clave
+# ── Offsets confirmados por diagnóstico sobre ficheros *A.DAT reales ─────────
+# E00423 (2026): asiento en bytes 110-111. E00841 (2026): asiento en bytes 112-113.
+# La diferencia de 2 bytes entre empresas es probable de versión A3ECO.
+# _AS_APUNTE_CANDIDATOS lista los offsets a probar; se usa el primero no-cero.
+_AS_CONCEPTO           = slice(15, 45)   # 30 chars cp850 — descripción del apunte
+_AS_NUM_FRA            = slice(45, 55)   # 10 chars cp850 — número de factura (campo búsqueda)
+_AS_APUNTE             = slice(110, 112) # offset primario (compatibilidad con llamadas directas)
+_AS_APUNTE_CANDIDATOS  = (slice(110, 112), slice(112, 114))  # probar en orden
 
 
 def leer_numero_asiento_desde_a3(
@@ -859,9 +969,10 @@ def leer_numero_asiento_desde_a3(
                     concepto_rec = rec[_AS_CONCEPTO].decode(_A3_ENCODING, errors="replace").strip()
                     match_concepto = desc_prefix in concepto_rec
                 if match_num_fra or match_concepto:
-                    apunte = int.from_bytes(rec[_AS_APUNTE], "big")
-                    if apunte > 0:
-                        return str(apunte)
+                    for apunte_slice in _AS_APUNTE_CANDIDATOS:
+                        apunte = int.from_bytes(rec[apunte_slice], "big")
+                        if apunte > 0:
+                            return str(apunte)
             offset += rec_size
 
     return None
@@ -1016,6 +1127,7 @@ def _filtrar_plan_cuentas_por_digitos(plan_cuentas: list[dict], ndig: int) -> li
         cleaned.append({
             "cuenta": cuenta,
             "descripcion": str(item.get("descripcion") or "").strip(),
+            "nif": str(item.get("nif") or ""),
         })
 
     raw_codes = sorted({item["cuenta"] for item in cleaned}, key=lambda x: (len(x), x))
@@ -1040,6 +1152,7 @@ def _filtrar_plan_cuentas_por_digitos(plan_cuentas: list[dict], ndig: int) -> li
         out.append({
             "cuenta": cuenta_norm,
             "descripcion": desc_corregida,
+            "nif": item.get("nif") or "",
         })
     out.sort(key=lambda x: (int(x["cuenta"]), x["cuenta"]))
     return out
@@ -1271,6 +1384,23 @@ def importar_empresa_desde_a3(codigo: str, digitos_plan_objetivo: int | None = N
     plan_cuentas_raw = _leer_plan_cuentas_binario(cu_path) if cu_path else []
     digitos_detectados = _deducir_digitos_plan(plan_cuentas_raw)
     digitos_plan = int(digitos_plan_objetivo or digitos_detectados or 8)
+    # Incluir subcuentas individuales (clientes, proveedores, inmovilizado...)
+    if cu_path and digitos_plan >= 4:
+        plan_cuentas_raw.extend(_leer_subcuentas_binario(cu_path, digitos_plan))
+    # Enriquecer subcuentas con NIF desde DA.DAT (terceros de A3)
+    da_path = _find_best_da_path(codigo_norm)
+    nifs_encontrados = 0
+    if da_path:
+        da_entries = _leer_nifs_desde_da(da_path)
+        for item in plan_cuentas_raw:
+            desc = str(item.get("descripcion") or "").strip().upper()
+            if len(desc) < _DA_MIN_NAME_LEN:
+                continue
+            for ctx, nif in da_entries:
+                if desc in ctx:
+                    item["nif"] = nif
+                    nifs_encontrados += 1
+                    break
     plan_cuentas = _filtrar_plan_cuentas_por_digitos(plan_cuentas_raw, digitos_plan)
 
     # 4. Fuentes de respaldo: VAR y cabecera de la ficha DAT
@@ -1322,6 +1452,10 @@ def importar_empresa_desde_a3(codigo: str, digitos_plan_objetivo: int | None = N
         detalle.append(
             f"Plan de cuentas CU ({len(plan_cuentas)} subcuentas de {digitos_plan} digitos"
             f" de {len(plan_cuentas_raw)} cuentas leidas): {cu_path}"
+        )
+    if da_path:
+        detalle.append(
+            f"Datos terceros DA ({nifs_encontrados} NIF/CIF vinculados): {da_path}"
         )
     if var_path:
         detalle.append(f"Ficha empresa VAR: {var_path}")
