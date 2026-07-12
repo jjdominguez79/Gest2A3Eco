@@ -262,6 +262,8 @@ class MaestroContableEmpresaService:
                 continue
             descripcion = str(row.get(col_desc, "") or "") if col_desc else ""
             nif_raw     = str(row.get(col_nif, "") or "") if col_nif else ""
+            if nif_raw.strip().lower() in ("nan", "none", "null"):
+                nif_raw = ""
             try:
                 existente = gestor.get_maestro_subcuenta_por_subcuenta(
                     codigo_empresa, subcuenta

@@ -1699,6 +1699,18 @@ class FacturasEmitidasController:
         subcuenta_cliente = self._resolved_subcuenta_cliente(fac)
         if subcuenta_cliente:
             base_row["Cuenta Cliente Proveedor"] = subcuenta_cliente
+        # subcuenta_ingreso: primero override manual de la factura, luego maestro de cuentas
+        subcuenta_ingreso = str(fac.get("subcuenta_ingreso") or "").strip()
+        if not subcuenta_ingreso and subcuenta_cliente:
+            maestro = self._gestor.get_maestro_subcuenta_por_subcuenta(
+                self._codigo, subcuenta_cliente
+            )
+            if maestro:
+                subcuenta_ingreso = str(
+                    maestro.get("cuenta_ingreso_predeterminada_id") or ""
+                ).strip()
+        if subcuenta_ingreso:
+            base_row["Cuenta Compras Ventas"] = subcuenta_ingreso
         lineas = aplicar_descuento_total_lineas(
             list(fac.get("lineas", [])),
             fac.get("descuento_total_tipo"),

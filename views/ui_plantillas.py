@@ -129,6 +129,79 @@ class InlineKVEditor(ttk.Frame):
     def _nav_down(self, event=None):
         self._apply_edit(); self._move_selection(+1); return "break"
 
+class SubcuentaPickerDialog(Dialog):
+    """Dialog modal para buscar y seleccionar una subcuenta del maestro de cuentas."""
+
+    def __init__(self, parent, gestor, empresa, filtro=""):
+        self.gestor = gestor
+        self.empresa = empresa
+        self._filtro_inicial = filtro
+        self._cuentas = []
+        self.result = None
+        super().__init__(parent, "Buscar subcuenta")
+
+    def body(self, master):
+        master.pack_configure(padx=8, pady=6)
+        fr_s = ttk.Frame(master)
+        fr_s.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(fr_s, text="Buscar:").pack(side=tk.LEFT)
+        self.var_search = tk.StringVar(value=self._filtro_inicial)
+        ent = ttk.Entry(fr_s, textvariable=self.var_search, width=45)
+        ent.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0))
+        ent.bind("<KeyRelease>", lambda e: self._filter())
+
+        fr_tv = ttk.Frame(master)
+        fr_tv.pack(fill=tk.BOTH, expand=True)
+        self.tv = ttk.Treeview(fr_tv, columns=("cuenta", "descripcion"), show="headings", height=16)
+        self.tv.heading("cuenta", text="Subcuenta")
+        self.tv.heading("descripcion", text="Descripcion")
+        self.tv.column("cuenta", width=160, stretch=False)
+        self.tv.column("descripcion", width=340)
+        sb = ttk.Scrollbar(fr_tv, orient=tk.VERTICAL, command=self.tv.yview)
+        self.tv.configure(yscrollcommand=sb.set)
+        self.tv.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tv.bind("<Double-1>", lambda e: self.ok())
+
+        self._load_cuentas()
+        self._filter()
+        return ent
+
+    def _load_cuentas(self):
+        codigo = self.empresa.get("codigo")
+        ejercicio = self.empresa.get("ejercicio")
+        seen = {}
+        for row in (self.gestor.get_plan_cuentas(codigo, ejercicio) or []):
+            cuenta = str(row.get("cuenta") or "").strip()
+            if cuenta:
+                seen[cuenta] = str(row.get("descripcion") or "").strip()
+        for row in (self.gestor.listar_maestro_subcuentas_empresa(codigo, activo=None) or []):
+            sub = str(row.get("subcuenta") or "").strip()
+            if sub:
+                nombre = str(row.get("nombre_subcuenta") or "").strip()
+                seen[sub] = nombre or seen.get(sub, "")
+        self._cuentas = sorted(seen.items(), key=lambda x: x[0])
+
+    def _filter(self):
+        texto = self.var_search.get().strip().lower()
+        self.tv.delete(*self.tv.get_children())
+        count = 0
+        for cuenta, desc in self._cuentas:
+            if not texto or texto in cuenta.lower() or texto in desc.lower():
+                self.tv.insert("", tk.END, values=(cuenta, desc))
+                count += 1
+                if count >= 200:
+                    break
+
+    def validate(self):
+        return True
+
+    def apply(self):
+        sel = self.tv.selection()
+        if sel:
+            self.result = str(self.tv.item(sel[0], "values")[0])
+
+
 class ConfigPlantillaDialog(Dialog):
     def __init__(self, parent, gestor, empresa, tipo, plantilla=None):
         self.gestor = gestor
@@ -201,10 +274,22 @@ class ConfigPlantillaDialog(Dialog):
                 self.pats.insert("", tk.END, values=(it.get("patron",""), it.get("subcuenta","")))
         return master
 
+    def _subcuenta_row_con_buscador(self, parent, var):
+        """Fila 'Subcuenta' con Entry + botón '...' que abre el buscador del maestro."""
+        fr = ttk.Frame(parent); fr.pack(fill=tk.X, pady=3)
+        ttk.Label(fr, text="Subcuenta", width=30).pack(side=tk.LEFT)
+        ttk.Entry(fr, textvariable=var, width=20).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        def _abrir_buscador():
+            dlg = SubcuentaPickerDialog(parent, self.gestor, self.empresa, filtro=var.get())
+            if dlg.result:
+                var.set(dlg.result)
+        ttk.Button(fr, text="...", width=3, command=_abrir_buscador).pack(side=tk.LEFT, padx=(3, 0))
+
     def _pat_add(self):
-        top = tk.Toplevel(self); top.title("Nuevo patrón"); top.resizable(False, False)
+        top = tk.Toplevel(self); top.title("Nuevo patron"); top.resizable(False, False)
         v1 = tk.StringVar(); v2 = tk.StringVar()
-        _row(top, "Patrón", v1); _row(top, "Subcuenta", v2)
+        _row(top, "Patron", v1)
+        self._subcuenta_row_con_buscador(top, v2)
         def ok():
             try:
                 validar_subcuenta_longitud(v2.get(), self.ndig, "subcuenta")
@@ -218,9 +303,10 @@ class ConfigPlantillaDialog(Dialog):
         sel = self.pats.selection()
         if not sel: return
         patron, sub = self.pats.item(sel[0], "values")
-        top = tk.Toplevel(self); top.title("Editar patrón"); top.resizable(False, False)
+        top = tk.Toplevel(self); top.title("Editar patron"); top.resizable(False, False)
         v1 = tk.StringVar(value=patron); v2 = tk.StringVar(value=sub)
-        _row(top, "Patrón", v1); _row(top, "Subcuenta", v2)
+        _row(top, "Patron", v1)
+        self._subcuenta_row_con_buscador(top, v2)
         def ok():
             try:
                 validar_subcuenta_longitud(v2.get(), self.ndig, "subcuenta")

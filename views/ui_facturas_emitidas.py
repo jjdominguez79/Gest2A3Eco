@@ -2201,15 +2201,15 @@ class UIFacturasEmitidas(ttk.Frame):
 
         bottom = ttk.Frame(parent)
         bottom.pack(fill="x", padx=10, pady=6)
+        self.btn_enviar_contabilidad = ttk.Button(bottom, text="Enviar a contabilidad", command=self._enviar_a_contabilidad)
+        self.btn_enviar_contabilidad.pack(side=tk.LEFT)
         self.btn_marcar_todas_facturas = ttk.Button(bottom, text="Marcar todas", command=self._marcar_todas_facturas)
-        self.btn_marcar_todas_facturas.pack(side=tk.LEFT)
+        self.btn_marcar_todas_facturas.pack(side=tk.LEFT, padx=(8, 0))
         self.btn_desmarcar_facturas = ttk.Button(bottom, text="Desmarcar todas", command=self._desmarcar_todas_facturas)
         self.btn_desmarcar_facturas.pack(side=tk.LEFT, padx=(8, 0))
         self.btn_marcar_facturas = ttk.Button(bottom, text="Marcar seleccionadas", command=self._marcar_facturas_seleccionadas)
         self.btn_marcar_facturas.pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(bottom, text="Exportar Excel", command=self._export_facturas_excel).pack(side=tk.LEFT, padx=(8, 0))
-        self.btn_enviar_contabilidad = ttk.Button(bottom, text="Enviar a contabilidad", command=self._enviar_a_contabilidad)
-        self.btn_enviar_contabilidad.pack(side=tk.LEFT, padx=(8, 0))
         self.btn_capturar_asiento = ttk.Button(bottom, text="Capturar nº asiento de A3", command=self._capturar_asiento_a3)
         self.btn_capturar_asiento.pack(side=tk.RIGHT, padx=(0, 8))
         if not can_write or is_cliente:

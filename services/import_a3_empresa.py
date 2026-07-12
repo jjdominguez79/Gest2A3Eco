@@ -675,15 +675,165 @@ def _leer_subcuentas_binario(cu_path: Path, ndig: int) -> list[dict]:
     return subcuentas
 
 
+# ─── Lectura de TCLIPRO.DAT (maestro de terceros de A3ECO) ──────────────────
+# TCLIPRO.DAT vive en el directorio RAIZ de A3ECO (no en la carpeta de empresa).
+# Contiene TODOS los terceros (clientes, proveedores) de TODAS las empresas
+# gestionadas por A3ECO, con su NIF/CIF y nombre.
+#
+# El fichero usa el mismo formato ISAM (cabecera 128 bytes) pero los registros
+# NO son contiguos: hay bloques de indice intercalados. Se detecta el inicio de
+# cada registro buscando size==256 (hex '100') en hexa[cursor+1:cursor+4].
+#
+# Layout de registro (260 bytes = 520 hex chars):
+#   hex  0     : high nibble del byte 0 = marcador activo (4 = activo)
+#   hex  1-3   : size = 256 (hex '100') cuando el registro es valido
+#   hex  4-11  : cod_tercero (4 bytes big-endian) = clave de enlace con CU.DAT
+#   hex 12-39  : CIF/NIF (14 bytes, latin-1)
+#   hex 40-99  : nombre (30 bytes, latin-1)
+#
+# En CU.DAT, cada subcuenta individual tiene cod_tercero en hex[424:432]
+# (4 bytes little-endian = bytes 212-215). Haciendo join por cod_tercero
+# se obtiene el NIF de cada subcuenta del plan.
+
+import binascii as _binascii
+
+_TCLIPRO_FILENAME = "TCLIPRO.DAT"
+
+
+def _find_tclipro_path() -> "Path | None":
+    """Busca TCLIPRO.DAT en los directorios base de A3ECO."""
+    for base in _get_a3_eco_bases():
+        p = Path(base) / _TCLIPRO_FILENAME
+        if p.exists():
+            return p
+        # A veces el fichero esta un nivel mas arriba
+        p2 = Path(base).parent / _TCLIPRO_FILENAME
+        if p2.exists():
+            return p2
+    return None
+
+
+def _leer_tclipro(tclipro_path: Path) -> "dict[int, str]":
+    """
+    Parsea TCLIPRO.DAT y devuelve {cod_tercero: nif}.
+
+    El fichero tiene registros de 520 hex chars (260 bytes) intercalados con
+    bloques de indice. Se detectan buscando hexa[cursor+1:cursor+4] == '100'
+    (size == 256). El cod_tercero (hex[4:12], big-endian) enlaza con CU.DAT.
+    """
+    try:
+        raw = tclipro_path.read_bytes()
+    except OSError:
+        return {}
+    hexa = _binascii.hexlify(raw).decode("ascii")[256:]  # skip 128-byte header
+    result: dict[int, str] = {}
+    cursor = 0
+    while cursor + 4 <= len(hexa):
+        size = int(hexa[cursor + 1: cursor + 4], 16)
+        if size != 256:
+            cursor += 16
+            try:
+                size = int(hexa[cursor + 1: cursor + 4], 16)
+            except Exception:
+                size = -1
+        if size != 256:
+            idx = hexa[cursor:].find("100")
+            if idx < 0:
+                break
+            cursor += idx - 1
+            try:
+                size = int(hexa[cursor + 1: cursor + 4], 16)
+            except Exception:
+                size = -1
+        if size != 256:
+            break
+        rec = hexa[cursor: cursor + 520]
+        if len(rec) >= 100:
+            cod = int(rec[4:12], 16)
+            try:
+                cif = bytes.fromhex(rec[12:40]).decode("latin-1").strip()
+            except Exception:
+                cif = ""
+            if cod and cif:
+                result[cod] = cif
+        cursor += 520
+    return result
+
+
+def _leer_cod_tercero_desde_cu(cu_path: Path) -> "dict[str, int]":
+    """
+    Lee el campo cod_tercero de cada subcuenta individual en CU.DAT.
+
+    En el formato ISAM de A3ECO (cada byte = 2 hex chars):
+      hex[4:8]   → cuenta_mayor (2 bytes, big-endian, p.ej. 4300)
+      hex[8:16]  → subcuenta_raw (4 bytes, big-endian, numero secuencial)
+      hex[16:76] → nombre (30 bytes, latin-1) - confirmado coincide con _CU_DESC_SLICE
+      hex[424:432] → cod_tercero (4 bytes, little-endian)
+
+    Devuelve dict {cuenta_str: cod_tercero} solo para subcuentas con cod != 0.
+    cuenta_str se construye como: str(cuenta_mayor).ljust(4,'0') + str(sub).rjust(8,'0')
+    """
+    try:
+        raw = cu_path.read_bytes()
+    except OSError:
+        return {}
+    hexa_all = _binascii.hexlify(raw).decode("ascii")
+    # Leer max_length desde bytes 54-57 del header (big-endian)
+    try:
+        max_len = int(hexa_all[54 * 2: 58 * 2], 16)
+    except Exception:
+        return {}
+    if max_len <= 0:
+        return {}
+    rec_len_hex = max_len * 2 + 8   # hex chars por registro (incluyendo 4 bytes ISAM overhead)
+    if rec_len_hex < 432:
+        return {}
+    hexa = hexa_all[256:]           # saltar cabecera 128 bytes = 256 hex chars
+    result: dict[str, int] = {}
+    i = 0
+    while (i + 1) * rec_len_hex <= len(hexa):
+        rec = hexa[i * rec_len_hex: (i + 1) * rec_len_hex]
+        if rec[0:1] == "4":          # marcador activo (high nibble = 4)
+            try:
+                cuenta_mayor = int(rec[4:8], 16)
+                subcuenta_raw = int(rec[8:16], 16)
+            except Exception:
+                i += 1
+                continue
+            if cuenta_mayor != 0 and subcuenta_raw != 0:
+                try:
+                    # cod_tercero en hex[424:432], little-endian
+                    cod_le = rec[424:432]
+                    cod = int(bytes.fromhex(cod_le)[::-1].hex(), 16)
+                except Exception:
+                    cod = 0
+                if cod != 0:
+                    cuenta_str = (
+                        str(cuenta_mayor).ljust(4, "0")
+                        + str(subcuenta_raw).rjust(8, "0")
+                    )
+                    result[cuenta_str[:8]] = cod
+        i += 1
+    return result
+
+
 # ─── Constantes para lectura de DA.DAT (datos de terceros) ──────────────────
-# DA.DAT: registros de 260 bytes, cabecera 128 bytes, NIF en byte 53 del registro.
-# El nombre del tercero empieza antes del byte 53, pero su longitud exacta varia.
-# Estrategia: leer 48 bytes antes del NIF (bytes 5-52 del registro) como contexto
-# de nombre, y buscar la descripcion de CU.DAT como subcadena de ese contexto.
-# Esto cubre tanto nombres cortos (<= 30 chars) como nombres largos (> 30 chars)
-# donde CU.DAT almacena los primeros 30 chars y DA.DAT puede almacenar mas.
-_DA_CONTEXT_BYTES = 48   # bytes de contexto antes del NIF (queda dentro del mismo registro)
-_DA_MIN_NAME_LEN  = 6    # minimo de chars para intentar el match (evita falsos positivos)
+# DA.DAT: registros ISAM de 260 bytes (igual que CU.DAT), cabecera 128 bytes.
+# Layout de registro (igual que subcuentas en CU.DAT):
+#   byte  0     : marcador activo (0x40/0x41)
+#   bytes 1-3   : cuenta padre (big-endian, ej. 4300 para clientes)
+#   bytes 4-7   : indice secuencial * multiplier (big-endian)
+#   bytes 8-37  : nombre (30 chars, cp1252)
+#   bytes 38-52 : otros datos del tercero (15 bytes)
+#   bytes 53-61 : NIF/CIF (9 chars, cp1252)
+# Estrategia principal: reconstruir el codigo de subcuenta desde bytes 1-7
+# (igual formula que _leer_subcuentas_binario) y hacer match por codigo.
+# Estrategia de respaldo: buscar patrones NIF en el stream y usar el contexto
+# de nombre (48 bytes antes del NIF = bytes 5-52) para match por nombre.
+_DA_REC_SIZE      = 260
+_DA_NIF_SLICE     = slice(53, 62)   # NIF (9 chars) en bytes 53-61
+_DA_CONTEXT_BYTES = 48   # bytes de contexto antes del NIF para el fallback por nombre
+_DA_MIN_NAME_LEN  = 6    # minimo de chars para intentar el match por nombre
 
 _NIF_BYTES_RE = re.compile(
     rb'(?:[ABCDEFGHJNPQRSUVW]\d{7}[0-9A-J]|\d{8}[A-Z]|[XYZ]\d{7}[A-Z])',
@@ -703,18 +853,54 @@ def _find_best_da_path(codigo_norm: str) -> "Path | None":
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
+def _leer_nifs_desde_da_por_codigo(
+    da_path: Path, ndig: int
+) -> "dict[str, str]":
+    """
+    Parsea DA.DAT como registros ISAM fijos de 260 bytes y extrae {subcuenta: NIF}.
+
+    Los registros de DA.DAT tienen la misma estructura que los registros de subcuenta
+    de CU.DAT: bytes 1-3 = cuenta padre (big-endian), bytes 4-7 = indice * multiplier
+    (big-endian), NIF en bytes 53-61. Se reconstruye el codigo de subcuenta con la
+    misma formula que _leer_subcuentas_binario y se hace match directo por codigo.
+
+    Devuelve dict {subcuenta_str: nif}. Devuelve {} si el fichero no existe o si
+    el layout no coincide con la estructura esperada (en ese caso usar el fallback
+    por nombre).
+    """
+    try:
+        data = da_path.read_bytes()
+    except OSError:
+        return {}
+    if ndig < 4:
+        return {}
+    multiplier = 10 ** (ndig - 4)
+    result: dict[str, str] = {}
+    offset = _ISAM_HEADER
+    while offset + _DA_REC_SIZE <= len(data):
+        rec = data[offset: offset + _DA_REC_SIZE]
+        if rec[0] in _ISAM_ACTIVE:
+            b13 = int.from_bytes(rec[1:4], "big")
+            code4 = int.from_bytes(rec[4:8], "big")
+            nif = _decode_field(rec[_DA_NIF_SLICE])
+            if b13 > 0 and code4 > 0 and nif and code4 % multiplier == 0:
+                sequential = code4 // multiplier
+                full_account = b13 * multiplier + sequential
+                full_str = str(full_account)
+                if len(full_str) == ndig:
+                    result[full_str] = nif
+        offset += _DA_REC_SIZE
+    return result
+
+
 def _leer_nifs_desde_da(da_path: Path) -> "list[tuple[str, str]]":
     """
-    Escanea DA.DAT buscando patrones NIF/CIF en el stream de bytes.
+    Fallback: escanea DA.DAT buscando patrones NIF/CIF en el stream de bytes.
     Para cada NIF encontrado devuelve (contexto_nombre_mayusculas, nif).
-    El contexto son los 48 bytes antes del NIF decodificados en cp1252,
-    que contienen el campo nombre completo del tercero en A3.
+    El contexto son los 48 bytes antes del NIF decodificados en cp1252.
 
-    Los registros de DA.DAT son 260 bytes con el NIF en el byte 53,
-    por lo que 48 bytes hacia atras queda siempre dentro del mismo registro
-    y captura el inicio del campo nombre.
-
-    Uso: buscar la descripcion de CU.DAT como subcadena del contexto.
+    Se usa solo si _leer_nifs_desde_da_por_codigo no encuentra ningun NIF
+    (indicando que el layout de DA.DAT no coincide con la estructura esperada).
     """
     try:
         data = da_path.read_bytes()
@@ -948,22 +1134,30 @@ def leer_numero_asiento_desde_a3(
     num_fra_limpio = str(num_factura or "").strip()[:10]
     desc_prefix = str(descripcion or "").strip()[:10]
 
-    for path in _candidate_asiento_paths(codigo_norm, ejercicio):
-        if not path.exists():
-            continue
-        try:
-            data = path.read_bytes()
-        except OSError:
-            continue
+    # Variantes del num_factura a probar: "1/0001", "10001", "1-0001", sin ceros iniciales, etc.
+    num_variantes: list[str] = []
+    if num_fra_limpio:
+        num_variantes.append(num_fra_limpio)
+        # Si tiene barra → tambien sin barra ("1/0001" → "10001")
+        sin_barra = num_fra_limpio.replace("/", "").replace("-", "")
+        if sin_barra != num_fra_limpio:
+            num_variantes.append(sin_barra[:10])
+        # Si no tiene barra y hay un digito al inicio → tambien con barra ("10001" → "1/0001")
+        import re as _re
+        m = _re.match(r"^(\d)(\d+)$", num_fra_limpio)
+        if m:
+            con_barra = f"{m.group(1)}/{m.group(2)}"[:10]
+            if con_barra not in num_variantes:
+                num_variantes.append(con_barra)
 
+    def _buscar_en_fichero(data: bytes) -> "str | None":
         rec_size = _isam_rec_size_from_header(data) or 132
         offset = _ISAM_HEADER
-
         while offset + rec_size <= len(data):
             rec = data[offset: offset + rec_size]
             if rec[0] in _ISAM_ACTIVE:
                 num_fra_rec = rec[_AS_NUM_FRA].decode(_A3_ENCODING, errors="replace").strip()
-                match_num_fra = num_fra_limpio and num_fra_rec == num_fra_limpio
+                match_num_fra = any(num_fra_rec == v for v in num_variantes)
                 match_concepto = False
                 if not match_num_fra and desc_prefix:
                     concepto_rec = rec[_AS_CONCEPTO].decode(_A3_ENCODING, errors="replace").strip()
@@ -974,6 +1168,35 @@ def leer_numero_asiento_desde_a3(
                         if apunte > 0:
                             return str(apunte)
             offset += rec_size
+        return None
+
+    # Primer intento: ficheros del ejercicio indicado
+    tried: set[str] = set()
+    for path in _candidate_asiento_paths(codigo_norm, ejercicio):
+        if not path.exists():
+            continue
+        tried.add(str(path).lower())
+        try:
+            result = _buscar_en_fichero(path.read_bytes())
+        except OSError:
+            continue
+        if result:
+            return result
+
+    # Segundo intento: todos los *A.DAT de la carpeta (cubre ejercicio incorrecto en la BD)
+    for folder in _candidate_dirs(codigo_norm):
+        if not folder.exists():
+            continue
+        for path in sorted(folder.glob(f"{codigo_norm}??A.DAT")):
+            if str(path).lower() in tried:
+                continue
+            tried.add(str(path).lower())
+            try:
+                result = _buscar_en_fichero(path.read_bytes())
+            except OSError:
+                continue
+            if result:
+                return result
 
     return None
 
@@ -1229,6 +1452,25 @@ def _extract_cif(text: str) -> str:
     return match.group(0).upper() if match else ""
 
 
+def _year_from_cu_path(cu_path: Path) -> "int | None":
+    """Extrae el ejercicio del nombre del fichero CU.DAT.
+
+    A3ECO nombra los ficheros como {codigo}{digit}CU.DAT donde digit = ejercicio % 10.
+    Ejemplos: 010746CU.DAT → digit 6 → 2026 ; 010745CU.DAT → digit 5 → 2025.
+    """
+    import re as _re
+    m = _re.search(r"(\d)CU$", cu_path.stem, _re.IGNORECASE)
+    if not m:
+        return None
+    digit = int(m.group(1))
+    current_year = date.today().year
+    candidate = 2020 + digit
+    # Si el candidato queda más de 1 año en el futuro, retrocedemos una decada
+    if candidate > current_year + 1:
+        candidate -= 10
+    return candidate
+
+
 def _extract_year(text: str, fallback_dirs: list[Path]) -> int:
     years = []
     for match in _YEAR_RE.findall(text):
@@ -1245,7 +1487,7 @@ def _extract_year(text: str, fallback_dirs: list[Path]) -> int:
         for child in facturas_dir.iterdir():
             if child.is_dir() and child.name.isdigit() and len(child.name) == 4:
                 years.append(int(child.name))
-    return max(years) if years else 2025
+    return max(years) if years else 0
 
 
 def _to_int(value) -> int | None:
@@ -1317,21 +1559,22 @@ def listar_empresas_a3() -> list[dict]:
         data = tecodir_path.read_bytes()
     except OSError:
         return []
-    empresas = []
+    # Recorremos todos los registros activos; si hay duplicados de codigo, el ultimo gana
+    # (el registro mas reciente en TECODIR.DAT tiene el nombre/CIF mas actualizado)
+    by_codigo: dict[str, dict] = {}
     offset = _TECODIR_HEADER
     while offset + _TECODIR_REC_SIZE <= len(data):
         rec = data[offset: offset + _TECODIR_REC_SIZE]
         if rec[0] == _TECODIR_ACTIVE:
             path_raw = _td_decode(rec, _TD_PATH).upper()
-            # Extraer codigo de empresa del path (p.ej. \A3\A3ECO\E00193\ → E00193)
             m = re.search(r"E(\d{5})", path_raw)
             if m:
                 codigo_norm = m.group(1)
                 nombre = _td_decode(rec, _TD_NOMBRE)
                 cif = _td_decode(rec, _TD_CIF)
-                empresas.append({"codigo": f"E{codigo_norm}", "nombre": nombre, "cif": cif})
+                by_codigo[codigo_norm] = {"codigo": f"E{codigo_norm}", "nombre": nombre, "cif": cif}
         offset += _TECODIR_REC_SIZE
-    return empresas
+    return list(by_codigo.values())
 
 
 def importar_empresa_desde_a3(codigo: str, digitos_plan_objetivo: int | None = None) -> dict:
@@ -1387,20 +1630,20 @@ def importar_empresa_desde_a3(codigo: str, digitos_plan_objetivo: int | None = N
     # Incluir subcuentas individuales (clientes, proveedores, inmovilizado...)
     if cu_path and digitos_plan >= 4:
         plan_cuentas_raw.extend(_leer_subcuentas_binario(cu_path, digitos_plan))
-    # Enriquecer subcuentas con NIF desde DA.DAT (terceros de A3)
-    da_path = _find_best_da_path(codigo_norm)
+    # Enriquecer subcuentas con NIF desde TCLIPRO.DAT (maestro global de terceros de A3ECO)
     nifs_encontrados = 0
-    if da_path:
-        da_entries = _leer_nifs_desde_da(da_path)
-        for item in plan_cuentas_raw:
-            desc = str(item.get("descripcion") or "").strip().upper()
-            if len(desc) < _DA_MIN_NAME_LEN:
-                continue
-            for ctx, nif in da_entries:
-                if desc in ctx:
-                    item["nif"] = nif
-                    nifs_encontrados += 1
-                    break
+    tclipro_path = _find_tclipro_path()
+    if tclipro_path and cu_path:
+        tclipro_map = _leer_tclipro(tclipro_path)
+        if tclipro_map:
+            cod_map = _leer_cod_tercero_desde_cu(cu_path)
+            for item in plan_cuentas_raw:
+                cuenta = str(item.get("cuenta") or "")
+                if cuenta in cod_map:
+                    cod = cod_map[cuenta]
+                    if cod in tclipro_map:
+                        item["nif"] = tclipro_map[cod]
+                        nifs_encontrados += 1
     plan_cuentas = _filtrar_plan_cuentas_por_digitos(plan_cuentas_raw, digitos_plan)
 
     # 4. Fuentes de respaldo: VAR y cabecera de la ficha DAT
@@ -1416,11 +1659,10 @@ def importar_empresa_desde_a3(codigo: str, digitos_plan_objetivo: int | None = N
     if dashboard_path:
         dashboard_data = _parse_dashboard_company_data(dashboard_path, codigo_norm)
 
-    # 5. Prioridad de datos: TECODIR > dashboard > VAR/EM > texto cabecera
+    # 5. Prioridad de datos: VAR/EM > dashboard > TECODIR (TECODIR puede estar desactualizado)
     nombre = str(
         tecodir_data.get("nombre")
         or dashboard_data.get("nombre")
-        or var_data.get("nombre")
         or _extract_name(text)
         or ""
     )
@@ -1438,6 +1680,7 @@ def importar_empresa_desde_a3(codigo: str, digitos_plan_objetivo: int | None = N
     email = str(tecodir_data.get("email") or var_data.get("email") or "")
     ejercicio = (
         _to_int(dashboard_data.get("ejercicio"))
+        or _year_from_cu_path(cu_path)
         or _extract_year(text, company_dirs)
         or date.today().year
     )
@@ -1453,9 +1696,9 @@ def importar_empresa_desde_a3(codigo: str, digitos_plan_objetivo: int | None = N
             f"Plan de cuentas CU ({len(plan_cuentas)} subcuentas de {digitos_plan} digitos"
             f" de {len(plan_cuentas_raw)} cuentas leidas): {cu_path}"
         )
-    if da_path:
+    if tclipro_path:
         detalle.append(
-            f"Datos terceros DA ({nifs_encontrados} NIF/CIF vinculados): {da_path}"
+            f"Maestro terceros TCLIPRO ({nifs_encontrados} NIF/CIF vinculados): {tclipro_path}"
         )
     if var_path:
         detalle.append(f"Ficha empresa VAR: {var_path}")

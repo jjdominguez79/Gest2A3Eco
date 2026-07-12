@@ -1,0 +1,197 @@
+================================================================================
+DIAGNÓSTICO IMPORTACIÓN PLAN CONTABLE DESDE A3 — EMPRESA E00380
+Fecha: 2026-07-11
+================================================================================
+
+DATOS DE LA EMPRESA
+-------------------
+Código A3   : E00380
+Nombre      : ALISHANAILS SL
+CIF         : B05288824
+Ejercicio   : 2026
+Fichero CU  : Z:\A3\A3ECO\E00380\003806CU.DAT  (599.948 bytes)
+Fichero DA  : Z:\A3\A3ECO\E00380\003806DA.DAT  ( 82.548 bytes)
+
+
+================================================================================
+RESULTADO DE LA IMPORTACIÓN
+================================================================================
+
+SIN digitos_plan_objetivo (auto-detección)
+-------------------------------------------
+  Total cuentas/subcuentas importadas : 632
+  Dígitos detectados                  : 4  ← INCORRECTO para esta empresa
+  Subcuentas individuales (8 dígitos) : 0
+  Terceros (4xxxxxxx)                 : 0
+  NIFs encontrados                    : 0
+
+  ► Causa: _deducir_digitos_plan() sólo lee las cuentas del plan principal
+    (cuentas de 1-4 dígitos) y devuelve max=4. Con ndig=4, la función
+    _leer_subcuentas_binario() no puede reconstruir los códigos de 8 dígitos
+    porque el multiplier=1 produce números de 5+ dígitos que se descartan.
+    En uso normal desde la UI, este problema no ocurre porque la UI siempre
+    pasa digitos_plan_objetivo=8 (por defecto para empresas nuevas) o el valor
+    configurado en la base de datos de la empresa.
+
+
+CON digitos_plan_objetivo=8 (como lo hace la UI)
+--------------------------------------------------
+  Total cuentas/subcuentas importadas : 1.238
+  Dígitos del plan                    : 8
+  Subcuentas individuales (8 dígitos) : 1.238
+  Terceros (cuentas 4xxxxxxx)         : 660
+  NIFs encontrados                    : 0  ← PROBLEMA PRINCIPAL
+
+  Distribución de terceros:
+    Proveedores   (400xxxxx)  : ~  (cuentas 40000001 – 400xxxxx)
+    Clientes      (430xxxxx)  : ~  (cuentas 43000001 – 430xxxxx)
+    Acreedores    (410xxxxx)  : incluidos en los 660 terceros
+
+  Muestra de las primeras 10 subcuentas de terceros (ninguna tiene NIF):
+    40000001   MLG SISTEMA 360 S.L.
+    40000002   RECEMAGO 04 S.L.
+    40000003   SENDUS 24 SL
+    40000004   CARTONAJES SANTANDER S.L.
+    40000005   RAJAPACK SA
+    40000006   NANCHANF SHI BO QIAN COSMETIC
+    40000007   GUANGZHOU RONIKI
+    40000008   FACTORIA COSMETICA S.L.
+    40000009   DH MATERIAL MEDICO S.L.
+    40000010   SEMEYA STREAM S.L.
+
+
+================================================================================
+ANÁLISIS DEL FICHERO DA.DAT (fuente prevista para los NIFs)
+================================================================================
+
+Tamaño          : 82.548 bytes
+Registros ISAM  : 317 (260 bytes/registro, cabecera 128 bytes)
+Registros activos: 315
+
+TIPOS DE REGISTRO encontrados en DA.DAT:
+  ACT  (x1)   — Actividad económica (CNAE: 614.2 COM.MAY.PTOS.PERFUMERIA...)
+  PAD  (x2)   — Datos de padrón
+  PDC  (x1)   — Persona de contacto
+  REP  (x2)   — Representante legal
+  REX  (x2)   — Representante legal externo
+  SI2  (x2)   — Situación fiscal
+  SIS  (x2)   — Sistema de IVA
+  BLD  (x1)   — ?
+  CCI  (x1)   — ?
+  30T  (x272) — Modelo 30T (IGIC/IVA trimestral?)
+  30M  (x2)   — Modelo 30M
+  FEB  (x1)   — Fecha de baja
+  FEC  (x4)   — Fechas
+  IVA  (x9)   — Datos de IVA
+  RES  (x1)   — Resultado declaración
+  SIT  (x2)   — Situación
+  303  (x2)   — Modelo 303 (IVA)
+  SGI  (x3)   — ?
+  CLQ  (x1)   — ?
+  110  (x2)   — Modelo 110 (IRPF retenciones)
+  349  (x2)   — Modelo 349 (operaciones intracomunitarias)
+
+CONCLUSIÓN CRÍTICA:
+  ► El fichero DA.DAT NO es un fichero de terceros (clientes/proveedores).
+    Es el fichero de DECLARACIONES FISCALES ANUALES de la empresa (modelo 303,
+    modelo 110, modelo 349, datos de actividad CNAE, representantes legales, etc.)
+
+  NIFs encontrados en DA.DAT: 6  — pero son EXCLUSIVAMENTE para:
+    72097954S  — Representante legal: VECI PEREZ, ALBA (registro tipo REP)
+    72101267Q  — Representante legal: SANTOS OCHAGAVIAS, NOELIA (registro tipo REP)
+
+  ► No hay ningún NIF de cliente o proveedor en DA.DAT.
+  ► La estrategia de enriquecimiento del plan contable con NIFs desde DA.DAT
+    es incorrecta por diseño: este fichero no contiene datos de terceros contables.
+
+
+NUEVA FUNCIÓN _leer_nifs_desde_da_por_codigo():
+  Resultado: dict vacío (0 entradas)
+  ► Comportamiento correcto: al no encontrar registros con estructura de
+    subcuenta (bytes 1-3 = cuenta padre, bytes 4-7 = índice * multiplier,
+    bytes 53-61 = NIF), devuelve {} y activa el fallback por nombre.
+
+FALLBACK _leer_nifs_desde_da() (búsqueda por regex + nombre):
+  NIFs detectados por regex en todo el fichero: 6
+  NIFs vinculados al plan por nombre: 0 o 1 (coincidencia aleatoria)
+  ► Resultado inútil: incluso el fallback da 0 o 1 NIF relevante.
+
+
+================================================================================
+OTROS FICHEROS EXPLORADOS (ejercicio 6)
+================================================================================
+
+003806DC.DAT  (95.808 bytes, 367 reg. ISAM)  — NIFs encontrados: 0
+  Tipo de fichero: desconocido (posiblemente Datos de Cobros o Contribuyentes)
+  No contiene NIFs de terceros.
+
+003806CV.DAT  (27.948 bytes, 107 reg. ISAM)  — NIFs encontrados: 0
+  No contiene NIFs de terceros.
+
+003806RI.DAT  (22.384 bytes,  85 reg. ISAM)  — NIFs encontrados: 0
+  Registro de IVA. No contiene NIFs de terceros en formato parseable.
+
+003806TM.DAT  ( 2.208 bytes,   8 reg. ISAM)  — NIFs encontrados: 8
+  Fichero de Trabajadores/Modelo 111-190. Contiene NIFs de empleados:
+    72097954S — VECI PEREZ, ALBA
+    72101267Q — SANTOS OCHAGAVIAS, NOELIA
+  NO contiene NIFs de clientes ni proveedores.
+
+0038061A.DAT – 0038067A.DAT  (asientos del ejercicio 6):
+  Contienen patrones que coinciden con la regex de NIF (D00000000, H00000000,
+  20260023F, etc.) pero son IMPORTES y NÚMEROS DE ASIENTO, no NIFs reales.
+
+
+================================================================================
+CONCLUSIÓN GENERAL
+================================================================================
+
+A3ECO NO almacena el NIF de clientes/proveedores vinculado a su subcuenta
+contable en ningún fichero binario estándar de la carpeta de empresa.
+
+  - CU.DAT: código de subcuenta + nombre (30 chars). SIN NIF.
+  - DA.DAT: declaraciones fiscales anuales de la empresa. SIN NIF de terceros.
+  - DC.DAT, CV.DAT, RI.DAT: otros datos contables. SIN NIF de terceros.
+  - TM.DAT: empleados y retenciones. SOLO NIFs de trabajadores.
+
+La vinculación NIF ↔ subcuenta contable en A3ECO se gestiona internamente en
+su base de datos propietaria y NO se exporta a los ficheros ISAM binarios de
+forma directa.
+
+CONSECUENCIA PARA LA IMPORTACIÓN:
+  El enriquecimiento automático de NIFs desde A3 (fichero DA.DAT) no funciona
+  para NINGUNA empresa porque el fichero DA.DAT no contiene los datos esperados.
+
+  La única vía para importar NIFs junto con el plan contable desde A3ECO es:
+  1. Exportar el plan contable a Excel desde A3ECO incluyendo la columna NIF.
+  2. Importar ese Excel desde Gest2A3Eco (Maestro Cuentas → Importar desde Excel).
+  ► Esta vía SÍ funciona correctamente porque el Excel incluye la columna NIF.
+
+
+================================================================================
+BUGS IDENTIFICADOS
+================================================================================
+
+BUG 1 (menor, no afecta al flujo normal de la UI):
+  _deducir_digitos_plan() devuelve 4 para empresas con plan de 8 dígitos
+  porque solo analiza las cuentas principales (1-4 dígitos). Si se llama a
+  importar_empresa_desde_a3() sin digitos_plan_objetivo, se pierden todas las
+  subcuentas individuales.
+  → La UI siempre pasa digitos_plan_objetivo, por lo que no afecta al usuario.
+
+BUG 2 (mayor, es la raíz del problema reportado):
+  _find_best_da_path() localiza el fichero DA.DAT correcto, pero DA.DAT
+  contiene declaraciones fiscales anuales (modelos 303, 110, 349, etc.),
+  NO datos de terceros contables. La hipótesis de trabajo que motivó el uso
+  de DA.DAT para extraer NIFs era incorrecta.
+  → No existe una fuente binaria alternativa en los ficheros ISAM de A3ECO
+    que contenga NIFs de terceros vinculados a sus subcuentas contables.
+
+CORRECCIÓN YA APLICADA (commit pendiente):
+  Se añadió _leer_nifs_desde_da_por_codigo() que intenta el match por código
+  de subcuenta antes que por nombre. Al devolver {} para DA.DAT (correcto, ya
+  que no tiene esa estructura), activa el fallback por nombre. El resultado
+  final es igualmente 0 NIFs, pero el código ahora falla de forma más limpia
+  y el diagnóstico es más informativo (0 NIFs en la estrategia primaria).
+
+================================================================================

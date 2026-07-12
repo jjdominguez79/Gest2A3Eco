@@ -125,6 +125,16 @@ def _cuenta_ingreso_tercero(terceros_by_nif: Dict[str, Dict[str, Any]] | None, n
     return _ajustar_cuenta(raw, ndig)
 
 
+def _subcuenta_cliente_tercero(terceros_by_nif: Dict[str, Dict[str, Any]] | None, nif: str, ndig: int) -> str:
+    """Devuelve la subcuenta_cliente del maestro de terceros para el NIF dado."""
+    if not terceros_by_nif or not nif:
+        return ""
+    raw = (terceros_by_nif.get(nif) or {}).get("subcuenta_cliente")
+    if not raw:
+        return ""
+    return _ajustar_cuenta(raw, ndig)
+
+
 def generar_emitidas(
     rows: List[Dict[str, Any]],
     plantilla: Dict[str, Any],
@@ -133,6 +143,7 @@ def generar_emitidas(
     ejercicio: int | None = None,
     terceros_by_nif: Dict[str, Dict[str, Any]] | None = None,
     formato_512: bool = False,
+    out_subcuentas_c: list | None = None,
 ) -> List[str]:
     """
     Genera registros de SUENLACE para FACTURAS EMITIDAS
@@ -150,6 +161,7 @@ def generar_emitidas(
         grupos[_key_factura(rec)].append(rec)
 
     registros: List[str] = []
+    seen_subcuentas_c: set = set()
     render_cab = render_emitidas_cabecera_512 if formato_512 else render_emitidas_cabecera_256
     render_det = render_emitidas_detalle_512 if formato_512 else render_emitidas_detalle_256
     for (_, _id), grecs in grupos.items():
@@ -198,7 +210,7 @@ def generar_emitidas(
         desc_det = f"Ventas a {nombre}".strip() if nombre else "Ventas"
 
         # Subcuenta: si no hay mapeo o no viene informada, usa generica
-        # Override manual por fila (desde preview de importacion)
+        # Prioridad: override manual > columna Excel > maestro terceros por NIF > generica
         subcliente_override = str(r0.get("_subcuenta_cliente_override") or "").strip()
         if subcliente_override:
             subcliente = _ajustar_cuenta(subcliente_override, ndig)
@@ -208,7 +220,30 @@ def generar_emitidas(
                 dig_cta = "".join(ch for ch in cta_excel if ch.isdigit()) or "0"
                 subcliente = (dig_cta + "0" * ndig)[:ndig]
             else:
-                subcliente = _subcuenta_generica(plantilla, ndig)
+                subcliente_ter = _subcuenta_cliente_tercero(terceros_by_nif, nif, ndig)
+                subcliente = subcliente_ter or _subcuenta_generica(plantilla, ndig)
+
+        # Tipo C: alta/modificacion de subcuenta en plan contable y maestro terceros A3
+        if nif and subcliente not in seen_subcuentas_c:
+            seen_subcuentas_c.add(subcliente)
+            if out_subcuentas_c is not None:
+                out_subcuentas_c.append({"subcuenta": subcliente, "nif": nif, "nombre": nombre})
+            registros.append(
+                render_a3_tipoC_alta_cuenta(
+                    codigo_empresa=codigo_empresa,
+                    fecha_alta=fecha,
+                    cuenta=subcliente,
+                    ndig_plan=ndig,
+                    nombre=nombre,
+                    nif=nif,
+                    municipio=datos_ter.get("poblacion", ""),
+                    cp=datos_ter.get("cp", ""),
+                    provincia=datos_ter.get("provincia", ""),
+                    telefono=datos_ter.get("telefono", ""),
+                    email=datos_ter.get("email", ""),
+                    cuenta_contrapartida=cta_ventas_def,
+                )
+            )
 
         # Total factura: suma de bases + IVA + recargo + retencion.
         # Regla de signo de retencion:

@@ -191,6 +191,8 @@ class UIMaestroCuentas(tk.Frame):
             subcuenta = str(r.get("subcuenta") or "")
             nombre = str(r.get("nombre_subcuenta") or "")
             nif = str(r.get("nif_snapshot") or "")
+            if nif.strip().upper() in ("NAN", "NONE", "NULL"):
+                nif = ""
             tipo = str(r.get("tipo_subcuenta") or "")
             tercero_id = str(r.get("tercero_id") or "").strip()
             rel = self._rels_by_tercero.get(tercero_id) or {}

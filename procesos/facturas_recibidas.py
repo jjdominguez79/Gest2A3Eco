@@ -280,6 +280,7 @@ def generar_recibidas_suenlace(
     ndig: int,
     ejercicio: int | None = None,
     terceros_by_nif: Dict[str, Dict[str, Any]] | None = None,
+    out_subcuentas_c: list | None = None,
 ) -> List[str]:
     """
     Genera registros SUENLACE (cabecera tipo 1/2 + detalle tipo 9, formato 254)
@@ -293,6 +294,7 @@ def generar_recibidas_suenlace(
         grupos[_key_factura(rec)].append(rec)
 
     registros: List[str] = []
+    seen_subcuentas_c: set = set()
     for (_, _id), grecs in grupos.items():
         if not grecs:
             continue
@@ -322,6 +324,29 @@ def generar_recibidas_suenlace(
         nif = datos_ter.get("nif", "")
         nombre = datos_ter.get("nombre", "")
         c_gasto_ter = _cuenta_gasto_tercero(terceros_by_nif, nif, ndig)
+
+        # Tipo C: alta/modificacion de subcuenta en plan contable y maestro terceros A3
+        if nif and c_prov not in seen_subcuentas_c:
+            seen_subcuentas_c.add(c_prov)
+            if out_subcuentas_c is not None:
+                out_subcuentas_c.append({"subcuenta": c_prov, "nif": nif, "nombre": nombre})
+            registros.append(
+                render_a3_tipoC_alta_cuenta(
+                    codigo_empresa=codigo_empresa,
+                    fecha_alta=fecha,
+                    cuenta=c_prov,
+                    ndig_plan=ndig,
+                    nombre=nombre,
+                    nif=nif,
+                    municipio=datos_ter.get("poblacion", ""),
+                    cp=datos_ter.get("cp", ""),
+                    provincia=datos_ter.get("provincia", ""),
+                    telefono=datos_ter.get("telefono", ""),
+                    email=datos_ter.get("email", ""),
+                    cuenta_contrapartida=cta_gasto_def,
+                )
+            )
+
         ref_doc = str(r0.get("_pdf_ref") or r0.get("Referencia Doc") or "").strip()
         desc_cab = f"Su Fra Nº. {num_fact}".strip()
         desc_det = f"Compras a {nombre}".strip() if nombre else "Compras"

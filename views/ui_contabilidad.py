@@ -122,10 +122,6 @@ class UIContabilidad(ttk.Frame):
             command=self.emitidas_ctrl.resetear_generadas,
         ).pack(side=tk.LEFT, padx=6)
         ttk.Button(
-            bar, text="Capturar asiento de A3",
-            command=self.emitidas_ctrl.capturar_numero_asiento_desde_a3,
-        ).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(
             bar, text="Marcar con asiento como generadas",
             command=self.emitidas_ctrl.marcar_con_asiento_como_generadas,
         ).pack(side=tk.LEFT)

@@ -445,6 +445,7 @@ class GestorSQLite:
             self._migrate_maestro_subcuentas()
             self._migrate_notificaciones()
             self._migrate_seguridad_social()
+            self._migrate_prefijo_ingreso_empresa()
             if json_seed:
                 self._maybe_seed_from_json(json_seed)
         except Exception as exc:
@@ -1271,6 +1272,41 @@ class GestorSQLite:
         if not existe:
             self._clonar_plantillas_si_hace_falta(emp.get("codigo"), emp.get("ejercicio"))
 
+    # ---------- Cuenta ingreso predeterminada en maestro ----------
+    def _migrate_prefijo_ingreso_empresa(self):
+        """Para E00090: rellena cuenta_ingreso_predeterminada_id en maestro_subcuentas_empresa.
+
+        Para cada subcuenta de cliente (430XXXXX) que no tenga ya ingreso configurado,
+        deriva la cuenta de ingreso sustituyendo el prefijo 430 por 438.
+        Ej: 43000001 → 43800001, 43000002 → 43800002.
+        Solo actua si la subcuenta 438XXXXX correspondiente existe en el maestro.
+        """
+        rows = self.conn.execute(
+            """
+            SELECT id, subcuenta
+              FROM maestro_subcuentas_empresa
+             WHERE codigo_empresa = 'E00090'
+               AND subcuenta LIKE '430%'
+               AND (cuenta_ingreso_predeterminada_id IS NULL
+                    OR cuenta_ingreso_predeterminada_id = '')
+            """
+        ).fetchall()
+        for row in rows:
+            subcuenta = str(row[1] or "")
+            if len(subcuenta) >= 3:
+                ingreso = "438" + subcuenta[3:]
+                # Verificar que la subcuenta 438XXXXX existe en el maestro
+                existe = self.conn.execute(
+                    "SELECT 1 FROM maestro_subcuentas_empresa WHERE codigo_empresa='E00090' AND subcuenta=?",
+                    (ingreso,),
+                ).fetchone()
+                if existe:
+                    self.conn.execute(
+                        "UPDATE maestro_subcuentas_empresa SET cuenta_ingreso_predeterminada_id=? WHERE id=?",
+                        (ingreso, row[0]),
+                    )
+        self.conn.commit()
+
     # ---------- Seguridad Social: NAF / CCC ----------
     def _migrate_seguridad_social(self):
         self._ensure_column("empresas", "naf", "TEXT")
@@ -1789,16 +1825,16 @@ class GestorSQLite:
             return
         qmarks = ",".join("?" for _ in ids)
         self.conn.execute(
-            f"UPDATE facturas_emitidas_docs SET estado_contable='pendiente' WHERE codigo_empresa=? AND ejercicio=? AND (estado_contable IS NULL OR estado_contable='') AND id IN ({qmarks})",
-            (codigo_empresa, _ej_val(ejercicio), *ids),
+            f"UPDATE facturas_emitidas_docs SET estado_contable='pendiente' WHERE codigo_empresa=? AND (estado_contable IS NULL OR estado_contable='') AND id IN ({qmarks})",
+            (codigo_empresa, *ids),
         )
         self.conn.commit()
 
     def listar_facturas_emitidas_en_contabilidad(self, codigo_empresa: str, ejercicio: int):
-        """Devuelve las facturas emitidas con estado_contable pendiente o generado."""
+        """Devuelve las facturas emitidas con estado_contable pendiente o generado (todos los ejercicios)."""
         cur = self.conn.execute(
-            "SELECT * FROM facturas_emitidas_docs WHERE codigo_empresa=? AND ejercicio=? AND estado_contable IS NOT NULL AND estado_contable != '' ORDER BY fecha_asiento, numero",
-            (codigo_empresa, _ej_val(ejercicio)),
+            "SELECT * FROM facturas_emitidas_docs WHERE codigo_empresa=? AND estado_contable IS NOT NULL AND estado_contable != '' ORDER BY fecha_asiento, numero",
+            (codigo_empresa,),
         )
         out = []
         for r in cur.fetchall():
@@ -1820,8 +1856,8 @@ class GestorSQLite:
             return 0
         qmarks = ",".join("?" for _ in ids)
         cur = self.conn.execute(
-            f"UPDATE facturas_emitidas_docs SET estado_contable=NULL WHERE codigo_empresa=? AND ejercicio=? AND estado_contable='pendiente' AND id IN ({qmarks})",
-            (codigo_empresa, _ej_val(ejercicio), *ids),
+            f"UPDATE facturas_emitidas_docs SET estado_contable=NULL WHERE codigo_empresa=? AND estado_contable='pendiente' AND id IN ({qmarks})",
+            (codigo_empresa, *ids),
         )
         self.conn.commit()
         return cur.rowcount
@@ -1831,10 +1867,10 @@ class GestorSQLite:
         cur = self.conn.execute(
             """UPDATE facturas_emitidas_docs
                SET estado_contable='generado'
-               WHERE codigo_empresa=? AND ejercicio=?
+               WHERE codigo_empresa=?
                  AND estado_contable='pendiente'
                  AND numero_asiento IS NOT NULL AND TRIM(numero_asiento) != ''""",
-            (codigo_empresa, _ej_val(ejercicio)),
+            (codigo_empresa,),
         )
         self.conn.commit()
         return cur.rowcount
@@ -1846,8 +1882,8 @@ class GestorSQLite:
             return 0
         qmarks = ",".join("?" for _ in ids)
         cur = self.conn.execute(
-            f"UPDATE facturas_emitidas_docs SET estado_contable=NULL WHERE codigo_empresa=? AND ejercicio=? AND estado_contable='generado' AND id IN ({qmarks})",
-            (codigo_empresa, _ej_val(ejercicio), *ids),
+            f"UPDATE facturas_emitidas_docs SET estado_contable=NULL WHERE codigo_empresa=? AND estado_contable='generado' AND id IN ({qmarks})",
+            (codigo_empresa, *ids),
         )
         self.conn.commit()
         return cur.rowcount
@@ -2094,12 +2130,12 @@ class GestorSQLite:
             return
         qmarks = ",".join("?" for _ in ids)
         self.conn.execute(
-            f"UPDATE facturas_emitidas_docs SET generada=1, fecha_generacion=? WHERE codigo_empresa=? AND ejercicio=? AND id IN ({qmarks})",
-            (fecha, codigo_empresa, _ej_val(ejercicio), *ids),
+            f"UPDATE facturas_emitidas_docs SET generada=1, fecha_generacion=? WHERE codigo_empresa=? AND id IN ({qmarks})",
+            (fecha, codigo_empresa, *ids),
         )
         self.conn.execute(
-            f"UPDATE facturas_emitidas_docs SET estado_contable='generado' WHERE codigo_empresa=? AND ejercicio=? AND estado_contable='pendiente' AND id IN ({qmarks})",
-            (codigo_empresa, _ej_val(ejercicio), *ids),
+            f"UPDATE facturas_emitidas_docs SET estado_contable='generado' WHERE codigo_empresa=? AND estado_contable='pendiente' AND id IN ({qmarks})",
+            (codigo_empresa, *ids),
         )
         self.conn.commit()
 
@@ -3656,6 +3692,19 @@ class GestorSQLite:
             "UPDATE maestro_subcuentas_empresa"
             " SET pendiente_alta_a3=0, fecha_alta_a3=?, lote_alta_a3=?, updated_at=? WHERE id=?",
             (now, lote, now, int(subcuenta_id)),
+        )
+        self.conn.commit()
+
+    def marcar_subcuenta_enlazada_a3_por_cuenta(
+        self, codigo_empresa: str, subcuenta: str, observaciones: str = "", lote: str | None = None
+    ) -> None:
+        now = self._utc_now()
+        self.conn.execute(
+            """UPDATE maestro_subcuentas_empresa
+               SET pendiente_alta_a3=0, fecha_alta_a3=?, lote_alta_a3=?,
+                   observaciones=?, updated_at=?
+               WHERE codigo_empresa=? AND subcuenta=?""",
+            (now, lote, observaciones or None, now, str(codigo_empresa), str(subcuenta)),
         )
         self.conn.commit()
 

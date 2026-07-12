@@ -316,6 +316,7 @@ class ProcesosController:
                     nif = self._norm_nif(t.get("nif"))
                     if nif:
                         terceros_by_nif[nif] = t
+                subcuentas_c_emitidas: list = []
                 registros = generar_emitidas(
                     rows,
                     pl,
@@ -323,13 +324,21 @@ class ProcesosController:
                     ndig,
                     ejercicio=self._ejercicio,
                     terceros_by_nif=terceros_by_nif,
+                    out_subcuentas_c=subcuentas_c_emitidas,
                 )
                 if registros:
                     save_path = self._view.ask_save_path(f"{self._codigo_empresa_a3()}.dat")
                     if not save_path:
                         return
+                    lote = os.path.basename(save_path)
                     with open(save_path, "w", encoding="latin-1", newline="") as f:
                         f.writelines(registros)
+                    for sc in subcuentas_c_emitidas:
+                        self._gestor.marcar_subcuenta_enlazada_a3_por_cuenta(
+                            codigo_empresa, sc["subcuenta"],
+                            observaciones="Alta enviada desde generacion de asiento",
+                            lote=lote,
+                        )
                     self._view.show_info("Gest2A3Eco", f"Fichero generado:\n{save_path}")
                 else:
                     self._view.show_warning("Gest2A3Eco", "No se generaron registros para facturas emitidas.")
@@ -372,6 +381,7 @@ class ProcesosController:
                 nif = self._norm_nif(t.get("nif"))
                 if nif:
                     terceros_by_nif[nif] = t
+            subcuentas_c_recibidas: list = []
             out_lines = generar_recibidas_suenlace(
                 rows,
                 pl,
@@ -379,14 +389,22 @@ class ProcesosController:
                 ndig,
                 ejercicio=self._ejercicio,
                 terceros_by_nif=terceros_by_nif,
+                out_subcuentas_c=subcuentas_c_recibidas,
             )
             avisos = []
             if out_lines:
                 save_path = self._view.ask_save_path(f"{self._codigo_empresa_a3()}.dat")
                 if not save_path:
                     return
+                lote = os.path.basename(save_path)
                 with open(save_path, "w", encoding="latin-1", newline="") as f:
                     f.writelines(out_lines)
+                for sc in subcuentas_c_recibidas:
+                    self._gestor.marcar_subcuenta_enlazada_a3_por_cuenta(
+                        codigo_empresa, sc["subcuenta"],
+                        observaciones="Alta enviada desde generacion de asiento",
+                        lote=lote,
+                    )
                 msg = f"Fichero generado:\n{save_path}"
                 if avisos:
                     preview = "\n".join(avisos[:10])

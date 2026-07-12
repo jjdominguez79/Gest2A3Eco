@@ -149,10 +149,8 @@ class UIConfiguracionEmpresa(ttk.Frame):
 
         btn_row = ttk.Frame(tab)
         btn_row.grid(row=0, column=2, columnspan=2, sticky="e", pady=4)
-        ttk.Button(btn_row, text="Buscar en A3...",
-                   command=self._browse_a3_companies).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_row, text="Importar datos de A3", style="Primary.TButton",
-                   command=self._import_from_a3).pack(side=tk.LEFT)
+        ttk.Button(btn_row, text="Buscar e importar de A3...", style="Primary.TButton",
+                   command=self._browse_a3_companies).pack(side=tk.LEFT)
 
         ttk.Checkbutton(tab, text="Activo", variable=self.var_activo).grid(
             row=2, column=3, sticky="w", pady=4)
@@ -1053,7 +1051,7 @@ class UIConfiguracionEmpresa(ttk.Frame):
         tree.bind("<Return>", _on_select_ok)
         btns = ttk.Frame(frm)
         btns.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(8, 0))
-        ttk.Button(btns, text="Seleccionar", style="Primary.TButton",
+        ttk.Button(btns, text="Importar", style="Primary.TButton",
                    command=_on_select_ok).pack(side=tk.LEFT)
         ttk.Button(btns, text="Cancelar", command=top.destroy).pack(side=tk.LEFT, padx=(6, 0))
         _render()
@@ -1066,7 +1064,11 @@ class UIConfiguracionEmpresa(ttk.Frame):
 
     def _import_from_a3(self):
         try:
-            data = importar_empresa_desde_a3(self.var_codigo.get())
+            digitos = int(self.var_dig.get() or 8)
+        except (ValueError, AttributeError):
+            digitos = 8
+        try:
+            data = importar_empresa_desde_a3(self.var_codigo.get(), digitos_plan_objetivo=digitos)
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc))
             return
