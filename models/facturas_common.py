@@ -298,10 +298,12 @@ def render_a3_tipo0_bancos(lineas: List[Linea], codigo_empresa: str, ndig_plan: 
 # RENDER 512 BYTES: FACTURAS (CABECERA TIPO 1/2) + DETALLE TIPO 9
 # ─────────────────────────────────────────────────────────────────────────────
 def _porc_5(xx) -> str:
-    # “xx.xx” → exactamente 5 posiciones
+    # "xx.xx" → exactamente 5 posiciones
     try:
         v = float(str(xx).replace(",", "."))
     except Exception:
+        v = 0.0
+    if not (v == v):  # NaN check
         v = 0.0
     return f"{v:05.2f}"[-5:]
 

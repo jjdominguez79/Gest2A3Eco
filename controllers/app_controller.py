@@ -83,6 +83,32 @@ class AppController:
             return
         shell = self._get_or_create_shell(codigo, ejercicio)
         shell.show_dashboard()
+        self._content.after(400, lambda: self._avisar_cuotas_pendientes(codigo, ejercicio))
+
+    def _avisar_cuotas_pendientes(self, codigo, ejercicio):
+        """Comprueba cuotas pendientes de generar para la empresa y muestra aviso si las hay."""
+        try:
+            from datetime import date
+            from controllers.ui_cuotas_controller import CuotasController
+            empresa_conf = self._gestor.get_empresa(codigo, ejercicio) or {}
+            ctrl = CuotasController(self._gestor, codigo, int(ejercicio), empresa_conf)
+            pendientes = ctrl.calcular_cuotas_pendientes(hasta=date.today())
+            if not pendientes:
+                return
+            total_periodos = sum(len(p["periodos"]) for p in pendientes)
+            nombres = [p["cuota"].get("nombre") or p["cuota"].get("nif") or "?" for p in pendientes[:5]]
+            detalle = "\n".join(f"  - {n}" for n in nombres)
+            if len(pendientes) > 5:
+                detalle += f"\n  ... y {len(pendientes) - 5} mas"
+            msg = (
+                f"Hay {total_periodos} periodo(s) pendiente(s) de facturar "
+                f"en {len(pendientes)} cuota(s):\n\n{detalle}\n\n"
+                "Puedes generarlas desde Facturacion > Cuotas periodicas > Generar pendientes."
+            )
+            messagebox.showinfo("Cuotas pendientes", msg,
+                                parent=self._content.winfo_toplevel())
+        except Exception:
+            pass
 
     def open_company_module(self, codigo, ejercicio, modulo="dashboard", nombre=None):
         try:

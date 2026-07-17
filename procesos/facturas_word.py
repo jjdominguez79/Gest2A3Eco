@@ -291,6 +291,43 @@ def render_docx(template_path: str, context: Dict[str, Any], out_docx_path: str)
     ctx = _escape_context(ctx)
     doc.render(ctx)
     doc.save(out_docx_path)
+    _fix_first_page_header(out_docx_path)
+
+
+def _fix_first_page_header(docx_path: str) -> None:
+    """
+    Elimina la referencia al header de 'primera pagina' del sectPr cuando no hay <w:titlePg/>.
+
+    Algunos templates Word contienen un <w:headerReference w:type="first" .../> residual
+    (del momento en que se activo 'Primera pagina diferente' y luego se desactivo).
+    Al abrir el .docx via Word COM para convertir a PDF, Word puede activar
+    automaticamente 'Primera pagina diferente' al detectar esa referencia, usando
+    el header de primera pagina (vacio) en lugar del default (que tiene los datos del cliente).
+    """
+    import zipfile
+    import re
+
+    tmp_path = docx_path + ".hdr.tmp"
+    try:
+        with zipfile.ZipFile(docx_path, "r") as zin:
+            doc_xml = zin.read("word/document.xml").decode("utf-8")
+            has_first_hdr = bool(re.search(r'<w:headerReference\s+w:type="first"', doc_xml))
+            has_title_pg = "<w:titlePg" in doc_xml
+            if not has_first_hdr or has_title_pg:
+                return  # No fix needed
+            fixed_doc = re.sub(
+                r'\s*<w:headerReference\s+w:type="first"[^/]*/>', "", doc_xml
+            )
+            with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    data = fixed_doc.encode("utf-8") if item.filename == "word/document.xml" else zin.read(item.filename)
+                    zout.writestr(item, data)
+        os.replace(tmp_path, docx_path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
 
 
 def _escape_context(value: Any) -> Any:

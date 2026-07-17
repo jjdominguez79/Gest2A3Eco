@@ -1191,7 +1191,21 @@ class FacturasEmitidasController:
             else:
                 num_factura = num_contable
             descripcion = str(fac.get("descripcion") or "").strip()
-            asiento = leer_numero_asiento_desde_a3(codigo_a3, self._ejercicio, num_factura, descripcion)
+            # Extraer mes de fecha_asiento para priorizar el fichero mensual correcto
+            mes_asiento: int | None = None
+            fecha_asiento_str = str(fac.get("fecha_asiento") or "").strip()
+            if fecha_asiento_str:
+                try:
+                    from datetime import datetime as _dt
+                    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+                        try:
+                            mes_asiento = _dt.strptime(fecha_asiento_str, fmt).month
+                            break
+                        except ValueError:
+                            continue
+                except Exception:
+                    pass
+            asiento = leer_numero_asiento_desde_a3(codigo_a3, self._ejercicio, num_factura, descripcion, mes=mes_asiento)
             if asiento:
                 fac["numero_asiento"] = asiento
                 self._gestor.upsert_factura_emitida(fac)
@@ -1624,7 +1638,26 @@ class FacturasEmitidasController:
         if cli is None:
             fac_nif = normalizar_nif_cif(str(fac.get("nif") or ""))
             if fac_nif:
-                cli = self._gestor.get_tercero_by_nif(fac_nif)
+                # Buscar primero por NIF normalizado (sin guiones ni puntos) para
+                # evitar fallos de coincidencia cuando la BD guarda el NIF con
+                # formato distinto al de la factura (ej: "12.345.678-A" vs "12345678A")
+                cli = (
+                    self._gestor.get_tercero_by_nif_normalizado(fac_nif)
+                    or self._gestor.get_tercero_by_nif(fac_nif)
+                )
+        if cli is None:
+            # Ultimo recurso: buscar por nombre (para facturas con tercero_id obsoleto
+            # y sin NIF almacenado, como las migradas de sistemas anteriores).
+            # Se acepta coincidencia exacta o cuando el nombre del tercero empieza
+            # por el nombre de la factura (que puede estar truncado).
+            fac_nombre = str(fac.get("nombre") or "").strip().upper()
+            if fac_nombre:
+                todos = self._gestor.listar_terceros()
+                for t in todos:
+                    t_nombre = str(t.get("nombre") or "").strip().upper()
+                    if t_nombre == fac_nombre or t_nombre.startswith(fac_nombre):
+                        cli = t
+                        break
         if cli is None:
             cli = {}
         cp = cli.get("cp", "")
@@ -1889,24 +1922,50 @@ class FacturasEmitidasController:
             return ""
 
         if os.path.exists(app_path):
-            # Comprobar si la factura fue modificada despues de que se genero el PDF
-            fac_updated = str(fac.get("updated_at") or "").strip()
             pdf_obsoleto = False
-            if fac_updated:
+            try:
+                pdf_mtime = datetime.fromtimestamp(os.path.getmtime(app_path))
+            except Exception:
+                pdf_mtime = None
+
+            # Comprobar si la factura fue modificada despues de que se genero el PDF
+            if not pdf_obsoleto and pdf_mtime:
+                fac_updated = str(fac.get("updated_at") or "").strip()
+                if fac_updated:
+                    try:
+                        fac_str = fac_updated.replace("T", " ").replace("Z", "").strip()[:19]
+                        fac_dt = datetime.strptime(fac_str, "%Y-%m-%d %H:%M:%S")
+                        if fac_dt > pdf_mtime:
+                            pdf_obsoleto = True
+                            _pdf_log.info(
+                                "PDF obsoleto para factura id=%s (updated_at=%s > pdf_mtime=%s);"
+                                " regenerando: %s",
+                                fac.get("id"), fac_dt, pdf_mtime, app_path,
+                            )
+                    except Exception:
+                        pass
+
+            # Comprobar si el generador Word o el controlador fueron actualizados
+            if not pdf_obsoleto and pdf_mtime:
                 try:
-                    pdf_mtime = datetime.fromtimestamp(os.path.getmtime(app_path))
-                    # updated_at puede incluir 'T', 'Z' u offset; normalizar a YYYY-MM-DD HH:MM:SS
-                    fac_str = fac_updated.replace("T", " ").replace("Z", "").strip()[:19]
-                    fac_dt = datetime.strptime(fac_str, "%Y-%m-%d %H:%M:%S")
-                    if fac_dt > pdf_mtime:
-                        pdf_obsoleto = True
-                        _pdf_log.info(
-                            "PDF obsoleto para factura id=%s (updated_at=%s > pdf_mtime=%s);"
-                            " regenerando: %s",
-                            fac.get("id"), fac_dt, pdf_mtime, app_path,
-                        )
+                    import procesos.facturas_word as _fw_mod
+                    import inspect as _inspect
+                    _code_files = [_inspect.getfile(_fw_mod), __file__]
+                    for _cf in _code_files:
+                        try:
+                            _cf_mtime = datetime.fromtimestamp(os.path.getmtime(_cf))
+                        except Exception:
+                            continue
+                        if _cf_mtime > pdf_mtime:
+                            pdf_obsoleto = True
+                            _pdf_log.info(
+                                "PDF obsoleto para factura id=%s: %s actualizado"
+                                " (%s > pdf %s); regenerando: %s",
+                                fac.get("id"), os.path.basename(_cf), _cf_mtime, pdf_mtime, app_path,
+                            )
+                            break
                 except Exception:
-                    pass  # Si no podemos comparar, usamos el PDF existente
+                    pass
 
             # Comprobar si la config de empresa cambio despues de que se genero el PDF
             if not pdf_obsoleto:

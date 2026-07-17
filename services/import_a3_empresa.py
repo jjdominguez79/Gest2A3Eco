@@ -933,14 +933,36 @@ def _isam_rec_size_from_header(data: bytes) -> int:
     return (max_len + 4) if max_len > 0 else 0
 
 
-def _candidate_asiento_paths(codigo_norm: str, ejercicio: int) -> list[Path]:
+def _mes_a_codigo(mes: int) -> str:
+    """Convierte número de mes (1-12) al código de mes A3ECO."""
+    _codigos = list("123456789") + ["O", "N", "D"]
+    if 1 <= mes <= 12:
+        return _codigos[mes - 1]
+    return ""
+
+
+def _candidate_asiento_paths(
+    codigo_norm: str,
+    ejercicio: int,
+    mes_preferido: int | None = None,
+) -> list[Path]:
     """
     Localiza los ficheros de asientos {codigo}{ej_digit}{mes}A.DAT
     de un ejercicio dado. A3ECO genera un fichero por mes:
       1..9 = enero..septiembre, O=octubre, N=noviembre, D=diciembre, I=cierre.
+
+    Si se indica mes_preferido (1-12), ese fichero mensual aparece primero en
+    la lista, lo que garantiza que en empresas con numeracion mensual se busque
+    antes en el mes correcto.
     """
     ej_digit = str(ejercicio % 10)
-    meses = list("123456789") + ["O", "N", "D", "I"]
+    meses_todos = list("123456789") + ["O", "N", "D", "I"]
+    # Si hay mes preferido, construir lista con ese mes delante
+    cod_pref = _mes_a_codigo(mes_preferido) if mes_preferido else ""
+    if cod_pref:
+        meses = [cod_pref] + [m for m in meses_todos if m != cod_pref]
+    else:
+        meses = meses_todos
     seen: set[str] = set()
     out: list[Path] = []
     for folder in _candidate_dirs(codigo_norm):
@@ -1108,6 +1130,7 @@ def leer_numero_asiento_desde_a3(
     ejercicio: int,
     num_factura: str,
     descripcion: str = "",
+    mes: int | None = None,
 ) -> str | None:
     """
     Busca el número de asiento en los ficheros *A.DAT de A3ECO tras procesar
@@ -1122,6 +1145,9 @@ def leer_numero_asiento_desde_a3(
     descripcion : Cadena alternativa que se busca en el campo concepto (bytes
                   15-44) si num_factura no produce coincidencia exacta.
                   Se comparan los primeros 10 caracteres.
+    mes         : Mes de la fecha de asiento (1-12). Si se indica, se busca
+                  primero en el fichero de ese mes. Esencial en empresas con
+                  numeracion mensual (el contador se reinicia cada mes).
 
     Retorna
     -------
@@ -1170,9 +1196,9 @@ def leer_numero_asiento_desde_a3(
             offset += rec_size
         return None
 
-    # Primer intento: ficheros del ejercicio indicado
+    # Primer intento: ficheros del ejercicio indicado (mes preferido primero)
     tried: set[str] = set()
-    for path in _candidate_asiento_paths(codigo_norm, ejercicio):
+    for path in _candidate_asiento_paths(codigo_norm, ejercicio, mes_preferido=mes):
         if not path.exists():
             continue
         tried.add(str(path).lower())

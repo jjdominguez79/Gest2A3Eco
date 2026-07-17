@@ -62,7 +62,9 @@ class CuotaDialog(tk.Toplevel):
     def __init__(self, parent, cuota: dict | None = None,
                  series: list[str] | None = None,
                  terceros: list[dict] | None = None,
-                 empresa_defaults: dict | None = None):
+                 empresa_defaults: dict | None = None,
+                 plantillas_word: list[str] | None = None,
+                 plantillas_emitidas: list[str] | None = None):
         super().__init__(parent)
         self.title("Cuota periodica" if not cuota or not cuota.get("id") else "Editar cuota")
         self.resizable(True, True)
@@ -70,9 +72,9 @@ class CuotaDialog(tk.Toplevel):
             sw = self.winfo_screenwidth()
             sh = self.winfo_screenheight()
             w = max(960, int(sw * 0.65))
-            h = max(740, int(sh * 0.78))
+            h = max(800, int(sh * 0.85))
             self.geometry(f"{w}x{h}")
-            self.minsize(860, 660)
+            self.minsize(860, 700)
         except Exception:
             pass
         self.result = None
@@ -80,6 +82,8 @@ class CuotaDialog(tk.Toplevel):
         self._series = series or []
         self._terceros = terceros or []
         self._empresa_defaults = empresa_defaults or {}
+        self._plantillas_word = plantillas_word or []
+        self._plantillas_emitidas = plantillas_emitidas or []
         self._lineas: list[dict] = list(self._cuota.get("lineas") or [])
         self._build()
         self.grab_set()
@@ -192,6 +196,42 @@ class CuotaDialog(tk.Toplevel):
         ttk.Label(frm, text="Observaciones").grid(row=row, column=0, sticky="w", padx=4, pady=3)
         self.var_obs = tk.StringVar(value=c.get("observaciones") or "")
         ttk.Entry(frm, textvariable=self.var_obs, width=46).grid(row=row, column=1, columnspan=3, padx=4, pady=3, sticky="w")
+        row += 1
+
+        # ── Retencion (IRPF) ──────────────────────────────────────────────────
+        self.var_retencion_aplica = tk.BooleanVar(value=bool(c.get("retencion_aplica")))
+        cb_ret = ttk.Checkbutton(frm, text="Aplica retencion (IRPF)",
+                                  variable=self.var_retencion_aplica,
+                                  command=self._toggle_retencion)
+        cb_ret.grid(row=row, column=0, columnspan=2, sticky="w", padx=4, pady=3)
+        row += 1
+
+        ttk.Label(frm, text="% Retencion").grid(row=row, column=0, sticky="w", padx=4, pady=3)
+        self.var_retencion_pct = tk.StringVar(
+            value=str(c.get("retencion_pct") or "15").replace(".", ","))
+        self._ent_retencion_pct = ttk.Entry(frm, textvariable=self.var_retencion_pct, width=10)
+        self._ent_retencion_pct.grid(row=row, column=1, padx=4, pady=3, sticky="w")
+        ttk.Label(frm, text="%", foreground="#666").grid(row=row, column=2, sticky="w")
+        row += 1
+        self._toggle_retencion()
+
+        # ── Plantillas ────────────────────────────────────────────────────────
+        ttk.Label(frm, text="Plantilla Word").grid(row=row, column=0, sticky="w", padx=4, pady=3)
+        self.var_plantilla_word = tk.StringVar(value=c.get("plantilla_word") or "")
+        pw_state = "readonly" if self._plantillas_word else "normal"
+        pw_values = self._plantillas_word
+        cb_pw = ttk.Combobox(frm, textvariable=self.var_plantilla_word,
+                              values=pw_values, width=30, state=pw_state)
+        cb_pw.grid(row=row, column=1, columnspan=2, padx=4, pady=3, sticky="w")
+        row += 1
+
+        ttk.Label(frm, text="Plantilla A3").grid(row=row, column=0, sticky="w", padx=4, pady=3)
+        self.var_plantilla_emitidas = tk.StringVar(value=c.get("plantilla_emitidas") or "")
+        pe_state = "readonly" if self._plantillas_emitidas else "normal"
+        pe_values = self._plantillas_emitidas
+        cb_pe = ttk.Combobox(frm, textvariable=self.var_plantilla_emitidas,
+                              values=pe_values, width=30, state=pe_state)
+        cb_pe.grid(row=row, column=1, columnspan=2, padx=4, pady=3, sticky="w")
         row += 1
 
         ttk.Separator(frm, orient="horizontal").grid(row=row, column=0, columnspan=5, sticky="ew", pady=6)
@@ -307,6 +347,14 @@ class CuotaDialog(tk.Toplevel):
         for ln in self._lineas:
             self._insert_linea_tv(ln)
         self._refresh_totales()
+
+    # ── Retencion helpers ─────────────────────────────────────────────────────
+
+    def _toggle_retencion(self):
+        if self.var_retencion_aplica.get():
+            self._ent_retencion_pct.state(["!disabled"])
+        else:
+            self._ent_retencion_pct.state(["disabled"])
 
     # ── Tercero helpers ───────────────────────────────────────────────────────
 
@@ -501,6 +549,16 @@ class CuotaDialog(tk.Toplevel):
             tercero_id = t.get("id")
 
         doc = dict(self._cuota)
+        # Retencion
+        retencion_aplica = 1 if self.var_retencion_aplica.get() else 0
+        retencion_pct = None
+        if retencion_aplica:
+            try:
+                retencion_pct = float(self.var_retencion_pct.get().replace(",", "."))
+            except ValueError:
+                messagebox.showwarning("Cuota", "El porcentaje de retencion debe ser numerico.", parent=self)
+                return
+
         doc.update({
             "codigo_empresa": self._cuota.get("codigo_empresa"),
             "ejercicio": self._cuota.get("ejercicio"),
@@ -519,6 +577,10 @@ class CuotaDialog(tk.Toplevel):
             "serie": self.var_serie.get().strip(),
             "tipo_operacion": "01",
             "modelo_fiscal": "",
+            "retencion_aplica": retencion_aplica,
+            "retencion_pct": retencion_pct,
+            "plantilla_word": self.var_plantilla_word.get().strip(),
+            "plantilla_emitidas": self.var_plantilla_emitidas.get().strip(),
             "lineas": self._lineas,
         })
         self.result = doc

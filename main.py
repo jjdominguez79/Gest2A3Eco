@@ -1,6 +1,9 @@
 import os
 import sys
+import warnings
 import tkinter as tk
+
+warnings.filterwarnings("ignore", message="Data Validation extension is not supported", category=UserWarning, module="openpyxl")
 from tkinter import filedialog, messagebox, ttk
 
 from controllers.app_controller import AppController

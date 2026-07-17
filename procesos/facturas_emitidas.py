@@ -43,13 +43,15 @@ def _r2(x) -> float:
 
 def _d2(x) -> Decimal:
     try:
-        return Decimal(str(x)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        d = Decimal(str(x)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return d if d.is_finite() else Decimal("0.00")
     except Exception:
         return Decimal("0.00")
 
 def _d0(x) -> Decimal:
     try:
-        return Decimal(str(x))
+        d = Decimal(str(x))
+        return d if d.is_finite() else Decimal("0")
     except Exception:
         return Decimal("0")
 
@@ -223,27 +225,31 @@ def generar_emitidas(
                 subcliente_ter = _subcuenta_cliente_tercero(terceros_by_nif, nif, ndig)
                 subcliente = subcliente_ter or _subcuenta_generica(plantilla, ndig)
 
-        # Tipo C: alta/modificacion de subcuenta en plan contable y maestro terceros A3
+        # Tipo C: alta/modificacion de subcuenta en plan contable y maestro terceros A3.
+        # Solo se emite en formato 512 (sector 5). En formato 256 (sector 4) el registro
+        # tipo C no es compatible y corromperia el fichero; se omite del binario pero
+        # se sigue registrando en out_subcuentas_c para la actualizacion de la BD.
         if nif and subcliente not in seen_subcuentas_c:
             seen_subcuentas_c.add(subcliente)
             if out_subcuentas_c is not None:
                 out_subcuentas_c.append({"subcuenta": subcliente, "nif": nif, "nombre": nombre})
-            registros.append(
-                render_a3_tipoC_alta_cuenta(
-                    codigo_empresa=codigo_empresa,
-                    fecha_alta=fecha,
-                    cuenta=subcliente,
-                    ndig_plan=ndig,
-                    nombre=nombre,
-                    nif=nif,
-                    municipio=datos_ter.get("poblacion", ""),
-                    cp=datos_ter.get("cp", ""),
-                    provincia=datos_ter.get("provincia", ""),
-                    telefono=datos_ter.get("telefono", ""),
-                    email=datos_ter.get("email", ""),
-                    cuenta_contrapartida=cta_ventas_def,
+            if formato_512:
+                registros.append(
+                    render_a3_tipoC_alta_cuenta(
+                        codigo_empresa=codigo_empresa,
+                        fecha_alta=fecha,
+                        cuenta=subcliente,
+                        ndig_plan=ndig,
+                        nombre=nombre,
+                        nif=nif,
+                        municipio=datos_ter.get("poblacion", ""),
+                        cp=datos_ter.get("cp", ""),
+                        provincia=datos_ter.get("provincia", ""),
+                        telefono=datos_ter.get("telefono", ""),
+                        email=datos_ter.get("email", ""),
+                        cuenta_contrapartida=cta_ventas_def,
+                    )
                 )
-            )
 
         # Total factura: suma de bases + IVA + recargo + retencion.
         # Regla de signo de retencion:

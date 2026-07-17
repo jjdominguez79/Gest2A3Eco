@@ -141,10 +141,14 @@ class UICuotasTab(ttk.Frame):
         return messagebox.askyesno(title, msg, parent=self)
 
     def open_cuota_dialog(self, cuota: dict, series: list, terceros: list,
-                          empresa_defaults: dict | None = None):
+                          empresa_defaults: dict | None = None,
+                          plantillas_word: list | None = None,
+                          plantillas_emitidas: list | None = None):
         from views.ui_cuota_dialog import CuotaDialog
         dlg = CuotaDialog(self, cuota=cuota, series=series, terceros=terceros,
-                          empresa_defaults=empresa_defaults)
+                          empresa_defaults=empresa_defaults,
+                          plantillas_word=plantillas_word,
+                          plantillas_emitidas=plantillas_emitidas)
         return dlg.result
 
     def open_generar_dialog(self, pendientes: list) -> dict | None:

@@ -95,6 +95,8 @@ class CuotasController:
             series=series,
             terceros=self._listar_terceros_empresa(),
             empresa_defaults=defaults,
+            plantillas_word=self._listar_plantillas_word(),
+            plantillas_emitidas=self._listar_plantillas_emitidas(),
         )
         if result:
             self._gestor.upsert_cuota_periodica(result)
@@ -121,6 +123,8 @@ class CuotasController:
             series=series,
             terceros=self._listar_terceros_empresa(),
             empresa_defaults=defaults,
+            plantillas_word=self._listar_plantillas_word(),
+            plantillas_emitidas=self._listar_plantillas_emitidas(),
         )
         if result:
             result["id"] = cuota_id
@@ -158,6 +162,8 @@ class CuotasController:
             series=series,
             terceros=self._listar_terceros_empresa(),
             empresa_defaults=defaults,
+            plantillas_word=self._listar_plantillas_word(),
+            plantillas_emitidas=self._listar_plantillas_emitidas(),
         )
         if result:
             self._gestor.upsert_cuota_periodica(result)
@@ -431,3 +437,23 @@ class CuotasController:
         except Exception:
             pass
         return defaults
+
+    def _listar_plantillas_word(self) -> list[str]:
+        try:
+            from pathlib import Path
+            from utils.utilidades import get_word_templates_dir
+            d = Path(get_word_templates_dir())
+            if not d.exists():
+                return []
+            return sorted([p.name for p in d.glob("*.docx") if p.is_file()],
+                          key=lambda s: s.lower())
+        except Exception:
+            return []
+
+    def _listar_plantillas_emitidas(self) -> list[str]:
+        try:
+            items = self._gestor.listar_emitidas(self._codigo, self._ejercicio)
+            return [str(p.get("nombre") or "").strip() for p in items
+                    if str(p.get("nombre") or "").strip()]
+        except Exception:
+            return []

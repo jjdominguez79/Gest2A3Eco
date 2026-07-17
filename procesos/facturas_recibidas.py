@@ -11,7 +11,6 @@ from models.facturas_common import (
     Linea,
     render_a3_tipo12_cabecera,
     render_a3_tipo9_detalle,
-    render_a3_tipoC_alta_cuenta,
     render_a3_tipo6_id,
 )
 from services.terceros_empresa_fiscal_service import split_iva_deducible
@@ -228,10 +227,11 @@ def _fv(x) -> float:
     if x is None or x == "":
         return 0.0
     if isinstance(x, (int, float)) and not isinstance(x, bool):
-        return float(x)
+        v = float(x)
+        return v if (v == v) else 0.0  # NaN check: NaN != NaN
 
     s = str(x).strip()
-    if not s:
+    if not s or s.lower() == "nan":
         return 0.0
 
     s = s.replace("\xa0", " ")
@@ -325,27 +325,15 @@ def generar_recibidas_suenlace(
         nombre = datos_ter.get("nombre", "")
         c_gasto_ter = _cuenta_gasto_tercero(terceros_by_nif, nif, ndig)
 
-        # Tipo C: alta/modificacion de subcuenta en plan contable y maestro terceros A3
+        # Tipo C: alta/modificacion de subcuenta en plan contable y maestro terceros A3.
+        # El formato de recibidas usa registros de 254 bytes (sector 4); el registro
+        # tipo C es de 512 bytes y no es compatible con este sector: se omite del
+        # binario para no corromper el fichero, pero se registra en out_subcuentas_c
+        # para que el controller actualice el plan de cuentas en la BD.
         if nif and c_prov not in seen_subcuentas_c:
             seen_subcuentas_c.add(c_prov)
             if out_subcuentas_c is not None:
                 out_subcuentas_c.append({"subcuenta": c_prov, "nif": nif, "nombre": nombre})
-            registros.append(
-                render_a3_tipoC_alta_cuenta(
-                    codigo_empresa=codigo_empresa,
-                    fecha_alta=fecha,
-                    cuenta=c_prov,
-                    ndig_plan=ndig,
-                    nombre=nombre,
-                    nif=nif,
-                    municipio=datos_ter.get("poblacion", ""),
-                    cp=datos_ter.get("cp", ""),
-                    provincia=datos_ter.get("provincia", ""),
-                    telefono=datos_ter.get("telefono", ""),
-                    email=datos_ter.get("email", ""),
-                    cuenta_contrapartida=cta_gasto_def,
-                )
-            )
 
         ref_doc = str(r0.get("_pdf_ref") or r0.get("Referencia Doc") or "").strip()
         desc_cab = f"Su Fra Nº. {num_fact}".strip()
