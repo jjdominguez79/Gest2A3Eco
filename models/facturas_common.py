@@ -29,7 +29,10 @@ class Linea:
 # UTILIDADES COMUNES
 # ─────────────────────────────────────────────────────────────────────────────
 def _s(x) -> str:
-    return "" if x is None else str(x)
+    """Convierte a str y elimina saltos de línea embebidos (Alt+Enter en Excel)."""
+    if x is None:
+        return ""
+    return str(x).replace("\r\n", " ").replace("\r", " ").replace("\n", " ").strip()
 
 
 def _latin1_safe_text(value: str) -> str:

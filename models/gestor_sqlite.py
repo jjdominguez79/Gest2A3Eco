@@ -839,6 +839,9 @@ class GestorSQLite:
             CREATE INDEX IF NOT EXISTS idx_ocr_corr_factura
                 ON ocr_correcciones(factura_id);
         """)
+        self._ensure_column("facturas_recibidas", "pct_fraccion", "INTEGER")
+        self._ensure_column("facturas_emitidas", "pct_fraccion", "INTEGER")
+        self.conn.commit()
         self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS cuotas_periodicas (
                 id              TEXT PRIMARY KEY,
@@ -1788,14 +1791,16 @@ class GestorSQLite:
         self.conn.execute(
             """
             INSERT INTO facturas_emitidas (codigo_empresa, ejercicio, nombre, cuenta_cliente_prefijo,
-                cuenta_ingreso_por_defecto, cuenta_iva_repercutido_defecto, cuenta_retenciones_irpf, excel_json)
-            VALUES (?,?,?,?,?,?,?,?)
+                cuenta_ingreso_por_defecto, cuenta_iva_repercutido_defecto, cuenta_retenciones_irpf,
+                excel_json, pct_fraccion)
+            VALUES (?,?,?,?,?,?,?,?,?)
             ON CONFLICT(codigo_empresa, ejercicio, nombre) DO UPDATE SET
                 cuenta_cliente_prefijo=excluded.cuenta_cliente_prefijo,
                 cuenta_ingreso_por_defecto=excluded.cuenta_ingreso_por_defecto,
                 cuenta_iva_repercutido_defecto=excluded.cuenta_iva_repercutido_defecto,
                 cuenta_retenciones_irpf=excluded.cuenta_retenciones_irpf,
-                excel_json=excluded.excel_json
+                excel_json=excluded.excel_json,
+                pct_fraccion=excluded.pct_fraccion
             """,
             (
                 plantilla.get("codigo_empresa"),
@@ -1806,6 +1811,7 @@ class GestorSQLite:
                 plantilla.get("cuenta_iva_repercutido_defecto"),
                 plantilla.get("cuenta_retenciones_irpf"),
                 json.dumps(plantilla.get("excel", {}), ensure_ascii=False),
+                1 if plantilla.get("pct_fraccion") else 0,
             ),
         )
         self.conn.commit()
@@ -2298,13 +2304,14 @@ class GestorSQLite:
         self.conn.execute(
             """
             INSERT INTO facturas_recibidas (codigo_empresa, ejercicio, nombre, cuenta_proveedor_prefijo,
-                cuenta_gasto_por_defecto, cuenta_iva_soportado_defecto, excel_json)
-            VALUES (?,?,?,?,?,?,?)
+                cuenta_gasto_por_defecto, cuenta_iva_soportado_defecto, excel_json, pct_fraccion)
+            VALUES (?,?,?,?,?,?,?,?)
             ON CONFLICT(codigo_empresa, ejercicio, nombre) DO UPDATE SET
                 cuenta_proveedor_prefijo=excluded.cuenta_proveedor_prefijo,
                 cuenta_gasto_por_defecto=excluded.cuenta_gasto_por_defecto,
                 cuenta_iva_soportado_defecto=excluded.cuenta_iva_soportado_defecto,
-                excel_json=excluded.excel_json
+                excel_json=excluded.excel_json,
+                pct_fraccion=excluded.pct_fraccion
             """,
             (
                 plantilla.get("codigo_empresa"),
@@ -2314,6 +2321,7 @@ class GestorSQLite:
                 plantilla.get("cuenta_gasto_por_defecto"),
                 plantilla.get("cuenta_iva_soportado_defecto"),
                 json.dumps(plantilla.get("excel", {}), ensure_ascii=False),
+                1 if plantilla.get("pct_fraccion") else 0,
             ),
         )
         self.conn.commit()

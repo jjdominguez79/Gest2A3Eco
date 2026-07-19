@@ -13,7 +13,7 @@ DEFAULT_COLS_FACTURAS = [
     "NIF Cliente Proveedor","Nombre Cliente Proveedor",
     "Descripcion Factura","Observaciones",
     "Cuenta Cliente Proveedor","Cuenta Compras Ventas","Cuenta IVA",
-    "Cuenta Recargo","Cuenta Retenciones","Cuenta Proveedor Importacion",
+    "Cuenta Recargo","Cuenta Retenciones",
     "Cuenta Tesoreria Cobro Pago",
     "Base","Porcentaje IVA","Cuota IVA","Porcentaje Recargo Equivalencia",
     "Cuota Recargo Equivalencia","Porcentaje Retencion IRPF","Cuota Retencion IRPF",
@@ -227,6 +227,7 @@ class ConfigPlantillaDialog(Dialog):
             _row(t_gen, "Subcuenta por defecto", self.var_sub_def)
         else:
             self.var_nombre = tk.StringVar(value=self.pl.get("nombre",""))
+            self.var_pct_fraccion = tk.BooleanVar(value=bool(self.pl.get("pct_fraccion", False)))
             if self.tipo == "emitidas":
                 self.var_pref = tk.StringVar(value=self.pl.get("cuenta_cliente_prefijo","430"))
                 self.var_ing = tk.StringVar(value=self.pl.get("cuenta_ingreso_por_defecto","70000000"))
@@ -245,6 +246,10 @@ class ConfigPlantillaDialog(Dialog):
                 _row(t_gen, "Subcuenta proveedores", self.var_pref)
                 _row(t_gen, "Cuenta Gasto", self.var_gasto)
                 _row(t_gen, "Cuenta IVA soportado", self.var_iva_def)
+            # Opcion comun a emitidas y recibidas
+            fr_pct = ttk.Frame(t_gen); fr_pct.pack(fill=tk.X, pady=3)
+            ttk.Label(fr_pct, text="% IVA/RE/Ret como fraccion (0,21=21%)", width=30).pack(side=tk.LEFT)
+            ttk.Checkbutton(fr_pct, variable=self.var_pct_fraccion).pack(side=tk.LEFT)
 
         t_xl = ttk.Frame(nb); nb.add(t_xl, text="Excel")
         cols = (self.pl.get("excel") or {}).get("columnas") or default_excel_columns_for(self.tipo)
@@ -347,6 +352,7 @@ class ConfigPlantillaDialog(Dialog):
             self.pl["subcuenta_por_defecto"] = self.var_sub_def.get().strip()
         else:
             self.pl["nombre"] = self.var_nombre.get().strip()
+            self.pl["pct_fraccion"] = bool(self.var_pct_fraccion.get())
             if self.tipo == "emitidas":
                 self.pl["cuenta_cliente_prefijo"] = self.var_pref.get().strip()
                 self.pl["cuenta_ingreso_por_defecto"] = self.var_ing.get().strip()

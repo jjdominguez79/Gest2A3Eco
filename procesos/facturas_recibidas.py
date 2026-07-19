@@ -4,6 +4,7 @@
 # Estas líneas luego se transforman en registros suenlace
 # según el formato que ya tienes implementado en el proyecto.
 
+import re
 from typing import List, Dict, Any
 
 from collections import defaultdict
@@ -222,6 +223,7 @@ def generar_asiento_recibida(row: Dict[str, Any], conf: Dict[str, Any]) -> List[
 def _fv(x) -> float:
     """
     Convierte un valor a float, soportando formatos 1234,56 y 1.234,56.
+    Elimina el simbolo '%' si aparece (ej. '21%' -> 21.0).
     Devuelve 0.0 si no es convertible.
     """
     if x is None or x == "":
@@ -234,7 +236,11 @@ def _fv(x) -> float:
     if not s or s.lower() == "nan":
         return 0.0
 
-    s = s.replace("\xa0", " ")
+    # Eliminar simbolo de porcentaje, moneda y cualquier caracter no numerico
+    # (se conservan digitos, coma, punto y signo menos para negativos)
+    s = re.sub(r"[^\d,.\-]", "", s)
+    if not s:
+        return 0.0
 
     # Caso 1: tiene punto y coma -> '.' miles, ',' decimales
     if "." in s and "," in s:
@@ -247,6 +253,18 @@ def _fv(x) -> float:
         return float(s)
     except Exception:
         return 0.0
+
+
+def _fv_pct(x, fraccion: bool) -> float:
+    """
+    Lee un campo de porcentaje.
+    Si fraccion=True, el Excel guarda el valor como fraccion decimal
+    (ej. 0.21 para 21%) y se multiplica por 100.
+    """
+    v = _fv(x)
+    if fraccion and v != 0.0:
+        v = round(v * 100.0, 10)
+    return v
 
 def _norm_subtipo(val: Any) -> str:
     s = "" if val is None else str(val).strip()
@@ -281,6 +299,7 @@ def generar_recibidas_suenlace(
     ejercicio: int | None = None,
     terceros_by_nif: Dict[str, Dict[str, Any]] | None = None,
     out_subcuentas_c: list | None = None,
+    pct_fraccion: bool = False,
 ) -> List[str]:
     """
     Genera registros SUENLACE (cabecera tipo 1/2 + detalle tipo 9, formato 254)
@@ -380,17 +399,24 @@ def generar_recibidas_suenlace(
             cuota = _fv(rr.get("Cuota IVA"))
 
             # Si no hay base ni IVA ni recargo ni retenci¢n, se omite
-            re_pct= _fv(rr.get("Porcentaje Recargo Equivalencia"))
-            re_c  = _fv(rr.get("Cuota Recargo Equivalencia"))
-            ret_pct= _fv(rr.get("Porcentaje Retencion IRPF"))
+            re_pct = _fv_pct(rr.get("Porcentaje Recargo Equivalencia"), pct_fraccion)
+            re_c   = _fv(rr.get("Cuota Recargo Equivalencia"))
+            ret_pct= _fv_pct(rr.get("Porcentaje Retencion IRPF"), pct_fraccion)
             ret_c  = _fv(rr.get("Cuota Retencion IRPF"))
 
             if base == 0 and cuota == 0 and re_c == 0 and ret_c == 0:
                 continue
 
-            pct   = _fv(rr.get("Porcentaje IVA"))
+            pct = _fv_pct(rr.get("Porcentaje IVA"), pct_fraccion)
             if base != 0 and pct == 0 and cuota != 0:
+                # Hay cuota pero no porcentaje: calcular el porcentaje
                 pct = round(abs(cuota / base * 100.0), 2)
+            elif cuota == 0 and pct != 0 and base != 0:
+                # ISP / adquisicion intracomunitaria: porcentaje informado pero el
+                # proveedor no repercute IVA fisicamente (cuota = 0 en Excel).
+                # Calculamos la cuota para que A3ECO pueda registrar la
+                # autorepercusion (debe 47x / haber 47x) con importe correcto.
+                cuota = round(abs(base) * abs(pct) / 100.0, 2)
 
             registros.append(
                 render_a3_tipo9_detalle(

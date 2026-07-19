@@ -1,6 +1,7 @@
 # procesos/facturas_emitidas.py
 #
 # Generacion de registros SUENLACE para facturas emitidas (ventas).
+import re
 from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Dict, Any
@@ -17,12 +18,16 @@ from utils.validaciones import normalizar_nif_cif
 
 
 def _fv(x) -> float:
-    """Convierte a float tolerando formatos 1.234,56 / 1234,56 y devuelve 0.0 si no es convertible."""
+    """
+    Convierte a float tolerando formatos 1.234,56 / 1234,56.
+    Elimina el simbolo '%' si aparece (ej. '21%' -> 21.0).
+    Devuelve 0.0 si no es convertible.
+    """
     if x is None or x == "":
         return 0.0
     if isinstance(x, (int, float)) and not isinstance(x, bool):
         return float(x)
-    s = str(x).strip().replace("\xa0", " ")
+    s = re.sub(r"[^\d,.\-]", "", str(x).strip())
     if not s:
         return 0.0
     if "." in s and "," in s:
@@ -33,6 +38,18 @@ def _fv(x) -> float:
         return float(s)
     except Exception:
         return 0.0
+
+
+def _fv_pct(x, fraccion: bool) -> float:
+    """
+    Lee un campo de porcentaje.
+    Si fraccion=True, el Excel guarda el valor como fraccion decimal
+    (ej. 0.21 para 21%) y se multiplica por 100.
+    """
+    v = _fv(x)
+    if fraccion and v != 0.0:
+        v = round(v * 100.0, 10)
+    return v
 
 
 def _r2(x) -> float:
@@ -146,6 +163,7 @@ def generar_emitidas(
     terceros_by_nif: Dict[str, Dict[str, Any]] | None = None,
     formato_512: bool = False,
     out_subcuentas_c: list | None = None,
+    pct_fraccion: bool = False,
 ) -> List[str]:
     """
     Genera registros de SUENLACE para FACTURAS EMITIDAS
@@ -306,17 +324,17 @@ def generar_emitidas(
         detalle_map = {}
         for rr in grecs:
             base  = _d2(_fv(rr.get("Base")))
-            pct   = _d0(_fv(rr.get("Porcentaje IVA")))
+            pct   = _d0(_fv_pct(rr.get("Porcentaje IVA"), pct_fraccion))
             cuota = _d2(_fv(rr.get("Cuota IVA")))
             if base != 0 and pct != 0:
                 cuota = (base * pct / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-            re_pct = _d0(_fv(rr.get("Porcentaje Recargo Equivalencia")))
+            re_pct = _d0(_fv_pct(rr.get("Porcentaje Recargo Equivalencia"), pct_fraccion))
             re_c   = _d2(_fv(rr.get("Cuota Recargo Equivalencia")))
             if base != 0 and re_pct != 0:
                 re_c = (base * re_pct / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-            ret_pct = _d0(_fv(rr.get("Porcentaje Retencion IRPF")))
+            ret_pct = _d0(_fv_pct(rr.get("Porcentaje Retencion IRPF"), pct_fraccion))
             ret_c   = _d2(_fv(rr.get("Cuota Retencion IRPF")))
             sign_ret = Decimal("1") if base < 0 else Decimal("-1")
             if base != 0 and ret_pct != 0:

@@ -171,10 +171,9 @@ class UIProcesos(ttk.Frame):
             self.tv.insert("", tk.END, values=vals, tags=("contra_ok",))
 
         # Guardar referencia de columnas y estado del editor editable
-        self._preview_editable_col = "Contrapartida"
+        self._preview_editable_col_map = {"Contrapartida": self.controller.set_contrapartida_override}
         self._preview_ok_tag = "contra_ok"
         self._preview_mod_tag = "contra_mod"
-        self._preview_override_fn = self.controller.set_contrapartida_override
         self._preview_cols = cols
 
         try:
@@ -205,10 +204,9 @@ class UIProcesos(ttk.Frame):
         self.tv.tag_configure("sub_mod",   foreground="#922b21")
         self.tv.tag_configure("sub_empty", foreground="#94a3b8")
 
-        self._preview_editable_col = col_label
+        self._preview_editable_col_map = {col_label: self.controller.set_subcuenta_override}
         self._preview_ok_tag = "sub_ok"
         self._preview_mod_tag = "sub_mod"
-        self._preview_override_fn = self.controller.set_subcuenta_override
         self._preview_cols = cols
 
         for row in rows:
@@ -226,8 +224,52 @@ class UIProcesos(ttk.Frame):
         self.tv.xview_moveto(0)
         self.tv.yview_moveto(0)
 
+    def mostrar_dos_subcuentas_preview(
+        self, rows: list,
+        col1_label: str, col1_key: str, fn1,
+        col2_label: str, col2_key: str, fn2,
+    ):
+        """Muestra filas con dos columnas editables: cuenta tercero + cuenta compras/ventas."""
+        self.tv.delete(*self.tv.get_children())
+        if not rows:
+            self.tv["columns"] = []
+            return
+
+        visible_keys = [k for k in rows[0].keys() if not k.startswith("_")]
+        editable_cols = [col1_label, col2_label]
+        cols = editable_cols + visible_keys
+        self.tv["columns"] = cols
+        for c in cols:
+            self.tv.heading(c, text=c)
+            w = 160 if c in editable_cols else 120
+            self.tv.column(c, width=w, minwidth=80, stretch=False)
+
+        self.tv.tag_configure("sub_ok",    foreground="#1a5276")
+        self.tv.tag_configure("sub_mod",   foreground="#922b21")
+        self.tv.tag_configure("sub_empty", foreground="#94a3b8")
+
+        self._preview_editable_col_map = {col1_label: fn1, col2_label: fn2}
+        self._preview_ok_tag = "sub_ok"
+        self._preview_mod_tag = "sub_mod"
+        self._preview_cols = cols
+
+        for row in rows:
+            v1 = str(row.get(col1_key) or "")
+            v2 = str(row.get(col2_key) or "")
+            vals = [v1, v2] + [str(row.get(k, "") or "") for k in visible_keys]
+            tag = "sub_ok" if (v1 or v2) else "sub_empty"
+            self.tv.insert("", tk.END, values=vals, tags=(tag,))
+
+        try:
+            self.tv.unbind("<Double-1>")
+        except Exception:
+            pass
+        self.tv.bind("<Double-1>", self._on_preview_double_click)
+        self.tv.xview_moveto(0)
+        self.tv.yview_moveto(0)
+
     def _on_preview_double_click(self, event):
-        """Abre editor con autocompletado en la celda Contrapartida."""
+        """Abre editor con autocompletado en la celda editable (Contrapartida, cuenta tercero o cuenta gasto/ingreso)."""
         region = self.tv.identify("region", event.x, event.y)
         if region != "cell":
             return
@@ -237,14 +279,17 @@ class UIProcesos(ttk.Frame):
             return
 
         cols = getattr(self, "_preview_cols", [])
-        if not cols:
+        editable_col_map = getattr(self, "_preview_editable_col_map", {})
+        if not cols or not editable_col_map:
             return
         try:
             col_idx = int(col_id.replace("#", "")) - 1  # 0-based
         except ValueError:
             return
-        editable_col = getattr(self, "_preview_editable_col", "Contrapartida")
-        if col_idx < 0 or col_idx >= len(cols) or cols[col_idx] != editable_col:
+        if col_idx < 0 or col_idx >= len(cols):
+            return
+        clicked_col = cols[col_idx]
+        if clicked_col not in editable_col_map:
             return
 
         all_items = self.tv.get_children()
@@ -253,8 +298,9 @@ class UIProcesos(ttk.Frame):
         except ValueError:
             return
 
-        current_val = self.tv.set(row_id, editable_col)
-        self._abrir_autocomplete_subcuenta(row_id, row_idx, col_id, current_val)
+        current_val = self.tv.set(row_id, clicked_col)
+        override_fn = editable_col_map[clicked_col]
+        self._abrir_autocomplete_subcuenta(row_id, row_idx, col_id, clicked_col, current_val, override_fn)
 
     def _cargar_catalogo_subcuentas(self) -> list[dict]:
         """Carga (y cachea) el maestro de subcuentas de la empresa actual."""
@@ -267,7 +313,7 @@ class UIProcesos(ttk.Frame):
                 self._subcuentas_catalogo = []
         return self._subcuentas_catalogo
 
-    def _abrir_autocomplete_subcuenta(self, row_id: str, row_idx: int, col_id: str, valor_actual: str):
+    def _abrir_autocomplete_subcuenta(self, row_id: str, row_idx: int, col_id: str, col_name: str, valor_actual: str, override_fn):
         """Editor de subcuenta con dropdown de autocompletado sobre el maestro de cuentas."""
         bbox = self.tv.bbox(row_id, col_id)
         if not bbox:
@@ -327,11 +373,9 @@ class UIProcesos(ttk.Frame):
                 popup.destroy()
             except Exception:
                 pass
-            editable_col = getattr(self, "_preview_editable_col", "Contrapartida")
             ok_tag = getattr(self, "_preview_ok_tag", "contra_ok")
             mod_tag = getattr(self, "_preview_mod_tag", "contra_mod")
-            override_fn = getattr(self, "_preview_override_fn", self.controller.set_contrapartida_override)
-            self.tv.set(row_id, editable_col, code)
+            self.tv.set(row_id, col_name, code)
             tag = mod_tag if code else ok_tag
             self.tv.item(row_id, tags=(tag,))
             override_fn(row_idx, code)

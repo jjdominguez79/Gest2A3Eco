@@ -1,3 +1,5 @@
+import warnings
+
 import pandas as pd
 
 
@@ -15,7 +17,9 @@ def col_letter_to_index(letter: str) -> int:
 
 
 def extract_rows_by_mapping(xlsx_path: str, sheet: str, mapping: dict):
-    raw = pd.read_excel(xlsx_path, sheet_name=sheet, header=None, dtype=object)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+        raw = pd.read_excel(xlsx_path, sheet_name=sheet, header=None, dtype=object)
     first = int((mapping or {}).get("primera_fila_procesar", 2))
     start_idx = max(0, first - 1)
     cols_map = (mapping or {}).get("columnas", {}) or {}

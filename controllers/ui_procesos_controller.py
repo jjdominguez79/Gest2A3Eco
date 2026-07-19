@@ -1,5 +1,6 @@
 import os
 import traceback
+import warnings
 
 import pandas as pd
 
@@ -23,6 +24,7 @@ class ProcesosController:
         self._cached_tipo: str = ""
         self._contrapartida_overrides: dict[int, str] = {}  # idx_fila -> subcuenta
         self._subcuenta_overrides: dict[int, str] = {}
+        self._cta_gv_overrides: dict[int, str] = {}  # idx_fila -> cuenta gasto/ingreso
         self._subcuenta_cached_rows: list[dict] | None = None
         self._subcuenta_cached_tipo: str = ""
         self._subcuenta_cached_plantilla: dict | None = None
@@ -51,7 +53,9 @@ class ProcesosController:
         self._excel_path = path
         self._view.set_excel_label(os.path.basename(path))
         try:
-            xls = pd.ExcelFile(path)
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+                xls = pd.ExcelFile(path)
             self._view.set_sheet_values(xls.sheet_names)
             self._view.clear_sheet_selection()
             self._view.clear_preview()
@@ -63,7 +67,9 @@ class ProcesosController:
         if not hoja or not self._excel_path:
             return
         try:
-            df = pd.read_excel(self._excel_path, sheet_name=hoja, header=0)
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+                df = pd.read_excel(self._excel_path, sheet_name=hoja, header=0)
             self._view.render_preview(df)
         except Exception as e:
             self._view.show_error("Gest2A3Eco", f"Error al leer hoja:\n{e}")
@@ -78,6 +84,7 @@ class ProcesosController:
         elif "emitidas" in tipo or "recibidas" in tipo:
             self._subcuenta_cached_rows = None
             self._subcuenta_overrides = {}
+            self._cta_gv_overrides = {}
             nombre_pl = (self._view.get_selected_plantilla() or "").strip()
             if nombre_pl:
                 if "emitidas" in tipo:
@@ -129,12 +136,9 @@ class ProcesosController:
             self._cached_tipo = "bancos"
 
             # Notificar a la vista para mostrar la columna de contrapartida
-            try:
-                self._view.mostrar_contrapartidas_preview(rows)
-            except AttributeError:
-                pass  # Vista antigua, sin soporte para contrapartidas
-        except Exception:
-            pass
+            self._view.mostrar_contrapartidas_preview(rows)
+        except Exception as e:
+            self._log_error("_cargar_contrapartidas_preview", e)
 
     def set_contrapartida_override(self, idx_fila: int, subcuenta: str):
         """Guarda el override de contrapartida para una fila especifica."""
@@ -149,6 +153,13 @@ class ProcesosController:
         elif idx_fila in self._subcuenta_overrides:
             del self._subcuenta_overrides[idx_fila]
 
+    def set_cta_gv_override(self, idx_fila: int, subcuenta: str):
+        """Guarda el override de cuenta compras/ventas para una fila especifica."""
+        if subcuenta:
+            self._cta_gv_overrides[idx_fila] = str(subcuenta).strip()
+        elif idx_fila in self._cta_gv_overrides:
+            del self._cta_gv_overrides[idx_fila]
+
     def _cargar_subcuentas_preview(self, tipo: str, pl: dict):
         """Carga las filas mapeadas y calcula las subcuentas por defecto desde terceros para emitidas/recibidas."""
         try:
@@ -158,39 +169,43 @@ class ProcesosController:
             if not rows:
                 return
 
-            # Construir diccionario NIF -> tercero
-            terceros = self._gestor.listar_terceros()
-            terceros_by_nif = {
-                self._norm_nif(t.get("nif")): t
-                for t in terceros
-                if self._norm_nif(t.get("nif"))
-            }
+            # Usar solo listar_terceros_por_empresa: ya hace JOIN con terceros_empresas
+            # y trae subcuenta_proveedor, subcuenta_cliente, subcuenta_gasto, subcuenta_ingreso.
             terceros_empresa = self._gestor.listar_terceros_por_empresa(self._codigo, self._ejercicio)
+            terceros_by_nif: dict[str, dict] = {}
             for t in terceros_empresa:
-                nif = self._norm_nif(t.get("nif"))
-                if nif:
-                    terceros_by_nif[nif] = t
+                # Intentar primero nif_normalizado (ya limpio en BD), luego nif normalizado al vuelo
+                nif_norm = str(t.get("nif_normalizado") or "").strip().upper()
+                if not nif_norm:
+                    nif_norm = self._norm_nif(t.get("nif"))
+                if nif_norm:
+                    terceros_by_nif[nif_norm] = t
 
-            # Calcular subcuenta por defecto para cada fila
             es_emitidas = "emitidas" in tipo
-            col_label = "Subcuenta cliente" if es_emitidas else "Subcuenta proveedor"
             sub_key = "subcuenta_cliente" if es_emitidas else "subcuenta_proveedor"
+            gv_key  = "subcuenta_ingreso" if es_emitidas else "subcuenta_gasto"
+            col1_label = "Cuenta cliente"  if es_emitidas else "Cuenta proveedor"
+            col2_label = "Cuenta ventas"   if es_emitidas else "Cuenta compras"
+
             for row in rows:
                 nif = self._norm_nif(row.get("NIF Cliente Proveedor") or row.get("NIF"))
                 tercero = terceros_by_nif.get(nif) if nif else None
                 row["_subcuenta_defecto"] = str((tercero or {}).get(sub_key) or "")
+                row["_cta_gv_defecto"]    = str((tercero or {}).get(gv_key)  or "")
 
             self._subcuenta_cached_rows = rows
             self._subcuenta_cached_tipo = tipo
             self._subcuenta_cached_plantilla = pl
             self._subcuenta_overrides = {}
+            self._cta_gv_overrides = {}
 
-            try:
-                self._view.mostrar_subcuentas_preview(rows, col_label)
-            except AttributeError:
-                pass
-        except Exception:
-            pass
+            self._view.mostrar_dos_subcuentas_preview(
+                rows,
+                col1_label, "_subcuenta_defecto", self.set_subcuenta_override,
+                col2_label, "_cta_gv_defecto",    self.set_cta_gv_override,
+            )
+        except Exception as e:
+            self._log_error("_cargar_subcuentas_preview", e)
 
     def generar(self):
         try:
@@ -296,6 +311,9 @@ class ProcesosController:
                     for idx, sub_override in self._subcuenta_overrides.items():
                         if 0 <= idx < len(rows):
                             rows[idx]["_subcuenta_cliente_override"] = sub_override
+                    for idx, cta_override in self._cta_gv_overrides.items():
+                        if 0 <= idx < len(rows):
+                            rows[idx]["Cuenta Compras Ventas"] = cta_override
                 else:
                     rows = [r for r in rows if self._row_has_data(r)]
                 if not rows:
@@ -325,6 +343,7 @@ class ProcesosController:
                     ejercicio=self._ejercicio,
                     terceros_by_nif=terceros_by_nif,
                     out_subcuentas_c=subcuentas_c_emitidas,
+                    pct_fraccion=bool(pl.get("pct_fraccion", False)),
                 )
                 if registros:
                     save_path = self._view.ask_save_path(f"{self._codigo_empresa_a3()}.dat")
@@ -361,6 +380,9 @@ class ProcesosController:
                 for idx, sub_override in self._subcuenta_overrides.items():
                     if 0 <= idx < len(rows):
                         rows[idx]["_cuenta_tercero_override"] = sub_override
+                for idx, cta_override in self._cta_gv_overrides.items():
+                    if 0 <= idx < len(rows):
+                        rows[idx]["Cuenta Compras Ventas"] = cta_override
             else:
                 rows = [r for r in rows if self._row_has_data(r)]
             if not rows:
@@ -390,6 +412,7 @@ class ProcesosController:
                 ejercicio=self._ejercicio,
                 terceros_by_nif=terceros_by_nif,
                 out_subcuentas_c=subcuentas_c_recibidas,
+                pct_fraccion=bool(pl.get("pct_fraccion", False)),
             )
             avisos = []
             if out_lines:
