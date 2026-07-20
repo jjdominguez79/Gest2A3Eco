@@ -4,6 +4,9 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$WorkflowSyncTimeoutSeconds = 900
+$WorkflowSyncPollSeconds = 15
+
 $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $RepoRoot
 
@@ -146,6 +149,51 @@ function Test-IncompleteGitOperation {
     }
 }
 
+function Wait-ForWorkflowSync {
+    param(
+        [string]$ExpectedVersion
+    )
+
+    Write-Step "Esperando a que GitHub Actions sincronice updates/version.json"
+
+    $deadline = (Get-Date).AddSeconds($WorkflowSyncTimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Seconds $WorkflowSyncPollSeconds
+        Invoke-Git -Step "git fetch sincronizacion" -Arguments @("fetch", "origin") | Out-Null
+
+        $remoteVersionJson = $null
+        try {
+            $remoteVersionJson = (Invoke-Git -Step "leer version remota" -Arguments @("show", "origin/main:updates/version.json")).Output
+        }
+        catch {
+            continue
+        }
+
+        if (-not $remoteVersionJson) {
+            continue
+        }
+
+        try {
+            $remoteManifest = $remoteVersionJson | ConvertFrom-Json
+        }
+        catch {
+            continue
+        }
+
+        if (($remoteManifest.latest_version -eq $ExpectedVersion) -and ($remoteManifest.download_url -match "/releases/download/v$ExpectedVersion/")) {
+            Invoke-Git -Step "git pull sincronizacion" -Arguments @("pull", "--ff-only", "origin", "main") -ShowOutput | Out-Null
+            Write-Host ""
+            Write-Host "Repositorio local sincronizado con origin/main." -ForegroundColor Green
+            return $true
+        }
+    }
+
+    Write-Host ""
+    Write-Host "GitHub Actions sigue en ejecucion o no ha actualizado todavia updates/version.json." -ForegroundColor Yellow
+    Write-Host "La publicacion sigue enviada. Si quieres sincronizar mas tarde, ejecuta: git pull --ff-only origin main" -ForegroundColor Yellow
+    return $false
+}
+
 Test-CommandInstalled -Name "git" -Step "validacion git"
 Test-CommandInstalled -Name "python" -Step "validacion python"
 
@@ -285,6 +333,7 @@ try {
     Write-Host ""
     Write-Host "La versión $newVersion ha sido enviada a GitHub." -ForegroundColor Green
     Write-Host "GitHub Actions está compilando y publicando la Release." -ForegroundColor Green
+    Wait-ForWorkflowSync -ExpectedVersion $newVersion | Out-Null
 }
 finally {
     if (Test-Path $tempChangelogPath) {

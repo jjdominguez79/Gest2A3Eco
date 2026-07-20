@@ -89,7 +89,9 @@ El workflow necesita permisos de escritura para:
 11. crea el commit de preparacion;
 12. hace push a `main`;
 13. crea el tag anotado `vX.Y.Z`;
-14. hace push del tag.
+14. hace push del tag;
+15. espera a que GitHub Actions actualice `updates/version.json` en `main`;
+16. hace `git pull --ff-only origin main` automaticamente cuando el remoto ya contiene la nueva version.
 
 ### GitHub Actions
 
@@ -130,7 +132,8 @@ publicar_version.bat
 7. Revisa el resumen.
 8. Confirma escribiendo exactamente `PUBLICAR`.
 9. Abre GitHub Actions y sigue la ejecucion del workflow `Publicar version`.
-10. Cuando termine, prueba la actualizacion desde una version anterior.
+10. El script intentara sincronizar tu repo local automaticamente cuando el workflow actualice `updates/version.json`.
+11. Cuando termine, prueba la actualizacion desde una version anterior.
 
 ## Notas sobre actualizaciones opcionales y obligatorias
 
@@ -163,6 +166,12 @@ Opciones:
 
 1. Desde GitHub Actions, usa `Re-run jobs` si el tag y el commit siguen siendo correctos.
 2. Usa `workflow_dispatch` indicando el tag exacto `vX.Y.Z`.
+
+Si el script local termina antes de poder sincronizar porque el workflow tarda demasiado, actualiza tu repo local con:
+
+```powershell
+git pull --ff-only origin main
+```
 
 ### Si falla antes de crear la Release
 
