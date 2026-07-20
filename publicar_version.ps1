@@ -53,8 +53,27 @@ function Invoke-Tool {
     )
 
     $commandText = ($FilePath + " " + ($Arguments -join " ")).Trim()
-    $rawOutput = & $FilePath @Arguments 2>&1
-    $exitCode = $LASTEXITCODE
+    $previousErrorActionPreference = $ErrorActionPreference
+    $hasNativePreference = [bool](Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue)
+    if ($hasNativePreference) {
+        $previousNativePreference = $PSNativeCommandUseErrorActionPreference
+    }
+
+    try {
+        $ErrorActionPreference = "Continue"
+        if ($hasNativePreference) {
+            $PSNativeCommandUseErrorActionPreference = $false
+        }
+        $rawOutput = & $FilePath @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+        if ($hasNativePreference) {
+            $PSNativeCommandUseErrorActionPreference = $previousNativePreference
+        }
+    }
+
     $output = ($rawOutput | ForEach-Object { $_.ToString() }) -join "`n"
 
     if ($AllowedExitCodes -notcontains $exitCode) {
@@ -161,10 +180,10 @@ if ($localChangesBefore) {
 }
 
 Write-Step "Sincronizando con origin/main"
-Invoke-Git -Step "git fetch" -Arguments @("fetch", "origin") -ShowOutput
-Invoke-Git -Step "git pull" -Arguments @("pull", "--ff-only", "origin", "main") -ShowOutput
+Invoke-Git -Step "git fetch" -Arguments @("fetch", "origin") -ShowOutput | Out-Null
+Invoke-Git -Step "git pull" -Arguments @("pull", "--ff-only", "origin", "main") -ShowOutput | Out-Null
 
-$conflicts = (Invoke-Git -Step "estado git" -Arguments @("diff", "--name-only", "--diff-filter=U")).Output
+$conflicts = (Invoke-Git -Step "estado git" -Arguments @("ls-files", "--unmerged")).Output
 if ($conflicts) {
     Stop-WithError -Step "validacion git" -Message "Existen conflictos Git sin resolver." -Details $conflicts
 }
