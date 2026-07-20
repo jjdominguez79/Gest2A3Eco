@@ -1,0 +1,6 @@
+{
+  "version": "1.2.2",
+  "tag": "v1.2.2",
+  "changelog": "Se añade la publicacion de version de manera automatica.",
+  "force_update": true
+}
