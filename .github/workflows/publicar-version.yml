@@ -1,0 +1,213 @@
+name: Publicar version
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag vX.Y.Z a publicar"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  publicar:
+    runs-on: windows-latest
+    env:
+      REPO_SLUG: ${{ github.repository }}
+      TARGET_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Checkout completo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validar tag y coherencia de versiones
+        shell: pwsh
+        run: |
+          python -m release_utils validate-release-state `
+            --tag "$env:TARGET_TAG" `
+            --repo "$env:REPO_SLUG" `
+            --app-version-file "app_version.py" `
+            --setup-file "setup.iss" `
+            --metadata-file "updates/release_metadata.json" | Set-Content -Encoding UTF8 release_state.json
+
+          $state = Get-Content release_state.json -Raw | ConvertFrom-Json
+          $state.release_notes | Set-Content -Encoding UTF8 release_notes.md
+          $state.changelog | Set-Content -Encoding UTF8 release_changelog.txt
+
+          "APP_VERSION=$($state.version)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "RELEASE_TAG=$($state.tag)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "INSTALLER_NAME=$($state.installer_name)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "DOWNLOAD_URL=$($state.download_url)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "RELEASE_TITLE=$($state.release_title)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "FORCE_UPDATE=$($state.force_update.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Comprobar que la Release no existe
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $apiUrl = "https://api.github.com/repos/$env:REPO_SLUG/releases/tags/$env:RELEASE_TAG"
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept        = "application/vnd.github+json"
+          }
+
+          try {
+            Invoke-RestMethod -Uri $apiUrl -Headers $headers -Method Get | Out-Null
+            throw "La Release $env:RELEASE_TAG ya existe. El workflow se detiene para evitar sobreescribir la publicacion."
+          }
+          catch {
+            $response = $_.Exception.Response
+            if ($response -and $response.StatusCode.value__ -eq 404) {
+              Write-Host "No existe una Release previa para $env:RELEASE_TAG. Se puede continuar."
+            }
+            elseif ($_.Exception.Message -like "*ya existe*") {
+              throw
+            }
+            else {
+              throw
+            }
+          }
+
+      - name: Instalar dependencias Python
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Compilar con PyInstaller
+        shell: pwsh
+        run: |
+          python -m PyInstaller --clean --noconfirm Gest2A3Eco.spec
+          $exePath = Join-Path $PWD "dist\Gest2A3Eco\Gest2A3Eco.exe"
+          if (-not (Test-Path $exePath)) {
+            throw "No se ha generado el ejecutable esperado: $exePath"
+          }
+
+      - name: Instalar Inno Setup 6
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+
+          $candidatePaths = @(
+            "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+            "C:\Program Files\Inno Setup 6\ISCC.exe"
+          )
+
+          $resolvedPath = $candidatePaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $resolvedPath) {
+            $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+            if ($command) {
+              $resolvedPath = $command.Source
+            }
+          }
+
+          if (-not $resolvedPath) {
+            throw "No se encontro ISCC.exe tras instalar Inno Setup."
+          }
+
+          "ISCC_PATH=$resolvedPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Generar instalador
+        shell: pwsh
+        run: |
+          & "$env:ISCC_PATH" "setup.iss"
+
+          $expectedInstaller = Join-Path $PWD ("dist_installer\" + $env:INSTALLER_NAME)
+          if (-not (Test-Path $expectedInstaller)) {
+            Write-Host "Contenido real de dist_installer:"
+            if (Test-Path "dist_installer") {
+              Get-ChildItem "dist_installer" | Select-Object FullName, Name, Length | Format-Table -AutoSize
+            }
+            throw "No se ha generado el instalador esperado: $expectedInstaller"
+          }
+
+      - name: Crear GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TITLE }}
+          files: dist_installer/${{ env.INSTALLER_NAME }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verificar URL publica del instalador
+        shell: pwsh
+        run: |
+          $maxAttempts = 10
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            try {
+              python -m release_utils assert-http-available --url "$env:DOWNLOAD_URL" --timeout 60
+              Write-Host "La URL publica del instalador responde correctamente."
+              exit 0
+            }
+            catch {
+              if ($attempt -eq $maxAttempts) {
+                throw "La URL publica del instalador sigue sin responder tras $maxAttempts intentos: $env:DOWNLOAD_URL"
+              }
+              Write-Host "La URL todavia no esta disponible. Reintento $attempt de $maxAttempts..."
+              Start-Sleep -Seconds 10
+            }
+          }
+
+      - name: Preparar rama main para actualizar version.json
+        shell: pwsh
+        run: |
+          git fetch origin main
+          git checkout -B main origin/main
+          git pull --ff-only origin main
+
+      - name: Generar updates/version.json
+        shell: pwsh
+        run: |
+          $state = Get-Content "release_state.json" -Raw | ConvertFrom-Json
+          $currentManifest = Get-Content "updates/version.json" -Raw | ConvertFrom-Json
+          $args = @(
+            "-m", "release_utils", "write-version-json",
+            "--version", $env:APP_VERSION,
+            "--repo", $env:REPO_SLUG,
+            "--output", "updates/version.json",
+            "--changelog-file", "release_changelog.txt",
+            "--previous-minimum-version", [string]$currentManifest.minimum_required_version
+          )
+
+          if ([bool]$state.force_update) {
+            $args += "--force-update"
+          }
+
+          python @args
+          Get-Content "updates/version.json" -Raw | ConvertFrom-Json | Out-Null
+        env:
+          PYTHONUTF8: "1"
+
+      - name: Commit y push de updates/version.json
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "updates/version.json"
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "updates/version.json no ha cambiado."
+            exit 0
+          }
+          git commit -m "Publicar actualización $env:APP_VERSION"
+          git push origin main
