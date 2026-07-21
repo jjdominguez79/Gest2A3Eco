@@ -48,8 +48,11 @@
 3. Añadir servicio `TramitesDgtService`.
 4. Añadir vista global accesible desde el panel inicial.
 5. Permitir crear expediente minimo, regenerar enlaces, enviar por email/WhatsApp, validar y generar documentos preliminares.
-6. Sustituir documentos `.txt` por plantillas DOCX/PDF cuando existan modelos definitivos.
-7. Incorporar integracion de firma mediante `firma_provider` y `firma_request_id`.
+6. Capturar y revisar datos completos de vendedor/comprador desde la vista interna.
+7. Registrar documentacion aportada con ruta y hash SHA-256.
+8. Verificar tokens de enlace para una futura interfaz externa de captura.
+9. Sustituir documentos `.txt` por plantillas DOCX/PDF cuando existan modelos definitivos.
+10. Incorporar integracion de firma mediante `firma_provider` y `firma_request_id`.
 
 ## 7. Archivos creados
 
@@ -57,6 +60,16 @@
 - `views/ui_tramites_dgt.py`
 - `tests/test_tramites_dgt.py`
 - `docs/analisis_modulo_dgt.md`
+
+## Estado implantado
+
+- Gestinem puede crear expedientes globales DGT sin empresa contable asociada.
+- Los enlaces de vendedor y comprador se regeneran con token seguro y se guardan solo como hash.
+- La vista permite editar datos completos de vendedor y comprador.
+- La vista permite adjuntar documentacion y registrar su SHA-256.
+- La validacion exige datos minimos de partes, identificacion valida, direccion y documentacion.
+- La generacion crea contrato/mandatos preliminares y conserva el JSON de generacion.
+- Queda preparada la verificacion de token para conectar un formulario externo o handler de protocolo.
 
 ## 8. Archivos modificados
 

@@ -36,11 +36,39 @@ def test_crear_validar_y_generar_documentos(tmp_path: Path, monkeypatch):
             "precio_venta": "1200,50",
         }
     )
+    links = service.regenerar_links(expediente_id)
+    vendedor_token = links["vendedor"].split("token=", 1)[1]
     expediente = service.get_expediente(expediente_id)
     assert expediente["referencia"].startswith("DGT-")
     assert expediente["vehiculo_matricula"] == "1234ABC"
     assert expediente["vendedor_token_hash"]
     assert expediente["comprador_token_hash"]
+
+    service.completar_desde_link(
+        expediente["referencia"],
+        "vendedor",
+        vendedor_token,
+        {
+            "nombre": "Vendedor Demo",
+            "nif": "00000000T",
+            "direccion": "Calle Mayor 1",
+            "vehiculo_matricula": "1234 ABC",
+            "precio_venta": "1200,50",
+        },
+    )
+    service.guardar_datos_parte(
+        expediente_id,
+        "comprador",
+        {
+            "nombre": "Comprador Demo",
+            "nif": "00000001R",
+            "direccion": "Calle Menor 2",
+        },
+    )
+    adjunto = tmp_path / "dni.pdf"
+    adjunto.write_bytes(b"%PDF-1.4 demo")
+    doc = service.adjuntar_documento(expediente_id, "comprador", str(adjunto), tipo="dni")
+    assert doc["sha256"]
 
     service.validar_expediente(expediente_id)
     docs = service.generar_documentos(expediente_id)
@@ -51,3 +79,16 @@ def test_crear_validar_y_generar_documentos(tmp_path: Path, monkeypatch):
     }
     for doc in docs:
         assert Path(doc["ruta_txt"]).exists()
+
+
+def test_rechaza_token_dgt_incorrecto(tmp_path: Path):
+    gestor = GestorSQLite(tmp_path / "dgt_token.db")
+    service = TramitesDgtService(gestor)
+    expediente_id = service.crear_expediente_minimo({"vendedor_nombre": "A", "comprador_nombre": "B"})
+    expediente = service.get_expediente(expediente_id)
+    try:
+        service.verificar_token(expediente["referencia"], "vendedor", "token-malo")
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("El token incorrecto no fue rechazado")

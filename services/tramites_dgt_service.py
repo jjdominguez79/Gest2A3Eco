@@ -20,6 +20,7 @@ DOCUMENTOS_BASE = (
     ("mandato_dgt_comprador", "Mandato DGT comprador"),
     ("mandato_dgt_vendedor", "Mandato DGT vendedor"),
 )
+ROLES_PARTE = {"vendedor", "comprador"}
 
 
 @dataclass(slots=True)
@@ -122,6 +123,79 @@ class TramitesDgtService:
             "comprador": self._build_url("comprador", ref, comprador.token),
         }
 
+    def verificar_token(self, referencia: str, rol: str, token: str) -> dict:
+        rol = self._validar_rol(rol)
+        expediente = self._gestor.get_dgt_expediente_por_referencia(referencia)
+        if not expediente:
+            raise ValueError("Expediente DGT no encontrado.")
+        stored_hash = str(expediente.get(f"{rol}_token_hash") or "")
+        if not stored_hash or not secrets.compare_digest(stored_hash, self._hash_token(token)):
+            raise PermissionError("Enlace DGT no valido o caducado.")
+        return expediente
+
+    def completar_desde_link(self, referencia: str, rol: str, token: str, payload: dict) -> None:
+        expediente = self.verificar_token(referencia, rol, token)
+        self.guardar_datos_parte(expediente["id"], rol, payload)
+
+    def guardar_datos_parte(self, expediente_id: str, rol: str, payload: dict) -> None:
+        rol = self._validar_rol(rol)
+        expediente = self._gestor.get_dgt_expediente(expediente_id)
+        if not expediente:
+            raise ValueError("Expediente DGT no encontrado.")
+        datos = self._normalizar_payload_parte(payload)
+        expediente[f"{rol}_payload"] = datos
+        if datos.get("nombre"):
+            expediente[f"{rol}_nombre"] = datos["nombre"]
+        if datos.get("email"):
+            expediente[f"{rol}_email"] = datos["email"]
+        if datos.get("telefono"):
+            expediente[f"{rol}_telefono"] = datos["telefono"]
+        if rol == "vendedor":
+            if datos.get("vehiculo_matricula"):
+                expediente["vehiculo_matricula"] = datos["vehiculo_matricula"]
+            if datos.get("vehiculo_bastidor"):
+                expediente["vehiculo_bastidor"] = datos["vehiculo_bastidor"]
+            if datos.get("precio_venta") is not None:
+                expediente["precio_venta"] = datos["precio_venta"]
+            if datos.get("fecha_operacion"):
+                expediente["fecha_operacion"] = datos["fecha_operacion"]
+        if expediente.get("estado") in ("borrador", ""):
+            expediente["estado"] = "pendiente_revision"
+        if expediente.get("estado") == "validado":
+            expediente["estado"] = "revision"
+            expediente["validado_por"] = None
+            expediente["validado_at"] = None
+        self._gestor.upsert_dgt_expediente(expediente)
+
+    def adjuntar_documento(self, expediente_id: str, rol: str, file_path: str, tipo: str = "", descripcion: str = "") -> dict:
+        rol = self._validar_rol(rol)
+        expediente = self._gestor.get_dgt_expediente(expediente_id)
+        if not expediente:
+            raise ValueError("Expediente DGT no encontrado.")
+        path = Path(file_path).expanduser()
+        if not path.exists() or not path.is_file():
+            raise FileNotFoundError(f"No existe el documento adjunto: {path}")
+        digest = self._hash_file(path)
+        item = {
+            "id": str(uuid.uuid4()),
+            "rol": rol,
+            "tipo": str(tipo or "").strip() or "documentacion",
+            "descripcion": str(descripcion or "").strip(),
+            "nombre_archivo": path.name,
+            "ruta": str(path.resolve()),
+            "sha256": digest,
+            "added_at": self._now(),
+        }
+        documentos = list(expediente.get("documentos") or [])
+        documentos.append(item)
+        expediente["documentos"] = documentos
+        if expediente.get("estado") == "validado":
+            expediente["estado"] = "revision"
+            expediente["validado_por"] = None
+            expediente["validado_at"] = None
+        self._gestor.upsert_dgt_expediente(expediente)
+        return item
+
     def validar_expediente(self, expediente_id: str) -> None:
         expediente = self._gestor.get_dgt_expediente(expediente_id)
         if not expediente:
@@ -143,8 +217,14 @@ class TramitesDgtService:
         for rol in ("vendedor", "comprador"):
             payload = expediente.get(f"{rol}_payload") or {}
             nif = normalizar_nif_cif(payload.get("nif") or payload.get("dni") or "")
-            if nif and not validar_nif_cif_nie(nif):
+            if not nif:
+                errors.append(f"El NIF/NIE/CIF del {rol} es obligatorio.")
+            elif not validar_nif_cif_nie(nif):
                 errors.append(f"El NIF/NIE/CIF del {rol} no es valido.")
+            if not payload.get("direccion"):
+                errors.append(f"La direccion del {rol} es obligatoria.")
+        if not expediente.get("documentos"):
+            errors.append("Debe existir al menos un documento adjunto.")
         return errors
 
     def generar_documentos(self, expediente_id: str) -> list[dict]:
@@ -218,10 +298,13 @@ class TramitesDgtService:
             f"Referencia: {ctx['referencia']}\n"
             f"Estado: {ctx['estado']}\n\n"
             f"Vendedor: {ctx['vendedor_nombre']}\n"
+            f"NIF vendedor: {ctx['vendedor_nif']}\n"
             f"Comprador: {ctx['comprador_nombre']}\n"
+            f"NIF comprador: {ctx['comprador_nif']}\n"
             f"Vehiculo: {ctx['vehiculo_matricula']} / {ctx['vehiculo_bastidor']}\n"
             f"Precio: {ctx['precio_venta']}\n"
             f"Fecha operacion: {ctx['fecha_operacion']}\n\n"
+            f"Documentos adjuntos: {ctx['documentos_count']}\n\n"
             "Documento preliminar generado por Gest2A3Eco. Pendiente de plantilla DOCX/PDF y firma electronica.\n"
         )
 
@@ -239,7 +322,14 @@ class TramitesDgtService:
             "fecha_operacion",
             "observaciones",
         )
-        return {key: expediente.get(key) for key in keys}
+        ctx = {key: expediente.get(key) for key in keys}
+        vendedor_payload = expediente.get("vendedor_payload") or {}
+        comprador_payload = expediente.get("comprador_payload") or {}
+        ctx["vendedor_nif"] = vendedor_payload.get("nif") or ""
+        ctx["comprador_nif"] = comprador_payload.get("nif") or ""
+        ctx["documentos"] = expediente.get("documentos") or []
+        ctx["documentos_count"] = len(ctx["documentos"])
+        return ctx
 
     def _parse_float(self, value):
         raw = str(value or "").strip().replace(".", "").replace(",", ".")
@@ -261,3 +351,35 @@ class TramitesDgtService:
 
     def _now(self) -> str:
         return datetime.utcnow().replace(microsecond=0).isoformat()
+
+    def _validar_rol(self, rol: str) -> str:
+        rol = str(rol or "").strip().lower()
+        if rol not in ROLES_PARTE:
+            raise ValueError("Rol DGT no valido.")
+        return rol
+
+    def _normalizar_payload_parte(self, payload: dict) -> dict:
+        out = {
+            "nombre": str(payload.get("nombre") or "").strip(),
+            "nif": normalizar_nif_cif(payload.get("nif") or payload.get("dni") or ""),
+            "email": str(payload.get("email") or "").strip(),
+            "telefono": self._normalizar_telefono(payload.get("telefono")),
+            "direccion": str(payload.get("direccion") or "").strip(),
+            "cp": str(payload.get("cp") or "").strip(),
+            "poblacion": str(payload.get("poblacion") or "").strip(),
+            "provincia": str(payload.get("provincia") or "").strip(),
+            "representante": str(payload.get("representante") or "").strip(),
+            "observaciones": str(payload.get("observaciones") or "").strip(),
+        }
+        out["vehiculo_matricula"] = self._normalizar_matricula(payload.get("vehiculo_matricula"))
+        out["vehiculo_bastidor"] = str(payload.get("vehiculo_bastidor") or "").strip().upper()
+        out["precio_venta"] = self._parse_float(payload.get("precio_venta"))
+        out["fecha_operacion"] = str(payload.get("fecha_operacion") or "").strip()
+        return out
+
+    def _hash_file(self, path: Path) -> str:
+        h = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()

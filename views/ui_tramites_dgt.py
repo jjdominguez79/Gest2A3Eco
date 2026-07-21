@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tkinter as tk
 import webbrowser
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from services.email_service import open_outlook_email
 from services.tramites_dgt_service import TramitesDgtService
@@ -96,6 +96,9 @@ class UITramitesDgt(ttk.Frame):
         actions = ttk.Frame(right)
         actions.pack(fill="x", pady=8)
         ttk.Button(actions, text="Guardar", style="Primary.TButton", command=self._guardar).pack(side=tk.LEFT)
+        ttk.Button(actions, text="Datos vendedor", command=lambda: self._editar_parte("vendedor")).pack(side=tk.LEFT, padx=5)
+        ttk.Button(actions, text="Datos comprador", command=lambda: self._editar_parte("comprador")).pack(side=tk.LEFT, padx=5)
+        ttk.Button(actions, text="Adjuntar", command=self._adjuntar_documento).pack(side=tk.LEFT, padx=5)
         ttk.Button(actions, text="Regenerar enlaces", command=self._regenerar_links).pack(side=tk.LEFT, padx=5)
         ttk.Button(actions, text="Validar", command=self._validar).pack(side=tk.LEFT, padx=5)
         ttk.Button(actions, text="Generar documentos", command=self._generar_documentos).pack(side=tk.LEFT, padx=5)
@@ -106,6 +109,20 @@ class UITramitesDgt(ttk.Frame):
         self.var_link_comprador = tk.StringVar()
         self._link_row(links, "Vendedor", self.var_link_vendedor, self._email_vendedor, self._whatsapp_vendedor, 0)
         self._link_row(links, "Comprador", self.var_link_comprador, self._email_comprador, self._whatsapp_comprador, 1)
+
+        attached = ttk.LabelFrame(right, text="Documentacion aportada")
+        attached.pack(fill="both", expand=True, pady=(0, 8))
+        self.attach_tv = ttk.Treeview(attached, columns=("rol", "tipo", "archivo", "hash"), show="headings", height=5)
+        for col, text, width in (
+            ("rol", "Rol", 90),
+            ("tipo", "Tipo", 140),
+            ("archivo", "Archivo", 280),
+            ("hash", "SHA256", 190),
+        ):
+            self.attach_tv.heading(col, text=text)
+            self.attach_tv.column(col, width=width, anchor="w")
+        self.attach_tv.pack(fill="both", expand=True)
+        self.attach_tv.bind("<Double-1>", lambda _e: self._abrir_adjunto())
 
         docs = ttk.LabelFrame(right, text="Documentos generados")
         docs.pack(fill="both", expand=True)
@@ -214,6 +231,7 @@ class UITramitesDgt(ttk.Frame):
         self.var_link_vendedor.set(links.get("vendedor", ""))
         self.var_link_comprador.set(links.get("comprador", ""))
         self._load_docs()
+        self._load_adjuntos(expediente)
 
     def _load_docs(self):
         self.docs_tv.delete(*self.docs_tv.get_children())
@@ -223,6 +241,23 @@ class UITramitesDgt(ttk.Frame):
             path = doc.get("ruta_pdf") or doc.get("ruta_docx") or doc.get("ruta_txt") or ""
             self.docs_tv.insert("", "end", iid=str(doc.get("id")), values=(doc.get("tipo_documento", ""), path))
 
+    def _load_adjuntos(self, expediente: dict | None = None):
+        self.attach_tv.delete(*self.attach_tv.get_children())
+        if expediente is None and self._current_id:
+            expediente = self._service.get_expediente(self._current_id)
+        for doc in (expediente or {}).get("documentos") or []:
+            self.attach_tv.insert(
+                "",
+                "end",
+                iid=str(doc.get("id") or doc.get("ruta") or ""),
+                values=(
+                    doc.get("rol", ""),
+                    doc.get("tipo", ""),
+                    doc.get("nombre_archivo") or doc.get("ruta") or "",
+                    str(doc.get("sha256") or "")[:16],
+                ),
+            )
+
     def _abrir_documento(self):
         sel = self.docs_tv.selection()
         if not sel:
@@ -230,6 +265,51 @@ class UITramitesDgt(ttk.Frame):
         path = self.docs_tv.item(sel[0], "values")[1]
         if path:
             webbrowser.open(path)
+
+    def _abrir_adjunto(self):
+        sel = self.attach_tv.selection()
+        if not sel or not self._current_id:
+            return
+        expediente = self._service.get_expediente(self._current_id) or {}
+        selected_id = str(sel[0])
+        for doc in expediente.get("documentos") or []:
+            if str(doc.get("id")) == selected_id and doc.get("ruta"):
+                webbrowser.open(doc["ruta"])
+                return
+
+    def _editar_parte(self, rol: str):
+        if not self._current_id:
+            return
+        expediente = self._service.get_expediente(self._current_id) or {}
+        dlg = DatosParteDialog(self.winfo_toplevel(), rol, expediente)
+        if not dlg.result:
+            return
+        try:
+            self._service.guardar_datos_parte(self._current_id, rol, dlg.result)
+            self.refresh()
+            self.tv.selection_set(self._current_id)
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+
+    def _adjuntar_documento(self):
+        if not self._current_id:
+            return
+        rol = simpledialog.askstring("Tramites DGT", "Rol del documento (vendedor/comprador):", parent=self.winfo_toplevel())
+        if not rol:
+            return
+        tipo = simpledialog.askstring("Tramites DGT", "Tipo de documento:", parent=self.winfo_toplevel()) or "documentacion"
+        path = filedialog.askopenfilename(
+            title="Seleccionar documento DGT",
+            filetypes=(("Documentos", "*.pdf *.jpg *.jpeg *.png *.doc *.docx"), ("Todos", "*.*")),
+        )
+        if not path:
+            return
+        try:
+            self._service.adjuntar_documento(self._current_id, rol, path, tipo=tipo)
+            expediente = self._service.get_expediente(self._current_id)
+            self._load_adjuntos(expediente)
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
 
     def _email_vendedor(self):
         self._email("vendedor")
@@ -273,3 +353,63 @@ class UITramitesDgt(ttk.Frame):
         self.var_link_vendedor.set("")
         self.var_link_comprador.set("")
         self.docs_tv.delete(*self.docs_tv.get_children())
+        self.attach_tv.delete(*self.attach_tv.get_children())
+
+
+class DatosParteDialog(simpledialog.Dialog):
+    def __init__(self, parent, rol: str, expediente: dict):
+        self.rol = rol
+        self.expediente = expediente
+        self.vars = {}
+        self.result = None
+        super().__init__(parent, f"Datos {rol}")
+
+    def body(self, master):
+        payload = dict(self.expediente.get(f"{self.rol}_payload") or {})
+        defaults = {
+            "nombre": self.expediente.get(f"{self.rol}_nombre") or "",
+            "email": self.expediente.get(f"{self.rol}_email") or "",
+            "telefono": self.expediente.get(f"{self.rol}_telefono") or "",
+            "nif": payload.get("nif") or "",
+            "direccion": payload.get("direccion") or "",
+            "cp": payload.get("cp") or "",
+            "poblacion": payload.get("poblacion") or "",
+            "provincia": payload.get("provincia") or "",
+            "representante": payload.get("representante") or "",
+            "observaciones": payload.get("observaciones") or "",
+            "vehiculo_matricula": self.expediente.get("vehiculo_matricula") or "",
+            "vehiculo_bastidor": self.expediente.get("vehiculo_bastidor") or "",
+            "precio_venta": self.expediente.get("precio_venta") or "",
+            "fecha_operacion": self.expediente.get("fecha_operacion") or "",
+        }
+        fields = [
+            ("Nombre/Razon social", "nombre"),
+            ("NIF/NIE/CIF", "nif"),
+            ("Email", "email"),
+            ("Telefono", "telefono"),
+            ("Direccion", "direccion"),
+            ("CP", "cp"),
+            ("Poblacion", "poblacion"),
+            ("Provincia", "provincia"),
+            ("Representante", "representante"),
+            ("Observaciones", "observaciones"),
+        ]
+        if self.rol == "vendedor":
+            fields.extend(
+                [
+                    ("Matricula", "vehiculo_matricula"),
+                    ("Bastidor", "vehiculo_bastidor"),
+                    ("Precio venta", "precio_venta"),
+                    ("Fecha operacion", "fecha_operacion"),
+                ]
+            )
+        for row, (label, key) in enumerate(fields):
+            ttk.Label(master, text=label).grid(row=row, column=0, sticky="w", padx=8, pady=3)
+            var = tk.StringVar(value=str(defaults.get(key) or ""))
+            self.vars[key] = var
+            ttk.Entry(master, textvariable=var, width=46).grid(row=row, column=1, sticky="ew", padx=8, pady=3)
+        master.columnconfigure(1, weight=1)
+        return None
+
+    def apply(self):
+        self.result = {key: var.get() for key, var in self.vars.items()}
