@@ -9,7 +9,7 @@ import webbrowser
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, unquote, urlparse
 from xml.sax.saxutils import escape as xml_escape
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -144,6 +144,20 @@ class TramitesDgtService:
     def completar_desde_link(self, referencia: str, rol: str, token: str, payload: dict) -> None:
         expediente = self.verificar_token(referencia, rol, token)
         self.guardar_datos_parte(expediente["id"], rol, payload)
+
+    def parse_link_seguro(self, url: str) -> dict:
+        parsed = urlparse(str(url or "").strip())
+        if parsed.scheme != "gest2a3eco" or parsed.netloc != "tramites-dgt":
+            raise ValueError("El enlace no corresponde a Trámites DGT.")
+        parts = [unquote(part) for part in parsed.path.strip("/").split("/") if part]
+        if len(parts) < 2:
+            raise ValueError("El enlace DGT no contiene rol y referencia.")
+        rol = self._validar_rol(parts[0])
+        referencia = parts[1]
+        token = (parse_qs(parsed.query).get("token") or [""])[0]
+        if not token:
+            raise ValueError("El enlace DGT no contiene token. Regenera el enlace antes de abrir el formulario.")
+        return {"rol": rol, "referencia": referencia, "token": token}
 
     def guardar_datos_parte(self, expediente_id: str, rol: str, payload: dict) -> None:
         rol = self._validar_rol(rol)

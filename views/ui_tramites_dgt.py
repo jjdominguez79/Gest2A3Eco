@@ -6,6 +6,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from services.email_service import open_outlook_email
 from services.tramites_dgt_service import TramitesDgtService
+from views.ui_tramites_dgt_public import UITramitesDgtPublicForm
 
 
 class UITramitesDgt(ttk.Frame):
@@ -109,8 +110,8 @@ class UITramitesDgt(ttk.Frame):
         links.pack(fill="x", pady=(0, 8))
         self.var_link_vendedor = tk.StringVar()
         self.var_link_comprador = tk.StringVar()
-        self._link_row(links, "Vendedor", self.var_link_vendedor, self._email_vendedor, self._whatsapp_vendedor, 0)
-        self._link_row(links, "Comprador", self.var_link_comprador, self._email_comprador, self._whatsapp_comprador, 1)
+        self._link_row(links, "Vendedor", self.var_link_vendedor, self._email_vendedor, self._whatsapp_vendedor, self._form_vendedor, 0)
+        self._link_row(links, "Comprador", self.var_link_comprador, self._email_comprador, self._whatsapp_comprador, self._form_comprador, 1)
 
         attached = ttk.LabelFrame(right, text="Documentacion aportada")
         attached.pack(fill="both", expand=True, pady=(0, 8))
@@ -136,11 +137,12 @@ class UITramitesDgt(ttk.Frame):
         self.docs_tv.pack(fill="both", expand=True)
         self.docs_tv.bind("<Double-1>", lambda _e: self._abrir_documento())
 
-    def _link_row(self, parent, label, var, email_cmd, whatsapp_cmd, row):
+    def _link_row(self, parent, label, var, email_cmd, whatsapp_cmd, form_cmd, row):
         ttk.Label(parent, text=label).grid(row=row, column=0, padx=8, pady=4, sticky="w")
         ttk.Entry(parent, textvariable=var).grid(row=row, column=1, padx=8, pady=4, sticky="ew")
         ttk.Button(parent, text="Email", command=email_cmd).grid(row=row, column=2, padx=3)
         ttk.Button(parent, text="WhatsApp", command=whatsapp_cmd).grid(row=row, column=3, padx=3)
+        ttk.Button(parent, text="Formulario", command=form_cmd).grid(row=row, column=4, padx=3)
         parent.columnconfigure(1, weight=1)
 
     def refresh(self):
@@ -346,6 +348,25 @@ class UITramitesDgt(ttk.Frame):
 
     def _whatsapp_comprador(self):
         self._whatsapp("comprador")
+
+    def _form_vendedor(self):
+        self._abrir_formulario_link(self.var_link_vendedor.get())
+
+    def _form_comprador(self):
+        self._abrir_formulario_link(self.var_link_comprador.get())
+
+    def _abrir_formulario_link(self, link: str):
+        try:
+            parsed = self._service.parse_link_seguro(link)
+            UITramitesDgtPublicForm(
+                self.winfo_toplevel(),
+                self._service,
+                referencia=parsed["referencia"],
+                rol=parsed["rol"],
+                token=parsed["token"],
+            )
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
 
     def _email(self, rol: str):
         link = self.var_link_vendedor.get() if rol == "vendedor" else self.var_link_comprador.get()

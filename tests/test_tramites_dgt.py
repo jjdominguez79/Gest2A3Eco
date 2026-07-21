@@ -101,6 +101,27 @@ def test_rechaza_token_dgt_incorrecto(tmp_path: Path):
         raise AssertionError("El token incorrecto no fue rechazado")
 
 
+def test_parsea_link_seguro_y_completa_comprador(tmp_path: Path):
+    gestor = GestorSQLite(tmp_path / "dgt_link.db")
+    service = TramitesDgtService(gestor)
+    expediente_id = service.crear_expediente_minimo({"vendedor_nombre": "A", "comprador_nombre": "B"})
+    link = service.regenerar_links(expediente_id)["comprador"]
+    parsed = service.parse_link_seguro(link)
+    assert parsed["rol"] == "comprador"
+    assert parsed["referencia"].startswith("DGT-")
+    assert parsed["token"]
+
+    service.completar_desde_link(
+        parsed["referencia"],
+        parsed["rol"],
+        parsed["token"],
+        {"nombre": "Comprador Link", "nif": "00000001R", "direccion": "Calle Link"},
+    )
+    expediente = service.get_expediente(expediente_id)
+    assert expediente["comprador_nombre"] == "Comprador Link"
+    assert expediente["comprador_payload"]["nif"] == "00000001R"
+
+
 def test_plantillas_dgt_editables_en_carpeta_configurada(tmp_path: Path, monkeypatch):
     templates_dir = tmp_path / "plantillas_usuario"
     monkeypatch.setattr("services.tramites_dgt_service.get_word_templates_dir", lambda: str(templates_dir))

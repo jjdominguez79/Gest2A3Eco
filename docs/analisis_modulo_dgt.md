@@ -55,11 +55,13 @@
 10. Intentar PDF cuando el entorno disponga de conversion Word COM.
 11. Preparar paquete de firma mediante `firma_provider` y `firma_request_id`.
 12. Mantener las plantillas DGT en carpeta editable de usuario para poder cambiarlas sin nuevo codigo ni version.
+13. Abrir un formulario de captura para vendedor/comprador a partir del enlace tokenizado.
 
 ## 7. Archivos creados
 
 - `services/tramites_dgt_service.py`
 - `views/ui_tramites_dgt.py`
+- `views/ui_tramites_dgt_public.py`
 - `tests/test_tramites_dgt.py`
 - `docs/analisis_modulo_dgt.md`
 
@@ -74,6 +76,7 @@
 - La firma queda marcada como `preparado` con el listado de documentos, pendiente de conectar Box Sign, SignRequest u otro proveedor.
 - Queda preparada la verificacion de token para conectar un formulario externo o handler de protocolo.
 - Las plantillas se buscan en `word_templates_dir/tramites_dgt` y pueden crearse/abrirse desde la UI, por lo que su contenido se modifica fuera del codigo.
+- El enlace seguro puede abrir un formulario local de captura que verifica referencia, rol y token antes de guardar datos o adjuntos.
 
 ## Plantillas editables
 
@@ -86,6 +89,12 @@ Archivos:
 - `dgt_mandato_vendedor.docx`
 
 La aplicacion puede crear plantillas base si faltan. Desde ese momento basta con editar los `.docx` en Word y volver a generar documentos; no hace falta publicar una nueva version.
+
+## Captura por enlace
+
+El formulario `UITramitesDgtPublicForm` permite reutilizar la logica de enlaces seguros sin exponer el panel interno. Recibe `referencia`, `rol` y `token`, verifica el hash guardado en SQLite y solo entonces permite guardar datos o adjuntar documentacion.
+
+La UI interna incluye un boton `Formulario` junto a cada enlace para probar el flujo. Cuando el protocolo `gest2a3eco://` quede registrado en instalador/SO, el mismo formulario puede abrirse desde el enlace enviado por email o WhatsApp.
 
 ## 8. Archivos modificados
 
