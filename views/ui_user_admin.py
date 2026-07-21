@@ -38,6 +38,7 @@ class UserAdminDialog(tk.Toplevel):
         self.var_activo = tk.BooleanVar(value=True)
         self.var_password = tk.StringVar()
         self.var_force_password_change = tk.BooleanVar(value=False)
+        self.var_perm_tramites_dgt = tk.BooleanVar(value=False)
         self._current_user_id = None
         self._company_rows: list[tuple[str, tk.StringVar]] = []
         self._build()
@@ -82,7 +83,7 @@ class UserAdminDialog(tk.Toplevel):
         right = ttk.LabelFrame(root, text="Edicion")
         right.grid(row=0, column=1, sticky="nsew")
         right.columnconfigure(1, weight=1)
-        right.rowconfigure(6, weight=1)
+        right.rowconfigure(7, weight=1)
 
         ttk.Label(right, text="Usuario").grid(row=0, column=0, sticky="w", padx=10, pady=(10, 4))
         ttk.Entry(right, textvariable=self.var_username).grid(row=0, column=1, sticky="ew", padx=10, pady=(10, 4))
@@ -100,8 +101,16 @@ class UserAdminDialog(tk.Toplevel):
 
         ttk.Checkbutton(right, text="Usuario activo", variable=self.var_activo).grid(row=3, column=1, sticky="w", padx=10, pady=4)
 
+        global_frame = ttk.LabelFrame(right, text="Permisos globales")
+        global_frame.grid(row=4, column=0, columnspan=2, sticky="ew", padx=10, pady=4)
+        ttk.Checkbutton(
+            global_frame,
+            text="Tramites DGT",
+            variable=self.var_perm_tramites_dgt,
+        ).pack(anchor="w", padx=8, pady=6)
+
         password_frame = ttk.Frame(right)
-        password_frame.grid(row=4, column=0, columnspan=2, sticky="ew", padx=10, pady=4)
+        password_frame.grid(row=5, column=0, columnspan=2, sticky="ew", padx=10, pady=4)
         password_frame.columnconfigure(1, weight=1)
         ttk.Label(password_frame, text="Nueva contraseña").grid(row=0, column=0, sticky="w")
         ttk.Entry(password_frame, textvariable=self.var_password, show="*").grid(row=0, column=1, sticky="ew", padx=(8, 0))
@@ -111,9 +120,9 @@ class UserAdminDialog(tk.Toplevel):
             variable=self.var_force_password_change,
         ).grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
 
-        ttk.Label(right, text="Permisos por empresa").grid(row=5, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 4))
+        ttk.Label(right, text="Permisos por empresa").grid(row=6, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 4))
         bulk = ttk.Frame(right)
-        bulk.grid(row=5, column=1, sticky="e", padx=10, pady=(10, 4))
+        bulk.grid(row=6, column=1, sticky="e", padx=10, pady=(10, 4))
         ttk.Button(
             bulk,
             text="Quitar todas",
@@ -130,7 +139,7 @@ class UserAdminDialog(tk.Toplevel):
             command=lambda: self._set_all_company_permissions(CompanyPermission.READ.value),
         ).pack(side="right", padx=(0, 6))
         company_wrap = ttk.Frame(right)
-        company_wrap.grid(row=6, column=0, columnspan=2, sticky="nsew", padx=10, pady=(0, 10))
+        company_wrap.grid(row=7, column=0, columnspan=2, sticky="nsew", padx=10, pady=(0, 10))
         company_wrap.columnconfigure(0, weight=1)
         company_wrap.rowconfigure(0, weight=1)
 
@@ -146,7 +155,7 @@ class UserAdminDialog(tk.Toplevel):
         canvas.bind("<Configure>", lambda e: canvas.itemconfigure(self._company_window, width=e.width))
 
         actions = ttk.Frame(right)
-        actions.grid(row=7, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
+        actions.grid(row=8, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
         ttk.Button(actions, text="Guardar usuario", style="Primary.TButton", command=lambda: self.controller.guardar()).pack(side="left")
         ttk.Button(actions, text="Cambiar contraseña", command=lambda: self.controller.cambiar_password()).pack(side="left", padx=(8, 0))
         ttk.Button(actions, text="Cerrar", command=self.destroy).pack(side="right")
@@ -180,7 +189,13 @@ class UserAdminDialog(tk.Toplevel):
         except Exception:
             return None
 
-    def load_user(self, user: dict | None, company_rows: list[dict], assigned_permissions: dict[str, str]):
+    def load_user(
+        self,
+        user: dict | None,
+        company_rows: list[dict],
+        assigned_permissions: dict[str, str],
+        global_permissions: set[str] | None = None,
+    ):
         self._current_user_id = user.get("id") if user else None
         self.var_username.set("" if not user else str(user.get("username") or ""))
         self.var_nombre.set("" if not user else str(user.get("nombre") or ""))
@@ -188,6 +203,7 @@ class UserAdminDialog(tk.Toplevel):
         self.var_activo.set(True if not user else bool(user.get("activo")))
         self.var_password.set("")
         self.var_force_password_change.set(False if not user else bool(user.get("must_change_password")))
+        self.var_perm_tramites_dgt.set("tramites_dgt" in (global_permissions or set()))
         self._render_company_permissions(company_rows, assigned_permissions)
         self._toggle_company_permissions()
 
@@ -225,6 +241,9 @@ class UserAdminDialog(tk.Toplevel):
 
     def get_form_data(self) -> dict:
         permissions = {codigo: var.get() for codigo, var in self._company_rows}
+        global_permissions = set()
+        if self.var_perm_tramites_dgt.get():
+            global_permissions.add("tramites_dgt")
         return {
             "id": self._current_user_id,
             "username": self.var_username.get().strip(),
@@ -234,6 +253,7 @@ class UserAdminDialog(tk.Toplevel):
             "password": self.var_password.get(),
             "must_change_password": bool(self.var_force_password_change.get()),
             "company_permissions": permissions,
+            "global_permissions": global_permissions,
         }
 
     def ask_new_password(self) -> str | None:

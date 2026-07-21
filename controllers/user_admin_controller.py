@@ -16,7 +16,7 @@ class UserAdminController:
         self.nuevo()
 
     def nuevo(self):
-        self._view.load_user(None, self._companies_cache, {})
+        self._view.load_user(None, self._companies_cache, {}, set())
 
     def seleccionar_usuario(self):
         user_id = self._view.get_selected_user_id()
@@ -27,7 +27,12 @@ class UserAdminController:
             str(row.get("empresa_codigo") or ""): str(row.get("permiso") or "")
             for row in self._gestor.listar_permisos_usuario(user_id)
         }
-        self._view.load_user(user, self._companies_cache, assigned)
+        global_permissions = {
+            str(row.get("permiso") or "").strip()
+            for row in self._gestor.listar_permisos_globales_usuario(user_id)
+            if bool(row.get("activo", 1)) and str(row.get("permiso") or "").strip()
+        }
+        self._view.load_user(user, self._companies_cache, assigned, global_permissions)
 
     def guardar(self):
         data = self._view.get_form_data()
@@ -40,6 +45,7 @@ class UserAdminController:
                 rol=data.get("rol"),
                 activo=data.get("activo"),
                 company_permissions=data.get("company_permissions") or {},
+                global_permissions=data.get("global_permissions") or set(),
                 password=password,
                 must_change_password=bool(data.get("must_change_password")),
             )

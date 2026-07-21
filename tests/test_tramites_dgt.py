@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from models.gestor_sqlite import GestorSQLite
+from services.auth_service import AuthService, AuthorizationService
 from services.tramites_dgt_service import TramitesDgtService, get_protocol_url_from_argv
 
 
@@ -144,3 +145,37 @@ def test_detecta_url_protocolo_dgt_en_argv():
     url = "gest2a3eco://tramites-dgt/vendedor/DGT-2026-0001?token=abc"
     assert get_protocol_url_from_argv(["Gest2A3Eco.exe", url]) == url
     assert get_protocol_url_from_argv(["Gest2A3Eco.exe", "--otro"]) == ""
+
+
+def test_permiso_global_tramites_dgt_en_usuario(tmp_path: Path):
+    gestor = GestorSQLite(tmp_path / "dgt_perms.db")
+    auth = AuthService(gestor)
+    user_id = auth.save_user(
+        user_id=None,
+        username="empleado",
+        nombre="Empleado",
+        rol="empleado",
+        activo=True,
+        company_permissions={},
+        global_permissions={"tramites_dgt"},
+        password="secret",
+    )
+    rows = gestor.listar_permisos_globales_usuario(user_id)
+    assert any(row["permiso"] == "tramites_dgt" and row["activo"] for row in rows)
+
+    result = auth.authenticate("empleado", "secret")
+    assert result.ok
+    assert AuthorizationService(result.session).can_manage_tramites_dgt()
+
+    auth.save_user(
+        user_id=user_id,
+        username="empleado",
+        nombre="Empleado",
+        rol="empleado",
+        activo=True,
+        company_permissions={},
+        global_permissions=set(),
+    )
+    result = auth.authenticate("empleado", "secret")
+    assert result.ok
+    assert not AuthorizationService(result.session).can_manage_tramites_dgt()

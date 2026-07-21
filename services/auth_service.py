@@ -185,6 +185,7 @@ class AuthService:
         rol: str,
         activo: bool,
         company_permissions: dict[str, str],
+        global_permissions: set[str] | list[str] | tuple[str, ...] | None = None,
         password: str | None = None,
         must_change_password: bool = False,
     ) -> int:
@@ -236,6 +237,18 @@ class AuthService:
                     continue
                 normalized_permissions[codigo_norm] = permiso.value
         self._gestor.reemplazar_permisos_usuario(stored_id, normalized_permissions)
+        requested_global = {
+            str(perm or "").strip()
+            for perm in (global_permissions or [])
+            if str(perm or "").strip()
+        }
+        existing_global = {
+            str(row.get("permiso") or "").strip()
+            for row in self._gestor.listar_permisos_globales_usuario(stored_id)
+            if str(row.get("permiso") or "").strip()
+        }
+        for permiso in sorted(requested_global | existing_global):
+            self._gestor.upsert_permiso_global_usuario(stored_id, permiso, permiso in requested_global)
         return stored_id
 
     def change_password(self, user_id: int, new_password: str, *, must_change_password: bool = False) -> None:
