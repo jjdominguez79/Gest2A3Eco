@@ -11,12 +11,14 @@ class UIPanelGeneral(ttk.Frame):
         empresa_service,
         session,
         on_open_dashboard,
+        on_open_tramites_dgt=None,
         on_create_company=None,
     ):
         super().__init__(parent)
         self._empresa_service = empresa_service
         self._session = session
         self._on_open_dashboard = on_open_dashboard
+        self._on_open_tramites_dgt = on_open_tramites_dgt
         self._on_create_company = on_create_company
         self._empresas = []
         self.var_buscar = tk.StringVar()
@@ -50,6 +52,13 @@ class UIPanelGeneral(ttk.Frame):
                 text="Crear empresa",
                 style="Primary.TButton",
                 command=self._on_create_company,
+            ).pack(side=tk.LEFT, padx=6)
+        if self._on_open_tramites_dgt is not None:
+            ttk.Button(
+                filtros,
+                text="Tramites DGT",
+                style="Primary.TButton",
+                command=self._on_open_tramites_dgt,
             ).pack(side=tk.LEFT, padx=6)
         ttk.Button(filtros, text="Actualizar", style="Primary.TButton", command=self.refresh).pack(side=tk.LEFT, padx=6)
         ttk.Button(filtros, text="Abrir empresa", style="Primary.TButton", command=self.open_selected).pack(side=tk.LEFT, padx=6)

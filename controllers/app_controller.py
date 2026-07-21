@@ -15,6 +15,7 @@ from views.ui_panel_general import UIPanelGeneral
 from views.ui_plantillas import UIPlantillasEmpresa
 from views.ui_procesos import UIProcesos
 from views.ui_terceros_globales import UITercerosGlobales
+from views.ui_tramites_dgt import UITramitesDgt
 from views.ui_user_admin import UserAdminDialog
 
 
@@ -70,6 +71,7 @@ class AppController:
             self._empresa_service,
             self._session,
             on_open_dashboard=self.open_company_dashboard,
+            on_open_tramites_dgt=self.open_tramites_dgt if self.authorization.can_manage_tramites_dgt() else None,
             on_create_company=on_create_company,
         )
 
@@ -266,6 +268,14 @@ class AppController:
                 on_open_empresa=self.open_company_dashboard,
             )
         )
+
+    def open_tramites_dgt(self):
+        try:
+            self.authorization.ensure_tramites_dgt()
+        except PermissionError as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self._content.winfo_toplevel())
+            return
+        self._show(lambda parent: UITramitesDgt(parent, self._gestor, session=self._session, on_back=self.start))
 
     def open_user_admin(self):
         try:

@@ -246,6 +246,42 @@ class SecuredGestorSQLite:
         self.security.ensure_admin("Solo el administrador puede gestionar usuarios.")
         return self._base.actualizar_password_usuario(user_id, password_hash, must_change_password=must_change_password)
 
+    def listar_permisos_globales_usuario(self, user_id: int):
+        self.security.ensure_admin("Solo el administrador puede gestionar usuarios.")
+        return self._base.listar_permisos_globales_usuario(user_id)
+
+    def upsert_permiso_global_usuario(self, user_id: int, permiso: str, activo: bool = True):
+        self.security.ensure_admin("Solo el administrador puede gestionar usuarios.")
+        return self._base.upsert_permiso_global_usuario(user_id, permiso, activo)
+
+    def listar_dgt_expedientes(self):
+        self.security.ensure_tramites_dgt()
+        return self._base.listar_dgt_expedientes()
+
+    def get_dgt_expediente(self, expediente_id: str):
+        self.security.ensure_tramites_dgt()
+        return self._base.get_dgt_expediente(expediente_id)
+
+    def get_dgt_expediente_por_referencia(self, referencia: str):
+        self.security.ensure_tramites_dgt()
+        return self._base.get_dgt_expediente_por_referencia(referencia)
+
+    def upsert_dgt_expediente(self, expediente: dict):
+        self.security.ensure_tramites_dgt()
+        return self._base.upsert_dgt_expediente(expediente)
+
+    def validar_dgt_expediente(self, expediente_id: str, user_id: int):
+        self.security.ensure_tramites_dgt()
+        return self._base.validar_dgt_expediente(expediente_id, user_id)
+
+    def insertar_dgt_documento_generado(self, doc: dict):
+        self.security.ensure_tramites_dgt()
+        return self._base.insertar_dgt_documento_generado(doc)
+
+    def listar_dgt_documentos_generados(self, expediente_id: str):
+        self.security.ensure_tramites_dgt()
+        return self._base.listar_dgt_documentos_generados(expediente_id)
+
     # ── Notificaciones Electronicas ──────────────────────────────────────────
     # Las operaciones de lectura se resuelven via __getattr__ sin comprobacion
     # adicional (el filtro de empresa ya esta en listar_notificaciones).

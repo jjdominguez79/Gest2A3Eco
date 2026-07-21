@@ -83,6 +83,9 @@ class AuthorizationService:
     def can_manage_global_third_parties(self) -> bool:
         return self._session.role in (UserRole.ADMIN, UserRole.EMPLEADO)
 
+    def can_manage_tramites_dgt(self) -> bool:
+        return self._session.has_global_permission("tramites_dgt")
+
     def permission_for_company(self, codigo_empresa: str) -> CompanyPermission:
         return self._session.permission_for_company(codigo_empresa)
 
@@ -99,6 +102,11 @@ class AuthorizationService:
         if self.can_manage_users():
             return
         raise PermissionError(message or "Acceso restringido a administradores.")
+
+    def ensure_tramites_dgt(self, message: str | None = None) -> None:
+        if self.can_manage_tramites_dgt():
+            return
+        raise PermissionError(message or "Acceso restringido al modulo Trámites DGT.")
 
     def ensure_company_read(self, codigo_empresa: str, message: str | None = None) -> None:
         if self.can_read_company(codigo_empresa):
@@ -155,7 +163,12 @@ class AuthService:
             except Exception:
                 permiso = CompanyPermission.NONE
             permissions[str(row.get("empresa_codigo") or "")] = permiso
-        return UserSession(user=user, company_permissions=permissions)
+        global_permissions = {
+            str(row.get("permiso") or "").strip()
+            for row in self._gestor.listar_permisos_globales_usuario(user.id)
+            if bool(row.get("activo", 1)) and str(row.get("permiso") or "").strip()
+        }
+        return UserSession(user=user, company_permissions=permissions, global_permissions=global_permissions)
 
     def list_users(self) -> list[dict]:
         return self._gestor.listar_usuarios()

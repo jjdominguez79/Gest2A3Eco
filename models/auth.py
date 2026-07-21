@@ -30,6 +30,7 @@ class UserRecord:
 class UserSession:
     user: UserRecord
     company_permissions: dict[str, CompanyPermission] = field(default_factory=dict)
+    global_permissions: set[str] = field(default_factory=set)
 
     @property
     def role(self) -> UserRole:
@@ -60,3 +61,6 @@ class UserSession:
 
     def can_write_company(self, codigo_empresa: str) -> bool:
         return self.permission_for_company(codigo_empresa) == CompanyPermission.WRITE
+
+    def has_global_permission(self, permission: str) -> bool:
+        return self.is_admin() or str(permission or "").strip() in self.global_permissions
