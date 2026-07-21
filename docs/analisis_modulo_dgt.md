@@ -51,8 +51,9 @@
 6. Capturar y revisar datos completos de vendedor/comprador desde la vista interna.
 7. Registrar documentacion aportada con ruta y hash SHA-256.
 8. Verificar tokens de enlace para una futura interfaz externa de captura.
-9. Sustituir documentos `.txt` por plantillas DOCX/PDF cuando existan modelos definitivos.
-10. Incorporar integracion de firma mediante `firma_provider` y `firma_request_id`.
+9. Generar DOCX desde plantillas DGT si existen, o DOCX basico como respaldo.
+10. Intentar PDF cuando el entorno disponga de conversion Word COM.
+11. Preparar paquete de firma mediante `firma_provider` y `firma_request_id`.
 
 ## 7. Archivos creados
 
@@ -68,7 +69,8 @@
 - La vista permite editar datos completos de vendedor y comprador.
 - La vista permite adjuntar documentacion y registrar su SHA-256.
 - La validacion exige datos minimos de partes, identificacion valida, direccion y documentacion.
-- La generacion crea contrato/mandatos preliminares y conserva el JSON de generacion.
+- La generacion crea contrato/mandatos en TXT y DOCX, conserva el JSON de generacion e intenta PDF si el equipo lo permite.
+- La firma queda marcada como `preparado` con el listado de documentos, pendiente de conectar Box Sign, SignRequest u otro proveedor.
 - Queda preparada la verificacion de token para conectar un formulario externo o handler de protocolo.
 
 ## 8. Archivos modificados

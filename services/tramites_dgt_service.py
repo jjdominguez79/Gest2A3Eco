@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
-from utils.utilidades import get_app_data_dir
+from utils.utilidades import get_app_data_dir, get_word_templates_dir
 from utils.validaciones import normalizar_nif_cif, validar_nif_cif_nie
 
 
@@ -21,6 +21,11 @@ DOCUMENTOS_BASE = (
     ("mandato_dgt_vendedor", "Mandato DGT vendedor"),
 )
 ROLES_PARTE = {"vendedor", "comprador"}
+TEMPLATE_FILENAMES = {
+    "contrato_compraventa": "dgt_contrato_compraventa.docx",
+    "mandato_dgt_comprador": "dgt_mandato_comprador.docx",
+    "mandato_dgt_vendedor": "dgt_mandato_vendedor.docx",
+}
 
 
 @dataclass(slots=True)
@@ -235,22 +240,40 @@ class TramitesDgtService:
             raise ValueError("Valida expresamente el expediente antes de generar documentos.")
         out = []
         for tipo, titulo in DOCUMENTOS_BASE:
-            contenido = self._render_documento_texto(expediente, titulo)
-            path = self._output_dir(expediente) / f"{tipo}.txt"
-            path.write_text(contenido, encoding="utf-8")
-            digest = hashlib.sha256(contenido.encode("utf-8")).hexdigest()
+            generated = self._generar_documento(expediente, tipo, titulo)
             doc_id = self._gestor.insertar_dgt_documento_generado(
                 {
                     "expediente_id": expediente_id,
                     "tipo_documento": tipo,
                     "titulo": titulo,
-                    "ruta_txt": str(path),
+                    "ruta_docx": generated.get("ruta_docx"),
+                    "ruta_pdf": generated.get("ruta_pdf"),
+                    "ruta_txt": generated.get("ruta_txt"),
                     "json_datos_generacion": self._document_context(expediente),
-                    "hash_contenido": digest,
+                    "hash_contenido": generated.get("hash_contenido"),
+                    "estado": generated.get("estado"),
                 }
             )
-            out.append({"id": doc_id, "tipo_documento": tipo, "titulo": titulo, "ruta_txt": str(path)})
+            out.append({"id": doc_id, "tipo_documento": tipo, "titulo": titulo, **generated})
         return out
+
+    def preparar_paquete_firma(self, expediente_id: str, provider: str = "") -> dict:
+        expediente = self._gestor.get_dgt_expediente(expediente_id)
+        if not expediente:
+            raise ValueError("Expediente DGT no encontrado.")
+        documentos = self._gestor.listar_dgt_documentos_generados(expediente_id)
+        rutas = []
+        for doc in documentos:
+            ruta = doc.get("ruta_pdf") or doc.get("ruta_docx") or doc.get("ruta_txt")
+            if ruta:
+                rutas.append(ruta)
+        if not rutas:
+            raise ValueError("Genera los documentos antes de preparar la firma.")
+        expediente["firma_estado"] = "preparado"
+        expediente["firma_provider"] = str(provider or "").strip()
+        expediente["firma_request_id"] = ""
+        self._gestor.upsert_dgt_expediente(expediente)
+        return {"expediente_id": expediente_id, "provider": expediente["firma_provider"], "documentos": rutas}
 
     def listar_documentos(self, expediente_id: str) -> list[dict]:
         return self._gestor.listar_dgt_documentos_generados(expediente_id)
@@ -290,6 +313,102 @@ class TramitesDgtService:
         path = get_app_data_dir() / "tramites_dgt" / ref
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    def _generar_documento(self, expediente: dict, tipo: str, titulo: str) -> dict:
+        output_dir = self._output_dir(expediente)
+        txt_path = output_dir / f"{tipo}.txt"
+        contenido = self._render_documento_texto(expediente, titulo)
+        txt_path.write_text(contenido, encoding="utf-8")
+        result = {
+            "ruta_txt": str(txt_path),
+            "ruta_docx": None,
+            "ruta_pdf": None,
+            "hash_contenido": hashlib.sha256(contenido.encode("utf-8")).hexdigest(),
+            "estado": "generado_txt",
+        }
+        docx_path = output_dir / f"{tipo}.docx"
+        if self._render_docx(expediente, tipo, titulo, docx_path):
+            result["ruta_docx"] = str(docx_path)
+            result["hash_contenido"] = self._hash_file(docx_path)
+            result["estado"] = "generado_docx"
+            pdf_path = output_dir / f"{tipo}.pdf"
+            if self._convertir_pdf(docx_path, pdf_path):
+                result["ruta_pdf"] = str(pdf_path)
+                result["hash_contenido"] = self._hash_file(pdf_path)
+                result["estado"] = "generado_pdf"
+        return result
+
+    def _render_docx(self, expediente: dict, tipo: str, titulo: str, out_docx_path: Path) -> bool:
+        template_path = self._buscar_template(tipo)
+        context = self._document_context(expediente)
+        context["titulo_documento"] = titulo
+        if template_path:
+            try:
+                from procesos.facturas_word import render_docx
+
+                render_docx(str(template_path), context, str(out_docx_path))
+                return out_docx_path.exists()
+            except Exception:
+                pass
+        return self._render_basic_docx(context, titulo, out_docx_path)
+
+    def _buscar_template(self, tipo: str) -> Path | None:
+        filename = TEMPLATE_FILENAMES.get(tipo)
+        if not filename:
+            return None
+        base = Path(get_word_templates_dir())
+        candidates = [
+            base / "tramites_dgt" / filename,
+            base / filename,
+        ]
+        for path in candidates:
+            if path.exists() and path.is_file():
+                return path
+        return None
+
+    def _render_basic_docx(self, context: dict, titulo: str, out_docx_path: Path) -> bool:
+        try:
+            from docx import Document
+        except Exception:
+            return False
+        try:
+            doc = Document()
+            doc.add_heading(titulo, level=1)
+            rows = [
+                ("Referencia", context.get("referencia")),
+                ("Vendedor", context.get("vendedor_nombre")),
+                ("NIF vendedor", context.get("vendedor_nif")),
+                ("Comprador", context.get("comprador_nombre")),
+                ("NIF comprador", context.get("comprador_nif")),
+                ("Matricula", context.get("vehiculo_matricula")),
+                ("Bastidor", context.get("vehiculo_bastidor")),
+                ("Precio venta", context.get("precio_venta")),
+                ("Fecha operacion", context.get("fecha_operacion")),
+                ("Documentos adjuntos", context.get("documentos_count")),
+            ]
+            table = doc.add_table(rows=0, cols=2)
+            for label, value in rows:
+                cells = table.add_row().cells
+                cells[0].text = str(label)
+                cells[1].text = "" if value is None else str(value)
+            doc.add_paragraph("")
+            doc.add_paragraph(
+                "Documento generado por Gest2A3Eco. Sustituir por plantilla oficial antes de firma electronica."
+            )
+            out_docx_path.parent.mkdir(parents=True, exist_ok=True)
+            doc.save(str(out_docx_path))
+            return out_docx_path.exists()
+        except Exception:
+            return False
+
+    def _convertir_pdf(self, docx_path: Path, pdf_path: Path) -> bool:
+        try:
+            from procesos.facturas_word import convert_docx_to_pdf
+
+            convert_docx_to_pdf(str(docx_path), str(pdf_path))
+            return pdf_path.exists()
+        except Exception:
+            return False
 
     def _render_documento_texto(self, expediente: dict, titulo: str) -> str:
         ctx = self._document_context(expediente)

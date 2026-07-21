@@ -102,6 +102,7 @@ class UITramitesDgt(ttk.Frame):
         ttk.Button(actions, text="Regenerar enlaces", command=self._regenerar_links).pack(side=tk.LEFT, padx=5)
         ttk.Button(actions, text="Validar", command=self._validar).pack(side=tk.LEFT, padx=5)
         ttk.Button(actions, text="Generar documentos", command=self._generar_documentos).pack(side=tk.LEFT, padx=5)
+        ttk.Button(actions, text="Preparar firma", command=self._preparar_firma).pack(side=tk.LEFT, padx=5)
 
         links = ttk.LabelFrame(right, text="Enlaces seguros")
         links.pack(fill="x", pady=(0, 8))
@@ -206,6 +207,25 @@ class UITramitesDgt(ttk.Frame):
             docs = self._service.generar_documentos(self._current_id)
             messagebox.showinfo("Gest2A3Eco", f"Documentos generados: {len(docs)}", parent=self.winfo_toplevel())
             self._load_docs()
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+
+    def _preparar_firma(self):
+        if not self._current_id:
+            return
+        provider = simpledialog.askstring(
+            "Tramites DGT",
+            "Proveedor de firma (opcional):",
+            parent=self.winfo_toplevel(),
+        ) or ""
+        try:
+            paquete = self._service.preparar_paquete_firma(self._current_id, provider=provider)
+            messagebox.showinfo(
+                "Gest2A3Eco",
+                f"Paquete de firma preparado con {len(paquete['documentos'])} documento(s).",
+                parent=self.winfo_toplevel(),
+            )
+            self.refresh()
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
 

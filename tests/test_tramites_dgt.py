@@ -79,6 +79,13 @@ def test_crear_validar_y_generar_documentos(tmp_path: Path, monkeypatch):
     }
     for doc in docs:
         assert Path(doc["ruta_txt"]).exists()
+        if doc.get("ruta_docx"):
+            assert Path(doc["ruta_docx"]).exists()
+
+    paquete = service.preparar_paquete_firma(expediente_id, provider="box_sign")
+    assert paquete["provider"] == "box_sign"
+    assert len(paquete["documentos"]) == 3
+    assert service.get_expediente(expediente_id)["firma_estado"] == "preparado"
 
 
 def test_rechaza_token_dgt_incorrecto(tmp_path: Path):
