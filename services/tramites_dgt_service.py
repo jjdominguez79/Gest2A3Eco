@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 from xml.sax.saxutils import escape as xml_escape
 from zipfile import ZIP_DEFLATED, ZipFile
 
+from services.tramites_dgt_repository import DgtRepository, SQLiteDgtRepository
 from utils.utilidades import get_app_data_dir, get_word_templates_dir
 from utils.validaciones import normalizar_nif_cif, validar_nif_cif_nie
 
@@ -47,8 +48,10 @@ class LinkSeguro:
 
 
 class TramitesDgtService:
-    def __init__(self, gestor, session=None):
-        self._gestor = gestor
+    def __init__(self, gestor=None, session=None, repository: DgtRepository | None = None):
+        if repository is None and gestor is None:
+            raise ValueError("TramitesDgtService necesita un gestor SQLite o un DgtRepository.")
+        self._repo = repository or SQLiteDgtRepository(gestor)
         self._session = session
 
     def crear_expediente_minimo(self, payload: dict) -> str:
@@ -80,11 +83,11 @@ class TramitesDgtService:
             "firma_estado": "pendiente",
             "created_by": getattr(getattr(self._session, "user", None), "id", None),
         }
-        self._gestor.upsert_dgt_expediente(expediente)
+        self._repo.upsert_expediente(expediente)
         return expediente_id
 
     def guardar_expediente(self, expediente_id: str, payload: dict) -> None:
-        actual = self._gestor.get_dgt_expediente(expediente_id)
+        actual = self._repo.get_expediente(expediente_id)
         if not actual:
             raise ValueError("Expediente DGT no encontrado.")
         actualizado = dict(actual)
@@ -107,13 +110,13 @@ class TramitesDgtService:
             actualizado["estado"] = "revision"
             actualizado["validado_por"] = None
             actualizado["validado_at"] = None
-        self._gestor.upsert_dgt_expediente(actualizado)
+        self._repo.upsert_expediente(actualizado)
 
     def listar_expedientes(self) -> list[dict]:
-        return self._gestor.listar_dgt_expedientes()
+        return self._repo.listar_expedientes()
 
     def get_expediente(self, expediente_id: str) -> dict | None:
-        return self._gestor.get_dgt_expediente(expediente_id)
+        return self._repo.get_expediente(expediente_id)
 
     def get_links(self, expediente: dict) -> dict[str, str]:
         ref = expediente.get("referencia") or expediente.get("id")
@@ -123,7 +126,7 @@ class TramitesDgtService:
         }
 
     def regenerar_links(self, expediente_id: str) -> dict[str, str]:
-        expediente = self._gestor.get_dgt_expediente(expediente_id)
+        expediente = self._repo.get_expediente(expediente_id)
         if not expediente:
             raise ValueError("Expediente DGT no encontrado.")
         vendedor = self._crear_link("vendedor")
@@ -132,7 +135,7 @@ class TramitesDgtService:
         expediente["comprador_token_hash"] = self._hash_token(comprador.token)
         expediente["vendedor_token_created_at"] = self._now()
         expediente["comprador_token_created_at"] = self._now()
-        self._gestor.upsert_dgt_expediente(expediente)
+        self._repo.upsert_expediente(expediente)
         ref = expediente.get("referencia") or expediente_id
         return {
             "vendedor": self._build_url("vendedor", ref, vendedor.token),
@@ -141,7 +144,7 @@ class TramitesDgtService:
 
     def verificar_token(self, referencia: str, rol: str, token: str) -> dict:
         rol = self._validar_rol(rol)
-        expediente = self._gestor.get_dgt_expediente_por_referencia(referencia)
+        expediente = self._repo.get_expediente_por_referencia(referencia)
         if not expediente:
             raise ValueError("Expediente DGT no encontrado.")
         stored_hash = str(expediente.get(f"{rol}_token_hash") or "")
@@ -169,7 +172,7 @@ class TramitesDgtService:
 
     def guardar_datos_parte(self, expediente_id: str, rol: str, payload: dict) -> None:
         rol = self._validar_rol(rol)
-        expediente = self._gestor.get_dgt_expediente(expediente_id)
+        expediente = self._repo.get_expediente(expediente_id)
         if not expediente:
             raise ValueError("Expediente DGT no encontrado.")
         datos = self._normalizar_payload_parte(payload)
@@ -195,11 +198,11 @@ class TramitesDgtService:
             expediente["estado"] = "revision"
             expediente["validado_por"] = None
             expediente["validado_at"] = None
-        self._gestor.upsert_dgt_expediente(expediente)
+        self._repo.upsert_expediente(expediente)
 
     def adjuntar_documento(self, expediente_id: str, rol: str, file_path: str, tipo: str = "", descripcion: str = "") -> dict:
         rol = self._validar_rol(rol)
-        expediente = self._gestor.get_dgt_expediente(expediente_id)
+        expediente = self._repo.get_expediente(expediente_id)
         if not expediente:
             raise ValueError("Expediente DGT no encontrado.")
         path = Path(file_path).expanduser()
@@ -223,18 +226,18 @@ class TramitesDgtService:
             expediente["estado"] = "revision"
             expediente["validado_por"] = None
             expediente["validado_at"] = None
-        self._gestor.upsert_dgt_expediente(expediente)
+        self._repo.upsert_expediente(expediente)
         return item
 
     def validar_expediente(self, expediente_id: str) -> None:
-        expediente = self._gestor.get_dgt_expediente(expediente_id)
+        expediente = self._repo.get_expediente(expediente_id)
         if not expediente:
             raise ValueError("Expediente DGT no encontrado.")
         errors = self.validar_datos(expediente)
         if errors:
             raise ValueError("\n".join(errors))
         user_id = getattr(getattr(self._session, "user", None), "id", 0) or 0
-        self._gestor.validar_dgt_expediente(expediente_id, user_id)
+        self._repo.validar_expediente(expediente_id, user_id)
 
     def validar_datos(self, expediente: dict) -> list[str]:
         errors = []
@@ -258,7 +261,7 @@ class TramitesDgtService:
         return errors
 
     def generar_documentos(self, expediente_id: str) -> list[dict]:
-        expediente = self._gestor.get_dgt_expediente(expediente_id)
+        expediente = self._repo.get_expediente(expediente_id)
         if not expediente:
             raise ValueError("Expediente DGT no encontrado.")
         if expediente.get("estado") != "validado":
@@ -266,7 +269,7 @@ class TramitesDgtService:
         out = []
         for tipo, titulo in DOCUMENTOS_BASE:
             generated = self._generar_documento(expediente, tipo, titulo)
-            doc_id = self._gestor.insertar_dgt_documento_generado(
+            doc_id = self._repo.insertar_documento_generado(
                 {
                     "expediente_id": expediente_id,
                     "tipo_documento": tipo,
@@ -283,10 +286,10 @@ class TramitesDgtService:
         return out
 
     def preparar_paquete_firma(self, expediente_id: str, provider: str = "") -> dict:
-        expediente = self._gestor.get_dgt_expediente(expediente_id)
+        expediente = self._repo.get_expediente(expediente_id)
         if not expediente:
             raise ValueError("Expediente DGT no encontrado.")
-        documentos = self._gestor.listar_dgt_documentos_generados(expediente_id)
+        documentos = self._repo.listar_documentos_generados(expediente_id)
         rutas = []
         for doc in documentos:
             ruta = doc.get("ruta_pdf") or doc.get("ruta_docx") or doc.get("ruta_txt")
@@ -297,11 +300,11 @@ class TramitesDgtService:
         expediente["firma_estado"] = "preparado"
         expediente["firma_provider"] = str(provider or "").strip()
         expediente["firma_request_id"] = ""
-        self._gestor.upsert_dgt_expediente(expediente)
+        self._repo.upsert_expediente(expediente)
         return {"expediente_id": expediente_id, "provider": expediente["firma_provider"], "documentos": rutas}
 
     def listar_documentos(self, expediente_id: str) -> list[dict]:
-        return self._gestor.listar_dgt_documentos_generados(expediente_id)
+        return self._repo.listar_documentos_generados(expediente_id)
 
     def get_templates_dir(self) -> Path:
         path = Path(get_word_templates_dir()) / "tramites_dgt"
@@ -378,7 +381,7 @@ class TramitesDgtService:
 
     def _siguiente_referencia(self) -> str:
         prefix = f"DGT-{datetime.now().year}-"
-        rows = self._gestor.listar_dgt_expedientes()
+        rows = self._repo.listar_expedientes()
         nums = []
         for row in rows:
             ref = str(row.get("referencia") or "")

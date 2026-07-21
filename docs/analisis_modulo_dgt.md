@@ -8,6 +8,7 @@
 - Autenticacion: `services/auth_service.py` construye `UserSession` desde tablas `usuarios` y `usuarios_empresas`.
 - Roles y permisos: `admin`, `empleado`, `cliente`; los permisos existentes son por empresa. Se añade permiso global `tramites_dgt`, gestionable desde Administracion de usuarios.
 - Persistencia SQLite: `models/gestor_sqlite.py` contiene esquema, migraciones idempotentes y repositorios.
+- Acceso a datos DGT: `services/tramites_dgt_repository.py` separa el servicio del almacenamiento concreto para permitir una futura API online.
 - Generacion documental: `procesos/facturas_word.py` usa `docxtpl`, `python-docx` y conversion a PDF via `win32com`.
 - Envio: `services/email_service.py` abre Outlook o envia por SMTP. WhatsApp se abre via URL en el modulo de emitidas.
 
@@ -78,6 +79,11 @@
 - Las plantillas se buscan en `word_templates_dir/tramites_dgt` y pueden crearse/abrirse desde la UI, por lo que su contenido se modifica fuera del codigo.
 - El enlace seguro puede abrir un formulario local de captura que verifica referencia, rol y token antes de guardar datos o adjuntos.
 - Administracion de usuarios permite conceder o retirar el permiso global `tramites_dgt` a empleados autorizados.
+- `TramitesDgtService` depende de `DgtRepository`, no de SQLite directamente; el adaptador actual es `SQLiteDgtRepository`.
+
+## Preparacion online
+
+La siguiente migracion hacia portal web/base online debe implementar un repositorio alternativo, por ejemplo `ApiDgtRepository`, con la misma interfaz que `DgtRepository`. La UI interna y el servicio de negocio podran seguir usando los mismos metodos mientras el almacenamiento real pasa a una API con PostgreSQL y almacenamiento documental externo.
 
 ## Plantillas editables
 

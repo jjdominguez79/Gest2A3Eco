@@ -5,6 +5,45 @@ from services.auth_service import AuthService, AuthorizationService
 from services.tramites_dgt_service import TramitesDgtService, get_protocol_url_from_argv
 
 
+class _MemoryDgtRepository:
+    def __init__(self):
+        self.expedientes = {}
+        self.docs = {}
+        self.doc_seq = 0
+
+    def listar_expedientes(self):
+        return list(self.expedientes.values())
+
+    def get_expediente(self, expediente_id: str):
+        item = self.expedientes.get(expediente_id)
+        return dict(item) if item else None
+
+    def get_expediente_por_referencia(self, referencia: str):
+        for item in self.expedientes.values():
+            if item.get("referencia") == referencia:
+                return dict(item)
+        return None
+
+    def upsert_expediente(self, expediente: dict):
+        self.expedientes[expediente["id"]] = dict(expediente)
+        return expediente["id"]
+
+    def validar_expediente(self, expediente_id: str, user_id: int):
+        item = dict(self.expedientes[expediente_id])
+        item["estado"] = "validado"
+        item["validado_por"] = user_id
+        self.expedientes[expediente_id] = item
+
+    def insertar_documento_generado(self, doc: dict):
+        self.doc_seq += 1
+        payload = dict(doc, id=self.doc_seq)
+        self.docs.setdefault(doc["expediente_id"], []).append(payload)
+        return self.doc_seq
+
+    def listar_documentos_generados(self, expediente_id: str):
+        return list(self.docs.get(expediente_id, []))
+
+
 def _tables(gestor: GestorSQLite) -> set[str]:
     rows = gestor.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     return {r[0] for r in rows}
@@ -179,3 +218,13 @@ def test_permiso_global_tramites_dgt_en_usuario(tmp_path: Path):
     result = auth.authenticate("empleado", "secret")
     assert result.ok
     assert not AuthorizationService(result.session).can_manage_tramites_dgt()
+
+
+def test_servicio_dgt_funciona_con_repositorio_no_sqlite():
+    repo = _MemoryDgtRepository()
+    service = TramitesDgtService(repository=repo)
+    expediente_id = service.crear_expediente_minimo(
+        {"vendedor_nombre": "A", "comprador_nombre": "B", "vehiculo_matricula": "1234ABC"}
+    )
+    assert service.get_expediente(expediente_id)["referencia"].startswith("DGT-")
+    assert repo.expedientes[expediente_id]["estado"] == "borrador"
