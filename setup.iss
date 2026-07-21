@@ -98,6 +98,14 @@ Name: "{autodesktop}\{#MyAppName}"; \
   Tasks: desktopicon; \
   Comment: "Gestionar facturas y generar archivos A3ECO"
 
+[Registry]
+; Protocolo para enlaces seguros de Trámites DGT:
+; gest2a3eco://tramites-dgt/{rol}/{referencia}?token=...
+Root: HKCR; Subkey: "gest2a3eco"; ValueType: string; ValueName: ""; ValueData: "URL:Gest2A3Eco"; Flags: uninsdeletekey
+Root: HKCR; Subkey: "gest2a3eco"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCR; Subkey: "gest2a3eco\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"
+Root: HKCR; Subkey: "gest2a3eco\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+
 [Run]
 ; Ofrecer iniciar la aplicacion al terminar la instalacion
 Filename: "{app}\{#MyAppExeName}"; \

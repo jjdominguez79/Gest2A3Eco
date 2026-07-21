@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from models.gestor_sqlite import GestorSQLite
-from services.tramites_dgt_service import TramitesDgtService
+from services.tramites_dgt_service import TramitesDgtService, get_protocol_url_from_argv
 
 
 def _tables(gestor: GestorSQLite) -> set[str]:
@@ -138,3 +138,9 @@ def test_plantillas_dgt_editables_en_carpeta_configurada(tmp_path: Path, monkeyp
     assert all(item["exists"] for item in after)
     for item in after:
         assert Path(item["path"]).exists()
+
+
+def test_detecta_url_protocolo_dgt_en_argv():
+    url = "gest2a3eco://tramites-dgt/vendedor/DGT-2026-0001?token=abc"
+    assert get_protocol_url_from_argv(["Gest2A3Eco.exe", url]) == url
+    assert get_protocol_url_from_argv(["Gest2A3Eco.exe", "--otro"]) == ""

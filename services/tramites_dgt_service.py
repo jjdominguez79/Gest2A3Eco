@@ -31,6 +31,14 @@ TEMPLATE_FILENAMES = {
 }
 
 
+def get_protocol_url_from_argv(argv: list[str]) -> str:
+    for arg in argv[1:] or []:
+        raw = str(arg or "").strip()
+        if raw.lower().startswith("gest2a3eco://tramites-dgt/"):
+            return raw
+    return ""
+
+
 @dataclass(slots=True)
 class LinkSeguro:
     rol: str

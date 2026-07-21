@@ -96,6 +96,10 @@ El formulario `UITramitesDgtPublicForm` permite reutilizar la logica de enlaces 
 
 La UI interna incluye un boton `Formulario` junto a cada enlace para probar el flujo. Cuando el protocolo `gest2a3eco://` quede registrado en instalador/SO, el mismo formulario puede abrirse desde el enlace enviado por email o WhatsApp.
 
+## Protocolo de sistema
+
+El instalador registra `gest2a3eco://` en Windows. Al abrir un enlace DGT, el ejecutable recibe la URL como argumento, abre la base configurada y muestra directamente `UITramitesDgtPublicForm` si el token es valido. No se muestra login para este flujo, porque la autorizacion queda limitada por el token del expediente.
+
 ## 8. Archivos modificados
 
 - `models/auth.py`

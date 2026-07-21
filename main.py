@@ -25,6 +25,7 @@ from utils.utilidades import (
 )
 from views.ui_auth import ChangePasswordDialog, UILogin
 from views.ui_config_monedas import MonedasDialog
+from views.ui_tramites_dgt_public import UITramitesDgtPublicForm
 from views.ui_theme import aplicar_tema
 from update_checker import check_for_updates
 
@@ -272,6 +273,30 @@ def main():
             parent=root,
         )
         root.destroy()
+        return
+    from services.tramites_dgt_service import get_protocol_url_from_argv
+
+    protocol_url = get_protocol_url_from_argv(sys.argv)
+    if protocol_url:
+        try:
+            from services.tramites_dgt_service import TramitesDgtService
+
+            service = TramitesDgtService(gestor_base)
+            parsed = service.parse_link_seguro(protocol_url)
+            root.deiconify()
+            _set_window_geometry(root, 780, 680, resizable=True)
+            UITramitesDgtPublicForm(
+                root,
+                service,
+                referencia=parsed["referencia"],
+                rol=parsed["rol"],
+                token=parsed["token"],
+            )
+            root.mainloop()
+        except Exception as exc:
+            log_exception("Error abriendo formulario DGT desde enlace.", exc, extra={"url": protocol_url})
+            messagebox.showerror("Gest2A3Eco", f"No se pudo abrir el enlace DGT:\n{exc}", parent=root)
+            root.destroy()
         return
     auth_service = AuthService(gestor_base)
     initial_admin_info = auth_service.ensure_initial_admin(
