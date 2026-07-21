@@ -99,3 +99,21 @@ def test_rechaza_token_dgt_incorrecto(tmp_path: Path):
         pass
     else:
         raise AssertionError("El token incorrecto no fue rechazado")
+
+
+def test_plantillas_dgt_editables_en_carpeta_configurada(tmp_path: Path, monkeypatch):
+    templates_dir = tmp_path / "plantillas_usuario"
+    monkeypatch.setattr("services.tramites_dgt_service.get_word_templates_dir", lambda: str(templates_dir))
+    gestor = GestorSQLite(tmp_path / "dgt_templates.db")
+    service = TramitesDgtService(gestor)
+
+    before = service.listar_plantillas_editables()
+    assert all(str(templates_dir / "tramites_dgt") in item["path"] for item in before)
+    assert not any(item["exists"] for item in before)
+
+    created = service.ensure_plantillas_editables()
+    assert len(created) == 3
+    after = service.listar_plantillas_editables()
+    assert all(item["exists"] for item in after)
+    for item in after:
+        assert Path(item["path"]).exists()

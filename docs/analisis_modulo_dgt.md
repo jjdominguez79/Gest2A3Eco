@@ -54,6 +54,7 @@
 9. Generar DOCX desde plantillas DGT si existen, o DOCX basico como respaldo.
 10. Intentar PDF cuando el entorno disponga de conversion Word COM.
 11. Preparar paquete de firma mediante `firma_provider` y `firma_request_id`.
+12. Mantener las plantillas DGT en carpeta editable de usuario para poder cambiarlas sin nuevo codigo ni version.
 
 ## 7. Archivos creados
 
@@ -72,6 +73,19 @@
 - La generacion crea contrato/mandatos en TXT y DOCX, conserva el JSON de generacion e intenta PDF si el equipo lo permite.
 - La firma queda marcada como `preparado` con el listado de documentos, pendiente de conectar Box Sign, SignRequest u otro proveedor.
 - Queda preparada la verificacion de token para conectar un formulario externo o handler de protocolo.
+- Las plantillas se buscan en `word_templates_dir/tramites_dgt` y pueden crearse/abrirse desde la UI, por lo que su contenido se modifica fuera del codigo.
+
+## Plantillas editables
+
+La carpeta editable esperada es la configurada en `word_templates_dir`, subcarpeta `tramites_dgt`.
+
+Archivos:
+
+- `dgt_contrato_compraventa.docx`
+- `dgt_mandato_comprador.docx`
+- `dgt_mandato_vendedor.docx`
+
+La aplicacion puede crear plantillas base si faltan. Desde ese momento basta con editar los `.docx` en Word y volver a generar documentos; no hace falta publicar una nueva version.
 
 ## 8. Archivos modificados
 

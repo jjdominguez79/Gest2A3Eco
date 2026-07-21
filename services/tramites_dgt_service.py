@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
 import uuid
 import webbrowser
@@ -9,6 +10,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
+from xml.sax.saxutils import escape as xml_escape
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from utils.utilidades import get_app_data_dir, get_word_templates_dir
 from utils.validaciones import normalizar_nif_cif, validar_nif_cif_nie
@@ -278,6 +281,62 @@ class TramitesDgtService:
     def listar_documentos(self, expediente_id: str) -> list[dict]:
         return self._gestor.listar_dgt_documentos_generados(expediente_id)
 
+    def get_templates_dir(self) -> Path:
+        path = Path(get_word_templates_dir()) / "tramites_dgt"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def listar_plantillas_editables(self) -> list[dict]:
+        base = self.get_templates_dir()
+        out = []
+        for tipo, titulo in DOCUMENTOS_BASE:
+            filename = TEMPLATE_FILENAMES[tipo]
+            path = base / filename
+            out.append(
+                {
+                    "tipo_documento": tipo,
+                    "titulo": titulo,
+                    "filename": filename,
+                    "path": str(path),
+                    "exists": path.exists(),
+                }
+            )
+        return out
+
+    def ensure_plantillas_editables(self, overwrite: bool = False) -> list[dict]:
+        base = self.get_templates_dir()
+        created = []
+        for tipo, titulo in DOCUMENTOS_BASE:
+            path = base / TEMPLATE_FILENAMES[tipo]
+            if path.exists() and not overwrite:
+                continue
+            ok = self._create_editable_template(tipo, titulo, path)
+            created.append(
+                {
+                    "tipo_documento": tipo,
+                    "titulo": titulo,
+                    "path": str(path),
+                    "created": ok,
+                }
+            )
+        return created
+
+    def abrir_carpeta_plantillas(self) -> Path:
+        path = self.get_templates_dir()
+        self._open_path(path)
+        return path
+
+    def abrir_plantilla(self, tipo: str) -> Path:
+        info = {item["tipo_documento"]: item for item in self.listar_plantillas_editables()}
+        item = info.get(str(tipo or "").strip())
+        if not item:
+            raise ValueError("Tipo de plantilla DGT no valido.")
+        path = Path(item["path"])
+        if not path.exists():
+            self._create_editable_template(item["tipo_documento"], item["titulo"], path)
+        self._open_path(path)
+        return path
+
     def abrir_whatsapp(self, telefono: str, mensaje: str) -> None:
         phone = self._normalizar_telefono(telefono)
         if not phone:
@@ -370,22 +429,11 @@ class TramitesDgtService:
         try:
             from docx import Document
         except Exception:
-            return False
+            return self._render_minimal_docx(context, titulo, out_docx_path)
         try:
             doc = Document()
             doc.add_heading(titulo, level=1)
-            rows = [
-                ("Referencia", context.get("referencia")),
-                ("Vendedor", context.get("vendedor_nombre")),
-                ("NIF vendedor", context.get("vendedor_nif")),
-                ("Comprador", context.get("comprador_nombre")),
-                ("NIF comprador", context.get("comprador_nif")),
-                ("Matricula", context.get("vehiculo_matricula")),
-                ("Bastidor", context.get("vehiculo_bastidor")),
-                ("Precio venta", context.get("precio_venta")),
-                ("Fecha operacion", context.get("fecha_operacion")),
-                ("Documentos adjuntos", context.get("documentos_count")),
-            ]
+            rows = self._document_rows(context)
             table = doc.add_table(rows=0, cols=2)
             for label, value in rows:
                 cells = table.add_row().cells
@@ -397,6 +445,84 @@ class TramitesDgtService:
             )
             out_docx_path.parent.mkdir(parents=True, exist_ok=True)
             doc.save(str(out_docx_path))
+            return out_docx_path.exists()
+        except Exception:
+            return self._render_minimal_docx(context, titulo, out_docx_path)
+
+    def _create_editable_template(self, tipo: str, titulo: str, path: Path) -> bool:
+        context = self._empty_template_context()
+        context["titulo_documento"] = titulo
+        return self._render_basic_docx(context, titulo, path)
+
+    def _empty_template_context(self) -> dict:
+        return {
+            "id": "",
+            "referencia": "{{ referencia }}",
+            "estado": "{{ estado }}",
+            "titulo": "{{ titulo }}",
+            "titulo_documento": "{{ titulo_documento }}",
+            "vendedor_nombre": "{{ vendedor_nombre }}",
+            "vendedor_nif": "{{ vendedor_nif }}",
+            "comprador_nombre": "{{ comprador_nombre }}",
+            "comprador_nif": "{{ comprador_nif }}",
+            "vehiculo_matricula": "{{ vehiculo_matricula }}",
+            "vehiculo_bastidor": "{{ vehiculo_bastidor }}",
+            "precio_venta": "{{ precio_venta }}",
+            "fecha_operacion": "{{ fecha_operacion }}",
+            "observaciones": "{{ observaciones }}",
+            "documentos_count": "{{ documentos_count }}",
+            "documentos": [],
+        }
+
+    def _document_rows(self, context: dict) -> list[tuple[str, object]]:
+        return [
+            ("Referencia", context.get("referencia")),
+            ("Vendedor", context.get("vendedor_nombre")),
+            ("NIF vendedor", context.get("vendedor_nif")),
+            ("Comprador", context.get("comprador_nombre")),
+            ("NIF comprador", context.get("comprador_nif")),
+            ("Matricula", context.get("vehiculo_matricula")),
+            ("Bastidor", context.get("vehiculo_bastidor")),
+            ("Precio venta", context.get("precio_venta")),
+            ("Fecha operacion", context.get("fecha_operacion")),
+            ("Documentos adjuntos", context.get("documentos_count")),
+        ]
+
+    def _render_minimal_docx(self, context: dict, titulo: str, out_docx_path: Path) -> bool:
+        paragraphs = [titulo]
+        paragraphs.extend(f"{label}: {'' if value is None else value}" for label, value in self._document_rows(context))
+        paragraphs.append("Documento generado por Gest2A3Eco. Sustituir por plantilla oficial antes de firma electronica.")
+        body = "".join(f"<w:p><w:r><w:t>{xml_escape(str(text))}</w:t></w:r></w:p>" for text in paragraphs)
+        document_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            f"<w:body>{body}<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>"
+            '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body>'
+            "</w:document>"
+        )
+        content_types = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/word/document.xml" '
+            'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+            "</Types>"
+        )
+        rels = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+            'Target="word/document.xml"/>'
+            "</Relationships>"
+        )
+        try:
+            out_docx_path.parent.mkdir(parents=True, exist_ok=True)
+            with ZipFile(out_docx_path, "w", ZIP_DEFLATED) as zf:
+                zf.writestr("[Content_Types].xml", content_types)
+                zf.writestr("_rels/.rels", rels)
+                zf.writestr("word/document.xml", document_xml)
             return out_docx_path.exists()
         except Exception:
             return False
@@ -502,3 +628,9 @@ class TramitesDgtService:
             for chunk in iter(lambda: fh.read(1024 * 1024), b""):
                 h.update(chunk)
         return h.hexdigest()
+
+    def _open_path(self, path: Path) -> None:
+        try:
+            os.startfile(str(path))  # type: ignore[attr-defined]
+        except AttributeError:
+            webbrowser.open(path.resolve().as_uri())

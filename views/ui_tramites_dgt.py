@@ -70,6 +70,7 @@ class UITramitesDgt(ttk.Frame):
         left_buttons.pack(fill="x", pady=(6, 0))
         ttk.Button(left_buttons, text="Nuevo", style="Primary.TButton", command=self._nuevo).pack(side=tk.LEFT)
         ttk.Button(left_buttons, text="Actualizar", command=self.refresh).pack(side=tk.LEFT, padx=6)
+        ttk.Button(left_buttons, text="Plantillas", command=self._gestionar_plantillas).pack(side=tk.LEFT)
 
         form = ttk.LabelFrame(right, text="Expediente")
         form.pack(fill="x")
@@ -228,6 +229,9 @@ class UITramitesDgt(ttk.Frame):
             self.refresh()
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+
+    def _gestionar_plantillas(self):
+        PlantillasDgtDialog(self.winfo_toplevel(), self._service)
 
     def _regenerar_links(self):
         if not self._current_id:
@@ -433,3 +437,87 @@ class DatosParteDialog(simpledialog.Dialog):
 
     def apply(self):
         self.result = {key: var.get() for key, var in self.vars.items()}
+
+
+class PlantillasDgtDialog(tk.Toplevel):
+    def __init__(self, parent, service: TramitesDgtService):
+        super().__init__(parent)
+        self._service = service
+        self.title("Plantillas DGT")
+        self.transient(parent)
+        self.grab_set()
+        self.geometry("760x320")
+        self._build()
+        self.refresh()
+
+    def _build(self):
+        top = ttk.Frame(self)
+        top.pack(fill="x", padx=10, pady=8)
+        ttk.Button(top, text="Crear faltantes", style="Primary.TButton", command=self._crear_faltantes).pack(side=tk.LEFT)
+        ttk.Button(top, text="Abrir carpeta", command=self._abrir_carpeta).pack(side=tk.LEFT, padx=6)
+        ttk.Button(top, text="Actualizar", command=self.refresh).pack(side=tk.LEFT)
+        ttk.Button(top, text="Cerrar", command=self.destroy).pack(side=tk.RIGHT)
+
+        self.tv = ttk.Treeview(
+            self,
+            columns=("titulo", "archivo", "estado", "ruta"),
+            show="headings",
+            height=8,
+        )
+        for col, text, width in (
+            ("titulo", "Plantilla", 190),
+            ("archivo", "Archivo", 210),
+            ("estado", "Estado", 90),
+            ("ruta", "Ruta editable", 250),
+        ):
+            self.tv.heading(col, text=text)
+            self.tv.column(col, width=width, anchor="w")
+        self.tv.pack(fill="both", expand=True, padx=10, pady=(0, 8))
+        self.tv.bind("<Double-1>", lambda _e: self._abrir_seleccionada())
+
+        bottom = ttk.Frame(self)
+        bottom.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Button(bottom, text="Abrir plantilla", command=self._abrir_seleccionada).pack(side=tk.LEFT)
+
+    def refresh(self):
+        self.tv.delete(*self.tv.get_children())
+        for item in self._service.listar_plantillas_editables():
+            self.tv.insert(
+                "",
+                "end",
+                iid=item["tipo_documento"],
+                values=(
+                    item["titulo"],
+                    item["filename"],
+                    "Existe" if item["exists"] else "Falta",
+                    item["path"],
+                ),
+            )
+
+    def _crear_faltantes(self):
+        try:
+            created = self._service.ensure_plantillas_editables(overwrite=False)
+            messagebox.showinfo(
+                "Gest2A3Eco",
+                f"Plantillas creadas o verificadas: {len(created)}",
+                parent=self,
+            )
+            self.refresh()
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self)
+
+    def _abrir_carpeta(self):
+        try:
+            self._service.abrir_carpeta_plantillas()
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self)
+
+    def _abrir_seleccionada(self):
+        sel = self.tv.selection()
+        if not sel:
+            return
+        try:
+            self._service.abrir_plantilla(str(sel[0]))
+            self.refresh()
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self)
