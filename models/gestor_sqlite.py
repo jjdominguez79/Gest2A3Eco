@@ -467,6 +467,7 @@ class GestorSQLite:
         self._ensure_column("empresas", "logo_max_width_mm", "REAL")
         self._ensure_column("empresas", "logo_max_height_mm", "REAL")
         self._ensure_column("empresas", "pais", "TEXT")
+        self._ensure_column("empresas", "responsable", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "forma_pago", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "cuenta_bancaria", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "plantilla_word", "TEXT")

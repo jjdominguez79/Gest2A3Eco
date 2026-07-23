@@ -1124,6 +1124,74 @@ _AS_NUM_FRA            = slice(45, 55)   # 10 chars cp850 — número de factura
 _AS_APUNTE             = slice(110, 112) # offset primario (compatibilidad con llamadas directas)
 _AS_APUNTE_CANDIDATOS  = (slice(110, 112), slice(112, 114))  # probar en orden
 
+# Códigos de mes A3ECO → número de mes (inverso de _mes_a_codigo)
+_A3_MES_CODIGO_A_NUM: dict[str, int] = {
+    "1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6,
+    "7": 7, "8": 8, "9": 9, "O": 10, "N": 11, "D": 12,
+}
+
+
+def _mes_desde_nombre_fichero(path: Path) -> int | None:
+    """Devuelve el número de mes (1-12) inferido del nombre del fichero *A.DAT.
+
+    El nombre sigue el patrón {codigo}{ej_digit}{mes_cod}A.DAT donde mes_cod
+    es uno de '1'..'9','O','N','D'. El asiento de cierre ('I') no tiene mes.
+    """
+    stem = path.stem.upper()  # ej. "E004236 1A" → después de limpiar, sólo nos importa la posición
+    # Nombre típico: "E004236" + "1" (ej) + "1" (mes) + "A" → 9+ chars
+    # Posición del código de mes: len(codigo_norm)+1 del stem sin extensión
+    # Más robusto: extraer el penúltimo carácter antes de la 'A' final.
+    if stem.endswith("A") and len(stem) >= 2:
+        mes_cod = stem[-2]
+        return _A3_MES_CODIGO_A_NUM.get(mes_cod)
+    return None
+
+
+def _detectar_modo_numeracion(codigo_norm: str, ejercicio: int) -> str:
+    """Auto-detecta si la empresa usa numeración anual o mensual de asientos.
+
+    Estrategia: recorre todos los *A.DAT del ejercicio, acumula los números de
+    asiento encontrados por mes y comprueba si algún número aparece en más de
+    un mes. En ese caso es mensual; si los números son únicos en todo el
+    ejercicio es anual.
+
+    Retorna "mensual" o "anual". Devuelve "anual" ante la duda (sin ficheros,
+    sin registros, o con datos insuficientes para decidir).
+    """
+    ej_digit = str(ejercicio % 10)
+    # numero → conjunto de meses donde aparece
+    num_a_meses: dict[int, set[int]] = {}
+
+    for folder in _candidate_dirs(codigo_norm):
+        if not folder.exists():
+            continue
+        # Solo ficheros del ejercicio (no de otros años)
+        pattern = f"{codigo_norm}{ej_digit}?A.DAT"
+        for path in sorted(folder.glob(pattern)):
+            mes = _mes_desde_nombre_fichero(path)
+            if mes is None:
+                continue  # fichero de cierre 'I', ignorar
+            try:
+                data = path.read_bytes()
+            except OSError:
+                continue
+            rec_size = _isam_rec_size_from_header(data) or 132
+            offset = _ISAM_HEADER
+            while offset + rec_size <= len(data):
+                rec = data[offset: offset + rec_size]
+                if rec[0] in _ISAM_ACTIVE:
+                    for apunte_slice in _AS_APUNTE_CANDIDATOS:
+                        num = int.from_bytes(rec[apunte_slice], "big")
+                        if num > 0:
+                            num_a_meses.setdefault(num, set()).add(mes)
+                            break
+                offset += rec_size
+
+    # Si algún número aparece en 2 o más meses distintos → mensual
+    if any(len(meses) > 1 for meses in num_a_meses.values()):
+        return "mensual"
+    return "anual"
+
 
 def leer_numero_asiento_desde_a3(
     codigo: str,
@@ -1151,10 +1219,10 @@ def leer_numero_asiento_desde_a3(
 
     Retorna
     -------
-    El número de asiento como cadena (ej. '15') o None si no se encuentra.
-    El número de asiento es el mismo para todos los apuntes de un mismo asiento,
-    por lo que se devuelve el primero que coincida con cualquier apunte del
-    asiento buscado.
+    En modo anual : cadena con el número (ej. '15').
+    En modo mensual: cadena 'MES/NUM' (ej. '2/15'), donde MES es el mes del
+                  fichero donde se encontró el registro.
+    None si no se encuentra.
     """
     codigo_norm = _clean_code(codigo)
     num_fra_limpio = str(num_factura or "").strip()[:10]
@@ -1177,6 +1245,7 @@ def leer_numero_asiento_desde_a3(
                 num_variantes.append(con_barra)
 
     def _buscar_en_fichero(data: bytes) -> "str | None":
+        """Retorna la referencia interna ('MM/NNNNN' o 'N') o None."""
         rec_size = _isam_rec_size_from_header(data) or 132
         offset = _ISAM_HEADER
         while offset + rec_size <= len(data):
@@ -1189,6 +1258,13 @@ def leer_numero_asiento_desde_a3(
                     concepto_rec = rec[_AS_CONCEPTO].decode(_A3_ENCODING, errors="replace").strip()
                     match_concepto = desc_prefix in concepto_rec
                 if match_num_fra or match_concepto:
+                    # Referencia interna mensual: 4 bytes big-endian = MES*1_000_000 + SEQ
+                    valor4 = int.from_bytes(rec[110:114], "big")
+                    mes_ref = valor4 // 1_000_000
+                    seq_ref = valor4 % 1_000_000
+                    if 1 <= mes_ref <= 12 and 1 <= seq_ref <= 9_999:
+                        return f"{mes_ref:02d}/{seq_ref:05d}"
+                    # Fallback referencia anual: 2 bytes big-endian
                     for apunte_slice in _AS_APUNTE_CANDIDATOS:
                         apunte = int.from_bytes(rec[apunte_slice], "big")
                         if apunte > 0:
@@ -1206,7 +1282,7 @@ def leer_numero_asiento_desde_a3(
             result = _buscar_en_fichero(path.read_bytes())
         except OSError:
             continue
-        if result:
+        if result is not None:
             return result
 
     # Segundo intento: todos los *A.DAT de la carpeta (cubre ejercicio incorrecto en la BD)
@@ -1221,7 +1297,7 @@ def leer_numero_asiento_desde_a3(
                 result = _buscar_en_fichero(path.read_bytes())
             except OSError:
                 continue
-            if result:
+            if result is not None:
                 return result
 
     return None
@@ -1770,6 +1846,7 @@ def importar_empresa_desde_a3(codigo: str, digitos_plan_objetivo: int | None = N
         "logo_max_width_mm": None,
         "logo_max_height_mm": None,
         "activo": True,
+        "responsable": "",  # TODO: extraer de NNNNN0DC.DAT cuando se confirme el offset
         "plan_cuentas": plan_cuentas,
         "bank_records": bank_records,
         "_ban_labels": ban_labels,
