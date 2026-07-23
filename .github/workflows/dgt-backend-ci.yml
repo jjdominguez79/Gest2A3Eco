@@ -1,0 +1,38 @@
+name: DGT backend CI
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "services/tramites_dgt_*"
+      - "tests/test_dgt_api.py"
+      - "tests/test_tramites_dgt.py"
+      - ".github/workflows/dgt-backend-ci.yml"
+  push:
+    branches: [main, feature/modulo-tramites-dgt]
+    paths:
+      - "backend/**"
+      - "services/tramites_dgt_*"
+      - "tests/test_dgt_api.py"
+      - "tests/test_tramites_dgt.py"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt -r backend/requirements.txt
+      - run: pytest tests/test_dgt_api.py tests/test_tramites_dgt.py -q
+        env:
+          PYTHONPATH: .
+          DGT_INTERNAL_API_KEY: ci-test-key
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f backend/Dockerfile -t gestinem-dgt:${{ github.sha }} .
