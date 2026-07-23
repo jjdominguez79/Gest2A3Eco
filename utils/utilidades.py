@@ -147,6 +147,8 @@ def _apply_env_overrides(data: dict) -> dict:
         "GEST2A3ECO_LAST_DB_PATH": "last_db_path",
         "GEST2A3ECO_WORD_TEMPLATES_DIR": "word_templates_dir",
         "GEST2A3ECO_OCR_ENDPOINT": "ocr_endpoint",
+        "GEST2A3ECO_DGT_API_URL": "dgt_api_url",
+        "GEST2A3ECO_DGT_API_KEY": "dgt_api_key",
         "GEST2A3ECO_ADMIN_PASSWORD": "admin_password",
         "GEST2A3ECO_INITIAL_ADMIN_PASSWORD": "initial_admin_password",
         "GEST2A3ECO_DESMARCAR_GENERADAS_PASSWORD": "desmarcar_generadas_password",
@@ -194,6 +196,8 @@ def _normalize_config(data: dict) -> dict:
     out.setdefault("last_db_path", "")
     out.setdefault("ocr_endpoint", "")
     out.setdefault("documentos_output_dir", "")
+    out.setdefault("dgt_api_url", "")
+    out.setdefault("dgt_api_key", "")
 
     if not str(out.get("db_path") or "").strip():
         out["db_path"] = str(out.get("last_db_path") or "").strip()

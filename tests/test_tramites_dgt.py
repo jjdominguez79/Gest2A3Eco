@@ -2,6 +2,7 @@ from pathlib import Path
 
 from models.gestor_sqlite import GestorSQLite
 from services.auth_service import AuthService, AuthorizationService
+from services.tramites_dgt_repository import ApiDgtRepository
 from services.tramites_dgt_service import TramitesDgtService, get_protocol_url_from_argv
 
 
@@ -228,3 +229,41 @@ def test_servicio_dgt_funciona_con_repositorio_no_sqlite():
     )
     assert service.get_expediente(expediente_id)["referencia"].startswith("DGT-")
     assert repo.expedientes[expediente_id]["estado"] == "borrador"
+
+
+class _FakeResponse:
+    def __init__(self, data, status_code=200):
+        self._data = data
+        self.status_code = status_code
+        self.content = b""
+        self.response = self
+
+    def json(self):
+        return self._data
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(self.status_code)
+
+
+class _FakeHttp:
+    def __init__(self):
+        self.calls = []
+
+    def request(self, method, url, **kwargs):
+        self.calls.append((method, url, kwargs))
+        if method == "POST" and url.endswith("/links"):
+            return _FakeResponse({
+                "vendedor": {"url": "https://tramites.test/t/DGT-1/vendedor?token=v"},
+                "comprador": {"url": "https://tramites.test/t/DGT-1/comprador?token=c"},
+            })
+        return _FakeResponse({})
+
+
+def test_api_repository_delega_generacion_enlaces_https():
+    http = _FakeHttp()
+    repo = ApiDgtRepository("https://api.test", "secret", session=http)
+    service = TramitesDgtService(repository=repo)
+    links = service.regenerar_links("exp-1")
+    assert links["vendedor"].startswith("https://")
+    assert http.calls[0][2]["headers"]["X-API-Key"] == "secret"

@@ -5,15 +5,16 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.dgt_api.database import Base, SessionLocal, engine
-from backend.dgt_api.models import Documento, Enlace, Evento, Expediente, Parte, SolicitudSubsanacion
-from backend.dgt_api.schemas import ExpedienteCreate, ExpedientePatch, PartePatch, SubsanacionCreate
+from backend.dgt_api.config import get_settings
+from backend.dgt_api.models import Documento, DocumentoGenerado, Enlace, Evento, Expediente, Parte, SolicitudSubsanacion
+from backend.dgt_api.schemas import DocumentoGeneradoCreate, ExpedienteCreate, ExpedientePatch, PartePatch, SubsanacionCreate
 from backend.dgt_api.security import require_internal_key, utcnow
 from backend.dgt_api.service import (
     cargar_expediente,
@@ -83,7 +84,10 @@ def get_expedientes(updated_since: datetime | None = None, db: Session = Depends
 
 @app.get("/api/v1/expedientes/{expediente_id}", dependencies=[internal])
 def get_expediente(expediente_id: str, db: Session = Depends(get_db)):
-    return serializar_expediente(cargar_expediente(db, expediente_id))
+    item = cargar_expediente(db, expediente_id)
+    result = serializar_expediente(item)
+    result["documentos"] = documentos_aportados(expediente_id, db)
+    return result
 
 
 @app.patch("/api/v1/expedientes/{expediente_id}", dependencies=[internal])
@@ -131,6 +135,84 @@ def post_subsanacion(expediente_id: str, payload: SubsanacionCreate, db: Session
     registrar_evento(db, item.id, "subsanacion_solicitada", "gest2a3eco", payload.model_dump())
     db.commit()
     return {"status": "pendiente"}
+
+
+@app.post("/api/v1/expedientes/{expediente_id}/validar", dependencies=[internal])
+def validar_interno(expediente_id: str, db: Session = Depends(get_db)):
+    item = cargar_expediente(db, expediente_id)
+    if not all(parte.estado == "completado" for parte in item.partes):
+        raise HTTPException(422, "Ambas partes deben haber completado sus datos")
+    if not db.scalar(select(Documento.id).where(Documento.expediente_id == expediente_id).limit(1)):
+        raise HTTPException(422, "Debe existir al menos un documento aportado")
+    item.estado = "validado"
+    registrar_evento(db, item.id, "expediente_validado", "gest2a3eco")
+    db.commit()
+    return {"status": "validado"}
+
+
+@app.patch("/api/v1/expedientes/{expediente_id}/partes/{rol}", dependencies=[internal])
+def patch_parte_interna(
+    expediente_id: str, rol: str, payload: PartePatch, db: Session = Depends(get_db)
+):
+    item = cargar_expediente(db, expediente_id)
+    if rol not in {"vendedor", "comprador"}:
+        raise HTTPException(422, "Rol no valido")
+    parte = next(part for part in item.partes if part.rol == rol)
+    for key in ("tipo_persona", "nombre", "nif", "email", "telefono", "datos"):
+        setattr(parte, key, getattr(payload, key))
+    parte.estado = "en_curso"
+    item.estado = f"{rol}_en_curso"
+    registrar_evento(db, item.id, "parte_actualizada_internamente", "gest2a3eco", {"rol": rol})
+    db.commit()
+    return serializar_expediente(cargar_expediente(db, item.id))
+
+
+@app.get("/api/v1/expedientes/{expediente_id}/documentos", dependencies=[internal])
+def documentos_aportados(expediente_id: str, db: Session = Depends(get_db)):
+    cargar_expediente(db, expediente_id)
+    docs = db.scalars(select(Documento).where(Documento.expediente_id == expediente_id)).all()
+    return [
+        {
+            "id": doc.id, "rol": doc.rol, "tipo": doc.tipo, "nombre_archivo": doc.nombre_archivo,
+            "content_type": doc.content_type, "size": doc.size, "sha256": doc.sha256, "created_at": doc.created_at,
+        }
+        for doc in docs
+    ]
+
+
+@app.get("/api/v1/documentos/{documento_id}/download", dependencies=[internal])
+def download_documento(documento_id: str, db: Session = Depends(get_db)):
+    doc = db.get(Documento, documento_id)
+    if not doc:
+        raise HTTPException(404, "Documento no encontrado")
+    root = Path(get_settings().storage_dir).resolve()
+    path = (root / doc.storage_key).resolve()
+    if root not in path.parents or not path.is_file():
+        raise HTTPException(404, "Archivo no disponible")
+    return FileResponse(path, media_type=doc.content_type, filename=doc.nombre_archivo)
+
+
+@app.post("/api/v1/expedientes/{expediente_id}/documentos-generados", dependencies=[internal], status_code=201)
+def post_documento_generado(
+    expediente_id: str, payload: DocumentoGeneradoCreate, db: Session = Depends(get_db)
+):
+    cargar_expediente(db, expediente_id)
+    doc = DocumentoGenerado(
+        expediente_id=expediente_id,
+        tipo=payload.tipo_documento,
+        datos=payload.model_dump(),
+    )
+    db.add(doc)
+    registrar_evento(db, expediente_id, "documento_generado", "gest2a3eco", {"tipo": doc.tipo})
+    db.commit()
+    return {"id": doc.id}
+
+
+@app.get("/api/v1/expedientes/{expediente_id}/documentos-generados", dependencies=[internal])
+def get_documentos_generados(expediente_id: str, db: Session = Depends(get_db)):
+    cargar_expediente(db, expediente_id)
+    docs = db.scalars(select(DocumentoGenerado).where(DocumentoGenerado.expediente_id == expediente_id)).all()
+    return [{"id": doc.id, "expediente_id": doc.expediente_id, **(doc.datos or {})} for doc in docs]
 
 
 def public_context(referencia: str, rol: str, token: str, db: Session):

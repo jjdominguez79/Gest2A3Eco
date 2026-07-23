@@ -55,6 +55,9 @@ class TramitesDgtService:
         self._session = session
 
     def crear_expediente_minimo(self, payload: dict) -> str:
+        create_remote = getattr(self._repo, "create_expediente", None)
+        if callable(create_remote):
+            return create_remote(payload)
         expediente_id = str(uuid.uuid4())
         vendedor = self._crear_link("vendedor")
         comprador = self._crear_link("comprador")
@@ -126,6 +129,9 @@ class TramitesDgtService:
         }
 
     def regenerar_links(self, expediente_id: str) -> dict[str, str]:
+        create_remote = getattr(self._repo, "create_links", None)
+        if callable(create_remote):
+            return create_remote(expediente_id)
         expediente = self._repo.get_expediente(expediente_id)
         if not expediente:
             raise ValueError("Expediente DGT no encontrado.")
@@ -141,6 +147,18 @@ class TramitesDgtService:
             "vendedor": self._build_url("vendedor", ref, vendedor.token),
             "comprador": self._build_url("comprador", ref, comprador.token),
         }
+
+    def revocar_link(self, expediente_id: str, rol: str) -> None:
+        rol = self._validar_rol(rol)
+        revoke_remote = getattr(self._repo, "revoke_link", None)
+        if callable(revoke_remote):
+            revoke_remote(expediente_id, rol)
+            return
+        expediente = self._repo.get_expediente(expediente_id)
+        if not expediente:
+            raise ValueError("Expediente DGT no encontrado.")
+        expediente[f"{rol}_token_hash"] = ""
+        self._repo.upsert_expediente(expediente)
 
     def verificar_token(self, referencia: str, rol: str, token: str) -> dict:
         rol = self._validar_rol(rol)
@@ -172,6 +190,10 @@ class TramitesDgtService:
 
     def guardar_datos_parte(self, expediente_id: str, rol: str, payload: dict) -> None:
         rol = self._validar_rol(rol)
+        update_remote = getattr(self._repo, "update_parte", None)
+        if callable(update_remote):
+            update_remote(expediente_id, rol, self._normalizar_payload_parte(payload))
+            return
         expediente = self._repo.get_expediente(expediente_id)
         if not expediente:
             raise ValueError("Expediente DGT no encontrado.")
@@ -230,6 +252,10 @@ class TramitesDgtService:
         return item
 
     def validar_expediente(self, expediente_id: str) -> None:
+        if getattr(self._repo, "online", False):
+            user_id = getattr(getattr(self._session, "user", None), "id", 0) or 0
+            self._repo.validar_expediente(expediente_id, user_id)
+            return
         expediente = self._repo.get_expediente(expediente_id)
         if not expediente:
             raise ValueError("Expediente DGT no encontrado.")
@@ -305,6 +331,12 @@ class TramitesDgtService:
 
     def listar_documentos(self, expediente_id: str) -> list[dict]:
         return self._repo.listar_documentos_generados(expediente_id)
+
+    def descargar_documento_aportado(self, documento_id: str, target_path: str) -> str:
+        download = getattr(self._repo, "download_documento", None)
+        if not callable(download):
+            raise ValueError("La descarga bajo demanda solo esta disponible en el repositorio online.")
+        return download(documento_id, target_path)
 
     def get_templates_dir(self) -> Path:
         path = Path(get_word_templates_dir()) / "tramites_dgt"

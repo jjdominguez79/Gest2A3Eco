@@ -5,14 +5,21 @@ import webbrowser
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from services.email_service import open_outlook_email
+from services.tramites_dgt_repository import ApiDgtRepository
 from services.tramites_dgt_service import TramitesDgtService
+from utils.utilidades import load_app_config
 from views.ui_tramites_dgt_public import UITramitesDgtPublicForm
 
 
 class UITramitesDgt(ttk.Frame):
     def __init__(self, parent, gestor, session=None, on_back=None):
         super().__init__(parent)
-        self._service = TramitesDgtService(gestor, session=session)
+        cfg = load_app_config()
+        api_url = str(cfg.get("dgt_api_url") or "").strip()
+        api_key = str(cfg.get("dgt_api_key") or "").strip()
+        repository = ApiDgtRepository(api_url, api_key) if api_url and api_key else None
+        self._service = TramitesDgtService(gestor, session=session, repository=repository)
+        self._online = repository is not None
         self._on_back = on_back
         self._expedientes = []
         self._current_id = None
@@ -33,6 +40,8 @@ class UITramitesDgt(ttk.Frame):
         }
         self._build()
         self.refresh()
+        if self._online:
+            self.after(60000, self._refresh_online)
 
     def _build(self):
         top = ttk.Frame(self)
@@ -51,13 +60,15 @@ class UITramitesDgt(ttk.Frame):
 
         self.tv = ttk.Treeview(
             left,
-            columns=("referencia", "estado", "matricula", "vendedor", "comprador"),
+            columns=("referencia", "estado", "vendedor_estado", "comprador_estado", "matricula", "vendedor", "comprador"),
             show="headings",
             height=20,
         )
         for col, text, width in (
             ("referencia", "Referencia", 120),
             ("estado", "Estado", 95),
+            ("vendedor_estado", "Vendedor", 95),
+            ("comprador_estado", "Comprador", 95),
             ("matricula", "Matricula", 90),
             ("vendedor", "Vendedor", 160),
             ("comprador", "Comprador", 160),
@@ -110,8 +121,8 @@ class UITramitesDgt(ttk.Frame):
         links.pack(fill="x", pady=(0, 8))
         self.var_link_vendedor = tk.StringVar()
         self.var_link_comprador = tk.StringVar()
-        self._link_row(links, "Vendedor", self.var_link_vendedor, self._email_vendedor, self._whatsapp_vendedor, self._form_vendedor, 0)
-        self._link_row(links, "Comprador", self.var_link_comprador, self._email_comprador, self._whatsapp_comprador, self._form_comprador, 1)
+        self._link_row(links, "Vendedor", self.var_link_vendedor, self._email_vendedor, self._whatsapp_vendedor, self._form_vendedor, lambda: self._copy_link("vendedor"), lambda: self._revoke_link("vendedor"), 0)
+        self._link_row(links, "Comprador", self.var_link_comprador, self._email_comprador, self._whatsapp_comprador, self._form_comprador, lambda: self._copy_link("comprador"), lambda: self._revoke_link("comprador"), 1)
 
         attached = ttk.LabelFrame(right, text="Documentacion aportada")
         attached.pack(fill="both", expand=True, pady=(0, 8))
@@ -137,12 +148,14 @@ class UITramitesDgt(ttk.Frame):
         self.docs_tv.pack(fill="both", expand=True)
         self.docs_tv.bind("<Double-1>", lambda _e: self._abrir_documento())
 
-    def _link_row(self, parent, label, var, email_cmd, whatsapp_cmd, form_cmd, row):
+    def _link_row(self, parent, label, var, email_cmd, whatsapp_cmd, form_cmd, copy_cmd, revoke_cmd, row):
         ttk.Label(parent, text=label).grid(row=row, column=0, padx=8, pady=4, sticky="w")
         ttk.Entry(parent, textvariable=var).grid(row=row, column=1, padx=8, pady=4, sticky="ew")
         ttk.Button(parent, text="Email", command=email_cmd).grid(row=row, column=2, padx=3)
         ttk.Button(parent, text="WhatsApp", command=whatsapp_cmd).grid(row=row, column=3, padx=3)
         ttk.Button(parent, text="Formulario", command=form_cmd).grid(row=row, column=4, padx=3)
+        ttk.Button(parent, text="Copiar", command=copy_cmd).grid(row=row, column=5, padx=3)
+        ttk.Button(parent, text="Revocar", command=revoke_cmd).grid(row=row, column=6, padx=3)
         parent.columnconfigure(1, weight=1)
 
     def refresh(self):
@@ -157,6 +170,8 @@ class UITramitesDgt(ttk.Frame):
                 values=(
                     item.get("referencia", ""),
                     item.get("estado", ""),
+                    item.get("vendedor_estado", ""),
+                    item.get("comprador_estado", ""),
                     item.get("vehiculo_matricula", ""),
                     item.get("vendedor_nombre", ""),
                     item.get("comprador_nombre", ""),
@@ -169,6 +184,14 @@ class UITramitesDgt(ttk.Frame):
             self._load_selected()
         else:
             self._clear_form()
+
+    def _refresh_online(self):
+        if not self.winfo_exists():
+            return
+        try:
+            self.refresh()
+        finally:
+            self.after(60000, self._refresh_online)
 
     def _nuevo(self):
         payload = self._payload()
@@ -299,9 +322,22 @@ class UITramitesDgt(ttk.Frame):
         expediente = self._service.get_expediente(self._current_id) or {}
         selected_id = str(sel[0])
         for doc in expediente.get("documentos") or []:
-            if str(doc.get("id")) == selected_id and doc.get("ruta"):
+            if str(doc.get("id")) != selected_id:
+                continue
+            if doc.get("ruta"):
                 webbrowser.open(doc["ruta"])
                 return
+            target = filedialog.asksaveasfilename(
+                title="Guardar documento DGT",
+                initialfile=doc.get("nombre_archivo") or "documento",
+            )
+            if target:
+                try:
+                    self._service.descargar_documento_aportado(selected_id, target)
+                    webbrowser.open(target)
+                except Exception as exc:
+                    messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+            return
 
     def _editar_parte(self, rol: str):
         if not self._current_id:
@@ -357,6 +393,9 @@ class UITramitesDgt(ttk.Frame):
 
     def _abrir_formulario_link(self, link: str):
         try:
+            if link.lower().startswith(("https://", "http://")):
+                webbrowser.open(link)
+                return
             parsed = self._service.parse_link_seguro(link)
             UITramitesDgtPublicForm(
                 self.winfo_toplevel(),
@@ -365,6 +404,27 @@ class UITramitesDgt(ttk.Frame):
                 rol=parsed["rol"],
                 token=parsed["token"],
             )
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+
+    def _copy_link(self, rol: str):
+        link = self.var_link_vendedor.get() if rol == "vendedor" else self.var_link_comprador.get()
+        if not link or "token=" not in link:
+            messagebox.showwarning("Gest2A3Eco", "Regenera el enlace antes de copiarlo.", parent=self.winfo_toplevel())
+            return
+        self.clipboard_clear()
+        self.clipboard_append(link)
+        self.update()
+
+    def _revoke_link(self, rol: str):
+        if not self._current_id:
+            return
+        try:
+            self._service.revocar_link(self._current_id, rol)
+            if rol == "vendedor":
+                self.var_link_vendedor.set("Enlace revocado")
+            else:
+                self.var_link_comprador.set("Enlace revocado")
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
 

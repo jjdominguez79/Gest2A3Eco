@@ -37,5 +37,16 @@ class SubsanacionCreate(BaseModel):
     mensaje: str = Field(min_length=3)
 
 
+class DocumentoGeneradoCreate(BaseModel):
+    tipo_documento: str
+    titulo: str = ""
+    ruta_docx: str | None = None
+    ruta_pdf: str | None = None
+    ruta_txt: str | None = None
+    json_datos_generacion: dict[str, Any] = Field(default_factory=dict)
+    hash_contenido: str | None = None
+    estado: str = ""
+
+
 class OrmModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)

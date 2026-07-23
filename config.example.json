@@ -4,6 +4,8 @@
   "last_db_path": "",
   "word_templates_dir": "",
   "ocr_endpoint": "",
+  "dgt_api_url": "",
+  "dgt_api_key": "",
   "monedas": [
     {
       "codigo": "EUR",
