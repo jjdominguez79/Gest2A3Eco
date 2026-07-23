@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tramite DGT {{ tramite.referencia }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/portal.css') }}">
+</head>
+<body>
+  <header class="brand">
+    <div class="brand-mark">G</div>
+    <div><strong>Gestinem</strong><span>Tramites DGT</span></div>
+  </header>
+  <main
+    id="portal"
+    data-reference="{{ tramite.referencia }}"
+    data-role="{{ tramite.rol }}"
+    data-token="{{ token }}"
+  >
+    <div class="progress"><span id="progress-bar"></span></div>
+    <p class="eyebrow">{{ tramite.referencia }} · {{ tramite.rol|capitalize }}</p>
+    <h1>Completa tus datos con tranquilidad</h1>
+    <p class="lead">Puedes guardar y continuar mientras el enlace este activo. Los campos de la otra parte no son visibles.</p>
+
+    <form id="dgt-form">
+      <section class="card form-step" data-step="1">
+        <div class="step-label">1 de 3 · Identificacion</div>
+        <div class="grid">
+          <label>Tipo de persona
+            <select name="tipo_persona">
+              <option value="fisica">Persona fisica</option>
+              <option value="juridica">Persona juridica</option>
+            </select>
+          </label>
+          <label>Nombre o razon social <input name="nombre" autocomplete="name" required></label>
+          <label>NIF, NIE o CIF <input name="nif" autocomplete="off" required></label>
+          <label>Representante <input name="representante"></label>
+          <label>Email <input name="email" type="email" autocomplete="email"></label>
+          <label>Telefono <input name="telefono" type="tel" autocomplete="tel"></label>
+          <label class="wide">Direccion <input name="direccion" autocomplete="street-address"></label>
+          <label>Codigo postal <input name="cp" inputmode="numeric"></label>
+          <label>Poblacion <input name="poblacion"></label>
+          <label>Provincia <input name="provincia"></label>
+        </div>
+      </section>
+
+      {% if tramite.rol == "vendedor" %}
+      <section class="card form-step hidden" data-step="2">
+        <div class="step-label">2 de 3 · Vehiculo y operacion</div>
+        <div class="grid">
+          <label>Matricula <input name="vehiculo_matricula"></label>
+          <label>Bastidor <input name="vehiculo_bastidor"></label>
+          <label>Marca <input name="vehiculo_marca"></label>
+          <label>Modelo y version <input name="vehiculo_modelo"></label>
+          <label>Kilometraje <input name="kilometraje" inputmode="numeric"></label>
+          <label>Precio de venta <input name="precio_venta" inputmode="decimal"></label>
+          <label>Fecha de entrega <input name="fecha_operacion" type="date"></label>
+          <label>Forma de pago <input name="forma_pago"></label>
+          <label class="wide">Cargas, reserva de dominio o financiacion
+            <textarea name="cargas"></textarea>
+          </label>
+        </div>
+      </section>
+      {% else %}
+      <section class="card form-step hidden" data-step="2">
+        <div class="step-label">2 de 3 · Notificaciones</div>
+        <div class="grid">
+          <label class="wide">Domicilio a efectos de notificacion
+            <input name="domicilio_notificaciones">
+          </label>
+          <label class="wide">Observaciones para la liquidacion
+            <textarea name="observaciones_fiscales"></textarea>
+          </label>
+        </div>
+      </section>
+      {% endif %}
+
+      <section class="card form-step hidden" data-step="3">
+        <div class="step-label">3 de 3 · Documentacion y revision</div>
+        <label class="upload">
+          <span>Adjunta DNI/NIE/CIF y documentacion necesaria</span>
+          <small>PDF, JPG o PNG · maximo 10 MB por archivo</small>
+          <input id="documents" type="file" accept=".pdf,.jpg,.jpeg,.png" multiple>
+        </label>
+        <div id="upload-list"></div>
+        <div id="review" class="review"></div>
+        <label class="consent">
+          <input id="privacy" type="checkbox">
+          <span>He leido la informacion de proteccion de datos y autorizo el tratamiento para gestionar este tramite.</span>
+        </label>
+      </section>
+
+      <div class="form-actions">
+        <button id="previous" type="button" class="secondary hidden">Anterior</button>
+        <span id="save-status">Sin cambios</span>
+        <button id="next" type="button">Continuar</button>
+        <button id="submit" type="button" class="hidden">Enviar a Gestinem</button>
+      </div>
+      <div id="message" role="alert"></div>
+    </form>
+  </main>
+  <script id="initial-data" type="application/json">{{ tramite|tojson }}</script>
+  <script src="{{ url_for('static', path='/portal.js') }}"></script>
+</body>
+</html>

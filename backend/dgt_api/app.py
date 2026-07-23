@@ -2,12 +2,17 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.dgt_api.database import Base, SessionLocal, engine
-from backend.dgt_api.models import Enlace, Evento, Expediente, Parte, SolicitudSubsanacion
+from backend.dgt_api.models import Documento, Enlace, Evento, Expediente, Parte, SolicitudSubsanacion
 from backend.dgt_api.schemas import ExpedienteCreate, ExpedientePatch, PartePatch, SubsanacionCreate
 from backend.dgt_api.security import require_internal_key, utcnow
 from backend.dgt_api.service import (
@@ -18,8 +23,12 @@ from backend.dgt_api.service import (
     serializar_expediente,
     verificar_enlace,
 )
+from backend.dgt_api.storage import save_private_upload
 
 app = FastAPI(title="Gestinem Tramites DGT API", version="1.0.0")
+WEB_DIR = Path(__file__).with_name("web")
+templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
+app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
 
 
 @app.on_event("startup")
@@ -41,6 +50,18 @@ internal = Depends(require_internal_key)
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/t/{referencia}/{rol}", response_class=HTMLResponse)
+def portal_form(request: Request, referencia: str, rol: str, token: str = Query(...), db: Session = Depends(get_db)):
+    context = public_context(referencia, rol, token, db)
+    registrar_evento(db, None, "portal_abierto", rol, {"referencia": referencia})
+    db.commit()
+    return templates.TemplateResponse(
+        request=request,
+        name="form.html",
+        context={"tramite": context, "token": token},
+    )
 
 
 @app.post("/api/v1/expedientes", dependencies=[internal], status_code=201)
@@ -155,17 +176,45 @@ def patch_public(referencia: str, rol: str, payload: PartePatch, token: str = Qu
 
 
 @app.post("/public/tramites/{referencia}/{rol}/submit")
-def submit_public(referencia: str, rol: str, token: str = Query(...), db: Session = Depends(get_db)):
+def submit_public(
+    referencia: str,
+    rol: str,
+    token: str = Query(...),
+    privacy_accepted: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
     item, _ = verificar_enlace(db, referencia, rol, token)
     parte = next(part for part in item.partes if part.rol == rol)
     if not parte.nombre or not parte.nif:
         raise HTTPException(422, "Nombre y NIF son obligatorios")
+    if not privacy_accepted:
+        raise HTTPException(422, "Debe aceptar la informacion de proteccion de datos")
     parte.estado = "completado"
     parte.submitted_at = utcnow()
     item.estado = "pendiente_revision" if all(p.estado == "completado" for p in item.partes) else f"{rol}_completado"
     registrar_evento(db, item.id, "formulario_completado", rol)
     db.commit()
     return {"status": "completado", "expediente_estado": item.estado}
+
+
+@app.post("/public/tramites/{referencia}/{rol}/documentos", status_code=201)
+async def post_public_documento(
+    referencia: str,
+    rol: str,
+    token: str = Query(...),
+    tipo: str = Form(default="documentacion"),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    item, _ = verificar_enlace(db, referencia, rol, token)
+    stored = await save_private_upload(file, referencia, rol)
+    doc = Documento(expediente_id=item.id, rol=rol, tipo=tipo[:64], **stored)
+    db.add(doc)
+    registrar_evento(
+        db, item.id, "documento_subido", rol, {"tipo": doc.tipo, "nombre": doc.nombre_archivo, "sha256": doc.sha256}
+    )
+    db.commit()
+    return {"id": doc.id, "tipo": doc.tipo, "nombre_archivo": doc.nombre_archivo, "sha256": doc.sha256}
 
 
 @app.get("/api/v1/sync", dependencies=[internal])
