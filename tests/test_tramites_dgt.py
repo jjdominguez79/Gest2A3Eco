@@ -67,6 +67,7 @@ def test_tramites_dgt_schema(tmp_path: Path):
 
 def test_crear_validar_y_generar_documentos(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("services.tramites_dgt_service.get_app_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("services.tramites_dgt_service.get_word_templates_dir", lambda: str(tmp_path / "plantillas"))
     gestor = GestorSQLite(tmp_path / "dgt_service.db")
     service = TramitesDgtService(gestor)
     expediente_id = service.crear_expediente_minimo(
@@ -92,9 +93,25 @@ def test_crear_validar_y_generar_documentos(tmp_path: Path, monkeypatch):
         {
             "nombre": "Vendedor Demo",
             "nif": "00000000T",
+            "email": "vendedor@example.com",
+            "telefono": "600000000",
             "direccion": "Calle Mayor 1",
+            "cp": "39001",
+            "poblacion": "Santander",
+            "provincia": "Cantabria",
             "vehiculo_matricula": "1234 ABC",
+            "vehiculo_bastidor": "WVWZZZ1JZXW000001",
+            "vehiculo_marca": "Seat",
+            "vehiculo_modelo": "Leon",
+            "vehiculo_primera_matriculacion": "2020-01-15",
+            "vehiculo_kilometros": "50000",
             "precio_venta": "1200,50",
+            "fecha_operacion": "2026-07-24",
+            "hora_entrega": "10:00",
+            "forma_pago": "transferencia",
+            "numero_llaves": "2",
+            "estado_cargas": "sin_cargas",
+            "estado_vehiculo": "usado",
         },
     )
     service.guardar_datos_parte(
@@ -103,7 +120,16 @@ def test_crear_validar_y_generar_documentos(tmp_path: Path, monkeypatch):
         {
             "nombre": "Comprador Demo",
             "nif": "00000001R",
+            "email": "comprador@example.com",
+            "telefono": "611111111",
             "direccion": "Calle Menor 2",
+            "cp": "39002",
+            "poblacion": "Santander",
+            "provincia": "Cantabria",
+            "envio_direccion": "Calle Menor 2",
+            "envio_cp": "39002",
+            "envio_poblacion": "Santander",
+            "envio_provincia": "Cantabria",
         },
     )
     adjunto = tmp_path / "dni.pdf"
@@ -112,11 +138,11 @@ def test_crear_validar_y_generar_documentos(tmp_path: Path, monkeypatch):
     assert doc["sha256"]
 
     service.validar_expediente(expediente_id)
+    service.ensure_plantillas_editables()
     docs = service.generar_documentos(expediente_id)
     assert {doc["tipo_documento"] for doc in docs} == {
         "contrato_compraventa",
         "mandato_dgt_comprador",
-        "mandato_dgt_vendedor",
     }
     for doc in docs:
         assert Path(doc["ruta_txt"]).exists()
@@ -125,7 +151,7 @@ def test_crear_validar_y_generar_documentos(tmp_path: Path, monkeypatch):
 
     paquete = service.preparar_paquete_firma(expediente_id, provider="box_sign")
     assert paquete["provider"] == "box_sign"
-    assert len(paquete["documentos"]) == 3
+    assert len(paquete["documentos"]) == 2
     assert service.get_expediente(expediente_id)["firma_estado"] == "preparado"
 
 
@@ -174,7 +200,7 @@ def test_plantillas_dgt_editables_en_carpeta_configurada(tmp_path: Path, monkeyp
     assert not any(item["exists"] for item in before)
 
     created = service.ensure_plantillas_editables()
-    assert len(created) == 3
+    assert len(created) == 2
     after = service.listar_plantillas_editables()
     assert all(item["exists"] for item in after)
     for item in after:

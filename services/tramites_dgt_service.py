@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import secrets
+import shutil
 import uuid
 import webbrowser
 from dataclasses import dataclass
@@ -22,13 +23,11 @@ TIPO_COMPRAVENTA = "compraventa_cambio_titularidad"
 DOCUMENTOS_BASE = (
     ("contrato_compraventa", "Contrato de compraventa"),
     ("mandato_dgt_comprador", "Mandato DGT comprador"),
-    ("mandato_dgt_vendedor", "Mandato DGT vendedor"),
 )
 ROLES_PARTE = {"vendedor", "comprador"}
 TEMPLATE_FILENAMES = {
     "contrato_compraventa": "dgt_contrato_compraventa.docx",
     "mandato_dgt_comprador": "dgt_mandato_comprador.docx",
-    "mandato_dgt_vendedor": "dgt_mandato_vendedor.docx",
 }
 
 
@@ -280,10 +279,33 @@ class TramitesDgtService:
                 errors.append(f"El NIF/NIE/CIF del {rol} es obligatorio.")
             elif not validar_nif_cif_nie(nif):
                 errors.append(f"El NIF/NIE/CIF del {rol} no es valido.")
-            if not payload.get("direccion"):
-                errors.append(f"La direccion del {rol} es obligatoria.")
-        if not expediente.get("documentos"):
-            errors.append("Debe existir al menos un documento adjunto.")
+            for campo, etiqueta in (
+                ("nombre", "nombre"),
+                ("email", "correo electronico"),
+                ("telefono", "telefono"),
+                ("direccion", "direccion"),
+                ("cp", "codigo postal"),
+                ("poblacion", "poblacion"),
+                ("provincia", "provincia"),
+            ):
+                if not str(payload.get(campo) or "").strip():
+                    errors.append(f"El {etiqueta} del {rol} es obligatorio.")
+            if payload.get("tipo_persona") == "juridica":
+                if not payload.get("representante_nombre"):
+                    errors.append(f"El nombre del representante del {rol} es obligatorio.")
+                representante_nif = normalizar_nif_cif(payload.get("representante_nif") or "")
+                if not representante_nif:
+                    errors.append(f"El DNI/NIE del representante del {rol} es obligatorio.")
+                elif not validar_nif_cif_nie(representante_nif):
+                    errors.append(f"El DNI/NIE del representante del {rol} no es valido.")
+        vendedor = expediente.get("vendedor_payload") or {}
+        if vendedor.get("tipo_persona") == "juridica":
+            tiene_factura = any(
+                doc.get("rol") == "vendedor" and doc.get("tipo") == "factura"
+                for doc in expediente.get("documentos") or []
+            )
+            if not tiene_factura:
+                errors.append("La factura es obligatoria cuando el vendedor es persona juridica.")
         return errors
 
     def generar_documentos(self, expediente_id: str) -> list[dict]:
@@ -293,7 +315,11 @@ class TramitesDgtService:
         if expediente.get("estado") != "validado":
             raise ValueError("Valida expresamente el expediente antes de generar documentos.")
         out = []
-        for tipo, titulo in DOCUMENTOS_BASE:
+        documentos = list(DOCUMENTOS_BASE)
+        vendedor = expediente.get("vendedor_payload") or {}
+        if vendedor.get("tipo_persona") == "juridica":
+            documentos = [item for item in documentos if item[0] != "contrato_compraventa"]
+        for tipo, titulo in documentos:
             generated = self._generar_documento(expediente, tipo, titulo)
             doc_id = self._repo.insertar_documento_generado(
                 {
@@ -362,12 +388,21 @@ class TramitesDgtService:
 
     def ensure_plantillas_editables(self, overwrite: bool = False) -> list[dict]:
         base = self.get_templates_dir()
+        packaged = Path(__file__).resolve().parents[1] / "plantillas" / "tramites_dgt"
         created = []
         for tipo, titulo in DOCUMENTOS_BASE:
             path = base / TEMPLATE_FILENAMES[tipo]
             if path.exists() and not overwrite:
                 continue
-            ok = self._create_editable_template(tipo, titulo, path)
+            source = packaged / TEMPLATE_FILENAMES[tipo]
+            if source.exists() and source.resolve() != path.resolve():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, path)
+                ok = path.exists()
+            elif source.exists():
+                ok = True
+            else:
+                ok = self._create_editable_template(tipo, titulo, path)
             created.append(
                 {
                     "tipo_documento": tipo,
@@ -456,17 +491,14 @@ class TramitesDgtService:
 
     def _render_docx(self, expediente: dict, tipo: str, titulo: str, out_docx_path: Path) -> bool:
         template_path = self._buscar_template(tipo)
+        if not template_path:
+            raise FileNotFoundError(f"No se encuentra la plantilla oficial para {titulo}.")
         context = self._document_context(expediente)
         context["titulo_documento"] = titulo
-        if template_path:
-            try:
-                from procesos.facturas_word import render_docx
+        from procesos.facturas_word import render_docx
 
-                render_docx(str(template_path), context, str(out_docx_path))
-                return out_docx_path.exists()
-            except Exception:
-                pass
-        return self._render_basic_docx(context, titulo, out_docx_path)
+        render_docx(str(template_path), context, str(out_docx_path))
+        return out_docx_path.exists()
 
     def _buscar_template(self, tipo: str) -> Path | None:
         filename = TEMPLATE_FILENAMES.get(tipo)
@@ -627,11 +659,115 @@ class TramitesDgtService:
         ctx = {key: expediente.get(key) for key in keys}
         vendedor_payload = expediente.get("vendedor_payload") or {}
         comprador_payload = expediente.get("comprador_payload") or {}
-        ctx["vendedor_nif"] = vendedor_payload.get("nif") or ""
-        ctx["comprador_nif"] = comprador_payload.get("nif") or ""
+        self._add_parte_context(ctx, "vendedor", vendedor_payload)
+        self._add_parte_context(ctx, "comprador", comprador_payload)
+        ctx["vendedor_comparecencia"] = self._comparecencia(vendedor_payload, "vendedor")
+        ctx["comprador_comparecencia"] = self._comparecencia(comprador_payload, "comprador")
+        ctx["comprador_mandante"] = self._mandante(comprador_payload)
+        ctx["vendedor_firma"] = self._firma_parte(vendedor_payload)
+        ctx["comprador_firma"] = self._firma_parte(comprador_payload)
+        ctx["fecha"] = self._fecha_es(expediente.get("fecha_operacion"))
+        ctx["fecha_firma"] = ctx["fecha"] or datetime.now().strftime("%d/%m/%Y")
+        ctx["marca_vehiculo"] = vendedor_payload.get("vehiculo_marca") or ""
+        ctx["modelo_vehiculo"] = vendedor_payload.get("vehiculo_modelo") or ""
+        ctx["matricula_vehiculo"] = vendedor_payload.get("vehiculo_matricula") or ctx.get("vehiculo_matricula") or ""
+        ctx["bastidor_vehiculo"] = vendedor_payload.get("vehiculo_bastidor") or ctx.get("vehiculo_bastidor") or ""
+        ctx["primeramatriculacion_vehiculo"] = self._fecha_es(vendedor_payload.get("vehiculo_primera_matriculacion"))
+        ctx["kilometros_vehiculo"] = vendedor_payload.get("vehiculo_kilometros") or ""
+        ctx["precio_compra"] = self._importe_es(vendedor_payload.get("precio_venta") or ctx.get("precio_venta"))
+        ctx["forma_pago"] = vendedor_payload.get("forma_pago") or ""
+        ctx["llaves_vehiculo"] = vendedor_payload.get("numero_llaves") or ""
         ctx["documentos"] = expediente.get("documentos") or []
         ctx["documentos_count"] = len(ctx["documentos"])
         return ctx
+
+    def _add_parte_context(self, ctx: dict, rol: str, payload: dict) -> None:
+        for campo in (
+            "tipo_persona", "nombre", "nif", "email", "telefono", "direccion",
+            "cp", "poblacion", "provincia", "representante_nombre", "representante_nif",
+        ):
+            ctx[f"{rol}_{campo}"] = payload.get(campo) or ""
+        ctx[f"{rol}_direccion_completa"] = self._direccion_completa(payload)
+        if rol == "comprador":
+            envio = {
+                "direccion": payload.get("envio_direccion"),
+                "cp": payload.get("envio_cp"),
+                "poblacion": payload.get("envio_poblacion"),
+                "provincia": payload.get("envio_provincia"),
+            }
+            ctx["comprador_direccion_envio"] = self._direccion_completa(envio)
+
+    def _comparecencia(self, payload: dict, rol: str) -> str:
+        etiqueta = "vendedora" if rol == "vendedor" else "compradora"
+        contacto = (
+            f"con domicilio en {self._direccion_completa(payload)}, telefono "
+            f"{payload.get('telefono') or ''} y correo electronico {payload.get('email') or ''}"
+        )
+        if payload.get("tipo_persona") == "juridica":
+            return (
+                f"la parte {etiqueta}: {payload.get('nombre') or ''}, con CIF "
+                f"{payload.get('nif') or ''}, {contacto}, representada en este acto por "
+                f"Don/Doña {payload.get('representante_nombre') or ''}, con DNI/NIE "
+                f"{payload.get('representante_nif') or ''}"
+            )
+        return (
+            f"Don/Doña {payload.get('nombre') or ''}, con DNI/NIE {payload.get('nif') or ''}, "
+            f"{contacto}"
+        )
+
+    def _mandante(self, payload: dict) -> str:
+        domicilio = self._direccion_completa(
+            {
+                "direccion": payload.get("envio_direccion") or payload.get("direccion"),
+                "cp": payload.get("envio_cp") or payload.get("cp"),
+                "poblacion": payload.get("envio_poblacion") or payload.get("poblacion"),
+                "provincia": payload.get("envio_provincia") or payload.get("provincia"),
+            }
+        )
+        if payload.get("tipo_persona") == "juridica":
+            return (
+                f"La entidad {payload.get('nombre') or ''}, con CIF {payload.get('nif') or ''}, "
+                f"con domicilio para notificaciones en {domicilio}, representada en este acto por "
+                f"D./Dña. {payload.get('representante_nombre') or ''}, con DNI/NIE "
+                f"{payload.get('representante_nif') or ''}, actuando en calidad de MANDANTE,"
+            )
+        return (
+            f"Yo, D./Dña. {payload.get('nombre') or ''}, con DNI/NIE {payload.get('nif') or ''}, "
+            f"con domicilio para notificaciones en {domicilio}, actuando en calidad de MANDANTE,"
+        )
+
+    def _firma_parte(self, payload: dict) -> str:
+        if payload.get("tipo_persona") == "juridica":
+            return str(payload.get("representante_nombre") or "")
+        return str(payload.get("nombre") or "")
+
+    def _direccion_completa(self, payload: dict) -> str:
+        localidad = " ".join(
+            part for part in (
+                str(payload.get("cp") or "").strip(),
+                str(payload.get("poblacion") or "").strip(),
+            ) if part
+        )
+        return ", ".join(
+            part for part in (
+                str(payload.get("direccion") or "").strip(),
+                localidad,
+                str(payload.get("provincia") or "").strip(),
+            ) if part
+        )
+
+    def _fecha_es(self, value) -> str:
+        raw = str(value or "").strip()
+        try:
+            return datetime.strptime(raw[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
+        except ValueError:
+            return raw
+
+    def _importe_es(self, value) -> str:
+        try:
+            return f"{float(value):,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
+        except (TypeError, ValueError):
+            return str(value or "")
 
     def _parse_float(self, value):
         raw = str(value or "").strip().replace(".", "").replace(",", ".")
@@ -662,6 +798,7 @@ class TramitesDgtService:
 
     def _normalizar_payload_parte(self, payload: dict) -> dict:
         out = {
+            "tipo_persona": str(payload.get("tipo_persona") or "fisica").strip().lower(),
             "nombre": str(payload.get("nombre") or "").strip(),
             "nif": normalizar_nif_cif(payload.get("nif") or payload.get("dni") or ""),
             "email": str(payload.get("email") or "").strip(),
@@ -670,13 +807,22 @@ class TramitesDgtService:
             "cp": str(payload.get("cp") or "").strip(),
             "poblacion": str(payload.get("poblacion") or "").strip(),
             "provincia": str(payload.get("provincia") or "").strip(),
-            "representante": str(payload.get("representante") or "").strip(),
+            "representante_nombre": str(
+                payload.get("representante_nombre") or payload.get("representante") or ""
+            ).strip(),
+            "representante_nif": normalizar_nif_cif(payload.get("representante_nif") or ""),
             "observaciones": str(payload.get("observaciones") or "").strip(),
         }
         out["vehiculo_matricula"] = self._normalizar_matricula(payload.get("vehiculo_matricula"))
         out["vehiculo_bastidor"] = str(payload.get("vehiculo_bastidor") or "").strip().upper()
         out["precio_venta"] = self._parse_float(payload.get("precio_venta"))
-        out["fecha_operacion"] = str(payload.get("fecha_operacion") or "").strip()
+        for campo in (
+            "vehiculo_marca", "vehiculo_modelo", "vehiculo_primera_matriculacion",
+            "vehiculo_kilometros", "fecha_operacion", "hora_entrega", "forma_pago",
+            "numero_llaves", "estado_cargas", "detalle_cargas", "estado_vehiculo",
+            "envio_direccion", "envio_cp", "envio_poblacion", "envio_provincia",
+        ):
+            out[campo] = str(payload.get(campo) or "").strip()
         return out
 
     def _hash_file(self, path: Path) -> str:
