@@ -12,6 +12,10 @@ class Base(DeclarativeBase):
 
 def build_engine(database_url: str | None = None):
     url = database_url or get_settings().database_url
+    if url.startswith("postgresql://"):
+        url = f"postgresql+psycopg://{url.removeprefix('postgresql://')}"
+    elif url.startswith("postgres://"):
+        url = f"postgresql+psycopg://{url.removeprefix('postgres://')}"
     kwargs = {"check_same_thread": False} if url.startswith("sqlite") else {}
     return create_engine(url, connect_args=kwargs, pool_pre_ping=True)
 
