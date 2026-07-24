@@ -271,7 +271,19 @@ class UITramitesDgt(ttk.Frame):
 
     def _nuevo(self):
         self._clear_form()
-        self._title_entry.focus_set()
+        self._vars["titulo"].set(
+            f"Cambio de titularidad DGT - {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+        )
+        try:
+            expediente_id = self._service.crear_expediente_minimo(self._payload())
+            self._last_links = self._service.regenerar_links(expediente_id)
+            self.refresh(select_id=expediente_id)
+            self.var_link_vendedor.set(self._last_links.get("vendedor", ""))
+            self.var_link_comprador.set(self._last_links.get("comprador", ""))
+            self._title_entry.focus_set()
+        except Exception as exc:
+            self._clear_form()
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
 
     def _guardar(self):
         if not self._current_id:
