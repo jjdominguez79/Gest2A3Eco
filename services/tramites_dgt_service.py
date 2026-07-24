@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
 import uuid
@@ -290,6 +291,12 @@ class TramitesDgtService:
             ):
                 if not str(payload.get(campo) or "").strip():
                     errors.append(f"El {etiqueta} del {rol} es obligatorio.")
+            if payload.get("email") and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", str(payload["email"])):
+                errors.append(f"El correo electronico del {rol} no es valido.")
+            if payload.get("telefono") and not re.fullmatch(r"\d{9,15}", str(payload["telefono"])):
+                errors.append(f"El telefono del {rol} debe contener entre 9 y 15 digitos.")
+            if payload.get("cp") and not re.fullmatch(r"\d{5}", str(payload["cp"])):
+                errors.append(f"El codigo postal del {rol} debe tener 5 digitos.")
             if payload.get("tipo_persona") == "juridica":
                 if not payload.get("representante_nombre"):
                     errors.append(f"El nombre del representante del {rol} es obligatorio.")
@@ -299,6 +306,39 @@ class TramitesDgtService:
                 elif not validar_nif_cif_nie(representante_nif):
                     errors.append(f"El DNI/NIE del representante del {rol} no es valido.")
         vendedor = expediente.get("vendedor_payload") or {}
+        for campo, etiqueta in (
+            ("vehiculo_matricula", "matricula"),
+            ("vehiculo_bastidor", "bastidor"),
+            ("vehiculo_marca", "marca"),
+            ("vehiculo_modelo", "modelo"),
+            ("vehiculo_primera_matriculacion", "fecha de primera matriculacion"),
+            ("vehiculo_kilometros", "kilometraje"),
+            ("precio_venta", "precio de venta"),
+            ("fecha_operacion", "fecha de entrega"),
+            ("hora_entrega", "hora de entrega"),
+            ("forma_pago", "forma de pago"),
+            ("numero_llaves", "numero de llaves"),
+            ("estado_cargas", "estado de cargas"),
+            ("estado_vehiculo", "estado del vehiculo"),
+        ):
+            if vendedor.get(campo) in (None, ""):
+                errors.append(f"La {etiqueta} del vehiculo es obligatoria.")
+        bastidor = str(vendedor.get("vehiculo_bastidor") or "")
+        if bastidor and not re.fullmatch(r"[A-HJ-NPR-Z0-9]{17}", bastidor):
+            errors.append("El bastidor debe contener 17 caracteres validos.")
+        if vendedor.get("estado_cargas") == "con_cargas" and not vendedor.get("detalle_cargas"):
+            errors.append("Debes detallar las cargas del vehiculo.")
+        comprador = expediente.get("comprador_payload") or {}
+        for campo, etiqueta in (
+            ("envio_direccion", "direccion"),
+            ("envio_cp", "codigo postal"),
+            ("envio_poblacion", "poblacion"),
+            ("envio_provincia", "provincia"),
+        ):
+            if not str(comprador.get(campo) or "").strip():
+                errors.append(f"La {etiqueta} de envio es obligatoria.")
+        if comprador.get("envio_cp") and not re.fullmatch(r"\d{5}", str(comprador["envio_cp"])):
+            errors.append("El codigo postal de envio debe tener 5 digitos.")
         if vendedor.get("tipo_persona") == "juridica":
             tiene_factura = any(
                 doc.get("rol") == "vendedor" and doc.get("tipo") == "factura"
