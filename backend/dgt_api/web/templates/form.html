@@ -66,19 +66,6 @@
           <label>Hora de entrega <input name="hora_entrega" type="time" required></label>
           <label>Forma de pago <input name="forma_pago" required></label>
           <label>Numero de llaves <input name="llaves_vehiculo" type="number" min="1" step="1" required></label>
-          <label>Situacion de cargas
-            <select name="cargas_estado" required>
-              <option value="">Selecciona una opcion</option>
-              <option value="sin_cargas">Sin cargas ni financiacion</option>
-              <option value="con_cargas">Con cargas, reserva o financiacion</option>
-            </select>
-          </label>
-          <label id="loads-detail" class="wide hidden">Detalle de cargas, reserva o financiacion
-            <textarea name="cargas_detalle"></textarea>
-          </label>
-          <label class="wide">Estado conocido del vehiculo
-            <textarea name="estado_vehiculo" required></textarea>
-          </label>
         </div>
       </section>
       {% else %}

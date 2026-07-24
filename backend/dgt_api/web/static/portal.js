@@ -45,13 +45,6 @@
       upload.classList.toggle("hidden", !visible);
       document.querySelector("#invoice").required = visible && !invoiceUploaded;
     }
-    const loads = form.elements.namedItem("cargas_estado");
-    const loadsDetail = document.querySelector("#loads-detail");
-    if (loads && loadsDetail) {
-      const visible = loads.value === "con_cargas";
-      loadsDetail.classList.toggle("hidden", !visible);
-      loadsDetail.querySelector("textarea").required = visible;
-    }
   }
 
   function copyShippingAddress() {
@@ -155,8 +148,6 @@
   form.elements.namedItem("tipo_persona").addEventListener("change", toggleConditionalFields);
   const sameAddress = document.querySelector("#same-address");
   if (sameAddress) sameAddress.addEventListener("change", copyShippingAddress);
-  const loads = form.elements.namedItem("cargas_estado");
-  if (loads) loads.addEventListener("change", toggleConditionalFields);
   toggleConditionalFields();
   copyShippingAddress();
   renderStep();

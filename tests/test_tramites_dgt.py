@@ -113,8 +113,6 @@ def test_crear_validar_y_generar_documentos(tmp_path: Path, monkeypatch):
             "hora_entrega": "10:00",
             "forma_pago": "transferencia",
             "numero_llaves": "2",
-            "estado_cargas": "sin_cargas",
-            "estado_vehiculo": "usado",
         },
     )
     service.guardar_datos_parte(

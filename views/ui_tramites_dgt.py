@@ -653,8 +653,6 @@ class DatosParteDialog(simpledialog.Dialog):
             "primera_matriculacion": "vehiculo_primera_matriculacion",
             "kilometraje": "vehiculo_kilometros",
             "llaves_vehiculo": "numero_llaves",
-            "cargas_estado": "estado_cargas",
-            "cargas_detalle": "detalle_cargas",
             "direccion_envio": "envio_direccion",
             "cp_envio": "envio_cp",
             "poblacion_envio": "envio_poblacion",
@@ -703,9 +701,6 @@ class DatosParteDialog(simpledialog.Dialog):
                 ("Hora de entrega", "hora_entrega"),
                 ("Forma de pago", "forma_pago"),
                 ("Numero de llaves", "llaves_vehiculo"),
-                ("Cargas (sin_cargas/con_cargas)", "cargas_estado"),
-                ("Detalle de cargas", "cargas_detalle"),
-                ("Estado conocido del vehiculo", "estado_vehiculo"),
             )
             self._build_fields(detalle_tab, detail_fields, defaults)
         else:

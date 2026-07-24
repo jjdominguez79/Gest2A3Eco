@@ -1,10 +1,12 @@
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from backend.dgt_api import app as app_module
 from backend.dgt_api.database import Base, build_engine
+from backend.dgt_api.models import Parte
 
 
 def _party_payload(*, role="vendedor", tipo_persona="fisica"):
@@ -30,8 +32,6 @@ def _party_payload(*, role="vendedor", tipo_persona="fisica"):
                 "hora_entrega": "12:30",
                 "forma_pago": "Transferencia",
                 "llaves_vehiculo": "2",
-                "cargas_estado": "sin_cargas",
-                "estado_vehiculo": "Usado en buen estado",
             }
         )
     else:
@@ -290,6 +290,17 @@ def test_correccion_interna_conserva_envio_y_datos_no_editados(tmp_path, monkeyp
     assert data["partes"]["vendedor"]["datos"]["vehiculo_marca"] == "Renault"
     assert data["partes"]["vendedor"]["datos"]["precio_venta"] == "9000"
     assert data["estado"] == "revision_interna"
+
+    buyer_link = client.post(f"/api/v1/expedientes/{item['id']}/links", headers=headers).json()["comprador"]["url"]
+    buyer_token = buyer_link.split("token=", 1)[1]
+    buyer_path = f"/public/tramites/{item['referencia']}/comprador"
+    client.patch(f"{buyer_path}?token={buyer_token}", json=_party_payload(role="comprador"))
+    client.post(f"{buyer_path}/submit?token={buyer_token}&privacy_accepted=true")
+    with sessionmaker(bind=engine, expire_on_commit=False)() as db:
+        seller = db.scalar(select(Parte).where(Parte.expediente_id == item["id"], Parte.rol == "vendedor"))
+        seller.estado = "en_curso"
+        db.commit()
+    assert client.post(f"/api/v1/expedientes/{item['id']}/validar", headers=headers).status_code == 200
     Base.metadata.drop_all(engine)
 
 

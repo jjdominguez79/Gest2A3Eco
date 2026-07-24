@@ -183,8 +183,16 @@ def post_subsanacion(expediente_id: str, payload: SubsanacionCreate, db: Session
 @app.post("/api/v1/expedientes/{expediente_id}/validar", dependencies=[internal])
 def validar_interno(expediente_id: str, db: Session = Depends(get_db)):
     item = cargar_expediente(db, expediente_id)
-    if not all(parte.estado == "completado" for parte in item.partes):
-        raise HTTPException(422, "Ambas partes deben haber completado sus datos")
+    errors = []
+    for parte in item.partes:
+        if parte.estado != "completado":
+            if parte.submitted_at and ultima_actualizacion_fue_interna(db, item.id, parte.rol):
+                parte.estado = "completado"
+            else:
+                errors.append(f"El {parte.rol} debe enviar el formulario completo.")
+        errors.extend(f"{parte.rol.capitalize()}: {error}" for error in validar_parte(parte, parte.rol))
+    if errors:
+        raise HTTPException(422, detail=errors)
     vendedor = next(parte for parte in item.partes if parte.rol == "vendedor")
     if vendedor.tipo_persona == "juridica" and not db.scalar(
         select(Documento.id).where(
@@ -230,9 +238,11 @@ def patch_parte_interna(
     )
     parte.datos = datos_nuevos
     sync_parte_operacion(item, parte, rol)
-    if estado_anterior != "completado":
+    if estado_anterior != "completado" and not parte.submitted_at:
         parte.estado = "en_curso"
-    item.estado = "revision_interna" if estado_anterior == "completado" else f"{rol}_en_curso"
+    else:
+        parte.estado = "completado"
+    item.estado = "revision_interna" if parte.estado == "completado" else f"{rol}_en_curso"
     registrar_evento(
         db,
         item.id,
@@ -242,6 +252,30 @@ def patch_parte_interna(
     )
     db.commit()
     return serializar_expediente(cargar_expediente(db, item.id))
+
+
+def ultima_actualizacion_fue_interna(db: Session, expediente_id: str, rol: str) -> bool:
+    eventos = db.scalars(
+        select(Evento)
+        .where(
+            Evento.expediente_id == expediente_id,
+            Evento.tipo.in_(
+                (
+                    "parte_actualizada_internamente",
+                    "formulario_guardado",
+                    "formulario_completado",
+                    "subsanacion_solicitada",
+                )
+            ),
+        )
+        .order_by(Evento.created_at.desc(), Evento.id.desc())
+    ).all()
+    for evento in eventos:
+        datos = evento.datos or {}
+        evento_rol = datos.get("rol") or evento.actor
+        if evento_rol == rol:
+            return evento.tipo == "parte_actualizada_internamente"
+    return False
 
 
 @app.get("/api/v1/expedientes/{expediente_id}/documentos", dependencies=[internal])
@@ -410,8 +444,7 @@ def sync_parte_operacion(item: Expediente, parte: Parte, rol: str) -> None:
     }
     operacion = dict(item.operacion.datos or {})
     for key in (
-        "precio_venta", "fecha_operacion", "hora_entrega", "forma_pago",
-        "llaves_vehiculo", "cargas_estado", "cargas_detalle", "estado_vehiculo",
+        "precio_venta", "fecha_operacion", "hora_entrega", "forma_pago", "llaves_vehiculo",
     ):
         operacion[key] = datos.get(key, "")
     item.operacion.datos = operacion

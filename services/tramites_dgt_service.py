@@ -351,16 +351,12 @@ class TramitesDgtService:
             ("hora_entrega", "hora de entrega"),
             ("forma_pago", "forma de pago"),
             ("llaves_vehiculo", "numero de llaves"),
-            ("cargas_estado", "estado de cargas"),
-            ("estado_vehiculo", "estado del vehiculo"),
         ):
             if vendedor.get(campo) in (None, ""):
                 errors.append(f"La {etiqueta} del vehiculo es obligatoria.")
         bastidor = str(vendedor.get("vehiculo_bastidor") or "")
         if bastidor and not re.fullmatch(r"[A-HJ-NPR-Z0-9]{17}", bastidor):
             errors.append("El bastidor debe contener 17 caracteres validos.")
-        if vendedor.get("cargas_estado") == "con_cargas" and not vendedor.get("cargas_detalle"):
-            errors.append("Debes detallar las cargas del vehiculo.")
         comprador = expediente.get("comprador_payload") or {}
         for campo, etiqueta in (
             ("direccion_envio", "direccion"),
@@ -957,9 +953,6 @@ class TramitesDgtService:
             "hora_entrega": ("hora_entrega",),
             "forma_pago": ("forma_pago",),
             "llaves_vehiculo": ("llaves_vehiculo", "numero_llaves"),
-            "cargas_estado": ("cargas_estado", "estado_cargas"),
-            "cargas_detalle": ("cargas_detalle", "detalle_cargas"),
-            "estado_vehiculo": ("estado_vehiculo",),
             "direccion_envio": ("direccion_envio", "envio_direccion"),
             "cp_envio": ("cp_envio", "envio_cp"),
             "poblacion_envio": ("poblacion_envio", "envio_poblacion"),

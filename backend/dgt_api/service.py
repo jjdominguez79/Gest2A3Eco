@@ -45,8 +45,7 @@ def serializar_expediente(item: Expediente) -> dict:
     )
     operacion = dict(item.operacion.datos or {}) if item.operacion else {}
     for key in (
-        "precio_venta", "fecha_operacion", "hora_entrega", "forma_pago",
-        "llaves_vehiculo", "cargas_estado", "cargas_detalle", "estado_vehiculo",
+        "precio_venta", "fecha_operacion", "hora_entrega", "forma_pago", "llaves_vehiculo",
     ):
         if not operacion.get(key) and vendedor_datos.get(key) not in (None, ""):
             operacion[key] = vendedor_datos[key]

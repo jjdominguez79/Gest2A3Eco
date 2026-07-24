@@ -83,8 +83,6 @@ def validar_parte(parte: Parte, rol: str) -> list[str]:
             "fecha_operacion": "La fecha de entrega",
             "hora_entrega": "La hora de entrega",
             "forma_pago": "La forma de pago",
-            "cargas_estado": "La situacion de cargas",
-            "estado_vehiculo": "La descripcion del estado del vehiculo",
             "llaves_vehiculo": "El numero de llaves",
         }
         errors.extend(_required(data, tuple(labels), labels))
@@ -105,8 +103,6 @@ def validar_parte(parte: Parte, rol: str) -> list[str]:
                     raise ValueError
             except ValueError:
                 errors.append(f"{label} debe ser un numero valido.")
-        if data.get("cargas_estado") == "con_cargas" and not str(data.get("cargas_detalle") or "").strip():
-            errors.append("Describe las cargas, reserva de dominio o financiacion.")
         for key, label in (
             ("primera_matriculacion", "La primera matriculacion"),
             ("fecha_operacion", "La fecha de entrega"),
