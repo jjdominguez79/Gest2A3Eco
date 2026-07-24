@@ -99,6 +99,11 @@ def test_flujo_api_separa_roles_y_audita(tmp_path, monkeypatch):
         json=_party_payload(),
     )
     assert saved.status_code == 200
+    internal = client.get(f"/api/v1/expedientes/{item['id']}", headers=headers).json()
+    assert internal["vehiculo"]["matricula"] == "1234ABC"
+    assert internal["vehiculo"]["bastidor"] == "VF1AAAAAA12345678"
+    assert internal["operacion"]["precio_venta"] == "8500"
+    assert internal["operacion"]["fecha_operacion"] == "2026-07-20"
     submitted = client.post(f"{public_path.replace('?', '/submit?')}&privacy_accepted=true")
     assert submitted.status_code == 200
 
@@ -113,6 +118,7 @@ def test_portal_sin_adjuntos_generales_para_comprador(tmp_path, monkeypatch):
     monkeypatch.setenv("DGT_STORAGE_DIR", str(tmp_path / "private"))
     headers = {"X-API-Key": "test-secret"}
     item = client.post("/api/v1/expedientes", headers=headers, json={}).json()
+    assert item["titulo"].startswith("Cambio de titularidad DGT-")
     link = client.post(f"/api/v1/expedientes/{item['id']}/links", headers=headers).json()["comprador"]["url"]
     token = link.split("token=", 1)[1]
     portal = client.get(f"/t/{item['referencia']}/comprador?token={token}")

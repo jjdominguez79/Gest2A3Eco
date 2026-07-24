@@ -82,7 +82,7 @@ class UITramitesDgt(ttk.Frame):
 
         left_buttons = ttk.Frame(left)
         left_buttons.pack(fill="x", pady=(6, 0))
-        ttk.Button(left_buttons, text="Nuevo", style="Primary.TButton", command=self._nuevo).pack(side=tk.LEFT)
+        ttk.Button(left_buttons, text="Nuevo expediente", style="Primary.TButton", command=self._nuevo).pack(side=tk.LEFT)
         ttk.Button(left_buttons, text="Actualizar", command=self.refresh).pack(side=tk.LEFT, padx=6)
         ttk.Button(left_buttons, text="Plantillas", command=self._gestionar_plantillas).pack(side=tk.LEFT)
         ttk.Button(left_buttons, text="Eliminar", command=self._eliminar_expediente).pack(side=tk.RIGHT)
@@ -114,7 +114,10 @@ class UITramitesDgt(ttk.Frame):
             )
         ):
             ttk.Label(form, text=label).grid(row=idx, column=0, sticky="w", padx=8, pady=3)
-            ttk.Entry(form, textvariable=self._vars[key], width=48).grid(row=idx, column=1, sticky="ew", padx=8, pady=3)
+            entry = ttk.Entry(form, textvariable=self._vars[key], width=48)
+            entry.grid(row=idx, column=1, sticky="ew", padx=8, pady=3)
+            if key == "titulo":
+                self._title_entry = entry
         ttk.Checkbutton(
             form,
             text="Modelo 620 presentado",
@@ -193,7 +196,8 @@ class UITramitesDgt(ttk.Frame):
         ttk.Button(parent, text="Revocar", command=revoke_cmd).grid(row=row, column=6, padx=3)
         parent.columnconfigure(1, weight=1)
 
-    def refresh(self):
+    def refresh(self, select_id: str | None = None):
+        previous_id = select_id or self._current_id
         self._expedientes = self._service.listar_expedientes()
         self.tv.delete(*self.tv.get_children())
         for item in self._expedientes:
@@ -212,10 +216,12 @@ class UITramitesDgt(ttk.Frame):
                     item.get("comprador_nombre", ""),
                 ),
             )
-        children = self.tv.get_children()
-        if children:
-            self.tv.selection_set(children[0])
-            self.tv.focus(children[0])
+        children = list(self.tv.get_children())
+        target_id = previous_id if previous_id in children else (children[0] if children else None)
+        if target_id:
+            self.tv.selection_set(target_id)
+            self.tv.focus(target_id)
+            self.tv.see(target_id)
             self._load_selected()
         else:
             self._clear_form()
@@ -229,24 +235,31 @@ class UITramitesDgt(ttk.Frame):
             self.after(60000, self._refresh_online)
 
     def _nuevo(self):
-        payload = self._payload()
-        expediente_id = self._service.crear_expediente_minimo(payload)
-        self._last_links = self._service.regenerar_links(expediente_id)
-        self.refresh()
-        self.tv.selection_set(expediente_id)
-        self.tv.focus(expediente_id)
-        self._load_selected()
-        self.var_link_vendedor.set(self._last_links.get("vendedor", ""))
-        self.var_link_comprador.set(self._last_links.get("comprador", ""))
+        self._clear_form()
+        self._title_entry.focus_set()
 
     def _guardar(self):
         if not self._current_id:
-            self._nuevo()
+            if not self._vars["titulo"].get().strip():
+                messagebox.showwarning(
+                    "Tramites DGT",
+                    "Indica un titulo para crear el expediente.",
+                    parent=self.winfo_toplevel(),
+                )
+                self._title_entry.focus_set()
+                return
+            try:
+                expediente_id = self._service.crear_expediente_minimo(self._payload())
+                self._last_links = self._service.regenerar_links(expediente_id)
+                self.refresh(select_id=expediente_id)
+                self.var_link_vendedor.set(self._last_links.get("vendedor", ""))
+                self.var_link_comprador.set(self._last_links.get("comprador", ""))
+            except Exception as exc:
+                messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
             return
         try:
             self._service.guardar_expediente(self._current_id, self._payload())
-            self.refresh()
-            self.tv.selection_set(self._current_id)
+            self.refresh(select_id=self._current_id)
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
 

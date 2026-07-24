@@ -30,11 +30,31 @@ def serializar_expediente(item: Expediente) -> dict:
         }
         for parte in item.partes
     }
+    vendedor_datos = next(
+        (parte.datos or {} for parte in item.partes if parte.rol == "vendedor"),
+        {},
+    )
+    vehiculo = dict(item.vehiculo.datos or {}) if item.vehiculo else {}
+    vehiculo["matricula"] = (
+        item.vehiculo.matricula if item.vehiculo and item.vehiculo.matricula
+        else vendedor_datos.get("vehiculo_matricula", "")
+    )
+    vehiculo["bastidor"] = (
+        item.vehiculo.bastidor if item.vehiculo and item.vehiculo.bastidor
+        else vendedor_datos.get("vehiculo_bastidor", "")
+    )
+    operacion = dict(item.operacion.datos or {}) if item.operacion else {}
+    for key in (
+        "precio_venta", "fecha_operacion", "hora_entrega", "forma_pago",
+        "llaves_vehiculo", "cargas_estado", "cargas_detalle", "estado_vehiculo",
+    ):
+        if not operacion.get(key) and vendedor_datos.get(key) not in (None, ""):
+            operacion[key] = vendedor_datos[key]
     return {
         "id": item.id,
         "referencia": item.referencia,
         "tipo": item.tipo,
-        "titulo": item.titulo,
+        "titulo": item.titulo or f"Cambio de titularidad {vehiculo.get('matricula') or item.referencia}",
         "estado": item.estado,
         "responsable": item.responsable,
         "observaciones": item.observaciones,
@@ -42,9 +62,8 @@ def serializar_expediente(item: Expediente) -> dict:
         "created_at": item.created_at,
         "updated_at": item.updated_at,
         "partes": partes,
-        "vehiculo": (item.vehiculo.datos | {"matricula": item.vehiculo.matricula, "bastidor": item.vehiculo.bastidor})
-        if item.vehiculo else {},
-        "operacion": item.operacion.datos if item.operacion else {},
+        "vehiculo": vehiculo,
+        "operacion": operacion,
     }
 
 
@@ -69,9 +88,10 @@ def siguiente_referencia(db: Session) -> str:
 
 
 def crear_expediente(db: Session, payload) -> Expediente:
+    referencia = siguiente_referencia(db)
     item = Expediente(
-        referencia=siguiente_referencia(db),
-        titulo=payload.titulo,
+        referencia=referencia,
+        titulo=payload.titulo.strip() or f"Cambio de titularidad {referencia}",
         responsable=payload.responsable,
         observaciones=payload.observaciones,
     )

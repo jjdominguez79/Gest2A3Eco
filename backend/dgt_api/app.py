@@ -214,6 +214,7 @@ def patch_parte_interna(
     parte = next(part for part in item.partes if part.rol == rol)
     for key in ("tipo_persona", "nombre", "nif", "email", "telefono", "datos"):
         setattr(parte, key, getattr(payload, key))
+    sync_parte_operacion(item, parte, rol)
     parte.estado = "en_curso"
     item.estado = f"{rol}_en_curso"
     registrar_evento(db, item.id, "parte_actualizada_internamente", "gest2a3eco", {"rol": rol})
@@ -366,11 +367,32 @@ def patch_public(referencia: str, rol: str, payload: PartePatch, token: str = Qu
     parte = next(part for part in item.partes if part.rol == rol)
     for key in ("tipo_persona", "nombre", "nif", "email", "telefono", "datos"):
         setattr(parte, key, getattr(payload, key))
+    sync_parte_operacion(item, parte, rol)
     parte.estado = "en_curso"
     item.estado = f"{rol}_en_curso"
     registrar_evento(db, item.id, "formulario_guardado", rol)
     db.commit()
     return public_context(referencia, rol, token, db)
+
+
+def sync_parte_operacion(item: Expediente, parte: Parte, rol: str) -> None:
+    if rol != "vendedor":
+        return
+    datos = parte.datos or {}
+    item.vehiculo.matricula = str(datos.get("vehiculo_matricula") or "").strip().upper()
+    item.vehiculo.bastidor = str(datos.get("vehiculo_bastidor") or "").strip().upper()
+    item.vehiculo.datos = {
+        key: value
+        for key, value in datos.items()
+        if key.startswith("vehiculo_") or key in {"primera_matriculacion", "kilometraje"}
+    }
+    operacion = dict(item.operacion.datos or {})
+    for key in (
+        "precio_venta", "fecha_operacion", "hora_entrega", "forma_pago",
+        "llaves_vehiculo", "cargas_estado", "cargas_detalle", "estado_vehiculo",
+    ):
+        operacion[key] = datos.get(key, "")
+    item.operacion.datos = operacion
 
 
 @app.post("/public/tramites/{referencia}/{rol}/submit")
