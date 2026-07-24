@@ -49,13 +49,21 @@ class LinkSeguro:
 
 class TramitesDgtService:
     def __init__(
-        self, gestor=None, session=None, repository: DgtRepository | None = None, firma_client=None
+        self,
+        gestor=None,
+        session=None,
+        repository: DgtRepository | None = None,
+        firma_client=None,
+        almacenamiento_client=None,
+        almacenamiento_base_path: str = "",
     ):
         if repository is None and gestor is None:
             raise ValueError("TramitesDgtService necesita un gestor SQLite o un DgtRepository.")
         self._repo = repository or SQLiteDgtRepository(gestor)
         self._session = session
         self._firma_client = firma_client
+        self._almacenamiento_client = almacenamiento_client
+        self._almacenamiento_base_path = str(almacenamiento_base_path or "").strip().rstrip("/")
 
     def crear_expediente_minimo(self, payload: dict) -> str:
         create_remote = getattr(self._repo, "create_expediente", None)
@@ -399,6 +407,12 @@ class TramitesDgtService:
         version = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         for tipo, titulo in documentos:
             generated = self._generar_documento(expediente, tipo, titulo, version)
+            contexto = self._document_context(expediente)
+            remotos = self._guardar_documentos_remotos(
+                expediente, "Generados", generated
+            )
+            if remotos:
+                contexto["dataprius"] = remotos
             doc_id = self._repo.insertar_documento_generado(
                 {
                     "expediente_id": expediente_id,
@@ -408,7 +422,7 @@ class TramitesDgtService:
                     "ruta_docx": generated.get("ruta_docx"),
                     "ruta_pdf": generated.get("ruta_pdf"),
                     "ruta_txt": generated.get("ruta_txt"),
-                    "json_datos_generacion": self._document_context(expediente),
+                    "json_datos_generacion": contexto,
                     "hash_contenido": generated.get("hash_contenido"),
                     "estado": generated.get("estado"),
                 }
@@ -564,6 +578,7 @@ class TramitesDgtService:
         return seleccionados
 
     def _registrar_evidencias_firma(self, expediente_id: str, tipo: str, evidencias: dict) -> None:
+        expediente = self._repo.get_expediente(expediente_id) or {}
         existentes = self._repo.listar_documentos_generados(expediente_id)
         fecha = self._now()
         nuevos = (
@@ -586,6 +601,9 @@ class TramitesDgtService:
         for tipo_documento, titulo, ruta, sha256 in nuevos:
             if not ruta or str(ruta) in rutas_existentes:
                 continue
+            remotos = self._guardar_documentos_remotos(
+                expediente, "Firmados", {"ruta_pdf": ruta}
+            )
             self._repo.insertar_documento_generado(
                 {
                     "expediente_id": expediente_id,
@@ -595,11 +613,31 @@ class TramitesDgtService:
                     "ruta_pdf": str(ruta),
                     "ruta_docx": None,
                     "ruta_txt": None,
-                    "json_datos_generacion": {"origen": "signrequest"},
+                    "json_datos_generacion": {
+                        "origen": "signrequest",
+                        "dataprius": remotos,
+                    },
                     "hash_contenido": sha256,
                     "estado": "firmado",
                 }
             )
+
+    def _guardar_documentos_remotos(
+        self, expediente: dict, categoria: str, documentos: dict
+    ) -> list[dict]:
+        if self._almacenamiento_client is None or not self._almacenamiento_base_path:
+            return []
+        referencia = str(expediente.get("referencia") or expediente.get("id") or "").strip()
+        ruta_remota = f"{self._almacenamiento_base_path}/{referencia}/{categoria}"
+        rutas = []
+        for campo in ("ruta_docx", "ruta_pdf", "ruta_txt"):
+            ruta = str(documentos.get(campo) or "").strip()
+            if ruta and ruta not in rutas:
+                rutas.append(ruta)
+        return [
+            self._almacenamiento_client.subir_archivo(ruta_remota, ruta)
+            for ruta in rutas
+        ]
 
     @staticmethod
     def _firmante(datos: dict, order: int) -> dict:

@@ -151,6 +151,9 @@ def _apply_env_overrides(data: dict) -> dict:
         "GEST2A3ECO_DGT_API_KEY": "dgt_api_key",
         "GEST2A3ECO_SIGNREQUEST_TOKEN": "signrequest_token",
         "GEST2A3ECO_SIGNREQUEST_FROM_EMAIL": "signrequest_from_email",
+        "GEST2A3ECO_DATAPRIUS_API_KEY": "dataprius_api_key",
+        "GEST2A3ECO_DATAPRIUS_API_SECRET": "dataprius_api_secret",
+        "GEST2A3ECO_DATAPRIUS_BASE_PATH": "dataprius_base_path",
         "GEST2A3ECO_ADMIN_PASSWORD": "admin_password",
         "GEST2A3ECO_INITIAL_ADMIN_PASSWORD": "initial_admin_password",
         "GEST2A3ECO_DESMARCAR_GENERADAS_PASSWORD": "desmarcar_generadas_password",
@@ -204,6 +207,10 @@ def _normalize_config(data: dict) -> dict:
     out.setdefault("signrequest_from_email", "")
     out.setdefault("signrequest_base_url", "https://signrequest.com/api/v1")
     out.setdefault("signrequest_use_sms", False)
+    out.setdefault("dataprius_api_key", "")
+    out.setdefault("dataprius_api_secret", "")
+    out.setdefault("dataprius_base_url", "https://api.v2.dataprius.com")
+    out.setdefault("dataprius_base_path", "FOLDERS/Gest2A3Eco/Tramites DGT")
 
     if not str(out.get("db_path") or "").strip():
         out["db_path"] = str(out.get("last_db_path") or "").strip()
