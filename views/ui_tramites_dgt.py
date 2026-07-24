@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import tkinter as tk
 import webbrowser
+from datetime import datetime
+from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from services.email_service import open_outlook_email
