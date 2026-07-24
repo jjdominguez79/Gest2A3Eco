@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from docx import Document
+
 from models.gestor_sqlite import GestorSQLite
 from services.auth_service import AuthService, AuthorizationService
 from services.tramites_dgt_repository import ApiDgtRepository
@@ -123,13 +125,30 @@ def test_envia_ultimas_versiones_a_signrequest(tmp_path: Path):
             }
         )
     firma = _FirmaClient()
-    service = TramitesDgtService(repository=repo, firma_client=firma)
+    service = TramitesDgtService(
+        repository=repo,
+        firma_client=firma,
+        firma_gestor_email="jjdominguez@gestinem.es",
+        firma_gestor_telefono="+34600000003",
+    )
 
     result = service.enviar_a_firma(expediente_id, usar_sms=True)
 
     assert result["estado"] == "enviado"
     assert len(firma.envios[0]["firmantes"]) == 2
-    assert len(firma.envios[1]["firmantes"]) == 1
+    assert len(firma.envios[1]["firmantes"]) == 2
+    assert firma.envios[1]["firmantes"] == [
+        {
+            "email": "jjdominguez@gestinem.es",
+            "telefono": "+34600000003",
+            "order": 2,
+        },
+        {
+            "email": "comprador@example.com",
+            "telefono": "+34600000002",
+            "order": 1,
+        },
+    ]
     assert repo.expedientes[expediente_id]["firma_provider"] == "signrequest"
     assert service.actualizar_estado_firma(expediente_id)["estado"] == "firmado"
     assert len(repo.listar_documentos_generados(expediente_id)) == 6
@@ -162,6 +181,59 @@ def test_rechaza_contrato_con_el_mismo_email_para_ambas_partes(tmp_path: Path):
         assert "emails distintos" in str(exc)
     else:
         raise AssertionError("No debe enviar un contrato con un unico email para ambas partes")
+
+
+def test_rechaza_mandato_sin_email_del_mandatario(tmp_path: Path):
+    repo = _MemoryDgtRepository()
+    expediente_id = "exp-sin-mandatario"
+    repo.expedientes[expediente_id] = {
+        "id": expediente_id,
+        "referencia": "DGT-2026-0101",
+        "estado": "validado",
+        "comprador_payload": {"email": "comprador@example.com"},
+    }
+    path = tmp_path / "mandato.pdf"
+    path.write_bytes(b"%PDF-1.4")
+    repo.insertar_documento_generado(
+        {
+            "expediente_id": expediente_id,
+            "tipo_documento": "mandato_dgt_comprador",
+            "ruta_pdf": str(path),
+        }
+    )
+    service = TramitesDgtService(repository=repo, firma_client=_FirmaClient())
+
+    try:
+        service.enviar_a_firma(expediente_id)
+    except ValueError as exc:
+        assert "signrequest_gestor_email" in str(exc)
+    else:
+        raise AssertionError("No debe enviar el mandato sin el email del mandatario")
+
+
+def test_plantillas_asignan_las_firmas_a_cada_contacto():
+    base = Path(__file__).resolve().parents[1] / "plantillas" / "tramites_dgt"
+    contrato = Document(base / "dgt_contrato_compraventa.docx")
+    mandato = Document(base / "dgt_mandato_comprador.docx")
+
+    etiquetas_contrato = [
+        paragraph.text
+        for table in contrato.tables
+        for row in table.rows
+        for cell in row.cells
+        for paragraph in cell.paragraphs
+        if "[[s|" in paragraph.text
+    ]
+    etiquetas_mandato = [
+        paragraph.text for paragraph in mandato.paragraphs if "[[s|" in paragraph.text
+    ]
+
+    assert len(etiquetas_contrato) == 2
+    assert any("[[s|1" in tag for tag in etiquetas_contrato)
+    assert any("[[s|2" in tag for tag in etiquetas_contrato)
+    assert len(etiquetas_mandato) == 2
+    assert any("[[s|1" in tag for tag in etiquetas_mandato)
+    assert any("[[s|0" in tag for tag in etiquetas_mandato)
 
 
 def test_contexto_con_persona_juridica_no_duplica_rol_y_muestra_empresa_en_firma():

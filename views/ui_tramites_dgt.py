@@ -42,6 +42,10 @@ class UITramitesDgt(ttk.Frame):
             session=session,
             repository=repository,
             firma_client=firma_client,
+            firma_gestor_email=cfg.get("signrequest_gestor_email")
+            or cfg.get("signrequest_from_email")
+            or "",
+            firma_gestor_telefono=cfg.get("signrequest_gestor_telefono") or "",
             almacenamiento_client=almacenamiento_client,
             almacenamiento_base_path=cfg.get("dataprius_base_path") or "",
         )
