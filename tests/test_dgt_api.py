@@ -124,6 +124,8 @@ def test_portal_sin_adjuntos_generales_para_comprador(tmp_path, monkeypatch):
     portal = client.get(f"/t/{item['referencia']}/comprador?token={token}")
     assert portal.status_code == 200
     assert 'name="viewport"' in portal.text
+    assert 'href="/static/portal.css"' in portal.text
+    assert 'src="/static/portal.js"' in portal.text
     assert "Vehiculo y operacion" not in portal.text
 
     uploaded = client.post(
