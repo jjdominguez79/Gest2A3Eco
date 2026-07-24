@@ -164,6 +164,31 @@ def test_rechaza_contrato_con_el_mismo_email_para_ambas_partes(tmp_path: Path):
         raise AssertionError("No debe enviar un contrato con un unico email para ambas partes")
 
 
+def test_contexto_con_persona_juridica_no_duplica_rol_y_muestra_empresa_en_firma():
+    service = TramitesDgtService(repository=_MemoryDgtRepository())
+    comprador = {
+        "tipo_persona": "juridica",
+        "nombre": "Asesoria Gestinem, S.L.",
+        "nif": "B12345674",
+        "representante_nombre": "Juan Jose Dominguez",
+        "representante_nif": "00000000T",
+        "direccion": "Calle Mayor 1",
+        "cp": "39001",
+        "poblacion": "Santander",
+        "provincia": "Cantabria",
+        "telefono": "600000000",
+        "email": "info@example.com",
+    }
+
+    comparecencia = service._comparecencia(comprador, "comprador")
+
+    assert comparecencia.startswith("Asesoria Gestinem, S.L., con CIF")
+    assert "la parte compradora" not in comparecencia
+    assert service._firma_parte(comprador) == (
+        "Asesoria Gestinem, S.L.\nD./Dña. Juan Jose Dominguez"
+    )
+
+
 def test_crear_validar_y_generar_documentos(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("services.tramites_dgt_service.get_app_data_dir", lambda: tmp_path)
     monkeypatch.setattr("services.tramites_dgt_service.get_word_templates_dir", lambda: str(tmp_path / "plantillas"))

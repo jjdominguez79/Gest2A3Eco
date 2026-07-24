@@ -1011,14 +1011,13 @@ class TramitesDgtService:
             ctx["comprador_direccion_envio"] = self._direccion_completa(envio)
 
     def _comparecencia(self, payload: dict, rol: str) -> str:
-        etiqueta = "vendedora" if rol == "vendedor" else "compradora"
         contacto = (
             f"con domicilio en {self._direccion_completa(payload)}, telefono "
             f"{payload.get('telefono') or ''} y correo electronico {payload.get('email') or ''}"
         )
         if payload.get("tipo_persona") == "juridica":
             return (
-                f"la parte {etiqueta}: {payload.get('nombre') or ''}, con CIF "
+                f"{payload.get('nombre') or ''}, con CIF "
                 f"{payload.get('nif') or ''}, {contacto}, representada en este acto por "
                 f"Don/Doña {payload.get('representante_nombre') or ''}, con DNI/NIE "
                 f"{payload.get('representante_nif') or ''}"
@@ -1051,7 +1050,12 @@ class TramitesDgtService:
 
     def _firma_parte(self, payload: dict) -> str:
         if payload.get("tipo_persona") == "juridica":
-            return str(payload.get("representante_nombre") or "")
+            empresa = str(payload.get("nombre") or "").strip()
+            representante = str(payload.get("representante_nombre") or "").strip()
+            return "\n".join(
+                parte for parte in (empresa, f"D./Dña. {representante}" if representante else "")
+                if parte
+            )
         return str(payload.get("nombre") or "")
 
     def _direccion_completa(self, payload: dict) -> str:
