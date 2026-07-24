@@ -22,6 +22,10 @@ class ExpedientePatch(BaseModel):
     observaciones: str | None = None
     codigo_tasa: str | None = None
     modelo_620_presentado: bool | None = None
+    firma_estado: str | None = None
+    firma_provider: str | None = None
+    firma_request_id: str | None = None
+    firma_evidencia: dict[str, Any] | None = None
     version: int | None = Field(default=None, ge=1)
 
 

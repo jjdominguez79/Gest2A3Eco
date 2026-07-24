@@ -270,6 +270,31 @@ def test_codigo_tasa_y_modelo_620_presentado(tmp_path, monkeypatch):
     Base.metadata.drop_all(engine)
 
 
+def test_persiste_estado_y_solicitudes_de_firma(tmp_path, monkeypatch):
+    client, engine = _client(tmp_path, monkeypatch)
+    headers = {"X-API-Key": "test-secret"}
+    item = client.post("/api/v1/expedientes", headers=headers, json={}).json()
+
+    response = client.patch(
+        f"/api/v1/expedientes/{item['id']}",
+        headers=headers,
+        json={
+            "version": item["version"],
+            "firma_estado": "enviado",
+            "firma_provider": "signrequest",
+            "firma_request_id": "[\"firma-1\"]",
+            "firma_evidencia": {"solicitudes": [{"request_id": "firma-1"}]},
+        },
+    )
+
+    assert response.status_code == 200
+    detail = client.get(f"/api/v1/expedientes/{item['id']}", headers=headers).json()
+    assert detail["firma_estado"] == "enviado"
+    assert detail["firma_provider"] == "signrequest"
+    assert detail["firma_evidencia"]["solicitudes"][0]["request_id"] == "firma-1"
+    Base.metadata.drop_all(engine)
+
+
 def test_correccion_interna_conserva_envio_y_datos_no_editados(tmp_path, monkeypatch):
     client, engine = _client(tmp_path, monkeypatch)
     headers = {"X-API-Key": "test-secret"}

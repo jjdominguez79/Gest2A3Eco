@@ -48,11 +48,14 @@ class LinkSeguro:
 
 
 class TramitesDgtService:
-    def __init__(self, gestor=None, session=None, repository: DgtRepository | None = None):
+    def __init__(
+        self, gestor=None, session=None, repository: DgtRepository | None = None, firma_client=None
+    ):
         if repository is None and gestor is None:
             raise ValueError("TramitesDgtService necesita un gestor SQLite o un DgtRepository.")
         self._repo = repository or SQLiteDgtRepository(gestor)
         self._session = session
+        self._firma_client = firma_client
 
     def crear_expediente_minimo(self, payload: dict) -> str:
         create_remote = getattr(self._repo, "create_expediente", None)
@@ -443,6 +446,117 @@ class TramitesDgtService:
         expediente["firma_request_id"] = ""
         self._repo.upsert_expediente(expediente)
         return {"expediente_id": expediente_id, "provider": expediente["firma_provider"], "documentos": rutas}
+
+    def enviar_a_firma(self, expediente_id: str, usar_sms: bool = False) -> dict:
+        if self._firma_client is None:
+            raise ValueError(
+                "Configura signrequest_token y signrequest_from_email para enviar documentos."
+            )
+        expediente = self._repo.get_expediente(expediente_id)
+        if not expediente:
+            raise ValueError("Expediente DGT no encontrado.")
+        if expediente.get("firma_estado") in {"enviado", "parcialmente_firmado"}:
+            raise ValueError("Ya existe una solicitud de firma activa para este expediente.")
+        documentos = self._ultimos_documentos_por_tipo(expediente_id)
+        if not documentos:
+            raise ValueError("Genera los documentos antes de enviarlos a firma.")
+        vendedor = expediente.get("vendedor_payload") or {}
+        comprador = expediente.get("comprador_payload") or {}
+        solicitudes = []
+        for doc in documentos:
+            tipo = str(doc.get("tipo_documento") or "")
+            ruta = doc.get("ruta_pdf") or doc.get("ruta_docx") or doc.get("ruta_txt")
+            firmantes = [self._firmante(comprador, 1)]
+            if tipo == "contrato_compraventa":
+                firmantes = [self._firmante(vendedor, 1), self._firmante(comprador, 2)]
+            resultado = self._firma_client.enviar_documento(
+                ruta=ruta,
+                firmantes=firmantes,
+                asunto=f"{doc.get('titulo') or tipo} - {expediente.get('referencia')}",
+                mensaje=(
+                    f"Firma del documento {doc.get('titulo') or tipo} "
+                    f"del expediente {expediente.get('referencia')}."
+                ),
+                external_id=f"{expediente_id}:{doc.get('id')}",
+                usar_sms=usar_sms,
+            )
+            if not resultado.get("uuid"):
+                raise RuntimeError("SignRequest no devolvio el identificador de la solicitud.")
+            solicitudes.append(
+                {
+                    "request_id": resultado["uuid"],
+                    "documento_id": str(doc.get("id")),
+                    "tipo_documento": tipo,
+                    "estado": resultado.get("status") or "sent",
+                }
+            )
+        expediente["firma_estado"] = "enviado"
+        expediente["firma_provider"] = "signrequest"
+        expediente["firma_request_id"] = json.dumps(
+            [item["request_id"] for item in solicitudes], ensure_ascii=True
+        )
+        expediente["firma_evidencia"] = {
+            "request_id": expediente["firma_request_id"],
+            "solicitudes": solicitudes,
+            "enviado_at": self._now(),
+        }
+        self._repo.upsert_expediente(expediente)
+        return {"estado": "enviado", "solicitudes": solicitudes}
+
+    def actualizar_estado_firma(self, expediente_id: str) -> dict:
+        if self._firma_client is None:
+            raise ValueError("SignRequest no esta configurado.")
+        expediente = self._repo.get_expediente(expediente_id)
+        if not expediente:
+            raise ValueError("Expediente DGT no encontrado.")
+        evidencia = dict(expediente.get("firma_evidencia") or {})
+        solicitudes = list(evidencia.get("solicitudes") or [])
+        if not solicitudes:
+            raise ValueError("El expediente no tiene solicitudes de firma.")
+        estados = []
+        for solicitud in solicitudes:
+            data = self._firma_client.consultar(solicitud["request_id"])
+            estado = str(data.get("status") or "desconocido")
+            solicitud["estado"] = estado
+            solicitud["actualizado_at"] = self._now()
+            estados.append(estado)
+        normalizados = {estado.lower() for estado in estados}
+        if normalizados and normalizados <= {"signed", "completed"}:
+            estado_global = "firmado"
+        elif normalizados & {"declined", "cancelled", "expired"}:
+            estado_global = "incidencia"
+        elif normalizados & {"signed", "completed"}:
+            estado_global = "parcialmente_firmado"
+        else:
+            estado_global = "enviado"
+        evidencia["solicitudes"] = solicitudes
+        evidencia["actualizado_at"] = self._now()
+        expediente["firma_estado"] = estado_global
+        expediente["firma_provider"] = "signrequest"
+        expediente["firma_evidencia"] = evidencia
+        self._repo.upsert_expediente(expediente)
+        return {"estado": estado_global, "solicitudes": solicitudes}
+
+    def _ultimos_documentos_por_tipo(self, expediente_id: str) -> list[dict]:
+        seleccionados = []
+        tipos = set()
+        for doc in self._repo.listar_documentos_generados(expediente_id):
+            tipo = str(doc.get("tipo_documento") or "")
+            if tipo and tipo not in tipos:
+                seleccionados.append(doc)
+                tipos.add(tipo)
+        return seleccionados
+
+    @staticmethod
+    def _firmante(datos: dict, order: int) -> dict:
+        email = str(datos.get("email") or "").strip()
+        if not email:
+            raise ValueError("Todos los firmantes deben tener un email guardado.")
+        return {
+            "email": email,
+            "telefono": str(datos.get("telefono") or "").strip(),
+            "order": order,
+        }
 
     def listar_documentos(self, expediente_id: str) -> list[dict]:
         return self._repo.listar_documentos_generados(expediente_id)

@@ -6,6 +6,10 @@
   "ocr_endpoint": "",
   "dgt_api_url": "",
   "dgt_api_key": "",
+  "signrequest_token": "",
+  "signrequest_from_email": "",
+  "signrequest_base_url": "https://signrequest.com/api/v1",
+  "signrequest_use_sms": false,
   "monedas": [
     {
       "codigo": "EUR",

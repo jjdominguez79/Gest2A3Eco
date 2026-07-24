@@ -5,6 +5,7 @@ import webbrowser
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from services.email_service import open_outlook_email
+from services.signrequest_service import SignRequestClient
 from services.tramites_dgt_repository import ApiDgtRepository
 from services.tramites_dgt_service import TramitesDgtService
 from utils.utilidades import load_app_config
@@ -18,12 +19,23 @@ class UITramitesDgt(ttk.Frame):
         api_url = str(cfg.get("dgt_api_url") or "").strip()
         api_key = str(cfg.get("dgt_api_key") or "").strip()
         repository = ApiDgtRepository(api_url, api_key) if api_url and api_key else None
-        self._service = TramitesDgtService(gestor, session=session, repository=repository)
+        firma_client = None
+        if cfg.get("signrequest_token") and cfg.get("signrequest_from_email"):
+            firma_client = SignRequestClient(
+                cfg["signrequest_token"],
+                cfg["signrequest_from_email"],
+                cfg.get("signrequest_base_url") or "https://signrequest.com/api/v1",
+            )
+        self._signrequest_use_sms = bool(cfg.get("signrequest_use_sms", False))
+        self._service = TramitesDgtService(
+            gestor, session=session, repository=repository, firma_client=firma_client
+        )
         self._online = repository is not None
         self._on_back = on_back
         self._expedientes = []
         self._current_id = None
         self._last_links = {}
+        self.var_firma_estado = tk.StringVar(value="Firma: sin solicitud")
         self._vars = {
             "titulo": tk.StringVar(),
             "vendedor_nombre": tk.StringVar(),
@@ -137,7 +149,8 @@ class UITramitesDgt(ttk.Frame):
             (primary_actions, "Guardar", self._guardar, True),
             (primary_actions, "Validar", self._validar, False),
             (primary_actions, "Generar documentos", self._generar_documentos, False),
-            (primary_actions, "Preparar firma", self._preparar_firma, False),
+            (primary_actions, "Enviar a firma", self._enviar_a_firma, False),
+            (secondary_actions, "Actualizar firma", self._actualizar_firma, False),
             (secondary_actions, "Datos vendedor", lambda: self._editar_parte("vendedor"), False),
             (secondary_actions, "Datos comprador", lambda: self._editar_parte("comprador"), False),
             (secondary_actions, "Adjuntar documento", self._adjuntar_documento, False),
@@ -146,6 +159,9 @@ class UITramitesDgt(ttk.Frame):
         ):
             options = {"style": "Primary.TButton"} if primary else {}
             ttk.Button(parent, text=text, command=command, **options).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Label(secondary_actions, textvariable=self.var_firma_estado).pack(
+            side=tk.RIGHT, padx=(8, 2)
+        )
         ttk.Label(subsanation_actions, text="Pedir correccion al cliente:").pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(
             subsanation_actions,
@@ -344,6 +360,8 @@ class UITramitesDgt(ttk.Frame):
         links = self._service.get_links(expediente)
         self.var_link_vendedor.set(links.get("vendedor", ""))
         self.var_link_comprador.set(links.get("comprador", ""))
+        estado_firma = str(expediente.get("firma_estado") or "sin solicitud").replace("_", " ")
+        self.var_firma_estado.set(f"Firma: {estado_firma}")
         self._load_docs()
         self._load_adjuntos(expediente)
 
@@ -443,6 +461,42 @@ class UITramitesDgt(ttk.Frame):
             self._current_id = None
             self._clear_form()
             self.refresh()
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+
+    def _enviar_a_firma(self):
+        if not self._current_id:
+            return
+        if not messagebox.askyesno(
+            "Enviar a SignRequest",
+            "Se enviaran las ultimas versiones al vendedor y/o comprador. ¿Continuar?",
+            parent=self.winfo_toplevel(),
+        ):
+            return
+        try:
+            resultado = self._service.enviar_a_firma(
+                self._current_id, usar_sms=self._signrequest_use_sms
+            )
+            messagebox.showinfo(
+                "Gest2A3Eco",
+                f"Solicitudes enviadas: {len(resultado['solicitudes'])}.",
+                parent=self.winfo_toplevel(),
+            )
+            self.refresh(select_id=self._current_id)
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+
+    def _actualizar_firma(self):
+        if not self._current_id:
+            return
+        try:
+            resultado = self._service.actualizar_estado_firma(self._current_id)
+            messagebox.showinfo(
+                "Gest2A3Eco",
+                f"Estado de firma: {resultado['estado']}.",
+                parent=self.winfo_toplevel(),
+            )
+            self.refresh(select_id=self._current_id)
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
 
@@ -648,6 +702,7 @@ class UITramitesDgt(ttk.Frame):
             var.set(False if key == "modelo_620_presentado" else "")
         self.var_link_vendedor.set("")
         self.var_link_comprador.set("")
+        self.var_firma_estado.set("Firma: sin solicitud")
         self.docs_tv.delete(*self.docs_tv.get_children())
         self.attach_tv.delete(*self.attach_tv.get_children())
 

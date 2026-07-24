@@ -149,6 +149,8 @@ def _apply_env_overrides(data: dict) -> dict:
         "GEST2A3ECO_OCR_ENDPOINT": "ocr_endpoint",
         "GEST2A3ECO_DGT_API_URL": "dgt_api_url",
         "GEST2A3ECO_DGT_API_KEY": "dgt_api_key",
+        "GEST2A3ECO_SIGNREQUEST_TOKEN": "signrequest_token",
+        "GEST2A3ECO_SIGNREQUEST_FROM_EMAIL": "signrequest_from_email",
         "GEST2A3ECO_ADMIN_PASSWORD": "admin_password",
         "GEST2A3ECO_INITIAL_ADMIN_PASSWORD": "initial_admin_password",
         "GEST2A3ECO_DESMARCAR_GENERADAS_PASSWORD": "desmarcar_generadas_password",
@@ -198,6 +200,10 @@ def _normalize_config(data: dict) -> dict:
     out.setdefault("documentos_output_dir", "")
     out.setdefault("dgt_api_url", "")
     out.setdefault("dgt_api_key", "")
+    out.setdefault("signrequest_token", "")
+    out.setdefault("signrequest_from_email", "")
+    out.setdefault("signrequest_base_url", "https://signrequest.com/api/v1")
+    out.setdefault("signrequest_use_sms", False)
 
     if not str(out.get("db_path") or "").strip():
         out["db_path"] = str(out.get("last_db_path") or "").strip()

@@ -55,6 +55,18 @@ def _columns(gestor: GestorSQLite, table: str) -> set[str]:
     return {r[1] for r in rows}
 
 
+class _FirmaClient:
+    def __init__(self):
+        self.envios = []
+
+    def enviar_documento(self, **kwargs):
+        self.envios.append(kwargs)
+        return {"uuid": f"firma-{len(self.envios)}", "status": "sent"}
+
+    def consultar(self, request_id):
+        return {"uuid": request_id, "status": "signed"}
+
+
 def test_tramites_dgt_schema(tmp_path: Path):
     gestor = GestorSQLite(tmp_path / "dgt.db")
     tables = _tables(gestor)
@@ -66,6 +78,46 @@ def test_tramites_dgt_schema(tmp_path: Path):
         "firma_provider", "codigo_tasa", "modelo_620_presentado",
     ):
         assert col in _columns(gestor, "dgt_expedientes")
+
+
+def test_envia_ultimas_versiones_a_signrequest(tmp_path: Path):
+    repo = _MemoryDgtRepository()
+    expediente_id = "exp-firma"
+    repo.expedientes[expediente_id] = {
+        "id": expediente_id,
+        "referencia": "DGT-2026-0099",
+        "estado": "validado",
+        "firma_estado": "",
+        "vendedor_payload": {
+            "email": "vendedor@example.com",
+            "telefono": "+34600000001",
+        },
+        "comprador_payload": {
+            "email": "comprador@example.com",
+            "telefono": "+34600000002",
+        },
+    }
+    for idx, tipo in enumerate(("contrato_compraventa", "mandato_dgt_comprador"), 1):
+        path = tmp_path / f"{tipo}.pdf"
+        path.write_bytes(b"%PDF-1.4")
+        repo.insertar_documento_generado(
+            {
+                "expediente_id": expediente_id,
+                "tipo_documento": tipo,
+                "titulo": tipo,
+                "ruta_pdf": str(path),
+            }
+        )
+    firma = _FirmaClient()
+    service = TramitesDgtService(repository=repo, firma_client=firma)
+
+    result = service.enviar_a_firma(expediente_id, usar_sms=True)
+
+    assert result["estado"] == "enviado"
+    assert len(firma.envios[0]["firmantes"]) == 2
+    assert len(firma.envios[1]["firmantes"]) == 1
+    assert repo.expedientes[expediente_id]["firma_provider"] == "signrequest"
+    assert service.actualizar_estado_firma(expediente_id)["estado"] == "firmado"
 
 
 def test_crear_validar_y_generar_documentos(tmp_path: Path, monkeypatch):

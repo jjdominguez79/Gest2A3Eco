@@ -188,6 +188,10 @@ class ApiDgtRepository:
                 "observaciones": expediente.get("observaciones", ""),
                 "codigo_tasa": expediente.get("codigo_tasa", ""),
                 "modelo_620_presentado": bool(expediente.get("modelo_620_presentado", False)),
+                "firma_estado": expediente.get("firma_estado"),
+                "firma_provider": expediente.get("firma_provider"),
+                "firma_request_id": expediente.get("firma_request_id"),
+                "firma_evidencia": expediente.get("firma_evidencia"),
                 "version": expediente.get("version"),
             },
         )

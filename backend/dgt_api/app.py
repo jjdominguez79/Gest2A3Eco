@@ -99,6 +99,17 @@ def get_expediente(expediente_id: str, db: Session = Depends(get_db)):
     item = cargar_expediente(db, expediente_id)
     result = serializar_expediente(item)
     result["documentos"] = documentos_aportados(expediente_id, db)
+    firma = db.scalar(
+        select(Firma).where(Firma.expediente_id == expediente_id).order_by(Firma.id.desc())
+    )
+    result.update(
+        {
+            "firma_estado": firma.estado if firma else "",
+            "firma_provider": firma.proveedor if firma else "",
+            "firma_request_id": (firma.evidencia or {}).get("request_id", "") if firma else "",
+            "firma_evidencia": firma.evidencia or {} if firma else {},
+        }
+    )
     return result
 
 
@@ -111,15 +122,37 @@ def patch_expediente(expediente_id: str, payload: ExpedientePatch, db: Session =
         r"[A-Za-z0-9-]{6,32}", payload.codigo_tasa.strip()
     ):
         raise HTTPException(422, "El codigo de tasa debe tener entre 6 y 32 letras, numeros o guiones")
+    firma_data = payload.model_dump(
+        exclude_none=True,
+        include={"firma_estado", "firma_provider", "firma_request_id", "firma_evidencia"},
+    )
     gestion = payload.model_dump(
         exclude_none=True, include={"codigo_tasa", "modelo_620_presentado"}
     )
     for key, value in payload.model_dump(
-        exclude_none=True, exclude={"version", "codigo_tasa", "modelo_620_presentado"}
+        exclude_none=True,
+        exclude={
+            "version", "codigo_tasa", "modelo_620_presentado",
+            "firma_estado", "firma_provider", "firma_request_id", "firma_evidencia",
+        },
     ).items():
         setattr(item, key, value)
     if gestion:
         item.operacion.datos = {**(item.operacion.datos or {}), **gestion}
+    if firma_data:
+        firma = db.scalar(
+            select(Firma).where(Firma.expediente_id == expediente_id).order_by(Firma.id.desc())
+        )
+        if not firma:
+            firma = Firma(expediente_id=expediente_id)
+            db.add(firma)
+        firma.estado = firma_data.get("firma_estado", firma.estado)
+        firma.proveedor = firma_data.get("firma_provider", firma.proveedor)
+        evidencia = dict(firma.evidencia or {})
+        evidencia.update(firma_data.get("firma_evidencia") or {})
+        if "firma_request_id" in firma_data:
+            evidencia["request_id"] = firma_data["firma_request_id"]
+        firma.evidencia = evidencia
     item.version += 1
     registrar_evento(db, item.id, "expediente_actualizado", "gest2a3eco")
     db.commit()
