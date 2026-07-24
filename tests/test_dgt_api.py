@@ -216,6 +216,10 @@ def test_elimina_documentos_y_expediente_sin_dejar_ficheros(tmp_path, monkeypatc
         headers=headers,
         json={"tipo_documento": "contrato", "ruta_pdf": "C:/temporal/contrato.pdf"},
     ).json()
+    listado = client.get(
+        f"/api/v1/expedientes/{item['id']}/documentos-generados", headers=headers
+    ).json()
+    assert listado[0]["fecha_generacion"]
     assert client.delete(
         f"/api/v1/documentos-generados/{generado['id']}", headers=headers
     ).status_code == 200

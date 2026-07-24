@@ -146,9 +146,17 @@ def test_crear_validar_y_generar_documentos(tmp_path: Path, monkeypatch):
         "mandato_dgt_comprador",
     }
     for doc in docs:
+        assert doc["fecha_generacion"]
         assert Path(doc["ruta_txt"]).exists()
         if doc.get("ruta_docx"):
             assert Path(doc["ruta_docx"]).exists()
+
+    docs_regenerados = service.generar_documentos(expediente_id)
+    assert {doc["ruta_txt"] for doc in docs}.isdisjoint(
+        {doc["ruta_txt"] for doc in docs_regenerados}
+    )
+    service.eliminar_documento_generado(docs[0]["id"])
+    assert Path(docs_regenerados[0]["ruta_txt"]).exists()
 
     paquete = service.preparar_paquete_firma(expediente_id, provider="box_sign")
     assert paquete["provider"] == "box_sign"

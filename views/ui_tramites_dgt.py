@@ -191,11 +191,15 @@ class UITramitesDgt(ttk.Frame):
         ttk.Button(
             docs_actions, text="Eliminar documento seleccionado", command=self._eliminar_documento_generado
         ).pack(side=tk.RIGHT)
-        self.docs_tv = ttk.Treeview(docs, columns=("tipo", "ruta"), show="headings", height=7)
+        self.docs_tv = ttk.Treeview(
+            docs, columns=("tipo", "fecha_generacion", "ruta"), show="headings", height=7
+        )
         self.docs_tv.heading("tipo", text="Tipo")
+        self.docs_tv.heading("fecha_generacion", text="Fecha de generacion")
         self.docs_tv.heading("ruta", text="Ruta")
         self.docs_tv.column("tipo", width=180, anchor="w")
-        self.docs_tv.column("ruta", width=420, anchor="w")
+        self.docs_tv.column("fecha_generacion", width=145, anchor="center")
+        self.docs_tv.column("ruta", width=360, anchor="w")
         self.docs_tv.pack(fill="both", expand=True)
         self.docs_tv.bind("<Double-1>", lambda _e: self._abrir_documento())
 
@@ -349,7 +353,18 @@ class UITramitesDgt(ttk.Frame):
             return
         for doc in self._service.listar_documentos(self._current_id):
             path = doc.get("ruta_pdf") or doc.get("ruta_docx") or doc.get("ruta_txt") or ""
-            self.docs_tv.insert("", "end", iid=str(doc.get("id")), values=(doc.get("tipo_documento", ""), path))
+            fecha = doc.get("fecha_generacion") or doc.get("created_at") or ""
+            if not fecha and path:
+                try:
+                    fecha = datetime.fromtimestamp(Path(path).stat().st_mtime).isoformat()
+                except OSError:
+                    pass
+            self.docs_tv.insert(
+                "",
+                "end",
+                iid=str(doc.get("id")),
+                values=(doc.get("tipo_documento", ""), self._formatear_fecha(fecha), path),
+            )
 
     def _load_adjuntos(self, expediente: dict | None = None):
         self.attach_tv.delete(*self.attach_tv.get_children())
@@ -372,9 +387,20 @@ class UITramitesDgt(ttk.Frame):
         sel = self.docs_tv.selection()
         if not sel:
             return
-        path = self.docs_tv.item(sel[0], "values")[1]
+        path = self.docs_tv.item(sel[0], "values")[2]
         if path:
             webbrowser.open(path)
+
+    @staticmethod
+    def _formatear_fecha(value) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        try:
+            fecha = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            return fecha.astimezone().strftime("%d/%m/%Y %H:%M")
+        except ValueError:
+            return raw
 
     def _abrir_adjunto(self):
         sel = self.attach_tv.selection()

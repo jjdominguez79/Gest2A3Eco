@@ -345,10 +345,13 @@ def post_documento_generado(
     expediente_id: str, payload: DocumentoGeneradoCreate, db: Session = Depends(get_db)
 ):
     cargar_expediente(db, expediente_id)
+    datos = payload.model_dump()
+    if not datos.get("fecha_generacion"):
+        datos["fecha_generacion"] = utcnow().isoformat()
     doc = DocumentoGenerado(
         expediente_id=expediente_id,
         tipo=payload.tipo_documento,
-        datos=payload.model_dump(),
+        datos=datos,
     )
     db.add(doc)
     registrar_evento(db, expediente_id, "documento_generado", "gest2a3eco", {"tipo": doc.tipo})
@@ -360,7 +363,8 @@ def post_documento_generado(
 def get_documentos_generados(expediente_id: str, db: Session = Depends(get_db)):
     cargar_expediente(db, expediente_id)
     docs = db.scalars(select(DocumentoGenerado).where(DocumentoGenerado.expediente_id == expediente_id)).all()
-    return [{"id": doc.id, "expediente_id": doc.expediente_id, **(doc.datos or {})} for doc in docs]
+    result = [{"id": doc.id, "expediente_id": doc.expediente_id, **(doc.datos or {})} for doc in docs]
+    return sorted(result, key=lambda item: item.get("fecha_generacion") or "", reverse=True)
 
 
 @app.delete("/api/v1/documentos-generados/{documento_id}", dependencies=[internal])

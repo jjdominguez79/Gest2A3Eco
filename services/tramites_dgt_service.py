@@ -392,13 +392,16 @@ class TramitesDgtService:
         vendedor = expediente.get("vendedor_payload") or {}
         if vendedor.get("tipo_persona") == "juridica":
             documentos = [item for item in documentos if item[0] != "contrato_compraventa"]
+        fecha_generacion = self._now()
+        version = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         for tipo, titulo in documentos:
-            generated = self._generar_documento(expediente, tipo, titulo)
+            generated = self._generar_documento(expediente, tipo, titulo, version)
             doc_id = self._repo.insertar_documento_generado(
                 {
                     "expediente_id": expediente_id,
                     "tipo_documento": tipo,
                     "titulo": titulo,
+                    "fecha_generacion": fecha_generacion,
                     "ruta_docx": generated.get("ruta_docx"),
                     "ruta_pdf": generated.get("ruta_pdf"),
                     "ruta_txt": generated.get("ruta_txt"),
@@ -407,7 +410,15 @@ class TramitesDgtService:
                     "estado": generated.get("estado"),
                 }
             )
-            out.append({"id": doc_id, "tipo_documento": tipo, "titulo": titulo, **generated})
+            out.append(
+                {
+                    "id": doc_id,
+                    "tipo_documento": tipo,
+                    "titulo": titulo,
+                    "fecha_generacion": fecha_generacion,
+                    **generated,
+                }
+            )
         return out
 
     def preparar_paquete_firma(self, expediente_id: str, provider: str = "") -> dict:
@@ -416,10 +427,15 @@ class TramitesDgtService:
             raise ValueError("Expediente DGT no encontrado.")
         documentos = self._repo.listar_documentos_generados(expediente_id)
         rutas = []
+        tipos_incluidos = set()
         for doc in documentos:
+            tipo = str(doc.get("tipo_documento") or "")
+            if tipo in tipos_incluidos:
+                continue
             ruta = doc.get("ruta_pdf") or doc.get("ruta_docx") or doc.get("ruta_txt")
             if ruta:
                 rutas.append(ruta)
+                tipos_incluidos.add(tipo)
         if not rutas:
             raise ValueError("Genera los documentos antes de preparar la firma.")
         expediente["firma_estado"] = "preparado"
@@ -589,9 +605,10 @@ class TramitesDgtService:
             if path.is_file():
                 path.unlink()
 
-    def _generar_documento(self, expediente: dict, tipo: str, titulo: str) -> dict:
+    def _generar_documento(self, expediente: dict, tipo: str, titulo: str, version: str) -> dict:
         output_dir = self._output_dir(expediente)
-        txt_path = output_dir / f"{tipo}.txt"
+        nombre_versionado = f"{tipo}_{version}"
+        txt_path = output_dir / f"{nombre_versionado}.txt"
         contenido = self._render_documento_texto(expediente, titulo)
         txt_path.write_text(contenido, encoding="utf-8")
         result = {
@@ -601,12 +618,12 @@ class TramitesDgtService:
             "hash_contenido": hashlib.sha256(contenido.encode("utf-8")).hexdigest(),
             "estado": "generado_txt",
         }
-        docx_path = output_dir / f"{tipo}.docx"
+        docx_path = output_dir / f"{nombre_versionado}.docx"
         if self._render_docx(expediente, tipo, titulo, docx_path):
             result["ruta_docx"] = str(docx_path)
             result["hash_contenido"] = self._hash_file(docx_path)
             result["estado"] = "generado_docx"
-            pdf_path = output_dir / f"{tipo}.pdf"
+            pdf_path = output_dir / f"{nombre_versionado}.pdf"
             if self._convertir_pdf(docx_path, pdf_path):
                 result["ruta_pdf"] = str(pdf_path)
                 result["hash_contenido"] = self._hash_file(pdf_path)

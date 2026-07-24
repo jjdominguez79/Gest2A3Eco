@@ -42,6 +42,7 @@ class SubsanacionCreate(BaseModel):
 class DocumentoGeneradoCreate(BaseModel):
     tipo_documento: str
     titulo: str = ""
+    fecha_generacion: str = ""
     ruta_docx: str | None = None
     ruta_pdf: str | None = None
     ruta_txt: str | None = None
