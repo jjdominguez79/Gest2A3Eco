@@ -27,6 +27,12 @@ class DgtRepository(Protocol):
     def listar_documentos_generados(self, expediente_id: str) -> list[dict]:
         ...
 
+    def eliminar_expediente(self, expediente_id: str) -> None:
+        ...
+
+    def eliminar_documento_generado(self, documento_id) -> dict | None:
+        ...
+
 
 class SQLiteDgtRepository:
     """
@@ -59,6 +65,12 @@ class SQLiteDgtRepository:
 
     def listar_documentos_generados(self, expediente_id: str) -> list[dict]:
         return self._gestor.listar_dgt_documentos_generados(expediente_id)
+
+    def eliminar_expediente(self, expediente_id: str) -> None:
+        self._gestor.eliminar_dgt_expediente(expediente_id)
+
+    def eliminar_documento_generado(self, documento_id) -> dict | None:
+        return self._gestor.eliminar_dgt_documento_generado(documento_id)
 
 
 class ApiDgtRepository:
@@ -195,6 +207,15 @@ class ApiDgtRepository:
 
     def listar_documentos_aportados(self, expediente_id: str) -> list[dict]:
         return self._request("GET", f"/api/v1/expedientes/{expediente_id}/documentos")
+
+    def eliminar_expediente(self, expediente_id: str) -> None:
+        self._request("DELETE", f"/api/v1/expedientes/{expediente_id}")
+
+    def eliminar_documento_aportado(self, documento_id: str) -> None:
+        self._request("DELETE", f"/api/v1/documentos/{documento_id}")
+
+    def eliminar_documento_generado(self, documento_id: str) -> dict | None:
+        return self._request("DELETE", f"/api/v1/documentos-generados/{documento_id}")
 
     def download_documento(self, documento_id: str, target_path: str) -> str:
         response = self._http.get(

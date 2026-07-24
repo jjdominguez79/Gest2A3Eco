@@ -184,3 +184,35 @@ def test_api_interna_requiere_credencial(tmp_path, monkeypatch):
     assert client.get("/api/v1/expedientes").status_code == 401
     assert client.get("/health").status_code == 200
     Base.metadata.drop_all(engine)
+
+
+def test_elimina_documentos_y_expediente_sin_dejar_ficheros(tmp_path, monkeypatch):
+    client, engine = _client(tmp_path, monkeypatch)
+    storage = tmp_path / "private"
+    monkeypatch.setenv("DGT_STORAGE_DIR", str(storage))
+    headers = {"X-API-Key": "test-secret"}
+    item = client.post("/api/v1/expedientes", headers=headers, json={}).json()
+    link = client.post(f"/api/v1/expedientes/{item['id']}/links", headers=headers).json()["vendedor"]["url"]
+    token = link.split("token=", 1)[1]
+    path = f"/public/tramites/{item['referencia']}/vendedor"
+    client.patch(f"{path}?token={token}", json=_party_payload(tipo_persona="juridica"))
+    uploaded = client.post(
+        f"{path}/documentos?token={token}",
+        data={"tipo": "factura"},
+        files={"file": ("factura.pdf", b"%PDF-1.4 demo", "application/pdf")},
+    ).json()
+    assert list(storage.rglob("*.pdf"))
+    assert client.delete(f"/api/v1/documentos/{uploaded['id']}", headers=headers).status_code == 204
+    assert not list(storage.rglob("*.pdf"))
+
+    generado = client.post(
+        f"/api/v1/expedientes/{item['id']}/documentos-generados",
+        headers=headers,
+        json={"tipo_documento": "contrato", "ruta_pdf": "C:/temporal/contrato.pdf"},
+    ).json()
+    assert client.delete(
+        f"/api/v1/documentos-generados/{generado['id']}", headers=headers
+    ).status_code == 200
+    assert client.delete(f"/api/v1/expedientes/{item['id']}", headers=headers).status_code == 204
+    assert client.get(f"/api/v1/expedientes/{item['id']}", headers=headers).status_code == 404
+    Base.metadata.drop_all(engine)

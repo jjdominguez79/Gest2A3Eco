@@ -168,6 +168,29 @@ def test_rechaza_token_dgt_incorrecto(tmp_path: Path):
         raise AssertionError("El token incorrecto no fue rechazado")
 
 
+def test_elimina_expediente_local_y_documentos_generados(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("services.tramites_dgt_service.get_app_data_dir", lambda: tmp_path)
+    gestor = GestorSQLite(tmp_path / "dgt_delete.db")
+    service = TramitesDgtService(gestor)
+    expediente_id = service.crear_expediente_minimo({"vendedor_nombre": "Error"})
+    expediente = service.get_expediente(expediente_id)
+    output = service._output_dir(expediente)
+    txt = output / "borrador.txt"
+    txt.write_text("borrador", encoding="utf-8")
+    doc_id = gestor.insertar_dgt_documento_generado(
+        {
+            "expediente_id": expediente_id,
+            "tipo_documento": "borrador",
+            "ruta_txt": str(txt),
+        }
+    )
+    service.eliminar_documento_generado(doc_id)
+    assert not txt.exists()
+    assert service.listar_documentos(expediente_id) == []
+    service.eliminar_expediente(expediente_id)
+    assert service.get_expediente(expediente_id) is None
+
+
 def test_parsea_link_seguro_y_completa_comprador(tmp_path: Path):
     gestor = GestorSQLite(tmp_path / "dgt_link.db")
     service = TramitesDgtService(gestor)

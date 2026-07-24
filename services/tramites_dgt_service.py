@@ -398,6 +398,42 @@ class TramitesDgtService:
     def listar_documentos(self, expediente_id: str) -> list[dict]:
         return self._repo.listar_documentos_generados(expediente_id)
 
+    def eliminar_expediente(self, expediente_id: str) -> None:
+        expediente = self._repo.get_expediente(expediente_id)
+        if not expediente:
+            raise ValueError("Expediente DGT no encontrado.")
+        generados = self._repo.listar_documentos_generados(expediente_id)
+        self._repo.eliminar_expediente(expediente_id)
+        for doc in generados:
+            self._eliminar_ficheros_generados(doc)
+        output_dir = self._output_dir_path(expediente)
+        if output_dir.is_dir():
+            try:
+                output_dir.rmdir()
+            except OSError:
+                pass
+
+    def eliminar_documento_generado(self, documento_id) -> None:
+        doc = self._repo.eliminar_documento_generado(documento_id)
+        if not doc:
+            raise ValueError("Documento generado no encontrado.")
+        self._eliminar_ficheros_generados(doc)
+
+    def eliminar_documento_aportado(self, expediente_id: str, documento_id: str) -> None:
+        expediente = self._repo.get_expediente(expediente_id)
+        if not expediente:
+            raise ValueError("Expediente DGT no encontrado.")
+        delete_remote = getattr(self._repo, "eliminar_documento_aportado", None)
+        if callable(delete_remote):
+            delete_remote(documento_id)
+            return
+        documentos = list(expediente.get("documentos") or [])
+        restantes = [doc for doc in documentos if str(doc.get("id")) != str(documento_id)]
+        if len(restantes) == len(documentos):
+            raise ValueError("Documento aportado no encontrado.")
+        expediente["documentos"] = restantes
+        self._repo.upsert_expediente(expediente)
+
     def descargar_documento_aportado(self, documento_id: str, target_path: str) -> str:
         download = getattr(self._repo, "download_documento", None)
         if not callable(download):
@@ -500,10 +536,25 @@ class TramitesDgtService:
         return f"{prefix}{(max(nums) + 1) if nums else 1:04d}"
 
     def _output_dir(self, expediente: dict) -> Path:
-        ref = str(expediente.get("referencia") or expediente.get("id") or "sin_ref").replace("/", "_")
-        path = get_app_data_dir() / "tramites_dgt" / ref
+        path = self._output_dir_path(expediente)
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    def _output_dir_path(self, expediente: dict) -> Path:
+        ref = str(expediente.get("referencia") or expediente.get("id") or "sin_ref").replace("/", "_")
+        return get_app_data_dir() / "tramites_dgt" / ref
+
+    def _eliminar_ficheros_generados(self, doc: dict) -> None:
+        root = (get_app_data_dir() / "tramites_dgt").resolve()
+        for key in ("ruta_docx", "ruta_pdf", "ruta_txt"):
+            raw = doc.get(key)
+            if not raw:
+                continue
+            path = Path(raw).resolve()
+            if root not in path.parents:
+                continue
+            if path.is_file():
+                path.unlink()
 
     def _generar_documento(self, expediente: dict, tipo: str, titulo: str) -> dict:
         output_dir = self._output_dir(expediente)

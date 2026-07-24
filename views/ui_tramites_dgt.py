@@ -83,6 +83,7 @@ class UITramitesDgt(ttk.Frame):
         ttk.Button(left_buttons, text="Nuevo", style="Primary.TButton", command=self._nuevo).pack(side=tk.LEFT)
         ttk.Button(left_buttons, text="Actualizar", command=self.refresh).pack(side=tk.LEFT, padx=6)
         ttk.Button(left_buttons, text="Plantillas", command=self._gestionar_plantillas).pack(side=tk.LEFT)
+        ttk.Button(left_buttons, text="Eliminar", command=self._eliminar_expediente).pack(side=tk.RIGHT)
 
         form = ttk.LabelFrame(right, text="Expediente")
         form.pack(fill="x")
@@ -137,6 +138,9 @@ class UITramitesDgt(ttk.Frame):
             self.attach_tv.column(col, width=width, anchor="w")
         self.attach_tv.pack(fill="both", expand=True)
         self.attach_tv.bind("<Double-1>", lambda _e: self._abrir_adjunto())
+        ttk.Button(attached, text="Eliminar seleccionado", command=self._eliminar_adjunto).pack(
+            anchor="e", padx=6, pady=(2, 6)
+        )
 
         docs = ttk.LabelFrame(right, text="Documentos generados")
         docs.pack(fill="both", expand=True)
@@ -147,6 +151,9 @@ class UITramitesDgt(ttk.Frame):
         self.docs_tv.column("ruta", width=420, anchor="w")
         self.docs_tv.pack(fill="both", expand=True)
         self.docs_tv.bind("<Double-1>", lambda _e: self._abrir_documento())
+        ttk.Button(docs, text="Eliminar seleccionado", command=self._eliminar_documento_generado).pack(
+            anchor="e", padx=6, pady=(2, 6)
+        )
 
     def _link_row(self, parent, label, var, email_cmd, whatsapp_cmd, form_cmd, copy_cmd, revoke_cmd, row):
         ttk.Label(parent, text=label).grid(row=row, column=0, padx=8, pady=4, sticky="w")
@@ -338,6 +345,60 @@ class UITramitesDgt(ttk.Frame):
                 except Exception as exc:
                     messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
             return
+
+    def _eliminar_expediente(self):
+        if not self._current_id:
+            return
+        expediente = self._service.get_expediente(self._current_id) or {}
+        referencia = expediente.get("referencia") or self._current_id
+        if not messagebox.askyesno(
+            "Eliminar expediente DGT",
+            f"Se eliminara definitivamente el expediente {referencia}, sus documentos y enlaces.\n\n"
+            "Esta accion no se puede deshacer. ¿Continuar?",
+            parent=self.winfo_toplevel(),
+        ):
+            return
+        try:
+            self._service.eliminar_expediente(self._current_id)
+            self._current_id = None
+            self._clear_detail()
+            self.refresh()
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+
+    def _eliminar_adjunto(self):
+        sel = self.attach_tv.selection()
+        if not sel or not self._current_id:
+            return
+        nombre = self.attach_tv.item(sel[0], "values")[2]
+        if not messagebox.askyesno(
+            "Eliminar fichero aportado",
+            f"Se eliminara definitivamente el fichero {nombre}. ¿Continuar?",
+            parent=self.winfo_toplevel(),
+        ):
+            return
+        try:
+            self._service.eliminar_documento_aportado(self._current_id, str(sel[0]))
+            self._load_adjuntos(self._service.get_expediente(self._current_id))
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+
+    def _eliminar_documento_generado(self):
+        sel = self.docs_tv.selection()
+        if not sel:
+            return
+        tipo = self.docs_tv.item(sel[0], "values")[0]
+        if not messagebox.askyesno(
+            "Eliminar documento generado",
+            f"Se eliminara definitivamente el documento {tipo} y sus ficheros. ¿Continuar?",
+            parent=self.winfo_toplevel(),
+        ):
+            return
+        try:
+            self._service.eliminar_documento_generado(str(sel[0]))
+            self._load_docs()
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
 
     def _editar_parte(self, rol: str):
         if not self._current_id:

@@ -8,12 +8,22 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request,
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from backend.dgt_api.database import Base, SessionLocal, engine
 from backend.dgt_api.config import get_settings
-from backend.dgt_api.models import Documento, DocumentoGenerado, Enlace, Evento, Expediente, Parte, SolicitudSubsanacion
+from backend.dgt_api.models import (
+    Comunicacion,
+    Documento,
+    DocumentoGenerado,
+    Enlace,
+    Evento,
+    Expediente,
+    Firma,
+    Parte,
+    SolicitudSubsanacion,
+)
 from backend.dgt_api.schemas import DocumentoGeneradoCreate, ExpedienteCreate, ExpedientePatch, PartePatch, SubsanacionCreate
 from backend.dgt_api.security import require_internal_key, utcnow
 from backend.dgt_api.service import (
@@ -24,7 +34,7 @@ from backend.dgt_api.service import (
     serializar_expediente,
     verificar_enlace,
 )
-from backend.dgt_api.storage import save_private_upload
+from backend.dgt_api.storage import delete_private_upload, save_private_upload
 from backend.dgt_api.validation import validar_parte
 
 app = FastAPI(title="Gestinem Tramites DGT API", version="1.0.0")
@@ -102,6 +112,23 @@ def patch_expediente(expediente_id: str, payload: ExpedientePatch, db: Session =
     registrar_evento(db, item.id, "expediente_actualizado", "gest2a3eco")
     db.commit()
     return serializar_expediente(cargar_expediente(db, item.id))
+
+
+@app.delete("/api/v1/expedientes/{expediente_id}", dependencies=[internal], status_code=204)
+def delete_expediente(expediente_id: str, db: Session = Depends(get_db)):
+    item = cargar_expediente(db, expediente_id)
+    storage_keys = list(
+        db.scalars(select(Documento.storage_key).where(Documento.expediente_id == expediente_id)).all()
+    )
+    registrar_evento(db, item.id, "expediente_eliminado", "gest2a3eco", {"referencia": item.referencia})
+    db.flush()
+    db.execute(update(Evento).where(Evento.expediente_id == expediente_id).values(expediente_id=None))
+    for model in (Enlace, Documento, SolicitudSubsanacion, DocumentoGenerado, Firma, Comunicacion):
+        db.execute(delete(model).where(model.expediente_id == expediente_id))
+    db.delete(item)
+    db.commit()
+    for storage_key in storage_keys:
+        delete_private_upload(storage_key)
 
 
 @app.post("/api/v1/expedientes/{expediente_id}/links", dependencies=[internal])
@@ -200,6 +227,21 @@ def download_documento(documento_id: str, db: Session = Depends(get_db)):
     return FileResponse(path, media_type=doc.content_type, filename=doc.nombre_archivo)
 
 
+@app.delete("/api/v1/documentos/{documento_id}", dependencies=[internal], status_code=204)
+def delete_documento(documento_id: str, db: Session = Depends(get_db)):
+    doc = db.get(Documento, documento_id)
+    if not doc:
+        raise HTTPException(404, "Documento no encontrado")
+    storage_key = doc.storage_key
+    registrar_evento(
+        db, doc.expediente_id, "documento_eliminado", "gest2a3eco",
+        {"tipo": doc.tipo, "nombre": doc.nombre_archivo},
+    )
+    db.delete(doc)
+    db.commit()
+    delete_private_upload(storage_key)
+
+
 @app.post("/api/v1/expedientes/{expediente_id}/documentos-generados", dependencies=[internal], status_code=201)
 def post_documento_generado(
     expediente_id: str, payload: DocumentoGeneradoCreate, db: Session = Depends(get_db)
@@ -221,6 +263,20 @@ def get_documentos_generados(expediente_id: str, db: Session = Depends(get_db)):
     cargar_expediente(db, expediente_id)
     docs = db.scalars(select(DocumentoGenerado).where(DocumentoGenerado.expediente_id == expediente_id)).all()
     return [{"id": doc.id, "expediente_id": doc.expediente_id, **(doc.datos or {})} for doc in docs]
+
+
+@app.delete("/api/v1/documentos-generados/{documento_id}", dependencies=[internal])
+def delete_documento_generado(documento_id: str, db: Session = Depends(get_db)):
+    doc = db.get(DocumentoGenerado, documento_id)
+    if not doc:
+        raise HTTPException(404, "Documento generado no encontrado")
+    result = {"id": doc.id, "expediente_id": doc.expediente_id, **(doc.datos or {})}
+    registrar_evento(
+        db, doc.expediente_id, "documento_generado_eliminado", "gest2a3eco", {"tipo": doc.tipo}
+    )
+    db.delete(doc)
+    db.commit()
+    return result
 
 
 def public_context(referencia: str, rol: str, token: str, db: Session):

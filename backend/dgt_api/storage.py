@@ -43,3 +43,21 @@ async def save_private_upload(file: UploadFile, referencia: str, rol: str) -> di
         "size": len(data),
         "sha256": hashlib.sha256(data).hexdigest(),
     }
+
+
+def delete_private_upload(storage_key: str) -> bool:
+    root = Path(get_settings().storage_dir).resolve()
+    target = (root / str(storage_key or "")).resolve()
+    if root not in target.parents:
+        raise ValueError("Ruta de almacenamiento no valida")
+    if not target.is_file():
+        return False
+    target.unlink()
+    for parent in target.parents:
+        if parent == root:
+            break
+        try:
+            parent.rmdir()
+        except OSError:
+            break
+    return True

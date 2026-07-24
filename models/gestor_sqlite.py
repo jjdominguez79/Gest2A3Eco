@@ -3729,6 +3729,21 @@ class GestorSQLite:
             out.append(item)
         return out
 
+    def eliminar_dgt_documento_generado(self, documento_id: int) -> dict | None:
+        cur = self.conn.execute("SELECT * FROM dgt_documentos_generados WHERE id=?", (int(documento_id),))
+        row = cur.fetchone()
+        if not row:
+            return None
+        item = self._row_to_dict(row)
+        self.conn.execute("DELETE FROM dgt_documentos_generados WHERE id=?", (int(documento_id),))
+        self.conn.commit()
+        return item
+
+    def eliminar_dgt_expediente(self, expediente_id: str) -> None:
+        self.conn.execute("DELETE FROM dgt_documentos_generados WHERE expediente_id=?", (str(expediente_id),))
+        self.conn.execute("DELETE FROM dgt_expedientes WHERE id=?", (str(expediente_id),))
+        self.conn.commit()
+
     def _decode_dgt_expediente(self, row) -> dict | None:
         item = self._row_to_dict(row)
         if not item:
