@@ -152,7 +152,9 @@ class FacturaDialogController:
         # Rellenar panel de datos completos del tercero
         tercero_global_id = str(t.get("tercero_global_id") or t.get("id") or "").strip()
         full = self.get_tercero_full_data(tercero_global_id) if tercero_global_id else t
-        self._view.set_tercero_panel(full, tercero_global_id)
+        set_tercero_panel = getattr(self._view, "set_tercero_panel", None)
+        if callable(set_tercero_panel):
+            set_tercero_panel(full, tercero_global_id)
 
     def pick_date(self, target_var):
         txt = (target_var.get() or "").strip()
