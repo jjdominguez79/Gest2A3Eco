@@ -136,6 +136,11 @@ class UITramitesDgt(ttk.Frame):
 
         attached = ttk.LabelFrame(right, text="Documentacion aportada")
         attached.pack(fill="both", expand=True, pady=(0, 8))
+        attached_actions = ttk.Frame(attached)
+        attached_actions.pack(fill="x", padx=6, pady=(4, 2))
+        ttk.Button(
+            attached_actions, text="Eliminar documento seleccionado", command=self._eliminar_adjunto
+        ).pack(side=tk.RIGHT)
         self.attach_tv = ttk.Treeview(attached, columns=("rol", "tipo", "archivo", "hash"), show="headings", height=5)
         for col, text, width in (
             ("rol", "Rol", 90),
@@ -147,12 +152,14 @@ class UITramitesDgt(ttk.Frame):
             self.attach_tv.column(col, width=width, anchor="w")
         self.attach_tv.pack(fill="both", expand=True)
         self.attach_tv.bind("<Double-1>", lambda _e: self._abrir_adjunto())
-        ttk.Button(attached, text="Eliminar seleccionado", command=self._eliminar_adjunto).pack(
-            anchor="e", padx=6, pady=(2, 6)
-        )
 
         docs = ttk.LabelFrame(right, text="Documentos generados")
         docs.pack(fill="both", expand=True)
+        docs_actions = ttk.Frame(docs)
+        docs_actions.pack(fill="x", padx=6, pady=(4, 2))
+        ttk.Button(
+            docs_actions, text="Eliminar documento seleccionado", command=self._eliminar_documento_generado
+        ).pack(side=tk.RIGHT)
         self.docs_tv = ttk.Treeview(docs, columns=("tipo", "ruta"), show="headings", height=7)
         self.docs_tv.heading("tipo", text="Tipo")
         self.docs_tv.heading("ruta", text="Ruta")
@@ -160,9 +167,6 @@ class UITramitesDgt(ttk.Frame):
         self.docs_tv.column("ruta", width=420, anchor="w")
         self.docs_tv.pack(fill="both", expand=True)
         self.docs_tv.bind("<Double-1>", lambda _e: self._abrir_documento())
-        ttk.Button(docs, text="Eliminar seleccionado", command=self._eliminar_documento_generado).pack(
-            anchor="e", padx=6, pady=(2, 6)
-        )
 
     def _link_row(self, parent, label, var, email_cmd, whatsapp_cmd, form_cmd, copy_cmd, revoke_cmd, row):
         ttk.Label(parent, text=label).grid(row=row, column=0, padx=8, pady=4, sticky="w")
