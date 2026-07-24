@@ -468,6 +468,12 @@ class TramitesDgtService:
             ruta = doc.get("ruta_pdf") or doc.get("ruta_docx") or doc.get("ruta_txt")
             firmantes = [self._firmante(comprador, 1)]
             if tipo == "contrato_compraventa":
+                if str(vendedor.get("email") or "").strip().lower() == str(
+                    comprador.get("email") or ""
+                ).strip().lower():
+                    raise ValueError(
+                        "Vendedor y comprador deben tener emails distintos para firmar el contrato."
+                    )
                 firmantes = [self._firmante(vendedor, 1), self._firmante(comprador, 2)]
             resultado = self._firma_client.enviar_documento(
                 ruta=ruta,
@@ -519,6 +525,15 @@ class TramitesDgtService:
             estado = str(data.get("status") or "desconocido")
             solicitud["estado"] = estado
             solicitud["actualizado_at"] = self._now()
+            if estado.lower() in {"signed", "completed"} and not solicitud.get("ruta_firmado"):
+                tipo = str(solicitud.get("tipo_documento") or "documento")
+                evidencias = self._firma_client.descargar_evidencias(
+                    solicitud["request_id"],
+                    str(self._output_dir(expediente) / "firmados"),
+                    f"{tipo}_{solicitud['request_id'][:8]}",
+                )
+                solicitud.update(evidencias)
+                self._registrar_evidencias_firma(expediente_id, tipo, evidencias)
             estados.append(estado)
         normalizados = {estado.lower() for estado in estados}
         if normalizados and normalizados <= {"signed", "completed"}:
@@ -540,12 +555,51 @@ class TramitesDgtService:
     def _ultimos_documentos_por_tipo(self, expediente_id: str) -> list[dict]:
         seleccionados = []
         tipos = set()
+        tipos_firmables = {tipo for tipo, _titulo in DOCUMENTOS_BASE}
         for doc in self._repo.listar_documentos_generados(expediente_id):
             tipo = str(doc.get("tipo_documento") or "")
-            if tipo and tipo not in tipos:
+            if tipo in tipos_firmables and tipo not in tipos:
                 seleccionados.append(doc)
                 tipos.add(tipo)
         return seleccionados
+
+    def _registrar_evidencias_firma(self, expediente_id: str, tipo: str, evidencias: dict) -> None:
+        existentes = self._repo.listar_documentos_generados(expediente_id)
+        fecha = self._now()
+        nuevos = (
+            (
+                f"{tipo}_firmado",
+                f"{tipo.replace('_', ' ').title()} firmado",
+                evidencias.get("ruta_firmado"),
+                evidencias.get("sha256_firmado"),
+            ),
+            (
+                f"{tipo}_registro_firma",
+                f"Registro de firma - {tipo.replace('_', ' ')}",
+                evidencias.get("ruta_registro_firma"),
+                evidencias.get("sha256_registro_firma"),
+            ),
+        )
+        rutas_existentes = {
+            str(doc.get("ruta_pdf") or "") for doc in existentes if doc.get("ruta_pdf")
+        }
+        for tipo_documento, titulo, ruta, sha256 in nuevos:
+            if not ruta or str(ruta) in rutas_existentes:
+                continue
+            self._repo.insertar_documento_generado(
+                {
+                    "expediente_id": expediente_id,
+                    "tipo_documento": tipo_documento,
+                    "titulo": titulo,
+                    "fecha_generacion": fecha,
+                    "ruta_pdf": str(ruta),
+                    "ruta_docx": None,
+                    "ruta_txt": None,
+                    "json_datos_generacion": {"origen": "signrequest"},
+                    "hash_contenido": sha256,
+                    "estado": "firmado",
+                }
+            )
 
     @staticmethod
     def _firmante(datos: dict, order: int) -> dict:

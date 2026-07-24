@@ -66,6 +66,20 @@ class _FirmaClient:
     def consultar(self, request_id):
         return {"uuid": request_id, "status": "signed"}
 
+    def descargar_evidencias(self, request_id, destino, nombre_base):
+        base = Path(destino)
+        base.mkdir(parents=True, exist_ok=True)
+        firmado = base / f"{nombre_base}_firmado.pdf"
+        registro = base / f"{nombre_base}_registro_firma.pdf"
+        firmado.write_bytes(b"%PDF firmado")
+        registro.write_bytes(b"%PDF registro")
+        return {
+            "ruta_firmado": str(firmado),
+            "ruta_registro_firma": str(registro),
+            "sha256_firmado": "a" * 64,
+            "sha256_registro_firma": "b" * 64,
+        }
+
 
 def test_tramites_dgt_schema(tmp_path: Path):
     gestor = GestorSQLite(tmp_path / "dgt.db")
@@ -118,6 +132,36 @@ def test_envia_ultimas_versiones_a_signrequest(tmp_path: Path):
     assert len(firma.envios[1]["firmantes"]) == 1
     assert repo.expedientes[expediente_id]["firma_provider"] == "signrequest"
     assert service.actualizar_estado_firma(expediente_id)["estado"] == "firmado"
+    assert len(repo.listar_documentos_generados(expediente_id)) == 6
+
+
+def test_rechaza_contrato_con_el_mismo_email_para_ambas_partes(tmp_path: Path):
+    repo = _MemoryDgtRepository()
+    expediente_id = "exp-email-repetido"
+    repo.expedientes[expediente_id] = {
+        "id": expediente_id,
+        "referencia": "DGT-2026-0100",
+        "estado": "validado",
+        "vendedor_payload": {"email": "misma@example.com"},
+        "comprador_payload": {"email": "misma@example.com"},
+    }
+    path = tmp_path / "contrato.pdf"
+    path.write_bytes(b"%PDF-1.4")
+    repo.insertar_documento_generado(
+        {
+            "expediente_id": expediente_id,
+            "tipo_documento": "contrato_compraventa",
+            "ruta_pdf": str(path),
+        }
+    )
+    service = TramitesDgtService(repository=repo, firma_client=_FirmaClient())
+
+    try:
+        service.enviar_a_firma(expediente_id)
+    except ValueError as exc:
+        assert "emails distintos" in str(exc)
+    else:
+        raise AssertionError("No debe enviar un contrato con un unico email para ambas partes")
 
 
 def test_crear_validar_y_generar_documentos(tmp_path: Path, monkeypatch):

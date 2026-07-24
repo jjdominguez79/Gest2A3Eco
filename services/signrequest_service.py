@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 from pathlib import Path
 
 import requests
@@ -89,7 +90,73 @@ class SignRequestClient:
         }
 
     def consultar(self, request_id: str) -> dict:
-        return self._request("GET", f"/signrequests/{request_id}/")
+        solicitud = self._request("GET", f"/signrequests/{request_id}/")
+        document_url = str(solicitud.get("document") or "")
+        if not document_url:
+            return {"status": "desconocido", "solicitud": solicitud}
+        documento = self._request_url("GET", document_url)
+        signing_log = documento.get("signing_log") or {}
+        if documento.get("pdf") and signing_log.get("pdf"):
+            estado = "signed"
+        elif documento.get("status"):
+            estado = str(documento["status"])
+        elif solicitud.get("is_being_prepared"):
+            estado = "preparing"
+        else:
+            estado = "sent"
+        return {
+            "status": estado,
+            "document_uuid": documento.get("uuid") or "",
+            "signed_pdf_url": documento.get("pdf") or "",
+            "signing_log_url": signing_log.get("pdf") or "",
+            "security_hash": documento.get("security_hash") or "",
+            "signing_log_security_hash": signing_log.get("security_hash") or "",
+        }
+
+    def descargar_evidencias(self, request_id: str, destino: str, nombre_base: str) -> dict:
+        estado = self.consultar(request_id)
+        if estado.get("status") != "signed":
+            raise ValueError("La solicitud todavia no esta completamente firmada.")
+        output = Path(destino)
+        output.mkdir(parents=True, exist_ok=True)
+        signed_path = output / f"{nombre_base}_firmado.pdf"
+        log_path = output / f"{nombre_base}_registro_firma.pdf"
+        self._download(estado["signed_pdf_url"], signed_path)
+        self._download(estado["signing_log_url"], log_path)
+        return {
+            "ruta_firmado": str(signed_path),
+            "ruta_registro_firma": str(log_path),
+            "sha256_firmado": self._sha256(signed_path),
+            "sha256_registro_firma": self._sha256(log_path),
+            "security_hash": estado.get("security_hash") or "",
+            "signing_log_security_hash": estado.get("signing_log_security_hash") or "",
+            "document_uuid": estado.get("document_uuid") or "",
+        }
+
+    def _request_url(self, method: str, url: str):
+        response = self._http.request(
+            method,
+            url,
+            headers={"Authorization": f"Token {self.token}"},
+            timeout=self.timeout,
+        )
+        if response.status_code >= 400:
+            raise ValueError(f"SignRequest rechazo la consulta ({response.status_code}).")
+        return response.json()
+
+    def _download(self, url: str, path: Path) -> None:
+        response = self._http.request("GET", url, timeout=self.timeout)
+        if response.status_code >= 400:
+            raise ValueError(f"No se pudo descargar una evidencia ({response.status_code}).")
+        path.write_bytes(response.content)
+
+    @staticmethod
+    def _sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
     def reenviar(self, request_id: str) -> dict:
         return self._request("POST", f"/signrequests/{request_id}/resend_signrequest_email/")
