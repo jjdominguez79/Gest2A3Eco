@@ -264,3 +264,54 @@ def test_codigo_tasa_y_modelo_620_presentado(tmp_path, monkeypatch):
     docs = client.get(f"/api/v1/expedientes/{item['id']}/documentos", headers=headers).json()
     assert any(doc["tipo"] == "modelo_620" for doc in docs)
     Base.metadata.drop_all(engine)
+
+
+def test_correccion_interna_conserva_envio_y_datos_no_editados(tmp_path, monkeypatch):
+    client, engine = _client(tmp_path, monkeypatch)
+    headers = {"X-API-Key": "test-secret"}
+    item = client.post("/api/v1/expedientes", headers=headers, json={}).json()
+    link = client.post(f"/api/v1/expedientes/{item['id']}/links", headers=headers).json()["vendedor"]["url"]
+    token = link.split("token=", 1)[1]
+    path = f"/public/tramites/{item['referencia']}/vendedor"
+    original = _party_payload()
+    client.patch(f"{path}?token={token}", json=original)
+    client.post(f"{path}/submit?token={token}&privacy_accepted=true")
+
+    corrected = {**original, "datos": {"precio_venta": "9000"}}
+    response = client.patch(
+        f"/api/v1/expedientes/{item['id']}/partes/vendedor",
+        headers=headers,
+        json=corrected,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["partes"]["vendedor"]["estado"] == "completado"
+    assert data["partes"]["vendedor"]["submitted_at"]
+    assert data["partes"]["vendedor"]["datos"]["vehiculo_marca"] == "Renault"
+    assert data["partes"]["vendedor"]["datos"]["precio_venta"] == "9000"
+    assert data["estado"] == "revision_interna"
+    Base.metadata.drop_all(engine)
+
+
+def test_subsanacion_regenera_solo_enlace_de_la_parte(tmp_path, monkeypatch):
+    client, engine = _client(tmp_path, monkeypatch)
+    headers = {"X-API-Key": "test-secret"}
+    item = client.post("/api/v1/expedientes", headers=headers, json={}).json()
+    links = client.post(f"/api/v1/expedientes/{item['id']}/links", headers=headers).json()
+    old_seller = links["vendedor"]["url"]
+    old_buyer = links["comprador"]["url"]
+    response = client.post(
+        f"/api/v1/expedientes/{item['id']}/subsanaciones",
+        headers=headers,
+        json={"rol": "vendedor", "mensaje": "Corrige el bastidor"},
+    )
+    assert response.status_code == 201
+    new_seller = response.json()["url"]
+    assert new_seller != old_seller
+    assert client.get(old_seller.replace("https://tramites.example.test", "")).status_code == 401
+    assert client.get(old_buyer.replace("https://tramites.example.test", "")).status_code == 200
+    assert client.get(new_seller.replace("https://tramites.example.test", "")).status_code == 200
+    current = client.get(f"/api/v1/expedientes/{item['id']}", headers=headers).json()
+    assert current["partes"]["vendedor"]["estado"] == "requiere_subsanacion"
+    assert current["partes"]["comprador"]["estado"] == "pendiente"
+    Base.metadata.drop_all(engine)

@@ -131,6 +131,8 @@ class UITramitesDgt(ttk.Frame):
         primary_actions.pack(fill="x")
         secondary_actions = ttk.Frame(actions)
         secondary_actions.pack(fill="x", pady=(5, 0))
+        subsanation_actions = ttk.Frame(actions)
+        subsanation_actions.pack(fill="x", pady=(5, 0))
         for parent, text, command, primary in (
             (primary_actions, "Guardar", self._guardar, True),
             (primary_actions, "Validar", self._validar, False),
@@ -144,6 +146,17 @@ class UITramitesDgt(ttk.Frame):
         ):
             options = {"style": "Primary.TButton"} if primary else {}
             ttk.Button(parent, text=text, command=command, **options).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Label(subsanation_actions, text="Pedir correccion al cliente:").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(
+            subsanation_actions,
+            text="Vendedor",
+            command=lambda: self._solicitar_subsanacion("vendedor"),
+        ).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(
+            subsanation_actions,
+            text="Comprador",
+            command=lambda: self._solicitar_subsanacion("comprador"),
+        ).pack(side=tk.LEFT)
 
         links = ttk.LabelFrame(detail_tab, text="Enlaces seguros")
         links.pack(fill="x", pady=(0, 8))
@@ -407,6 +420,37 @@ class UITramitesDgt(ttk.Frame):
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
 
+    def _solicitar_subsanacion(self, rol: str):
+        if not self._current_id:
+            return
+        mensaje = simpledialog.askstring(
+            "Solicitar subsanacion",
+            f"Indica al {rol} que debe corregir o completar:",
+            parent=self.winfo_toplevel(),
+        )
+        if not mensaje:
+            return
+        try:
+            result = self._service.solicitar_subsanacion(self._current_id, rol, mensaje)
+            link = result.get("url") or ""
+            self.refresh(select_id=self._current_id)
+            if rol == "vendedor":
+                self.var_link_vendedor.set(link)
+            else:
+                self.var_link_comprador.set(link)
+            if link:
+                self.clipboard_clear()
+                self.clipboard_append(link)
+            messagebox.showinfo(
+                "Gest2A3Eco",
+                f"Subsanacion solicitada al {rol}.\n\n"
+                "Se ha generado un enlace nuevo solo para esa parte"
+                + (" y se ha copiado al portapapeles." if link else "."),
+                parent=self.winfo_toplevel(),
+            )
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+
     def _eliminar_adjunto(self):
         sel = self.attach_tv.selection()
         if not sel or not self._current_id:
@@ -592,50 +636,119 @@ class DatosParteDialog(simpledialog.Dialog):
 
     def body(self, master):
         payload = dict(self.expediente.get(f"{self.rol}_payload") or {})
-        defaults = {
-            "nombre": self.expediente.get(f"{self.rol}_nombre") or "",
-            "email": self.expediente.get(f"{self.rol}_email") or "",
-            "telefono": self.expediente.get(f"{self.rol}_telefono") or "",
-            "nif": payload.get("nif") or "",
-            "direccion": payload.get("direccion") or "",
-            "cp": payload.get("cp") or "",
-            "poblacion": payload.get("poblacion") or "",
-            "provincia": payload.get("provincia") or "",
-            "representante": payload.get("representante") or "",
-            "observaciones": payload.get("observaciones") or "",
-            "vehiculo_matricula": self.expediente.get("vehiculo_matricula") or "",
-            "vehiculo_bastidor": self.expediente.get("vehiculo_bastidor") or "",
-            "precio_venta": self.expediente.get("precio_venta") or "",
-            "fecha_operacion": self.expediente.get("fecha_operacion") or "",
+        defaults = dict(payload)
+        for key in ("nombre", "email", "telefono"):
+            defaults[key] = self.expediente.get(f"{self.rol}_{key}") or payload.get(key) or ""
+        defaults["vehiculo_matricula"] = (
+            payload.get("vehiculo_matricula") or self.expediente.get("vehiculo_matricula") or ""
+        )
+        defaults["vehiculo_bastidor"] = (
+            payload.get("vehiculo_bastidor") or self.expediente.get("vehiculo_bastidor") or ""
+        )
+        defaults["precio_venta"] = payload.get("precio_venta") or self.expediente.get("precio_venta") or ""
+        defaults["fecha_operacion"] = (
+            payload.get("fecha_operacion") or self.expediente.get("fecha_operacion") or ""
+        )
+        aliases = {
+            "primera_matriculacion": "vehiculo_primera_matriculacion",
+            "kilometraje": "vehiculo_kilometros",
+            "llaves_vehiculo": "numero_llaves",
+            "cargas_estado": "estado_cargas",
+            "cargas_detalle": "detalle_cargas",
+            "direccion_envio": "envio_direccion",
+            "cp_envio": "envio_cp",
+            "poblacion_envio": "envio_poblacion",
+            "provincia_envio": "envio_provincia",
         }
-        fields = [
-            ("Nombre/Razon social", "nombre"),
-            ("NIF/NIE/CIF", "nif"),
+        for key, legacy in aliases.items():
+            defaults[key] = payload.get(key) or payload.get(legacy) or ""
+
+        self.geometry("760x690")
+        notebook = ttk.Notebook(master)
+        notebook.pack(fill="both", expand=True, padx=6, pady=6)
+        persona_tab = ttk.Frame(notebook, padding=8)
+        detalle_tab = ttk.Frame(notebook, padding=8)
+        notebook.add(persona_tab, text="Identificacion y contacto")
+        notebook.add(
+            detalle_tab,
+            text="Vehiculo y operacion" if self.rol == "vendedor" else "Direccion de envio",
+        )
+
+        common_fields = (
+            ("Tipo de persona", "tipo_persona"),
+            ("Nombre o razon social", "nombre"),
+            ("NIF, NIE o CIF", "nif"),
             ("Email", "email"),
             ("Telefono", "telefono"),
             ("Direccion", "direccion"),
-            ("CP", "cp"),
+            ("Codigo postal", "cp"),
             ("Poblacion", "poblacion"),
             ("Provincia", "provincia"),
-            ("Representante", "representante"),
+            ("Representante (persona juridica)", "representante_nombre"),
+            ("DNI/NIE representante", "representante_nif"),
             ("Observaciones", "observaciones"),
-        ]
+        )
+        self._build_fields(persona_tab, common_fields, defaults)
+
         if self.rol == "vendedor":
-            fields.extend(
-                [
-                    ("Matricula", "vehiculo_matricula"),
-                    ("Bastidor", "vehiculo_bastidor"),
-                    ("Precio venta", "precio_venta"),
-                    ("Fecha operacion", "fecha_operacion"),
-                ]
+            detail_fields = (
+                ("Matricula", "vehiculo_matricula"),
+                ("Bastidor", "vehiculo_bastidor"),
+                ("Marca", "vehiculo_marca"),
+                ("Modelo y version", "vehiculo_modelo"),
+                ("Primera matriculacion (AAAA-MM-DD)", "primera_matriculacion"),
+                ("Kilometraje", "kilometraje"),
+                ("Precio de venta", "precio_venta"),
+                ("Fecha de entrega (AAAA-MM-DD)", "fecha_operacion"),
+                ("Hora de entrega", "hora_entrega"),
+                ("Forma de pago", "forma_pago"),
+                ("Numero de llaves", "llaves_vehiculo"),
+                ("Cargas (sin_cargas/con_cargas)", "cargas_estado"),
+                ("Detalle de cargas", "cargas_detalle"),
+                ("Estado conocido del vehiculo", "estado_vehiculo"),
             )
-        for row, (label, key) in enumerate(fields):
-            ttk.Label(master, text=label).grid(row=row, column=0, sticky="w", padx=8, pady=3)
-            var = tk.StringVar(value=str(defaults.get(key) or ""))
-            self.vars[key] = var
-            ttk.Entry(master, textvariable=var, width=46).grid(row=row, column=1, sticky="ew", padx=8, pady=3)
-        master.columnconfigure(1, weight=1)
+            self._build_fields(detalle_tab, detail_fields, defaults)
+        else:
+            ttk.Button(
+                detalle_tab,
+                text="Copiar domicilio principal",
+                command=self._copiar_direccion_envio,
+            ).grid(row=0, column=1, sticky="e", padx=8, pady=(0, 8))
+            detail_fields = (
+                ("Direccion de envio", "direccion_envio"),
+                ("Codigo postal de envio", "cp_envio"),
+                ("Poblacion de envio", "poblacion_envio"),
+                ("Provincia de envio", "provincia_envio"),
+            )
+            self._build_fields(detalle_tab, detail_fields, defaults, start_row=1)
         return None
+
+    def _build_fields(self, parent, fields, defaults, start_row=0):
+        for offset, (label, key) in enumerate(fields):
+            row = start_row + offset
+            ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=8, pady=4)
+            var = tk.StringVar(value=str(defaults.get(key) or ("fisica" if key == "tipo_persona" else "")))
+            self.vars[key] = var
+            if key == "tipo_persona":
+                widget = ttk.Combobox(
+                    parent,
+                    textvariable=var,
+                    values=("fisica", "juridica"),
+                    state="readonly",
+                )
+            else:
+                widget = ttk.Entry(parent, textvariable=var)
+            widget.grid(row=row, column=1, sticky="ew", padx=8, pady=4)
+        parent.columnconfigure(1, weight=1)
+
+    def _copiar_direccion_envio(self):
+        for source, target in (
+            ("direccion", "direccion_envio"),
+            ("cp", "cp_envio"),
+            ("poblacion", "poblacion_envio"),
+            ("provincia", "provincia_envio"),
+        ):
+            self.vars[target].set(self.vars[source].get())
 
     def apply(self):
         self.result = {key: var.get() for key, var in self.vars.items()}

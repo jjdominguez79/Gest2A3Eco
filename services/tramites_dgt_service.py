@@ -165,6 +165,29 @@ class TramitesDgtService:
         expediente[f"{rol}_token_hash"] = ""
         self._repo.upsert_expediente(expediente)
 
+    def solicitar_subsanacion(self, expediente_id: str, rol: str, mensaje: str) -> dict:
+        rol = self._validar_rol(rol)
+        mensaje = str(mensaje or "").strip()
+        if len(mensaje) < 3:
+            raise ValueError("Indica el motivo de la subsanacion.")
+        request_remote = getattr(self._repo, "solicitar_subsanacion", None)
+        if callable(request_remote):
+            return request_remote(expediente_id, rol, mensaje)
+        expediente = self._repo.get_expediente(expediente_id)
+        if not expediente:
+            raise ValueError("Expediente DGT no encontrado.")
+        link = self._crear_link(rol)
+        expediente[f"{rol}_token_hash"] = self._hash_token(link.token)
+        expediente[f"{rol}_token_created_at"] = self._now()
+        expediente["estado"] = "requiere_subsanacion"
+        expediente[f"{rol}_estado"] = "requiere_subsanacion"
+        expediente.setdefault("subsanaciones", []).append(
+            {"rol": rol, "mensaje": mensaje, "created_at": self._now()}
+        )
+        self._repo.upsert_expediente(expediente)
+        ref = expediente.get("referencia") or expediente_id
+        return {"status": "pendiente", "rol": rol, "url": self._build_url(rol, ref, link.token)}
+
     def verificar_token(self, referencia: str, rol: str, token: str) -> dict:
         rol = self._validar_rol(rol)
         expediente = self._repo.get_expediente_por_referencia(referencia)
@@ -321,14 +344,14 @@ class TramitesDgtService:
             ("vehiculo_bastidor", "bastidor"),
             ("vehiculo_marca", "marca"),
             ("vehiculo_modelo", "modelo"),
-            ("vehiculo_primera_matriculacion", "fecha de primera matriculacion"),
-            ("vehiculo_kilometros", "kilometraje"),
+            ("primera_matriculacion", "fecha de primera matriculacion"),
+            ("kilometraje", "kilometraje"),
             ("precio_venta", "precio de venta"),
             ("fecha_operacion", "fecha de entrega"),
             ("hora_entrega", "hora de entrega"),
             ("forma_pago", "forma de pago"),
-            ("numero_llaves", "numero de llaves"),
-            ("estado_cargas", "estado de cargas"),
+            ("llaves_vehiculo", "numero de llaves"),
+            ("cargas_estado", "estado de cargas"),
             ("estado_vehiculo", "estado del vehiculo"),
         ):
             if vendedor.get(campo) in (None, ""):
@@ -336,18 +359,18 @@ class TramitesDgtService:
         bastidor = str(vendedor.get("vehiculo_bastidor") or "")
         if bastidor and not re.fullmatch(r"[A-HJ-NPR-Z0-9]{17}", bastidor):
             errors.append("El bastidor debe contener 17 caracteres validos.")
-        if vendedor.get("estado_cargas") == "con_cargas" and not vendedor.get("detalle_cargas"):
+        if vendedor.get("cargas_estado") == "con_cargas" and not vendedor.get("cargas_detalle"):
             errors.append("Debes detallar las cargas del vehiculo.")
         comprador = expediente.get("comprador_payload") or {}
         for campo, etiqueta in (
-            ("envio_direccion", "direccion"),
-            ("envio_cp", "codigo postal"),
-            ("envio_poblacion", "poblacion"),
-            ("envio_provincia", "provincia"),
+            ("direccion_envio", "direccion"),
+            ("cp_envio", "codigo postal"),
+            ("poblacion_envio", "poblacion"),
+            ("provincia_envio", "provincia"),
         ):
             if not str(comprador.get(campo) or "").strip():
                 errors.append(f"La {etiqueta} de envio es obligatoria.")
-        if comprador.get("envio_cp") and not re.fullmatch(r"\d{5}", str(comprador["envio_cp"])):
+        if comprador.get("cp_envio") and not re.fullmatch(r"\d{5}", str(comprador["cp_envio"])):
             errors.append("El codigo postal de envio debe tener 5 digitos.")
         if expediente.get("modelo_620_presentado") and not any(
             doc.get("tipo") == "modelo_620" for doc in expediente.get("documentos") or []
@@ -777,11 +800,15 @@ class TramitesDgtService:
         ctx["modelo_vehiculo"] = vendedor_payload.get("vehiculo_modelo") or ""
         ctx["matricula_vehiculo"] = vendedor_payload.get("vehiculo_matricula") or ctx.get("vehiculo_matricula") or ""
         ctx["bastidor_vehiculo"] = vendedor_payload.get("vehiculo_bastidor") or ctx.get("vehiculo_bastidor") or ""
-        ctx["primeramatriculacion_vehiculo"] = self._fecha_es(vendedor_payload.get("vehiculo_primera_matriculacion"))
-        ctx["kilometros_vehiculo"] = vendedor_payload.get("vehiculo_kilometros") or ""
+        ctx["primeramatriculacion_vehiculo"] = self._fecha_es(
+            vendedor_payload.get("primera_matriculacion") or vendedor_payload.get("vehiculo_primera_matriculacion")
+        )
+        ctx["kilometros_vehiculo"] = (
+            vendedor_payload.get("kilometraje") or vendedor_payload.get("vehiculo_kilometros") or ""
+        )
         ctx["precio_compra"] = self._importe_es(vendedor_payload.get("precio_venta") or ctx.get("precio_venta"))
         ctx["forma_pago"] = vendedor_payload.get("forma_pago") or ""
-        ctx["llaves_vehiculo"] = vendedor_payload.get("numero_llaves") or ""
+        ctx["llaves_vehiculo"] = vendedor_payload.get("llaves_vehiculo") or vendedor_payload.get("numero_llaves") or ""
         ctx["documentos"] = expediente.get("documentos") or []
         ctx["documentos_count"] = len(ctx["documentos"])
         return ctx
@@ -795,10 +822,10 @@ class TramitesDgtService:
         ctx[f"{rol}_direccion_completa"] = self._direccion_completa(payload)
         if rol == "comprador":
             envio = {
-                "direccion": payload.get("envio_direccion"),
-                "cp": payload.get("envio_cp"),
-                "poblacion": payload.get("envio_poblacion"),
-                "provincia": payload.get("envio_provincia"),
+                "direccion": payload.get("direccion_envio") or payload.get("envio_direccion"),
+                "cp": payload.get("cp_envio") or payload.get("envio_cp"),
+                "poblacion": payload.get("poblacion_envio") or payload.get("envio_poblacion"),
+                "provincia": payload.get("provincia_envio") or payload.get("envio_provincia"),
             }
             ctx["comprador_direccion_envio"] = self._direccion_completa(envio)
 
@@ -823,10 +850,10 @@ class TramitesDgtService:
     def _mandante(self, payload: dict) -> str:
         domicilio = self._direccion_completa(
             {
-                "direccion": payload.get("envio_direccion") or payload.get("direccion"),
-                "cp": payload.get("envio_cp") or payload.get("cp"),
-                "poblacion": payload.get("envio_poblacion") or payload.get("poblacion"),
-                "provincia": payload.get("envio_provincia") or payload.get("provincia"),
+                "direccion": payload.get("direccion_envio") or payload.get("envio_direccion") or payload.get("direccion"),
+                "cp": payload.get("cp_envio") or payload.get("envio_cp") or payload.get("cp"),
+                "poblacion": payload.get("poblacion_envio") or payload.get("envio_poblacion") or payload.get("poblacion"),
+                "provincia": payload.get("provincia_envio") or payload.get("envio_provincia") or payload.get("provincia"),
             }
         )
         if payload.get("tipo_persona") == "juridica":
@@ -921,13 +948,25 @@ class TramitesDgtService:
         out["vehiculo_matricula"] = self._normalizar_matricula(payload.get("vehiculo_matricula"))
         out["vehiculo_bastidor"] = str(payload.get("vehiculo_bastidor") or "").strip().upper()
         out["precio_venta"] = self._parse_float(payload.get("precio_venta"))
-        for campo in (
-            "vehiculo_marca", "vehiculo_modelo", "vehiculo_primera_matriculacion",
-            "vehiculo_kilometros", "fecha_operacion", "hora_entrega", "forma_pago",
-            "numero_llaves", "estado_cargas", "detalle_cargas", "estado_vehiculo",
-            "envio_direccion", "envio_cp", "envio_poblacion", "envio_provincia",
-        ):
-            out[campo] = str(payload.get(campo) or "").strip()
+        aliases = {
+            "vehiculo_marca": ("vehiculo_marca",),
+            "vehiculo_modelo": ("vehiculo_modelo",),
+            "primera_matriculacion": ("primera_matriculacion", "vehiculo_primera_matriculacion"),
+            "kilometraje": ("kilometraje", "vehiculo_kilometros"),
+            "fecha_operacion": ("fecha_operacion",),
+            "hora_entrega": ("hora_entrega",),
+            "forma_pago": ("forma_pago",),
+            "llaves_vehiculo": ("llaves_vehiculo", "numero_llaves"),
+            "cargas_estado": ("cargas_estado", "estado_cargas"),
+            "cargas_detalle": ("cargas_detalle", "detalle_cargas"),
+            "estado_vehiculo": ("estado_vehiculo",),
+            "direccion_envio": ("direccion_envio", "envio_direccion"),
+            "cp_envio": ("cp_envio", "envio_cp"),
+            "poblacion_envio": ("poblacion_envio", "envio_poblacion"),
+            "provincia_envio": ("provincia_envio", "envio_provincia"),
+        }
+        for campo, opciones in aliases.items():
+            out[campo] = str(next((payload.get(key) for key in opciones if payload.get(key) not in (None, "")), "")).strip()
         return out
 
     def _hash_file(self, path: Path) -> str:

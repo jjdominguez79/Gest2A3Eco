@@ -170,11 +170,14 @@ def post_subsanacion(expediente_id: str, payload: SubsanacionCreate, db: Session
     item = cargar_expediente(db, expediente_id)
     if payload.rol not in {"vendedor", "comprador"}:
         raise HTTPException(422, "Rol no valido")
+    parte = next(part for part in item.partes if part.rol == payload.rol)
     db.add(SolicitudSubsanacion(expediente_id=item.id, rol=payload.rol, mensaje=payload.mensaje))
+    parte.estado = "requiere_subsanacion"
     item.estado = "requiere_subsanacion"
+    link = crear_enlace(db, item, payload.rol)
     registrar_evento(db, item.id, "subsanacion_solicitada", "gest2a3eco", payload.model_dump())
     db.commit()
-    return {"status": "pendiente"}
+    return {"status": "pendiente", "rol": payload.rol, "url": link["url"], "expires_at": link["expires_at"]}
 
 
 @app.post("/api/v1/expedientes/{expediente_id}/validar", dependencies=[internal])
@@ -212,12 +215,31 @@ def patch_parte_interna(
     if rol not in {"vendedor", "comprador"}:
         raise HTTPException(422, "Rol no valido")
     parte = next(part for part in item.partes if part.rol == rol)
-    for key in ("tipo_persona", "nombre", "nif", "email", "telefono", "datos"):
-        setattr(parte, key, getattr(payload, key))
+    estado_anterior = parte.estado
+    cambios = []
+    for key in ("tipo_persona", "nombre", "nif", "email", "telefono"):
+        value = getattr(payload, key)
+        if getattr(parte, key) != value:
+            cambios.append(key)
+            setattr(parte, key, value)
+    datos_anteriores = dict(parte.datos or {})
+    datos_nuevos = {**datos_anteriores, **payload.datos}
+    cambios.extend(
+        f"datos.{key}" for key, value in payload.datos.items()
+        if datos_anteriores.get(key) != value
+    )
+    parte.datos = datos_nuevos
     sync_parte_operacion(item, parte, rol)
-    parte.estado = "en_curso"
-    item.estado = f"{rol}_en_curso"
-    registrar_evento(db, item.id, "parte_actualizada_internamente", "gest2a3eco", {"rol": rol})
+    if estado_anterior != "completado":
+        parte.estado = "en_curso"
+    item.estado = "revision_interna" if estado_anterior == "completado" else f"{rol}_en_curso"
+    registrar_evento(
+        db,
+        item.id,
+        "parte_actualizada_internamente",
+        "gest2a3eco",
+        {"rol": rol, "estado_anterior": estado_anterior, "campos_modificados": cambios},
+    )
     db.commit()
     return serializar_expediente(cargar_expediente(db, item.id))
 

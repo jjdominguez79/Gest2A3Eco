@@ -94,6 +94,15 @@ class ApiDgtRepository:
         )
         if response.status_code == 409:
             raise RuntimeError("El expediente ha cambiado en el servidor. Actualiza antes de guardar.")
+        if response.status_code >= 400:
+            try:
+                detail = response.json().get("detail")
+            except Exception:
+                detail = None
+            if isinstance(detail, list):
+                detail = "\n".join(str(item) for item in detail)
+            if detail:
+                raise ValueError(str(detail))
         response.raise_for_status()
         if response.status_code == 204:
             return None
@@ -110,12 +119,18 @@ class ApiDgtRepository:
             "vendedor_nombre": vendedor.get("nombre", ""),
             "vendedor_email": vendedor.get("email", ""),
             "vendedor_telefono": vendedor.get("telefono", ""),
-            "vendedor_payload": {**(vendedor.get("datos") or {}), "nif": vendedor.get("nif", "")},
+            "vendedor_payload": {
+                **(vendedor.get("datos") or {}),
+                **{key: vendedor.get(key, "") for key in ("tipo_persona", "nombre", "nif", "email", "telefono")},
+            },
             "vendedor_estado": vendedor.get("estado", "pendiente"),
             "comprador_nombre": comprador.get("nombre", ""),
             "comprador_email": comprador.get("email", ""),
             "comprador_telefono": comprador.get("telefono", ""),
-            "comprador_payload": {**(comprador.get("datos") or {}), "nif": comprador.get("nif", "")},
+            "comprador_payload": {
+                **(comprador.get("datos") or {}),
+                **{key: comprador.get(key, "") for key in ("tipo_persona", "nombre", "nif", "email", "telefono")},
+            },
             "comprador_estado": comprador.get("estado", "pendiente"),
             "vehiculo_matricula": vehiculo.get("matricula", ""),
             "vehiculo_bastidor": vehiculo.get("bastidor", ""),
@@ -184,6 +199,13 @@ class ApiDgtRepository:
 
     def revoke_link(self, expediente_id: str, rol: str) -> None:
         self._request("POST", f"/api/v1/expedientes/{expediente_id}/links/{rol}/revoke")
+
+    def solicitar_subsanacion(self, expediente_id: str, rol: str, mensaje: str) -> dict:
+        return self._request(
+            "POST",
+            f"/api/v1/expedientes/{expediente_id}/subsanaciones",
+            json={"rol": rol, "mensaje": mensaje},
+        )
 
     def sync(self, updated_since: str = "") -> list[dict]:
         params = {"updated_since": updated_since} if updated_since else {}
