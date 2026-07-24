@@ -67,13 +67,13 @@ class UITramitesDgt(ttk.Frame):
             height=20,
         )
         for col, text, width in (
-            ("referencia", "Referencia", 120),
-            ("estado", "Estado", 95),
-            ("vendedor_estado", "Vendedor", 95),
-            ("comprador_estado", "Comprador", 95),
-            ("matricula", "Matricula", 90),
-            ("vendedor", "Vendedor", 160),
-            ("comprador", "Comprador", 160),
+            ("referencia", "Referencia", 105),
+            ("estado", "Estado", 90),
+            ("vendedor_estado", "Vend.", 80),
+            ("comprador_estado", "Comp.", 80),
+            ("matricula", "Matricula", 80),
+            ("vendedor", "Vendedor", 130),
+            ("comprador", "Comprador", 130),
         ):
             self.tv.heading(col, text=text)
             self.tv.column(col, width=width, anchor="w")
@@ -87,7 +87,14 @@ class UITramitesDgt(ttk.Frame):
         ttk.Button(left_buttons, text="Plantillas", command=self._gestionar_plantillas).pack(side=tk.LEFT)
         ttk.Button(left_buttons, text="Eliminar", command=self._eliminar_expediente).pack(side=tk.RIGHT)
 
-        form = ttk.LabelFrame(right, text="Expediente")
+        notebook = ttk.Notebook(right)
+        notebook.pack(fill="both", expand=True)
+        detail_tab = ttk.Frame(notebook, padding=8)
+        documents_tab = ttk.Frame(notebook, padding=8)
+        notebook.add(detail_tab, text="Expediente y acciones")
+        notebook.add(documents_tab, text="Documentos")
+
+        form = ttk.LabelFrame(detail_tab, text="Datos del expediente", padding=(4, 3))
         form.pack(fill="x")
         for idx, (label, key) in enumerate(
             (
@@ -115,26 +122,34 @@ class UITramitesDgt(ttk.Frame):
         ).grid(row=13, column=1, sticky="w", padx=8, pady=3)
         form.columnconfigure(1, weight=1)
 
-        actions = ttk.Frame(right)
+        actions = ttk.LabelFrame(detail_tab, text="Acciones", padding=5)
         actions.pack(fill="x", pady=8)
-        ttk.Button(actions, text="Guardar", style="Primary.TButton", command=self._guardar).pack(side=tk.LEFT)
-        ttk.Button(actions, text="Datos vendedor", command=lambda: self._editar_parte("vendedor")).pack(side=tk.LEFT, padx=5)
-        ttk.Button(actions, text="Datos comprador", command=lambda: self._editar_parte("comprador")).pack(side=tk.LEFT, padx=5)
-        ttk.Button(actions, text="Adjuntar", command=self._adjuntar_documento).pack(side=tk.LEFT, padx=5)
-        ttk.Button(actions, text="Subir modelo 620", command=self._subir_modelo_620).pack(side=tk.LEFT, padx=5)
-        ttk.Button(actions, text="Regenerar enlaces", command=self._regenerar_links).pack(side=tk.LEFT, padx=5)
-        ttk.Button(actions, text="Validar", command=self._validar).pack(side=tk.LEFT, padx=5)
-        ttk.Button(actions, text="Generar documentos", command=self._generar_documentos).pack(side=tk.LEFT, padx=5)
-        ttk.Button(actions, text="Preparar firma", command=self._preparar_firma).pack(side=tk.LEFT, padx=5)
+        primary_actions = ttk.Frame(actions)
+        primary_actions.pack(fill="x")
+        secondary_actions = ttk.Frame(actions)
+        secondary_actions.pack(fill="x", pady=(5, 0))
+        for parent, text, command, primary in (
+            (primary_actions, "Guardar", self._guardar, True),
+            (primary_actions, "Validar", self._validar, False),
+            (primary_actions, "Generar documentos", self._generar_documentos, False),
+            (primary_actions, "Preparar firma", self._preparar_firma, False),
+            (secondary_actions, "Datos vendedor", lambda: self._editar_parte("vendedor"), False),
+            (secondary_actions, "Datos comprador", lambda: self._editar_parte("comprador"), False),
+            (secondary_actions, "Adjuntar documento", self._adjuntar_documento, False),
+            (secondary_actions, "Subir modelo 620", self._subir_modelo_620, False),
+            (secondary_actions, "Regenerar enlaces", self._regenerar_links, False),
+        ):
+            options = {"style": "Primary.TButton"} if primary else {}
+            ttk.Button(parent, text=text, command=command, **options).pack(side=tk.LEFT, padx=(0, 5))
 
-        links = ttk.LabelFrame(right, text="Enlaces seguros")
+        links = ttk.LabelFrame(detail_tab, text="Enlaces seguros")
         links.pack(fill="x", pady=(0, 8))
         self.var_link_vendedor = tk.StringVar()
         self.var_link_comprador = tk.StringVar()
         self._link_row(links, "Vendedor", self.var_link_vendedor, self._email_vendedor, self._whatsapp_vendedor, self._form_vendedor, lambda: self._copy_link("vendedor"), lambda: self._revoke_link("vendedor"), 0)
         self._link_row(links, "Comprador", self.var_link_comprador, self._email_comprador, self._whatsapp_comprador, self._form_comprador, lambda: self._copy_link("comprador"), lambda: self._revoke_link("comprador"), 1)
 
-        attached = ttk.LabelFrame(right, text="Documentacion aportada")
+        attached = ttk.LabelFrame(documents_tab, text="Documentacion aportada")
         attached.pack(fill="both", expand=True, pady=(0, 8))
         attached_actions = ttk.Frame(attached)
         attached_actions.pack(fill="x", padx=6, pady=(4, 2))
@@ -153,7 +168,7 @@ class UITramitesDgt(ttk.Frame):
         self.attach_tv.pack(fill="both", expand=True)
         self.attach_tv.bind("<Double-1>", lambda _e: self._abrir_adjunto())
 
-        docs = ttk.LabelFrame(right, text="Documentos generados")
+        docs = ttk.LabelFrame(documents_tab, text="Documentos generados")
         docs.pack(fill="both", expand=True)
         docs_actions = ttk.Frame(docs)
         docs_actions.pack(fill="x", padx=6, pady=(4, 2))
@@ -374,7 +389,7 @@ class UITramitesDgt(ttk.Frame):
         try:
             self._service.eliminar_expediente(self._current_id)
             self._current_id = None
-            self._clear_detail()
+            self._clear_form()
             self.refresh()
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
