@@ -37,6 +37,7 @@ class UITramitesDgt(ttk.Frame):
         self._expedientes = []
         self._current_id = None
         self._last_links = {}
+        self._links_by_expediente = {}
         self.var_firma_estado = tk.StringVar(value="Firma: sin solicitud")
         self._vars = {
             "titulo": tk.StringVar(),
@@ -277,6 +278,7 @@ class UITramitesDgt(ttk.Frame):
         try:
             expediente_id = self._service.crear_expediente_minimo(self._payload())
             self._last_links = self._service.regenerar_links(expediente_id)
+            self._links_by_expediente[expediente_id] = dict(self._last_links)
             self.refresh(select_id=expediente_id)
             self.var_link_vendedor.set(self._last_links.get("vendedor", ""))
             self.var_link_comprador.set(self._last_links.get("comprador", ""))
@@ -298,6 +300,7 @@ class UITramitesDgt(ttk.Frame):
             try:
                 expediente_id = self._service.crear_expediente_minimo(self._payload())
                 self._last_links = self._service.regenerar_links(expediente_id)
+                self._links_by_expediente[expediente_id] = dict(self._last_links)
                 self.refresh(select_id=expediente_id)
                 self.var_link_vendedor.set(self._last_links.get("vendedor", ""))
                 self.var_link_comprador.set(self._last_links.get("comprador", ""))
@@ -358,6 +361,7 @@ class UITramitesDgt(ttk.Frame):
             return
         try:
             self._last_links = self._service.regenerar_links(self._current_id)
+            self._links_by_expediente[self._current_id] = dict(self._last_links)
             self.var_link_vendedor.set(self._last_links.get("vendedor", ""))
             self.var_link_comprador.set(self._last_links.get("comprador", ""))
         except Exception as exc:
@@ -371,7 +375,11 @@ class UITramitesDgt(ttk.Frame):
         expediente = self._service.get_expediente(self._current_id) or {}
         for key, var in self._vars.items():
             var.set("" if expediente.get(key) is None else str(expediente.get(key)))
-        links = self._service.get_links(expediente)
+        links = (
+            self._links_by_expediente.get(self._current_id, {})
+            if self._online
+            else self._service.get_links(expediente)
+        )
         self.var_link_vendedor.set(links.get("vendedor", ""))
         self.var_link_comprador.set(links.get("comprador", ""))
         estado_firma = str(expediente.get("firma_estado") or "sin solicitud").replace("_", " ")
@@ -527,6 +535,9 @@ class UITramitesDgt(ttk.Frame):
         try:
             result = self._service.solicitar_subsanacion(self._current_id, rol, mensaje)
             link = result.get("url") or ""
+            cached_links = dict(self._links_by_expediente.get(self._current_id, {}))
+            cached_links[rol] = link
+            self._links_by_expediente[self._current_id] = cached_links
             self.refresh(select_id=self._current_id)
             if rol == "vendedor":
                 self.var_link_vendedor.set(link)
@@ -680,6 +691,7 @@ class UITramitesDgt(ttk.Frame):
             return
         try:
             self._service.revocar_link(self._current_id, rol)
+            self._links_by_expediente.get(self._current_id, {}).pop(rol, None)
             if rol == "vendedor":
                 self.var_link_vendedor.set("Enlace revocado")
             else:
