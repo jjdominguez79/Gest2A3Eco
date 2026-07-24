@@ -27,20 +27,27 @@
         <div class="step-label">1 de 3 · Identificacion</div>
         <div class="grid">
           <label>Tipo de persona
-            <select name="tipo_persona">
+            <select name="tipo_persona" required>
               <option value="fisica">Persona fisica</option>
               <option value="juridica">Persona juridica</option>
             </select>
           </label>
           <label>Nombre o razon social <input name="nombre" autocomplete="name" required></label>
-          <label>NIF, NIE o CIF <input name="nif" autocomplete="off" required></label>
-          <label>Representante <input name="representante"></label>
-          <label>Email <input name="email" type="email" autocomplete="email"></label>
-          <label>Telefono <input name="telefono" type="tel" autocomplete="tel"></label>
-          <label class="wide">Direccion <input name="direccion" autocomplete="street-address"></label>
-          <label>Codigo postal <input name="cp" inputmode="numeric"></label>
-          <label>Poblacion <input name="poblacion"></label>
-          <label>Provincia <input name="provincia"></label>
+          <label>NIF, NIE o CIF <input name="nif" autocomplete="off" maxlength="9" required></label>
+          <div id="representative-fields" class="wide grid nested hidden">
+            <label>Nombre y apellidos del representante
+              <input name="representante_nombre" autocomplete="name">
+            </label>
+            <label>DNI o NIE del representante
+              <input name="representante_nif" maxlength="9">
+            </label>
+          </div>
+          <label>Email <input name="email" type="email" autocomplete="email" required></label>
+          <label>Telefono <input name="telefono" type="tel" autocomplete="tel" pattern="[+0-9 ]{9,18}" required></label>
+          <label class="wide">Direccion <input name="direccion" autocomplete="street-address" required></label>
+          <label>Codigo postal <input name="cp" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" required></label>
+          <label>Poblacion <input name="poblacion" required></label>
+          <label>Provincia <input name="provincia" required></label>
         </div>
       </section>
 
@@ -48,16 +55,29 @@
       <section class="card form-step hidden" data-step="2">
         <div class="step-label">2 de 3 · Vehiculo y operacion</div>
         <div class="grid">
-          <label>Matricula <input name="vehiculo_matricula"></label>
-          <label>Bastidor <input name="vehiculo_bastidor"></label>
-          <label>Marca <input name="vehiculo_marca"></label>
-          <label>Modelo y version <input name="vehiculo_modelo"></label>
-          <label>Kilometraje <input name="kilometraje" inputmode="numeric"></label>
-          <label>Precio de venta <input name="precio_venta" inputmode="decimal"></label>
-          <label>Fecha de entrega <input name="fecha_operacion" type="date"></label>
-          <label>Forma de pago <input name="forma_pago"></label>
-          <label class="wide">Cargas, reserva de dominio o financiacion
-            <textarea name="cargas"></textarea>
+          <label>Matricula <input name="vehiculo_matricula" pattern="[A-Za-z0-9 -]{5,12}" required></label>
+          <label>Bastidor <input name="vehiculo_bastidor" minlength="17" maxlength="17" pattern="[A-HJ-NPR-Za-hj-npr-z0-9]{17}" required></label>
+          <label>Marca <input name="vehiculo_marca" required></label>
+          <label>Modelo y version <input name="vehiculo_modelo" required></label>
+          <label>Primera matriculacion <input name="primera_matriculacion" type="date" required></label>
+          <label>Kilometraje <input name="kilometraje" type="number" min="0" step="1" required></label>
+          <label>Precio de venta <input name="precio_venta" type="number" min="0.01" step="0.01" required></label>
+          <label>Fecha de entrega <input name="fecha_operacion" type="date" required></label>
+          <label>Hora de entrega <input name="hora_entrega" type="time" required></label>
+          <label>Forma de pago <input name="forma_pago" required></label>
+          <label>Numero de llaves <input name="llaves_vehiculo" type="number" min="1" step="1" required></label>
+          <label>Situacion de cargas
+            <select name="cargas_estado" required>
+              <option value="">Selecciona una opcion</option>
+              <option value="sin_cargas">Sin cargas ni financiacion</option>
+              <option value="con_cargas">Con cargas, reserva o financiacion</option>
+            </select>
+          </label>
+          <label id="loads-detail" class="wide hidden">Detalle de cargas, reserva o financiacion
+            <textarea name="cargas_detalle"></textarea>
+          </label>
+          <label class="wide">Estado conocido del vehiculo
+            <textarea name="estado_vehiculo" required></textarea>
           </label>
         </div>
       </section>
@@ -65,22 +85,25 @@
       <section class="card form-step hidden" data-step="2">
         <div class="step-label">2 de 3 · Notificaciones</div>
         <div class="grid">
-          <label class="wide">Domicilio a efectos de notificacion
-            <input name="domicilio_notificaciones">
+          <label class="wide consent same-address">
+            <input id="same-address" name="envio_misma_direccion" type="checkbox">
+            <span>La direccion de envio es la misma que la direccion anterior</span>
           </label>
-          <label class="wide">Observaciones para la liquidacion
-            <textarea name="observaciones_fiscales"></textarea>
-          </label>
+          <label class="wide">Direccion de envio <input name="direccion_envio" required></label>
+          <label>Codigo postal de envio <input name="cp_envio" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" required></label>
+          <label>Poblacion de envio <input name="poblacion_envio" required></label>
+          <label>Provincia de envio <input name="provincia_envio" required></label>
         </div>
       </section>
       {% endif %}
 
       <section class="card form-step hidden" data-step="3">
-        <div class="step-label">3 de 3 · Documentacion y revision</div>
-        <label class="upload">
-          <span>Adjunta DNI/NIE/CIF y documentacion necesaria</span>
+        <div class="step-label">3 de 3 · Revision y envio</div>
+        <label id="invoice-upload" class="upload hidden">
+          <span>Adjunta la factura de venta</span>
+          <strong>Obligatoria cuando el vendedor es una persona juridica.</strong>
           <small>PDF, JPG o PNG · maximo 10 MB por archivo</small>
-          <input id="documents" type="file" accept=".pdf,.jpg,.jpeg,.png" multiple>
+          <input id="invoice" type="file" accept=".pdf,.jpg,.jpeg,.png">
         </label>
         <div id="upload-list"></div>
         <div id="review" class="review"></div>

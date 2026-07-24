@@ -25,6 +25,7 @@ from backend.dgt_api.service import (
     verificar_enlace,
 )
 from backend.dgt_api.storage import save_private_upload
+from backend.dgt_api.validation import validar_parte
 
 app = FastAPI(title="Gestinem Tramites DGT API", version="1.0.0")
 WEB_DIR = Path(__file__).with_name("web")
@@ -142,8 +143,15 @@ def validar_interno(expediente_id: str, db: Session = Depends(get_db)):
     item = cargar_expediente(db, expediente_id)
     if not all(parte.estado == "completado" for parte in item.partes):
         raise HTTPException(422, "Ambas partes deben haber completado sus datos")
-    if not db.scalar(select(Documento.id).where(Documento.expediente_id == expediente_id).limit(1)):
-        raise HTTPException(422, "Debe existir al menos un documento aportado")
+    vendedor = next(parte for parte in item.partes if parte.rol == "vendedor")
+    if vendedor.tipo_persona == "juridica" and not db.scalar(
+        select(Documento.id).where(
+            Documento.expediente_id == expediente_id,
+            Documento.rol == "vendedor",
+            Documento.tipo == "factura",
+        ).limit(1)
+    ):
+        raise HTTPException(422, "La factura del vendedor juridico es obligatoria")
     item.estado = "validado"
     registrar_evento(db, item.id, "expediente_validado", "gest2a3eco")
     db.commit()
@@ -218,6 +226,16 @@ def get_documentos_generados(expediente_id: str, db: Session = Depends(get_db)):
 def public_context(referencia: str, rol: str, token: str, db: Session):
     item, _ = verificar_enlace(db, referencia, rol, token)
     own = next(parte for parte in item.partes if parte.rol == rol)
+    factura_aportada = bool(
+        rol == "vendedor"
+        and db.scalar(
+            select(Documento.id).where(
+                Documento.expediente_id == item.id,
+                Documento.rol == "vendedor",
+                Documento.tipo == "factura",
+            ).limit(1)
+        )
+    )
     return {
         "referencia": item.referencia,
         "rol": rol,
@@ -233,6 +251,7 @@ def public_context(referencia: str, rol: str, token: str, db: Session):
         "vehiculo": (item.vehiculo.datos | {"matricula": item.vehiculo.matricula, "bastidor": item.vehiculo.bastidor})
         if rol == "vendedor" and item.vehiculo else {},
         "operacion": item.operacion.datos if rol == "vendedor" and item.operacion else {},
+        "factura_aportada": factura_aportada,
     }
 
 
@@ -267,8 +286,17 @@ def submit_public(
 ):
     item, _ = verificar_enlace(db, referencia, rol, token)
     parte = next(part for part in item.partes if part.rol == rol)
-    if not parte.nombre or not parte.nif:
-        raise HTTPException(422, "Nombre y NIF son obligatorios")
+    errors = validar_parte(parte, rol)
+    if rol == "vendedor" and parte.tipo_persona == "juridica" and not db.scalar(
+        select(Documento.id).where(
+            Documento.expediente_id == item.id,
+            Documento.rol == "vendedor",
+            Documento.tipo == "factura",
+        ).limit(1)
+    ):
+        errors.append("La factura emitida por el vendedor es obligatoria.")
+    if errors:
+        raise HTTPException(422, detail=errors)
     if not privacy_accepted:
         raise HTTPException(422, "Debe aceptar la informacion de proteccion de datos")
     parte.estado = "completado"
@@ -289,6 +317,9 @@ async def post_public_documento(
     db: Session = Depends(get_db),
 ):
     item, _ = verificar_enlace(db, referencia, rol, token)
+    parte = next(part for part in item.partes if part.rol == rol)
+    if rol != "vendedor" or parte.tipo_persona != "juridica" or tipo != "factura":
+        raise HTTPException(422, "Solo el vendedor juridico debe aportar la factura.")
     stored = await save_private_upload(file, referencia, rol)
     doc = Documento(expediente_id=item.id, rol=rol, tipo=tipo[:64], **stored)
     db.add(doc)

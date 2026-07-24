@@ -59,6 +59,7 @@ z_tecodir_*.txt
 *.sqlite
 *.sqlite3
 backend/runtime/
+tramites_dgt/
 
 # Instaladores
 dist_installer/
