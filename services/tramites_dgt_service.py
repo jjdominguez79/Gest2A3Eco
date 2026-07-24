@@ -93,6 +93,9 @@ class TramitesDgtService:
         actual = self._repo.get_expediente(expediente_id)
         if not actual:
             raise ValueError("Expediente DGT no encontrado.")
+        codigo_tasa = str(payload.get("codigo_tasa") or "").strip().upper()
+        if codigo_tasa and not re.fullmatch(r"[A-Z0-9-]{6,32}", codigo_tasa):
+            raise ValueError("El codigo de tasa debe tener entre 6 y 32 letras, numeros o guiones.")
         actualizado = dict(actual)
         for key in (
             "titulo",
@@ -105,6 +108,8 @@ class TramitesDgtService:
             "observaciones",
         ):
             actualizado[key] = str(payload.get(key) or "").strip()
+        actualizado["codigo_tasa"] = codigo_tasa
+        actualizado["modelo_620_presentado"] = bool(payload.get("modelo_620_presentado"))
         actualizado["vendedor_telefono"] = self._normalizar_telefono(payload.get("vendedor_telefono"))
         actualizado["comprador_telefono"] = self._normalizar_telefono(payload.get("comprador_telefono"))
         actualizado["vehiculo_matricula"] = self._normalizar_matricula(payload.get("vehiculo_matricula"))
@@ -223,13 +228,18 @@ class TramitesDgtService:
         self._repo.upsert_expediente(expediente)
 
     def adjuntar_documento(self, expediente_id: str, rol: str, file_path: str, tipo: str = "", descripcion: str = "") -> dict:
-        rol = self._validar_rol(rol)
+        rol = str(rol or "").strip().lower()
+        if rol not in ROLES_PARTE | {"gestor"}:
+            raise ValueError("Rol DGT no valido.")
         expediente = self._repo.get_expediente(expediente_id)
         if not expediente:
             raise ValueError("Expediente DGT no encontrado.")
         path = Path(file_path).expanduser()
         if not path.exists() or not path.is_file():
             raise FileNotFoundError(f"No existe el documento adjunto: {path}")
+        upload_remote = getattr(self._repo, "upload_documento", None)
+        if callable(upload_remote):
+            return upload_remote(expediente_id, rol, str(tipo or "documentacion"), str(path))
         digest = self._hash_file(path)
         item = {
             "id": str(uuid.uuid4()),
@@ -339,6 +349,10 @@ class TramitesDgtService:
                 errors.append(f"La {etiqueta} de envio es obligatoria.")
         if comprador.get("envio_cp") and not re.fullmatch(r"\d{5}", str(comprador["envio_cp"])):
             errors.append("El codigo postal de envio debe tener 5 digitos.")
+        if expediente.get("modelo_620_presentado") and not any(
+            doc.get("tipo") == "modelo_620" for doc in expediente.get("documentos") or []
+        ):
+            errors.append("Debes adjuntar el modelo 620 presentado.")
         if vendedor.get("tipo_persona") == "juridica":
             tiene_factura = any(
                 doc.get("rol") == "vendedor" and doc.get("tipo") == "factura"

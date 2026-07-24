@@ -121,6 +121,8 @@ class ApiDgtRepository:
             "vehiculo_bastidor": vehiculo.get("bastidor", ""),
             "precio_venta": operacion.get("precio_venta"),
             "fecha_operacion": operacion.get("fecha_operacion", ""),
+            "codigo_tasa": operacion.get("codigo_tasa", ""),
+            "modelo_620_presentado": bool(operacion.get("modelo_620_presentado", False)),
             "documentos": item.get("documentos") or [],
         }
 
@@ -169,6 +171,8 @@ class ApiDgtRepository:
                 "estado": expediente.get("estado", "borrador"),
                 "responsable": expediente.get("responsable", ""),
                 "observaciones": expediente.get("observaciones", ""),
+                "codigo_tasa": expediente.get("codigo_tasa", ""),
+                "modelo_620_presentado": bool(expediente.get("modelo_620_presentado", False)),
                 "version": expediente.get("version"),
             },
         )
@@ -216,6 +220,15 @@ class ApiDgtRepository:
 
     def eliminar_documento_generado(self, documento_id: str) -> dict | None:
         return self._request("DELETE", f"/api/v1/documentos-generados/{documento_id}")
+
+    def upload_documento(self, expediente_id: str, rol: str, tipo: str, file_path: str) -> dict:
+        with open(file_path, "rb") as fh:
+            return self._request(
+                "POST",
+                f"/api/v1/expedientes/{expediente_id}/documentos",
+                data={"rol": rol, "tipo": tipo},
+                files={"file": (file_path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1], fh)},
+            )
 
     def download_documento(self, documento_id: str, target_path: str) -> str:
         response = self._http.get(

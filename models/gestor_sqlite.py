@@ -595,6 +595,8 @@ class GestorSQLite:
               vehiculo_bastidor TEXT,
               precio_venta REAL,
               fecha_operacion TEXT,
+              codigo_tasa TEXT,
+              modelo_620_presentado INTEGER NOT NULL DEFAULT 0,
               observaciones TEXT,
               vendedor_token_hash TEXT,
               comprador_token_hash TEXT,
@@ -633,6 +635,9 @@ class GestorSQLite:
             CREATE INDEX IF NOT EXISTS idx_dgt_documentos_expediente
               ON dgt_documentos_generados(expediente_id, tipo_documento);
         """)
+        self.conn.commit()
+        self._ensure_column("dgt_expedientes", "codigo_tasa", "TEXT")
+        self._ensure_column("dgt_expedientes", "modelo_620_presentado", "INTEGER NOT NULL DEFAULT 0")
         self.conn.commit()
         # Migración: crear tabla plan_cuentas si no existe (idempotente via SCHEMA)
         self.conn.executescript(
@@ -3600,7 +3605,8 @@ class GestorSQLite:
                 SET estado=?, titulo=?, vendedor_nombre=?, vendedor_email=?, vendedor_telefono=?,
                     comprador_nombre=?, comprador_email=?, comprador_telefono=?,
                     vehiculo_matricula=?, vehiculo_bastidor=?, precio_venta=?, fecha_operacion=?,
-                    observaciones=?, vendedor_token_hash=?, comprador_token_hash=?,
+                    codigo_tasa=?, modelo_620_presentado=?, observaciones=?,
+                    vendedor_token_hash=?, comprador_token_hash=?,
                     vendedor_token_created_at=?, comprador_token_created_at=?,
                     vendedor_payload_json=?, comprador_payload_json=?, documentos_json=?,
                     validado_por=?, validado_at=?, firma_estado=?, firma_provider=?, firma_request_id=?,
@@ -3620,6 +3626,8 @@ class GestorSQLite:
                     expediente.get("vehiculo_bastidor"),
                     expediente.get("precio_venta"),
                     expediente.get("fecha_operacion"),
+                    expediente.get("codigo_tasa"),
+                    1 if expediente.get("modelo_620_presentado") else 0,
                     expediente.get("observaciones"),
                     expediente.get("vendedor_token_hash"),
                     expediente.get("comprador_token_hash"),
@@ -3644,10 +3652,11 @@ class GestorSQLite:
             INSERT INTO dgt_expedientes
             (id, referencia, tipo, estado, titulo, vendedor_nombre, vendedor_email, vendedor_telefono,
              comprador_nombre, comprador_email, comprador_telefono, vehiculo_matricula, vehiculo_bastidor,
-             precio_venta, fecha_operacion, observaciones, vendedor_token_hash, comprador_token_hash,
+             precio_venta, fecha_operacion, codigo_tasa, modelo_620_presentado, observaciones,
+             vendedor_token_hash, comprador_token_hash,
              vendedor_token_created_at, comprador_token_created_at, vendedor_payload_json, comprador_payload_json,
              documentos_json, firma_estado, firma_provider, firma_request_id, created_by, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 expediente_id,
@@ -3665,6 +3674,8 @@ class GestorSQLite:
                 expediente.get("vehiculo_bastidor"),
                 expediente.get("precio_venta"),
                 expediente.get("fecha_operacion"),
+                expediente.get("codigo_tasa"),
+                1 if expediente.get("modelo_620_presentado") else 0,
                 expediente.get("observaciones"),
                 expediente.get("vendedor_token_hash"),
                 expediente.get("comprador_token_hash"),
@@ -3751,6 +3762,7 @@ class GestorSQLite:
         item["vendedor_payload"] = json.loads(item.get("vendedor_payload_json") or "{}")
         item["comprador_payload"] = json.loads(item.get("comprador_payload_json") or "{}")
         item["documentos"] = json.loads(item.get("documentos_json") or "[]")
+        item["modelo_620_presentado"] = bool(item.get("modelo_620_presentado"))
         item.pop("vendedor_payload_json", None)
         item.pop("comprador_payload_json", None)
         item.pop("documentos_json", None)

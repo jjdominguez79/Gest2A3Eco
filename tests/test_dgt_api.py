@@ -216,3 +216,45 @@ def test_elimina_documentos_y_expediente_sin_dejar_ficheros(tmp_path, monkeypatc
     assert client.delete(f"/api/v1/expedientes/{item['id']}", headers=headers).status_code == 204
     assert client.get(f"/api/v1/expedientes/{item['id']}", headers=headers).status_code == 404
     Base.metadata.drop_all(engine)
+
+
+def test_codigo_tasa_y_modelo_620_presentado(tmp_path, monkeypatch):
+    client, engine = _client(tmp_path, monkeypatch)
+    monkeypatch.setenv("DGT_STORAGE_DIR", str(tmp_path / "private"))
+    headers = {"X-API-Key": "test-secret"}
+    item = client.post("/api/v1/expedientes", headers=headers, json={}).json()
+    links = client.post(f"/api/v1/expedientes/{item['id']}/links", headers=headers).json()
+    for rol in ("vendedor", "comprador"):
+        token = links[rol]["url"].split("token=", 1)[1]
+        path = f"/public/tramites/{item['referencia']}/{rol}"
+        assert client.patch(f"{path}?token={token}", json=_party_payload(role=rol)).status_code == 200
+        assert client.post(f"{path}/submit?token={token}&privacy_accepted=true").status_code == 200
+
+    invalid = client.patch(
+        f"/api/v1/expedientes/{item['id']}",
+        headers=headers,
+        json={"codigo_tasa": "?!", "version": 1},
+    )
+    assert invalid.status_code == 422
+    patched = client.patch(
+        f"/api/v1/expedientes/{item['id']}",
+        headers=headers,
+        json={"codigo_tasa": "TASA-123456789", "modelo_620_presentado": True, "version": 1},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["operacion"]["codigo_tasa"] == "TASA-123456789"
+    missing = client.post(f"/api/v1/expedientes/{item['id']}/validar", headers=headers)
+    assert missing.status_code == 422
+    assert "620" in missing.json()["detail"]
+
+    uploaded = client.post(
+        f"/api/v1/expedientes/{item['id']}/documentos",
+        headers=headers,
+        data={"rol": "gestor", "tipo": "modelo_620"},
+        files={"file": ("modelo620.pdf", b"%PDF-1.4 modelo 620", "application/pdf")},
+    )
+    assert uploaded.status_code == 201
+    assert client.post(f"/api/v1/expedientes/{item['id']}/validar", headers=headers).status_code == 200
+    docs = client.get(f"/api/v1/expedientes/{item['id']}/documentos", headers=headers).json()
+    assert any(doc["tipo"] == "modelo_620" for doc in docs)
+    Base.metadata.drop_all(engine)

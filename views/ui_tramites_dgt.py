@@ -36,6 +36,8 @@ class UITramitesDgt(ttk.Frame):
             "vehiculo_bastidor": tk.StringVar(),
             "precio_venta": tk.StringVar(),
             "fecha_operacion": tk.StringVar(),
+            "codigo_tasa": tk.StringVar(),
+            "modelo_620_presentado": tk.BooleanVar(value=False),
             "observaciones": tk.StringVar(),
         }
         self._build()
@@ -100,11 +102,17 @@ class UITramitesDgt(ttk.Frame):
                 ("Bastidor", "vehiculo_bastidor"),
                 ("Precio venta", "precio_venta"),
                 ("Fecha operacion", "fecha_operacion"),
+                ("Codigo de tasa pagada", "codigo_tasa"),
                 ("Observaciones", "observaciones"),
             )
         ):
             ttk.Label(form, text=label).grid(row=idx, column=0, sticky="w", padx=8, pady=3)
             ttk.Entry(form, textvariable=self._vars[key], width=48).grid(row=idx, column=1, sticky="ew", padx=8, pady=3)
+        ttk.Checkbutton(
+            form,
+            text="Modelo 620 presentado",
+            variable=self._vars["modelo_620_presentado"],
+        ).grid(row=13, column=1, sticky="w", padx=8, pady=3)
         form.columnconfigure(1, weight=1)
 
         actions = ttk.Frame(right)
@@ -113,6 +121,7 @@ class UITramitesDgt(ttk.Frame):
         ttk.Button(actions, text="Datos vendedor", command=lambda: self._editar_parte("vendedor")).pack(side=tk.LEFT, padx=5)
         ttk.Button(actions, text="Datos comprador", command=lambda: self._editar_parte("comprador")).pack(side=tk.LEFT, padx=5)
         ttk.Button(actions, text="Adjuntar", command=self._adjuntar_documento).pack(side=tk.LEFT, padx=5)
+        ttk.Button(actions, text="Subir modelo 620", command=self._subir_modelo_620).pack(side=tk.LEFT, padx=5)
         ttk.Button(actions, text="Regenerar enlaces", command=self._regenerar_links).pack(side=tk.LEFT, padx=5)
         ttk.Button(actions, text="Validar", command=self._validar).pack(side=tk.LEFT, padx=5)
         ttk.Button(actions, text="Generar documentos", command=self._generar_documentos).pack(side=tk.LEFT, padx=5)
@@ -468,6 +477,25 @@ class UITramitesDgt(ttk.Frame):
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
 
+    def _subir_modelo_620(self):
+        if not self._current_id:
+            return
+        path = filedialog.askopenfilename(
+            title="Seleccionar modelo 620 presentado",
+            filetypes=(("PDF o imagen", "*.pdf *.jpg *.jpeg *.png"), ("Todos", "*.*")),
+        )
+        if not path:
+            return
+        try:
+            self._service.adjuntar_documento(
+                self._current_id, "gestor", path, tipo="modelo_620", descripcion="Modelo 620 presentado"
+            )
+            self._vars["modelo_620_presentado"].set(True)
+            self._service.guardar_expediente(self._current_id, self._payload())
+            self._load_adjuntos(self._service.get_expediente(self._current_id))
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+
     def _copy_link(self, rol: str):
         link = self.var_link_vendedor.get() if rol == "vendedor" else self.var_link_comprador.get()
         if not link or "token=" not in link:
@@ -514,8 +542,8 @@ class UITramitesDgt(ttk.Frame):
 
     def _clear_form(self):
         self._current_id = None
-        for var in self._vars.values():
-            var.set("")
+        for key, var in self._vars.items():
+            var.set(False if key == "modelo_620_presentado" else "")
         self.var_link_vendedor.set("")
         self.var_link_comprador.set("")
         self.docs_tv.delete(*self.docs_tv.get_children())

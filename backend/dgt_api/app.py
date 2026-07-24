@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 
 from pathlib import Path
 
@@ -106,8 +107,19 @@ def patch_expediente(expediente_id: str, payload: ExpedientePatch, db: Session =
     item = cargar_expediente(db, expediente_id)
     if payload.version is not None and payload.version != item.version:
         raise HTTPException(409, "El expediente fue modificado por otro usuario")
-    for key, value in payload.model_dump(exclude_none=True, exclude={"version"}).items():
+    if payload.codigo_tasa is not None and payload.codigo_tasa and not re.fullmatch(
+        r"[A-Za-z0-9-]{6,32}", payload.codigo_tasa.strip()
+    ):
+        raise HTTPException(422, "El codigo de tasa debe tener entre 6 y 32 letras, numeros o guiones")
+    gestion = payload.model_dump(
+        exclude_none=True, include={"codigo_tasa", "modelo_620_presentado"}
+    )
+    for key, value in payload.model_dump(
+        exclude_none=True, exclude={"version", "codigo_tasa", "modelo_620_presentado"}
+    ).items():
         setattr(item, key, value)
+    if gestion:
+        item.operacion.datos = {**(item.operacion.datos or {}), **gestion}
     item.version += 1
     registrar_evento(db, item.id, "expediente_actualizado", "gest2a3eco")
     db.commit()
@@ -179,6 +191,13 @@ def validar_interno(expediente_id: str, db: Session = Depends(get_db)):
         ).limit(1)
     ):
         raise HTTPException(422, "La factura del vendedor juridico es obligatoria")
+    if (item.operacion.datos or {}).get("modelo_620_presentado") and not db.scalar(
+        select(Documento.id).where(
+            Documento.expediente_id == expediente_id,
+            Documento.tipo == "modelo_620",
+        ).limit(1)
+    ):
+        raise HTTPException(422, "Debes adjuntar el modelo 620 presentado")
     item.estado = "validado"
     registrar_evento(db, item.id, "expediente_validado", "gest2a3eco")
     db.commit()
@@ -213,6 +232,28 @@ def documentos_aportados(expediente_id: str, db: Session = Depends(get_db)):
         }
         for doc in docs
     ]
+
+
+@app.post("/api/v1/expedientes/{expediente_id}/documentos", dependencies=[internal], status_code=201)
+async def post_documento_interno(
+    expediente_id: str,
+    rol: str = Form(default="gestor"),
+    tipo: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    item = cargar_expediente(db, expediente_id)
+    if tipo not in {"factura", "modelo_620", "documentacion"}:
+        raise HTTPException(422, "Tipo de documento no valido")
+    stored = await save_private_upload(file, item.referencia, rol)
+    doc = Documento(expediente_id=item.id, rol=rol[:16], tipo=tipo, **stored)
+    db.add(doc)
+    registrar_evento(
+        db, item.id, "documento_subido_internamente", "gest2a3eco",
+        {"tipo": doc.tipo, "nombre": doc.nombre_archivo, "sha256": doc.sha256},
+    )
+    db.commit()
+    return {"id": doc.id, "tipo": doc.tipo, "nombre_archivo": doc.nombre_archivo, "sha256": doc.sha256}
 
 
 @app.get("/api/v1/documentos/{documento_id}/download", dependencies=[internal])

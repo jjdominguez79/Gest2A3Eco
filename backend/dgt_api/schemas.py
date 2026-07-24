@@ -20,6 +20,8 @@ class ExpedientePatch(BaseModel):
     estado: str | None = None
     responsable: str | None = None
     observaciones: str | None = None
+    codigo_tasa: str | None = None
+    modelo_620_presentado: bool | None = None
     version: int | None = Field(default=None, ge=1)
 
 

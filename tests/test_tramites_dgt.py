@@ -61,7 +61,10 @@ def test_tramites_dgt_schema(tmp_path: Path):
     assert "dgt_expedientes" in tables
     assert "dgt_documentos_generados" in tables
     assert "usuarios_permisos_globales" in tables
-    for col in ("referencia", "estado", "vendedor_token_hash", "comprador_token_hash", "firma_provider"):
+    for col in (
+        "referencia", "estado", "vendedor_token_hash", "comprador_token_hash",
+        "firma_provider", "codigo_tasa", "modelo_620_presentado",
+    ):
         assert col in _columns(gestor, "dgt_expedientes")
 
 
