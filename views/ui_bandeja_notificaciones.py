@@ -314,8 +314,8 @@ class UIBandejaNotificaciones(ttk.Frame):
         messagebox.showinfo(
             "Sincronizar notificaciones",
             "La conexion con organismos no esta disponible todavia.\n\n"
-            "Esta funcion se activara cuando se configuren los conectores reales\n"
-            "(DEH, 060, NOTIFIC@) en la seccion de Buzones.",
+            "Utiliza la opcion 'Sincronizar ahora' de la configuracion DEHu\n"
+            "del cliente o la sincronizacion global de buzones DEHu.",
             parent=self.winfo_toplevel(),
         )
 

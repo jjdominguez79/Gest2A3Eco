@@ -1,17 +1,17 @@
 """
-Vista: Notificaciones electronicas del cliente (pantalla dividida en 2).
+Vista: configuracion del unico buzon DEHu del cliente.
 
 Izquierda:
   - Certificado digital unico del cliente (panel UICertificados).
-  - Opciones comunes que se aplican a TODOS los buzones del cliente
+  - Opciones del buzon DEHu del cliente.
     (email de aviso, modo de descarga, periodicidad, envio automatico,
     responsable interno).
 
 Derecha (patron Portal NEOS):
   - Tabla con todas las administraciones/organismos configurados globalmente
-    (Organismo, Descripcion, notificaciones Pendientes), con una marca por fila
+    DEHu es el unico organismo configurable, con una marca para activarlo.
     para elegir cuales gestiona el cliente. La URL del organismo seleccionado se
-    muestra debajo. Cada organismo marcado se materializa como un buzon activo.
+    Al marcarlo se materializa como el unico buzon activo del cliente.
 
 Un unico boton "Guardar configuracion" concilia todo.
 """
@@ -63,7 +63,7 @@ class UINotificacionesCliente(ttk.Frame):
 
         card = tk.Frame(left, bg=_BG)
         card.pack(fill="x", padx=12, pady=(10, 6))
-        tk.Label(card, text="Opciones comunes de los buzones", bg=_BG, fg=_HDR_FG,
+        tk.Label(card, text="Opciones del buzon DEHu", bg=_BG, fg=_HDR_FG,
                  font=("Segoe UI", 10, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
 
         self._var_email = tk.StringVar()
@@ -91,9 +91,9 @@ class UINotificacionesCliente(ttk.Frame):
     def _build_right(self, right):
         hdr = tk.Frame(right, bg=_HDR_BG)
         hdr.pack(fill="x")
-        tk.Label(hdr, text="Administraciones", bg=_HDR_BG, fg=_HDR_FG,
+        tk.Label(hdr, text="Buzon DEHu", bg=_HDR_BG, fg=_HDR_FG,
                  font=("Segoe UI", 11, "bold")).pack(side="left", padx=16, pady=10)
-        tk.Label(hdr, text="Marca (doble clic) las que gestionas para este cliente",
+        tk.Label(hdr, text="Activa DEHu para consultar las notificaciones del cliente",
                  bg=_HDR_BG, fg=_HDR_SUB, font=("Segoe UI", 9)).pack(side="left", pady=10)
 
         cont = tk.Frame(right, bg=_BG)
@@ -236,7 +236,7 @@ class UINotificacionesCliente(ttk.Frame):
                         "codigo_empresa": self._codigo,
                         "nombre": (existente.get("nombre") if existente else None) or org.get("nombre") or "Buzon",
                         "organismo_id": oid,
-                        "tipo_buzon": (existente.get("tipo_buzon") if existente else None) or "DEH",
+                        "tipo_buzon": "DEHU",
                         "nif_titular": nif,
                         "certificado_id": cert_id,
                         "activo": 1,

@@ -1,8 +1,7 @@
 """
 Vista: Gestion de Buzones de Notificacion.
 
-Un buzon es la combinacion empresa + organismo + tipo de servicio (DEH, 060...)
-que permite recibir notificaciones electronicas. Operativo sobre SQLite local.
+Cada cliente puede tener un unico buzon DEHu.
 
 Modelo de certificado unico: el buzon NO elige certificado; usa automaticamente
 el unico certificado digital del cliente (empresa). El NIF del titular tambien se
@@ -21,7 +20,7 @@ except Exception:  # pragma: no cover
     def _vigencia(_f):
         return ("", "neutro")
 
-TIPOS_BUZON = ["DEH", "060", "NOTIFIC@", "SNE", "CARPETA CIUDADANA", "OTRO"]
+TIPOS_BUZON = ["DEHU"]
 
 PERIODICIDADES = ["MANUAL", "DIARIA", "SEMANAL", "QUINCENAL", "MENSUAL"]
 
@@ -221,7 +220,7 @@ class _BuzonDialog(tk.Toplevel):
         self._org_ids     = [None] + [o["id"] for o in self._organismos]
 
         self._var_nombre     = tk.StringVar(value=self._buzon.get("nombre", ""))
-        self._var_tipo       = tk.StringVar(value=self._buzon.get("tipo_buzon", "DEH"))
+        self._var_tipo       = tk.StringVar(value="DEHU")
         self._var_periodicidad = tk.StringVar(value=self._buzon.get("periodicidad_sync", "MANUAL"))
         self._var_email      = tk.StringVar(value=self._buzon.get("email_aviso", "") or "")
         self._var_responsable = tk.StringVar(value=self._buzon.get("responsable_interno", "") or "")
@@ -299,7 +298,7 @@ class _BuzonDialog(tk.Toplevel):
             "codigo_empresa": self._empresa,
             "nombre":         nombre,
             "organismo_id":   org_id,
-            "tipo_buzon":     self._var_tipo.get().strip() or "DEH",
+            "tipo_buzon":     "DEHU",
             "nif_titular":    nif,
             "certificado_id": cert_id,
             "periodicidad_sync": self._var_periodicidad.get().strip() or "MANUAL",

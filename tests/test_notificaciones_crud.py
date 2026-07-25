@@ -96,40 +96,36 @@ def test_listar_certificados_solo_activos(tmp_path):
 def test_crear_organismo(tmp_path):
     g = _gestor(tmp_path)
     g.upsert_notif_organismo({
-        "codigo": "AEAT",
-        "nombre": "Agencia Tributaria",
-        "tipo":   "HACIENDA",
+        "codigo": "DEHU",
+        "nombre": "Direccion Electronica Habilitada unica",
+        "tipo":   "ESTATAL",
         "activo": 1,
     })
     rows = g.listar_notif_organismos()
-    assert any(r["codigo"] == "AEAT" for r in rows)
+    assert [r["codigo"] for r in rows] == ["DEHU"]
 
 
 def test_editar_organismo(tmp_path):
     g = _gestor(tmp_path)
-    g.upsert_notif_organismo({"codigo": "ORG1", "nombre": "Organismo Original", "tipo": "AAPP", "activo": 1})
-    org_id = next(r["id"] for r in g.listar_notif_organismos() if r["codigo"] == "ORG1")
-    g.upsert_notif_organismo({"id": org_id, "codigo": "ORG1", "nombre": "Organismo Editado", "tipo": "LOCAL", "activo": 1})
+    g.upsert_notif_organismo({"codigo": "DEHU", "nombre": "DEHu", "tipo": "ESTATAL", "activo": 1})
+    org_id = next(r["id"] for r in g.listar_notif_organismos() if r["codigo"] == "DEHU")
+    g.upsert_notif_organismo({"id": org_id, "codigo": "DEHU", "nombre": "DEHu Editada", "tipo": "ESTATAL", "activo": 1})
     org = g.get_notif_organismo(org_id)
-    assert org["nombre"] == "Organismo Editado"
-    assert org["tipo"] == "LOCAL"
+    assert org["nombre"] == "DEHu Editada"
 
 
-def test_eliminar_organismo(tmp_path):
+def test_rechaza_organismo_distinto_de_dehu(tmp_path):
     g = _gestor(tmp_path)
-    g.upsert_notif_organismo({"codigo": "BORRAR", "nombre": "A Borrar", "tipo": "OTRO", "activo": 1})
-    org_id = next(r["id"] for r in g.listar_notif_organismos() if r["codigo"] == "BORRAR")
-    g.eliminar_notif_organismo(org_id)
-    assert g.get_notif_organismo(org_id) is None
+    with pytest.raises(ValueError, match="DEHu"):
+        g.upsert_notif_organismo({"codigo": "TGSS", "nombre": "TGSS", "activo": 1})
 
 
 def test_listar_organismos_solo_activos(tmp_path):
     g = _gestor(tmp_path)
-    g.upsert_notif_organismo({"codigo": "ACT",  "nombre": "Activo",   "tipo": "AAPP", "activo": 1})
-    g.upsert_notif_organismo({"codigo": "INAC", "nombre": "Inactivo", "tipo": "AAPP", "activo": 0})
+    g.upsert_notif_organismo({"codigo": "DEHU", "nombre": "DEHu", "tipo": "ESTATAL", "activo": 1})
     todos   = g.listar_notif_organismos()
     activos = g.listar_notif_organismos(solo_activos=True)
-    assert len(todos)   >= 2
+    assert len(todos) == 1
     assert all(r["activo"] for r in activos)
 
 
@@ -137,8 +133,8 @@ def test_listar_organismos_solo_activos(tmp_path):
 
 def _crear_organismo_y_cert(g: GestorSQLite) -> tuple[int, int | None]:
     """Devuelve (organismo_id, cert_id) para usar en buzones."""
-    g.upsert_notif_organismo({"codigo": "TSSS", "nombre": "TGSS", "tipo": "SS", "activo": 1})
-    org_id = next(r["id"] for r in g.listar_notif_organismos() if r["codigo"] == "TSSS")
+    g.upsert_notif_organismo({"codigo": "DEHU", "nombre": "DEHu", "tipo": "ESTATAL", "activo": 1})
+    org_id = next(r["id"] for r in g.listar_notif_organismos() if r["codigo"] == "DEHU")
     g.upsert_notif_certificado({"codigo_empresa": EMPRESA, "nombre": "Cert SS", "nif_titular": "B99999999", "tipo": "PFX", "activo": 1})
     cert_id = g.listar_notif_certificados(EMPRESA)[0]["id"]
     return org_id, cert_id
@@ -149,33 +145,33 @@ def test_crear_buzon(tmp_path):
     org_id, cert_id = _crear_organismo_y_cert(g)
     g.upsert_notif_buzon({
         "codigo_empresa": EMPRESA,
-        "nombre":         "Buzon TGSS DEH",
+        "nombre":         "DEHu",
         "organismo_id":   org_id,
-        "tipo_buzon":     "DEH",
+        "tipo_buzon":     "DEHU",
         "nif_titular":    "B99999999",
         "certificado_id": cert_id,
         "activo":         1,
     })
     rows = g.listar_notif_buzones(EMPRESA)
     assert len(rows) == 1
-    assert rows[0]["nombre"] == "Buzon TGSS DEH"
+    assert rows[0]["nombre"] == "DEHu"
 
 
 def test_editar_buzon(tmp_path):
     g = _gestor(tmp_path)
     org_id, cert_id = _crear_organismo_y_cert(g)
-    g.upsert_notif_buzon({"codigo_empresa": EMPRESA, "nombre": "Buzon Orig", "organismo_id": org_id, "tipo_buzon": "DEH", "activo": 1})
+    g.upsert_notif_buzon({"codigo_empresa": EMPRESA, "nombre": "DEHu", "organismo_id": org_id, "tipo_buzon": "DEHU", "activo": 1})
     buzon_id = g.listar_notif_buzones(EMPRESA)[0]["id"]
-    g.upsert_notif_buzon({"id": buzon_id, "codigo_empresa": EMPRESA, "nombre": "Buzon Edit", "organismo_id": org_id, "tipo_buzon": "060", "activo": 1})
+    g.upsert_notif_buzon({"id": buzon_id, "codigo_empresa": EMPRESA, "nombre": "DEHu Editada", "organismo_id": org_id, "tipo_buzon": "DEHU", "activo": 1})
     buzon = g.get_notif_buzon(buzon_id)
-    assert buzon["nombre"] == "Buzon Edit"
-    assert buzon["tipo_buzon"] == "060"
+    assert buzon["nombre"] == "DEHu Editada"
+    assert buzon["tipo_buzon"] == "DEHU"
 
 
 def test_eliminar_buzon(tmp_path):
     g = _gestor(tmp_path)
     org_id, _ = _crear_organismo_y_cert(g)
-    g.upsert_notif_buzon({"codigo_empresa": EMPRESA, "nombre": "Temporal", "organismo_id": org_id, "tipo_buzon": "DEH", "activo": 1})
+    g.upsert_notif_buzon({"codigo_empresa": EMPRESA, "nombre": "DEHu", "organismo_id": org_id, "tipo_buzon": "DEHU", "activo": 1})
     buzon_id = g.listar_notif_buzones(EMPRESA)[0]["id"]
     g.eliminar_notif_buzon(EMPRESA, buzon_id)
     assert g.listar_notif_buzones(EMPRESA) == []
@@ -258,6 +254,45 @@ def test_indice_notif_buzones_organismo_existe(tmp_path):
         ).fetchall()
     }
     assert "idx_notif_buzones_organismo" in indices
+
+
+def test_migracion_conserva_historico_y_deja_un_solo_dehu(tmp_path):
+    g = _gestor(tmp_path)
+    now = "2026-07-25T12:00:00"
+    g.conn.execute(
+        """INSERT INTO notif_organismos
+           (codigo,nombre,tipo,activo,created_at,updated_at)
+           VALUES ('TGSS','TGSS','ESTATAL',1,?,?)""",
+        (now, now),
+    )
+    org_id = g.conn.execute(
+        "SELECT id FROM notif_organismos WHERE codigo='TGSS'"
+    ).fetchone()[0]
+    g.conn.execute(
+        """INSERT INTO notif_buzones
+           (id,codigo_empresa,nombre,organismo_id,tipo_buzon,activo,created_at,updated_at)
+           VALUES ('b-tgss',?,'TGSS',?,'DEH',1,?,?)""",
+        (EMPRESA, org_id, now, now),
+    )
+    g.conn.execute(
+        """INSERT INTO notif_bandeja
+           (id,codigo_empresa,ejercicio,buzon_id,organismo_id,asunto,estado,created_at,updated_at)
+           VALUES ('n-tgss',?,?,'b-tgss',?,'Notificacion historica','PENDIENTE',?,?)""",
+        (EMPRESA, EJERCICIO, org_id, now, now),
+    )
+    g.conn.commit()
+
+    g.asegurar_dehu_unico()
+
+    assert [o["codigo"] for o in g.listar_notif_organismos()] == ["DEHU"]
+    buzones = g.listar_notif_buzones(EMPRESA)
+    assert len(buzones) == 1
+    assert buzones[0]["organismo_codigo"] == "DEHU"
+    assert buzones[0]["tipo_buzon"] == "DEHU"
+    historico = g.get_notif_bandeja_item("n-tgss")
+    assert historico is not None
+    assert historico["organismo_codigo"] == "DEHU"
+    assert historico["buzon_id"] == buzones[0]["id"]
 
 
 # ── Migracion: tablas del modulo existen ─────────────────────────────────────

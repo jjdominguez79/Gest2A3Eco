@@ -4804,6 +4804,9 @@ class GestorSQLite:
 
     def upsert_notif_organismo(self, org: dict) -> int:
         now = self._utc_now()
+        codigo = org.get("codigo", "").upper().strip()
+        if codigo != "DEHU":
+            raise ValueError("DEHu es el unico organismo de notificaciones soportado.")
         org_id = org.get("id")
         if org_id:
             self.conn.execute(
@@ -4822,7 +4825,7 @@ class GestorSQLite:
                 """,
                 (
                     int(org_id),
-                    org.get("codigo", "").upper().strip(),
+                    codigo,
                     org.get("nombre", ""),
                     org.get("tipo", "AAPP"),
                     org.get("url_portal"),
@@ -4847,7 +4850,7 @@ class GestorSQLite:
                     updated_at  = excluded.updated_at
                 """,
                 (
-                    org.get("codigo", "").upper().strip(),
+                    codigo,
                     org.get("nombre", ""),
                     org.get("tipo", "AAPP"),
                     org.get("url_portal"),
@@ -4860,7 +4863,7 @@ class GestorSQLite:
         self.conn.commit()
         row = self.conn.execute(
             "SELECT id FROM notif_organismos WHERE codigo=?",
-            (org.get("codigo", "").upper().strip(),),
+            (codigo,),
         ).fetchone()
         return row[0] if row else 0
 
@@ -4909,6 +4912,10 @@ class GestorSQLite:
         import uuid as _uuid
         now      = self._utc_now()
         buzon_id = str(buzon.get("id") or _uuid.uuid4())
+        organismo_id = buzon.get("organismo_id")
+        org = self.get_notif_organismo(organismo_id) if organismo_id else None
+        if not org or org.get("codigo") != "DEHU":
+            raise ValueError("El buzon debe pertenecer al organismo DEHu.")
         self.conn.execute(
             """
             INSERT INTO notif_buzones
@@ -4936,8 +4943,8 @@ class GestorSQLite:
                 buzon_id,
                 buzon.get("codigo_empresa"),
                 buzon.get("nombre", ""),
-                buzon.get("organismo_id"),
-                buzon.get("tipo_buzon", "DEH"),
+                organismo_id,
+                "DEHU",
                 buzon.get("nif_titular"),
                 buzon.get("certificado_id"),
                 int(buzon.get("activo", 1)),
@@ -5238,77 +5245,96 @@ class GestorSQLite:
         self.conn.commit()
         return log_id
 
-    # ── Seeder de datos simulados ────────────────────────────────────────────
+    # ── Configuracion del buzon unico DEHu ───────────────────────────────────
 
     def sembrar_organismos_simulados(self) -> None:
-        """Asegura el catalogo de organismos (buzones estilo Portal NEOS). Idempotente."""
+        """Compatibilidad: configura DEHu como unico buzon de notificaciones."""
+        self.asegurar_dehu_unico()
+
+    def asegurar_dehu_unico(self) -> None:
+        """Deja un unico buzon DEHu por cliente y conserva el historico.
+
+        Las versiones antiguas permitian configurar portales independientes,
+        aunque todos terminaban usando el conector DEHu. La migracion reasigna
+        sus notificaciones y logs al buzon DEHu del cliente antes de eliminar
+        los buzones y organismos obsoletos.
+        """
         now = self._utc_now()
-        organismos = [
-            # (codigo, nombre, tipo, url_portal, descripcion)
-            ("DEHU", "Direccion Electronica Habilitada Unica (DEHu)", "ESTATAL",
-             "https://dehu.redsara.es/", "Punto unico: AEAT, Seguridad Social y otros"),
-            ("TGSS", "Seguridad Social", "ESTATAL",
-             "https://sede.seg-social.gob.es/wps/portal/sede/sede/Inicio/NotificacionesTelematicas",
-             "SS - Sede electronica"),
-            ("DGT", "Direccion General de Trafico", "ESTATAL",
-             "https://sede.dgt.gob.es/es/", "DGT - Sede Electronica"),
-            ("ENOTUM", "eNotum", "AUTONOMICO",
-             "https://api.enotum.cat:8443/", "eNotum (Catalunya)"),
-            ("DFGIPUZKOA", "Diputacion Foral de Gipuzkoa", "FORAL",
-             "https://w390w.gipuzkoa.net/WAS/HACI/WATGipuzkoatariaWEB/inicio.do?idioma=C&app=BUZON",
-             "Sede electronica de la Diputacion Foral de Gipuzkoa"),
-            ("GVA", "Generalitat Valenciana", "AUTONOMICO",
-             "https://www.comunicaciones.gva.es/comunicaciones/login.html", "Generalitat Valenciana"),
-            ("XUNTA", "Xunta de Galicia", "AUTONOMICO",
-             "https://notifica.xunta.gal/notificaciones/portal/portada", "Xunta de Galicia"),
-            ("MADRID", "Comunidad de Madrid", "AUTONOMICO",
-             "https://gestiona3.madrid.org/", "Comunidad de Madrid"),
-            ("DPSEVILLA", "Diputacion Provincial de Sevilla", "PROVINCIAL",
-             "https://sedeelectronicadipusevilla.es/opencms/opencms/sede", "Diputacion Provincial de Sevilla"),
-            ("DFBIZKAIA", "Diputacion Foral de Bizkaia - eBizkaia", "FORAL",
-             "https://www.ebizkaia.eus/es/mi-perfil", "Diputacion Foral de Bizkaia - eBizkaia"),
-            ("EUSKADI", "Comunidad Autonoma de Pais Vasco", "AUTONOMICO",
-             "https://www.euskadi.eus/notificaciones/", "Comunidad Autonoma de Pais Vasco"),
-            ("JANDALUCIA", "Junta de Andalucia", "AUTONOMICO",
-             "https://ws020.juntadeandalucia.es/", "Junta de Andalucia"),
-            ("LPGC", "Ayuntamiento de Las Palmas de Gran Canaria", "LOCAL",
-             "https://sedeelectronica.laspalmasgc.es/web/inicioWebc.do?opcion=noreg",
-             "Ayuntamiento de Las Palmas de Gran Canaria"),
+        self.conn.execute(
+            """
+            INSERT INTO notif_organismos
+                (codigo, nombre, tipo, url_portal, descripcion, activo, created_at, updated_at)
+            VALUES ('DEHU', ?, 'ESTATAL', 'https://dehu.redsara.es/',
+                    'Punto unico de notificaciones de las Administraciones Publicas', 1, ?, ?)
+            ON CONFLICT(codigo) DO UPDATE SET
+                nombre = excluded.nombre,
+                tipo = excluded.tipo,
+                url_portal = excluded.url_portal,
+                descripcion = excluded.descripcion,
+                activo = 1,
+                updated_at = excluded.updated_at
+            """,
+            ("Direccion Electronica Habilitada unica (DEHu)", now, now),
+        )
+        dehu_id = self.conn.execute(
+            "SELECT id FROM notif_organismos WHERE codigo='DEHU'"
+        ).fetchone()[0]
+
+        empresas = [
+            r[0] for r in self.conn.execute(
+                "SELECT DISTINCT codigo_empresa FROM notif_buzones"
+            ).fetchall()
         ]
-        for codigo, nombre, tipo, url, descr in organismos:
+        for codigo_empresa in empresas:
+            buzones = self.conn.execute(
+                """
+                SELECT b.id, o.codigo
+                FROM notif_buzones b
+                LEFT JOIN notif_organismos o ON o.id=b.organismo_id
+                WHERE b.codigo_empresa=?
+                ORDER BY CASE WHEN o.codigo='DEHU' THEN 0 ELSE 1 END, b.created_at, b.id
+                """,
+                (codigo_empresa,),
+            ).fetchall()
+            if not buzones:
+                continue
+            principal = buzones[0][0]
             self.conn.execute(
                 """
-                INSERT INTO notif_organismos
-                    (codigo, nombre, tipo, url_portal, descripcion, activo, created_at, updated_at)
-                VALUES (?,?,?,?,?,1,?,?)
-                ON CONFLICT(codigo) DO UPDATE SET
-                    nombre      = excluded.nombre,
-                    tipo        = excluded.tipo,
-                    url_portal  = excluded.url_portal,
-                    descripcion = excluded.descripcion,
-                    activo      = 1,
-                    updated_at  = excluded.updated_at
+                UPDATE notif_buzones
+                SET nombre='DEHu', organismo_id=?, tipo_buzon='DEHU',
+                    updated_at=?
+                WHERE id=?
                 """,
-                (codigo, nombre, tipo, url, descr, now, now),
+                (dehu_id, now, principal),
             )
-        # Eliminar los organismos de demo antiguos (y sus datos dependientes)
-        # que no forman parte del catalogo de Portal NEOS.
-        legacy = ("AEAT", "SEPE", "AEPD", "MHACIENDA", "MINTRA", "AYTO")
-        ph = ",".join("?" for _ in legacy)
-        ids = [r[0] for r in self.conn.execute(
-            "SELECT id FROM notif_organismos WHERE codigo IN (%s)" % ph, legacy).fetchall()]
-        if ids:
-            iph = ",".join("?" for _ in ids)
-            buz = [r[0] for r in self.conn.execute(
-                "SELECT id FROM notif_buzones WHERE organismo_id IN (%s)" % iph, ids).fetchall()]
-            if buz:
-                bph = ",".join("?" for _ in buz)
-                self.conn.execute("DELETE FROM notif_bandeja WHERE buzon_id IN (%s)" % bph, buz)
-                self.conn.execute("DELETE FROM notif_sync_logs WHERE buzon_id IN (%s)" % bph, buz)
-            self.conn.execute("DELETE FROM notif_bandeja WHERE organismo_id IN (%s)" % iph, ids)
-            self.conn.execute("DELETE FROM notif_sync_logs WHERE organismo_id IN (%s)" % iph, ids)
-            self.conn.execute("DELETE FROM notif_buzones WHERE organismo_id IN (%s)" % iph, ids)
-            self.conn.execute("DELETE FROM notif_organismos WHERE id IN (%s)" % iph, ids)
+            sobrantes = [r[0] for r in buzones[1:]]
+            if sobrantes:
+                ph = ",".join("?" for _ in sobrantes)
+                self.conn.execute(
+                    "UPDATE notif_bandeja SET buzon_id=?, organismo_id=? "
+                    "WHERE buzon_id IN (%s)" % ph,
+                    (principal, dehu_id, *sobrantes),
+                )
+                self.conn.execute(
+                    "UPDATE notif_sync_logs SET buzon_id=?, organismo_id=? "
+                    "WHERE buzon_id IN (%s)" % ph,
+                    (principal, dehu_id, *sobrantes),
+                )
+                self.conn.execute(
+                    "DELETE FROM notif_buzones WHERE id IN (%s)" % ph,
+                    sobrantes,
+                )
+
+        self.conn.execute(
+            "UPDATE notif_bandeja SET organismo_id=? WHERE organismo_id IS NOT NULL",
+            (dehu_id,),
+        )
+        self.conn.execute(
+            "UPDATE notif_sync_logs SET organismo_id=? WHERE organismo_id IS NOT NULL",
+            (dehu_id,),
+        )
+        self.conn.execute("DELETE FROM notif_organismos WHERE codigo<>'DEHU'")
         self.conn.commit()
 
     def sembrar_datos_empresa_simulados(self, codigo_empresa: str, ejercicio: int) -> None:
@@ -5378,29 +5404,13 @@ class GestorSQLite:
             )
             cert_id = cert_activo["id"] if cert_activo else None
             org_map = {o["codigo"]: o["id"] for o in self.listar_notif_organismos()}
-            for buzon in [
-                {
-                    "id": str(_uuid.uuid4()), "codigo_empresa": codigo_empresa,
-                    "nombre": "DEH AEAT Principal", "organismo_id": org_map.get("AEAT"),
-                    "tipo_buzon": "DEH", "nif_titular": nif,
-                    "certificado_id": cert_id, "activo": 1,
-                    "ultima_consulta": "2026-06-09T10:30:00",
-                },
-                {
-                    "id": str(_uuid.uuid4()), "codigo_empresa": codigo_empresa,
-                    "nombre": "DEH Seguridad Social", "organismo_id": org_map.get("TGSS"),
-                    "tipo_buzon": "DEH", "nif_titular": nif,
-                    "certificado_id": cert_id, "activo": 1,
-                    "ultima_consulta": "2026-06-09T10:31:00",
-                },
-                {
-                    "id": str(_uuid.uuid4()), "codigo_empresa": codigo_empresa,
-                    "nombre": "060 AGE General", "organismo_id": org_map.get("MHACIENDA"),
-                    "tipo_buzon": "060", "nif_titular": nif,
-                    "certificado_id": cert_id, "activo": 1,
-                    "ultima_consulta": None,
-                },
-            ]:
+            for buzon in [{
+                "id": str(_uuid.uuid4()), "codigo_empresa": codigo_empresa,
+                "nombre": "DEHu", "organismo_id": org_map.get("DEHU"),
+                "tipo_buzon": "DEHU", "nif_titular": nif,
+                "certificado_id": cert_id, "activo": 1,
+                "ultima_consulta": None,
+            }]:
                 self.conn.execute(
                     "INSERT OR IGNORE INTO notif_buzones "
                     "(id,codigo_empresa,nombre,organismo_id,tipo_buzon,nif_titular,"
@@ -5423,7 +5433,11 @@ class GestorSQLite:
         if not existing_bandeja:
             self.sembrar_organismos_simulados()
             org_map   = {o["codigo"]: o["id"] for o in self.listar_notif_organismos()}
-            buzon_map = {b["organismo_codigo"]: b["id"] for b in self.listar_notif_buzones(codigo_empresa) if b.get("organismo_codigo")}
+            buzon_dehu = next(
+                (b["id"] for b in self.listar_notif_buzones(codigo_empresa)
+                 if b.get("organismo_codigo") == "DEHU"),
+                None,
+            )
             for item in [
                 {
                     "organismo": "AEAT", "asunto": "Requerimiento - Modelo 347 ejercicio 2024",
@@ -5501,8 +5515,8 @@ class GestorSQLite:
                         " pendiente de pago. Importe: 5.678,90 EUR. Plazo de alegaciones: 10 dias.",
                 },
             ]:
-                org_id   = org_map.get(item["organismo"])
-                buzon_id = buzon_map.get(item["organismo"])
+                org_id = org_map.get("DEHU")
+                buzon_id = buzon_dehu
                 self.conn.execute(
                     "INSERT OR IGNORE INTO notif_bandeja "
                     "(id,codigo_empresa,ejercicio,buzon_id,organismo_id,asunto,descripcion,"

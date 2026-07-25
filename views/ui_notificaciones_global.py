@@ -8,8 +8,7 @@ electronicas de TODOS los clientes. Se accede desde el menu principal
 Subpantallas:
     - Bandeja global:    notificaciones de todos los clientes.
     - Certificados:      certificados digitales de todos los clientes.
-    - Buzones:           buzones de notificacion de todos los clientes.
-    - Organismos:        catalogo global de organismos (sin cambios).
+    - Buzones DEHu:      configuracion DEHu de todos los clientes.
     - Sincronizaciones:  historico global de sincronizaciones (logs).
 
 El cliente es una dimension de configuracion y filtrado: la configuracion
@@ -26,8 +25,6 @@ from views.notificaciones_theme import *  # noqa: F401,F403
 from views.ui_bandeja_global import UIBandejaGlobal
 from views.ui_buzones_global import UIBuzonesGlobal
 from views.ui_certificados_global import UICertificadosGlobal
-from views.ui_certificados_obtenidos import UICertificadosObtenidos
-from views.ui_organismos import UIOrganismos
 from views.ui_sync_logs import UISyncLogs
 
 
@@ -40,14 +37,15 @@ class UINotificacionesGlobal(ttk.Frame):
         self._session = session
         self._on_open_empresa = on_open_empresa
         self._tabs: dict[str, ttk.Frame] = {}
+        self._gestor.asegurar_dehu_unico()
         self._build()
 
     def _build(self) -> None:
         hdr = tk.Frame(self, bg=_HDR_BG)
         hdr.pack(fill="x")
-        tk.Label(hdr, text="✉  Notificaciones Electronicas", bg=_HDR_BG, fg=_HDR_FG,
+        tk.Label(hdr, text="✉  Notificaciones DEHu", bg=_HDR_BG, fg=_HDR_FG,
                  font=("Segoe UI", 13, "bold"), anchor="w").pack(side="left", padx=16, pady=10)
-        tk.Label(hdr, text="Gestion centralizada de notificaciones de todos los clientes",
+        tk.Label(hdr, text="Gestion centralizada del Punto unico de notificaciones",
                  bg=_HDR_BG, fg=_HDR_SUB, font=("Segoe UI", 9)).pack(side="left", pady=10)
 
         nb = ttk.Notebook(self)
@@ -61,18 +59,12 @@ class UINotificacionesGlobal(ttk.Frame):
         nb.add(certificados, text="Certificados")
 
         buzones = UIBuzonesGlobal(nb, self._gestor, session=self._session)
-        nb.add(buzones, text="Buzones")
-
-        cert_obt = UICertificadosObtenidos(nb, self._gestor, session=self._session)
-        nb.add(cert_obt, text="Obtencion de certificados")
-
-        organismos = UIOrganismos(nb, self._gestor, session=self._session)
-        nb.add(organismos, text="Organismos")
+        nb.add(buzones, text="Buzones DEHu")
 
         logs = UISyncLogs(nb, self._gestor, session=self._session)
         nb.add(logs, text="Sincronizaciones / Logs")
 
-        self._views = [bandeja, certificados, buzones, cert_obt, organismos, logs]
+        self._views = [bandeja, certificados, buzones, logs]
         nb.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
     def _on_tab_changed(self, _e=None) -> None:

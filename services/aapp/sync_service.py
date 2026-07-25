@@ -3,8 +3,7 @@ Orquestador de sincronizacion de notificaciones.
 
 Sustituye la "sincronizacion simulada" de la UI por el flujo real:
   1. Resuelve el certificado del cliente (CertStore, certificado unico).
-  2. Localiza el conector del organismo (registro de base.py); si el organismo
-     no tiene conector propio, usa DEHu (que centraliza AEAT, Seg. Social, etc.).
+  2. Ejecuta exclusivamente el conector DEHu.
   3. Ejecuta el conector -> lista de NotificacionDTO.
   4. Persiste en notif_bandeja (idempotente, sin duplicar) y registra el
      resultado en notif_sync_logs. Actualiza ultima_consulta del buzon.
@@ -80,9 +79,14 @@ def sincronizar_buzon(gestor, buzon: dict, opciones: OpcionesSync | None = None,
         # 1) Certificado (unico del cliente)
         material = CertStore(gestor).material_para_buzon(buzon)
 
-        # 2) Conector. Si el organismo no tiene conector propio, se usa DEHu, que
-        # centraliza las notificaciones de AEAT, Seguridad Social y demas.
-        conector = obtener_conector(org_codigo) or obtener_conector("DEHU")
+        # 2) DEHu es el unico buzon soportado. No se redirigen silenciosamente
+        # otros portales al conector DEHu.
+        if org_codigo != "DEHU":
+            raise CertError(
+                f"El buzon '{org_codigo or '(sin codigo)'} ya no esta soportado. "
+                "Configura el cliente con el buzon unico DEHu."
+            )
+        conector = obtener_conector("DEHU")
         if conector is None:
             raise CertError(
                 f"No hay conector disponible para el organismo '{org_codigo or '(desconocido)'}'."
