@@ -140,3 +140,29 @@ class Comunicacion(Base):
     estado: Mapped[str] = mapped_column(String(32), default="preparada")
     datos: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Pago(Base):
+    __tablename__ = "dgt_pagos"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    expediente_id: Mapped[str] = mapped_column(
+        ForeignKey("dgt_expedientes.id", ondelete="CASCADE"), index=True
+    )
+    proveedor: Mapped[str] = mapped_column(String(32), default="redsys_paygold")
+    entorno: Mapped[str] = mapped_column(String(16), default="test")
+    pedido: Mapped[str] = mapped_column(String(12), unique=True, index=True)
+    importe_centimos: Mapped[int] = mapped_column(Integer)
+    moneda: Mapped[str] = mapped_column(String(3), default="978")
+    estado: Mapped[str] = mapped_column(String(32), default="solicitando", index=True)
+    enlace: Mapped[str] = mapped_column(Text, default="")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    codigo_respuesta: Mapped[str] = mapped_column(String(16), default="")
+    codigo_autorizacion: Mapped[str] = mapped_column(String(32), default="")
+    datos: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )

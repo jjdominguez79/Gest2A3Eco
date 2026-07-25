@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -53,6 +54,13 @@ class DocumentoGeneradoCreate(BaseModel):
     json_datos_generacion: dict[str, Any] = Field(default_factory=dict)
     hash_contenido: str | None = None
     estado: str = ""
+
+
+class PagoPayGoldCreate(BaseModel):
+    importe: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
+    descripcion: str = Field(default="", max_length=125)
+    caducidad_minutos: int = Field(default=4320, ge=5, le=43200)
+    enviar_desde_redsys: bool = False
 
 
 class OrmModel(BaseModel):

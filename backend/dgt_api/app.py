@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime
 import re
+import secrets
+from datetime import timedelta
 
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import delete, select, update
@@ -22,10 +24,19 @@ from backend.dgt_api.models import (
     Evento,
     Expediente,
     Firma,
+    Pago,
     Parte,
     SolicitudSubsanacion,
 )
-from backend.dgt_api.schemas import DocumentoGeneradoCreate, ExpedienteCreate, ExpedientePatch, PartePatch, SubsanacionCreate
+from backend.dgt_api.paygold import PayGoldClient, importe_centimos
+from backend.dgt_api.schemas import (
+    DocumentoGeneradoCreate,
+    ExpedienteCreate,
+    ExpedientePatch,
+    PagoPayGoldCreate,
+    PartePatch,
+    SubsanacionCreate,
+)
 from backend.dgt_api.security import require_internal_key, utcnow
 from backend.dgt_api.service import (
     cargar_expediente,
@@ -58,6 +69,23 @@ def get_db():
 
 
 internal = Depends(require_internal_key)
+
+
+def get_paygold_client() -> PayGoldClient:
+    settings = get_settings()
+    endpoint = (
+        "https://sis-t.redsys.es:25443/sis/rest/trataPeticionREST"
+        if settings.redsys_environment == "test"
+        else "https://sis.redsys.es/sis/rest/trataPeticionREST"
+    )
+    return PayGoldClient(
+        merchant_code=settings.redsys_merchant_code,
+        terminal=settings.redsys_terminal,
+        secret_key=settings.redsys_secret_key,
+        endpoint=endpoint,
+        notification_url=settings.redsys_notification_url,
+        timeout=settings.redsys_timeout,
+    )
 
 
 @app.get("/health")
@@ -168,7 +196,15 @@ def delete_expediente(expediente_id: str, db: Session = Depends(get_db)):
     registrar_evento(db, item.id, "expediente_eliminado", "gest2a3eco", {"referencia": item.referencia})
     db.flush()
     db.execute(update(Evento).where(Evento.expediente_id == expediente_id).values(expediente_id=None))
-    for model in (Enlace, Documento, SolicitudSubsanacion, DocumentoGenerado, Firma, Comunicacion):
+    for model in (
+        Enlace,
+        Documento,
+        SolicitudSubsanacion,
+        DocumentoGenerado,
+        Firma,
+        Comunicacion,
+        Pago,
+    ):
         db.execute(delete(model).where(model.expediente_id == expediente_id))
     db.delete(item)
     db.commit()
@@ -412,6 +448,215 @@ def delete_documento_generado(documento_id: str, db: Session = Depends(get_db)):
     db.delete(doc)
     db.commit()
     return result
+
+
+def serializar_pago(pago: Pago) -> dict:
+    return {
+        "id": pago.id,
+        "expediente_id": pago.expediente_id,
+        "proveedor": pago.proveedor,
+        "entorno": pago.entorno,
+        "pedido": pago.pedido,
+        "importe_centimos": pago.importe_centimos,
+        "moneda": pago.moneda,
+        "estado": pago.estado,
+        "enlace": pago.enlace,
+        "expires_at": pago.expires_at.isoformat() if pago.expires_at else None,
+        "codigo_respuesta": pago.codigo_respuesta,
+        "codigo_autorizacion": pago.codigo_autorizacion,
+        "created_at": pago.created_at.isoformat() if pago.created_at else None,
+        "updated_at": pago.updated_at.isoformat() if pago.updated_at else None,
+    }
+
+
+def nuevo_pedido_paygold(db: Session) -> str:
+    for _attempt in range(10):
+        pedido = f"{datetime.now().strftime('%H%M')}{secrets.token_hex(4).upper()}"
+        if not db.scalar(select(Pago.id).where(Pago.pedido == pedido)):
+            return pedido
+    raise HTTPException(503, "No se pudo generar un numero de pedido unico")
+
+
+@app.get("/api/v1/expedientes/{expediente_id}/pagos", dependencies=[internal])
+def get_pagos(expediente_id: str, db: Session = Depends(get_db)):
+    cargar_expediente(db, expediente_id)
+    items = db.scalars(
+        select(Pago)
+        .where(Pago.expediente_id == expediente_id)
+        .order_by(Pago.created_at.desc())
+    ).all()
+    return [serializar_pago(item) for item in items]
+
+
+@app.post(
+    "/api/v1/expedientes/{expediente_id}/pagos/paygold",
+    dependencies=[internal],
+    status_code=201,
+)
+def post_pago_paygold(
+    expediente_id: str,
+    payload: PagoPayGoldCreate,
+    db: Session = Depends(get_db),
+    client: PayGoldClient = Depends(get_paygold_client),
+):
+    settings = get_settings()
+    if settings.redsys_environment != "test":
+        raise HTTPException(409, "Esta fase solo permite generar pagos en el sandbox")
+    expediente = cargar_expediente(db, expediente_id)
+    firma = db.scalar(
+        select(Firma)
+        .where(Firma.expediente_id == expediente_id)
+        .order_by(Firma.id.desc())
+    )
+    if not firma or firma.estado.lower() not in {"firmado", "signed", "completed"}:
+        raise HTTPException(409, "El expediente debe estar completamente firmado")
+    comprador = next(
+        (parte for parte in expediente.partes if parte.rol == "comprador"), None
+    )
+    if not comprador:
+        raise HTTPException(422, "El expediente no contiene los datos del comprador")
+
+    cents = importe_centimos(payload.importe)
+    pedido = nuevo_pedido_paygold(db)
+    expires_at = utcnow() + timedelta(minutes=payload.caducidad_minutos)
+    pago = Pago(
+        expediente_id=expediente_id,
+        entorno="test",
+        pedido=pedido,
+        importe_centimos=int(cents),
+        estado="solicitando",
+        expires_at=expires_at,
+        datos={
+            "descripcion": payload.descripcion,
+            "comprador": comprador.nombre,
+            "email": comprador.email,
+            "telefono": comprador.telefono,
+        },
+    )
+    db.add(pago)
+    db.commit()
+    db.refresh(pago)
+
+    try:
+        result = client.crear_enlace(
+            order=pedido,
+            amount_cents=cents,
+            description=payload.descripcion
+            or f"Tramitacion DGT - {expediente.referencia}",
+            customer_name=comprador.nombre,
+            customer_email=comprador.email,
+            customer_mobile=comprador.telefono,
+            expiry_minutes=payload.caducidad_minutos,
+            enviar_desde_redsys=payload.enviar_desde_redsys,
+        )
+        response_code = str(
+            result.get("Ds_Response") or result.get("DS_RESPONSE") or ""
+        )
+        link = str(
+            result.get("Ds_UrlPago2Fases")
+            or result.get("DS_URLPAGO2FASES")
+            or ""
+        )
+        if response_code != "9998" or not link:
+            raise ValueError(
+                f"Redsys no devolvio un enlace pendiente valido ({response_code or 'sin codigo'})."
+            )
+        pago.estado = "enlace_generado"
+        pago.enlace = link
+        pago.codigo_respuesta = response_code
+        pago.datos = {**(pago.datos or {}), "respuesta_inicial": result}
+        registrar_evento(
+            db,
+            expediente_id,
+            "pago_enlace_generado",
+            "gest2a3eco",
+            {"pago_id": pago.id, "pedido": pedido, "entorno": "test"},
+        )
+        db.commit()
+        db.refresh(pago)
+        return serializar_pago(pago)
+    except Exception as exc:
+        pago.estado = "incidencia"
+        pago.datos = {**(pago.datos or {}), "error": str(exc)}
+        registrar_evento(
+            db,
+            expediente_id,
+            "pago_error",
+            "redsys",
+            {"pago_id": pago.id, "pedido": pedido, "error": str(exc)},
+        )
+        db.commit()
+        raise HTTPException(502, str(exc)) from exc
+
+
+@app.post(
+    "/api/v1/pagos/redsys/notificacion",
+    response_class=PlainTextResponse,
+)
+async def post_notificacion_redsys(
+    request: Request,
+    db: Session = Depends(get_db),
+    client: PayGoldClient = Depends(get_paygold_client),
+):
+    content_type = request.headers.get("content-type", "").lower()
+    envelope = (
+        await request.json()
+        if "application/json" in content_type
+        else dict(await request.form())
+    )
+    try:
+        result = client.validar_respuesta(envelope)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    pedido = str(result.get("Ds_Order") or result.get("DS_ORDER") or "")
+    pago = db.scalar(select(Pago).where(Pago.pedido == pedido))
+    if not pago:
+        raise HTTPException(404, "Pedido PayGold no encontrado")
+    merchant_code = str(
+        result.get("Ds_MerchantCode") or result.get("DS_MERCHANTCODE") or ""
+    )
+    terminal = str(result.get("Ds_Terminal") or result.get("DS_TERMINAL") or "")
+    amount = str(result.get("Ds_Amount") or result.get("DS_AMOUNT") or "")
+    settings = get_settings()
+    if (
+        merchant_code != settings.redsys_merchant_code
+        or terminal != settings.redsys_terminal
+        or amount != str(pago.importe_centimos)
+    ):
+        raise HTTPException(400, "Los datos de la notificacion no coinciden con el pago")
+
+    response_code = str(
+        result.get("Ds_Response") or result.get("DS_RESPONSE") or ""
+    ).zfill(4)
+    try:
+        authorized = 0 <= int(response_code) <= 100
+    except ValueError:
+        authorized = False
+    target_state = "pagado" if authorized else "denegado"
+    if pago.estado == target_state and pago.codigo_respuesta == response_code:
+        return "OK"
+    pago.estado = target_state
+    pago.codigo_respuesta = response_code
+    pago.codigo_autorizacion = str(
+        result.get("Ds_AuthorisationCode")
+        or result.get("DS_AUTHORISATIONCODE")
+        or ""
+    )
+    pago.datos = {**(pago.datos or {}), "notificacion": result}
+    registrar_evento(
+        db,
+        pago.expediente_id,
+        "pago_confirmado" if authorized else "pago_denegado",
+        "redsys",
+        {
+            "pago_id": pago.id,
+            "pedido": pedido,
+            "codigo_respuesta": response_code,
+        },
+    )
+    db.commit()
+    return "OK"
 
 
 def public_context(referencia: str, rol: str, token: str, db: Session):
