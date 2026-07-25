@@ -181,6 +181,12 @@ class TercerosOcrService:
             if _es_subcuenta_valida(sub, prefijo, ndig):
                 usadas.add(int(sub))
 
+        # 3. plan_cuentas importado de A3 para el ejercicio activo
+        for cuenta in gestor.get_plan_cuentas(codigo, ejercicio):
+            val = str(cuenta.get("cuenta") or "").strip()
+            if _es_subcuenta_valida(val, prefijo, ndig):
+                usadas.add(int(val))
+
         primera = int(prefijo) * (10 ** (ndig - len(prefijo))) + 1
         candidato = primera
         while candidato in usadas:

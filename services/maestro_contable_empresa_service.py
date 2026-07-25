@@ -140,6 +140,15 @@ class MaestroContableEmpresaService:
             if _es_del_prefijo(val, prefijo, digitos_plan):
                 usadas.add(int(val))
 
+        cuentas_plan = gestor.conn.execute(
+            "SELECT DISTINCT cuenta FROM plan_cuentas WHERE codigo_empresa=?",
+            (codigo_empresa,),
+        ).fetchall()
+        for row in cuentas_plan:
+            val = str(row[0] or "").strip()
+            if _es_del_prefijo(val, prefijo, digitos_plan):
+                usadas.add(int(val))
+
         primera = int(prefijo) * (10 ** (digitos_plan - len(prefijo))) + 1
         candidato = primera
         while candidato in usadas:

@@ -209,7 +209,9 @@ class MaestroTercerosService:
                 nombre_legal,
                 datos.get("nombre_comercial") or None,
                 tipo_id,
-                normalizar_codigo_pais(datos.get("pais")) or inferir_pais_desde_identificacion(nif_norm) or None,
+                normalizar_codigo_pais(datos.get("pais"))
+                or inferir_pais_desde_identificacion(nif_norm)
+                or "ES",
                 cp,
                 datos.get("observaciones") or None,
                 datos.get("origen") or "manual",
