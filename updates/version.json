@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.2.2",
+  "latest_version": "1.3.0",
   "minimum_required_version": "1.2.2",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.2.2/Setup_Gest2A3Eco_1.2.2.exe",
-  "changelog": "Se a�ade la publicacion de version de manera automatica.",
-  "force_update": true
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.3.0/Setup_Gest2A3Eco_1.3.0.exe",
+  "changelog": "Mejora la firma electronica de contratos y mandatos, asignando las zonas y los firmantes correctos. Corrige regresiones en el maestro de terceros y en la integracion OCR y contable.",
+  "force_update": false
 }
