@@ -54,6 +54,8 @@ class TramitesDgtService:
         session=None,
         repository: DgtRepository | None = None,
         firma_client=None,
+        firma_gestor_email: str = "",
+        firma_gestor_telefono: str = "",
         almacenamiento_client=None,
         almacenamiento_base_path: str = "",
     ):
@@ -62,6 +64,10 @@ class TramitesDgtService:
         self._repo = repository or SQLiteDgtRepository(gestor)
         self._session = session
         self._firma_client = firma_client
+        self._firma_gestor_email = str(
+            firma_gestor_email or getattr(firma_client, "from_email", "") or ""
+        ).strip()
+        self._firma_gestor_telefono = str(firma_gestor_telefono or "").strip()
         self._almacenamiento_client = almacenamiento_client
         self._almacenamiento_base_path = str(almacenamiento_base_path or "").strip().rstrip("/")
 
@@ -489,6 +495,28 @@ class TramitesDgtService:
                         "Vendedor y comprador deben tener emails distintos para firmar el contrato."
                     )
                 firmantes = [self._firmante(vendedor, 1), self._firmante(comprador, 2)]
+            elif tipo == "mandato_dgt_comprador":
+                if not self._firma_gestor_email:
+                    raise ValueError(
+                        "Configura signrequest_gestor_email para que el mandatario firme el mandato."
+                    )
+                if self._firma_gestor_email.lower() == str(
+                    comprador.get("email") or ""
+                ).strip().lower():
+                    raise ValueError(
+                        "Comprador y mandatario deben tener emails distintos para firmar el mandato."
+                    )
+                # SignRequest reserva el indice de etiqueta 0 al remitente.
+                # Lo enviamos primero en la lista de contactos, aunque firme
+                # despues del comprador mediante el orden de firma.
+                firmantes = [
+                    {
+                        "email": self._firma_gestor_email,
+                        "telefono": self._firma_gestor_telefono,
+                        "order": 2,
+                    },
+                    self._firmante(comprador, 1),
+                ]
             resultado = self._firma_client.enviar_documento(
                 ruta=ruta,
                 firmantes=firmantes,
@@ -845,7 +873,74 @@ class TramitesDgtService:
         from procesos.facturas_word import render_docx
 
         render_docx(str(template_path), context, str(out_docx_path))
+        self._asegurar_etiquetas_firma(out_docx_path, tipo)
         return out_docx_path.exists()
+
+    @staticmethod
+    def _asegurar_etiquetas_firma(docx_path: Path, tipo: str) -> None:
+        """Inserta campos invisibles que SignRequest convierte en zonas de firma."""
+        from docx import Document
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.shared import Pt, RGBColor
+
+        document = Document(str(docx_path))
+
+        def add_tag(paragraph, signer_index: int) -> None:
+            marker = f"[[s|{signer_index}"
+            if marker in paragraph.text:
+                return
+            run = paragraph.add_run(f"[[s|{signer_index}{' ' * 26}]]")
+            run.font.color.rgb = RGBColor(255, 255, 255)
+            run.font.size = Pt(18)
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        if tipo == "contrato_compraventa":
+            if not document.tables or len(document.tables[-1].rows[-1].cells) < 2:
+                raise ValueError(
+                    "La plantilla del contrato necesita una tabla final con "
+                    "las zonas de firma de vendedor y comprador."
+                )
+            cells = document.tables[-1].rows[-1].cells
+            for cell, signer_index in zip(cells[:2], (1, 2)):
+                if not any(
+                    f"[[s|{signer_index}" in paragraph.text
+                    for paragraph in cell.paragraphs
+                ):
+                    add_tag(cell.add_paragraph(), signer_index)
+        elif tipo == "mandato_dgt_comprador":
+            assignments = {"EL MANDANTE": 1, "EL MANDATARIO": 0}
+            for heading, signer_index in assignments.items():
+                if any(
+                    f"[[s|{signer_index}" in paragraph.text
+                    for paragraph in document.paragraphs
+                ):
+                    continue
+                heading_index = next(
+                    (
+                        index
+                        for index, paragraph in enumerate(document.paragraphs)
+                        if paragraph.text.strip().upper() == heading
+                    ),
+                    None,
+                )
+                if heading_index is None:
+                    raise ValueError(
+                        f"La plantilla del mandato no contiene la zona '{heading}'."
+                    )
+                target = next(
+                    (
+                        paragraph
+                        for paragraph in document.paragraphs[heading_index + 1 :]
+                        if not paragraph.text.strip()
+                    ),
+                    None,
+                )
+                if target is None:
+                    raise ValueError(
+                        f"La plantilla del mandato necesita espacio de firma tras '{heading}'."
+                    )
+                add_tag(target, signer_index)
+        document.save(str(docx_path))
 
     def _buscar_template(self, tipo: str) -> Path | None:
         filename = TEMPLATE_FILENAMES.get(tipo)

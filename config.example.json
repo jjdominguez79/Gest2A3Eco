@@ -8,6 +8,8 @@
   "dgt_api_key": "",
   "signrequest_token": "",
   "signrequest_from_email": "",
+  "signrequest_gestor_email": "",
+  "signrequest_gestor_telefono": "",
   "signrequest_base_url": "https://signrequest.com/api/v1",
   "signrequest_use_sms": false,
   "monedas": [

@@ -151,6 +151,8 @@ def _apply_env_overrides(data: dict) -> dict:
         "GEST2A3ECO_DGT_API_KEY": "dgt_api_key",
         "GEST2A3ECO_SIGNREQUEST_TOKEN": "signrequest_token",
         "GEST2A3ECO_SIGNREQUEST_FROM_EMAIL": "signrequest_from_email",
+        "GEST2A3ECO_SIGNREQUEST_GESTOR_EMAIL": "signrequest_gestor_email",
+        "GEST2A3ECO_SIGNREQUEST_GESTOR_TELEFONO": "signrequest_gestor_telefono",
         "GEST2A3ECO_DATAPRIUS_API_KEY": "dataprius_api_key",
         "GEST2A3ECO_DATAPRIUS_API_SECRET": "dataprius_api_secret",
         "GEST2A3ECO_DATAPRIUS_BASE_PATH": "dataprius_base_path",
@@ -205,6 +207,8 @@ def _normalize_config(data: dict) -> dict:
     out.setdefault("dgt_api_key", "")
     out.setdefault("signrequest_token", "")
     out.setdefault("signrequest_from_email", "")
+    out.setdefault("signrequest_gestor_email", "")
+    out.setdefault("signrequest_gestor_telefono", "")
     out.setdefault("signrequest_base_url", "https://signrequest.com/api/v1")
     out.setdefault("signrequest_use_sms", False)
     out.setdefault("dataprius_api_key", "")
