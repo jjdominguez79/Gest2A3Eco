@@ -23,6 +23,7 @@ Requisitos:  pip install cryptography playwright  &&  playwright install chromiu
 from __future__ import annotations
 
 import argparse
+import getpass
 import os
 import sys
 
@@ -36,7 +37,8 @@ from services.aapp.dehu_playwright import ConectorDEHU         # noqa: E402
 def main() -> int:
     ap = argparse.ArgumentParser(description="Prueba del conector DEHu")
     ap.add_argument("--pfx", required=True, help="Ruta al certificado .pfx/.p12")
-    ap.add_argument("--password", default="", help="Contrasena del certificado")
+    ap.add_argument("--password", default=None, help="Contrasena del certificado")
+    ap.add_argument("--nif", default="", help="NIF titular por el que filtrar")
     ap.add_argument("--url", default="https://dehu.redsara.es")
     ap.add_argument("--headed", action="store_true", help="Mostrar ventana del navegador")
     ap.add_argument("--diagnostico", action="store_true", help="Guardar captura + HTML + API")
@@ -44,6 +46,8 @@ def main() -> int:
                     help="Modo aprendizaje: segundos para identificarte a mano con el "
                          "certificado mientras se graba la API (implica ventana visible).")
     args = ap.parse_args()
+    if args.password is None:
+        args.password = getpass.getpass("Contrasena del certificado (no se mostrara): ")
 
     if not os.path.isfile(args.pfx):
         print(f"ERROR: no existe el fichero {args.pfx}")
@@ -76,6 +80,7 @@ def main() -> int:
         modo_diagnostico=args.diagnostico or args.login_manual > 0,
         carpeta_diagnostico=os.path.join(os.getcwd(), "logs"),
         pausa_login_segundos=args.login_manual,
+        nif_filtro=args.nif or None,
         log=lambda m: print(m),
     )
     buzon = {"nombre": "Prueba DEHu", "url_portal": args.url, "organismo_codigo": "DEHU"}

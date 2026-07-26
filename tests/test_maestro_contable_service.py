@@ -271,6 +271,38 @@ def test_importar_desde_dataframe_ignora_filas_vacias(tmp_path):
     assert resultado["importadas"] == 1
 
 
+def test_importar_plan_desde_a3_persiste_plan_y_maestro(tmp_path):
+    g = _make_gestor(tmp_path)
+    progreso = []
+    cuentas = [
+        {"cuenta": "43000001", "descripcion": "Cliente A3", "nif": "B12345678"},
+        {"cuenta": "57200001", "descripcion": "Banco A3"},
+        {"cuenta": "43000001", "descripcion": "Duplicada"},
+    ]
+
+    total = _svc().importar_plan_desde_a3(
+        g,
+        "E00570",
+        2026,
+        cuentas,
+        progress_callback=lambda actual, total: progreso.append((actual, total)),
+    )
+
+    assert total == 2
+    assert g.get_plan_cuentas("E00570", 2026) == [
+        {"cuenta": "43000001", "descripcion": "Cliente A3"},
+        {"cuenta": "57200001", "descripcion": "Banco A3"},
+    ]
+    cliente = g.get_maestro_subcuenta_por_subcuenta("E00570", "43000001")
+    banco = g.get_maestro_subcuenta_por_subcuenta("E00570", "57200001")
+    assert cliente["tipo_subcuenta"] == "cliente"
+    assert cliente["nif_snapshot"] == "B12345678"
+    assert cliente["origen"] == "a3"
+    assert cliente["pendiente_alta_a3"] == 0
+    assert banco["tipo_subcuenta"] == "banco"
+    assert progreso == [(2, 2)]
+
+
 # ── marcar_subcuenta_alta_a3_realizada ────────────────────────────────────────
 
 def test_marcar_alta_a3_realizada(tmp_path):

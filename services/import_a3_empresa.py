@@ -184,27 +184,33 @@ def _candidate_entorno_bank_paths() -> list[tuple[Path, Path]]:
     return out
 
 
-def _candidate_entorno_responsable_paths() -> list[tuple[Path, Path]]:
-    """Pares (clientes, aplicaciones) del directorio compartido A3ENTORNO."""
+def _candidate_entorno_responsable_paths() -> list[tuple[Path, Path, Path]]:
+    """Ternas (clientes, responsables, usuarios) de A3ENTORNO."""
     out = []
     for base in _get_a3_entorno_bases():
         datos = base / "Datos"
-        out.append((datos / "ASECLI.DAT", datos / "ASECLAPL.DAT"))
-        out.append((datos / "asecli.dat", datos / "aseclapl.dat"))
+        out.append((datos / "ASECLI.DAT", datos / "ASERESPO.DAT", datos / "ASEUSR.DAT"))
+        out.append((datos / "asecli.dat", datos / "aserespo.dat", datos / "aseusr.dat"))
     return out
 
 
-# A3ENTORNO vincula cada cliente con sus aplicaciones. El responsable no se
-# obtiene del fichero DC de la empresa: cada registro ASECLAPL puede contener
-# uno distinto para ECO, GES, NOM, etc.
+# El responsable no se obtiene de ASECLAPL: su campo de texto es el nombre de
+# la empresa enlazada con la aplicacion (de ahi que antes se importase
+# erroneamente la razon social). ASERESPO contiene las asignaciones por
+# aplicacion y ASEUSR resuelve el identificador al nombre de usuario.
 _ASECLI_REC_SIZE = 1028
 _ASECLI_NIF = slice(42, 56)
 _ASECLI_ID = slice(56, 60)
-_ASECLAPL_REC_SIZE = 260
-_ASECLAPL_ACTIVE = 0x41
-_ASECLAPL_CLIENT_ID = slice(2, 6)
-_ASECLAPL_APP = slice(6, 16)
-_ASECLAPL_RESPONSABLE = slice(34, 74)
+_ASERESPO_REC_SIZE = 516
+_ASERESPO_MARKERS = {0x22, 0x42}
+_ASERESPO_USUARIO_ID = slice(2, 6)
+_ASERESPO_APP = slice(6, 16)
+_ASERESPO_CLIENT_ID = slice(32, 36)
+_ASERESPO_ORDEN = slice(36, 40)
+_ASEUSR_REC_SIZE = 2604
+_ASEUSR_MARKER = 0x4A
+_ASEUSR_ID = slice(2, 6)
+_ASEUSR_NOMBRE = slice(6, 36)
 
 
 def _normalizar_nif_a3(value: str) -> str:
@@ -214,7 +220,8 @@ def _normalizar_nif_a3(value: str) -> str:
 def _leer_responsable_entorno(
     cif: str,
     cli_path: Path,
-    apl_path: Path,
+    respo_path: Path,
+    usr_path: Path,
     aplicacion: str = "ECO",
 ) -> str:
     """Lee el responsable asignado a una aplicacion para el cliente con ese NIF."""
@@ -223,7 +230,8 @@ def _leer_responsable_entorno(
         return ""
     try:
         cli_data = cli_path.read_bytes()
-        apl_data = apl_path.read_bytes()
+        respo_data = respo_path.read_bytes()
+        usr_data = usr_path.read_bytes()
     except OSError:
         return ""
 
@@ -237,29 +245,63 @@ def _leer_responsable_entorno(
         return ""
 
     app_objetivo = str(aplicacion or "ECO").strip().upper()
-    responsable = ""
-    for offset in range(_ISAM_HEADER, len(apl_data) - _ASECLAPL_REC_SIZE + 1, _ASECLAPL_REC_SIZE):
-        rec = apl_data[offset: offset + _ASECLAPL_REC_SIZE]
-        if rec[0] != _ASECLAPL_ACTIVE:
+    usuarios: dict[int, str] = {}
+    for offset in range(_ISAM_HEADER, len(usr_data) - _ASEUSR_REC_SIZE + 1, _ASEUSR_REC_SIZE):
+        rec = usr_data[offset: offset + _ASEUSR_REC_SIZE]
+        if rec[0] != _ASEUSR_MARKER:
             continue
-        cliente_id = int.from_bytes(rec[_ASECLAPL_CLIENT_ID], "big")
-        app = rec[_ASECLAPL_APP].decode(_A3_ENCODING, errors="ignore").strip().upper()
-        if cliente_id == 0 or cliente_id not in cliente_ids or app != app_objetivo:
+        usuario_id = int.from_bytes(rec[_ASEUSR_ID], "big")
+        nombre = rec[_ASEUSR_NOMBRE].decode(_A3_ENCODING, errors="ignore").strip()
+        if usuario_id and nombre:
+            usuarios[usuario_id] = " ".join(nombre.split())
+
+    candidatos: list[tuple[int, int, str]] = []
+    for offset in range(
+        _ISAM_HEADER,
+        len(respo_data) - _ASERESPO_REC_SIZE + 1,
+        _ASERESPO_REC_SIZE,
+    ):
+        rec = respo_data[offset: offset + _ASERESPO_REC_SIZE]
+        if rec[0] not in _ASERESPO_MARKERS:
             continue
-        nombre = rec[_ASECLAPL_RESPONSABLE].decode(_A3_ENCODING, errors="ignore").strip()
-        if nombre:
-            responsable = " ".join(nombre.split())
-    return responsable
+        cliente_id = int.from_bytes(rec[_ASERESPO_CLIENT_ID], "big")
+        app = rec[_ASERESPO_APP].decode(_A3_ENCODING, errors="ignore").strip().upper()
+        usuario_id = int.from_bytes(rec[_ASERESPO_USUARIO_ID], "big")
+        if cliente_id not in cliente_ids or app != app_objetivo or usuario_id not in usuarios:
+            continue
+        orden = int.from_bytes(rec[_ASERESPO_ORDEN], "big")
+        # A3 puede guardar varios roles ECO. El de menor orden es el
+        # responsable principal que muestra la ficha de la aplicacion.
+        candidatos.append((orden, usuario_id, usuarios[usuario_id]))
+    if not candidatos:
+        return ""
+    candidatos.sort(key=lambda item: (item[0], item[1]))
+    return candidatos[0][2]
 
 
 def _buscar_responsable_a3eco(cif: str) -> tuple[str, "Path | None"]:
-    for cli_path, apl_path in _candidate_entorno_responsable_paths():
-        if not cli_path.exists() or not apl_path.exists():
+    for cli_path, respo_path, usr_path in _candidate_entorno_responsable_paths():
+        if not cli_path.exists() or not respo_path.exists() or not usr_path.exists():
             continue
-        responsable = _leer_responsable_entorno(cif, cli_path, apl_path, "ECO")
+        responsable = _leer_responsable_entorno(
+            cif, cli_path, respo_path, usr_path, "ECO"
+        )
         if responsable:
-            return responsable, apl_path
+            return responsable, respo_path
     return "", None
+
+
+def importar_responsable_a3eco(cif: str) -> str:
+    """Importa solo el responsable ECO usando el NIF/CIF ya conocido.
+
+    Este flujo no depende de que la empresa conserve ficheros CU/EM ni de que
+    siga activa en TECODIR, por lo que sirve para empresas historicas.
+    """
+    cif_norm = _normalizar_nif_a3(cif)
+    if not cif_norm:
+        raise ValueError("La empresa no tiene CIF/NIF; no se puede buscar su responsable en A3.")
+    responsable, _path = _buscar_responsable_a3eco(cif_norm)
+    return responsable
 
 
 def _candidate_paths(codigo: str) -> list[Path]:
@@ -1752,12 +1794,14 @@ def _extract_cif(text: str) -> str:
     return match.group(0).upper() if match else ""
 
 
-def _year_from_cu_path(cu_path: Path) -> "int | None":
+def _year_from_cu_path(cu_path: "Path | None") -> "int | None":
     """Extrae el ejercicio del nombre del fichero CU.DAT.
 
     A3ECO nombra los ficheros como {codigo}{digit}CU.DAT donde digit = ejercicio % 10.
     Ejemplos: 010746CU.DAT → digit 6 → 2026 ; 010745CU.DAT → digit 5 → 2025.
     """
+    if cu_path is None:
+        return None
     import re as _re
     m = _re.search(r"(\d)CU$", cu_path.stem, _re.IGNORECASE)
     if not m:

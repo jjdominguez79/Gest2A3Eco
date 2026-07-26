@@ -5,7 +5,12 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from services.import_a3_empresa import importar_empresa_desde_a3, listar_empresas_a3
+from services.import_a3_empresa import (
+    importar_empresa_desde_a3,
+    importar_responsable_a3eco,
+    listar_empresas_a3,
+)
+from services.maestro_contable_empresa_service import MaestroContableEmpresaService
 from utils.validaciones import normalizar_codigo_pais, normalizar_nif_cif
 from views.ui_buzones import UIBuzones
 from views.ui_certificados import UICertificados
@@ -45,6 +50,50 @@ def _to_float_es(x) -> float:
         return 0.0
 
 
+class _PlanSaveProgress:
+    def __init__(self, parent, total: int):
+        self.total = max(int(total or 0), 1)
+        self.window = tk.Toplevel(parent)
+        self.window.title("Actualizando plan contable")
+        self.window.resizable(False, False)
+        self.window.transient(parent.winfo_toplevel())
+        self.window.protocol("WM_DELETE_WINDOW", lambda: None)
+        frame = ttk.Frame(self.window, padding=20)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame,
+            text="Guardando las cuentas importadas desde A3...",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(anchor="w")
+        self.label = ttk.Label(frame, text=f"Preparando {total} subcuentas.")
+        self.label.pack(anchor="w", pady=(8, 6))
+        self.progress = ttk.Progressbar(
+            frame, mode="determinate", maximum=self.total, length=380
+        )
+        self.progress.pack(fill="x")
+        ttk.Label(
+            frame,
+            text="No cierres la aplicacion hasta que finalice el proceso.",
+            foreground="#64748b",
+        ).pack(anchor="w", pady=(8, 0))
+        self.window.update_idletasks()
+        _center_window(self.window, parent.winfo_toplevel())
+        self.window.grab_set()
+        self.window.update()
+
+    def update(self, current: int, total: int):
+        self.progress.configure(maximum=max(total, 1), value=current)
+        self.label.configure(text=f"Actualizando subcuenta {current} de {total}...")
+        self.window.update()
+
+    def close(self):
+        try:
+            self.window.grab_release()
+            self.window.destroy()
+        except tk.TclError:
+            pass
+
+
 class UIConfiguracionEmpresa(ttk.Frame):
     """Frame integrado de configuracion de empresa, embebible en el area de contenido."""
 
@@ -60,6 +109,8 @@ class UIConfiguracionEmpresa(ttk.Frame):
         self._bank_records: list = []
         self._exercise_rows: list = []
         self._series_por_ejercicio: dict = {}
+        self._pending_plan_cuentas: list[dict] = []
+        self._pending_plan_ejercicio = 0
         self._on_back = on_back
         self._on_deleted = on_deleted or on_back
         self._session = session
@@ -283,6 +334,11 @@ class UIConfiguracionEmpresa(ttk.Frame):
                    command=self._add_bank).pack(side=tk.LEFT)
         ttk.Button(btns, text="Editar", command=self._edit_bank).pack(side=tk.LEFT, padx=6)
         ttk.Button(btns, text="Eliminar", command=self._remove_bank).pack(side=tk.LEFT)
+        ttk.Button(
+            btns,
+            text="Importar desde A3",
+            command=self._update_banks_from_a3,
+        ).pack(side=tk.LEFT, padx=(12, 0))
         self.lbl_bancos_info = ttk.Label(tab, text="")
         self.lbl_bancos_info.grid(row=3, column=0, sticky="w", pady=(8, 0))
         self._load_bank_records()
@@ -507,6 +563,18 @@ class UIConfiguracionEmpresa(ttk.Frame):
 
             # Siempre guardar/limpiar (aunque este vacia) para que el DELETE persista
             self._gestor.reemplazar_cuentas_bancarias(base["codigo"], 0, self._bank_records)
+            if self._pending_plan_cuentas:
+                progress = _PlanSaveProgress(self, len(self._pending_plan_cuentas))
+                try:
+                    MaestroContableEmpresaService().importar_plan_desde_a3(
+                        self._gestor,
+                        base["codigo"],
+                        self._pending_plan_ejercicio,
+                        self._pending_plan_cuentas,
+                        progress_callback=progress.update,
+                    )
+                finally:
+                    progress.close()
 
             messagebox.showinfo("Gest2A3Eco", "Configuracion guardada correctamente.")
             self._on_back()
@@ -1097,20 +1165,20 @@ class UIConfiguracionEmpresa(ttk.Frame):
         self._bank_records = [dict(item) for item in bank_records]
         self._sync_bank_items_from_records()
         self._refresh_banks_tree()
+        self._pending_plan_cuentas = [
+            dict(item) for item in (data.get("plan_cuentas") or [])
+        ]
+        self._pending_plan_ejercicio = int(data.get("ejercicio") or 0)
         self.var_a3_info.set("Importacion A3 completada.\n" + str(data.get("_a3_info") or "Datos basicos detectados."))
         self._set_a3_preview(data)
 
     def _update_responsable_from_a3(self):
-        codigo = self.var_codigo.get().strip() or self._codigo
-        if not codigo:
-            messagebox.showwarning("Gest2A3Eco", "Introduce primero el codigo A3 de la empresa.")
-            return
         try:
-            data = importar_empresa_desde_a3(codigo)
+            responsable = importar_responsable_a3eco(self.var_cif.get())
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc))
             return
-        responsable = str(data.get("responsable") or "").strip()
+        responsable = str(responsable or "").strip()
         if not responsable:
             messagebox.showinfo("Gest2A3Eco",
                 "La empresa no tiene un responsable asignado a la aplicacion ECO en A3.")
@@ -1165,7 +1233,7 @@ class UIConfiguracionEmpresa(ttk.Frame):
             f"Email:            {payload.get('email', '')}",
             f"Ejercicio:        {payload.get('ejercicio', '')}",
             f"Digitos plan:     {payload.get('digitos_plan', '')}",
-            f"Plan de cuentas:  {len(payload.get('plan_cuentas') or [])} subcuentas importadas",
+            f"Plan de cuentas:  {len(payload.get('plan_cuentas') or [])} subcuentas detectadas (se guardan al pulsar Guardar)",
             f"Bancos (A3):      {ban_text}",
             "",
             "--- Origen de los datos ---",

@@ -12,7 +12,11 @@ from services.terceros_empresa_fiscal_service import (
     get_proveedor_deduction_mode,
     validate_tercero_empresa_rel,
 )
-from services.import_a3_empresa import importar_empresa_desde_a3, listar_empresas_a3
+from services.import_a3_empresa import (
+    importar_empresa_desde_a3,
+    importar_responsable_a3eco,
+    listar_empresas_a3,
+)
 from utils.validaciones import (
     inferir_pais_desde_identificacion,
     normalizar_codigo_pais,
@@ -73,6 +77,8 @@ class EmpresaDialog(tk.Toplevel):
         self._bank_items = []
         self._bank_records = []
         self._exercise_rows = []
+        self._pending_plan_cuentas = []
+        self._pending_plan_ejercicio = 0
         self._build()
         self.wait_visibility()
         _center_window(self, parent)
@@ -299,6 +305,11 @@ class EmpresaDialog(tk.Toplevel):
         ttk.Button(btns, text="Anadir", style="Primary.TButton", command=self._add_bank).pack(side=tk.LEFT)
         ttk.Button(btns, text="Editar", command=self._edit_bank).pack(side=tk.LEFT, padx=6)
         ttk.Button(btns, text="Eliminar", command=self._remove_bank).pack(side=tk.LEFT)
+        ttk.Button(
+            btns,
+            text="Importar desde A3",
+            command=self._update_banks_from_a3,
+        ).pack(side=tk.LEFT, padx=(12, 0))
         self.lbl_bancos_info = ttk.Label(tab, text="")
         self.lbl_bancos_info.grid(row=3, column=0, sticky="w", pady=(8, 0))
         self._load_bank_records()
@@ -1271,6 +1282,10 @@ class EmpresaDialog(tk.Toplevel):
         self._bank_records = [dict(item) for item in bank_records]
         self._sync_bank_items_from_records()
         self._refresh_banks_tree()
+        self._pending_plan_cuentas = [
+            dict(item) for item in (data.get("plan_cuentas") or [])
+        ]
+        self._pending_plan_ejercicio = int(data.get("ejercicio") or 0)
 
         self.var_a3_info.set(
             "Importacion A3 completada."
@@ -1280,16 +1295,12 @@ class EmpresaDialog(tk.Toplevel):
         self._set_a3_preview(data)
 
     def _update_responsable_from_a3(self):
-        codigo = self._codigo_empresa_actual()
-        if not codigo:
-            messagebox.showwarning("Gest2A3Eco", "Introduce primero el codigo A3 de la empresa.", parent=self)
-            return
         try:
-            data = importar_empresa_desde_a3(codigo)
+            responsable = importar_responsable_a3eco(self.var_cif.get())
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self)
             return
-        responsable = str(data.get("responsable") or "").strip()
+        responsable = str(responsable or "").strip()
         if not responsable:
             messagebox.showinfo("Gest2A3Eco",
                 "La empresa no tiene un responsable asignado a la aplicacion ECO en A3.", parent=self)
@@ -1322,7 +1333,7 @@ class EmpresaDialog(tk.Toplevel):
                 return
             messagebox.showinfo(
                 "Gest2A3Eco",
-                f"Cuentas bancarias actualizadas desde A3: {n} registros.\nCompleta manualmente el IBAN y la subcuenta contable si A3 no los expone.",
+                f"Cuentas bancarias actualizadas desde A3: {n} registros.",
                 parent=self,
             )
         self._bank_records = [dict(item) for item in bank_records]
@@ -1351,7 +1362,7 @@ class EmpresaDialog(tk.Toplevel):
             f"Email:            {payload.get('email', '')}",
             f"Ejercicio:        {payload.get('ejercicio', '')}",
             f"Digitos plan:     {payload.get('digitos_plan', '')}",
-            f"Plan de cuentas:  {len(payload.get('plan_cuentas') or [])} subcuentas importadas",
+            f"Plan de cuentas:  {len(payload.get('plan_cuentas') or [])} subcuentas detectadas (se guardan al pulsar Guardar)",
             f"Bancos (A3):      {ban_text}",
             "",
             "--- Origen de los datos ---",
@@ -1425,6 +1436,8 @@ class EmpresaDialog(tk.Toplevel):
                 "_exercise_configs": ejercicios,
                 "_series_por_ejercicio": dict(self._series_por_ejercicio),
                 "_bank_records": [dict(item) for item in self._bank_records],
+                "_plan_cuentas": [dict(item) for item in self._pending_plan_cuentas],
+                "_plan_ejercicio": self._pending_plan_ejercicio,
                 **ejercicios[-1],
             }
             self.destroy()

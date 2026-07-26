@@ -14,22 +14,34 @@ def test_lee_solo_responsable_de_aplicacion_eco(tmp_path):
     cli[42:56] = b" B12345678    "
     cli[56:60] = cliente_id.to_bytes(4, "big")
 
-    ges = _record(260)
-    ges[2:6] = cliente_id.to_bytes(4, "big")
-    ges[6:16] = b"GES       "
-    ges[34:74] = b"RESPONSABLE GES".ljust(40)
+    supervisor = _record(2604, 0x4A)
+    supervisor[2:6] = (1).to_bytes(4, "big")
+    supervisor[6:36] = b"Supervisor".ljust(30)
+    otro_usuario = _record(2604, 0x4A)
+    otro_usuario[2:6] = (11).to_bytes(4, "big")
+    otro_usuario[6:36] = b"OTRA PERSONA".ljust(30)
 
-    eco = _record(260)
-    eco[2:6] = cliente_id.to_bytes(4, "big")
+    eco = _record(516, 0x22)
+    eco[2:6] = (1).to_bytes(4, "big")
     eco[6:16] = b"ECO       "
-    eco[34:74] = b"LOPEZ ROYANO, MARTA".ljust(40)
+    eco[32:36] = cliente_id.to_bytes(4, "big")
+    eco[36:40] = (6).to_bytes(4, "big")
+    eco_secundario = _record(516, 0x42)
+    eco_secundario[2:6] = (11).to_bytes(4, "big")
+    eco_secundario[6:16] = b"ECO       "
+    eco_secundario[32:36] = cliente_id.to_bytes(4, "big")
+    eco_secundario[36:40] = (8).to_bytes(4, "big")
 
     cli_path = tmp_path / "ASECLI.DAT"
-    apl_path = tmp_path / "ASECLAPL.DAT"
+    respo_path = tmp_path / "ASERESPO.DAT"
+    usr_path = tmp_path / "ASEUSR.DAT"
     cli_path.write_bytes(bytes(128) + cli)
-    apl_path.write_bytes(bytes(128) + ges + eco)
+    respo_path.write_bytes(bytes(128) + eco_secundario + eco)
+    usr_path.write_bytes(bytes(128) + supervisor + otro_usuario)
 
-    assert _leer_responsable_entorno("B-12345678", cli_path, apl_path) == "LOPEZ ROYANO, MARTA"
+    assert _leer_responsable_entorno(
+        "B-12345678", cli_path, respo_path, usr_path
+    ) == "Supervisor"
 
 
 def test_responsable_no_coincide_con_otro_cliente(tmp_path):
@@ -37,17 +49,25 @@ def test_responsable_no_coincide_con_otro_cliente(tmp_path):
     cli[42:56] = b" B12345678    "
     cli[56:60] = (10).to_bytes(4, "big")
 
-    eco = _record(260)
+    usuario = _record(2604, 0x4A)
+    usuario[2:6] = (11).to_bytes(4, "big")
+    usuario[6:36] = b"OTRA PERSONA".ljust(30)
+    eco = _record(516, 0x42)
     eco[2:6] = (11).to_bytes(4, "big")
     eco[6:16] = b"ECO       "
-    eco[34:74] = b"OTRA PERSONA".ljust(40)
+    eco[32:36] = (11).to_bytes(4, "big")
+    eco[36:40] = (1).to_bytes(4, "big")
 
     cli_path = tmp_path / "ASECLI.DAT"
-    apl_path = tmp_path / "ASECLAPL.DAT"
+    respo_path = tmp_path / "ASERESPO.DAT"
+    usr_path = tmp_path / "ASEUSR.DAT"
     cli_path.write_bytes(bytes(128) + cli)
-    apl_path.write_bytes(bytes(128) + eco)
+    respo_path.write_bytes(bytes(128) + eco)
+    usr_path.write_bytes(bytes(128) + usuario)
 
-    assert _leer_responsable_entorno("B12345678", cli_path, apl_path) == ""
+    assert _leer_responsable_entorno(
+        "B12345678", cli_path, respo_path, usr_path
+    ) == ""
 
 
 def test_responsable_se_persiste_en_empresa(tmp_path):

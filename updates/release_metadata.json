@@ -1,6 +1,6 @@
 {
-  "version": "1.3.0",
-  "tag": "v1.3.0",
-  "changelog": "Mejora la firma electronica de contratos y mandatos, asignando las zonas y los firmantes correctos. Corrige regresiones en el maestro de terceros y en la integracion OCR y contable.",
+  "version": "1.3.1",
+  "tag": "v1.3.1",
+  "changelog": "Mejora la importacion de datos de empresa desde A3, incluyendo supervisor, cuentas bancarias y maestro de cuentas. Anade la gestion de tramites de cambios de titularidad en la DGT.",
   "force_update": false
 }

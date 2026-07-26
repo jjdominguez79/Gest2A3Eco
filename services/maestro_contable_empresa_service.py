@@ -223,6 +223,60 @@ class MaestroContableEmpresaService:
                 duplicados.append(subcuenta)
         return duplicados
 
+    def importar_plan_desde_a3(
+        self,
+        gestor,
+        codigo_empresa: str,
+        ejercicio: int,
+        cuentas: list[dict],
+        progress_callback=None,
+    ) -> int:
+        """Persiste un plan leido de A3 en el plan legacy y en el maestro actual."""
+        codigo = str(codigo_empresa or "").strip()
+        if not codigo:
+            raise ValueError("codigo_empresa es obligatorio")
+
+        normalizadas: list[dict] = []
+        vistas: set[str] = set()
+        for item in cuentas or []:
+            subcuenta = str(item.get("cuenta") or "").strip()
+            if not subcuenta or subcuenta in vistas:
+                continue
+            vistas.add(subcuenta)
+            normalizadas.append(
+                {
+                    "cuenta": subcuenta,
+                    "descripcion": str(item.get("descripcion") or "").strip(),
+                    "nif": normalizar_nif_cif(item.get("nif") or "") or None,
+                }
+            )
+
+        gestor.upsert_plan_cuentas(codigo, int(ejercicio or 0), normalizadas)
+        total = len(normalizadas)
+        for indice, item in enumerate(normalizadas, 1):
+            tercero_id = None
+            if item["nif"]:
+                tercero = gestor.get_tercero_by_nif_normalizado(item["nif"])
+                if tercero:
+                    tercero_id = str(tercero.get("id") or "").strip() or None
+            gestor.upsert_maestro_subcuenta(
+                {
+                    "codigo_empresa": codigo,
+                    "subcuenta": item["cuenta"],
+                    "nombre_subcuenta": item["descripcion"],
+                    "tipo_subcuenta": clasificar_tipo_subcuenta(item["cuenta"]),
+                    "nif_snapshot": item["nif"],
+                    "tercero_id": tercero_id,
+                    "activo": 1,
+                    "origen": "a3",
+                    "creado_en_gest2a3eco": 0,
+                    "pendiente_alta_a3": 0,
+                }
+            )
+            if progress_callback and (indice == total or indice % 10 == 0):
+                progress_callback(indice, total)
+        return len(normalizadas)
+
     # ── Importacion desde DataFrame ───────────────────────────────────────────
 
     def importar_subcuentas_desde_dataframe(
