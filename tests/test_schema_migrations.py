@@ -94,6 +94,7 @@ def test_empresas_y_facturas_emitidas_docs_columnas_facturae(tmp_path):
     g = _gestor(tmp_path)
     empresas_cols = _columns(g, "empresas")
     assert "pais" in empresas_cols
+    assert "responsable" in empresas_cols
     emitidas_cols = _columns(g, "facturas_emitidas_docs")
     for col in ("facturae_xml_path", "facturae_generated_at", "facturae_status", "facturae_error"):
         assert col in emitidas_cols, f"Columna 'facturas_emitidas_docs.{col}' no existe"

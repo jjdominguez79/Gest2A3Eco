@@ -138,6 +138,130 @@ def _get_a3_gesw_bases() -> list[Path]:
     return bases
 
 
+def _get_a3_entorno_bases() -> list[Path]:
+    """Rutas candidatas de A3ENTORNO, maestro compartido por las aplicaciones A3."""
+    bases: list[Path] = []
+    try:
+        cfg = _load_app_config()
+        configured = str(cfg.get("a3_base_path") or "").strip()
+        if configured:
+            p = Path(configured)
+            bases.extend(
+                [
+                    p / "A3ENTORNO",
+                    p.parent / "A3ENTORNO",
+                    p if p.name.upper() == "A3ENTORNO" else None,
+                ]
+            )
+    except Exception:
+        pass
+    bases.extend(
+        [
+            Path(r"\\Gestinemmain\Aplicaciones\A3\A3ENTORNO"),
+            Path(r"Z:\A3\A3ENTORNO"),
+            Path(r"C:\A3\A3ENTORNO"),
+        ]
+    )
+    out: list[Path] = []
+    seen: set[str] = set()
+    for base in bases:
+        if base is None:
+            continue
+        key = str(base).lower()
+        if key not in seen:
+            out.append(base)
+            seen.add(key)
+    return out
+
+
+def _candidate_entorno_bank_paths() -> list[tuple[Path, Path]]:
+    """Pares (maestro de clientes, cuentas bancarias) de A3ENTORNO."""
+    out = []
+    for base in _get_a3_entorno_bases():
+        datos = base / "Datos"
+        out.append((datos / "ASECLI.DAT", datos / "ASECCC.DAT"))
+        out.append((datos / "asecli.dat", datos / "aseccc.dat"))
+    return out
+
+
+def _candidate_entorno_responsable_paths() -> list[tuple[Path, Path]]:
+    """Pares (clientes, aplicaciones) del directorio compartido A3ENTORNO."""
+    out = []
+    for base in _get_a3_entorno_bases():
+        datos = base / "Datos"
+        out.append((datos / "ASECLI.DAT", datos / "ASECLAPL.DAT"))
+        out.append((datos / "asecli.dat", datos / "aseclapl.dat"))
+    return out
+
+
+# A3ENTORNO vincula cada cliente con sus aplicaciones. El responsable no se
+# obtiene del fichero DC de la empresa: cada registro ASECLAPL puede contener
+# uno distinto para ECO, GES, NOM, etc.
+_ASECLI_REC_SIZE = 1028
+_ASECLI_NIF = slice(42, 56)
+_ASECLI_ID = slice(56, 60)
+_ASECLAPL_REC_SIZE = 260
+_ASECLAPL_ACTIVE = 0x41
+_ASECLAPL_CLIENT_ID = slice(2, 6)
+_ASECLAPL_APP = slice(6, 16)
+_ASECLAPL_RESPONSABLE = slice(34, 74)
+
+
+def _normalizar_nif_a3(value: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+
+
+def _leer_responsable_entorno(
+    cif: str,
+    cli_path: Path,
+    apl_path: Path,
+    aplicacion: str = "ECO",
+) -> str:
+    """Lee el responsable asignado a una aplicacion para el cliente con ese NIF."""
+    nif_objetivo = _normalizar_nif_a3(cif)
+    if not nif_objetivo:
+        return ""
+    try:
+        cli_data = cli_path.read_bytes()
+        apl_data = apl_path.read_bytes()
+    except OSError:
+        return ""
+
+    cliente_ids: set[int] = set()
+    for offset in range(_ISAM_HEADER, len(cli_data) - _ASECLI_REC_SIZE + 1, _ASECLI_REC_SIZE):
+        rec = cli_data[offset: offset + _ASECLI_REC_SIZE]
+        nif = _normalizar_nif_a3(rec[_ASECLI_NIF].decode(_A3_ENCODING, errors="ignore"))
+        if nif == nif_objetivo:
+            cliente_ids.add(int.from_bytes(rec[_ASECLI_ID], "big"))
+    if not cliente_ids:
+        return ""
+
+    app_objetivo = str(aplicacion or "ECO").strip().upper()
+    responsable = ""
+    for offset in range(_ISAM_HEADER, len(apl_data) - _ASECLAPL_REC_SIZE + 1, _ASECLAPL_REC_SIZE):
+        rec = apl_data[offset: offset + _ASECLAPL_REC_SIZE]
+        if rec[0] != _ASECLAPL_ACTIVE:
+            continue
+        cliente_id = int.from_bytes(rec[_ASECLAPL_CLIENT_ID], "big")
+        app = rec[_ASECLAPL_APP].decode(_A3_ENCODING, errors="ignore").strip().upper()
+        if cliente_id == 0 or cliente_id not in cliente_ids or app != app_objetivo:
+            continue
+        nombre = rec[_ASECLAPL_RESPONSABLE].decode(_A3_ENCODING, errors="ignore").strip()
+        if nombre:
+            responsable = " ".join(nombre.split())
+    return responsable
+
+
+def _buscar_responsable_a3eco(cif: str) -> tuple[str, "Path | None"]:
+    for cli_path, apl_path in _candidate_entorno_responsable_paths():
+        if not cli_path.exists() or not apl_path.exists():
+            continue
+        responsable = _leer_responsable_entorno(cif, cli_path, apl_path, "ECO")
+        if responsable:
+            return responsable, apl_path
+    return "", None
+
+
 def _candidate_paths(codigo: str) -> list[Path]:
     out = []
     for base in _get_a3_eco_bases():
@@ -459,6 +583,80 @@ def _build_bank_records_from_labels(labels: list[str]) -> list[dict]:
             }
         )
     return out
+
+
+def _leer_cuentas_bancarias_entorno(cif: str) -> tuple[list[dict], str]:
+    """
+    Lee las cuentas centrales de a3ASESOR.
+
+    ASECLI enlaza NIF/CIF -> identificador interno de cliente. ASECCC enlaza ese
+    identificador con CCC/IBAN/BIC. Ambos son ISAM de registro fijo y solo se
+    leen; los IDX no son necesarios.
+    """
+    nif_objetivo = _normalizar_nif_a3(cif)
+    if not nif_objetivo:
+        return [], ""
+
+    paths = next(
+        ((cli, ccc) for cli, ccc in _candidate_entorno_bank_paths() if cli.exists() and ccc.exists()),
+        None,
+    )
+    if paths is None:
+        return [], ""
+    cli_path, ccc_path = paths
+    try:
+        cli_data = cli_path.read_bytes()
+        ccc_data = ccc_path.read_bytes()
+    except OSError:
+        return [], ""
+
+    # ASECLI: cabecera 128, registro 1028 (1024 datos + control ISAM).
+    # NIF/CIF [42:51], id interno big-endian [56:60].
+    cliente_ids: set[int] = set()
+    for offset in range(_ISAM_HEADER, len(cli_data) - 1027, 1028):
+        rec = cli_data[offset: offset + 1028]
+        if not rec or rec[0] not in {0x41, 0x42, 0x44}:
+            continue
+        nif = _normalizar_nif_a3(rec[42:51].decode(_A3_ENCODING, errors="ignore"))
+        if nif == nif_objetivo:
+            cliente_ids.add(int.from_bytes(rec[56:60], "big"))
+    if not cliente_ids:
+        return [], str(ccc_path)
+
+    # ASECCC: cabecera 128, registro 304 (300 datos + control ISAM).
+    # [4:6] id cliente, [10:30] CCC, [30:70] descripcion,
+    # [70:150] oficina, [150] principal, [151] no activa,
+    # [152:186] IBAN y [192:203] BIC.
+    records: list[dict] = []
+    for offset in range(_ISAM_HEADER, len(ccc_data) - 303, 304):
+        rec = ccc_data[offset: offset + 304]
+        if not rec or rec[0] != 0x41:
+            continue
+        if int.from_bytes(rec[4:6], "big") not in cliente_ids:
+            continue
+        no_activa = rec[151:152].decode("ascii", errors="ignore").upper() == "S"
+        if no_activa:
+            continue
+        ccc = rec[10:30].decode(_A3_ENCODING, errors="ignore").strip()
+        descripcion = rec[30:70].decode(_A3_ENCODING, errors="ignore").strip()
+        oficina = rec[70:150].decode(_A3_ENCODING, errors="ignore").strip()
+        iban = rec[152:186].decode("ascii", errors="ignore").strip().replace(" ", "")
+        bic = rec[192:203].decode("ascii", errors="ignore").strip()
+        detalle = descripcion or oficina or (f"Cuenta {ccc}" if ccc else "Cuenta bancaria A3")
+        records.append(
+            {
+                "descripcion": detalle,
+                "iban": iban,
+                "ccc": ccc,
+                "bic": bic,
+                "oficina": oficina,
+                "subcuenta_contable": "",
+                "origen": "a3_entorno",
+                "principal": rec[150:151].decode("ascii", errors="ignore").upper() == "S",
+            }
+        )
+    records.sort(key=lambda item: (not item["principal"], item["descripcion"], item["iban"]))
+    return records, str(ccc_path)
 
 
 def _extract_name_from_var(text: str) -> str:
@@ -1814,11 +2012,17 @@ def importar_empresa_desde_a3(codigo: str, digitos_plan_objetivo: int | None = N
     if var_data.get("web"):
         detalle.append(f"Web: {var_data.get('web')}")
 
-    ban_labels = var_data.get("_ban_labels") or []
-    bank_records = _build_bank_records_from_labels(ban_labels)
-    if ban_labels:
-        detalle.append(f"Cuentas bancarias detectadas en A3 (sin IBAN): {', '.join(ban_labels)}")
-        detalle.append("  → El IBAN/CCC en A3 esta en formato binario propietario. Introducelo manualmente en la pestana Bancos.")
+    bank_records, entorno_bank_path = _leer_cuentas_bancarias_entorno(cif)
+    responsable, entorno_responsable_path = _buscar_responsable_a3eco(cif)
+    ban_labels = [str(item.get("descripcion") or item.get("iban") or "") for item in bank_records]
+    if entorno_bank_path:
+        detalle.append(
+            f"Cuentas bancarias A3ENTORNO ({len(bank_records)} activas): {entorno_bank_path}"
+        )
+    if entorno_responsable_path:
+        detalle.append(
+            f"Responsable A3ECO: {responsable} ({entorno_responsable_path})"
+        )
     if en_gesw:
         detalle.append("Empresa presente en A3GESW (disponible para informes de gestion).")
 
@@ -1833,8 +2037,10 @@ def importar_empresa_desde_a3(codigo: str, digitos_plan_objetivo: int | None = N
         "siguiente_num_emitidas": 1,
         "serie_emitidas_rect": "R",
         "siguiente_num_emitidas_rect": 1,
-        "cuenta_bancaria": str(ban_labels[0]) if ban_labels else "",
-        "cuentas_bancarias": "\n".join(str(x) for x in ban_labels if str(x).strip()),
+        "cuenta_bancaria": str(bank_records[0].get("iban") or "") if bank_records else "",
+        "cuentas_bancarias": "\n".join(
+            str(item.get("iban") or "") for item in bank_records if str(item.get("iban") or "").strip()
+        ),
         "cif": cif,
         "direccion": direccion,
         "cp": cp,
@@ -1846,7 +2052,7 @@ def importar_empresa_desde_a3(codigo: str, digitos_plan_objetivo: int | None = N
         "logo_max_width_mm": None,
         "logo_max_height_mm": None,
         "activo": True,
-        "responsable": "",  # TODO: extraer de NNNNN0DC.DAT cuando se confirme el offset
+        "responsable": responsable,
         "plan_cuentas": plan_cuentas,
         "bank_records": bank_records,
         "_ban_labels": ban_labels,

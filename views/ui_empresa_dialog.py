@@ -93,6 +93,7 @@ class EmpresaDialog(tk.Toplevel):
         self.var_pais.trace_add("write", lambda *_: self._normalize_country_var(self.var_pais))
         self.var_tel = tk.StringVar(value=str(self._empresa.get("telefono", "")))
         self.var_mail = tk.StringVar(value=str(self._empresa.get("email", "")))
+        self.var_responsable = tk.StringVar(value=str(self._empresa.get("responsable", "") or ""))
         self.var_logo = tk.StringVar(value=str(self._empresa.get("logo_path", "")))
         self.var_logo_w = tk.StringVar(value=str(self._empresa.get("logo_max_width_mm") or ""))
         self.var_logo_h = tk.StringVar(value=str(self._empresa.get("logo_max_height_mm") or ""))
@@ -123,7 +124,7 @@ class EmpresaDialog(tk.Toplevel):
         nb.add(tab, text="General")
         tab.columnconfigure(1, weight=1)
         tab.columnconfigure(3, weight=1)
-        tab.rowconfigure(11, weight=1)
+        tab.rowconfigure(12, weight=1)
         fields = [
             ("Codigo A3 [Enter]", self.var_codigo, 0, 0, 14),
             ("Nombre", self.var_nombre, 1, 0, None),
@@ -154,19 +155,26 @@ class EmpresaDialog(tk.Toplevel):
         ttk.Button(btn_row, text="Buscar en A3...", command=self._browse_a3_companies).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_row, text="Importar datos de A3", style="Primary.TButton", command=self._import_from_a3).pack(side=tk.LEFT)
         ttk.Checkbutton(tab, text="Activo", variable=self.var_activo).grid(row=2, column=3, sticky="w", pady=4)
-        ttk.Label(tab, text="Logo (JPG)").grid(row=8, column=0, sticky="w", pady=4)
+        ttk.Label(tab, text="Responsable A3ECO").grid(row=8, column=0, sticky="w", pady=4)
+        row_responsable = ttk.Frame(tab)
+        row_responsable.grid(row=8, column=1, columnspan=3, sticky="ew", pady=4)
+        row_responsable.columnconfigure(0, weight=1)
+        ttk.Entry(row_responsable, textvariable=self.var_responsable).grid(row=0, column=0, sticky="ew")
+        ttk.Button(row_responsable, text="Importar responsable",
+                   command=self._update_responsable_from_a3).grid(row=0, column=1, padx=(4, 0))
+        ttk.Label(tab, text="Logo (JPG)").grid(row=9, column=0, sticky="w", pady=4)
         row_logo = ttk.Frame(tab)
-        row_logo.grid(row=8, column=1, columnspan=3, sticky="ew", pady=4)
+        row_logo.grid(row=9, column=1, columnspan=3, sticky="ew", pady=4)
         row_logo.columnconfigure(0, weight=1)
         ttk.Entry(row_logo, textvariable=self.var_logo).pack(side=tk.LEFT, fill="x", expand=True)
         ttk.Button(row_logo, text="Buscar", command=self._choose_logo).pack(side=tk.LEFT, padx=4)
-        ttk.Label(tab, text="Logo ancho (mm)").grid(row=9, column=0, sticky="w", pady=4)
-        ttk.Entry(tab, textvariable=self.var_logo_w, width=10).grid(row=9, column=1, sticky="w", pady=4)
-        ttk.Label(tab, text="Logo alto (mm)").grid(row=9, column=2, sticky="w", pady=4, padx=(18, 0))
-        ttk.Entry(tab, textvariable=self.var_logo_h, width=10).grid(row=9, column=3, sticky="w", pady=4)
-        ttk.Label(tab, textvariable=self.var_a3_info, justify="left").grid(row=10, column=0, columnspan=4, sticky="w", pady=(12, 6))
+        ttk.Label(tab, text="Logo ancho (mm)").grid(row=10, column=0, sticky="w", pady=4)
+        ttk.Entry(tab, textvariable=self.var_logo_w, width=10).grid(row=10, column=1, sticky="w", pady=4)
+        ttk.Label(tab, text="Logo alto (mm)").grid(row=10, column=2, sticky="w", pady=4, padx=(18, 0))
+        ttk.Entry(tab, textvariable=self.var_logo_h, width=10).grid(row=10, column=3, sticky="w", pady=4)
+        ttk.Label(tab, textvariable=self.var_a3_info, justify="left").grid(row=11, column=0, columnspan=4, sticky="w", pady=(12, 6))
         preview = ttk.LabelFrame(tab, text="Detalle capturado desde A3")
-        preview.grid(row=11, column=0, columnspan=4, sticky="nsew", pady=(0, 4))
+        preview.grid(row=12, column=0, columnspan=4, sticky="nsew", pady=(0, 4))
         preview.columnconfigure(0, weight=1)
         preview.rowconfigure(0, weight=1)
         self.txt_a3_preview = tk.Text(preview, height=8, wrap="word", state="disabled")
@@ -1255,8 +1263,14 @@ class EmpresaDialog(tk.Toplevel):
             self.var_tel.set(str(data.get("telefono") or ""))
         if data.get("email"):
             self.var_mail.set(str(data.get("email") or ""))
+        if data.get("responsable"):
+            self.var_responsable.set(str(data.get("responsable") or ""))
         if data.get("digitos_plan"):
             self.var_dig.set(str(data.get("digitos_plan") or "8"))
+        bank_records = data.get("bank_records") or []
+        self._bank_records = [dict(item) for item in bank_records]
+        self._sync_bank_items_from_records()
+        self._refresh_banks_tree()
 
         self.var_a3_info.set(
             "Importacion A3 completada."
@@ -1264,6 +1278,26 @@ class EmpresaDialog(tk.Toplevel):
             + str(data.get("_a3_info") or "Datos basicos detectados.")
         )
         self._set_a3_preview(data)
+
+    def _update_responsable_from_a3(self):
+        codigo = self._codigo_empresa_actual()
+        if not codigo:
+            messagebox.showwarning("Gest2A3Eco", "Introduce primero el codigo A3 de la empresa.", parent=self)
+            return
+        try:
+            data = importar_empresa_desde_a3(codigo)
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self)
+            return
+        responsable = str(data.get("responsable") or "").strip()
+        if not responsable:
+            messagebox.showinfo("Gest2A3Eco",
+                "La empresa no tiene un responsable asignado a la aplicacion ECO en A3.", parent=self)
+            return
+        self.var_responsable.set(responsable)
+        messagebox.showinfo("Gest2A3Eco",
+            f"Responsable A3ECO importado: {responsable}\nPulsa Guardar para conservar el cambio.",
+            parent=self)
 
     def _update_banks_from_a3(self):
         codigo = self._codigo_empresa_actual()
@@ -1308,6 +1342,7 @@ class EmpresaDialog(tk.Toplevel):
             f"Codigo A3:        {payload.get('codigo', '')}",
             f"Razon Social:     {payload.get('nombre', '')}",
             f"CIF/NIF:          {payload.get('cif', '')}",
+            f"Responsable ECO:  {payload.get('responsable', '')}",
             f"Domicilio:        {payload.get('direccion', '')}",
             f"Cod. Postal:      {payload.get('cp', '')}",
             f"Poblacion:        {payload.get('poblacion', '')}",
@@ -1363,6 +1398,7 @@ class EmpresaDialog(tk.Toplevel):
                 "pais": normalizar_codigo_pais(self.var_pais.get()) or "ES",
                 "telefono": self.var_tel.get().strip(),
                 "email": self.var_mail.get().strip(),
+                "responsable": self.var_responsable.get().strip(),
                 "logo_path": self.var_logo.get().strip(),
                 "logo_max_width_mm": _to_float_es(logo_w_txt) if logo_w_txt else None,
                 "logo_max_height_mm": _to_float_es(logo_h_txt) if logo_h_txt else None,

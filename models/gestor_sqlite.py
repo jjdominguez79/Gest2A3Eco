@@ -1292,8 +1292,8 @@ class GestorSQLite:
             INSERT INTO empresas (codigo, ejercicio, nombre, digitos_plan, serie_emitidas,
                 siguiente_num_emitidas, serie_emitidas_rect, siguiente_num_emitidas_rect,
                 pdf_ref_seq, cuenta_bancaria, cuentas_bancarias, cif, direccion, cp, poblacion, provincia, pais, telefono, email,
-                logo_path, logo_max_width_mm, logo_max_height_mm, activo, naf)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                logo_path, logo_max_width_mm, logo_max_height_mm, activo, naf, responsable)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(codigo, ejercicio) DO UPDATE SET
                 nombre=excluded.nombre,
                 digitos_plan=excluded.digitos_plan,
@@ -1316,7 +1316,8 @@ class GestorSQLite:
                 logo_max_width_mm=excluded.logo_max_width_mm,
                 logo_max_height_mm=excluded.logo_max_height_mm,
                 activo=excluded.activo,
-                naf=excluded.naf
+                naf=excluded.naf,
+                responsable=excluded.responsable
             """,
             (
                 emp.get("codigo"),
@@ -1343,6 +1344,7 @@ class GestorSQLite:
                 emp.get("logo_max_height_mm"),
                 1 if emp.get("activo", True) else 0,
                 emp.get("naf"),
+                emp.get("responsable"),
             ),
         )
         self.conn.commit()
