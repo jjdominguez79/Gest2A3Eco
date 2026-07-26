@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.3.0",
+  "latest_version": "1.3.1",
   "minimum_required_version": "1.2.2",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.3.0/Setup_Gest2A3Eco_1.3.0.exe",
-  "changelog": "Mejora la firma electronica de contratos y mandatos, asignando las zonas y los firmantes correctos. Corrige regresiones en el maestro de terceros y en la integracion OCR y contable.",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.3.1/Setup_Gest2A3Eco_1.3.1.exe",
+  "changelog": "Mejora la importacion de datos de empresa desde A3, incluyendo supervisor, cuentas bancarias y maestro de cuentas. Anade la gestion de tramites de cambios de titularidad en la DGT.",
   "force_update": false
 }
