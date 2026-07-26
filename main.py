@@ -67,6 +67,7 @@ def _build_header(
     on_open_users=None,
     on_open_terceros=None,
     on_open_notificaciones=None,
+    on_open_tramites_dgt=None,
     on_logout=None,
     db_path: str | None = None,
     word_tpl_dir: str | None = None,
@@ -156,6 +157,8 @@ def _build_header(
         _hbtn("Terceros", on_open_terceros)
     if on_open_notificaciones:
         _hbtn("Notificaciones/Certificados", on_open_notificaciones)
+    if on_open_tramites_dgt:
+        _hbtn("Tramites DGT", on_open_tramites_dgt)
     if on_open_config and session.is_admin():
         _hbtn("Configuracion", on_open_config)
     if on_open_users and session.is_admin():
@@ -382,6 +385,11 @@ def main():
             on_cambiar_empresa=controller.start,
             on_open_terceros=controller.open_terceros,
             on_open_notificaciones=controller.open_notificaciones_global,
+            on_open_tramites_dgt=(
+                controller.open_tramites_dgt
+                if controller.authorization.can_manage_tramites_dgt()
+                else None
+            ),
             on_open_config=_show_config_menu,
             on_open_users=controller.open_user_admin,
             on_logout=_logout,

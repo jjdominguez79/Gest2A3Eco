@@ -71,7 +71,6 @@ class AppController:
             self._empresa_service,
             self._session,
             on_open_dashboard=self.open_company_dashboard,
-            on_open_tramites_dgt=self.open_tramites_dgt if self.authorization.can_manage_tramites_dgt() else None,
             on_create_company=on_create_company,
         )
 
