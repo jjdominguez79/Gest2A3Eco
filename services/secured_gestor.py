@@ -115,6 +115,14 @@ class SecuredGestorSQLite:
         self.security.ensure_company_write(codigo_empresa)
         return self._base.eliminar_banco(codigo_empresa, banco, ejercicio)
 
+    def crear_importacion_banco(self, datos: dict):
+        self.security.ensure_company_write(datos.get("codigo_empresa"))
+        return self._base.crear_importacion_banco(datos)
+
+    def listar_importaciones_bancos(self, codigo_empresa: str, ejercicio: int, limite: int = 250):
+        self.security.ensure_company_read(codigo_empresa)
+        return self._base.listar_importaciones_bancos(codigo_empresa, ejercicio, limite)
+
     def upsert_emitida(self, plantilla):
         self.security.ensure_company_write(plantilla.get("codigo_empresa"))
         return self._base.upsert_emitida(plantilla)

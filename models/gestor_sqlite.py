@@ -75,6 +75,34 @@ CREATE TABLE IF NOT EXISTS bancos (
   excel_json TEXT,
   PRIMARY KEY (codigo_empresa, ejercicio, banco)
 );
+CREATE TABLE IF NOT EXISTS importaciones_bancos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  codigo_empresa TEXT NOT NULL,
+  ejercicio INTEGER NOT NULL,
+  banco TEXT NOT NULL,
+  subcuenta_banco TEXT,
+  usuario_id INTEGER,
+  usuario TEXT,
+  fecha_importacion TEXT NOT NULL,
+  archivo_origen TEXT,
+  hoja TEXT,
+  archivo_generado TEXT,
+  estado TEXT NOT NULL,
+  filas_leidas INTEGER DEFAULT 0,
+  movimientos_generados INTEGER DEFAULT 0,
+  movimientos_omitidos INTEGER DEFAULT 0,
+  fecha_primer_asiento TEXT,
+  fecha_ultimo_asiento TEXT,
+  saldo_primer_asiento REAL,
+  saldo_final REAL,
+  importe_entradas REAL DEFAULT 0,
+  importe_salidas REAL DEFAULT 0,
+  variacion_neta REAL DEFAULT 0,
+  avisos_json TEXT,
+  error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_importaciones_bancos_empresa
+  ON importaciones_bancos(codigo_empresa, ejercicio, fecha_importacion DESC);
 CREATE TABLE IF NOT EXISTS facturas_emitidas (
   codigo_empresa TEXT NOT NULL,
   ejercicio INTEGER NOT NULL,
@@ -1845,6 +1873,49 @@ class GestorSQLite:
             (codigo_empresa, _ej_val(ejercicio), banco),
         )
         self.conn.commit()
+
+    def crear_importacion_banco(self, datos: dict) -> int:
+        campos = (
+            "codigo_empresa", "ejercicio", "banco", "subcuenta_banco",
+            "usuario_id", "usuario", "fecha_importacion", "archivo_origen",
+            "hoja", "archivo_generado", "estado", "filas_leidas",
+            "movimientos_generados", "movimientos_omitidos",
+            "fecha_primer_asiento", "fecha_ultimo_asiento",
+            "saldo_primer_asiento", "saldo_final", "importe_entradas",
+            "importe_salidas", "variacion_neta", "avisos_json", "error",
+        )
+        valores = dict(datos)
+        valores.setdefault("fecha_importacion", datetime.now().isoformat(timespec="seconds"))
+        valores["ejercicio"] = _ej_val(valores.get("ejercicio"))
+        valores["avisos_json"] = json.dumps(
+            valores.get("avisos") or [], ensure_ascii=False
+        )
+        cur = self.conn.execute(
+            "INSERT INTO importaciones_bancos ({}) VALUES ({})".format(
+                ", ".join(campos), ", ".join("?" for _ in campos)
+            ),
+            tuple(valores.get(campo) for campo in campos),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def listar_importaciones_bancos(self, codigo_empresa: str, ejercicio: int, limite: int = 250):
+        cur = self.conn.execute(
+            """
+            SELECT * FROM importaciones_bancos
+            WHERE codigo_empresa=? AND ejercicio=?
+            ORDER BY fecha_importacion DESC, id DESC
+            LIMIT ?
+            """,
+            (codigo_empresa, _ej_val(ejercicio), max(1, int(limite))),
+        )
+        out = []
+        for row in cur.fetchall():
+            dato = self._row_to_dict(row)
+            dato["avisos"] = json.loads(dato.get("avisos_json") or "[]")
+            dato.pop("avisos_json", None)
+            out.append(dato)
+        return out
 
     # ---------- EMITIDAS (plantillas) ----------
     def listar_emitidas(self, codigo_empresa: str, ejercicio: int):

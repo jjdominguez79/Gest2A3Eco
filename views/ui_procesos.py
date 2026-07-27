@@ -17,7 +17,9 @@ class UIProcesos(ttk.Frame):
         self._initial_tipo = initial_tipo or "Bancos"
         self.pack(fill=tk.BOTH, expand=True)
         self._build()
-        self.controller = ProcesosController(gestor, codigo_empresa, ejercicio, self)
+        self.controller = ProcesosController(
+            gestor, codigo_empresa, ejercicio, self, session=session
+        )
         self.controller.refresh_plantillas()
 
     # UI
@@ -56,6 +58,12 @@ class UIProcesos(ttk.Frame):
             command=lambda: self.controller.generar(),
         )
         self.btn_generar.pack(side=tk.BOTTOM, pady=10)
+
+        ttk.Button(
+            form,
+            text="Historial de importaciones bancarias",
+            command=lambda: self.controller.mostrar_historial_bancos(),
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         preview_wrap = ttk.Frame(self, height=320, width=900)
         preview_wrap.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -126,6 +134,82 @@ class UIProcesos(ttk.Frame):
     def clear_preview(self):
         self.tv.delete(*self.tv.get_children())
         self.tv["columns"] = []
+
+    def mostrar_historial_bancos(self, registros):
+        dlg = tk.Toplevel(self)
+        dlg.title(f"Historial de importaciones bancarias - {self.nombre}")
+        dlg.geometry("1180x620")
+        dlg.transient(self.winfo_toplevel())
+
+        cols = (
+            "fecha", "estado", "banco", "subcuenta", "usuario", "periodo",
+            "movimientos", "saldo_final", "archivo",
+        )
+        tv = ttk.Treeview(dlg, columns=cols, show="headings")
+        etiquetas = {
+            "fecha": "Importacion", "estado": "Estado", "banco": "Banco",
+            "subcuenta": "Subcuenta", "usuario": "Usuario",
+            "periodo": "Periodo asientos", "movimientos": "Mov.",
+            "saldo_final": "Saldo final", "archivo": "Excel origen",
+        }
+        anchos = (145, 100, 130, 95, 125, 190, 55, 95, 150)
+        for col, ancho in zip(cols, anchos):
+            tv.heading(col, text=etiquetas[col])
+            tv.column(col, width=ancho, stretch=col in ("banco", "archivo"))
+        tv.pack(fill="both", expand=True, padx=10, pady=(10, 4))
+
+        detalle = tk.Text(dlg, height=9, wrap="word", state="disabled")
+        detalle.pack(fill="x", padx=10, pady=(4, 10))
+        por_id = {}
+        for reg in registros:
+            iid = str(reg["id"])
+            por_id[iid] = reg
+            periodo = "{} - {}".format(
+                reg.get("fecha_primer_asiento") or "-",
+                reg.get("fecha_ultimo_asiento") or "-",
+            )
+            saldo = reg.get("saldo_final")
+            tv.insert("", "end", iid=iid, values=(
+                str(reg.get("fecha_importacion") or "").replace("T", " "),
+                reg.get("estado") or "", reg.get("banco") or "",
+                reg.get("subcuenta_banco") or "", reg.get("usuario") or "",
+                periodo, reg.get("movimientos_generados") or 0,
+                "-" if saldo is None else f"{saldo:,.2f}",
+                reg.get("archivo_origen") or "",
+            ))
+
+        def ver_detalle(_event=None):
+            seleccion = tv.selection()
+            if not seleccion:
+                return
+            reg = por_id[seleccion[0]]
+            avisos = reg.get("avisos") or []
+            texto = (
+                f"Filas leidas: {reg.get('filas_leidas', 0)} | "
+                f"Movimientos: {reg.get('movimientos_generados', 0)} | "
+                f"Omitidos: {reg.get('movimientos_omitidos', 0)}\n"
+                f"Primer asiento: {reg.get('fecha_primer_asiento') or '-'} | "
+                f"Saldo primer asiento: {reg.get('saldo_primer_asiento') if reg.get('saldo_primer_asiento') is not None else '-'}\n"
+                f"Ultimo asiento: {reg.get('fecha_ultimo_asiento') or '-'} | "
+                f"Saldo final: {reg.get('saldo_final') if reg.get('saldo_final') is not None else '-'}\n"
+                f"Entradas: {reg.get('importe_entradas', 0):,.2f} | "
+                f"Salidas: {reg.get('importe_salidas', 0):,.2f} | "
+                f"Variacion neta: {reg.get('variacion_neta', 0):,.2f}\n"
+                f"DAT: {reg.get('archivo_generado') or '-'}\n"
+                f"Error: {reg.get('error') or '-'}"
+            )
+            if avisos:
+                texto += "\nAvisos:\n- " + "\n- ".join(avisos)
+            detalle.configure(state="normal")
+            detalle.delete("1.0", "end")
+            detalle.insert("1.0", texto)
+            detalle.configure(state="disabled")
+
+        tv.bind("<<TreeviewSelect>>", ver_detalle)
+        if registros:
+            primero = str(registros[0]["id"])
+            tv.selection_set(primero)
+            ver_detalle()
 
     def render_preview(self, df):
         self.tv.delete(*self.tv.get_children())

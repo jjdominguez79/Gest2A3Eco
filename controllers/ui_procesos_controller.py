@@ -8,15 +8,17 @@ from procesos.bancos import generar_bancos
 from procesos.facturas_emitidas import generar_emitidas
 from procesos.facturas_recibidas import generar_recibidas_suenlace
 from services.excel_mapping import extract_rows_by_mapping
+from services.historial_importaciones_bancos import resumir_importacion_banco
 from utils.validaciones import normalizar_nif_cif
 
 
 class ProcesosController:
-    def __init__(self, gestor, codigo, ejercicio, view):
+    def __init__(self, gestor, codigo, ejercicio, view, session=None):
         self._gestor = gestor
         self._codigo = codigo
         self._ejercicio = ejercicio
         self._view = view
+        self._session = session
         self._excel_path = None
         # Mejora 7: cache de filas extraidas y overrides de contrapartida por fila
         self._cached_rows: list[dict] | None = None
@@ -45,6 +47,33 @@ class ProcesosController:
         self._view.set_plantillas(pls)
         self._view.set_plantilla_enabled(True)
         self._view.set_generar_text("Generar Suenlace.dat")
+
+    def mostrar_historial_bancos(self):
+        registros = self._gestor.listar_importaciones_bancos(
+            self._codigo, self._ejercicio
+        )
+        self._view.mostrar_historial_bancos(registros)
+
+    def _registrar_importacion_banco(
+        self, pl, rows, avisos, estado, archivo_generado=None, error=None
+    ):
+        resumen = resumir_importacion_banco(rows or [], avisos or [])
+        usuario = getattr(getattr(self._session, "user", None), "username", None)
+        usuario_id = getattr(getattr(self._session, "user", None), "id", None)
+        self._gestor.crear_importacion_banco({
+            "codigo_empresa": self._codigo,
+            "ejercicio": self._ejercicio,
+            "banco": pl.get("banco") or "",
+            "subcuenta_banco": pl.get("subcuenta_banco"),
+            "usuario_id": usuario_id,
+            "usuario": usuario or "Usuario no identificado",
+            "archivo_origen": os.path.basename(self._excel_path or ""),
+            "hoja": self._view.get_selected_sheet(),
+            "archivo_generado": archivo_generado,
+            "estado": estado,
+            "error": str(error) if error else None,
+            **resumen,
+        })
 
     def cargar_excel(self):
         path = self._view.ask_open_excel_path()
@@ -264,6 +293,9 @@ class ProcesosController:
                 try:
                     out_lines, avisos = generar_bancos(rows, pl, codigo_empresa, ndig)
                 except ValueError as e:
+                    self._registrar_importacion_banco(
+                        pl, rows, [], "ERROR", error=e
+                    )
                     self._view.show_error("Gest2A3Eco", str(e))
                     return
                 if not out_lines:
@@ -274,13 +306,28 @@ class ProcesosController:
                         if len(avisos) > 10:
                             preview += f"\n... y {len(avisos)-10} filas mas con fecha invalida."
                         msg += preview
+                    self._registrar_importacion_banco(
+                        pl, rows, avisos, "ERROR",
+                        error="No se generaron movimientos validos.",
+                    )
                     self._view.show_warning("Gest2A3Eco", msg)
                     return
                 save_path = self._view.ask_save_path(f"{self._codigo_empresa_a3()}.dat")
                 if not save_path:
                     return
-                with open(save_path, "w", encoding="latin-1", newline="") as f:
-                    f.writelines(out_lines)
+                try:
+                    with open(save_path, "w", encoding="latin-1", newline="") as f:
+                        f.writelines(out_lines)
+                except Exception as e:
+                    self._registrar_importacion_banco(
+                        pl, rows, avisos, "ERROR",
+                        archivo_generado=save_path, error=e,
+                    )
+                    raise
+                estado = "CON_AVISOS" if avisos else "CORRECTA"
+                self._registrar_importacion_banco(
+                    pl, rows, avisos, estado, archivo_generado=save_path
+                )
                 msg = f"Fichero generado:\n{save_path}"
                 if avisos:
                     msg += "\n\nATENCION: se han omitido movimientos por fecha invalida:\n"

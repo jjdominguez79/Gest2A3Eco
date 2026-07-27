@@ -5,7 +5,7 @@ from utils.utilidades import validar_subcuenta_longitud
 from controllers.ui_plantillas_controller import PlantillasController
 
 DEFAULT_COLS_BANCOS = [
-    "Fecha Asiento","Descripcion Asiento","Concepto","Importe",
+    "Fecha Asiento","Descripcion Asiento","Concepto","Importe","Saldo",
 ]
 DEFAULT_COLS_FACTURAS = [
     "Serie","Numero Factura","Numero Factura Largo SII",

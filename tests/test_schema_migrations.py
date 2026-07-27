@@ -32,6 +32,20 @@ def test_tablas_originales_existen(tmp_path):
         assert tabla in t, f"Tabla '{tabla}' no existe tras migracion"
 
 
+def test_tabla_historial_importaciones_bancos_existe(tmp_path):
+    g = _gestor(tmp_path)
+    assert "importaciones_bancos" in _tables(g)
+    cols = _columns(g, "importaciones_bancos")
+    for col in (
+        "codigo_empresa", "ejercicio", "banco", "subcuenta_banco",
+        "usuario", "fecha_importacion", "estado", "filas_leidas",
+        "movimientos_generados", "fecha_primer_asiento",
+        "fecha_ultimo_asiento", "saldo_primer_asiento", "saldo_final",
+        "importe_entradas", "importe_salidas", "variacion_neta", "error",
+    ):
+        assert col in cols
+
+
 # ── Tablas nuevas de Fase 2 ───────────────────────────────────────────────────
 
 def test_tabla_maestro_subcuentas_empresa_existe(tmp_path):
