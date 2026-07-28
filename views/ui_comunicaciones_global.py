@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 
 from services.comunicaciones_sync_service import ComunicacionesSyncService
 from utils.utilidades import load_app_config
@@ -18,6 +18,7 @@ class UIComunicacionesGlobal(ttk.Frame):
         self._pending: dict[str, dict] = {}
         self._mine: dict[str, dict] = {}
         self._supervision: dict[str, dict] = {}
+        self._discarded: dict[str, dict] = {}
         self._companies: dict[str, dict] = {}
         self._users: dict[str, dict] = {}
         self._build()
@@ -40,6 +41,8 @@ class UIComunicacionesGlobal(ttk.Frame):
         if self._session.is_admin():
             supervision_tab = ttk.Frame(tabs, padding=8)
             tabs.add(supervision_tab, text="Supervision")
+            discarded_tab = ttk.Frame(tabs, padding=8)
+            tabs.add(discarded_tab, text="Descartados")
 
         self._pending_tree = self._tree(
             pending_tab,
@@ -71,6 +74,15 @@ class UIComunicacionesGlobal(ttk.Frame):
             buttons, text="Seleccionar mismo remitente",
             command=self._select_same_sender,
         ).pack(side="left", padx=(0, 5))
+        ttk.Button(
+            buttons, text="Asignar sin cliente",
+            command=self._assign_without_client,
+        ).pack(side="left", padx=(0, 5))
+        if self._session.is_admin():
+            ttk.Button(
+                buttons, text="Descartar",
+                command=self._discard,
+            ).pack(side="left", padx=(0, 5))
         ttk.Button(buttons, text="Asignar seleccionados", command=self._assign).pack(side="left")
         assign.columnconfigure(1, weight=1)
         assign.columnconfigure(3, weight=1)
@@ -99,6 +111,20 @@ class UIComunicacionesGlobal(ttk.Frame):
 
         if supervision_tab is not None:
             self._build_supervision(supervision_tab)
+            self._build_discarded(discarded_tab)
+
+    def _build_discarded(self, parent):
+        self._discarded_tree = self._tree(
+            parent,
+            (("fecha", "Fecha", 170), ("buzon", "Buzon", 180),
+             ("remitente", "Remitente", 240), ("asunto", "Asunto", 340),
+             ("por", "Descartado por", 170), ("motivo", "Motivo", 240)),
+            selectmode="extended",
+        )
+        ttk.Button(
+            parent, text="Restaurar seleccionados",
+            command=self._restore,
+        ).pack(anchor="e", pady=(8, 0))
 
     def _build_supervision(self, parent):
         filters = ttk.Frame(parent)
@@ -204,18 +230,34 @@ class UIComunicacionesGlobal(ttk.Frame):
             item["_pending_client"] = True
             self._mine[iid] = item
             self._mine_tree.insert("", "end", iid=iid, values=(
-                item.get("fecha") or "", "Sin asignar",
+                item.get("fecha") or "",
+                "Sin cliente" if item.get("sin_cliente_confirmado") else "Sin asignar",
                 item.get("asunto") or "", item.get("remitente") or "",
-                "pendiente de cliente",
+                item.get("estado") or "pendiente",
             ))
         if self._session.is_admin():
             self._refresh_supervision()
+            self._refresh_discarded()
+
+    def _refresh_discarded(self):
+        self._discarded_tree.delete(*self._discarded_tree.get_children())
+        self._discarded = {}
+        for item in self._gestor.listar_comunicaciones_descartadas():
+            graph_id = item["graph_message_id"]
+            self._discarded[graph_id] = item
+            self._discarded_tree.insert("", "end", iid=graph_id, values=(
+                item.get("fecha") or "", item.get("mailbox") or "",
+                item.get("remitente") or "", item.get("asunto") or "",
+                item.get("descartado_por") or "", item.get("motivo_descarte") or "",
+            ))
 
     def _refresh_supervision(self):
         self._supervision = {
             item["id"]: item
             for item in self._gestor.listar_comunicaciones_supervision()
         }
+        for item in self._gestor.listar_comunicaciones_sin_cliente_asignadas():
+            self._supervision[f"queue::{item['graph_message_id']}"] = item
         statuses = sorted({str(item.get("estado") or "pendiente") for item in self._supervision.values()})
         users = sorted({str(item.get("responsable_nombre") or "") for item in self._supervision.values() if item.get("responsable_nombre")})
         companies = sorted({str(item.get("cliente_nombre") or item.get("codigo_empresa") or "") for item in self._supervision.values()})
@@ -433,6 +475,72 @@ class UIComunicacionesGlobal(ttk.Frame):
             parent=self,
         )
 
+    def _assign_without_client(self):
+        selected = self._pending_tree.selection()
+        user = self._users.get(self._user_var.get())
+        if not selected or not user:
+            messagebox.showwarning(
+                "Asignacion", "Selecciona mensajes y responsable.", parent=self,
+            )
+            return
+        automatic_ids = {
+            int(self._pending[item].get("responsable_usuario_id"))
+            for item in selected
+            if self._pending[item].get("responsable_usuario_id") is not None
+        }
+        if automatic_ids and (
+            len(automatic_ids) > 1 or int(user["id"]) not in automatic_ids
+        ):
+            messagebox.showwarning(
+                "Asignacion",
+                "Los correos personales deben conservar su responsable automatico.",
+                parent=self,
+            )
+            return
+        if not messagebox.askyesno(
+            "Asignar sin cliente",
+            (
+                f"Se asignaran {len(selected)} mensajes a {user['nombre']} "
+                "sin vincularlos a ningun cliente.\n\n¿Deseas continuar?"
+            ),
+            parent=self,
+        ):
+            return
+        count = self._gestor.asignar_comunicaciones_sin_cliente(
+            list(selected), int(user["id"]), str(user["nombre"]),
+        )
+        self._refresh()
+        messagebox.showinfo(
+            "Asignacion", f"Mensajes asignados sin cliente: {count}", parent=self,
+        )
+
+    def _discard(self):
+        selected = self._pending_tree.selection()
+        if not selected:
+            return
+        motivo = simpledialog.askstring(
+            "Descartar correos", "Motivo opcional:", parent=self,
+        )
+        if motivo is None:
+            return
+        count = self._gestor.descartar_comunicaciones(
+            list(selected), self._session.user.nombre, motivo,
+        )
+        self._refresh()
+        messagebox.showinfo(
+            "Descartar", f"Correos descartados: {count}", parent=self,
+        )
+
+    def _restore(self):
+        selected = self._discarded_tree.selection()
+        if not selected:
+            return
+        count = self._gestor.restaurar_comunicaciones(list(selected))
+        self._refresh()
+        messagebox.showinfo(
+            "Restaurar", f"Correos restaurados: {count}", parent=self,
+        )
+
     def _pending_detail(self):
         selected = self._pending_tree.selection()
         if not selected:
@@ -457,11 +565,11 @@ class UIComunicacionesGlobal(ttk.Frame):
         if not selected:
             return
         if selected[0].startswith("pending::"):
-            messagebox.showinfo(
-                "Estado",
-                "Asigna primero el cliente para gestionar el estado del correo.",
-                parent=self,
+            graph_id = selected[0].split("::", 1)[1]
+            self._gestor.cambiar_estado_pendiente_responsable(
+                graph_id, estado, self._session.user.id,
             )
+            self._refresh()
             return
         self._gestor.cambiar_estado_comunicacion(
             selected[0], estado, self._session.user.id,
@@ -494,6 +602,22 @@ class UIComunicacionesGlobal(ttk.Frame):
     def _supervision_detail(self):
         selected = self._supervision_tree.selection()
         if not selected:
+            return
+        if selected[0].startswith("queue::"):
+            item = self._supervision[selected[0]]
+            payload = json.loads(item.get("payload_json") or "{}")
+            message = {
+                "fecha": payload.get("fecha"),
+                "remitente": payload.get("remitente"),
+                "destinatarios_json": json.dumps(payload.get("destinatarios") or []),
+                "cc_json": json.dumps(payload.get("cc") or []),
+                "asunto": payload.get("asunto"),
+                "cuerpo_html": payload.get("cuerpo_html"),
+                "estado_envio": item.get("estado") or "pendiente",
+                "error_envio": "",
+                "adjuntos": [],
+            }
+            CommunicationDetailDialog(self, [message])
             return
         messages = self._gestor.listar_mensajes_comunicacion(selected[0])
         CommunicationDetailDialog(self, messages)

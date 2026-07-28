@@ -179,3 +179,29 @@ def test_pendiente_personal_aparece_en_buzon_del_responsable(tmp_path):
 
     assert len(pendientes) == 1
     assert pendientes[0]["responsable_nombre"] == "Administrador"
+
+
+def test_asigna_sin_cliente_gestiona_descarta_y_restaura(tmp_path):
+    gestor = GestorSQLite(tmp_path / "test.db")
+    for index in range(2):
+        gestor.guardar_comunicacion_sin_asignar({
+            "graph_message_id": f"internal-{index}",
+            "mailbox": "oficina@gestinem.es",
+            "remitente": "proveedor@example.com",
+            "asunto": "Aviso interno",
+            "fecha": f"2026-07-28T10:0{index}:00Z",
+        })
+
+    assert gestor.asignar_comunicaciones_sin_cliente(
+        ["internal-0"], 3, "ANABEL",
+    ) == 1
+    gestor.cambiar_estado_pendiente_responsable(
+        "internal-0", "gestionado", 3,
+    )
+    assert gestor.listar_comunicaciones_sin_cliente_asignadas()[0]["estado"] == "gestionado"
+    assert gestor.descartar_comunicaciones(
+        ["internal-1"], "Administrador", "Publicidad",
+    ) == 1
+    assert gestor.listar_comunicaciones_descartadas()[0]["motivo_descarte"] == "Publicidad"
+    assert gestor.restaurar_comunicaciones(["internal-1"]) == 1
+    assert gestor.listar_comunicaciones_descartadas() == []
