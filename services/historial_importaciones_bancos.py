@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import re
+import unicodedata
+from collections import Counter
+
 from models.facturas_common import _fecha_yyyymmdd
 
 
@@ -58,6 +63,123 @@ def resumir_importacion_banco(rows: list[dict], avisos: list[str]) -> dict:
         "variacion_neta": round(entradas - salidas, 2),
         "avisos": list(avisos or []),
     }
+
+
+def normalizar_movimientos_banco(rows: list[dict]) -> list[dict]:
+    """Convierte filas Excel en movimientos comparables y asigna ocurrencias."""
+    movimientos = []
+    ocurrencias = Counter()
+    for indice, row in enumerate(rows or []):
+        fecha = _fecha_yyyymmdd(
+            row.get("Fecha Asiento")
+            or row.get("Fecha Operacion")
+            or row.get("Fecha Expedicion")
+        )
+        importe = _numero(row.get("Importe"))
+        if fecha == "00000000" or importe in (None, 0):
+            continue
+        concepto = str(
+            row.get("Concepto") or row.get("Descripcion Factura") or ""
+        ).strip()
+        referencia = _primero_con_valor(
+            row,
+            (
+                "Referencia", "Referencia bancaria", "Referencia Bancaria",
+                "Numero movimiento", "Número movimiento", "Documento",
+            ),
+        )
+        saldo = _primero_numero(
+            row, ("Saldo", "Saldo banco", "Saldo Banco", "Saldo disponible")
+        )
+        base = "|".join((
+            fecha,
+            f"{importe:.2f}",
+            _texto_huella(concepto),
+            _texto_huella(referencia),
+        ))
+        huella = hashlib.sha256(base.encode("utf-8")).hexdigest()
+        ocurrencias[huella] += 1
+        movimientos.append({
+            "indice_fila": indice,
+            "fecha": fecha,
+            "importe": importe,
+            "concepto": concepto,
+            "referencia": referencia,
+            "saldo": saldo,
+            "huella": huella,
+            "ocurrencia": ocurrencias[huella],
+        })
+    return movimientos
+
+
+def analizar_duplicados_banco(
+    rows: list[dict],
+    movimientos_anteriores: list[dict],
+    importaciones_solapadas: list[dict] | None = None,
+) -> dict:
+    """Clasifica filas nuevas, repetidas y posiblemente modificadas."""
+    actuales = normalizar_movimientos_banco(rows)
+    claves_anteriores = {
+        (str(m.get("huella") or ""), int(m.get("ocurrencia") or 1))
+        for m in movimientos_anteriores or []
+    }
+    referencias_anteriores = {
+        (str(m.get("fecha") or ""), _texto_huella(m.get("referencia"))):
+        str(m.get("huella") or "")
+        for m in movimientos_anteriores or []
+        if _texto_huella(m.get("referencia"))
+    }
+    nuevos, duplicados, modificados = [], [], []
+    for movimiento in actuales:
+        clave = (movimiento["huella"], movimiento["ocurrencia"])
+        clave_ref = (
+            movimiento["fecha"], _texto_huella(movimiento["referencia"])
+        )
+        if clave in claves_anteriores:
+            duplicados.append(movimiento)
+        elif (
+            clave_ref[1]
+            and clave_ref in referencias_anteriores
+            and referencias_anteriores[clave_ref] != movimiento["huella"]
+        ):
+            modificados.append(movimiento)
+        else:
+            nuevos.append(movimiento)
+
+    return {
+        "movimientos": actuales,
+        "nuevos": nuevos,
+        "duplicados": duplicados,
+        "modificados": modificados,
+        "importaciones_solapadas": list(importaciones_solapadas or []),
+        "fecha_desde": min((m["fecha"] for m in actuales), default=None),
+        "fecha_hasta": max((m["fecha"] for m in actuales), default=None),
+        "hay_conflicto": bool(
+            duplicados or modificados or importaciones_solapadas
+        ),
+    }
+
+
+def _texto_huella(valor) -> str:
+    texto = unicodedata.normalize("NFKD", str(valor or ""))
+    texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+    return re.sub(r"\s+", " ", texto).strip().upper()
+
+
+def _primero_con_valor(row: dict, claves) -> str:
+    for clave in claves:
+        valor = row.get(clave)
+        if valor is not None and str(valor).strip().lower() not in ("", "nan"):
+            return str(valor).strip()
+    return ""
+
+
+def _primero_numero(row: dict, claves):
+    for clave in claves:
+        numero = _numero(row.get(clave))
+        if numero is not None:
+            return numero
+    return None
 
 
 def _saldo_cierre_fecha(movimientos, fecha):

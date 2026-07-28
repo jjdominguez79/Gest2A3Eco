@@ -135,6 +135,70 @@ class UIProcesos(ttk.Frame):
         self.tv.delete(*self.tv.get_children())
         self.tv["columns"] = []
 
+    def pedir_accion_duplicados_banco(self, analisis):
+        dlg = tk.Toplevel(self)
+        dlg.title("Movimientos bancarios ya generados")
+        dlg.transient(self.winfo_toplevel())
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        solapadas = analisis.get("importaciones_solapadas") or []
+        duplicados = analisis.get("duplicados") or []
+        nuevos = analisis.get("nuevos") or []
+        modificados = analisis.get("modificados") or []
+        texto = (
+            f"El fichero comprende del {analisis.get('fecha_desde') or '-'} "
+            f"al {analisis.get('fecha_hasta') or '-'}.\n\n"
+            f"Importaciones anteriores solapadas: {len(solapadas)}\n"
+            f"Movimientos ya generados: {len(duplicados)}\n"
+            f"Movimientos nuevos: {len(nuevos)}\n"
+            f"Posiblemente modificados: {len(modificados)}\n\n"
+        )
+        if analisis.get("sin_detalle_previo"):
+            texto += (
+                "Las importaciones anteriores no guardaban el detalle de sus "
+                "movimientos, por lo que no es posible separar los nuevos con "
+                "seguridad. Puedes regenerar todo o cancelar."
+            )
+        else:
+            texto += (
+                "Se recomienda generar solamente los movimientos nuevos. "
+                "Los posibles movimientos modificados requieren revision y "
+                "no se incluiran en esa opcion."
+            )
+        ttk.Label(
+            dlg, text=texto, justify="left", wraplength=620, padding=16
+        ).pack(fill="x")
+
+        resultado = tk.StringVar(value="cancelar")
+        botones = ttk.Frame(dlg, padding=(16, 0, 16, 16))
+        botones.pack(fill="x")
+
+        def cerrar(valor):
+            resultado.set(valor)
+            dlg.destroy()
+
+        btn_nuevos = ttk.Button(
+            botones,
+            text="Generar solo nuevos",
+            style="Primary.TButton",
+            command=lambda: cerrar("solo_nuevos"),
+        )
+        btn_nuevos.pack(side="left")
+        if analisis.get("sin_detalle_previo"):
+            btn_nuevos.configure(state="disabled")
+        ttk.Button(
+            botones, text="Regenerar todo",
+            command=lambda: cerrar("todo"),
+        ).pack(side="left", padx=8)
+        ttk.Button(
+            botones, text="Cancelar",
+            command=lambda: cerrar("cancelar"),
+        ).pack(side="right")
+        dlg.protocol("WM_DELETE_WINDOW", lambda: cerrar("cancelar"))
+        dlg.wait_window()
+        return resultado.get()
+
     def mostrar_historial_bancos(self, registros):
         dlg = tk.Toplevel(self)
         dlg.title(f"Historial de importaciones bancarias - {self.nombre}")
@@ -197,6 +261,9 @@ class UIProcesos(ttk.Frame):
                 f"Entradas: {reg.get('importe_entradas', 0):,.2f} | "
                 f"Salidas: {reg.get('importe_salidas', 0):,.2f} | "
                 f"Variacion neta: {reg.get('variacion_neta', 0):,.2f}\n"
+                f"Control duplicados: {reg.get('modo_duplicados') or '-'} | "
+                f"Repetidos excluidos/detectados: {reg.get('movimientos_duplicados') or 0} | "
+                f"Modificados: {reg.get('movimientos_modificados') or 0}\n"
                 f"DAT: {reg.get('archivo_generado') or '-'}\n"
                 f"Error: {reg.get('error') or '-'}"
             )

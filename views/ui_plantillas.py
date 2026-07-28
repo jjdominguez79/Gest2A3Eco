@@ -10,7 +10,7 @@ from services.plantillas_bancos_service import (
 )
 
 DEFAULT_COLS_BANCOS = [
-    "Fecha Asiento","Descripcion Asiento","Concepto","Importe","Saldo",
+    "Fecha Asiento","Descripcion Asiento","Concepto","Referencia","Importe","Saldo",
 ]
 DEFAULT_COLS_FACTURAS = [
     "Serie","Numero Factura","Numero Factura Largo SII",

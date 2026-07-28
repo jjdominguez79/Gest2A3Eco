@@ -261,6 +261,31 @@ class SecuredGestorSQLite:
         self.security.ensure_company_read(codigo_empresa)
         return self._base.listar_importaciones_bancos(codigo_empresa, ejercicio, limite)
 
+    def guardar_movimientos_importacion_banco(
+        self, importacion_id: int, datos_cuenta: dict, movimientos: list[dict]
+    ):
+        self.security.ensure_company_write(datos_cuenta.get("codigo_empresa"))
+        return self._base.guardar_movimientos_importacion_banco(
+            importacion_id, datos_cuenta, movimientos
+        )
+
+    def listar_movimientos_importados_banco(
+        self, codigo_empresa: str, ejercicio: int, plantilla: dict
+    ):
+        self.security.ensure_company_read(codigo_empresa)
+        return self._base.listar_movimientos_importados_banco(
+            codigo_empresa, ejercicio, plantilla
+        )
+
+    def listar_importaciones_banco_solapadas(
+        self, codigo_empresa: str, ejercicio: int, plantilla: dict,
+        fecha_desde: str, fecha_hasta: str
+    ):
+        self.security.ensure_company_read(codigo_empresa)
+        return self._base.listar_importaciones_banco_solapadas(
+            codigo_empresa, ejercicio, plantilla, fecha_desde, fecha_hasta
+        )
+
     def upsert_emitida(self, plantilla):
         self.security.ensure_company_write(plantilla.get("codigo_empresa"))
         return self._base.upsert_emitida(plantilla)

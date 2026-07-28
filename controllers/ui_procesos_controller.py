@@ -8,7 +8,11 @@ from procesos.bancos import generar_bancos
 from procesos.facturas_emitidas import generar_emitidas
 from procesos.facturas_recibidas import generar_recibidas_suenlace
 from services.excel_mapping import extract_rows_by_mapping
-from services.historial_importaciones_bancos import resumir_importacion_banco
+from services.historial_importaciones_bancos import (
+    analizar_duplicados_banco,
+    normalizar_movimientos_banco,
+    resumir_importacion_banco,
+)
 from utils.validaciones import normalizar_nif_cif
 
 
@@ -55,12 +59,14 @@ class ProcesosController:
         self._view.mostrar_historial_bancos(registros)
 
     def _registrar_importacion_banco(
-        self, pl, rows, avisos, estado, archivo_generado=None, error=None
+        self, pl, rows, avisos, estado, archivo_generado=None, error=None,
+        control_duplicados=None,
     ):
         resumen = resumir_importacion_banco(rows or [], avisos or [])
         usuario = getattr(getattr(self._session, "user", None), "username", None)
         usuario_id = getattr(getattr(self._session, "user", None), "id", None)
-        self._gestor.crear_importacion_banco({
+        control = control_duplicados or {}
+        importacion_id = self._gestor.crear_importacion_banco({
             "codigo_empresa": self._codigo,
             "ejercicio": self._ejercicio,
             "banco": pl.get("banco") or "",
@@ -73,8 +79,44 @@ class ProcesosController:
             "archivo_generado": archivo_generado,
             "estado": estado,
             "error": str(error) if error else None,
+            "movimientos_duplicados": len(control.get("duplicados") or []),
+            "movimientos_modificados": len(control.get("modificados") or []),
+            "modo_duplicados": control.get("modo"),
+            "importaciones_solapadas": [
+                item.get("id")
+                for item in control.get("importaciones_solapadas") or []
+            ],
             **resumen,
         })
+        if estado in ("CORRECTA", "CON_AVISOS"):
+            self._gestor.guardar_movimientos_importacion_banco(
+                importacion_id,
+                {
+                    "codigo_empresa": self._codigo,
+                    "ejercicio": self._ejercicio,
+                    "banco": pl.get("banco"),
+                    "numero_cuenta": pl.get("numero_cuenta"),
+                    "subcuenta_banco": pl.get("subcuenta_banco"),
+                },
+                normalizar_movimientos_banco(rows or []),
+            )
+        return importacion_id
+
+    def _analizar_duplicados_banco(self, rows, pl):
+        actuales = normalizar_movimientos_banco(rows)
+        if not actuales:
+            return analizar_duplicados_banco(rows, [])
+        fecha_desde = min(m["fecha"] for m in actuales)
+        fecha_hasta = max(m["fecha"] for m in actuales)
+        anteriores = self._gestor.listar_movimientos_importados_banco(
+            self._codigo, self._ejercicio, pl
+        )
+        solapadas = self._gestor.listar_importaciones_banco_solapadas(
+            self._codigo, self._ejercicio, pl, fecha_desde, fecha_hasta
+        )
+        analisis = analizar_duplicados_banco(rows, anteriores, solapadas)
+        analisis["sin_detalle_previo"] = bool(solapadas and not anteriores)
+        return analisis
 
     def cargar_excel(self):
         path = self._view.ask_open_excel_path()
@@ -291,6 +333,45 @@ class ProcesosController:
                         "Revisa la hoja seleccionada, 'Primera fila procesar' y el mapeo de columnas.",
                     )
                     return
+                control_duplicados = self._analizar_duplicados_banco(rows, pl)
+                if control_duplicados["hay_conflicto"]:
+                    decision = self._view.pedir_accion_duplicados_banco(
+                        control_duplicados
+                    )
+                    if decision == "cancelar":
+                        return
+                    if decision == "solo_nuevos":
+                        indices_nuevos = {
+                            mov["indice_fila"]
+                            for mov in control_duplicados["nuevos"]
+                        }
+                        rows = [
+                            row for idx, row in enumerate(rows)
+                            if idx in indices_nuevos
+                        ]
+                        if not rows:
+                            if control_duplicados.get("modificados"):
+                                mensaje_sin_nuevos = (
+                                    "No hay movimientos nuevos seguros para generar. "
+                                    "Se han detectado movimientos posiblemente "
+                                    "modificados que deben revisarse o regenerarse "
+                                    "expresamente."
+                                )
+                            else:
+                                mensaje_sin_nuevos = (
+                                    "Todos los movimientos ya fueron generados. "
+                                    "No hay movimientos nuevos para crear el fichero."
+                                )
+                            self._view.show_warning(
+                                "Gest2A3Eco - Bancos",
+                                mensaje_sin_nuevos,
+                            )
+                            return
+                        control_duplicados["modo"] = "SOLO_NUEVOS"
+                    else:
+                        control_duplicados["modo"] = "REGENERACION_FORZADA"
+                else:
+                    control_duplicados["modo"] = "SIN_SOLAPAMIENTO"
                 try:
                     out_lines, avisos = generar_bancos(rows, pl, codigo_empresa, ndig)
                 except ValueError as e:
@@ -327,9 +408,16 @@ class ProcesosController:
                     raise
                 estado = "CON_AVISOS" if avisos else "CORRECTA"
                 self._registrar_importacion_banco(
-                    pl, rows, avisos, estado, archivo_generado=save_path
+                    pl, rows, avisos, estado, archivo_generado=save_path,
+                    control_duplicados=control_duplicados,
                 )
                 msg = f"Fichero generado:\n{save_path}"
+                if control_duplicados.get("modo") == "SOLO_NUEVOS":
+                    msg += (
+                        "\n\nSe han excluido "
+                        f"{len(control_duplicados.get('duplicados') or [])} "
+                        "movimientos ya generados."
+                    )
                 if avisos:
                     msg += "\n\nATENCION: se han omitido movimientos por fecha invalida:\n"
                     preview = "\n".join(avisos[:10])

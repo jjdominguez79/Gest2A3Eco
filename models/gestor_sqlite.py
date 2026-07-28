@@ -101,11 +101,37 @@ CREATE TABLE IF NOT EXISTS importaciones_bancos (
   importe_entradas REAL DEFAULT 0,
   importe_salidas REAL DEFAULT 0,
   variacion_neta REAL DEFAULT 0,
+  movimientos_duplicados INTEGER DEFAULT 0,
+  movimientos_modificados INTEGER DEFAULT 0,
+  modo_duplicados TEXT,
+  importaciones_solapadas_json TEXT,
   avisos_json TEXT,
   error TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_importaciones_bancos_empresa
   ON importaciones_bancos(codigo_empresa, ejercicio, fecha_importacion DESC);
+CREATE TABLE IF NOT EXISTS importaciones_bancos_movimientos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  importacion_id INTEGER NOT NULL,
+  codigo_empresa TEXT NOT NULL,
+  ejercicio INTEGER NOT NULL,
+  banco TEXT,
+  numero_cuenta TEXT,
+  subcuenta_banco TEXT,
+  fecha TEXT NOT NULL,
+  importe REAL NOT NULL,
+  concepto TEXT,
+  referencia TEXT,
+  saldo REAL,
+  huella TEXT NOT NULL,
+  ocurrencia INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (importacion_id) REFERENCES importaciones_bancos(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_importaciones_bancos_movimientos_cuenta
+  ON importaciones_bancos_movimientos(
+    codigo_empresa, ejercicio, subcuenta_banco, fecha, huella, ocurrencia
+  );
 CREATE TABLE IF NOT EXISTS facturas_emitidas (
   codigo_empresa TEXT NOT NULL,
   ejercicio INTEGER NOT NULL,
@@ -596,6 +622,10 @@ class GestorSQLite:
         self.conn.commit()
         self._ensure_column("bancos", "numero_cuenta", "TEXT")
         self._ensure_column("importaciones_bancos", "numero_cuenta", "TEXT")
+        self._ensure_column("importaciones_bancos", "movimientos_duplicados", "INTEGER DEFAULT 0")
+        self._ensure_column("importaciones_bancos", "movimientos_modificados", "INTEGER DEFAULT 0")
+        self._ensure_column("importaciones_bancos", "modo_duplicados", "TEXT")
+        self._ensure_column("importaciones_bancos", "importaciones_solapadas_json", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "forma_pago", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "cuenta_bancaria", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "plantilla_word", "TEXT")
@@ -1984,13 +2014,18 @@ class GestorSQLite:
             "movimientos_generados", "movimientos_omitidos",
             "fecha_primer_asiento", "fecha_ultimo_asiento",
             "saldo_primer_asiento", "saldo_final", "importe_entradas",
-            "importe_salidas", "variacion_neta", "avisos_json", "error",
+            "importe_salidas", "variacion_neta", "movimientos_duplicados",
+            "movimientos_modificados", "modo_duplicados",
+            "importaciones_solapadas_json", "avisos_json", "error",
         )
         valores = dict(datos)
         valores.setdefault("fecha_importacion", datetime.now().isoformat(timespec="seconds"))
         valores["ejercicio"] = _ej_val(valores.get("ejercicio"))
         valores["avisos_json"] = json.dumps(
             valores.get("avisos") or [], ensure_ascii=False
+        )
+        valores["importaciones_solapadas_json"] = json.dumps(
+            valores.get("importaciones_solapadas") or [], ensure_ascii=False
         )
         cur = self.conn.execute(
             "INSERT INTO importaciones_bancos ({}) VALUES ({})".format(
@@ -2015,9 +2050,119 @@ class GestorSQLite:
         for row in cur.fetchall():
             dato = self._row_to_dict(row)
             dato["avisos"] = json.loads(dato.get("avisos_json") or "[]")
+            dato["importaciones_solapadas"] = json.loads(
+                dato.get("importaciones_solapadas_json") or "[]"
+            )
             dato.pop("avisos_json", None)
+            dato.pop("importaciones_solapadas_json", None)
             out.append(dato)
         return out
+
+    def guardar_movimientos_importacion_banco(
+        self, importacion_id: int, datos_cuenta: dict, movimientos: list[dict]
+    ) -> int:
+        now = datetime.now().isoformat(timespec="seconds")
+        filas = [
+            (
+                int(importacion_id),
+                datos_cuenta.get("codigo_empresa"),
+                _ej_val(datos_cuenta.get("ejercicio")),
+                datos_cuenta.get("banco"),
+                datos_cuenta.get("numero_cuenta"),
+                datos_cuenta.get("subcuenta_banco"),
+                mov.get("fecha"),
+                mov.get("importe"),
+                mov.get("concepto"),
+                mov.get("referencia"),
+                mov.get("saldo"),
+                mov.get("huella"),
+                int(mov.get("ocurrencia") or 1),
+                now,
+            )
+            for mov in movimientos or []
+        ]
+        if filas:
+            self.conn.executemany(
+                """
+                INSERT INTO importaciones_bancos_movimientos (
+                  importacion_id, codigo_empresa, ejercicio, banco,
+                  numero_cuenta, subcuenta_banco, fecha, importe, concepto,
+                  referencia, saldo, huella, ocurrencia, created_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                filas,
+            )
+            self.conn.commit()
+        return len(filas)
+
+    def listar_movimientos_importados_banco(
+        self, codigo_empresa: str, ejercicio: int, plantilla: dict
+    ) -> list[dict]:
+        numero = str(plantilla.get("numero_cuenta") or "").strip()
+        subcuenta = str(plantilla.get("subcuenta_banco") or "").strip()
+        banco = str(plantilla.get("banco") or "").strip()
+        if numero:
+            filtro = (
+                "(COALESCE(numero_cuenta, '')=? OR "
+                "(COALESCE(numero_cuenta, '')='' AND "
+                "COALESCE(subcuenta_banco, '')=?))"
+            )
+            valores_cuenta = (numero, subcuenta)
+        elif subcuenta:
+            filtro = "COALESCE(subcuenta_banco, '')=?"
+            valores_cuenta = (subcuenta,)
+        else:
+            filtro = "COALESCE(banco, '')=?"
+            valores_cuenta = (banco,)
+        cur = self.conn.execute(
+            f"""
+            SELECT fecha, importe, concepto, referencia, saldo, huella,
+                   ocurrencia, MIN(id) AS primer_id
+            FROM importaciones_bancos_movimientos
+            WHERE codigo_empresa=? AND ejercicio=? AND {filtro}
+            GROUP BY fecha, importe, concepto, referencia, saldo, huella, ocurrencia
+            ORDER BY fecha, primer_id
+            """,
+            (codigo_empresa, _ej_val(ejercicio), *valores_cuenta),
+        )
+        return [self._row_to_dict(row) for row in cur.fetchall()]
+
+    def listar_importaciones_banco_solapadas(
+        self, codigo_empresa: str, ejercicio: int, plantilla: dict,
+        fecha_desde: str, fecha_hasta: str
+    ) -> list[dict]:
+        numero = str(plantilla.get("numero_cuenta") or "").strip()
+        subcuenta = str(plantilla.get("subcuenta_banco") or "").strip()
+        banco = str(plantilla.get("banco") or "").strip()
+        if numero:
+            filtro = (
+                "(COALESCE(numero_cuenta, '')=? OR "
+                "(COALESCE(numero_cuenta, '')='' AND "
+                "COALESCE(subcuenta_banco, '')=?))"
+            )
+            valores_cuenta = (numero, subcuenta)
+        elif subcuenta:
+            filtro = "COALESCE(subcuenta_banco, '')=?"
+            valores_cuenta = (subcuenta,)
+        else:
+            filtro = "COALESCE(banco, '')=?"
+            valores_cuenta = (banco,)
+        cur = self.conn.execute(
+            f"""
+            SELECT id, fecha_importacion, fecha_primer_asiento,
+                   fecha_ultimo_asiento, archivo_origen, estado
+            FROM importaciones_bancos
+            WHERE codigo_empresa=? AND ejercicio=? AND {filtro}
+              AND estado IN ('CORRECTA', 'CON_AVISOS')
+              AND fecha_primer_asiento<=? AND fecha_ultimo_asiento>=?
+            ORDER BY fecha_importacion DESC, id DESC
+            """,
+            (
+                codigo_empresa, _ej_val(ejercicio), *valores_cuenta,
+                fecha_hasta, fecha_desde,
+            ),
+        )
+        return [self._row_to_dict(row) for row in cur.fetchall()]
 
     # ---------- EMITIDAS (plantillas) ----------
     def listar_emitidas(self, codigo_empresa: str, ejercicio: int):
