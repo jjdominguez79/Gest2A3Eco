@@ -58,13 +58,21 @@ class UIDashboardEmpresa(ttk.Frame):
         on_open_terceros=None,
         on_open_maestro_cuentas=None,
         on_open_comunicaciones=None,
-        on_back,
+        on_previous_company=None,
+        on_next_company=None,
+        company_position: int = 0,
+        company_total: int = 0,
+        on_back=None,
     ):
         super().__init__(parent)
         self._empresa_service = empresa_service
         self._codigo = codigo
         self._ejercicio = ejercicio
-        self._on_back = on_back  # usado solo desde el boton Empresas del header
+        self._on_back = on_back or (lambda: None)  # usado solo desde el boton Empresas del header
+        self._on_previous_company = on_previous_company
+        self._on_next_company = on_next_company
+        self._company_position = company_position
+        self._company_total = company_total
         self._callbacks = {
             "inicio":          self._go_dashboard,
             "facturacion":     on_open_facturacion,
@@ -82,6 +90,7 @@ class UIDashboardEmpresa(ttk.Frame):
         self._stat_value_labels: dict[str, tk.Label] = {}
         self._disabled_keys: set[str] = set()
         self._current_module_widget = None
+        self._current_nav_key = "inicio"
         self._build()
         self.show_dashboard()
 
@@ -168,6 +177,29 @@ class UIDashboardEmpresa(ttk.Frame):
             font=("Segoe UI", 9),
         )
         self.lbl_sub.pack(side="left", padx=(8, 0), pady=18)
+
+        nav_wrap = tk.Frame(topbar, bg=self._M_CARD)
+        nav_wrap.pack(side="right", fill="y", padx=16)
+        self.btn_previous_company = ttk.Button(
+            nav_wrap, text="\u2190 Cliente anterior",
+            command=self._on_previous_company or (lambda: None),
+            state="normal" if self._on_previous_company else "disabled",
+        )
+        self.btn_previous_company.pack(side="left", pady=12, padx=(0, 6))
+        position_text = (
+            f"Cliente {self._company_position} de {self._company_total}"
+            if self._company_position and self._company_total else ""
+        )
+        tk.Label(
+            nav_wrap, text=position_text, bg=self._M_CARD, fg=self._M_SUB,
+            font=("Segoe UI", 9),
+        ).pack(side="left", pady=18, padx=6)
+        self.btn_next_company = ttk.Button(
+            nav_wrap, text="Cliente siguiente \u2192",
+            command=self._on_next_company or (lambda: None),
+            state="normal" if self._on_next_company else "disabled",
+        )
+        self.btn_next_company.pack(side="left", pady=12, padx=(6, 0))
 
         tk.Frame(parent, bg=self._M_BORDER, height=1).pack(fill="x")
 
@@ -273,6 +305,7 @@ class UIDashboardEmpresa(ttk.Frame):
     # ----------------------------------------------------------------- nav helpers
 
     def _set_active_nav(self, active_key: str):
+        self._current_nav_key = active_key
         for key, item in self._nav_items.items():
             is_active = (key == active_key)
             bg_item  = self._S_ACTIVE if is_active else self._S_BG
@@ -284,6 +317,10 @@ class UIDashboardEmpresa(ttk.Frame):
             item["lbl_icon"].configure(fg=fg_item)
             item["lbl_text"].configure(fg=fg_item)
             item["active"] = is_active
+
+    @property
+    def current_nav_key(self) -> str:
+        return self._current_nav_key
 
     def _on_nav_click(self, key, command):
         if key not in self._disabled_keys:

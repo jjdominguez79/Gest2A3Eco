@@ -53,6 +53,25 @@ class EmpresaService:
         out.sort(key=lambda row: (str(row.get("nombre") or "").lower(), str(row.get("codigo") or "")))
         return out
 
+    def get_company_navigation(self, codigo: str) -> dict:
+        companies = self.listar_empresas_panel()
+        current = next(
+            (index for index, item in enumerate(companies)
+             if str(item.get("codigo") or "") == str(codigo or "")),
+            -1,
+        )
+        if current < 0:
+            return {
+                "position": 0, "total": len(companies),
+                "previous": None, "next": None,
+            }
+        return {
+            "position": current + 1,
+            "total": len(companies),
+            "previous": companies[current - 1] if current > 0 else None,
+            "next": companies[current + 1] if current + 1 < len(companies) else None,
+        }
+
     def get_dashboard_context(self, codigo: str, ejercicio: int) -> dict:
         empresa = self._gestor.get_empresa(codigo, ejercicio) or {}
         ejercicios = []
