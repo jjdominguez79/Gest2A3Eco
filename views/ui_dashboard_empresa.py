@@ -29,6 +29,7 @@ class UIDashboardEmpresa(ttk.Frame):
         ("contabilidad",   "\u25a0", "Contabilidad",      "contabilidad"),
         ("importaciones",  "\u25a4", "Importaciones",     "importaciones"),
         ("plantillas",     "\u2630", "Plantillas",        "plantillas"),
+        ("comunicaciones",  "\u2709", "Comunicaciones",   "comunicaciones"),
         ("maestro_cuentas",    "\u25a1", "Maestro cuentas",       "maestro_cuentas"),
         ("configuracion",      "\u2699", "Configuracion",         "configuracion"),
     ]
@@ -56,6 +57,7 @@ class UIDashboardEmpresa(ttk.Frame):
         on_open_ocr,
         on_open_terceros=None,
         on_open_maestro_cuentas=None,
+        on_open_comunicaciones=None,
         on_back,
     ):
         super().__init__(parent)
@@ -72,6 +74,7 @@ class UIDashboardEmpresa(ttk.Frame):
             "plantillas":      on_open_plantillas,
             "terceros":        on_open_terceros or (lambda: None),
             "maestro_cuentas": on_open_maestro_cuentas or (lambda: None),
+            "comunicaciones":  on_open_comunicaciones or (lambda: None),
             "configuracion":   on_open_configuracion,
         }
         self._ctx = {}

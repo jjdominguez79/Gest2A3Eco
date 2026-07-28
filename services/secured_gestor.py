@@ -34,6 +34,14 @@ class SecuredGestorSQLite:
         self.security.ensure_company_read(codigo)
         return self._base.get_empresa(codigo, ejercicio)
 
+    def listar_comunicaciones(self, codigo_empresa: str):
+        self.security.ensure_company_read(codigo_empresa)
+        return self._base.listar_comunicaciones(codigo_empresa)
+
+    def registrar_envio_comunicacion(self, datos: dict):
+        self.security.ensure_company_write(datos.get("codigo_empresa"))
+        return self._base.registrar_envio_comunicacion(datos)
+
     def listar_bancos(self, codigo_empresa: str, ejercicio: int):
         self.security.ensure_company_read(codigo_empresa)
         return self._base.listar_bancos(codigo_empresa, ejercicio)

@@ -4,6 +4,7 @@ from tkinter import messagebox, ttk
 from controllers.user_admin_controller import UserAdminController
 from services.empresa_service import EmpresaService
 from views.ui_configuracion_empresa import UIConfiguracionEmpresa
+from views.ui_comunicaciones import UIComunicaciones
 from views.ui_contabilidad import UIContabilidad
 from views.ui_dashboard_empresa import UIDashboardEmpresa
 from views.ui_facturas_emitidas import UIFacturasEmitidas
@@ -158,6 +159,7 @@ class AppController:
             on_open_ocr=lambda: self._open_module_in_shell(codigo, ejercicio, "ocr"),
             on_open_terceros=lambda: self._open_module_in_shell(codigo, ejercicio, "terceros"),
             on_open_maestro_cuentas=lambda: self._open_module_in_shell(codigo, ejercicio, "maestro_cuentas"),
+            on_open_comunicaciones=lambda: self._open_module_in_shell(codigo, ejercicio, "comunicaciones"),
             on_back=self.start,
         )
         shell.pack(fill="both", expand=True)
@@ -205,6 +207,8 @@ class AppController:
             return UITercerosGlobales(parent, self._gestor, session=self._session)
         if modulo == "maestro_cuentas":
             return UIMaestroCuentas(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
+        if modulo == "comunicaciones":
+            return UIComunicaciones(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
         if modulo.startswith("importaciones::"):
             tipo = modulo.split("::", 1)[1]
             return UIProcesos(parent, self._gestor, codigo, ejercicio, nombre, session=self._session, initial_tipo=tipo)

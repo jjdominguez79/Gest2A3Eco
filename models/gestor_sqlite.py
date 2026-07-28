@@ -2,6 +2,7 @@ import json
 import sqlite3
 import time
 import re
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -422,6 +423,46 @@ CREATE TABLE IF NOT EXISTS series_emitidas (
 );
 CREATE INDEX IF NOT EXISTS idx_series_emitidas_empresa
   ON series_emitidas(codigo_empresa, ejercicio);
+CREATE TABLE IF NOT EXISTS comunicaciones (
+  id TEXT PRIMARY KEY,
+  codigo_empresa TEXT NOT NULL,
+  asunto TEXT NOT NULL,
+  estado TEXT NOT NULL DEFAULT 'abierta',
+  responsable_usuario_id INTEGER,
+  responsable_nombre TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_comunicaciones_empresa
+  ON comunicaciones(codigo_empresa, updated_at DESC);
+CREATE TABLE IF NOT EXISTS comunicaciones_mensajes (
+  id TEXT PRIMARY KEY,
+  comunicacion_id TEXT NOT NULL,
+  direccion TEXT NOT NULL,
+  remitente TEXT,
+  destinatarios_json TEXT NOT NULL,
+  cc_json TEXT,
+  asunto TEXT NOT NULL,
+  cuerpo_html TEXT,
+  estado_envio TEXT NOT NULL,
+  error_envio TEXT,
+  graph_message_id TEXT,
+  internet_message_id TEXT,
+  usuario_id INTEGER,
+  usuario_nombre TEXT,
+  fecha TEXT NOT NULL,
+  FOREIGN KEY (comunicacion_id) REFERENCES comunicaciones(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_com_mensajes_comunicacion
+  ON comunicaciones_mensajes(comunicacion_id, fecha DESC);
+CREATE TABLE IF NOT EXISTS comunicaciones_adjuntos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  mensaje_id TEXT NOT NULL,
+  nombre TEXT NOT NULL,
+  ruta TEXT NOT NULL,
+  tamano INTEGER,
+  FOREIGN KEY (mensaje_id) REFERENCES comunicaciones_mensajes(id) ON DELETE CASCADE
+);
 """
 
 AUTH_SCHEMA = """
@@ -5701,3 +5742,70 @@ class GestorSQLite:
             (str(cuota_id), periodo, str(factura_id), fecha),
         )
         self.conn.commit()
+
+    # ---------------------------------------------------------------- comunicaciones
+
+    def listar_comunicaciones(self, codigo_empresa: str) -> list[dict]:
+        rows = self.conn.execute(
+            """
+            SELECT c.*, COUNT(m.id) AS mensajes,
+                   MAX(m.fecha) AS ultima_fecha, MAX(m.remitente) AS ultimo_remitente
+            FROM comunicaciones c
+            LEFT JOIN comunicaciones_mensajes m ON m.comunicacion_id=c.id
+            WHERE c.codigo_empresa=?
+            GROUP BY c.id ORDER BY c.updated_at DESC
+            """,
+            (codigo_empresa,),
+        ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    def listar_mensajes_comunicacion(self, comunicacion_id: str) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM comunicaciones_mensajes WHERE comunicacion_id=? ORDER BY fecha DESC",
+            (comunicacion_id,),
+        ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    def registrar_envio_comunicacion(self, datos: dict) -> tuple[str, str]:
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        comunicacion_id = str(datos.get("comunicacion_id") or uuid.uuid4())
+        mensaje_id = str(uuid.uuid4())
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO comunicaciones
+                  (id,codigo_empresa,asunto,estado,responsable_usuario_id,
+                   responsable_nombre,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at
+                """,
+                (
+                    comunicacion_id, datos["codigo_empresa"], datos["asunto"], "abierta",
+                    datos.get("usuario_id"), datos.get("usuario_nombre"), now, now,
+                ),
+            )
+            self.conn.execute(
+                """
+                INSERT INTO comunicaciones_mensajes
+                  (id,comunicacion_id,direccion,remitente,destinatarios_json,cc_json,
+                   asunto,cuerpo_html,estado_envio,error_envio,graph_message_id,
+                   internet_message_id,usuario_id,usuario_nombre,fecha)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    mensaje_id, comunicacion_id, "saliente", datos.get("remitente"),
+                    json.dumps(datos.get("destinatarios") or []),
+                    json.dumps(datos.get("cc") or []), datos["asunto"],
+                    datos.get("cuerpo_html"), datos.get("estado_envio"),
+                    datos.get("error_envio"), datos.get("graph_message_id"),
+                    datos.get("internet_message_id"), datos.get("usuario_id"),
+                    datos.get("usuario_nombre"), now,
+                ),
+            )
+            for ruta in datos.get("adjuntos") or []:
+                path = Path(ruta)
+                self.conn.execute(
+                    "INSERT INTO comunicaciones_adjuntos (mensaje_id,nombre,ruta,tamano) VALUES (?,?,?,?)",
+                    (mensaje_id, path.name, str(path), path.stat().st_size if path.exists() else None),
+                )
+        return comunicacion_id, mensaje_id

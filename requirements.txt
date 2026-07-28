@@ -10,6 +10,7 @@ pypdf
 pymupdf
 pywin32
 requests
+msal
 packaging
 cryptography
 # Notificaciones electronicas (Opcion A, conector por navegador):
