@@ -10,6 +10,7 @@ from services.graph_mail_service import GraphMailService
 from utils.utilidades import (
     load_app_config,
     load_user_config,
+    get_install_dir,
     save_app_config,
     save_user_config,
 )
@@ -19,13 +20,54 @@ def _emails(value: str) -> list[str]:
     return [part.strip() for part in value.replace(";", ",").split(",") if part.strip()]
 
 
-def construir_cuerpo_html(mensaje: str, firma: str = "") -> str:
+FIRMA_CORPORATIVA_HTML = """
+<div style="font-family:Arial,Helvetica,sans-serif;color:#111;font-size:13px;line-height:1.35">
+  <img src="cid:gestinem-logo" alt="Gestinem" width="185"
+       style="display:block;width:185px;height:auto;margin:8px 0 18px 0">
+  <div><strong>Juan José Domínguez Barrero</strong></div>
+  <div><strong>Asesor Contable – Fiscal - Mercantil</strong></div>
+  <div>Mail: <a href="mailto:jjdominguez@gestinem.es">jjdominguez@gestinem.es</a></div>
+  <div>Web: <a href="https://www.gestinem.es/">www.gestinem.es</a></div>
+  <div>F: 942 79 14 04 - M: 691 47 45 19</div>
+  <div style="margin-top:18px">CL Atilano Rodríguez 4, Entreplanta, Local 7<br>
+  39002 Santander (Cantabria) - (Frente a Estaciones)</div>
+  <div style="margin-top:18px">Síguenos en:
+    <a href="https://www.facebook.com/gestinem/">Facebook</a>
+  </div>
+  <div style="margin:20px 0 10px;text-align:center">____________ ADVERTENCIA LEGAL ____________</div>
+  <div style="font-size:10px;text-align:justify">
+    JUAN JOSE DOMINGUEZ BARRERO (GESTINEM), le informa que su dirección de correo
+    electrónico, así como el resto de los datos de carácter personal que nos facilite,
+    serán objeto de tratamiento automatizado en nuestros ficheros, con la finalidad del
+    envío de información comercial y/o personal por vía electrónica. Podrá ejercer los
+    derechos de acceso, rectificación, cancelación y oposición en los términos establecidos
+    en la normativa aplicable, dirigiendo un escrito a JUAN JOSE DOMINGUEZ BARRERO
+    (GESTINEM), con domicilio en CL ATILANO RODRIGUEZ 4, ENTREPLANTA LOCAL 7 - 39002
+    SANTANDER CANTABRIA, o a
+    <a href="mailto:jjdominguez@gestinem.es">jjdominguez@gestinem.es</a>.
+    La información incluida en este e-mail es CONFIDENCIAL y para uso exclusivo de su
+    destinatario. Si ha recibido este mensaje por error, le rogamos que lo notifique y
+    proceda a su eliminación.
+  </div>
+  <div style="font-size:11px;font-weight:bold;margin-top:12px">
+    En caso de que no quiera seguir recibiendo información sobre los servicios prestados
+    por nuestra empresa, responda a este mail con el asunto “dar de baja”.
+  </div>
+</div>
+""".strip()
+
+
+def construir_cuerpo_html(
+    mensaje: str, firma_html: str = "", usuario_nombre: str = "",
+) -> str:
     partes = [html.escape(mensaje.strip()).replace("\n", "<br>")]
-    if firma.strip():
+    if firma_html.strip():
+        despedida = "Saludos,"
+        if usuario_nombre.strip():
+            despedida += f"<br><strong>{html.escape(usuario_nombre.strip())}</strong>"
         partes.append(
-            '<div style="margin-top:24px">'
-            f"{html.escape(firma.strip()).replace(chr(10), '<br>')}"
-            "</div>"
+            f'<div style="margin-top:24px">{despedida}</div>'
+            f'<div style="margin-top:18px">{firma_html.strip()}</div>'
         )
     return f"<html><body>{''.join(partes)}</body></html>"
 
@@ -126,7 +168,11 @@ class UIComunicaciones(ttk.Frame):
         messagebox.showinfo("Microsoft 365", "Configuracion guardada. No se ha almacenado ninguna contraseña.", parent=self)
 
     def _configure_signature(self):
-        SignatureDialog(self, load_user_config().get("email_signature") or "")
+        cfg = load_user_config()
+        SignatureDialog(
+            self,
+            cfg.get("email_signature_html") or FIRMA_CORPORATIVA_HTML,
+        )
 
     def _compose(self):
         ComposeMailDialog(self, self._gestor, self._codigo, self._empresa, self._session, self._refresh)
@@ -157,7 +203,10 @@ class SignatureDialog(tk.Toplevel):
         frame.pack(fill="both", expand=True)
         ttk.Label(
             frame,
-            text="Esta firma se añadira automaticamente a todos los correos enviados desde la aplicacion.",
+            text=(
+                "Firma corporativa en HTML. Antes de este bloque se añadiran "
+                "automaticamente «Saludos,» y el nombre del usuario conectado."
+            ),
             wraplength=580,
         ).pack(anchor="w", pady=(0, 8))
         self._text = tk.Text(frame, wrap="word", height=12)
@@ -170,7 +219,7 @@ class SignatureDialog(tk.Toplevel):
 
     def _save(self):
         cfg = load_user_config()
-        cfg["email_signature"] = self._text.get("1.0", "end").strip()
+        cfg["email_signature_html"] = self._text.get("1.0", "end").strip()
         save_user_config(cfg)
         messagebox.showinfo("Firma", "Firma guardada.", parent=self)
         self.destroy()
@@ -273,7 +322,10 @@ class ComposeMailDialog(tk.Toplevel):
         self._files = ttk.Label(form, text="Sin adjuntos")
         self._files.grid(row=5, column=1, sticky="w")
         ttk.Button(form, text="Añadir adjuntos", command=self._attach).grid(row=5, column=0, sticky="w")
-        signature = (load_user_config().get("email_signature") or "").strip()
+        signature = (
+            load_user_config().get("email_signature_html")
+            or FIRMA_CORPORATIVA_HTML
+        ).strip()
         firma_estado = "Se añadira la firma configurada." if signature else "No hay una firma configurada."
         ttk.Label(form, text=firma_estado, foreground="gray").grid(row=6, column=1, sticky="w", pady=(5, 0))
         actions = ttk.Frame(form)
@@ -296,15 +348,26 @@ class ComposeMailDialog(tk.Toplevel):
             return
         shared = (load_app_config().get("microsoft_graph") or {}).get("shared_mailbox") or "Oficina@gestinem.es"
         sender = "me" if self._sender.get().startswith("Mi cuenta") else shared
-        signature = load_user_config().get("email_signature") or ""
-        body_html = construir_cuerpo_html(plain, signature)
-        service = GraphMailService()
+        signature = (
+            load_user_config().get("email_signature_html")
+            or FIRMA_CORPORATIVA_HTML
+        )
         user = getattr(self._session, "user", None)
+        body_html = construir_cuerpo_html(
+            plain, signature, getattr(user, "nombre", ""),
+        )
+        logo_path = get_install_dir() / "logo.png"
+        inline_attachments = (
+            [{"path": str(logo_path), "content_id": "gestinem-logo"}]
+            if "cid:gestinem-logo" in signature else []
+        )
+        service = GraphMailService()
         try:
             result = service.send(
                 sender=sender, to=to, cc=cc, subject=subject,
                 body=body_html,
                 attachments=self._attachments,
+                inline_attachments=inline_attachments,
             )
         except Exception as exc:
             self._gestor.registrar_envio_comunicacion({

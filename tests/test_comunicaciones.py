@@ -24,19 +24,26 @@ def test_registra_envio_y_lo_lista(tmp_path):
     assert mensajes[0]["graph_message_id"] == "graph-1"
 
 
-def test_construir_cuerpo_html_incluye_firma_y_escapa_contenido():
-    cuerpo = construir_cuerpo_html("Hola <cliente>\nGracias", "Juan & Equipo\nGestinem")
+def test_construir_cuerpo_html_incluye_firma_html_usuario_y_escapa_mensaje():
+    cuerpo = construir_cuerpo_html(
+        "Hola <cliente>\nGracias",
+        "<strong>Gestinem</strong>",
+        "Ana & Equipo",
+    )
 
     assert "Hola &lt;cliente&gt;<br>Gracias" in cuerpo
-    assert "Juan &amp; Equipo<br>Gestinem" in cuerpo
-    assert 'style="margin-top:24px"' in cuerpo
+    assert "Ana &amp; Equipo" in cuerpo
+    assert "<strong>Gestinem</strong>" in cuerpo
 
 
 def test_html_a_texto_muestra_cuerpo_y_firma_sin_etiquetas():
-    cuerpo = construir_cuerpo_html("Hola\nGracias", "Juan\nGestinem")
+    cuerpo = construir_cuerpo_html(
+        "Hola\nGracias", "<strong>Gestinem</strong>", "Juan",
+    )
 
     texto = html_a_texto(cuerpo)
 
     assert "Hola\nGracias" in texto
-    assert "Juan\nGestinem" in texto
+    assert "Juan" in texto
+    assert "Gestinem" in texto
     assert "<br>" not in texto

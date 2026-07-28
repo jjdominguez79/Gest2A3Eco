@@ -88,6 +88,7 @@ class GraphMailService:
     def send(
         self, *, sender: str, to: list[str], subject: str, body: str,
         cc: list[str] | None = None, attachments: list[str] | None = None,
+        inline_attachments: list[dict] | None = None,
     ) -> GraphSendResult:
         token, signed_in = self._token()
         actual_sender = signed_in if sender == "me" else (sender or self.shared_mailbox)
@@ -108,6 +109,17 @@ class GraphMailService:
                 "@odata.type": "#microsoft.graph.fileAttachment",
                 "name": path.name,
                 "contentBytes": base64.b64encode(path.read_bytes()).decode("ascii"),
+            })
+        for item in inline_attachments or []:
+            path = Path(str(item.get("path") or ""))
+            if not path.is_file():
+                raise FileNotFoundError(f"No existe la imagen incrustada: {path}")
+            encoded_attachments.append({
+                "@odata.type": "#microsoft.graph.fileAttachment",
+                "name": path.name,
+                "contentBytes": base64.b64encode(path.read_bytes()).decode("ascii"),
+                "isInline": True,
+                "contentId": str(item.get("content_id") or path.stem),
             })
         if encoded_attachments:
             message["attachments"] = encoded_attachments

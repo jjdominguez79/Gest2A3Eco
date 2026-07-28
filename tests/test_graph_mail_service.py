@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from services.graph_mail_service import GraphMailService
@@ -50,3 +51,26 @@ def test_missing_attachment_is_rejected(monkeypatch, tmp_path: Path):
         pass
     else:
         raise AssertionError("Debia rechazar el adjunto inexistente")
+
+
+def test_inline_attachment_uses_content_id(monkeypatch, tmp_path: Path):
+    session = Session()
+    service = GraphMailService(
+        {"tenant_id": "t", "client_id": "c"}, session=session,
+    )
+    monkeypatch.setattr(service, "_token", lambda: ("token", "yo@gestinem.es"))
+    logo = tmp_path / "logo.png"
+    logo.write_bytes(b"logo")
+
+    service.send(
+        sender="me", to=["a@b.es"], subject="x",
+        body='<img src="cid:gestinem-logo">',
+        inline_attachments=[
+            {"path": str(logo), "content_id": "gestinem-logo"},
+        ],
+    )
+
+    payload = json.loads(session.calls[0][1]["data"])
+    attachment = payload["message"]["attachments"][0]
+    assert attachment["isInline"] is True
+    assert attachment["contentId"] == "gestinem-logo"
