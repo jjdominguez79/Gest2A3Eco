@@ -134,3 +134,29 @@ def test_supervision_global_incluye_cliente_responsable_buzon_y_estado(tmp_path)
     assert row["responsable_nombre"] == "ANA"
     assert row["mailbox"] == "oficina@gestinem.es"
     assert row["estado"] == "respondido"
+
+
+def test_asignacion_masiva_mueve_todos_los_mensajes_seleccionados(tmp_path):
+    gestor = GestorSQLite(tmp_path / "test.db")
+    gestor.upsert_empresa({
+        "codigo": "E00001", "ejercicio": 2026, "nombre": "Cliente Uno",
+    })
+    for index in range(3):
+        gestor.guardar_comunicacion_sin_asignar({
+            "graph_message_id": f"bulk-{index}",
+            "mailbox": "oficina@gestinem.es",
+            "remitente": "administracion@cliente.es",
+            "asunto": f"Mensaje {index}",
+            "cuerpo_html": "<p>Hola</p>",
+            "fecha": f"2026-07-28T10:0{index}:00Z",
+        })
+
+    result = gestor.asignar_comunicaciones_pendientes(
+        ["bulk-0", "bulk-1", "bulk-2"],
+        "E00001", 3, "ANABEL",
+    )
+
+    assert result["asignadas"] == ["bulk-0", "bulk-1", "bulk-2"]
+    assert result["omitidas"] == []
+    assert gestor.listar_comunicaciones_sin_asignar() == []
+    assert len(gestor.listar_buzon_responsable(3)) == 3

@@ -6021,6 +6021,23 @@ class GestorSQLite:
             )
         return result
 
+    def asignar_comunicaciones_pendientes(
+        self, graph_message_ids: list[str], codigo_empresa: str,
+        responsable_usuario_id: int, responsable_nombre: str,
+    ) -> dict:
+        asignadas = []
+        omitidas = []
+        for graph_message_id in dict.fromkeys(graph_message_ids):
+            result = self.asignar_comunicacion_pendiente(
+                graph_message_id, codigo_empresa,
+                responsable_usuario_id, responsable_nombre,
+            )
+            if result:
+                asignadas.append(graph_message_id)
+            else:
+                omitidas.append(graph_message_id)
+        return {"asignadas": asignadas, "omitidas": omitidas}
+
     def listar_buzon_responsable(self, usuario_id: int) -> list[dict]:
         rows = self.conn.execute(
             """

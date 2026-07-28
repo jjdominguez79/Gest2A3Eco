@@ -52,6 +52,16 @@ class SecuredGestorSQLite:
             responsable_usuario_id, responsable_nombre,
         )
 
+    def asignar_comunicaciones_pendientes(
+        self, graph_message_ids: list[str], codigo_empresa: str,
+        responsable_usuario_id: int, responsable_nombre: str,
+    ):
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.asignar_comunicaciones_pendientes(
+            graph_message_ids, codigo_empresa,
+            responsable_usuario_id, responsable_nombre,
+        )
+
     def listar_buzon_responsable(self, usuario_id: int):
         if int(usuario_id) != int(self.security.session.user.id):
             raise PermissionError("No puedes consultar el buzon privado de otro usuario.")

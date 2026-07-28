@@ -46,19 +46,35 @@ class UIComunicacionesGlobal(ttk.Frame):
             (("fecha", "Fecha", 170), ("buzon", "Buzon", 180),
              ("remitente", "Remitente", 230), ("asunto", "Asunto", 330),
              ("sugerencia", "Cliente sugerido", 220)),
+            selectmode="extended",
         )
         assign = ttk.Frame(pending_tab)
         assign.pack(fill="x", pady=(8, 0))
-        ttk.Label(assign, text="Cliente").pack(side="left")
+        ttk.Label(assign, text="Buscar cliente").grid(row=0, column=0, sticky="w")
+        self._company_search = tk.StringVar()
+        search_company = ttk.Entry(assign, textvariable=self._company_search, width=30)
+        search_company.grid(row=0, column=1, sticky="ew", padx=5)
+        self._company_search.trace_add("write", lambda *_: self._filter_companies())
+        ttk.Label(assign, text="Cliente").grid(row=0, column=2, sticky="w", padx=(10, 0))
         self._company_var = tk.StringVar()
         self._company_combo = ttk.Combobox(assign, textvariable=self._company_var, state="readonly", width=42)
-        self._company_combo.pack(side="left", padx=5)
-        ttk.Label(assign, text="Responsable").pack(side="left", padx=(12, 0))
+        self._company_combo.grid(row=0, column=3, sticky="ew", padx=5)
+        ttk.Label(assign, text="Responsable").grid(row=1, column=0, sticky="w", pady=(7, 0))
         self._user_var = tk.StringVar()
         self._user_combo = ttk.Combobox(assign, textvariable=self._user_var, state="readonly", width=28)
-        self._user_combo.pack(side="left", padx=5)
-        ttk.Button(assign, text="Asignar", command=self._assign).pack(side="right")
-        self._pending_tree.bind("<<TreeviewSelect>>", self._select_suggestion)
+        self._user_combo.grid(row=1, column=1, sticky="w", padx=5, pady=(7, 0))
+        self._selection_label = ttk.Label(assign, text="0 mensajes seleccionados")
+        self._selection_label.grid(row=1, column=2, sticky="w", padx=(10, 0), pady=(7, 0))
+        buttons = ttk.Frame(assign)
+        buttons.grid(row=1, column=3, sticky="e", pady=(7, 0))
+        ttk.Button(
+            buttons, text="Seleccionar mismo remitente",
+            command=self._select_same_sender,
+        ).pack(side="left", padx=(0, 5))
+        ttk.Button(buttons, text="Asignar seleccionados", command=self._assign).pack(side="left")
+        assign.columnconfigure(1, weight=1)
+        assign.columnconfigure(3, weight=1)
+        self._pending_tree.bind("<<TreeviewSelect>>", self._on_pending_selection)
         self._pending_tree.bind("<Double-1>", lambda _event: self._pending_detail())
 
         self._mine_tree = self._tree(
@@ -134,10 +150,10 @@ class UIComunicacionesGlobal(ttk.Frame):
         ).pack(anchor="e", pady=(8, 0))
 
     @staticmethod
-    def _tree(parent, columns):
+    def _tree(parent, columns, selectmode="browse"):
         tree = ttk.Treeview(
             parent, columns=tuple(item[0] for item in columns),
-            show="headings", selectmode="browse",
+            show="headings", selectmode=selectmode,
         )
         for key, title, width in columns:
             tree.heading(key, text=title)
@@ -152,7 +168,7 @@ class UIComunicacionesGlobal(ttk.Frame):
             if code not in companies or int(item.get("ejercicio") or 0) > int(companies[code].get("ejercicio") or 0):
                 companies[code] = item
         self._companies = {f"{item.get('nombre') or code} [{code}]": item for code, item in companies.items()}
-        self._company_combo["values"] = sorted(self._companies)
+        self._filter_companies()
 
         users = [item for item in self._gestor.listar_usuarios() if bool(item.get("activo"))]
         self._users = {f"{item.get('nombre')} [{item.get('username')}]": item for item in users}
@@ -267,15 +283,59 @@ class UIComunicacionesGlobal(ttk.Frame):
         self._refresh()
         messagebox.showinfo("Sincronizacion", f"Correos revisados: {total}", parent=self)
 
-    def _select_suggestion(self, _event=None):
+    def _on_pending_selection(self, _event=None):
+        selected = self._pending_tree.selection()
+        self._selection_label.configure(
+            text=f"{len(selected)} mensajes seleccionados",
+        )
+        self._select_suggestion()
+
+    def _select_suggestion(self):
         selected = self._pending_tree.selection()
         if not selected:
             return
         suggestion = self._pending[selected[0]].get("sugerencia_codigo_empresa")
         for label, company in self._companies.items():
             if company.get("codigo") == suggestion:
+                self._company_search.set(
+                    str(company.get("nombre") or company.get("codigo") or ""),
+                )
                 self._company_var.set(label)
                 break
+
+    def _filter_companies(self):
+        query = self._company_search.get().strip().lower()
+        values = []
+        for label, company in self._companies.items():
+            searchable = " ".join((
+                label, str(company.get("cif") or ""),
+                str(company.get("email") or ""),
+            )).lower()
+            if not query or query in searchable:
+                values.append(label)
+        values.sort()
+        self._company_combo["values"] = values
+        if self._company_var.get() not in values:
+            self._company_var.set(values[0] if len(values) == 1 else "")
+
+    def _select_same_sender(self):
+        selected = self._pending_tree.selection()
+        if not selected:
+            messagebox.showwarning(
+                "Seleccion multiple", "Selecciona primero un correo.", parent=self,
+            )
+            return
+        sender = str(self._pending[selected[0]].get("remitente") or "").strip().lower()
+        if not sender:
+            return
+        matches = [
+            graph_id for graph_id, item in self._pending.items()
+            if str(item.get("remitente") or "").strip().lower() == sender
+        ]
+        self._pending_tree.selection_set(matches)
+        if matches:
+            self._pending_tree.see(matches[0])
+        self._on_pending_selection()
 
     def _assign(self):
         selected = self._pending_tree.selection()
@@ -286,10 +346,29 @@ class UIComunicacionesGlobal(ttk.Frame):
                 "Asignacion", "Selecciona correo, cliente y responsable.", parent=self,
             )
             return
-        self._gestor.asignar_comunicacion_pendiente(
-            selected[0], company["codigo"], int(user["id"]), str(user["nombre"]),
+        if not messagebox.askyesno(
+            "Confirmar asignacion masiva",
+            (
+                f"Se asignaran {len(selected)} mensajes a:\n\n"
+                f"Cliente: {company.get('nombre') or company['codigo']}\n"
+                f"Responsable: {user['nombre']}\n\n"
+                "¿Deseas continuar?"
+            ),
+            parent=self,
+        ):
+            return
+        result = self._gestor.asignar_comunicaciones_pendientes(
+            list(selected), company["codigo"], int(user["id"]), str(user["nombre"]),
         )
         self._refresh()
+        messagebox.showinfo(
+            "Asignacion masiva",
+            (
+                f"Mensajes asignados: {len(result['asignadas'])}\n"
+                f"Mensajes omitidos: {len(result['omitidas'])}"
+            ),
+            parent=self,
+        )
 
     def _pending_detail(self):
         selected = self._pending_tree.selection()
