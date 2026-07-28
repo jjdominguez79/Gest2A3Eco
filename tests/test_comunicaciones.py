@@ -160,3 +160,22 @@ def test_asignacion_masiva_mueve_todos_los_mensajes_seleccionados(tmp_path):
     assert result["omitidas"] == []
     assert gestor.listar_comunicaciones_sin_asignar() == []
     assert len(gestor.listar_buzon_responsable(3)) == 3
+
+
+def test_pendiente_personal_aparece_en_buzon_del_responsable(tmp_path):
+    gestor = GestorSQLite(tmp_path / "test.db")
+    gestor.guardar_comunicacion_sin_asignar(
+        {
+            "graph_message_id": "personal-1",
+            "mailbox": "admin@gestinem.es",
+            "remitente": "cliente@example.com",
+            "asunto": "Correo personal",
+            "fecha": "2026-07-28T10:00:00Z",
+        },
+        responsable={"id": 1, "nombre": "Administrador"},
+    )
+
+    pendientes = gestor.listar_pendientes_responsable(1)
+
+    assert len(pendientes) == 1
+    assert pendientes[0]["responsable_nombre"] == "Administrador"

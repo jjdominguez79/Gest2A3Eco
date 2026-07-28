@@ -26,7 +26,9 @@ class ComunicacionesSyncService:
         self.gestor = gestor
         self.graph = graph or GraphMailService()
 
-    def sync(self, mailbox: str) -> SyncSummary:
+    def sync(
+        self, mailbox: str, responsable: dict | None = None,
+    ) -> SyncSummary:
         key = str(mailbox or "me").strip().lower()
         delta = self.gestor.get_comunicaciones_delta(key)
         result = self.graph.sync_inbox(mailbox=mailbox, delta_link=delta)
@@ -34,7 +36,9 @@ class ComunicacionesSyncService:
         for raw in result.messages:
             data = self._normalize(raw, result.mailbox)
             empresa = self.gestor.buscar_empresa_por_email(data["remitente"])
-            if self.gestor.guardar_comunicacion_sin_asignar(data, empresa):
+            if self.gestor.guardar_comunicacion_sin_asignar(
+                data, empresa, responsable,
+            ):
                 unmatched += 1
             else:
                 duplicates += 1

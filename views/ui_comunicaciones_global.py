@@ -199,6 +199,15 @@ class UIComunicacionesGlobal(ttk.Frame):
                 item.get("asunto") or "", item.get("ultimo_remitente") or "",
                 item.get("estado") or "pendiente",
             ))
+        for item in self._gestor.listar_pendientes_responsable(self._session.user.id):
+            iid = f"pending::{item['graph_message_id']}"
+            item["_pending_client"] = True
+            self._mine[iid] = item
+            self._mine_tree.insert("", "end", iid=iid, values=(
+                item.get("fecha") or "", "Sin asignar",
+                item.get("asunto") or "", item.get("remitente") or "",
+                "pendiente de cliente",
+            ))
         if self._session.is_admin():
             self._refresh_supervision()
 
@@ -276,7 +285,15 @@ class UIComunicacionesGlobal(ttk.Frame):
         try:
             service = ComunicacionesSyncService(self._gestor)
             for mailbox in mailboxes:
-                total += service.sync(mailbox).recibidos
+                responsable = None
+                if mailbox == "me":
+                    responsable = {
+                        "id": self._session.user.id,
+                        "nombre": self._session.user.nombre,
+                    }
+                total += service.sync(
+                    mailbox, responsable=responsable,
+                ).recibidos
         except Exception as exc:
             messagebox.showerror("Sincronizacion", str(exc), parent=self)
             return
@@ -289,6 +306,7 @@ class UIComunicacionesGlobal(ttk.Frame):
             text=f"{len(selected)} mensajes seleccionados",
         )
         self._select_suggestion()
+        self._select_automatic_responsible()
 
     def _select_suggestion(self):
         selected = self._pending_tree.selection()
@@ -301,6 +319,23 @@ class UIComunicacionesGlobal(ttk.Frame):
                     str(company.get("nombre") or company.get("codigo") or ""),
                 )
                 self._company_var.set(label)
+                break
+
+    def _select_automatic_responsible(self):
+        selected = self._pending_tree.selection()
+        if not selected:
+            return
+        responsible_ids = {
+            int(self._pending[item].get("responsable_usuario_id"))
+            for item in selected
+            if self._pending[item].get("responsable_usuario_id") is not None
+        }
+        if len(responsible_ids) != 1:
+            return
+        responsible_id = next(iter(responsible_ids))
+        for label, user in self._users.items():
+            if int(user["id"]) == responsible_id:
+                self._user_var.set(label)
                 break
 
     def _filter_companies(self):
@@ -346,6 +381,34 @@ class UIComunicacionesGlobal(ttk.Frame):
                 "Asignacion", "Selecciona correo, cliente y responsable.", parent=self,
             )
             return
+        automatic_ids = {
+            int(self._pending[item].get("responsable_usuario_id"))
+            for item in selected
+            if self._pending[item].get("responsable_usuario_id") is not None
+        }
+        without_automatic = [
+            item for item in selected
+            if self._pending[item].get("responsable_usuario_id") is None
+        ]
+        if automatic_ids and without_automatic:
+            messagebox.showwarning(
+                "Asignacion",
+                (
+                    "La seleccion mezcla correos personales preasignados y correos "
+                    "de Oficina. Asignalos en dos operaciones separadas."
+                ),
+                parent=self,
+            )
+            return
+        if automatic_ids:
+            automatic_id = next(iter(automatic_ids))
+            if len(automatic_ids) > 1 or int(user["id"]) != automatic_id:
+                messagebox.showwarning(
+                    "Asignacion",
+                    "Los correos personales deben conservar su responsable automatico.",
+                    parent=self,
+                )
+                return
         if not messagebox.askyesno(
             "Confirmar asignacion masiva",
             (
@@ -393,6 +456,13 @@ class UIComunicacionesGlobal(ttk.Frame):
         selected = self._mine_tree.selection()
         if not selected:
             return
+        if selected[0].startswith("pending::"):
+            messagebox.showinfo(
+                "Estado",
+                "Asigna primero el cliente para gestionar el estado del correo.",
+                parent=self,
+            )
+            return
         self._gestor.cambiar_estado_comunicacion(
             selected[0], estado, self._session.user.id,
         )
@@ -401,6 +471,22 @@ class UIComunicacionesGlobal(ttk.Frame):
     def _detail(self):
         selected = self._mine_tree.selection()
         if not selected:
+            return
+        if selected[0].startswith("pending::"):
+            item = self._mine[selected[0]]
+            payload = json.loads(item.get("payload_json") or "{}")
+            message = {
+                "fecha": payload.get("fecha"),
+                "remitente": payload.get("remitente"),
+                "destinatarios_json": json.dumps(payload.get("destinatarios") or []),
+                "cc_json": json.dumps(payload.get("cc") or []),
+                "asunto": payload.get("asunto"),
+                "cuerpo_html": payload.get("cuerpo_html"),
+                "estado_envio": "pendiente de cliente",
+                "error_envio": "",
+                "adjuntos": [],
+            }
+            CommunicationDetailDialog(self, [message])
             return
         messages = self._gestor.listar_mensajes_comunicacion(selected[0])
         CommunicationDetailDialog(self, messages)

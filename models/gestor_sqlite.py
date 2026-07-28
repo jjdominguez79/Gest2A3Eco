@@ -481,6 +481,8 @@ CREATE TABLE IF NOT EXISTS comunicaciones_sin_asignar (
   payload_json TEXT NOT NULL,
   sugerencia_codigo_empresa TEXT,
   sugerencia_nombre TEXT,
+  responsable_usuario_id INTEGER,
+  responsable_nombre TEXT,
   created_at TEXT NOT NULL
 );
 """
@@ -561,6 +563,8 @@ class GestorSQLite:
         self._ensure_column("comunicaciones_mensajes", "mailbox", "TEXT")
         self._ensure_column("comunicaciones_sin_asignar", "sugerencia_codigo_empresa", "TEXT")
         self._ensure_column("comunicaciones_sin_asignar", "sugerencia_nombre", "TEXT")
+        self._ensure_column("comunicaciones_sin_asignar", "responsable_usuario_id", "INTEGER")
+        self._ensure_column("comunicaciones_sin_asignar", "responsable_nombre", "TEXT")
         self.conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_com_msg_graph "
             "ON comunicaciones_mensajes(graph_message_id) "
@@ -5959,6 +5963,7 @@ class GestorSQLite:
 
     def guardar_comunicacion_sin_asignar(
         self, datos: dict, sugerencia: dict | None = None,
+        responsable: dict | None = None,
     ) -> bool:
         now = datetime.now().astimezone().isoformat(timespec="seconds")
         with self.conn:
@@ -5966,8 +5971,9 @@ class GestorSQLite:
                 """
                 INSERT OR IGNORE INTO comunicaciones_sin_asignar
                   (graph_message_id,mailbox,remitente,asunto,fecha,cuerpo_html,
-                  payload_json,sugerencia_codigo_empresa,sugerencia_nombre,created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?)
+                  payload_json,sugerencia_codigo_empresa,sugerencia_nombre,
+                  responsable_usuario_id,responsable_nombre,created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     datos["graph_message_id"], datos.get("mailbox") or "",
@@ -5976,10 +5982,23 @@ class GestorSQLite:
                     json.dumps(datos),
                     (sugerencia or {}).get("codigo"),
                     (sugerencia or {}).get("nombre"),
+                    (responsable or {}).get("id"),
+                    (responsable or {}).get("nombre"),
                     now,
                 ),
             )
         return cursor.rowcount > 0
+
+    def listar_pendientes_responsable(self, usuario_id: int) -> list[dict]:
+        rows = self.conn.execute(
+            """
+            SELECT * FROM comunicaciones_sin_asignar
+            WHERE responsable_usuario_id=?
+            ORDER BY fecha DESC
+            """,
+            (usuario_id,),
+        ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
 
     def listar_comunicaciones_sin_asignar(self) -> list[dict]:
         rows = self.conn.execute(

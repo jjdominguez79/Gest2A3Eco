@@ -67,6 +67,11 @@ class SecuredGestorSQLite:
             raise PermissionError("No puedes consultar el buzon privado de otro usuario.")
         return self._base.listar_buzon_responsable(usuario_id)
 
+    def listar_pendientes_responsable(self, usuario_id: int):
+        if int(usuario_id) != int(self.security.session.user.id):
+            raise PermissionError("No puedes consultar pendientes de otro usuario.")
+        return self._base.listar_pendientes_responsable(usuario_id)
+
     def listar_comunicaciones_supervision(self):
         if not self.security.session.is_admin():
             raise PermissionError("Solo un administrador puede supervisar todos los buzones.")
