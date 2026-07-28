@@ -1,15 +1,62 @@
 from __future__ import annotations
 
 import html
+import json
 import tkinter as tk
+from html.parser import HTMLParser
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from services.graph_mail_service import GraphMailService
-from utils.utilidades import load_app_config, save_app_config
+from utils.utilidades import (
+    load_app_config,
+    load_user_config,
+    save_app_config,
+    save_user_config,
+)
 
 
 def _emails(value: str) -> list[str]:
     return [part.strip() for part in value.replace(";", ",").split(",") if part.strip()]
+
+
+def construir_cuerpo_html(mensaje: str, firma: str = "") -> str:
+    partes = [html.escape(mensaje.strip()).replace("\n", "<br>")]
+    if firma.strip():
+        partes.append(
+            '<div style="margin-top:24px">'
+            f"{html.escape(firma.strip()).replace(chr(10), '<br>')}"
+            "</div>"
+        )
+    return f"<html><body>{''.join(partes)}</body></html>"
+
+
+class _HTMLToText(HTMLParser):
+    _BLOCK_TAGS = {"br", "div", "p", "li", "tr", "h1", "h2", "h3", "h4"}
+
+    def __init__(self):
+        super().__init__()
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() in self._BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag.lower() in self._BLOCK_TAGS - {"br"}:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+
+def html_a_texto(value: str) -> str:
+    parser = _HTMLToText()
+    parser.feed(value or "")
+    lines = [line.rstrip() for line in "".join(parser.parts).splitlines()]
+    texto = "\n".join(lines).strip()
+    while "\n\n\n" in texto:
+        texto = texto.replace("\n\n\n", "\n\n")
+    return texto
 
 
 class UIComunicaciones(ttk.Frame):
@@ -26,6 +73,7 @@ class UIComunicaciones(ttk.Frame):
         top.pack(fill="x", pady=(0, 10))
         ttk.Label(top, text="Comunicaciones", font=("Segoe UI", 16, "bold")).pack(side="left")
         ttk.Button(top, text="Configurar Microsoft 365", command=self._configure).pack(side="right")
+        ttk.Button(top, text="Configurar firma", command=self._configure_signature).pack(side="right", padx=6)
         ttk.Button(top, text="Nuevo correo", command=self._compose).pack(side="right", padx=6)
         self._tree = ttk.Treeview(
             self, columns=("fecha", "asunto", "remitente", "estado", "mensajes"),
@@ -77,6 +125,9 @@ class UIComunicaciones(ttk.Frame):
         save_app_config(cfg)
         messagebox.showinfo("Microsoft 365", "Configuracion guardada. No se ha almacenado ninguna contraseña.", parent=self)
 
+    def _configure_signature(self):
+        SignatureDialog(self, load_user_config().get("email_signature") or "")
+
     def _compose(self):
         ComposeMailDialog(self, self._gestor, self._codigo, self._empresa, self._session, self._refresh)
 
@@ -85,12 +136,108 @@ class UIComunicaciones(ttk.Frame):
         if not selected:
             return
         messages = self._gestor.listar_mensajes_comunicacion(selected[0])
-        body = "\n\n".join(
-            f"{m.get('fecha','')} · {m.get('remitente','')} · {m.get('estado_envio','')}\n"
-            f"{m.get('asunto','')}\n{m.get('cuerpo_html','')}"
-            for m in messages
+        for message in messages:
+            message["adjuntos"] = [
+                dict(row) for row in self._gestor.conn.execute(
+                    "SELECT nombre,ruta,tamano FROM comunicaciones_adjuntos WHERE mensaje_id=? ORDER BY nombre",
+                    (message["id"],),
+                ).fetchall()
+            ]
+        CommunicationDetailDialog(self, messages)
+
+
+class SignatureDialog(tk.Toplevel):
+    def __init__(self, parent, signature: str):
+        super().__init__(parent)
+        self.title("Firma de correo")
+        self.geometry("620x360")
+        self.transient(parent.winfo_toplevel())
+        self.grab_set()
+        frame = ttk.Frame(self, padding=14)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame,
+            text="Esta firma se añadira automaticamente a todos los correos enviados desde la aplicacion.",
+            wraplength=580,
+        ).pack(anchor="w", pady=(0, 8))
+        self._text = tk.Text(frame, wrap="word", height=12)
+        self._text.insert("1.0", signature)
+        self._text.pack(fill="both", expand=True)
+        actions = ttk.Frame(frame)
+        actions.pack(anchor="e", pady=(12, 0))
+        ttk.Button(actions, text="Cancelar", command=self.destroy).pack(side="left", padx=5)
+        ttk.Button(actions, text="Guardar", command=self._save).pack(side="left")
+
+    def _save(self):
+        cfg = load_user_config()
+        cfg["email_signature"] = self._text.get("1.0", "end").strip()
+        save_user_config(cfg)
+        messagebox.showinfo("Firma", "Firma guardada.", parent=self)
+        self.destroy()
+
+
+class CommunicationDetailDialog(tk.Toplevel):
+    def __init__(self, parent, messages: list[dict]):
+        super().__init__(parent)
+        self.title("Historial de la comunicacion")
+        self.geometry("900x650")
+        self.transient(parent.winfo_toplevel())
+        frame = ttk.Frame(self, padding=12)
+        frame.pack(fill="both", expand=True)
+        self._messages = messages
+        self._list = ttk.Treeview(
+            frame, columns=("fecha", "remitente", "asunto", "estado"),
+            show="headings", height=7, selectmode="browse",
         )
-        messagebox.showinfo("Historial de la comunicacion", body or "Sin mensajes.", parent=self)
+        for key, title, width in (
+            ("fecha", "Fecha", 180), ("remitente", "Remitente", 220),
+            ("asunto", "Asunto", 330), ("estado", "Estado", 120),
+        ):
+            self._list.heading(key, text=title)
+            self._list.column(key, width=width, anchor="w")
+        self._list.pack(fill="x")
+        self._list.bind("<<TreeviewSelect>>", self._show)
+        self._content = tk.Text(frame, wrap="word", state="disabled")
+        self._content.pack(fill="both", expand=True, pady=(10, 0))
+        for index, item in enumerate(messages):
+            self._list.insert("", "end", iid=str(index), values=(
+                item.get("fecha") or "", item.get("remitente") or "",
+                item.get("asunto") or "", item.get("estado_envio") or "",
+            ))
+        if messages:
+            self._list.selection_set("0")
+            self._show()
+        else:
+            self._set_content("Sin mensajes.")
+
+    def _show(self, _event=None):
+        selected = self._list.selection()
+        if not selected:
+            return
+        message = self._messages[int(selected[0])]
+        destinatarios = ", ".join(json.loads(message.get("destinatarios_json") or "[]"))
+        cc = ", ".join(json.loads(message.get("cc_json") or "[]")) or "-"
+        adjuntos = message.get("adjuntos") or []
+        nombres = ", ".join(item.get("nombre") or "" for item in adjuntos) or "Ninguno"
+        error = message.get("error_envio") or "-"
+        contenido = (
+            f"De: {message.get('remitente') or ''}\n"
+            f"Para: {destinatarios}\n"
+            f"CC: {cc}\n"
+            f"Fecha: {message.get('fecha') or ''}\n"
+            f"Estado: {message.get('estado_envio') or ''}\n"
+            f"Adjuntos: {nombres}\n"
+            f"Error: {error}\n\n"
+            f"Asunto: {message.get('asunto') or ''}\n\n"
+            f"{html_a_texto(message.get('cuerpo_html') or '')}"
+        )
+        self._set_content(contenido)
+
+    def _set_content(self, value: str):
+        self._content.configure(state="normal")
+        self._content.delete("1.0", "end")
+        self._content.insert("1.0", value)
+        self._content.configure(state="disabled")
 
 
 class ComposeMailDialog(tk.Toplevel):
@@ -126,8 +273,11 @@ class ComposeMailDialog(tk.Toplevel):
         self._files = ttk.Label(form, text="Sin adjuntos")
         self._files.grid(row=5, column=1, sticky="w")
         ttk.Button(form, text="Añadir adjuntos", command=self._attach).grid(row=5, column=0, sticky="w")
+        signature = (load_user_config().get("email_signature") or "").strip()
+        firma_estado = "Se añadira la firma configurada." if signature else "No hay una firma configurada."
+        ttk.Label(form, text=firma_estado, foreground="gray").grid(row=6, column=1, sticky="w", pady=(5, 0))
         actions = ttk.Frame(form)
-        actions.grid(row=6, column=1, sticky="e", pady=14)
+        actions.grid(row=7, column=1, sticky="e", pady=14)
         ttk.Button(actions, text="Cancelar", command=self.destroy).pack(side="left", padx=5)
         ttk.Button(actions, text="Enviar y registrar", command=self._send).pack(side="left")
         form.columnconfigure(1, weight=1)
@@ -146,19 +296,21 @@ class ComposeMailDialog(tk.Toplevel):
             return
         shared = (load_app_config().get("microsoft_graph") or {}).get("shared_mailbox") or "Oficina@gestinem.es"
         sender = "me" if self._sender.get().startswith("Mi cuenta") else shared
+        signature = load_user_config().get("email_signature") or ""
+        body_html = construir_cuerpo_html(plain, signature)
         service = GraphMailService()
         user = getattr(self._session, "user", None)
         try:
             result = service.send(
                 sender=sender, to=to, cc=cc, subject=subject,
-                body=f"<html><body>{html.escape(plain).replace(chr(10), '<br>')}</body></html>",
+                body=body_html,
                 attachments=self._attachments,
             )
         except Exception as exc:
             self._gestor.registrar_envio_comunicacion({
                 "codigo_empresa": self._codigo, "asunto": subject,
                 "remitente": sender, "destinatarios": to, "cc": cc,
-                "cuerpo_html": plain, "estado_envio": "error",
+                "cuerpo_html": body_html, "estado_envio": "error",
                 "error_envio": str(exc),
                 "usuario_id": getattr(user, "id", None),
                 "usuario_nombre": getattr(user, "nombre", None),
@@ -170,7 +322,7 @@ class ComposeMailDialog(tk.Toplevel):
         self._gestor.registrar_envio_comunicacion({
             "codigo_empresa": self._codigo, "asunto": subject,
             "remitente": result.sender, "destinatarios": to, "cc": cc,
-            "cuerpo_html": plain, "estado_envio": "aceptado_graph",
+            "cuerpo_html": body_html, "estado_envio": "aceptado_graph",
             "graph_message_id": result.message_id,
             "internet_message_id": result.internet_message_id,
             "usuario_id": getattr(user, "id", None),

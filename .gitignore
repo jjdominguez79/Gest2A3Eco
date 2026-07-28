@@ -43,6 +43,7 @@ config.local.json
 .env.*
 pdfs_emitidas/
 plantillas/gest2a3eco.db
+plantillas/graph_token_cache.bin
 
 # Clave de cifrado de contrasenas de certificados (NUNCA subir al repo)
 plantillas/.notif_key
