@@ -39,6 +39,7 @@ logs/
 # Local runtime / generated data
 config.json
 config.local.json
+user.config.json
 .env
 .env.*
 pdfs_emitidas/
