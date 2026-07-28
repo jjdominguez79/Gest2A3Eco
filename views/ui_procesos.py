@@ -142,17 +142,18 @@ class UIProcesos(ttk.Frame):
         dlg.transient(self.winfo_toplevel())
 
         cols = (
-            "fecha", "estado", "banco", "subcuenta", "usuario", "periodo",
+            "fecha", "estado", "banco", "cuenta", "subcuenta", "usuario", "periodo",
             "movimientos", "saldo_final", "archivo",
         )
         tv = ttk.Treeview(dlg, columns=cols, show="headings")
         etiquetas = {
             "fecha": "Importacion", "estado": "Estado", "banco": "Banco",
+            "cuenta": "Cuenta / IBAN",
             "subcuenta": "Subcuenta", "usuario": "Usuario",
             "periodo": "Periodo asientos", "movimientos": "Mov.",
             "saldo_final": "Saldo final", "archivo": "Excel origen",
         }
-        anchos = (145, 100, 130, 95, 125, 190, 55, 95, 150)
+        anchos = (145, 100, 130, 170, 95, 125, 190, 55, 95, 150)
         for col, ancho in zip(cols, anchos):
             tv.heading(col, text=etiquetas[col])
             tv.column(col, width=ancho, stretch=col in ("banco", "archivo"))
@@ -172,6 +173,7 @@ class UIProcesos(ttk.Frame):
             tv.insert("", "end", iid=iid, values=(
                 str(reg.get("fecha_importacion") or "").replace("T", " "),
                 reg.get("estado") or "", reg.get("banco") or "",
+                reg.get("numero_cuenta") or "",
                 reg.get("subcuenta_banco") or "", reg.get("usuario") or "",
                 periodo, reg.get("movimientos_generados") or 0,
                 "-" if saldo is None else f"{saldo:,.2f}",

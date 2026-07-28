@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS bancos (
   codigo_empresa TEXT NOT NULL,
   ejercicio INTEGER NOT NULL,
   banco TEXT NOT NULL,
+  numero_cuenta TEXT,
   subcuenta_banco TEXT,
   subcuenta_por_defecto TEXT,
   conceptos_json TEXT,
@@ -81,6 +82,7 @@ CREATE TABLE IF NOT EXISTS importaciones_bancos (
   codigo_empresa TEXT NOT NULL,
   ejercicio INTEGER NOT NULL,
   banco TEXT NOT NULL,
+  numero_cuenta TEXT,
   subcuenta_banco TEXT,
   usuario_id INTEGER,
   usuario TEXT,
@@ -537,6 +539,8 @@ class GestorSQLite:
         self._ensure_column("empresas", "logo_max_height_mm", "REAL")
         self._ensure_column("empresas", "pais", "TEXT")
         self._ensure_column("empresas", "responsable", "TEXT")
+        self._ensure_column("bancos", "numero_cuenta", "TEXT")
+        self._ensure_column("importaciones_bancos", "numero_cuenta", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "forma_pago", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "cuenta_bancaria", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "plantilla_word", "TEXT")
@@ -1888,9 +1892,10 @@ class GestorSQLite:
             eje = 0
         self.conn.execute(
             """
-            INSERT INTO bancos (codigo_empresa, ejercicio, banco, subcuenta_banco, subcuenta_por_defecto, conceptos_json, excel_json)
-            VALUES (?,?,?,?,?,?,?)
+            INSERT INTO bancos (codigo_empresa, ejercicio, banco, numero_cuenta, subcuenta_banco, subcuenta_por_defecto, conceptos_json, excel_json)
+            VALUES (?,?,?,?,?,?,?,?)
             ON CONFLICT(codigo_empresa, ejercicio, banco) DO UPDATE SET
+                numero_cuenta=excluded.numero_cuenta,
                 subcuenta_banco=excluded.subcuenta_banco,
                 subcuenta_por_defecto=excluded.subcuenta_por_defecto,
                 conceptos_json=excluded.conceptos_json,
@@ -1900,6 +1905,7 @@ class GestorSQLite:
                 plantilla.get("codigo_empresa"),
                 eje,
                 plantilla.get("banco"),
+                plantilla.get("numero_cuenta"),
                 plantilla.get("subcuenta_banco"),
                 plantilla.get("subcuenta_por_defecto"),
                 json.dumps(plantilla.get("conceptos", []), ensure_ascii=False),
@@ -1917,7 +1923,7 @@ class GestorSQLite:
 
     def crear_importacion_banco(self, datos: dict) -> int:
         campos = (
-            "codigo_empresa", "ejercicio", "banco", "subcuenta_banco",
+            "codigo_empresa", "ejercicio", "banco", "numero_cuenta", "subcuenta_banco",
             "usuario_id", "usuario", "fecha_importacion", "archivo_origen",
             "hoja", "archivo_generado", "estado", "filas_leidas",
             "movimientos_generados", "movimientos_omitidos",

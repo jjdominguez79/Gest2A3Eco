@@ -46,6 +46,10 @@ class SecuredGestorSQLite:
         self.security.ensure_company_read(codigo_empresa)
         return self._base.listar_bancos(codigo_empresa, ejercicio)
 
+    def listar_cuentas_bancarias(self, codigo_empresa: str, ejercicio: int):
+        self.security.ensure_company_read(codigo_empresa)
+        return self._base.listar_cuentas_bancarias(codigo_empresa, ejercicio)
+
     def listar_emitidas(self, codigo_empresa: str, ejercicio: int):
         self.security.ensure_company_read(codigo_empresa)
         return self._base.listar_emitidas(codigo_empresa, ejercicio)

@@ -37,13 +37,14 @@ def test_tabla_historial_importaciones_bancos_existe(tmp_path):
     assert "importaciones_bancos" in _tables(g)
     cols = _columns(g, "importaciones_bancos")
     for col in (
-        "codigo_empresa", "ejercicio", "banco", "subcuenta_banco",
+        "codigo_empresa", "ejercicio", "banco", "numero_cuenta", "subcuenta_banco",
         "usuario", "fecha_importacion", "estado", "filas_leidas",
         "movimientos_generados", "fecha_primer_asiento",
         "fecha_ultimo_asiento", "saldo_primer_asiento", "saldo_final",
         "importe_entradas", "importe_salidas", "variacion_neta", "error",
     ):
         assert col in cols
+    assert "numero_cuenta" in _columns(g, "bancos")
 
 
 # ── Tablas nuevas de Fase 2 ───────────────────────────────────────────────────

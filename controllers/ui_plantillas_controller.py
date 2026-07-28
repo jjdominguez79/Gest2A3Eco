@@ -34,13 +34,18 @@ class PlantillasController:
             return
         tipo = self._tipo_from_title(title)
         key = self._sel_key(tv)
-        if not key:
+        if key is None:
             self._view.show_info("Gest2A3Eco", "Selecciona una plantilla.")
             return
         pl = self._get_plantilla(tipo, key)
         result, pl = self._view.open_config_dialog(tipo, pl)
         if result:
             self._upsert(tipo, pl)
+            nueva_key = (
+                pl.get("banco") if tipo == "bancos" else pl.get("nombre")
+            )
+            if nueva_key != key:
+                self._delete(tipo, key)
             self.refresh_all()
             self._view.show_info("Gest2A3Eco", "Cambios guardados.")
 
@@ -49,7 +54,7 @@ class PlantillasController:
             return
         tipo = self._tipo_from_title(title)
         key = self._sel_key(tv)
-        if not key:
+        if key is None:
             return
         if not self._view.ask_yes_no("Gest2A3Eco", "Eliminar la plantilla seleccionada?"):
             return
@@ -60,7 +65,10 @@ class PlantillasController:
         tv = self._tabs["bancos"]["tv"]
         tv.delete(*tv.get_children())
         for p in self._gestor.listar_bancos(self._empresa.get("codigo"), self._empresa.get("ejercicio")):
-            tv.insert("", "end", values=(p.get("banco"), p.get("subcuenta_banco"), p.get("subcuenta_por_defecto")))
+            tv.insert("", "end", values=(
+                p.get("banco"), p.get("numero_cuenta"),
+                p.get("subcuenta_banco"), p.get("subcuenta_por_defecto"),
+            ))
 
     def _refresh_emitidas(self):
         tv = self._tabs["emitidas"]["tv"]

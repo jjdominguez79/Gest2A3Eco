@@ -30,6 +30,7 @@ def test_gestor_persiste_y_lista_historial(tmp_path):
         "codigo_empresa": "E00001",
         "ejercicio": 2026,
         "banco": "Banco prueba",
+        "numero_cuenta": "ES9121000418450200051332",
         "subcuenta_banco": "57200000",
         "usuario": "maria",
         "estado": "CON_AVISOS",
@@ -43,5 +44,20 @@ def test_gestor_persiste_y_lista_historial(tmp_path):
 
     assert registros[0]["id"] == registro_id
     assert registros[0]["usuario"] == "maria"
+    assert registros[0]["numero_cuenta"] == "ES9121000418450200051332"
     assert registros[0]["avisos"] == ["Fila 3 omitida"]
     assert gestor.listar_importaciones_bancos("E00002", 2026) == []
+
+
+def test_saldo_final_es_cierre_del_ultimo_dia_con_extracto_invertido():
+    rows = [
+        # El banco entrega primero el movimiento mas reciente del mismo dia.
+        {"Fecha Asiento": "03/02/2026", "Importe": "-20", "Saldo": "130"},
+        {"Fecha Asiento": "03/02/2026", "Importe": "50", "Saldo": "150"},
+        {"Fecha Asiento": "02/02/2026", "Importe": "100", "Saldo": "100"},
+    ]
+
+    resumen = resumir_importacion_banco(rows, [])
+
+    assert resumen["fecha_ultimo_asiento"] == "20260203"
+    assert resumen["saldo_final"] == 130

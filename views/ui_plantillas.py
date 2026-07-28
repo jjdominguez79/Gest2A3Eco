@@ -3,6 +3,11 @@ from tkinter import ttk, messagebox
 from tkinter.simpledialog import Dialog
 from utils.utilidades import validar_subcuenta_longitud
 from controllers.ui_plantillas_controller import PlantillasController
+from services.plantillas_bancos_service import (
+    datos_plantilla_desde_cuenta,
+    etiqueta_cuenta_bancaria,
+    listar_cuentas_bancarias_para_plantilla,
+)
 
 DEFAULT_COLS_BANCOS = [
     "Fecha Asiento","Descripcion Asiento","Concepto","Importe","Saldo",
@@ -220,11 +225,14 @@ class ConfigPlantillaDialog(Dialog):
         
         if self.tipo == "bancos":
             self.var_banco = tk.StringVar(value=self.pl.get("banco",""))
+            self.var_numero_cuenta = tk.StringVar(value=self.pl.get("numero_cuenta",""))
             self.var_sub_banco = tk.StringVar(value=self.pl.get("subcuenta_banco",""))
             self.var_sub_def = tk.StringVar(value=self.pl.get("subcuenta_por_defecto",""))
-            _row(t_gen, "Banco", self.var_banco)
-            _row(t_gen, "Subcuenta banco", self.var_sub_banco)
-            _row(t_gen, "Subcuenta por defecto", self.var_sub_def)
+            self._crear_selector_cuenta_bancaria(t_gen)
+            _row(t_gen, "Descripcion / banco", self.var_banco)
+            _row(t_gen, "Numero de cuenta / IBAN", self.var_numero_cuenta)
+            _row(t_gen, "Subcuenta bancaria", self.var_sub_banco)
+            _row(t_gen, "Contrapartida por defecto", self.var_sub_def)
         else:
             self.var_nombre = tk.StringVar(value=self.pl.get("nombre",""))
             self.var_pct_fraccion = tk.BooleanVar(value=bool(self.pl.get("pct_fraccion", False)))
@@ -252,7 +260,8 @@ class ConfigPlantillaDialog(Dialog):
             ttk.Checkbutton(fr_pct, variable=self.var_pct_fraccion).pack(side=tk.LEFT)
 
         t_xl = ttk.Frame(nb); nb.add(t_xl, text="Excel")
-        cols = (self.pl.get("excel") or {}).get("columnas") or default_excel_columns_for(self.tipo)
+        cols = default_excel_columns_for(self.tipo)
+        cols.update((self.pl.get("excel") or {}).get("columnas") or {})
         self.var_primera = tk.StringVar(value=str((self.pl.get("excel") or {}).get("primera_fila_procesar", 2)))
         self.var_ignorar = tk.StringVar(value=(self.pl.get("excel") or {}).get("ignorar_filas",""))
         self.var_gen = tk.StringVar(value=(self.pl.get("excel") or {}).get("condicion_cuenta_generica",""))
@@ -278,6 +287,45 @@ class ConfigPlantillaDialog(Dialog):
             for it in (self.pl.get("conceptos") or []):
                 self.pats.insert("", tk.END, values=(it.get("patron",""), it.get("subcuenta","")))
         return master
+
+    def _crear_selector_cuenta_bancaria(self, parent):
+        codigo = self.empresa.get("codigo")
+        ejercicio = self.empresa.get("ejercicio")
+        self._cuentas_bancarias = listar_cuentas_bancarias_para_plantilla(
+            self.gestor, codigo, ejercicio
+        )
+        self._cuentas_por_etiqueta = {
+            etiqueta_cuenta_bancaria(cuenta): cuenta
+            for cuenta in self._cuentas_bancarias
+            if etiqueta_cuenta_bancaria(cuenta)
+        }
+        fr = ttk.Frame(parent)
+        fr.pack(fill=tk.X, pady=(3, 8))
+        ttk.Label(fr, text="Cuenta bancaria de empresa", width=30).pack(side=tk.LEFT)
+        self.var_cuenta_empresa = tk.StringVar()
+        cb = ttk.Combobox(
+            fr,
+            textvariable=self.var_cuenta_empresa,
+            values=list(self._cuentas_por_etiqueta),
+            state="readonly",
+            width=55,
+        )
+        cb.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        cb.bind("<<ComboboxSelected>>", self._on_cuenta_bancaria_seleccionada)
+        if not self._cuentas_bancarias:
+            cb.configure(state="disabled")
+            ttk.Label(
+                fr, text="Opcional: no hay cuentas bancarias importadas."
+            ).pack(side=tk.LEFT, padx=(8, 0))
+
+    def _on_cuenta_bancaria_seleccionada(self, _event=None):
+        cuenta = self._cuentas_por_etiqueta.get(self.var_cuenta_empresa.get())
+        if not cuenta:
+            return
+        datos = datos_plantilla_desde_cuenta(cuenta)
+        self.var_banco.set(datos["banco"])
+        self.var_numero_cuenta.set(datos["numero_cuenta"])
+        self.var_sub_banco.set(datos["subcuenta_banco"])
 
     def _subcuenta_row_con_buscador(self, parent, var):
         """Fila 'Subcuenta' con Entry + botón '...' que abre el buscador del maestro."""
@@ -348,6 +396,7 @@ class ConfigPlantillaDialog(Dialog):
         self.pl["ejercicio"] = self.empresa.get("ejercicio")
         if self.tipo == "bancos":
             self.pl["banco"] = self.var_banco.get().strip()
+            self.pl["numero_cuenta"] = self.var_numero_cuenta.get().strip()
             self.pl["subcuenta_banco"] = self.var_sub_banco.get().strip()
             self.pl["subcuenta_por_defecto"] = self.var_sub_def.get().strip()
         else:
@@ -408,7 +457,10 @@ class UIPlantillasEmpresa(ttk.Frame):
         ttk.Label(self, text=f"Plantillas de {self.nombre} ({self.codigo})", font=("Segoe UI", 12, "bold")).pack(pady=6, anchor="w", padx=10)
         nb = ttk.Notebook(self); nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         self.notebook = nb
-        self._tab_bancos = self._build_tab(nb, "Bancos", ("banco","subcuenta_banco","subcuenta_por_defecto"))
+        self._tab_bancos = self._build_tab(
+            nb, "Bancos",
+            ("banco", "numero_cuenta", "subcuenta_banco", "subcuenta_por_defecto"),
+        )
         self._tab_emitidas = self._build_tab(nb, "Facturas Emitidas", ("nombre","cuenta_cliente_prefijo","cuenta_iva_repercutido_defecto","cuenta_retenciones_irpf"))
         self._tab_recibidas = self._build_tab(nb, "Facturas Recibidas", ("nombre","cuenta_proveedor_prefijo","cuenta_iva_soportado_defecto"))
         self.controller.register_tabs(self._tab_bancos, self._tab_emitidas, self._tab_recibidas)

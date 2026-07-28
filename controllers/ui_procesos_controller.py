@@ -64,6 +64,7 @@ class ProcesosController:
             "codigo_empresa": self._codigo,
             "ejercicio": self._ejercicio,
             "banco": pl.get("banco") or "",
+            "numero_cuenta": pl.get("numero_cuenta"),
             "subcuenta_banco": pl.get("subcuenta_banco"),
             "usuario_id": usuario_id,
             "usuario": usuario or "Usuario no identificado",
