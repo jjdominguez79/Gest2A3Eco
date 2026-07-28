@@ -5,7 +5,6 @@ import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
 from services.comunicaciones_sync_service import ComunicacionesSyncService
-from services.responsables_a3_service import actualizar_responsables_desde_a3
 from utils.utilidades import load_app_config
 from views.ui_comunicaciones import CommunicationDetailDialog
 
@@ -111,11 +110,6 @@ class UIComunicacionesGlobal(ttk.Frame):
         ttk.Label(top, text="Buzon de comunicaciones", font=("Segoe UI", 16, "bold")).pack(side="left")
         ttk.Button(top, text="Empresas", command=self._on_open_empresas).pack(side="right")
         ttk.Button(top, text="Sincronizar", command=self._sync).pack(side="right", padx=6)
-        if self._session.is_admin():
-            ttk.Button(
-                top, text="Actualizar responsables A3",
-                command=self._import_responsibles,
-            ).pack(side="right", padx=6)
 
         tabs = ttk.Notebook(self)
         tabs.pack(fill="both", expand=True)
@@ -455,41 +449,6 @@ class UIComunicacionesGlobal(ttk.Frame):
             return
         self._refresh()
         messagebox.showinfo("Sincronizacion", f"Correos revisados: {total}", parent=self)
-
-    def _import_responsibles(self):
-        if not messagebox.askyesno(
-            "Responsables A3",
-            (
-                "Se actualizaran masivamente los responsables ECO desde A3. "
-                "Los clientes con email @gestinem.es se asignaran al Administrador.\n\n"
-                "¿Deseas continuar?"
-            ),
-            parent=self,
-        ):
-            return
-        try:
-            result = actualizar_responsables_desde_a3(
-                self._gestor, self._session.user.nombre,
-            )
-        except Exception as exc:
-            messagebox.showerror("Responsables A3", str(exc), parent=self)
-            return
-        self._refresh()
-        distribution = "\n".join(
-            f"  {name}: {count}"
-            for name, count in sorted(result.distribucion.items())
-        )
-        messagebox.showinfo(
-            "Responsables A3",
-            (
-                f"Clientes identificados en A3: {result.clientes_a3}\n"
-                f"Clientes internos: {result.clientes_internos}\n"
-                f"Registros actualizados: {result.filas_actualizadas}\n"
-                f"Sin asignacion A3: {result.sin_asignacion_a3}\n\n"
-                f"Distribucion:\n{distribution}"
-            ),
-            parent=self,
-        )
 
     def _on_pending_selection(self, _event=None):
         selected = self._pending_tree.selection()

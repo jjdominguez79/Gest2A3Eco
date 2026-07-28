@@ -1,5 +1,10 @@
 from models.gestor_sqlite import GestorSQLite
-from views.ui_comunicaciones import construir_cuerpo_html, html_a_texto
+from views.ui_comunicaciones import (
+    FIRMA_OFICINA_HTML,
+    FIRMA_PERSONAL_HTML,
+    construir_cuerpo_html,
+    html_a_texto,
+)
 
 
 def test_registra_envio_y_lo_lista(tmp_path):
@@ -47,6 +52,27 @@ def test_html_a_texto_muestra_cuerpo_y_firma_sin_etiquetas():
     assert "Juan" in texto
     assert "Gestinem" in texto
     assert "<br>" not in texto
+
+
+def test_firma_oficina_no_incluye_datos_personales():
+    firma = FIRMA_OFICINA_HTML.lower()
+
+    assert "asesoría fiscal, contable y laboral" in firma
+    assert "oficina@gestinem.es" in firma
+    assert "942 79 14 04" in firma
+    assert "juan josé" not in firma
+    assert "juan jose" not in firma
+    assert "jjdominguez@gestinem.es" not in firma
+    assert "691 474 519" not in firma
+
+
+def test_firma_personal_conserva_datos_de_la_plantilla_a3():
+    firma = FIRMA_PERSONAL_HTML
+
+    assert "Juan José Domínguez Barrero" in firma
+    assert "Asesor Fiscal, Contable y Mercantil" in firma
+    assert "jjdominguez@gestinem.es" in firma
+    assert "691 474 519" in firma
 
 
 def test_registra_entrada_y_evitar_duplicado(tmp_path):
