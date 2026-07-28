@@ -152,7 +152,7 @@ def _build_header(
         b.pack(side="left", padx=(0, 6))
         return b
 
-    _hbtn("Empresas", on_cambiar_empresa)
+    _hbtn("Buzon", on_cambiar_empresa)
     if on_open_terceros:
         _hbtn("Terceros", on_open_terceros)
     if on_open_notificaciones:
@@ -350,7 +350,7 @@ def main():
 
     def _build_context_menu(controller):
         ctx = tk.Menu(root, tearoff=0)
-        ctx.add_command(label="Menu principal", command=controller.start)
+        ctx.add_command(label="Buzon de comunicaciones", command=controller.start)
         ctx.add_separator()
         ctx.add_command(label="Cerrar sesion", command=_logout)
         ctx.add_command(label="Cerrar", command=root.destroy)

@@ -10,6 +10,86 @@ from utils.utilidades import load_app_config
 from views.ui_comunicaciones import CommunicationDetailDialog
 
 
+class ReassignCommunicationDialog(tk.Toplevel):
+    def __init__(self, parent, companies, users, item, on_save):
+        super().__init__(parent)
+        self.title("Reasignar comunicacion")
+        self.transient(parent)
+        self.grab_set()
+        self.resizable(True, False)
+        self._companies = companies
+        self._users = users
+        self._on_save = on_save
+
+        frame = ttk.Frame(self, padding=14)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame, text=item.get("asunto") or "(Sin asunto)",
+            font=("Segoe UI", 11, "bold"),
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        ttk.Label(frame, text="Buscar cliente").grid(row=1, column=0, sticky="w")
+        self._search = tk.StringVar()
+        ttk.Entry(frame, textvariable=self._search, width=44).grid(
+            row=1, column=1, sticky="ew", padx=(8, 0),
+        )
+        ttk.Label(frame, text="Cliente").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        self._company = tk.StringVar()
+        self._company_combo = ttk.Combobox(
+            frame, textvariable=self._company, state="readonly", width=42,
+        )
+        self._company_combo.grid(row=2, column=1, sticky="ew", padx=(8, 0), pady=(8, 0))
+        ttk.Label(frame, text="Responsable").grid(row=3, column=0, sticky="w", pady=(8, 0))
+        self._user = tk.StringVar()
+        user_combo = ttk.Combobox(
+            frame, textvariable=self._user, state="readonly", width=32,
+            values=sorted(users),
+        )
+        user_combo.grid(row=3, column=1, sticky="ew", padx=(8, 0), pady=(8, 0))
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=4, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Cancelar", command=self.destroy).pack(side="left", padx=(0, 6))
+        ttk.Button(buttons, text="Guardar reasignacion", command=self._save).pack(side="left")
+        frame.columnconfigure(1, weight=1)
+
+        current_code = str(item.get("codigo_empresa") or "")
+        for label, company in companies.items():
+            if str(company.get("codigo") or "") == current_code:
+                self._company.set(label)
+                break
+        current_user = item.get("responsable_usuario_id")
+        for label, user in users.items():
+            if current_user is not None and int(user["id"]) == int(current_user):
+                self._user.set(label)
+                break
+        self._search.trace_add("write", lambda *_: self._filter_companies())
+        self._filter_companies()
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.wait_visibility()
+        self.focus_set()
+
+    def _filter_companies(self):
+        query = self._search.get().strip().lower()
+        values = [
+            label for label, company in self._companies.items()
+            if not query or query in " ".join((
+                label, str(company.get("cif") or ""),
+                str(company.get("email") or ""),
+            )).lower()
+        ]
+        self._company_combo["values"] = sorted(values)
+
+    def _save(self):
+        company = self._companies.get(self._company.get())
+        user = self._users.get(self._user.get())
+        if not company or not user:
+            messagebox.showwarning(
+                "Reasignacion", "Selecciona un cliente y un responsable.", parent=self,
+            )
+            return
+        self._on_save(company, user)
+        self.destroy()
+
+
 class UIComunicacionesGlobal(ttk.Frame):
     def __init__(self, parent, gestor, session, on_open_empresas):
         super().__init__(parent, padding=12)
@@ -112,6 +192,15 @@ class UIComunicacionesGlobal(ttk.Frame):
                 actions, text=label,
                 command=lambda value=estado: self._set_status(value),
             ).pack(side="left", padx=(0, 5))
+        if self._session.is_admin():
+            ttk.Button(
+                actions, text="Reasignar",
+                command=lambda: self._reassign("mine"),
+            ).pack(side="left", padx=(8, 5))
+            ttk.Button(
+                actions, text="Descartar",
+                command=lambda: self._discard_assigned("mine"),
+            ).pack(side="left", padx=(0, 5))
         ttk.Button(actions, text="Ver conversacion", command=self._detail).pack(side="right")
         self._mine_tree.bind("<Double-1>", lambda _event: self._detail())
 
@@ -176,10 +265,20 @@ class UIComunicacionesGlobal(ttk.Frame):
         self._supervision_tree.bind(
             "<Double-1>", lambda _event: self._supervision_detail(),
         )
+        actions = ttk.Frame(parent)
+        actions.pack(fill="x", pady=(8, 0))
         ttk.Button(
-            parent, text="Ver conversacion",
+            actions, text="Reasignar",
+            command=lambda: self._reassign("supervision"),
+        ).pack(side="left")
+        ttk.Button(
+            actions, text="Descartar",
+            command=lambda: self._discard_assigned("supervision"),
+        ).pack(side="left", padx=6)
+        ttk.Button(
+            actions, text="Ver conversacion",
             command=self._supervision_detail,
-        ).pack(anchor="e", pady=(8, 0))
+        ).pack(side="right")
 
     @staticmethod
     def _tree(parent, columns, selectmode="browse"):
@@ -250,8 +349,17 @@ class UIComunicacionesGlobal(ttk.Frame):
         self._discarded = {}
         for item in self._gestor.listar_comunicaciones_descartadas():
             graph_id = item["graph_message_id"]
-            self._discarded[graph_id] = item
-            self._discarded_tree.insert("", "end", iid=graph_id, values=(
+            iid = f"queue::{graph_id}"
+            self._discarded[iid] = item
+            self._discarded_tree.insert("", "end", iid=iid, values=(
+                item.get("fecha") or "", item.get("mailbox") or "",
+                item.get("remitente") or "", item.get("asunto") or "",
+                item.get("descartado_por") or "", item.get("motivo_descarte") or "",
+            ))
+        for item in self._gestor.listar_conversaciones_descartadas():
+            iid = f"comm::{item['id']}"
+            self._discarded[iid] = item
+            self._discarded_tree.insert("", "end", iid=iid, values=(
                 item.get("fecha") or "", item.get("mailbox") or "",
                 item.get("remitente") or "", item.get("asunto") or "",
                 item.get("descartado_por") or "", item.get("motivo_descarte") or "",
@@ -576,10 +684,75 @@ class UIComunicacionesGlobal(ttk.Frame):
         selected = self._discarded_tree.selection()
         if not selected:
             return
-        count = self._gestor.restaurar_comunicaciones(list(selected))
+        queue_ids = [iid.split("::", 1)[1] for iid in selected if iid.startswith("queue::")]
+        comm_ids = [iid.split("::", 1)[1] for iid in selected if iid.startswith("comm::")]
+        count = self._gestor.restaurar_comunicaciones(queue_ids)
+        count += self._gestor.restaurar_conversaciones(comm_ids)
         self._refresh()
         messagebox.showinfo(
             "Restaurar", f"Correos restaurados: {count}", parent=self,
+        )
+
+    def _selected_assigned(self, source: str):
+        tree = self._mine_tree if source == "mine" else self._supervision_tree
+        items = self._mine if source == "mine" else self._supervision
+        selected = tree.selection()
+        if not selected:
+            return None, None
+        return selected[0], items.get(selected[0])
+
+    def _reassign(self, source: str):
+        iid, item = self._selected_assigned(source)
+        if not iid or not item:
+            messagebox.showwarning(
+                "Reasignacion", "Selecciona primero una comunicacion.", parent=self,
+            )
+            return
+
+        def save(company, user):
+            if iid.startswith(("pending::", "queue::")):
+                graph_id = iid.split("::", 1)[1]
+                result = self._gestor.asignar_comunicacion_pendiente(
+                    graph_id, company["codigo"], int(user["id"]), str(user["nombre"]),
+                )
+            else:
+                result = self._gestor.reasignar_comunicacion(
+                    iid, company["codigo"], int(user["id"]), str(user["nombre"]),
+                )
+            if not result:
+                messagebox.showwarning(
+                    "Reasignacion", "No se ha podido reasignar la comunicacion.", parent=self,
+                )
+                return
+            self._refresh()
+
+        ReassignCommunicationDialog(
+            self, self._companies, self._users, item, save,
+        )
+
+    def _discard_assigned(self, source: str):
+        iid, item = self._selected_assigned(source)
+        if not iid or not item:
+            messagebox.showwarning(
+                "Descartar", "Selecciona primero una comunicacion.", parent=self,
+            )
+            return
+        motivo = simpledialog.askstring(
+            "Descartar comunicacion", "Motivo opcional:", parent=self,
+        )
+        if motivo is None:
+            return
+        if iid.startswith(("pending::", "queue::")):
+            count = self._gestor.descartar_comunicaciones(
+                [iid.split("::", 1)[1]], self._session.user.nombre, motivo,
+            )
+        else:
+            count = self._gestor.descartar_conversaciones(
+                [iid], self._session.user.nombre, motivo,
+            )
+        self._refresh()
+        messagebox.showinfo(
+            "Descartar", f"Comunicaciones descartadas: {count}", parent=self,
         )
 
     def _pending_detail(self):

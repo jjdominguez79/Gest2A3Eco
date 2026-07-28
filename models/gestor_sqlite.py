@@ -432,6 +432,10 @@ CREATE TABLE IF NOT EXISTS comunicaciones (
   estado TEXT NOT NULL DEFAULT 'abierta',
   responsable_usuario_id INTEGER,
   responsable_nombre TEXT,
+  descartado INTEGER NOT NULL DEFAULT 0,
+  descartado_por TEXT,
+  descartado_at TEXT,
+  motivo_descarte TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -566,6 +570,10 @@ class GestorSQLite:
         self._ensure_column("empresas", "pais", "TEXT")
         self._ensure_column("empresas", "responsable", "TEXT")
         self._ensure_column("comunicaciones", "graph_conversation_id", "TEXT")
+        self._ensure_column("comunicaciones", "descartado", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("comunicaciones", "descartado_por", "TEXT")
+        self._ensure_column("comunicaciones", "descartado_at", "TEXT")
+        self._ensure_column("comunicaciones", "motivo_descarte", "TEXT")
         self._ensure_column("comunicaciones_mensajes", "mailbox", "TEXT")
         self._ensure_column("comunicaciones_sin_asignar", "sugerencia_codigo_empresa", "TEXT")
         self._ensure_column("comunicaciones_sin_asignar", "sugerencia_nombre", "TEXT")
@@ -5805,7 +5813,7 @@ class GestorSQLite:
                    MAX(m.fecha) AS ultima_fecha, MAX(m.remitente) AS ultimo_remitente
             FROM comunicaciones c
             LEFT JOIN comunicaciones_mensajes m ON m.comunicacion_id=c.id
-            WHERE c.codigo_empresa=?
+            WHERE c.codigo_empresa=? AND c.descartado=0
             GROUP BY c.id ORDER BY c.updated_at DESC
             """,
             (codigo_empresa,),
@@ -6031,6 +6039,39 @@ class GestorSQLite:
         ).fetchall()
         return [self._row_to_dict(row) for row in rows]
 
+    def listar_conversaciones_descartadas(self) -> list[dict]:
+        rows = self.conn.execute(
+            """
+            SELECT c.*,e.nombre AS cliente_nombre,
+                   MAX(m.fecha) AS fecha,
+                   (
+                     SELECT mm.remitente FROM comunicaciones_mensajes mm
+                     WHERE mm.comunicacion_id=c.id
+                     ORDER BY mm.fecha DESC LIMIT 1
+                   ) AS remitente,
+                   (
+                     SELECT mm.mailbox FROM comunicaciones_mensajes mm
+                     WHERE mm.comunicacion_id=c.id
+                       AND mm.mailbox IS NOT NULL AND mm.mailbox<>''
+                     ORDER BY mm.fecha DESC LIMIT 1
+                   ) AS mailbox
+            FROM comunicaciones c
+            LEFT JOIN (
+              SELECT e1.codigo,e1.nombre FROM empresas e1
+              JOIN (
+                SELECT codigo,MAX(ejercicio) ejercicio
+                FROM empresas GROUP BY codigo
+              ) latest
+                ON latest.codigo=e1.codigo AND latest.ejercicio=e1.ejercicio
+            ) e ON e.codigo=c.codigo_empresa
+            LEFT JOIN comunicaciones_mensajes m ON m.comunicacion_id=c.id
+            WHERE c.descartado=1
+            GROUP BY c.id
+            ORDER BY c.descartado_at DESC
+            """
+        ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
     def listar_comunicaciones_sin_cliente_asignadas(self) -> list[dict]:
         rows = self.conn.execute(
             """
@@ -6112,6 +6153,80 @@ class GestorSQLite:
             )
         return cursor.rowcount
 
+    def descartar_conversaciones(
+        self, comunicacion_ids: list[str], usuario_nombre: str, motivo: str = "",
+    ) -> int:
+        ids = list(dict.fromkeys(comunicacion_ids))
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        with self.conn:
+            cursor = self.conn.execute(
+                f"""
+                UPDATE comunicaciones
+                SET descartado=1,descartado_por=?,descartado_at=?,
+                    motivo_descarte=?,updated_at=?
+                WHERE id IN ({placeholders}) AND descartado=0
+                """,
+                (usuario_nombre, now, motivo or None, now, *ids),
+            )
+        return cursor.rowcount
+
+    def restaurar_conversaciones(self, comunicacion_ids: list[str]) -> int:
+        ids = list(dict.fromkeys(comunicacion_ids))
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        with self.conn:
+            cursor = self.conn.execute(
+                f"""
+                UPDATE comunicaciones
+                SET descartado=0,descartado_por=NULL,descartado_at=NULL,
+                    motivo_descarte=NULL,updated_at=?
+                WHERE id IN ({placeholders}) AND descartado=1
+                """,
+                (now, *ids),
+            )
+        return cursor.rowcount
+
+    def reasignar_comunicacion(
+        self, comunicacion_id: str, codigo_empresa: str,
+        responsable_usuario_id: int, responsable_nombre: str,
+    ) -> bool:
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        with self.conn:
+            cursor = self.conn.execute(
+                """
+                UPDATE comunicaciones
+                SET codigo_empresa=?,responsable_usuario_id=?,
+                    responsable_nombre=?,updated_at=?
+                WHERE id=? AND descartado=0
+                """,
+                (
+                    codigo_empresa, responsable_usuario_id,
+                    responsable_nombre, now, comunicacion_id,
+                ),
+            )
+        return cursor.rowcount > 0
+
+    def reasignar_pendiente_responsable(
+        self, graph_message_id: str, responsable_usuario_id: int,
+        responsable_nombre: str,
+    ) -> bool:
+        with self.conn:
+            cursor = self.conn.execute(
+                """
+                UPDATE comunicaciones_sin_asignar
+                SET responsable_usuario_id=?,responsable_nombre=?,
+                    sin_cliente_confirmado=1
+                WHERE graph_message_id=? AND descartado=0
+                """,
+                (responsable_usuario_id, responsable_nombre, graph_message_id),
+            )
+        return cursor.rowcount > 0
+
     def asignar_comunicacion_pendiente(
         self, graph_message_id: str, codigo_empresa: str,
         responsable_usuario_id: int, responsable_nombre: str,
@@ -6170,7 +6285,7 @@ class GestorSQLite:
                    MAX(m.remitente) ultimo_remitente
             FROM comunicaciones c
             LEFT JOIN comunicaciones_mensajes m ON m.comunicacion_id=c.id
-            WHERE c.responsable_usuario_id=?
+            WHERE c.responsable_usuario_id=? AND c.descartado=0
             GROUP BY c.id ORDER BY c.updated_at DESC
             """,
             (usuario_id,),
@@ -6207,7 +6322,7 @@ class GestorSQLite:
                 ON latest.codigo=e1.codigo AND latest.ejercicio=e1.ejercicio
             ) e ON e.codigo=c.codigo_empresa
             LEFT JOIN comunicaciones_mensajes m ON m.comunicacion_id=c.id
-            WHERE c.responsable_usuario_id IS NOT NULL
+            WHERE c.responsable_usuario_id IS NOT NULL AND c.descartado=0
             GROUP BY c.id
             ORDER BY c.updated_at DESC
             """

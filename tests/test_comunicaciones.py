@@ -205,3 +205,62 @@ def test_asigna_sin_cliente_gestiona_descarta_y_restaura(tmp_path):
     assert gestor.listar_comunicaciones_descartadas()[0]["motivo_descarte"] == "Publicidad"
     assert gestor.restaurar_comunicaciones(["internal-1"]) == 1
     assert gestor.listar_comunicaciones_descartadas() == []
+
+
+def test_reasigna_cliente_y_responsable_de_una_conversacion(tmp_path):
+    gestor = GestorSQLite(tmp_path / "test.db")
+    for codigo, nombre in (("E00001", "Cliente Uno"), ("E00002", "Cliente Dos")):
+        gestor.upsert_empresa({
+            "codigo": codigo, "ejercicio": 2026, "nombre": nombre,
+        })
+    gestor.guardar_comunicacion_sin_asignar({
+        "graph_message_id": "reassign-1",
+        "mailbox": "oficina@gestinem.es",
+        "remitente": "cliente@example.com",
+        "asunto": "Consulta",
+        "fecha": "2026-07-28T10:00:00Z",
+    })
+    comunicacion_id, _ = gestor.asignar_comunicacion_pendiente(
+        "reassign-1", "E00001", 3, "ANABEL",
+    )
+
+    assert gestor.reasignar_comunicacion(
+        comunicacion_id, "E00002", 5, "NIDIA",
+    )
+
+    assert gestor.listar_comunicaciones("E00001") == []
+    row = gestor.listar_comunicaciones("E00002")[0]
+    assert row["responsable_usuario_id"] == 5
+    assert row["responsable_nombre"] == "NIDIA"
+    assert gestor.listar_buzon_responsable(3) == []
+    assert gestor.listar_buzon_responsable(5)[0]["id"] == comunicacion_id
+
+
+def test_descarta_y_restaura_una_conversacion_asignada(tmp_path):
+    gestor = GestorSQLite(tmp_path / "test.db")
+    gestor.upsert_empresa({
+        "codigo": "E00001", "ejercicio": 2026, "nombre": "Cliente Uno",
+    })
+    gestor.guardar_comunicacion_sin_asignar({
+        "graph_message_id": "discard-assigned-1",
+        "mailbox": "oficina@gestinem.es",
+        "remitente": "cliente@example.com",
+        "asunto": "Publicidad",
+        "fecha": "2026-07-28T10:00:00Z",
+    })
+    comunicacion_id, _ = gestor.asignar_comunicacion_pendiente(
+        "discard-assigned-1", "E00001", 3, "ANABEL",
+    )
+
+    assert gestor.descartar_conversaciones(
+        [comunicacion_id], "Administrador", "No corresponde",
+    ) == 1
+    assert gestor.listar_comunicaciones("E00001") == []
+    assert gestor.listar_buzon_responsable(3) == []
+    assert gestor.listar_comunicaciones_supervision() == []
+    discarded = gestor.listar_conversaciones_descartadas()[0]
+    assert discarded["id"] == comunicacion_id
+    assert discarded["motivo_descarte"] == "No corresponde"
+
+    assert gestor.restaurar_conversaciones([comunicacion_id]) == 1
+    assert gestor.listar_comunicaciones("E00001")[0]["id"] == comunicacion_id

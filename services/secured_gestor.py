@@ -108,6 +108,47 @@ class SecuredGestorSQLite:
             raise PermissionError("Solo un administrador puede ver descartados.")
         return self._base.listar_comunicaciones_descartadas()
 
+    def listar_conversaciones_descartadas(self):
+        if not self.security.session.is_admin():
+            raise PermissionError("Solo un administrador puede ver descartados.")
+        return self._base.listar_conversaciones_descartadas()
+
+    def descartar_conversaciones(
+        self, comunicacion_ids: list[str], usuario_nombre: str, motivo: str = "",
+    ):
+        if not self.security.session.is_admin():
+            raise PermissionError("Solo un administrador puede descartar conversaciones.")
+        return self._base.descartar_conversaciones(
+            comunicacion_ids, usuario_nombre, motivo,
+        )
+
+    def restaurar_conversaciones(self, comunicacion_ids: list[str]):
+        if not self.security.session.is_admin():
+            raise PermissionError("Solo un administrador puede restaurar conversaciones.")
+        return self._base.restaurar_conversaciones(comunicacion_ids)
+
+    def reasignar_comunicacion(
+        self, comunicacion_id: str, codigo_empresa: str,
+        responsable_usuario_id: int, responsable_nombre: str,
+    ):
+        if not self.security.session.is_admin():
+            raise PermissionError("Solo un administrador puede reasignar conversaciones.")
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.reasignar_comunicacion(
+            comunicacion_id, codigo_empresa,
+            responsable_usuario_id, responsable_nombre,
+        )
+
+    def reasignar_pendiente_responsable(
+        self, graph_message_id: str, responsable_usuario_id: int,
+        responsable_nombre: str,
+    ):
+        if not self.security.session.is_admin():
+            raise PermissionError("Solo un administrador puede reasignar correos.")
+        return self._base.reasignar_pendiente_responsable(
+            graph_message_id, responsable_usuario_id, responsable_nombre,
+        )
+
     def listar_comunicaciones_sin_cliente_asignadas(self):
         if not self.security.session.is_admin():
             raise PermissionError("Solo un administrador puede supervisar todos los buzones.")
