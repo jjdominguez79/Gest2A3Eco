@@ -26,7 +26,7 @@ from utils.utilidades import (
 from views.ui_auth import ChangePasswordDialog, UILogin
 from views.ui_config_monedas import MonedasDialog
 from views.ui_tramites_dgt_public import UITramitesDgtPublicForm
-from views.ui_theme import aplicar_tema
+from views.ui_theme import aplicar_icono_ventana, aplicar_tema
 from update_checker import check_for_updates
 
 
@@ -34,7 +34,7 @@ EMPRESA_NOMBRE = "Asesoria Gestinem S.L."
 EMPRESA_CIF = "B16916967"
 EMPRESA_DIRECCION = "CL Atilano Rodriguez 4, Entlo. 7, 39002 Santander (Cantabria)"
 EMPRESA_EMAIL = "jjdominguez@gestinem.es"
-EMPRESA_TELEFONO = "Tel.: 691 474 519"
+EMPRESA_TELEFONO = "Tel.: 942 791 404"
 
 
 def resource_path(relpath: str) -> str:
@@ -48,6 +48,7 @@ def resource_path(relpath: str) -> str:
 def find_login_logo_path() -> str:
     project_dir = os.path.dirname(os.path.abspath(__file__))
     candidates = [
+        resource_path("icono.ico"),
         resource_path("logo.png"),
         resource_path("logo.jpg"),
         os.path.join(project_dir, "dist", "Gest2A3Eco", "_internal", "logo.png"),
@@ -235,12 +236,9 @@ def main():
     ensure_template_file()  # Crea plantillas/email_factura.html si no existe
     root = tk.Tk()
     root.withdraw()  # ocultar ventana vacia durante inicializacion y comprobacion de actualizaciones
-    root.title("Gest2A3Eco")
-    _set_window_geometry(root, 520, 480, resizable=False)
-    try:
-        root.iconbitmap(resource_path("icono.ico"))
-    except Exception:
-        pass
+    root.title("Gestinem Suite")
+    _set_window_geometry(root, 980, 600, resizable=False)
+    aplicar_icono_ventana(root)
     aplicar_tema(root)
 
     cfg = load_app_config()
@@ -443,7 +441,7 @@ def main():
     def _show_login():
         nonlocal initial_admin_info
         _clear_root(root)
-        _set_window_geometry(root, 520, 480, resizable=False)
+        _set_window_geometry(root, 980, 600, resizable=False)
         login = UILogin(root, _try_login, logo_path=find_login_logo_path())
         login.pack(fill="both", expand=True)
         state["login_view"] = login

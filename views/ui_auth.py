@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import messagebox, ttk
 from pathlib import Path
+from tkinter import messagebox, ttk
 
 from app_version import APP_VERSION
 
@@ -13,16 +13,20 @@ except Exception:  # pragma: no cover
     ImageTk = None
 
 
+APP_TITLE = "Gestinem Suite"
+CONTACT_EMAIL = "jjdominguez@gestinem.es"
+CONTACT_PHONE = "942 791 404"
+COPYRIGHT = "Copyright 2026 Asesoria Gestinem S.L. Todos los derechos reservados."
+
+
 def _center_window(win, parent=None):
     try:
         win.update_idletasks()
         width = win.winfo_width()
         height = win.winfo_height()
         if parent is None:
-            screen_w = win.winfo_screenwidth()
-            screen_h = win.winfo_screenheight()
-            pos_x = (screen_w - width) // 2
-            pos_y = (screen_h - height) // 2
+            pos_x = (win.winfo_screenwidth() - width) // 2
+            pos_y = (win.winfo_screenheight() - height) // 2
         else:
             parent.update_idletasks()
             pos_x = parent.winfo_rootx() + (parent.winfo_width() - width) // 2
@@ -37,7 +41,6 @@ class UILogin(ttk.Frame):
         super().__init__(parent)
         self._on_login = on_login
         self._logo_path = str(logo_path or "").strip()
-        self._logo_img = None
         self._logo_tk_img = None
         self.var_username = tk.StringVar()
         self.var_password = tk.StringVar()
@@ -45,57 +48,90 @@ class UILogin(ttk.Frame):
         self._build()
 
     def _build(self):
-        wrapper = ttk.Frame(self)
-        wrapper.place(relx=0.5, rely=0.5, anchor="center")
+        self.configure(style="Login.TFrame")
+        shell = tk.Frame(self, bg="#ffffff", highlightbackground="#d7dee8", highlightthickness=1)
+        shell.place(relx=0.5, rely=0.5, anchor="center", width=900, height=500)
 
-        card = ttk.Frame(wrapper, padding=20, style="Surface.TFrame")
-        card.pack(fill="both", expand=True)
+        brand = tk.Frame(shell, bg="#002C57", width=390)
+        brand.pack(side="left", fill="both")
+        brand.pack_propagate(False)
+        self._build_brand_panel(brand)
 
-        self._build_logo(card)
-        ttk.Label(card, text="Gest2A3Eco", style="Header.TLabel").pack(anchor="center", pady=(0, 6))
-        ttk.Label(card, text="Acceso seguro", style="SubHeader.TLabel").pack(anchor="center", pady=(0, 18))
+        access = tk.Frame(shell, bg="#ffffff", padx=64, pady=58)
+        access.pack(side="right", fill="both", expand=True)
+        self._build_access_panel(access)
 
-        ttk.Label(card, text="Usuario").pack(anchor="w")
-        entry_user = ttk.Entry(card, textvariable=self.var_username, width=32)
-        entry_user.pack(fill="x", pady=(4, 12))
+    def _build_brand_panel(self, parent):
+        mark = self._load_logo_image(max_h=110)
+        if mark is not None:
+            tk.Label(parent, image=mark, bg="#002C57", borderwidth=0).pack(pady=(82, 28))
+        else:
+            tk.Label(parent, text="G", bg="#002C57", fg="#ffffff", font=("Segoe UI", 54, "bold")).pack(pady=(82, 28))
 
-        ttk.Label(card, text="Contraseña").pack(anchor="w")
-        entry_password = ttk.Entry(card, textvariable=self.var_password, show="*", width=32)
-        entry_password.pack(fill="x", pady=(4, 8))
+        tk.Label(
+            parent, text=APP_TITLE, bg="#002C57", fg="#ffffff",
+            font=("Segoe UI", 29, "bold"),
+        ).pack()
+        tk.Label(
+            parent, text="Gestion integral para tu empresa", bg="#002C57", fg="#c4d9ee",
+            font=("Segoe UI", 13),
+        ).pack(pady=(6, 0))
 
-        lbl_error = ttk.Label(card, textvariable=self.var_error, foreground="#B42318")
-        lbl_error.pack(anchor="w", pady=(0, 12))
+    def _build_access_panel(self, parent):
+        tk.Label(
+            parent, text="Bienvenido de nuevo", bg="#ffffff", fg="#002C57",
+            font=("Segoe UI", 23, "bold"), anchor="w",
+        ).pack(fill="x")
+        tk.Label(
+            parent, text="Accede a tu espacio de trabajo", bg="#ffffff", fg="#667085",
+            font=("Segoe UI", 11), anchor="w",
+        ).pack(fill="x", pady=(6, 34))
 
-        ttk.Button(card, text="Iniciar sesion", style="Primary.TButton", command=self._submit).pack(fill="x")
-        ttk.Label(card, text=f"Versión {APP_VERSION}").pack(anchor="center", pady=(14, 0))
+        self._field(parent, "Usuario", self.var_username, show=None)
+        entry_password = self._field(parent, "Contrasena", self.var_password, show="*")
 
-        entry_user.bind("<Return>", lambda _e: entry_password.focus_set())
+        tk.Label(
+            parent, textvariable=self.var_error, bg="#ffffff", fg="#b42318",
+            font=("Segoe UI", 9), anchor="w", wraplength=360,
+        ).pack(fill="x", pady=(0, 12))
+        tk.Button(
+            parent, text="Iniciar sesion", command=self._submit, bg="#0759af", fg="#ffffff",
+            activebackground="#002C57", activeforeground="#ffffff", relief="flat", borderwidth=0,
+            cursor="hand2", font=("Segoe UI", 11, "bold"), pady=10,
+        ).pack(fill="x")
+
+        footer = tk.Frame(parent, bg="#ffffff")
+        footer.pack(side="bottom", fill="x", pady=(58, 0))
+        tk.Label(
+            footer, text=f"{CONTACT_EMAIL}  |  Tel.: {CONTACT_PHONE}", bg="#ffffff", fg="#667085",
+            font=("Segoe UI", 9),
+        ).pack()
+        tk.Label(
+            footer, text=COPYRIGHT, bg="#ffffff", fg="#98a2b3", font=("Segoe UI", 8),
+        ).pack(pady=(5, 0))
+        tk.Label(
+            footer, text=f"Version {APP_VERSION}", bg="#ffffff", fg="#98a2b3", font=("Segoe UI", 8),
+        ).pack(pady=(5, 0))
+
+        self._entry_user.bind("<Return>", lambda _e: entry_password.focus_set())
         entry_password.bind("<Return>", lambda _e: self._submit())
-        entry_user.focus_set()
+        self._entry_user.focus_set()
 
-    def _build_logo(self, parent):
-        if not self._logo_path:
-            return
+    def _field(self, parent, label, variable, show):
+        tk.Label(
+            parent, text=label, bg="#ffffff", fg="#344054", font=("Segoe UI", 10, "bold"), anchor="w",
+        ).pack(fill="x", pady=(0, 6))
+        entry = ttk.Entry(parent, textvariable=variable, show=show, width=36, font=("Segoe UI", 11))
+        entry.pack(fill="x", ipady=6, pady=(0, 18))
+        if label == "Usuario":
+            self._entry_user = entry
+        return entry
+
+    def _load_logo_image(self, max_h: int):
+        if not self._logo_path or Image is None or ImageTk is None:
+            return None
         path = Path(self._logo_path)
         if not path.exists():
-            return
-        img = self._load_logo_image(path, max_h=96)
-        if img is None:
-            return
-        self._logo_img = img
-        ttk.Label(parent, image=img).pack(anchor="center", pady=(0, 10))
-
-    def _load_logo_image(self, path: Path, max_h: int):
-        try:
-            if path.suffix.lower() == ".png":
-                img = tk.PhotoImage(file=str(path))
-                if img.height() > max_h:
-                    factor = max(1, img.height() // max_h)
-                    img = img.subsample(factor, factor)
-                return img
-        except Exception:
-            pass
-        if Image is None or ImageTk is None:
             return None
         try:
             pil_img = Image.open(path)
@@ -117,7 +153,7 @@ class UILogin(ttk.Frame):
 
 
 class ChangePasswordDialog(tk.Toplevel):
-    def __init__(self, parent, title: str = "Cambiar contraseña", username: str = ""):
+    def __init__(self, parent, title: str = "Cambiar contrasena", username: str = ""):
         super().__init__(parent)
         self.title(title)
         self.resizable(False, False)
@@ -132,11 +168,11 @@ class ChangePasswordDialog(tk.Toplevel):
         if username:
             ttk.Label(frm, text=f"Usuario: {username}", style="SubHeader.TLabel").pack(anchor="w", pady=(0, 12))
 
-        ttk.Label(frm, text="Contraseña actual").pack(anchor="w")
+        ttk.Label(frm, text="Contrasena actual").pack(anchor="w")
         ttk.Entry(frm, textvariable=self.var_current, show="*", width=32).pack(fill="x", pady=(4, 10))
-        ttk.Label(frm, text="Nueva contraseña").pack(anchor="w")
+        ttk.Label(frm, text="Nueva contrasena").pack(anchor="w")
         ttk.Entry(frm, textvariable=self.var_new, show="*", width=32).pack(fill="x", pady=(4, 10))
-        ttk.Label(frm, text="Repetir contraseña").pack(anchor="w")
+        ttk.Label(frm, text="Repetir contrasena").pack(anchor="w")
         ttk.Entry(frm, textvariable=self.var_repeat, show="*", width=32).pack(fill="x", pady=(4, 12))
 
         actions = ttk.Frame(frm)
@@ -155,13 +191,10 @@ class ChangePasswordDialog(tk.Toplevel):
         new_password = self.var_new.get()
         repeated = self.var_repeat.get()
         if not new_password.strip():
-            messagebox.showerror("Gest2A3Eco", "La nueva contraseña no puede estar vacia.", parent=self)
+            messagebox.showerror(APP_TITLE, "La nueva contrasena no puede estar vacia.", parent=self)
             return
         if new_password != repeated:
-            messagebox.showerror("Gest2A3Eco", "Las contraseñas no coinciden.", parent=self)
+            messagebox.showerror(APP_TITLE, "Las contrasenas no coinciden.", parent=self)
             return
-        self.result = {
-            "current_password": current,
-            "new_password": new_password,
-        }
+        self.result = {"current_password": current, "new_password": new_password}
         self.destroy()

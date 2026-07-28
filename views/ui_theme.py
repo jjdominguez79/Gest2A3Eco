@@ -1,6 +1,69 @@
 # ui_tema.py
+import sys
 import tkinter as tk
-from tkinter import ttk
+from pathlib import Path
+from tkinter import messagebox, ttk
+
+try:
+    from PIL import Image, ImageTk
+except Exception:  # pragma: no cover
+    Image = None
+    ImageTk = None
+
+
+APP_TITLE = "Gestinem Suite"
+LEGACY_APP_TITLE = "Gest2A3Eco"
+
+
+def _icon_path() -> Path:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / "icono.ico"
+    return Path(__file__).resolve().parents[1] / "icono.ico"
+
+
+def aplicar_icono_ventana(window) -> None:
+    """Fuerza la G corporativa en la barra de titulo de Windows."""
+    icon_path = _icon_path()
+    if not icon_path.exists():
+        return
+    try:
+        window.iconbitmap(str(icon_path))
+    except Exception:
+        pass
+    if Image is None or ImageTk is None:
+        return
+    try:
+        image = Image.open(icon_path).convert("RGBA")
+        image.thumbnail((64, 64))
+        window._gestinem_icon_img = ImageTk.PhotoImage(image, master=window)
+        window.iconphoto(True, window._gestinem_icon_img)
+    except Exception:
+        pass
+
+
+def _instalar_marca_dialogos() -> None:
+    """Aplica el titulo e icono corporativos a dialogos Tk y messagebox."""
+    if getattr(tk.Toplevel, "_marca_gestinem_instalada", False):
+        return
+
+    original_title = tk.Toplevel.title
+    original_messagebox_show = messagebox._show
+
+    def branded_title(self, string=None):
+        if string == LEGACY_APP_TITLE:
+            string = APP_TITLE
+        return original_title(self, string)
+
+    def branded_messagebox_show(title=None, message=None, _icon=None, _type=None, **options):
+        if title == LEGACY_APP_TITLE:
+            title = APP_TITLE
+        return original_messagebox_show(title, message, _icon, _type, **options)
+
+    tk.Toplevel.title = branded_title
+    tk.Toplevel.wm_title = branded_title
+    messagebox._show = branded_messagebox_show
+    tk.Toplevel._marca_gestinem_instalada = True  # type: ignore[attr-defined]
+    tk.Toplevel._set_icono_gestinem = staticmethod(aplicar_icono_ventana)  # type: ignore[attr-defined]
 
 def _instalar_centrado_toplevels() -> None:
     """Parcha tk.Toplevel para que todos los dialogos se centren en pantalla automaticamente."""
@@ -10,6 +73,10 @@ def _instalar_centrado_toplevels() -> None:
 
     def _patched_init(self, master=None, **kw):
         _orig_init(self, master, **kw)
+        try:
+            tk.Toplevel._set_icono_gestinem(self)  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
         def _center():
             try:
@@ -196,4 +263,7 @@ def aplicar_tema(root: tk.Tk) -> None:
         font=("Segoe UI", 10),
     )
 
+    _instalar_marca_dialogos()
     _instalar_centrado_toplevels()
+
+    style.configure("Login.TFrame", background="#edf2f7")
