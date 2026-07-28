@@ -17,6 +17,7 @@ class UIComunicacionesGlobal(ttk.Frame):
         self._on_open_empresas = on_open_empresas
         self._pending: dict[str, dict] = {}
         self._mine: dict[str, dict] = {}
+        self._supervision: dict[str, dict] = {}
         self._companies: dict[str, dict] = {}
         self._users: dict[str, dict] = {}
         self._build()
@@ -35,6 +36,10 @@ class UIComunicacionesGlobal(ttk.Frame):
         mine_tab = ttk.Frame(tabs, padding=8)
         tabs.add(pending_tab, text="Entrada sin asignar")
         tabs.add(mine_tab, text="Mi buzon")
+        supervision_tab = None
+        if self._session.is_admin():
+            supervision_tab = ttk.Frame(tabs, padding=8)
+            tabs.add(supervision_tab, text="Supervision")
 
         self._pending_tree = self._tree(
             pending_tab,
@@ -66,7 +71,7 @@ class UIComunicacionesGlobal(ttk.Frame):
         actions.pack(fill="x", pady=(8, 0))
         for estado, label in (
             ("pendiente", "Marcar pendiente"),
-            ("contestado", "Marcar contestado"),
+            ("respondido", "Marcar respondido"),
             ("gestionado", "Marcar gestionado"),
         ):
             ttk.Button(
@@ -75,6 +80,58 @@ class UIComunicacionesGlobal(ttk.Frame):
             ).pack(side="left", padx=(0, 5))
         ttk.Button(actions, text="Ver conversacion", command=self._detail).pack(side="right")
         self._mine_tree.bind("<Double-1>", lambda _event: self._detail())
+
+        if supervision_tab is not None:
+            self._build_supervision(supervision_tab)
+
+    def _build_supervision(self, parent):
+        filters = ttk.Frame(parent)
+        filters.pack(fill="x", pady=(0, 8))
+        self._sup_status = tk.StringVar(value="Todos")
+        self._sup_user = tk.StringVar(value="Todos")
+        self._sup_company = tk.StringVar(value="Todos")
+        self._sup_mailbox = tk.StringVar(value="Todos")
+        self._sup_search = tk.StringVar()
+        for label, variable, width in (
+            ("Estado", self._sup_status, 14),
+            ("Responsable", self._sup_user, 24),
+            ("Cliente", self._sup_company, 28),
+            ("Buzon", self._sup_mailbox, 24),
+        ):
+            ttk.Label(filters, text=label).pack(side="left", padx=(0, 3))
+            combo = ttk.Combobox(
+                filters, textvariable=variable, state="readonly", width=width,
+            )
+            combo.pack(side="left", padx=(0, 8))
+            combo.bind("<<ComboboxSelected>>", lambda _event: self._filter_supervision())
+            if variable is self._sup_status:
+                self._sup_status_combo = combo
+            elif variable is self._sup_user:
+                self._sup_user_combo = combo
+            elif variable is self._sup_company:
+                self._sup_company_combo = combo
+            else:
+                self._sup_mailbox_combo = combo
+        ttk.Label(filters, text="Buscar").pack(side="left")
+        search = ttk.Entry(filters, textvariable=self._sup_search, width=24)
+        search.pack(side="left", padx=4, fill="x", expand=True)
+        self._sup_search.trace_add("write", lambda *_: self._filter_supervision())
+        self._sup_summary = ttk.Label(parent, text="")
+        self._sup_summary.pack(anchor="w", pady=(0, 5))
+        self._supervision_tree = self._tree(
+            parent,
+            (("fecha", "Ultima actividad", 165), ("buzon", "Buzon", 175),
+             ("cliente", "Cliente", 210), ("responsable", "Responsable", 170),
+             ("asunto", "Asunto", 310), ("remitente", "Ultimo remitente", 210),
+             ("estado", "Estado", 105)),
+        )
+        self._supervision_tree.bind(
+            "<Double-1>", lambda _event: self._supervision_detail(),
+        )
+        ttk.Button(
+            parent, text="Ver conversacion",
+            command=self._supervision_detail,
+        ).pack(anchor="e", pady=(8, 0))
 
     @staticmethod
     def _tree(parent, columns):
@@ -126,6 +183,62 @@ class UIComunicacionesGlobal(ttk.Frame):
                 item.get("asunto") or "", item.get("ultimo_remitente") or "",
                 item.get("estado") or "pendiente",
             ))
+        if self._session.is_admin():
+            self._refresh_supervision()
+
+    def _refresh_supervision(self):
+        self._supervision = {
+            item["id"]: item
+            for item in self._gestor.listar_comunicaciones_supervision()
+        }
+        statuses = sorted({str(item.get("estado") or "pendiente") for item in self._supervision.values()})
+        users = sorted({str(item.get("responsable_nombre") or "") for item in self._supervision.values() if item.get("responsable_nombre")})
+        companies = sorted({str(item.get("cliente_nombre") or item.get("codigo_empresa") or "") for item in self._supervision.values()})
+        mailboxes = sorted({str(item.get("mailbox") or "") for item in self._supervision.values() if item.get("mailbox")})
+        self._sup_status_combo["values"] = ["Todos", *statuses]
+        self._sup_user_combo["values"] = ["Todos", *users]
+        self._sup_company_combo["values"] = ["Todos", *companies]
+        self._sup_mailbox_combo["values"] = ["Todos", *mailboxes]
+        self._filter_supervision()
+
+    def _filter_supervision(self):
+        self._supervision_tree.delete(*self._supervision_tree.get_children())
+        query = self._sup_search.get().strip().lower()
+        visible = 0
+        counts = {"pendiente": 0, "respondido": 0, "gestionado": 0}
+        for comm_id, item in self._supervision.items():
+            status = str(item.get("estado") or "pendiente")
+            user = str(item.get("responsable_nombre") or "")
+            company = str(item.get("cliente_nombre") or item.get("codigo_empresa") or "")
+            mailbox = str(item.get("mailbox") or "")
+            if self._sup_status.get() != "Todos" and status != self._sup_status.get():
+                continue
+            if self._sup_user.get() != "Todos" and user != self._sup_user.get():
+                continue
+            if self._sup_company.get() != "Todos" and company != self._sup_company.get():
+                continue
+            if self._sup_mailbox.get() != "Todos" and mailbox != self._sup_mailbox.get():
+                continue
+            searchable = " ".join((
+                company, user, mailbox, str(item.get("asunto") or ""),
+                str(item.get("ultimo_remitente") or ""), status,
+            )).lower()
+            if query and query not in searchable:
+                continue
+            visible += 1
+            counts[status] = counts.get(status, 0) + 1
+            self._supervision_tree.insert("", "end", iid=comm_id, values=(
+                item.get("ultima_fecha") or "", mailbox, company, user,
+                item.get("asunto") or "", item.get("ultimo_remitente") or "",
+                status,
+            ))
+        self._sup_summary.configure(
+            text=(
+                f"Mostrados: {visible} · Pendientes: {counts.get('pendiente', 0)} · "
+                f"Respondidos: {counts.get('respondido', 0)} · "
+                f"Gestionados: {counts.get('gestionado', 0)}"
+            )
+        )
 
     def _allowed_mailboxes(self) -> set[str]:
         shared = str((load_app_config().get("microsoft_graph") or {}).get("shared_mailbox") or "Oficina@gestinem.es").lower()
@@ -208,6 +321,13 @@ class UIComunicacionesGlobal(ttk.Frame):
 
     def _detail(self):
         selected = self._mine_tree.selection()
+        if not selected:
+            return
+        messages = self._gestor.listar_mensajes_comunicacion(selected[0])
+        CommunicationDetailDialog(self, messages)
+
+    def _supervision_detail(self):
+        selected = self._supervision_tree.selection()
         if not selected:
             return
         messages = self._gestor.listar_mensajes_comunicacion(selected[0])

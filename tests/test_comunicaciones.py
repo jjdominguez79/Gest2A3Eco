@@ -107,3 +107,30 @@ def test_busca_empresa_en_lista_de_varios_emails(tmp_path):
     })
 
     assert gestor.buscar_empresa_por_email("GERENTE@example.com")["codigo"] == "E00001"
+
+
+def test_supervision_global_incluye_cliente_responsable_buzon_y_estado(tmp_path):
+    gestor = GestorSQLite(tmp_path / "test.db")
+    gestor.upsert_empresa({
+        "codigo": "E00001", "ejercicio": 2026, "nombre": "Cliente Uno",
+    })
+    payload = {
+        "graph_message_id": "supervision-1",
+        "mailbox": "oficina@gestinem.es",
+        "remitente": "cliente@example.com",
+        "asunto": "Consulta fiscal",
+        "cuerpo_html": "<p>Hola</p>",
+        "fecha": "2026-07-28T10:00:00Z",
+    }
+    gestor.guardar_comunicacion_sin_asignar(payload)
+    comunicacion_id, _ = gestor.asignar_comunicacion_pendiente(
+        "supervision-1", "E00001", 7, "ANA",
+    )
+    gestor.cambiar_estado_comunicacion(comunicacion_id, "respondido", 7)
+
+    row = gestor.listar_comunicaciones_supervision()[0]
+
+    assert row["cliente_nombre"] == "Cliente Uno"
+    assert row["responsable_nombre"] == "ANA"
+    assert row["mailbox"] == "oficina@gestinem.es"
+    assert row["estado"] == "respondido"

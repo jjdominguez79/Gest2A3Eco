@@ -566,6 +566,9 @@ class GestorSQLite:
             "ON comunicaciones_mensajes(graph_message_id) "
             "WHERE graph_message_id IS NOT NULL AND graph_message_id<>''"
         )
+        self.conn.execute(
+            "UPDATE comunicaciones SET estado='respondido' WHERE estado='contestado'"
+        )
         self.conn.commit()
         self._ensure_column("bancos", "numero_cuenta", "TEXT")
         self._ensure_column("importaciones_bancos", "numero_cuenta", "TEXT")
@@ -6032,10 +6035,47 @@ class GestorSQLite:
         ).fetchall()
         return [self._row_to_dict(row) for row in rows]
 
+    def listar_comunicaciones_supervision(self) -> list[dict]:
+        rows = self.conn.execute(
+            """
+            SELECT c.*,e.nombre AS cliente_nombre,
+                   COUNT(m.id) AS mensajes,
+                   MAX(m.fecha) AS ultima_fecha,
+                   (
+                     SELECT mm.remitente
+                     FROM comunicaciones_mensajes mm
+                     WHERE mm.comunicacion_id=c.id
+                     ORDER BY mm.fecha DESC LIMIT 1
+                   ) AS ultimo_remitente,
+                   (
+                     SELECT mm.mailbox
+                     FROM comunicaciones_mensajes mm
+                     WHERE mm.comunicacion_id=c.id
+                       AND mm.mailbox IS NOT NULL AND mm.mailbox<>''
+                     ORDER BY mm.fecha DESC LIMIT 1
+                   ) AS mailbox
+            FROM comunicaciones c
+            LEFT JOIN (
+              SELECT e1.codigo,e1.nombre
+              FROM empresas e1
+              JOIN (
+                SELECT codigo,MAX(ejercicio) ejercicio
+                FROM empresas GROUP BY codigo
+              ) latest
+                ON latest.codigo=e1.codigo AND latest.ejercicio=e1.ejercicio
+            ) e ON e.codigo=c.codigo_empresa
+            LEFT JOIN comunicaciones_mensajes m ON m.comunicacion_id=c.id
+            WHERE c.responsable_usuario_id IS NOT NULL
+            GROUP BY c.id
+            ORDER BY c.updated_at DESC
+            """
+        ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
     def cambiar_estado_comunicacion(
         self, comunicacion_id: str, estado: str, usuario_id: int,
     ) -> None:
-        allowed = {"pendiente", "contestado", "gestionado"}
+        allowed = {"pendiente", "respondido", "gestionado"}
         if estado not in allowed:
             raise ValueError("Estado de comunicacion no valido.")
         with self.conn:

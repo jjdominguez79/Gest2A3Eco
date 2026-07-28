@@ -57,6 +57,11 @@ class SecuredGestorSQLite:
             raise PermissionError("No puedes consultar el buzon privado de otro usuario.")
         return self._base.listar_buzon_responsable(usuario_id)
 
+    def listar_comunicaciones_supervision(self):
+        if not self.security.session.is_admin():
+            raise PermissionError("Solo un administrador puede supervisar todos los buzones.")
+        return self._base.listar_comunicaciones_supervision()
+
     def cambiar_estado_comunicacion(
         self, comunicacion_id: str, estado: str, usuario_id: int,
     ):
