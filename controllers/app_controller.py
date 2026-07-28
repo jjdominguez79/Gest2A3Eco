@@ -5,6 +5,7 @@ from controllers.user_admin_controller import UserAdminController
 from services.empresa_service import EmpresaService
 from views.ui_configuracion_empresa import UIConfiguracionEmpresa
 from views.ui_comunicaciones import UIComunicaciones
+from views.ui_comunicaciones_global import UIComunicacionesGlobal
 from views.ui_contabilidad import UIContabilidad
 from views.ui_dashboard_empresa import UIDashboardEmpresa
 from views.ui_facturas_emitidas import UIFacturasEmitidas
@@ -46,7 +47,13 @@ class AppController:
         return self._gestor.security
 
     def start(self):
-        self._show(self.build_panel_general)
+        self._show(self.build_comunicaciones_global)
+
+    def build_comunicaciones_global(self, parent):
+        return UIComunicacionesGlobal(
+            parent, self._gestor, self._session,
+            on_open_empresas=lambda: self._show(self.build_panel_general),
+        )
 
     def _show(self, factory):
         """Reemplaza el contenido principal destruyendo el frame actual."""
@@ -146,6 +153,9 @@ class AppController:
         if self._current_frame is not None:
             self._current_frame.destroy()
 
+        navigation = self._empresa_service.get_company_navigation(codigo)
+        previous = navigation.get("previous")
+        next_company = navigation.get("next")
         shell = UIDashboardEmpresa(
             self._content,
             self._empresa_service,
@@ -160,6 +170,16 @@ class AppController:
             on_open_terceros=lambda: self._open_module_in_shell(codigo, ejercicio, "terceros"),
             on_open_maestro_cuentas=lambda: self._open_module_in_shell(codigo, ejercicio, "maestro_cuentas"),
             on_open_comunicaciones=lambda: self._open_module_in_shell(codigo, ejercicio, "comunicaciones"),
+            on_previous_company=(
+                (lambda: self._navigate_company(previous))
+                if previous else None
+            ),
+            on_next_company=(
+                (lambda: self._navigate_company(next_company))
+                if next_company else None
+            ),
+            company_position=int(navigation.get("position") or 0),
+            company_total=int(navigation.get("total") or 0),
             on_back=self.start,
         )
         shell.pack(fill="both", expand=True)
@@ -168,6 +188,21 @@ class AppController:
         self._current_codigo = codigo
         self._current_ejercicio = int(ejercicio)
         return shell
+
+    def _navigate_company(self, target: dict):
+        if not target:
+            return
+        module = (
+            self._company_shell.current_nav_key
+            if self._company_shell is not None else "inicio"
+        )
+        codigo = str(target.get("codigo") or "")
+        ejercicio = int(target.get("ejercicio") or target.get("ultimo_ejercicio"))
+        if module == "inicio":
+            shell = self._get_or_create_shell(codigo, ejercicio)
+            shell.show_dashboard()
+            return
+        self._open_module_in_shell(codigo, ejercicio, module)
 
     def _open_module_in_shell(self, codigo, ejercicio, modulo, nombre=None):
         """Muestra un modulo dentro del shell persistente."""

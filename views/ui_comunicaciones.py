@@ -20,22 +20,21 @@ def _emails(value: str) -> list[str]:
     return [part.strip() for part in value.replace(";", ",").split(",") if part.strip()]
 
 
-FIRMA_CORPORATIVA_HTML = """
-<div style="font-family:Arial,Helvetica,sans-serif;color:#111;font-size:13px;line-height:1.35">
-  <img src="cid:gestinem-logo" alt="Gestinem" width="185"
-       style="display:block;width:185px;height:auto;margin:8px 0 18px 0">
+FIRMA_PERSONAL_HTML = """
+<div style="font-family:'Times New Roman',serif;color:#111;font-size:11pt;line-height:1.2">
+  <img src="cid:gestinem-logo" alt="Gestinem" width="140"
+       style="display:block;width:140px;height:auto;margin:8px 0 18px 0">
   <div><strong>Juan José Domínguez Barrero</strong></div>
-  <div><strong>Asesor Contable – Fiscal - Mercantil</strong></div>
+  <div><strong>Asesor Fiscal, Contable y Mercantil</strong></div>
   <div>Mail: <a href="mailto:jjdominguez@gestinem.es">jjdominguez@gestinem.es</a></div>
-  <div>Web: <a href="https://www.gestinem.es/">www.gestinem.es</a></div>
-  <div>F: 942 79 14 04 - M: 691 47 45 19</div>
+  <div>Web: <a href="http://www.gestinem.es/">www.gestinem.es</a></div>
+  <div>F: 942 79 14 04 / M: 691 474 519</div>
   <div style="margin-top:18px">CL Atilano Rodríguez 4, Entreplanta, Local 7<br>
   39002 Santander (Cantabria) - (Frente a Estaciones)</div>
-  <div style="margin-top:18px">Síguenos en:
-    <a href="https://www.facebook.com/gestinem/">Facebook</a>
+  <div style="margin:20px 0 10px;text-align:center;font-family:Tahoma,sans-serif;font-size:10pt">
+    _________ ADVERTENCIA LEGAL _________
   </div>
-  <div style="margin:20px 0 10px;text-align:center">____________ ADVERTENCIA LEGAL ____________</div>
-  <div style="font-size:10px;text-align:justify">
+  <div style="font-family:Tahoma,sans-serif;font-size:10pt;text-align:justify">
     JUAN JOSE DOMINGUEZ BARRERO (GESTINEM), le informa que su dirección de correo
     electrónico, así como el resto de los datos de carácter personal que nos facilite,
     serán objeto de tratamiento automatizado en nuestros ficheros, con la finalidad del
@@ -49,12 +48,54 @@ FIRMA_CORPORATIVA_HTML = """
     destinatario. Si ha recibido este mensaje por error, le rogamos que lo notifique y
     proceda a su eliminación.
   </div>
-  <div style="font-size:11px;font-weight:bold;margin-top:12px">
+  <div style="font-family:Tahoma,sans-serif;font-size:10pt;font-weight:bold;margin-top:12px">
     En caso de que no quiera seguir recibiendo información sobre los servicios prestados
     por nuestra empresa, responda a este mail con el asunto “dar de baja”.
   </div>
 </div>
 """.strip()
+
+FIRMA_OFICINA_HTML = """
+<div style="font-family:'Times New Roman',serif;color:#111;font-size:11pt;line-height:1.2">
+  <img src="cid:gestinem-logo" alt="Gestinem" width="140"
+       style="display:block;width:140px;height:auto;margin:8px 0 18px 0">
+  <div><strong>Gestinem{{RESPONSABLE}}</strong></div>
+  <div><strong>Asesoría Fiscal, Contable y Laboral</strong></div>
+  <div>Mail: <a href="mailto:oficina@gestinem.es">oficina@gestinem.es</a></div>
+  <div>Web: <a href="http://www.gestinem.es/">www.gestinem.es</a></div>
+  <div>F: 942 79 14 04</div>
+  <div style="margin-top:18px">CL Atilano Rodríguez 4, Entreplanta, Local 7<br>
+  39002 Santander (Cantabria) - (Frente a Estaciones)</div>
+  <div style="margin:20px 0 10px;text-align:center;font-family:Tahoma,sans-serif;font-size:10pt">
+    _________ ADVERTENCIA LEGAL _________
+  </div>
+  <div style="font-family:Tahoma,sans-serif;font-size:10pt;text-align:justify">
+    GESTINEM le informa que su dirección de correo electrónico, así como el resto
+    de los datos de carácter personal que nos facilite, serán tratados con la
+    finalidad de gestionar las comunicaciones profesionales y prestar nuestros
+    servicios. Podrá ejercer los derechos que reconoce la normativa aplicable
+    dirigiéndose a CL ATILANO RODRIGUEZ 4, ENTREPLANTA LOCAL 7 - 39002 SANTANDER
+    CANTABRIA, o a
+    <a href="mailto:oficina@gestinem.es">oficina@gestinem.es</a>.
+    La información incluida en este e-mail es CONFIDENCIAL y para uso exclusivo
+    de su destinatario. Si ha recibido este mensaje por error, notifíquelo y
+    proceda a su eliminación.
+  </div>
+  <div style="font-family:Tahoma,sans-serif;font-size:10pt;font-weight:bold;margin-top:12px">
+    En caso de que no quiera seguir recibiendo información sobre los servicios
+    prestados por nuestra empresa, responda a este mail con el asunto “dar de baja”.
+  </div>
+</div>
+""".strip()
+
+# Alias conservado para configuraciones y llamadas existentes.
+FIRMA_CORPORATIVA_HTML = FIRMA_PERSONAL_HTML
+
+
+def construir_firma_oficina(usuario_nombre: str = "") -> str:
+    nombre = html.escape(str(usuario_nombre or "").strip())
+    responsable = f" - {nombre}" if nombre else ""
+    return FIRMA_OFICINA_HTML.replace("{{RESPONSABLE}}", responsable)
 
 
 def construir_cuerpo_html(
@@ -171,7 +212,7 @@ class UIComunicaciones(ttk.Frame):
         cfg = load_user_config()
         SignatureDialog(
             self,
-            cfg.get("email_signature_html") or FIRMA_CORPORATIVA_HTML,
+            cfg.get("email_signature_html") or FIRMA_PERSONAL_HTML,
         )
 
     def _compose(self):
@@ -190,6 +231,62 @@ class UIComunicaciones(ttk.Frame):
                 ).fetchall()
             ]
         CommunicationDetailDialog(self, messages)
+
+
+class UnmatchedMailDialog(tk.Toplevel):
+    def __init__(self, parent, gestor, codigo_empresa: str, on_assigned):
+        super().__init__(parent)
+        self.title("Correos pendientes de asignar")
+        self.geometry("850x430")
+        self.transient(parent.winfo_toplevel())
+        self.grab_set()
+        self._gestor = gestor
+        self._codigo = codigo_empresa
+        self._on_assigned = on_assigned
+        frame = ttk.Frame(self, padding=12)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame,
+            text=(
+                "Selecciona un correo para asignarlo al cliente actual. "
+                "Los siguientes correos de ese remitente se asociaran automaticamente "
+                "si guardas su direccion en la ficha del cliente."
+            ),
+            wraplength=800,
+        ).pack(anchor="w", pady=(0, 8))
+        self._tree = ttk.Treeview(
+            frame, columns=("fecha", "remitente", "asunto", "buzon"),
+            show="headings", selectmode="browse",
+        )
+        for key, title, width in (
+            ("fecha", "Fecha", 175), ("remitente", "Remitente", 220),
+            ("asunto", "Asunto", 300), ("buzon", "Buzon", 140),
+        ):
+            self._tree.heading(key, text=title)
+            self._tree.column(key, width=width, anchor="w")
+        self._tree.pack(fill="both", expand=True)
+        for item in gestor.listar_comunicaciones_sin_asignar():
+            self._tree.insert("", "end", iid=item["graph_message_id"], values=(
+                item.get("fecha") or "", item.get("remitente") or "",
+                item.get("asunto") or "", item.get("mailbox") or "",
+            ))
+        ttk.Button(
+            frame, text="Asignar al cliente actual",
+            command=self._assign,
+        ).pack(anchor="e", pady=(10, 0))
+
+    def _assign(self):
+        selected = self._tree.selection()
+        if not selected:
+            messagebox.showwarning(
+                "Asignacion", "Selecciona un correo.", parent=self,
+            )
+            return
+        self._gestor.asignar_comunicacion_pendiente(
+            selected[0], self._codigo, 0, "",
+        )
+        self._tree.delete(selected[0])
+        self._on_assigned()
 
 
 class SignatureDialog(tk.Toplevel):
@@ -324,7 +421,7 @@ class ComposeMailDialog(tk.Toplevel):
         ttk.Button(form, text="Añadir adjuntos", command=self._attach).grid(row=5, column=0, sticky="w")
         signature = (
             load_user_config().get("email_signature_html")
-            or FIRMA_CORPORATIVA_HTML
+            or FIRMA_PERSONAL_HTML
         ).strip()
         firma_estado = "Se añadira la firma configurada." if signature else "No hay una firma configurada."
         ttk.Label(form, text=firma_estado, foreground="gray").grid(row=6, column=1, sticky="w", pady=(5, 0))
@@ -348,13 +445,18 @@ class ComposeMailDialog(tk.Toplevel):
             return
         shared = (load_app_config().get("microsoft_graph") or {}).get("shared_mailbox") or "Oficina@gestinem.es"
         sender = "me" if self._sender.get().startswith("Mi cuenta") else shared
-        signature = (
-            load_user_config().get("email_signature_html")
-            or FIRMA_CORPORATIVA_HTML
-        )
+        is_shared = sender != "me"
         user = getattr(self._session, "user", None)
+        signature = (
+            construir_firma_oficina(getattr(user, "nombre", ""))
+            if is_shared
+            else (
+                load_user_config().get("email_signature_html")
+                or FIRMA_PERSONAL_HTML
+            )
+        )
         body_html = construir_cuerpo_html(
-            plain, signature, getattr(user, "nombre", ""),
+            plain, signature, "",
         )
         logo_path = get_install_dir() / "logo.png"
         inline_attachments = (

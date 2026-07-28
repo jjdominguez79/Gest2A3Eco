@@ -22,6 +22,10 @@ class Session:
         self.calls.append((url, kwargs))
         return Response(202)
 
+    def get(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        return Response(200, {"value": [], "@odata.deltaLink": "delta-final"})
+
 
 def test_shared_mailbox_sends_without_mailbox_read_permission(monkeypatch):
     session = Session()
@@ -74,3 +78,16 @@ def test_inline_attachment_uses_content_id(monkeypatch, tmp_path: Path):
     attachment = payload["message"]["attachments"][0]
     assert attachment["isInline"] is True
     assert attachment["contentId"] == "gestinem-logo"
+
+
+def test_sync_inbox_uses_delta_and_returns_cursor(monkeypatch):
+    service = GraphMailService(
+        {"tenant_id": "t", "client_id": "c"}, session=Session(),
+    )
+    monkeypatch.setattr(service, "_token", lambda: ("token", "yo@gestinem.es"))
+
+    result = service.sync_inbox(mailbox="Oficina@gestinem.es")
+
+    assert result.mailbox == "Oficina@gestinem.es"
+    assert result.delta_link == "delta-final"
+    assert "/users/Oficina%40gestinem.es/mailFolders/inbox/messages/delta" in service.session.calls[0][0]

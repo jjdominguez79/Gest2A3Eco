@@ -42,6 +42,132 @@ class SecuredGestorSQLite:
         self.security.ensure_company_write(datos.get("codigo_empresa"))
         return self._base.registrar_envio_comunicacion(datos)
 
+    def asignar_comunicacion_pendiente(
+        self, graph_message_id: str, codigo_empresa: str,
+        responsable_usuario_id: int, responsable_nombre: str,
+    ):
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.asignar_comunicacion_pendiente(
+            graph_message_id, codigo_empresa,
+            responsable_usuario_id, responsable_nombre,
+        )
+
+    def asignar_comunicaciones_pendientes(
+        self, graph_message_ids: list[str], codigo_empresa: str,
+        responsable_usuario_id: int, responsable_nombre: str,
+    ):
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.asignar_comunicaciones_pendientes(
+            graph_message_ids, codigo_empresa,
+            responsable_usuario_id, responsable_nombre,
+        )
+
+    def listar_buzon_responsable(self, usuario_id: int):
+        if int(usuario_id) != int(self.security.session.user.id):
+            raise PermissionError("No puedes consultar el buzon privado de otro usuario.")
+        return self._base.listar_buzon_responsable(usuario_id)
+
+    def listar_pendientes_responsable(self, usuario_id: int):
+        if int(usuario_id) != int(self.security.session.user.id):
+            raise PermissionError("No puedes consultar pendientes de otro usuario.")
+        return self._base.listar_pendientes_responsable(usuario_id)
+
+    def asignar_comunicaciones_sin_cliente(
+        self, graph_message_ids: list[str], responsable_usuario_id: int,
+        responsable_nombre: str,
+    ):
+        return self._base.asignar_comunicaciones_sin_cliente(
+            graph_message_ids, responsable_usuario_id, responsable_nombre,
+        )
+
+    def cambiar_estado_pendiente_responsable(
+        self, graph_message_id: str, estado: str, usuario_id: int,
+    ):
+        if int(usuario_id) != int(self.security.session.user.id):
+            raise PermissionError("No puedes modificar pendientes de otro usuario.")
+        return self._base.cambiar_estado_pendiente_responsable(
+            graph_message_id, estado, usuario_id,
+        )
+
+    def descartar_comunicaciones(
+        self, graph_message_ids: list[str], usuario_nombre: str, motivo: str = "",
+    ):
+        if not self.security.session.is_admin():
+            raise PermissionError("Solo un administrador puede descartar correos.")
+        return self._base.descartar_comunicaciones(
+            graph_message_ids, usuario_nombre, motivo,
+        )
+
+    def restaurar_comunicaciones(self, graph_message_ids: list[str]):
+        if not self.security.session.is_admin():
+            raise PermissionError("Solo un administrador puede restaurar correos.")
+        return self._base.restaurar_comunicaciones(graph_message_ids)
+
+    def listar_comunicaciones_descartadas(self):
+        if not self.security.session.is_admin():
+            raise PermissionError("Solo un administrador puede ver descartados.")
+        return self._base.listar_comunicaciones_descartadas()
+
+    def listar_conversaciones_descartadas(self):
+        if not self.security.session.is_admin():
+            raise PermissionError("Solo un administrador puede ver descartados.")
+        return self._base.listar_conversaciones_descartadas()
+
+    def descartar_conversaciones(
+        self, comunicacion_ids: list[str], usuario_nombre: str, motivo: str = "",
+    ):
+        if not self.security.session.is_admin():
+            raise PermissionError("Solo un administrador puede descartar conversaciones.")
+        return self._base.descartar_conversaciones(
+            comunicacion_ids, usuario_nombre, motivo,
+        )
+
+    def restaurar_conversaciones(self, comunicacion_ids: list[str]):
+        if not self.security.session.is_admin():
+            raise PermissionError("Solo un administrador puede restaurar conversaciones.")
+        return self._base.restaurar_conversaciones(comunicacion_ids)
+
+    def reasignar_comunicacion(
+        self, comunicacion_id: str, codigo_empresa: str,
+        responsable_usuario_id: int, responsable_nombre: str,
+    ):
+        if not self.security.session.is_admin():
+            raise PermissionError("Solo un administrador puede reasignar conversaciones.")
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.reasignar_comunicacion(
+            comunicacion_id, codigo_empresa,
+            responsable_usuario_id, responsable_nombre,
+        )
+
+    def reasignar_pendiente_responsable(
+        self, graph_message_id: str, responsable_usuario_id: int,
+        responsable_nombre: str,
+    ):
+        if not self.security.session.is_admin():
+            raise PermissionError("Solo un administrador puede reasignar correos.")
+        return self._base.reasignar_pendiente_responsable(
+            graph_message_id, responsable_usuario_id, responsable_nombre,
+        )
+
+    def listar_comunicaciones_sin_cliente_asignadas(self):
+        if not self.security.session.is_admin():
+            raise PermissionError("Solo un administrador puede supervisar todos los buzones.")
+        return self._base.listar_comunicaciones_sin_cliente_asignadas()
+
+    def listar_comunicaciones_supervision(self):
+        if not self.security.session.is_admin():
+            raise PermissionError("Solo un administrador puede supervisar todos los buzones.")
+        return self._base.listar_comunicaciones_supervision()
+
+    def cambiar_estado_comunicacion(
+        self, comunicacion_id: str, estado: str, usuario_id: int,
+    ):
+        if int(usuario_id) != int(self.security.session.user.id):
+            raise PermissionError("No puedes modificar el buzon privado de otro usuario.")
+        return self._base.cambiar_estado_comunicacion(
+            comunicacion_id, estado, usuario_id,
+        )
+
     def listar_bancos(self, codigo_empresa: str, ejercicio: int):
         self.security.ensure_company_read(codigo_empresa)
         return self._base.listar_bancos(codigo_empresa, ejercicio)

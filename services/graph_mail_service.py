@@ -12,7 +12,7 @@ from utils.utilidades import get_default_templates_dir, load_app_config
 
 
 GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
-SCOPES = ["User.Read", "Mail.Send", "Mail.Send.Shared"]
+SCOPES = ["User.Read", "Mail.Send", "Mail.Send.Shared", "Mail.Read.Shared"]
 
 
 @dataclass(frozen=True)
@@ -20,6 +20,13 @@ class GraphSendResult:
     message_id: str
     internet_message_id: str
     sender: str
+
+
+@dataclass(frozen=True)
+class GraphSyncResult:
+    messages: list[dict]
+    delta_link: str
+    mailbox: str
 
 
 class GraphMailService:
@@ -140,6 +147,37 @@ class GraphMailService:
             internet_message_id="",
             sender=actual_sender,
         )
+
+    def sync_inbox(
+        self, *, mailbox: str = "me", delta_link: str = "",
+    ) -> GraphSyncResult:
+        token, signed_in = self._token()
+        actual_mailbox = signed_in if mailbox == "me" else mailbox
+        target = "me" if mailbox == "me" else f"users/{quote(actual_mailbox)}"
+        url = delta_link or (
+            f"{GRAPH_ROOT}/{target}/mailFolders/inbox/messages/delta"
+            "?changeType=created"
+            "&$select=id,conversationId,internetMessageId,subject,body,"
+            "from,toRecipients,ccRecipients,receivedDateTime,hasAttachments,isRead"
+        )
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Prefer": 'IdType="ImmutableId", outlook.body-content-type="html"',
+        }
+        messages: list[dict] = []
+        final_delta = delta_link
+        while url:
+            response = self.session.get(url, headers=headers, timeout=45)
+            if response.status_code != 200:
+                raise RuntimeError(self._error(response))
+            payload = response.json()
+            messages.extend(
+                item for item in payload.get("value", [])
+                if "@removed" not in item
+            )
+            url = payload.get("@odata.nextLink") or ""
+            final_delta = payload.get("@odata.deltaLink") or final_delta
+        return GraphSyncResult(messages, final_delta, actual_mailbox)
 
     @staticmethod
     def _error(response) -> str:
