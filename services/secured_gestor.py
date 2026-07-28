@@ -42,6 +42,14 @@ class SecuredGestorSQLite:
         self.security.ensure_company_write(datos.get("codigo_empresa"))
         return self._base.registrar_envio_comunicacion(datos)
 
+    def asignar_comunicacion_pendiente(
+        self, graph_message_id: str, codigo_empresa: str,
+    ):
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.asignar_comunicacion_pendiente(
+            graph_message_id, codigo_empresa,
+        )
+
     def listar_bancos(self, codigo_empresa: str, ejercicio: int):
         self.security.ensure_company_read(codigo_empresa)
         return self._base.listar_bancos(codigo_empresa, ejercicio)

@@ -47,3 +47,51 @@ def test_html_a_texto_muestra_cuerpo_y_firma_sin_etiquetas():
     assert "Juan" in texto
     assert "Gestinem" in texto
     assert "<br>" not in texto
+
+
+def test_registra_entrada_y_evitar_duplicado(tmp_path):
+    gestor = GestorSQLite(tmp_path / "test.db")
+    gestor.upsert_empresa({
+        "codigo": "E00001", "ejercicio": 2026, "nombre": "Cliente",
+        "email": "cliente@example.com",
+    })
+    empresa = gestor.buscar_empresa_por_email("CLIENTE@example.com")
+    payload = {
+        "codigo_empresa": "E00001",
+        "graph_message_id": "graph-in-1",
+        "graph_conversation_id": "conversation-1",
+        "remitente": "cliente@example.com",
+        "destinatarios": ["oficina@gestinem.es"],
+        "asunto": "Respuesta",
+        "cuerpo_html": "<p>Hola</p>",
+        "fecha": "2026-07-28T10:00:00Z",
+        "mailbox": "oficina@gestinem.es",
+    }
+
+    first = gestor.registrar_entrada_comunicacion(payload)
+    second = gestor.registrar_entrada_comunicacion(payload)
+
+    assert empresa["codigo"] == "E00001"
+    assert first is not None
+    assert second is None
+    assert gestor.listar_mensajes_comunicacion(first[0])[0]["direccion"] == "entrante"
+
+
+def test_asigna_manualmente_un_correo_pendiente(tmp_path):
+    gestor = GestorSQLite(tmp_path / "test.db")
+    gestor.upsert_empresa({
+        "codigo": "E00001", "ejercicio": 2026, "nombre": "Cliente",
+        "responsable": "ANA",
+    })
+    payload = {
+        "graph_message_id": "pending-1", "mailbox": "oficina@gestinem.es",
+        "remitente": "nuevo@example.com", "asunto": "Consulta",
+        "cuerpo_html": "<p>Hola</p>", "fecha": "2026-07-28T10:00:00Z",
+    }
+    gestor.guardar_comunicacion_sin_asignar(payload)
+
+    result = gestor.asignar_comunicacion_pendiente("pending-1", "E00001")
+
+    assert result is not None
+    assert gestor.listar_comunicaciones_sin_asignar() == []
+    assert gestor.listar_comunicaciones("E00001")[0]["responsable_nombre"] == "ANA"

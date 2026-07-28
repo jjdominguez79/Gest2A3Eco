@@ -7,6 +7,7 @@ from html.parser import HTMLParser
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from services.graph_mail_service import GraphMailService
+from services.comunicaciones_sync_service import ComunicacionesSyncService
 from utils.utilidades import (
     load_app_config,
     load_user_config,
@@ -115,6 +116,8 @@ class UIComunicaciones(ttk.Frame):
         top.pack(fill="x", pady=(0, 10))
         ttk.Label(top, text="Comunicaciones", font=("Segoe UI", 16, "bold")).pack(side="left")
         ttk.Button(top, text="Configurar Microsoft 365", command=self._configure).pack(side="right")
+        ttk.Button(top, text="Sincronizar correo", command=self._sync).pack(side="right", padx=6)
+        ttk.Button(top, text="Pendientes de asignar", command=self._unmatched).pack(side="right")
         ttk.Button(top, text="Configurar firma", command=self._configure_signature).pack(side="right", padx=6)
         ttk.Button(top, text="Nuevo correo", command=self._compose).pack(side="right", padx=6)
         self._tree = ttk.Treeview(
@@ -174,6 +177,35 @@ class UIComunicaciones(ttk.Frame):
             cfg.get("email_signature_html") or FIRMA_CORPORATIVA_HTML,
         )
 
+    def _sync(self):
+        cfg = load_app_config().get("microsoft_graph") or {}
+        shared = str(cfg.get("shared_mailbox") or "Oficina@gestinem.es").strip()
+        service = ComunicacionesSyncService(self._gestor)
+        try:
+            shared_result = service.sync(shared)
+            own_result = service.sync("me")
+        except Exception as exc:
+            messagebox.showerror(
+                "Sincronizacion de correo", str(exc), parent=self,
+            )
+            return
+        self._refresh()
+        messagebox.showinfo(
+            "Sincronizacion de correo",
+            (
+                f"Recibidos revisados: {shared_result.recibidos + own_result.recibidos}\n"
+                f"Asignados a clientes: {shared_result.asignados + own_result.asignados}\n"
+                f"Pendientes de asignar: {shared_result.sin_asignar + own_result.sin_asignar}\n"
+                f"Ya registrados: {shared_result.duplicados + own_result.duplicados}"
+            ),
+            parent=self,
+        )
+
+    def _unmatched(self):
+        UnmatchedMailDialog(
+            self, self._gestor, self._codigo, self._refresh,
+        )
+
     def _compose(self):
         ComposeMailDialog(self, self._gestor, self._codigo, self._empresa, self._session, self._refresh)
 
@@ -190,6 +222,62 @@ class UIComunicaciones(ttk.Frame):
                 ).fetchall()
             ]
         CommunicationDetailDialog(self, messages)
+
+
+class UnmatchedMailDialog(tk.Toplevel):
+    def __init__(self, parent, gestor, codigo_empresa: str, on_assigned):
+        super().__init__(parent)
+        self.title("Correos pendientes de asignar")
+        self.geometry("850x430")
+        self.transient(parent.winfo_toplevel())
+        self.grab_set()
+        self._gestor = gestor
+        self._codigo = codigo_empresa
+        self._on_assigned = on_assigned
+        frame = ttk.Frame(self, padding=12)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame,
+            text=(
+                "Selecciona un correo para asignarlo al cliente actual. "
+                "Los siguientes correos de ese remitente se asociaran automaticamente "
+                "si guardas su direccion en la ficha del cliente."
+            ),
+            wraplength=800,
+        ).pack(anchor="w", pady=(0, 8))
+        self._tree = ttk.Treeview(
+            frame, columns=("fecha", "remitente", "asunto", "buzon"),
+            show="headings", selectmode="browse",
+        )
+        for key, title, width in (
+            ("fecha", "Fecha", 175), ("remitente", "Remitente", 220),
+            ("asunto", "Asunto", 300), ("buzon", "Buzon", 140),
+        ):
+            self._tree.heading(key, text=title)
+            self._tree.column(key, width=width, anchor="w")
+        self._tree.pack(fill="both", expand=True)
+        for item in gestor.listar_comunicaciones_sin_asignar():
+            self._tree.insert("", "end", iid=item["graph_message_id"], values=(
+                item.get("fecha") or "", item.get("remitente") or "",
+                item.get("asunto") or "", item.get("mailbox") or "",
+            ))
+        ttk.Button(
+            frame, text="Asignar al cliente actual",
+            command=self._assign,
+        ).pack(anchor="e", pady=(10, 0))
+
+    def _assign(self):
+        selected = self._tree.selection()
+        if not selected:
+            messagebox.showwarning(
+                "Asignacion", "Selecciona un correo.", parent=self,
+            )
+            return
+        self._gestor.asignar_comunicacion_pendiente(
+            selected[0], self._codigo,
+        )
+        self._tree.delete(selected[0])
+        self._on_assigned()
 
 
 class SignatureDialog(tk.Toplevel):
