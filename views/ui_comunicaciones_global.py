@@ -1,0 +1,214 @@
+from __future__ import annotations
+
+import json
+import tkinter as tk
+from tkinter import messagebox, ttk
+
+from services.comunicaciones_sync_service import ComunicacionesSyncService
+from utils.utilidades import load_app_config
+from views.ui_comunicaciones import CommunicationDetailDialog
+
+
+class UIComunicacionesGlobal(ttk.Frame):
+    def __init__(self, parent, gestor, session, on_open_empresas):
+        super().__init__(parent, padding=12)
+        self._gestor = gestor
+        self._session = session
+        self._on_open_empresas = on_open_empresas
+        self._pending: dict[str, dict] = {}
+        self._mine: dict[str, dict] = {}
+        self._companies: dict[str, dict] = {}
+        self._users: dict[str, dict] = {}
+        self._build()
+        self._refresh()
+
+    def _build(self):
+        top = ttk.Frame(self)
+        top.pack(fill="x", pady=(0, 10))
+        ttk.Label(top, text="Buzon de comunicaciones", font=("Segoe UI", 16, "bold")).pack(side="left")
+        ttk.Button(top, text="Empresas", command=self._on_open_empresas).pack(side="right")
+        ttk.Button(top, text="Sincronizar", command=self._sync).pack(side="right", padx=6)
+
+        tabs = ttk.Notebook(self)
+        tabs.pack(fill="both", expand=True)
+        pending_tab = ttk.Frame(tabs, padding=8)
+        mine_tab = ttk.Frame(tabs, padding=8)
+        tabs.add(pending_tab, text="Entrada sin asignar")
+        tabs.add(mine_tab, text="Mi buzon")
+
+        self._pending_tree = self._tree(
+            pending_tab,
+            (("fecha", "Fecha", 170), ("buzon", "Buzon", 180),
+             ("remitente", "Remitente", 230), ("asunto", "Asunto", 330),
+             ("sugerencia", "Cliente sugerido", 220)),
+        )
+        assign = ttk.Frame(pending_tab)
+        assign.pack(fill="x", pady=(8, 0))
+        ttk.Label(assign, text="Cliente").pack(side="left")
+        self._company_var = tk.StringVar()
+        self._company_combo = ttk.Combobox(assign, textvariable=self._company_var, state="readonly", width=42)
+        self._company_combo.pack(side="left", padx=5)
+        ttk.Label(assign, text="Responsable").pack(side="left", padx=(12, 0))
+        self._user_var = tk.StringVar()
+        self._user_combo = ttk.Combobox(assign, textvariable=self._user_var, state="readonly", width=28)
+        self._user_combo.pack(side="left", padx=5)
+        ttk.Button(assign, text="Asignar", command=self._assign).pack(side="right")
+        self._pending_tree.bind("<<TreeviewSelect>>", self._select_suggestion)
+        self._pending_tree.bind("<Double-1>", lambda _event: self._pending_detail())
+
+        self._mine_tree = self._tree(
+            mine_tab,
+            (("fecha", "Ultima actividad", 170), ("cliente", "Cliente", 220),
+             ("asunto", "Asunto", 350), ("remitente", "Remitente", 220),
+             ("estado", "Estado", 110)),
+        )
+        actions = ttk.Frame(mine_tab)
+        actions.pack(fill="x", pady=(8, 0))
+        for estado, label in (
+            ("pendiente", "Marcar pendiente"),
+            ("contestado", "Marcar contestado"),
+            ("gestionado", "Marcar gestionado"),
+        ):
+            ttk.Button(
+                actions, text=label,
+                command=lambda value=estado: self._set_status(value),
+            ).pack(side="left", padx=(0, 5))
+        ttk.Button(actions, text="Ver conversacion", command=self._detail).pack(side="right")
+        self._mine_tree.bind("<Double-1>", lambda _event: self._detail())
+
+    @staticmethod
+    def _tree(parent, columns):
+        tree = ttk.Treeview(
+            parent, columns=tuple(item[0] for item in columns),
+            show="headings", selectmode="browse",
+        )
+        for key, title, width in columns:
+            tree.heading(key, text=title)
+            tree.column(key, width=width, anchor="w")
+        tree.pack(fill="both", expand=True)
+        return tree
+
+    def _refresh(self):
+        companies = {}
+        for item in self._gestor.listar_empresas():
+            code = str(item.get("codigo") or "")
+            if code not in companies or int(item.get("ejercicio") or 0) > int(companies[code].get("ejercicio") or 0):
+                companies[code] = item
+        self._companies = {f"{item.get('nombre') or code} [{code}]": item for code, item in companies.items()}
+        self._company_combo["values"] = sorted(self._companies)
+
+        users = [item for item in self._gestor.listar_usuarios() if bool(item.get("activo"))]
+        self._users = {f"{item.get('nombre')} [{item.get('username')}]": item for item in users}
+        self._user_combo["values"] = sorted(self._users)
+
+        self._pending_tree.delete(*self._pending_tree.get_children())
+        self._pending = {}
+        allowed = self._allowed_mailboxes()
+        for item in self._gestor.listar_comunicaciones_sin_asignar():
+            if str(item.get("mailbox") or "").lower() not in allowed:
+                continue
+            graph_id = item["graph_message_id"]
+            self._pending[graph_id] = item
+            self._pending_tree.insert("", "end", iid=graph_id, values=(
+                item.get("fecha") or "", item.get("mailbox") or "",
+                item.get("remitente") or "", item.get("asunto") or "",
+                item.get("sugerencia_nombre") or "",
+            ))
+
+        self._mine_tree.delete(*self._mine_tree.get_children())
+        self._mine = {}
+        for item in self._gestor.listar_buzon_responsable(self._session.user.id):
+            comm_id = item["id"]
+            self._mine[comm_id] = item
+            company = companies.get(str(item.get("codigo_empresa") or ""), {})
+            self._mine_tree.insert("", "end", iid=comm_id, values=(
+                item.get("ultima_fecha") or "", company.get("nombre") or item.get("codigo_empresa"),
+                item.get("asunto") or "", item.get("ultimo_remitente") or "",
+                item.get("estado") or "pendiente",
+            ))
+
+    def _allowed_mailboxes(self) -> set[str]:
+        shared = str((load_app_config().get("microsoft_graph") or {}).get("shared_mailbox") or "Oficina@gestinem.es").lower()
+        allowed = {shared}
+        if self._session.is_admin():
+            allowed.add("me")
+            # Las entradas de Graph guardan la direccion real de la cuenta personal.
+            allowed.update(
+                str(item.get("mailbox") or "").lower()
+                for item in self._gestor.listar_comunicaciones_sin_asignar()
+                if str(item.get("mailbox") or "").lower() != shared
+            )
+        return allowed
+
+    def _sync(self):
+        shared = str((load_app_config().get("microsoft_graph") or {}).get("shared_mailbox") or "Oficina@gestinem.es")
+        mailboxes = [shared] + (["me"] if self._session.is_admin() else [])
+        total = 0
+        try:
+            service = ComunicacionesSyncService(self._gestor)
+            for mailbox in mailboxes:
+                total += service.sync(mailbox).recibidos
+        except Exception as exc:
+            messagebox.showerror("Sincronizacion", str(exc), parent=self)
+            return
+        self._refresh()
+        messagebox.showinfo("Sincronizacion", f"Correos revisados: {total}", parent=self)
+
+    def _select_suggestion(self, _event=None):
+        selected = self._pending_tree.selection()
+        if not selected:
+            return
+        suggestion = self._pending[selected[0]].get("sugerencia_codigo_empresa")
+        for label, company in self._companies.items():
+            if company.get("codigo") == suggestion:
+                self._company_var.set(label)
+                break
+
+    def _assign(self):
+        selected = self._pending_tree.selection()
+        company = self._companies.get(self._company_var.get())
+        user = self._users.get(self._user_var.get())
+        if not selected or not company or not user:
+            messagebox.showwarning(
+                "Asignacion", "Selecciona correo, cliente y responsable.", parent=self,
+            )
+            return
+        self._gestor.asignar_comunicacion_pendiente(
+            selected[0], company["codigo"], int(user["id"]), str(user["nombre"]),
+        )
+        self._refresh()
+
+    def _pending_detail(self):
+        selected = self._pending_tree.selection()
+        if not selected:
+            return
+        item = self._pending[selected[0]]
+        payload = json.loads(item.get("payload_json") or "{}")
+        message = {
+            "fecha": payload.get("fecha"),
+            "remitente": payload.get("remitente"),
+            "destinatarios_json": json.dumps(payload.get("destinatarios") or []),
+            "cc_json": json.dumps(payload.get("cc") or []),
+            "asunto": payload.get("asunto"),
+            "cuerpo_html": payload.get("cuerpo_html"),
+            "estado_envio": "sin asignar",
+            "error_envio": "",
+            "adjuntos": [],
+        }
+        CommunicationDetailDialog(self, [message])
+
+    def _set_status(self, estado: str):
+        selected = self._mine_tree.selection()
+        if not selected:
+            return
+        self._gestor.cambiar_estado_comunicacion(
+            selected[0], estado, self._session.user.id,
+        )
+        self._refresh()
+
+    def _detail(self):
+        selected = self._mine_tree.selection()
+        if not selected:
+            return
+        messages = self._gestor.listar_mensajes_comunicacion(selected[0])
+        CommunicationDetailDialog(self, messages)

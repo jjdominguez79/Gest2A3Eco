@@ -479,6 +479,8 @@ CREATE TABLE IF NOT EXISTS comunicaciones_sin_asignar (
   fecha TEXT,
   cuerpo_html TEXT,
   payload_json TEXT NOT NULL,
+  sugerencia_codigo_empresa TEXT,
+  sugerencia_nombre TEXT,
   created_at TEXT NOT NULL
 );
 """
@@ -557,6 +559,8 @@ class GestorSQLite:
         self._ensure_column("empresas", "responsable", "TEXT")
         self._ensure_column("comunicaciones", "graph_conversation_id", "TEXT")
         self._ensure_column("comunicaciones_mensajes", "mailbox", "TEXT")
+        self._ensure_column("comunicaciones_sin_asignar", "sugerencia_codigo_empresa", "TEXT")
+        self._ensure_column("comunicaciones_sin_asignar", "sugerencia_nombre", "TEXT")
         self.conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_com_msg_graph "
             "ON comunicaciones_mensajes(graph_message_id) "
@@ -5871,22 +5875,27 @@ class GestorSQLite:
             return None
         rows = self.conn.execute(
             """
-            SELECT e.codigo,e.ejercicio,e.nombre,e.responsable
+            SELECT e.codigo,e.ejercicio,e.nombre,e.responsable,e.email
             FROM empresas e
             JOIN (
               SELECT codigo,MAX(ejercicio) ejercicio FROM empresas GROUP BY codigo
             ) u ON u.codigo=e.codigo AND u.ejercicio=e.ejercicio
-            WHERE lower(trim(e.email))=?
             UNION
-            SELECT e.codigo,e.ejercicio,e.nombre,e.responsable
+            SELECT e.codigo,e.ejercicio,e.nombre,e.responsable,t.email
             FROM terceros t
             JOIN terceros_empresas te ON te.tercero_id=t.id
             JOIN empresas e ON e.codigo=te.codigo_empresa AND e.ejercicio=te.ejercicio
-            WHERE lower(trim(t.email))=?
             """,
-            (value, value),
         ).fetchall()
-        unique = {row["codigo"]: self._row_to_dict(row) for row in rows}
+        unique = {}
+        for row in rows:
+            emails = {
+                part.strip().lower()
+                for part in re.split(r"[,;]", str(row["email"] or ""))
+                if part.strip()
+            }
+            if value in emails:
+                unique[row["codigo"]] = self._row_to_dict(row)
         return next(iter(unique.values())) if len(unique) == 1 else None
 
     def registrar_entrada_comunicacion(self, datos: dict) -> tuple[str, str] | None:
@@ -5945,23 +5954,29 @@ class GestorSQLite:
             )
         return comunicacion_id, mensaje_id
 
-    def guardar_comunicacion_sin_asignar(self, datos: dict) -> None:
+    def guardar_comunicacion_sin_asignar(
+        self, datos: dict, sugerencia: dict | None = None,
+    ) -> bool:
         now = datetime.now().astimezone().isoformat(timespec="seconds")
         with self.conn:
-            self.conn.execute(
+            cursor = self.conn.execute(
                 """
                 INSERT OR IGNORE INTO comunicaciones_sin_asignar
                   (graph_message_id,mailbox,remitente,asunto,fecha,cuerpo_html,
-                   payload_json,created_at)
-                VALUES (?,?,?,?,?,?,?,?)
+                  payload_json,sugerencia_codigo_empresa,sugerencia_nombre,created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     datos["graph_message_id"], datos.get("mailbox") or "",
                     datos.get("remitente"), datos.get("asunto"),
                     datos.get("fecha"), datos.get("cuerpo_html"),
-                    json.dumps(datos), now,
+                    json.dumps(datos),
+                    (sugerencia or {}).get("codigo"),
+                    (sugerencia or {}).get("nombre"),
+                    now,
                 ),
             )
+        return cursor.rowcount > 0
 
     def listar_comunicaciones_sin_asignar(self) -> list[dict]:
         rows = self.conn.execute(
@@ -5971,6 +5986,7 @@ class GestorSQLite:
 
     def asignar_comunicacion_pendiente(
         self, graph_message_id: str, codigo_empresa: str,
+        responsable_usuario_id: int, responsable_nombre: str,
     ) -> tuple[str, str] | None:
         row = self.conn.execute(
             "SELECT payload_json FROM comunicaciones_sin_asignar "
@@ -5982,11 +5998,54 @@ class GestorSQLite:
         datos = json.loads(row["payload_json"])
         empresa = self.get_empresa(codigo_empresa) or {}
         datos["codigo_empresa"] = codigo_empresa
-        datos["responsable_nombre"] = empresa.get("responsable")
+        datos["responsable_usuario_id"] = responsable_usuario_id
+        datos["responsable_nombre"] = responsable_nombre
         result = self.registrar_entrada_comunicacion(datos)
+        if result:
+            with self.conn:
+                self.conn.execute(
+                    """
+                    UPDATE comunicaciones
+                    SET responsable_usuario_id=?,responsable_nombre=?,estado='pendiente'
+                    WHERE id=?
+                    """,
+                    (responsable_usuario_id, responsable_nombre, result[0]),
+                )
         with self.conn:
             self.conn.execute(
                 "DELETE FROM comunicaciones_sin_asignar WHERE graph_message_id=?",
                 (graph_message_id,),
             )
         return result
+
+    def listar_buzon_responsable(self, usuario_id: int) -> list[dict]:
+        rows = self.conn.execute(
+            """
+            SELECT c.*,COUNT(m.id) mensajes,MAX(m.fecha) ultima_fecha,
+                   MAX(m.remitente) ultimo_remitente
+            FROM comunicaciones c
+            LEFT JOIN comunicaciones_mensajes m ON m.comunicacion_id=c.id
+            WHERE c.responsable_usuario_id=?
+            GROUP BY c.id ORDER BY c.updated_at DESC
+            """,
+            (usuario_id,),
+        ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    def cambiar_estado_comunicacion(
+        self, comunicacion_id: str, estado: str, usuario_id: int,
+    ) -> None:
+        allowed = {"pendiente", "contestado", "gestionado"}
+        if estado not in allowed:
+            raise ValueError("Estado de comunicacion no valido.")
+        with self.conn:
+            self.conn.execute(
+                """
+                UPDATE comunicaciones SET estado=?,updated_at=?
+                WHERE id=? AND responsable_usuario_id=?
+                """,
+                (
+                    estado, datetime.now().astimezone().isoformat(timespec="seconds"),
+                    comunicacion_id, usuario_id,
+                ),
+            )

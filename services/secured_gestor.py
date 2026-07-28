@@ -44,10 +44,26 @@ class SecuredGestorSQLite:
 
     def asignar_comunicacion_pendiente(
         self, graph_message_id: str, codigo_empresa: str,
+        responsable_usuario_id: int, responsable_nombre: str,
     ):
         self.security.ensure_company_write(codigo_empresa)
         return self._base.asignar_comunicacion_pendiente(
             graph_message_id, codigo_empresa,
+            responsable_usuario_id, responsable_nombre,
+        )
+
+    def listar_buzon_responsable(self, usuario_id: int):
+        if int(usuario_id) != int(self.security.session.user.id):
+            raise PermissionError("No puedes consultar el buzon privado de otro usuario.")
+        return self._base.listar_buzon_responsable(usuario_id)
+
+    def cambiar_estado_comunicacion(
+        self, comunicacion_id: str, estado: str, usuario_id: int,
+    ):
+        if int(usuario_id) != int(self.security.session.user.id):
+            raise PermissionError("No puedes modificar el buzon privado de otro usuario.")
+        return self._base.cambiar_estado_comunicacion(
+            comunicacion_id, estado, usuario_id,
         )
 
     def listar_bancos(self, codigo_empresa: str, ejercicio: int):

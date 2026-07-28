@@ -90,8 +90,20 @@ def test_asigna_manualmente_un_correo_pendiente(tmp_path):
     }
     gestor.guardar_comunicacion_sin_asignar(payload)
 
-    result = gestor.asignar_comunicacion_pendiente("pending-1", "E00001")
+    result = gestor.asignar_comunicacion_pendiente(
+        "pending-1", "E00001", 7, "ANA",
+    )
 
     assert result is not None
     assert gestor.listar_comunicaciones_sin_asignar() == []
     assert gestor.listar_comunicaciones("E00001")[0]["responsable_nombre"] == "ANA"
+
+
+def test_busca_empresa_en_lista_de_varios_emails(tmp_path):
+    gestor = GestorSQLite(tmp_path / "test.db")
+    gestor.upsert_empresa({
+        "codigo": "E00001", "ejercicio": 2026, "nombre": "Cliente",
+        "email": "administracion@example.com, gerente@example.com; fiscal@example.com",
+    })
+
+    assert gestor.buscar_empresa_por_email("GERENTE@example.com")["codigo"] == "E00001"

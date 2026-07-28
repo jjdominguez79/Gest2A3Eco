@@ -181,7 +181,7 @@ class UIConfiguracionEmpresa(ttk.Frame):
             ("Digitos plan", self.var_dig, 2, 0, 10),
             ("CIF/NIF", self.var_cif, 3, 0, 20),
             ("Telefono", self.var_tel, 3, 2, 20),
-            ("Email", self.var_mail, 4, 0, None),
+            ("Email(s), separados por coma", self.var_mail, 4, 0, None),
             ("Direccion", self.var_dir, 5, 0, None),
             ("CP", self.var_cp, 6, 0, 10),
             ("Poblacion", self.var_pob, 6, 2, None),

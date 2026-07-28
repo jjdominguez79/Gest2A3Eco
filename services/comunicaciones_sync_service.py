@@ -34,16 +34,10 @@ class ComunicacionesSyncService:
         for raw in result.messages:
             data = self._normalize(raw, result.mailbox)
             empresa = self.gestor.buscar_empresa_por_email(data["remitente"])
-            if empresa:
-                data["codigo_empresa"] = empresa["codigo"]
-                data["responsable_nombre"] = empresa.get("responsable")
-                if self.gestor.registrar_entrada_comunicacion(data):
-                    assigned += 1
-                else:
-                    duplicates += 1
-            else:
-                self.gestor.guardar_comunicacion_sin_asignar(data)
+            if self.gestor.guardar_comunicacion_sin_asignar(data, empresa):
                 unmatched += 1
+            else:
+                duplicates += 1
         self.gestor.guardar_comunicaciones_delta(key, result.delta_link)
         return SyncSummary(len(result.messages), assigned, unmatched, duplicates)
 

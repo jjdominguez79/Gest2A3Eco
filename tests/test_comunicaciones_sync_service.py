@@ -39,23 +39,25 @@ class Gestor:
         self.entradas.append(data)
         return ("com-1", "msg-1")
 
-    def guardar_comunicacion_sin_asignar(self, data):
-        self.pendientes.append(data)
+    def guardar_comunicacion_sin_asignar(self, data, sugerencia=None):
+        self.pendientes.append({**data, "sugerencia": sugerencia})
+        return True
 
     def guardar_comunicaciones_delta(self, mailbox, delta_link):
         self.delta = (mailbox, delta_link)
 
 
-def test_sync_asigna_por_email_y_responsable():
+def test_sync_sugiere_cliente_pero_no_asigna():
     gestor = Gestor({
         "codigo": "E00001", "responsable": "ANA",
     })
 
     summary = ComunicacionesSyncService(gestor, Graph()).sync("oficina@gestinem.es")
 
-    assert summary.asignados == 1
-    assert gestor.entradas[0]["codigo_empresa"] == "E00001"
-    assert gestor.entradas[0]["responsable_nombre"] == "ANA"
+    assert summary.asignados == 0
+    assert summary.sin_asignar == 1
+    assert gestor.entradas == []
+    assert gestor.pendientes[0]["sugerencia"]["codigo"] == "E00001"
     assert gestor.delta == ("oficina@gestinem.es", "delta-1")
 
 

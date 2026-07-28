@@ -5,6 +5,7 @@ from controllers.user_admin_controller import UserAdminController
 from services.empresa_service import EmpresaService
 from views.ui_configuracion_empresa import UIConfiguracionEmpresa
 from views.ui_comunicaciones import UIComunicaciones
+from views.ui_comunicaciones_global import UIComunicacionesGlobal
 from views.ui_contabilidad import UIContabilidad
 from views.ui_dashboard_empresa import UIDashboardEmpresa
 from views.ui_facturas_emitidas import UIFacturasEmitidas
@@ -46,7 +47,13 @@ class AppController:
         return self._gestor.security
 
     def start(self):
-        self._show(self.build_panel_general)
+        self._show(self.build_comunicaciones_global)
+
+    def build_comunicaciones_global(self, parent):
+        return UIComunicacionesGlobal(
+            parent, self._gestor, self._session,
+            on_open_empresas=lambda: self._show(self.build_panel_general),
+        )
 
     def _show(self, factory):
         """Reemplaza el contenido principal destruyendo el frame actual."""
