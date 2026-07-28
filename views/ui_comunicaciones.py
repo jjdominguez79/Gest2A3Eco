@@ -59,7 +59,7 @@ FIRMA_OFICINA_HTML = """
 <div style="font-family:'Times New Roman',serif;color:#111;font-size:11pt;line-height:1.2">
   <img src="cid:gestinem-logo" alt="Gestinem" width="140"
        style="display:block;width:140px;height:auto;margin:8px 0 18px 0">
-  <div><strong>Gestinem</strong></div>
+  <div><strong>Gestinem{{RESPONSABLE}}</strong></div>
   <div><strong>Asesoría Fiscal, Contable y Laboral</strong></div>
   <div>Mail: <a href="mailto:oficina@gestinem.es">oficina@gestinem.es</a></div>
   <div>Web: <a href="http://www.gestinem.es/">www.gestinem.es</a></div>
@@ -90,6 +90,12 @@ FIRMA_OFICINA_HTML = """
 
 # Alias conservado para configuraciones y llamadas existentes.
 FIRMA_CORPORATIVA_HTML = FIRMA_PERSONAL_HTML
+
+
+def construir_firma_oficina(usuario_nombre: str = "") -> str:
+    nombre = html.escape(str(usuario_nombre or "").strip())
+    responsable = f" - {nombre}" if nombre else ""
+    return FIRMA_OFICINA_HTML.replace("{{RESPONSABLE}}", responsable)
 
 
 def construir_cuerpo_html(
@@ -440,18 +446,17 @@ class ComposeMailDialog(tk.Toplevel):
         shared = (load_app_config().get("microsoft_graph") or {}).get("shared_mailbox") or "Oficina@gestinem.es"
         sender = "me" if self._sender.get().startswith("Mi cuenta") else shared
         is_shared = sender != "me"
+        user = getattr(self._session, "user", None)
         signature = (
-            FIRMA_OFICINA_HTML
+            construir_firma_oficina(getattr(user, "nombre", ""))
             if is_shared
             else (
                 load_user_config().get("email_signature_html")
                 or FIRMA_PERSONAL_HTML
             )
         )
-        user = getattr(self._session, "user", None)
         body_html = construir_cuerpo_html(
-            plain, signature,
-            "" if is_shared else getattr(user, "nombre", ""),
+            plain, signature, "",
         )
         logo_path = get_install_dir() / "logo.png"
         inline_attachments = (

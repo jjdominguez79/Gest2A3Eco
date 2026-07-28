@@ -3,6 +3,7 @@ from views.ui_comunicaciones import (
     FIRMA_OFICINA_HTML,
     FIRMA_PERSONAL_HTML,
     construir_cuerpo_html,
+    construir_firma_oficina,
     html_a_texto,
 )
 
@@ -66,6 +67,13 @@ def test_firma_oficina_no_incluye_datos_personales():
     assert "691 474 519" not in firma
 
 
+def test_firma_oficina_incluye_responsable_sin_exponer_sus_datos():
+    firma = construir_firma_oficina("Ana & Equipo")
+
+    assert "Gestinem - Ana &amp; Equipo" in firma
+    assert "{{RESPONSABLE}}" not in firma
+
+
 def test_firma_personal_conserva_datos_de_la_plantilla_a3():
     firma = FIRMA_PERSONAL_HTML
 
@@ -73,6 +81,15 @@ def test_firma_personal_conserva_datos_de_la_plantilla_a3():
     assert "Asesor Fiscal, Contable y Mercantil" in firma
     assert "jjdominguez@gestinem.es" in firma
     assert "691 474 519" in firma
+
+
+def test_firma_personal_no_antepone_el_nombre_de_usuario():
+    cuerpo = construir_cuerpo_html(
+        "Mensaje", FIRMA_PERSONAL_HTML, "",
+    )
+
+    assert "Saludos," in cuerpo
+    assert "Administrador" not in cuerpo
 
 
 def test_registra_entrada_y_evitar_duplicado(tmp_path):
