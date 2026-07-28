@@ -19,12 +19,10 @@ class Session:
 
     def post(self, url, **kwargs):
         self.calls.append((url, kwargs))
-        if url.endswith("/messages"):
-            return Response(201, {"id": "immutable-1", "internetMessageId": "<x@gestinem.es>"})
         return Response(202)
 
 
-def test_shared_mailbox_creates_then_sends(monkeypatch):
+def test_shared_mailbox_sends_without_mailbox_read_permission(monkeypatch):
     session = Session()
     service = GraphMailService(
         {"tenant_id": "tenant", "client_id": "client", "shared_mailbox": "Oficina@gestinem.es"},
@@ -36,9 +34,10 @@ def test_shared_mailbox_creates_then_sends(monkeypatch):
         subject="Prueba", body="<p>Hola</p>",
     )
     assert result.sender == "Oficina@gestinem.es"
-    assert result.message_id == "immutable-1"
-    assert "/users/Oficina%40gestinem.es/messages" in session.calls[0][0]
-    assert session.calls[1][0].endswith("/messages/immutable-1/send")
+    assert result.message_id == ""
+    assert session.calls[0][0].endswith("/users/Oficina%40gestinem.es/sendMail")
+    assert len(session.calls) == 1
+    assert '"saveToSentItems": true' in session.calls[0][1]["data"]
 
 
 def test_missing_attachment_is_rejected(monkeypatch, tmp_path: Path):

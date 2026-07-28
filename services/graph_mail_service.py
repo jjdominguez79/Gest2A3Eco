@@ -117,23 +117,15 @@ class GraphMailService:
             "Content-Type": "application/json",
             "Prefer": 'IdType="ImmutableId"',
         }
-        create = self.session.post(
-            f"{GRAPH_ROOT}/{target}/messages", headers=headers,
-            data=json.dumps(message), timeout=45,
-        )
-        if create.status_code not in (200, 201):
-            raise RuntimeError(self._error(create))
-        draft = create.json()
-        message_id = str(draft.get("id") or "")
         sent = self.session.post(
-            f"{GRAPH_ROOT}/{target}/messages/{quote(message_id, safe='')}/send",
-            headers=headers, timeout=45,
+            f"{GRAPH_ROOT}/{target}/sendMail", headers=headers,
+            data=json.dumps({"message": message, "saveToSentItems": True}), timeout=45,
         )
         if sent.status_code != 202:
             raise RuntimeError(self._error(sent))
         return GraphSendResult(
-            message_id=message_id,
-            internet_message_id=str(draft.get("internetMessageId") or ""),
+            message_id="",
+            internet_message_id="",
             sender=actual_sender,
         )
 
