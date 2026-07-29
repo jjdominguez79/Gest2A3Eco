@@ -2841,8 +2841,8 @@ class UIFacturasEmitidas(ttk.Frame):
         email_signature: str = "",
     ) -> dict | None:
         dlg = tk.Toplevel(self)
-        using_outlook = str(email_mode or "outlook").strip().lower() != "smtp"
-        dlg.title("Preparar email en Outlook" if using_outlook else "Enviar factura por email")
+        using_outlook = False
+        dlg.title("Enviar factura por email")
         dlg.resizable(True, True)
         result = {"value": None}
         current_smtp = [dict(smtp_cfg)]
@@ -2851,15 +2851,10 @@ class UIFacturasEmitidas(ttk.Frame):
         frm.pack(fill="both", expand=True)
         frm.columnconfigure(1, weight=1)
 
-        # PDF info + boton SMTP
+        # PDF adjunto
         pdf_name = Path(pdf_path).name if pdf_path else ""
         ttk.Label(frm, text="PDF:").grid(row=0, column=0, sticky="e", padx=(0, 8), pady=4)
         ttk.Label(frm, text=pdf_name, foreground="gray").grid(row=0, column=1, sticky="w", pady=4)
-
-        def _abrir_smtp():
-            new_cfg = self.ask_smtp_config(current_smtp[0])
-            if new_cfg:
-                current_smtp[0] = new_cfg
 
         def _editar_plantilla_html():
             from services.email_service import ensure_template_file
@@ -2879,14 +2874,19 @@ class UIFacturasEmitidas(ttk.Frame):
 
         btn_row_top = ttk.Frame(frm)
         btn_row_top.grid(row=0, column=2, padx=(8, 0), pady=4, sticky="e")
-        if not using_outlook:
-            ttk.Button(btn_row_top, text="Configurar SMTP", command=_abrir_smtp).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(btn_row_top, text="Editar plantilla HTML", command=_editar_plantilla_html).pack(side=tk.LEFT)
 
         # --- Destinatarios ---
-        ttk.Label(frm, text="Destinatarios:").grid(row=1, column=0, sticky="ne", padx=(0, 8), pady=(8, 2))
+        ttk.Label(frm, text="Remitente:").grid(row=1, column=0, sticky="e", padx=(0, 8), pady=(8, 2))
+        sender_mode = tk.StringVar(value="oficina")
+        sender_frame = ttk.Frame(frm)
+        sender_frame.grid(row=1, column=1, columnspan=2, sticky="w", pady=(8, 2))
+        ttk.Radiobutton(sender_frame, text="Oficina", variable=sender_mode, value="oficina").pack(side=tk.LEFT)
+        ttk.Radiobutton(sender_frame, text="Mi cuenta", variable=sender_mode, value="personal").pack(side=tk.LEFT, padx=(12, 0))
+
+        ttk.Label(frm, text="Destinatarios:").grid(row=2, column=0, sticky="ne", padx=(0, 8), pady=(8, 2))
         dest_frm = ttk.Frame(frm)
-        dest_frm.grid(row=1, column=1, columnspan=2, sticky="ew", pady=(8, 2))
+        dest_frm.grid(row=2, column=1, columnspan=2, sticky="ew", pady=(8, 2))
         dest_frm.columnconfigure(1, weight=1)
 
         # Checkboxes empresa / cliente
@@ -2935,28 +2935,28 @@ class UIFacturasEmitidas(ttk.Frame):
         ttk.Entry(dest_frm, textvariable=bcc_var, width=36).grid(row=5, column=1, sticky="ew", pady=(6, 0))
 
         # Asunto
-        ttk.Label(frm, text="Asunto:").grid(row=2, column=0, sticky="e", padx=(0, 8), pady=(8, 4))
+        ttk.Label(frm, text="Asunto:").grid(row=3, column=0, sticky="e", padx=(0, 8), pady=(8, 4))
         asunto_var = tk.StringVar(value=asunto)
         ttk.Entry(frm, textvariable=asunto_var, width=50).grid(
-            row=2, column=1, columnspan=2, sticky="ew", pady=(8, 4)
+            row=3, column=1, columnspan=2, sticky="ew", pady=(8, 4)
         )
 
         # Cuerpo
-        ttk.Label(frm, text="Mensaje:").grid(row=3, column=0, sticky="ne", padx=(0, 8), pady=4)
+        ttk.Label(frm, text="Mensaje:").grid(row=4, column=0, sticky="ne", padx=(0, 8), pady=4)
         cuerpo_text = tk.Text(frm, height=7, width=50, wrap="word")
         cuerpo_text.insert("1.0", cuerpo)
-        cuerpo_text.grid(row=3, column=1, columnspan=2, sticky="nsew", pady=4)
-        frm.rowconfigure(3, weight=1)
-
-        ttk.Label(frm, text="Firma:").grid(row=4, column=0, sticky="ne", padx=(0, 8), pady=4)
-        firma_text = tk.Text(frm, height=4, width=50, wrap="word")
-        firma_text.insert("1.0", email_signature)
-        firma_text.grid(row=4, column=1, columnspan=2, sticky="nsew", pady=4)
+        cuerpo_text.grid(row=4, column=1, columnspan=2, sticky="nsew", pady=4)
         frm.rowconfigure(4, weight=1)
+
+        ttk.Label(
+            frm,
+            text="Se añadira automaticamente la firma corporativa configurada en Comunicaciones.",
+            foreground="gray",
+        ).grid(row=5, column=1, columnspan=2, sticky="w", pady=4)
 
         # Botones
         btn_frm = ttk.Frame(frm)
-        btn_frm.grid(row=5, column=0, columnspan=3, pady=(12, 0))
+        btn_frm.grid(row=6, column=0, columnspan=3, pady=(12, 0))
 
         def _enviar():
             emails = []
@@ -2980,14 +2980,14 @@ class UIFacturasEmitidas(ttk.Frame):
                 "cuerpo": cuerpo_text.get("1.0", "end").strip(),
                 "cc": cc_var.get().strip(),
                 "bcc": bcc_var.get().strip(),
-                "signature": firma_text.get("1.0", "end").strip(),
+                "sender_mode": sender_mode.get(),
                 "smtp_cfg": current_smtp[0],
             }
             dlg.destroy()
 
         ttk.Button(
             btn_frm,
-            text="Abrir correo en Outlook" if using_outlook else "Enviar",
+            text="Enviar",
             style="Primary.TButton",
             command=_enviar,
         ).pack(side=tk.LEFT, padx=4)

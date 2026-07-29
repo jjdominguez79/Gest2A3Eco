@@ -45,6 +45,22 @@ def test_shared_mailbox_sends_without_mailbox_read_permission(monkeypatch):
     assert '"saveToSentItems": true' in session.calls[0][1]["data"]
 
 
+def test_send_includes_blind_copy_recipients(monkeypatch):
+    session = Session()
+    service = GraphMailService({"tenant_id": "t", "client_id": "c"}, session=session)
+    monkeypatch.setattr(service, "_token", lambda: ("token", "yo@gestinem.es"))
+
+    service.send(
+        sender="me", to=["cliente@example.com"], cc=["copia@example.com"],
+        bcc=["oculta@example.com"], subject="Factura", body="<p>Adjunto</p>",
+    )
+
+    payload = json.loads(session.calls[0][1]["data"])
+    assert payload["message"]["bccRecipients"] == [
+        {"emailAddress": {"address": "oculta@example.com"}}
+    ]
+
+
 def test_missing_attachment_is_rejected(monkeypatch, tmp_path: Path):
     service = GraphMailService({"tenant_id": "t", "client_id": "c"}, session=Session())
     monkeypatch.setattr(service, "_token", lambda: ("token", "yo@gestinem.es"))

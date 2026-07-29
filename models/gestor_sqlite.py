@@ -2519,6 +2519,25 @@ class GestorSQLite:
         self.conn.commit()
         return fid
 
+    def actualizar_numero_asiento_factura_emitida(
+        self,
+        codigo_empresa: str,
+        factura_id: str,
+        numero_asiento: str,
+    ) -> bool:
+        """Actualiza solo el asiento capturado desde A3ECO.
+
+        Evita regrabar la factura completa al refrescar este dato tras la
+        importacion, especialmente importante con el adaptador PostgreSQL.
+        """
+        cur = self.conn.execute(
+            "UPDATE facturas_emitidas_docs SET numero_asiento=? "
+            "WHERE id=? AND codigo_empresa=?",
+            (str(numero_asiento or "").strip(), str(factura_id), str(codigo_empresa)),
+        )
+        self.conn.commit()
+        return bool(cur.rowcount)
+
     def eliminar_factura_emitida(self, codigo_empresa: str, factura_id: str, ejercicio: int):
         self.conn.execute(
             "DELETE FROM facturas_emitidas_docs WHERE codigo_empresa=? AND ejercicio=? AND id=?",
@@ -5957,7 +5976,9 @@ class GestorSQLite:
         rows = self.conn.execute(
             """
             SELECT c.*, COUNT(m.id) AS mensajes,
-                   MAX(m.fecha) AS ultima_fecha, MAX(m.remitente) AS ultimo_remitente
+                   MAX(m.fecha) AS ultima_fecha, MAX(m.remitente) AS ultimo_remitente,
+                   (SELECT m2.direccion FROM comunicaciones_mensajes m2
+                    WHERE m2.comunicacion_id=c.id ORDER BY m2.fecha DESC LIMIT 1) AS ultima_direccion
             FROM comunicaciones c
             LEFT JOIN comunicaciones_mensajes m ON m.comunicacion_id=c.id
             WHERE c.codigo_empresa=? AND c.descartado=0

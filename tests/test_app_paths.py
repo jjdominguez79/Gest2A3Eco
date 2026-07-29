@@ -60,3 +60,26 @@ def test_validate_sqlite_db_path_falla_si_no_existe_carpeta(tmp_path):
         assert str(db_path.parent) in str(exc)
     else:
         raise AssertionError("Se esperaba FileNotFoundError")
+
+
+def test_load_app_config_admite_configuracion_postgres(monkeypatch, tmp_path):
+    monkeypatch.setattr(utilidades, "get_user_config_path", lambda: tmp_path / "config.local.json")
+    monkeypatch.setattr(utilidades, "_legacy_config_path", lambda: tmp_path / "config.json")
+    monkeypatch.setattr(utilidades, "_legacy_local_config_path", lambda: tmp_path / "legacy.local.json")
+    monkeypatch.setattr(utilidades, "_config_example_path", lambda: tmp_path / "config.example.json")
+    monkeypatch.setenv("GEST2A3ECO_DATABASE_ENGINE", "postgres")
+    monkeypatch.setenv("GEST2A3ECO_POSTGRES_DSN", "postgresql://gestor@192.168.0.19:5432/gest2a3eco")
+
+    cfg = utilidades.load_app_config()
+
+    assert cfg["database_engine"] == "postgres"
+    assert cfg["postgres_dsn"].startswith("postgresql://")
+
+
+def test_load_app_config_usa_postgres_por_defecto(monkeypatch, tmp_path):
+    monkeypatch.setattr(utilidades, "get_user_config_path", lambda: tmp_path / "config.local.json")
+    monkeypatch.setattr(utilidades, "_legacy_config_path", lambda: tmp_path / "config.json")
+    monkeypatch.setattr(utilidades, "_legacy_local_config_path", lambda: tmp_path / "legacy.local.json")
+    monkeypatch.setattr(utilidades, "_config_example_path", lambda: tmp_path / "config.example.json")
+
+    assert utilidades.load_app_config()["database_engine"] == "postgres"

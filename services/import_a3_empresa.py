@@ -280,11 +280,23 @@ def _leer_responsable_entorno(
 
 
 def _buscar_responsable_a3eco(cif: str) -> tuple[str, "Path | None"]:
-    for cli_path, respo_path, usr_path in _candidate_entorno_responsable_paths():
-        if not cli_path.exists() or not respo_path.exists() or not usr_path.exists():
-            continue
+    rutas = [
+        (cli_path, respo_path, usr_path)
+        for cli_path, respo_path, usr_path in _candidate_entorno_responsable_paths()
+        if cli_path.exists() and respo_path.exists() and usr_path.exists()
+    ]
+    # La asignacion especifica de ECO siempre tiene prioridad.
+    for cli_path, respo_path, usr_path in rutas:
         responsable = _leer_responsable_entorno(
             cif, cli_path, respo_path, usr_path, "ECO"
+        )
+        if responsable:
+            return responsable, respo_path
+    # Algunas fichas antiguas o migradas no tienen registro ECO y heredan el
+    # responsable general de Gestion (GES). Es el caso real de E00193.
+    for cli_path, respo_path, usr_path in rutas:
+        responsable = _leer_responsable_entorno(
+            cif, cli_path, respo_path, usr_path, "GES"
         )
         if responsable:
             return responsable, respo_path

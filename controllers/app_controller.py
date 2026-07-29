@@ -47,13 +47,19 @@ class AppController:
         return self._gestor.security
 
     def start(self):
+        """Abre el listado de empresas, pantalla inicial de la aplicacion."""
+        self._show(self.build_panel_general)
+
+    def open_buzon(self):
+        """Abre el buzon global de comunicaciones bajo demanda."""
         self._show(self.build_comunicaciones_global)
 
+    def open_empresas(self):
+        """Vuelve al listado general de empresas desde cualquier modulo."""
+        self._show(self.build_panel_general)
+
     def build_comunicaciones_global(self, parent):
-        return UIComunicacionesGlobal(
-            parent, self._gestor, self._session,
-            on_open_empresas=lambda: self._show(self.build_panel_general),
-        )
+        return UIComunicacionesGlobal(parent, self._gestor, self._session)
 
     def _show(self, factory):
         """Reemplaza el contenido principal destruyendo el frame actual."""

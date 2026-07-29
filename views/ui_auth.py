@@ -88,7 +88,7 @@ class UILogin(ttk.Frame):
         ).pack(fill="x", pady=(6, 34))
 
         self._field(parent, "Usuario", self.var_username, show=None)
-        entry_password = self._field(parent, "Contrasena", self.var_password, show="*")
+        entry_password = self._field(parent, "Contraseña", self.var_password, show="*")
 
         tk.Label(
             parent, textvariable=self.var_error, bg="#ffffff", fg="#b42318",
@@ -153,7 +153,7 @@ class UILogin(ttk.Frame):
 
 
 class ChangePasswordDialog(tk.Toplevel):
-    def __init__(self, parent, title: str = "Cambiar contrasena", username: str = ""):
+    def __init__(self, parent, title: str = "Cambiar contraseña", username: str = ""):
         super().__init__(parent)
         self.title(title)
         self.resizable(False, False)
@@ -168,11 +168,11 @@ class ChangePasswordDialog(tk.Toplevel):
         if username:
             ttk.Label(frm, text=f"Usuario: {username}", style="SubHeader.TLabel").pack(anchor="w", pady=(0, 12))
 
-        ttk.Label(frm, text="Contrasena actual").pack(anchor="w")
+        ttk.Label(frm, text="Contraseña actual").pack(anchor="w")
         ttk.Entry(frm, textvariable=self.var_current, show="*", width=32).pack(fill="x", pady=(4, 10))
-        ttk.Label(frm, text="Nueva contrasena").pack(anchor="w")
+        ttk.Label(frm, text="Nueva contraseña").pack(anchor="w")
         ttk.Entry(frm, textvariable=self.var_new, show="*", width=32).pack(fill="x", pady=(4, 10))
-        ttk.Label(frm, text="Repetir contrasena").pack(anchor="w")
+        ttk.Label(frm, text="Repetir contraseña").pack(anchor="w")
         ttk.Entry(frm, textvariable=self.var_repeat, show="*", width=32).pack(fill="x", pady=(4, 12))
 
         actions = ttk.Frame(frm)
@@ -191,10 +191,10 @@ class ChangePasswordDialog(tk.Toplevel):
         new_password = self.var_new.get()
         repeated = self.var_repeat.get()
         if not new_password.strip():
-            messagebox.showerror(APP_TITLE, "La nueva contrasena no puede estar vacia.", parent=self)
+            messagebox.showerror(APP_TITLE, "La nueva contraseña no puede estar vacia.", parent=self)
             return
         if new_password != repeated:
-            messagebox.showerror(APP_TITLE, "Las contrasenas no coinciden.", parent=self)
+            messagebox.showerror(APP_TITLE, "Las contraseñas no coinciden.", parent=self)
             return
         self.result = {"current_password": current, "new_password": new_password}
         self.destroy()

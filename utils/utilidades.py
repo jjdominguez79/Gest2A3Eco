@@ -152,6 +152,8 @@ def _apply_env_overrides(data: dict) -> dict:
     direct_map = {
         "GEST2A3ECO_A3_BASE_PATH": "a3_base_path",
         "GEST2A3ECO_LAST_DB_PATH": "last_db_path",
+        "GEST2A3ECO_DATABASE_ENGINE": "database_engine",
+        "GEST2A3ECO_POSTGRES_DSN": "postgres_dsn",
         "GEST2A3ECO_WORD_TEMPLATES_DIR": "word_templates_dir",
         "GEST2A3ECO_OCR_ENDPOINT": "ocr_endpoint",
         "GEST2A3ECO_OCR_MOTOR_ACTIVO": "ocr_motor_activo",
@@ -211,6 +213,12 @@ def _normalize_config(data: dict) -> dict:
     out.setdefault("a3_base_path", "")
     out.setdefault("db_path", "")
     out.setdefault("last_db_path", "")
+    # Desde la version 1.4.0 PostgreSQL es el motor central. Si un puesto no
+    # tiene DSN configurada, el arranque se detiene antes de escribir en la
+    # antigua SQLite. Se puede indicar "sqlite" explicitamente solo para
+    # recuperacion o pruebas controladas.
+    out.setdefault("database_engine", "postgres")
+    out.setdefault("postgres_dsn", "")
     out.setdefault("ocr_endpoint", "")
     out.setdefault("ocr_motor_activo", "")
     out.setdefault("azure_doc_intelligence_endpoint", "")
@@ -233,6 +241,9 @@ def _normalize_config(data: dict) -> dict:
         out["db_path"] = str(out.get("last_db_path") or "").strip()
     if not str(out.get("last_db_path") or "").strip():
         out["last_db_path"] = str(out.get("db_path") or "").strip()
+    out["database_engine"] = str(out.get("database_engine") or "postgres").strip().lower()
+    if out["database_engine"] not in {"sqlite", "postgres"}:
+        out["database_engine"] = "sqlite"
     if not str(out.get("documentos_output_dir") or "").strip():
         out["documentos_output_dir"] = str(get_default_output_dir())
 

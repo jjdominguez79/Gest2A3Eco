@@ -94,7 +94,8 @@ class GraphMailService:
 
     def send(
         self, *, sender: str, to: list[str], subject: str, body: str,
-        cc: list[str] | None = None, attachments: list[str] | None = None,
+        cc: list[str] | None = None, bcc: list[str] | None = None,
+        attachments: list[str] | None = None,
         inline_attachments: list[dict] | None = None,
     ) -> GraphSendResult:
         token, signed_in = self._token()
@@ -105,6 +106,7 @@ class GraphMailService:
             "body": {"contentType": "HTML", "content": body},
             "toRecipients": self._recipients(to),
             "ccRecipients": self._recipients(cc or []),
+            "bccRecipients": self._recipients(bcc or []),
         }
         encoded_attachments = []
         import base64

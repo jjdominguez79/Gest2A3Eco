@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from services.email_service import build_outlook_bodies, open_outlook_email
+from services.email_service import build_invoice_email_text, build_outlook_bodies, open_outlook_email
 from utils import utilidades
 
 
@@ -14,6 +14,20 @@ def test_build_outlook_bodies_append_signature_and_plain_text():
     assert plain == "Adjunto factura F-1.\n\nSaludos\nEquipo"
     assert "Adjunto factura F-1." in html
     assert "Saludos<br>Equipo" in html
+
+
+def test_build_invoice_email_text_uses_the_brief_invoice_message():
+    body = build_invoice_email_text(
+        {"numero": "000001", "fecha_expedicion": "29/07/2026"},
+        {"nombre": "DOMINGUEZ ASTARLOA INVERSIONES"},
+        {"total": 121},
+    )
+
+    assert body == (
+        "Estimado/a DOMINGUEZ ASTARLOA INVERSIONES,\n\n"
+        "Le adjuntamos la factura 000001 con fecha 29/07/2026 por un importe de 121,00 €.\n\n"
+        "Quedo a su disposición para cualquier consulta."
+    )
 
 
 def test_open_outlook_email_valida_adjuntos_antes_de_outlook(tmp_path):

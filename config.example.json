@@ -1,6 +1,8 @@
 {
   "templates_path": "plantillas/plantillas.json",
   "a3_base_path": "",
+  "database_engine": "postgres",
+  "postgres_dsn": "",
   "last_db_path": "",
   "word_templates_dir": "",
   "ocr_endpoint": "",

@@ -74,6 +74,13 @@ def test_firma_oficina_incluye_responsable_sin_exponer_sus_datos():
     assert "{{RESPONSABLE}}" not in firma
 
 
+def test_firma_oficina_permite_indicar_el_nombre_del_remitente_compartido():
+    firma = construir_firma_oficina("", "Asesoria Gestinem SL")
+
+    assert "<strong>Asesoria Gestinem SL</strong>" in firma
+    assert "Gestinem{{RESPONSABLE}}" not in firma
+
+
 def test_firma_personal_conserva_datos_de_la_plantilla_a3():
     firma = FIRMA_PERSONAL_HTML
 

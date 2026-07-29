@@ -92,10 +92,15 @@ FIRMA_OFICINA_HTML = """
 FIRMA_CORPORATIVA_HTML = FIRMA_PERSONAL_HTML
 
 
-def construir_firma_oficina(usuario_nombre: str = "") -> str:
+def construir_firma_oficina(
+    usuario_nombre: str = "", nombre_remitente: str = "Gestinem",
+) -> str:
     nombre = html.escape(str(usuario_nombre or "").strip())
+    remitente = html.escape(str(nombre_remitente or "Gestinem").strip())
     responsable = f" - {nombre}" if nombre else ""
-    return FIRMA_OFICINA_HTML.replace("{{RESPONSABLE}}", responsable)
+    return FIRMA_OFICINA_HTML.replace(
+        "Gestinem{{RESPONSABLE}}", f"{remitente}{responsable}",
+    )
 
 
 def construir_cuerpo_html(
@@ -159,11 +164,11 @@ class UIComunicaciones(ttk.Frame):
         ttk.Button(top, text="Configurar firma", command=self._configure_signature).pack(side="right", padx=6)
         ttk.Button(top, text="Nuevo correo", command=self._compose).pack(side="right", padx=6)
         self._tree = ttk.Treeview(
-            self, columns=("fecha", "asunto", "remitente", "estado", "mensajes"),
+            self, columns=("fecha", "tipo", "asunto", "remitente", "estado", "mensajes"),
             show="headings", selectmode="browse",
         )
         for key, title, width in (
-            ("fecha", "Ultima actividad", 170), ("asunto", "Asunto", 430),
+            ("fecha", "Ultima actividad", 170), ("tipo", "Tipo", 85), ("asunto", "Asunto", 345),
             ("remitente", "Remitente", 230), ("estado", "Estado", 100),
             ("mensajes", "Mensajes", 80),
         ):
@@ -178,7 +183,7 @@ class UIComunicaciones(ttk.Frame):
         for row in self._gestor.listar_comunicaciones(self._codigo):
             self._rows[row["id"]] = row
             self._tree.insert("", "end", iid=row["id"], values=(
-                row.get("ultima_fecha") or "", row.get("asunto") or "",
+                row.get("ultima_fecha") or "", "Enviado" if row.get("ultima_direccion") == "saliente" else "Recibido", row.get("asunto") or "",
                 row.get("ultimo_remitente") or "", row.get("estado") or "",
                 row.get("mensajes") or 0,
             ))
@@ -333,11 +338,11 @@ class CommunicationDetailDialog(tk.Toplevel):
         self._messages = messages
         self._on_import_attachments = on_import_attachments
         self._list = ttk.Treeview(
-            frame, columns=("fecha", "remitente", "asunto", "estado"),
+            frame, columns=("fecha", "tipo", "remitente", "asunto", "estado"),
             show="headings", height=7, selectmode="browse",
         )
         for key, title, width in (
-            ("fecha", "Fecha", 180), ("remitente", "Remitente", 220),
+            ("fecha", "Fecha", 180), ("tipo", "Tipo", 85), ("remitente", "Remitente", 180),
             ("asunto", "Asunto", 330), ("estado", "Estado", 120),
         ):
             self._list.heading(key, text=title)
@@ -357,7 +362,7 @@ class CommunicationDetailDialog(tk.Toplevel):
             self._import_button.configure(state="disabled")
         for index, item in enumerate(messages):
             self._list.insert("", "end", iid=str(index), values=(
-                item.get("fecha") or "", item.get("remitente") or "",
+                item.get("fecha") or "", "Enviado" if item.get("direccion") == "saliente" else "Recibido", item.get("remitente") or "",
                 item.get("asunto") or "", item.get("estado_envio") or "",
             ))
         if messages:

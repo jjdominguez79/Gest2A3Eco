@@ -124,11 +124,10 @@ class AttachmentSelectionDialog(tk.Toplevel):
 
 
 class UIComunicacionesGlobal(ttk.Frame):
-    def __init__(self, parent, gestor, session, on_open_empresas):
+    def __init__(self, parent, gestor, session):
         super().__init__(parent, padding=12)
         self._gestor = gestor
         self._session = session
-        self._on_open_empresas = on_open_empresas
         self._pending: dict[str, dict] = {}
         self._mine: dict[str, dict] = {}
         self._supervision: dict[str, dict] = {}
@@ -142,7 +141,6 @@ class UIComunicacionesGlobal(ttk.Frame):
         top = ttk.Frame(self)
         top.pack(fill="x", pady=(0, 10))
         ttk.Label(top, text="Buzon de comunicaciones", font=("Segoe UI", 16, "bold")).pack(side="left")
-        ttk.Button(top, text="Empresas", command=self._on_open_empresas).pack(side="right")
         ttk.Button(top, text="Sincronizar", command=self._sync).pack(side="right", padx=6)
 
         tabs = ttk.Notebook(self)

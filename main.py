@@ -9,6 +9,7 @@ from tkinter import filedialog, messagebox, ttk
 from controllers.app_controller import AppController
 from services.email_service import ensure_template_file
 from models.gestor_sqlite import GestorSQLite
+from models.gestor_postgres import GestorPostgres, crear_dsn_postgres
 from services.auth_service import AuthService, AuthorizationService
 from services.secured_gestor import SecuredGestorSQLite
 from utils.utilidades import (
@@ -25,6 +26,7 @@ from utils.utilidades import (
 )
 from views.ui_auth import ChangePasswordDialog, UILogin
 from views.ui_config_monedas import MonedasDialog
+from views.ui_postgres_config import PostgresConfigDialog
 from views.ui_tramites_dgt_public import UITramitesDgtPublicForm
 from views.ui_theme import aplicar_icono_ventana, aplicar_tema
 from update_checker import check_for_updates
@@ -64,6 +66,7 @@ def _build_header(
     root: tk.Tk,
     session,
     on_cambiar_empresa,
+    on_open_empresas=None,
     on_open_config=None,
     on_open_users=None,
     on_open_terceros=None,
@@ -154,6 +157,8 @@ def _build_header(
         return b
 
     _hbtn("Buzon", on_cambiar_empresa)
+    if on_open_empresas:
+        _hbtn("Empresas", on_open_empresas)
     if on_open_terceros:
         _hbtn("Terceros", on_open_terceros)
     if on_open_notificaciones:
@@ -242,6 +247,8 @@ def main():
     aplicar_tema(root)
 
     cfg = load_app_config()
+    database_engine = str(cfg.get("database_engine") or "postgres").strip().lower()
+    postgres_dsn = str(cfg.get("postgres_dsn") or "").strip()
     db_path = str(cfg.get("db_path") or cfg.get("last_db_path") or "").strip() or str(get_default_db_path())
     word_tpl_dir = get_word_templates_dir(str(get_default_templates_dir()))
     if not str(cfg.get("db_path") or "").strip():
@@ -253,24 +260,48 @@ def main():
     save_app_config(cfg)
 
     try:
-        db_path = validate_sqlite_db_path(db_path, allow_create=True)
+        if database_engine == "postgres":
+            while True:
+                if not postgres_dsn:
+                    root.deiconify()
+                    dialog = PostgresConfigDialog(root)
+                    root.withdraw()
+                    if not dialog.result:
+                        root.destroy()
+                        return
+                    postgres_dsn = crear_dsn_postgres(**dialog.result)
+                    cfg["database_engine"] = "postgres"
+                    cfg["postgres_dsn"] = postgres_dsn
+                    save_app_config(cfg)
+                try:
+                    gestor_base = GestorPostgres(postgres_dsn)
+                    break
+                except Exception as exc:
+                    log_exception(
+                        "Error conectando con PostgreSQL.",
+                        exc,
+                        extra={"database_engine": database_engine},
+                    )
+                    reconfigurar = messagebox.askretrycancel(
+                        "Gest2A3Eco",
+                        "No se ha podido conectar con PostgreSQL.\n\n"
+                        f"Detalle: {exc}\n\n"
+                        "Pulsa Reintentar para revisar servidor, usuario y contraseña.",
+                        parent=root,
+                    )
+                    if not reconfigurar:
+                        root.destroy()
+                        return
+                    postgres_dsn = ""
+            db_path = "PostgreSQL"
+        else:
+            db_path = validate_sqlite_db_path(db_path, allow_create=True)
+            gestor_base = GestorSQLite(db_path, json_seed=get_seed_json_path())
     except Exception as exc:
-        log_exception("Error validando la base de datos SQLite al iniciar.", exc, extra={"db_path": db_path})
+        log_exception("Error abriendo la base de datos.", exc, extra={"database_engine": database_engine})
         messagebox.showerror(
             "Gest2A3Eco",
-            f"No se puede usar la base de datos SQLite configurada:\n{db_path}\n\nDetalle: {exc}",
-            parent=root,
-        )
-        root.destroy()
-        return
-
-    try:
-        gestor_base = GestorSQLite(db_path, json_seed=get_seed_json_path())
-    except Exception as exc:
-        log_exception("Error abriendo la base de datos SQLite.", exc, extra={"db_path": db_path})
-        messagebox.showerror(
-            "Gest2A3Eco",
-            f"No se ha podido abrir la base de datos SQLite:\n{db_path}\n\nDetalle: {exc}",
+            f"No se ha podido abrir la base de datos {database_engine}:\n\nDetalle: {exc}",
             parent=root,
         )
         root.destroy()
@@ -312,6 +343,13 @@ def main():
         if not state["session"] or not state["session"].is_admin():
             messagebox.showerror("Gest2A3Eco", "Solo el administrador puede cambiar la base de datos.", parent=root)
             return
+        if database_engine != "sqlite":
+            messagebox.showinfo(
+                "Gest2A3Eco",
+                "La conexion PostgreSQL se configura en config.local.json o mediante GEST2A3ECO_POSTGRES_DSN.",
+                parent=root,
+            )
+            return
         new_path = _select_db_path(db_path)
         if new_path and new_path != db_path:
             try:
@@ -348,7 +386,7 @@ def main():
 
     def _build_context_menu(controller):
         ctx = tk.Menu(root, tearoff=0)
-        ctx.add_command(label="Buzon de comunicaciones", command=controller.start)
+        ctx.add_command(label="Buzon de comunicaciones", command=controller.open_buzon)
         ctx.add_separator()
         ctx.add_command(label="Cerrar sesion", command=_logout)
         ctx.add_command(label="Cerrar", command=root.destroy)
@@ -380,7 +418,8 @@ def main():
         _build_header(
             root,
             session=session,
-            on_cambiar_empresa=controller.start,
+            on_cambiar_empresa=controller.open_buzon,
+            on_open_empresas=controller.open_empresas,
             on_open_terceros=controller.open_terceros,
             on_open_notificaciones=controller.open_notificaciones_global,
             on_open_tramites_dgt=(

@@ -161,6 +161,19 @@ def build_html_body(empresa_conf: dict, fac: dict, cliente: dict, totales: dict)
         return template
 
 
+def build_invoice_email_text(fac: dict, cliente: dict, totales: dict) -> str:
+    """Cuerpo breve y uniforme para el envio de facturas emitidas."""
+    nombre_cliente = str(cliente.get("nombre") or "").strip()
+    numero = str(fac.get("numero") or "").strip()
+    fecha = str(fac.get("fecha_expedicion") or fac.get("fecha_asiento") or "").strip()
+    total = _fmt_total(totales, fac)
+    return (
+        f"Estimado/a {nombre_cliente},\n\n"
+        f"Le adjuntamos la factura {numero} con fecha {fecha} por un importe de {total}.\n\n"
+        "Quedo a su disposición para cualquier consulta."
+    )
+
+
 def build_outlook_bodies(
     plain_body: str,
     *,

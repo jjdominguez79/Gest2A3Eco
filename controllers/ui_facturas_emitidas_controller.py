@@ -1,10 +1,8 @@
 import os
 import shutil
 import sys
-import webbrowser
 import subprocess
 from contextlib import contextmanager
-from urllib.parse import quote
 from datetime import datetime
 from pathlib import Path
 import traceback
@@ -907,9 +905,9 @@ class FacturasEmitidasController:
         fac = self._get_factura_by_id(sel[0])
         if not fac:
             return
-        canal = self._view.ask_share_channel()
-        if not canal:
+        if not self._ensure_write("Necesitas permiso de escritura para enviar y registrar la factura."):
             return
+        canal = "email"
 
         pdf_path = self._resolve_app_pdf(fac)
         if not pdf_path:
@@ -934,135 +932,60 @@ class FacturasEmitidasController:
 
         numero = str(fac.get("numero", "") or "")
         asunto = f"Factura {numero}".strip()
-        if include_albaranes:
-            cuerpo = (
-                f"Adjunto factura {numero} y el albaran relacionado."
-                if len(related_albaranes) == 1
-                else f"Adjunto factura {numero} y los albaranes relacionados."
-            ).strip()
-        else:
-            cuerpo = f"Adjunto factura {numero}.".strip()
         cliente = self._cliente_factura(fac)
 
         if canal == "email":
-            from services.email_service import (
-                build_html_body,
-                build_outlook_bodies,
-                load_email_preferences,
-                load_smtp_config,
-                open_outlook_email,
-                save_email_preferences,
-                save_smtp_config,
-                send_email_smtp,
-            )
+            from services.email_service import build_invoice_email_text
+            from services.graph_mail_service import GraphMailService
+            from views.ui_comunicaciones import construir_cuerpo_html, construir_firma_oficina
+            from utils.utilidades import get_install_dir, load_app_config
             email_cliente = str(cliente.get("email") or "").strip()
             email_empresa = str(self._empresa_conf.get("email") or "").strip()
-            email_prefs = load_email_preferences()
-            email_mode = str(email_prefs.get("email_mode") or "outlook").strip().lower() or "outlook"
-            smtp_cfg = load_smtp_config() if email_mode == "smtp" else {}
-
-            if email_mode == "smtp" and not smtp_cfg.get("host"):
-                smtp_cfg = self._view.ask_smtp_config(smtp_cfg or {})
-                if not smtp_cfg or not smtp_cfg.get("host"):
-                    return
-                save_smtp_config(smtp_cfg)
+            tot = self._totales_factura(fac)
+            cuerpo = build_invoice_email_text(fac, cliente, tot)
 
             compose = self._view.ask_email_compose(
-                email_cliente, asunto, cuerpo, pdf_path, smtp_cfg,
+                email_cliente, asunto, cuerpo, pdf_path, {},
                 email_empresa=email_empresa,
-                email_mode=email_mode,
-                default_cc=str(email_prefs.get("default_cc") or ""),
-                default_bcc=str(email_prefs.get("default_bcc") or ""),
-                email_signature=str(email_prefs.get("email_signature") or ""),
+                email_mode="graph",
             )
             if not compose:
                 return
 
-            tot = self._totales_factura(fac)
-            html_body = build_html_body(self._empresa_conf, fac, cliente, tot)
-            plain_body, outlook_html_body = build_outlook_bodies(
-                compose["cuerpo"],
-                html_body=html_body,
-                signature=compose.get("signature") or "",
+            user = getattr(getattr(self._view, "session", None), "user", None)
+            send_from_personal = compose.get("sender_mode") == "personal"
+            user_name = str(getattr(user, "nombre", "") or "").strip()
+            if user_name.lower() == "administrador":
+                user_name = "Juan José Domínguez Barrero"
+            signature = (
+                construir_firma_oficina(user_name)
+                if send_from_personal
+                else construir_firma_oficina("", "Asesoria Gestinem SL")
             )
-
-            save_email_preferences(
-                {
-                    "email_mode": email_mode,
-                    "default_cc": compose.get("cc", ""),
-                    "default_bcc": compose.get("bcc", ""),
-                    "email_signature": compose.get("signature", ""),
-                    "open_outlook_before_send": True,
-                }
-            )
-
-            if email_mode == "smtp":
-                new_smtp = compose.get("smtp_cfg") or {}
-                if new_smtp and new_smtp != smtp_cfg:
-                    save_smtp_config(new_smtp)
-                    smtp_cfg = new_smtp
-                try:
-                    send_email_smtp(
-                        smtp_cfg, compose["emails"], compose["asunto"], plain_body,
-                        pdf_path, attachment_paths=attachment_paths[1:], html_body=outlook_html_body,
-                    )
-                    self._view.show_info("Gest2A3Eco", "Email enviado correctamente.")
-                except Exception as e:
-                    host = str(smtp_cfg.get("host") or "(vacio)").strip() or "(vacio)"
-                    port = smtp_cfg.get("port", 587)
-                    self._view.show_error(
-                        "Gest2A3Eco",
-                        f"Error al enviar el email:\n{e}\n\n"
-                        f"Servidor configurado: {host}:{port}\n"
-                        f"Verifica la configuracion SMTP pulsando 'Cambiar SMTP' en el dialogo de envio.",
-                    )
-                    return
-            else:
-                try:
-                    open_outlook_email(
-                        to="; ".join(compose["emails"]),
-                        subject=compose["asunto"],
-                        body=plain_body,
-                        attachments=attachment_paths,
-                        cc=compose.get("cc", ""),
-                        bcc=compose.get("bcc", ""),
-                        html_body=outlook_html_body,
-                    )
-                    self._view.show_info(
-                        "Gest2A3Eco",
-                        "Se ha abierto Outlook con el correo preparado. Revise el mensaje y pulse Enviar desde Outlook.",
-                    )
-                except FileNotFoundError as e:
-                    self._view.show_error("Gest2A3Eco", str(e))
-                    return
-                except Exception as e:
-                    self._view.show_error(
-                        "Gest2A3Eco",
-                        f"{e}\n\nEl correo no se ha enviado y la aplicacion puede seguir utilizandose.",
-                    )
-                    return
-
-        elif canal == "whatsapp":
-            telefono_cliente = str(cliente.get("telefono") or "").strip()
-            telefono_empresa = str(self._empresa_conf.get("telefono") or "").strip()
-            compose_wa = self._view.ask_whatsapp_compose(
-                telefono_cliente, cuerpo, pdf_path,
-                telefono_empresa=telefono_empresa,
-            )
-            if not compose_wa:
+            email_html_body = construir_cuerpo_html(compose["cuerpo"], signature, "")
+            cc = self._split_email_addresses(compose.get("cc", ""))
+            bcc = self._split_email_addresses(compose.get("bcc", ""))
+            shared_mailbox = str((load_app_config().get("microsoft_graph") or {}).get("shared_mailbox") or "Oficina@gestinem.es").strip()
+            sender = "me" if send_from_personal else shared_mailbox
+            logo_path = get_install_dir() / "logo.png"
+            inline_attachments = ([{"path": str(logo_path), "content_id": "gestinem-logo"}]
+                                  if "cid:gestinem-logo" in signature else [])
+            try:
+                result = GraphMailService().send(
+                    sender=sender, to=compose["emails"], cc=cc, bcc=bcc,
+                    subject=compose["asunto"], body=email_html_body,
+                    attachments=attachment_paths, inline_attachments=inline_attachments,
+                )
+            except Exception as exc:
+                self._registrar_envio_factura(compose, sender, cc, attachment_paths, email_html_body, user, estado="error", error=str(exc))
+                self._view.show_error("Gest2A3Eco", f"No se pudo enviar el email:\n{exc}")
                 return
-            tel = compose_wa["telefono"]
-            msg = compose_wa["mensaje"]
-            from urllib.parse import quote
-            url = f"https://wa.me/{tel}?text={quote(msg)}" if tel else "https://web.whatsapp.com/"
-            try:
-                webbrowser.open(url)
-            except Exception:
-                pass
-            try:
-                self._open_attachments_in_explorer(attachment_paths)
-            except Exception:
-                pass
+            self._registrar_envio_factura(
+                compose, result.sender, cc, attachment_paths, email_html_body, user,
+                estado="aceptado_graph", graph_message_id=result.message_id,
+                internet_message_id=result.internet_message_id,
+            )
+            self._view.show_info("Gest2A3Eco", "Email enviado y registrado en Comunicaciones.")
 
         if self._view.ask_yes_no("Gest2A3Eco", "¿Marcar factura como enviada?"):
             if not self._ensure_write("Necesitas permiso de escritura para marcar la factura como enviada."):
@@ -1073,6 +996,30 @@ class FacturasEmitidasController:
                 self._codigo, fac.get("id"), fecha_envio, canal, eje
             )
             self.refresh_facturas()
+
+    @staticmethod
+    def _split_email_addresses(value: str) -> list[str]:
+        return [item.strip() for item in str(value or "").replace(";", ",").split(",") if item.strip()]
+
+    def _registrar_envio_factura(
+        self, compose, remitente, cc, adjuntos, cuerpo_html, user, *, estado,
+        error="", graph_message_id="", internet_message_id="",
+    ):
+        self._gestor.registrar_envio_comunicacion({
+            "codigo_empresa": self._codigo,
+            "asunto": compose["asunto"],
+            "remitente": remitente,
+            "destinatarios": compose["emails"],
+            "cc": cc,
+            "cuerpo_html": cuerpo_html,
+            "estado_envio": estado,
+            "error_envio": error,
+            "graph_message_id": graph_message_id,
+            "internet_message_id": internet_message_id,
+            "usuario_id": getattr(user, "id", None),
+            "usuario_nombre": getattr(user, "nombre", None),
+            "adjuntos": adjuntos,
+        })
 
     def generar_suenlace(self):
         if not self._ensure_write():
@@ -1207,9 +1154,16 @@ class FacturasEmitidasController:
                     pass
             asiento = leer_numero_asiento_desde_a3(codigo_a3, self._ejercicio, num_factura, descripcion, mes=mes_asiento)
             if asiento:
-                fac["numero_asiento"] = asiento
-                self._gestor.upsert_factura_emitida(fac)
-                actualizadas.append(f"{num_factura} → asiento {asiento}")
+                actualizado = self._gestor.actualizar_numero_asiento_factura_emitida(
+                    self._codigo,
+                    fid,
+                    asiento,
+                )
+                if actualizado:
+                    fac["numero_asiento"] = asiento
+                    actualizadas.append(f"{num_factura} → asiento {asiento}")
+                else:
+                    sin_asiento.append(num_factura or str(fid))
             else:
                 sin_asiento.append(num_factura or str(fid))
         self.refresh_facturas()

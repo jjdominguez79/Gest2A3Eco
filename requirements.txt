@@ -14,6 +14,7 @@ msal
 azure-ai-documentintelligence
 packaging
 cryptography
+psycopg[binary]
 # Notificaciones electronicas (Opcion A, conector por navegador):
 #   tras instalar, ejecutar tambien:  playwright install chromium
 playwright
