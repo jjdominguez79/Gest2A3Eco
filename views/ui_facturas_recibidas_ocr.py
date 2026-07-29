@@ -23,6 +23,8 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 import tkinter as tk
 
+from utils.utilidades import load_app_config, save_app_config
+
 logger = logging.getLogger(__name__)
 
 # Bandejas de estado
@@ -106,6 +108,10 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             btn_frame, text="Reprocesar seleccionado",
             command=self._reprocesar_seleccionado,
         ).pack(side="left", padx=4)
+        ttk.Button(
+            btn_frame, text="Configurar OCR",
+            command=self._configurar_ocr,
+        ).pack(side="left", padx=4)
 
         # Panel horizontal: lista + detalle
         paned = ttk.PanedWindow(self, orient="horizontal")
@@ -124,6 +130,49 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         # Barra de estado
         self._lbl_status = ttk.Label(self, text="", foreground="#555")
         self._lbl_status.pack(fill="x", padx=10, pady=(0, 6))
+
+    def _configurar_ocr(self):
+        """Configura Azure Document Intelligence sin exponer la clave en la pantalla."""
+        dialog = tk.Toplevel(self)
+        dialog.title("Configuracion OCR")
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+        frame = ttk.Frame(dialog, padding=14)
+        frame.pack(fill="both", expand=True)
+        cfg = load_app_config()
+        motor = tk.StringVar(value=str(cfg.get("ocr_motor_activo") or ""))
+        endpoint = tk.StringVar(value=str(cfg.get("azure_doc_intelligence_endpoint") or ""))
+        key = tk.StringVar(value=str(cfg.get("azure_doc_intelligence_key") or ""))
+        ttk.Label(frame, text="Motor OCR").grid(row=0, column=0, sticky="w", pady=3)
+        ttk.Combobox(frame, textvariable=motor, state="readonly", values=("", "azure"), width=42).grid(row=0, column=1, sticky="ew", padx=(8, 0), pady=3)
+        ttk.Label(frame, text="Endpoint Azure").grid(row=1, column=0, sticky="w", pady=3)
+        ttk.Entry(frame, textvariable=endpoint, width=55).grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=3)
+        ttk.Label(frame, text="Clave Azure").grid(row=2, column=0, sticky="w", pady=3)
+        ttk.Entry(frame, textvariable=key, show="*", width=55).grid(row=2, column=1, sticky="ew", padx=(8, 0), pady=3)
+        ttk.Label(
+            frame,
+            text=("Azure Document Intelligence usa el modelo prebuilt-invoice. "
+                  "Los documentos se enviaran al servicio de Azure para su analisis."),
+            wraplength=520, foreground="#555",
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
+
+        def save():
+            selected = motor.get().strip().lower()
+            if selected == "azure" and (not endpoint.get().strip() or not key.get().strip()):
+                messagebox.showwarning("OCR", "Indica endpoint y clave de Azure.", parent=dialog)
+                return
+            cfg["ocr_motor_activo"] = selected
+            cfg["azure_doc_intelligence_endpoint"] = endpoint.get().strip()
+            cfg["azure_doc_intelligence_key"] = key.get().strip()
+            save_app_config(cfg)
+            dialog.destroy()
+            self._lbl_status.configure(text="Configuracion OCR guardada. Los documentos nuevos usaran el motor seleccionado.")
+
+        actions = ttk.Frame(frame)
+        actions.grid(row=4, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        ttk.Button(actions, text="Cancelar", command=dialog.destroy).pack(side="left", padx=(0, 6))
+        ttk.Button(actions, text="Guardar", command=save).pack(side="left")
+        frame.columnconfigure(1, weight=1)
 
     def _build_bandejas(self, parent: ttk.Frame):
         self._nb = ttk.Notebook(parent)
@@ -545,8 +594,51 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         if doc:
             doc["estado"] = "pendiente_contabilizar"
             self._gestor.upsert_documento_ocr(doc)
+            self._crear_o_actualizar_documento_contable(doc, factura)
         self._refresh_all()
         messagebox.showinfo("OCR", "Documento validado.")
+
+    def _crear_o_actualizar_documento_contable(self, documento: dict, factura: dict):
+        """Proyecta el documento OCR tipado al flujo que genera SUENLACE.
+
+        Ambos modelos convivian, pero sin esta proyeccion los documentos nuevos
+        (incluidos los que vienen de correo) no podian llegar a contabilidad.
+        Se conserva el mismo ID para mantener trazabilidad directa.
+        """
+        doc_id = str(documento.get("id") or "")
+        lineas = []
+        try:
+            for item in self._gestor.listar_lineas_iva_ocr(str(factura.get("id") or "")):
+                lineas.append({
+                    "base_imponible": item.get("base") or 0.0,
+                    "tipo_iva": item.get("tipo_iva") or 0.0,
+                    "cuota_iva": item.get("cuota_iva") or 0.0,
+                    "tipo_recargo": item.get("tipo_recargo") or 0.0,
+                    "cuota_recargo": item.get("cuota_recargo") or 0.0,
+                })
+        except Exception as exc:
+            logger.warning("[OCR] No se pudieron obtener las lineas IVA: %s", exc)
+        ruta = str(documento.get("ruta_original") or "")
+        payload = {
+            "id": doc_id, "codigo_empresa": self._codigo, "ejercicio": self._ejercicio,
+            "origen_path": ruta, "pdf_path": ruta if Path(ruta).suffix.lower() == ".pdf" else "",
+            "estado_ocr": "procesado", "estado_validacion": "validada",
+            "estado_contable": "pendiente_contabilizar", "tipo_documento": "factura_recibida",
+            "proveedor_nif": factura.get("nif_proveedor") or "",
+            "proveedor_nombre": factura.get("nombre_proveedor") or "",
+            "numero_factura": factura.get("numero_factura") or "",
+            "fecha_factura": factura.get("fecha_factura") or "",
+            "fecha_operacion": factura.get("fecha_operacion") or factura.get("fecha_factura") or "",
+            "fecha_asiento": factura.get("fecha_factura") or "",
+            "fecha_vencimiento": factura.get("fecha_vencimiento") or "",
+            "descripcion": f"Factura {factura.get('numero_factura') or ''}".strip(),
+            "moneda_codigo": "EUR", "base_imponible": factura.get("base_total") or 0.0,
+            "cuota_iva": factura.get("iva_total") or 0.0,
+            "cuota_retencion": factura.get("retencion_total") or 0.0,
+            "total": factura.get("total_factura") or 0.0, "lineas": lineas,
+            "datos_extra": {"documento_ocr_id": doc_id},
+        }
+        self._gestor.upsert_factura_recibida_doc(payload)
 
     def _enviar_a_error(self, estado: str):
         doc_id = self._get_selected_id()
@@ -636,6 +728,14 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                 )
                 return
             from services.ocr_recibidas_service import generate_suenlace_for_docs, mark_docs_as_generated
+            from services.documentos_recibidos_a3_service import preparar_documentos_para_suenlace
+            try:
+                doc = preparar_documentos_para_suenlace(
+                    self._gestor, self._codigo, self._ejercicio, [doc],
+                )[0]
+            except Exception as exc:
+                messagebox.showerror("OCR", f"No se pudo preparar el PDF para A3ECO:\n{exc}")
+                return
             regs = generate_suenlace_for_docs(self._gestor, self._codigo, self._ejercicio, [doc])
             if not regs:
                 messagebox.showwarning("OCR", "No se generaron registros.")

@@ -91,3 +91,24 @@ def test_sync_inbox_uses_delta_and_returns_cursor(monkeypatch):
     assert result.mailbox == "Oficina@gestinem.es"
     assert result.delta_link == "delta-final"
     assert "/users/Oficina%40gestinem.es/mailFolders/inbox/messages/delta" in service.session.calls[0][0]
+
+
+def test_lists_and_downloads_file_attachments(monkeypatch):
+    class AttachmentSession(Session):
+        def get(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            if url.endswith("/attachments") or "/attachments?$select=" in url:
+                return Response(200, {"value": [
+                    {"id": "file-1", "name": "factura.pdf", "@odata.type": "#microsoft.graph.fileAttachment"},
+                    {"id": "inline", "name": "logo.png", "isInline": True, "@odata.type": "#microsoft.graph.fileAttachment"},
+                ]})
+            return Response(200, {"id": "file-1", "name": "factura.pdf", "contentBytes": "eA==", "@odata.type": "#microsoft.graph.fileAttachment"})
+
+    session = AttachmentSession()
+    service = GraphMailService({"tenant_id": "t", "client_id": "c"}, session=session)
+    monkeypatch.setattr(service, "_token", lambda: ("token", "yo@gestinem.es"))
+    attachments = service.list_attachments(mailbox="me", message_id="message-1")
+    item = service.download_attachment(mailbox="me", message_id="message-1", attachment_id="file-1")
+
+    assert [x["name"] for x in attachments] == ["factura.pdf"]
+    assert item["contentBytes"] == "eA=="

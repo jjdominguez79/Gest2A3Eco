@@ -1713,8 +1713,10 @@ class GestorSQLite:
         seq = int(row.get("pdf_ref_seq") or 0)
         if seq <= 0:
             cur = self.conn.execute(
-                "SELECT pdf_ref FROM facturas_emitidas_docs WHERE codigo_empresa=? AND pdf_ref IS NOT NULL AND TRIM(pdf_ref)<>''",
-                (codigo_empresa,),
+                """SELECT pdf_ref FROM facturas_emitidas_docs WHERE codigo_empresa=? AND pdf_ref IS NOT NULL AND TRIM(pdf_ref)<>''
+                   UNION ALL
+                   SELECT pdf_ref FROM facturas_recibidas_docs WHERE codigo_empresa=? AND pdf_ref IS NOT NULL AND TRIM(pdf_ref)<>''""",
+                (codigo_empresa, codigo_empresa),
             )
             for item in cur.fetchall():
                 ref = str(item["pdf_ref"] or "").strip()
@@ -5971,6 +5973,15 @@ class GestorSQLite:
             (comunicacion_id,),
         ).fetchall()
         return [self._row_to_dict(row) for row in rows]
+
+    def registrar_adjunto_comunicacion(self, mensaje_id: str, ruta: str | Path, tamano: int | None = None) -> None:
+        path = Path(ruta)
+        with self.conn:
+            self.conn.execute(
+                """INSERT OR IGNORE INTO comunicaciones_adjuntos (mensaje_id,nombre,ruta,tamano)
+                   VALUES (?,?,?,?)""",
+                (str(mensaje_id), path.name, str(path), tamano if tamano is not None else (path.stat().st_size if path.exists() else None)),
+            )
 
     def registrar_envio_comunicacion(self, datos: dict) -> tuple[str, str]:
         now = datetime.now().astimezone().isoformat(timespec="seconds")

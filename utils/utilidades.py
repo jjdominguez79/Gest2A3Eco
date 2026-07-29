@@ -66,6 +66,13 @@ def get_default_output_dir() -> Path:
     return path
 
 
+def get_default_received_documents_dir() -> Path:
+    """Carpeta raiz de documentos recibidos que pasan por captura/OCR."""
+    path = get_app_data_dir() / "pdfs_recibidas"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def get_default_db_path() -> Path:
     return get_app_data_dir() / "gest2a3eco.db"
 
@@ -147,6 +154,9 @@ def _apply_env_overrides(data: dict) -> dict:
         "GEST2A3ECO_LAST_DB_PATH": "last_db_path",
         "GEST2A3ECO_WORD_TEMPLATES_DIR": "word_templates_dir",
         "GEST2A3ECO_OCR_ENDPOINT": "ocr_endpoint",
+        "GEST2A3ECO_OCR_MOTOR_ACTIVO": "ocr_motor_activo",
+        "GEST2A3ECO_AZURE_DOC_INTELLIGENCE_ENDPOINT": "azure_doc_intelligence_endpoint",
+        "GEST2A3ECO_AZURE_DOC_INTELLIGENCE_KEY": "azure_doc_intelligence_key",
         "GEST2A3ECO_DGT_API_URL": "dgt_api_url",
         "GEST2A3ECO_DGT_API_KEY": "dgt_api_key",
         "GEST2A3ECO_SIGNREQUEST_TOKEN": "signrequest_token",
@@ -202,6 +212,9 @@ def _normalize_config(data: dict) -> dict:
     out.setdefault("db_path", "")
     out.setdefault("last_db_path", "")
     out.setdefault("ocr_endpoint", "")
+    out.setdefault("ocr_motor_activo", "")
+    out.setdefault("azure_doc_intelligence_endpoint", "")
+    out.setdefault("azure_doc_intelligence_key", "")
     out.setdefault("documentos_output_dir", "")
     out.setdefault("dgt_api_url", "")
     out.setdefault("dgt_api_key", "")

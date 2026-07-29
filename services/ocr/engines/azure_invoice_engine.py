@@ -137,12 +137,14 @@ class AzureInvoiceEngine(OcrEngineBase):
         result.iva_total   = _azure_float(f.get("TotalTax"))
 
         # Lineas de IVA desde TaxDetails (si disponible)
-        tax_details = f.get("TaxDetails") or {}
-        items_val   = tax_details.get("valueArray") or []
+        tax_details = _azure_value(f.get("TaxDetails")) or []
+        items_val = tax_details if isinstance(tax_details, list) else []
         for item in items_val:
-            item_f = item.get("valueObject") or {}
+            item_f = _azure_value(item) or {}
+            if not isinstance(item_f, dict):
+                continue
             linea = OcrVatLine(
-                tipo_iva  = _azure_float(item_f.get("Amount")) or 0.0,
+                tipo_iva  = _azure_float(item_f.get("Rate")) or 0.0,
                 base      = result.base_total,  # Azure no siempre desglosa base por tipo
                 cuota_iva = _azure_float(item_f.get("Amount")) or 0.0,
             )
@@ -177,14 +179,14 @@ class AzureInvoiceEngine(OcrEngineBase):
 def _azure_str(field) -> str:
     if field is None:
         return ""
-    content = getattr(field, "content", None) or getattr(field, "value_string", None)
+    content = getattr(field, "content", None) or _azure_value(field) or getattr(field, "value_string", None)
     return str(content or "").strip()
 
 
 def _azure_float(field) -> float:
     if field is None:
         return 0.0
-    val = getattr(field, "value", None) or getattr(field, "value_number", None)
+    val = _azure_value(field) or getattr(field, "value_number", None)
     if val is None:
         return 0.0
     try:
@@ -199,9 +201,20 @@ def _azure_float(field) -> float:
 def _azure_fecha(field) -> str:
     if field is None:
         return ""
-    val = getattr(field, "value", None) or getattr(field, "value_date", None)
+    val = _azure_value(field) or getattr(field, "value_date", None)
     if val is None:
         return ""
     if hasattr(val, "isoformat"):
         return val.isoformat()
     return str(val)
+
+
+def _azure_value(field):
+    """Compatibilidad con DocumentField de las versiones actuales del SDK."""
+    if field is None:
+        return None
+    value = getattr(field, "value", None)
+    if value is not None:
+        return value
+    # Las versiones antiguas exponian valueArray/valueObject directamente.
+    return getattr(field, "value_array", None) or getattr(field, "value_object", None)

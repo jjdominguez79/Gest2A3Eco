@@ -323,7 +323,7 @@ class SignatureDialog(tk.Toplevel):
 
 
 class CommunicationDetailDialog(tk.Toplevel):
-    def __init__(self, parent, messages: list[dict]):
+    def __init__(self, parent, messages: list[dict], on_import_attachments=None):
         super().__init__(parent)
         self.title("Historial de la comunicacion")
         self.geometry("900x650")
@@ -331,6 +331,7 @@ class CommunicationDetailDialog(tk.Toplevel):
         frame = ttk.Frame(self, padding=12)
         frame.pack(fill="both", expand=True)
         self._messages = messages
+        self._on_import_attachments = on_import_attachments
         self._list = ttk.Treeview(
             frame, columns=("fecha", "remitente", "asunto", "estado"),
             show="headings", height=7, selectmode="browse",
@@ -345,6 +346,15 @@ class CommunicationDetailDialog(tk.Toplevel):
         self._list.bind("<<TreeviewSelect>>", self._show)
         self._content = tk.Text(frame, wrap="word", state="disabled")
         self._content.pack(fill="both", expand=True, pady=(10, 0))
+        actions = ttk.Frame(frame)
+        actions.pack(fill="x", pady=(8, 0))
+        self._import_button = ttk.Button(
+            actions, text="Guardar adjuntos en documentacion",
+            command=self._import_attachments,
+        )
+        self._import_button.pack(side="left")
+        if not on_import_attachments:
+            self._import_button.configure(state="disabled")
         for index, item in enumerate(messages):
             self._list.insert("", "end", iid=str(index), values=(
                 item.get("fecha") or "", item.get("remitente") or "",
@@ -384,6 +394,14 @@ class CommunicationDetailDialog(tk.Toplevel):
         self._content.delete("1.0", "end")
         self._content.insert("1.0", value)
         self._content.configure(state="disabled")
+
+    def _import_attachments(self):
+        if not self._on_import_attachments:
+            return
+        selected = self._list.selection()
+        if not selected:
+            return
+        self._on_import_attachments(self._messages[int(selected[0])])
 
 
 class ComposeMailDialog(tk.Toplevel):

@@ -11,6 +11,7 @@ pymupdf
 pywin32
 requests
 msal
+azure-ai-documentintelligence
 packaging
 cryptography
 # Notificaciones electronicas (Opcion A, conector por navegador):

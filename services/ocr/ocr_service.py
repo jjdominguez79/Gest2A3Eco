@@ -144,6 +144,22 @@ class OcrService:
         """Construye la lista ordenada de motores disponibles."""
         motores = []
 
+        # Azure se ejecuta primero cuando se configura expresamente: su modelo
+        # prebuilt-invoice entrega campos estructurados y evita depender de
+        # expresiones regulares sobre el texto local.
+        try:
+            cfg = self._leer_config_ocr()
+            if cfg.get("motor_activo") == "azure":
+                from services.ocr.engines.azure_invoice_engine import AzureInvoiceEngine
+                engine = AzureInvoiceEngine(
+                    endpoint=cfg.get("azure_endpoint", ""),
+                    api_key=cfg.get("azure_key", ""),
+                )
+                if engine.disponible():
+                    motores.append(engine)
+        except Exception:
+            pass
+
         # 1. PDF texto nativo (siempre primero si disponible)
         try:
             from services.ocr.engines.pdf_text_engine import PdfTextEngine
@@ -156,7 +172,7 @@ class OcrService:
         # 2. Azure (si configurado)
         try:
             cfg = self._leer_config_ocr()
-            if cfg.get("motor_activo") == "azure":
+            if cfg.get("motor_activo") == "azure" and not any(m.nombre == "azure" for m in motores):
                 from services.ocr.engines.azure_invoice_engine import AzureInvoiceEngine
                 e = AzureInvoiceEngine(
                     endpoint=cfg.get("azure_endpoint", ""),
@@ -195,7 +211,10 @@ class OcrService:
                 logger.warning("[OcrService] Motor %s lanzo excepcion: %s", motor.nombre, exc)
                 continue
 
-            if resultado.texto and len(resultado.texto.strip()) >= _MIN_TEXT_CHARS:
+            if (
+                (resultado.texto and len(resultado.texto.strip()) >= _MIN_TEXT_CHARS)
+                or (resultado.proveedor_nif and resultado.numero_factura)
+            ):
                 return resultado
 
             # Motor no extrajo texto util: guardar como fallback y continuar

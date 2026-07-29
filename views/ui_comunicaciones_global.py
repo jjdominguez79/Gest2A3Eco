@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import threading
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
 from services.comunicaciones_sync_service import ComunicacionesSyncService
+from services.documentos_correo_service import DocumentosCorreoService
 from utils.utilidades import load_app_config
 from views.ui_comunicaciones import CommunicationDetailDialog
 
@@ -86,6 +88,38 @@ class ReassignCommunicationDialog(tk.Toplevel):
             )
             return
         self._on_save(company, user)
+        self.destroy()
+
+
+class AttachmentSelectionDialog(tk.Toplevel):
+    """Seleccion multiple de adjuntos antes de incorporarlos al OCR."""
+    def __init__(self, parent, attachments: list[dict], on_save):
+        super().__init__(parent)
+        self.title("Adjuntos del correo")
+        self.transient(parent.winfo_toplevel())
+        self.grab_set()
+        self._attachments = attachments
+        self._on_save = on_save
+        self._selected = {str(item.get("id")): tk.BooleanVar(value=True) for item in attachments}
+        frame = ttk.Frame(self, padding=12)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text="Marca los adjuntos que quieres guardar en Documentacion/OCR.").pack(anchor="w", pady=(0, 8))
+        for item in attachments:
+            name = str(item.get("name") or "Adjunto")
+            size = int(item.get("size") or 0)
+            text = f"{name}  ({size / 1024:.1f} KB)"
+            ttk.Checkbutton(frame, text=text, variable=self._selected[str(item.get("id"))]).pack(anchor="w", pady=2)
+        actions = ttk.Frame(frame)
+        actions.pack(anchor="e", pady=(12, 0))
+        ttk.Button(actions, text="Cancelar", command=self.destroy).pack(side="left", padx=(0, 6))
+        ttk.Button(actions, text="Guardar seleccionados", command=self._save).pack(side="left")
+
+    def _save(self):
+        selected = [item_id for item_id, value in self._selected.items() if value.get()]
+        if not selected:
+            messagebox.showwarning("Documentacion", "Marca al menos un adjunto.", parent=self)
+            return
+        self._on_save(selected)
         self.destroy()
 
 
@@ -770,7 +804,11 @@ class UIComunicacionesGlobal(ttk.Frame):
             CommunicationDetailDialog(self, [message])
             return
         messages = self._gestor.listar_mensajes_comunicacion(selected[0])
-        CommunicationDetailDialog(self, messages)
+        company = self._mine[selected[0]].get("codigo_empresa")
+        CommunicationDetailDialog(
+            self, messages,
+            on_import_attachments=lambda message: self._choose_attachments(company, message),
+        )
 
     def _supervision_detail(self):
         selected = self._supervision_tree.selection()
@@ -793,4 +831,66 @@ class UIComunicacionesGlobal(ttk.Frame):
             CommunicationDetailDialog(self, [message])
             return
         messages = self._gestor.listar_mensajes_comunicacion(selected[0])
-        CommunicationDetailDialog(self, messages)
+        company = self._supervision[selected[0]].get("codigo_empresa")
+        CommunicationDetailDialog(
+            self, messages,
+            on_import_attachments=lambda message: self._choose_attachments(company, message),
+        )
+
+    def _choose_attachments(self, codigo_empresa: str, message: dict):
+        graph_id = str(message.get("graph_message_id") or "").strip()
+        mailbox = str(message.get("mailbox") or "").strip()
+        if not codigo_empresa or not graph_id or not mailbox:
+            messagebox.showwarning(
+                "Documentacion", "Este mensaje no tiene adjuntos de correo disponibles para descargar.", parent=self,
+            )
+            return
+        try:
+            attachments = DocumentosCorreoService(self._gestor).listar_adjuntos(
+                mailbox=mailbox, graph_message_id=graph_id,
+            )
+        except Exception as exc:
+            messagebox.showerror("Documentacion", f"No se pudieron consultar los adjuntos:\n{exc}", parent=self)
+            return
+        if not attachments:
+            messagebox.showinfo("Documentacion", "El correo no tiene adjuntos descargables.", parent=self)
+            return
+        AttachmentSelectionDialog(
+            self, attachments,
+            on_save=lambda ids: self._import_attachments(codigo_empresa, message, ids),
+        )
+
+    def _import_attachments(self, codigo_empresa: str, message: dict, attachment_ids: list[str]):
+        empresa = self._gestor.get_empresa(codigo_empresa) or {}
+        ejercicio = int(empresa.get("ejercicio") or 0)
+        self.winfo_toplevel().configure(cursor="watch")
+
+        def worker():
+            try:
+                summary = DocumentosCorreoService(self._gestor).importar_adjuntos(
+                    codigo_empresa=codigo_empresa, ejercicio=ejercicio,
+                    mensaje_id=str(message.get("id") or ""), mailbox=str(message.get("mailbox") or ""),
+                    graph_message_id=str(message.get("graph_message_id") or ""),
+                    attachment_ids=attachment_ids, usuario=self._session.user.nombre,
+                )
+            except Exception as exc:
+                self.after(0, lambda err=exc: self._show_import_error(err))
+                return
+            self.after(0, lambda: self._show_import_summary(summary))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_import_error(self, exc: Exception):
+        self.winfo_toplevel().configure(cursor="")
+        messagebox.showerror("Documentacion", f"No se pudieron guardar los adjuntos:\n{exc}", parent=self)
+
+    def _show_import_summary(self, summary):
+        self.winfo_toplevel().configure(cursor="")
+        parts = [f"Incorporados a OCR: {len(summary.imported)}"]
+        if summary.duplicates:
+            parts.append(f"Duplicados omitidos: {len(summary.duplicates)}")
+        if summary.unsupported:
+            parts.append(f"No compatibles: {len(summary.unsupported)}")
+        if summary.errors:
+            parts.append("Errores:\n- " + "\n- ".join(summary.errors[:4]))
+        messagebox.showinfo("Documentacion", "\n".join(parts), parent=self)

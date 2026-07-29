@@ -7,6 +7,7 @@ from pathlib import Path
 
 from utils.validaciones import normalizar_nif_cif
 from services.ocr_recibidas_service import generate_suenlace_for_docs, mark_docs_as_generated
+from services.documentos_recibidos_a3_service import preparar_documentos_para_suenlace
 from services.ocr_service import OCRService
 from services.terceros_ocr_service import TercerosOcrService
 
@@ -207,6 +208,13 @@ class UIOcrFacturasController:
             )
             return
 
+        try:
+            docs_ok = preparar_documentos_para_suenlace(
+                self._gestor, self._codigo, self._ejercicio, docs_ok,
+            )
+        except Exception as exc:
+            self._view.show_error("Gest2A3Eco", f"No se pudieron preparar los PDFs para A3ECO:\n{exc}")
+            return
         regs = generate_suenlace_for_docs(self._gestor, self._codigo, self._ejercicio, docs_ok)
         if not regs:
             self._view.show_warning("Gest2A3Eco", "No se generaron registros para los documentos seleccionados.")

@@ -12,7 +12,7 @@ from utils.utilidades import get_default_templates_dir, load_app_config
 
 
 GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
-SCOPES = ["User.Read", "Mail.Send", "Mail.Send.Shared", "Mail.Read.Shared"]
+SCOPES = ["User.Read", "Mail.Send", "Mail.Send.Shared", "Mail.Read", "Mail.Read.Shared"]
 
 
 @dataclass(frozen=True)
@@ -178,6 +178,47 @@ class GraphMailService:
             url = payload.get("@odata.nextLink") or ""
             final_delta = payload.get("@odata.deltaLink") or final_delta
         return GraphSyncResult(messages, final_delta, actual_mailbox)
+
+    def list_attachments(self, *, mailbox: str, message_id: str) -> list[dict]:
+        """Devuelve los adjuntos de archivo de un correo, sin descargarlos aun."""
+        token, signed_in = self._token()
+        actual_mailbox = signed_in if mailbox == "me" else mailbox
+        target = "me" if mailbox == "me" else f"users/{quote(actual_mailbox)}"
+        url = (
+            f"{GRAPH_ROOT}/{target}/messages/{quote(str(message_id), safe='')}/attachments"
+            "?$select=id,name,size,contentType,isInline"
+        )
+        response = self.session.get(url, headers={
+            "Authorization": f"Bearer {token}",
+            "Prefer": 'IdType="ImmutableId"',
+        }, timeout=45)
+        if response.status_code != 200:
+            raise RuntimeError(self._error(response))
+        return [
+            item for item in response.json().get("value", [])
+            if item.get("@odata.type") == "#microsoft.graph.fileAttachment"
+            and not item.get("isInline", False)
+        ]
+
+    def download_attachment(self, *, mailbox: str, message_id: str, attachment_id: str) -> dict:
+        """Descarga un adjunto de archivo; Graph lo entrega codificado en base64."""
+        token, signed_in = self._token()
+        actual_mailbox = signed_in if mailbox == "me" else mailbox
+        target = "me" if mailbox == "me" else f"users/{quote(actual_mailbox)}"
+        url = (
+            f"{GRAPH_ROOT}/{target}/messages/{quote(str(message_id), safe='')}/attachments/"
+            f"{quote(str(attachment_id), safe='')}"
+        )
+        response = self.session.get(url, headers={
+            "Authorization": f"Bearer {token}",
+            "Prefer": 'IdType="ImmutableId"',
+        }, timeout=45)
+        if response.status_code != 200:
+            raise RuntimeError(self._error(response))
+        item = response.json()
+        if item.get("@odata.type") != "#microsoft.graph.fileAttachment" or not item.get("contentBytes"):
+            raise ValueError("El adjunto no es un archivo descargable.")
+        return item
 
     @staticmethod
     def _error(response) -> str:
