@@ -65,11 +65,15 @@ def test_crear_dsn_postgres_escapa_password_especial():
 
 
 class _Resultado:
-    def __init__(self, row):
+    def __init__(self, row=None, rows=None):
         self._row = row
+        self._rows = list(rows or [])
 
     def fetchone(self):
         return self._row
+
+    def fetchall(self):
+        return self._rows
 
 
 class _ConexionFalsa:
@@ -215,3 +219,92 @@ def test_upsert_factura_emitida_con_id_textual_confirma_transaccion():
     assert "INSERT INTO facturas_emitidas_docs" in insert_sql
     assert "ON CONFLICT(id) DO UPDATE" in insert_sql
     assert params[0:3] == ("factura-empleado-809", "E00809", 2026)
+
+
+class _ConexionMigracionesFalsa:
+    def __init__(self, columnas, *, tabla_permisos=True, indice_permisos=True):
+        self.columnas = columnas
+        self.tabla_permisos = tabla_permisos
+        self.indice_permisos = indice_permisos
+        self.sentencias = []
+        self.commit_count = 0
+
+    def execute(self, sql, params=None):
+        self.sentencias.append((sql, params))
+        if "information_schema.columns" in sql:
+            return _Resultado(rows=[
+                {"table_name": tabla, "column_name": columna}
+                for tabla, columna in self.columnas
+            ])
+        if "AS tabla_permisos" in sql:
+            return _Resultado({
+                "tabla_permisos": (
+                    "usuarios_permisos_globales" if self.tabla_permisos else None
+                ),
+                "indice_permisos": (
+                    "idx_usuarios_permisos_globales_usuario"
+                    if self.indice_permisos else None
+                ),
+            })
+        return _Resultado()
+
+    def commit(self):
+        self.commit_count += 1
+
+
+_COLUMNAS_ESENCIALES = {
+    ("empresas", "cuenta_bancaria"),
+    ("empresas", "cuentas_bancarias"),
+    ("empresas", "pdf_ref_seq"),
+    ("empresas", "serie_emitidas_rect"),
+    ("empresas", "siguiente_num_emitidas_rect"),
+    ("empresas", "logo_max_width_mm"),
+    ("empresas", "logo_max_height_mm"),
+    ("empresas", "pais"),
+    ("empresas", "naf"),
+    ("empresas", "responsable"),
+    ("empresas", "activo"),
+    ("usuarios", "must_change_password"),
+}
+
+
+def test_migraciones_postgres_no_ejecutan_ddl_si_esquema_esta_actualizado():
+    conexion = _ConexionMigracionesFalsa(_COLUMNAS_ESENCIALES)
+    gestor = object.__new__(GestorPostgres)
+    gestor.conn = conexion
+
+    gestor._aplicar_migraciones_esenciales_postgres()
+
+    sql = "\n".join(sentencia for sentencia, _params in conexion.sentencias)
+    assert "ALTER TABLE" not in sql
+    assert "CREATE TABLE" not in sql
+    assert "CREATE INDEX" not in sql
+    assert conexion.commit_count == 1
+
+
+def test_migraciones_postgres_crean_solo_elementos_que_faltan():
+    columnas = _COLUMNAS_ESENCIALES - {("empresas", "responsable")}
+    conexion = _ConexionMigracionesFalsa(
+        columnas, tabla_permisos=False, indice_permisos=False
+    )
+    gestor = object.__new__(GestorPostgres)
+    gestor.conn = conexion
+
+    gestor._aplicar_migraciones_esenciales_postgres()
+
+    ddl = [
+        " ".join(sentencia.split())
+        for sentencia, _params in conexion.sentencias
+        if sentencia.lstrip().upper().startswith(("ALTER", "CREATE"))
+    ]
+    assert len(ddl) == 3
+    assert ddl[0] == (
+        "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS responsable TEXT"
+    )
+    assert ddl[1].startswith(
+        "CREATE TABLE IF NOT EXISTS usuarios_permisos_globales"
+    )
+    assert ddl[2].startswith(
+        "CREATE INDEX IF NOT EXISTS idx_usuarios_permisos_globales_usuario"
+    )
+    assert conexion.commit_count == 1

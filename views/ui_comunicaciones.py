@@ -10,7 +10,7 @@ from services.graph_mail_service import GraphMailService
 from utils.utilidades import (
     load_app_config,
     load_user_config,
-    get_install_dir,
+    get_packaged_resource_path,
     save_app_config,
     save_user_config,
 )
@@ -481,10 +481,10 @@ class ComposeMailDialog(tk.Toplevel):
         body_html = construir_cuerpo_html(
             plain, signature, "",
         )
-        logo_path = get_install_dir() / "logo.png"
+        logo_path = get_packaged_resource_path("logo.png")
         inline_attachments = (
             [{"path": str(logo_path), "content_id": "gestinem-logo"}]
-            if "cid:gestinem-logo" in signature else []
+            if "cid:gestinem-logo" in signature and logo_path.is_file() else []
         )
         service = GraphMailService()
         try:

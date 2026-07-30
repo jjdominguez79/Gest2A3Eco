@@ -26,6 +26,22 @@ def get_install_dir() -> Path:
     return _base_dir()
 
 
+def get_packaged_resource_path(relative_path: str | Path) -> Path:
+    """Devuelve la ruta real de un recurso incluido por PyInstaller.
+
+    En una distribucion ``onedir`` el ejecutable queda en la carpeta principal,
+    pero los ``datas`` se alojan bajo ``sys._MEIPASS`` (normalmente
+    ``_internal``). En desarrollo, los recursos siguen resolviendose desde la
+    raiz del proyecto.
+    """
+    packaged_dir = Path(
+        getattr(sys, "_MEIPASS", _base_dir())
+        if getattr(sys, "frozen", False)
+        else _base_dir()
+    )
+    return packaged_dir / Path(relative_path)
+
+
 def get_app_data_dir() -> Path:
     if getattr(sys, "frozen", False):
         root = Path(os.getenv("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))

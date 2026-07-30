@@ -17,6 +17,21 @@ def test_get_user_config_path_usa_localappdata_en_frozen(monkeypatch, tmp_path):
     assert cfg_path == localappdata / "Gestinem" / "Gest2A3Eco" / "config.local.json"
 
 
+def test_get_packaged_resource_path_usa_meipass_en_frozen(monkeypatch, tmp_path):
+    internal_dir = tmp_path / "install" / "_internal"
+    internal_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(utilidades.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        utilidades.sys, "_MEIPASS", str(internal_dir), raising=False
+    )
+
+    assert (
+        utilidades.get_packaged_resource_path("logo.png")
+        == internal_dir / "logo.png"
+    )
+
+
 def test_load_app_config_migra_legacy_config_a_localappdata(monkeypatch, tmp_path):
     install_dir = tmp_path / "install"
     localappdata = tmp_path / "LocalAppData"

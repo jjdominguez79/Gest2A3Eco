@@ -938,7 +938,7 @@ class FacturasEmitidasController:
             from services.email_service import build_invoice_email_text
             from services.graph_mail_service import GraphMailService
             from views.ui_comunicaciones import construir_cuerpo_html, construir_firma_oficina
-            from utils.utilidades import get_install_dir, load_app_config
+            from utils.utilidades import get_packaged_resource_path, load_app_config
             email_cliente = str(cliente.get("email") or "").strip()
             email_empresa = str(self._empresa_conf.get("email") or "").strip()
             tot = self._totales_factura(fac)
@@ -967,9 +967,9 @@ class FacturasEmitidasController:
             bcc = self._split_email_addresses(compose.get("bcc", ""))
             shared_mailbox = str((load_app_config().get("microsoft_graph") or {}).get("shared_mailbox") or "Oficina@gestinem.es").strip()
             sender = "me" if send_from_personal else shared_mailbox
-            logo_path = get_install_dir() / "logo.png"
+            logo_path = get_packaged_resource_path("logo.png")
             inline_attachments = ([{"path": str(logo_path), "content_id": "gestinem-logo"}]
-                                  if "cid:gestinem-logo" in signature else [])
+                                  if "cid:gestinem-logo" in signature and logo_path.is_file() else [])
             try:
                 result = GraphMailService().send(
                     sender=sender, to=compose["emails"], cc=cc, bcc=bcc,

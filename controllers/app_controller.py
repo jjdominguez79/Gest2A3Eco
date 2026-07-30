@@ -1,24 +1,13 @@
+from __future__ import annotations
+
 from datetime import datetime
 from tkinter import messagebox, ttk
+from typing import TYPE_CHECKING
 
-from controllers.user_admin_controller import UserAdminController
 from services.empresa_service import EmpresaService
-from views.ui_configuracion_empresa import UIConfiguracionEmpresa
-from views.ui_comunicaciones import UIComunicaciones
-from views.ui_comunicaciones_global import UIComunicacionesGlobal
-from views.ui_contabilidad import UIContabilidad
-from views.ui_dashboard_empresa import UIDashboardEmpresa
-from views.ui_facturas_emitidas import UIFacturasEmitidas
-from views.ui_maestro_cuentas import UIMaestroCuentas
-from views.ui_ocr_facturas import UIOcrFacturas
-from views.ui_facturas_recibidas_ocr import UIFacturasRecibidasOcr
-from views.ui_notificaciones_global import UINotificacionesGlobal
-from views.ui_panel_general import UIPanelGeneral
-from views.ui_plantillas import UIPlantillasEmpresa
-from views.ui_procesos import UIProcesos
-from views.ui_terceros_globales import UITercerosGlobales
-from views.ui_tramites_dgt import UITramitesDgt
-from views.ui_user_admin import UserAdminDialog
+
+if TYPE_CHECKING:
+    from views.ui_dashboard_empresa import UIDashboardEmpresa
 
 
 class AppController:
@@ -59,6 +48,8 @@ class AppController:
         self._show(self.build_panel_general)
 
     def build_comunicaciones_global(self, parent):
+        from views.ui_comunicaciones_global import UIComunicacionesGlobal
+
         return UIComunicacionesGlobal(parent, self._gestor, self._session)
 
     def _show(self, factory):
@@ -79,6 +70,8 @@ class AppController:
         self._show(factory)
 
     def build_panel_general(self, parent):
+        from views.ui_panel_general import UIPanelGeneral
+
         on_create_company = self.open_new_company_config if self.authorization.can_manage_company_catalog() else None
         return UIPanelGeneral(
             parent,
@@ -148,6 +141,8 @@ class AppController:
 
     def _get_or_create_shell(self, codigo, ejercicio) -> UIDashboardEmpresa:
         """Devuelve el shell existente si es la misma empresa/ejercicio, o crea uno nuevo."""
+        from views.ui_dashboard_empresa import UIDashboardEmpresa
+
         if (
             self._company_shell is not None
             and self._current_codigo == codigo
@@ -222,6 +217,15 @@ class AppController:
 
     def _build_module_content(self, parent, codigo, ejercicio, modulo, nombre):
         """Construye y devuelve el widget del modulo sin empaquetarlo."""
+        from views.ui_comunicaciones import UIComunicaciones
+        from views.ui_configuracion_empresa import UIConfiguracionEmpresa
+        from views.ui_contabilidad import UIContabilidad
+        from views.ui_facturas_emitidas import UIFacturasEmitidas
+        from views.ui_maestro_cuentas import UIMaestroCuentas
+        from views.ui_plantillas import UIPlantillasEmpresa
+        from views.ui_procesos import UIProcesos
+        from views.ui_terceros_globales import UITercerosGlobales
+
         if modulo == "configuracion":
             shell = self._company_shell
             def _back_to_dashboard():
@@ -277,6 +281,8 @@ class AppController:
         return True
 
     def open_new_company_config(self):
+        from views.ui_configuracion_empresa import UIConfiguracionEmpresa
+
         try:
             if not self.authorization.can_manage_company_catalog():
                 raise PermissionError("No tienes permisos para crear empresas.")
@@ -300,12 +306,16 @@ class AppController:
     # ------------------------------------------------------------------ otros
 
     def open_terceros(self):
+        from views.ui_terceros_globales import UITercerosGlobales
+
         if self._company_shell is not None:
             self._open_module_in_shell(self._current_codigo, self._current_ejercicio, "terceros")
         else:
             self._show(lambda parent: UITercerosGlobales(parent, self._gestor, session=self._session))
 
     def open_notificaciones_global(self):
+        from views.ui_notificaciones_global import UINotificacionesGlobal
+
         self._show(
             lambda parent: UINotificacionesGlobal(
                 parent, self._gestor, session=self._session,
@@ -314,6 +324,8 @@ class AppController:
         )
 
     def open_tramites_dgt(self):
+        from views.ui_tramites_dgt import UITramitesDgt
+
         try:
             self.authorization.ensure_tramites_dgt()
         except PermissionError as exc:
@@ -322,6 +334,9 @@ class AppController:
         self._show(lambda parent: UITramitesDgt(parent, self._gestor, session=self._session, on_back=self.start))
 
     def open_user_admin(self):
+        from controllers.user_admin_controller import UserAdminController
+        from views.ui_user_admin import UserAdminDialog
+
         try:
             self.authorization.ensure_admin()
         except PermissionError as exc:
@@ -345,6 +360,9 @@ class _OcrModuleContainer(ttk.Frame):
     """
 
     def __init__(self, master, gestor, codigo, ejercicio, nombre, session=None):
+        from views.ui_facturas_recibidas_ocr import UIFacturasRecibidasOcr
+        from views.ui_ocr_facturas import UIOcrFacturas
+
         super().__init__(master)
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True)
