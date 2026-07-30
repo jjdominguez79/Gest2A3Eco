@@ -1682,8 +1682,12 @@ class GestorSQLite:
         sql = """
             SELECT s.*, e.nombre AS empresa_nombre, e.cif AS empresa_cif, e.email AS empresa_email
             FROM cert_solicitudes s
-            LEFT JOIN (SELECT codigo, nombre, cif, email, MAX(ejercicio) AS ejercicio
-                       FROM empresas GROUP BY codigo) e ON e.codigo = s.codigo_empresa
+            LEFT JOIN empresas e
+              ON e.codigo = s.codigo_empresa
+             AND e.ejercicio = (
+                 SELECT MAX(e2.ejercicio) FROM empresas e2
+                 WHERE e2.codigo = s.codigo_empresa
+             )
             WHERE 1=1
         """
         params: list = []
@@ -5464,8 +5468,11 @@ class GestorSQLite:
 
     def listar_empresas_resumen(self) -> list[dict]:
         cur = self.conn.execute(
-            "SELECT codigo, nombre, cif, MAX(ejercicio) AS ejercicio "
-            "FROM empresas GROUP BY codigo ORDER BY nombre"
+            "SELECT e.codigo, e.nombre, e.cif, e.ejercicio "
+            "FROM empresas e "
+            "WHERE e.ejercicio = ("
+            "  SELECT MAX(e2.ejercicio) FROM empresas e2 WHERE e2.codigo=e.codigo"
+            ") ORDER BY e.nombre"
         )
         cols = [c[0] for c in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
@@ -5478,8 +5485,12 @@ class GestorSQLite:
             FROM notif_bandeja nb
             LEFT JOIN notif_organismos o  ON nb.organismo_id = o.id
             LEFT JOIN notif_buzones    bz ON nb.buzon_id     = bz.id
-            LEFT JOIN (SELECT codigo, nombre, cif, MAX(ejercicio) AS ejercicio
-                       FROM empresas GROUP BY codigo) e ON e.codigo = nb.codigo_empresa
+            LEFT JOIN empresas e
+              ON e.codigo = nb.codigo_empresa
+             AND e.ejercicio = (
+                 SELECT MAX(e2.ejercicio) FROM empresas e2
+                 WHERE e2.codigo = nb.codigo_empresa
+             )
             WHERE 1=1
         """
         params: list = []
@@ -5496,8 +5507,12 @@ class GestorSQLite:
         sql = """
             SELECT c.*, e.nombre AS empresa_nombre, e.cif AS empresa_cif
             FROM notif_certificados c
-            LEFT JOIN (SELECT codigo, nombre, cif, MAX(ejercicio) AS ejercicio
-                       FROM empresas GROUP BY codigo) e ON e.codigo = c.codigo_empresa
+            LEFT JOIN empresas e
+              ON e.codigo = c.codigo_empresa
+             AND e.ejercicio = (
+                 SELECT MAX(e2.ejercicio) FROM empresas e2
+                 WHERE e2.codigo = c.codigo_empresa
+             )
             WHERE 1=1
         """
         params: list = []
@@ -5518,8 +5533,12 @@ class GestorSQLite:
             FROM notif_buzones b
             LEFT JOIN notif_organismos o   ON b.organismo_id = o.id
             LEFT JOIN notif_certificados c ON b.certificado_id = c.id
-            LEFT JOIN (SELECT codigo, nombre, cif, MAX(ejercicio) AS ejercicio
-                       FROM empresas GROUP BY codigo) e ON e.codigo = b.codigo_empresa
+            LEFT JOIN empresas e
+              ON e.codigo = b.codigo_empresa
+             AND e.ejercicio = (
+                 SELECT MAX(e2.ejercicio) FROM empresas e2
+                 WHERE e2.codigo = b.codigo_empresa
+             )
             WHERE 1=1
         """
         params: list = []
@@ -5542,8 +5561,12 @@ class GestorSQLite:
             FROM notif_sync_logs l
             LEFT JOIN notif_organismos o  ON l.organismo_id = o.id
             LEFT JOIN notif_buzones    bz ON l.buzon_id     = bz.id
-            LEFT JOIN (SELECT codigo, nombre, cif, MAX(ejercicio) AS ejercicio
-                       FROM empresas GROUP BY codigo) e ON e.codigo = l.codigo_empresa
+            LEFT JOIN empresas e
+              ON e.codigo = l.codigo_empresa
+             AND e.ejercicio = (
+                 SELECT MAX(e2.ejercicio) FROM empresas e2
+                 WHERE e2.codigo = l.codigo_empresa
+             )
             WHERE 1=1
         """
         params: list = []
@@ -6243,7 +6266,7 @@ class GestorSQLite:
             ) e ON e.codigo=c.codigo_empresa
             LEFT JOIN comunicaciones_mensajes m ON m.comunicacion_id=c.id
             WHERE c.descartado=1
-            GROUP BY c.id
+            GROUP BY c.id, e.nombre
             ORDER BY c.descartado_at DESC
             """
         ).fetchall()
@@ -6500,7 +6523,7 @@ class GestorSQLite:
             ) e ON e.codigo=c.codigo_empresa
             LEFT JOIN comunicaciones_mensajes m ON m.comunicacion_id=c.id
             WHERE c.responsable_usuario_id IS NOT NULL AND c.descartado=0
-            GROUP BY c.id
+            GROUP BY c.id, e.nombre
             ORDER BY c.updated_at DESC
             """
         ).fetchall()

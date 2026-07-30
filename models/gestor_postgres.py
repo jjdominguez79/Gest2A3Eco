@@ -96,18 +96,64 @@ class CursorPostgres:
 
     def execute(self, sql: str, params=None):
         traducido = traducir_sqlite_a_postgres(sql)
-        self._cursor.execute(traducido, params)
-        if re.match(r"^\s*INSERT\b", traducido, re.IGNORECASE):
-            try:
-                row = self._cursor.connection.execute("SELECT LASTVAL()").fetchone()
-                self.lastrowid = next(iter(row.values())) if isinstance(row, dict) else row[0]
-            except Exception:
-                self.lastrowid = None
+        try:
+            self._cursor.execute(traducido, params)
+            if (
+                self._cursor.rowcount != 0
+                and re.match(r"^\s*INSERT\b", traducido, re.IGNORECASE)
+                and " RETURNING " not in traducido.upper()
+            ):
+                self._cargar_lastrowid(traducido)
+        except Exception:
+            # SQLite no deja la conexion inutilizable despues de un error de
+            # sentencia. PostgreSQL si: hay que deshacer la transaccion fallida
+            # para que una vista que captura el error no rompa las siguientes.
+            self._cursor.connection.rollback()
+            raise
         return self
 
     def executemany(self, sql: str, params_seq: Iterable):
-        self._cursor.executemany(traducir_sqlite_a_postgres(sql), params_seq)
+        try:
+            self._cursor.executemany(traducir_sqlite_a_postgres(sql), params_seq)
+        except Exception:
+            self._cursor.connection.rollback()
+            raise
         return self
+
+    def _cargar_lastrowid(self, sql: str) -> None:
+        """Obtiene el ID solo si la tabla tiene una secuencia en ``id``.
+
+        ``SELECT LASTVAL()`` falla cuando el INSERT usa una clave textual y
+        aborta toda la transaccion. ``pg_get_serial_sequence`` permite
+        comprobarlo sin provocar ese fallo.
+        """
+        self.lastrowid = None
+        match = re.match(
+            r'^\s*INSERT\s+INTO\s+("?[\w]+"?)',
+            sql,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return
+        tabla = match.group(1).strip('"')
+        row = self._cursor.connection.execute(
+            """
+            SELECT pg_get_serial_sequence(%s, 'id')
+            FROM pg_attribute
+            WHERE attrelid=to_regclass(%s)
+              AND attname='id'
+              AND NOT attisdropped
+            """,
+            (tabla, tabla),
+        ).fetchone()
+        secuencia = next(iter(row.values())) if isinstance(row, dict) and row else (row[0] if row else None)
+        if not secuencia:
+            return
+        row = self._cursor.connection.execute(
+            "SELECT currval(%s::regclass)",
+            (secuencia,),
+        ).fetchone()
+        self.lastrowid = next(iter(row.values())) if isinstance(row, dict) else row[0]
 
     def fetchone(self):
         return _adaptar_fila(self._cursor.fetchone())
@@ -161,6 +207,16 @@ class ConexionPostgres:
 
     def close(self):
         self._conexion.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if exc_type is None:
+            self.commit()
+        else:
+            self.rollback()
+        return False
 
 
 class GestorPostgres(GestorSQLite):

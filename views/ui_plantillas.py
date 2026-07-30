@@ -68,6 +68,10 @@ class InlineKVEditor(ttk.Frame):
             self.tv.insert("", tk.END, values=(k, v))
 
     def to_dict(self):
+        # Si el usuario pulsa Aceptar mientras sigue editando una celda, Tk no
+        # garantiza que FocusOut se procese antes de Dialog.apply(). Confirma
+        # aqui la edicion activa para no guardar el valor anterior.
+        self._apply_edit()
         out = {}
         for iid in self.tv.get_children():
             vals = self.tv.item(iid, "values")

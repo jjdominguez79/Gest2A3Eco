@@ -1,6 +1,6 @@
 {
-  "version": "1.4.0",
-  "tag": "v1.4.0",
-  "changelog": "Migra el almacenamiento compartido a PostgreSQL para trabajo concurrente, incorpora el migrador y las adaptaciones de compatibilidad, y mejora la importacion A3 y la captura de numeros de asiento.",
+  "version": "1.4.1",
+  "tag": "v1.4.1",
+  "changelog": "Corrige el guardado en PostgreSQL de facturas emitidas, terceros y plantillas bancarias; evita transacciones abortadas tras inserciones con claves textuales; confirma la celda activa del mapeo Excel al guardar; y adapta consultas de notificaciones y comunicaciones a PostgreSQL.",
   "force_update": true
 }

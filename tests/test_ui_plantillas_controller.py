@@ -1,4 +1,5 @@
 from controllers.ui_plantillas_controller import PlantillasController
+from views.ui_plantillas import InlineKVEditor
 
 
 class TreeFalso:
@@ -90,3 +91,26 @@ def test_configurar_cuenta_distinta_reemplaza_plantilla_anterior():
 
     assert gestor.guardada["banco"] == "Cuenta nueva"
     assert gestor.eliminada == ("E00505", "Cuenta anterior", 2026)
+
+
+def test_mapeo_excel_confirma_la_celda_activa_antes_de_guardar():
+    class TreeMapeoFalso:
+        def get_children(self):
+            return ("fila",)
+
+        def item(self, _iid, _opcion):
+            return ("Importe", "F")
+
+    class EditorFalso:
+        tv = TreeMapeoFalso()
+        edicion_confirmada = False
+
+        def _apply_edit(self):
+            self.edicion_confirmada = True
+
+    editor = EditorFalso()
+
+    resultado = InlineKVEditor.to_dict(editor)
+
+    assert editor.edicion_confirmada is True
+    assert resultado == {"Importe": "F"}
