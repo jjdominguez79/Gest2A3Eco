@@ -318,11 +318,14 @@ def generar_emitidas(
         )
 
         # Detalle tipo 9 por cada linea de IVA
-        cta_ventas = r0.get("Cuenta Compras Ventas") or c_ing_ter or cta_ventas_def
-        cta_ventas = _ajustar_cuenta(cta_ventas, ndig)
         detalle_rows = []
         detalle_map = {}
         for rr in grecs:
+            es_suplido = bool(rr.get("Es Suplido"))
+            cuenta_linea = _ajustar_cuenta(
+                rr.get("Cuenta Compras Ventas") or c_ing_ter or cta_ventas_def,
+                ndig,
+            )
             base  = _d2(_fv(rr.get("Base")))
             pct   = _d0(_fv_pct(rr.get("Porcentaje IVA"), pct_fraccion))
             cuota = _d2(_fv(rr.get("Cuota IVA")))
@@ -349,7 +352,7 @@ def generar_emitidas(
             if base != 0 and pct == 0 and cuota != 0:
                 pct = _d0((abs(cuota / base) * Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
-            key = (float(pct), float(re_pct), float(ret_pct))
+            key = (cuenta_linea, es_suplido, float(pct), float(re_pct), float(ret_pct))
             agg = detalle_map.get(key)
             if not agg:
                 agg = {
@@ -360,6 +363,8 @@ def generar_emitidas(
                     "re_c": Decimal("0.00"),
                     "ret_pct": float(ret_pct),
                     "ret_c": Decimal("0.00"),
+                    "cuenta": cuenta_linea,
+                    "es_suplido": es_suplido,
                 }
                 detalle_map[key] = agg
                 detalle_rows.append(agg)
@@ -389,7 +394,7 @@ def generar_emitidas(
                 render_det(
                     codigo_empresa=codigo_empresa,
                     fecha=fecha,
-                    cuenta_base_iva=cta_ventas,
+                    cuenta_base_iva=rr["cuenta"],
                     ndig_plan=ndig,
                     num_factura=num_fact,
                     desc_apunte=desc_det,
@@ -410,7 +415,7 @@ def generar_emitidas(
                     cuenta_recargo="",
                     cuenta_retencion=cta_ret_def or "",
                     impreso=modelo,
-                    operacion_sujeta_iva=True,
+                    operacion_sujeta_iva=not rr["es_suplido"],
                     keep_sign=True,
                 )
             )

@@ -1561,22 +1561,29 @@ class FacturasEmitidasController:
         return self._round2(total)
 
     def _totales_factura(self, fac: dict):
-        base = iva = re = 0.0
+        base = iva = re = suplidos = 0.0
         lineas = aplicar_descuento_total_lineas(
             fac.get("lineas", []),
             fac.get("descuento_total_tipo"),
             fac.get("descuento_total_valor"),
         )
         for ln in lineas:
+            tipo = str(ln.get("tipo") or "").strip().lower()
+            if tipo == "obs":
+                continue
+            if tipo == "suplido":
+                suplidos += self._to_float(ln.get("base"))
+                continue
             base += self._to_float(ln.get("base"))
             iva += self._to_float(ln.get("cuota_iva"))
             re += self._to_float(ln.get("cuota_re"))
         ret = self._retencion_importe(fac)
-        total = base + iva + re + ret
+        total = base + iva + re + suplidos + ret
         return {
             "base": self._round2(base),
             "iva": self._round2(iva),
             "re": self._round2(re),
+            "suplidos": self._round2(suplidos),
             "ret": self._round2(ret),
             "total": self._round2(total),
         }
@@ -1722,6 +1729,11 @@ class FacturasEmitidasController:
                     "Cuota Retencion IRPF": 0.0 if aplica_ret_pct else (ret_importe if ret_aplica_linea else 0.0),
                 }
             )
+            cuenta_linea = str(ln.get("cuenta_ingreso") or "").strip()
+            if cuenta_linea:
+                r["Cuenta Compras Ventas"] = cuenta_linea
+            if str(ln.get("tipo") or "").strip().lower() == "suplido":
+                r["Es Suplido"] = True
             rows.append(r)
         return rows
 

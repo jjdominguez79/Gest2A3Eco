@@ -1397,7 +1397,7 @@ class FacturaDialog(tk.Toplevel):
 
         self.tv = ttk.Treeview(
             frm,
-            columns=("concepto", "unidades", "precio", "desc", "base", "pct_iva", "cuota_iva", "pct_irpf", "cuota_irpf", "desc_tipo", "desc_val", "tipo_linea"),
+            columns=("concepto", "unidades", "precio", "desc", "base", "pct_iva", "cuota_iva", "pct_irpf", "cuota_irpf", "desc_tipo", "desc_val", "tipo_linea", "cuenta_ingreso"),
             displaycolumns=("concepto", "unidades", "precio", "desc", "base", "pct_iva", "cuota_iva"),
             show="headings",
             height=8,
@@ -1747,6 +1747,12 @@ class FacturaDialog(tk.Toplevel):
         return bool(self.var_line_obs.get())
 
     def upsert_line_row(self, ln: dict):
+        sel = self.tv.selection()
+        if sel:
+            anteriores = self.tv.item(sel[0], "values") or ()
+            if not ln.get("tipo") and len(anteriores) > 11 and anteriores[11] == "suplido":
+                ln["tipo"] = "suplido"
+                ln["cuenta_ingreso"] = anteriores[12] if len(anteriores) > 12 else "55509999"
         desc_txt = self._format_desc(ln)
         is_obs = str(ln.get("tipo") or "").strip().lower() == "obs"
         sym = self._moneda_simbolo
@@ -1763,8 +1769,8 @@ class FacturaDialog(tk.Toplevel):
             ln.get("descuento_tipo", ""),
             "" if is_obs else fmt2(round2(ln.get("descuento_valor"))),
             ln.get("tipo", ""),
+            ln.get("cuenta_ingreso", ""),
         )
-        sel = self.tv.selection()
         if sel:
             self.tv.item(sel[0], values=vals)
         else:
@@ -1787,6 +1793,7 @@ class FacturaDialog(tk.Toplevel):
             ln.get("descuento_tipo", ""),
             "" if is_obs else fmt2(round2(ln.get("descuento_valor"))),
             ln.get("tipo", ""),
+            ln.get("cuenta_ingreso", ""),
         )
         self.tv.insert("", tk.END, values=vals)
 
@@ -1843,6 +1850,7 @@ class FacturaDialog(tk.Toplevel):
                     "pct_re": 0.0,
                     "cuota_re": 0.0,
                     "tipo": tipo,
+                    "cuenta_ingreso": vals[12] if len(vals) > 12 else "",
                 }
             )
         return out

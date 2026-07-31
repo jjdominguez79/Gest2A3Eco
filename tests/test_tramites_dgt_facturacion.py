@@ -9,6 +9,7 @@ from services.tramites_dgt_facturacion_service import (
     SERIE_DGT,
     TramitesDgtFacturacionService,
 )
+import procesos.facturas_emitidas as exportador_emitidas
 
 
 @pytest.fixture()
@@ -85,3 +86,36 @@ def test_no_duplica_factura_ni_reinicia_contador_serie(gestor):
         servicio.crear_borrador(_expediente(), destinatario="comprador", honorarios=90)
 
     assert gestor.get_siguiente_serie_num(EMPRESA_DGT, date.today().year, SERIE_DGT) == 2
+
+
+def test_exportacion_separa_honorarios_y_suplidos(monkeypatch):
+    detalles = []
+    monkeypatch.setattr(exportador_emitidas, "render_emitidas_cabecera_256", lambda **_kwargs: "CAB")
+    monkeypatch.setattr(
+        exportador_emitidas,
+        "render_emitidas_detalle_256",
+        lambda **kwargs: detalles.append(kwargs) or "DET",
+    )
+    rows = [
+        {
+            "Serie": "TR", "Numero Factura": "TR000001", "Fecha Asiento": "2026-01-15",
+            "NIF Cliente Proveedor": "12345678Z", "Nombre Cliente Proveedor": "Cliente",
+            "Cuenta Cliente Proveedor": "43000001", "Cuenta Compras Ventas": "70000000",
+            "Base": 100, "Porcentaje IVA": 21, "Cuota IVA": 21,
+        },
+        {
+            "Serie": "TR", "Numero Factura": "TR000001", "Fecha Asiento": "2026-01-15",
+            "NIF Cliente Proveedor": "12345678Z", "Nombre Cliente Proveedor": "Cliente",
+            "Cuenta Cliente Proveedor": "43000001", "Cuenta Compras Ventas": CUENTA_SUPLIDOS,
+            "Base": 55.70, "Porcentaje IVA": 0, "Cuota IVA": 0, "Es Suplido": True,
+        },
+    ]
+
+    exportador_emitidas.generar_emitidas(rows, {}, EMPRESA_DGT, 8)
+
+    assert len(detalles) == 2
+    honorarios = next(d for d in detalles if d["cuenta_base_iva"] == "70000000")
+    suplido = next(d for d in detalles if d["cuenta_base_iva"] == CUENTA_SUPLIDOS)
+    assert honorarios["operacion_sujeta_iva"] is True
+    assert suplido["operacion_sujeta_iva"] is False
+    assert suplido["base"] == 55.7

@@ -10,6 +10,7 @@ from services.email_service import open_outlook_email
 from services.dataprius_service import DatapriusClient
 from services.signrequest_service import SignRequestClient
 from services.tramites_dgt_repository import ApiDgtRepository
+from services.tramites_dgt_facturacion_service import TramitesDgtFacturacionService
 from services.tramites_dgt_service import TramitesDgtService
 from utils.utilidades import load_app_config
 from views.ui_tramites_dgt_public import UITramitesDgtPublicForm
@@ -18,6 +19,8 @@ from views.ui_tramites_dgt_public import UITramitesDgtPublicForm
 class UITramitesDgt(ttk.Frame):
     def __init__(self, parent, gestor, session=None, on_back=None):
         super().__init__(parent)
+        self._gestor = gestor
+        self._facturacion_service = TramitesDgtFacturacionService(gestor)
         cfg = load_app_config()
         api_url = str(cfg.get("dgt_api_url") or "").strip()
         api_key = str(cfg.get("dgt_api_key") or "").strip()
@@ -165,6 +168,8 @@ class UITramitesDgt(ttk.Frame):
         secondary_actions.pack(fill="x", pady=(5, 0))
         subsanation_actions = ttk.Frame(actions)
         subsanation_actions.pack(fill="x", pady=(5, 0))
+        billing_actions = ttk.Frame(actions)
+        billing_actions.pack(fill="x", pady=(5, 0))
         for parent, text, command, primary in (
             (primary_actions, "Guardar", self._guardar, True),
             (primary_actions, "Validar", self._validar, False),
@@ -193,6 +198,14 @@ class UITramitesDgt(ttk.Frame):
             text="Comprador",
             command=lambda: self._solicitar_subsanacion("comprador"),
         ).pack(side=tk.LEFT)
+        ttk.Button(
+            billing_actions,
+            text="Facturar tramite",
+            style="Primary.TButton",
+            command=self._facturar_tramite,
+        ).pack(side=tk.LEFT)
+        self.var_factura_estado = tk.StringVar(value="Factura: no creada")
+        ttk.Label(billing_actions, textvariable=self.var_factura_estado).pack(side=tk.LEFT, padx=10)
 
         links = ttk.LabelFrame(detail_tab, text="Enlaces seguros")
         links.pack(fill="x", pady=(0, 8))
@@ -341,6 +354,36 @@ class UITramitesDgt(ttk.Frame):
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
 
+    def _facturar_tramite(self):
+        if not self._current_id:
+            messagebox.showwarning("Tramites DGT", "Selecciona un expediente.", parent=self.winfo_toplevel())
+            return
+        vinculada = self._gestor.get_dgt_factura(self._current_id)
+        if vinculada:
+            messagebox.showinfo(
+                "Tramites DGT",
+                "Este expediente ya tiene una factura vinculada.\n\n"
+                f"Factura: {vinculada.get('factura_id')}\n"
+                "Puedes abrirla en Empresa E00006 > Facturacion.",
+                parent=self.winfo_toplevel(),
+            )
+            return
+        expediente = self._service.get_expediente(self._current_id) or {}
+        dialog = FacturarTramiteDgtDialog(self.winfo_toplevel(), expediente)
+        if not dialog.resultado:
+            return
+        try:
+            factura = self._facturacion_service.crear_borrador(expediente, **dialog.resultado)
+            self.var_factura_estado.set("Factura: borrador TR creado")
+            messagebox.showinfo(
+                "Tramites DGT",
+                "Se ha creado el borrador de factura en la empresa E00006.\n\n"
+                "Revísalo en Facturacion; al guardarlo definitivamente entrará en el circuito normal.",
+                parent=self.winfo_toplevel(),
+            )
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+
     def _generar_documentos(self):
         if not self._current_id:
             return
@@ -401,6 +444,10 @@ class UITramitesDgt(ttk.Frame):
         self.var_link_comprador.set(links.get("comprador", ""))
         estado_firma = str(expediente.get("firma_estado") or "sin solicitud").replace("_", " ")
         self.var_firma_estado.set(f"Firma: {estado_firma}")
+        vinculada = self._gestor.get_dgt_factura(self._current_id)
+        self.var_factura_estado.set(
+            "Factura: borrador TR creado" if vinculada else "Factura: no creada"
+        )
         self._load_docs()
         self._load_adjuntos(expediente)
 
@@ -746,8 +793,80 @@ class UITramitesDgt(ttk.Frame):
         self.var_link_vendedor.set("")
         self.var_link_comprador.set("")
         self.var_firma_estado.set("Firma: sin solicitud")
+        self.var_factura_estado.set("Factura: no creada")
         self.docs_tv.delete(*self.docs_tv.get_children())
         self.attach_tv.delete(*self.attach_tv.get_children())
+
+
+class FacturarTramiteDgtDialog(simpledialog.Dialog):
+    def __init__(self, parent, expediente: dict):
+        self.expediente = expediente
+        self.resultado = None
+        super().__init__(parent, title="Facturar tramite DGT")
+
+    def body(self, master):
+        ttk.Label(
+            master,
+            text="La factura se creara como borrador de la empresa E00006, serie TR.",
+            wraplength=460,
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 12))
+        self.var_destinatario = tk.StringVar(value="comprador")
+        self.var_honorarios = tk.StringVar()
+        self.var_tasa = tk.StringVar()
+        self.var_impuesto = tk.StringVar()
+        self.var_otros = tk.StringVar()
+
+        ttk.Label(master, text="Facturar a").grid(row=1, column=0, sticky="w", padx=8, pady=4)
+        partes = ttk.Frame(master)
+        partes.grid(row=1, column=1, sticky="w", padx=8, pady=4)
+        ttk.Radiobutton(partes, text="Comprador", variable=self.var_destinatario, value="comprador").pack(side=tk.LEFT)
+        ttk.Radiobutton(partes, text="Vendedor", variable=self.var_destinatario, value="vendedor").pack(side=tk.LEFT, padx=12)
+
+        entries = (
+            ("Honorarios (base sin IVA) *", self.var_honorarios),
+            ("Tasa DGT (suplido)", self.var_tasa),
+            ("Impuesto 620 (suplido)", self.var_impuesto),
+            ("Otros suplidos", self.var_otros),
+        )
+        first = None
+        for row, (label, var) in enumerate(entries, start=2):
+            ttk.Label(master, text=label).grid(row=row, column=0, sticky="w", padx=8, pady=4)
+            entry = ttk.Entry(master, textvariable=var, width=22)
+            entry.grid(row=row, column=1, sticky="w", padx=8, pady=4)
+            if first is None:
+                first = entry
+        ttk.Label(
+            master,
+            text="Los honorarios llevan IVA del 21 %. Los suplidos no llevan IVA y se contabilizan en 55509999.",
+            wraplength=460,
+        ).grid(row=6, column=0, columnspan=2, sticky="w", padx=8, pady=(10, 8))
+        return first
+
+    def validate(self):
+        if not self.var_honorarios.get().strip():
+            messagebox.showwarning("Facturar tramite", "Indica los honorarios.", parent=self)
+            return False
+        rol = self.var_destinatario.get()
+        parte = dict(self.expediente.get(f"{rol}_payload") or {})
+        nombre = parte.get("nombre") or self.expediente.get(f"{rol}_nombre")
+        nif = parte.get("nif") or parte.get("nif_cif")
+        if not nombre or not nif:
+            messagebox.showwarning(
+                "Facturar tramite",
+                f"Faltan el nombre o el NIF/CIF del {rol}. Completa sus datos antes de facturar.",
+                parent=self,
+            )
+            return False
+        return True
+
+    def apply(self):
+        self.resultado = {
+            "destinatario": self.var_destinatario.get(),
+            "honorarios": self.var_honorarios.get(),
+            "tasa_dgt": self.var_tasa.get(),
+            "impuesto_620": self.var_impuesto.get(),
+            "otros_suplidos": self.var_otros.get(),
+        }
 
 
 class DatosParteDialog(simpledialog.Dialog):

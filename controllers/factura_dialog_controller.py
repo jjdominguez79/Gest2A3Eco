@@ -192,13 +192,17 @@ class FacturaDialogController:
             self.refresh_totales()
 
     def refresh_totales(self):
-        base = iva = 0.0
+        base = iva = suplidos = 0.0
         resumen = {}
         lineas = self._view.get_lineas()
         dtipo, dvalor = self._view.get_descuento_total()
         lineas_calc = aplicar_descuento_total_lineas(lineas, dtipo, dvalor)
         for ln in lineas_calc:
-            if str(ln.get("tipo") or "").strip().lower() == "obs":
+            tipo = str(ln.get("tipo") or "").strip().lower()
+            if tipo == "obs":
+                continue
+            if tipo == "suplido":
+                suplidos += ln.get("base", 0.0)
                 continue
             base += ln["base"]
             iva += ln["cuota_iva"]
@@ -209,7 +213,7 @@ class FacturaDialogController:
         base = self._round2(base)
         iva = self._round2(iva)
         ret = self._round2(self._view.get_retencion_importe() if self._view.get_retencion_aplica() else 0.0)
-        total = self._round2(base + iva + ret)
+        total = self._round2(base + iva + suplidos + ret)
         self._view.set_totales(base, iva, ret, total)
         rows = [resumen[k] for k in sorted(resumen.keys(), reverse=True)]
         self._view.set_iva_resumen(rows)
@@ -469,7 +473,7 @@ class FacturaDialogController:
         total = 0.0
         lineas_calc = aplicar_descuento_total_lineas(lineas, dtipo, dvalor)
         for ln in lineas_calc:
-            if str(ln.get("tipo") or "").strip().lower() == "obs":
+            if str(ln.get("tipo") or "").strip().lower() in {"obs", "suplido"}:
                 continue
             total += ln.get("base", 0.0)
         return self._round2(total)

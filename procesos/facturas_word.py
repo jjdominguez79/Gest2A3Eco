@@ -75,7 +75,7 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
             return 0.0, ""
         total_base = 0.0
         for ln in lineas:
-            if str(ln.get("tipo") or "").strip().lower() == "obs":
+            if str(ln.get("tipo") or "").strip().lower() in {"obs", "suplido"}:
                 continue
             try:
                 total_base += float(ln.get("base") or 0)
@@ -119,7 +119,7 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
 
     resumen = {}
     for ln in lineas_calc:
-        if str(ln.get("tipo") or "").strip().lower() == "obs":
+        if str(ln.get("tipo") or "").strip().lower() in {"obs", "suplido"}:
             continue
         pct = float(ln.get("pct_iva") or 0)
         item = resumen.setdefault(pct, {"base": 0.0, "cuota": 0.0})
@@ -137,7 +137,7 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
     if fac.get("retencion_aplica"):
         base_imponible = 0.0
         for ln in lineas_calc:
-            if str(ln.get("tipo") or "").strip().lower() == "obs":
+            if str(ln.get("tipo") or "").strip().lower() in {"obs", "suplido"}:
                 continue
             try:
                 base_imponible += float(ln.get("base") or 0)
@@ -223,6 +223,7 @@ def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales:
         "totales": {
             "base": f2s(totales.get("base", 0)),
             "iva": f2s(totales.get("iva", 0)),
+            "suplidos": f2s(totales.get("suplidos", 0)),
             "irpf": f2s(totales.get("ret", 0)),
             "total": f2s(totales.get("total", 0)),
             "ret_base": f2s(ret_base or 0),

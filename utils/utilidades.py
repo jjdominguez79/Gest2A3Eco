@@ -577,7 +577,7 @@ def aplicar_descuento_total_lineas(lineas, tipo, valor):
 
     total_base = 0.0
     for ln in lineas:
-        if str(ln.get("tipo") or "").strip().lower() == "obs":
+        if str(ln.get("tipo") or "").strip().lower() in {"obs", "suplido"}:
             continue
         try:
             total_base += float(ln.get("base", 0) or 0)
@@ -593,7 +593,7 @@ def aplicar_descuento_total_lineas(lineas, tipo, valor):
 
     out = []
     for ln in lineas:
-        if str(ln.get("tipo") or "").strip().lower() == "obs":
+        if str(ln.get("tipo") or "").strip().lower() in {"obs", "suplido"}:
             out.append(dict(ln))
             continue
         base = float(ln.get("base", 0) or 0)

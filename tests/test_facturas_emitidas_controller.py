@@ -12,3 +12,25 @@ def test_numero_factura_contable_tolera_campos_vacios():
 
     assert controller._numero_factura_contable({"serie": "", "numero": "123"}) == "123"
     assert controller._numero_factura_contable({"serie": "A", "numero": ""}) == "A"
+
+
+def test_totales_separan_suplidos_de_base_imponible():
+    controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
+    factura = {
+        "lineas": [
+            {"base": 100, "cuota_iva": 21, "cuota_re": 0, "tipo": "honorario"},
+            {"base": 55.70, "cuota_iva": 0, "cuota_re": 0, "tipo": "suplido"},
+        ],
+        "retencion_aplica": False,
+    }
+
+    totales = controller._totales_factura(factura)
+
+    assert totales == {
+        "base": 100.0,
+        "iva": 21.0,
+        "re": 0.0,
+        "suplidos": 55.7,
+        "ret": 0.0,
+        "total": 176.7,
+    }
