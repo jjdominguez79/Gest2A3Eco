@@ -6,8 +6,6 @@ from datetime import datetime
 from pathlib import Path
 
 from utils.validaciones import normalizar_nif_cif
-from services.ocr_recibidas_service import generate_suenlace_for_docs, mark_docs_as_generated
-from services.documentos_recibidos_a3_service import preparar_documentos_para_suenlace
 from services.ocr_service import OCRService
 from services.terceros_ocr_service import TercerosOcrService
 
@@ -177,68 +175,6 @@ class UIOcrFacturasController:
             current_id=str(ids[0]),
             on_close=self.refresh_all,
         )
-
-    # ── Generacion suenlace ───────────────────────────────────────────────────
-
-    def generar_suenlace_seleccionadas(self):
-        ids = self._view.get_selected_ids("pendiente_contabilizar")
-        if not ids:
-            self._view.show_warning("Gest2A3Eco", "Selecciona uno o varios documentos.")
-            return
-
-        docs_ok: list[dict] = []
-        omitidos: list[str] = []
-        for doc_id in ids:
-            doc = self._gestor.get_factura_recibida_doc(doc_id)
-            if not doc:
-                omitidos.append(f"{doc_id}: no encontrado")
-                continue
-            errors = self._validate_para_contabilizar(doc)
-            if errors:
-                label = doc.get("numero_factura") or doc_id
-                omitidos.append(f"{label}: " + "; ".join(errors))
-                continue
-            docs_ok.append(doc)
-
-        if not docs_ok:
-            self._view.show_warning(
-                "Gest2A3Eco",
-                "Ninguno de los documentos seleccionados es valido para generar suenlace."
-                + (("\n\nOmitidos:\n- " + "\n- ".join(omitidos[:8])) if omitidos else ""),
-            )
-            return
-
-        try:
-            docs_ok = preparar_documentos_para_suenlace(
-                self._gestor, self._codigo, self._ejercicio, docs_ok,
-            )
-        except Exception as exc:
-            self._view.show_error("Gest2A3Eco", f"No se pudieron preparar los PDFs para A3ECO:\n{exc}")
-            return
-        regs = generate_suenlace_for_docs(self._gestor, self._codigo, self._ejercicio, docs_ok)
-        if not regs:
-            self._view.show_warning("Gest2A3Eco", "No se generaron registros para los documentos seleccionados.")
-            return
-
-        save_path = self._view.ask_save_path(f"{self._codigo}.dat")
-        if not save_path:
-            return
-
-        lote = datetime.now().strftime("%Y%m%d_%H%M%S")
-        with open(save_path, "w", encoding="latin-1", newline="") as f:
-            f.writelines(regs)
-
-        for doc in docs_ok:
-            doc["lote_generacion"] = lote
-        mark_docs_as_generated(self._gestor, docs_ok, estado_contable="contabilizada")
-        self.refresh_all()
-
-        msg = f"Fichero generado:\n{save_path}\n\nContabilizados: {len(docs_ok)}"
-        if omitidos:
-            msg += "\n\nOmitidos:\n- " + "\n- ".join(omitidos[:8])
-            self._view.show_warning("Gest2A3Eco", msg)
-        else:
-            self._view.show_info("Gest2A3Eco", msg)
 
     # ── OCR en segundo plano ──────────────────────────────────────────────────
 

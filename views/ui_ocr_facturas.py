@@ -126,8 +126,9 @@ class UIOcrFacturas(ttk.Frame):
                        command=lambda: self.controller.eliminar_seleccionado(estado)).pack(side="left")
 
         elif estado == "pendiente_contabilizar":
-            ttk.Button(bar, text="Generar suenlace seleccionadas", style="Primary.TButton",
-                       command=self.controller.generar_suenlace_seleccionadas).pack(side="left", padx=(0, 4))
+            ttk.Label(
+                bar, text="Pendiente en Contabilidad. El suenlace.dat se genera desde ese modulo."
+            ).pack(side="left", padx=(0, 8))
             ttk.Button(bar, text="Abrir documento",
                        command=lambda: self.controller.abrir_documento_seleccionado(estado)).pack(side="left", padx=(0, 4))
             ttk.Button(bar, text="Enviar a Errores",

@@ -224,8 +224,9 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             ttk.Button(bar, text="Eliminar", style="Danger.TButton",
                        command=lambda: self._eliminar(estado)).pack(side="left", padx=2)
         elif estado == "pendiente_contabilizar":
-            ttk.Button(bar, text="Generar suenlace", style="Primary.TButton",
-                       command=self._generar_suenlace).pack(side="left", padx=2)
+            ttk.Label(
+                bar, text="Documento enviado a Contabilidad. Genera alli el suenlace.dat."
+            ).pack(side="left", padx=2)
             ttk.Button(bar, text="Enviar a errores",
                        command=lambda: self._enviar_a_error(estado)).pack(side="left", padx=2)
 
@@ -287,8 +288,6 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                    command=self._guardar).pack(side="left", padx=4)
         ttk.Button(btn_frame, text="Validar y pasar a contabilizar",
                    command=self._validar_seleccionado).pack(side="left", padx=4)
-        ttk.Button(btn_frame, text="Generar suenlace",
-                   command=self._generar_suenlace).pack(side="left", padx=4)
 
         # Errores OCR
         self._lbl_errores = ttk.Label(parent, text="", foreground="#c0392b",
@@ -596,7 +595,9 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             self._gestor.upsert_documento_ocr(doc)
             self._crear_o_actualizar_documento_contable(doc, factura)
         self._refresh_all()
-        messagebox.showinfo("OCR", "Documento validado.")
+        messagebox.showinfo(
+            "OCR", "Documento validado y enviado a Contabilidad.\nGenera alli el suenlace.dat."
+        )
 
     def _crear_o_actualizar_documento_contable(self, documento: dict, factura: dict):
         """Proyecta el documento OCR tipado al flujo que genera SUENLACE.
@@ -697,64 +698,6 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                 )
         except Exception as exc:
             logger.debug("[abrir_detalle] %s", exc)
-
-    def _generar_suenlace(self):
-        """Genera suenlace.dat para documentos validados usando el flujo existente."""
-        doc_id = self._get_selected_id()
-        if not doc_id:
-            messagebox.showwarning("OCR", "Selecciona un documento validado.")
-            return
-        # Buscar doc equivalente en facturas_recibidas_docs (flujo existente)
-        try:
-            doc = self._gestor.get_factura_recibida_doc(doc_id)
-            if not doc:
-                messagebox.showwarning(
-                    "OCR",
-                    "Este documento aun no tiene un registro en el flujo de suenlace.\n"
-                    "Usa la pantalla 'Captura documental' principal para generar suenlace.",
-                )
-                return
-            errors = []
-            if not str(doc.get("proveedor_nif") or "").strip():
-                errors.append("NIF del proveedor")
-            if not str(doc.get("numero_factura") or "").strip():
-                errors.append("Numero de factura")
-            if not float(doc.get("total") or 0.0):
-                errors.append("Total (es 0)")
-            if errors:
-                messagebox.showwarning(
-                    "OCR",
-                    "Faltan datos para generar suenlace:\n- " + "\n- ".join(errors),
-                )
-                return
-            from services.ocr_recibidas_service import generate_suenlace_for_docs, mark_docs_as_generated
-            from services.documentos_recibidos_a3_service import preparar_documentos_para_suenlace
-            try:
-                doc = preparar_documentos_para_suenlace(
-                    self._gestor, self._codigo, self._ejercicio, [doc],
-                )[0]
-            except Exception as exc:
-                messagebox.showerror("OCR", f"No se pudo preparar el PDF para A3ECO:\n{exc}")
-                return
-            regs = generate_suenlace_for_docs(self._gestor, self._codigo, self._ejercicio, [doc])
-            if not regs:
-                messagebox.showwarning("OCR", "No se generaron registros.")
-                return
-            save_path = filedialog.asksaveasfilename(
-                title="Guardar fichero suenlace.dat",
-                defaultextension=".dat",
-                initialfile=f"{self._codigo}.dat",
-                filetypes=[("Ficheros DAT", "*.dat")],
-            )
-            if not save_path:
-                return
-            with open(save_path, "w", encoding="latin-1", newline="") as f:
-                f.writelines(regs)
-            mark_docs_as_generated(self._gestor, [doc], estado_contable="contabilizada")
-            self._refresh_all()
-            messagebox.showinfo("OCR", f"Fichero generado:\n{save_path}")
-        except Exception as exc:
-            messagebox.showerror("OCR", f"Error al generar suenlace:\n{exc}")
 
     # ── Utilidades ────────────────────────────────────────────────────────────
 
