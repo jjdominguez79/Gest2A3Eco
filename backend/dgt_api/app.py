@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 import re
 
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import delete, select, update
@@ -36,6 +37,7 @@ from backend.dgt_api.service import (
     verificar_enlace,
 )
 from backend.dgt_api.storage import delete_private_upload, save_private_upload
+from backend.dgt_api.integrations import DatapriusBackend, ProviderError, SignRequestBackend
 from backend.dgt_api.validation import validar_parte
 
 app = FastAPI(title="Gestinem Tramites DGT API", version="1.0.0")
@@ -63,6 +65,59 @@ internal = Depends(require_internal_key)
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/v1/integrations/status", dependencies=[internal])
+def integrations_status():
+    cfg = get_settings()
+    return {
+        "signrequest": bool(cfg.signrequest_token and cfg.signrequest_from_email),
+        "dataprius": bool(cfg.dataprius_api_key and cfg.dataprius_api_secret),
+        "firma_gestor_email": cfg.signrequest_gestor_email or cfg.signrequest_from_email,
+        "firma_gestor_telefono": cfg.signrequest_gestor_telefono,
+    }
+
+
+@app.post("/api/v1/integrations/signrequest/send", dependencies=[internal])
+async def integration_signrequest_send(
+    file: UploadFile = File(...), firmantes: str = Form(...), asunto: str = Form(""),
+    mensaje: str = Form(""), external_id: str = Form(""), callback_url: str = Form(""),
+    usar_sms: bool = Form(False),
+):
+    try:
+        return SignRequestBackend().enviar(
+            await file.read(), file.filename or "documento.pdf", json.loads(firmantes),
+            asunto, mensaje, external_id, callback_url, usar_sms,
+        )
+    except (ProviderError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@app.get("/api/v1/integrations/signrequest/{request_id}", dependencies=[internal])
+def integration_signrequest_status(request_id: str):
+    try:
+        estado = SignRequestBackend().consultar(request_id)
+        return {key: value for key, value in estado.items() if not key.endswith("_url")}
+    except ProviderError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@app.get("/api/v1/integrations/signrequest/{request_id}/evidence/{tipo}", dependencies=[internal])
+def integration_signrequest_evidence(request_id: str, tipo: str):
+    if tipo not in {"documento", "registro"}:
+        raise HTTPException(422, "Tipo de evidencia no valido")
+    try:
+        return Response(SignRequestBackend().evidencia(request_id, tipo), media_type="application/pdf")
+    except ProviderError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@app.post("/api/v1/integrations/dataprius/upload", dependencies=[internal])
+async def integration_dataprius_upload(ruta: str = Form(""), file: UploadFile = File(...)):
+    try:
+        return DatapriusBackend().subir(ruta, file.filename or "documento", await file.read())
+    except ProviderError as exc:
+        raise HTTPException(502, str(exc)) from exc
 
 
 @app.get("/t/{referencia}/{rol}", response_class=HTMLResponse)

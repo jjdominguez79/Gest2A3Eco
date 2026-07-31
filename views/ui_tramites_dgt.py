@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import tkinter as tk
 import webbrowser
+import requests
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from services.email_service import open_outlook_email
-from services.dataprius_service import DatapriusClient
-from services.signrequest_service import SignRequestClient
+from services.dgt_remote_integrations import BackendDatapriusClient, BackendSignRequestClient
 from services.tramites_dgt_repository import ApiDgtRepository
 from services.tramites_dgt_facturacion_service import TramitesDgtFacturacionService
 from services.tramites_dgt_service import TramitesDgtService
@@ -27,30 +27,25 @@ class UITramitesDgt(ttk.Frame):
         repository = ApiDgtRepository(api_url, api_key) if api_url and api_key else None
         firma_client = None
         almacenamiento_client = None
-        if cfg.get("signrequest_token") and cfg.get("signrequest_from_email"):
-            firma_client = SignRequestClient(
-                cfg["signrequest_token"],
-                cfg["signrequest_from_email"],
-                cfg.get("signrequest_base_url") or "https://signrequest.com/api/v1",
-            )
-        if cfg.get("dataprius_api_key") and cfg.get("dataprius_api_secret"):
-            almacenamiento_client = DatapriusClient(
-                cfg["dataprius_api_key"],
-                cfg["dataprius_api_secret"],
-                cfg.get("dataprius_base_url") or "https://api.v2.dataprius.com",
-            )
+        if api_url and api_key:
+            try:
+                firma_client = BackendSignRequestClient(api_url, api_key)
+            except (ValueError, requests.RequestException):
+                firma_client = None
+            try:
+                almacenamiento_client = BackendDatapriusClient(api_url, api_key)
+            except (ValueError, requests.RequestException):
+                almacenamiento_client = None
         self._signrequest_use_sms = bool(cfg.get("signrequest_use_sms", False))
         self._service = TramitesDgtService(
             gestor,
             session=session,
             repository=repository,
             firma_client=firma_client,
-            firma_gestor_email=cfg.get("signrequest_gestor_email")
-            or cfg.get("signrequest_from_email")
-            or "",
-            firma_gestor_telefono=cfg.get("signrequest_gestor_telefono") or "",
+            firma_gestor_email=getattr(firma_client, "gestor_email", ""),
+            firma_gestor_telefono=getattr(firma_client, "gestor_telefono", ""),
             almacenamiento_client=almacenamiento_client,
-            almacenamiento_base_path=cfg.get("dataprius_base_path") or "",
+            almacenamiento_base_path="Tramites DGT" if almacenamiento_client else "",
         )
         self._online = repository is not None
         self._on_back = on_back
