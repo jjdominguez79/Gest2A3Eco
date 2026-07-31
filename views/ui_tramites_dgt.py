@@ -45,7 +45,7 @@ class UITramitesDgt(ttk.Frame):
             firma_gestor_email=getattr(firma_client, "gestor_email", ""),
             firma_gestor_telefono=getattr(firma_client, "gestor_telefono", ""),
             almacenamiento_client=almacenamiento_client,
-            almacenamiento_base_path="Tramites DGT" if almacenamiento_client else "",
+            almacenamiento_base_path="expedientes" if almacenamiento_client else "",
         )
         self._online = repository is not None
         self._on_back = on_back
