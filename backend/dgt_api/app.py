@@ -184,11 +184,40 @@ def patch_expediente(expediente_id: str, payload: ExpedientePatch, db: Session =
     gestion = payload.model_dump(
         exclude_none=True, include={"codigo_tasa", "modelo_620_presentado"}
     )
+    cambios = payload.model_dump(exclude_none=True)
+    partes_por_rol = {parte.rol: parte for parte in item.partes}
+    for rol in ("vendedor", "comprador"):
+        parte = partes_por_rol.get(rol)
+        if not parte:
+            parte = Parte(expediente_id=item.id, rol=rol)
+            item.partes.append(parte)
+        for campo in ("nombre", "email", "telefono"):
+            key = f"{rol}_{campo}"
+            if key in cambios:
+                setattr(parte, campo, cambios[key])
+    if item.vehiculo is None:
+        item.vehiculo = Vehiculo(expediente_id=item.id, datos={})
+    if item.operacion is None:
+        item.operacion = Operacion(expediente_id=item.id, datos={})
+    if "vehiculo_matricula" in cambios:
+        item.vehiculo.matricula = cambios["vehiculo_matricula"]
+    if "vehiculo_bastidor" in cambios:
+        item.vehiculo.bastidor = cambios["vehiculo_bastidor"]
+    operacion_directa = {
+        key: cambios[key]
+        for key in ("precio_venta", "fecha_operacion")
+        if key in cambios
+    }
+    if operacion_directa:
+        item.operacion.datos = {**(item.operacion.datos or {}), **operacion_directa}
     for key, value in payload.model_dump(
         exclude_none=True,
         exclude={
             "version", "codigo_tasa", "modelo_620_presentado",
             "firma_estado", "firma_provider", "firma_request_id", "firma_evidencia",
+            "vendedor_nombre", "vendedor_email", "vendedor_telefono",
+            "comprador_nombre", "comprador_email", "comprador_telefono",
+            "vehiculo_matricula", "vehiculo_bastidor", "precio_venta", "fecha_operacion",
         },
     ).items():
         setattr(item, key, value)

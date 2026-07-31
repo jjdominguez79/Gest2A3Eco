@@ -20,6 +20,16 @@ class ExpedientePatch(BaseModel):
     estado: str | None = None
     responsable: str | None = None
     observaciones: str | None = None
+    vendedor_nombre: str | None = None
+    vendedor_email: str | None = None
+    vendedor_telefono: str | None = None
+    comprador_nombre: str | None = None
+    comprador_email: str | None = None
+    comprador_telefono: str | None = None
+    vehiculo_matricula: str | None = None
+    vehiculo_bastidor: str | None = None
+    precio_venta: Any | None = None
+    fecha_operacion: str | None = None
     codigo_tasa: str | None = None
     modelo_620_presentado: bool | None = None
     firma_estado: str | None = None

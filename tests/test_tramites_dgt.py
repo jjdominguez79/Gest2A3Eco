@@ -518,3 +518,33 @@ def test_api_repository_delega_generacion_enlaces_https():
     links = service.regenerar_links("exp-1")
     assert links["vendedor"].startswith("https://")
     assert http.calls[0][2]["headers"]["X-API-Key"] == "secret"
+
+
+def test_api_repository_envia_correcciones_editadas_en_la_ficha():
+    http = _FakeHttp()
+    repo = ApiDgtRepository("https://api.test", "secret", session=http)
+
+    repo.upsert_expediente(
+        {
+            "id": "exp-1",
+            "version": 3,
+            "vendedor_nombre": "Vendedor",
+            "vendedor_email": "correo-corregido@example.test",
+            "vendedor_telefono": "611111111",
+            "comprador_nombre": "Comprador",
+            "comprador_email": "comprador@example.test",
+            "comprador_telefono": "622222222",
+            "vehiculo_matricula": "1234ABC",
+            "vehiculo_bastidor": "VF1AAAAAA12345678",
+            "precio_venta": 9750.5,
+            "fecha_operacion": "2026-07-31",
+        }
+    )
+
+    method, url, kwargs = http.calls[0]
+    assert method == "PATCH"
+    assert url.endswith("/api/v1/expedientes/exp-1")
+    assert kwargs["json"]["vendedor_email"] == "correo-corregido@example.test"
+    assert kwargs["json"]["comprador_email"] == "comprador@example.test"
+    assert kwargs["json"]["vehiculo_matricula"] == "1234ABC"
+    assert kwargs["json"]["precio_venta"] == 9750.5

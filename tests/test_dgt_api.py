@@ -272,6 +272,45 @@ def test_codigo_tasa_y_modelo_620_presentado(tmp_path, monkeypatch):
     Base.metadata.drop_all(engine)
 
 
+def test_edicion_interna_guarda_partes_vehiculo_y_operacion(tmp_path, monkeypatch):
+    client, engine = _client(tmp_path, monkeypatch)
+    headers = {"X-API-Key": "test-secret"}
+    item = client.post(
+        "/api/v1/expedientes",
+        headers=headers,
+        json={"vendedor_email": "incorrecto@example.test"},
+    ).json()
+
+    patched = client.patch(
+        f"/api/v1/expedientes/{item['id']}",
+        headers=headers,
+        json={
+            "version": item["version"],
+            "vendedor_nombre": "Vendedor corregido",
+            "vendedor_email": "correcto@example.test",
+            "vendedor_telefono": "611111111",
+            "comprador_nombre": "Comprador corregido",
+            "comprador_email": "comprador@example.test",
+            "comprador_telefono": "622222222",
+            "vehiculo_matricula": "1234ABC",
+            "vehiculo_bastidor": "VF1AAAAAA12345678",
+            "precio_venta": 9750.5,
+            "fecha_operacion": "2026-07-31",
+        },
+    )
+
+    assert patched.status_code == 200
+    saved = client.get(f"/api/v1/expedientes/{item['id']}", headers=headers).json()
+    assert saved["partes"]["vendedor"]["email"] == "correcto@example.test"
+    assert saved["partes"]["vendedor"]["nombre"] == "Vendedor corregido"
+    assert saved["partes"]["comprador"]["email"] == "comprador@example.test"
+    assert saved["vehiculo"]["matricula"] == "1234ABC"
+    assert saved["vehiculo"]["bastidor"] == "VF1AAAAAA12345678"
+    assert saved["operacion"]["precio_venta"] == 9750.5
+    assert saved["operacion"]["fecha_operacion"] == "2026-07-31"
+    Base.metadata.drop_all(engine)
+
+
 def test_persiste_estado_y_solicitudes_de_firma(tmp_path, monkeypatch):
     client, engine = _client(tmp_path, monkeypatch)
     headers = {"X-API-Key": "test-secret"}
