@@ -291,18 +291,28 @@ class GestorPostgres(GestorSQLite):
             """
             SELECT
               to_regclass('public.usuarios_permisos_globales') AS tabla_permisos,
-              to_regclass('public.idx_usuarios_permisos_globales_usuario') AS indice_permisos
+              to_regclass('public.idx_usuarios_permisos_globales_usuario') AS indice_permisos,
+              to_regclass('public.dgt_facturas') AS tabla_dgt_facturas,
+              to_regclass('public.idx_dgt_facturas_factura') AS indice_dgt_facturas
             """
         ).fetchone()
         tabla_permisos_existe = bool(objetos and objetos["tabla_permisos"])
         indice_permisos_existe = bool(objetos and objetos["indice_permisos"])
+        tabla_dgt_facturas_existe = bool(objetos and objetos["tabla_dgt_facturas"])
+        indice_dgt_facturas_existe = bool(objetos and objetos["indice_dgt_facturas"])
         faltantes = [
             (tabla, columna, tipo)
             for tabla, columna, tipo in columnas
             if (tabla, columna) not in existentes
         ]
 
-        if not faltantes and tabla_permisos_existe and indice_permisos_existe:
+        if (
+            not faltantes
+            and tabla_permisos_existe
+            and indice_permisos_existe
+            and tabla_dgt_facturas_existe
+            and indice_dgt_facturas_existe
+        ):
             self.conn.commit()
             return
 
@@ -328,5 +338,28 @@ class GestorPostgres(GestorSQLite):
             self.conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_usuarios_permisos_globales_usuario "
                 "ON usuarios_permisos_globales(usuario_id)"
+            )
+        if not tabla_dgt_facturas_existe:
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS dgt_facturas (
+                  expediente_id TEXT PRIMARY KEY,
+                  factura_id TEXT NOT NULL UNIQUE,
+                  codigo_empresa TEXT NOT NULL,
+                  ejercicio INTEGER NOT NULL,
+                  destinatario TEXT NOT NULL,
+                  honorarios DOUBLE PRECISION NOT NULL DEFAULT 0,
+                  tasa_dgt DOUBLE PRECISION NOT NULL DEFAULT 0,
+                  impuesto_620 DOUBLE PRECISION NOT NULL DEFAULT 0,
+                  otros_suplidos DOUBLE PRECISION NOT NULL DEFAULT 0,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                )
+                """
+            )
+        if not indice_dgt_facturas_existe:
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_dgt_facturas_factura "
+                "ON dgt_facturas(factura_id)"
             )
         self.conn.commit()
