@@ -792,6 +792,21 @@ class GestorSQLite:
             );
             CREATE INDEX IF NOT EXISTS idx_dgt_documentos_expediente
               ON dgt_documentos_generados(expediente_id, tipo_documento);
+            CREATE TABLE IF NOT EXISTS dgt_facturas (
+              expediente_id TEXT PRIMARY KEY,
+              factura_id TEXT NOT NULL UNIQUE,
+              codigo_empresa TEXT NOT NULL,
+              ejercicio INTEGER NOT NULL,
+              destinatario TEXT NOT NULL,
+              honorarios REAL NOT NULL DEFAULT 0,
+              tasa_dgt REAL NOT NULL DEFAULT 0,
+              impuesto_620 REAL NOT NULL DEFAULT 0,
+              otros_suplidos REAL NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_dgt_facturas_factura
+              ON dgt_facturas(factura_id);
         """)
         self.conn.commit()
         self._ensure_column("dgt_expedientes", "codigo_tasa", "TEXT")
@@ -4096,8 +4111,51 @@ class GestorSQLite:
         return item
 
     def eliminar_dgt_expediente(self, expediente_id: str) -> None:
+        self.conn.execute("DELETE FROM dgt_facturas WHERE expediente_id=?", (str(expediente_id),))
         self.conn.execute("DELETE FROM dgt_documentos_generados WHERE expediente_id=?", (str(expediente_id),))
         self.conn.execute("DELETE FROM dgt_expedientes WHERE id=?", (str(expediente_id),))
+        self.conn.commit()
+
+    def get_dgt_factura(self, expediente_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM dgt_facturas WHERE expediente_id=?",
+            (str(expediente_id),),
+        ).fetchone()
+        return self._row_to_dict(row)
+
+    def upsert_dgt_factura(self, datos: dict) -> None:
+        now = self._utc_now()
+        self.conn.execute(
+            """
+            INSERT INTO dgt_facturas
+              (expediente_id, factura_id, codigo_empresa, ejercicio, destinatario,
+               honorarios, tasa_dgt, impuesto_620, otros_suplidos, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(expediente_id) DO UPDATE SET
+              factura_id=excluded.factura_id,
+              codigo_empresa=excluded.codigo_empresa,
+              ejercicio=excluded.ejercicio,
+              destinatario=excluded.destinatario,
+              honorarios=excluded.honorarios,
+              tasa_dgt=excluded.tasa_dgt,
+              impuesto_620=excluded.impuesto_620,
+              otros_suplidos=excluded.otros_suplidos,
+              updated_at=excluded.updated_at
+            """,
+            (
+                str(datos.get("expediente_id") or ""),
+                str(datos.get("factura_id") or ""),
+                str(datos.get("codigo_empresa") or ""),
+                int(datos.get("ejercicio") or 0),
+                str(datos.get("destinatario") or ""),
+                float(datos.get("honorarios") or 0),
+                float(datos.get("tasa_dgt") or 0),
+                float(datos.get("impuesto_620") or 0),
+                float(datos.get("otros_suplidos") or 0),
+                datos.get("created_at") or now,
+                now,
+            ),
+        )
         self.conn.commit()
 
     def _decode_dgt_expediente(self, row) -> dict | None:
