@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from utils.utilidades import aplicar_descuento_total_lineas
+
 
 class EmpresaService:
     def __init__(self, gestor):
@@ -80,6 +82,7 @@ class EmpresaService:
         except Exception:
             ejercicios = [ejercicio]
         emitidas = self._safe_list(lambda: self._gestor.listar_facturas_emitidas(codigo, ejercicio))
+        comunicaciones = self._safe_list(lambda: self._gestor.listar_comunicaciones(codigo))
         bancos = self._safe_list(lambda: self._gestor.listar_bancos(codigo, ejercicio))
         plantillas_emitidas = self._safe_list(lambda: self._gestor.listar_emitidas(codigo, ejercicio))
         plantillas_recibidas = self._safe_list(lambda: self._gestor.listar_recibidas(codigo, ejercicio))
@@ -94,6 +97,51 @@ class EmpresaService:
         generadas = sum(1 for fac in emitidas if fac.get("generada"))
         enviadas = sum(1 for fac in emitidas if fac.get("enviado"))
         borradores = sum(1 for fac in emitidas if fac.get("borrador"))
+        facturacion_mensual = [0.0] * 12
+        for fac in emitidas:
+            if fac.get("borrador"):
+                continue
+            mes = self._month_from_date(fac.get("fecha_expedicion") or fac.get("fecha_asiento"))
+            if mes:
+                facturacion_mensual[mes - 1] += self._factura_total(fac)
+
+        correos_recibidos = 0
+        correos_enviados = 0
+        actividad_comunicaciones = []
+        pendientes_correo = 0
+        for comunicacion in comunicaciones:
+            estado = str(comunicacion.get("estado") or "").lower()
+            if estado in {"abierta", "pendiente"}:
+                pendientes_correo += 1
+            mensajes = self._safe_list(
+                lambda cid=comunicacion.get("id"): self._gestor.listar_mensajes_comunicacion(cid)
+            )
+            for mensaje in mensajes:
+                if self._year_from_date(mensaje.get("fecha")) != int(ejercicio):
+                    continue
+                direccion = str(mensaje.get("direccion") or "").lower()
+                if direccion == "entrante":
+                    correos_recibidos += 1
+                elif direccion == "saliente":
+                    correos_enviados += 1
+            if mensajes:
+                ultimo = mensajes[0]
+                actividad_comunicaciones.append({
+                    "fecha": ultimo.get("fecha") or comunicacion.get("updated_at") or "",
+                    "asunto": ultimo.get("asunto") or comunicacion.get("asunto") or "(Sin asunto)",
+                    "direccion": ultimo.get("direccion") or "",
+                    "remitente": ultimo.get("remitente") or "",
+                    "estado": comunicacion.get("estado") or "abierta",
+                })
+        actividad_comunicaciones.sort(key=lambda item: self._sort_datetime(item.get("fecha")), reverse=True)
+        pendientes_ocr = sum(
+            1 for doc in recibidas_docs
+            if (doc.get("estado_validacion") or "").lower() != "validada"
+        )
+        pendientes_facturacion = sum(
+            1 for fac in emitidas
+            if fac.get("borrador") or (not fac.get("enviado") and not fac.get("generada"))
+        )
         cuentas_bancarias = []
         if cuentas_bancarias_struct:
             for item in cuentas_bancarias_struct:
@@ -165,6 +213,19 @@ class EmpresaService:
                 "borrador": borradores,
                 "generadas": generadas,
                 "enviadas": enviadas,
+                "importe_total": round(sum(facturacion_mensual), 2),
+                "mensual": [round(valor, 2) for valor in facturacion_mensual],
+            },
+            "resumen_comunicaciones": {
+                "recibidos": correos_recibidos,
+                "enviados": correos_enviados,
+                "pendientes": pendientes_correo,
+            },
+            "pendientes": {
+                "total": pendientes_correo + pendientes_ocr + pendientes_facturacion,
+                "correos": pendientes_correo,
+                "ocr": pendientes_ocr,
+                "facturacion": pendientes_facturacion,
             },
             "resumen_ocr": {
                 "total": len(recibidas_docs),
@@ -182,6 +243,7 @@ class EmpresaService:
             "terceros_count": len(terceros),
             "cuentas_bancarias": cuentas_bancarias,
             "ultimos_procesos": ultimos_procesos,
+            "actividad_comunicaciones": actividad_comunicaciones[:6],
             "avisos": avisos,
         }
 
@@ -257,9 +319,50 @@ class EmpresaService:
         txt = str(value or "").strip()
         if not txt:
             return datetime.min
+        try:
+            return datetime.fromisoformat(txt.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            pass
         for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d", "%d-%m-%Y"):
             try:
                 return datetime.strptime(txt, fmt)
             except Exception:
                 continue
         return datetime.min
+
+    def _year_from_date(self, value) -> int | None:
+        date = self._sort_datetime(value)
+        return date.year if date != datetime.min else None
+
+    def _month_from_date(self, value) -> int | None:
+        date = self._sort_datetime(value)
+        return date.month if date != datetime.min else None
+
+    def _factura_total(self, factura: dict) -> float:
+        """Total de factura para el resumen, aplicando descuentos y retenciones."""
+        total = 0.0
+        lineas = aplicar_descuento_total_lineas(
+            factura.get("lineas") or [],
+            factura.get("descuento_total_tipo"),
+            factura.get("descuento_total_valor"),
+        )
+        for linea in lineas:
+            total += (
+                self._as_float(linea.get("base"))
+                + self._as_float(linea.get("cuota_iva"))
+                + self._as_float(linea.get("cuota_re"))
+            )
+        if factura.get("retencion_aplica"):
+            importe = factura.get("retencion_importe")
+            if importe in (None, ""):
+                importe = self._as_float(factura.get("retencion_base")) * self._as_float(factura.get("retencion_pct")) / 100
+            total -= abs(self._as_float(importe))
+        else:
+            total += sum(self._as_float(linea.get("cuota_irpf")) for linea in lineas)
+        return round(total, 2)
+
+    def _as_float(self, value) -> float:
+        try:
+            return float(str(value or 0).replace(",", "."))
+        except (TypeError, ValueError):
+            return 0.0

@@ -36,10 +36,11 @@ class UIDashboardEmpresa(ttk.Frame):
 
     # Stat cards: (key, label, color)
     _STATS = [
-        ("total_emitidas", "Facturas emitidas", "#2563eb"),
-        ("borradores",     "Borradores",        "#f59e0b"),
-        ("generadas",      "Generadas",         "#10b981"),
-        ("terceros",       "Terceros",          "#8b5cf6"),
+        ("facturacion", "Facturacion ejercicio", "#2563eb"),
+        ("emitidas",    "Facturas emitidas",    "#0ea5e9"),
+        ("recibidos",   "Emails recibidos",     "#8b5cf6"),
+        ("enviados",    "Emails enviados",      "#10b981"),
+        ("pendientes",  "Pendientes de gestionar", "#f59e0b"),
     ]
 
     def __init__(
@@ -88,6 +89,7 @@ class UIDashboardEmpresa(ttk.Frame):
         self._ctx = {}
         self._nav_items: dict[str, dict] = {}
         self._stat_value_labels: dict[str, tk.Label] = {}
+        self._pending_rows: list[tuple[tk.Label, tk.Label]] = []
         self._disabled_keys: set[str] = set()
         self._current_module_widget = None
         self._current_nav_key = "inicio"
@@ -203,47 +205,73 @@ class UIDashboardEmpresa(ttk.Frame):
 
         tk.Frame(parent, bg=self._M_BORDER, height=1).pack(fill="x")
 
-        # --- Stat cards row ---
+        # --- Indicadores principales ---
         stats_row = tk.Frame(parent, bg=self._M_BG)
         stats_row.pack(fill="x", padx=24, pady=20)
         for i, (key, label, color) in enumerate(self._STATS):
             pad_right = 14 if i < len(self._STATS) - 1 else 0
-            card = self._make_stat_card(stats_row, label, color)
+            commands = {
+                "facturacion": self._callbacks["facturacion"],
+                "emitidas": self._callbacks["facturacion"],
+                "recibidos": self._callbacks["comunicaciones"],
+                "enviados": self._callbacks["comunicaciones"],
+                "pendientes": self._open_pendientes,
+            }
+            card = self._make_stat_card(stats_row, label, color, commands[key])
             card.grid(row=0, column=i, padx=(0, pad_right), sticky="nsew")
             stats_row.columnconfigure(i, weight=1)
             self._stat_value_labels[key] = card._val_lbl  # type: ignore[attr-defined]
 
-        # --- Mid section ---
+        # --- Centro operativo ---
         mid = tk.Frame(parent, bg=self._M_BG)
         mid.pack(fill="both", expand=True, padx=24, pady=(0, 20))
-        mid.columnconfigure(0, weight=3)
-        mid.columnconfigure(1, weight=2)
+        mid.columnconfigure(0, weight=3, minsize=440)
+        mid.columnconfigure(1, weight=2, minsize=300)
         mid.rowconfigure(0, weight=1)
 
-        # Config status card
-        cfg_card = self._make_card(mid, "Configuracion")
-        cfg_card.grid(row=0, column=0, sticky="nsew", padx=(0, 14))
-        self.lbl_config_detail = tk.Label(
-            cfg_card, text="",
-            bg=self._M_CARD, fg=self._M_TEXT,
-            font=("Segoe UI", 9), justify="left",
-        )
-        self.lbl_config_detail.pack(anchor="w", padx=16, pady=(8, 16))
-
-        # Processes card
-        proc_card = self._make_card(mid, "Ultimos procesos")
-        proc_card.grid(row=0, column=1, sticky="nsew")
-        self.lb_procesos = tk.Listbox(
-            proc_card,
-            bg=self._M_CARD, fg=self._M_TEXT,
+        chart_card = self._make_card(mid, "Facturacion mensual")
+        chart_card.grid(row=0, column=0, sticky="nsew", padx=(0, 14))
+        self.lbl_chart_total = tk.Label(
+            chart_card, text="", bg=self._M_CARD, fg=self._M_SUB,
             font=("Segoe UI", 9),
-            relief="flat", bd=0,
-            selectbackground="#eff6ff", selectforeground="#1e40af",
-            highlightthickness=0,
         )
-        self.lb_procesos.pack(fill="both", expand=True, padx=8, pady=(4, 12))
+        self.lbl_chart_total.pack(anchor="w", padx=16, pady=(8, 0))
+        self.chart_canvas = tk.Canvas(chart_card, bg=self._M_CARD, highlightthickness=0, height=250)
+        self.chart_canvas.pack(fill="both", expand=True, padx=12, pady=(4, 12))
+        self.chart_canvas.bind("<Configure>", lambda _event: self._draw_chart())
+        self.chart_canvas.bind("<Button-1>", lambda _event: self._callbacks["facturacion"]())
 
-    def _make_stat_card(self, parent, label: str, color: str) -> tk.Frame:
+        right = tk.Frame(mid, bg=self._M_BG)
+        right.grid(row=0, column=1, sticky="nsew")
+        right.rowconfigure(0, weight=1)
+        right.rowconfigure(1, weight=2)
+        right.columnconfigure(0, weight=1)
+
+        pending_card = self._make_card(right, "Pendientes de gestionar")
+        pending_card.grid(row=0, column=0, sticky="nsew", pady=(0, 14))
+        self.pending_body = tk.Frame(pending_card, bg=self._M_CARD)
+        self.pending_body.pack(fill="both", expand=True, padx=16, pady=(8, 12))
+        for label, command in (
+            ("Correos sin cerrar", self._callbacks["comunicaciones"]),
+            ("Documentos OCR por revisar", self._callbacks["ocr"]),
+            ("Facturas por completar", self._callbacks["facturacion"]),
+        ):
+            row = tk.Frame(self.pending_body, bg=self._M_CARD, cursor="hand2")
+            row.pack(fill="x", pady=3)
+            text = tk.Label(row, text=label, bg=self._M_CARD, fg=self._M_TEXT, font=("Segoe UI", 9), anchor="w")
+            text.pack(side="left", fill="x", expand=True)
+            value = tk.Label(row, text="0", bg=self._M_CARD, fg="#f59e0b", font=("Segoe UI", 10, "bold"))
+            value.pack(side="right")
+            for widget in (row, text, value):
+                widget.bind("<Button-1>", lambda _event, cmd=command: cmd())
+            self._pending_rows.append((text, value))
+
+        activity_card = self._make_card(right, "Actividad de correo")
+        activity_card.grid(row=1, column=0, sticky="nsew")
+        self.activity_body = tk.Frame(activity_card, bg=self._M_CARD)
+        self.activity_body.pack(fill="both", expand=True, padx=16, pady=(6, 10))
+
+    def _make_stat_card(self, parent, label: str, color: str, command=None) -> tk.Frame:
         card = tk.Frame(parent, bg=self._M_CARD,
                         highlightbackground=self._M_BORDER, highlightthickness=1)
         tk.Frame(card, bg=color, height=4).pack(fill="x")
@@ -259,6 +287,10 @@ class UIDashboardEmpresa(ttk.Frame):
             font=("Segoe UI", 9),
         ).pack(anchor="w", padx=16, pady=(0, 14))
         card._val_lbl = val_lbl  # type: ignore[attr-defined]
+        if command:
+            card.configure(cursor="hand2")
+            for widget in card.winfo_children():
+                widget.bind("<Button-1>", lambda _event, cmd=command: cmd())
         return card
 
     def _make_card(self, parent, title: str) -> tk.Frame:
@@ -345,8 +377,9 @@ class UIDashboardEmpresa(ttk.Frame):
     def refresh(self):
         self._ctx = self._empresa_service.get_dashboard_context(self._codigo, self._ejercicio)
         empresa  = self._ctx.get("empresa") or {}
-        contab   = self._ctx.get("resumen_contabilidad") or {}
         fact     = self._ctx.get("resumen_facturacion") or {}
+        correos  = self._ctx.get("resumen_comunicaciones") or {}
+        pendientes = self._ctx.get("pendientes") or {}
 
         nombre    = empresa.get("nombre", "")
         codigo    = empresa.get("codigo", self._codigo)
@@ -357,31 +390,42 @@ class UIDashboardEmpresa(ttk.Frame):
         self.lbl_sub.configure(text=f"Ejercicio {ejercicio}   \u00b7   {permiso}")
 
         # Stats
-        self._set_stat("total_emitidas", fact.get("total", 0))
-        self._set_stat("borradores",     fact.get("borrador", 0))
-        self._set_stat("generadas",      fact.get("generadas", 0))
-        self._set_stat("terceros",       self._ctx.get("terceros_count", 0))
+        self._set_stat("facturacion", self._format_euro(fact.get("importe_total", 0)))
+        self._set_stat("emitidas", fact.get("total", 0))
+        self._set_stat("recibidos", correos.get("recibidos", 0))
+        self._set_stat("enviados", correos.get("enviados", 0))
+        self._set_stat("pendientes", pendientes.get("total", 0))
+        self.lbl_chart_total.configure(
+            text=f"Total facturado: {self._format_euro(fact.get('importe_total', 0))}"
+        )
+        self._chart_values = list(fact.get("mensual") or [])
+        self._draw_chart()
 
-        # Config detail
-        lines = [
-            f"Estado:               {self._ctx.get('estado_configuracion', '')}",
-            f"Plan contable:        {contab.get('plan_cuentas', 0)} cuentas",
-            f"Plantillas bancos:    {contab.get('plantillas_bancos', 0)}",
-            f"Plantillas emitidas:  {contab.get('plantillas_emitidas', 0)}",
-            f"Plantillas recibidas: {contab.get('plantillas_recibidas', 0)}",
-            f"Terceros asignados:   {self._ctx.get('terceros_count', 0)}",
-        ]
-        self.lbl_config_detail.configure(text="\n".join(lines))
+        for (label, value), text, count in zip(
+            self._pending_rows,
+            ("Correos sin cerrar", "Documentos OCR por revisar", "Facturas por completar"),
+            (pendientes.get("correos", 0), pendientes.get("ocr", 0), pendientes.get("facturacion", 0)),
+        ):
+            label.configure(text=text)
+            value.configure(text=str(count))
 
-        # Processes
-        self.lb_procesos.delete(0, tk.END)
-        for item in self._ctx.get("ultimos_procesos") or []:
-            self.lb_procesos.insert(
-                tk.END,
-                f"{item.get('fecha', '')}  \u00b7  {item.get('descripcion', '')}",
+        for child in self.activity_body.winfo_children():
+            child.destroy()
+        activity = self._ctx.get("actividad_comunicaciones") or []
+        if not activity:
+            tk.Label(
+                self.activity_body, text="Sin correos recientes.", bg=self._M_CARD,
+                fg=self._M_SUB, font=("Segoe UI", 9), anchor="w",
+            ).pack(fill="x", pady=4)
+        for item in activity:
+            direction = "Recibido" if item.get("direccion") == "entrante" else "Enviado"
+            text = f"{direction}  ·  {item.get('asunto', '')}"
+            row = tk.Label(
+                self.activity_body, text=text, bg=self._M_CARD, fg=self._M_TEXT,
+                font=("Segoe UI", 9), anchor="w", cursor="hand2",
             )
-        if self.lb_procesos.size() == 0:
-            self.lb_procesos.insert(tk.END, "Sin procesos recientes.")
+            row.pack(fill="x", pady=3)
+            row.bind("<Button-1>", lambda _event: self._callbacks["comunicaciones"]())
 
         # Permissions
         can_write = bool(self._ctx.get("can_write"))
@@ -392,6 +436,57 @@ class UIDashboardEmpresa(ttk.Frame):
         lbl = self._stat_value_labels.get(key)
         if lbl:
             lbl.configure(text=str(value))
+
+    def _open_pendientes(self):
+        pendientes = self._ctx.get("pendientes") or {}
+        if pendientes.get("correos"):
+            self._callbacks["comunicaciones"]()
+        elif pendientes.get("ocr"):
+            self._callbacks["ocr"]()
+        else:
+            self._callbacks["facturacion"]()
+
+    def _draw_chart(self):
+        canvas = getattr(self, "chart_canvas", None)
+        if canvas is None:
+            return
+        canvas.delete("all")
+        values = list(getattr(self, "_chart_values", []) or [])
+        if len(values) != 12:
+            values = [0.0] * 12
+        width, height = canvas.winfo_width(), canvas.winfo_height()
+        if width < 80 or height < 80:
+            return
+        left, right, top, bottom = 38, 12, 18, 28
+        chart_width, chart_height = width - left - right, height - top - bottom
+        max_value = max(values) if values else 0
+        if max_value <= 0:
+            canvas.create_text(width / 2, height / 2, text="Aun no hay facturacion en este ejercicio.", fill=self._M_SUB, font=("Segoe UI", 10))
+            return
+        for index in range(4):
+            y = top + chart_height * index / 3
+            canvas.create_line(left, y, width - right, y, fill="#e2e8f0")
+            amount = max_value * (3 - index) / 3
+            canvas.create_text(left - 6, y, text=self._compact_euro(amount), fill=self._M_SUB, font=("Segoe UI", 8), anchor="e")
+        step = chart_width / 12
+        bar_width = max(8, step * 0.56)
+        for index, value in enumerate(values):
+            x = left + step * index + (step - bar_width) / 2
+            bar_height = chart_height * value / max_value
+            y = top + chart_height - bar_height
+            canvas.create_rectangle(x, y, x + bar_width, top + chart_height, fill="#2563eb", outline="")
+            canvas.create_text(x + bar_width / 2, height - 12, text=("E F M A M J J A S O N D".split()[index]), fill=self._M_SUB, font=("Segoe UI", 8))
+
+    def _format_euro(self, value) -> str:
+        try:
+            return f"{float(value or 0):,.2f} €".replace(",", "X").replace(".", ",").replace("X", ".")
+        except (TypeError, ValueError):
+            return "0,00 €"
+
+    def _compact_euro(self, value) -> str:
+        if value >= 1000:
+            return f"{value / 1000:.0f}k"
+        return f"{value:.0f} €"
 
     def _set_nav_enabled(self, key: str, enabled: bool):
         item = self._nav_items.get(key)
