@@ -175,6 +175,8 @@ class UITramitesDgt(ttk.Frame):
         actions.pack(fill="x", pady=8)
         primary_actions = ttk.Frame(actions)
         primary_actions.pack(fill="x")
+        firma_actions = ttk.Frame(actions)
+        firma_actions.pack(fill="x", pady=(5, 0))
         secondary_actions = ttk.Frame(actions)
         secondary_actions.pack(fill="x", pady=(5, 0))
         subsanation_actions = ttk.Frame(actions)
@@ -186,8 +188,8 @@ class UITramitesDgt(ttk.Frame):
             (primary_actions, "Validar", self._validar, False),
             (primary_actions, "Generar documentos", self._generar_documentos, False),
             (primary_actions, "Enviar a firma", self._enviar_a_firma, False),
-            (secondary_actions, "Actualizar firma", self._actualizar_firma, False),
-            (secondary_actions, "Anular ultima firma", self._anular_ultima_firma, False),
+            (firma_actions, "Actualizar firma", self._actualizar_firma, False),
+            (firma_actions, "Anular ultima firma", self._anular_ultima_firma, False),
             (secondary_actions, "Datos vendedor", lambda: self._editar_parte("vendedor"), False),
             (secondary_actions, "Datos comprador", lambda: self._editar_parte("comprador"), False),
             (secondary_actions, "Adjuntar documento", self._adjuntar_documento, False),
@@ -196,7 +198,7 @@ class UITramitesDgt(ttk.Frame):
         ):
             options = {"style": "Primary.TButton"} if primary else {}
             ttk.Button(parent, text=text, command=command, **options).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Label(secondary_actions, textvariable=self.var_firma_estado).pack(
+        ttk.Label(firma_actions, textvariable=self.var_firma_estado).pack(
             side=tk.RIGHT, padx=(8, 2)
         )
         ttk.Label(subsanation_actions, text="Pedir correccion al cliente:").pack(side=tk.LEFT, padx=(0, 6))
