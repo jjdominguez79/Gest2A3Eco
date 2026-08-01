@@ -596,9 +596,11 @@ class UITramitesDgt(ttk.Frame):
             return
         try:
             resultado = self._service.actualizar_estado_firma(self._current_id)
+            avisos = resultado.get("avisos") or []
             messagebox.showinfo(
                 "Gest2A3Eco",
-                f"Estado de firma: {resultado['estado']}.",
+                f"Estado de firma: {resultado['estado']}."
+                + ("\n\n" + "\n".join(avisos) if avisos else ""),
                 parent=self.winfo_toplevel(),
             )
             self.refresh(select_id=self._current_id)

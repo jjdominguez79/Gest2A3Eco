@@ -6,6 +6,7 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.dgt_api import app as app_module
 from backend.dgt_api.database import Base, build_engine
+from backend.dgt_api.integrations import DatapriusBackend
 from backend.dgt_api.models import Parte
 
 
@@ -288,6 +289,34 @@ def test_backend_expone_anulacion_de_signrequest(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.json()["cancelled"] is True
     Base.metadata.drop_all(engine)
+
+
+def test_dataprius_reutiliza_archivo_existente_sin_duplicarlo():
+    backend = object.__new__(DatapriusBackend)
+    backend.base_path = "FOLDERS/Gest2A3Eco/Tramites DGT"
+    llamadas = []
+
+    def request(method, path, **kwargs):
+        llamadas.append((method, path, kwargs))
+        if path == "/folders/getpath":
+            return {"data": [{"ID": 123}]}
+        if path == "/folders/files/123":
+            return {"data": [{"ID": 456, "Name": "contrato_firmado.pdf", "Size": 100}]}
+        raise AssertionError("No debe intentar subir un fichero que ya existe")
+
+    backend._request = request
+    resultado = backend.subir(
+        "expedientes/DGT-2026-0001/Firmados",
+        "contrato_firmado.pdf",
+        b"%PDF",
+    )
+
+    assert resultado["id"] == 456
+    assert resultado["existente"] is True
+    assert [path for _method, path, _kwargs in llamadas] == [
+        "/folders/getpath",
+        "/folders/files/123",
+    ]
 
 
 def test_edicion_interna_guarda_partes_vehiculo_y_operacion(tmp_path, monkeypatch):

@@ -130,8 +130,33 @@ class DatapriusBackend:
             headers["Authorization"] = f"Bearer {self._token(True)}"
             response = self.http.request(method, f"{self.base_url}{path}", headers=headers, timeout=60, **kwargs)
         if response.status_code >= 400:
-            raise ProviderError(f"Dataprius rechazo la operacion ({response.status_code}).")
+            try:
+                detalle = response.json().get("message") or response.json().get("detail")
+            except Exception:
+                detalle = response.text[:300]
+            suffix = f": {detalle}" if detalle else "."
+            raise ProviderError(
+                f"Dataprius rechazo {method.upper()} {path} ({response.status_code}){suffix}"
+            )
         return response.json() if response.content else {}
+
+    def _archivo_existente(self, folder_id, nombre: str) -> dict:
+        try:
+            data = self._request("GET", f"/folders/files/{folder_id}")
+        except ProviderError:
+            return {}
+        items = data.get("data") or []
+        if isinstance(items, dict):
+            items = items.get("items") or items.get("files") or []
+        buscado = Path(nombre).name.casefold()
+        return next(
+            (
+                dict(item)
+                for item in items
+                if str(item.get("Name") or item.get("name") or "").casefold() == buscado
+            ),
+            {},
+        )
 
     def subir(self, ruta: str, nombre: str, contenido: bytes) -> dict:
         ruta_final = str(ruta or "").strip().strip("/")
@@ -145,6 +170,15 @@ class DatapriusBackend:
         if not items:
             raise ProviderError("Dataprius no devolvio la carpeta de destino.")
         carpeta = items[-1]
+        existente = self._archivo_existente(carpeta["ID"], nombre)
+        if existente:
+            return {
+                "provider": "dataprius", "id": existente.get("ID") or existente.get("id"),
+                "folder_id": existente.get("Folder") or carpeta["ID"],
+                "nombre": existente.get("Name") or existente.get("name") or Path(nombre).name,
+                "ruta": ruta_final, "tamano": existente.get("Size") or existente.get("size"),
+                "existente": True,
+            }
         data = self._request(
             "POST", "/files/upload", data={"IDFolder": carpeta["ID"]},
             files={"file": (Path(nombre).name, contenido)},

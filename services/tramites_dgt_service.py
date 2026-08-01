@@ -562,6 +562,7 @@ class TramitesDgtService:
         if not solicitudes:
             raise ValueError("El expediente no tiene solicitudes de firma.")
         estados = []
+        avisos = []
         for solicitud in solicitudes:
             data = self._firma_client.consultar(solicitud["request_id"])
             estado = str(data.get("status") or "desconocido")
@@ -575,7 +576,7 @@ class TramitesDgtService:
                     f"{tipo}_{solicitud['request_id'][:8]}",
                 )
                 solicitud.update(evidencias)
-                self._registrar_evidencias_firma(expediente_id, tipo, evidencias)
+                avisos.extend(self._registrar_evidencias_firma(expediente_id, tipo, evidencias))
             estados.append(estado)
         normalizados = {estado.lower() for estado in estados}
         if normalizados and normalizados <= {"signed", "completed"}:
@@ -592,7 +593,7 @@ class TramitesDgtService:
         expediente["firma_provider"] = "signrequest"
         expediente["firma_evidencia"] = evidencia
         self._repo.upsert_expediente(expediente)
-        return {"estado": estado_global, "solicitudes": solicitudes}
+        return {"estado": estado_global, "solicitudes": solicitudes, "avisos": avisos}
 
     def anular_ultima_firma(self, expediente_id: str) -> dict:
         if self._firma_client is None:
@@ -640,7 +641,7 @@ class TramitesDgtService:
                 tipos.add(tipo)
         return seleccionados
 
-    def _registrar_evidencias_firma(self, expediente_id: str, tipo: str, evidencias: dict) -> None:
+    def _registrar_evidencias_firma(self, expediente_id: str, tipo: str, evidencias: dict) -> list[str]:
         expediente = self._repo.get_expediente(expediente_id) or {}
         existentes = self._repo.listar_documentos_generados(expediente_id)
         fecha = self._now()
@@ -661,12 +662,21 @@ class TramitesDgtService:
         rutas_existentes = {
             str(doc.get("ruta_pdf") or "") for doc in existentes if doc.get("ruta_pdf")
         }
+        avisos = []
         for tipo_documento, titulo, ruta, sha256 in nuevos:
             if not ruta or str(ruta) in rutas_existentes:
                 continue
-            remotos = self._guardar_documentos_remotos(
-                expediente, "Firmados", {"ruta_pdf": ruta}
-            )
+            remotos = []
+            error_dataprius = ""
+            try:
+                remotos = self._guardar_documentos_remotos(
+                    expediente, "Firmados", {"ruta_pdf": ruta}
+                )
+            except Exception as exc:
+                error_dataprius = str(exc)
+                avisos.append(
+                    f"{Path(str(ruta)).name} se guardo localmente, pero no en Dataprius: {exc}"
+                )
             self._repo.insertar_documento_generado(
                 {
                     "expediente_id": expediente_id,
@@ -679,11 +689,13 @@ class TramitesDgtService:
                     "json_datos_generacion": {
                         "origen": "signrequest",
                         "dataprius": remotos,
+                        "dataprius_error": error_dataprius,
                     },
                     "hash_contenido": sha256,
                     "estado": "firmado",
                 }
             )
+        return avisos
 
     def _guardar_documentos_remotos(
         self, expediente: dict, categoria: str, documentos: dict

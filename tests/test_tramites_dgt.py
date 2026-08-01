@@ -97,6 +97,11 @@ class _FirmaPendienteClient:
         return {"cancelled": True}
 
 
+class _DatapriusConError:
+    def subir_archivo(self, ruta_carpeta, ruta_archivo):
+        raise ValueError("Dataprius rechazo la operacion (400).")
+
+
 def test_tramites_dgt_schema(tmp_path: Path):
     gestor = GestorSQLite(tmp_path / "dgt.db")
     tables = _tables(gestor)
@@ -248,6 +253,39 @@ def test_no_anula_un_envio_si_algun_documento_ya_esta_firmado():
     else:
         raise AssertionError("Debio impedir la anulacion de una firma completada")
     assert firma.canceladas == []
+
+
+def test_firma_se_guarda_aunque_dataprius_rechace_el_archivo(tmp_path: Path):
+    repo = _MemoryDgtRepository()
+    repo.expedientes["exp-1"] = {
+        "id": "exp-1",
+        "referencia": "DGT-2026-0001",
+        "firma_estado": "enviado",
+        "firma_evidencia": {
+            "solicitudes": [
+                {
+                    "request_id": "firma-1",
+                    "tipo_documento": "contrato_compraventa",
+                }
+            ]
+        },
+    }
+    service = TramitesDgtService(
+        repository=repo,
+        firma_client=_FirmaClient(),
+        almacenamiento_client=_DatapriusConError(),
+        almacenamiento_base_path="expedientes",
+    )
+    service._output_dir = lambda _expediente: tmp_path
+
+    resultado = service.actualizar_estado_firma("exp-1")
+
+    assert resultado["estado"] == "firmado"
+    assert resultado["avisos"]
+    assert repo.expedientes["exp-1"]["firma_estado"] == "firmado"
+    guardados = repo.listar_documentos_generados("exp-1")
+    assert len(guardados) == 2
+    assert all(doc["estado"] == "firmado" for doc in guardados)
 
 
 def test_rechaza_mandato_sin_email_del_mandatario(tmp_path: Path):
