@@ -302,13 +302,21 @@ class GestorPostgres(GestorSQLite):
               to_regclass('public.usuarios_permisos_globales') AS tabla_permisos,
               to_regclass('public.idx_usuarios_permisos_globales_usuario') AS indice_permisos,
               to_regclass('public.dgt_facturas') AS tabla_dgt_facturas,
-              to_regclass('public.idx_dgt_facturas_factura') AS indice_dgt_facturas
+              to_regclass('public.idx_dgt_facturas_factura') AS indice_dgt_facturas,
+              to_regclass('public.comunicaciones_avisos_estado') AS tabla_avisos_correo,
+              to_regclass('public.comunicaciones_avisos_vistos') AS tabla_avisos_vistos
             """
         ).fetchone()
         tabla_permisos_existe = bool(objetos and objetos["tabla_permisos"])
         indice_permisos_existe = bool(objetos and objetos["indice_permisos"])
         tabla_dgt_facturas_existe = bool(objetos and objetos["tabla_dgt_facturas"])
         indice_dgt_facturas_existe = bool(objetos and objetos["indice_dgt_facturas"])
+        tabla_avisos_correo_existe = bool(
+            objetos and objetos.get("tabla_avisos_correo")
+        )
+        tabla_avisos_vistos_existe = bool(
+            objetos and objetos.get("tabla_avisos_vistos")
+        )
         faltantes = [
             (tabla, columna, tipo)
             for tabla, columna, tipo in columnas
@@ -321,6 +329,8 @@ class GestorPostgres(GestorSQLite):
             and indice_permisos_existe
             and tabla_dgt_facturas_existe
             and indice_dgt_facturas_existe
+            and tabla_avisos_correo_existe
+            and tabla_avisos_vistos_existe
         ):
             self.conn.commit()
             return
@@ -370,5 +380,26 @@ class GestorPostgres(GestorSQLite):
             self.conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_dgt_facturas_factura "
                 "ON dgt_facturas(factura_id)"
+            )
+        if not tabla_avisos_correo_existe:
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS comunicaciones_avisos_estado (
+                  usuario_id INTEGER PRIMARY KEY,
+                  ultimo_control_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                )
+                """
+            )
+        if not tabla_avisos_vistos_existe:
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS comunicaciones_avisos_vistos (
+                  usuario_id INTEGER NOT NULL,
+                  graph_message_id TEXT NOT NULL,
+                  avisado_at TEXT NOT NULL,
+                  PRIMARY KEY (usuario_id, graph_message_id)
+                )
+                """
             )
         self.conn.commit()

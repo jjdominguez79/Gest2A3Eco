@@ -5,6 +5,7 @@ from views.ui_comunicaciones import (
     construir_cuerpo_html,
     construir_firma_oficina,
     html_a_texto,
+    normalizar_html_correo,
 )
 
 
@@ -53,6 +54,42 @@ def test_html_a_texto_muestra_cuerpo_y_firma_sin_etiquetas():
     assert "Juan" in texto
     assert "Gestinem" in texto
     assert "<br>" not in texto
+
+
+def test_html_escapado_se_normaliza_antes_de_mostrarlo():
+    cuerpo = "&lt;div&gt;Hola &lt;strong&gt;cliente&lt;/strong&gt;&lt;br&gt;Gracias&lt;/div&gt;"
+
+    assert normalizar_html_correo(cuerpo).startswith("<div>")
+    texto = html_a_texto(cuerpo)
+    assert "Hola cliente" in texto
+    assert "Gracias" in texto
+    assert "<strong>" not in texto
+
+
+def test_avisos_correo_ignoran_historico_y_no_se_repiten(tmp_path):
+    gestor = GestorSQLite(tmp_path / "test.db")
+    gestor.guardar_comunicacion_sin_asignar({
+        "graph_message_id": "historico-1",
+        "mailbox": "oficina@gestinem.es",
+        "remitente": "antiguo@example.com",
+        "asunto": "Correo anterior",
+    })
+
+    assert gestor.obtener_nuevos_avisos_correo(7, "OFICINA@GESTINEM.ES") == []
+
+    gestor.guardar_comunicacion_sin_asignar({
+        "graph_message_id": "nuevo-1",
+        "mailbox": "oficina@gestinem.es",
+        "remitente": "cliente@example.com",
+        "asunto": "Nueva consulta",
+    })
+    avisos = gestor.obtener_nuevos_avisos_correo(7, "oficina@gestinem.es")
+
+    assert [item["graph_message_id"] for item in avisos] == ["nuevo-1"]
+    assert avisos[0]["asunto"] == "Nueva consulta"
+    assert gestor.obtener_nuevos_avisos_correo(7, "oficina@gestinem.es") == []
+    # Cada usuario mantiene su propio estado y tampoco recibe el historico al activar.
+    assert gestor.obtener_nuevos_avisos_correo(8, "oficina@gestinem.es") == []
 
 
 def test_firma_oficina_no_incluye_datos_personales():

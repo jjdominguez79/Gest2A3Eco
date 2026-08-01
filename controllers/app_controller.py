@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+import threading
+import tkinter as tk
 from datetime import datetime
 from tkinter import messagebox, ttk
 from typing import TYPE_CHECKING
@@ -8,6 +11,10 @@ from services.empresa_service import EmpresaService
 
 if TYPE_CHECKING:
     from views.ui_dashboard_empresa import UIDashboardEmpresa
+
+
+LOG = logging.getLogger(__name__)
+MAIL_NOTIFICATION_INTERVAL_MS = 30_000
 
 
 class AppController:
@@ -26,6 +33,11 @@ class AppController:
         self._company_shell: UIDashboardEmpresa | None = None
         self._current_codigo: str | None = None
         self._current_ejercicio: int | None = None
+        self._mail_poll_running = False
+        self._mail_poll_scheduled = False
+        self._mail_poll_stopped = False
+        self._mail_toast = None
+        self._content.bind("<Destroy>", self._on_content_destroy, add="+")
 
     @property
     def session(self):
@@ -38,6 +50,133 @@ class AppController:
     def start(self):
         """Abre el listado de empresas, pantalla inicial de la aplicacion."""
         self._show(self.build_panel_general)
+        self._schedule_mail_poll(1_500)
+
+    def _schedule_mail_poll(self, delay_ms=MAIL_NOTIFICATION_INTERVAL_MS):
+        role = str(getattr(self._session.role, "value", self._session.role)).lower()
+        if (
+            self._mail_poll_stopped
+            or self._mail_poll_scheduled
+            or role not in {"admin", "empleado"}
+        ):
+            return
+        try:
+            self._content.after(delay_ms, self._start_mail_poll)
+            self._mail_poll_scheduled = True
+        except tk.TclError:
+            pass
+
+    def _start_mail_poll(self):
+        self._mail_poll_scheduled = False
+        if self._mail_poll_stopped:
+            return
+        if self._mail_poll_running:
+            self._schedule_mail_poll()
+            return
+        self._mail_poll_running = True
+        mailbox = self._shared_mailbox()
+        usuario_id = self._session.user.id
+
+        def worker():
+            try:
+                rows = self._gestor.obtener_nuevos_avisos_correo(
+                    usuario_id, mailbox,
+                )
+                error = None
+            except Exception as exc:
+                rows, error = [], exc
+            try:
+                self._content.after(0, self._finish_mail_poll, rows, error)
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    @staticmethod
+    def _shared_mailbox() -> str:
+        from utils.utilidades import load_app_config
+
+        return str(
+            (load_app_config().get("microsoft_graph") or {}).get("shared_mailbox")
+            or "Oficina@gestinem.es"
+        ).strip().lower()
+
+    def _finish_mail_poll(self, rows, error):
+        self._mail_poll_running = False
+        if self._mail_poll_stopped:
+            return
+        if error is not None:
+            LOG.warning("No se pudieron comprobar nuevos correos: %s", error)
+        elif rows:
+            self._show_mail_toast(rows)
+        self._schedule_mail_poll()
+
+    def _show_mail_toast(self, rows: list[dict]):
+        try:
+            if self._mail_toast is not None and self._mail_toast.winfo_exists():
+                self._mail_toast.destroy()
+            root = self._content.winfo_toplevel()
+            toast = tk.Toplevel(root)
+            self._mail_toast = toast
+            toast.title("Nuevo correo")
+            toast.attributes("-topmost", True)
+            toast.resizable(False, False)
+            toast.configure(bg="#eaf3fb")
+            frame = tk.Frame(
+                toast, bg="#eaf3fb", padx=16, pady=13,
+                highlightbackground="#2b6ea6", highlightthickness=1,
+            )
+            frame.pack(fill="both", expand=True)
+            count = len(rows)
+            title = "Nuevo correo en Oficina" if count == 1 else f"{count} correos nuevos en Oficina"
+            tk.Label(
+                frame, text=title, bg="#eaf3fb", fg="#123b5d",
+                font=("Segoe UI", 11, "bold"), anchor="w",
+            ).pack(fill="x")
+            details = []
+            for row in rows[:3]:
+                sender = str(row.get("remitente") or "Remitente desconocido")
+                subject = str(row.get("asunto") or "(Sin asunto)")
+                details.append(f"{sender}\n{subject}")
+            if count > 3:
+                details.append(f"Y {count - 3} mas...")
+            tk.Label(
+                frame, text="\n\n".join(details), bg="#eaf3fb", fg="#263746",
+                font=("Segoe UI", 9), justify="left", anchor="w",
+                wraplength=390,
+            ).pack(fill="x", pady=(8, 10))
+            actions = tk.Frame(frame, bg="#eaf3fb")
+            actions.pack(fill="x")
+            tk.Button(
+                actions, text="Cerrar", command=toast.destroy,
+                relief="flat", padx=10,
+            ).pack(side="right")
+            tk.Button(
+                actions, text="Abrir buzon",
+                command=lambda: self._open_mailbox_from_toast(toast),
+                bg="#2b6ea6", fg="white", activebackground="#225985",
+                activeforeground="white", relief="flat", padx=12,
+            ).pack(side="right", padx=(0, 7))
+            toast.update_idletasks()
+            width, height = toast.winfo_reqwidth(), toast.winfo_reqheight()
+            x = root.winfo_screenwidth() - width - 24
+            y = root.winfo_screenheight() - height - 70
+            toast.geometry(f"+{max(0, x)}+{max(0, y)}")
+            toast.after(15_000, lambda: toast.winfo_exists() and toast.destroy())
+            root.bell()
+        except tk.TclError:
+            pass
+
+    def _open_mailbox_from_toast(self, toast):
+        try:
+            toast.destroy()
+        except tk.TclError:
+            pass
+        self.open_buzon()
+
+    def _on_content_destroy(self, event):
+        if event.widget is self._content:
+            self._mail_poll_stopped = True
 
     def open_buzon(self):
         """Abre el buzon global de comunicaciones bajo demanda."""

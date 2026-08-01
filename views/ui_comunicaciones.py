@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 import tkinter as tk
 from html.parser import HTMLParser
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -137,14 +138,138 @@ class _HTMLToText(HTMLParser):
         self.parts.append(data)
 
 
+def normalizar_html_correo(value: str) -> str:
+    """Corrige cuerpos que Microsoft entrega con el HTML escapado una vez."""
+    value = str(value or "")
+    if re.search(
+        r"&lt;\s*(?:html|body|div|p|table|span|br|blockquote)\b",
+        value,
+        flags=re.IGNORECASE,
+    ):
+        return html.unescape(value)
+    return value
+
+
 def html_a_texto(value: str) -> str:
     parser = _HTMLToText()
-    parser.feed(value or "")
+    parser.feed(normalizar_html_correo(value))
     lines = [line.rstrip() for line in "".join(parser.parts).splitlines()]
     texto = "\n".join(lines).strip()
     while "\n\n\n" in texto:
         texto = texto.replace("\n\n\n", "\n\n")
     return texto
+
+
+class _HTMLTextRenderer(HTMLParser):
+    """Renderiza HTML de correo en un Text sin ejecutar contenido externo."""
+
+    _BLOCKS = {"div", "p", "section", "article", "header", "footer", "tr"}
+    _SKIPPED = {"script", "style", "head", "title", "meta", "link"}
+
+    def __init__(self, widget: tk.Text):
+        super().__init__(convert_charrefs=True)
+        self.widget = widget
+        self.styles: list[str] = []
+        self.skip_depth = 0
+        self._in_pre = False
+
+    def _last_char(self) -> str:
+        value = self.widget.get("end-2c", "end-1c")
+        return value if value != "\n" or self.widget.index("end-1c") != "1.0" else ""
+
+    def _newline(self, count: int = 1):
+        current = self.widget.get("1.0", "end-1c")
+        if not current:
+            return
+        trailing = len(current) - len(current.rstrip("\n"))
+        if trailing < count:
+            self.widget.insert("end", "\n" * (count - trailing))
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        attrs = dict(attrs)
+        if tag in self._SKIPPED:
+            self.skip_depth += 1
+            return
+        if self.skip_depth:
+            return
+        if tag in self._BLOCKS:
+            self._newline(2 if tag == "p" else 1)
+        elif tag == "br":
+            self._newline()
+        elif tag == "li":
+            self._newline()
+            self.widget.insert("end", "  • ", ("bullet",))
+        elif tag in {"td", "th"}:
+            current = self.widget.get("1.0", "end-1c")
+            if current and not current.endswith(("\n", "  ")):
+                self.widget.insert("end", "   ")
+        elif tag == "hr":
+            self._newline()
+            self.widget.insert("end", "─" * 72, ("muted",))
+            self._newline()
+        elif tag == "img":
+            alt = str(attrs.get("alt") or "").strip()
+            if alt:
+                self.widget.insert("end", f"[{alt}]", ("muted", "italic"))
+        if tag in {"strong", "b", "th"}:
+            self.styles.append("bold")
+        elif tag in {"em", "i"}:
+            self.styles.append("italic")
+        elif tag in {"h1", "h2", "h3", "h4"}:
+            self._newline(2)
+            self.styles.append("heading")
+        elif tag == "a":
+            self.styles.append("link")
+        elif tag == "blockquote":
+            self._newline()
+            self.styles.append("quote")
+        elif tag == "pre":
+            self._newline()
+            self._in_pre = True
+            self.styles.append("mono")
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag in self._SKIPPED:
+            self.skip_depth = max(0, self.skip_depth - 1)
+            return
+        if self.skip_depth:
+            return
+        style = {
+            "strong": "bold", "b": "bold", "th": "bold",
+            "em": "italic", "i": "italic", "a": "link",
+            "blockquote": "quote", "pre": "mono",
+            "h1": "heading", "h2": "heading", "h3": "heading", "h4": "heading",
+        }.get(tag)
+        if style and style in self.styles:
+            index = len(self.styles) - 1 - self.styles[::-1].index(style)
+            self.styles.pop(index)
+        if tag == "pre":
+            self._in_pre = False
+        if tag in self._BLOCKS or tag in {"li", "ul", "ol", "blockquote", "pre"}:
+            self._newline(2 if tag == "p" else 1)
+
+    def handle_data(self, data):
+        if self.skip_depth or not data:
+            return
+        value = data if self._in_pre else re.sub(r"\s+", " ", data)
+        if not value.strip():
+            return
+        current = self.widget.get("1.0", "end-1c")
+        if current and not current.endswith((" ", "\n")) and data[:1].isspace():
+            value = " " + value.lstrip()
+        self.widget.insert("end", value, tuple(dict.fromkeys(self.styles)))
+
+
+def insertar_html_en_texto(widget: tk.Text, value: str) -> None:
+    """Inserta HTML de forma visual y segura en un widget Text."""
+    parser = _HTMLTextRenderer(widget)
+    try:
+        parser.feed(normalizar_html_correo(value))
+        parser.close()
+    except Exception:
+        widget.insert("end", html_a_texto(value or ""))
 
 
 class UIComunicaciones(ttk.Frame):
@@ -350,6 +475,21 @@ class CommunicationDetailDialog(tk.Toplevel):
         self._list.pack(fill="x")
         self._list.bind("<<TreeviewSelect>>", self._show)
         self._content = tk.Text(frame, wrap="word", state="disabled")
+        self._content.configure(
+            font=("Segoe UI", 10), padx=14, pady=12,
+            bg="#ffffff", fg="#1f2937", relief="solid", borderwidth=1,
+        )
+        self._content.tag_configure("metadata_label", font=("Segoe UI", 9, "bold"), foreground="#41566b")
+        self._content.tag_configure("metadata", font=("Segoe UI", 9), foreground="#41566b")
+        self._content.tag_configure("subject", font=("Segoe UI", 13, "bold"), foreground="#123b5d", spacing1=8, spacing3=10)
+        self._content.tag_configure("bold", font=("Segoe UI", 10, "bold"))
+        self._content.tag_configure("italic", font=("Segoe UI", 10, "italic"))
+        self._content.tag_configure("heading", font=("Segoe UI", 12, "bold"), foreground="#123b5d")
+        self._content.tag_configure("link", foreground="#1267a5", underline=True)
+        self._content.tag_configure("quote", foreground="#52606d", lmargin1=22, lmargin2=22)
+        self._content.tag_configure("mono", font=("Consolas", 9), background="#f3f4f6")
+        self._content.tag_configure("bullet", foreground="#2b6ea6", font=("Segoe UI", 10, "bold"))
+        self._content.tag_configure("muted", foreground="#6b7280")
         self._content.pack(fill="both", expand=True, pady=(10, 0))
         actions = ttk.Frame(frame)
         actions.pack(fill="x", pady=(8, 0))
@@ -381,18 +521,22 @@ class CommunicationDetailDialog(tk.Toplevel):
         adjuntos = message.get("adjuntos") or []
         nombres = ", ".join(item.get("nombre") or "" for item in adjuntos) or "Ninguno"
         error = message.get("error_envio") or "-"
-        contenido = (
-            f"De: {message.get('remitente') or ''}\n"
-            f"Para: {destinatarios}\n"
-            f"CC: {cc}\n"
-            f"Fecha: {message.get('fecha') or ''}\n"
-            f"Estado: {message.get('estado_envio') or ''}\n"
-            f"Adjuntos: {nombres}\n"
-            f"Error: {error}\n\n"
-            f"Asunto: {message.get('asunto') or ''}\n\n"
-            f"{html_a_texto(message.get('cuerpo_html') or '')}"
+        self._content.configure(state="normal")
+        self._content.delete("1.0", "end")
+        for label, value in (
+            ("De", message.get("remitente") or ""),
+            ("Para", destinatarios), ("CC", cc),
+            ("Fecha", message.get("fecha") or ""),
+            ("Estado", message.get("estado_envio") or ""),
+            ("Adjuntos", nombres), ("Error", error),
+        ):
+            self._content.insert("end", f"{label}: ", ("metadata_label",))
+            self._content.insert("end", f"{value}\n", ("metadata",))
+        self._content.insert(
+            "end", f"\n{message.get('asunto') or '(Sin asunto)'}\n", ("subject",),
         )
-        self._set_content(contenido)
+        insertar_html_en_texto(self._content, message.get("cuerpo_html") or "")
+        self._content.configure(state="disabled")
 
     def _set_content(self, value: str):
         self._content.configure(state="normal")

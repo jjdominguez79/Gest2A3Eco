@@ -230,12 +230,16 @@ class _ConexionMigracionesFalsa:
         indice_permisos=True,
         tabla_dgt_facturas=True,
         indice_dgt_facturas=True,
+        tabla_avisos_correo=True,
+        tabla_avisos_vistos=True,
     ):
         self.columnas = columnas
         self.tabla_permisos = tabla_permisos
         self.indice_permisos = indice_permisos
         self.tabla_dgt_facturas = tabla_dgt_facturas
         self.indice_dgt_facturas = indice_dgt_facturas
+        self.tabla_avisos_correo = tabla_avisos_correo
+        self.tabla_avisos_vistos = tabla_avisos_vistos
         self.sentencias = []
         self.commit_count = 0
 
@@ -261,6 +265,14 @@ class _ConexionMigracionesFalsa:
                 "indice_dgt_facturas": (
                     "idx_dgt_facturas_factura"
                     if self.indice_dgt_facturas else None
+                ),
+                "tabla_avisos_correo": (
+                    "comunicaciones_avisos_estado"
+                    if self.tabla_avisos_correo else None
+                ),
+                "tabla_avisos_vistos": (
+                    "comunicaciones_avisos_vistos"
+                    if self.tabla_avisos_vistos else None
                 ),
             })
         return _Resultado()

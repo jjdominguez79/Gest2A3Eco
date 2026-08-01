@@ -506,6 +506,17 @@ CREATE TABLE IF NOT EXISTS comunicaciones_sync (
   ultima_sincronizacion TEXT,
   ultimo_error TEXT
 );
+CREATE TABLE IF NOT EXISTS comunicaciones_avisos_estado (
+  usuario_id INTEGER PRIMARY KEY,
+  ultimo_control_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS comunicaciones_avisos_vistos (
+  usuario_id INTEGER NOT NULL,
+  graph_message_id TEXT NOT NULL,
+  avisado_at TEXT NOT NULL,
+  PRIMARY KEY (usuario_id, graph_message_id)
+);
 CREATE TABLE IF NOT EXISTS comunicaciones_sin_asignar (
   graph_message_id TEXT PRIMARY KEY,
   mailbox TEXT NOT NULL,
@@ -616,6 +627,25 @@ class GestorSQLite:
         self._ensure_column("comunicaciones_sin_asignar", "descartado_por", "TEXT")
         self._ensure_column("comunicaciones_sin_asignar", "descartado_at", "TEXT")
         self._ensure_column("comunicaciones_sin_asignar", "motivo_descarte", "TEXT")
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS comunicaciones_avisos_estado (
+              usuario_id INTEGER PRIMARY KEY,
+              ultimo_control_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """
+        )
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS comunicaciones_avisos_vistos (
+              usuario_id INTEGER NOT NULL,
+              graph_message_id TEXT NOT NULL,
+              avisado_at TEXT NOT NULL,
+              PRIMARY KEY (usuario_id, graph_message_id)
+            )
+            """
+        )
         self.conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_com_msg_graph "
             "ON comunicaciones_mensajes(graph_message_id) "
@@ -6406,6 +6436,71 @@ class GestorSQLite:
         rows = self.conn.execute(
             f"SELECT * FROM comunicaciones_sin_asignar WHERE {where} ORDER BY fecha DESC"
         ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    def obtener_nuevos_avisos_correo(
+        self, usuario_id: int, mailbox: str,
+    ) -> list[dict]:
+        """Devuelve una sola vez los correos incorporados desde el ultimo control.
+
+        La primera llamada inicializa el cursor sin recuperar el historico. En
+        llamadas posteriores tambien incluye lo recibido mientras el usuario
+        tenia cerrada la aplicacion.
+        """
+        usuario_id = int(usuario_id)
+        mailbox = str(mailbox or "").strip().lower()
+        if not mailbox:
+            return []
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        with self.conn:
+            estado = self.conn.execute(
+                "SELECT ultimo_control_at FROM comunicaciones_avisos_estado "
+                "WHERE usuario_id=?",
+                (usuario_id,),
+            ).fetchone()
+            if not estado:
+                self.conn.execute(
+                    """
+                    INSERT OR IGNORE INTO comunicaciones_avisos_vistos
+                      (usuario_id,graph_message_id,avisado_at)
+                    SELECT ?,graph_message_id,?
+                    FROM comunicaciones_sin_asignar
+                    WHERE LOWER(mailbox)=?
+                    """,
+                    (usuario_id, now, mailbox),
+                )
+                self.conn.execute(
+                    "INSERT INTO comunicaciones_avisos_estado "
+                    "(usuario_id,ultimo_control_at,updated_at) VALUES (?,?,?)",
+                    (usuario_id, now, now),
+                )
+                return []
+            rows = self.conn.execute(
+                """
+                SELECT p.graph_message_id,p.mailbox,p.remitente,p.asunto,
+                       p.fecha,p.created_at
+                FROM comunicaciones_sin_asignar p
+                WHERE LOWER(p.mailbox)=? AND p.descartado=0
+                  AND NOT EXISTS (
+                    SELECT 1 FROM comunicaciones_avisos_vistos v
+                    WHERE v.usuario_id=?
+                      AND v.graph_message_id=p.graph_message_id
+                  )
+                ORDER BY p.created_at,p.graph_message_id
+                """,
+                (mailbox, usuario_id),
+            ).fetchall()
+            for row in rows:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO comunicaciones_avisos_vistos "
+                    "(usuario_id,graph_message_id,avisado_at) VALUES (?,?,?)",
+                    (usuario_id, row["graph_message_id"], now),
+                )
+            self.conn.execute(
+                "UPDATE comunicaciones_avisos_estado "
+                "SET ultimo_control_at=?,updated_at=? WHERE usuario_id=?",
+                (now, now, usuario_id),
+            )
         return [self._row_to_dict(row) for row in rows]
 
     def listar_comunicaciones_descartadas(self) -> list[dict]:
