@@ -288,6 +288,26 @@ def test_firma_se_guarda_aunque_dataprius_rechace_el_archivo(tmp_path: Path):
     assert all(doc["estado"] == "firmado" for doc in guardados)
 
 
+def test_terminar_expediente_local_impide_guardar_cambios():
+    repo = _MemoryDgtRepository()
+    repo.expedientes["exp-1"] = {
+        "id": "exp-1",
+        "estado": "revision",
+        "firma_estado": "firmado",
+    }
+    service = TramitesDgtService(repository=repo)
+
+    terminado = service.finalizar_expediente("exp-1")
+
+    assert terminado["estado"] == "terminado"
+    try:
+        service.guardar_expediente("exp-1", {"titulo": "Cambio posterior"})
+    except ValueError as exc:
+        assert "solo lectura" in str(exc)
+    else:
+        raise AssertionError("Debio bloquear la edicion del expediente terminado")
+
+
 def test_rechaza_mandato_sin_email_del_mandatario(tmp_path: Path):
     repo = _MemoryDgtRepository()
     expediente_id = "exp-sin-mandatario"

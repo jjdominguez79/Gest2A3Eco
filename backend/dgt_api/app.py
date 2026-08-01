@@ -62,6 +62,11 @@ def get_db():
 internal = Depends(require_internal_key)
 
 
+def asegurar_expediente_editable(item: Expediente) -> None:
+    if item.estado == "terminado":
+        raise HTTPException(409, "El expediente esta terminado y es de solo lectura")
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -179,6 +184,7 @@ def get_expediente(expediente_id: str, db: Session = Depends(get_db)):
 @app.patch("/api/v1/expedientes/{expediente_id}", dependencies=[internal])
 def patch_expediente(expediente_id: str, payload: ExpedientePatch, db: Session = Depends(get_db)):
     item = cargar_expediente(db, expediente_id)
+    asegurar_expediente_editable(item)
     if payload.version is not None and payload.version != item.version:
         raise HTTPException(409, "El expediente fue modificado por otro usuario")
     if payload.codigo_tasa is not None and payload.codigo_tasa and not re.fullmatch(
@@ -251,6 +257,23 @@ def patch_expediente(expediente_id: str, payload: ExpedientePatch, db: Session =
     return serializar_expediente(cargar_expediente(db, item.id))
 
 
+@app.post("/api/v1/expedientes/{expediente_id}/finalizar", dependencies=[internal])
+def finalizar_expediente(expediente_id: str, db: Session = Depends(get_db)):
+    item = cargar_expediente(db, expediente_id)
+    if item.estado == "terminado":
+        return serializar_expediente(item)
+    firma = db.scalar(
+        select(Firma).where(Firma.expediente_id == expediente_id).order_by(Firma.id.desc())
+    )
+    if not firma or str(firma.estado or "").lower() not in {"firmado", "signed", "completed"}:
+        raise HTTPException(422, "Solo se puede terminar un expediente con la firma completada")
+    item.estado = "terminado"
+    item.version += 1
+    registrar_evento(db, item.id, "expediente_terminado", "gest2a3eco")
+    db.commit()
+    return serializar_expediente(cargar_expediente(db, item.id))
+
+
 @app.delete("/api/v1/expedientes/{expediente_id}", dependencies=[internal], status_code=204)
 def delete_expediente(expediente_id: str, db: Session = Depends(get_db)):
     item = cargar_expediente(db, expediente_id)
@@ -271,6 +294,7 @@ def delete_expediente(expediente_id: str, db: Session = Depends(get_db)):
 @app.post("/api/v1/expedientes/{expediente_id}/links", dependencies=[internal])
 def post_links(expediente_id: str, db: Session = Depends(get_db)):
     item = cargar_expediente(db, expediente_id)
+    asegurar_expediente_editable(item)
     links = {rol: crear_enlace(db, item, rol) for rol in ("vendedor", "comprador")}
     item.estado = "enlaces_enviados"
     db.commit()
@@ -279,6 +303,8 @@ def post_links(expediente_id: str, db: Session = Depends(get_db)):
 
 @app.post("/api/v1/expedientes/{expediente_id}/links/{rol}/revoke", dependencies=[internal])
 def revoke_link(expediente_id: str, rol: str, db: Session = Depends(get_db)):
+    item = cargar_expediente(db, expediente_id)
+    asegurar_expediente_editable(item)
     now = utcnow()
     links = db.scalars(
         select(Enlace).where(Enlace.expediente_id == expediente_id, Enlace.rol == rol, Enlace.revoked_at.is_(None))
@@ -293,6 +319,7 @@ def revoke_link(expediente_id: str, rol: str, db: Session = Depends(get_db)):
 @app.post("/api/v1/expedientes/{expediente_id}/subsanaciones", dependencies=[internal], status_code=201)
 def post_subsanacion(expediente_id: str, payload: SubsanacionCreate, db: Session = Depends(get_db)):
     item = cargar_expediente(db, expediente_id)
+    asegurar_expediente_editable(item)
     if payload.rol not in {"vendedor", "comprador"}:
         raise HTTPException(422, "Rol no valido")
     parte = next(part for part in item.partes if part.rol == payload.rol)
@@ -308,6 +335,7 @@ def post_subsanacion(expediente_id: str, payload: SubsanacionCreate, db: Session
 @app.post("/api/v1/expedientes/{expediente_id}/validar", dependencies=[internal])
 def validar_interno(expediente_id: str, db: Session = Depends(get_db)):
     item = cargar_expediente(db, expediente_id)
+    asegurar_expediente_editable(item)
     errors = []
     for parte in item.partes:
         if parte.estado != "completado":
@@ -345,6 +373,7 @@ def patch_parte_interna(
     expediente_id: str, rol: str, payload: PartePatch, db: Session = Depends(get_db)
 ):
     item = cargar_expediente(db, expediente_id)
+    asegurar_expediente_editable(item)
     if rol not in {"vendedor", "comprador"}:
         raise HTTPException(422, "Rol no valido")
     parte = next(part for part in item.partes if part.rol == rol)
@@ -425,6 +454,7 @@ async def post_documento_interno(
     db: Session = Depends(get_db),
 ):
     item = cargar_expediente(db, expediente_id)
+    asegurar_expediente_editable(item)
     if tipo not in {"factura", "modelo_620", "documentacion"}:
         raise HTTPException(422, "Tipo de documento no valido")
     stored = await save_private_upload(file, item.referencia, rol)
@@ -455,6 +485,7 @@ def delete_documento(documento_id: str, db: Session = Depends(get_db)):
     doc = db.get(Documento, documento_id)
     if not doc:
         raise HTTPException(404, "Documento no encontrado")
+    asegurar_expediente_editable(cargar_expediente(db, doc.expediente_id))
     storage_key = doc.storage_key
     registrar_evento(
         db, doc.expediente_id, "documento_eliminado", "gest2a3eco",
@@ -469,7 +500,8 @@ def delete_documento(documento_id: str, db: Session = Depends(get_db)):
 def post_documento_generado(
     expediente_id: str, payload: DocumentoGeneradoCreate, db: Session = Depends(get_db)
 ):
-    cargar_expediente(db, expediente_id)
+    item = cargar_expediente(db, expediente_id)
+    asegurar_expediente_editable(item)
     datos = payload.model_dump()
     if not datos.get("fecha_generacion"):
         datos["fecha_generacion"] = utcnow().isoformat()
@@ -497,6 +529,7 @@ def delete_documento_generado(documento_id: str, db: Session = Depends(get_db)):
     doc = db.get(DocumentoGenerado, documento_id)
     if not doc:
         raise HTTPException(404, "Documento generado no encontrado")
+    asegurar_expediente_editable(cargar_expediente(db, doc.expediente_id))
     result = {"id": doc.id, "expediente_id": doc.expediente_id, **(doc.datos or {})}
     registrar_evento(
         db, doc.expediente_id, "documento_generado_eliminado", "gest2a3eco", {"tipo": doc.tipo}
@@ -549,6 +582,7 @@ def get_public(referencia: str, rol: str, token: str = Query(...), db: Session =
 @app.patch("/public/tramites/{referencia}/{rol}")
 def patch_public(referencia: str, rol: str, payload: PartePatch, token: str = Query(...), db: Session = Depends(get_db)):
     item, _ = verificar_enlace(db, referencia, rol, token)
+    asegurar_expediente_editable(item)
     parte = next(part for part in item.partes if part.rol == rol)
     for key in ("tipo_persona", "nombre", "nif", "email", "telefono", "datos"):
         setattr(parte, key, getattr(payload, key))
@@ -588,6 +622,7 @@ def submit_public(
     db: Session = Depends(get_db),
 ):
     item, _ = verificar_enlace(db, referencia, rol, token)
+    asegurar_expediente_editable(item)
     parte = next(part for part in item.partes if part.rol == rol)
     errors = validar_parte(parte, rol)
     if rol == "vendedor" and parte.tipo_persona == "juridica" and not db.scalar(
@@ -620,6 +655,7 @@ async def post_public_documento(
     db: Session = Depends(get_db),
 ):
     item, _ = verificar_enlace(db, referencia, rol, token)
+    asegurar_expediente_editable(item)
     parte = next(part for part in item.partes if part.rol == rol)
     if rol != "vendedor" or parte.tipo_persona != "juridica" or tipo != "factura":
         raise HTTPException(422, "Solo el vendedor juridico debe aportar la factura.")

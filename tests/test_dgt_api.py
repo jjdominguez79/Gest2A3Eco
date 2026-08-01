@@ -383,6 +383,56 @@ def test_persiste_estado_y_solicitudes_de_firma(tmp_path, monkeypatch):
     Base.metadata.drop_all(engine)
 
 
+def test_terminar_expediente_lo_deja_de_solo_lectura(tmp_path, monkeypatch):
+    client, engine = _client(tmp_path, monkeypatch)
+    headers = {"X-API-Key": "test-secret"}
+    item = client.post("/api/v1/expedientes", headers=headers, json={}).json()
+    links = client.post(f"/api/v1/expedientes/{item['id']}/links", headers=headers).json()
+    token = links["vendedor"]["url"].split("token=", 1)[1]
+    firma = client.patch(
+        f"/api/v1/expedientes/{item['id']}",
+        headers=headers,
+        json={"version": item["version"], "firma_estado": "firmado"},
+    )
+    assert firma.status_code == 200
+
+    terminado = client.post(
+        f"/api/v1/expedientes/{item['id']}/finalizar", headers=headers
+    )
+
+    assert terminado.status_code == 200
+    assert terminado.json()["estado"] == "terminado"
+    assert client.patch(
+        f"/api/v1/expedientes/{item['id']}",
+        headers=headers,
+        json={"titulo": "No debe cambiar"},
+    ).status_code == 409
+    assert client.patch(
+        f"/public/tramites/{item['referencia']}/vendedor?token={token}",
+        json=_party_payload(),
+    ).status_code == 409
+    assert client.post(
+        f"/api/v1/expedientes/{item['id']}/documentos-generados",
+        headers=headers,
+        json={"tipo_documento": "contrato"},
+    ).status_code == 409
+    Base.metadata.drop_all(engine)
+
+
+def test_no_termina_expediente_sin_firma_completada(tmp_path, monkeypatch):
+    client, engine = _client(tmp_path, monkeypatch)
+    headers = {"X-API-Key": "test-secret"}
+    item = client.post("/api/v1/expedientes", headers=headers, json={}).json()
+
+    response = client.post(
+        f"/api/v1/expedientes/{item['id']}/finalizar", headers=headers
+    )
+
+    assert response.status_code == 422
+    assert "firma completada" in response.json()["detail"]
+    Base.metadata.drop_all(engine)
+
+
 def test_correccion_interna_conserva_envio_y_datos_no_editados(tmp_path, monkeypatch):
     client, engine = _client(tmp_path, monkeypatch)
     headers = {"X-API-Key": "test-secret"}

@@ -214,6 +214,11 @@ class ApiDgtRepository:
     def revoke_link(self, expediente_id: str, rol: str) -> None:
         self._request("POST", f"/api/v1/expedientes/{expediente_id}/links/{rol}/revoke")
 
+    def finalizar_expediente(self, expediente_id: str) -> dict:
+        return self._legacy(
+            self._request("POST", f"/api/v1/expedientes/{expediente_id}/finalizar")
+        )
+
     def solicitar_subsanacion(self, expediente_id: str, rol: str, mensaje: str) -> dict:
         return self._request(
             "POST",

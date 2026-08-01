@@ -110,6 +110,7 @@ class TramitesDgtService:
         actual = self._repo.get_expediente(expediente_id)
         if not actual:
             raise ValueError("Expediente DGT no encontrado.")
+        self._asegurar_editable(actual)
         codigo_tasa = str(payload.get("codigo_tasa") or "").strip().upper()
         if codigo_tasa and not re.fullmatch(r"[A-Z0-9-]{6,32}", codigo_tasa):
             raise ValueError("El codigo de tasa debe tener entre 6 y 32 letras, numeros o guiones.")
@@ -235,6 +236,10 @@ class TramitesDgtService:
 
     def guardar_datos_parte(self, expediente_id: str, rol: str, payload: dict) -> None:
         rol = self._validar_rol(rol)
+        actual = self._repo.get_expediente(expediente_id)
+        if not actual:
+            raise ValueError("Expediente DGT no encontrado.")
+        self._asegurar_editable(actual)
         update_remote = getattr(self._repo, "update_parte", None)
         if callable(update_remote):
             update_remote(expediente_id, rol, self._normalizar_payload_parte(payload))
@@ -594,6 +599,28 @@ class TramitesDgtService:
         expediente["firma_evidencia"] = evidencia
         self._repo.upsert_expediente(expediente)
         return {"estado": estado_global, "solicitudes": solicitudes, "avisos": avisos}
+
+    def finalizar_expediente(self, expediente_id: str) -> dict:
+        expediente = self._repo.get_expediente(expediente_id)
+        if not expediente:
+            raise ValueError("Expediente DGT no encontrado.")
+        if expediente.get("estado") == "terminado":
+            return expediente
+        if str(expediente.get("firma_estado") or "").lower() not in {
+            "firmado", "signed", "completed"
+        }:
+            raise ValueError("Solo se puede terminar un expediente con la firma completada.")
+        finalizar_remoto = getattr(self._repo, "finalizar_expediente", None)
+        if callable(finalizar_remoto):
+            return finalizar_remoto(expediente_id)
+        expediente["estado"] = "terminado"
+        self._repo.upsert_expediente(expediente)
+        return expediente
+
+    @staticmethod
+    def _asegurar_editable(expediente: dict) -> None:
+        if str(expediente.get("estado") or "").lower() == "terminado":
+            raise ValueError("El expediente esta terminado y es de solo lectura.")
 
     def anular_ultima_firma(self, expediente_id: str) -> dict:
         if self._firma_client is None:

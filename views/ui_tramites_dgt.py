@@ -134,6 +134,7 @@ class UITramitesDgt(ttk.Frame):
         ttk.Button(left_buttons, text="Eliminar", command=self._eliminar_expediente).pack(side=tk.RIGHT)
 
         notebook = ttk.Notebook(right)
+        self._notebook = notebook
         notebook.pack(fill="both", expand=True)
         detail_tab = ttk.Frame(notebook, padding=8)
         documents_tab = ttk.Frame(notebook, padding=8)
@@ -218,6 +219,11 @@ class UITramitesDgt(ttk.Frame):
             style="Primary.TButton",
             command=self._facturar_tramite,
         ).pack(side=tk.LEFT)
+        ttk.Button(
+            billing_actions,
+            text="Marcar como terminado",
+            command=self._finalizar_expediente,
+        ).pack(side=tk.LEFT, padx=(6, 0))
         self.var_factura_estado = tk.StringVar(value="Factura: no creada")
         ttk.Label(billing_actions, textvariable=self.var_factura_estado).pack(side=tk.LEFT, padx=10)
 
@@ -469,6 +475,38 @@ class UITramitesDgt(ttk.Frame):
         )
         self._load_docs()
         self._load_adjuntos(expediente)
+        self._set_readonly(expediente.get("estado") == "terminado")
+
+    def _set_readonly(self, readonly: bool) -> None:
+        estado = ["disabled"] if readonly else ["!disabled"]
+
+        def aplicar(widget):
+            for child in widget.winfo_children():
+                if isinstance(child, (ttk.Entry, ttk.Button, ttk.Checkbutton, ttk.Combobox)):
+                    child.state(estado)
+                aplicar(child)
+
+        aplicar(self._notebook)
+
+    def _finalizar_expediente(self):
+        if not self._current_id:
+            return
+        if not messagebox.askyesno(
+            "Terminar expediente",
+            "El expediente quedara cerrado y no se podran modificar sus datos ni documentos.\n\n¿Marcarlo como terminado?",
+            parent=self.winfo_toplevel(),
+        ):
+            return
+        try:
+            self._service.finalizar_expediente(self._current_id)
+            messagebox.showinfo(
+                "Gest2A3Eco",
+                "Expediente terminado. Desde ahora es de solo lectura.",
+                parent=self.winfo_toplevel(),
+            )
+            self.refresh(select_id=self._current_id)
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
 
     def _load_docs(self):
         self.docs_tv.delete(*self.docs_tv.get_children())
@@ -837,6 +875,7 @@ class UITramitesDgt(ttk.Frame):
         self.var_factura_estado.set("Factura: no creada")
         self.docs_tv.delete(*self.docs_tv.get_children())
         self.attach_tv.delete(*self.attach_tv.get_children())
+        self._set_readonly(False)
 
 
 class FacturarTramiteDgtDialog(simpledialog.Dialog):
