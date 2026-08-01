@@ -594,6 +594,41 @@ class TramitesDgtService:
         self._repo.upsert_expediente(expediente)
         return {"estado": estado_global, "solicitudes": solicitudes}
 
+    def anular_ultima_firma(self, expediente_id: str) -> dict:
+        if self._firma_client is None:
+            raise ValueError("SignRequest no esta configurado.")
+        expediente = self._repo.get_expediente(expediente_id)
+        if not expediente:
+            raise ValueError("Expediente DGT no encontrado.")
+        evidencia = dict(expediente.get("firma_evidencia") or {})
+        solicitudes = list(evidencia.get("solicitudes") or [])
+        if not solicitudes:
+            raise ValueError("El expediente no tiene una solicitud de firma activa.")
+
+        estados = []
+        for solicitud in solicitudes:
+            data = self._firma_client.consultar(solicitud["request_id"])
+            estado = str(data.get("status") or "desconocido").lower()
+            solicitud["estado"] = estado
+            estados.append(estado)
+        if any(estado in {"signed", "completed"} for estado in estados):
+            raise ValueError("No se puede anular porque alguno de los documentos ya esta firmado.")
+
+        anuladas = 0
+        for solicitud in solicitudes:
+            if solicitud["estado"] not in {"cancelled", "canceled", "declined", "expired"}:
+                self._firma_client.cancelar(solicitud["request_id"])
+                anuladas += 1
+            solicitud["estado"] = "cancelled"
+            solicitud["cancelado_at"] = self._now()
+        evidencia["solicitudes"] = solicitudes
+        evidencia["cancelado_at"] = self._now()
+        expediente["firma_estado"] = "cancelado"
+        expediente["firma_request_id"] = ""
+        expediente["firma_evidencia"] = evidencia
+        self._repo.upsert_expediente(expediente)
+        return {"estado": "cancelado", "solicitudes_anuladas": anuladas}
+
     def _ultimos_documentos_por_tipo(self, expediente_id: str) -> list[dict]:
         seleccionados = []
         tipos = set()
@@ -1220,9 +1255,22 @@ class TramitesDgtService:
             return str(value or "")
 
     def _parse_float(self, value):
-        raw = str(value or "").strip().replace(".", "").replace(",", ".")
+        raw = str(value or "").strip().replace(" ", "").replace("€", "")
         if not raw:
             return None
+        if "," in raw and "." in raw:
+            if raw.rfind(",") > raw.rfind("."):
+                raw = raw.replace(".", "").replace(",", ".")
+            else:
+                raw = raw.replace(",", "")
+        elif "," in raw:
+            raw = raw.replace(".", "").replace(",", ".")
+        elif "." in raw:
+            partes = raw.split(".")
+            if len(partes) > 2:
+                raw = "".join(partes) if len(partes[-1]) == 3 else "".join(partes[:-1]) + "." + partes[-1]
+            elif len(partes[-1]) == 3 and partes[0].lstrip("+-").isdigit():
+                raw = "".join(partes)
         try:
             return float(raw)
         except Exception:

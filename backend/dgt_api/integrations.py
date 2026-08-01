@@ -78,6 +78,14 @@ class SignRequestBackend:
             "signing_log_url": log.get("pdf") or "",
         }
 
+    def cancelar(self, request_id: str) -> dict:
+        estado = self.consultar(request_id)
+        if str(estado.get("status") or "").lower() in {"signed", "completed"}:
+            raise ProviderError("La solicitud ya esta firmada y no se puede anular.")
+        return self._json(
+            "POST", f"{self.base_url}/signrequests/{request_id}/cancel_signrequest/"
+        )
+
     def evidencia(self, request_id: str, tipo: str) -> bytes:
         estado = self.consultar(request_id)
         if estado.get("status") != "signed":

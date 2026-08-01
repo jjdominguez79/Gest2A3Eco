@@ -6,6 +6,7 @@ from models.gestor_sqlite import GestorSQLite
 from services.auth_service import AuthService, AuthorizationService
 from services.tramites_dgt_repository import ApiDgtRepository
 from services.tramites_dgt_service import TramitesDgtService, get_protocol_url_from_argv
+from views.ui_tramites_dgt import _formatear_importe_es
 
 
 class _MemoryDgtRepository:
@@ -81,6 +82,19 @@ class _FirmaClient:
             "sha256_firmado": "a" * 64,
             "sha256_registro_firma": "b" * 64,
         }
+
+
+class _FirmaPendienteClient:
+    def __init__(self, estado="sent"):
+        self.estado = estado
+        self.canceladas = []
+
+    def consultar(self, request_id):
+        return {"uuid": request_id, "status": self.estado}
+
+    def cancelar(self, request_id):
+        self.canceladas.append(request_id)
+        return {"cancelled": True}
 
 
 def test_tramites_dgt_schema(tmp_path: Path):
@@ -181,6 +195,59 @@ def test_rechaza_contrato_con_el_mismo_email_para_ambas_partes(tmp_path: Path):
         assert "emails distintos" in str(exc)
     else:
         raise AssertionError("No debe enviar un contrato con un unico email para ambas partes")
+
+
+def test_precio_admite_formato_espanol_y_no_multiplica_decimal():
+    service = TramitesDgtService(repository=_MemoryDgtRepository())
+
+    assert service._parse_float("1.234,50") == 1234.5
+    assert service._parse_float("1234,50") == 1234.5
+    assert service._parse_float("1234.5") == 1234.5
+    assert service._parse_float("1.234") == 1234.0
+    assert _formatear_importe_es(1234.5) == "1.234,50"
+
+
+def test_anula_ultimo_envio_de_firma_si_sigue_pendiente():
+    repo = _MemoryDgtRepository()
+    repo.expedientes["exp-1"] = {
+        "id": "exp-1",
+        "firma_estado": "enviado",
+        "firma_request_id": '["firma-1", "firma-2"]',
+        "firma_evidencia": {
+            "solicitudes": [
+                {"request_id": "firma-1", "estado": "sent"},
+                {"request_id": "firma-2", "estado": "sent"},
+            ]
+        },
+    }
+    firma = _FirmaPendienteClient()
+    service = TramitesDgtService(repository=repo, firma_client=firma)
+
+    resultado = service.anular_ultima_firma("exp-1")
+
+    assert resultado == {"estado": "cancelado", "solicitudes_anuladas": 2}
+    assert firma.canceladas == ["firma-1", "firma-2"]
+    assert repo.expedientes["exp-1"]["firma_estado"] == "cancelado"
+    assert repo.expedientes["exp-1"]["firma_request_id"] == ""
+
+
+def test_no_anula_un_envio_si_algun_documento_ya_esta_firmado():
+    repo = _MemoryDgtRepository()
+    repo.expedientes["exp-1"] = {
+        "id": "exp-1",
+        "firma_estado": "firmado",
+        "firma_evidencia": {"solicitudes": [{"request_id": "firma-1"}]},
+    }
+    firma = _FirmaPendienteClient(estado="signed")
+    service = TramitesDgtService(repository=repo, firma_client=firma)
+
+    try:
+        service.anular_ultima_firma("exp-1")
+    except ValueError as exc:
+        assert "ya esta firmado" in str(exc)
+    else:
+        raise AssertionError("Debio impedir la anulacion de una firma completada")
+    assert firma.canceladas == []
 
 
 def test_rechaza_mandato_sin_email_del_mandatario(tmp_path: Path):

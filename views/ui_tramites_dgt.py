@@ -16,6 +16,22 @@ from utils.utilidades import load_app_config
 from views.ui_tramites_dgt_public import UITramitesDgtPublicForm
 
 
+def _formatear_importe_es(value) -> str:
+    if value in (None, ""):
+        return ""
+    raw = str(value).strip().replace(" ", "").replace("€", "")
+    try:
+        if "," in raw and "." in raw:
+            numero = float(raw.replace(".", "").replace(",", "."))
+        elif "," in raw:
+            numero = float(raw.replace(",", "."))
+        else:
+            numero = float(raw)
+    except (TypeError, ValueError):
+        return str(value)
+    return f"{numero:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
+
+
 class UITramitesDgt(ttk.Frame):
     def __init__(self, parent, gestor, session=None, on_back=None):
         super().__init__(parent)
@@ -171,6 +187,7 @@ class UITramitesDgt(ttk.Frame):
             (primary_actions, "Generar documentos", self._generar_documentos, False),
             (primary_actions, "Enviar a firma", self._enviar_a_firma, False),
             (secondary_actions, "Actualizar firma", self._actualizar_firma, False),
+            (secondary_actions, "Anular ultima firma", self._anular_ultima_firma, False),
             (secondary_actions, "Datos vendedor", lambda: self._editar_parte("vendedor"), False),
             (secondary_actions, "Datos comprador", lambda: self._editar_parte("comprador"), False),
             (secondary_actions, "Adjuntar documento", self._adjuntar_documento, False),
@@ -429,7 +446,12 @@ class UITramitesDgt(ttk.Frame):
         self._current_id = str(sel[0])
         expediente = self._service.get_expediente(self._current_id) or {}
         for key, var in self._vars.items():
-            var.set("" if expediente.get(key) is None else str(expediente.get(key)))
+            value = expediente.get(key)
+            var.set(
+                _formatear_importe_es(value)
+                if key == "precio_venta"
+                else ("" if value is None else str(value))
+            )
         links = (
             self._links_by_expediente.get(self._current_id, {})
             if self._online
@@ -575,6 +597,26 @@ class UITramitesDgt(ttk.Frame):
             messagebox.showinfo(
                 "Gest2A3Eco",
                 f"Estado de firma: {resultado['estado']}.",
+                parent=self.winfo_toplevel(),
+            )
+            self.refresh(select_id=self._current_id)
+        except Exception as exc:
+            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+
+    def _anular_ultima_firma(self):
+        if not self._current_id:
+            return
+        if not messagebox.askyesno(
+            "Anular ultima firma",
+            "Se anularan en SignRequest las solicitudes del ultimo envio que todavia no esten firmadas.\n\n¿Continuar?",
+            parent=self.winfo_toplevel(),
+        ):
+            return
+        try:
+            resultado = self._service.anular_ultima_firma(self._current_id)
+            messagebox.showinfo(
+                "Gest2A3Eco",
+                f"Solicitudes anuladas: {resultado['solicitudes_anuladas']}.",
                 parent=self.winfo_toplevel(),
             )
             self.refresh(select_id=self._current_id)
@@ -883,7 +925,9 @@ class DatosParteDialog(simpledialog.Dialog):
         defaults["vehiculo_bastidor"] = (
             payload.get("vehiculo_bastidor") or self.expediente.get("vehiculo_bastidor") or ""
         )
-        defaults["precio_venta"] = payload.get("precio_venta") or self.expediente.get("precio_venta") or ""
+        defaults["precio_venta"] = _formatear_importe_es(
+            payload.get("precio_venta") or self.expediente.get("precio_venta") or ""
+        )
         defaults["fecha_operacion"] = (
             payload.get("fecha_operacion") or self.expediente.get("fecha_operacion") or ""
         )

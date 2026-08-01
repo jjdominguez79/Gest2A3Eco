@@ -102,6 +102,14 @@ def integration_signrequest_status(request_id: str):
         raise HTTPException(502, str(exc)) from exc
 
 
+@app.post("/api/v1/integrations/signrequest/{request_id}/cancel", dependencies=[internal])
+def integration_signrequest_cancel(request_id: str):
+    try:
+        return SignRequestBackend().cancelar(request_id)
+    except ProviderError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
 @app.get("/api/v1/integrations/signrequest/{request_id}/evidence/{tipo}", dependencies=[internal])
 def integration_signrequest_evidence(request_id: str, tipo: str):
     if tipo not in {"documento", "registro"}:

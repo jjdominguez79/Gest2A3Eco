@@ -272,6 +272,24 @@ def test_codigo_tasa_y_modelo_620_presentado(tmp_path, monkeypatch):
     Base.metadata.drop_all(engine)
 
 
+def test_backend_expone_anulacion_de_signrequest(tmp_path, monkeypatch):
+    client, engine = _client(tmp_path, monkeypatch)
+
+    class FirmaBackendFalso:
+        def cancelar(self, request_id):
+            return {"detail": "OK", "cancelled": request_id == "firma-1"}
+
+    monkeypatch.setattr(app_module, "SignRequestBackend", FirmaBackendFalso)
+    response = client.post(
+        "/api/v1/integrations/signrequest/firma-1/cancel",
+        headers={"X-API-Key": "test-secret"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["cancelled"] is True
+    Base.metadata.drop_all(engine)
+
+
 def test_edicion_interna_guarda_partes_vehiculo_y_operacion(tmp_path, monkeypatch):
     client, engine = _client(tmp_path, monkeypatch)
     headers = {"X-API-Key": "test-secret"}

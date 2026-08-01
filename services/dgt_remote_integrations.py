@@ -53,6 +53,11 @@ class BackendSignRequestClient:
     def consultar(self, request_id: str) -> dict:
         return self.backend.request("GET", f"/api/v1/integrations/signrequest/{request_id}").json()
 
+    def cancelar(self, request_id: str) -> dict:
+        return self.backend.request(
+            "POST", f"/api/v1/integrations/signrequest/{request_id}/cancel"
+        ).json()
+
     def descargar_evidencias(self, request_id: str, destino: str, nombre_base: str) -> dict:
         estado = self.consultar(request_id)
         if estado.get("status") != "signed":
