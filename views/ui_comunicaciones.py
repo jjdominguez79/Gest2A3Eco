@@ -432,9 +432,13 @@ class ComposeMailDialog(tk.Toplevel):
             ttk.Label(form, text=label).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Entry(form, textvariable=var).grid(row=row, column=1, sticky="ew", pady=4)
         ttk.Label(form, text="Remitente").grid(row=3, column=0, sticky="w", pady=4)
+        is_admin = bool(self._session and self._session.is_admin())
+        sender_values = [f"Buzon compartido: {shared}"]
+        if is_admin:
+            sender_values.insert(0, "Mi cuenta de Microsoft 365")
         ttk.Combobox(
             form, textvariable=self._sender, state="readonly",
-            values=("Mi cuenta de Microsoft 365", f"Buzon compartido: {shared}"),
+            values=sender_values,
         ).grid(row=3, column=1, sticky="ew", pady=4)
         ttk.Label(form, text="Mensaje").grid(row=4, column=0, sticky="nw", pady=4)
         self._body = tk.Text(form, wrap="word", height=20)
@@ -467,7 +471,8 @@ class ComposeMailDialog(tk.Toplevel):
             messagebox.showwarning("Correo", "Para, asunto y mensaje son obligatorios.", parent=self)
             return
         shared = (load_app_config().get("microsoft_graph") or {}).get("shared_mailbox") or "Oficina@gestinem.es"
-        sender = "me" if self._sender.get().startswith("Mi cuenta") else shared
+        is_admin = bool(self._session and self._session.is_admin())
+        sender = "me" if is_admin and self._sender.get().startswith("Mi cuenta") else shared
         is_shared = sender != "me"
         user = getattr(self._session, "user", None)
         signature = (

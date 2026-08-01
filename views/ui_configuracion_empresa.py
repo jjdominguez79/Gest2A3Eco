@@ -11,7 +11,7 @@ from services.import_a3_empresa import (
     listar_empresas_a3,
 )
 from services.maestro_contable_empresa_service import MaestroContableEmpresaService
-from utils.validaciones import normalizar_codigo_pais, normalizar_nif_cif
+from utils.validaciones import normalizar_codigo_empresa_a3, normalizar_codigo_pais, normalizar_nif_cif
 from views.ui_buzones import UIBuzones
 from views.ui_certificados import UICertificados
 from views.ui_notificaciones_cliente import UINotificacionesCliente
@@ -506,11 +506,13 @@ class UIConfiguracionEmpresa(ttk.Frame):
         try:
             if not self._exercise_rows:
                 raise ValueError("Debes configurar al menos un ejercicio.")
+            codigo = normalizar_codigo_empresa_a3(self.var_codigo.get())
+            self.var_codigo.set(codigo)
             self._sync_bank_items_from_records()
             logo_w_txt = self.var_logo_w.get().strip()
             logo_h_txt = self.var_logo_h.get().strip()
             base = {
-                "codigo": self.var_codigo.get().strip(),
+                "codigo": codigo,
                 "nombre": self.var_nombre.get().strip(),
                 "digitos_plan": int(self.var_dig.get().strip() or "8"),
                 "cuenta_bancaria": self._bank_items[0] if self._bank_items else "",
@@ -591,8 +593,7 @@ class UIConfiguracionEmpresa(ttk.Frame):
         ):
             return
         try:
-            for eje in self._gestor.listar_ejercicios_empresa(codigo):
-                self._gestor.eliminar_empresa(codigo, eje)
+            self._gestor.eliminar_empresa_completa(codigo)
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc))
             return
@@ -1148,6 +1149,16 @@ class UIConfiguracionEmpresa(ttk.Frame):
             data = importar_empresa_desde_a3(self.var_codigo.get(), digitos_plan_objetivo=digitos)
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc))
+            return
+        existente = self._gestor.buscar_empresa_por_nif(
+            data.get("cif"), excluir_codigo=data.get("codigo")
+        ) if data.get("cif") else None
+        if existente:
+            messagebox.showwarning(
+                "Empresa ya importada",
+                f"El CIF/NIF {normalizar_nif_cif(data.get('cif'))} ya corresponde a "
+                f"la empresa {existente.get('codigo')}. No se importara otra empresa.",
+            )
             return
         if data.get("codigo"):
             self.var_codigo.set(str(data["codigo"]))

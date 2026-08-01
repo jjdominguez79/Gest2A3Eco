@@ -29,6 +29,7 @@ pip-wheel-metadata/
 .DS_Store
 Thumbs.db
 .claude/
+.worktrees/
 
 # Logs and temp files
 *.log

@@ -95,6 +95,11 @@ class FacturasEmitidasController:
         session = getattr(self._security(), "session", None)
         return bool(session and session.role.value == "cliente")
 
+    def _is_admin(self) -> bool:
+        """Indica si la sesion actual puede enviar desde su buzon personal."""
+        session = getattr(self._security(), "session", None)
+        return bool(session and session.is_admin())
+
     def _ensure_write(self, message: str | None = None) -> bool:
         if self._can_write():
             return True
@@ -953,7 +958,11 @@ class FacturasEmitidasController:
                 return
 
             user = getattr(getattr(self._view, "session", None), "user", None)
-            send_from_personal = compose.get("sender_mode") == "personal"
+            # El valor devuelto por la vista no es una autorizacion: solo los
+            # administradores pueden utilizar su buzon personal.
+            send_from_personal = (
+                compose.get("sender_mode") == "personal" and self._is_admin()
+            )
             user_name = str(getattr(user, "nombre", "") or "").strip()
             if user_name.lower() == "administrador":
                 user_name = "Juan José Domínguez Barrero"

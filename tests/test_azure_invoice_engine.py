@@ -26,6 +26,17 @@ def test_mapea_campos_estructurados_del_sdk_actual():
     assert result.bases_iva[0].tipo_iva == 21.0
 
 
+def test_usa_el_texto_de_azure_como_respaldo_si_faltan_campos():
+    doc = SimpleNamespace(fields={})
+    texto = "Proveedor Demo SL\nCIF: B12345678\nFactura N: F-22\nFecha factura: 15/05/2026\nTotal factura: 121,00"
+
+    result = AzureInvoiceEngine("endpoint", "key")._mapear_documento(doc, None, texto=texto)
+
+    assert result.proveedor_nif == "B12345678"
+    assert result.numero_factura == "F-22"
+    assert result.total == 121.0
+
+
 def test_acepta_resultado_estructurado_aunque_azure_no_devuelva_texto():
     service = object.__new__(OcrService)
 
@@ -38,3 +49,28 @@ def test_acepta_resultado_estructurado_aunque_azure_no_devuelva_texto():
     result = service._ejecutar_motores(None)
 
     assert result.motor == "azure"
+
+
+def test_prefiere_razon_social_y_convierte_porcentaje_iva_de_azure():
+    field = lambda value, content=None, confidence=0.9: SimpleNamespace(value=value, content=content, confidence=confidence)
+    tax_item = field({
+        "Rate": field("10,00%", "10,00%"),
+        "Amount": field(SimpleNamespace(amount=25.31), "25,31"),
+    })
+    doc = SimpleNamespace(fields={
+        "VendorName": field("Frozen Food elmar", "Frozen Food elmar"),
+        "VendorAddressRecipient": field("ELMAR FROZEN FOOD SLU", "ELMAR FROZEN FOOD SLU"),
+        "VendorTaxId": field("B27849421", "B27849421"),
+        "InvoiceId": field("XST26 07994", "XST26 07994"),
+        "InvoiceTotal": field(SimpleNamespace(amount=278.41)),
+        "SubTotal": field(SimpleNamespace(amount=253.10)),
+        "TotalTax": field(SimpleNamespace(amount=25.31)),
+        "TaxDetails": field([tax_item]),
+    })
+
+    result = AzureInvoiceEngine("endpoint", "key")._mapear_documento(doc, None)
+
+    assert result.proveedor_nombre == "ELMAR FROZEN FOOD SLU"
+    assert [(linea.tipo_iva, linea.base, linea.cuota_iva) for linea in result.bases_iva] == [
+        (10.0, 253.10, 25.31)
+    ]

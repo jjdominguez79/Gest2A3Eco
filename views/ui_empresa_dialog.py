@@ -19,6 +19,7 @@ from services.import_a3_empresa import (
 )
 from utils.validaciones import (
     inferir_pais_desde_identificacion,
+    normalizar_codigo_empresa_a3,
     normalizar_codigo_pais,
     normalizar_nif_cif,
     validar_nif_o_nif_iva_intracomunitario,
@@ -1257,6 +1258,17 @@ class EmpresaDialog(tk.Toplevel):
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self)
             return
+        existente = self._gestor.buscar_empresa_por_nif(
+            data.get("cif"), excluir_codigo=data.get("codigo")
+        ) if data.get("cif") else None
+        if existente:
+            messagebox.showwarning(
+                "Empresa ya importada",
+                f"El CIF/NIF {normalizar_nif_cif(data.get('cif'))} ya corresponde a "
+                f"la empresa {existente.get('codigo')}. No se importara otra empresa.",
+                parent=self,
+            )
+            return
         self.var_codigo.set(str(data.get("codigo") or ""))
         if data.get("nombre"):
             self.var_nombre.set(str(data.get("nombre") or ""))
@@ -1391,12 +1403,14 @@ class EmpresaDialog(tk.Toplevel):
         try:
             if not self._exercise_rows:
                 raise ValueError("Debes configurar al menos un ejercicio.")
+            codigo = normalizar_codigo_empresa_a3(self.var_codigo.get())
+            self.var_codigo.set(codigo)
             self._sync_bank_items_from_records()
             cuentas_text = "\n".join(self._bank_items).strip()
             logo_w_txt = self.var_logo_w.get().strip()
             logo_h_txt = self.var_logo_h.get().strip()
             base = {
-                "codigo": self.var_codigo.get().strip(),
+                "codigo": codigo,
                 "nombre": self.var_nombre.get().strip(),
                 "digitos_plan": int(self.var_dig.get().strip() or "8"),
                 "cuenta_bancaria": self._bank_items[0] if self._bank_items else "",

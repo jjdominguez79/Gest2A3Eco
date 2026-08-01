@@ -17,6 +17,10 @@ from __future__ import annotations
 
 import logging
 import queue
+import os
+import shutil
+import subprocess
+import tempfile
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +30,32 @@ import tkinter as tk
 from utils.utilidades import load_app_config, save_app_config
 
 logger = logging.getLogger(__name__)
+
+
+def _normalizar_confianza(value) -> float:
+    """Normaliza valores de confianza de SQLite/Azure para mostrarlos en UI."""
+    try:
+        raw = str(value or "").strip().replace(",", ".")
+        is_percentage = raw.endswith("%")
+        if is_percentage:
+            raw = raw[:-1].strip()
+        confidence = float(raw) if raw else 0.0
+        if is_percentage or confidence > 1:
+            confidence /= 100.0
+        return max(0.0, min(confidence, 1.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _parse_importe(value) -> float:
+    raw = str(value or "").strip().replace("€", "")
+    if not raw:
+        return 0.0
+    if "," in raw and "." in raw:
+        raw = raw.replace(".", "").replace(",", ".")
+    elif "," in raw:
+        raw = raw.replace(",", ".")
+    return float(raw)
 
 # Bandejas de estado
 BANDEJAS = [
@@ -75,6 +105,9 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         super().__init__(master)
         self._gestor    = gestor
         self._codigo    = codigo_empresa
+        # El listado OCR tipado trabaja por empresa_id; es el mismo codigo
+        # interno de la empresa, pero debe conservarse como atributo propio.
+        self._empresa_id = codigo_empresa
         self._ejercicio = ejercicio
         self._nombre    = nombre_empresa
         self._session   = session
@@ -122,10 +155,17 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         paned.add(left, weight=40)
         self._build_bandejas(left)
 
-        # Panel derecho: editor
+        # Panel derecho: vista previa y campos visibles simultaneamente.
         right = ttk.Frame(paned)
         paned.add(right, weight=60)
-        self._build_editor(right)
+        detalle = ttk.PanedWindow(right, orient="horizontal")
+        detalle.pack(fill="both", expand=True)
+        preview = ttk.Frame(detalle)
+        editor = ttk.Frame(detalle)
+        detalle.add(preview, weight=48)
+        detalle.add(editor, weight=52)
+        self._build_preview(preview)
+        self._build_editor(editor)
 
         # Barra de estado
         self._lbl_status = ttk.Label(self, text="", foreground="#555")
@@ -269,6 +309,38 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             self._tv_iva.heading(c, text=c.replace("_", " ").title())
             self._tv_iva.column(c, width=90, anchor="e")
         self._tv_iva.pack(fill="both", expand=True, padx=4, pady=4)
+        self._tv_iva.bind("<<TreeviewSelect>>", self._cargar_linea_iva_en_editor)
+
+        iva_editor = ttk.Frame(iva_frame)
+        iva_editor.pack(fill="x", padx=4, pady=(0, 4))
+        self._iva_vars = {
+            "tipo_iva": tk.StringVar(value="21"),
+            "base": tk.StringVar(),
+            "cuota_iva": tk.StringVar(),
+            "tipo_recargo": tk.StringVar(value="0"),
+            "cuota_recargo": tk.StringVar(value="0"),
+        }
+        etiquetas = (
+            ("tipo_iva", "Tipo IVA", 8), ("base", "Base", 10),
+            ("cuota_iva", "Cuota IVA", 10), ("tipo_recargo", "Recargo", 8),
+            ("cuota_recargo", "Cuota R.", 10),
+        )
+        for col, (campo, etiqueta, ancho) in enumerate(etiquetas):
+            ttk.Label(iva_editor, text=etiqueta).grid(row=0, column=col, sticky="w", padx=2)
+            if campo == "tipo_iva":
+                widget = ttk.Combobox(
+                    iva_editor, textvariable=self._iva_vars[campo],
+                    values=("0", "4", "5", "10", "21"), width=ancho, state="normal",
+                )
+            else:
+                widget = ttk.Entry(iva_editor, textvariable=self._iva_vars[campo], width=ancho)
+            widget.grid(row=1, column=col, sticky="ew", padx=2)
+        ttk.Button(iva_editor, text="Anadir / actualizar", command=self._guardar_linea_iva).grid(
+            row=1, column=len(etiquetas), padx=(6, 2)
+        )
+        ttk.Button(iva_editor, text="Quitar", command=self._quitar_linea_iva).grid(
+            row=1, column=len(etiquetas) + 1, padx=2
+        )
 
         # Seccion retenciones
         ret_frame = ttk.LabelFrame(parent, text="Retenciones IRPF")
@@ -294,6 +366,141 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                                        wraplength=400, justify="left")
         self._lbl_errores.pack(anchor="w", padx=8, pady=2)
 
+    def _build_preview(self, parent: ttk.Frame):
+        """Vista local de la primera pagina; no envia el documento a ningun servicio."""
+        barra = ttk.Frame(parent)
+        barra.pack(fill="x", padx=8, pady=(8, 4))
+        self._lbl_preview = ttk.Label(barra, text="Selecciona una factura para verla.")
+        self._lbl_preview.pack(side="left", fill="x", expand=True)
+        ttk.Button(barra, text="Abrir documento", command=self._abrir_documento).pack(side="right")
+        marco = ttk.Frame(parent)
+        marco.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self._lbl_preview_imagen = ttk.Label(marco, anchor="center")
+        self._lbl_preview_imagen.pack(fill="both", expand=True)
+        self._preview_photo = None
+        self._preview_path = ""
+
+    def _mostrar_preview(self, doc: dict):
+        ruta = Path(str(doc.get("ruta_original") or ""))
+        self._preview_path = str(ruta)
+        self._preview_photo = None
+        self._lbl_preview_imagen.configure(image="", text="")
+        if not ruta.exists():
+            self._lbl_preview.configure(text=f"No se encuentra el documento original: {ruta}")
+            return
+        try:
+            imagen = self._cargar_primera_pagina(ruta)
+            from PIL import ImageTk
+            self._preview_photo = ImageTk.PhotoImage(imagen)
+            self._lbl_preview_imagen.configure(image=self._preview_photo)
+            self._lbl_preview.configure(text=f"{ruta.name} - primera pagina")
+        except Exception as exc:
+            self._lbl_preview.configure(text=f"No se pudo generar la vista previa: {exc}")
+            self._lbl_preview_imagen.configure(text="Usa 'Abrir documento' para verlo en el visor PDF.")
+
+    def _cargar_primera_pagina(self, ruta: Path):
+        from PIL import Image
+        if ruta.suffix.lower() != ".pdf":
+            imagen = Image.open(ruta)
+            imagen.thumbnail((760, 900))
+            return imagen.copy()
+        try:
+            import fitz
+            pdf = fitz.open(str(ruta))
+            pagina = pdf.load_page(0)
+            pix = pagina.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+            imagen = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            pdf.close()
+        except ImportError:
+            ejecutable = shutil.which("pdftoppm")
+            if not ejecutable:
+                raise RuntimeError("Falta PyMuPDF o pdftoppm para visualizar PDFs.")
+            carpeta = Path(tempfile.mkdtemp(prefix="gest2a3eco_preview_"))
+            prefijo = carpeta / "pagina"
+            subprocess.run(
+                [ejecutable, "-f", "1", "-l", "1", "-scale-to", "1400", "-png", str(ruta), str(prefijo)],
+                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            )
+            png = next(carpeta.glob("pagina-1.png"), None)
+            if not png:
+                raise RuntimeError("No se genero la imagen de la primera pagina.")
+            imagen = Image.open(png).copy()
+        imagen.thumbnail((760, 900))
+        return imagen
+
+    def _abrir_documento(self):
+        if not self._preview_path or not Path(self._preview_path).exists():
+            messagebox.showwarning("OCR", "No hay documento original disponible.")
+            return
+        try:
+            os.startfile(self._preview_path)
+        except Exception as exc:
+            messagebox.showerror("OCR", f"No se pudo abrir el documento:\n{exc}")
+
+    def _cargar_linea_iva_en_editor(self, _event=None):
+        seleccion = self._tv_iva.selection()
+        if not seleccion:
+            return
+        valores = self._tv_iva.item(seleccion[0], "values")
+        for campo, valor in zip(self._iva_vars, valores):
+            self._iva_vars[campo].set(str(valor))
+
+    def _guardar_linea_iva(self):
+        try:
+            valores = [_parse_importe(self._iva_vars[campo].get()) for campo in self._iva_vars]
+        except ValueError:
+            messagebox.showerror("OCR", "Los valores de la linea de IVA deben ser numericos.")
+            return
+        tipo, base, cuota, tipo_recargo, cuota_recargo = valores
+        if not 0 <= tipo <= 100:
+            messagebox.showerror("OCR", "El tipo de IVA debe estar entre 0 y 100.")
+            return
+        fila = tuple(f"{valor:.2f}" for valor in valores)
+        seleccion = self._tv_iva.selection()
+        if seleccion:
+            self._tv_iva.item(seleccion[0], values=fila)
+        else:
+            self._tv_iva.insert("", "end", values=fila)
+        self._recalcular_totales_iva()
+
+    def _quitar_linea_iva(self):
+        for item in self._tv_iva.selection():
+            self._tv_iva.delete(item)
+        for var in self._iva_vars.values():
+            var.set("")
+        self._iva_vars["tipo_iva"].set("21")
+        self._iva_vars["tipo_recargo"].set("0")
+        self._recalcular_totales_iva()
+
+    def _lineas_iva_editor(self) -> list[dict]:
+        lineas = []
+        for item in self._tv_iva.get_children():
+            valores = self._tv_iva.item(item, "values")
+            try:
+                tipo, base, cuota, tipo_recargo, cuota_recargo = [_parse_importe(v) for v in valores]
+            except ValueError:
+                raise ValueError("Hay una linea de IVA con importes invalidos.")
+            lineas.append({
+                "tipo_iva": tipo, "base": base, "cuota_iva": cuota,
+                "tipo_recargo": tipo_recargo, "cuota_recargo": cuota_recargo,
+            })
+        return lineas
+
+    def _recalcular_totales_iva(self):
+        try:
+            lineas = self._lineas_iva_editor()
+        except ValueError:
+            return
+        if not lineas:
+            return
+        base = round(sum(linea["base"] for linea in lineas), 2)
+        iva = round(sum(linea["cuota_iva"] for linea in lineas), 2)
+        recargo = round(sum(linea["cuota_recargo"] for linea in lineas), 2)
+        retencion = _parse_importe(self._entries["retencion_total"].get())
+        self._entries["base_total"].set(f"{base:.2f}")
+        self._entries["iva_total"].set(f"{iva:.2f}")
+        self._entries["total_factura"].set(f"{base + iva + recargo - retencion:.2f}")
+
     # ── Refresco de bandejas ──────────────────────────────────────────────────
 
     def _refresh_all(self):
@@ -303,7 +510,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
     def _refresh_bandeja(self, estado: str):
         # Cargar documentos OCR por estado (via tabla documentos_ocr)
         try:
-            docs = self._gestor.listar_documentos_ocr(self._empresa, estado)
+            docs = self._gestor.listar_documentos_ocr(self._empresa_id, estado)
         except Exception:
             # Compatibilidad: si metodo no existe, fallback
             docs = []
@@ -333,7 +540,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             return
         tv.delete(*tv.get_children())
         for doc in enriquecidos:
-            confianza = doc.get("confianza_global") or 0.0
+            confianza = _normalizar_confianza(doc.get("confianza_global"))
             vals = (
                 doc.get("nombre_archivo") or "",
                 doc.get("nombre_proveedor") or "",
@@ -372,6 +579,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             return
         self._doc_seleccionado = doc
         self._cargar_factura_en_editor(doc_id)
+        self._mostrar_preview(doc)
 
     def _cargar_factura_en_editor(self, doc_id: str):
         """Carga datos de facturas_recibidas_ocr en el editor."""
@@ -429,6 +637,10 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         for var in self._entries.values():
             var.set("")
         self._tv_iva.delete(*self._tv_iva.get_children())
+        for var in self._iva_vars.values():
+            var.set("")
+        self._iva_vars["tipo_iva"].set("21")
+        self._iva_vars["tipo_recargo"].set("0")
         self._tv_ret.delete(*self._tv_ret.get_children())
         self._lbl_errores.configure(text="")
         self._factura_seleccionada = None
@@ -516,15 +728,24 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         doc = self._gestor.get_documento_ocr(doc_id)
         if not doc:
             return
-        ruta = doc.get("ruta_original") or ""
-        if not ruta or not Path(ruta).exists():
-            messagebox.showerror("OCR", f"Fichero original no encontrado:\n{ruta}")
-            return
         self._lbl_status.configure(text="Reprocesando...")
-        t = threading.Thread(target=self._worker_ocr, args=([ruta],), daemon=True)
+        t = threading.Thread(target=self._worker_reprocesar, args=(doc_id,), daemon=True)
         self._ocr_thread = t
         t.start()
         self.after(300, self._poll_ocr)
+
+    def _worker_reprocesar(self, doc_id: str):
+        try:
+            from services.ocr import OcrService
+            svc = OcrService(
+                gestor=self._gestor, empresa_id=self._codigo,
+                ejercicio=self._ejercicio, usuario=getattr(self._session, "usuario", ""),
+            )
+            self._ocr_q.put(("ok", svc.reprocesar_documento(doc_id)))
+        except Exception as exc:
+            self._ocr_q.put(("error", str(exc)))
+        finally:
+            self._ocr_q.put(("done", None))
 
     def _guardar(self):
         if not self._factura_seleccionada:
@@ -537,12 +758,18 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             valor = var.get().strip()
             if campo in ("total_factura", "base_total", "iva_total", "retencion_total"):
                 try:
-                    payload[campo] = float(valor) if valor else 0.0
+                    payload[campo] = _parse_importe(valor)
                 except ValueError:
                     messagebox.showerror("OCR", f"Valor numerico invalido en '{campo}'.")
                     return
             else:
                 payload[campo] = valor
+
+        try:
+            lineas_iva = self._lineas_iva_editor()
+        except ValueError as exc:
+            messagebox.showerror("OCR", str(exc))
+            return
 
         # Registrar correcciones si hay cambios
         try:
@@ -562,6 +789,15 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             logger.warning("[guardar] Error al registrar correcciones: %s", exc)
 
         self._gestor.upsert_factura_recibida_ocr(payload)
+        self._gestor.eliminar_lineas_iva_ocr(factura_id)
+        for linea in lineas_iva:
+            self._gestor.upsert_linea_iva_ocr({
+                "factura_id": factura_id,
+                **linea,
+                "deducible": 1,
+                "porcentaje_deduccion": 100.0,
+                "tipo_operacion_iva": "INTERIOR_DEDUCIBLE",
+            })
         self._factura_seleccionada = payload
         self._refresh_all()
         messagebox.showinfo("OCR", "Cambios guardados.")

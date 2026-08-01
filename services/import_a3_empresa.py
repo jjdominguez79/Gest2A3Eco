@@ -10,6 +10,8 @@ try:
 except Exception:  # pragma: no cover
     xlrd = None
 
+from utils.validaciones import normalizar_codigo_empresa_a3
+
 try:
     from utils.utilidades import load_app_config as _load_app_config
 except Exception:  # pragma: no cover
@@ -71,13 +73,7 @@ _ADDRESS_START_RE = re.compile(
 
 
 def _clean_code(codigo: str) -> str:
-    raw = str(codigo or "").strip().upper()
-    if raw.startswith("E"):
-        raw = raw[1:]
-    txt = "".join(ch for ch in raw if ch.isdigit())
-    if not txt:
-        raise ValueError("Introduce un codigo de empresa A3 valido, por ejemplo E00193 o 00193.")
-    return txt.zfill(5)
+    return normalizar_codigo_empresa_a3(codigo)[1:]
 
 
 def _get_a3_eco_bases() -> list[Path]:

@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
-from services.comunicaciones_sync_service import ComunicacionesSyncService
 from services.documentos_correo_service import DocumentosCorreoService
 from utils.utilidades import load_app_config
 from views.ui_comunicaciones import CommunicationDetailDialog
+
+
+LOG = logging.getLogger(__name__)
+AUTO_REFRESH_MS = 30_000
 
 
 class ReassignCommunicationDialog(tk.Toplevel):
@@ -134,16 +138,22 @@ class UIComunicacionesGlobal(ttk.Frame):
         self._discarded: dict[str, dict] = {}
         self._companies: dict[str, dict] = {}
         self._users: dict[str, dict] = {}
+        self._auto_refresh_after_id = None
+        self._auto_refresh_running = False
+        self._destroying = False
+        self._refresh_generation = 0
         self._build()
         self._refresh()
+        self.bind("<Destroy>", self._on_destroy, add="+")
+        self._schedule_auto_refresh()
 
     def _build(self):
         top = ttk.Frame(self)
         top.pack(fill="x", pady=(0, 10))
         ttk.Label(top, text="Buzon de comunicaciones", font=("Segoe UI", 16, "bold")).pack(side="left")
-        ttk.Button(top, text="Sincronizar", command=self._sync).pack(side="right", padx=6)
 
         tabs = ttk.Notebook(self)
+        self._tabs = tabs
         tabs.pack(fill="both", expand=True)
         pending_tab = ttk.Frame(tabs, padding=8)
         mine_tab = ttk.Frame(tabs, padding=8)
@@ -319,22 +329,58 @@ class UIComunicacionesGlobal(ttk.Frame):
         return tree
 
     def _refresh(self):
+        self._refresh_generation += 1
+        self._apply_refresh_data(self._collect_refresh_data())
+
+    def _collect_refresh_data(self) -> dict:
+        data = {
+            "companies": self._gestor.listar_empresas(),
+            "users": self._gestor.listar_usuarios(),
+            "pending": self._gestor.listar_comunicaciones_sin_asignar(),
+            "mine": self._gestor.listar_buzon_responsable(self._session.user.id),
+            "mine_pending": self._gestor.listar_pendientes_responsable(
+                self._session.user.id
+            ),
+        }
+        if self._session.is_admin():
+            data.update({
+                "supervision": self._gestor.listar_comunicaciones_supervision(),
+                "supervision_unassigned": (
+                    self._gestor.listar_comunicaciones_sin_cliente_asignadas()
+                ),
+                "discarded": self._gestor.listar_comunicaciones_descartadas(),
+                "discarded_conversations": (
+                    self._gestor.listar_conversaciones_descartadas()
+                ),
+            })
+        return data
+
+    def _apply_refresh_data(self, data: dict):
+        selections = {
+            "pending": self._pending_tree.selection(),
+            "mine": self._mine_tree.selection(),
+        }
+        if self._session.is_admin():
+            selections.update({
+                "supervision": self._supervision_tree.selection(),
+                "discarded": self._discarded_tree.selection(),
+            })
         companies = {}
-        for item in self._gestor.listar_empresas():
+        for item in data["companies"]:
             code = str(item.get("codigo") or "")
             if code not in companies or int(item.get("ejercicio") or 0) > int(companies[code].get("ejercicio") or 0):
                 companies[code] = item
         self._companies = {f"{item.get('nombre') or code} [{code}]": item for code, item in companies.items()}
         self._filter_companies()
 
-        users = [item for item in self._gestor.listar_usuarios() if bool(item.get("activo"))]
+        users = [item for item in data["users"] if bool(item.get("activo"))]
         self._users = {f"{item.get('nombre')} [{item.get('username')}]": item for item in users}
         self._user_combo["values"] = sorted(self._users)
 
         self._pending_tree.delete(*self._pending_tree.get_children())
         self._pending = {}
         allowed = self._allowed_mailboxes()
-        for item in self._gestor.listar_comunicaciones_sin_asignar():
+        for item in data["pending"]:
             if str(item.get("mailbox") or "").lower() not in allowed:
                 continue
             graph_id = item["graph_message_id"]
@@ -347,7 +393,10 @@ class UIComunicacionesGlobal(ttk.Frame):
 
         self._mine_tree.delete(*self._mine_tree.get_children())
         self._mine = {}
-        for item in self._gestor.listar_buzon_responsable(self._session.user.id):
+        shared_mailbox = self._shared_mailbox()
+        for item in data["mine"]:
+            if str(item.get("mailbox") or "").strip().lower() != shared_mailbox:
+                continue
             comm_id = item["id"]
             self._mine[comm_id] = item
             company = companies.get(str(item.get("codigo_empresa") or ""), {})
@@ -356,7 +405,9 @@ class UIComunicacionesGlobal(ttk.Frame):
                 item.get("asunto") or "", item.get("ultimo_remitente") or "",
                 item.get("estado") or "pendiente",
             ))
-        for item in self._gestor.listar_pendientes_responsable(self._session.user.id):
+        for item in data["mine_pending"]:
+            if str(item.get("mailbox") or "").strip().lower() != shared_mailbox:
+                continue
             iid = f"pending::{item['graph_message_id']}"
             item["_pending_client"] = True
             self._mine[iid] = item
@@ -367,13 +418,43 @@ class UIComunicacionesGlobal(ttk.Frame):
                 item.get("estado") or "pendiente",
             ))
         if self._session.is_admin():
-            self._refresh_supervision()
-            self._refresh_discarded()
+            self._refresh_supervision(
+                data["supervision"], data["supervision_unassigned"],
+            )
+            self._refresh_discarded(
+                data["discarded"], data["discarded_conversations"],
+            )
+        self._restore_selection(self._pending_tree, selections["pending"])
+        self._restore_selection(self._mine_tree, selections["mine"])
+        if self._session.is_admin():
+            self._restore_selection(
+                self._supervision_tree, selections["supervision"],
+            )
+            self._restore_selection(
+                self._discarded_tree, selections["discarded"],
+            )
 
-    def _refresh_discarded(self):
+    @staticmethod
+    def _restore_selection(tree, selected):
+        existing = [iid for iid in selected if tree.exists(iid)]
+        if existing:
+            tree.selection_set(existing)
+
+    def _refresh_discarded(self, discarded=None, conversations=None):
         self._discarded_tree.delete(*self._discarded_tree.get_children())
         self._discarded = {}
-        for item in self._gestor.listar_comunicaciones_descartadas():
+        shared_mailbox = self._shared_mailbox()
+        discarded = (
+            self._gestor.listar_comunicaciones_descartadas()
+            if discarded is None else discarded
+        )
+        conversations = (
+            self._gestor.listar_conversaciones_descartadas()
+            if conversations is None else conversations
+        )
+        for item in discarded:
+            if str(item.get("mailbox") or "").strip().lower() != shared_mailbox:
+                continue
             graph_id = item["graph_message_id"]
             iid = f"queue::{graph_id}"
             self._discarded[iid] = item
@@ -382,7 +463,9 @@ class UIComunicacionesGlobal(ttk.Frame):
                 item.get("remitente") or "", item.get("asunto") or "",
                 item.get("descartado_por") or "", item.get("motivo_descarte") or "",
             ))
-        for item in self._gestor.listar_conversaciones_descartadas():
+        for item in conversations:
+            if str(item.get("mailbox") or "").strip().lower() != shared_mailbox:
+                continue
             iid = f"comm::{item['id']}"
             self._discarded[iid] = item
             self._discarded_tree.insert("", "end", iid=iid, values=(
@@ -391,12 +474,24 @@ class UIComunicacionesGlobal(ttk.Frame):
                 item.get("descartado_por") or "", item.get("motivo_descarte") or "",
             ))
 
-    def _refresh_supervision(self):
+    def _refresh_supervision(self, supervision=None, unassigned=None):
+        shared_mailbox = self._shared_mailbox()
+        supervision = (
+            self._gestor.listar_comunicaciones_supervision()
+            if supervision is None else supervision
+        )
+        unassigned = (
+            self._gestor.listar_comunicaciones_sin_cliente_asignadas()
+            if unassigned is None else unassigned
+        )
         self._supervision = {
             item["id"]: item
-            for item in self._gestor.listar_comunicaciones_supervision()
+            for item in supervision
+            if str(item.get("mailbox") or "").strip().lower() == shared_mailbox
         }
-        for item in self._gestor.listar_comunicaciones_sin_cliente_asignadas():
+        for item in unassigned:
+            if str(item.get("mailbox") or "").strip().lower() != shared_mailbox:
+                continue
             self._supervision[f"queue::{item['graph_message_id']}"] = item
         statuses = sorted({str(item.get("estado") or "pendiente") for item in self._supervision.values()})
         users = sorted({str(item.get("responsable_nombre") or "") for item in self._supervision.values() if item.get("responsable_nombre")})
@@ -447,40 +542,71 @@ class UIComunicacionesGlobal(ttk.Frame):
             )
         )
 
-    def _allowed_mailboxes(self) -> set[str]:
-        shared = str((load_app_config().get("microsoft_graph") or {}).get("shared_mailbox") or "Oficina@gestinem.es").lower()
-        allowed = {shared}
-        if self._session.is_admin():
-            allowed.add("me")
-            # Las entradas de Graph guardan la direccion real de la cuenta personal.
-            allowed.update(
-                str(item.get("mailbox") or "").lower()
-                for item in self._gestor.listar_comunicaciones_sin_asignar()
-                if str(item.get("mailbox") or "").lower() != shared
-            )
-        return allowed
+    @staticmethod
+    def _shared_mailbox() -> str:
+        return str(
+            (load_app_config().get("microsoft_graph") or {}).get("shared_mailbox")
+            or "Oficina@gestinem.es"
+        ).strip().lower()
 
-    def _sync(self):
-        shared = str((load_app_config().get("microsoft_graph") or {}).get("shared_mailbox") or "Oficina@gestinem.es")
-        mailboxes = [shared] + (["me"] if self._session.is_admin() else [])
-        total = 0
-        try:
-            service = ComunicacionesSyncService(self._gestor)
-            for mailbox in mailboxes:
-                responsable = None
-                if mailbox == "me":
-                    responsable = {
-                        "id": self._session.user.id,
-                        "nombre": self._session.user.nombre,
-                    }
-                total += service.sync(
-                    mailbox, responsable=responsable,
-                ).recibidos
-        except Exception as exc:
-            messagebox.showerror("Sincronizacion", str(exc), parent=self)
+    def _allowed_mailboxes(self) -> set[str]:
+        return {self._shared_mailbox()}
+
+    def _schedule_auto_refresh(self):
+        if self._destroying or self._auto_refresh_after_id is not None:
             return
-        self._refresh()
-        messagebox.showinfo("Sincronizacion", f"Correos revisados: {total}", parent=self)
+        self._auto_refresh_after_id = self.after(
+            AUTO_REFRESH_MS, self._start_auto_refresh,
+        )
+
+    def _start_auto_refresh(self):
+        self._auto_refresh_after_id = None
+        if self._destroying or self._auto_refresh_running:
+            self._schedule_auto_refresh()
+            return
+        self._auto_refresh_running = True
+        generation = self._refresh_generation
+
+        def worker():
+            try:
+                data = self._collect_refresh_data()
+                error = None
+            except Exception as exc:
+                data = None
+                error = exc
+            try:
+                self.after(
+                    0, self._finish_auto_refresh, data, error, generation,
+                )
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_auto_refresh(self, data, error, generation):
+        self._auto_refresh_running = False
+        if self._destroying:
+            return
+        if error is None and generation == self._refresh_generation:
+            self._apply_refresh_data(data)
+            self._refresh_generation += 1
+        else:
+            if error is not None:
+                LOG.warning(
+                    "No se pudo actualizar el buzon en segundo plano: %s", error,
+                )
+        self._schedule_auto_refresh()
+
+    def _on_destroy(self, event):
+        if event.widget is not self:
+            return
+        self._destroying = True
+        if self._auto_refresh_after_id is not None:
+            try:
+                self.after_cancel(self._auto_refresh_after_id)
+            except tk.TclError:
+                pass
+            self._auto_refresh_after_id = None
 
     def _on_pending_selection(self, _event=None):
         selected = self._pending_tree.selection()

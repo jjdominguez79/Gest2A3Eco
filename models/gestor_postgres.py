@@ -43,6 +43,15 @@ class FilaPostgres(dict):
             return tuple(self.values())[key]
         return super().__getitem__(key)
 
+    def __iter__(self):
+        """SQLite Row itera por valores; varios metodos heredados dependen de ello.
+
+        Psycopg entrega diccionarios y el iterador nativo de ``dict`` devuelve
+        claves. Eso hacia que ``dict(zip(columnas, fila))`` guardase literalmente
+        los nombres de columna como valores, especialmente en el modulo OCR.
+        """
+        return iter(self.values())
+
 
 def _adaptar_fila(row):
     return None if row is None else FilaPostgres(row)

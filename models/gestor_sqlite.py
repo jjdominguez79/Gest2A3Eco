@@ -7,7 +7,12 @@ from datetime import datetime
 from pathlib import Path
 
 from services.terceros_empresa_fiscal_service import validate_tercero_empresa_rel
-from utils.validaciones import inferir_pais_desde_identificacion, normalizar_codigo_pais
+from utils.validaciones import (
+    inferir_pais_desde_identificacion,
+    normalizar_codigo_empresa_a3,
+    normalizar_codigo_pais,
+    normalizar_nif_cif,
+)
 
 
 def _ej_val(v):
@@ -1458,8 +1463,36 @@ class GestorSQLite:
             )
         return self._normalize_empresa_activo(self._row_to_dict(cur.fetchone()))
 
+    def buscar_empresa_por_nif(self, nif: str | None, excluir_codigo: str | None = None):
+        """Localiza una empresa por CIF/NIF normalizado.
+
+        Se itera sobre las filas para que tambien se detecten datos antiguos
+        que se guardaron con guiones, espacios o minusculas.
+        """
+        nif_norm = normalizar_nif_cif(nif)
+        if not nif_norm:
+            return None
+        excluido = str(excluir_codigo or "").strip().upper()
+        for empresa in self.listar_empresas():
+            codigo = str(empresa.get("codigo") or "").strip().upper()
+            if codigo == excluido:
+                continue
+            if normalizar_nif_cif(empresa.get("cif")) == nif_norm:
+                return empresa
+        return None
+
     def upsert_empresa(self, emp: dict):
-        existe = self.get_empresa(emp.get("codigo"), emp.get("ejercicio"))
+        emp = dict(emp or {})
+        codigo = normalizar_codigo_empresa_a3(emp.get("codigo"))
+        emp["codigo"] = codigo
+        emp["cif"] = normalizar_nif_cif(emp.get("cif"))
+        duplicada = self.buscar_empresa_por_nif(emp.get("cif"), excluir_codigo=codigo)
+        if duplicada:
+            raise ValueError(
+                "Ya existe una empresa con el CIF/NIF "
+                f"{emp['cif']}: {duplicada.get('codigo')}."
+            )
+        existe = self.get_empresa(codigo, emp.get("ejercicio"))
         self.conn.execute(
             """
             INSERT INTO empresas (codigo, ejercicio, nombre, digitos_plan, serie_emitidas,
@@ -1493,7 +1526,7 @@ class GestorSQLite:
                 responsable=excluded.responsable
             """,
             (
-                emp.get("codigo"),
+                codigo,
                 _ej_val(emp.get("ejercicio")),
                 emp.get("nombre"),
                 emp.get("digitos_plan"),
@@ -1522,7 +1555,7 @@ class GestorSQLite:
         )
         self.conn.commit()
         if not existe:
-            self._clonar_plantillas_si_hace_falta(emp.get("codigo"), emp.get("ejercicio"))
+            self._clonar_plantillas_si_hace_falta(codigo, emp.get("ejercicio"))
 
     # ---------- Cuenta ingreso predeterminada en maestro ----------
     def _migrate_prefijo_ingreso_empresa(self):
@@ -2537,6 +2570,91 @@ class GestorSQLite:
         )
         self.conn.commit()
         return fid
+
+    def eliminar_empresa_completa(self, codigo: str) -> int:
+        """Elimina una empresa y todos sus ejercicios, verificando el resultado.
+
+        Esta operacion se usa desde el catalogo. A diferencia del borrado por
+        ejercicio, limpia tambien los registros que no llevan ejercicio y que
+        de otro modo dejaban restos de una empresa eliminada.
+        """
+        codigo = str(codigo or "").strip().upper()
+        if not codigo:
+            raise ValueError("Indica el codigo de empresa que se desea eliminar.")
+
+        tablas = (
+            ("albaranes_emitidas_docs", "codigo_empresa"),
+            ("asientos_contables", "codigo_empresa"),
+            ("bancos", "codigo_empresa"),
+            ("cert_solicitudes", "codigo_empresa"),
+            ("comunicaciones", "codigo_empresa"),
+            ("cuentas_bancarias", "codigo_empresa"),
+            ("cuotas_periodicas", "codigo_empresa"),
+            ("document_scan_run_items", "codigo_empresa"),
+            ("facturas_recibidas_ocr", "empresa_id"),
+            ("documentos_ocr", "empresa_id"),
+            ("documentos_generados", "codigo_empresa"),
+            ("documentos", "codigo_empresa"),
+            ("duplicate_groups", "codigo_empresa"),
+            ("empresa_ccc", "codigo_empresa"),
+            ("facturas_emitidas_docs", "codigo_empresa"),
+            ("facturas_emitidas", "codigo_empresa"),
+            ("facturas_recibidas_docs", "codigo_empresa"),
+            ("facturas_recibidas", "codigo_empresa"),
+            ("importaciones_bancos_movimientos", "codigo_empresa"),
+            ("importaciones_bancos", "codigo_empresa"),
+            ("intervinientes", "codigo_empresa"),
+            ("lotes_suenlace", "codigo_empresa"),
+            ("maestro_subcuentas_empresa", "codigo_empresa"),
+            ("notif_bandeja", "codigo_empresa"),
+            ("notif_buzones", "codigo_empresa"),
+            ("notif_certificados", "codigo_empresa"),
+            ("notif_sync_logs", "codigo_empresa"),
+            ("notificaciones_config", "codigo_empresa"),
+            ("notificaciones", "codigo_empresa"),
+            ("operaciones", "codigo_empresa"),
+            ("plan_cuentas", "codigo_empresa"),
+            ("plantillas_documentos", "codigo_empresa"),
+            ("series_emitidas", "codigo_empresa"),
+            ("terceros_empresas", "codigo_empresa"),
+            ("usuarios_empresas", "empresa_codigo"),
+        )
+        # Algunas bases SQLite antiguas no tienen aun todas las tablas de los
+        # modulos recientes. PostgreSQL si las tiene tras la migracion.
+        try:
+            filas_tablas = self.conn.execute(
+                "SELECT name AS table_name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        except Exception:
+            filas_tablas = self.conn.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema=current_schema()"
+            ).fetchall()
+        existentes = {
+            str(fila["table_name"] or "").lower()
+            for fila in filas_tablas
+        }
+        eliminadas = 0
+        try:
+            for tabla, columna in tablas:
+                if tabla.lower() not in existentes:
+                    continue
+                cur = self.conn.execute(
+                    f"DELETE FROM {tabla} WHERE {columna}=?", (codigo,)
+                )
+                eliminadas += max(0, int(cur.rowcount or 0))
+            cur = self.conn.execute("DELETE FROM empresas WHERE codigo=?", (codigo,))
+            eliminadas += max(0, int(cur.rowcount or 0))
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
+        if self.conn.execute(
+            "SELECT 1 FROM empresas WHERE codigo=? LIMIT 1", (codigo,)
+        ).fetchone():
+            raise RuntimeError(f"No se ha podido confirmar el borrado de la empresa {codigo}.")
+        return eliminadas
 
     def actualizar_numero_asiento_factura_emitida(
         self,
@@ -6540,7 +6658,14 @@ class GestorSQLite:
         rows = self.conn.execute(
             """
             SELECT c.*,COUNT(m.id) mensajes,MAX(m.fecha) ultima_fecha,
-                   MAX(m.remitente) ultimo_remitente
+                   MAX(m.remitente) ultimo_remitente,
+                   (
+                     SELECT mm.mailbox
+                     FROM comunicaciones_mensajes mm
+                     WHERE mm.comunicacion_id=c.id
+                       AND mm.mailbox IS NOT NULL AND mm.mailbox<>''
+                     ORDER BY mm.fecha DESC LIMIT 1
+                   ) AS mailbox
             FROM comunicaciones c
             LEFT JOIN comunicaciones_mensajes m ON m.comunicacion_id=c.id
             WHERE c.responsable_usuario_id=? AND c.descartado=0

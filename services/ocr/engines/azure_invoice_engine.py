@@ -17,6 +17,7 @@ el mapeo de campos Azure → OcrInvoiceResult.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from services.ocr.base import OcrEngineBase
@@ -95,14 +96,16 @@ class AzureInvoiceEngine(OcrEngineBase):
                 return self._error_result("Azure no devolvio documentos analizados.")
 
             doc = result.documents[0]
-            return self._mapear_documento(doc, path)
+            return self._mapear_documento(
+                doc, path, texto=str(getattr(result, "content", "") or ""),
+            )
 
         except Exception as exc:
             return self._error_result(f"Error Azure Document Intelligence: {exc}")
 
     # ── Mapeo de campos Azure → OcrInvoiceResult ──────────────────────────────
 
-    def _mapear_documento(self, doc, path: Path) -> OcrInvoiceResult:
+    def _mapear_documento(self, doc, path: Path, texto: str = "") -> OcrInvoiceResult:
         """
         Mapeo de campos del modelo prebuilt-invoice de Azure.
 
@@ -120,10 +123,19 @@ class AzureInvoiceEngine(OcrEngineBase):
         """
         f = doc.fields or {}
 
-        result = OcrInvoiceResult(motor=self.nombre)
+        result = OcrInvoiceResult(motor=self.nombre, texto=texto)
 
         # Proveedor
-        result.proveedor_nombre = _azure_str(f.get("VendorName"))
+        proveedor_modelo = _azure_str(f.get("VendorName"))
+        proveedor_destinatario = _azure_str(f.get("VendorAddressRecipient"))
+        # En algunos disenos Azure toma el logotipo como VendorName (por
+        # ejemplo, "Frozen Food elmar") y deja la razon social completa en el
+        # destinatario de la direccion del proveedor.
+        result.proveedor_nombre = (
+            proveedor_destinatario
+            if _parece_razon_social(proveedor_destinatario)
+            else proveedor_modelo or proveedor_destinatario
+        )
         result.proveedor_nif    = _azure_str(f.get("VendorTaxId"))
 
         # Numero y fechas
@@ -135,6 +147,26 @@ class AzureInvoiceEngine(OcrEngineBase):
         result.total       = _azure_float(f.get("InvoiceTotal"))
         result.base_total  = _azure_float(f.get("SubTotal"))
         result.iva_total   = _azure_float(f.get("TotalTax"))
+
+        # Algunos formatos españoles no rellenan todos los campos normalizados
+        # del modelo prebuilt-invoice. Azure sí aporta el texto completo: se
+        # interpreta como respaldo sin sustituir los valores estructurados.
+        if texto:
+            from services.ocr.invoice_interpreter import InvoiceInterpreter
+            fallback = InvoiceInterpreter().interpretar(texto)
+            for campo in (
+                "proveedor_nombre", "proveedor_nif", "numero_factura",
+                "fecha_factura", "fecha_vencimiento",
+            ):
+                if not getattr(result, campo):
+                    setattr(result, campo, getattr(fallback, campo))
+            for campo in ("total", "base_total", "iva_total", "retencion_total"):
+                if not getattr(result, campo):
+                    setattr(result, campo, getattr(fallback, campo))
+            if not result.bases_iva and fallback.bases_iva:
+                result.bases_iva = fallback.bases_iva
+            if not result.retenciones and fallback.retenciones:
+                result.retenciones = fallback.retenciones
 
         # Lineas de IVA desde TaxDetails (si disponible)
         tax_details = _azure_value(f.get("TaxDetails")) or []
@@ -165,7 +197,10 @@ class AzureInvoiceEngine(OcrEngineBase):
         result.confianza = round(sum(confs) / len(confs), 3) if confs else 0.85
 
         # Guardar JSON bruto para auditoría
-        result.raw_json = {"azure_fields": {k: str(v) for k, v in f.items()}}
+        result.raw_json = {
+            "azure_fields": {k: str(v) for k, v in f.items()},
+            "texto_disponible": bool(texto),
+        }
 
         # Validar coherencia
         from services.ocr.invoice_interpreter import InvoiceInterpreter
@@ -193,6 +228,13 @@ def _azure_float(field) -> float:
         # Azure devuelve CurrencyValue con amount y currency_symbol
         if hasattr(val, "amount"):
             return float(val.amount or 0.0)
+        if isinstance(val, str):
+            raw = val.strip().replace("%", "")
+            if "," in raw and "." in raw:
+                raw = raw.replace(".", "").replace(",", ".")
+            elif "," in raw:
+                raw = raw.replace(",", ".")
+            return float(raw)
         return float(val)
     except Exception:
         return 0.0
@@ -218,3 +260,7 @@ def _azure_value(field):
         return value
     # Las versiones antiguas exponian valueArray/valueObject directamente.
     return getattr(field, "value_array", None) or getattr(field, "value_object", None)
+
+
+def _parece_razon_social(value: str) -> bool:
+    return bool(re.search(r"\b(?:S\.?L\.?U?|S\.?A\.?|S\.?C\.?|COOP\.?|SLNE)\b", value or "", re.IGNORECASE))

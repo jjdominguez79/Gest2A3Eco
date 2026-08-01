@@ -222,10 +222,20 @@ def test_upsert_factura_emitida_con_id_textual_confirma_transaccion():
 
 
 class _ConexionMigracionesFalsa:
-    def __init__(self, columnas, *, tabla_permisos=True, indice_permisos=True):
+    def __init__(
+        self,
+        columnas,
+        *,
+        tabla_permisos=True,
+        indice_permisos=True,
+        tabla_dgt_facturas=True,
+        indice_dgt_facturas=True,
+    ):
         self.columnas = columnas
         self.tabla_permisos = tabla_permisos
         self.indice_permisos = indice_permisos
+        self.tabla_dgt_facturas = tabla_dgt_facturas
+        self.indice_dgt_facturas = indice_dgt_facturas
         self.sentencias = []
         self.commit_count = 0
 
@@ -244,6 +254,13 @@ class _ConexionMigracionesFalsa:
                 "indice_permisos": (
                     "idx_usuarios_permisos_globales_usuario"
                     if self.indice_permisos else None
+                ),
+                "tabla_dgt_facturas": (
+                    "dgt_facturas" if self.tabla_dgt_facturas else None
+                ),
+                "indice_dgt_facturas": (
+                    "idx_dgt_facturas_factura"
+                    if self.indice_dgt_facturas else None
                 ),
             })
         return _Resultado()
@@ -308,3 +325,20 @@ def test_migraciones_postgres_crean_solo_elementos_que_faltan():
         "CREATE INDEX IF NOT EXISTS idx_usuarios_permisos_globales_usuario"
     )
     assert conexion.commit_count == 1
+
+
+def test_fila_postgres_es_compatible_con_iteracion_de_sqlite_row():
+    fila = FilaPostgres(
+        nombre_archivo="factura.pdf",
+        motor_ocr="azure",
+        estado="pendiente_revision",
+    )
+    columnas = ["nombre_archivo", "motor_ocr", "estado"]
+
+    assert dict(zip(columnas, fila)) == {
+        "nombre_archivo": "factura.pdf",
+        "motor_ocr": "azure",
+        "estado": "pendiente_revision",
+    }
+    assert fila[0] == "factura.pdf"
+    assert dict(fila)["motor_ocr"] == "azure"

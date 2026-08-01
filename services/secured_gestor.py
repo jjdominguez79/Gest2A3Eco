@@ -389,6 +389,10 @@ class SecuredGestorSQLite:
         self.security.ensure_admin("Solo el administrador puede eliminar empresas.")
         return self._base.eliminar_empresa(codigo, ejercicio)
 
+    def eliminar_empresa_completa(self, codigo: str):
+        self.security.ensure_admin("Solo el administrador puede eliminar empresas.")
+        return self._base.eliminar_empresa_completa(codigo)
+
     def listar_usuarios(self):
         self.security.ensure_admin("Solo el administrador puede gestionar usuarios.")
         return self._base.listar_usuarios()

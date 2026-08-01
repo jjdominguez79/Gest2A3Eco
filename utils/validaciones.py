@@ -5,6 +5,7 @@ _DNI_LETTERS = "TRWAGMYFPDXBNJZSQVHLCKE"
 _CIF_CONTROL = "JABCDEFGHI"
 _CIF_LETTER_TYPES = set("KPQS")
 _CIF_DIGIT_TYPES = set("ABEH")
+_CODIGO_EMPRESA_A3_RE = re.compile(r"E\d{5}")
 _VAT_SIMPLE_PATTERNS = {
     "AT": r"U\d{8}",
     "BE": r"\d{10}",
@@ -40,6 +41,22 @@ def normalizar_nif_cif(value: str | None) -> str:
     if value is None:
         return ""
     return re.sub(r"[^A-Za-z0-9]", "", str(value)).upper()
+
+
+def normalizar_codigo_empresa_a3(value: str | None) -> str:
+    """Valida el identificador de empresa A3 sin corregir codigos ambiguos.
+
+    El codigo forma parte de nombres de carpetas y de ficheros A3, por lo que
+    no se deben eliminar caracteres ni anadir ceros automaticamente: hacerlo
+    permite que ``E001006`` se convierta en otra empresa valida por error.
+    """
+    codigo = str(value or "").strip().upper()
+    if not _CODIGO_EMPRESA_A3_RE.fullmatch(codigo):
+        raise ValueError(
+            "El codigo de empresa A3 debe tener el formato E seguido de exactamente "
+            "cinco digitos (por ejemplo, E01006)."
+        )
+    return codigo
 
 
 def _norm_nif(value: str | None) -> str:

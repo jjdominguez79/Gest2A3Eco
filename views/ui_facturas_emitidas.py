@@ -2890,7 +2890,9 @@ class UIFacturasEmitidas(ttk.Frame):
         sender_frame = ttk.Frame(frm)
         sender_frame.grid(row=1, column=1, columnspan=2, sticky="w", pady=(8, 2))
         ttk.Radiobutton(sender_frame, text="Oficina", variable=sender_mode, value="oficina").pack(side=tk.LEFT)
-        ttk.Radiobutton(sender_frame, text="Mi cuenta", variable=sender_mode, value="personal").pack(side=tk.LEFT, padx=(12, 0))
+        is_admin = bool(self.session and self.session.is_admin())
+        if is_admin:
+            ttk.Radiobutton(sender_frame, text="Mi cuenta", variable=sender_mode, value="personal").pack(side=tk.LEFT, padx=(12, 0))
 
         ttk.Label(frm, text="Destinatarios:").grid(row=2, column=0, sticky="ne", padx=(0, 8), pady=(8, 2))
         dest_frm = ttk.Frame(frm)

@@ -209,7 +209,9 @@ def test_asignacion_masiva_mueve_todos_los_mensajes_seleccionados(tmp_path):
     assert result["asignadas"] == ["bulk-0", "bulk-1", "bulk-2"]
     assert result["omitidas"] == []
     assert gestor.listar_comunicaciones_sin_asignar() == []
-    assert len(gestor.listar_buzon_responsable(3)) == 3
+    buzon = gestor.listar_buzon_responsable(3)
+    assert len(buzon) == 3
+    assert {item["mailbox"] for item in buzon} == {"oficina@gestinem.es"}
 
 
 def test_pendiente_personal_aparece_en_buzon_del_responsable(tmp_path):

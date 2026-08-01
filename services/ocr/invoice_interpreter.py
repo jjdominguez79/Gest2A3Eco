@@ -125,7 +125,9 @@ def _detectar_nombre_proveedor(text: str) -> str:
     skip = {
         "FACTURA", "INVOICE", "CIF", "NIF", "FECHA", "TOTAL", "BASE",
         "IVA", "ALBARAN", "PRESUPUESTO", "PEDIDO", "NOTA", "RECIBO", "ABONO",
-        "ALBARÁN", "NÚMERO", "NUMERO", "PROVEEDOR", "CLIENTE",
+        "ALBARÁN", "NÚMERO", "NUMERO", "PROVEEDOR", "CLIENTE", "PAGINA",
+        "PÁGINA", "REFER", "DESCRIPCION", "DESCRIPCIÓN", "CANTIDAD", "LOTE",
+        "PRECIO", "DTOS", "IMPORTE", "MERCANCIA", "MERCANCÍA",
     }
     for line in text.splitlines():
         clean = " ".join(line.split()).strip()
@@ -144,6 +146,21 @@ def _detectar_nombre_proveedor(text: str) -> str:
 
 def _detectar_numero_factura(text: str) -> str:
     """Detecta el numero de factura por patrones de etiqueta habituales."""
+    # Algunos PDF imprimen las cabeceras en una columna y sus valores en la
+    # siguiente. En el texto extraido queda ``Factura:\nfecha\nnumero``; la
+    # expresion regular general confunde entonces el nombre del proveedor con
+    # el numero de factura.
+    lines = [" ".join(line.split()).strip() for line in text.splitlines()]
+    for index, line in enumerate(lines):
+        if not re.fullmatch(r"(?:Factura|Fra\.?|Invoice)\s*:", line, re.IGNORECASE):
+            continue
+        for candidate in lines[index + 1:index + 6]:
+            if not candidate or re.fullmatch(r"(?:Fecha|Date)\s*:?", candidate, re.IGNORECASE):
+                continue
+            if re.fullmatch(r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}", candidate):
+                continue
+            if re.fullmatch(r"[A-Z0-9][A-Z0-9 /.-]{1,39}", candidate, re.IGNORECASE):
+                return candidate
     return _search(text, [
         r"\b(?:Factura|Fra\.?|Invoice)\s*(?:N[ºo°]?\.?|No\.?|Num\.?|#)?\s*[:#\-]?\s*([A-Z0-9][A-Z0-9\/\.\-]{1,39})",
         r"\bN[ºo°]\s*(?:de\s+)?factura\s*[:#\-]?\s*([A-Z0-9][A-Z0-9\/\.\-]{1,39})",
@@ -193,6 +210,7 @@ def _detectar_fecha_vencimiento(text: str) -> str:
 
 def _detectar_total(text: str) -> float:
     return _buscar_importe(text, [
+        r"\bTotal\s+(?:factura|importe|a\s+pagar)\b[^0-9]{0,80}([0-9][0-9\.,]*)",
         r"\b(?:Total\s+(?:factura|importe|a\s+pagar)|Importe\s+total|TOTAL\s+FACTURA|TOTAL)\s*[:#\-]?\s*(?:EUR|€)?\s*([0-9][0-9\.,]*)",
         r"\b(?:Total\s+(?:factura|importe|a\s+pagar)|Importe\s+total|TOTAL\s+FACTURA|TOTAL)\s*[:#\-]?\s*([0-9][0-9\.,]*)\s*(?:EUR|€)?",
     ])
@@ -204,9 +222,31 @@ def _detectar_lineas_iva(text: str) -> list[OcrVatLine]:
     """Intenta varios patrones para detectar tramos de IVA multiples."""
     lineas = _detectar_tabla_iva(text)
     if not lineas:
+        lineas = _detectar_iva_desglose_vertical(text)
+    if not lineas:
         lineas = _detectar_pares_tipo_iva(text)
     if not lineas:
         lineas = _detectar_iva_junto_a_base(text)
+    return lineas
+
+
+def _detectar_iva_desglose_vertical(text: str) -> list[OcrVatLine]:
+    """Lee el desglose que los PDF colocan en tres lineas verticales.
+
+    Ejemplo: ``I.V.A. 10,00% s/\n253,10 ...:\n25,31``.
+    """
+    patron = re.compile(
+        r"I\.?V\.?A\.?\s*(\d{1,2}(?:[,\.]\d+)?)\s*%\s*(?:s/)?\s*"
+        r"([0-9][0-9\.,]*)\s*[^0-9]{0,40}\s*([0-9][0-9\.,]*)",
+        re.IGNORECASE,
+    )
+    lineas = []
+    for match in patron.finditer(text):
+        tipo = _parse_amount(match.group(1))
+        base = _parse_amount(match.group(2))
+        cuota = _parse_amount(match.group(3))
+        if tipo in TIPOS_IVA_ESPANA and base > 0 and cuota >= 0:
+            lineas.append(OcrVatLine(tipo_iva=tipo, base=base, cuota_iva=cuota))
     return lineas
 
 

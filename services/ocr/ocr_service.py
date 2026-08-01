@@ -112,7 +112,7 @@ class OcrService:
             "fecha_procesado": _now(),
             "motor_ocr":       result.motor,
             "confianza_global": result.confianza,
-            "error_ocr":       "; ".join(result.errores) if not result.proveedor_nif else "",
+            "error_ocr":       "; ".join(result.errores),
             "texto_extraido":  result.texto,
             "json_ocr":        result.to_json(),
         })
@@ -136,6 +136,47 @@ class OcrService:
             "estado":       estado_final,
             "resultado":    result.to_dict(),
             "errores":      result.errores,
+        }
+
+    def reprocesar_documento(self, documento_id: str) -> dict:
+        """Vuelve a analizar un documento existente sin tratarlo como duplicado."""
+        doc = self._gestor.get_documento_ocr(documento_id)
+        if not doc:
+            return self._respuesta_error(documento_id, "Documento OCR no encontrado.")
+        path = Path(str(doc.get("ruta_original") or ""))
+        if not path.exists():
+            return self._respuesta_error(documento_id, f"Fichero original no encontrado: {path}")
+
+        doc_payload = dict(doc)
+        doc_payload.update({"estado": OcrDocumentState.PROCESANDO.value, "error_ocr": ""})
+        self._gestor.upsert_documento_ocr(doc_payload)
+        result = self._ejecutar_motores(path)
+        doc_payload.update({
+            "estado": result.estado_sugerido.value,
+            "fecha_procesado": _now(),
+            "motor_ocr": result.motor,
+            "confianza_global": result.confianza,
+            "error_ocr": "; ".join(result.errores),
+            "texto_extraido": result.texto,
+            "json_ocr": result.to_json(),
+        })
+        self._gestor.upsert_documento_ocr(doc_payload)
+
+        # La propuesta anterior y sus lineas se eliminan por cascada antes de
+        # guardar la nueva. Asi nunca se acumulan IVAs de intentos previos.
+        self._gestor.conn.execute(
+            "DELETE FROM facturas_recibidas_ocr WHERE documento_id=?", (str(documento_id),)
+        )
+        self._gestor.conn.commit()
+        factura_id = self._guardar_factura(str(documento_id), result) if (
+            result.proveedor_nif or result.numero_factura
+        ) else None
+        return {
+            "documento_id": str(documento_id),
+            "factura_id": factura_id,
+            "estado": result.estado_sugerido.value,
+            "resultado": result.to_dict(),
+            "errores": result.errores,
         }
 
     # ── Cadena de motores ─────────────────────────────────────────────────────
@@ -204,17 +245,27 @@ class OcrService:
             errores=["No hay motores OCR disponibles para procesar este documento."],
         )
 
+        diagnosticos = []
         for motor in self._motores:
             try:
                 resultado = motor.extraer(path)
             except Exception as exc:
                 logger.warning("[OcrService] Motor %s lanzo excepcion: %s", motor.nombre, exc)
+                diagnosticos.append(f"{motor.nombre}: {exc}")
                 continue
+
+            if resultado.errores:
+                diagnosticos.extend(f"{motor.nombre}: {error}" for error in resultado.errores)
 
             if (
                 (resultado.texto and len(resultado.texto.strip()) >= _MIN_TEXT_CHARS)
                 or (resultado.proveedor_nif and resultado.numero_factura)
             ):
+                # Si Azure fallo y se uso la lectura local como respaldo, no
+                # ocultar el motivo: el usuario necesita poder corregir la
+                # configuracion en vez de confiar en datos heurísticos.
+                if diagnosticos and motor.nombre != "azure":
+                    resultado.errores = list(dict.fromkeys(diagnosticos + resultado.errores))
                 return resultado
 
             # Motor no extrajo texto util: guardar como fallback y continuar
@@ -232,6 +283,8 @@ class OcrService:
                     "La imagen requiere un motor OCR local (Tesseract) o externo (Azure)."
                 ]
 
+        if diagnosticos:
+            ultimo_resultado.errores = list(dict.fromkeys(diagnosticos + ultimo_resultado.errores))
         return ultimo_resultado
 
     # ── Persistencia ──────────────────────────────────────────────────────────
