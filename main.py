@@ -138,6 +138,38 @@ def _build_header(
         font=("Segoe UI", 9), anchor="e",
     ).pack(anchor="e", pady=(0, 8))
 
+    mail_status = tk.Frame(right, bg=COLOR_PRIMARY, cursor="hand2")
+    mail_status.pack(anchor="e", pady=(0, 7))
+    tk.Label(
+        mail_status, text="Correo:", bg=COLOR_PRIMARY, fg=COLOR_ACCENT,
+        font=("Segoe UI", 9, "bold"), cursor="hand2",
+    ).pack(side="left", padx=(0, 5))
+    mail_labels = {}
+    for key, title, color in (
+        ("pendiente", "Pendientes", "#f8c471"),
+        ("respondido", "Respondidos", "#85c1e9"),
+        ("gestionado", "Gestionados", "#82e0aa"),
+    ):
+        label = tk.Label(
+            mail_status, text=f"{title} 0", bg=COLOR_PRIMARY, fg=color,
+            font=("Segoe UI", 9, "bold"), cursor="hand2",
+        )
+        label.pack(side="left", padx=(0, 9))
+        label.bind("<Button-1>", lambda _event: on_cambiar_empresa())
+        mail_labels[key] = label
+    mail_status.bind("<Button-1>", lambda _event: on_cambiar_empresa())
+
+    def _set_mail_counts(counts):
+        mail_labels["pendiente"].configure(
+            text=f"Pendientes {int(counts.get('pendiente', 0))}"
+        )
+        mail_labels["respondido"].configure(
+            text=f"Respondidos {int(counts.get('respondido', 0))}"
+        )
+        mail_labels["gestionado"].configure(
+            text=f"Gestionados {int(counts.get('gestionado', 0))}"
+        )
+
     btn_row = tk.Frame(right, bg=COLOR_PRIMARY)
     btn_row.pack(anchor="e")
 
@@ -192,6 +224,7 @@ def _build_header(
         ).pack(anchor="w")
         tk.Frame(root, bg=COLOR_SEPARATOR, height=1).pack(side="top", fill="x")
 
+    header.set_mail_counts = _set_mail_counts
     return header
 
 
@@ -415,7 +448,7 @@ def main():
         content = ttk.Frame(root, padding=10, style="TFrame")
         controller = AppController(content, secured_gestor, auth_service, session)
         state["controller"] = controller
-        _build_header(
+        header = _build_header(
             root,
             session=session,
             on_cambiar_empresa=controller.open_buzon,
@@ -433,6 +466,7 @@ def main():
             db_path=db_path,
             word_tpl_dir=word_tpl_dir,
         )
+        controller.set_mail_status_callback(header.set_mail_counts)
         content.pack(side="top", fill="both", expand=True)
         ctx = _build_context_menu(controller)
 

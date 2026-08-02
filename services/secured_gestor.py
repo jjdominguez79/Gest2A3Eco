@@ -89,6 +89,26 @@ class SecuredGestorSQLite:
             graph_message_id, estado, usuario_id,
         )
 
+    def actualizar_etiqueta_pendiente(self, graph_message_id: str, etiqueta: str):
+        return self._base.actualizar_etiqueta_pendiente(graph_message_id, etiqueta)
+
+    def actualizar_etiqueta_comunicacion(self, comunicacion_id: str, etiqueta: str):
+        if not self.security.session.is_admin():
+            row = self._base.conn.execute(
+                "SELECT responsable_usuario_id FROM comunicaciones WHERE id=?",
+                (comunicacion_id,),
+            ).fetchone()
+            if not row or int(row["responsable_usuario_id"] or 0) != int(
+                self.security.session.user.id
+            ):
+                raise PermissionError("Solo puedes etiquetar comunicaciones de tu buzon.")
+        return self._base.actualizar_etiqueta_comunicacion(comunicacion_id, etiqueta)
+
+    def resumen_buzon_responsable(self, usuario_id: int):
+        if int(usuario_id) != int(self.security.session.user.id):
+            raise PermissionError("No puedes consultar el resumen de otro usuario.")
+        return self._base.resumen_buzon_responsable(usuario_id)
+
     def descartar_comunicaciones(
         self, graph_message_ids: list[str], usuario_nombre: str, motivo: str = "",
     ):

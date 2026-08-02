@@ -76,3 +76,50 @@ def test_no_copia_un_adjunto_duplicado_ni_archivo_no_compatible(tmp_path, monkey
     assert summary.duplicates == ["repetida.pdf"]
     assert summary.unsupported == ["nota.docx"]
     assert not (tmp_path / "pdfs_recibidas").exists()
+
+
+def test_descarga_pdf_temporal_sin_registrarlo_en_ocr(tmp_path, monkeypatch):
+    import services.documentos_correo_service as module
+
+    monkeypatch.setattr(module.tempfile, "gettempdir", lambda: str(tmp_path))
+    gestor = GestorSQLite(tmp_path / "test.db")
+    graph = FakeGraph({
+        "pdf": {
+            "name": "Factura: cliente?.pdf",
+            "contentBytes": base64.b64encode(b"%PDF-preview").decode(),
+        },
+    })
+
+    path = DocumentosCorreoService(
+        gestor, graph,
+    ).descargar_adjunto_temporal(
+        mailbox="oficina@gestinem.es", graph_message_id="graph-1",
+        attachment_id="pdf",
+    )
+
+    assert path.read_bytes() == b"%PDF-preview"
+    assert path.suffix == ".pdf"
+    assert ":" not in path.name and "?" not in path.name
+    assert gestor.listar_documentos_ocr("E00001") == []
+
+
+def test_vista_previa_bloquea_formatos_ejecutables(tmp_path, monkeypatch):
+    import services.documentos_correo_service as module
+
+    monkeypatch.setattr(module.tempfile, "gettempdir", lambda: str(tmp_path))
+    graph = FakeGraph({
+        "exe": {
+            "name": "factura.exe",
+            "contentBytes": base64.b64encode(b"contenido").decode(),
+        },
+    })
+
+    try:
+        DocumentosCorreoService(None, graph).descargar_adjunto_temporal(
+            mailbox="oficina@gestinem.es", graph_message_id="graph-2",
+            attachment_id="exe",
+        )
+    except ValueError as exc:
+        assert "no se abre por seguridad" in str(exc)
+    else:
+        raise AssertionError("Se esperaba el bloqueo del formato ejecutable")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
@@ -127,6 +128,64 @@ class AttachmentSelectionDialog(tk.Toplevel):
         self.destroy()
 
 
+class AttachmentPreviewDialog(tk.Toplevel):
+    """Lista adjuntos y permite abrir una copia temporal sin asignar el correo."""
+
+    def __init__(self, parent, attachments: list[dict], on_open):
+        super().__init__(parent)
+        self.title("Revisar adjuntos del correo")
+        self.geometry("680x360")
+        self.transient(parent.winfo_toplevel())
+        self._attachments = {
+            str(item.get("id") or ""): item for item in attachments
+        }
+        self._on_open = on_open
+        frame = ttk.Frame(self, padding=12)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame,
+            text=(
+                "Abre una copia temporal para identificar el cliente. "
+                "El adjunto no se guardara en Documentacion hasta que lo asignes."
+            ),
+            wraplength=640,
+        ).pack(anchor="w", pady=(0, 8))
+        self._tree = ttk.Treeview(
+            frame, columns=("nombre", "tipo", "tamano"),
+            show="headings", selectmode="browse",
+        )
+        for key, title, width in (
+            ("nombre", "Archivo", 390), ("tipo", "Tipo", 150),
+            ("tamano", "Tamano", 100),
+        ):
+            self._tree.heading(key, text=title)
+            self._tree.column(key, width=width, anchor="w")
+        self._tree.pack(fill="both", expand=True)
+        for item_id, item in self._attachments.items():
+            size = int(item.get("size") or 0)
+            self._tree.insert("", "end", iid=item_id, values=(
+                item.get("name") or "Adjunto",
+                item.get("contentType") or "",
+                f"{size / 1024:.1f} KB",
+            ))
+        self._tree.bind("<Double-1>", lambda _event: self._open())
+        actions = ttk.Frame(frame)
+        actions.pack(fill="x", pady=(10, 0))
+        ttk.Button(actions, text="Cerrar", command=self.destroy).pack(side="right")
+        ttk.Button(
+            actions, text="Abrir adjunto", command=self._open,
+        ).pack(side="right", padx=(0, 7))
+        if self._attachments:
+            first = next(iter(self._attachments))
+            self._tree.selection_set(first)
+            self._tree.focus(first)
+
+    def _open(self):
+        selected = self._tree.selection()
+        if selected:
+            self._on_open(selected[0])
+
+
 class UIComunicacionesGlobal(ttk.Frame):
     def __init__(self, parent, gestor, session):
         super().__init__(parent, padding=12)
@@ -170,6 +229,8 @@ class UIComunicacionesGlobal(ttk.Frame):
             pending_tab,
             (("fecha", "Fecha", 170), ("buzon", "Buzon", 180),
              ("remitente", "Remitente", 230), ("asunto", "Asunto", 330),
+             ("adjuntos", "Adjuntos", 85),
+             ("etiqueta", "Etiqueta", 150),
              ("sugerencia", "Cliente sugerido", 220)),
             selectmode="extended",
         )
@@ -197,6 +258,14 @@ class UIComunicacionesGlobal(ttk.Frame):
             command=self._select_same_sender,
         ).pack(side="left", padx=(0, 5))
         ttk.Button(
+            buttons, text="Editar etiqueta",
+            command=lambda: self._edit_label("pending"),
+        ).pack(side="left", padx=(0, 5))
+        ttk.Button(
+            buttons, text="Revisar adjuntos",
+            command=self._preview_selected_pending,
+        ).pack(side="left", padx=(0, 5))
+        ttk.Button(
             buttons, text="Asignar sin cliente",
             command=self._assign_without_client,
         ).pack(side="left", padx=(0, 5))
@@ -214,7 +283,8 @@ class UIComunicacionesGlobal(ttk.Frame):
         self._mine_tree = self._tree(
             mine_tab,
             (("fecha", "Ultima actividad", 170), ("cliente", "Cliente", 220),
-             ("asunto", "Asunto", 350), ("remitente", "Remitente", 220),
+             ("etiqueta", "Etiqueta", 150), ("asunto", "Asunto", 320),
+             ("remitente", "Remitente", 210),
              ("estado", "Estado", 110)),
         )
         actions = ttk.Frame(mine_tab)
@@ -228,6 +298,10 @@ class UIComunicacionesGlobal(ttk.Frame):
                 actions, text=label,
                 command=lambda value=estado: self._set_status(value),
             ).pack(side="left", padx=(0, 5))
+        ttk.Button(
+            actions, text="Editar etiqueta",
+            command=lambda: self._edit_label("mine"),
+        ).pack(side="left", padx=(8, 5))
         if self._session.is_admin():
             ttk.Button(
                 actions, text="Reasignar",
@@ -295,7 +369,8 @@ class UIComunicacionesGlobal(ttk.Frame):
             parent,
             (("fecha", "Ultima actividad", 165), ("buzon", "Buzon", 175),
              ("cliente", "Cliente", 210), ("responsable", "Responsable", 170),
-             ("asunto", "Asunto", 310), ("remitente", "Ultimo remitente", 210),
+             ("etiqueta", "Etiqueta", 145), ("asunto", "Asunto", 280),
+             ("remitente", "Ultimo remitente", 200),
              ("estado", "Estado", 105)),
         )
         self._supervision_tree.bind(
@@ -307,6 +382,10 @@ class UIComunicacionesGlobal(ttk.Frame):
             actions, text="Reasignar",
             command=lambda: self._reassign("supervision"),
         ).pack(side="left")
+        ttk.Button(
+            actions, text="Editar etiqueta",
+            command=lambda: self._edit_label("supervision"),
+        ).pack(side="left", padx=6)
         ttk.Button(
             actions, text="Descartar",
             command=lambda: self._discard_assigned("supervision"),
@@ -384,10 +463,16 @@ class UIComunicacionesGlobal(ttk.Frame):
             if str(item.get("mailbox") or "").lower() not in allowed:
                 continue
             graph_id = item["graph_message_id"]
+            try:
+                payload = json.loads(item.get("payload_json") or "{}")
+            except (TypeError, ValueError):
+                payload = {}
             self._pending[graph_id] = item
             self._pending_tree.insert("", "end", iid=graph_id, values=(
                 item.get("fecha") or "", item.get("mailbox") or "",
                 item.get("remitente") or "", item.get("asunto") or "",
+                "Si" if payload.get("tiene_adjuntos") else "",
+                item.get("etiqueta") or "",
                 item.get("sugerencia_nombre") or "",
             ))
 
@@ -401,7 +486,9 @@ class UIComunicacionesGlobal(ttk.Frame):
             self._mine[comm_id] = item
             company = companies.get(str(item.get("codigo_empresa") or ""), {})
             self._mine_tree.insert("", "end", iid=comm_id, values=(
-                item.get("ultima_fecha") or "", company.get("nombre") or item.get("codigo_empresa"),
+                item.get("ultima_fecha") or "",
+                item.get("cliente_nombre") or company.get("nombre") or item.get("codigo_empresa"),
+                item.get("etiqueta") or "",
                 item.get("asunto") or "", item.get("ultimo_remitente") or "",
                 item.get("estado") or "pendiente",
             ))
@@ -414,6 +501,7 @@ class UIComunicacionesGlobal(ttk.Frame):
             self._mine_tree.insert("", "end", iid=iid, values=(
                 item.get("fecha") or "",
                 "Sin cliente" if item.get("sin_cliente_confirmado") else "Sin asignar",
+                item.get("etiqueta") or "",
                 item.get("asunto") or "", item.get("remitente") or "",
                 item.get("estado") or "pendiente",
             ))
@@ -523,6 +611,7 @@ class UIComunicacionesGlobal(ttk.Frame):
                 continue
             searchable = " ".join((
                 company, user, mailbox, str(item.get("asunto") or ""),
+                str(item.get("etiqueta") or ""),
                 str(item.get("ultimo_remitente") or ""), status,
             )).lower()
             if query and query not in searchable:
@@ -531,7 +620,8 @@ class UIComunicacionesGlobal(ttk.Frame):
             counts[status] = counts.get(status, 0) + 1
             self._supervision_tree.insert("", "end", iid=comm_id, values=(
                 item.get("ultima_fecha") or "", mailbox, company, user,
-                item.get("asunto") or "", item.get("ultimo_remitente") or "",
+                item.get("etiqueta") or "", item.get("asunto") or "",
+                item.get("ultimo_remitente") or "",
                 status,
             ))
         self._sup_summary.configure(
@@ -818,6 +908,46 @@ class UIComunicacionesGlobal(ttk.Frame):
             return None, None
         return selected[0], items.get(selected[0])
 
+    def _edit_label(self, source: str):
+        if source == "pending":
+            selected = list(self._pending_tree.selection())
+            items = self._pending
+        else:
+            tree = self._mine_tree if source == "mine" else self._supervision_tree
+            selected = list(tree.selection())
+            items = self._mine if source == "mine" else self._supervision
+        if not selected:
+            messagebox.showwarning(
+                "Etiqueta", "Selecciona al menos un correo.", parent=self,
+            )
+            return
+        current = str((items.get(selected[0]) or {}).get("etiqueta") or "")
+        etiqueta = simpledialog.askstring(
+            "Etiqueta del correo",
+            "Etiqueta visible para identificar o clasificar este correo:\n"
+            "(dejala vacia para quitarla)",
+            initialvalue=current,
+            parent=self,
+        )
+        if etiqueta is None:
+            return
+        updated = 0
+        for iid in selected:
+            if source == "pending" or iid.startswith(("pending::", "queue::")):
+                graph_id = iid.split("::", 1)[-1]
+                updated += int(bool(self._gestor.actualizar_etiqueta_pendiente(
+                    graph_id, etiqueta,
+                )))
+            else:
+                updated += int(bool(self._gestor.actualizar_etiqueta_comunicacion(
+                    iid, etiqueta,
+                )))
+        self._refresh()
+        if not updated:
+            messagebox.showwarning(
+                "Etiqueta", "No se ha podido actualizar la etiqueta.", parent=self,
+            )
+
     def _reassign(self, source: str):
         iid, item = self._selected_assigned(source)
         if not iid or not item:
@@ -879,6 +1009,8 @@ class UIComunicacionesGlobal(ttk.Frame):
         item = self._pending[selected[0]]
         payload = json.loads(item.get("payload_json") or "{}")
         message = {
+            "graph_message_id": item.get("graph_message_id"),
+            "mailbox": item.get("mailbox"),
             "fecha": payload.get("fecha"),
             "remitente": payload.get("remitente"),
             "destinatarios_json": json.dumps(payload.get("destinatarios") or []),
@@ -889,7 +1021,22 @@ class UIComunicacionesGlobal(ttk.Frame):
             "error_envio": "",
             "adjuntos": [],
         }
-        CommunicationDetailDialog(self, [message])
+        CommunicationDetailDialog(
+            self, [message], on_preview_attachments=self._preview_attachments,
+        )
+
+    def _preview_selected_pending(self):
+        selected = self._pending_tree.selection()
+        if not selected:
+            messagebox.showwarning(
+                "Adjuntos", "Selecciona primero un correo.", parent=self,
+            )
+            return
+        item = self._pending[selected[0]]
+        self._preview_attachments({
+            "graph_message_id": item.get("graph_message_id"),
+            "mailbox": item.get("mailbox"),
+        })
 
     def _set_status(self, estado: str):
         selected = self._mine_tree.selection()
@@ -915,6 +1062,8 @@ class UIComunicacionesGlobal(ttk.Frame):
             item = self._mine[selected[0]]
             payload = json.loads(item.get("payload_json") or "{}")
             message = {
+                "graph_message_id": item.get("graph_message_id"),
+                "mailbox": item.get("mailbox"),
                 "fecha": payload.get("fecha"),
                 "remitente": payload.get("remitente"),
                 "destinatarios_json": json.dumps(payload.get("destinatarios") or []),
@@ -925,13 +1074,17 @@ class UIComunicacionesGlobal(ttk.Frame):
                 "error_envio": "",
                 "adjuntos": [],
             }
-            CommunicationDetailDialog(self, [message])
+            CommunicationDetailDialog(
+                self, [message],
+                on_preview_attachments=self._preview_attachments,
+            )
             return
         messages = self._gestor.listar_mensajes_comunicacion(selected[0])
         company = self._mine[selected[0]].get("codigo_empresa")
         CommunicationDetailDialog(
             self, messages,
             on_import_attachments=lambda message: self._choose_attachments(company, message),
+            on_preview_attachments=self._preview_attachments,
         )
 
     def _supervision_detail(self):
@@ -942,6 +1095,8 @@ class UIComunicacionesGlobal(ttk.Frame):
             item = self._supervision[selected[0]]
             payload = json.loads(item.get("payload_json") or "{}")
             message = {
+                "graph_message_id": item.get("graph_message_id"),
+                "mailbox": item.get("mailbox"),
                 "fecha": payload.get("fecha"),
                 "remitente": payload.get("remitente"),
                 "destinatarios_json": json.dumps(payload.get("destinatarios") or []),
@@ -952,14 +1107,103 @@ class UIComunicacionesGlobal(ttk.Frame):
                 "error_envio": "",
                 "adjuntos": [],
             }
-            CommunicationDetailDialog(self, [message])
+            CommunicationDetailDialog(
+                self, [message],
+                on_preview_attachments=self._preview_attachments,
+            )
             return
         messages = self._gestor.listar_mensajes_comunicacion(selected[0])
         company = self._supervision[selected[0]].get("codigo_empresa")
         CommunicationDetailDialog(
             self, messages,
             on_import_attachments=lambda message: self._choose_attachments(company, message),
+            on_preview_attachments=self._preview_attachments,
         )
+
+    def _preview_attachments(self, message: dict):
+        graph_id = str(message.get("graph_message_id") or "").strip()
+        mailbox = str(message.get("mailbox") or "").strip()
+        if not graph_id or not mailbox:
+            messagebox.showinfo(
+                "Adjuntos", "Este mensaje no tiene adjuntos disponibles en Microsoft 365.",
+                parent=self,
+            )
+            return
+        self.winfo_toplevel().configure(cursor="watch")
+
+        def worker():
+            try:
+                attachments = DocumentosCorreoService(self._gestor).listar_adjuntos(
+                    mailbox=mailbox, graph_message_id=graph_id,
+                )
+                error = None
+            except Exception as exc:
+                attachments, error = [], exc
+            try:
+                self.after(
+                    0, self._show_attachment_preview_list,
+                    message, attachments, error,
+                )
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_attachment_preview_list(self, message, attachments, error):
+        self.winfo_toplevel().configure(cursor="")
+        if error is not None:
+            messagebox.showerror(
+                "Adjuntos", f"No se pudieron consultar los adjuntos:\n{error}",
+                parent=self,
+            )
+            return
+        if not attachments:
+            messagebox.showinfo(
+                "Adjuntos", "El correo no tiene adjuntos descargables.", parent=self,
+            )
+            return
+        AttachmentPreviewDialog(
+            self, attachments,
+            on_open=lambda attachment_id: self._open_temporary_attachment(
+                message, attachment_id,
+            ),
+        )
+
+    def _open_temporary_attachment(self, message: dict, attachment_id: str):
+        self.winfo_toplevel().configure(cursor="watch")
+
+        def worker():
+            try:
+                path = DocumentosCorreoService(
+                    self._gestor,
+                ).descargar_adjunto_temporal(
+                    mailbox=str(message.get("mailbox") or ""),
+                    graph_message_id=str(message.get("graph_message_id") or ""),
+                    attachment_id=attachment_id,
+                )
+                error = None
+            except Exception as exc:
+                path, error = None, exc
+            try:
+                self.after(0, self._finish_open_attachment, path, error)
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_open_attachment(self, path, error):
+        self.winfo_toplevel().configure(cursor="")
+        if error is not None:
+            messagebox.showerror(
+                "Adjuntos", f"No se pudo abrir el adjunto:\n{error}", parent=self,
+            )
+            return
+        try:
+            os.startfile(str(path))
+        except Exception as exc:
+            messagebox.showerror(
+                "Adjuntos", f"Windows no pudo abrir el archivo:\n{exc}", parent=self,
+            )
 
     def _choose_attachments(self, codigo_empresa: str, message: dict):
         graph_id = str(message.get("graph_message_id") or "").strip()

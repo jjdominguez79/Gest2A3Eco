@@ -165,6 +165,7 @@ class _HTMLTextRenderer(HTMLParser):
 
     _BLOCKS = {"div", "p", "section", "article", "header", "footer", "tr"}
     _SKIPPED = {"script", "style", "head", "title", "meta", "link"}
+    _VOID_SKIPPED = {"meta", "link"}
 
     def __init__(self, widget: tk.Text):
         super().__init__(convert_charrefs=True)
@@ -188,6 +189,8 @@ class _HTMLTextRenderer(HTMLParser):
     def handle_starttag(self, tag, attrs):
         tag = tag.lower()
         attrs = dict(attrs)
+        if tag in self._VOID_SKIPPED:
+            return
         if tag in self._SKIPPED:
             self.skip_depth += 1
             return
@@ -231,6 +234,8 @@ class _HTMLTextRenderer(HTMLParser):
 
     def handle_endtag(self, tag):
         tag = tag.lower()
+        if tag in self._VOID_SKIPPED:
+            return
         if tag in self._SKIPPED:
             self.skip_depth = max(0, self.skip_depth - 1)
             return
@@ -453,7 +458,10 @@ class SignatureDialog(tk.Toplevel):
 
 
 class CommunicationDetailDialog(tk.Toplevel):
-    def __init__(self, parent, messages: list[dict], on_import_attachments=None):
+    def __init__(
+        self, parent, messages: list[dict], on_import_attachments=None,
+        on_preview_attachments=None,
+    ):
         super().__init__(parent)
         self.title("Historial de la comunicacion")
         self.geometry("900x650")
@@ -462,6 +470,7 @@ class CommunicationDetailDialog(tk.Toplevel):
         frame.pack(fill="both", expand=True)
         self._messages = messages
         self._on_import_attachments = on_import_attachments
+        self._on_preview_attachments = on_preview_attachments
         self._list = ttk.Treeview(
             frame, columns=("fecha", "tipo", "remitente", "asunto", "estado"),
             show="headings", height=7, selectmode="browse",
@@ -500,6 +509,13 @@ class CommunicationDetailDialog(tk.Toplevel):
         self._import_button.pack(side="left")
         if not on_import_attachments:
             self._import_button.configure(state="disabled")
+        self._preview_button = ttk.Button(
+            actions, text="Revisar adjuntos",
+            command=self._preview_attachments,
+        )
+        self._preview_button.pack(side="left", padx=(7, 0))
+        if not on_preview_attachments:
+            self._preview_button.configure(state="disabled")
         for index, item in enumerate(messages):
             self._list.insert("", "end", iid=str(index), values=(
                 item.get("fecha") or "", "Enviado" if item.get("direccion") == "saliente" else "Recibido", item.get("remitente") or "",
@@ -551,6 +567,14 @@ class CommunicationDetailDialog(tk.Toplevel):
         if not selected:
             return
         self._on_import_attachments(self._messages[int(selected[0])])
+
+    def _preview_attachments(self):
+        if not self._on_preview_attachments:
+            return
+        selected = self._list.selection()
+        if not selected:
+            return
+        self._on_preview_attachments(self._messages[int(selected[0])])
 
 
 class ComposeMailDialog(tk.Toplevel):

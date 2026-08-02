@@ -37,6 +37,7 @@ class AppController:
         self._mail_poll_scheduled = False
         self._mail_poll_stopped = False
         self._mail_toast = None
+        self._mail_status_callback = None
         self._content.bind("<Destroy>", self._on_content_destroy, add="+")
 
     @property
@@ -51,6 +52,9 @@ class AppController:
         """Abre el listado de empresas, pantalla inicial de la aplicacion."""
         self._show(self.build_panel_general)
         self._schedule_mail_poll(1_500)
+
+    def set_mail_status_callback(self, callback):
+        self._mail_status_callback = callback
 
     def _schedule_mail_poll(self, delay_ms=MAIL_NOTIFICATION_INTERVAL_MS):
         role = str(getattr(self._session.role, "value", self._session.role)).lower()
@@ -82,11 +86,14 @@ class AppController:
                 rows = self._gestor.obtener_nuevos_avisos_correo(
                     usuario_id, mailbox,
                 )
+                summary = self._gestor.resumen_buzon_responsable(usuario_id)
                 error = None
             except Exception as exc:
-                rows, error = [], exc
+                rows, summary, error = [], None, exc
             try:
-                self._content.after(0, self._finish_mail_poll, rows, error)
+                self._content.after(
+                    0, self._finish_mail_poll, rows, summary, error,
+                )
             except (RuntimeError, tk.TclError):
                 pass
 
@@ -101,14 +108,20 @@ class AppController:
             or "Oficina@gestinem.es"
         ).strip().lower()
 
-    def _finish_mail_poll(self, rows, error):
+    def _finish_mail_poll(self, rows, summary, error):
         self._mail_poll_running = False
         if self._mail_poll_stopped:
             return
         if error is not None:
             LOG.warning("No se pudieron comprobar nuevos correos: %s", error)
-        elif rows:
-            self._show_mail_toast(rows)
+        else:
+            if self._mail_status_callback is not None and summary is not None:
+                try:
+                    self._mail_status_callback(summary)
+                except tk.TclError:
+                    pass
+            if rows:
+                self._show_mail_toast(rows)
         self._schedule_mail_poll()
 
     def _show_mail_toast(self, rows: list[dict]):

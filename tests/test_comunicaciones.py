@@ -5,6 +5,7 @@ from views.ui_comunicaciones import (
     construir_cuerpo_html,
     construir_firma_oficina,
     html_a_texto,
+    insertar_html_en_texto,
     normalizar_html_correo,
 )
 
@@ -64,6 +65,38 @@ def test_html_escapado_se_normaliza_antes_de_mostrarlo():
     assert "Hola cliente" in texto
     assert "Gracias" in texto
     assert "<strong>" not in texto
+
+
+def test_render_html_outlook_no_oculta_cuerpo_despues_de_meta_y_estilos():
+    class TextStub:
+        def __init__(self):
+            self.value = ""
+
+        def get(self, _start, _end):
+            return self.value
+
+        def insert(self, _position, value, _tags=()):
+            self.value += value
+
+    widget = TextStub()
+    cuerpo = """
+        <html><head>
+          <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+          <link rel="stylesheet" href="cid:styles">
+          <style>.x { color: red; }</style>
+          <title>Resumen interno</title>
+        </head><body>
+          <p>Este es el mensaje completo del proveedor.</p>
+          <div><strong>Factura del cliente E00042</strong></div>
+        </body></html>
+    """
+
+    insertar_html_en_texto(widget, cuerpo)
+
+    assert "Este es el mensaje completo del proveedor." in widget.value
+    assert "Factura del cliente E00042" in widget.value
+    assert ".x { color: red; }" not in widget.value
+    assert "Resumen interno" not in widget.value
 
 
 def test_avisos_correo_ignoran_historico_y_no_se_repiten(tmp_path):
@@ -184,6 +217,58 @@ def test_asigna_manualmente_un_correo_pendiente(tmp_path):
     assert result is not None
     assert gestor.listar_comunicaciones_sin_asignar() == []
     assert gestor.listar_comunicaciones("E00001")[0]["responsable_nombre"] == "ANA"
+
+
+def test_etiqueta_se_transfiere_al_asignar_y_buzon_muestra_cliente(tmp_path):
+    gestor = GestorSQLite(tmp_path / "test.db")
+    gestor.upsert_empresa({
+        "codigo": "E00001", "ejercicio": 2026, "nombre": "Cliente Visible",
+    })
+    gestor.guardar_comunicacion_sin_asignar({
+        "graph_message_id": "etiqueta-1",
+        "mailbox": "oficina@gestinem.es",
+        "remitente": "proveedor@example.com",
+        "asunto": "Factura proveedor",
+    })
+    assert gestor.actualizar_etiqueta_pendiente(
+        "etiqueta-1", "Factura recibida directamente",
+    )
+
+    result = gestor.asignar_comunicacion_pendiente(
+        "etiqueta-1", "E00001", 7, "ANA",
+    )
+    row = gestor.listar_buzon_responsable(7)[0]
+
+    assert result is not None
+    assert row["cliente_nombre"] == "Cliente Visible"
+    assert row["etiqueta"] == "Factura recibida directamente"
+
+
+def test_resumen_buzon_cuenta_cada_estado(tmp_path):
+    gestor = GestorSQLite(tmp_path / "test.db")
+    gestor.upsert_empresa({
+        "codigo": "E00001", "ejercicio": 2026, "nombre": "Cliente",
+    })
+    ids = []
+    for index, estado in enumerate(("pendiente", "respondido", "gestionado")):
+        graph_id = f"estado-{index}"
+        gestor.guardar_comunicacion_sin_asignar({
+            "graph_message_id": graph_id,
+            "mailbox": "oficina@gestinem.es",
+            "remitente": "cliente@example.com",
+            "asunto": estado,
+        })
+        comunicacion_id, _ = gestor.asignar_comunicacion_pendiente(
+            graph_id, "E00001", 7, "ANA",
+        )
+        gestor.cambiar_estado_comunicacion(comunicacion_id, estado, 7)
+        ids.append(comunicacion_id)
+
+    resumen = gestor.resumen_buzon_responsable(7)
+
+    assert resumen == {
+        "pendiente": 1, "respondido": 1, "gestionado": 1, "total": 3,
+    }
 
 
 def test_busca_empresa_en_lista_de_varios_emails(tmp_path):

@@ -460,6 +460,7 @@ CREATE TABLE IF NOT EXISTS comunicaciones (
   id TEXT PRIMARY KEY,
   codigo_empresa TEXT NOT NULL,
   asunto TEXT NOT NULL,
+  etiqueta TEXT,
   estado TEXT NOT NULL DEFAULT 'abierta',
   responsable_usuario_id INTEGER,
   responsable_nombre TEXT,
@@ -522,6 +523,7 @@ CREATE TABLE IF NOT EXISTS comunicaciones_sin_asignar (
   mailbox TEXT NOT NULL,
   remitente TEXT,
   asunto TEXT,
+  etiqueta TEXT,
   fecha TEXT,
   cuerpo_html TEXT,
   payload_json TEXT NOT NULL,
@@ -612,12 +614,14 @@ class GestorSQLite:
         self._ensure_column("empresas", "pais", "TEXT")
         self._ensure_column("empresas", "responsable", "TEXT")
         self._ensure_column("comunicaciones", "graph_conversation_id", "TEXT")
+        self._ensure_column("comunicaciones", "etiqueta", "TEXT")
         self._ensure_column("comunicaciones", "descartado", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("comunicaciones", "descartado_por", "TEXT")
         self._ensure_column("comunicaciones", "descartado_at", "TEXT")
         self._ensure_column("comunicaciones", "motivo_descarte", "TEXT")
         self._ensure_column("comunicaciones_mensajes", "mailbox", "TEXT")
         self._ensure_column("comunicaciones_sin_asignar", "sugerencia_codigo_empresa", "TEXT")
+        self._ensure_column("comunicaciones_sin_asignar", "etiqueta", "TEXT")
         self._ensure_column("comunicaciones_sin_asignar", "sugerencia_nombre", "TEXT")
         self._ensure_column("comunicaciones_sin_asignar", "responsable_usuario_id", "INTEGER")
         self._ensure_column("comunicaciones_sin_asignar", "responsable_nombre", "TEXT")
@@ -6703,13 +6707,14 @@ class GestorSQLite:
         responsable_usuario_id: int, responsable_nombre: str,
     ) -> tuple[str, str] | None:
         row = self.conn.execute(
-            "SELECT payload_json FROM comunicaciones_sin_asignar "
+            "SELECT payload_json,etiqueta FROM comunicaciones_sin_asignar "
             "WHERE graph_message_id=?",
             (graph_message_id,),
         ).fetchone()
         if not row:
             return None
         datos = json.loads(row["payload_json"])
+        etiqueta = str(row["etiqueta"] or "").strip()
         empresa = self.get_empresa(codigo_empresa) or {}
         datos["codigo_empresa"] = codigo_empresa
         datos["responsable_usuario_id"] = responsable_usuario_id
@@ -6720,10 +6725,11 @@ class GestorSQLite:
                 self.conn.execute(
                     """
                     UPDATE comunicaciones
-                    SET responsable_usuario_id=?,responsable_nombre=?,estado='pendiente'
+                    SET responsable_usuario_id=?,responsable_nombre=?,estado='pendiente',
+                        etiqueta=?
                     WHERE id=?
                     """,
-                    (responsable_usuario_id, responsable_nombre, result[0]),
+                    (responsable_usuario_id, responsable_nombre, etiqueta or None, result[0]),
                 )
         with self.conn:
             self.conn.execute(
@@ -6752,7 +6758,8 @@ class GestorSQLite:
     def listar_buzon_responsable(self, usuario_id: int) -> list[dict]:
         rows = self.conn.execute(
             """
-            SELECT c.*,COUNT(m.id) mensajes,MAX(m.fecha) ultima_fecha,
+            SELECT c.*,e.nombre AS cliente_nombre,
+                   COUNT(m.id) mensajes,MAX(m.fecha) ultima_fecha,
                    MAX(m.remitente) ultimo_remitente,
                    (
                      SELECT mm.mailbox
@@ -6762,13 +6769,66 @@ class GestorSQLite:
                      ORDER BY mm.fecha DESC LIMIT 1
                    ) AS mailbox
             FROM comunicaciones c
+            LEFT JOIN (
+              SELECT e1.codigo,e1.nombre FROM empresas e1
+              JOIN (
+                SELECT codigo,MAX(ejercicio) ejercicio FROM empresas GROUP BY codigo
+              ) latest ON latest.codigo=e1.codigo AND latest.ejercicio=e1.ejercicio
+            ) e ON e.codigo=c.codigo_empresa
             LEFT JOIN comunicaciones_mensajes m ON m.comunicacion_id=c.id
             WHERE c.responsable_usuario_id=? AND c.descartado=0
-            GROUP BY c.id ORDER BY c.updated_at DESC
+            GROUP BY c.id,e.nombre ORDER BY c.updated_at DESC
             """,
             (usuario_id,),
         ).fetchall()
         return [self._row_to_dict(row) for row in rows]
+
+    def actualizar_etiqueta_pendiente(
+        self, graph_message_id: str, etiqueta: str,
+    ) -> bool:
+        with self.conn:
+            cursor = self.conn.execute(
+                "UPDATE comunicaciones_sin_asignar SET etiqueta=? "
+                "WHERE graph_message_id=? AND descartado=0",
+                (str(etiqueta or "").strip() or None, graph_message_id),
+            )
+        return cursor.rowcount > 0
+
+    def actualizar_etiqueta_comunicacion(
+        self, comunicacion_id: str, etiqueta: str,
+    ) -> bool:
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        with self.conn:
+            cursor = self.conn.execute(
+                "UPDATE comunicaciones SET etiqueta=?,updated_at=? "
+                "WHERE id=? AND descartado=0",
+                (str(etiqueta or "").strip() or None, now, comunicacion_id),
+            )
+        return cursor.rowcount > 0
+
+    def resumen_buzon_responsable(self, usuario_id: int) -> dict[str, int]:
+        counts = {"pendiente": 0, "respondido": 0, "gestionado": 0}
+        rows = self.conn.execute(
+            """
+            SELECT estado,COUNT(*) total FROM (
+              SELECT COALESCE(estado,'pendiente') estado
+              FROM comunicaciones
+              WHERE responsable_usuario_id=? AND descartado=0
+              UNION ALL
+              SELECT COALESCE(estado,'pendiente') estado
+              FROM comunicaciones_sin_asignar
+              WHERE responsable_usuario_id=? AND descartado=0
+                AND sin_cliente_confirmado=1
+            ) pendientes GROUP BY estado
+            """,
+            (usuario_id, usuario_id),
+        ).fetchall()
+        for row in rows:
+            estado = str(row["estado"] or "pendiente")
+            if estado in counts:
+                counts[estado] = int(row["total"] or 0)
+        counts["total"] = sum(counts.values())
+        return counts
 
     def listar_comunicaciones_supervision(self) -> list[dict]:
         rows = self.conn.execute(

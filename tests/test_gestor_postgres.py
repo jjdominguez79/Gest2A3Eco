@@ -294,6 +294,8 @@ _COLUMNAS_ESENCIALES = {
     ("empresas", "responsable"),
     ("empresas", "activo"),
     ("usuarios", "must_change_password"),
+    ("comunicaciones", "etiqueta"),
+    ("comunicaciones_sin_asignar", "etiqueta"),
 }
 
 
