@@ -232,6 +232,9 @@ class _ConexionMigracionesFalsa:
         indice_dgt_facturas=True,
         tabla_avisos_correo=True,
         tabla_avisos_vistos=True,
+        tabla_categorias_documentales=True,
+        tabla_documentos_archivo=True,
+        tabla_decisiones_adjuntos=True,
     ):
         self.columnas = columnas
         self.tabla_permisos = tabla_permisos
@@ -240,6 +243,9 @@ class _ConexionMigracionesFalsa:
         self.indice_dgt_facturas = indice_dgt_facturas
         self.tabla_avisos_correo = tabla_avisos_correo
         self.tabla_avisos_vistos = tabla_avisos_vistos
+        self.tabla_categorias_documentales = tabla_categorias_documentales
+        self.tabla_documentos_archivo = tabla_documentos_archivo
+        self.tabla_decisiones_adjuntos = tabla_decisiones_adjuntos
         self.sentencias = []
         self.commit_count = 0
 
@@ -273,6 +279,17 @@ class _ConexionMigracionesFalsa:
                 "tabla_avisos_vistos": (
                     "comunicaciones_avisos_vistos"
                     if self.tabla_avisos_vistos else None
+                ),
+                "tabla_categorias_documentales": (
+                    "categorias_documentales"
+                    if self.tabla_categorias_documentales else None
+                ),
+                "tabla_documentos_archivo": (
+                    "documentos_archivo" if self.tabla_documentos_archivo else None
+                ),
+                "tabla_decisiones_adjuntos": (
+                    "comunicaciones_adjuntos_decisiones"
+                    if self.tabla_decisiones_adjuntos else None
                 ),
             })
         return _Resultado()

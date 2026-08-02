@@ -309,7 +309,10 @@ class GestorPostgres(GestorSQLite):
               to_regclass('public.dgt_facturas') AS tabla_dgt_facturas,
               to_regclass('public.idx_dgt_facturas_factura') AS indice_dgt_facturas,
               to_regclass('public.comunicaciones_avisos_estado') AS tabla_avisos_correo,
-              to_regclass('public.comunicaciones_avisos_vistos') AS tabla_avisos_vistos
+              to_regclass('public.comunicaciones_avisos_vistos') AS tabla_avisos_vistos,
+              to_regclass('public.categorias_documentales') AS tabla_categorias_documentales,
+              to_regclass('public.documentos_archivo') AS tabla_documentos_archivo,
+              to_regclass('public.comunicaciones_adjuntos_decisiones') AS tabla_decisiones_adjuntos
             """
         ).fetchone()
         tabla_permisos_existe = bool(objetos and objetos["tabla_permisos"])
@@ -322,6 +325,9 @@ class GestorPostgres(GestorSQLite):
         tabla_avisos_vistos_existe = bool(
             objetos and objetos.get("tabla_avisos_vistos")
         )
+        tabla_categorias_existe = bool(objetos and objetos.get("tabla_categorias_documentales"))
+        tabla_documentos_existe = bool(objetos and objetos.get("tabla_documentos_archivo"))
+        tabla_decisiones_existe = bool(objetos and objetos.get("tabla_decisiones_adjuntos"))
         faltantes = [
             (tabla, columna, tipo)
             for tabla, columna, tipo in columnas
@@ -336,7 +342,11 @@ class GestorPostgres(GestorSQLite):
             and indice_dgt_facturas_existe
             and tabla_avisos_correo_existe
             and tabla_avisos_vistos_existe
+            and tabla_categorias_existe
+            and tabla_documentos_existe
+            and tabla_decisiones_existe
         ):
+            self._seed_categorias_documentales()
             self.conn.commit()
             return
 
@@ -407,4 +417,46 @@ class GestorPostgres(GestorSQLite):
                 )
                 """
             )
+        if not tabla_categorias_existe:
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS categorias_documentales (
+                  id TEXT PRIMARY KEY,nombre TEXT NOT NULL,
+                  carpeta TEXT NOT NULL UNIQUE,permite_ocr INTEGER NOT NULL DEFAULT 0,
+                  activa INTEGER NOT NULL DEFAULT 1,orden INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+        if not tabla_documentos_existe:
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS documentos_archivo (
+                  id TEXT PRIMARY KEY,codigo_empresa TEXT NOT NULL,ejercicio INTEGER NOT NULL,
+                  categoria_id TEXT NOT NULL,nombre_original TEXT NOT NULL,
+                  nombre_archivo TEXT NOT NULL,ruta TEXT NOT NULL,hash_archivo TEXT NOT NULL,
+                  tamano INTEGER,mime_type TEXT,origen TEXT NOT NULL DEFAULT 'correo',
+                  comunicacion_id TEXT,mensaje_id TEXT,graph_message_id TEXT,
+                  graph_attachment_id TEXT,correo_remitente TEXT,correo_asunto TEXT,
+                  estado TEXT NOT NULL DEFAULT 'archivado',ocr_documento_id TEXT,
+                  creado_por TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
+                  UNIQUE(codigo_empresa,hash_archivo)
+                )
+                """
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_documentos_archivo_empresa "
+                "ON documentos_archivo(codigo_empresa,ejercicio,categoria_id,created_at DESC)"
+            )
+        if not tabla_decisiones_existe:
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS comunicaciones_adjuntos_decisiones (
+                  graph_message_id TEXT NOT NULL,graph_attachment_id TEXT NOT NULL,
+                  nombre TEXT,accion TEXT NOT NULL,categoria_id TEXT,documento_id TEXT,
+                  created_at TEXT NOT NULL,
+                  PRIMARY KEY(graph_message_id,graph_attachment_id)
+                )
+                """
+            )
+        self._seed_categorias_documentales()
         self.conn.commit()

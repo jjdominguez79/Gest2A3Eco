@@ -8,6 +8,7 @@ import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
 from services.documentos_correo_service import DocumentosCorreoService
+from services.gestion_documental_service import GestionDocumentalService
 from utils.utilidades import load_app_config
 from views.ui_comunicaciones import CommunicationDetailDialog
 
@@ -184,6 +185,76 @@ class AttachmentPreviewDialog(tk.Toplevel):
         selected = self._tree.selection()
         if selected:
             self._on_open(selected[0])
+
+
+class AttachmentClassificationDialog(tk.Toplevel):
+    """Clasifica cada adjunto antes de asignar definitivamente el correo."""
+
+    def __init__(self, parent, attachments: list[dict], categories: list[dict], on_save):
+        super().__init__(parent)
+        self.title("Clasificar adjuntos antes de asignar")
+        self.geometry("900x520")
+        self.transient(parent.winfo_toplevel())
+        self.grab_set()
+        self._attachments = {item["key"]: item for item in attachments}
+        self._categories = {item["nombre"]: item for item in categories}
+        self._on_save = on_save
+        self._values = {key: "No guardar" for key in self._attachments}
+        frame = ttk.Frame(self, padding=12)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame,
+            text=(
+                "Selecciona el destino de cada adjunto. Los marcados como "
+                "No guardar solo quedaran registrados como omitidos."
+            ), wraplength=850,
+        ).pack(anchor="w", pady=(0, 8))
+        self._tree = ttk.Treeview(
+            frame, columns=("correo", "archivo", "tamano", "categoria"),
+            show="headings", selectmode="extended",
+        )
+        for key, title, width in (
+            ("correo", "Correo", 250), ("archivo", "Adjunto", 330),
+            ("tamano", "Tamano", 90), ("categoria", "Destino", 180),
+        ):
+            self._tree.heading(key, text=title)
+            self._tree.column(key, width=width, anchor="w")
+        self._tree.pack(fill="both", expand=True)
+        for key, item in self._attachments.items():
+            self._tree.insert("", "end", iid=key, values=(
+                item.get("subject") or "(Sin asunto)", item.get("name") or "Adjunto",
+                f"{int(item.get('size') or 0) / 1024:.1f} KB", "No guardar",
+            ))
+        controls = ttk.Frame(frame)
+        controls.pack(fill="x", pady=(10, 0))
+        ttk.Label(controls, text="Destino seleccionados").pack(side="left")
+        self._category = tk.StringVar(value="No guardar")
+        combo = ttk.Combobox(
+            controls, textvariable=self._category, state="readonly", width=28,
+            values=["No guardar", *self._categories.keys()],
+        )
+        combo.pack(side="left", padx=6)
+        ttk.Button(controls, text="Aplicar", command=self._apply).pack(side="left")
+        ttk.Button(controls, text="Cancelar", command=self.destroy).pack(side="right")
+        ttk.Button(controls, text="Guardar y asignar", command=self._save).pack(side="right", padx=6)
+
+    def _apply(self):
+        value = self._category.get()
+        for key in self._tree.selection():
+            self._values[key] = value
+            values = list(self._tree.item(key, "values"))
+            values[3] = value
+            self._tree.item(key, values=values)
+
+    def _save(self):
+        decisions = []
+        for key, item in self._attachments.items():
+            category = self._categories.get(self._values[key])
+            decisions.append({
+                **item, "categoria_id": (category or {}).get("id") or "",
+            })
+        self._on_save(decisions)
+        self.destroy()
 
 
 class UIComunicacionesGlobal(ttk.Frame):
@@ -813,22 +884,130 @@ class UIComunicacionesGlobal(ttk.Frame):
                 f"Se asignaran {len(selected)} mensajes a:\n\n"
                 f"Cliente: {company.get('nombre') or company['codigo']}\n"
                 f"Responsable: {user['nombre']}\n\n"
-                "¿Deseas continuar?"
+                "Si contienen adjuntos, podras decidir cuales se guardan."
             ),
             parent=self,
         ):
             return
-        result = self._gestor.asignar_comunicaciones_pendientes(
-            list(selected), company["codigo"], int(user["id"]), str(user["nombre"]),
+        self._prepare_attachment_classification(list(selected), company, user)
+
+    def _prepare_attachment_classification(self, graph_ids, company, user):
+        self.winfo_toplevel().configure(cursor="watch")
+
+        def worker():
+            attachments = []
+            errors = []
+            service = DocumentosCorreoService(self._gestor)
+            for graph_id in graph_ids:
+                item = self._pending[graph_id]
+                try:
+                    listed = service.listar_adjuntos(
+                        mailbox=str(item.get("mailbox") or ""),
+                        graph_message_id=graph_id,
+                    )
+                    for attachment in listed:
+                        attachment_id = str(attachment.get("id") or "")
+                        attachments.append({
+                            **attachment,
+                            "key": f"{graph_id}::{attachment_id}",
+                            "attachment_id": attachment_id,
+                            "graph_message_id": graph_id,
+                            "mailbox": item.get("mailbox") or "",
+                            "subject": item.get("asunto") or "",
+                            "sender": item.get("remitente") or "",
+                        })
+                except Exception as exc:
+                    errors.append(f"{item.get('asunto') or graph_id}: {exc}")
+            try:
+                self.after(
+                    0, self._show_classification,
+                    graph_ids, company, user, attachments, errors,
+                )
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_classification(self, graph_ids, company, user, attachments, errors):
+        self.winfo_toplevel().configure(cursor="")
+        if errors:
+            messagebox.showerror(
+                "Asignacion",
+                "No se pudieron consultar todos los adjuntos:\n- " + "\n- ".join(errors),
+                parent=self,
+            )
+            return
+        if not attachments:
+            self._complete_assignment(graph_ids, company, user, [])
+            return
+        categories = self._gestor.listar_categorias_documentales()
+        AttachmentClassificationDialog(
+            self, attachments, categories,
+            on_save=lambda decisions: self._complete_assignment(
+                graph_ids, company, user, decisions,
+            ),
         )
+
+    def _complete_assignment(self, graph_ids, company, user, decisions):
+        self.winfo_toplevel().configure(cursor="watch")
+
+        def worker():
+            saved = ignored = duplicates = 0
+            errors = []
+            service = GestionDocumentalService(self._gestor)
+            for graph_id in graph_ids:
+                item = self._pending[graph_id]
+                current = [
+                    decision for decision in decisions
+                    if decision["graph_message_id"] == graph_id
+                ]
+                if current:
+                    summary = service.archivar_adjuntos_correo(
+                        codigo_empresa=company["codigo"],
+                        ejercicio=int(company.get("ejercicio") or 0),
+                        mailbox=str(item.get("mailbox") or ""),
+                        graph_message_id=graph_id,
+                        remitente=str(item.get("remitente") or ""),
+                        asunto=str(item.get("asunto") or ""),
+                        decisiones=current,
+                        usuario=str(self._session.user.nombre),
+                    )
+                    saved += len(summary.saved)
+                    ignored += len(summary.ignored)
+                    duplicates += len(summary.duplicates)
+                    errors.extend(summary.errors)
+            result = None
+            if not errors:
+                result = self._gestor.asignar_comunicaciones_pendientes(
+                    graph_ids, company["codigo"], int(user["id"]), str(user["nombre"]),
+                )
+                for graph_id in result["asignadas"]:
+                    self._gestor.vincular_documentos_graph_comunicacion(graph_id)
+            try:
+                self.after(
+                    0, self._finish_assignment,
+                    result, saved, ignored, duplicates, errors,
+                )
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_assignment(self, result, saved, ignored, duplicates, errors):
+        self.winfo_toplevel().configure(cursor="")
+        if errors:
+            messagebox.showerror(
+                "Asignacion",
+                "No se ha completado la asignacion. Corrige o marca como No guardar:\n- "
+                + "\n- ".join(errors[:8]), parent=self,
+            )
+            return
         self._refresh()
         messagebox.showinfo(
-            "Asignacion masiva",
-            (
-                f"Mensajes asignados: {len(result['asignadas'])}\n"
-                f"Mensajes omitidos: {len(result['omitidas'])}"
-            ),
-            parent=self,
+            "Asignacion",
+            f"Mensajes asignados: {len(result['asignadas'])}\n"
+            f"Documentos guardados: {saved}\nAdjuntos no guardados: {ignored}\n"
+            f"Duplicados detectados: {duplicates}", parent=self,
         )
 
     def _assign_without_client(self):

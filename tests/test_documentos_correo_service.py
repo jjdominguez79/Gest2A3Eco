@@ -50,7 +50,10 @@ def test_importa_varios_adjuntos_a_carpeta_recibidas_y_registra_trazabilidad(tmp
     )
 
     assert summary.imported == ["F-1.pdf", "foto.JPG"]
-    assert (tmp_path / "pdfs_recibidas" / "E00001" / "2026" / "F-1.pdf").read_bytes() == b"uno"
+    assert (
+        tmp_path / "pdfs_recibidas" / "E00001" / "2026"
+        / "Facturas_recibidas" / "F-1.pdf"
+    ).read_bytes() == b"uno"
     rows = gestor.conn.execute("SELECT nombre FROM comunicaciones_adjuntos WHERE mensaje_id=?", (mensaje_id,)).fetchall()
     assert {row["nombre"] for row in rows} == {"F-1.pdf", "foto.JPG"}
 

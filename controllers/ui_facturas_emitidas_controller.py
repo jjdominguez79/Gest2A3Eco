@@ -1359,17 +1359,18 @@ class FacturasEmitidasController:
 
     def _albaran_app_pdf_path(self, alb: dict) -> str:
         pdf_dir = str(get_default_output_dir())
-        emp_name = self._safe_filename(self._empresa_conf.get("nombre") or "") or "Sin_empresa"
+        company_dir = self._safe_filename(self._codigo or "") or "Sin_empresa"
+        ejercicio = self._safe_filename(str(alb.get("ejercicio") or self._ejercicio or ""))
         safe_num = self._safe_filename(str(alb.get("numero", "") or ""))
         safe_codigo = self._safe_filename(self._codigo or "")
         safe_cliente = self._safe_filename(alb.get("nombre", "")) or "Sin_cliente"
         parts = [p for p in [f"Albaran_{safe_num}" if safe_num else "", safe_codigo, safe_cliente] if p]
         filename = "_".join(parts) if parts else f"Albaran_{alb.get('id', '')}"
         try:
-            os.makedirs(os.path.join(pdf_dir, emp_name), exist_ok=True)
+            os.makedirs(os.path.join(pdf_dir, company_dir, ejercicio, "Albaranes_emitidos"), exist_ok=True)
         except Exception:
             return ""
-        return os.path.join(pdf_dir, emp_name, f"{filename}.pdf")
+        return os.path.join(pdf_dir, company_dir, ejercicio, "Albaranes_emitidos", f"{filename}.pdf")
 
     def _resolve_albaran_pdf(self, alb: dict) -> str:
         pdf_path = str(alb.get("pdf_path") or "").strip()
@@ -2059,7 +2060,8 @@ class FacturasEmitidasController:
 
     def _app_pdf_path(self, fac: dict) -> str:
         pdf_dir = str(get_default_output_dir())
-        emp_name = self._safe_filename(self._empresa_conf.get("nombre") or "") or "Sin_empresa"
+        company_dir = self._safe_filename(self._codigo or "") or "Sin_empresa"
+        ejercicio = self._safe_filename(str(fac.get("ejercicio") or self._ejercicio or ""))
         serie = self._safe_filename(str(fac.get("serie", "") or ""))
         num = self._safe_filename(str(fac.get("numero", "") or ""))
         codigo = self._safe_filename(self._codigo or "")
@@ -2068,12 +2070,12 @@ class FacturasEmitidasController:
         parts = [p for p in [id_part, codigo, cliente] if p]
         filename = "_".join(parts) if parts else f"Factura_{fac.get('id', '')}"
         try:
-            os.makedirs(os.path.join(pdf_dir, emp_name), exist_ok=True)
+            os.makedirs(os.path.join(pdf_dir, company_dir, ejercicio, "Facturas_emitidas"), exist_ok=True)
         except Exception:
             return ""
         if not filename:
             return ""
-        return os.path.join(pdf_dir, emp_name, f"{filename}.pdf")
+        return os.path.join(pdf_dir, company_dir, ejercicio, "Facturas_emitidas", f"{filename}.pdf")
 
     def _a3_pdf_path(self, pdf_ref: str) -> str:
         return self._a3_pdf_path_for(pdf_ref, self._ejercicio)

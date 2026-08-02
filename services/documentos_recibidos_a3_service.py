@@ -51,7 +51,10 @@ def preparar_documentos_para_suenlace(gestor, codigo_empresa: str, ejercicio: in
 def _local_pdf_path(codigo_empresa: str, ejercicio: int, ref: str, doc: dict) -> Path:
     proveedor = _safe_name(doc.get("proveedor_nombre") or "Proveedor")
     numero = _safe_name(doc.get("numero_factura") or "Sin_numero")
-    return get_default_received_documents_dir() / str(codigo_empresa) / str(ejercicio) / f"{ref}_{proveedor}_{numero}.pdf"
+    return (
+        get_default_received_documents_dir() / str(codigo_empresa) / str(ejercicio)
+        / "Facturas_recibidas" / f"{ref}_{proveedor}_{numero}.pdf"
+    )
 
 
 def _convertir_imagen_a_pdf(source: Path, destination: Path) -> None:

@@ -539,6 +539,52 @@ CREATE TABLE IF NOT EXISTS comunicaciones_sin_asignar (
   motivo_descarte TEXT,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS categorias_documentales (
+  id TEXT PRIMARY KEY,
+  nombre TEXT NOT NULL,
+  carpeta TEXT NOT NULL UNIQUE,
+  permite_ocr INTEGER NOT NULL DEFAULT 0,
+  activa INTEGER NOT NULL DEFAULT 1,
+  orden INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS documentos_archivo (
+  id TEXT PRIMARY KEY,
+  codigo_empresa TEXT NOT NULL,
+  ejercicio INTEGER NOT NULL,
+  categoria_id TEXT NOT NULL,
+  nombre_original TEXT NOT NULL,
+  nombre_archivo TEXT NOT NULL,
+  ruta TEXT NOT NULL,
+  hash_archivo TEXT NOT NULL,
+  tamano INTEGER,
+  mime_type TEXT,
+  origen TEXT NOT NULL DEFAULT 'correo',
+  comunicacion_id TEXT,
+  mensaje_id TEXT,
+  graph_message_id TEXT,
+  graph_attachment_id TEXT,
+  correo_remitente TEXT,
+  correo_asunto TEXT,
+  estado TEXT NOT NULL DEFAULT 'archivado',
+  ocr_documento_id TEXT,
+  creado_por TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (categoria_id) REFERENCES categorias_documentales(id),
+  UNIQUE(codigo_empresa, hash_archivo)
+);
+CREATE INDEX IF NOT EXISTS idx_documentos_archivo_empresa
+  ON documentos_archivo(codigo_empresa, ejercicio, categoria_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS comunicaciones_adjuntos_decisiones (
+  graph_message_id TEXT NOT NULL,
+  graph_attachment_id TEXT NOT NULL,
+  nombre TEXT,
+  accion TEXT NOT NULL,
+  categoria_id TEXT,
+  documento_id TEXT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (graph_message_id, graph_attachment_id)
+);
 """
 
 AUTH_SCHEMA = """
@@ -603,6 +649,8 @@ class GestorSQLite:
     # ---------- utilidades internas ----------
     def _init_schema(self):
         self.conn.executescript(SCHEMA + AUTH_SCHEMA)
+        self.conn.commit()
+        self._seed_categorias_documentales()
         self.conn.commit()
         self._ensure_column("empresas", "cuenta_bancaria", "TEXT")
         self._ensure_column("empresas", "cuentas_bancarias", "TEXT")
@@ -1171,6 +1219,27 @@ class GestorSQLite:
         """)
         self.conn.commit()
 
+    def _seed_categorias_documentales(self) -> None:
+        categorias = (
+            ("facturas_recibidas", "Facturas recibidas", "FACTURAS_RECIBIDAS", 1, 10),
+            ("fiscal", "Fiscal", "FISCAL", 0, 20),
+            ("contable", "Contable", "CONTABLE", 0, 30),
+            ("laboral", "Laboral", "LABORAL", 0, 40),
+            ("bancaria", "Bancaria", "BANCARIA", 0, 50),
+            ("mercantil", "Mercantil", "MERCANTIL", 0, 60),
+            ("contratos", "Contratos", "CONTRATOS", 0, 70),
+            ("notificaciones", "Notificaciones", "NOTIFICACIONES", 0, 80),
+            ("otros", "Otros", "OTROS", 0, 90),
+        )
+        for categoria_id, nombre, carpeta, permite_ocr, orden in categorias:
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO categorias_documentales
+                  (id,nombre,carpeta,permite_ocr,activa,orden)
+                VALUES (?,?,?,?,1,?)
+                """,
+                (categoria_id, nombre, carpeta, permite_ocr, orden),
+            )
     def _ensure_column(self, table: str, column: str, col_type: str):
         cur = self.conn.execute(f"PRAGMA table_info({table})")
         cols = {r[1] for r in cur.fetchall()}
@@ -2916,6 +2985,114 @@ class GestorSQLite:
         self.conn.execute(
             "DELETE FROM facturas_recibidas WHERE codigo_empresa=? AND ejercicio=? AND nombre=?",
             (codigo_empresa, _ej_val(ejercicio), nombre),
+        )
+        self.conn.commit()
+
+    # ---------- GESTION DOCUMENTAL ----------
+    def listar_categorias_documentales(self, solo_activas: bool = True) -> list[dict]:
+        where = "WHERE activa=1" if solo_activas else ""
+        rows = self.conn.execute(
+            f"SELECT * FROM categorias_documentales {where} ORDER BY orden,nombre"
+        ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    def listar_documentos_archivo(
+        self, codigo_empresa: str, ejercicio: int | None = None,
+        categoria_id: str = "",
+    ) -> list[dict]:
+        clauses = ["d.codigo_empresa=?"]
+        params: list = [codigo_empresa]
+        if ejercicio is not None:
+            clauses.append("d.ejercicio=?")
+            params.append(int(ejercicio))
+        if categoria_id:
+            clauses.append("d.categoria_id=?")
+            params.append(categoria_id)
+        rows = self.conn.execute(
+            "SELECT d.*,c.nombre AS categoria_nombre,c.permite_ocr "
+            "FROM documentos_archivo d "
+            "JOIN categorias_documentales c ON c.id=d.categoria_id WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY d.created_at DESC,d.nombre_original",
+            tuple(params),
+        ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    def get_documento_archivo(self, documento_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT d.*,c.nombre AS categoria_nombre,c.permite_ocr "
+            "FROM documentos_archivo d JOIN categorias_documentales c "
+            "ON c.id=d.categoria_id WHERE d.id=?", (documento_id,),
+        ).fetchone()
+        return self._row_to_dict(row) if row else None
+
+    def registrar_documento_archivo(self, datos: dict) -> str:
+        documento_id = str(datos.get("id") or uuid.uuid4())
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        self.conn.execute(
+            """
+            INSERT INTO documentos_archivo
+              (id,codigo_empresa,ejercicio,categoria_id,nombre_original,
+               nombre_archivo,ruta,hash_archivo,tamano,mime_type,origen,
+               comunicacion_id,mensaje_id,graph_message_id,graph_attachment_id,
+               correo_remitente,correo_asunto,estado,ocr_documento_id,
+               creado_por,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                documento_id, datos["codigo_empresa"], int(datos["ejercicio"]),
+                datos["categoria_id"], datos["nombre_original"],
+                datos["nombre_archivo"], datos["ruta"], datos["hash_archivo"],
+                datos.get("tamano"), datos.get("mime_type"),
+                datos.get("origen") or "correo", datos.get("comunicacion_id"),
+                datos.get("mensaje_id"), datos.get("graph_message_id"),
+                datos.get("graph_attachment_id"), datos.get("correo_remitente"),
+                datos.get("correo_asunto"), datos.get("estado") or "archivado",
+                datos.get("ocr_documento_id"), datos.get("creado_por"), now, now,
+            ),
+        )
+        self.conn.commit()
+        return documento_id
+
+    def registrar_decision_adjunto(self, datos: dict) -> None:
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        self.conn.execute(
+            """
+            INSERT INTO comunicaciones_adjuntos_decisiones
+              (graph_message_id,graph_attachment_id,nombre,accion,categoria_id,
+               documento_id,created_at) VALUES (?,?,?,?,?,?,?)
+            ON CONFLICT(graph_message_id,graph_attachment_id) DO UPDATE SET
+              nombre=excluded.nombre,accion=excluded.accion,
+              categoria_id=excluded.categoria_id,documento_id=excluded.documento_id,
+              created_at=excluded.created_at
+            """,
+            (
+                datos["graph_message_id"], datos["graph_attachment_id"],
+                datos.get("nombre"), datos["accion"], datos.get("categoria_id"),
+                datos.get("documento_id"), now,
+            ),
+        )
+        self.conn.commit()
+
+    def vincular_documento_archivo_ocr(self, documento_id: str, ocr_documento_id: str) -> None:
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        self.conn.execute(
+            "UPDATE documentos_archivo SET ocr_documento_id=?,estado='en_ocr',"
+            "updated_at=? WHERE id=?", (ocr_documento_id, now, documento_id),
+        )
+        self.conn.commit()
+
+    def vincular_documentos_graph_comunicacion(self, graph_message_id: str) -> None:
+        row = self.conn.execute(
+            "SELECT id,comunicacion_id FROM comunicaciones_mensajes "
+            "WHERE graph_message_id=? LIMIT 1", (graph_message_id,),
+        ).fetchone()
+        if not row:
+            return
+        self.conn.execute(
+            "UPDATE documentos_archivo SET comunicacion_id=?,mensaje_id=? "
+            "WHERE graph_message_id=?",
+            (row["comunicacion_id"], row["id"], graph_message_id),
         )
         self.conn.commit()
 

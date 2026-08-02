@@ -77,14 +77,24 @@ def get_default_templates_dir() -> Path:
 
 
 def get_default_output_dir() -> Path:
-    path = get_app_data_dir() / "pdfs_emitidas"
+    path = get_document_repository_dir() / "Empresas"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def get_default_received_documents_dir() -> Path:
-    """Carpeta raiz de documentos recibidos que pasan por captura/OCR."""
-    path = get_app_data_dir() / "pdfs_recibidas"
+    """Raiz compartida de documentos de empresa que pasan por captura/OCR."""
+    path = get_document_repository_dir() / "Empresas"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def get_document_repository_dir() -> Path:
+    """Repositorio documental definitivo, comun para todos los puestos."""
+    path = Path(
+        os.getenv("GEST2A3ECO_DOCUMENT_REPOSITORY_DIR")
+        or r"\\GestinemMain\Doc_Compartidos\Gest2A3Eco"
+    )
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -261,7 +271,11 @@ def _normalize_config(data: dict) -> dict:
     if out["database_engine"] not in {"sqlite", "postgres"}:
         out["database_engine"] = "sqlite"
     if not str(out.get("documentos_output_dir") or "").strip():
-        out["documentos_output_dir"] = str(get_default_output_dir())
+        repository = Path(
+            os.getenv("GEST2A3ECO_DOCUMENT_REPOSITORY_DIR")
+            or r"\\GestinemMain\Doc_Compartidos\Gest2A3Eco"
+        )
+        out["documentos_output_dir"] = str(repository / "Empresas")
 
     smtp = out.get("smtp")
     if not isinstance(smtp, dict):

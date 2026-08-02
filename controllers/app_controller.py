@@ -320,6 +320,9 @@ class AppController:
             on_open_plantillas=lambda: self._open_module_in_shell(codigo, ejercicio, "plantillas"),
             on_open_configuracion=lambda: self._open_module_in_shell(codigo, ejercicio, "configuracion"),
             on_open_ocr=lambda: self._open_module_in_shell(codigo, ejercicio, "ocr"),
+            on_open_gestion_documental=lambda: self._open_module_in_shell(
+                codigo, ejercicio, "gestion_documental"
+            ),
             on_open_terceros=lambda: self._open_module_in_shell(codigo, ejercicio, "terceros"),
             on_open_maestro_cuentas=lambda: self._open_module_in_shell(codigo, ejercicio, "maestro_cuentas"),
             on_open_comunicaciones=lambda: self._open_module_in_shell(codigo, ejercicio, "comunicaciones"),
@@ -370,6 +373,7 @@ class AppController:
     def _build_module_content(self, parent, codigo, ejercicio, modulo, nombre):
         """Construye y devuelve el widget del modulo sin empaquetarlo."""
         from views.ui_comunicaciones import UIComunicaciones
+        from views.ui_gestion_documental import UIGestionDocumental
         from views.ui_configuracion_empresa import UIConfiguracionEmpresa
         from views.ui_contabilidad import UIContabilidad
         from views.ui_facturas_emitidas import UIFacturasEmitidas
@@ -396,6 +400,11 @@ class AppController:
             return UIProcesos(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
         if modulo == "ocr":
             return _OcrModuleContainer(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
+        if modulo == "gestion_documental":
+            return UIGestionDocumental(
+                parent, self._gestor, codigo, ejercicio, nombre,
+                session=self._session,
+            )
         if modulo == "contabilidad":
             return UIContabilidad(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)
         if modulo == "plantillas":
@@ -521,7 +530,7 @@ class _OcrModuleContainer(ttk.Frame):
 
         # Pestana 1: nuevo modulo OCR tipado
         tab_nuevo = ttk.Frame(nb)
-        nb.add(tab_nuevo, text="Captura documental")
+        nb.add(tab_nuevo, text="OCR de facturas")
         UIFacturasRecibidasOcr(
             tab_nuevo, gestor, codigo, ejercicio, nombre, session=session
         ).pack(fill="both", expand=True)

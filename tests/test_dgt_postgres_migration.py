@@ -36,6 +36,11 @@ class _Conexion:
                 indice_permisos="idx_usuarios_permisos_globales_usuario",
                 tabla_dgt_facturas=None,
                 indice_dgt_facturas=None,
+                tabla_avisos_correo="comunicaciones_avisos_estado",
+                tabla_avisos_vistos="comunicaciones_avisos_vistos",
+                tabla_categorias_documentales="categorias_documentales",
+                tabla_documentos_archivo="documentos_archivo",
+                tabla_decisiones_adjuntos="comunicaciones_adjuntos_decisiones",
             ))
         return _Resultado()
 

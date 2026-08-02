@@ -38,6 +38,36 @@ class SecuredGestorSQLite:
         self.security.ensure_company_read(codigo_empresa)
         return self._base.listar_comunicaciones(codigo_empresa)
 
+    def listar_categorias_documentales(self, solo_activas: bool = True):
+        return self._base.listar_categorias_documentales(solo_activas)
+
+    def listar_documentos_archivo(self, codigo_empresa: str, ejercicio=None, categoria_id: str = ""):
+        self.security.ensure_company_read(codigo_empresa)
+        return self._base.listar_documentos_archivo(codigo_empresa, ejercicio, categoria_id)
+
+    def get_documento_archivo(self, documento_id: str):
+        row = self._base.get_documento_archivo(documento_id)
+        if row:
+            self.security.ensure_company_read(row["codigo_empresa"])
+        return row
+
+    def registrar_documento_archivo(self, datos: dict):
+        self.security.ensure_company_write(datos.get("codigo_empresa"))
+        return self._base.registrar_documento_archivo(datos)
+
+    def registrar_decision_adjunto(self, datos: dict):
+        return self._base.registrar_decision_adjunto(datos)
+
+    def vincular_documento_archivo_ocr(self, documento_id: str, ocr_documento_id: str):
+        row = self._base.get_documento_archivo(documento_id)
+        if not row:
+            raise ValueError("Documento no encontrado.")
+        self.security.ensure_company_write(row["codigo_empresa"])
+        return self._base.vincular_documento_archivo_ocr(documento_id, ocr_documento_id)
+
+    def vincular_documentos_graph_comunicacion(self, graph_message_id: str):
+        return self._base.vincular_documentos_graph_comunicacion(graph_message_id)
+
     def registrar_envio_comunicacion(self, datos: dict):
         self.security.ensure_company_write(datos.get("codigo_empresa"))
         return self._base.registrar_envio_comunicacion(datos)
