@@ -159,6 +159,34 @@ class GestionDocumentalService:
             self._gestor.vincular_documento_archivo_ocr(documento_id, ocr_id)
         return result
 
+    def eliminar_documento(self, documento_id: str) -> None:
+        document = self._gestor.get_documento_archivo(documento_id)
+        if not document:
+            raise ValueError("Documento no encontrado.")
+        if document.get("ocr_documento_id"):
+            if self._gestor.get_documento_ocr(document["ocr_documento_id"]):
+                raise ValueError(
+                    "El documento ya fue enviado a OCR y no se puede eliminar desde aqui."
+                )
+            self._gestor.reconciliar_documentos_archivo_ocr(
+                document["codigo_empresa"]
+            )
+        path = Path(str(document.get("ruta") or ""))
+        temporary = None
+        if path.is_file():
+            temporary = path.with_name(f".eliminando-{uuid.uuid4().hex}-{path.name}")
+            path.replace(temporary)
+        try:
+            deleted = self._gestor.eliminar_documento_archivo(documento_id)
+            if not deleted:
+                raise ValueError("Documento no encontrado.")
+        except Exception:
+            if temporary and temporary.exists():
+                temporary.replace(path)
+            raise
+        if temporary:
+            temporary.unlink(missing_ok=True)
+
     @staticmethod
     def _safe_name(value: str) -> str:
         return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", Path(value).name).strip(". ") or "Documento"

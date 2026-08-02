@@ -63,6 +63,7 @@ class UIGestionDocumental(ttk.Frame):
         actions.pack(fill="x", pady=(8, 0))
         ttk.Button(actions, text="Abrir", command=self._open).pack(side="left")
         ttk.Button(actions, text="Enviar a OCR de facturas", command=self._send_ocr).pack(side="left", padx=6)
+        ttk.Button(actions, text="Eliminar", command=self._delete).pack(side="left")
         self._summary = ttk.Label(actions, text="")
         self._summary.pack(side="right")
 
@@ -142,6 +143,41 @@ class UIGestionDocumental(ttk.Frame):
             self.after(0, self._finish_ocr, sent, errors)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _delete(self):
+        selected = list(self._tree.selection())
+        if not selected:
+            messagebox.showwarning("Gestion documental", "Selecciona documentos.", parent=self)
+            return
+        names = [self._rows[item]["nombre_original"] for item in selected]
+        preview = "\n".join(f"- {name}" for name in names[:8])
+        if len(names) > 8:
+            preview += f"\n- ... y {len(names) - 8} mas"
+        if not messagebox.askyesno(
+            "Eliminar documentos",
+            "Se eliminaran el registro y el archivo de la carpeta compartida:\n\n"
+            + preview + "\n\nEsta operacion no se puede deshacer.",
+            parent=self,
+        ):
+            return
+        errors = []
+        deleted = 0
+        for document_id in selected:
+            try:
+                self._service.eliminar_documento(document_id)
+                deleted += 1
+            except Exception as exc:
+                errors.append(f"{self._rows[document_id]['nombre_original']}: {exc}")
+        self._refresh()
+        if errors:
+            messagebox.showerror(
+                "Gestion documental",
+                f"Eliminados: {deleted}\n\n" + "\n".join(errors[:8]), parent=self,
+            )
+        else:
+            messagebox.showinfo(
+                "Gestion documental", f"Documentos eliminados: {deleted}", parent=self,
+            )
 
     def _finish_ocr(self, sent, errors):
         self.winfo_toplevel().configure(cursor="")

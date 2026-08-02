@@ -143,3 +143,88 @@ def test_archiva_en_repositorio_compartido_y_no_en_a3(tmp_path, monkeypatch):
         / "FACTURAS_RECIBIDAS"
     )
     gestor.conn.close()
+
+
+def test_elimina_documento_y_archivo_fisico(tmp_path, monkeypatch):
+    gestor, servicio, _raiz = _servicio(tmp_path, monkeypatch)
+    origen = tmp_path / "prueba.pdf"
+    origen.write_bytes(b"factura de prueba")
+    documento_id = servicio.importar_archivo(
+        codigo_empresa="E00724", ejercicio=2026,
+        categoria_id="facturas_recibidas", source=origen,
+    )
+    archivado = Path(gestor.get_documento_archivo(documento_id)["ruta"])
+    assert archivado.is_file()
+
+    servicio.eliminar_documento(documento_id)
+
+    assert not archivado.exists()
+    assert gestor.get_documento_archivo(documento_id) is None
+    gestor.conn.close()
+
+
+def test_no_elimina_documento_ya_enviado_a_ocr(tmp_path, monkeypatch):
+    gestor, servicio, _raiz = _servicio(tmp_path, monkeypatch)
+    origen = tmp_path / "en-ocr.pdf"
+    origen.write_bytes(b"factura")
+    documento_id = servicio.importar_archivo(
+        codigo_empresa="E00724", ejercicio=2026,
+        categoria_id="facturas_recibidas", source=origen,
+    )
+    gestor.upsert_documento_ocr({
+        "id": "ocr-1", "empresa_id": "E00724",
+        "ruta_original": str(origen), "nombre_archivo": origen.name,
+        "hash_archivo": "hash-ocr-activo", "estado": "pendiente_revision",
+    })
+    gestor.vincular_documento_archivo_ocr(documento_id, "ocr-1")
+
+    with pytest.raises(ValueError, match="enviado a OCR"):
+        servicio.eliminar_documento(documento_id)
+
+    assert Path(gestor.get_documento_archivo(documento_id)["ruta"]).is_file()
+    gestor.conn.close()
+
+
+def test_eliminar_en_ocr_devuelve_documento_a_archivado(tmp_path, monkeypatch):
+    gestor, servicio, _raiz = _servicio(tmp_path, monkeypatch)
+    origen = tmp_path / "volver-a-archivado.pdf"
+    origen.write_bytes(b"factura")
+    documento_id = servicio.importar_archivo(
+        codigo_empresa="E00724", ejercicio=2026,
+        categoria_id="facturas_recibidas", source=origen,
+    )
+    gestor.upsert_documento_ocr({
+        "id": "ocr-eliminable", "empresa_id": "E00724",
+        "ruta_original": str(origen), "nombre_archivo": origen.name,
+        "hash_archivo": "hash-ocr", "estado": "pendiente_revision",
+    })
+    gestor.vincular_documento_archivo_ocr(documento_id, "ocr-eliminable")
+
+    assert gestor.eliminar_documento_ocr("ocr-eliminable") is True
+
+    documento = gestor.get_documento_archivo(documento_id)
+    assert documento["estado"] == "archivado"
+    assert documento["ocr_documento_id"] is None
+    servicio.eliminar_documento(documento_id)
+    assert gestor.get_documento_archivo(documento_id) is None
+    gestor.conn.close()
+
+
+def test_reconcilia_vinculo_ocr_antiguo_que_ya_no_existe(tmp_path, monkeypatch):
+    gestor, servicio, _raiz = _servicio(tmp_path, monkeypatch)
+    origen = tmp_path / "vinculo-huerfano.pdf"
+    origen.write_bytes(b"factura antigua")
+    documento_id = servicio.importar_archivo(
+        codigo_empresa="E00724", ejercicio=2026,
+        categoria_id="facturas_recibidas", source=origen,
+    )
+    gestor.vincular_documento_archivo_ocr(documento_id, "ocr-ya-eliminado")
+
+    documentos = gestor.listar_documentos_archivo("E00724", 2026)
+
+    documento = next(item for item in documentos if item["id"] == documento_id)
+    assert documento["estado"] == "archivado"
+    assert documento["ocr_documento_id"] is None
+    servicio.eliminar_documento(documento_id)
+    assert gestor.get_documento_archivo(documento_id) is None
+    gestor.conn.close()

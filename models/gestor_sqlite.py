@@ -3000,6 +3000,7 @@ class GestorSQLite:
         self, codigo_empresa: str, ejercicio: int | None = None,
         categoria_id: str = "",
     ) -> list[dict]:
+        self.reconciliar_documentos_archivo_ocr(codigo_empresa)
         clauses = ["d.codigo_empresa=?"]
         params: list = [codigo_empresa]
         if ejercicio is not None:
@@ -3017,6 +3018,20 @@ class GestorSQLite:
             tuple(params),
         ).fetchall()
         return [self._row_to_dict(row) for row in rows]
+
+    def reconciliar_documentos_archivo_ocr(self, codigo_empresa: str) -> int:
+        """Libera vinculos OCR cuyo documento de trabajo ya fue eliminado."""
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        cursor = self.conn.execute(
+            "UPDATE documentos_archivo SET ocr_documento_id=NULL,"
+            "estado='archivado',updated_at=? "
+            "WHERE codigo_empresa=? AND ocr_documento_id IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM documentos_ocr o "
+            "WHERE o.id=documentos_archivo.ocr_documento_id)",
+            (now, codigo_empresa),
+        )
+        self.conn.commit()
+        return max(0, int(cursor.rowcount or 0))
 
     def get_documento_archivo(self, documento_id: str) -> dict | None:
         row = self.conn.execute(
@@ -3081,6 +3096,18 @@ class GestorSQLite:
             "updated_at=? WHERE id=?", (ocr_documento_id, now, documento_id),
         )
         self.conn.commit()
+
+    def eliminar_documento_archivo(self, documento_id: str) -> dict | None:
+        documento = self.get_documento_archivo(documento_id)
+        if not documento:
+            return None
+        self.conn.execute(
+            "UPDATE comunicaciones_adjuntos_decisiones SET documento_id=NULL "
+            "WHERE documento_id=?", (documento_id,),
+        )
+        self.conn.execute("DELETE FROM documentos_archivo WHERE id=?", (documento_id,))
+        self.conn.commit()
+        return documento
 
     def vincular_documentos_graph_comunicacion(self, graph_message_id: str) -> None:
         row = self.conn.execute(
@@ -5022,6 +5049,24 @@ class GestorSQLite:
             )
         cols = [c[0] for c in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def eliminar_documento_ocr(self, doc_id: str) -> bool:
+        """Elimina el trabajo OCR y devuelve su documento de archivo a archivado."""
+        documento = self.get_documento_ocr(doc_id)
+        if not documento:
+            return False
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        self.conn.execute(
+            "UPDATE documentos_archivo SET ocr_documento_id=NULL,"
+            "estado='archivado',updated_at=? WHERE ocr_documento_id=?",
+            (now, str(doc_id)),
+        )
+        self.conn.execute(
+            "DELETE FROM facturas_recibidas_ocr WHERE documento_id=?", (str(doc_id),)
+        )
+        self.conn.execute("DELETE FROM documentos_ocr WHERE id=?", (str(doc_id),))
+        self.conn.commit()
+        return True
 
     # facturas_recibidas_ocr ──────────────────────────────────────────────────
 

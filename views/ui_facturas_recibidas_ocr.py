@@ -895,15 +895,8 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             return
         if not messagebox.askyesno("OCR", "Eliminar el documento? No se puede deshacer."):
             return
-        # Eliminar factura asociada
         try:
-            self._gestor.conn.execute(
-                "DELETE FROM facturas_recibidas_ocr WHERE documento_id=?", (doc_id,)
-            )
-            self._gestor.conn.execute(
-                "DELETE FROM documentos_ocr WHERE id=?", (doc_id,)
-            )
-            self._gestor.conn.commit()
+            self._gestor.eliminar_documento_ocr(doc_id)
         except Exception as exc:
             messagebox.showerror("OCR", f"Error al eliminar: {exc}")
             return

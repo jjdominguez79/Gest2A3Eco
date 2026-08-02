@@ -45,6 +45,10 @@ class SecuredGestorSQLite:
         self.security.ensure_company_read(codigo_empresa)
         return self._base.listar_documentos_archivo(codigo_empresa, ejercicio, categoria_id)
 
+    def reconciliar_documentos_archivo_ocr(self, codigo_empresa: str):
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.reconciliar_documentos_archivo_ocr(codigo_empresa)
+
     def get_documento_archivo(self, documento_id: str):
         row = self._base.get_documento_archivo(documento_id)
         if row:
@@ -64,6 +68,20 @@ class SecuredGestorSQLite:
             raise ValueError("Documento no encontrado.")
         self.security.ensure_company_write(row["codigo_empresa"])
         return self._base.vincular_documento_archivo_ocr(documento_id, ocr_documento_id)
+
+    def eliminar_documento_archivo(self, documento_id: str):
+        row = self._base.get_documento_archivo(documento_id)
+        if not row:
+            return None
+        self.security.ensure_company_write(row["codigo_empresa"])
+        return self._base.eliminar_documento_archivo(documento_id)
+
+    def eliminar_documento_ocr(self, documento_id: str):
+        row = self._base.get_documento_ocr(documento_id)
+        if not row:
+            return False
+        self.security.ensure_company_write(row["empresa_id"])
+        return self._base.eliminar_documento_ocr(documento_id)
 
     def vincular_documentos_graph_comunicacion(self, graph_message_id: str):
         return self._base.vincular_documentos_graph_comunicacion(graph_message_id)
