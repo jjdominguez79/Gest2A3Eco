@@ -1,6 +1,6 @@
 {
-  "version": "1.4.2",
-  "tag": "v1.4.2",
-  "changelog": "Acelera el arranque evitando bloqueos DDL innecesarios en PostgreSQL y cargando las pantallas bajo demanda; corrige la localizacion del logo empaquetado al enviar facturas y comunicaciones por Microsoft Graph; y permite enviar el correo aunque la imagen corporativa no este disponible.",
-  "force_update": true
+  "version": "1.4.3",
+  "tag": "v1.4.3",
+  "changelog": "Incorpora gestion documental, mejoras en comunicaciones (etiquetas, contadores, adjuntos y notificaciones), mejoras de empresas y OCR, y completa el modulo de tramites DGT con facturacion e integraciones remotas.",
+  "force_update": false
 }
