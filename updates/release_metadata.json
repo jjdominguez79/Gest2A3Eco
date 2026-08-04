@@ -1,6 +1,6 @@
 {
-  "version": "1.4.3",
-  "tag": "v1.4.3",
-  "changelog": "Incorpora gestion documental, mejoras en comunicaciones (etiquetas, contadores, adjuntos y notificaciones), mejoras de empresas y OCR, y completa el modulo de tramites DGT con facturacion e integraciones remotas.",
+  "version": "1.5.0",
+  "tag": "v1.5.0",
+  "changelog": "Incorpora una gestion documental y OCR mas completa, con migracion de PDF de facturas emitidas y mejoras del maestro contable.\n\nMejora Comunicaciones: adjuntos visibles y abribles, respuestas en hilo, identificacion del remitente y mejor visualizacion de conversaciones.\n\nOptimiza el despliegue en Railway para que solo se active cuando se modifique el backend.",
   "force_update": false
 }

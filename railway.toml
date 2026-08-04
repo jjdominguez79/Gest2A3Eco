@@ -1,6 +1,9 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "backend/Dockerfile"
+# El servicio de Railway solo debe reconstruirse cuando cambia su API, no al
+# publicar una nueva version de la aplicacion de escritorio.
+watchPatterns = ["backend/**", "railway.toml"]
 
 [deploy]
 healthcheckPath = "/health"
