@@ -1,3 +1,4 @@
+import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -17,18 +18,28 @@ class UIContabilidad(ttk.Frame):
         self.session = session
         self._docs = []
         self._emitidas_docs = []
+        self._carga_en_curso = False
+        self._destroying = False
+        self._document_request_id = 0
+        self._emitida_request_id = 0
         self.controller = UIContabilidadController(gestor, codigo_empresa, ejercicio, self)
         self.emitidas_ctrl = UIContabilidadEmitidasController(gestor, codigo_empresa, ejercicio, self)
         self._build()
-        self.controller.refresh()
-        self.emitidas_ctrl.refresh()
+        self.bind("<Destroy>", self._on_destroy, add="+")
+        # La consulta de documentos puede ser costosa en PostgreSQL. No debe
+        # impedir que se pinte el modulo ni bloquear el resto de la aplicacion.
+        self.after_idle(self.refresh_async)
 
     def _build(self):
+        header = ttk.Frame(self)
+        header.pack(fill="x", padx=10, pady=8)
         ttk.Label(
-            self,
+            header,
             text=f"Contabilidad - {self.nombre} ({self.codigo})",
             font=("Segoe UI", 12, "bold"),
-        ).pack(anchor="w", padx=10, pady=8)
+        ).pack(side=tk.LEFT)
+        self._loading_label = ttk.Label(header, text="Cargando datos...", foreground="#64748b")
+        self._loading_label.pack(side=tk.RIGHT)
 
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=8, pady=4)
@@ -50,7 +61,12 @@ class UIContabilidad(ttk.Frame):
         bar = ttk.Frame(wrap)
         bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
         ttk.Button(bar, text="Generar asiento", style="Primary.TButton", command=self.controller.generar_asiento).pack(side=tk.LEFT)
+        ttk.Button(bar, text="Editar asiento", command=self.controller.editar_asiento).pack(side=tk.LEFT, padx=(6, 0))
         ttk.Button(bar, text="Exportar suenlace.dat", command=self.controller.exportar_suenlace).pack(side=tk.LEFT, padx=6)
+        ttk.Button(
+            bar, text="Capturar nº asiento de A3",
+            command=self.controller.capturar_numero_asiento_desde_a3,
+        ).pack(side=tk.LEFT)
         ttk.Label(bar, text="Nº asiento").pack(side=tk.LEFT, padx=(14, 4))
         self.var_numero_asiento = tk.StringVar()
         ttk.Entry(bar, textvariable=self.var_numero_asiento, width=12).pack(side=tk.LEFT)
@@ -58,10 +74,22 @@ class UIContabilidad(ttk.Frame):
         self.var_fecha_asiento = tk.StringVar()
         ttk.Entry(bar, textvariable=self.var_fecha_asiento, width=12).pack(side=tk.LEFT)
 
+        ttk.Label(bar, text="Mostrar").pack(side=tk.LEFT, padx=(14, 4))
+        self.cmb_filtro_recibidas = ttk.Combobox(
+            bar, values=("Pendientes", "Contabilizadas", "Todas"),
+            state="readonly", width=15,
+        )
+        self.cmb_filtro_recibidas.set("Pendientes")
+        self.cmb_filtro_recibidas.pack(side=tk.LEFT)
+        self.cmb_filtro_recibidas.bind(
+            "<<ComboboxSelected>>", self._aplicar_filtro_recibidas,
+        )
+
         self.tv = ttk.Treeview(
             wrap,
             columns=("proveedor", "numero", "estado", "total"),
             show="headings",
+            selectmode="extended",
             height=16,
         )
         for col, txt, width in (
@@ -227,16 +255,96 @@ class UIContabilidad(ttk.Frame):
         self.lbl_balance_emitidas = ttk.Label(right, text="", foreground="#475569")
         self.lbl_balance_emitidas.pack(anchor="w", padx=4, pady=2)
 
+    # ── Carga no bloqueante ───────────────────────────────────────────────
+
+    def _on_destroy(self, event):
+        if event.widget is self:
+            self._destroying = True
+
+    def refresh_async(self, select_id: str | None = None):
+        """Carga los listados fuera del hilo grafico.
+
+        El asiento se obtiene al seleccionar una factura, de modo que abrir
+        Contabilidad no ejecuta tambien una consulta por cada previsualizacion.
+        """
+        if self._destroying or self._carga_en_curso:
+            return
+        self._carga_en_curso = True
+        self._pending_select_id = select_id
+        self._loading_label.configure(text="Cargando datos...")
+
+        def worker():
+            try:
+                recibidas = self.gestor.listar_facturas_recibidas_docs(self.codigo, self.ejercicio)
+                emitidas = self.gestor.listar_facturas_emitidas_en_contabilidad(self.codigo, self.ejercicio)
+                error = None
+            except Exception as exc:
+                recibidas, emitidas, error = [], [], exc
+            try:
+                self.after(0, self._finish_refresh_async, recibidas, emitidas, error)
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_refresh_async(self, recibidas, emitidas, error):
+        self._carga_en_curso = False
+        if self._destroying:
+            return
+        if error is not None:
+            self._loading_label.configure(text="No se pudieron cargar los datos.")
+            self.show_error("Contabilidad", f"No se pudieron cargar los datos de contabilidad:\n{error}")
+            return
+        self.set_documents(recibidas)
+        self.set_emitidas(emitidas)
+        target = self._pending_select_id
+        self._pending_select_id = None
+        self.clear_preview()
+        if target and str(target) in self.tv.get_children():
+            self._load_document_async(str(target))
+        self._loading_label.configure(text="")
+
     # ── Emitidas tab interface ──────────────────────────────────────────────
 
     def _on_emitida_select(self, _event=None):
         sel = self.tv_emitidas.selection()
         if sel:
-            self.emitidas_ctrl.on_seleccionar(str(sel[0]))
+            self._load_emitida_async(str(sel[0]))
         else:
             self.tv_asiento_emitidas.delete(*self.tv_asiento_emitidas.get_children())
             self.lbl_asiento_fac.configure(text="Selecciona una factura para ver su asiento.")
             self.lbl_balance_emitidas.configure(text="")
+
+    def _load_emitida_async(self, fac_id: str):
+        if self._destroying:
+            return
+        self._emitida_request_id += 1
+        request_id = self._emitida_request_id
+        self._loading_label.configure(text="Calculando asiento...")
+
+        def worker():
+            try:
+                result = self.emitidas_ctrl.preparar_asiento_seleccionada(fac_id)
+                error = None
+            except Exception as exc:
+                result, error = None, exc
+            try:
+                self.after(0, self._finish_load_emitida_async, request_id, result, error)
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_load_emitida_async(self, request_id, result, error):
+        if self._destroying or request_id != self._emitida_request_id:
+            return
+        if error is not None:
+            self._loading_label.configure(text="No se pudo calcular el asiento.")
+            self.show_error("Contabilidad", f"No se pudo calcular el asiento:\n{error}")
+            return
+        if result:
+            self.set_asiento_emitida(*result)
+        self._loading_label.configure(text="")
 
     def set_emitidas(self, docs: list[dict]):
         self._emitidas_docs = docs or []
@@ -339,8 +447,17 @@ class UIContabilidad(ttk.Frame):
 
     def set_documents(self, docs: list[dict]):
         self._docs = docs or []
+        self._aplicar_filtro_recibidas()
+
+    def _aplicar_filtro_recibidas(self, _event=None):
         self.tv.delete(*self.tv.get_children())
+        filtro = self.cmb_filtro_recibidas.get()
         for doc in self._docs:
+            contabilizada = doc.get("estado_contable") == "contabilizada"
+            if filtro == "Pendientes" and contabilizada:
+                continue
+            if filtro == "Contabilizadas" and not contabilizada:
+                continue
             self.tv.insert(
                 "", "end",
                 iid=str(doc.get("id")),
@@ -351,6 +468,9 @@ class UIContabilidad(ttk.Frame):
                     self._fmt_num(doc.get("total", 0)),
                 ),
             )
+
+    def get_selected_received_ids(self) -> list[str]:
+        return list(self.tv.selection())
 
     def load_document(self, doc: dict, asiento: dict | None):
         self.var_numero_asiento.set(str(doc.get("numero_asiento") or ""))
@@ -393,6 +513,12 @@ class UIContabilidad(ttk.Frame):
     def get_fecha_asiento(self):
         return self.var_fecha_asiento.get().strip()
 
+    def edit_document_asiento(self, doc: dict, asiento: dict, catalogo: list[dict]):
+        AsientoRecibidaDialog(
+            self.winfo_toplevel(), doc, asiento, catalogo,
+            on_save=lambda lineas: self.controller.guardar_asiento_editado(doc, asiento, lineas),
+        )
+
     def ask_save_path(self, initialfile):
         return filedialog.asksaveasfilename(
             title="Guardar fichero suenlace.dat",
@@ -413,10 +539,131 @@ class UIContabilidad(ttk.Frame):
     def _on_select(self):
         sel = self.tv.selection()
         if sel:
-            self.controller.select_document(str(sel[0]))
+            self._load_document_async(str(sel[0]))
+
+    def _load_document_async(self, doc_id: str):
+        """Obtiene documento y asiento fuera del hilo de Tkinter."""
+        if self._destroying:
+            return
+        self._document_request_id += 1
+        request_id = self._document_request_id
+        self._loading_label.configure(text="Cargando factura...")
+
+        def worker():
+            try:
+                doc = self.gestor.get_factura_recibida_doc(doc_id)
+                asiento = self.gestor.get_asiento_contable_por_documento(doc_id) if doc else None
+                error = None
+            except Exception as exc:
+                doc, asiento, error = None, None, exc
+            try:
+                self.after(
+                    0, self._finish_load_document_async,
+                    request_id, doc_id, doc, asiento, error,
+                )
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_load_document_async(self, request_id, doc_id, doc, asiento, error):
+        if self._destroying or request_id != self._document_request_id:
+            return
+        if error is not None:
+            self._loading_label.configure(text="No se pudo cargar la factura.")
+            self.show_error("Contabilidad", f"No se pudo cargar la factura:\n{error}")
+            return
+        if doc:
+            self.controller.load_document_data(doc_id, doc, asiento)
+            self._loading_label.configure(text="")
 
     def _fmt_num(self, value) -> str:
         try:
             return f"{float(value):.2f}"
         except Exception:
             return "0.00"
+
+
+class AsientoRecibidaDialog(tk.Toplevel):
+    """Edicion manual de las lineas de un asiento de factura recibida."""
+
+    def __init__(self, parent, doc: dict, asiento: dict, catalogo: list[dict], on_save):
+        super().__init__(parent)
+        self.title("Editar asiento de factura recibida")
+        self.geometry("1050x470")
+        self.transient(parent)
+        self.grab_set()
+        self._on_save = on_save
+        self._catalogo = catalogo or []
+        self._rows = []
+        self._valores_cuentas = [
+            f"{row.get('subcuenta') or ''} - {row.get('nombre_subcuenta') or ''}".rstrip(" -")
+            for row in self._catalogo if row.get("subcuenta")
+        ]
+        frame = ttk.Frame(self, padding=12)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame,
+            text=(f"Factura {doc.get('numero_factura') or ''} - {doc.get('proveedor_nombre') or ''}. "
+                  "Las subcuentas se eligen del plan contable de esta empresa."),
+        ).pack(anchor="w", pady=(0, 8))
+        self._lines = ttk.Frame(frame)
+        self._lines.pack(fill="both", expand=True)
+        self._lines.columnconfigure(3, weight=1)
+        for col, text, width in ((0, "Subcuenta", 34), (1, "D/H", 6), (2, "Importe", 14), (3, "Concepto", 45)):
+            ttk.Label(self._lines, text=text, font=("Segoe UI", 9, "bold")).grid(
+                row=0, column=col, sticky="w", padx=3,
+            )
+        for line in asiento.get("lineas") or []:
+            self._add_row(line)
+        actions = ttk.Frame(frame)
+        actions.pack(fill="x", pady=(10, 0))
+        ttk.Button(actions, text="Añadir linea", command=lambda: self._add_row({"dh": "D"})).pack(side=tk.LEFT)
+        ttk.Button(actions, text="Guardar asiento", style="Primary.TButton", command=self._save).pack(side=tk.RIGHT)
+        ttk.Button(actions, text="Cancelar", command=self.destroy).pack(side=tk.RIGHT, padx=6)
+
+    def _add_row(self, line: dict):
+        row = len(self._rows) + 1
+        cuenta = tk.StringVar(value=str(line.get("subcuenta") or ""))
+        dh = tk.StringVar(value=str(line.get("dh") or "D"))
+        importe = tk.StringVar(value=f"{float(line.get('importe') or 0):.2f}")
+        concepto = tk.StringVar(value=str(line.get("concepto") or ""))
+        combo = ttk.Combobox(self._lines, textvariable=cuenta, values=self._valores_cuentas, width=32)
+        combo.grid(row=row, column=0, sticky="ew", padx=3, pady=2)
+        ttk.Combobox(self._lines, textvariable=dh, values=("D", "H"), state="readonly", width=4).grid(row=row, column=1, padx=3, pady=2)
+        ttk.Entry(self._lines, textvariable=importe, width=13).grid(row=row, column=2, padx=3, pady=2)
+        ttk.Entry(self._lines, textvariable=concepto).grid(row=row, column=3, sticky="ew", padx=3, pady=2)
+        ttk.Button(self._lines, text="Quitar", command=lambda: self._remove_row(row)).grid(row=row, column=4, padx=3)
+        self._rows.append((row, cuenta, dh, importe, concepto))
+
+    def _remove_row(self, row):
+        for item in self._lines.grid_slaves(row=row):
+            item.destroy()
+        self._rows = [item for item in self._rows if item[0] != row]
+
+    @staticmethod
+    def _code(value: str) -> str:
+        return str(value or "").split(" - ", 1)[0].strip()
+
+    def _save(self):
+        lineas, debe, haber = [], 0.0, 0.0
+        try:
+            for _row, cuenta, dh, importe, concepto in self._rows:
+                codigo = self._code(cuenta.get())
+                valor = float(importe.get().strip().replace(",", "."))
+                lado = dh.get()
+                if not codigo or lado not in ("D", "H") or valor <= 0:
+                    raise ValueError("Cada linea necesita subcuenta, D/H e importe positivo.")
+                lineas.append({"subcuenta": codigo, "dh": lado, "importe": round(valor, 2), "concepto": concepto.get().strip()})
+                if lado == "D":
+                    debe += valor
+                else:
+                    haber += valor
+        except ValueError as exc:
+            messagebox.showwarning("Asiento", str(exc), parent=self)
+            return
+        if not lineas or round(debe - haber, 2) != 0:
+            messagebox.showwarning("Asiento", f"El asiento debe cuadrar. Debe: {debe:.2f}; Haber: {haber:.2f}", parent=self)
+            return
+        self._on_save(lineas)
+        self.destroy()

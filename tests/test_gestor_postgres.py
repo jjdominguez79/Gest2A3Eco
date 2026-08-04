@@ -312,7 +312,9 @@ _COLUMNAS_ESENCIALES = {
     ("empresas", "activo"),
     ("usuarios", "must_change_password"),
     ("comunicaciones", "etiqueta"),
+    ("comunicaciones_mensajes", "tiene_adjuntos"),
     ("comunicaciones_sin_asignar", "etiqueta"),
+    ("facturas_recibidas_ocr", "tipo_operacion_iva"),
 }
 
 

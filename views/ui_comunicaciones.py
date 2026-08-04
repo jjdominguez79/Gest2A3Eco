@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import html
 import json
+import os
 import re
+import threading
 import tkinter as tk
 from html.parser import HTMLParser
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from services.graph_mail_service import GraphMailService
+from services.documentos_correo_service import DocumentosCorreoService
 from utils.utilidades import (
     load_app_config,
     load_user_config,
@@ -293,6 +296,9 @@ class UIComunicaciones(ttk.Frame):
         ttk.Button(top, text="Configurar Microsoft 365", command=self._configure).pack(side="right")
         ttk.Button(top, text="Configurar firma", command=self._configure_signature).pack(side="right", padx=6)
         ttk.Button(top, text="Nuevo correo", command=self._compose).pack(side="right", padx=6)
+        ttk.Button(top, text="Ver conversacion", command=self._detail).pack(side="right", padx=6)
+        ttk.Button(top, text="Ver adjuntos", command=self._preview_selected_attachments).pack(side="right", padx=6)
+        ttk.Button(top, text="Responder", command=self._reply_selected).pack(side="right", padx=6)
         self._tree = ttk.Treeview(
             self, columns=("fecha", "tipo", "asunto", "remitente", "estado", "mensajes"),
             show="headings", selectmode="browse",
@@ -312,9 +318,10 @@ class UIComunicaciones(ttk.Frame):
         self._rows.clear()
         for row in self._gestor.listar_comunicaciones(self._codigo):
             self._rows[row["id"]] = row
+            remitente = row.get("ultimo_remitente") or "(sin remitente)"
             self._tree.insert("", "end", iid=row["id"], values=(
                 row.get("ultima_fecha") or "", "Enviado" if row.get("ultima_direccion") == "saliente" else "Recibido", row.get("asunto") or "",
-                row.get("ultimo_remitente") or "", row.get("estado") or "",
+                remitente, row.get("estado") or "",
                 row.get("mensajes") or 0,
             ))
 
@@ -357,7 +364,15 @@ class UIComunicaciones(ttk.Frame):
         selected = self._tree.selection()
         if not selected:
             return
-        messages = self._gestor.listar_mensajes_comunicacion(selected[0])
+        messages = self._messages_with_local_attachments(selected[0])
+        CommunicationDetailDialog(
+            self, messages,
+            on_preview_attachments=self._preview_attachments,
+            on_reply=lambda message: self._reply(selected[0], message),
+        )
+
+    def _messages_with_local_attachments(self, comunicacion_id: str) -> list[dict]:
+        messages = self._gestor.listar_mensajes_comunicacion(comunicacion_id)
         for message in messages:
             message["adjuntos"] = [
                 dict(row) for row in self._gestor.conn.execute(
@@ -365,7 +380,195 @@ class UIComunicaciones(ttk.Frame):
                     (message["id"],),
                 ).fetchall()
             ]
-        CommunicationDetailDialog(self, messages)
+        return messages
+
+    def _preview_selected_attachments(self):
+        selected = self._tree.selection()
+        if not selected:
+            messagebox.showwarning(
+                "Adjuntos", "Selecciona una conversacion.", parent=self,
+            )
+            return
+        messages = self._messages_with_local_attachments(selected[0])
+        message = next(
+            (
+                item for item in messages
+                if item.get("adjuntos") or item.get("tiene_adjuntos")
+                or (
+                    item.get("direccion") != "saliente"
+                    and item.get("graph_message_id") and item.get("mailbox")
+                )
+            ),
+            None,
+        )
+        if not message:
+            messagebox.showinfo(
+                "Adjuntos", "La conversacion no contiene adjuntos disponibles.",
+                parent=self,
+            )
+            return
+        self._preview_attachments(message)
+
+    def _reply(self, comunicacion_id: str, message: dict):
+        ReplyMailDialog(
+            self, self._gestor, self._codigo, self._session,
+            comunicacion_id, message, self._refresh,
+        )
+
+    def _reply_selected(self):
+        selected = self._tree.selection()
+        if not selected:
+            messagebox.showwarning("Correo", "Selecciona una conversacion para responder.", parent=self)
+            return
+        messages = self._gestor.listar_mensajes_comunicacion(selected[0])
+        message = next(
+            (item for item in messages if item.get("direccion") != "saliente"
+             and item.get("graph_message_id") and item.get("mailbox")),
+            None,
+        )
+        if not message:
+            messagebox.showwarning(
+                "Correo", "La conversacion no contiene un correo recibido que se pueda responder.",
+                parent=self,
+            )
+            return
+        self._reply(selected[0], message)
+
+    def _preview_attachments(self, message: dict):
+        """Abre adjuntos archivados localmente o los disponibles en Graph."""
+        local = message.get("adjuntos") or []
+        graph_id = str(message.get("graph_message_id") or "").strip()
+        mailbox = str(message.get("mailbox") or "").strip()
+        # Los enviados y las respuestas conservan una copia local de sus
+        # ficheros. Es la fuente fiable despues de enviar (Graph no devuelve
+        # el identificador definitivo del mensaje enviado).
+        if local and message.get("direccion") == "saliente":
+            LocalAttachmentsDialog(self, local)
+            return
+        if not graph_id or not mailbox:
+            if local:
+                LocalAttachmentsDialog(self, local)
+            else:
+                messagebox.showinfo("Adjuntos", "Este mensaje no tiene adjuntos disponibles.", parent=self)
+            return
+
+        self.winfo_toplevel().configure(cursor="watch")
+
+        def worker():
+            try:
+                attachments = DocumentosCorreoService(self._gestor).listar_adjuntos(
+                    mailbox=mailbox, graph_message_id=graph_id,
+                )
+                error = None
+            except Exception as exc:
+                attachments, error = [], exc
+            try:
+                self.after(0, self._finish_preview_attachments, message, attachments, error)
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_preview_attachments(self, message: dict, attachments: list[dict], error):
+        self.winfo_toplevel().configure(cursor="")
+        if error is not None:
+            messagebox.showerror("Adjuntos", f"No se pudieron consultar los adjuntos:\n{error}", parent=self)
+            return
+        if not attachments:
+            messagebox.showinfo("Adjuntos", "El correo no tiene adjuntos descargables.", parent=self)
+            return
+        GraphAttachmentsDialog(
+            self, attachments,
+            on_open=lambda attachment_id: self._open_graph_attachment(message, attachment_id),
+        )
+
+    def _open_graph_attachment(self, message: dict, attachment_id: str):
+        self.winfo_toplevel().configure(cursor="watch")
+
+        def worker():
+            try:
+                path = DocumentosCorreoService(self._gestor).descargar_adjunto_temporal(
+                    mailbox=str(message.get("mailbox") or ""),
+                    graph_message_id=str(message.get("graph_message_id") or ""),
+                    attachment_id=attachment_id,
+                )
+                error = None
+            except Exception as exc:
+                path, error = None, exc
+            try:
+                self.after(0, self._finish_open_attachment, path, error)
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_open_attachment(self, path, error):
+        self.winfo_toplevel().configure(cursor="")
+        if error is not None:
+            messagebox.showerror("Adjuntos", f"No se pudo abrir el adjunto:\n{error}", parent=self)
+            return
+        try:
+            os.startfile(str(path))
+        except Exception as exc:
+            messagebox.showerror("Adjuntos", f"Windows no pudo abrir el archivo:\n{exc}", parent=self)
+
+
+class _AttachmentsDialog(tk.Toplevel):
+    """Selector comun para adjuntos locales y los descargados desde Graph."""
+
+    def __init__(self, parent, attachments: list[dict], on_open):
+        super().__init__(parent)
+        self.title("Adjuntos del correo")
+        self.geometry("650x330")
+        self.transient(parent.winfo_toplevel())
+        self._attachments = {str(item.get("id") or item.get("ruta") or ""): item for item in attachments}
+        self._on_open = on_open
+        frame = ttk.Frame(self, padding=12)
+        frame.pack(fill="both", expand=True)
+        self._tree = ttk.Treeview(frame, columns=("nombre", "tamano"), show="headings")
+        self._tree.heading("nombre", text="Archivo")
+        self._tree.heading("tamano", text="Tamano")
+        self._tree.column("nombre", width=480, anchor="w")
+        self._tree.column("tamano", width=110, anchor="e")
+        self._tree.pack(fill="both", expand=True)
+        for key, item in self._attachments.items():
+            size = int(item.get("size") or item.get("tamano") or 0)
+            self._tree.insert("", "end", iid=key, values=(
+                item.get("name") or item.get("nombre") or "Adjunto",
+                f"{size / 1024:.1f} KB" if size else "",
+            ))
+        self._tree.bind("<Double-1>", lambda _event: self._open())
+        actions = ttk.Frame(frame)
+        actions.pack(anchor="e", pady=(10, 0))
+        ttk.Button(actions, text="Cerrar", command=self.destroy).pack(side="left", padx=(0, 6))
+        ttk.Button(actions, text="Abrir", command=self._open).pack(side="left")
+        if self._attachments:
+            first = next(iter(self._attachments))
+            self._tree.selection_set(first)
+
+    def _open(self):
+        selected = self._tree.selection()
+        if selected:
+            self._on_open(selected[0])
+
+
+class LocalAttachmentsDialog(_AttachmentsDialog):
+    def __init__(self, parent, attachments: list[dict]):
+        super().__init__(parent, attachments, self._open_local)
+
+    def _open_local(self, key: str):
+        path = str(self._attachments[key].get("ruta") or "")
+        if not path or not os.path.isfile(path):
+            messagebox.showerror("Adjuntos", "El archivo local ya no esta disponible.", parent=self)
+            return
+        try:
+            os.startfile(path)
+        except Exception as exc:
+            messagebox.showerror("Adjuntos", f"Windows no pudo abrir el archivo:\n{exc}", parent=self)
+
+
+class GraphAttachmentsDialog(_AttachmentsDialog):
+    pass
 
 
 class UnmatchedMailDialog(tk.Toplevel):
@@ -460,24 +663,27 @@ class SignatureDialog(tk.Toplevel):
 class CommunicationDetailDialog(tk.Toplevel):
     def __init__(
         self, parent, messages: list[dict], on_import_attachments=None,
-        on_preview_attachments=None,
+        on_preview_attachments=None, on_reply=None,
     ):
         super().__init__(parent)
         self.title("Historial de la comunicacion")
-        self.geometry("900x650")
+        self.geometry("1120x650")
+        self.minsize(1050, 560)
         self.transient(parent.winfo_toplevel())
         frame = ttk.Frame(self, padding=12)
         frame.pack(fill="both", expand=True)
         self._messages = messages
         self._on_import_attachments = on_import_attachments
         self._on_preview_attachments = on_preview_attachments
+        self._on_reply = on_reply
         self._list = ttk.Treeview(
-            frame, columns=("fecha", "tipo", "remitente", "asunto", "estado"),
+            frame, columns=("fecha", "tipo", "remitente", "asunto", "adjuntos", "estado"),
             show="headings", height=7, selectmode="browse",
         )
         for key, title, width in (
             ("fecha", "Fecha", 180), ("tipo", "Tipo", 85), ("remitente", "Remitente", 180),
-            ("asunto", "Asunto", 330), ("estado", "Estado", 120),
+            ("asunto", "Asunto", 270), ("adjuntos", "Adjuntos", 85),
+            ("estado", "Estado", 120),
         ):
             self._list.heading(key, text=title)
             self._list.column(key, width=width, anchor="w")
@@ -510,16 +716,25 @@ class CommunicationDetailDialog(tk.Toplevel):
         if not on_import_attachments:
             self._import_button.configure(state="disabled")
         self._preview_button = ttk.Button(
-            actions, text="Revisar adjuntos",
+            actions, text="Ver adjuntos",
             command=self._preview_attachments,
         )
         self._preview_button.pack(side="left", padx=(7, 0))
         if not on_preview_attachments:
             self._preview_button.configure(state="disabled")
+        self._reply_button = ttk.Button(
+            actions, text="Responder", command=self._reply,
+        )
+        self._reply_button.pack(side="right")
+        if not on_reply:
+            self._reply_button.configure(state="disabled")
         for index, item in enumerate(messages):
+            tiene_adjuntos = bool(item.get("adjuntos")) or bool(item.get("tiene_adjuntos"))
+            remitente = item.get("remitente") or "(sin remitente)"
             self._list.insert("", "end", iid=str(index), values=(
-                item.get("fecha") or "", "Enviado" if item.get("direccion") == "saliente" else "Recibido", item.get("remitente") or "",
-                item.get("asunto") or "", item.get("estado_envio") or "",
+                item.get("fecha") or "", "Enviado" if item.get("direccion") == "saliente" else "Recibido", remitente,
+                item.get("asunto") or "", "Si" if tiene_adjuntos else "",
+                item.get("estado_envio") or "",
             ))
         if messages:
             self._list.selection_set("0")
@@ -532,15 +747,25 @@ class CommunicationDetailDialog(tk.Toplevel):
         if not selected:
             return
         message = self._messages[int(selected[0])]
+        can_reply = bool(
+            self._on_reply
+            and message.get("direccion") != "saliente"
+            and message.get("graph_message_id")
+            and message.get("mailbox")
+        )
+        self._reply_button.configure(state="normal" if can_reply else "disabled")
         destinatarios = ", ".join(json.loads(message.get("destinatarios_json") or "[]"))
         cc = ", ".join(json.loads(message.get("cc_json") or "[]")) or "-"
         adjuntos = message.get("adjuntos") or []
-        nombres = ", ".join(item.get("nombre") or "" for item in adjuntos) or "Ninguno"
+        nombres = ", ".join(item.get("nombre") or "" for item in adjuntos)
+        if not nombres and message.get("tiene_adjuntos"):
+            nombres = "Disponibles (pulsa «Ver adjuntos»)"
+        nombres = nombres or "Ninguno"
         error = message.get("error_envio") or "-"
         self._content.configure(state="normal")
         self._content.delete("1.0", "end")
         for label, value in (
-            ("De", message.get("remitente") or ""),
+            ("De", message.get("remitente") or "(sin remitente)"),
             ("Para", destinatarios), ("CC", cc),
             ("Fecha", message.get("fecha") or ""),
             ("Estado", message.get("estado_envio") or ""),
@@ -575,6 +800,13 @@ class CommunicationDetailDialog(tk.Toplevel):
         if not selected:
             return
         self._on_preview_attachments(self._messages[int(selected[0])])
+
+    def _reply(self):
+        if not self._on_reply:
+            return
+        selected = self._list.selection()
+        if selected:
+            self._on_reply(self._messages[int(selected[0])])
 
 
 class ComposeMailDialog(tk.Toplevel):
@@ -676,6 +908,7 @@ class ComposeMailDialog(tk.Toplevel):
                 "usuario_id": getattr(user, "id", None),
                 "usuario_nombre": getattr(user, "nombre", None),
                 "adjuntos": self._attachments,
+                "mailbox": sender,
             })
             self._on_sent()
             messagebox.showerror("No se pudo enviar", str(exc), parent=self)
@@ -689,7 +922,102 @@ class ComposeMailDialog(tk.Toplevel):
             "usuario_id": getattr(user, "id", None),
             "usuario_nombre": getattr(user, "nombre", None),
             "adjuntos": self._attachments,
+            "mailbox": sender,
         })
         messagebox.showinfo("Correo", "Exchange ha aceptado el mensaje y se ha registrado.", parent=self)
+        self._on_sent()
+        self.destroy()
+
+
+class ReplyMailDialog(tk.Toplevel):
+    """Respuesta de un correo existente, incluida en su hilo de Exchange."""
+
+    def __init__(self, parent, gestor, codigo, session, comunicacion_id, message, on_sent):
+        super().__init__(parent)
+        self.title("Responder correo")
+        self.geometry("720x530")
+        self.transient(parent.winfo_toplevel())
+        self.grab_set()
+        self._gestor = gestor
+        self._codigo = codigo
+        self._session = session
+        self._comunicacion_id = str(comunicacion_id)
+        self._message = message
+        self._on_sent = on_sent
+        self._attachments: list[str] = []
+        self._mark_answered = tk.BooleanVar(value=True)
+        self._build()
+
+    def _build(self):
+        form = ttk.Frame(self, padding=14)
+        form.pack(fill="both", expand=True)
+        ttk.Label(form, text="Responder a", font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="w", pady=4)
+        ttk.Label(form, text=self._message.get("remitente") or "").grid(row=0, column=1, sticky="w", pady=4)
+        ttk.Label(form, text="Asunto", font=("Segoe UI", 9, "bold")).grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Label(form, text=self._message.get("asunto") or "").grid(row=1, column=1, sticky="w", pady=4)
+        ttk.Label(form, text="Mensaje").grid(row=2, column=0, sticky="nw", pady=(10, 4))
+        self._body = tk.Text(form, wrap="word", height=16)
+        self._body.grid(row=2, column=1, sticky="nsew", pady=(10, 4))
+        ttk.Button(form, text="Adjuntar archivos", command=self._attach).grid(row=3, column=0, sticky="w", pady=4)
+        self._files = ttk.Label(form, text="Sin adjuntos")
+        self._files.grid(row=3, column=1, sticky="w", pady=4)
+        ttk.Checkbutton(
+            form, text="Marcar la comunicacion como respondida al enviar",
+            variable=self._mark_answered,
+        ).grid(row=4, column=1, sticky="w", pady=(8, 0))
+        actions = ttk.Frame(form)
+        actions.grid(row=5, column=1, sticky="e", pady=14)
+        ttk.Button(actions, text="Cancelar", command=self.destroy).pack(side="left", padx=5)
+        ttk.Button(actions, text="Enviar respuesta", command=self._send).pack(side="left")
+        form.columnconfigure(1, weight=1)
+        form.rowconfigure(2, weight=1)
+
+    def _attach(self):
+        chosen = filedialog.askopenfilenames(parent=self, title="Seleccionar adjuntos")
+        self._attachments.extend(path for path in chosen if path not in self._attachments)
+        names = [path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] for path in self._attachments]
+        self._files.configure(text=", ".join(names) or "Sin adjuntos")
+
+    def _send(self):
+        plain = self._body.get("1.0", "end").strip()
+        if not plain:
+            messagebox.showwarning("Correo", "Escribe el mensaje de respuesta.", parent=self)
+            return
+        graph_id = str(self._message.get("graph_message_id") or "").strip()
+        mailbox = str(self._message.get("mailbox") or "").strip()
+        if not graph_id or not mailbox:
+            messagebox.showerror("Correo", "No se dispone del identificador de Microsoft 365 para responder.", parent=self)
+            return
+        user = getattr(self._session, "user", None)
+        signature = construir_firma_oficina(getattr(user, "nombre", ""))
+        body_html = construir_cuerpo_html(plain, signature, "")
+        try:
+            result = GraphMailService().reply(
+                mailbox=mailbox, message_id=graph_id, body=body_html,
+                attachments=self._attachments,
+            )
+        except Exception as exc:
+            messagebox.showerror("No se pudo enviar", str(exc), parent=self)
+            return
+        self._gestor.registrar_envio_comunicacion({
+            "comunicacion_id": self._comunicacion_id,
+            "codigo_empresa": self._codigo,
+            "asunto": self._message.get("asunto") or "",
+            "remitente": result.sender,
+            "destinatarios": [self._message.get("remitente") or ""],
+            "cc": [], "cuerpo_html": body_html,
+            "estado_envio": "aceptado_graph",
+            "graph_message_id": result.message_id,
+            "internet_message_id": result.internet_message_id,
+            "usuario_id": getattr(user, "id", None),
+            "usuario_nombre": getattr(user, "nombre", None),
+            "adjuntos": self._attachments,
+            "mailbox": mailbox,
+        })
+        if self._mark_answered.get():
+            self._gestor.cambiar_estado_comunicacion(
+                self._comunicacion_id, "respondido", getattr(user, "id", 0),
+            )
+        messagebox.showinfo("Correo", "Respuesta enviada y registrada.", parent=self)
         self._on_sent()
         self.destroy()

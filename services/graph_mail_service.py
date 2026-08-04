@@ -79,13 +79,23 @@ class GraphMailService:
             token_cache=self._cache,
         )
         accounts = app.get_accounts()
-        result = app.acquire_token_silent(SCOPES, account=accounts[0]) if accounts else None
+        account = accounts[0] if accounts else None
+        result = app.acquire_token_silent(SCOPES, account=account) if account else None
         if not result:
             result = app.acquire_token_interactive(scopes=SCOPES, prompt="select_account")
         self._save_cache()
         if "access_token" not in result:
             raise RuntimeError(result.get("error_description") or "Microsoft no ha autorizado el acceso.")
-        username = str((result.get("id_token_claims") or {}).get("preferred_username") or "")
+        claims = result.get("id_token_claims") or {}
+        username = str(
+            claims.get("preferred_username") or claims.get("email")
+            or claims.get("upn") or (account or {}).get("username") or ""
+        ).strip()
+        if not username:
+            refreshed_accounts = app.get_accounts()
+            username = str(
+                (refreshed_accounts[0] if refreshed_accounts else {}).get("username") or ""
+            ).strip()
         return result["access_token"], username
 
     @staticmethod
@@ -149,6 +159,105 @@ class GraphMailService:
             internet_message_id="",
             sender=actual_sender,
         )
+
+    def reply(
+        self, *, mailbox: str, message_id: str, body: str,
+        attachments: list[str] | None = None,
+    ) -> GraphSendResult:
+        """Responde manteniendo la conversacion de Exchange.
+
+        ``createReply`` crea un borrador enlazado al mensaje original; asi se
+        pueden incluir adjuntos antes de enviarlo, algo que el endpoint
+        ``reply`` directo de Graph no permite.
+        """
+        import base64
+
+        token, signed_in = self._token()
+        actual_mailbox = signed_in if mailbox == "me" else (mailbox or self.shared_mailbox)
+        target = "me" if mailbox == "me" else f"users/{quote(actual_mailbox)}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Prefer": 'IdType="ImmutableId"',
+        }
+        encoded_id = quote(str(message_id), safe="")
+        created = self.session.post(
+            f"{GRAPH_ROOT}/{target}/messages/{encoded_id}/createReply",
+            headers=headers, data="{}", timeout=45,
+        )
+        if created.status_code not in (200, 201):
+            raise RuntimeError(self._error(created))
+        draft = created.json()
+        draft_id = str(draft.get("id") or "")
+        if not draft_id:
+            raise RuntimeError("Microsoft Graph no devolvio el borrador de respuesta.")
+        updated = self.session.patch(
+            f"{GRAPH_ROOT}/{target}/messages/{quote(draft_id, safe='')}",
+            headers=headers,
+            data=json.dumps({"body": {"contentType": "HTML", "content": body}}),
+            timeout=45,
+        )
+        if updated.status_code not in (200, 202):
+            raise RuntimeError(self._error(updated))
+        for raw_path in attachments or []:
+            path = Path(raw_path)
+            if not path.is_file():
+                raise FileNotFoundError(f"No existe el adjunto: {path}")
+            if path.stat().st_size <= 3 * 1024 * 1024:
+                attachment = {
+                    "@odata.type": "#microsoft.graph.fileAttachment",
+                    "name": path.name,
+                    "contentBytes": base64.b64encode(path.read_bytes()).decode("ascii"),
+                }
+                response = self.session.post(
+                    f"{GRAPH_ROOT}/{target}/messages/{quote(draft_id, safe='')}/attachments",
+                    headers=headers, data=json.dumps(attachment), timeout=45,
+                )
+                if response.status_code not in (200, 201):
+                    raise RuntimeError(self._error(response))
+            else:
+                self._upload_large_attachment(target, draft_id, path, headers)
+        sent = self.session.post(
+            f"{GRAPH_ROOT}/{target}/messages/{quote(draft_id, safe='')}/send",
+            headers=headers, data="{}", timeout=45,
+        )
+        if sent.status_code not in (202, 204):
+            raise RuntimeError(self._error(sent))
+        return GraphSendResult(message_id=draft_id, internet_message_id="", sender=actual_mailbox)
+
+    def _upload_large_attachment(self, target: str, draft_id: str, path: Path, headers: dict) -> None:
+        """Carga adjuntos grandes al borrador en bloques aceptados por Graph."""
+        request = self.session.post(
+            f"{GRAPH_ROOT}/{target}/messages/{quote(draft_id, safe='')}/attachments/createUploadSession",
+            headers=headers,
+            data=json.dumps({"AttachmentItem": {
+                "attachmentType": "file", "name": path.name, "size": path.stat().st_size,
+            }}),
+            timeout=45,
+        )
+        if request.status_code not in (200, 201):
+            raise RuntimeError(self._error(request))
+        upload_url = str(request.json().get("uploadUrl") or "")
+        if not upload_url:
+            raise RuntimeError("Microsoft Graph no devolvio la sesion de carga del adjunto.")
+        total = path.stat().st_size
+        chunk_size = 10 * 320 * 1024
+        start = 0
+        with path.open("rb") as source:
+            while start < total:
+                content = source.read(min(chunk_size, total - start))
+                end = start + len(content) - 1
+                response = self.session.put(
+                    upload_url,
+                    headers={
+                        "Content-Length": str(len(content)),
+                        "Content-Range": f"bytes {start}-{end}/{total}",
+                    },
+                    data=content, timeout=90,
+                )
+                if response.status_code not in (200, 201, 202):
+                    raise RuntimeError(self._error(response))
+                start = end + 1
 
     def sync_inbox(
         self, *, mailbox: str = "me", delta_link: str = "",

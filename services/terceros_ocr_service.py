@@ -259,7 +259,9 @@ class TercerosOcrService:
         gestor.upsert_tercero_empresa(rel)
 
         # Sincronizar con maestro_subcuentas_empresa (Fase 2+)
-        tipo_sub = {"subcuenta_proveedor": "proveedor", "subcuenta_cliente": "cliente"}.get(campo, tipo_tercero)
+        # Proveedor y acreedor comparten la cuenta de compras, pero se conserva
+        # la clase elegida para que el maestro no pierda esa informacion.
+        tipo_sub = tipo_tercero if campo == "subcuenta_proveedor" else "cliente"
         gestor.upsert_maestro_subcuenta({
             "codigo_empresa":       codigo,
             "tercero_id":           str(tid),

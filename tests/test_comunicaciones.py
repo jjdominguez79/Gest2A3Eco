@@ -32,6 +32,42 @@ def test_registra_envio_y_lo_lista(tmp_path):
     assert mensajes[0]["graph_message_id"] == "graph-1"
 
 
+def test_registra_adjunto_recibido_para_mostrarlo_en_el_historial(tmp_path):
+    gestor = GestorSQLite(tmp_path / "test.db")
+    comunicacion_id, _ = gestor.registrar_entrada_comunicacion({
+        "codigo_empresa": "E00001", "asunto": "Factura adjunta",
+        "remitente": "cliente@example.com", "destinatarios": [], "cc": [],
+        "graph_message_id": "entrada-1", "mailbox": "oficina@example.com",
+        "tiene_adjuntos": True,
+    })
+
+    mensaje = gestor.listar_mensajes_comunicacion(comunicacion_id)[0]
+
+    assert mensaje["tiene_adjuntos"] == 1
+
+
+def test_listado_muestra_el_remitente_del_ultimo_mensaje(tmp_path):
+    gestor = GestorSQLite(tmp_path / "test.db")
+    comunicacion_id, _ = gestor.registrar_envio_comunicacion({
+        "codigo_empresa": "E00001", "asunto": "Consulta",
+        "remitente": "oficina@gestinem.es", "destinatarios": [], "cc": [],
+        "cuerpo_html": "", "estado_envio": "aceptado",
+    })
+    _, ultimo_mensaje_id = gestor.registrar_envio_comunicacion({
+        "comunicacion_id": comunicacion_id, "codigo_empresa": "E00001",
+        "asunto": "Consulta", "remitente": "ana@gestinem.es",
+        "destinatarios": [], "cc": [], "cuerpo_html": "",
+        "estado_envio": "aceptado",
+    })
+    gestor.conn.execute(
+        "UPDATE comunicaciones_mensajes SET fecha=? WHERE id=?",
+        ("9999-12-31T23:59:59+00:00", ultimo_mensaje_id),
+    )
+    gestor.conn.commit()
+
+    assert gestor.listar_comunicaciones("E00001")[0]["ultimo_remitente"] == "ana@gestinem.es"
+
+
 def test_construir_cuerpo_html_incluye_firma_html_usuario_y_escapa_mensaje():
     cuerpo = construir_cuerpo_html(
         "Hola <cliente>\nGracias",

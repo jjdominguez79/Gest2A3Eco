@@ -19,12 +19,15 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
+import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from services.ocr.types import OcrInvoiceResult, OcrDocumentState
+from utils.utilidades import get_default_received_documents_dir
 
 logger = logging.getLogger(__name__)
 
@@ -64,17 +67,29 @@ class OcrService:
           resultado       — OcrInvoiceResult serializado como dict
           errores         — lista de errores
         """
-        path = Path(file_path)
-        if not path.exists():
+        source_path = Path(file_path)
+        if not source_path.exists():
             return self._respuesta_error(None, f"Fichero no encontrado: {file_path}")
 
         # 1. Hash para detectar duplicados
-        hash_archivo = _sha256(path)
+        hash_archivo = _sha256(source_path)
 
         # 2. Comprobar duplicado
         doc_dup = self._gestor.buscar_documento_ocr_por_hash(self._empresa, hash_archivo)
         if doc_dup:
-            logger.info("[OcrService] Duplicado detectado: %s", path.name)
+            # Recupera documentos antiguos que apuntaban al Escritorio de un
+            # puesto: la nueva seleccion pasa a ser la copia compartida.
+            ruta_existente = Path(str(doc_dup.get("ruta_original") or ""))
+            if not ruta_existente.is_file():
+                try:
+                    payload_dup = dict(doc_dup)
+                    payload_dup["ruta_original"] = str(
+                        self._archivar_en_repositorio_compartido(source_path)
+                    )
+                    self._gestor.upsert_documento_ocr(payload_dup)
+                except Exception as exc:
+                    logger.warning("[OcrService] No se pudo recuperar la copia compartida: %s", exc)
+            logger.info("[OcrService] Duplicado detectado: %s", source_path.name)
             return {
                 "documento_id": doc_dup["id"],
                 "factura_id":   None,
@@ -83,7 +98,16 @@ class OcrService:
                 "errores":      [f"Documento duplicado (ya existe: {doc_dup.get('nombre_archivo')})"],
             }
 
-        # 3. Crear registro inicial en documentos_ocr
+        # 3. Copiar antes de OCR al repositorio comun. El procesamiento y la
+        # ruta persistida no deben depender del ordenador que importo el PDF.
+        try:
+            path = self._archivar_en_repositorio_compartido(source_path)
+        except Exception as exc:
+            return self._respuesta_error(
+                None, f"No se pudo archivar el documento en la ruta compartida: {exc}"
+            )
+
+        # 4. Crear registro inicial en documentos_ocr
         doc_id = str(uuid.uuid4())
         doc_payload = {
             "id":              doc_id,
@@ -103,10 +127,10 @@ class OcrService:
         }
         self._gestor.upsert_documento_ocr(doc_payload)
 
-        # 4. Intentar extraccion con cadena de motores
+        # 5. Intentar extraccion con cadena de motores
         result = self._ejecutar_motores(path)
 
-        # 5. Actualizar documento con resultado
+        # 6. Actualizar documento con resultado
         doc_payload.update({
             "estado":          result.estado_sugerido.value,
             "fecha_procesado": _now(),
@@ -118,7 +142,7 @@ class OcrService:
         })
         self._gestor.upsert_documento_ocr(doc_payload)
 
-        # 6. Guardar factura propuesta si hay datos minimos
+        # 7. Guardar factura propuesta si hay datos minimos
         factura_id = None
         if result.proveedor_nif or result.numero_factura:
             factura_id = self._guardar_factura(doc_id, result)
@@ -178,6 +202,31 @@ class OcrService:
             "resultado": result.to_dict(),
             "errores": result.errores,
         }
+
+    def _archivar_en_repositorio_compartido(self, source: Path) -> Path:
+        """Devuelve la copia definitiva del OCR en el repositorio compartido."""
+        root = get_default_received_documents_dir()
+        try:
+            # Un documento que ya procede del archivo compartido no se copia
+            # otra vez (por ejemplo, los adjuntos de correo o Gestion Documental).
+            source.relative_to(root)
+            return source
+        except ValueError:
+            pass
+
+        digits = "".join(ch for ch in str(self._empresa) if ch.isdigit())
+        empresa = f"E{digits.zfill(5)[:5]}"
+        destination_dir = root / empresa / str(self._ejercicio) / "Facturas_recibidas"
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", source.name).strip(". ") or "Documento"
+        destination = destination_dir / safe_name
+        index = 2
+        while destination.exists() and _sha256(destination) != _sha256(source):
+            destination = destination_dir / f"{Path(safe_name).stem}_{index}{Path(safe_name).suffix}"
+            index += 1
+        if not destination.exists():
+            shutil.copy2(source, destination)
+        return destination
 
     # ── Cadena de motores ─────────────────────────────────────────────────────
 
@@ -266,6 +315,12 @@ class OcrService:
                 # configuracion en vez de confiar en datos heurísticos.
                 if diagnosticos and motor.nombre != "azure":
                     resultado.errores = list(dict.fromkeys(diagnosticos + resultado.errores))
+                resultado.raw_json = dict(resultado.raw_json or {})
+                resultado.raw_json["diagnostico_motores"] = {
+                    "cadena": [m.nombre for m in self._motores],
+                    "motor_elegido": motor.nombre,
+                    "diagnosticos_previos": diagnosticos,
+                }
                 return resultado
 
             # Motor no extrajo texto util: guardar como fallback y continuar

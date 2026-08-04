@@ -486,6 +486,7 @@ CREATE TABLE IF NOT EXISTS comunicaciones_mensajes (
   error_envio TEXT,
   graph_message_id TEXT,
   internet_message_id TEXT,
+  tiene_adjuntos INTEGER NOT NULL DEFAULT 0,
   usuario_id INTEGER,
   usuario_nombre TEXT,
   fecha TEXT NOT NULL,
@@ -632,6 +633,12 @@ class GestorSQLite:
             self.conn.execute("PRAGMA busy_timeout = 5000")
             self.conn.row_factory = sqlite3.Row
             self._init_schema()
+            self._ensure_column("facturas_recibidas_ocr", "tipo_operacion_iva", "TEXT")
+            self.conn.execute(
+                "UPDATE facturas_recibidas_ocr SET tipo_operacion_iva='INTERIOR_DEDUCIBLE' "
+                "WHERE tipo_operacion_iva IS NULL OR TRIM(tipo_operacion_iva)=''"
+            )
+            self.conn.commit()
             self._migrate_terceros_global()
             self._migrate_maestro_subcuentas()
             self._migrate_notificaciones()
@@ -668,6 +675,10 @@ class GestorSQLite:
         self._ensure_column("comunicaciones", "descartado_at", "TEXT")
         self._ensure_column("comunicaciones", "motivo_descarte", "TEXT")
         self._ensure_column("comunicaciones_mensajes", "mailbox", "TEXT")
+        self._ensure_column(
+            "comunicaciones_mensajes", "tiene_adjuntos",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
         self._ensure_column("comunicaciones_sin_asignar", "sugerencia_codigo_empresa", "TEXT")
         self._ensure_column("comunicaciones_sin_asignar", "etiqueta", "TEXT")
         self._ensure_column("comunicaciones_sin_asignar", "sugerencia_nombre", "TEXT")
@@ -1126,6 +1137,7 @@ class GestorSQLite:
                 base_total        REAL,
                 iva_total         REAL,
                 retencion_total   REAL,
+                tipo_operacion_iva TEXT DEFAULT 'INTERIOR_DEDUCIBLE',
                 estado_validacion TEXT DEFAULT 'pendiente',
                 observaciones     TEXT
             );
@@ -1857,7 +1869,9 @@ class GestorSQLite:
         cols = [c[0] for c in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
-    def next_pdf_ref(self, codigo_empresa: str, ejercicio: int | None = None) -> str:
+    def next_pdf_ref(
+        self, codigo_empresa: str, ejercicio: int | None = None, prefix: str = "E",
+    ) -> str:
         eje = _ej_val(ejercicio)
         row = self.get_empresa(codigo_empresa, eje)
         if not row and eje is not None:
@@ -1865,6 +1879,9 @@ class GestorSQLite:
         if not row:
             raise ValueError(f"Empresa no encontrada para generar referencia PDF: {codigo_empresa}")
 
+        prefix = str(prefix or "E").strip().upper()[:1]
+        if not prefix.isalnum():
+            raise ValueError("El prefijo de referencia PDF no es valido.")
         seq = int(row.get("pdf_ref_seq") or 0)
         if seq <= 0:
             cur = self.conn.execute(
@@ -1876,7 +1893,9 @@ class GestorSQLite:
             for item in cur.fetchall():
                 ref = str(item["pdf_ref"] or "").strip()
                 base = ref.split("@", 1)[0]
-                match = re.match(r"^E(\d{1,8})$", base, re.IGNORECASE)
+                # La secuencia se comparte entre emitidas (E) y recibidas (R)
+                # para evitar reutilizaciones si se cambia el prefijo.
+                match = re.match(r"^[A-Z](\d{1,8})$", base, re.IGNORECASE)
                 if match:
                     seq = max(seq, int(match.group(1)))
 
@@ -1886,7 +1905,7 @@ class GestorSQLite:
             (seq, str(row.get("codigo") or codigo_empresa), _ej_val(row.get("ejercicio"))),
         )
         self.conn.commit()
-        return f"E{seq:08d}"
+        return f"{prefix}{seq:08d}"
 
     # ── Plan de Cuentas ──────────────────────────────────────────────────────
 
@@ -3180,6 +3199,25 @@ class GestorSQLite:
             (str(doc_id),),
         )
         return self._row_to_factura_recibida_doc(cur.fetchone())
+
+    def actualizar_numero_asiento_factura_recibida(
+        self, codigo_empresa: str, documento_id: str, numero_asiento: str,
+    ) -> bool:
+        """Guarda el asiento recuperado de A3 en factura y asiento propuesto."""
+        now = self._utc_now()
+        numero = str(numero_asiento or "").strip()
+        cursor = self.conn.execute(
+            "UPDATE facturas_recibidas_docs SET numero_asiento=?,updated_at=? "
+            "WHERE id=? AND codigo_empresa=?",
+            (numero, now, str(documento_id), str(codigo_empresa)),
+        )
+        self.conn.execute(
+            "UPDATE asientos_contables SET numero_asiento=?,updated_at=? "
+            "WHERE documento_id=? AND codigo_empresa=?",
+            (numero, now, str(documento_id), str(codigo_empresa)),
+        )
+        self.conn.commit()
+        return bool(cursor.rowcount)
 
     def upsert_factura_recibida_doc(self, doc: dict):
         now = self._utc_now()
@@ -5078,8 +5116,8 @@ class GestorSQLite:
               (id, documento_id, empresa_id, proveedor_id, nif_proveedor,
                nombre_proveedor, numero_factura, fecha_factura, fecha_operacion,
                fecha_vencimiento, total_factura, base_total, iva_total,
-               retencion_total, estado_validacion, observaciones)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               retencion_total, tipo_operacion_iva, estado_validacion, observaciones)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
               proveedor_id=excluded.proveedor_id,
               nif_proveedor=excluded.nif_proveedor,
@@ -5092,6 +5130,7 @@ class GestorSQLite:
               base_total=excluded.base_total,
               iva_total=excluded.iva_total,
               retencion_total=excluded.retencion_total,
+              tipo_operacion_iva=excluded.tipo_operacion_iva,
               estado_validacion=excluded.estado_validacion,
               observaciones=excluded.observaciones
             """,
@@ -5105,6 +5144,7 @@ class GestorSQLite:
                 float(factura.get("base_total") or 0.0),
                 float(factura.get("iva_total") or 0.0),
                 float(factura.get("retencion_total") or 0.0),
+                factura.get("tipo_operacion_iva") or "INTERIOR_DEDUCIBLE",
                 factura.get("estado_validacion", "pendiente"),
                 factura.get("observaciones", ""),
             ),
@@ -6431,7 +6471,9 @@ class GestorSQLite:
         rows = self.conn.execute(
             """
             SELECT c.*, COUNT(m.id) AS mensajes,
-                   MAX(m.fecha) AS ultima_fecha, MAX(m.remitente) AS ultimo_remitente,
+                   MAX(m.fecha) AS ultima_fecha,
+                   (SELECT m2.remitente FROM comunicaciones_mensajes m2
+                    WHERE m2.comunicacion_id=c.id ORDER BY m2.fecha DESC LIMIT 1) AS ultimo_remitente,
                    (SELECT m2.direccion FROM comunicaciones_mensajes m2
                     WHERE m2.comunicacion_id=c.id ORDER BY m2.fecha DESC LIMIT 1) AS ultima_direccion
             FROM comunicaciones c
@@ -6449,6 +6491,12 @@ class GestorSQLite:
             (comunicacion_id,),
         ).fetchall()
         return [self._row_to_dict(row) for row in rows]
+
+    def get_comunicacion(self, comunicacion_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM comunicaciones WHERE id=?", (str(comunicacion_id),),
+        ).fetchone()
+        return self._row_to_dict(row) if row else None
 
     def registrar_adjunto_comunicacion(self, mensaje_id: str, ruta: str | Path, tamano: int | None = None) -> None:
         path = Path(ruta)
@@ -6482,8 +6530,8 @@ class GestorSQLite:
                 INSERT INTO comunicaciones_mensajes
                   (id,comunicacion_id,direccion,remitente,destinatarios_json,cc_json,
                    asunto,cuerpo_html,estado_envio,error_envio,graph_message_id,
-                   internet_message_id,usuario_id,usuario_nombre,fecha)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   internet_message_id,tiene_adjuntos,usuario_id,usuario_nombre,fecha,mailbox)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     mensaje_id, comunicacion_id, "saliente", datos.get("remitente"),
@@ -6491,8 +6539,9 @@ class GestorSQLite:
                     json.dumps(datos.get("cc") or []), datos["asunto"],
                     datos.get("cuerpo_html"), datos.get("estado_envio"),
                     datos.get("error_envio"), datos.get("graph_message_id"),
-                    datos.get("internet_message_id"), datos.get("usuario_id"),
-                    datos.get("usuario_nombre"), now,
+                    datos.get("internet_message_id"), int(bool(datos.get("adjuntos"))),
+                    datos.get("usuario_id"),
+                    datos.get("usuario_nombre"), now, datos.get("mailbox"),
                 ),
             )
             for ruta in datos.get("adjuntos") or []:
@@ -6597,8 +6646,8 @@ class GestorSQLite:
                 INSERT INTO comunicaciones_mensajes
                   (id,comunicacion_id,direccion,remitente,destinatarios_json,
                    cc_json,asunto,cuerpo_html,estado_envio,graph_message_id,
-                   internet_message_id,fecha,mailbox)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   internet_message_id,tiene_adjuntos,fecha,mailbox)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     mensaje_id, comunicacion_id, "entrante",
@@ -6608,6 +6657,7 @@ class GestorSQLite:
                     datos.get("asunto") or "(Sin asunto)",
                     datos.get("cuerpo_html") or "", "recibido",
                     graph_id, datos.get("internet_message_id"),
+                    int(bool(datos.get("tiene_adjuntos"))),
                     datos.get("fecha") or now, datos.get("mailbox"),
                 ),
             )
@@ -6982,7 +7032,11 @@ class GestorSQLite:
             """
             SELECT c.*,e.nombre AS cliente_nombre,
                    COUNT(m.id) mensajes,MAX(m.fecha) ultima_fecha,
-                   MAX(m.remitente) ultimo_remitente,
+                   (
+                     SELECT mm.remitente FROM comunicaciones_mensajes mm
+                     WHERE mm.comunicacion_id=c.id
+                     ORDER BY mm.fecha DESC LIMIT 1
+                   ) AS ultimo_remitente,
                    (
                      SELECT mm.mailbox
                      FROM comunicaciones_mensajes mm
@@ -7091,18 +7145,18 @@ class GestorSQLite:
 
     def cambiar_estado_comunicacion(
         self, comunicacion_id: str, estado: str, usuario_id: int,
+        allow_any_responsible: bool = False,
     ) -> None:
         allowed = {"pendiente", "respondido", "gestionado"}
         if estado not in allowed:
             raise ValueError("Estado de comunicacion no valido.")
         with self.conn:
-            self.conn.execute(
-                """
-                UPDATE comunicaciones SET estado=?,updated_at=?
-                WHERE id=? AND responsable_usuario_id=?
-                """,
-                (
-                    estado, datetime.now().astimezone().isoformat(timespec="seconds"),
-                    comunicacion_id, usuario_id,
-                ),
+            params = (
+                estado, datetime.now().astimezone().isoformat(timespec="seconds"),
+                comunicacion_id,
             )
+            sql = "UPDATE comunicaciones SET estado=?,updated_at=? WHERE id=?"
+            if not allow_any_responsible:
+                sql += " AND responsable_usuario_id=?"
+                params += (usuario_id,)
+            self.conn.execute(sql, params)

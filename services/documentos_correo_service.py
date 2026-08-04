@@ -109,8 +109,10 @@ class DocumentosCorreoService:
     @staticmethod
     def _destination(codigo_empresa: str, ejercicio: int, filename: str) -> Path:
         safe = DocumentosCorreoService._safe_filename(filename)
+        digits = "".join(ch for ch in str(codigo_empresa) if ch.isdigit())
+        company = f"E{digits.zfill(5)[:5]}"
         directory = (
-            get_default_received_documents_dir() / str(codigo_empresa)
+            get_default_received_documents_dir() / company
             / str(ejercicio) / "Facturas_recibidas"
         )
         directory.mkdir(parents=True, exist_ok=True)

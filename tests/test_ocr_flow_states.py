@@ -67,6 +67,26 @@ def test_mark_docs_as_generated_updates_states(tmp_path):
     assert updated["fecha_generacion"] == "2026-05-15 12:30"
 
 
+def test_captura_asiento_actualiza_factura_y_asiento_propuesto(tmp_path):
+    gestor = _make_gestor(tmp_path)
+    doc = _base_doc(estado_contable="contabilizada", generada=1)
+    gestor.upsert_factura_recibida_doc(doc)
+    gestor.upsert_asiento_contable({
+        "documento_id": "doc-1", "codigo_empresa": "E00570",
+        "ejercicio": 2026, "fecha_asiento": "2026-05-15",
+        "estado": "exportado", "total_debe": 121, "total_haber": 121,
+        "lineas": [],
+    })
+
+    assert gestor.actualizar_numero_asiento_factura_recibida(
+        "E00570", "doc-1", "05/00042",
+    )
+
+    assert gestor.get_factura_recibida_doc("doc-1")["numero_asiento"] == "05/00042"
+    asiento = gestor.get_asiento_contable_por_documento("doc-1")
+    assert asiento["numero_asiento"] == "05/00042"
+
+
 # ── Filtrado por bandeja ──────────────────────────────────────────────────────
 
 def test_bandeja_pendiente_revision_filtra_correctamente(tmp_path):

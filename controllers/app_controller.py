@@ -509,35 +509,15 @@ class AppController:
         controller.refresh()
 
 
-# ── Contenedor OCR: pestana nueva (tipada) + pestana legado ──────────────────
+# ── Contenedor OCR ────────────────────────────────────────────────────────────
 
 class _OcrModuleContainer(ttk.Frame):
-    """
-    Contenedor del modulo OCR con dos pestanas:
-      - "Nuevo OCR"   — UIFacturasRecibidasOcr (services/ocr/ tipado, nuevas tablas)
-      - "Importaciones anteriores" — UIOcrFacturas (flujo legado facturas_recibidas_docs)
-
-    Permite usar el nuevo modulo sin perder acceso a documentos existentes.
-    """
+    """Contenedor del modulo actual de captura y revision OCR."""
 
     def __init__(self, master, gestor, codigo, ejercicio, nombre, session=None):
         from views.ui_facturas_recibidas_ocr import UIFacturasRecibidasOcr
-        from views.ui_ocr_facturas import UIOcrFacturas
 
         super().__init__(master)
-        nb = ttk.Notebook(self)
-        nb.pack(fill="both", expand=True)
-
-        # Pestana 1: nuevo modulo OCR tipado
-        tab_nuevo = ttk.Frame(nb)
-        nb.add(tab_nuevo, text="OCR de facturas")
         UIFacturasRecibidasOcr(
-            tab_nuevo, gestor, codigo, ejercicio, nombre, session=session
-        ).pack(fill="both", expand=True)
-
-        # Pestana 2: flujo legado (documentos ya procesados con sistema anterior)
-        tab_legado = ttk.Frame(nb)
-        nb.add(tab_legado, text="Importaciones anteriores")
-        UIOcrFacturas(
-            tab_legado, gestor, codigo, ejercicio, nombre, session=session
+            self, gestor, codigo, ejercicio, nombre, session=session
         ).pack(fill="both", expand=True)

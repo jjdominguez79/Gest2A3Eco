@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from controllers.terceros_global_controller import TercerosGlobalController
+from services.maestro_contable_empresa_service import MaestroContableEmpresaService
 from utils.validaciones import inferir_pais_desde_identificacion, normalizar_codigo_pais, normalizar_nif_cif
 
 _TIPOS_IDENTIFICACION = [
@@ -71,6 +72,10 @@ class UITercerosGlobales(tk.Frame):
                    command=lambda: self._controller.editar()).pack(side="left", padx=(0, 4))
         ttk.Button(search_row, text="Eliminar",
                    command=lambda: self._controller.eliminar()).pack(side="left")
+        ttk.Button(
+            search_row, text="Vincular plan A3 (masivo)",
+            command=self._vincular_plan_a3_masivo,
+        ).pack(side="left", padx=(8, 0))
 
         # Treeview
         tree_wrap = tk.Frame(left, bg="#f1f5f9")
@@ -204,6 +209,52 @@ class UITercerosGlobales(tk.Frame):
 
     def ask_yes_no(self, title: str, msg: str) -> bool:
         return messagebox.askyesno(title, msg, parent=self.winfo_toplevel())
+
+    def _vincular_plan_a3_masivo(self):
+        """Vincula cuentas importadas de todas las empresas con el maestro global."""
+        servicio = MaestroContableEmpresaService()
+        try:
+            previa = servicio.previsualizar_vinculacion_terceros_masiva(self._gestor)
+        except Exception as exc:
+            self.show_error("Vinculacion masiva", f"No se pudo preparar la vinculacion:\n{exc}")
+            return
+        propuestas = previa["propuestas"]
+        if not propuestas:
+            self.show_info(
+                "Vinculacion masiva",
+                "No hay subcuentas pendientes que coincidan de forma segura con el maestro.\n\n"
+                f"Sin coincidencia: {len(previa['sin_coincidencia'])}\n"
+                f"Coincidencias ambiguas: {len(previa['ambiguas'])}",
+            )
+            return
+        por_nif = sum(1 for p in propuestas if p["criterio"] == "nif")
+        por_nombre = len(propuestas) - por_nif
+        mensaje = (
+            "Se han encontrado coincidencias seguras en todas las empresas:\n\n"
+            f"  Vinculos a aplicar: {len(propuestas)}\n"
+            f"  Por NIF: {por_nif}\n"
+            f"  Por nombre exacto: {por_nombre}\n"
+            f"  Empresas afectadas: {len(previa['empresas'])}\n"
+            f"  Sin coincidencia: {len(previa['sin_coincidencia'])}\n"
+            f"  Ambiguas (no se tocaran): {len(previa['ambiguas'])}\n\n"
+            "No se reemplazara ningun vinculo existente.\n\n"
+            "Quieres aplicar la vinculacion masiva?"
+        )
+        if not self.ask_yes_no("Vinculacion masiva plan A3", mensaje):
+            return
+        try:
+            resultado = servicio.vincular_terceros_masivo(self._gestor)
+        except Exception as exc:
+            self.show_error("Vinculacion masiva", f"No se pudo completar la vinculacion:\n{exc}")
+            return
+        self._controller.refresh()
+        self.show_info(
+            "Vinculacion masiva completada",
+            f"Subcuentas vinculadas: {resultado['vinculadas']}\n"
+            f"Relaciones contables creadas: {resultado['relaciones_asignadas']}\n"
+            f"Sin coincidencia: {len(resultado['sin_coincidencia'])}\n"
+            f"Ambiguas sin tocar: {len(resultado['ambiguas'])}",
+        )
 
     # ── Filtrado ─────────────────────────────────────────────────────────────
 

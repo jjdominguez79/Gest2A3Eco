@@ -10,7 +10,7 @@ from tkinter import messagebox, simpledialog, ttk
 from services.documentos_correo_service import DocumentosCorreoService
 from services.gestion_documental_service import GestionDocumentalService
 from utils.utilidades import load_app_config
-from views.ui_comunicaciones import CommunicationDetailDialog
+from views.ui_comunicaciones import CommunicationDetailDialog, ReplyMailDialog
 
 
 LOG = logging.getLogger(__name__)
@@ -273,14 +273,18 @@ class UIComunicacionesGlobal(ttk.Frame):
         self._destroying = False
         self._refresh_generation = 0
         self._build()
-        self._refresh()
         self.bind("<Destroy>", self._on_destroy, add="+")
+        # No bloquear el hilo de Tkinter: en una base compartida estas consultas
+        # pueden tardar lo suficiente para dejar el Buzon aparentemente en blanco.
+        self.after_idle(self._refresh)
         self._schedule_auto_refresh()
 
     def _build(self):
         top = ttk.Frame(self)
         top.pack(fill="x", pady=(0, 10))
         ttk.Label(top, text="Buzon de comunicaciones", font=("Segoe UI", 16, "bold")).pack(side="left")
+        self._loading_label = ttk.Label(top, text="Cargando mensajes...", foreground="#64748b")
+        self._loading_label.pack(side="right")
 
         tabs = ttk.Notebook(self)
         self._tabs = tabs
@@ -373,6 +377,10 @@ class UIComunicacionesGlobal(ttk.Frame):
             actions, text="Editar etiqueta",
             command=lambda: self._edit_label("mine"),
         ).pack(side="left", padx=(8, 5))
+        ttk.Button(
+            actions, text="Responder",
+            command=lambda: self._reply_selected("mine"),
+        ).pack(side="left", padx=(0, 5))
         if self._session.is_admin():
             ttk.Button(
                 actions, text="Reasignar",
@@ -480,7 +488,8 @@ class UIComunicacionesGlobal(ttk.Frame):
 
     def _refresh(self):
         self._refresh_generation += 1
-        self._apply_refresh_data(self._collect_refresh_data())
+        self._loading_label.configure(text="Cargando mensajes...")
+        self._start_auto_refresh()
 
     def _collect_refresh_data(self) -> dict:
         data = {
@@ -751,11 +760,13 @@ class UIComunicacionesGlobal(ttk.Frame):
         if error is None and generation == self._refresh_generation:
             self._apply_refresh_data(data)
             self._refresh_generation += 1
+            self._loading_label.configure(text="")
         else:
             if error is not None:
                 LOG.warning(
                     "No se pudo actualizar el buzon en segundo plano: %s", error,
                 )
+                self._loading_label.configure(text="No se pudieron cargar los mensajes.")
         self._schedule_auto_refresh()
 
     def _on_destroy(self, event):
@@ -954,6 +965,8 @@ class UIComunicacionesGlobal(ttk.Frame):
         def worker():
             saved = ignored = duplicates = 0
             errors = []
+            ocr_sent = 0
+            ocr_errors = []
             service = GestionDocumentalService(self._gestor)
             for graph_id in graph_ids:
                 item = self._pending[graph_id]
@@ -976,6 +989,18 @@ class UIComunicacionesGlobal(ttk.Frame):
                     ignored += len(summary.ignored)
                     duplicates += len(summary.duplicates)
                     errors.extend(summary.errors)
+                    for documento_id in summary.ocr_document_ids:
+                        try:
+                            ocr_result = service.enviar_a_ocr(
+                                documento_id, usuario=str(self._session.user.nombre),
+                            )
+                            if ocr_result.get("estado") == "error":
+                                detalle = "; ".join(ocr_result.get("errores") or [])
+                                ocr_errors.append(detalle or f"Documento {documento_id}")
+                            else:
+                                ocr_sent += 1
+                        except Exception as exc:
+                            ocr_errors.append(str(exc))
             result = None
             if not errors:
                 result = self._gestor.asignar_comunicaciones_pendientes(
@@ -986,14 +1011,14 @@ class UIComunicacionesGlobal(ttk.Frame):
             try:
                 self.after(
                     0, self._finish_assignment,
-                    result, saved, ignored, duplicates, errors,
+                    result, saved, ignored, duplicates, ocr_sent, errors, ocr_errors,
                 )
             except (RuntimeError, tk.TclError):
                 pass
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _finish_assignment(self, result, saved, ignored, duplicates, errors):
+    def _finish_assignment(self, result, saved, ignored, duplicates, ocr_sent, errors, ocr_errors):
         self.winfo_toplevel().configure(cursor="")
         if errors:
             messagebox.showerror(
@@ -1007,8 +1032,16 @@ class UIComunicacionesGlobal(ttk.Frame):
             "Asignacion",
             f"Mensajes asignados: {len(result['asignadas'])}\n"
             f"Documentos guardados: {saved}\nAdjuntos no guardados: {ignored}\n"
-            f"Duplicados detectados: {duplicates}", parent=self,
+            f"Duplicados detectados: {duplicates}\n"
+            f"Facturas enviadas a OCR: {ocr_sent}", parent=self,
         )
+        if ocr_errors:
+            messagebox.showwarning(
+                "OCR",
+                "La comunicacion se ha archivado, pero alguna factura no pudo procesarse:\n- "
+                + "\n- ".join(ocr_errors[:8]),
+                parent=self,
+            )
 
     def _assign_without_client(self):
         selected = self._pending_tree.selection()
@@ -1264,6 +1297,37 @@ class UIComunicacionesGlobal(ttk.Frame):
             self, messages,
             on_import_attachments=lambda message: self._choose_attachments(company, message),
             on_preview_attachments=self._preview_attachments,
+            on_reply=lambda message: self._reply(selected[0], company, message),
+        )
+
+    def _reply_selected(self, source: str):
+        iid, item = self._selected_assigned(source)
+        if not iid:
+            return
+        messages = self._gestor.listar_mensajes_comunicacion(iid)
+        message = next(
+            (entry for entry in messages if entry.get("direccion") != "saliente"
+             and entry.get("graph_message_id") and entry.get("mailbox")),
+            None,
+        )
+        if not message:
+            messagebox.showwarning(
+                "Correo", "La conversacion no contiene un correo recibido que se pueda responder.",
+                parent=self,
+            )
+            return
+        self._reply(iid, str(item.get("codigo_empresa") or ""), message)
+
+    def _reply(self, comunicacion_id: str, codigo_empresa: str, message: dict):
+        if not codigo_empresa:
+            messagebox.showwarning(
+                "Correo", "Asigna primero el correo a un cliente para poder responderlo.",
+                parent=self,
+            )
+            return
+        ReplyMailDialog(
+            self, self._gestor, codigo_empresa, self._session,
+            comunicacion_id, message, self._refresh,
         )
 
     def _supervision_detail(self):
@@ -1297,6 +1361,7 @@ class UIComunicacionesGlobal(ttk.Frame):
             self, messages,
             on_import_attachments=lambda message: self._choose_attachments(company, message),
             on_preview_attachments=self._preview_attachments,
+            on_reply=lambda message: self._reply(selected[0], company, message),
         )
 
     def _preview_attachments(self, message: dict):

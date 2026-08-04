@@ -53,7 +53,9 @@ def doc_to_row(doc: dict) -> dict:
         "_proveedor_tipo_operacion_iva": doc.get("proveedor_tipo_operacion_iva") or "INTERIOR_DEDUCIBLE",
         "_proveedor_iva_deducible": int(doc.get("proveedor_iva_deducible", 1) or 0),
         "_proveedor_porcentaje_deduccion_iva": doc.get("proveedor_porcentaje_deduccion_iva", 100.0),
-        "_pdf_ref":                  doc.get("id"),
+        # A3 abre el documento mediante esta referencia. El PDF se copia como
+        # ``<pdf_ref>.pdf`` en A3ECO, no con el UUID interno del documento.
+        "_pdf_ref":                  doc.get("pdf_ref") or "",
     }
 
 
@@ -88,7 +90,7 @@ def doc_to_rows(doc: dict, lineas: list[dict] | None = None) -> list[dict]:
         "_proveedor_tipo_operacion_iva": doc.get("proveedor_tipo_operacion_iva") or "INTERIOR_DEDUCIBLE",
         "_proveedor_iva_deducible": int(doc.get("proveedor_iva_deducible", 1) or 0),
         "_proveedor_porcentaje_deduccion_iva": doc.get("proveedor_porcentaje_deduccion_iva", 100.0),
-        "_pdf_ref":                  doc.get("id"),
+        "_pdf_ref":                  doc.get("pdf_ref") or "",
     }
 
     rows = []

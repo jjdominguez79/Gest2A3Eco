@@ -990,7 +990,8 @@ class FacturasEmitidasController:
                 self._view.show_error("Gest2A3Eco", f"No se pudo enviar el email:\n{exc}")
                 return
             self._registrar_envio_factura(
-                compose, result.sender, cc, attachment_paths, email_html_body, user,
+                compose, result.sender or (shared_mailbox if sender == "me" else sender),
+                cc, attachment_paths, email_html_body, user,
                 estado="aceptado_graph", graph_message_id=result.message_id,
                 internet_message_id=result.internet_message_id,
             )
@@ -1028,6 +1029,7 @@ class FacturasEmitidasController:
             "usuario_id": getattr(user, "id", None),
             "usuario_nombre": getattr(user, "nombre", None),
             "adjuntos": adjuntos,
+            "mailbox": remitente,
         })
 
     def generar_suenlace(self):

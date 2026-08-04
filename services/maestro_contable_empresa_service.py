@@ -84,6 +84,122 @@ def clasificar_tipo_subcuenta(codigo: str) -> str:
 
 class MaestroContableEmpresaService:
 
+    # ── Vinculacion masiva con maestro global ────────────────────────────────
+
+    def previsualizar_vinculacion_terceros_masiva(
+        self, gestor, codigos_empresa: list[str] | None = None, usar_nombre: bool = True,
+    ) -> dict:
+        """Busca subcuentas A3 sin tercero y propone vinculos no destructivos.
+
+        Se prioriza el NIF capturado desde A3. Como respaldo se utiliza el
+        nombre exacto normalizado, solo cuando identifica un unico tercero.
+        No crea terceros ni modifica datos: sirve para informar y confirmar.
+        """
+        codigos = {str(c).strip() for c in (codigos_empresa or []) if str(c).strip()}
+        terceros = list(gestor.listar_terceros() or [])
+        por_nif = {}
+        por_nombre: dict[str, list[dict]] = {}
+        for tercero in terceros:
+            nif = normalizar_nif_cif(tercero.get("nif") or "")
+            if nif:
+                por_nif[nif] = tercero
+            nombre = _normalizar_nombre_vinculo(tercero.get("nombre") or tercero.get("nombre_legal"))
+            if nombre:
+                por_nombre.setdefault(nombre, []).append(tercero)
+
+        propuestas = []
+        sin_coincidencia = []
+        ambiguas = []
+        empresas_procesadas: set[str] = set()
+        for empresa in gestor.listar_empresas() or []:
+            codigo = str(empresa.get("codigo") or "").strip()
+            if not codigo or codigo in empresas_procesadas or (codigos and codigo not in codigos):
+                continue
+            empresas_procesadas.add(codigo)
+            for subcuenta in gestor.listar_maestro_subcuentas_empresa(codigo, activo=None) or []:
+                if str(subcuenta.get("tercero_id") or "").strip():
+                    continue
+                tipo = str(subcuenta.get("tipo_subcuenta") or "")
+                if tipo not in _PREFIJOS_TERCERO:
+                    continue
+                tercero = None
+                criterio = ""
+                nif = normalizar_nif_cif(subcuenta.get("nif_snapshot") or "")
+                if nif:
+                    tercero = por_nif.get(nif)
+                    criterio = "nif" if tercero else ""
+                if tercero is None and usar_nombre:
+                    nombre = _normalizar_nombre_vinculo(subcuenta.get("nombre_subcuenta"))
+                    candidatos = por_nombre.get(nombre, []) if nombre else []
+                    if len(candidatos) == 1:
+                        tercero = candidatos[0]
+                        criterio = "nombre"
+                    elif len(candidatos) > 1:
+                        ambiguas.append({"codigo_empresa": codigo, "subcuenta": subcuenta, "candidatos": candidatos})
+                        continue
+                if tercero is None:
+                    sin_coincidencia.append({"codigo_empresa": codigo, "subcuenta": subcuenta})
+                    continue
+                propuestas.append({
+                    "codigo_empresa": codigo,
+                    "subcuenta": subcuenta,
+                    "tercero": tercero,
+                    "criterio": criterio,
+                })
+        return {
+            "propuestas": propuestas,
+            "sin_coincidencia": sin_coincidencia,
+            "ambiguas": ambiguas,
+            "empresas": sorted({p["codigo_empresa"] for p in propuestas}),
+        }
+
+    def vincular_terceros_masivo(
+        self, gestor, codigos_empresa: list[str] | None = None, usar_nombre: bool = True,
+    ) -> dict:
+        """Aplica solo las propuestas exactas y preserva vinculos ya existentes."""
+        previa = self.previsualizar_vinculacion_terceros_masiva(
+            gestor, codigos_empresa, usar_nombre=usar_nombre,
+        )
+        vinculadas = relaciones_asignadas = 0
+        for propuesta in previa["propuestas"]:
+            subcuenta = dict(propuesta["subcuenta"])
+            tercero = propuesta["tercero"]
+            codigo = propuesta["codigo_empresa"]
+            tercero_id = str(tercero.get("id") or "")
+            if not tercero_id:
+                continue
+            subcuenta["tercero_id"] = tercero_id
+            subcuenta["nif_snapshot"] = normalizar_nif_cif(tercero.get("nif") or "") or subcuenta.get("nif_snapshot")
+            gestor.upsert_maestro_subcuenta(subcuenta)
+            vinculadas += 1
+            if self._asignar_subcuenta_a_relacion(gestor, codigo, tercero_id, subcuenta):
+                relaciones_asignadas += 1
+        return {
+            **previa,
+            "vinculadas": vinculadas,
+            "relaciones_asignadas": relaciones_asignadas,
+        }
+
+    @staticmethod
+    def _asignar_subcuenta_a_relacion(gestor, codigo: str, tercero_id: str, subcuenta: dict) -> bool:
+        """Da uso contable al vinculo sin reemplazar una cuenta ya configurada."""
+        tipo = str(subcuenta.get("tipo_subcuenta") or "")
+        campo = {
+            "cliente": "subcuenta_cliente",
+            "proveedor": "subcuenta_proveedor",
+            "acreedor": "subcuenta_proveedor",
+        }.get(tipo)
+        if not campo:
+            return False
+        relacion = gestor.get_tercero_empresa(codigo, tercero_id, 0) or {
+            "codigo_empresa": codigo, "tercero_id": tercero_id,
+        }
+        if str(relacion.get(campo) or "").strip():
+            return False
+        relacion[campo] = str(subcuenta.get("subcuenta") or "")
+        gestor.upsert_tercero_empresa(relacion)
+        return True
+
     # ── Busqueda ──────────────────────────────────────────────────────────────
 
     def buscar_subcuenta(
@@ -259,8 +375,16 @@ class MaestroContableEmpresaService:
                 tercero = gestor.get_tercero_by_nif_normalizado(item["nif"])
                 if tercero:
                     tercero_id = str(tercero.get("id") or "").strip() or None
-            gestor.upsert_maestro_subcuenta(
-                {
+            if not tercero_id:
+                coincidencias = [
+                    t for t in (gestor.listar_terceros() or [])
+                    if _normalizar_nombre_vinculo(t.get("nombre") or t.get("nombre_legal"))
+                    and _normalizar_nombre_vinculo(t.get("nombre") or t.get("nombre_legal"))
+                    == _normalizar_nombre_vinculo(item["descripcion"])
+                ]
+                if len(coincidencias) == 1:
+                    tercero_id = str(coincidencias[0].get("id") or "").strip() or None
+            registro = {
                     "codigo_empresa": codigo,
                     "subcuenta": item["cuenta"],
                     "nombre_subcuenta": item["descripcion"],
@@ -272,7 +396,9 @@ class MaestroContableEmpresaService:
                     "creado_en_gest2a3eco": 0,
                     "pendiente_alta_a3": 0,
                 }
-            )
+            gestor.upsert_maestro_subcuenta(registro)
+            if tercero_id:
+                self._asignar_subcuenta_a_relacion(gestor, codigo, tercero_id, registro)
             if progress_callback and (indice == total or indice % 10 == 0):
                 progress_callback(indice, total)
         return len(normalizadas)
@@ -402,6 +528,13 @@ def _normalize_colname(s: str) -> str:
     nfkd = unicodedata.normalize("NFKD", str(s))
     ascii_s = nfkd.encode("ascii", "ignore").decode("ascii")
     return ascii_s.lower().strip().replace(".", "")
+
+
+def _normalizar_nombre_vinculo(valor) -> str:
+    """Clave conservadora para cruzar descripciones A3 con el maestro global."""
+    nfkd = unicodedata.normalize("NFKD", str(valor or ""))
+    ascii_s = nfkd.encode("ascii", "ignore").decode("ascii").upper()
+    return "".join(ch for ch in ascii_s if ch.isalnum())
 
 
 def _es_del_prefijo(val: str, prefijo: str, ndig: int) -> bool:

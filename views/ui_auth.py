@@ -15,13 +15,13 @@ except Exception:  # pragma: no cover
 
 APP_TITLE = "Gestinem Suite"
 CONTACT_EMAIL = "jjdominguez@gestinem.es"
-CONTACT_PHONE = "942 791 404"
+CONTACT_PHONE = "942 791 123"
 COPYRIGHT = "Copyright 2026 Asesoria Gestinem S.L. Todos los derechos reservados."
 
 
 def _center_window(win, parent=None):
     try:
-        win.update_idletasks()
+        
         width = win.winfo_width()
         height = win.winfo_height()
         if parent is None:
@@ -79,7 +79,7 @@ class UILogin(ttk.Frame):
 
     def _build_access_panel(self, parent):
         tk.Label(
-            parent, text="Bienvenido de nuevo", bg="#ffffff", fg="#002C57",
+            parent, text="Bienvenido de nuevo.", bg="#ffffff", fg="#002C57",
             font=("Segoe UI", 23, "bold"), anchor="w",
         ).pack(fill="x")
         tk.Label(

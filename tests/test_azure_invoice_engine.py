@@ -74,3 +74,16 @@ def test_prefiere_razon_social_y_convierte_porcentaje_iva_de_azure():
     assert [(linea.tipo_iva, linea.base, linea.cuota_iva) for linea in result.bases_iva] == [
         (10.0, 253.10, 25.31)
     ]
+
+
+def test_corrige_nif_cliente_devuelto_por_azure_con_cabecera_del_emisor():
+    field = lambda value, content=None, confidence=0.9: SimpleNamespace(value=value, content=content, confidence=confidence)
+    doc = SimpleNamespace(fields={
+        "VendorName": field("Makro Distribucion Mayorista, S.A."),
+        "VendorTaxId": field("B21977418"),
+    })
+    texto = "Makro Distribucion Mayorista, S.A.\nNIF: A-28/647451\nFactura: 015/117\nLergiani SL\nN.I.F.: B21977418"
+
+    result = AzureInvoiceEngine("endpoint", "key")._mapear_documento(doc, None, texto=texto)
+
+    assert result.proveedor_nif == "A28647451"

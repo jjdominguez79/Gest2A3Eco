@@ -285,7 +285,9 @@ class GestorPostgres(GestorSQLite):
             ("empresas", "activo", "INTEGER"),
             ("usuarios", "must_change_password", "INTEGER NOT NULL DEFAULT 0"),
             ("comunicaciones", "etiqueta", "TEXT"),
+            ("comunicaciones_mensajes", "tiene_adjuntos", "INTEGER NOT NULL DEFAULT 0"),
             ("comunicaciones_sin_asignar", "etiqueta", "TEXT"),
+            ("facturas_recibidas_ocr", "tipo_operacion_iva", "TEXT"),
         )
         existentes = {
             (str(row["table_name"]), str(row["column_name"]))
@@ -295,8 +297,8 @@ class GestorPostgres(GestorSQLite):
                 FROM information_schema.columns
                 WHERE table_schema=current_schema()
                   AND table_name IN (
-                    'empresas', 'usuarios', 'comunicaciones',
-                    'comunicaciones_sin_asignar'
+                    'empresas', 'usuarios', 'comunicaciones', 'comunicaciones_mensajes',
+                    'comunicaciones_sin_asignar', 'facturas_recibidas_ocr'
                   )
                 """
             ).fetchall()

@@ -81,6 +81,19 @@ def test_no_copia_un_adjunto_duplicado_ni_archivo_no_compatible(tmp_path, monkey
     assert not (tmp_path / "pdfs_recibidas").exists()
 
 
+def test_destino_normaliza_el_codigo_de_empresa(tmp_path, monkeypatch):
+    import services.documentos_correo_service as module
+
+    monkeypatch.setattr(module, "get_default_received_documents_dir", lambda: tmp_path / "Empresas")
+
+    destination = DocumentosCorreoService._destination("1006", 2026, "Factura.pdf")
+
+    assert destination == (
+        tmp_path / "Empresas" / "E01006" / "2026"
+        / "Facturas_recibidas" / "Factura.pdf"
+    )
+
+
 def test_descarga_pdf_temporal_sin_registrarlo_en_ocr(tmp_path, monkeypatch):
     import services.documentos_correo_service as module
 

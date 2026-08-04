@@ -154,6 +154,14 @@ class AzureInvoiceEngine(OcrEngineBase):
         if texto:
             from services.ocr.invoice_interpreter import InvoiceInterpreter
             fallback = InvoiceInterpreter().interpretar(texto)
+            # Algunos tickets colocan primero los datos del emisor y despues
+            # el bloque del cliente. En esos casos Azure puede etiquetar el
+            # segundo NIF como VendorTaxId; el primer NIF etiquetado del texto
+            # es una correccion mas fiable para una factura recibida.
+            if fallback.proveedor_nif and fallback.proveedor_nif != result.proveedor_nif:
+                result.proveedor_nif = fallback.proveedor_nif
+                if fallback.proveedor_nombre:
+                    result.proveedor_nombre = fallback.proveedor_nombre
             for campo in (
                 "proveedor_nombre", "proveedor_nif", "numero_factura",
                 "fecha_factura", "fecha_vencimiento",

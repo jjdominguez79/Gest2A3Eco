@@ -108,6 +108,22 @@ class InvoiceInterpreter:
 
 def _detectar_nif(text: str) -> str:
     """Detecta NIF, CIF, NIE o VAT comunitario espanol."""
+    # En tickets y facturas de distribucion el emisor suele figurar arriba con
+    # formatos como ``NIF: A-28/647451``. Normalizamos ese primer identificador
+    # etiquetado antes de evaluar los patrones estrictos: mas abajo aparece con
+    # frecuencia el NIF del cliente, que no debe usarse como proveedor.
+    etiqueta_flexible = re.compile(
+        r"\b(?:CIF|NIF|N\.I\.F\.?|C\.I\.F\.?)\s*[:#\.]?\s*([A-Z0-9][A-Z0-9 ./-]{5,24})",
+        re.IGNORECASE,
+    )
+    for match in etiqueta_flexible.finditer(text):
+        candidato = re.sub(r"[^A-Z0-9]", "", match.group(1).upper())
+        if re.fullmatch(r"[A-Z]\d{7}[A-Z0-9]", candidato):
+            return candidato
+        if re.fullmatch(r"\d{8}[A-Z]", candidato):
+            return candidato
+        if re.fullmatch(r"[XYZ]\d{7}[A-Z]", candidato):
+            return candidato
     _ETIQ = r"\b(?:CIF|NIF|VAT(?:[ \t]+(?:no\.?|number))?|N\.I\.F\.?|C\.I\.F\.)[ \t]*[:#\.]?[ \t]*"
     return _search(text, [
         _ETIQ + r"([A-Z]\d{7}[A-Z0-9])",    # CIF espanol con etiqueta

@@ -213,6 +213,21 @@ def test_crear_tercero_tipo_cliente_usa_subcuenta_cliente(tmp_path):
     assert t.get("subcuenta_proveedor") is None
 
 
+def test_crear_acreedor_conserva_la_clase_en_maestro_subcuentas(tmp_path):
+    svc = TercerosOcrService()
+    g = _make_gestor(tmp_path)
+    svc.crear_tercero(
+        g,
+        {"nif": "B87654321", "nombre": "Acreedor Demo SL"},
+        "41000001",
+        "acreedor",
+        "E00570",
+        2026,
+    )
+    maestro = g.listar_maestro_subcuentas_empresa("E00570")
+    assert any(r["subcuenta"] == "41000001" and r["tipo_subcuenta"] == "acreedor" for r in maestro)
+
+
 # ── nif_ya_existe ─────────────────────────────────────────────────────────────
 
 def test_nif_ya_existe_true(tmp_path):

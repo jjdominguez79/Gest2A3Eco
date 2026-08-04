@@ -369,7 +369,14 @@ def generar_recibidas_suenlace(
         total_abs = abs(total)
         tipo_registro = "2" if signo < 0 else "1"  # 2=rectificativa (abono)
 
-        cta_gasto = r0.get("Cuenta Compras Ventas") or c_gasto_ter or cta_gasto_def
+        # La cuenta elegida al revisar el asiento/documento tiene prioridad
+        # sobre el maestro del tercero y sobre la plantilla generica.
+        cta_gasto = (
+            r0.get("Cuenta Compras Ventas")
+            or r0.get("_cuenta_py_gv_override")
+            or c_gasto_ter
+            or cta_gasto_def
+        )
         cta_gasto = _ajustar_cuenta(cta_gasto, ndig)
 
         # CABECERA tipo 1 (factura normal) con tipo_factura = 2 (compras)

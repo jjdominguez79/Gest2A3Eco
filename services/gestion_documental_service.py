@@ -15,9 +15,27 @@ from services.ocr.ocr_service import OcrService
 from utils.utilidades import get_document_repository_dir
 
 
+# Estructura documental unica para todos los puestos. Los valores historicos
+# de ``categorias_documentales.carpeta`` se conservan en la BD, pero nunca
+# determinan por si solos la ruta fisica.
+CARPETAS_DOCUMENTALES = {
+    "FACTURAS_RECIBIDAS": "Facturas_recibidas",
+    "FACTURAS_EMITIDAS": "Facturas_emitidas",
+    "FISCAL": "Fiscal",
+    "CONTABLE": "Contable",
+    "LABORAL": "Laboral",
+    "BANCARIA": "Bancaria",
+    "MERCANTIL": "Mercantil",
+    "CONTRATOS": "Contratos",
+    "NOTIFICACIONES": "Notificaciones",
+    "OTROS": "Otros",
+}
+
+
 @dataclass
 class ArchiveSummary:
     saved: list[str] = field(default_factory=list)
+    ocr_document_ids: list[str] = field(default_factory=list)
     ignored: list[str] = field(default_factory=list)
     duplicates: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -103,6 +121,8 @@ class GestionDocumentalService:
                     "documento_id": document_id,
                 })
                 summary.saved.append(name)
+                if bool(category.get("permite_ocr")):
+                    summary.ocr_document_ids.append(document_id)
             except Exception as exc:
                 summary.errors.append(f"{name}: {exc}")
         return summary
@@ -194,9 +214,12 @@ class GestionDocumentalService:
     def _category_directory(self, codigo: str, ejercicio: int, folder: str) -> Path:
         digits = "".join(ch for ch in str(codigo) if ch.isdigit())
         company = f"E{digits.zfill(5)[:5]}"
+        category_folder = CARPETAS_DOCUMENTALES.get(
+            str(folder or "").strip().upper(), self._safe_name(folder),
+        )
         destination = (
             get_document_repository_dir() / "Empresas" / company
-            / str(int(ejercicio)) / folder
+            / str(int(ejercicio)) / category_folder
         )
         destination.mkdir(parents=True, exist_ok=True)
         return destination

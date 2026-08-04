@@ -87,7 +87,23 @@ class SecuredGestorSQLite:
         return self._base.vincular_documentos_graph_comunicacion(graph_message_id)
 
     def registrar_envio_comunicacion(self, datos: dict):
-        self.security.ensure_company_write(datos.get("codigo_empresa"))
+        comunicacion_id = str(datos.get("comunicacion_id") or "").strip()
+        existente = (
+            self._base.get_comunicacion(comunicacion_id)
+            if comunicacion_id else None
+        )
+        # El responsable puede contestar desde su Buzon aunque solo tenga
+        # permiso de lectura sobre el cliente. Para un correo nuevo se conserva
+        # la exigencia habitual de escritura de empresa.
+        if not (
+            existente
+            and (
+                self.security.session.is_admin()
+                or int(existente.get("responsable_usuario_id") or 0)
+                == int(self.security.session.user.id)
+            )
+        ):
+            self.security.ensure_company_write(datos.get("codigo_empresa"))
         return self._base.registrar_envio_comunicacion(datos)
 
     def asignar_comunicacion_pendiente(
@@ -234,6 +250,7 @@ class SecuredGestorSQLite:
             raise PermissionError("No puedes modificar el buzon privado de otro usuario.")
         return self._base.cambiar_estado_comunicacion(
             comunicacion_id, estado, usuario_id,
+            allow_any_responsible=self.security.session.is_admin(),
         )
 
     def listar_bancos(self, codigo_empresa: str, ejercicio: int):
@@ -377,6 +394,14 @@ class SecuredGestorSQLite:
     def upsert_factura_recibida_doc(self, doc: dict):
         self.security.ensure_company_write(doc.get("codigo_empresa"))
         return self._base.upsert_factura_recibida_doc(doc)
+
+    def actualizar_numero_asiento_factura_recibida(
+        self, codigo_empresa: str, documento_id: str, numero_asiento: str,
+    ):
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.actualizar_numero_asiento_factura_recibida(
+            codigo_empresa, documento_id, numero_asiento,
+        )
 
     def eliminar_factura_recibida_doc(self, doc_id: str):
         doc = self._base.get_factura_recibida_doc(doc_id)

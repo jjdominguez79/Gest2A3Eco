@@ -303,6 +303,50 @@ def test_importar_plan_desde_a3_persiste_plan_y_maestro(tmp_path):
     assert progreso == [(2, 2)]
 
 
+def test_importar_plan_a3_vincula_por_nombre_exacto_si_no_hay_nif(tmp_path):
+    g = _make_gestor(tmp_path)
+    tercero_id = g.upsert_tercero({"nif": "B12345678", "nombre": "Proveedor A3 SL"})
+
+    _svc().importar_plan_desde_a3(
+        g, "E00570", 2026,
+        [{"cuenta": "40000001", "descripcion": "Proveedor A3 SL"}],
+    )
+
+    maestro = g.get_maestro_subcuenta_por_subcuenta("E00570", "40000001")
+    relacion = g.get_tercero_empresa("E00570", str(tercero_id), 2026)
+    assert str(maestro["tercero_id"]) == str(tercero_id)
+    assert relacion["subcuenta_proveedor"] == "40000001"
+
+
+def test_vinculacion_masiva_cruza_todas_las_empresas_y_omite_ambiguas(tmp_path):
+    g = _make_gestor(tmp_path)
+    g.upsert_empresa({"codigo": "E00571", "ejercicio": 2026, "nombre": "Otra SA", "activo": 1})
+    proveedor_id = g.upsert_tercero({"nif": "B12345678", "nombre": "Proveedor Uno SL"})
+    g.upsert_tercero({"nif": "B87654321", "nombre": "Nombre Repetido SL"})
+    g.upsert_tercero({"nif": "B11223344", "nombre": "Nombre Repetido SL"})
+    _add_subcuenta(g, "40000001", nif="B12345678")
+    g.upsert_maestro_subcuenta({
+        "codigo_empresa": "E00571", "subcuenta": "40000002",
+        "nombre_subcuenta": "Proveedor Uno SL", "tipo_subcuenta": "proveedor",
+        "activo": 1, "origen": "a3",
+    })
+    g.upsert_maestro_subcuenta({
+        "codigo_empresa": "E00571", "subcuenta": "40000003",
+        "nombre_subcuenta": "Nombre Repetido SL", "tipo_subcuenta": "proveedor",
+        "activo": 1, "origen": "a3",
+    })
+
+    previa = _svc().previsualizar_vinculacion_terceros_masiva(g)
+    resultado = _svc().vincular_terceros_masivo(g)
+
+    assert len(previa["propuestas"]) == 2
+    assert len(previa["ambiguas"]) == 1
+    assert resultado["vinculadas"] == 2
+    assert str(g.get_maestro_subcuenta_por_subcuenta("E00570", "40000001")["tercero_id"]) == str(proveedor_id)
+    assert str(g.get_maestro_subcuenta_por_subcuenta("E00571", "40000002")["tercero_id"]) == str(proveedor_id)
+    assert g.get_maestro_subcuenta_por_subcuenta("E00571", "40000003")["tercero_id"] is None
+
+
 # ── marcar_subcuenta_alta_a3_realizada ────────────────────────────────────────
 
 def test_marcar_alta_a3_realizada(tmp_path):

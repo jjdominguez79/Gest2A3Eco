@@ -80,19 +80,30 @@ class UIContabilidadEmitidasController:
         self._codigo = codigo
         self._ejercicio = ejercicio
         self._view = view
-        empresa_conf = gestor.get_empresa(codigo, ejercicio) or {}
-        self._empresa_conf = empresa_conf
-        adapter = _ViewAdapter(self, view)
-        self._fac_ctrl = FacturasEmitidasController(
-            gestor, codigo, ejercicio, empresa_conf, adapter, allow_all_years=False
-        )
+        self._empresa_conf = None
+        self._adapter = _ViewAdapter(self, view)
+        self._fac_ctrl = None
+
+    def _facturas_controller(self):
+        """Crea el controlador solo cuando se usa una accion de emitidas.
+
+        Consultar la empresa al abrir Contabilidad hacia que el hilo grafico se
+        quedase esperando la base de datos compartida antes de pintar la vista.
+        """
+        if self._fac_ctrl is None:
+            self._empresa_conf = self._gestor.get_empresa(self._codigo, self._ejercicio) or {}
+            self._fac_ctrl = FacturasEmitidasController(
+                self._gestor, self._codigo, self._ejercicio, self._empresa_conf,
+                self._adapter, allow_all_years=False,
+            )
+        return self._fac_ctrl
 
     def refresh(self):
         docs = self._gestor.listar_facturas_emitidas_en_contabilidad(self._codigo, self._ejercicio)
         self._view.set_emitidas(docs)
 
     def generar_suenlace(self):
-        self._fac_ctrl.generar_suenlace()
+        self._facturas_controller().generar_suenlace()
 
     def quitar_de_contabilidad(self):
         """Quita las facturas seleccionadas del modulo de contabilidad.
@@ -153,7 +164,7 @@ class UIContabilidadEmitidasController:
 
     def capturar_numero_asiento_desde_a3(self):
         """Delega en el controlador interno de facturas emitidas."""
-        self._fac_ctrl.capturar_numero_asiento_desde_a3()
+        self._facturas_controller().capturar_numero_asiento_desde_a3()
 
     def resetear_generadas(self):
         """Revierte el estado 'generado' a NULL de las facturas seleccionadas para poder regenerar el suenlace."""
@@ -190,6 +201,12 @@ class UIContabilidadEmitidasController:
 
     def on_seleccionar(self, fac_id: str):
         """Calcula y muestra el asiento de la factura seleccionada en el panel derecho."""
+        result = self.preparar_asiento_seleccionada(fac_id)
+        if result:
+            self._view.set_asiento_emitida(*result)
+
+    def preparar_asiento_seleccionada(self, fac_id: str):
+        """Calcula el asiento sin tocar Tkinter, apto para carga en segundo plano."""
         from views.ui_asiento_emitida_dialog import calcular_asiento_emitida
 
         fac = next(
@@ -197,9 +214,10 @@ class UIContabilidadEmitidasController:
             None,
         )
         if not fac:
-            return
+            return None
 
-        ndig = int(self._empresa_conf.get("digitos_plan") or 8)
+        self._facturas_controller()
+        ndig = int((self._empresa_conf or {}).get("digitos_plan") or 8)
         plantilla = self._get_plantilla_para_factura(fac)
         lineas = calcular_asiento_emitida(fac, plantilla, ndig)
 
@@ -214,7 +232,7 @@ class UIContabilidadEmitidasController:
         nombre = str(fac.get("nombre") or "").strip()
         fecha = str(fac.get("fecha_asiento") or fac.get("fecha_expedicion") or "").strip()
         label = f"Fra. {serie}{num}  {fecha}  —  {nombre}"
-        self._view.set_asiento_emitida(lineas, label)
+        return lineas, label
 
     def editar_asiento_seleccionada(self):
         """Abre el dialogo de edicion completa del asiento para la factura seleccionada."""
@@ -232,7 +250,8 @@ class UIContabilidadEmitidasController:
         if not fac:
             return
 
-        ndig = int(self._empresa_conf.get("digitos_plan") or 8)
+        self._facturas_controller()
+        ndig = int((self._empresa_conf or {}).get("digitos_plan") or 8)
         plantilla = self._get_plantilla_para_factura(fac)
 
         parent_win = None
@@ -263,7 +282,7 @@ class UIContabilidadEmitidasController:
 
     def _get_plantilla_para_factura(self, fac: dict) -> dict:
         try:
-            return self._fac_ctrl._plantilla_emitidas_for_factura(fac, {}, set())
+            return self._facturas_controller()._plantilla_emitidas_for_factura(fac, {}, set())
         except Exception:
             return {}
 

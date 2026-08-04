@@ -33,3 +33,15 @@ Total factura (EUR)...............................:
     assert [(linea.tipo_iva, linea.base, linea.cuota_iva) for linea in result.bases_iva] == [
         (10.0, 253.10, 25.31)
     ]
+
+
+def test_prefiere_nif_emisor_con_puntuacion_frente_al_nif_del_cliente():
+    texto = """Makro Distribucion Mayorista, S.A.
+NIF: A-28/647451
+Factura: 015/117
+Lergiani SL
+N.I.F.: B21977418
+"""
+    result = InvoiceInterpreter().interpretar(texto)
+
+    assert result.proveedor_nif == "A28647451"

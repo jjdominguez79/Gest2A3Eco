@@ -12,6 +12,7 @@ from services.ocr_recibidas_service import doc_to_row, doc_to_rows, generate_sue
 def _base_doc(**overrides) -> dict:
     doc = {
         "id": "doc-1",
+        "pdf_ref": "E00000001",
         "codigo_empresa": "E00570",
         "ejercicio": 2026,
         "fecha_asiento": "2026-05-15",
@@ -53,7 +54,7 @@ def test_doc_to_row_mapea_campos_esperados():
     assert row["Base"] == 100.0
     assert row["Cuota IVA"] == 21.0
     assert row["_cuenta_tercero_override"] == "40000001"
-    assert row["_pdf_ref"] == "doc-1"
+    assert row["_pdf_ref"] == "E00000001"
 
 
 # ── doc_to_rows: fallback single-row ─────────────────────────────────────────
@@ -108,7 +109,7 @@ def test_doc_to_rows_campos_comunes_replicados_en_cada_fila():
     for row in rows:
         assert row["Numero Factura"] == "F-100"
         assert row["NIF Cliente Proveedor"] == "B12345678"
-        assert row["_pdf_ref"] == "doc-1"
+        assert row["_pdf_ref"] == "E00000001"
         assert row["_cuenta_tercero_override"] == "40000001"
 
 
@@ -147,6 +148,19 @@ def test_generate_suenlace_devuelve_registros(tmp_path):
     # Cabecera + 1 tipo9 + tipo6 de trazabilidad
     assert len(regs) >= 2
     assert any("G2A" in line for line in regs)
+
+
+def test_suenlace_recibidas_respeta_cuenta_gasto_editada(tmp_path):
+    g = _make_gestor(tmp_path)
+    doc = _base_doc(pdf_ref="R00000001", cuenta_gasto="62900000", lineas=[])
+    regs = generate_suenlace_for_docs(g, "E00570", 2026, [doc])
+    detalle = next(reg for reg in regs if reg[14] == "9")
+    # Posiciones 16-27: subcuenta en formato A3 (12 caracteres).
+    assert detalle[15:27] == "629000000000"
+    cabecera = next(reg for reg in regs if reg[14] == "1")
+    trazabilidad = next(reg for reg in regs if reg[14] == "6")
+    assert cabecera[113:143].strip() == "R00000001"
+    assert trazabilidad[58:94].strip() == "R00000001"
 
 
 def test_generate_suenlace_multibase_produce_dos_tipo9(tmp_path):

@@ -45,6 +45,28 @@ def test_shared_mailbox_sends_without_mailbox_read_permission(monkeypatch):
     assert '"saveToSentItems": true' in session.calls[0][1]["data"]
 
 
+def test_token_uses_cached_account_username_when_claim_is_absent(monkeypatch):
+    class Cache:
+        has_state_changed = False
+
+    class App:
+        def get_accounts(self):
+            return [{"username": "usuario@gestinem.es"}]
+
+        def acquire_token_silent(self, _scopes, account):
+            assert account["username"] == "usuario@gestinem.es"
+            return {"access_token": "token", "id_token_claims": {}}
+
+    service = GraphMailService({"tenant_id": "t", "client_id": "c"}, session=Session())
+    service._cache = Cache()
+    monkeypatch.setattr(
+        "services.graph_mail_service.msal.PublicClientApplication",
+        lambda *_args, **_kwargs: App(),
+    )
+
+    assert service._token() == ("token", "usuario@gestinem.es")
+
+
 def test_send_includes_blind_copy_recipients(monkeypatch):
     session = Session()
     service = GraphMailService({"tenant_id": "t", "client_id": "c"}, session=session)
@@ -128,3 +150,35 @@ def test_lists_and_downloads_file_attachments(monkeypatch):
 
     assert [x["name"] for x in attachments] == ["factura.pdf"]
     assert item["contentBytes"] == "eA=="
+
+
+def test_reply_creates_threaded_draft_attaches_and_sends(monkeypatch, tmp_path: Path):
+    class ReplySession(Session):
+        def post(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            if url.endswith("/createReply"):
+                return Response(201, {"id": "draft-1"})
+            if url.endswith("/attachments"):
+                return Response(201)
+            return Response(202)
+
+        def patch(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            return Response(200)
+
+    attachment = tmp_path / "respuesta.pdf"
+    attachment.write_bytes(b"pdf")
+    session = ReplySession()
+    service = GraphMailService({"tenant_id": "t", "client_id": "c"}, session=session)
+    monkeypatch.setattr(service, "_token", lambda: ("token", "yo@gestinem.es"))
+
+    result = service.reply(
+        mailbox="Oficina@gestinem.es", message_id="original-1",
+        body="<p>Respuesta</p>", attachments=[str(attachment)],
+    )
+
+    urls = [item[0] for item in session.calls]
+    assert any(url.endswith("/messages/original-1/createReply") for url in urls)
+    assert any(url.endswith("/messages/draft-1/attachments") for url in urls)
+    assert urls[-1].endswith("/messages/draft-1/send")
+    assert result.message_id == "draft-1"

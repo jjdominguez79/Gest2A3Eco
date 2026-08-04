@@ -67,10 +67,11 @@ def test_clasifica_guarda_e_ignora_adjuntos(tmp_path, monkeypatch):
 
     destino = (
         raiz / "Empresas" / "E00001" / "2026"
-        / "FACTURAS_RECIBIDAS" / "Factura 01.pdf"
+        / "Facturas_recibidas" / "Factura 01.pdf"
     )
     assert destino.read_bytes() == b"contenido factura"
     assert resumen.saved == ["Factura 01.pdf"]
+    assert len(resumen.ocr_document_ids) == 1
     assert resumen.ignored == ["logo.png"]
     documentos = gestor.listar_documentos_archivo("E00001", 2026)
     assert len(documentos) == 1
@@ -140,7 +141,7 @@ def test_archiva_en_repositorio_compartido_y_no_en_a3(tmp_path, monkeypatch):
 
     assert destino == (
         raiz_compartida / "Empresas" / "E00724" / "2026"
-        / "FACTURAS_RECIBIDAS"
+        / "Facturas_recibidas"
     )
     gestor.conn.close()
 

@@ -154,9 +154,11 @@ class UIDashboardEmpresa(ttk.Frame):
 
         widgets = (row, accent, inner, lbl_icon, lbl_text)
         for w in widgets:
-            w.bind("<Button-1>", lambda e, cmd=command, k=key: self._on_nav_click(k, cmd))
-            w.bind("<Enter>", lambda e, k=key: self._on_nav_hover(k, True))
-            w.bind("<Leave>", lambda e, k=key: self._on_nav_hover(k, False))
+            # Tk entrega el evento al hacer clic, pero algunos disparadores
+            # programaticos llaman el callback sin argumentos.
+            w.bind("<Button-1>", lambda e=None, cmd=command, k=key: self._on_nav_click(k, cmd))
+            w.bind("<Enter>", lambda e=None, k=key: self._on_nav_hover(k, True))
+            w.bind("<Leave>", lambda e=None, k=key: self._on_nav_hover(k, False))
 
     def _build_main_into(self, parent):
         # --- Top bar ---
