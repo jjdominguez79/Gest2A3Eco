@@ -42,9 +42,12 @@ class AzureInvoiceEngine(OcrEngineBase):
     config.json (claves: azure_doc_intelligence_endpoint / _key).
     """
 
-    def __init__(self, endpoint: str = "", api_key: str = ""):
+    def __init__(self, endpoint: str = "", api_key: str = "", model_id: str = ""):
         self._endpoint = (endpoint or "").strip().rstrip("/")
         self._api_key  = (api_key or "").strip()
+        # Vacio conserva el comportamiento actual. Con un id de modelo se
+        # invoca un modelo personalizado entrenado en Document Intelligence.
+        self._model_id = (model_id or "").strip() or "prebuilt-invoice"
 
     @property
     def nombre(self) -> str:
@@ -86,7 +89,7 @@ class AzureInvoiceEngine(OcrEngineBase):
 
             with open(str(path), "rb") as f:
                 poller = client.begin_analyze_document(
-                    "prebuilt-invoice",
+                self._model_id,
                     body=f,
                     content_type="application/octet-stream",
                 )
@@ -126,8 +129,8 @@ class AzureInvoiceEngine(OcrEngineBase):
         result = OcrInvoiceResult(motor=self.nombre, texto=texto)
 
         # Proveedor
-        proveedor_modelo = _azure_str(f.get("VendorName"))
-        proveedor_destinatario = _azure_str(f.get("VendorAddressRecipient"))
+        proveedor_modelo = _campo(f, "VendorName", "ProveedorNombre", "nombre_proveedor")
+        proveedor_destinatario = _campo(f, "VendorAddressRecipient")
         # En algunos disenos Azure toma el logotipo como VendorName (por
         # ejemplo, "Frozen Food elmar") y deja la razon social completa en el
         # destinatario de la direccion del proveedor.
@@ -136,17 +139,17 @@ class AzureInvoiceEngine(OcrEngineBase):
             if _parece_razon_social(proveedor_destinatario)
             else proveedor_modelo or proveedor_destinatario
         )
-        result.proveedor_nif    = _azure_str(f.get("VendorTaxId"))
+        result.proveedor_nif    = _campo(f, "VendorTaxId", "ProveedorNif", "NifProveedor", "nif_proveedor")
 
         # Numero y fechas
-        result.numero_factura    = _azure_str(f.get("InvoiceId"))
-        result.fecha_factura     = _azure_fecha(f.get("InvoiceDate"))
-        result.fecha_vencimiento = _azure_fecha(f.get("DueDate"))
+        result.numero_factura    = _campo(f, "InvoiceId", "NumeroFactura", "numero_factura")
+        result.fecha_factura     = _campo_fecha(f, "InvoiceDate", "FechaFactura", "fecha_factura")
+        result.fecha_vencimiento = _campo_fecha(f, "DueDate", "FechaVencimiento", "fecha_vencimiento")
 
         # Importes globales
-        result.total       = _azure_float(f.get("InvoiceTotal"))
-        result.base_total  = _azure_float(f.get("SubTotal"))
-        result.iva_total   = _azure_float(f.get("TotalTax"))
+        result.total       = _campo_float(f, "InvoiceTotal", "TotalFactura", "total_factura")
+        result.base_total  = _campo_float(f, "SubTotal", "BaseTotal", "base_total")
+        result.iva_total   = _campo_float(f, "TotalTax", "IvaTotal", "iva_total")
 
         # Algunos formatos españoles no rellenan todos los campos normalizados
         # del modelo prebuilt-invoice. Azure sí aporta el texto completo: se
@@ -190,6 +193,19 @@ class AzureInvoiceEngine(OcrEngineBase):
             )
             result.bases_iva.append(linea)
 
+        # Tabla etiquetada en un modelo personalizado. Los nombres son los
+        # indicados en la guia de configuracion y permiten varios tipos de IVA.
+        if not result.bases_iva:
+            for item in _azure_value(f.get("LineasIva")) or []:
+                item_f = _azure_value(item) or {}
+                if not isinstance(item_f, dict):
+                    continue
+                result.bases_iva.append(OcrVatLine(
+                    tipo_iva=_campo_float(item_f, "TipoIva", "tipo_iva"),
+                    base=_campo_float(item_f, "Base", "base"),
+                    cuota_iva=_campo_float(item_f, "CuotaIva", "cuota_iva"),
+                ))
+
         # Fallback: si no hay lineas de IVA, crear una desde totales
         if not result.bases_iva and result.base_total:
             tipo = round(result.iva_total / result.base_total * 100, 1) if result.base_total else 0.0
@@ -206,6 +222,7 @@ class AzureInvoiceEngine(OcrEngineBase):
 
         # Guardar JSON bruto para auditoría
         result.raw_json = {
+            "model_id": self._model_id,
             "azure_fields": {k: str(v) for k, v in f.items()},
             "texto_disponible": bool(texto),
         }
@@ -224,6 +241,31 @@ def _azure_str(field) -> str:
         return ""
     content = getattr(field, "content", None) or _azure_value(field) or getattr(field, "value_string", None)
     return str(content or "").strip()
+
+
+def _campo(fields: dict, *nombres: str) -> str:
+    """Lee un campo prebuilt o su equivalente etiquetado por el despacho."""
+    for nombre in nombres:
+        value = _azure_str(fields.get(nombre))
+        if value:
+            return value
+    return ""
+
+
+def _campo_float(fields: dict, *nombres: str) -> float:
+    for nombre in nombres:
+        value = _azure_float(fields.get(nombre))
+        if value:
+            return value
+    return 0.0
+
+
+def _campo_fecha(fields: dict, *nombres: str) -> str:
+    for nombre in nombres:
+        value = _azure_fecha(fields.get(nombre))
+        if value:
+            return value
+    return ""
 
 
 def _azure_float(field) -> float:

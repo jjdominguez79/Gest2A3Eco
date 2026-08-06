@@ -20,6 +20,7 @@ from services.ocr.types import (
 )
 from services.ocr.base import OcrEngineBase
 from services.ocr.ocr_service import OcrService
+from services.ocr.aprendizaje_service import AprendizajeOcrService
 
 __all__ = [
     "OcrInvoiceResult",
@@ -29,4 +30,5 @@ __all__ = [
     "OcrDocumentState",
     "OcrEngineBase",
     "OcrService",
+    "AprendizajeOcrService",
 ]

@@ -14,6 +14,14 @@ def test_numero_factura_contable_tolera_campos_vacios():
     assert controller._numero_factura_contable({"serie": "A", "numero": ""}) == "A"
 
 
+def test_observacion_rectificativa_referencia_factura_y_fecha_originales():
+    controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
+
+    assert controller._observacion_rectificativa({
+        "serie": "A", "numero": "000123", "fecha_expedicion": "2026-05-08",
+    }) == "Rectifica la factura A000123 con fecha 08/05/2026."
+
+
 def test_totales_separan_suplidos_de_base_imponible():
     controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
     factura = {

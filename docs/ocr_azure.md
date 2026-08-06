@@ -73,6 +73,30 @@ La cadena de motores en `OcrService` tiene este orden:
 
 Si el PDF tiene texto, Azure no se invoca (economia de llamadas API).
 
+### Modelo personalizado para el despacho
+
+El modelo prebuilt-invoice es generalista: las correcciones hechas en la
+aplicacion quedan auditadas, pero **no lo reentrenan automaticamente**. Para
+que el OCR aprenda de las facturas reales hay que crear un modelo de extraccion
+personalizado en Azure Document Intelligence Studio:
+
+1. Reunir facturas ya revisadas, incluyendo las distintas calidades de escaneo,
+   proveedores y formatos habituales. Cinco ejemplos permiten empezar; se
+   recomienda una muestra diversa antes de medir resultados.
+2. Subir las copias al contenedor Blob configurado en un proyecto de
+   *Custom extraction* y marcar visualmente estos campos: `ProveedorNif`,
+   `ProveedorNombre`, `NumeroFactura`, `FechaFactura`, `BaseTotal`, `IvaTotal`,
+   `TotalFactura` y, cuando aplique, una tabla `LineasIva`.
+3. Entrenar y probar el modelo. Azure devuelve un ID de modelo; introducirlo en
+   **OCR > Configurar OCR > ID modelo personalizado**.
+4. Conservar una muestra de control no usada al entrenar. Solo sustituir el ID
+   configurado cuando la prueba mejore el modelo anterior.
+
+El motor reconoce esos nombres de campo y tambien los nombres estandar de
+`prebuilt-invoice`, de modo que dejar vacio el ID revierte de forma segura al
+modelo generico. Para facturas con formatos muy diferentes, crear modelos por
+familia y combinarlos en un modelo compuesto o con clasificador en Azure.
+
 ---
 
 ## 5. Mapeo de campos Azure → OcrInvoiceResult

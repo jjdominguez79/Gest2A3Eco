@@ -244,6 +244,7 @@ class OcrService:
                 engine = AzureInvoiceEngine(
                     endpoint=cfg.get("azure_endpoint", ""),
                     api_key=cfg.get("azure_key", ""),
+                    model_id=cfg.get("azure_model_id", ""),
                 )
                 if engine.disponible():
                     motores.append(engine)
@@ -267,6 +268,7 @@ class OcrService:
                 e = AzureInvoiceEngine(
                     endpoint=cfg.get("azure_endpoint", ""),
                     api_key=cfg.get("azure_key", ""),
+                    model_id=cfg.get("azure_model_id", ""),
                 )
                 if e.disponible():
                     motores.append(e)
@@ -295,6 +297,7 @@ class OcrService:
         )
 
         diagnosticos = []
+        azure_prioritario = any(motor.nombre == "azure" for motor in self._motores)
         for motor in self._motores:
             try:
                 resultado = motor.extraer(path)
@@ -305,6 +308,19 @@ class OcrService:
 
             if resultado.errores:
                 diagnosticos.extend(f"{motor.nombre}: {error}" for error in resultado.errores)
+
+            # Si el usuario ha seleccionado Azure, no ocultar un fallo del
+            # modelo personalizado usando silenciosamente PDF/texto. La
+            # aplicacion debe mostrar el error para que se pueda corregir el
+            # endpoint, la clave o el ID del modelo.
+            if motor.nombre == "azure" and azure_prioritario:
+                resultado.raw_json = dict(resultado.raw_json or {})
+                resultado.raw_json["diagnostico_motores"] = {
+                    "cadena": [m.nombre for m in self._motores],
+                    "motor_elegido": "azure",
+                    "diagnosticos_previos": diagnosticos,
+                }
+                return resultado
 
             if (
                 (resultado.texto and len(resultado.texto.strip()) >= _MIN_TEXT_CHARS)
@@ -418,6 +434,7 @@ class OcrService:
                 "motor_activo":    cfg.get("ocr_motor_activo") or cfg.get("ocr_provider") or "",
                 "azure_endpoint":  cfg.get("azure_doc_intelligence_endpoint") or "",
                 "azure_key":       cfg.get("azure_doc_intelligence_key") or "",
+                "azure_model_id":  cfg.get("azure_doc_intelligence_model_id") or "",
             }
         except Exception:
             return {}

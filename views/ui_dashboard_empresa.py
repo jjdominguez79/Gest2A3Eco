@@ -66,11 +66,13 @@ class UIDashboardEmpresa(ttk.Frame):
         company_position: int = 0,
         company_total: int = 0,
         on_back=None,
+        usuario_id: int | None = None,
     ):
         super().__init__(parent)
         self._empresa_service = empresa_service
         self._codigo = codigo
         self._ejercicio = ejercicio
+        self._usuario_id = usuario_id
         self._on_back = on_back or (lambda: None)  # usado solo desde el boton Empresas del header
         self._on_previous_company = on_previous_company
         self._on_next_company = on_next_company
@@ -380,7 +382,9 @@ class UIDashboardEmpresa(ttk.Frame):
     # ----------------------------------------------------------------- refresh
 
     def refresh(self):
-        self._ctx = self._empresa_service.get_dashboard_context(self._codigo, self._ejercicio)
+        self._ctx = self._empresa_service.get_dashboard_context(
+            self._codigo, self._ejercicio, usuario_id=self._usuario_id,
+        )
         empresa  = self._ctx.get("empresa") or {}
         fact     = self._ctx.get("resumen_facturacion") or {}
         correos  = self._ctx.get("resumen_comunicaciones") or {}

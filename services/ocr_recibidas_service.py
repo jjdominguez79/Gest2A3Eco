@@ -148,6 +148,18 @@ def mark_docs_as_generated(gestor, docs: list[dict], *, estado_contable: str = "
         payload["fecha_generacion"] = timestamp
         payload["estado_contable"] = estado_contable
         gestor.upsert_factura_recibida_doc(payload)
+        # El documento de la bandeja OCR comparte el mismo identificador que
+        # su proyeccion contable. Mantener ambas tablas sincronizadas hace que
+        # una factura exportada aparezca inmediatamente en "Contabilizadas".
+        try:
+            documento_ocr = gestor.get_documento_ocr(str(payload.get("id") or ""))
+            if documento_ocr:
+                documento_ocr["estado"] = estado_contable
+                gestor.upsert_documento_ocr(documento_ocr)
+        except Exception:
+            # La proyeccion contable debe seguir siendo util aunque se use una
+            # base antigua sin la tabla documentos_ocr.
+            pass
         asiento = gestor.get_asiento_contable_por_documento(payload.get("id"))
         if asiento:
             asiento["estado"] = "exportado"

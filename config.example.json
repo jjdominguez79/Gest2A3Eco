@@ -9,6 +9,8 @@
   "ocr_motor_activo": "",
   "azure_doc_intelligence_endpoint": "",
   "azure_doc_intelligence_key": "",
+  "azure_storage_connection_string": "",
+  "azure_ocr_training_container": "facturas-entrenamiento",
   "dgt_api_url": "",
   "dgt_api_key": "",
   "signrequest_token": "",

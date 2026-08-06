@@ -54,6 +54,28 @@ class UIContabilidadController:
         if not doc:
             self._view.show_warning("Gest2A3Eco", "Selecciona un documento.")
             return
+        # Documentos OCR antiguos pueden haberse proyectado antes de que se
+        # copiara la relacion contable del proveedor. Recuperarla aqui evita
+        # que se regeneren 400/629/472 genericas cuando el maestro ya tiene
+        # subcuentas configuradas.
+        tercero_id = str(doc.get("tercero_id") or "").strip()
+        if tercero_id:
+            try:
+                relacion = self._gestor.get_tercero_empresa(
+                    self._codigo, tercero_id, self._ejercicio,
+                ) or {}
+                changed = False
+                for campo, rel_campo in (
+                    ("cuenta_proveedor", "subcuenta_proveedor"),
+                    ("cuenta_gasto", "subcuenta_gasto"),
+                ):
+                    if not str(doc.get(campo) or "").strip() and str(relacion.get(rel_campo) or "").strip():
+                        doc[campo] = relacion[rel_campo]
+                        changed = True
+                if changed:
+                    self._gestor.upsert_factura_recibida_doc(doc)
+            except Exception:
+                pass
         plantilla = self._resolve_plantilla()
         empresa = self._gestor.get_empresa(self._codigo, self._ejercicio) or {}
         row = self._doc_to_row(doc)
@@ -77,8 +99,8 @@ class UIContabilidadController:
         ]
         total_debe = round(sum(x["importe"] for x in payload_lineas if x["dh"] == "D"), 2)
         total_haber = round(sum(x["importe"] for x in payload_lineas if x["dh"] == "H"), 2)
-        numero_asiento = str(doc.get("numero_asiento") or self._view.get_numero_asiento() or "").strip()
-        fecha_asiento = self._view.get_fecha_asiento() or doc.get("fecha_asiento")
+        numero_asiento = str(doc.get("numero_asiento") or "").strip()
+        fecha_asiento = doc.get("fecha_asiento") or doc.get("fecha_factura")
         self._gestor.upsert_asiento_contable(
             {
                 "documento_id": doc.get("id"),
@@ -152,6 +174,13 @@ class UIContabilidadController:
         if not doc:
             self._view.show_warning("Gest2A3Eco", "Selecciona un documento.")
             return
+        if bool(doc.get("generada")) or str(doc.get("estado_contable") or "").strip().lower() == "contabilizada":
+            self._view.show_warning(
+                "Gest2A3Eco",
+                "Esta factura ya tiene un suenlace generado. "
+                "Captura primero el numero de asiento desde A3 para verificar si ya esta contabilizada.",
+            )
+            return
         try:
             docs = preparar_documentos_para_suenlace(
                 self._gestor, self._codigo, self._ejercicio, [doc],
@@ -167,13 +196,42 @@ class UIContabilidadController:
         save_path = self._view.ask_save_path(f"{self._codigo}.dat")
         if not save_path:
             return
-        with open(save_path, "w", encoding="latin-1", newline="") as f:
-            f.writelines(regs)
-        doc["numero_asiento"] = self._view.get_numero_asiento() or doc.get("numero_asiento")
-        doc["fecha_asiento"] = self._view.get_fecha_asiento() or doc.get("fecha_asiento")
+        # SUENLACE es un fichero binario de registros fijos. Escribirlo como
+        # texto puede alterar saltos de linea o longitudes y A3 lo interpreta
+        # entonces como registros desplazados ("tipo incorrecto").
+        try:
+            # Algunas versiones de A3ECO no admiten el registro 6 de
+            # trazabilidad en el enlace de recibidas (lo reportan como
+            # "tipo de registro incorrecto" y muestran R00000001/cuenta 0).
+            # La trazabilidad queda guardada en la BD y no es necesaria para
+            # importar el asiento, por lo que se excluye del fichero enviado.
+            registros_a3 = [reg for reg in regs if str(reg)[14:15] != "6"]
+            if not registros_a3:
+                self._view.show_error("Gest2A3Eco", "No hay registros compatibles para importar en A3ECO.")
+                return
+            bloques = [str(reg).encode("latin-1") for reg in registros_a3]
+        except UnicodeEncodeError as exc:
+            self._view.show_error("Gest2A3Eco", f"El asiento contiene caracteres no validos para A3ECO:\n{exc}")
+            return
+        longitudes = {len(bloque) for bloque in bloques}
+        if not longitudes.issubset({256, 512}):
+            self._view.show_error(
+                "Gest2A3Eco",
+                "El suenlace generado contiene registros con longitud invalida "
+                f"({sorted(longitudes)} bytes; deben ser 256 o 512).",
+            )
+            return
+        with open(save_path, "wb") as f:
+            f.write(b"".join(bloques))
+        doc["numero_asiento"] = doc.get("numero_asiento") or ""
+        doc["fecha_asiento"] = doc.get("fecha_asiento") or doc.get("fecha_factura") or ""
         self._gestor.upsert_factura_recibida_doc(doc)
         mark_docs_as_generated(self._gestor, [doc], estado_contable="contabilizada")
-        self.refresh(select_id=self._selected_id)
+        # La factura ya no debe quedar seleccionada ni visible en Pendientes;
+        # se mostrara en OCR/Contabilidad como contabilizada tras refrescar.
+        self._selected_id = None
+        self.refresh(select_id="__clear_selection__")
+        self._view.clear_preview()
         self._view.show_info("Gest2A3Eco", f"Fichero generado:\n{save_path}")
 
     def capturar_numero_asiento_desde_a3(self):

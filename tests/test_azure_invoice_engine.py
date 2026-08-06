@@ -87,3 +87,30 @@ def test_corrige_nif_cliente_devuelto_por_azure_con_cabecera_del_emisor():
     result = AzureInvoiceEngine("endpoint", "key")._mapear_documento(doc, None, texto=texto)
 
     assert result.proveedor_nif == "A28647451"
+
+
+def test_mapea_las_etiquetas_del_modelo_personalizado():
+    field = lambda value: SimpleNamespace(value=value, content=str(value), confidence=0.9)
+    linea_iva = field({
+        "TipoIva": field("21"),
+        "Base": field(SimpleNamespace(amount=100.0)),
+        "CuotaIva": field(SimpleNamespace(amount=21.0)),
+    })
+    doc = SimpleNamespace(fields={
+        "ProveedorNif": field("B12345678"),
+        "ProveedorNombre": field("Proveedor personalizado SL"),
+        "NumeroFactura": field("P-12"),
+        "FechaFactura": field(__import__("datetime").date(2026, 8, 5)),
+        "TotalFactura": field(SimpleNamespace(amount=121.0)),
+        "BaseTotal": field(SimpleNamespace(amount=100.0)),
+        "IvaTotal": field(SimpleNamespace(amount=21.0)),
+        "LineasIva": field([linea_iva]),
+    })
+
+    result = AzureInvoiceEngine("endpoint", "key", "modelo-despacho")._mapear_documento(doc, None)
+
+    assert result.proveedor_nombre == "Proveedor personalizado SL"
+    assert result.numero_factura == "P-12"
+    assert result.total == 121.0
+    assert [(x.tipo_iva, x.base, x.cuota_iva) for x in result.bases_iva] == [(21.0, 100.0, 21.0)]
+    assert result.raw_json["model_id"] == "modelo-despacho"

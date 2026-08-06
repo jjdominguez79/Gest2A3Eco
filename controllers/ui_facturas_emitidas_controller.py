@@ -392,6 +392,10 @@ class FacturasEmitidasController:
             return
         nuevo = dict(fac)
         nuevo.pop("id", None)
+        # El asiento pertenece a la factura original: la rectificativa tendra
+        # el suyo cuando se genere e importe en A3.
+        nuevo["numero_asiento"] = ""
+        nuevo["observaciones"] = self._observacion_rectificativa(fac)
         fecha_base = fac.get("fecha_asiento") or datetime.now().strftime("%d/%m/%Y")
         sugerido, serie_sug, eje_sug = self._proximo_numero_por_fecha(fecha_base, rectificativa=True)
         nuevo["numero"] = sugerido
@@ -413,6 +417,7 @@ class FacturasEmitidasController:
         if result:
             result.pop("_borrador", None)
             result["borrador"] = 0
+            result["numero_asiento"] = ""
             result = self._ajustar_numero_por_fecha_si_aplica(result, sugerido, serie_sug, rectificativa=True)
             self._gestor.upsert_factura_emitida(result)
             self._incrementar_numeracion_por_factura(result, rectificativa=True)
@@ -1760,6 +1765,13 @@ class FacturasEmitidasController:
         if numero.upper().startswith(serie.upper()):
             numero = numero[len(serie):]
         return f"{serie}{numero}"
+
+    def _observacion_rectificativa(self, fac: dict) -> str:
+        numero = self._numero_factura_contable(fac) or "(sin numero)"
+        fecha = self._format_fecha_descripcion(
+            fac.get("fecha_expedicion") or fac.get("fecha_asiento")
+        ) or "(sin fecha)"
+        return f"Rectifica la factura {numero} con fecha {fecha}."
 
     def _docx_template_path(
         self,

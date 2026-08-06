@@ -16,12 +16,14 @@ Esta pantalla complementa (no reemplaza) ui_ocr_facturas.py + ui_ocr_detalle.py.
 from __future__ import annotations
 
 import logging
+import json
 import queue
 import os
 import shutil
 import subprocess
 import tempfile
 import threading
+import uuid
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -76,6 +78,7 @@ COLS_LISTA = [
     ("numero_factura",   "Factura",     100, "w"),
     ("fecha_factura",    "Fecha",        85, "w"),
     ("total_factura",    "Total",        80, "e"),
+    ("numero_asiento",   "Asiento A3",   90, "w"),
     ("motor_ocr",        "Motor",        75, "w"),
     ("confianza_global", "Conf.",        55, "e"),
     ("estado",           "Estado",       90, "w"),
@@ -125,6 +128,10 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         self._revision_window: tk.Toplevel | None = None
         self._editor_activo = False
         self._entries: dict[str, tk.Variable] = {}
+        self._campo_marcado_var = tk.StringVar(value="ProveedorNif")
+        self._marcas_campos: dict[str, dict] = {}
+        self._marca_inicio: tuple[float, float] | None = None
+        self._marca_rect_id = None
 
         self._build()
         self.after_idle(self._refresh_all)
@@ -152,8 +159,8 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             command=self._reprocesar_seleccionado,
         ).pack(side="left", padx=4)
         ttk.Button(
-            btn_frame, text="Configurar OCR",
-            command=self._configurar_ocr,
+            btn_frame, text="Aprendizaje",
+            command=self._mostrar_estado_aprendizaje,
         ).pack(side="left", padx=4)
 
         # La pantalla inicial solo es el listado de estados. La revision se
@@ -201,18 +208,22 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         motor = tk.StringVar(value=str(cfg.get("ocr_motor_activo") or ""))
         endpoint = tk.StringVar(value=str(cfg.get("azure_doc_intelligence_endpoint") or ""))
         key = tk.StringVar(value=str(cfg.get("azure_doc_intelligence_key") or ""))
+        model_id = tk.StringVar(value=str(cfg.get("azure_doc_intelligence_model_id") or ""))
         ttk.Label(frame, text="Motor OCR").grid(row=0, column=0, sticky="w", pady=3)
         ttk.Combobox(frame, textvariable=motor, state="readonly", values=("", "azure"), width=42).grid(row=0, column=1, sticky="ew", padx=(8, 0), pady=3)
         ttk.Label(frame, text="Endpoint Azure").grid(row=1, column=0, sticky="w", pady=3)
         ttk.Entry(frame, textvariable=endpoint, width=55).grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=3)
         ttk.Label(frame, text="Clave Azure").grid(row=2, column=0, sticky="w", pady=3)
         ttk.Entry(frame, textvariable=key, show="*", width=55).grid(row=2, column=1, sticky="ew", padx=(8, 0), pady=3)
+        ttk.Label(frame, text="ID modelo personalizado").grid(row=3, column=0, sticky="w", pady=3)
+        ttk.Entry(frame, textvariable=model_id, width=55).grid(row=3, column=1, sticky="ew", padx=(8, 0), pady=3)
         ttk.Label(
             frame,
-            text=("Azure Document Intelligence usa el modelo prebuilt-invoice. "
-                  "Los documentos se enviaran al servicio de Azure para su analisis."),
+            text=("Deja el ID vacio para usar prebuilt-invoice. Indica el ID de un "
+                  "modelo personalizado entrenado con facturas etiquetadas para "
+                  "usar sus campos. Los documentos se enviaran a Azure para su analisis."),
             wraplength=520, foreground="#555",
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(10, 0))
 
         def save():
             selected = motor.get().strip().lower()
@@ -222,12 +233,13 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             cfg["ocr_motor_activo"] = selected
             cfg["azure_doc_intelligence_endpoint"] = endpoint.get().strip()
             cfg["azure_doc_intelligence_key"] = key.get().strip()
+            cfg["azure_doc_intelligence_model_id"] = model_id.get().strip()
             save_app_config(cfg)
             dialog.destroy()
             self._lbl_status.configure(text="Configuracion OCR guardada. Los documentos nuevos usaran el motor seleccionado.")
 
         actions = ttk.Frame(frame)
-        actions.grid(row=4, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        actions.grid(row=5, column=0, columnspan=2, sticky="e", pady=(12, 0))
         ttk.Button(actions, text="Cancelar", command=dialog.destroy).pack(side="left", padx=(0, 6))
         ttk.Button(actions, text="Guardar", command=save).pack(side="left")
         frame.columnconfigure(1, weight=1)
@@ -247,7 +259,9 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             self._build_bandeja_toolbar(bar, estado)
 
             # Treeview
-            tv = ttk.Treeview(frame, columns=COL_IDS, show="headings", selectmode="browse")
+            # En "Contabilizadas" se pueden seleccionar varias facturas para
+            # capturar sus numeros de asiento desde A3 de una sola vez.
+            tv = ttk.Treeview(frame, columns=COL_IDS, show="headings", selectmode="extended")
             for col_id, titulo_col, w, anchor in COLS_LISTA:
                 tv.heading(col_id, text=titulo_col)
                 tv.column(col_id, width=w, anchor=anchor, stretch=(col_id == "proveedor_nombre"))
@@ -287,6 +301,14 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             ).pack(side="left", padx=2)
             ttk.Button(bar, text="Enviar a errores",
                        command=lambda: self._enviar_a_error(estado)).pack(side="left", padx=2)
+        elif estado == "contabilizada":
+            ttk.Label(
+                bar, text="Exportada a suenlace.dat. Importala en A3 y captura el asiento para confirmarla."
+            ).pack(side="left", padx=2)
+            ttk.Button(
+                bar, text="Capturar asiento de A3", style="Primary.TButton",
+                command=self._capturar_asiento_a3,
+            ).pack(side="left", padx=6)
 
     def _build_editor(self, parent: ttk.Frame):
         """Panel derecho: cabecera, IVA y retenciones del documento seleccionado."""
@@ -348,6 +370,15 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             tercero_frame, textvariable=self._subcuenta_plan_var, state="readonly", width=42,
         )
         self._cb_subcuenta_plan.grid(row=2, column=1, columnspan=2, sticky="ew", padx=3, pady=(2, 4))
+        ttk.Label(tercero_frame, text="Subcuenta de gastos del proveedor").grid(
+            row=3, column=0, sticky="w", padx=4, pady=(2, 4)
+        )
+        self._subcuenta_gasto_var = tk.StringVar()
+        self._cuentas_gasto_por_etiqueta = {}
+        self._cb_subcuenta_gasto = ttk.Combobox(
+            tercero_frame, textvariable=self._subcuenta_gasto_var, state="readonly", width=42,
+        )
+        self._cb_subcuenta_gasto.grid(row=3, column=1, columnspan=2, sticky="ew", padx=3, pady=(2, 4))
         tercero_frame.columnconfigure(0, weight=1)
 
         # Seccion lineas IVA
@@ -422,6 +453,15 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         barra.pack(fill="x", padx=8, pady=(8, 4))
         self._lbl_preview = ttk.Label(barra, text="Selecciona una factura para verla.")
         self._lbl_preview.pack(side="left", fill="x", expand=True)
+        ttk.Label(barra, text="Campo a marcar:").pack(side="left", padx=(12, 4))
+        ttk.Combobox(
+            barra, textvariable=self._campo_marcado_var, state="readonly", width=20,
+            values=("ProveedorNif", "ProveedorNombre", "NumeroFactura", "FechaFactura",
+                    "FechaVencimiento", "BaseTotal", "IvaTotal", "TotalFactura"),
+        ).pack(side="left")
+        ttk.Label(barra, text="Arrastra un rectangulo sobre el valor", foreground="#555").pack(
+            side="left", padx=8,
+        )
         ttk.Button(barra, text="-", width=3, command=lambda: self._cambiar_zoom_preview(-0.2)).pack(side="right", padx=(4, 0))
         ttk.Button(barra, text="+", width=3, command=lambda: self._cambiar_zoom_preview(0.2)).pack(side="right", padx=(4, 0))
         ttk.Button(barra, text="100 %", command=self._restablecer_zoom_preview).pack(side="right", padx=(4, 0))
@@ -443,6 +483,9 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         self._preview_imagen_original = None
         self._preview_zoom = 1.0
         self._preview_path = ""
+        self._canvas_preview.bind("<ButtonPress-1>", self._iniciar_marca)
+        self._canvas_preview.bind("<B1-Motion>", self._actualizar_marca)
+        self._canvas_preview.bind("<ButtonRelease-1>", self._terminar_marca)
 
     def _mostrar_preview(self, doc: dict):
         ruta = Path(str(doc.get("ruta_original") or ""))
@@ -450,6 +493,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         self._preview_photo = None
         self._preview_imagen_original = None
         self._canvas_preview.delete("all")
+        self._marcas_campos = {}
         if not ruta.exists():
             self._lbl_preview.configure(text=f"No se encuentra el documento original: {ruta}")
             return
@@ -485,8 +529,96 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         imagen = original.resize((ancho, alto), Image.Resampling.LANCZOS)
         self._preview_photo = ImageTk.PhotoImage(imagen)
         self._canvas_preview.delete("all")
-        self._canvas_preview.create_image(0, 0, anchor="nw", image=self._preview_photo)
+        self._canvas_preview.create_image(0, 0, anchor="nw", image=self._preview_photo, tags=("pagina",))
+        self._dibujar_marcas()
         self._canvas_preview.configure(scrollregion=(0, 0, ancho, alto))
+
+    def _iniciar_marca(self, event):
+        if self._preview_imagen_original is None:
+            return
+        self._marca_inicio = (
+            self._canvas_preview.canvasx(event.x), self._canvas_preview.canvasy(event.y),
+        )
+        self._marca_rect_id = self._canvas_preview.create_rectangle(
+            *self._marca_inicio, *self._marca_inicio, outline="#e11d48", width=2,
+        )
+
+    def _actualizar_marca(self, event):
+        if self._marca_inicio is None or self._marca_rect_id is None:
+            return
+        x = self._canvas_preview.canvasx(event.x)
+        y = self._canvas_preview.canvasy(event.y)
+        self._canvas_preview.coords(self._marca_rect_id, *self._marca_inicio, x, y)
+
+    def _terminar_marca(self, event):
+        if self._marca_inicio is None or self._preview_imagen_original is None:
+            return
+        x1, y1 = self._marca_inicio
+        x2 = self._canvas_preview.canvasx(event.x)
+        y2 = self._canvas_preview.canvasy(event.y)
+        left, top = min(x1, x2), min(y1, y2)
+        right, bottom = max(x1, x2), max(y1, y2)
+        width, height = self._preview_imagen_original.size
+        if right - left >= 4 and bottom - top >= 4:
+            campo = self._campo_marcado_var.get().strip()
+            marca = {
+                "x": round(max(0, left) / self._preview_zoom, 2),
+                "y": round(max(0, top) / self._preview_zoom, 2),
+                "width": round(min(width, right / self._preview_zoom) - max(0, left) / self._preview_zoom, 2),
+                "height": round(min(height, bottom / self._preview_zoom) - max(0, top) / self._preview_zoom, 2),
+            }
+            self._marcas_campos[campo] = marca
+            texto = self._extraer_texto_marca(marca)
+            if texto and campo in self._entries:
+                self._entries[campo].set(texto)
+        self._marca_inicio = None
+        self._marca_rect_id = None
+        self._dibujar_marcas()
+
+    def _dibujar_marcas(self):
+        if self._preview_imagen_original is None:
+            return
+        self._canvas_preview.delete("marca")
+        for campo, marca in self._marcas_campos.items():
+            try:
+                x = float(marca["x"]) * self._preview_zoom
+                y = float(marca["y"]) * self._preview_zoom
+                w = float(marca["width"]) * self._preview_zoom
+                h = float(marca["height"]) * self._preview_zoom
+            except (TypeError, ValueError, KeyError):
+                continue
+            self._canvas_preview.create_rectangle(x, y, x + w, y + h, outline="#16a34a", width=2, tags=("marca",))
+            self._canvas_preview.create_text(x + 3, y + 3, anchor="nw", text=campo, fill="#166534", tags=("marca",))
+
+    def _extraer_texto_marca(self, marca: dict) -> str:
+        """Extrae las palabras PDF que caen dentro de una marca visual."""
+        if not self._preview_path.lower().endswith(".pdf"):
+            return ""
+        try:
+            import fitz
+            pdf = fitz.open(self._preview_path)
+            try:
+                page = pdf.load_page(0)
+                palabras = page.get_text("words") or []
+                escala_x = self._preview_imagen_original.width / page.rect.width
+                escala_y = self._preview_imagen_original.height / page.rect.height
+            finally:
+                pdf.close()
+            left = float(marca["x"])
+            top = float(marca["y"])
+            right = left + float(marca["width"])
+            bottom = top + float(marca["height"])
+            dentro = []
+            for x0, y0, x1, y1, texto, *_ in palabras:
+                px0, py0 = x0 * escala_x, y0 * escala_y
+                px1, py1 = x1 * escala_x, y1 * escala_y
+                cx, cy = (px0 + px1) / 2, (py0 + py1) / 2
+                if left <= cx <= right and top <= cy <= bottom:
+                    dentro.append((round(py0, 1), round(px0, 1), str(texto)))
+            dentro.sort(key=lambda item: (item[0], item[1]))
+            return " ".join(item[2] for item in dentro).strip()
+        except Exception:
+            return ""
 
     def _cargar_primera_pagina(self, ruta: Path):
         from PIL import Image
@@ -607,6 +739,38 @@ class UIFacturasRecibidasOcr(ttk.Frame):
     def _subcuenta_plan_seleccionada(self) -> str:
         return self._cuentas_plan_por_etiqueta.get(self._subcuenta_plan_var.get(), "")
 
+    def _cargar_subcuentas_gasto(self, seleccionada: str = ""):
+        """Carga cuentas de gasto del plan contable de la empresa."""
+        self._cuentas_gasto_por_etiqueta.clear()
+        cuentas = []
+        try:
+            cuentas = list(self._gestor.listar_maestro_subcuentas_empresa(self._codigo, activo=None) or [])
+        except Exception:
+            pass
+        try:
+            cur = self._gestor.conn.execute(
+                "SELECT DISTINCT cuenta, descripcion FROM plan_cuentas WHERE codigo_empresa=? ORDER BY cuenta",
+                (self._codigo,),
+            )
+            columnas = [c[0] for c in cur.description]
+            cuentas.extend(dict(zip(columnas, fila)) for fila in cur.fetchall())
+        except Exception:
+            pass
+        etiquetas, vistos = [], set()
+        for cuenta in cuentas:
+            codigo = str(cuenta.get("subcuenta") or cuenta.get("cuenta") or "").strip()
+            if not codigo or codigo in vistos or codigo[0] not in "67":
+                continue
+            vistos.add(codigo)
+            texto = f"{codigo} - {str(cuenta.get('nombre_subcuenta') or cuenta.get('descripcion') or '').strip()}".rstrip(" -")
+            self._cuentas_gasto_por_etiqueta[texto] = codigo
+            etiquetas.append(texto)
+        self._cb_subcuenta_gasto.configure(values=etiquetas)
+        self._subcuenta_gasto_var.set(next((e for e, c in self._cuentas_gasto_por_etiqueta.items() if c == str(seleccionada or "")), ""))
+
+    def _subcuenta_gasto_seleccionada(self) -> str:
+        return self._cuentas_gasto_por_etiqueta.get(self._subcuenta_gasto_var.get(), "")
+
     def _aplicar_proveedor_maestro(self, tercero: dict):
         tercero_id = str(tercero.get("id") or "").strip()
         if not tercero_id:
@@ -619,6 +783,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             self._tipo_operacion_iva_var.set(tipo)
         cuenta = str(tercero.get("subcuenta_proveedor") or "").strip()
         self._cargar_subcuentas_plan_empresa(cuenta)
+        self._cargar_subcuentas_gasto(str(tercero.get("subcuenta_gasto") or ""))
         texto = f"Vinculado al maestro{f' - cuenta {cuenta}' if cuenta else ''}."
         self._lbl_proveedor_maestro.configure(text=texto)
 
@@ -654,6 +819,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                 "Si no aparece, importa antes el plan desde A3."
             )
         relacion["subcuenta_proveedor"] = subcuenta
+        relacion["subcuenta_gasto"] = self._subcuenta_gasto_seleccionada()
         self._gestor.upsert_tercero_empresa(relacion)
 
     def _alta_proveedor(self):
@@ -693,6 +859,40 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         ttk.Button(botones, text="Cancelar", command=dialog.destroy).pack(side="left", padx=(0, 5))
         ttk.Button(botones, text="Dar de alta", style="Primary.TButton", command=guardar).pack(side="left")
         frame.columnconfigure(1, weight=1)
+
+    def _mostrar_estado_aprendizaje(self):
+        from services.ocr import AprendizajeOcrService
+        cfg = load_app_config()
+        resumen = AprendizajeOcrService(self._gestor, self._codigo).resumen()
+        pendientes = int(resumen.get("pendientes") or 0)
+        proveedores = resumen.get("por_proveedor") or {}
+        lineas = [f"Ejemplos validados pendientes de entrenamiento: {pendientes}"]
+        if proveedores:
+            lineas.append("")
+            lineas.append("Por proveedor (NIF):")
+            lineas.extend(f"- {nif}: {total}" for nif, total in sorted(proveedores.items()))
+        lineas.extend([
+            "",
+            "Cada factura validada se incorpora automaticamente a esta cola.",
+            "La exportacion y el reentrenamiento se realizan despues de revisar una muestra suficiente.",
+        ])
+        dialog = tk.Toplevel(self.winfo_toplevel())
+        dialog.title("Aprendizaje OCR")
+        dialog.transient(self.winfo_toplevel())
+        ttk.Label(dialog, text="\n".join(lineas), justify="left", wraplength=600).pack(padx=14, pady=14)
+        actions = ttk.Frame(dialog); actions.pack(fill="x", padx=14, pady=(0, 14))
+        def exportar():
+            try:
+                resultado = AprendizajeOcrService(self._gestor, self._codigo).exportar_a_blob(
+                    connection_string=str(cfg.get("azure_storage_connection_string") or ""),
+                    container=str(cfg.get("azure_ocr_training_container") or "facturas-entrenamiento"),
+                )
+                messagebox.showinfo("Aprendizaje OCR", f"Documentos subidos: {resultado['subidos']}\nOmitidos: {resultado['omitidos']}\n\nAhora revisa y etiqueta los PDF en Document Intelligence Studio.", parent=dialog)
+                dialog.destroy()
+            except Exception as exc:
+                messagebox.showerror("Aprendizaje OCR", str(exc), parent=dialog)
+        ttk.Button(actions, text="Exportar pendientes a Azure", command=exportar).pack(side="left")
+        ttk.Button(actions, text="Cerrar", command=dialog.destroy).pack(side="right")
 
     def _cargar_linea_iva_en_editor(self, _event=None):
         seleccion = self._tv_iva.selection()
@@ -790,6 +990,14 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             merged = dict(doc)
             if factura:
                 merged.update({k: v for k, v in factura.items() if k not in ("id", "estado")})
+            # El asiento vive en la proyeccion contable; mostrarlo en OCR
+            # evita tener que abrir Contabilidad para comprobarlo.
+            try:
+                contable = self._gestor.get_factura_recibida_doc(str(doc["id"])) or {}
+                if contable:
+                    merged["numero_asiento"] = contable.get("numero_asiento") or ""
+            except Exception:
+                merged["numero_asiento"] = ""
             enriquecidos.append(merged)
 
         tv = self._tvs.get(estado)
@@ -805,6 +1013,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                 doc.get("numero_factura") or "",
                 doc.get("fecha_factura") or "",
                 f"{float(doc.get('total_factura') or 0.0):.2f}",
+                doc.get("numero_asiento") or "",
                 doc.get("motor_ocr") or "",
                 f"{confianza:.0%}" if confianza else "",
                 doc.get("estado") or "",
@@ -857,6 +1066,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         ventana.minsize(1200, 700)
         self._revision_window = ventana
         self._editor_activo = True
+        estado_revision = str(doc.get("estado") or "").strip().lower()
         ventana.protocol("WM_DELETE_WINDOW", self._cerrar_ventana_revision)
 
         cabecera = ttk.Frame(ventana, padding=(12, 8))
@@ -876,6 +1086,34 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         self._build_editor(self._crear_editor_desplazable(editor_shell))
         self._cargar_factura_en_editor(str(doc.get("id") or ""))
         self._mostrar_preview(doc)
+        if estado_revision in ("pendiente_contabilizar", "contabilizada"):
+            self._bloquear_editor_revision(editor_shell, permitir_error=(estado_revision == "pendiente_contabilizar"))
+
+    def _bloquear_editor_revision(self, contenedor, *, permitir_error: bool):
+        """Impide cambios en documentos ya revisados/contabilizados."""
+        def recorrer(widget):
+            for hijo in widget.winfo_children():
+                if isinstance(hijo, (ttk.Entry, ttk.Combobox, ttk.Button, ttk.Treeview)):
+                    try:
+                        hijo.configure(state="disabled")
+                    except tk.TclError:
+                        pass
+                recorrer(hijo)
+        recorrer(contenedor)
+        if permitir_error:
+            ttk.Button(
+                contenedor, text="Pasar a errores para editar",
+                command=self._pasar_revision_a_error,
+            ).pack(anchor="w", padx=12, pady=(0, 8))
+
+    def _pasar_revision_a_error(self):
+        doc = self._doc_seleccionado
+        if not doc:
+            return
+        doc["estado"] = "error"
+        self._gestor.upsert_documento_ocr(doc)
+        self._cerrar_ventana_revision()
+        self._refresh_all()
 
     def _cerrar_ventana_revision(self):
         if self._revision_window and self._revision_window.winfo_exists():
@@ -900,6 +1138,13 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             return
 
         self._factura_seleccionada = factura
+        self._marcas_campos = {}
+        try:
+            ejemplo = self._gestor.get_ejemplo_aprendizaje_ocr(str(factura["id"]))
+            if ejemplo and ejemplo.get("marcas_json"):
+                self._marcas_campos = json.loads(ejemplo["marcas_json"])
+        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+            self._marcas_campos = {}
         self._proveedor_id_seleccionado = str(factura.get("proveedor_id") or "")
         self._cargar_maestro_proveedores(self._proveedor_id_seleccionado)
         relacion = (
@@ -908,6 +1153,9 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         )
         self._cargar_subcuentas_plan_empresa(
             str((relacion or {}).get("subcuenta_proveedor") or "")
+        )
+        self._cargar_subcuentas_gasto(
+            str((relacion or {}).get("subcuenta_gasto") or factura.get("cuenta_gasto") or "")
         )
         self._tipo_operacion_iva_var.set(
             str(factura.get("tipo_operacion_iva") or "INTERIOR_DEDUCIBLE")
@@ -966,6 +1214,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         self._proveedor_id_seleccionado = ""
         self._proveedor_var.set("")
         self._subcuenta_plan_var.set("")
+        self._subcuenta_gasto_var.set("")
         self._tipo_operacion_iva_var.set("INTERIOR_DEDUCIBLE")
         self._lbl_proveedor_maestro.configure(text="")
 
@@ -1035,6 +1284,17 @@ class UIFacturasRecibidasOcr(ttk.Frame):
 
         if changed:
             self._refresh_all()
+            # Al reprocesar desde el boton de la bandeja se actualiza la
+            # propuesta OCR en la base de datos, pero la ventana de revision
+            # ya abierta no recibe automaticamente esos valores. Recargarla
+            # aqui evita que el usuario vea los datos antiguos o en blanco.
+            if self._editor_activo and self._doc_seleccionado:
+                doc_id = str(self._doc_seleccionado.get("id") or "")
+                doc_actualizado = self._gestor.get_documento_ocr(doc_id) if doc_id else None
+                if doc_actualizado:
+                    self._doc_seleccionado = doc_actualizado
+                    self._cargar_factura_en_editor(doc_id)
+                    self._mostrar_preview(doc_actualizado)
 
         if done:
             self._lbl_status.configure(text="")
@@ -1072,11 +1332,22 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             self._ocr_q.put(("done", None))
 
     def _guardar(self):
-        if not self._factura_seleccionada:
+        if not self._factura_seleccionada and not self._doc_seleccionado:
             messagebox.showwarning("OCR", "No hay documento seleccionado.")
             return
-        factura_id = self._factura_seleccionada["id"]
-        payload = dict(self._factura_seleccionada)
+        factura_id = str((self._factura_seleccionada or {}).get("id") or uuid.uuid4())
+        payload = dict(self._factura_seleccionada or {
+            "id": factura_id,
+            "documento_id": str(self._doc_seleccionado.get("id") or ""),
+            "empresa_id": self._empresa_id,
+            "proveedor_id": None,
+            "tipo_operacion_iva": "INTERIOR_DEDUCIBLE",
+            "estado_validacion": "pendiente",
+            "observaciones": "Factura creada desde revision manual OCR.",
+        })
+        payload["id"] = factura_id
+        payload["documento_id"] = str(payload.get("documento_id") or self._doc_seleccionado.get("id") or "")
+        payload["empresa_id"] = str(payload.get("empresa_id") or self._empresa_id)
 
         for campo, var in self._entries.items():
             valor = var.get().strip()
@@ -1113,7 +1384,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                 usuario=getattr(self._session, "usuario", ""),
             )
             for campo, var in self._entries.items():
-                orig = str(self._factura_seleccionada.get(campo) or "")
+                orig = str((self._factura_seleccionada or {}).get(campo) or "")
                 nuevo = var.get().strip()
                 if orig != nuevo:
                     svc.registrar_correccion(factura_id, campo, orig, nuevo)
@@ -1131,6 +1402,13 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                 "tipo_operacion_iva": payload["tipo_operacion_iva"],
             })
         self._factura_seleccionada = payload
+        # Recargar desde SQLite para que el formulario derecho refleje tambien
+        # las facturas creadas manualmente cuando no habia propuesta OCR.
+        marcas_guardadas = dict(self._marcas_campos)
+        # La recarga busca por documento_id, no por el id de la factura OCR.
+        self._cargar_factura_en_editor(str(payload.get("documento_id") or self._doc_seleccionado.get("id") or ""))
+        self._marcas_campos = marcas_guardadas
+        self._dibujar_marcas()
         self._refresh_all()
         messagebox.showinfo("OCR", "Cambios guardados.")
 
@@ -1161,6 +1439,13 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         if doc:
             doc["estado"] = "pendiente_contabilizar"
             self._gestor.upsert_documento_ocr(doc)
+            try:
+                from services.ocr import AprendizajeOcrService
+                AprendizajeOcrService(self._gestor, self._codigo).registrar_factura_validada(
+                    doc, factura, marcas_campos=self._marcas_campos,
+                )
+            except Exception as exc:
+                logger.warning("[aprendizaje OCR] No se pudo registrar ejemplo: %s", exc)
             self._crear_o_actualizar_documento_contable(doc, factura)
         self._refresh_all()
         messagebox.showinfo(
@@ -1189,12 +1474,50 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         except Exception as exc:
             logger.warning("[OCR] No se pudieron obtener las lineas IVA: %s", exc)
         ruta = str(documento.get("ruta_original") or "")
+        # Las cuentas elegidas en la revision OCR viven en la relacion
+        # tercero-empresa. Al proyectar a facturas_recibidas_docs hay que
+        # copiarlas, porque Contabilidad genera el asiento desde ese registro
+        # y, si faltan, aplica 629/472/400 por defecto.
+        relacion = {}
+        proveedor_id = str(factura.get("proveedor_id") or "").strip()
+        # Si el usuario no selecciono manualmente el proveedor, vincularlo por
+        # NIF exacto contra los terceros de la empresa antes de crear el
+        # documento contable. Asi se recuperan sus subcuentas configuradas.
+        if not proveedor_id:
+            nif_ocr = str(factura.get("nif_proveedor") or "").strip()
+            try:
+                nif_norm = normalizar_nif_cif(nif_ocr)
+            except Exception:
+                nif_norm = nif_ocr.upper().replace("-", "").replace(" ", "")
+            if nif_norm:
+                try:
+                    for tercero in self._gestor.listar_terceros_por_empresa(self._codigo, self._ejercicio) or []:
+                        try:
+                            tercero_nif = normalizar_nif_cif(tercero.get("nif"))
+                        except Exception:
+                            tercero_nif = str(tercero.get("nif") or "").upper().replace("-", "").replace(" ", "")
+                        if tercero_nif and tercero_nif == nif_norm:
+                            proveedor_id = str(tercero.get("id") or tercero.get("tercero_id") or "")
+                            factura["proveedor_id"] = proveedor_id
+                            break
+                except Exception:
+                    pass
+        if proveedor_id:
+            try:
+                relacion = self._gestor.get_tercero_empresa(
+                    self._codigo, proveedor_id, self._ejercicio,
+                ) or {}
+            except Exception as exc:
+                logger.warning("[OCR] No se pudo cargar la relacion contable del proveedor: %s", exc)
         payload = {
             "id": doc_id, "codigo_empresa": self._codigo, "ejercicio": self._ejercicio,
             "origen_path": ruta, "pdf_path": ruta if Path(ruta).suffix.lower() == ".pdf" else "",
             "estado_ocr": "procesado", "estado_validacion": "validada",
             "estado_contable": "pendiente_contabilizar", "tipo_documento": "factura_recibida",
             "tercero_id": factura.get("proveedor_id") or "",
+            "cuenta_proveedor": factura.get("cuenta_proveedor") or relacion.get("subcuenta_proveedor") or "",
+            "cuenta_gasto": factura.get("cuenta_gasto") or relacion.get("subcuenta_gasto") or "",
+            "cuenta_iva": factura.get("cuenta_iva") or "",
             "proveedor_nif": factura.get("nif_proveedor") or "",
             "proveedor_nombre": factura.get("nombre_proveedor") or "",
             "proveedor_tipo_operacion_iva": factura.get("tipo_operacion_iva") or "INTERIOR_DEDUCIBLE",
@@ -1267,6 +1590,60 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             logger.debug("[abrir_detalle] %s", exc)
 
     # ── Utilidades ────────────────────────────────────────────────────────────
+
+    def _capturar_asiento_a3(self):
+        """Lee desde A3 el numero de asiento de las facturas exportadas."""
+        from services.import_a3_empresa import leer_numero_asiento_desde_a3
+
+        tv = self._tvs.get("contabilizada")
+        seleccionados = list(tv.selection()) if tv else []
+        if not seleccionados:
+            messagebox.showwarning(
+                "OCR", "Selecciona al menos una factura contabilizada.",
+                parent=self.winfo_toplevel(),
+            )
+            return
+
+        codigo_digitos = "".join(ch for ch in str(self._codigo or "") if ch.isdigit())
+        codigo_a3 = f"E{(codigo_digitos.zfill(5) if codigo_digitos else '00000')[:5]}"
+        ejercicio = int(self._ejercicio)
+        actualizadas, no_encontradas = [], []
+        for documento_id in seleccionados:
+            doc = self._gestor.get_factura_recibida_doc(documento_id)
+            if not doc or doc.get("estado_contable") != "contabilizada":
+                no_encontradas.append(str((doc or {}).get("numero_factura") or documento_id))
+                continue
+            numero = str(doc.get("numero_factura") or "").strip()[:10]
+            descripcion = str(doc.get("descripcion") or f"Su Fra Nº. {numero}").strip()
+            fecha = str(doc.get("fecha_asiento") or doc.get("fecha_factura") or "")
+            mes = None
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+                try:
+                    from datetime import datetime
+                    mes = datetime.strptime(fecha, fmt).month
+                    break
+                except ValueError:
+                    pass
+            asiento = leer_numero_asiento_desde_a3(
+                codigo_a3, ejercicio, numero, descripcion, mes=mes,
+            )
+            if asiento and self._gestor.actualizar_numero_asiento_factura_recibida(
+                self._codigo, documento_id, asiento,
+            ):
+                actualizadas.append(f"{numero} -> asiento {asiento}")
+            else:
+                no_encontradas.append(numero or documento_id)
+
+        self._refresh_all()
+        partes = []
+        if actualizadas:
+            partes.append("Asientos capturados:\n" + "\n".join(actualizadas))
+        if no_encontradas:
+            partes.append(
+                "No encontradas en A3ECO (importa primero el suenlace):\n"
+                + "\n".join(no_encontradas)
+            )
+        messagebox.showinfo("OCR", "\n\n".join(partes) or "Sin cambios.", parent=self.winfo_toplevel())
 
     def _get_selected_id(self) -> str | None:
         try:

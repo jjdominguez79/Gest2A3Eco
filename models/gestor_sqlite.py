@@ -1184,9 +1184,28 @@ class GestorSQLite:
             );
             CREATE INDEX IF NOT EXISTS idx_ocr_corr_factura
                 ON ocr_correcciones(factura_id);
+
+            CREATE TABLE IF NOT EXISTS ocr_aprendizaje_ejemplos (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                empresa_id         TEXT NOT NULL,
+                documento_id       TEXT NOT NULL,
+                factura_id         TEXT NOT NULL UNIQUE,
+                proveedor_nif      TEXT,
+                origen_path        TEXT,
+                datos_validados_json TEXT NOT NULL,
+                estado             TEXT NOT NULL DEFAULT 'pendiente',
+                modelo_destino     TEXT,
+                fecha_validacion   TEXT NOT NULL,
+                fecha_exportacion  TEXT,
+                notas              TEXT,
+                marcas_json        TEXT NOT NULL DEFAULT '{}'
+            );
+            CREATE INDEX IF NOT EXISTS idx_ocr_aprendizaje_empresa
+                ON ocr_aprendizaje_ejemplos(empresa_id, estado, proveedor_nif);
         """)
         self._ensure_column("facturas_recibidas", "pct_fraccion", "INTEGER")
         self._ensure_column("facturas_emitidas", "pct_fraccion", "INTEGER")
+        self._ensure_column("ocr_aprendizaje_ejemplos", "marcas_json", "TEXT NOT NULL DEFAULT '{}'")
         self.conn.commit()
         self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS cuotas_periodicas (
@@ -2537,6 +2556,50 @@ class GestorSQLite:
             out.append(d)
         return out
 
+    def listar_control_facturas_global(self, codigos_empresas: list[str]) -> list[dict]:
+        """Devuelve una proyeccion comun de facturas emitidas y recibidas.
+
+        La consulta recibe explicitamente las empresas visibles para no exponer
+        datos de clientes que no correspondan a la sesion actual. Los filtros de
+        interfaz se aplican sobre esta proyeccion, que es pequena y evita
+        duplicar la semantica de estados en las vistas.
+        """
+        codigos = [str(c).strip() for c in (codigos_empresas or []) if str(c).strip()]
+        if not codigos:
+            return []
+        marks = ",".join("?" for _ in codigos)
+        sql = f"""
+            SELECT
+                'emitida' AS tipo, id, codigo_empresa, ejercicio,
+                TRIM(COALESCE(serie, '') || COALESCE(numero, '')) AS numero_factura,
+                COALESCE(fecha_expedicion, fecha_asiento, '') AS fecha,
+                COALESCE(nombre, '') AS tercero, COALESCE(nif, '') AS nif,
+                COALESCE(descripcion, '') AS descripcion, estado_contable,
+                COALESCE(generada, 0) AS generada, COALESCE(fecha_generacion, '') AS fecha_generacion,
+                COALESCE(numero_asiento, '') AS numero_asiento,
+                '' AS estado_validacion, '' AS estado_ocr, lineas_json,
+                COALESCE(borrador, 0) AS borrador, NULL AS total
+            FROM facturas_emitidas_docs
+            WHERE codigo_empresa IN ({marks}) AND COALESCE(borrador, 0)=0
+            UNION ALL
+            SELECT
+                'recibida' AS tipo, id, codigo_empresa, ejercicio,
+                COALESCE(numero_factura, '') AS numero_factura,
+                COALESCE(fecha_factura, fecha_asiento, '') AS fecha,
+                COALESCE(proveedor_nombre, '') AS tercero, COALESCE(proveedor_nif, '') AS nif,
+                COALESCE(descripcion, '') AS descripcion, estado_contable,
+                COALESCE(generada, 0) AS generada, COALESCE(fecha_generacion, '') AS fecha_generacion,
+                COALESCE(numero_asiento, '') AS numero_asiento,
+                COALESCE(estado_validacion, '') AS estado_validacion,
+                COALESCE(estado_ocr, '') AS estado_ocr, NULL AS lineas_json,
+                0 AS borrador, total
+            FROM facturas_recibidas_docs
+            WHERE codigo_empresa IN ({marks})
+            ORDER BY fecha DESC, codigo_empresa, numero_factura
+        """
+        cur = self.conn.execute(sql, tuple(codigos) * 2)
+        return [self._row_to_dict(row) for row in cur.fetchall()]
+
     def _normalizar_campos_factura_emitida(self, factura: dict):
         if not str(factura.get("tipo_operacion") or "").strip():
             factura["tipo_operacion"] = "01"
@@ -3127,6 +3190,68 @@ class GestorSQLite:
         self.conn.execute("DELETE FROM documentos_archivo WHERE id=?", (documento_id,))
         self.conn.commit()
         return documento
+
+    def devolver_facturas_recibidas_a_documentacion(
+        self, codigo_empresa: str, ejercicio: int | None = None,
+        incluir_contabilizadas: bool = False,
+    ) -> dict:
+        """Archiva y retira del circuito OCR facturas aun no contabilizadas.
+
+        Se recuperan cargas del flujo OCR anterior sin borrar ni mover el PDF
+        original: se conserva su ruta y se crea la ficha en Gestion documental.
+        Las facturas ya enlazadas o contabilizadas se excluyen expresamente,
+        salvo que se solicite de forma expresa para depurar pruebas.
+        """
+        categoria = self.conn.execute(
+            "SELECT id FROM categorias_documentales "
+            "WHERE carpeta='FACTURAS_RECIBIDAS' AND activa=1 LIMIT 1"
+        ).fetchone()
+        if not categoria:
+            raise ValueError("No existe la categoria documental Facturas recibidas.")
+        clauses = ["codigo_empresa=?"]
+        if not incluir_contabilizadas:
+            clauses.extend([
+                "COALESCE(generada, 0)=0",
+                "COALESCE(estado_contable, '') IN ('', 'pendiente_contabilizar')",
+            ])
+        params: list = [str(codigo_empresa)]
+        if ejercicio is not None:
+            clauses.append("ejercicio=?")
+            params.append(int(ejercicio))
+        rows = self.conn.execute(
+            "SELECT * FROM facturas_recibidas_docs WHERE " + " AND ".join(clauses),
+            tuple(params),
+        ).fetchall()
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        archivadas = omitidas = 0
+        for raw in rows:
+            doc = self._row_to_dict(raw)
+            ruta = str(doc.get("pdf_path") or doc.get("origen_path") or "").strip()
+            if not ruta:
+                omitidas += 1
+                continue
+            existente = self.conn.execute(
+                "SELECT id FROM documentos_archivo WHERE codigo_empresa=? AND ruta=? LIMIT 1",
+                (str(codigo_empresa), ruta),
+            ).fetchone()
+            if not existente:
+                nombre = Path(ruta).name or str(doc.get("numero_factura") or "Factura recibida")
+                self.conn.execute(
+                    """INSERT INTO documentos_archivo
+                       (id,codigo_empresa,ejercicio,categoria_id,nombre_original,nombre_archivo,
+                        ruta,hash_archivo,tamano,mime_type,origen,estado,created_at,updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        str(uuid.uuid4()), str(codigo_empresa), int(doc.get("ejercicio") or 0),
+                        categoria["id"], nombre, nombre, ruta,
+                        f"recuperado-ocr:{doc.get('id')}", None, "application/pdf",
+                        "recuperacion_ocr", "archivado", now, now,
+                    ),
+                )
+            self.conn.execute("DELETE FROM facturas_recibidas_docs WHERE id=?", (str(doc["id"]),))
+            archivadas += 1
+        self.conn.commit()
+        return {"archivadas": archivadas, "omitidas_sin_ruta": omitidas}
 
     def vincular_documentos_graph_comunicacion(self, graph_message_id: str) -> None:
         row = self.conn.execute(
@@ -5276,6 +5401,78 @@ class GestorSQLite:
         )
         cols = [c[0] for c in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    # ocr_aprendizaje_ejemplos -------------------------------------------------
+
+    def upsert_ejemplo_aprendizaje_ocr(self, ejemplo: dict) -> int:
+        """Guarda la version validada de una factura para futuro entrenamiento.
+
+        El PDF no se copia ni se envia a ningun proveedor desde aqui. La cola
+        local separa la validacion humana de la exportacion/reentrenamiento.
+        """
+        cur = self.conn.execute(
+            """
+            INSERT INTO ocr_aprendizaje_ejemplos
+              (empresa_id, documento_id, factura_id, proveedor_nif, origen_path,
+               datos_validados_json, estado, modelo_destino, fecha_validacion,
+               fecha_exportacion, notas, marcas_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(factura_id) DO UPDATE SET
+              proveedor_nif=excluded.proveedor_nif,
+              origen_path=excluded.origen_path,
+              datos_validados_json=excluded.datos_validados_json,
+              estado=excluded.estado,
+              modelo_destino=excluded.modelo_destino,
+              fecha_validacion=excluded.fecha_validacion,
+              fecha_exportacion='',
+              notas=excluded.notas,
+              marcas_json=excluded.marcas_json
+            """,
+            (
+                str(ejemplo["empresa_id"]), str(ejemplo["documento_id"]),
+                str(ejemplo["factura_id"]), ejemplo.get("proveedor_nif", ""),
+                ejemplo.get("origen_path", ""), ejemplo["datos_validados_json"],
+                ejemplo.get("estado", "pendiente"), ejemplo.get("modelo_destino", ""),
+                ejemplo["fecha_validacion"], ejemplo.get("fecha_exportacion", ""),
+                ejemplo.get("notas", ""), ejemplo.get("marcas_json", "{}"),
+            ),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def get_ejemplo_aprendizaje_ocr(self, factura_id: str) -> dict | None:
+        cur = self.conn.execute(
+            "SELECT * FROM ocr_aprendizaje_ejemplos WHERE factura_id=?",
+            (str(factura_id),),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    def listar_ejemplos_aprendizaje_ocr(self, empresa_id: str, estado: str = "pendiente") -> list[dict]:
+        cur = self.conn.execute(
+            "SELECT * FROM ocr_aprendizaje_ejemplos WHERE empresa_id=? AND estado=? ORDER BY id",
+            (str(empresa_id), str(estado)),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    def resumen_aprendizaje_ocr(self, empresa_id: str) -> dict:
+        cur = self.conn.execute(
+            """
+            SELECT estado, proveedor_nif, COUNT(*) AS total
+            FROM ocr_aprendizaje_ejemplos
+            WHERE empresa_id=?
+            GROUP BY estado, proveedor_nif
+            """,
+            (str(empresa_id),),
+        )
+        filas = [dict(r) for r in cur.fetchall()]
+        pendientes = sum(int(r["total"] or 0) for r in filas if r["estado"] == "pendiente")
+        por_proveedor = {}
+        for fila in filas:
+            if fila["estado"] == "pendiente":
+                clave = str(fila["proveedor_nif"] or "Sin NIF")
+                por_proveedor[clave] = por_proveedor.get(clave, 0) + int(fila["total"] or 0)
+        return {"pendientes": pendientes, "por_proveedor": por_proveedor}
         self.conn.commit()
 
     # ── Notificaciones Electronicas ──────────────────────────────────────────
@@ -7082,22 +7279,57 @@ class GestorSQLite:
             )
         return cursor.rowcount > 0
 
-    def resumen_buzon_responsable(self, usuario_id: int) -> dict[str, int]:
+    def resumen_buzon_responsable(
+        self, usuario_id: int, mailbox: str | None = None,
+    ) -> dict[str, int]:
+        """Resume el buzon de un responsable.
+
+        Cuando se indica ``mailbox``, el resumen usa el mismo criterio que el
+        listado de la interfaz: solo cuenta conversaciones cuyo ultimo mensaje
+        pertenece a ese buzon, y pendientes sin cliente de ese mismo buzon.
+        """
         counts = {"pendiente": 0, "respondido": 0, "gestionado": 0}
-        rows = self.conn.execute(
+        mailbox = str(mailbox or "").strip().lower()
+        filtro_comunicaciones = ""
+        filtro_pendientes = ""
+        params: list[object] = [usuario_id]
+        if mailbox:
+            filtro_comunicaciones = """
+                AND COALESCE((
+                    SELECT LOWER(mm.mailbox)
+                    FROM comunicaciones_mensajes mm
+                    WHERE mm.comunicacion_id=comunicaciones.id
+                      AND mm.mailbox IS NOT NULL AND mm.mailbox<>''
+                    ORDER BY mm.fecha DESC LIMIT 1
+                ), '')=?
             """
+            params.append(mailbox)
+        params.append(usuario_id)
+        if mailbox:
+            filtro_pendientes = " AND LOWER(COALESCE(mailbox,''))=?"
+            params.append(mailbox)
+        rows = self.conn.execute(
+            f"""
             SELECT estado,COUNT(*) total FROM (
-              SELECT COALESCE(estado,'pendiente') estado
+              SELECT CASE
+                       WHEN LOWER(COALESCE(estado,'')) IN ('', 'abierta', 'abierto', 'sin_gestionar') THEN 'pendiente'
+                       ELSE LOWER(estado)
+                     END estado
               FROM comunicaciones
               WHERE responsable_usuario_id=? AND descartado=0
+              {filtro_comunicaciones}
               UNION ALL
-              SELECT COALESCE(estado,'pendiente') estado
+              SELECT CASE
+                       WHEN LOWER(COALESCE(estado,'')) IN ('', 'abierta', 'abierto', 'sin_gestionar') THEN 'pendiente'
+                       ELSE LOWER(estado)
+                     END estado
               FROM comunicaciones_sin_asignar
               WHERE responsable_usuario_id=? AND descartado=0
                 AND sin_cliente_confirmado=1
+              {filtro_pendientes}
             ) pendientes GROUP BY estado
             """,
-            (usuario_id, usuario_id),
+            tuple(params),
         ).fetchall()
         for row in rows:
             estado = str(row["estado"] or "pendiente")

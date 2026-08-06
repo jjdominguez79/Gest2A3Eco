@@ -965,8 +965,6 @@ class UIComunicacionesGlobal(ttk.Frame):
         def worker():
             saved = ignored = duplicates = 0
             errors = []
-            ocr_sent = 0
-            ocr_errors = []
             service = GestionDocumentalService(self._gestor)
             for graph_id in graph_ids:
                 item = self._pending[graph_id]
@@ -989,18 +987,6 @@ class UIComunicacionesGlobal(ttk.Frame):
                     ignored += len(summary.ignored)
                     duplicates += len(summary.duplicates)
                     errors.extend(summary.errors)
-                    for documento_id in summary.ocr_document_ids:
-                        try:
-                            ocr_result = service.enviar_a_ocr(
-                                documento_id, usuario=str(self._session.user.nombre),
-                            )
-                            if ocr_result.get("estado") == "error":
-                                detalle = "; ".join(ocr_result.get("errores") or [])
-                                ocr_errors.append(detalle or f"Documento {documento_id}")
-                            else:
-                                ocr_sent += 1
-                        except Exception as exc:
-                            ocr_errors.append(str(exc))
             result = None
             if not errors:
                 result = self._gestor.asignar_comunicaciones_pendientes(
@@ -1011,14 +997,14 @@ class UIComunicacionesGlobal(ttk.Frame):
             try:
                 self.after(
                     0, self._finish_assignment,
-                    result, saved, ignored, duplicates, ocr_sent, errors, ocr_errors,
+                    result, saved, ignored, duplicates, errors,
                 )
             except (RuntimeError, tk.TclError):
                 pass
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _finish_assignment(self, result, saved, ignored, duplicates, ocr_sent, errors, ocr_errors):
+    def _finish_assignment(self, result, saved, ignored, duplicates, errors):
         self.winfo_toplevel().configure(cursor="")
         if errors:
             messagebox.showerror(
@@ -1032,16 +1018,10 @@ class UIComunicacionesGlobal(ttk.Frame):
             "Asignacion",
             f"Mensajes asignados: {len(result['asignadas'])}\n"
             f"Documentos guardados: {saved}\nAdjuntos no guardados: {ignored}\n"
-            f"Duplicados detectados: {duplicates}\n"
-            f"Facturas enviadas a OCR: {ocr_sent}", parent=self,
+            f"Duplicados detectados: {duplicates}\n\n"
+            "Los documentos quedan archivados. Puedes enviarlos a OCR manualmente "
+            "desde Gestion documental cuando el modulo este configurado.", parent=self,
         )
-        if ocr_errors:
-            messagebox.showwarning(
-                "OCR",
-                "La comunicacion se ha archivado, pero alguna factura no pudo procesarse:\n- "
-                + "\n- ".join(ocr_errors[:8]),
-                parent=self,
-            )
 
     def _assign_without_client(self):
         selected = self._pending_tree.selection()

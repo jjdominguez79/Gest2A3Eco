@@ -26,6 +26,7 @@ from utils.utilidades import (
 )
 from views.ui_auth import ChangePasswordDialog, UILogin
 from views.ui_config_monedas import MonedasDialog
+from views.ui_configuracion import abrir_configuracion_email, abrir_configuracion_ocr
 from views.ui_postgres_config import PostgresConfigDialog
 from views.ui_tramites_dgt_public import UITramitesDgtPublicForm
 from views.ui_theme import aplicar_icono_ventana, aplicar_tema
@@ -70,6 +71,7 @@ def _build_header(
     on_open_config=None,
     on_open_users=None,
     on_open_terceros=None,
+    on_open_control_facturas=None,
     on_open_notificaciones=None,
     on_open_tramites_dgt=None,
     on_logout=None,
@@ -193,6 +195,8 @@ def _build_header(
         _hbtn("Empresas", on_open_empresas)
     if on_open_terceros:
         _hbtn("Terceros", on_open_terceros)
+    if on_open_control_facturas:
+        _hbtn("Control facturas", on_open_control_facturas)
     if on_open_notificaciones:
         _hbtn("Notificaciones/Certificados", on_open_notificaciones)
     if on_open_tramites_dgt:
@@ -433,6 +437,9 @@ def main():
         menu.add_command(label="Seleccionar base de datos", command=_on_cambiar_db)
         menu.add_command(label="Seleccionar plantillas Word", command=_on_cambiar_plantillas_word)
         menu.add_command(label="Configurar monedas y clave desmarcar", command=_on_config_monedas)
+        menu.add_separator()
+        menu.add_command(label="Configurar OCR (Azure)", command=lambda: abrir_configuracion_ocr(root))
+        menu.add_command(label="Configurar email (SMTP)", command=lambda: abrir_configuracion_email(root))
         try:
             x = root.winfo_rootx() + root.winfo_width() - 220
             y = root.winfo_rooty() + 110
@@ -454,6 +461,7 @@ def main():
             on_cambiar_empresa=controller.open_buzon,
             on_open_empresas=controller.open_empresas,
             on_open_terceros=controller.open_terceros,
+            on_open_control_facturas=controller.open_control_facturas_global,
             on_open_notificaciones=controller.open_notificaciones_global,
             on_open_tramites_dgt=(
                 controller.open_tramites_dgt

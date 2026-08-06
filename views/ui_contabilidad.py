@@ -63,16 +63,6 @@ class UIContabilidad(ttk.Frame):
         ttk.Button(bar, text="Generar asiento", style="Primary.TButton", command=self.controller.generar_asiento).pack(side=tk.LEFT)
         ttk.Button(bar, text="Editar asiento", command=self.controller.editar_asiento).pack(side=tk.LEFT, padx=(6, 0))
         ttk.Button(bar, text="Exportar suenlace.dat", command=self.controller.exportar_suenlace).pack(side=tk.LEFT, padx=6)
-        ttk.Button(
-            bar, text="Capturar nº asiento de A3",
-            command=self.controller.capturar_numero_asiento_desde_a3,
-        ).pack(side=tk.LEFT)
-        ttk.Label(bar, text="Nº asiento").pack(side=tk.LEFT, padx=(14, 4))
-        self.var_numero_asiento = tk.StringVar()
-        ttk.Entry(bar, textvariable=self.var_numero_asiento, width=12).pack(side=tk.LEFT)
-        ttk.Label(bar, text="Fecha asiento").pack(side=tk.LEFT, padx=(14, 4))
-        self.var_fecha_asiento = tk.StringVar()
-        ttk.Entry(bar, textvariable=self.var_fecha_asiento, width=12).pack(side=tk.LEFT)
 
         ttk.Label(bar, text="Mostrar").pack(side=tk.LEFT, padx=(14, 4))
         self.cmb_filtro_recibidas = ttk.Combobox(
@@ -300,6 +290,7 @@ class UIContabilidad(ttk.Frame):
         target = self._pending_select_id
         self._pending_select_id = None
         self.clear_preview()
+        self.tv.selection_remove(self.tv.selection())
         if target and str(target) in self.tv.get_children():
             self._load_document_async(str(target))
         self._loading_label.configure(text="")
@@ -473,8 +464,6 @@ class UIContabilidad(ttk.Frame):
         return list(self.tv.selection())
 
     def load_document(self, doc: dict, asiento: dict | None):
-        self.var_numero_asiento.set(str(doc.get("numero_asiento") or ""))
-        self.var_fecha_asiento.set(str(doc.get("fecha_asiento") or doc.get("fecha_factura") or ""))
         self.lbl_resumen.configure(
             text=(
                 f"Proveedor: {doc.get('proveedor_nombre', '')}    "
@@ -502,16 +491,8 @@ class UIContabilidad(ttk.Frame):
             self.tv.focus(iid)
 
     def clear_preview(self):
-        self.var_numero_asiento.set("")
-        self.var_fecha_asiento.set("")
         self.lbl_resumen.configure(text="")
         self.tv_asiento.delete(*self.tv_asiento.get_children())
-
-    def get_numero_asiento(self):
-        return self.var_numero_asiento.get().strip()
-
-    def get_fecha_asiento(self):
-        return self.var_fecha_asiento.get().strip()
 
     def edit_document_asiento(self, doc: dict, asiento: dict, catalogo: list[dict]):
         AsientoRecibidaDialog(

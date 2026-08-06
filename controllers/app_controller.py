@@ -86,7 +86,9 @@ class AppController:
                 rows = self._gestor.obtener_nuevos_avisos_correo(
                     usuario_id, mailbox,
                 )
-                summary = self._gestor.resumen_buzon_responsable(usuario_id)
+                summary = self._gestor.resumen_buzon_responsable(
+                    usuario_id, mailbox=mailbox,
+                )
                 error = None
             except Exception as exc:
                 rows, summary, error = [], None, exc
@@ -199,6 +201,13 @@ class AppController:
         """Vuelve al listado general de empresas desde cualquier modulo."""
         self._show(self.build_panel_general)
 
+    def open_control_facturas_global(self):
+        from views.ui_control_facturas_global import UIControlFacturasGlobal
+        self._show(lambda parent: UIControlFacturasGlobal(
+            parent, self._gestor, self._empresa_service,
+            on_open_empresa=self.open_company_module,
+        ))
+
     def build_comunicaciones_global(self, parent):
         from views.ui_comunicaciones_global import UIComunicacionesGlobal
 
@@ -231,6 +240,7 @@ class AppController:
             self._session,
             on_open_dashboard=self.open_company_dashboard,
             on_create_company=on_create_company,
+            on_open_control_facturas=self.open_control_facturas_global,
         )
 
     # ------------------------------------------------------------------ empresa
@@ -314,6 +324,7 @@ class AppController:
             self._empresa_service,
             codigo,
             ejercicio,
+            usuario_id=getattr(self._session.user, "id", None),
             on_open_facturacion=lambda: self._open_module_in_shell(codigo, ejercicio, "facturacion"),
             on_open_contabilidad=lambda: self._open_module_in_shell(codigo, ejercicio, "contabilidad"),
             on_open_importaciones=lambda: self._open_module_in_shell(codigo, ejercicio, "importaciones"),

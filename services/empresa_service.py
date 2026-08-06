@@ -74,7 +74,7 @@ class EmpresaService:
             "next": companies[current + 1] if current + 1 < len(companies) else None,
         }
 
-    def get_dashboard_context(self, codigo: str, ejercicio: int) -> dict:
+    def get_dashboard_context(self, codigo: str, ejercicio: int, usuario_id: int | None = None) -> dict:
         empresa = self._gestor.get_empresa(codigo, ejercicio) or {}
         ejercicios = []
         try:
@@ -133,6 +133,16 @@ class EmpresaService:
                     "remitente": ultimo.get("remitente") or "",
                     "estado": comunicacion.get("estado") or "abierta",
                 })
+        # El panel debe reflejar el buzon del usuario conectado, no el total
+        # de conversaciones de toda la empresa.
+        if usuario_id is not None:
+            try:
+                from utils.utilidades import load_app_config
+                mailbox = str((load_app_config().get("microsoft_graph") or {}).get("shared_mailbox") or "Oficina@gestinem.es").strip().lower()
+                resumen_usuario = self._gestor.resumen_buzon_responsable(int(usuario_id), mailbox=mailbox)
+                pendientes_correo = int(resumen_usuario.get("pendiente") or 0)
+            except Exception:
+                pass
         actividad_comunicaciones.sort(key=lambda item: self._sort_datetime(item.get("fecha")), reverse=True)
         pendientes_ocr = sum(
             1 for doc in recibidas_docs

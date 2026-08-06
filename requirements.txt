@@ -12,6 +12,7 @@ pywin32
 requests
 msal
 azure-ai-documentintelligence
+azure-storage-blob
 packaging
 cryptography
 psycopg[binary]

@@ -307,6 +307,28 @@ def test_resumen_buzon_cuenta_cada_estado(tmp_path):
     }
 
 
+def test_resumen_buzon_filtra_el_mismo_mailbox_que_el_listado(tmp_path):
+    gestor = GestorSQLite(tmp_path / "test.db")
+    gestor.upsert_empresa({
+        "codigo": "E00001", "ejercicio": 2026, "nombre": "Cliente",
+    })
+    for graph_id, mailbox in (("oficina", "oficina@gestinem.es"),
+                              ("otro", "otro@gestinem.es")):
+        gestor.guardar_comunicacion_sin_asignar({
+            "graph_message_id": graph_id,
+            "mailbox": mailbox,
+            "remitente": "cliente@example.com",
+            "asunto": "Consulta",
+        })
+        gestor.asignar_comunicacion_pendiente(graph_id, "E00001", 7, "ANA")
+
+    resumen = gestor.resumen_buzon_responsable(7, "oficina@gestinem.es")
+
+    assert resumen == {
+        "pendiente": 1, "respondido": 0, "gestionado": 0, "total": 1,
+    }
+
+
 def test_busca_empresa_en_lista_de_varios_emails(tmp_path):
     gestor = GestorSQLite(tmp_path / "test.db")
     gestor.upsert_empresa({

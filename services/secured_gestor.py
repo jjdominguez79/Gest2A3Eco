@@ -168,10 +168,12 @@ class SecuredGestorSQLite:
                 raise PermissionError("Solo puedes etiquetar comunicaciones de tu buzon.")
         return self._base.actualizar_etiqueta_comunicacion(comunicacion_id, etiqueta)
 
-    def resumen_buzon_responsable(self, usuario_id: int):
+    def resumen_buzon_responsable(
+        self, usuario_id: int, mailbox: str | None = None,
+    ):
         if int(usuario_id) != int(self.security.session.user.id):
             raise PermissionError("No puedes consultar el resumen de otro usuario.")
-        return self._base.resumen_buzon_responsable(usuario_id)
+        return self._base.resumen_buzon_responsable(usuario_id, mailbox=mailbox)
 
     def descartar_comunicaciones(
         self, graph_message_ids: list[str], usuario_nombre: str, motivo: str = "",
