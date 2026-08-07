@@ -104,3 +104,18 @@ def test_firma_global_y_categoria_firmas_existen(tmp_path):
     )
     assert gestor.listar_todas_firma_solicitudes()[0]["codigo_empresa"] == "__GLOBAL__"
     gestor.conn.close()
+
+
+def test_puede_marcar_pendiente_reenviar_y_finalizar(tmp_path):
+    gestor, pdf, provider, service = _service(tmp_path)
+    solicitud = service.crear_solicitud(
+        "__GLOBAL__", 2026, str(pdf), [{"orden": 1, "email": "externo@example.com"}],
+    )
+    service.enviar(solicitud)
+    service.finalizar(solicitud)
+    assert gestor.get_firma_solicitud(solicitud)["estado"] == "finalizado"
+    service.marcar_pendiente(solicitud)
+    assert gestor.get_firma_solicitud(solicitud)["estado"] == "borrador"
+    service.enviar(solicitud)
+    assert len(provider.envios) == 2
+    gestor.conn.close()

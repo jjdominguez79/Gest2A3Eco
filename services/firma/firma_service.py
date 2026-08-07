@@ -127,6 +127,24 @@ class FirmaService:
             raise ValueError("Solo se puede reenviar una solicitud activa.")
         return self.provider.reenviar(solicitud["request_id"])
 
+    def marcar_pendiente(self, solicitud_id: str) -> dict:
+        """Cierra la solicitud anterior y deja una nueva preparada para enviar."""
+        solicitud = self._require(solicitud_id)
+        self.repository.actualizar(solicitud_id, {
+            "estado": "borrador", "request_id": None, "ruta_firmado": None,
+            "ruta_registro_firma": None, "sha256_firmado": None,
+            "sha256_registro_firma": None, "documento_firmado_archivo_id": None,
+        })
+        self.repository.evento(solicitud_id, "marcada_pendiente", "", "")
+        return {**solicitud, "estado": "borrador", "request_id": None}
+
+    def finalizar(self, solicitud_id: str) -> dict:
+        """Marca el expediente como finalizado sin borrar su auditoria ni archivos."""
+        solicitud = self._require(solicitud_id)
+        self.repository.actualizar(solicitud_id, {"estado": "finalizado"})
+        self.repository.evento(solicitud_id, "finalizada", "", "")
+        return {**solicitud, "estado": "finalizado"}
+
     def listar(self, codigo_empresa, ejercicio, estado="", texto=""):
         return self.repository.listar(codigo_empresa, ejercicio, estado, texto)
 

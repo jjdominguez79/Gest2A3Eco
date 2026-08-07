@@ -3366,7 +3366,8 @@ class GestorSQLite:
             "ruta_envio", "request_id", "estado", "ruta_firmado", "ruta_registro_firma",
             "sha256_firmado", "sha256_registro_firma", "security_hash",
             "signing_log_security_hash", "documento_firmado_archivo_id",
-            "enviado_at", "firmado_at",
+            "enviado_at", "firmado_at", "request_id", "ruta_firmado",
+            "ruta_registro_firma", "sha256_firmado", "sha256_registro_firma",
         }
         cambios = {key: value for key, value in cambios.items() if key in permitidos}
         if not cambios:

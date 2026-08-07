@@ -37,7 +37,7 @@ class UIFirmasGlobal(ttk.Frame):
         self._status = tk.StringVar(value="Todos")
         ttk.Combobox(
             filters, textvariable=self._status, state="readonly", width=18,
-            values=("Todos", "Pendientes", "Enviados", "Firmados"),
+            values=("Todos", "Pendientes", "Enviados", "Firmados", "Finalizados"),
         ).pack(side="left", padx=5)
         ttk.Label(filters, text="Buscar").pack(side="left", padx=(14, 0))
         self._search = tk.StringVar()
@@ -65,6 +65,8 @@ class UIFirmasGlobal(ttk.Frame):
         ttk.Button(actions, text="Abrir documento", command=self._open_selected).pack(side="left", padx=6)
         ttk.Button(actions, text="Reenviar", command=self._resend_selected).pack(side="left")
         ttk.Button(actions, text="Cancelar", command=self._cancel_selected).pack(side="left", padx=6)
+        ttk.Button(actions, text="Marcar pendiente", command=self._mark_pending).pack(side="left", padx=6)
+        ttk.Button(actions, text="Dar por finalizado", command=self._finish_selected).pack(side="left")
         self._summary = ttk.Label(actions, text="")
         self._summary.pack(side="right")
 
@@ -75,6 +77,7 @@ class UIFirmasGlobal(ttk.Frame):
             "Pendientes": {"borrador", "incidencia", "rechazado"},
             "Enviados": {"enviado", "parcialmente_firmado"},
             "Firmados": {"firmado"},
+            "Finalizados": {"finalizado"},
         }
         if estado in grupos:
             rows = [row for row in rows if str(row.get("estado") or "") in grupos[estado]]
@@ -96,6 +99,8 @@ class UIFirmasGlobal(ttk.Frame):
         estado = str(estado or "")
         if estado == "firmado":
             return "Firmado"
+        if estado == "finalizado":
+            return "Finalizado"
         if estado in {"enviado", "parcialmente_firmado"}:
             return "Enviado"
         return "Pendiente"
@@ -178,6 +183,12 @@ class UIFirmasGlobal(ttk.Frame):
 
     def _cancel_selected(self):
         self._simple_action("cancelar", "Solicitud cancelada.")
+
+    def _mark_pending(self):
+        self._simple_action("marcar_pendiente", "Solicitud preparada para un nuevo envio.")
+
+    def _finish_selected(self):
+        self._simple_action("finalizar", "Expediente marcado como finalizado.")
 
     def _simple_action(self, action, success):
         row = self._selected()
