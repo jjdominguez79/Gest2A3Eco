@@ -49,7 +49,7 @@ class FirmaService:
             "ruta_origen": str(path),
             "ruta_envio": envio,
             "hash_origen": self._sha256(path),
-            "external_id": f"gd:{solicitud_id}",
+            "external_id": f"firma:{solicitud_id}",
             "asunto": asunto.strip(),
             "mensaje": mensaje.strip(),
             "usar_sms": usar_sms,
@@ -93,7 +93,7 @@ class FirmaService:
         if estado == "firmado" and destino_evidencias:
             evidencia = self.provider.descargar_evidencias(
                 solicitud["request_id"], destino_evidencias,
-                Path(solicitud["nombre_documento"]).stem,
+                f"{Path(solicitud['nombre_documento']).stem}_{str(solicitud_id)[:8]}",
             )
             cambios.update({
                 "ruta_firmado": evidencia.get("ruta_firmado"),

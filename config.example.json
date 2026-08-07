@@ -21,7 +21,7 @@
   "signrequest_use_sms": false,
   "firma_habilitada": true,
   "firma_permitir_cliente_local": false,
-  "firma_categoria_firmados": "CONTRATOS",
+  "firma_categoria_firmados": "FIRMAS",
   "firma_max_mb": 15,
   "firma_webhook_secret": "",
   "monedas": [

@@ -86,6 +86,9 @@ class AuthorizationService:
     def can_manage_tramites_dgt(self) -> bool:
         return self._session.has_global_permission("tramites_dgt")
 
+    def can_manage_firmas(self) -> bool:
+        return self._session.has_global_permission("firmas")
+
     def permission_for_company(self, codigo_empresa: str) -> CompanyPermission:
         return self._session.permission_for_company(codigo_empresa)
 
@@ -107,6 +110,11 @@ class AuthorizationService:
         if self.can_manage_tramites_dgt():
             return
         raise PermissionError(message or "Acceso restringido al modulo Trámites DGT.")
+
+    def ensure_firmas(self, message: str | None = None) -> None:
+        if self.can_manage_firmas():
+            return
+        raise PermissionError(message or "Acceso restringido al modulo Firmas.")
 
     def ensure_company_read(self, codigo_empresa: str, message: str | None = None) -> None:
         if self.can_read_company(codigo_empresa):

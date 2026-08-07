@@ -265,7 +265,7 @@ def _normalize_config(data: dict) -> dict:
     out.setdefault("signrequest_use_sms", False)
     out.setdefault("firma_habilitada", True)
     out.setdefault("firma_permitir_cliente_local", False)
-    out.setdefault("firma_categoria_firmados", "CONTRATOS")
+    out.setdefault("firma_categoria_firmados", "FIRMAS")
     out.setdefault("firma_max_mb", 15)
     out.setdefault("firma_webhook_secret", "")
     out.setdefault("dataprius_api_key", "")

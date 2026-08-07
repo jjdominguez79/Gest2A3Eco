@@ -67,7 +67,9 @@ class UIGestionDocumental(ttk.Frame):
         actions.pack(fill="x", pady=(8, 0))
         ttk.Button(actions, text="Abrir", command=self._open).pack(side="left")
         ttk.Button(actions, text="Enviar a OCR de facturas", command=self._send_ocr).pack(side="left", padx=6)
-        ttk.Button(actions, text="Enviar a firma", command=self._send_firma).pack(side="left", padx=6)
+        security = getattr(self._gestor, "security", None)
+        if security is None or security.can_manage_firmas():
+            ttk.Button(actions, text="Enviar a firma", command=self._send_firma).pack(side="left", padx=6)
         ttk.Button(actions, text="Eliminar", command=self._delete).pack(side="left")
         self._summary = ttk.Label(actions, text="")
         self._summary.pack(side="right")
@@ -150,6 +152,9 @@ class UIGestionDocumental(ttk.Frame):
         threading.Thread(target=worker, daemon=True).start()
 
     def _send_firma(self):
+        security = getattr(self._gestor, "security", None)
+        if security is not None:
+            security.ensure_firmas()
         selected = list(self._tree.selection())
         if len(selected) != 1:
             messagebox.showwarning("Gestion documental", "Selecciona un unico PDF.", parent=self)

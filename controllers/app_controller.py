@@ -210,7 +210,11 @@ class AppController:
 
     def open_firmas_global(self):
         from views.ui_firmas_global import UIFirmasGlobal
-
+        try:
+            self.authorization.ensure_firmas()
+        except PermissionError as exc:
+            messagebox.showerror("Firmas", str(exc), parent=self._content.winfo_toplevel())
+            return
         self._show(lambda parent: UIFirmasGlobal(parent, self._gestor, session=self._session))
 
     def build_comunicaciones_global(self, parent):
@@ -246,7 +250,7 @@ class AppController:
             on_open_dashboard=self.open_company_dashboard,
             on_create_company=on_create_company,
             on_open_control_facturas=self.open_control_facturas_global,
-            on_open_firmas=self.open_firmas_global,
+            on_open_firmas=(self.open_firmas_global if self.authorization.can_manage_firmas() else None),
         )
 
     # ------------------------------------------------------------------ empresa
