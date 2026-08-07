@@ -37,7 +37,8 @@ class SignRequestBackend:
             email = str(firmante.get("email") or "").strip()
             if not email:
                 raise ProviderError("Todos los firmantes deben tener email.")
-            item = {"email": email, "needs_to_sign": True, "order": int(firmante.get("order") or 0)}
+            item = {"email": email, "needs_to_sign": True,
+                    "order": int(firmante.get("order") or firmante.get("orden") or 0)}
             telefono = str(firmante.get("telefono") or "").strip()
             if usar_sms and telefono:
                 item["verify_phone_number"] = telefono
@@ -84,6 +85,18 @@ class SignRequestBackend:
             raise ProviderError("La solicitud ya esta firmada y no se puede anular.")
         return self._json(
             "POST", f"{self.base_url}/signrequests/{request_id}/cancel_signrequest/"
+        )
+
+    def eliminar(self, request_id: str) -> dict:
+        solicitud = self._json("GET", f"{self.base_url}/signrequests/{request_id}/")
+        document_url = str(solicitud.get("document") or "")
+        if not document_url:
+            raise ProviderError("SignRequest no devolvio el documento remoto.")
+        return self._json("DELETE", document_url)
+
+    def reenviar(self, request_id: str) -> dict:
+        return self._json(
+            "POST", f"{self.base_url}/signrequests/{request_id}/resend_signrequest_email/"
         )
 
     def evidencia(self, request_id: str, tipo: str) -> bytes:

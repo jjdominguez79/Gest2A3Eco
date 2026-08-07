@@ -27,6 +27,7 @@ CARPETAS_DOCUMENTALES = {
     "BANCARIA": "Bancaria",
     "MERCANTIL": "Mercantil",
     "CONTRATOS": "Contratos",
+    "FIRMAS": "Firmas",
     "NOTIFICACIONES": "Notificaciones",
     "OTROS": "Otros",
 }

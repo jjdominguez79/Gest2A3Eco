@@ -19,6 +19,11 @@
   "signrequest_gestor_telefono": "",
   "signrequest_base_url": "https://signrequest.com/api/v1",
   "signrequest_use_sms": false,
+  "firma_habilitada": true,
+  "firma_permitir_cliente_local": false,
+  "firma_categoria_firmados": "FIRMAS",
+  "firma_max_mb": 15,
+  "firma_webhook_secret": "",
   "monedas": [
     {
       "codigo": "EUR",

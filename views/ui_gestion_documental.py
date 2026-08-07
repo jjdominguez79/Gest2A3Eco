@@ -7,6 +7,10 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from services.gestion_documental_service import GestionDocumentalService
+from services.firma.firma_service import FirmaService
+from services.firma.provider import build_firma_provider
+from utils.utilidades import load_app_config
+from views.ui_firma_dialog import UIFirmaDialog
 
 
 class UIGestionDocumental(ttk.Frame):
@@ -63,6 +67,9 @@ class UIGestionDocumental(ttk.Frame):
         actions.pack(fill="x", pady=(8, 0))
         ttk.Button(actions, text="Abrir", command=self._open).pack(side="left")
         ttk.Button(actions, text="Enviar a OCR de facturas", command=self._send_ocr).pack(side="left", padx=6)
+        security = getattr(self._gestor, "security", None)
+        if security is None or security.can_manage_firmas():
+            ttk.Button(actions, text="Enviar a firma", command=self._send_firma).pack(side="left", padx=6)
         ttk.Button(actions, text="Eliminar", command=self._delete).pack(side="left")
         self._summary = ttk.Label(actions, text="")
         self._summary.pack(side="right")
@@ -143,6 +150,66 @@ class UIGestionDocumental(ttk.Frame):
             self.after(0, self._finish_ocr, sent, errors)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _send_firma(self):
+        security = getattr(self._gestor, "security", None)
+        if security is not None:
+            security.ensure_firmas()
+        selected = list(self._tree.selection())
+        if len(selected) != 1:
+            messagebox.showwarning("Gestion documental", "Selecciona un unico PDF.", parent=self)
+            return
+        documento = self._rows[selected[0]]
+        ruta = str(documento.get("ruta") or "")
+        if not ruta.lower().endswith(".pdf"):
+            messagebox.showwarning("Firma", "Solo se pueden enviar documentos PDF.", parent=self)
+            return
+        try:
+            terceros = self._gestor.listar_terceros_por_empresa(self._codigo, self._ejercicio)
+        except Exception:
+            terceros = []
+        cfg = load_app_config()
+        remitente = {
+            "nombre": cfg.get("signrequest_gestor_email") or cfg.get("signrequest_from_email") or "Remitente",
+            "email": cfg.get("signrequest_gestor_email") or cfg.get("signrequest_from_email") or "",
+            "telefono": cfg.get("signrequest_gestor_telefono") or "",
+        }
+        dialog = UIFirmaDialog(self, ruta, terceros=terceros, remitente=remitente)
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        self.winfo_toplevel().configure(cursor="watch")
+
+        def worker():
+            try:
+                provider = build_firma_provider(cfg)
+                for firmante in dialog.result["firmantes"]:
+                    if firmante.get("es_remitente") and not firmante.get("email"):
+                        firmante["email"] = str(
+                            getattr(provider, "gestor_email", "")
+                            or getattr(provider, "from_email", "")
+                            or ""
+                        )
+                service = FirmaService(self._gestor, provider=provider, max_mb=cfg.get("firma_max_mb", 15))
+                solicitud_id = service.crear_solicitud(
+                    self._codigo, self._ejercicio, ruta, dialog.result["firmantes"],
+                    documento_archivo_id=str(documento["id"]), asunto=dialog.result["asunto"],
+                    mensaje=dialog.result["mensaje"], usar_sms=dialog.result["usar_sms"],
+                    zonas=dialog.result["zonas"], creado_por=getattr(getattr(self._session, "user", None), "nombre", ""),
+                )
+                service.enviar(solicitud_id)
+                self.after(0, self._finish_firma, "Solicitud enviada correctamente.", "")
+            except Exception as exc:
+                self.after(0, self._finish_firma, "", str(exc))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_firma(self, ok, error):
+        self.winfo_toplevel().configure(cursor="")
+        if error:
+            messagebox.showerror("Firma", error, parent=self)
+        else:
+            messagebox.showinfo("Firma", ok, parent=self)
 
     def _delete(self):
         selected = list(self._tree.selection())

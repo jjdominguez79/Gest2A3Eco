@@ -39,6 +39,7 @@ class UserAdminDialog(tk.Toplevel):
         self.var_password = tk.StringVar()
         self.var_force_password_change = tk.BooleanVar(value=False)
         self.var_perm_tramites_dgt = tk.BooleanVar(value=False)
+        self.var_perm_firmas = tk.BooleanVar(value=False)
         self._current_user_id = None
         self._company_rows: list[tuple[str, tk.StringVar]] = []
         self._build()
@@ -108,6 +109,11 @@ class UserAdminDialog(tk.Toplevel):
             text="Tramites DGT",
             variable=self.var_perm_tramites_dgt,
         ).pack(anchor="w", padx=8, pady=6)
+        ttk.Checkbutton(
+            global_frame,
+            text="Firma documental",
+            variable=self.var_perm_firmas,
+        ).pack(anchor="w", padx=8, pady=(0, 6))
 
         password_frame = ttk.Frame(right)
         password_frame.grid(row=5, column=0, columnspan=2, sticky="ew", padx=10, pady=4)
@@ -204,6 +210,7 @@ class UserAdminDialog(tk.Toplevel):
         self.var_password.set("")
         self.var_force_password_change.set(False if not user else bool(user.get("must_change_password")))
         self.var_perm_tramites_dgt.set("tramites_dgt" in (global_permissions or set()))
+        self.var_perm_firmas.set("firmas" in (global_permissions or set()))
         self._render_company_permissions(company_rows, assigned_permissions)
         self._toggle_company_permissions()
 
@@ -244,6 +251,8 @@ class UserAdminDialog(tk.Toplevel):
         global_permissions = set()
         if self.var_perm_tramites_dgt.get():
             global_permissions.add("tramites_dgt")
+        if self.var_perm_firmas.get():
+            global_permissions.add("firmas")
         return {
             "id": self._current_user_id,
             "username": self.var_username.get().strip(),
