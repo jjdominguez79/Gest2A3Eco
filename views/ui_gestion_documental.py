@@ -178,6 +178,13 @@ class UIGestionDocumental(ttk.Frame):
         def worker():
             try:
                 provider = build_firma_provider(cfg)
+                for firmante in dialog.result["firmantes"]:
+                    if firmante.get("es_remitente") and not firmante.get("email"):
+                        firmante["email"] = str(
+                            getattr(provider, "gestor_email", "")
+                            or getattr(provider, "from_email", "")
+                            or ""
+                        )
                 service = FirmaService(self._gestor, provider=provider, max_mb=cfg.get("firma_max_mb", 15))
                 solicitud_id = service.crear_solicitud(
                     self._codigo, self._ejercicio, ruta, dialog.result["firmantes"],
