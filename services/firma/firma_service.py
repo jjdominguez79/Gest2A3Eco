@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -130,6 +129,43 @@ class FirmaService:
 
     def listar(self, codigo_empresa, ejercicio, estado="", texto=""):
         return self.repository.listar(codigo_empresa, ejercicio, estado, texto)
+
+    def archivar_evidencias(self, solicitud_id: str, categoria_id: str = "firmas") -> str | None:
+        """Registra las evidencias en Gestion documental cuando hay cliente."""
+        solicitud = self._require(solicitud_id)
+        codigo = str(solicitud.get("codigo_empresa") or "")
+        if not codigo or codigo == "__GLOBAL__":
+            return None
+        categoria = next(
+            (item for item in self.gestor.listar_categorias_documentales(False)
+             if item.get("id") == categoria_id), None,
+        )
+        if not categoria or not solicitud.get("ruta_firmado"):
+            return None
+        ids = []
+        for ruta in (solicitud.get("ruta_firmado"), solicitud.get("ruta_registro_firma")):
+            path = Path(str(ruta or ""))
+            if not path.is_file():
+                continue
+            digest = self._sha256(path)
+            existente = self.gestor.conn.execute(
+                "SELECT id FROM documentos_archivo WHERE codigo_empresa=? AND hash_archivo=? LIMIT 1",
+                (codigo, digest),
+            ).fetchone()
+            if existente:
+                ids.append(str(existente["id"]))
+                continue
+            ids.append(self.gestor.registrar_documento_archivo({
+                "id": str(uuid.uuid4()), "codigo_empresa": codigo,
+                "ejercicio": int(solicitud["ejercicio"]), "categoria_id": categoria_id,
+                "nombre_original": path.name, "nombre_archivo": path.name,
+                "ruta": str(path), "hash_archivo": digest, "tamano": path.stat().st_size,
+                "mime_type": "application/pdf", "origen": "firma", "estado": "firmado",
+                "creado_por": solicitud.get("creado_por") or "",
+            }))
+        if ids:
+            self.repository.actualizar(solicitud_id, {"documento_firmado_archivo_id": ids[0]})
+        return ids[0] if ids else None
 
     def _require(self, solicitud_id):
         solicitud = self.repository.get(solicitud_id)

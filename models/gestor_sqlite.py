@@ -611,6 +611,7 @@ CREATE TABLE IF NOT EXISTS firma_solicitudes (
   sha256_registro_firma TEXT,
   security_hash TEXT,
   signing_log_security_hash TEXT,
+  documento_firmado_archivo_id TEXT,
   creado_por TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -724,6 +725,9 @@ class GestorSQLite:
         self.conn.executescript(SCHEMA + AUTH_SCHEMA)
         self.conn.commit()
         self._seed_categorias_documentales()
+        self._ensure_column(
+            "firma_solicitudes", "documento_firmado_archivo_id", "TEXT"
+        )
         self.conn.commit()
         self._ensure_column("empresas", "cuenta_bancaria", "TEXT")
         self._ensure_column("empresas", "cuentas_bancarias", "TEXT")
@@ -1334,6 +1338,7 @@ class GestorSQLite:
             ("bancaria", "Bancaria", "BANCARIA", 0, 50),
             ("mercantil", "Mercantil", "MERCANTIL", 0, 60),
             ("contratos", "Contratos", "CONTRATOS", 0, 70),
+            ("firmas", "Firmas", "FIRMAS", 0, 75),
             ("notificaciones", "Notificaciones", "NOTIFICACIONES", 0, 80),
             ("otros", "Otros", "OTROS", 0, 90),
         )
@@ -3341,11 +3346,27 @@ class GestorSQLite:
         ).fetchall()
         return [self._row_to_dict(row) for row in rows]
 
+    def listar_todas_firma_solicitudes(self, estado: str = "", texto: str = "") -> list[dict]:
+        clauses = ["1=1"]
+        params: list = []
+        if estado:
+            clauses.append("estado=?")
+            params.append(str(estado))
+        if texto:
+            clauses.append("(nombre_documento LIKE ? OR asunto LIKE ? OR codigo_empresa LIKE ?)")
+            params.extend([f"%{texto}%", f"%{texto}%", f"%{texto}%"])
+        rows = self.conn.execute(
+            "SELECT * FROM firma_solicitudes WHERE " + " AND ".join(clauses)
+            + " ORDER BY created_at DESC", tuple(params),
+        ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
     def actualizar_firma_solicitud(self, solicitud_id: str, cambios: dict) -> None:
         permitidos = {
             "ruta_envio", "request_id", "estado", "ruta_firmado", "ruta_registro_firma",
             "sha256_firmado", "sha256_registro_firma", "security_hash",
-            "signing_log_security_hash", "enviado_at", "firmado_at",
+            "signing_log_security_hash", "documento_firmado_archivo_id",
+            "enviado_at", "firmado_at",
         }
         cambios = {key: value for key, value in cambios.items() if key in permitidos}
         if not cambios:

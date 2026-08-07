@@ -90,3 +90,17 @@ def test_actualizar_descarga_evidencias_y_guarda_estado(tmp_path):
     assert Path(estado["ruta_firmado"]).exists()
     assert provider.envios
     gestor.conn.close()
+
+
+def test_firma_global_y_categoria_firmas_existen(tmp_path):
+    gestor = GestorSQLite(tmp_path / "global.db")
+    categorias = {item["id"] for item in gestor.listar_categorias_documentales()}
+    assert "firmas" in categorias
+    gestor.crear_firma_solicitud(
+        {"id": "global-1", "codigo_empresa": "__GLOBAL__", "ejercicio": 2026,
+         "nombre_documento": "libre.pdf", "ruta_origen": "C:/libre.pdf",
+         "hash_origen": "a" * 64},
+        [{"orden": 1, "email": "externo@example.com"}], [],
+    )
+    assert gestor.listar_todas_firma_solicitudes()[0]["codigo_empresa"] == "__GLOBAL__"
+    gestor.conn.close()

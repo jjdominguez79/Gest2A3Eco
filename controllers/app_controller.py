@@ -208,6 +208,11 @@ class AppController:
             on_open_empresa=self.open_company_module,
         ))
 
+    def open_firmas_global(self):
+        from views.ui_firmas_global import UIFirmasGlobal
+
+        self._show(lambda parent: UIFirmasGlobal(parent, self._gestor, session=self._session))
+
     def build_comunicaciones_global(self, parent):
         from views.ui_comunicaciones_global import UIComunicacionesGlobal
 
@@ -241,6 +246,7 @@ class AppController:
             on_open_dashboard=self.open_company_dashboard,
             on_create_company=on_create_company,
             on_open_control_facturas=self.open_control_facturas_global,
+            on_open_firmas=self.open_firmas_global,
         )
 
     # ------------------------------------------------------------------ empresa
