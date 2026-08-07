@@ -946,6 +946,15 @@ class ReplyMailDialog(tk.Toplevel):
         self._on_sent = on_sent
         self._attachments: list[str] = []
         self._mark_answered = tk.BooleanVar(value=True)
+        cfg = load_app_config().get("microsoft_graph") or {}
+        self._shared_mailbox = str(
+            cfg.get("shared_mailbox") or "Oficina@gestinem.es"
+        ).strip()
+        self._is_admin = bool(self._session and self._session.is_admin())
+        self._sender = tk.StringVar(
+            value="Mi cuenta de Microsoft 365" if self._is_admin
+            else f"Buzon compartido: {self._shared_mailbox}"
+        )
         self._build()
 
     def _build(self):
@@ -955,22 +964,29 @@ class ReplyMailDialog(tk.Toplevel):
         ttk.Label(form, text=self._message.get("remitente") or "").grid(row=0, column=1, sticky="w", pady=4)
         ttk.Label(form, text="Asunto", font=("Segoe UI", 9, "bold")).grid(row=1, column=0, sticky="w", pady=4)
         ttk.Label(form, text=self._message.get("asunto") or "").grid(row=1, column=1, sticky="w", pady=4)
-        ttk.Label(form, text="Mensaje").grid(row=2, column=0, sticky="nw", pady=(10, 4))
+        ttk.Label(form, text="Enviar desde").grid(row=2, column=0, sticky="w", pady=4)
+        sender_values = [f"Buzon compartido: {self._shared_mailbox}"]
+        if self._is_admin:
+            sender_values.insert(0, "Mi cuenta de Microsoft 365")
+        ttk.Combobox(
+            form, textvariable=self._sender, state="readonly", values=sender_values,
+        ).grid(row=2, column=1, sticky="ew", pady=4)
+        ttk.Label(form, text="Mensaje").grid(row=3, column=0, sticky="nw", pady=(10, 4))
         self._body = tk.Text(form, wrap="word", height=16)
-        self._body.grid(row=2, column=1, sticky="nsew", pady=(10, 4))
-        ttk.Button(form, text="Adjuntar archivos", command=self._attach).grid(row=3, column=0, sticky="w", pady=4)
+        self._body.grid(row=3, column=1, sticky="nsew", pady=(10, 4))
+        ttk.Button(form, text="Adjuntar archivos", command=self._attach).grid(row=4, column=0, sticky="w", pady=4)
         self._files = ttk.Label(form, text="Sin adjuntos")
-        self._files.grid(row=3, column=1, sticky="w", pady=4)
+        self._files.grid(row=4, column=1, sticky="w", pady=4)
         ttk.Checkbutton(
             form, text="Marcar la comunicacion como respondida al enviar",
             variable=self._mark_answered,
-        ).grid(row=4, column=1, sticky="w", pady=(8, 0))
+        ).grid(row=5, column=1, sticky="w", pady=(8, 0))
         actions = ttk.Frame(form)
-        actions.grid(row=5, column=1, sticky="e", pady=14)
+        actions.grid(row=6, column=1, sticky="e", pady=14)
         ttk.Button(actions, text="Cancelar", command=self.destroy).pack(side="left", padx=5)
         ttk.Button(actions, text="Enviar respuesta", command=self._send).pack(side="left")
         form.columnconfigure(1, weight=1)
-        form.rowconfigure(2, weight=1)
+        form.rowconfigure(3, weight=1)
 
     def _attach(self):
         chosen = filedialog.askopenfilenames(parent=self, title="Seleccionar adjuntos")
@@ -983,26 +999,47 @@ class ReplyMailDialog(tk.Toplevel):
         if not plain:
             messagebox.showwarning("Correo", "Escribe el mensaje de respuesta.", parent=self)
             return
-        graph_id = str(self._message.get("graph_message_id") or "").strip()
         mailbox = str(self._message.get("mailbox") or "").strip()
-        if not graph_id or not mailbox:
+        recipient = str(self._message.get("remitente") or "").strip()
+        send_personal = self._sender.get() == "Mi cuenta de Microsoft 365"
+        graph_id = str(self._message.get("graph_message_id") or "").strip()
+        if not recipient:
+            messagebox.showerror("Correo", "El mensaje no contiene un remitente valido.", parent=self)
+            return
+        if not send_personal and (not graph_id or not mailbox):
             messagebox.showerror("Correo", "No se dispone del identificador de Microsoft 365 para responder.", parent=self)
             return
         user = getattr(self._session, "user", None)
-        signature = construir_firma_oficina(getattr(user, "nombre", ""))
+        signature = (
+            load_user_config().get("email_signature_html") or FIRMA_PERSONAL_HTML
+            if send_personal
+            else construir_firma_oficina(getattr(user, "nombre", ""))
+        )
         body_html = construir_cuerpo_html(plain, signature, "")
         try:
-            result = GraphMailService().reply(
-                mailbox=mailbox, message_id=graph_id, body=body_html,
-                attachments=self._attachments,
-            )
+            service = GraphMailService()
+            if send_personal:
+                subject = self._message.get("asunto") or ""
+                if not subject.lower().startswith("re:"):
+                    subject = f"Re: {subject}"
+                result = service.send(
+                    sender="me", to=[recipient], subject=subject, body=body_html,
+                    attachments=self._attachments,
+                )
+                sent_mailbox = result.sender
+            else:
+                result = service.reply(
+                    mailbox=mailbox, message_id=graph_id, body=body_html,
+                    attachments=self._attachments,
+                )
+                sent_mailbox = mailbox
         except Exception as exc:
             messagebox.showerror("No se pudo enviar", str(exc), parent=self)
             return
         self._gestor.registrar_envio_comunicacion({
             "comunicacion_id": self._comunicacion_id,
             "codigo_empresa": self._codigo,
-            "asunto": self._message.get("asunto") or "",
+            "asunto": subject if send_personal else self._message.get("asunto") or "",
             "remitente": result.sender,
             "destinatarios": [self._message.get("remitente") or ""],
             "cc": [], "cuerpo_html": body_html,
@@ -1012,7 +1049,7 @@ class ReplyMailDialog(tk.Toplevel):
             "usuario_id": getattr(user, "id", None),
             "usuario_nombre": getattr(user, "nombre", None),
             "adjuntos": self._attachments,
-            "mailbox": mailbox,
+            "mailbox": sent_mailbox,
         })
         if self._mark_answered.get():
             self._gestor.cambiar_estado_comunicacion(
