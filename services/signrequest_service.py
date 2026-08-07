@@ -164,3 +164,22 @@ class SignRequestClient:
 
     def cancelar(self, request_id: str) -> dict:
         return self._request("POST", f"/signrequests/{request_id}/cancel_signrequest/")
+
+    def eliminar(self, request_id: str) -> dict:
+        solicitud = self._request("GET", f"/signrequests/{request_id}/")
+        document_url = str(solicitud.get("document") or "")
+        if not document_url:
+            raise ValueError("SignRequest no devolvio el documento remoto.")
+        return self._delete_url(document_url)
+
+    def _delete_url(self, url: str) -> dict:
+        response = self._http.request(
+            "DELETE", url,
+            headers={"Authorization": f"Token {self.token}"},
+            timeout=self.timeout,
+        )
+        if response.status_code >= 400:
+            raise ValueError(f"SignRequest rechazo la eliminacion ({response.status_code}).")
+        if response.status_code == 204 or not response.content:
+            return {}
+        return response.json()

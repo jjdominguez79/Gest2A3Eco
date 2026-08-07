@@ -67,6 +67,7 @@ class UIFirmasGlobal(ttk.Frame):
         ttk.Button(actions, text="Cancelar", command=self._cancel_selected).pack(side="left", padx=6)
         ttk.Button(actions, text="Marcar pendiente", command=self._mark_pending).pack(side="left", padx=6)
         ttk.Button(actions, text="Dar por finalizado", command=self._finish_selected).pack(side="left")
+        ttk.Button(actions, text="Eliminar", command=self._delete_selected).pack(side="left", padx=6)
         self._summary = ttk.Label(actions, text="")
         self._summary.pack(side="right")
 
@@ -235,6 +236,16 @@ class UIFirmasGlobal(ttk.Frame):
 
     def _finish_selected(self):
         self._simple_action("finalizar", "Expediente marcado como finalizado.")
+
+    def _delete_selected(self):
+        row = self._selected()
+        if not row:
+            return
+        if not messagebox.askyesno(
+                "Firmas", "Se eliminara el expediente local y el documento remoto de SignRequest.\n\n"
+                "El PDF original se conservara. ¿Continuar?", parent=self):
+            return
+        self._simple_action("eliminar", "Expediente eliminado local y remotamente.")
 
     def _simple_action(self, action, success):
         row = self._selected()

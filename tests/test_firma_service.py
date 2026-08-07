@@ -10,6 +10,7 @@ from services.firma.firma_service import FirmaService
 class FakeProvider:
     def __init__(self):
         self.envios = []
+        self.eliminados = []
 
     def enviar_documento(self, ruta, firmantes, asunto, mensaje, external_id,
                          callback_url="", usar_sms=False):
@@ -21,6 +22,10 @@ class FakeProvider:
 
     def cancelar(self, request_id):
         return {"cancelled": True}
+
+    def eliminar(self, request_id):
+        self.eliminados.append(request_id)
+        return {"deleted": True}
 
     def reenviar(self, request_id):
         return {"resent": True}
@@ -153,4 +158,22 @@ def test_cancelar_pendiente_no_llama_al_proveedor_y_cierra_el_expediente(tmp_pat
     assert resultado["local"] is True
     assert gestor.get_firma_solicitud(solicitud)["estado"] == "cancelado"
     assert provider.envios == []
+    gestor.conn.close()
+
+
+def test_eliminar_borra_solicitud_y_artifactos_pero_conserva_el_original(tmp_path):
+    gestor, pdf, provider, service = _service(tmp_path)
+    solicitud = service.crear_solicitud(
+        "__GLOBAL__", 2026, str(pdf),
+        [{"orden": 1, "email": "uno@example.com"}],
+        zonas=[{"pagina": 0, "x": .1, "y": .1, "ancho": .2, "alto": .1, "firmante": 0}],
+    )
+    service.enviar(solicitud)
+    envio = Path(gestor.get_firma_solicitud(solicitud)["ruta_envio"])
+    assert envio.exists()
+    service.eliminar(solicitud)
+    assert not envio.exists()
+    assert pdf.exists()
+    assert gestor.get_firma_solicitud(solicitud) is None
+    assert provider.eliminados == ["firma-1"]
     gestor.conn.close()

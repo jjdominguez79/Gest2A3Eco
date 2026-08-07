@@ -3404,6 +3404,14 @@ class GestorSQLite:
             )
         self.conn.commit()
 
+    def eliminar_firma_solicitud(self, solicitud_id: str) -> None:
+        solicitud_id = str(solicitud_id)
+        self.conn.execute("DELETE FROM firma_eventos WHERE solicitud_id=?", (solicitud_id,))
+        self.conn.execute("DELETE FROM firma_firmantes WHERE solicitud_id=?", (solicitud_id,))
+        self.conn.execute("DELETE FROM firma_zonas WHERE solicitud_id=?", (solicitud_id,))
+        self.conn.execute("DELETE FROM firma_solicitudes WHERE id=?", (solicitud_id,))
+        self.conn.commit()
+
     def registrar_firma_evento(self, solicitud_id: str, tipo: str,
                                detalle_json: str = "", usuario: str = "") -> None:
         self.conn.execute(

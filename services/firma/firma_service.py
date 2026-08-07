@@ -180,6 +180,28 @@ class FirmaService:
         self.repository.evento(solicitud_id, "finalizada", "", "")
         return {**solicitud, "estado": "finalizado"}
 
+    def eliminar(self, solicitud_id: str) -> dict:
+        """Elimina la solicitud y los artefactos generados, conservando el original."""
+        solicitud = self._require(solicitud_id)
+        if solicitud.get("request_id"):
+            if self.provider is None:
+                raise RuntimeError("Firma electronica no disponible: configure el backend.")
+            self.provider.eliminar(solicitud["request_id"])
+        rutas = {
+            solicitud.get("ruta_envio"), solicitud.get("ruta_firmado"),
+            solicitud.get("ruta_registro_firma"),
+        }
+        origen = str(solicitud.get("ruta_origen") or "")
+        for ruta in rutas:
+            path = Path(str(ruta or ""))
+            if str(path) and str(path) != origen and path.is_file():
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+        self.repository.eliminar(solicitud_id)
+        return {"deleted": True, "remote": bool(solicitud.get("request_id"))}
+
     def listar(self, codigo_empresa, ejercicio, estado="", texto=""):
         return self.repository.listar(codigo_empresa, ejercicio, estado, texto)
 
