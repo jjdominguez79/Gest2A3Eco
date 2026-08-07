@@ -142,3 +142,15 @@ def test_editar_pendiente_actualiza_firmantes_y_zonas_antes_de_reenviar(tmp_path
     assert len(provider.envios) == 2
     assert provider.envios[-1]["firmantes"][0]["email"] == "nuevo@example.com"
     gestor.conn.close()
+
+
+def test_cancelar_pendiente_no_llama_al_proveedor_y_cierra_el_expediente(tmp_path):
+    gestor, pdf, provider, service = _service(tmp_path)
+    solicitud = service.crear_solicitud(
+        "__GLOBAL__", 2026, str(pdf), [{"orden": 1, "email": "uno@example.com"}],
+    )
+    resultado = service.cancelar(solicitud)
+    assert resultado["local"] is True
+    assert gestor.get_firma_solicitud(solicitud)["estado"] == "cancelado"
+    assert provider.envios == []
+    gestor.conn.close()

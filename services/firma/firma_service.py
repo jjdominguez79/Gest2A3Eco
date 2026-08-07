@@ -109,11 +109,17 @@ class FirmaService:
         return {**solicitud, **cambios, "proveedor": estado_raw}
 
     def cancelar(self, solicitud_id: str) -> dict:
-        if self.provider is None:
-            raise RuntimeError("Firma electronica no disponible: configure el backend.")
         solicitud = self._require(solicitud_id)
         if solicitud.get("estado") == "firmado":
             raise ValueError("No se puede cancelar una solicitud ya firmada.")
+        # Una solicitud marcada como pendiente ya no tiene peticion remota.
+        # En ese caso solo hay que cerrar el expediente localmente.
+        if not solicitud.get("request_id"):
+            self.repository.actualizar(solicitud_id, {"estado": "cancelado"})
+            self.repository.evento(solicitud_id, "cancelada", json.dumps({"remota": False}), "")
+            return {"cancelled": True, "local": True}
+        if self.provider is None:
+            raise RuntimeError("Firma electronica no disponible: configure el backend.")
         result = self.provider.cancelar(solicitud["request_id"])
         self.repository.actualizar(solicitud_id, {"estado": "cancelado"})
         self.repository.evento(solicitud_id, "cancelada", json.dumps(result), "")
