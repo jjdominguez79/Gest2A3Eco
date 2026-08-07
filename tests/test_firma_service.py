@@ -116,6 +116,6 @@ def test_puede_marcar_pendiente_reenviar_y_finalizar(tmp_path):
     assert gestor.get_firma_solicitud(solicitud)["estado"] == "finalizado"
     service.marcar_pendiente(solicitud)
     assert gestor.get_firma_solicitud(solicitud)["estado"] == "borrador"
-    service.enviar(solicitud)
+    service.reenviar(solicitud)
     assert len(provider.envios) == 2
     gestor.conn.close()

@@ -123,6 +123,8 @@ class FirmaService:
         if self.provider is None:
             raise RuntimeError("Firma electronica no disponible: configure el backend.")
         solicitud = self._require(solicitud_id)
+        if solicitud.get("estado") == "borrador":
+            return self.enviar(solicitud_id)
         if solicitud.get("estado") not in {"enviado", "parcialmente_firmado"}:
             raise ValueError("Solo se puede reenviar una solicitud activa.")
         return self.provider.reenviar(solicitud["request_id"])
