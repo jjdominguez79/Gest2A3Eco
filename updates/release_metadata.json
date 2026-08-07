@@ -1,6 +1,6 @@
 {
-  "version": "1.5.0",
-  "tag": "v1.5.0",
-  "changelog": "Incorpora una gestion documental y OCR mas completa, con migracion de PDF de facturas emitidas y mejoras del maestro contable.\n\nMejora Comunicaciones: adjuntos visibles y abribles, respuestas en hilo, identificacion del remitente y mejor visualizacion de conversaciones.\n\nOptimiza el despliegue en Railway para que solo se active cuando se modifique el backend.",
-  "force_update": false
+  "version": "1.5.1",
+  "tag": "v1.5.1",
+  "changelog": "Se ha implementado el envio de documentos para firma electrónica. Mejoras en la lectura OCR de facturas recibidas. Mejoras varias.",
+  "force_update": true
 }
