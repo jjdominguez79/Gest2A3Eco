@@ -588,6 +588,70 @@ CREATE TABLE IF NOT EXISTS comunicaciones_adjuntos_decisiones (
   created_at TEXT NOT NULL,
   PRIMARY KEY (graph_message_id, graph_attachment_id)
 );
+CREATE TABLE IF NOT EXISTS firma_solicitudes (
+  id TEXT PRIMARY KEY,
+  codigo_empresa TEXT NOT NULL,
+  ejercicio INTEGER NOT NULL,
+  origen TEXT NOT NULL DEFAULT 'archivo',
+  documento_archivo_id TEXT,
+  nombre_documento TEXT NOT NULL,
+  ruta_origen TEXT NOT NULL,
+  ruta_envio TEXT,
+  hash_origen TEXT NOT NULL,
+  proveedor TEXT NOT NULL DEFAULT 'signrequest',
+  request_id TEXT,
+  external_id TEXT,
+  asunto TEXT,
+  mensaje TEXT,
+  usar_sms INTEGER NOT NULL DEFAULT 0,
+  estado TEXT NOT NULL DEFAULT 'borrador',
+  ruta_firmado TEXT,
+  ruta_registro_firma TEXT,
+  sha256_firmado TEXT,
+  sha256_registro_firma TEXT,
+  security_hash TEXT,
+  signing_log_security_hash TEXT,
+  creado_por TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  enviado_at TEXT,
+  firmado_at TEXT,
+  UNIQUE(proveedor, request_id)
+);
+CREATE INDEX IF NOT EXISTS idx_firma_solicitudes_empresa
+  ON firma_solicitudes(codigo_empresa, ejercicio, estado, created_at DESC);
+CREATE TABLE IF NOT EXISTS firma_firmantes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  solicitud_id TEXT NOT NULL,
+  orden INTEGER NOT NULL DEFAULT 1,
+  nombre TEXT,
+  email TEXT NOT NULL,
+  telefono TEXT,
+  tercero_id TEXT,
+  es_remitente INTEGER NOT NULL DEFAULT 0,
+  estado TEXT NOT NULL DEFAULT 'pendiente',
+  FOREIGN KEY (solicitud_id) REFERENCES firma_solicitudes(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS firma_zonas (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  solicitud_id TEXT NOT NULL,
+  pagina INTEGER NOT NULL,
+  x REAL NOT NULL,
+  y REAL NOT NULL,
+  ancho REAL NOT NULL,
+  alto REAL NOT NULL,
+  firmante INTEGER NOT NULL,
+  FOREIGN KEY (solicitud_id) REFERENCES firma_solicitudes(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS firma_eventos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  solicitud_id TEXT NOT NULL,
+  tipo TEXT NOT NULL,
+  detalle_json TEXT,
+  usuario TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (solicitud_id) REFERENCES firma_solicitudes(id) ON DELETE CASCADE
+);
 """
 
 AUTH_SCHEMA = """
@@ -3206,6 +3270,110 @@ class GestorSQLite:
         self.conn.execute("DELETE FROM documentos_archivo WHERE id=?", (documento_id,))
         self.conn.commit()
         return documento
+
+    # ---------- FIRMA ELECTRONICA ----------
+    def crear_firma_solicitud(self, datos: dict, firmantes: list[dict], zonas: list[dict]) -> str:
+        solicitud_id = str(datos["id"])
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        self.conn.execute(
+            """INSERT INTO firma_solicitudes
+            (id,codigo_empresa,ejercicio,origen,documento_archivo_id,nombre_documento,
+             ruta_origen,ruta_envio,hash_origen,proveedor,external_id,asunto,mensaje,usar_sms,
+             estado,creado_por,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (solicitud_id, datos["codigo_empresa"], int(datos["ejercicio"]),
+             datos.get("origen") or "archivo", datos.get("documento_archivo_id"),
+             datos["nombre_documento"], datos["ruta_origen"], datos.get("ruta_envio"),
+             datos["hash_origen"], datos.get("proveedor") or "signrequest",
+             datos.get("external_id"), datos.get("asunto"), datos.get("mensaje"),
+             1 if datos.get("usar_sms") else 0, datos.get("estado") or "borrador",
+             datos.get("creado_por"), now, now),
+        )
+        for firmante in firmantes:
+            self.conn.execute(
+                """INSERT INTO firma_firmantes
+                (solicitud_id,orden,nombre,email,telefono,tercero_id,es_remitente)
+                VALUES (?,?,?,?,?,?,?)""",
+                (solicitud_id, int(firmante["orden"]), firmante.get("nombre"),
+                 firmante["email"], firmante.get("telefono"), firmante.get("tercero_id"),
+                 1 if firmante.get("es_remitente") else 0),
+            )
+        for zona in zonas:
+            self.conn.execute(
+                """INSERT INTO firma_zonas
+                (solicitud_id,pagina,x,y,ancho,alto,firmante) VALUES (?,?,?,?,?,?,?)""",
+                (solicitud_id, int(zona["pagina"]), float(zona["x"]), float(zona["y"]),
+                 float(zona["ancho"]), float(zona["alto"]), int(zona["firmante"])),
+            )
+        self.conn.commit()
+        return solicitud_id
+
+    def get_firma_solicitud(self, solicitud_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM firma_solicitudes WHERE id=?", (str(solicitud_id),)
+        ).fetchone()
+        if not row:
+            return None
+        result = self._row_to_dict(row)
+        result["firmantes"] = [self._row_to_dict(item) for item in self.conn.execute(
+            "SELECT * FROM firma_firmantes WHERE solicitud_id=? ORDER BY orden,id",
+            (str(solicitud_id),),
+        ).fetchall()]
+        result["zonas"] = [self._row_to_dict(item) for item in self.conn.execute(
+            "SELECT * FROM firma_zonas WHERE solicitud_id=? ORDER BY pagina,id",
+            (str(solicitud_id),),
+        ).fetchall()]
+        return result
+
+    def listar_firma_solicitudes(self, codigo_empresa: str, ejercicio: int,
+                                 estado: str = "", texto: str = "") -> list[dict]:
+        clauses = ["codigo_empresa=?", "ejercicio=?"]
+        params: list = [str(codigo_empresa), int(ejercicio)]
+        if estado:
+            clauses.append("estado=?")
+            params.append(str(estado))
+        if texto:
+            clauses.append("(nombre_documento LIKE ? OR asunto LIKE ?)")
+            params.extend([f"%{texto}%", f"%{texto}%"])
+        rows = self.conn.execute(
+            "SELECT * FROM firma_solicitudes WHERE " + " AND ".join(clauses)
+            + " ORDER BY created_at DESC", tuple(params),
+        ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    def actualizar_firma_solicitud(self, solicitud_id: str, cambios: dict) -> None:
+        permitidos = {
+            "ruta_envio", "request_id", "estado", "ruta_firmado", "ruta_registro_firma",
+            "sha256_firmado", "sha256_registro_firma", "security_hash",
+            "signing_log_security_hash", "enviado_at", "firmado_at",
+        }
+        cambios = {key: value for key, value in cambios.items() if key in permitidos}
+        if not cambios:
+            return
+        cambios["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        setters = ",".join(f"{key}=?" for key in cambios)
+        self.conn.execute(
+            f"UPDATE firma_solicitudes SET {setters} WHERE id=?",
+            (*cambios.values(), str(solicitud_id)),
+        )
+        self.conn.commit()
+
+    def registrar_firma_evento(self, solicitud_id: str, tipo: str,
+                               detalle_json: str = "", usuario: str = "") -> None:
+        self.conn.execute(
+            "INSERT INTO firma_eventos(solicitud_id,tipo,detalle_json,usuario,created_at) "
+            "VALUES (?,?,?,?,?)",
+            (str(solicitud_id), str(tipo), detalle_json, usuario,
+             datetime.now().astimezone().isoformat(timespec="seconds")),
+        )
+        self.conn.commit()
+
+    def listar_firma_eventos(self, solicitud_id: str) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM firma_eventos WHERE solicitud_id=? ORDER BY created_at,id",
+            (str(solicitud_id),),
+        ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
 
     def devolver_facturas_recibidas_a_documentacion(
         self, codigo_empresa: str, ejercicio: int | None = None,

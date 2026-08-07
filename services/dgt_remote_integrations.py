@@ -80,6 +80,11 @@ class BackendSignRequestClient:
             "document_uuid": estado.get("document_uuid") or "",
         }
 
+    def reenviar(self, request_id: str) -> dict:
+        return self.backend.request(
+            "POST", f"/api/v1/integrations/signrequest/{request_id}/resend"
+        ).json()
+
     @staticmethod
     def _sha(path: Path) -> str:
         return hashlib.sha256(path.read_bytes()).hexdigest()

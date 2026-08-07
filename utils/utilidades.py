@@ -191,6 +191,11 @@ def _apply_env_overrides(data: dict) -> dict:
         "GEST2A3ECO_SIGNREQUEST_FROM_EMAIL": "signrequest_from_email",
         "GEST2A3ECO_SIGNREQUEST_GESTOR_EMAIL": "signrequest_gestor_email",
         "GEST2A3ECO_SIGNREQUEST_GESTOR_TELEFONO": "signrequest_gestor_telefono",
+        "GEST2A3ECO_FIRMA_HABILITADA": "firma_habilitada",
+        "GEST2A3ECO_FIRMA_PERMITIR_CLIENTE_LOCAL": "firma_permitir_cliente_local",
+        "GEST2A3ECO_FIRMA_CATEGORIA_FIRMADOS": "firma_categoria_firmados",
+        "GEST2A3ECO_FIRMA_MAX_MB": "firma_max_mb",
+        "GEST2A3ECO_FIRMA_WEBHOOK_SECRET": "firma_webhook_secret",
         "GEST2A3ECO_DATAPRIUS_API_KEY": "dataprius_api_key",
         "GEST2A3ECO_DATAPRIUS_API_SECRET": "dataprius_api_secret",
         "GEST2A3ECO_DATAPRIUS_BASE_PATH": "dataprius_base_path",
@@ -258,6 +263,11 @@ def _normalize_config(data: dict) -> dict:
     out.setdefault("signrequest_gestor_telefono", "")
     out.setdefault("signrequest_base_url", "https://signrequest.com/api/v1")
     out.setdefault("signrequest_use_sms", False)
+    out.setdefault("firma_habilitada", True)
+    out.setdefault("firma_permitir_cliente_local", False)
+    out.setdefault("firma_categoria_firmados", "CONTRATOS")
+    out.setdefault("firma_max_mb", 15)
+    out.setdefault("firma_webhook_secret", "")
     out.setdefault("dataprius_api_key", "")
     out.setdefault("dataprius_api_secret", "")
     out.setdefault("dataprius_base_url", "https://api.v2.dataprius.com")

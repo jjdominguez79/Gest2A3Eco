@@ -64,7 +64,8 @@ class SignRequestClient:
             email = str(firmante.get("email") or "").strip()
             if not email:
                 raise ValueError("Todos los firmantes deben tener email.")
-            item = {"email": email, "needs_to_sign": True, "order": int(firmante.get("order") or 0)}
+            item = {"email": email, "needs_to_sign": True,
+                    "order": int(firmante.get("order") or firmante.get("orden") or 0)}
             telefono = str(firmante.get("telefono") or "").strip()
             if usar_sms and telefono:
                 item["verify_phone_number"] = telefono
