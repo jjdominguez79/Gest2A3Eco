@@ -129,6 +129,33 @@ class FirmaService:
             raise ValueError("Solo se puede reenviar una solicitud activa.")
         return self.provider.reenviar(solicitud["request_id"])
 
+    def editar_y_reenviar(self, solicitud_id: str, firmantes: list[dict],
+                          asunto: str, mensaje: str, zonas: list[dict]) -> dict:
+        """Actualiza una solicitud pendiente y la envia como una nueva peticion."""
+        solicitud = self._require(solicitud_id)
+        if solicitud.get("estado") != "borrador":
+            raise ValueError("Solo se puede editar una solicitud pendiente.")
+        path = Path(solicitud["ruta_origen"])
+        self._validar_pdf(path)
+        self._validar_firmantes(firmantes, bool(solicitud.get("usar_sms")))
+        zonas = list(zonas or [])
+        remitente = bool(firmantes and firmantes[0].get("es_remitente"))
+        self._validar_zonas(zonas, len(firmantes), remitente)
+        envio = str(path)
+        if zonas:
+            zonas_envio = [
+                {**zona, "firmante": int(zona["firmante"]) + (0 if remitente else 1)}
+                for zona in zonas
+            ]
+            envio = preparar_pdf_con_zonas(str(path), zonas_envio)
+        self.repository.actualizar(solicitud_id, {
+            "ruta_envio": envio, "request_id": None, "estado": "borrador",
+            "asunto": asunto.strip(), "mensaje": mensaje.strip(),
+        })
+        self.repository.actualizar_participantes(solicitud_id, firmantes, zonas)
+        self.repository.evento(solicitud_id, "datos_editados", json.dumps({"zonas": len(zonas)}), "")
+        return self.enviar(solicitud_id)
+
     def marcar_pendiente(self, solicitud_id: str) -> dict:
         """Cierra la solicitud anterior y deja una nueva preparada para enviar."""
         solicitud = self._require(solicitud_id)

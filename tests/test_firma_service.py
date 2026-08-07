@@ -119,3 +119,26 @@ def test_puede_marcar_pendiente_reenviar_y_finalizar(tmp_path):
     service.reenviar(solicitud)
     assert len(provider.envios) == 2
     gestor.conn.close()
+
+
+def test_editar_pendiente_actualiza_firmantes_y_zonas_antes_de_reenviar(tmp_path):
+    gestor, pdf, provider, service = _service(tmp_path)
+    solicitud = service.crear_solicitud(
+        "__GLOBAL__", 2026, str(pdf),
+        [{"orden": 1, "email": "antiguo@example.com"}],
+        zonas=[{"pagina": 0, "x": .1, "y": .1, "ancho": .2, "alto": .1, "firmante": 0}],
+    )
+    service.enviar(solicitud)
+    service.marcar_pendiente(solicitud)
+    service.editar_y_reenviar(
+        solicitud,
+        [{"orden": 1, "nombre": "Nuevo", "email": "nuevo@example.com"}],
+        "Asunto corregido", "Mensaje corregido", [],
+    )
+    guardada = gestor.get_firma_solicitud(solicitud)
+    assert guardada["asunto"] == "Asunto corregido"
+    assert guardada["firmantes"][0]["email"] == "nuevo@example.com"
+    assert guardada["zonas"] == []
+    assert len(provider.envios) == 2
+    assert provider.envios[-1]["firmantes"][0]["email"] == "nuevo@example.com"
+    gestor.conn.close()

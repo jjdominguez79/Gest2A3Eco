@@ -3364,6 +3364,7 @@ class GestorSQLite:
     def actualizar_firma_solicitud(self, solicitud_id: str, cambios: dict) -> None:
         permitidos = {
             "ruta_envio", "request_id", "estado", "ruta_firmado", "ruta_registro_firma",
+            "asunto", "mensaje",
             "sha256_firmado", "sha256_registro_firma", "security_hash",
             "signing_log_security_hash", "documento_firmado_archivo_id",
             "enviado_at", "firmado_at", "request_id", "ruta_firmado",
@@ -3378,6 +3379,29 @@ class GestorSQLite:
             f"UPDATE firma_solicitudes SET {setters} WHERE id=?",
             (*cambios.values(), str(solicitud_id)),
         )
+        self.conn.commit()
+
+    def actualizar_firma_participantes(self, solicitud_id: str,
+                                       firmantes: list[dict], zonas: list[dict]) -> None:
+        solicitud_id = str(solicitud_id)
+        self.conn.execute("DELETE FROM firma_firmantes WHERE solicitud_id=?", (solicitud_id,))
+        self.conn.execute("DELETE FROM firma_zonas WHERE solicitud_id=?", (solicitud_id,))
+        for firmante in firmantes:
+            self.conn.execute(
+                """INSERT INTO firma_firmantes
+                (solicitud_id,orden,nombre,email,telefono,tercero_id,es_remitente)
+                VALUES (?,?,?,?,?,?,?)""",
+                (solicitud_id, int(firmante["orden"]), firmante.get("nombre"),
+                 firmante["email"], firmante.get("telefono"),
+                 firmante.get("tercero_id"), 1 if firmante.get("es_remitente") else 0),
+            )
+        for zona in zonas:
+            self.conn.execute(
+                """INSERT INTO firma_zonas
+                (solicitud_id,pagina,x,y,ancho,alto,firmante) VALUES (?,?,?,?,?,?,?)""",
+                (solicitud_id, int(zona["pagina"]), float(zona["x"]), float(zona["y"]),
+                 float(zona["ancho"]), float(zona["alto"]), int(zona["firmante"])),
+            )
         self.conn.commit()
 
     def registrar_firma_evento(self, solicitud_id: str, tipo: str,

@@ -19,6 +19,9 @@ class FirmaRepository:
     def actualizar(self, solicitud_id, cambios):
         return self.gestor.actualizar_firma_solicitud(solicitud_id, cambios)
 
+    def actualizar_participantes(self, solicitud_id, firmantes, zonas):
+        return self.gestor.actualizar_firma_participantes(solicitud_id, firmantes, zonas)
+
     def evento(self, solicitud_id, tipo, detalle_json="", usuario=""):
         return self.gestor.registrar_firma_evento(solicitud_id, tipo, detalle_json, usuario)
 

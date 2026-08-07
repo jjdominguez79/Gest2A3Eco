@@ -6,7 +6,7 @@ from tkinter import messagebox, ttk
 
 
 class UIFirmaDialog(tk.Toplevel):
-    def __init__(self, parent, ruta, terceros=None, remitente=None):
+    def __init__(self, parent, ruta, terceros=None, remitente=None, initial=None):
         super().__init__(parent)
         self.title("Enviar documento a firma")
         self.geometry("1180x760")
@@ -15,6 +15,7 @@ class UIFirmaDialog(tk.Toplevel):
         self._ruta = str(ruta)
         self._terceros = list(terceros or [])
         self._remitente = dict(remitente or {})
+        self._initial = dict(initial or {})
         self.result = None
         self._rows = []
         self._zonas = []
@@ -29,11 +30,15 @@ class UIFirmaDialog(tk.Toplevel):
         form = ttk.Frame(self, padding=10)
         form.pack(fill="x")
         ttk.Label(form, text="Asunto").grid(row=0, column=0, sticky="w")
-        self._asunto = tk.StringVar(value=self._ruta.rsplit("\\", 1)[-1])
+        self._asunto = tk.StringVar(
+            value=str(self._initial.get("asunto") or self._ruta.rsplit("\\", 1)[-1])
+        )
         ttk.Entry(form, textvariable=self._asunto, width=70).grid(row=0, column=1, sticky="ew", padx=6)
         ttk.Label(form, text="Mensaje").grid(row=1, column=0, sticky="nw", pady=(6, 0))
         self._mensaje = tk.Text(form, height=3, width=70)
         self._mensaje.grid(row=1, column=1, sticky="ew", padx=6, pady=(6, 0))
+        if self._initial.get("mensaje"):
+            self._mensaje.insert("1.0", str(self._initial["mensaje"]))
         form.columnconfigure(1, weight=1)
         self._yo_firmo = tk.BooleanVar(value=False)
         ttk.Checkbutton(
@@ -49,12 +54,17 @@ class UIFirmaDialog(tk.Toplevel):
         body.add(right, weight=1)
 
         ttk.Label(left, text="Firmantes", font=("Segoe UI", 11, "bold")).pack(anchor="w")
-        ttk.Label(left, text="Puedes usar terceros o escribir cualquier email externo.", wraplength=280).pack(anchor="w", pady=(2, 8))
+        ttk.Label(left, text="Puedes usar terceros o escribir cualquier email externo.", wraplength=280).pack(anchor="w", pady=(2, 4))
         self._tercero_var = tk.StringVar()
         opciones = [self._etiqueta_tercero(t) for t in self._terceros if t.get("email") or t.get("correo")]
         self._tercero_combo = ttk.Combobox(left, textvariable=self._tercero_var, values=opciones, width=38, state="readonly")
         self._tercero_combo.pack(fill="x")
         ttk.Button(left, text="Anadir tercero seleccionado", command=self._add_tercero).pack(fill="x", pady=(4, 8))
+        columns = ttk.Frame(left)
+        columns.pack(fill="x")
+        ttk.Label(columns, text="Nombre", width=18).grid(row=0, column=0, padx=(0, 3), sticky="w")
+        ttk.Label(columns, text="Email", width=26).grid(row=0, column=1, padx=(0, 3), sticky="w")
+        ttk.Label(columns, text="Telefono SMS (opcional)", width=20).grid(row=0, column=2, sticky="w")
         self._firmantes_frame = ttk.Frame(left)
         self._firmantes_frame.pack(fill="both", expand=True)
         ttk.Button(left, text="Anadir email manual", command=self._add_manual).pack(fill="x", pady=(8, 0))
@@ -80,7 +90,14 @@ class UIFirmaDialog(tk.Toplevel):
         buttons.pack(fill="x")
         ttk.Button(buttons, text="Cancelar", command=self.destroy).pack(side="right")
         ttk.Button(buttons, text="Continuar con el envio", command=self._accept).pack(side="right", padx=8)
-        self._add_manual()
+        iniciales = list(self._initial.get("firmantes") or [])
+        if iniciales:
+            for firmante in iniciales:
+                self._add_row(firmante)
+            self._yo_firmo.set(any(row.get("es_remitente") for row in iniciales))
+            self._zonas = [dict(zona) for zona in (self._initial.get("zonas") or [])]
+        else:
+            self._add_manual()
 
     @staticmethod
     def _etiqueta_tercero(tercero):
@@ -108,7 +125,8 @@ class UIFirmaDialog(tk.Toplevel):
         ttk.Entry(row, textvariable=telefono, width=15).grid(row=0, column=2, padx=(0, 3))
         ttk.Button(row, text="Quitar", command=lambda: self._remove_row(item)).grid(row=0, column=3)
         item = {"frame": row, "nombre": nombre, "email": email, "telefono": telefono,
-                "tercero_id": datos.get("id")}
+                "tercero_id": datos.get("tercero_id") or datos.get("id"),
+                "es_remitente": bool(datos.get("es_remitente"))}
         self._rows.append(item)
         self._refresh_zone_combo()
 

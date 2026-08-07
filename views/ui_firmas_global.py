@@ -179,7 +179,53 @@ class UIFirmasGlobal(ttk.Frame):
         threading.Thread(target=worker, daemon=True).start()
 
     def _resend_selected(self):
-        self._simple_action("reenviar", "Solicitud reenviada.")
+        row = self._selected()
+        if not row:
+            return
+        if row.get("estado") != "borrador":
+            self._simple_action("reenviar", "Solicitud reenviada.")
+            return
+        solicitud = self._gestor.get_firma_solicitud(row["id"])
+        if not solicitud:
+            return
+        codigo = str(solicitud.get("codigo_empresa") or "")
+        ejercicio = int(solicitud.get("ejercicio") or datetime.now().year)
+        terceros = self._gestor.listar_terceros_por_empresa(codigo, ejercicio) if codigo != GLOBAL_CODE else []
+        cfg = load_app_config()
+        remitente = self._remitente_config(cfg)
+        dialog = UIFirmaDialog(
+            self, solicitud.get("ruta_origen") or row.get("ruta_origen"),
+            terceros=terceros, remitente=remitente, initial=solicitud,
+        )
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        self.configure(cursor="watch")
+
+        def worker():
+            try:
+                result = dict(dialog.result)
+                service = FirmaService(
+                    self._gestor, provider=build_firma_provider(cfg),
+                    max_mb=cfg.get("firma_max_mb", 15),
+                )
+                service.editar_y_reenviar(
+                    solicitud["id"], result["firmantes"], result["asunto"],
+                    result["mensaje"], result["zonas"],
+                )
+                self.after(0, self._done, "Datos corregidos y solicitud reenviada.", "")
+            except Exception as exc:
+                self.after(0, self._done, "", str(exc))
+        threading.Thread(target=worker, daemon=True).start()
+
+    @staticmethod
+    def _remitente_config(cfg):
+        email = cfg.get("signrequest_gestor_email") or cfg.get("signrequest_from_email") or ""
+        return {
+            "nombre": email or "Remitente",
+            "email": email,
+            "telefono": cfg.get("signrequest_gestor_telefono") or "",
+        }
 
     def _cancel_selected(self):
         self._simple_action("cancelar", "Solicitud cancelada.")
