@@ -76,6 +76,7 @@ class UIFirmaDialog(tk.Toplevel):
         self._pagina_label.pack(side="left", padx=8)
         ttk.Button(toolbar, text="Pagina siguiente", command=lambda: self._change_page(1)).pack(side="left")
         ttk.Label(toolbar, text="Selecciona un firmante y arrastra sobre el PDF para dibujar su zona.").pack(side="right")
+        ttk.Button(toolbar, text="Deshacer ultima zona", command=self._undo_zone).pack(side="right", padx=6)
         self._zona_firmante = tk.StringVar(value="")
         ttk.Label(right, text="Firmante de la nueva zona").pack(anchor="w")
         self._zona_combo = ttk.Combobox(right, textvariable=self._zona_firmante, state="readonly")
@@ -85,6 +86,11 @@ class UIFirmaDialog(tk.Toplevel):
         self._canvas.bind("<ButtonPress-1>", self._start_zone)
         self._canvas.bind("<B1-Motion>", self._move_zone)
         self._canvas.bind("<ButtonRelease-1>", self._finish_zone)
+        self._canvas.bind("<Button-3>", self._delete_zone_at)
+        ttk.Label(
+            right, text="Clic derecho sobre una zona para borrarla.",
+            foreground="#6b7280",
+        ).pack(anchor="w", pady=(3, 0))
 
         buttons = ttk.Frame(self, padding=(10, 0, 10, 10))
         buttons.pack(fill="x")
@@ -241,6 +247,28 @@ class UIFirmaDialog(tk.Toplevel):
             "firmante": int(self._zona_firmante.get().split(":", 1)[0]),
         })
         self._render()
+
+    def _undo_zone(self):
+        if self._zonas:
+            self._zonas.pop()
+            self._render()
+
+    def _delete_zone_at(self, event):
+        if not self._doc:
+            return
+        page = self._doc[self._pagina].rect
+        scale = 1.15
+        x = self._canvas.canvasx(event.x) / (page.width * scale)
+        y = self._canvas.canvasy(event.y) / (page.height * scale)
+        for indice in range(len(self._zonas) - 1, -1, -1):
+            zona = self._zonas[indice]
+            if zona["pagina"] != self._pagina:
+                continue
+            if (zona["x"] <= x <= zona["x"] + zona["ancho"]
+                    and zona["y"] <= y <= zona["y"] + zona["alto"]):
+                self._zonas.pop(indice)
+                self._render()
+                return
 
     def _accept(self):
         firmantes = []
