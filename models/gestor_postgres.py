@@ -289,6 +289,8 @@ class GestorPostgres(GestorSQLite):
             ("comunicaciones_sin_asignar", "etiqueta", "TEXT"),
             ("facturas_recibidas_ocr", "tipo_operacion_iva", "TEXT"),
             ("ocr_aprendizaje_ejemplos", "marcas_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("facturas_emitidas_docs", "updated_at", "TEXT"),
+            ("facturas_emitidas_docs", "pdf_generated_at", "TEXT"),
         )
         # La cola de aprendizaje OCR se incorporo despues de algunas
         # migraciones PostgreSQL ya existentes.  Debe crearse aqui para que
@@ -326,7 +328,7 @@ class GestorPostgres(GestorSQLite):
                   AND table_name IN (
                     'empresas', 'usuarios', 'comunicaciones', 'comunicaciones_mensajes',
                     'comunicaciones_sin_asignar', 'facturas_recibidas_ocr'
-                    , 'ocr_aprendizaje_ejemplos'
+                    , 'ocr_aprendizaje_ejemplos', 'facturas_emitidas_docs'
                   )
                 """
             ).fetchall()

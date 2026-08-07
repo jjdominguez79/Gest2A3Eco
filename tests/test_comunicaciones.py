@@ -1,4 +1,5 @@
 from models.gestor_sqlite import GestorSQLite
+from views.ui_comunicaciones_global import _buscar_usuario_responsable
 from views.ui_comunicaciones import (
     FIRMA_OFICINA_HTML,
     FIRMA_PERSONAL_HTML,
@@ -466,6 +467,20 @@ def test_reasigna_cliente_y_responsable_de_una_conversacion(tmp_path):
     assert row["responsable_nombre"] == "NIDIA"
     assert gestor.listar_buzon_responsable(3) == []
     assert gestor.listar_buzon_responsable(5)[0]["id"] == comunicacion_id
+
+
+def test_propone_usuario_a_partir_del_responsable_de_la_empresa():
+    users = {
+        "Ana [ana]": {"id": 7, "nombre": "Ana Pérez", "username": "ana"},
+        "Luis [luis]": {"id": 8, "nombre": "Luis", "username": "luis"},
+    }
+
+    assert _buscar_usuario_responsable(
+        {"responsable": "ANA"}, users,
+    )["id"] == 7
+    assert _buscar_usuario_responsable(
+        {"responsable": "Luis"}, users,
+    )["id"] == 8
 
 
 def test_descarta_y_restaura_una_conversacion_asignada(tmp_path):

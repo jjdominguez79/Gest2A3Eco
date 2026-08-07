@@ -262,7 +262,9 @@ CREATE TABLE IF NOT EXISTS facturas_emitidas_docs (
   facturae_xml_path TEXT,
   facturae_generated_at TEXT,
   facturae_status TEXT,
-  facturae_error TEXT
+  facturae_error TEXT,
+  updated_at TEXT,
+  pdf_generated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS albaranes_emitidas_docs (
   id TEXT PRIMARY KEY,
@@ -948,6 +950,8 @@ class GestorSQLite:
         self._ensure_column("facturas_emitidas_docs", "facturae_generated_at", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "facturae_status", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "facturae_error", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "updated_at", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "pdf_generated_at", "TEXT")
         self.conn.executescript(
             "CREATE TABLE IF NOT EXISTS series_emitidas ("
             "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -1248,6 +1252,13 @@ class GestorSQLite:
                 UNIQUE(cuota_id, periodo)
             );
         """)
+        # Las bases creadas antes de incorporar el control de fecha no
+        # reciben cambios al ejecutar CREATE TABLE IF NOT EXISTS. Asegurar
+        # la columna permite actualizar esas bases sin perder los periodos
+        # ya registrados.
+        self._ensure_column(
+            "cuotas_periodicas_generadas", "fecha_registro", "TEXT"
+        )
         self.conn.commit()
 
     def _seed_categorias_documentales(self) -> None:
@@ -2653,8 +2664,9 @@ class GestorSQLite:
              fecha_asiento, fecha_expedicion, fecha_operacion, tipo_operacion, modelo_fiscal, nif, nombre, descripcion, observaciones,
              subcuenta_cliente, forma_pago, cuenta_bancaria, plantilla_word, plantilla_emitidas, pdf_path, pdf_ref, pdf_path_a3, retencion_aplica, retencion_pct,
              retencion_base, retencion_importe, descuento_total_tipo, descuento_total_valor, moneda_codigo, moneda_simbolo, enviado, fecha_envio, canal_envio, generada, fecha_generacion, lineas_json, borrador,
-             subcuenta_ingreso, subcuenta_iva, subcuenta_retencion, facturae_xml_path, facturae_generated_at, facturae_status, facturae_error)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             subcuenta_ingreso, subcuenta_iva, subcuenta_retencion, facturae_xml_path, facturae_generated_at, facturae_status, facturae_error,
+             updated_at, pdf_generated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -2701,7 +2713,9 @@ class GestorSQLite:
                 facturae_xml_path=excluded.facturae_xml_path,
                 facturae_generated_at=excluded.facturae_generated_at,
                 facturae_status=excluded.facturae_status,
-                facturae_error=excluded.facturae_error
+                facturae_error=excluded.facturae_error,
+                updated_at=excluded.updated_at,
+                pdf_generated_at=excluded.pdf_generated_at
             """,
             (
                 fid,
@@ -2751,6 +2765,8 @@ class GestorSQLite:
                 factura.get("facturae_generated_at"),
                 factura.get("facturae_status"),
                 factura.get("facturae_error"),
+                self._utc_now(),
+                factura.get("pdf_generated_at"),
             ),
         )
         self.conn.commit()

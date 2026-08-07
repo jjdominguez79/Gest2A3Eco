@@ -1901,8 +1901,9 @@ class FacturasEmitidasController:
     def _resolve_app_pdf(self, fac: dict) -> str:
         """Devuelve la ruta del PDF en la carpeta de la app, generandolo si no existe o esta obsoleto.
 
-        Mejora 3: si la factura tiene updated_at mas reciente que el fichero PDF, el PDF
-        se considera obsoleto y se regenera automaticamente.
+        Si la factura tiene updated_at mas reciente que pdf_generated_at, el PDF
+        se considera obsoleto y se regenera automaticamente. Las facturas
+        antiguas sin estas marcas se regeneran una vez al abrirlas o enviarlas.
         """
         import logging as _logging
         _pdf_log = _logging.getLogger(__name__)
@@ -1918,19 +1919,27 @@ class FacturasEmitidasController:
             except Exception:
                 pdf_mtime = None
 
-            # Comprobar si la factura fue modificada despues de que se genero el PDF
+            # Comprobar si la factura fue modificada despues de que se genero el PDF.
+            # Las bases antiguas no tienen estas marcas: en ese caso se fuerza
+            # una regeneracion unica para no reutilizar un PDF cuyo origen se
+            # desconoce.
             if not pdf_obsoleto and pdf_mtime:
                 fac_updated = str(fac.get("updated_at") or "").strip()
-                if fac_updated:
+                pdf_generated = str(fac.get("pdf_generated_at") or "").strip()
+                if not pdf_generated:
+                    pdf_obsoleto = True
+                elif fac_updated:
                     try:
                         fac_str = fac_updated.replace("T", " ").replace("Z", "").strip()[:19]
                         fac_dt = datetime.strptime(fac_str, "%Y-%m-%d %H:%M:%S")
-                        if fac_dt > pdf_mtime:
+                        pdf_str = pdf_generated.replace("T", " ").replace("Z", "").strip()[:19]
+                        pdf_dt = datetime.strptime(pdf_str, "%Y-%m-%d %H:%M:%S")
+                        if fac_dt > pdf_dt:
                             pdf_obsoleto = True
                             _pdf_log.info(
-                                "PDF obsoleto para factura id=%s (updated_at=%s > pdf_mtime=%s);"
+                                "PDF obsoleto para factura id=%s (updated_at=%s > pdf_generated_at=%s);"
                                 " regenerando: %s",
-                                fac.get("id"), fac_dt, pdf_mtime, app_path,
+                                fac.get("id"), fac_dt, pdf_dt, app_path,
                             )
                     except Exception:
                         pass
@@ -1988,6 +1997,7 @@ class FacturasEmitidasController:
         if os.path.exists(app_path):
             upd = dict(fac)
             upd["pdf_path"] = app_path
+            upd["pdf_generated_at"] = datetime.now().replace(microsecond=0).isoformat()
             self._persist_factura_if_allowed(upd)
             return app_path
         return ""
@@ -1999,11 +2009,10 @@ class FacturasEmitidasController:
         app_path = self._app_pdf_path(fac)
         if not app_path:
             return
+        # Reutilizar el mismo control de obsolescencia que usan abrir y enviar.
+        # Asi una generacion de suenlace tampoco copia un PDF antiguo.
+        self._resolve_app_pdf(fac)
         if os.path.exists(app_path):
-            if fac.get("pdf_path") != app_path:
-                upd = dict(fac)
-                upd["pdf_path"] = app_path
-                self._persist_factura_if_allowed(upd)
             return
         existing_path = str(fac.get("pdf_path") or "").strip()
         if existing_path and os.path.exists(existing_path):
@@ -2034,6 +2043,7 @@ class FacturasEmitidasController:
             return
         upd = dict(fac)
         upd["pdf_path"] = app_path
+        upd["pdf_generated_at"] = datetime.now().replace(microsecond=0).isoformat()
         self._persist_factura_if_allowed(upd)
 
     def _ensure_a3_pdf(self, fac: dict) -> None:

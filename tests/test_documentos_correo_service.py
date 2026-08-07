@@ -1,4 +1,5 @@
 import base64
+import zipfile
 from pathlib import Path
 
 from models.gestor_sqlite import GestorSQLite
@@ -139,3 +140,67 @@ def test_vista_previa_bloquea_formatos_ejecutables(tmp_path, monkeypatch):
         assert "no se abre por seguridad" in str(exc)
     else:
         raise AssertionError("Se esperaba el bloqueo del formato ejecutable")
+
+
+def test_vista_previa_permite_excel_y_comprimidos(tmp_path, monkeypatch):
+    import services.documentos_correo_service as module
+
+    monkeypatch.setattr(module.tempfile, "gettempdir", lambda: str(tmp_path))
+    graph = FakeGraph({
+        "excel": {
+            "name": "saldos.xlsx",
+            "contentBytes": base64.b64encode(b"excel").decode(),
+        },
+        "zip": {
+            "name": "documentos.zip",
+            "contentBytes": base64.b64encode(b"zip").decode(),
+        },
+    })
+
+    service = DocumentosCorreoService(None, graph)
+    excel = service.descargar_adjunto_temporal(
+        mailbox="oficina@gestinem.es", graph_message_id="g",
+        attachment_id="excel",
+    )
+    archive = service.descargar_adjunto_temporal(
+        mailbox="oficina@gestinem.es", graph_message_id="g",
+        attachment_id="zip",
+    )
+
+    assert excel.suffix == ".xlsx"
+    assert archive.suffix == ".zip"
+    assert excel.read_bytes() == b"excel"
+    assert archive.read_bytes() == b"zip"
+
+
+def test_zip_se_puede_listar_y_extraer_unico_documento(tmp_path, monkeypatch):
+    import services.documentos_correo_service as module
+
+    monkeypatch.setattr(module.tempfile, "gettempdir", lambda: str(tmp_path))
+    archive = tmp_path / "documentos.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("facturas/enero.xlsx", b"excel")
+        bundle.writestr("contrato.pdf", b"pdf")
+
+    service = DocumentosCorreoService(None)
+    members = service.listar_contenido_zip(archive)
+    path = service.extraer_zip_temporal(archive, "facturas/enero.xlsx")
+
+    assert [item["name"] for item in members] == [
+        "facturas/enero.xlsx", "contrato.pdf",
+    ]
+    assert path.name.endswith("_enero.xlsx")
+    assert path.read_bytes() == b"excel"
+
+
+def test_zip_rechaza_ruta_traversal(tmp_path):
+    archive = tmp_path / "malicioso.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("../salida.txt", b"no")
+
+    try:
+        DocumentosCorreoService.listar_contenido_zip(archive)
+    except ValueError as exc:
+        assert "ruta no segura" in str(exc)
+    else:
+        raise AssertionError("Se esperaba bloquear la ruta insegura del ZIP")

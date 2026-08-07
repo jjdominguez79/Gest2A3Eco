@@ -1,5 +1,6 @@
 
 import calendar
+import os
 import sys
 from pathlib import Path
 import tkinter as tk
@@ -2882,6 +2883,15 @@ class UIFacturasEmitidas(ttk.Frame):
 
         btn_row_top = ttk.Frame(frm)
         btn_row_top.grid(row=0, column=2, padx=(8, 0), pady=4, sticky="e")
+        def _abrir_pdf_adjunto():
+            try:
+                if not pdf_path or not Path(pdf_path).exists():
+                    raise FileNotFoundError(pdf_path or "(sin PDF)")
+                os.startfile(str(pdf_path))
+            except Exception as exc:
+                messagebox.showerror("Gest2A3Eco", f"No se pudo abrir el PDF adjunto:\n{exc}", parent=dlg)
+
+        ttk.Button(btn_row_top, text="Abrir PDF adjunto", command=_abrir_pdf_adjunto).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_row_top, text="Editar plantilla HTML", command=_editar_plantilla_html).pack(side=tk.LEFT)
 
         # --- Destinatarios ---
@@ -3038,6 +3048,18 @@ class UIFacturasEmitidas(ttk.Frame):
         pdf_name = Path(pdf_path).name if pdf_path else "(sin PDF)"
         ttk.Label(frm, text="PDF:").grid(row=0, column=0, sticky="e", padx=(0, 8), pady=4)
         ttk.Label(frm, text=pdf_name, foreground="gray").grid(row=0, column=1, sticky="w", pady=4)
+
+        def _abrir_pdf_adjunto():
+            try:
+                if not pdf_path or not Path(pdf_path).exists():
+                    raise FileNotFoundError(pdf_path or "(sin PDF)")
+                os.startfile(str(pdf_path))
+            except Exception as exc:
+                messagebox.showerror("Gest2A3Eco", f"No se pudo abrir el PDF adjunto:\n{exc}", parent=dlg)
+
+        ttk.Button(frm, text="Abrir PDF adjunto", command=_abrir_pdf_adjunto).grid(
+            row=0, column=2, sticky="e", padx=(8, 0), pady=4
+        )
 
         # --- Destinatario (radio: cliente / empresa / otro) ---
         ttk.Label(frm, text="Destinatario:").grid(row=1, column=0, sticky="ne", padx=(0, 8), pady=(8, 2))

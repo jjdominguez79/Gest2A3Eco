@@ -315,6 +315,9 @@ _COLUMNAS_ESENCIALES = {
     ("comunicaciones_mensajes", "tiene_adjuntos"),
     ("comunicaciones_sin_asignar", "etiqueta"),
     ("facturas_recibidas_ocr", "tipo_operacion_iva"),
+    ("ocr_aprendizaje_ejemplos", "marcas_json"),
+    ("facturas_emitidas_docs", "updated_at"),
+    ("facturas_emitidas_docs", "pdf_generated_at"),
 }
 
 

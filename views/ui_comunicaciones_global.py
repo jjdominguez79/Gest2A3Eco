@@ -5,6 +5,7 @@ import logging
 import os
 import threading
 import tkinter as tk
+import unicodedata
 from tkinter import messagebox, simpledialog, ttk
 
 from services.documentos_correo_service import DocumentosCorreoService
@@ -15,6 +16,31 @@ from views.ui_comunicaciones import CommunicationDetailDialog, ReplyMailDialog
 
 LOG = logging.getLogger(__name__)
 AUTO_REFRESH_MS = 30_000
+
+
+def _normalizar_texto(value: str) -> str:
+    """Normaliza nombres para casar el responsable de la ficha con un usuario."""
+    value = unicodedata.normalize("NFKD", str(value or ""))
+    return "".join(ch for ch in value if not unicodedata.combining(ch)).casefold().strip()
+
+
+def _buscar_usuario_responsable(company: dict, users: dict) -> dict | None:
+    """Devuelve el usuario que coincide con empresas.responsable, si existe."""
+    responsable = _normalizar_texto(company.get("responsable"))
+    if not responsable:
+        return None
+    candidatos = []
+    for user in users.values():
+        nombres = (
+            user.get("nombre"), user.get("username"),
+        )
+        if any(_normalizar_texto(value) == responsable for value in nombres):
+            return user
+        if len(responsable) >= 3 and any(
+            _normalizar_texto(value).startswith(responsable) for value in nombres
+        ):
+            candidatos.append(user)
+    return candidatos[0] if len(candidatos) == 1 else None
 
 
 class ReassignCommunicationDialog(tk.Toplevel):
@@ -52,6 +78,7 @@ class ReassignCommunicationDialog(tk.Toplevel):
             values=sorted(users),
         )
         user_combo.grid(row=3, column=1, sticky="ew", padx=(8, 0), pady=(8, 0))
+        self._company_combo.bind("<<ComboboxSelected>>", lambda _event: self._suggest_responsible())
         buttons = ttk.Frame(frame)
         buttons.grid(row=4, column=0, columnspan=2, sticky="e", pady=(14, 0))
         ttk.Button(buttons, text="Cancelar", command=self.destroy).pack(side="left", padx=(0, 6))
@@ -70,6 +97,7 @@ class ReassignCommunicationDialog(tk.Toplevel):
                 break
         self._search.trace_add("write", lambda *_: self._filter_companies())
         self._filter_companies()
+        self._suggest_responsible()
         self.protocol("WM_DELETE_WINDOW", self.destroy)
         self.wait_visibility()
         self.focus_set()
@@ -84,6 +112,15 @@ class ReassignCommunicationDialog(tk.Toplevel):
             )).lower()
         ]
         self._company_combo["values"] = sorted(values)
+
+    def _suggest_responsible(self):
+        company = self._companies.get(self._company.get())
+        user = _buscar_usuario_responsable(company or {}, self._users)
+        if user:
+            for label, candidate in self._users.items():
+                if candidate.get("id") == user.get("id"):
+                    self._user.set(label)
+                    break
 
     def _save(self):
         company = self._companies.get(self._company.get())
@@ -132,7 +169,7 @@ class AttachmentSelectionDialog(tk.Toplevel):
 class AttachmentPreviewDialog(tk.Toplevel):
     """Lista adjuntos y permite abrir una copia temporal sin asignar el correo."""
 
-    def __init__(self, parent, attachments: list[dict], on_open):
+    def __init__(self, parent, attachments: list[dict], on_open, on_inspect=None):
         super().__init__(parent)
         self.title("Revisar adjuntos del correo")
         self.geometry("680x360")
@@ -141,6 +178,7 @@ class AttachmentPreviewDialog(tk.Toplevel):
             str(item.get("id") or ""): item for item in attachments
         }
         self._on_open = on_open
+        self._on_inspect = on_inspect
         frame = ttk.Frame(self, padding=12)
         frame.pack(fill="both", expand=True)
         ttk.Label(
@@ -176,6 +214,9 @@ class AttachmentPreviewDialog(tk.Toplevel):
         ttk.Button(
             actions, text="Abrir adjunto", command=self._open,
         ).pack(side="right", padx=(0, 7))
+        ttk.Button(
+            actions, text="Ver contenido ZIP", command=self._inspect,
+        ).pack(side="right", padx=(0, 7))
         if self._attachments:
             first = next(iter(self._attachments))
             self._tree.selection_set(first)
@@ -185,6 +226,105 @@ class AttachmentPreviewDialog(tk.Toplevel):
         selected = self._tree.selection()
         if selected:
             self._on_open(selected[0])
+
+    def _inspect(self):
+        selected = self._tree.selection()
+        if not selected or not self._on_inspect:
+            return
+        item = self._attachments[selected[0]]
+        if not str(item.get("name") or "").lower().endswith(".zip"):
+            messagebox.showinfo("ZIP", "Selecciona un archivo ZIP.", parent=self)
+            return
+        self._on_inspect(selected[0])
+
+
+class ArchiveContentsDialog(tk.Toplevel):
+    """Contenido de un ZIP, sin ejecutar ni extraer todos sus archivos."""
+
+    def __init__(self, parent, members: list[dict], on_open,
+                 companies=None, categories=None, on_assign=None):
+        super().__init__(parent)
+        self.title("Contenido del ZIP")
+        self.geometry("700x400")
+        self.transient(parent.winfo_toplevel())
+        self._members = {item["name"]: item for item in members}
+        self._on_open = on_open
+        self._companies = companies or {}
+        self._categories = {item["nombre"]: item for item in (categories or [])}
+        self._on_assign = on_assign
+        self._values = {item["name"]: {"company": "", "category": ""} for item in members}
+        frame = ttk.Frame(self, padding=12)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame,
+            text="Puedes abrir un documento concreto. Los demás archivos no se extraen.",
+        ).pack(anchor="w", pady=(0, 8))
+        self._tree = ttk.Treeview(
+            frame, columns=("nombre", "tamano", "cliente", "categoria"),
+            show="headings", selectmode="extended",
+        )
+        self._tree.heading("nombre", text="Documento")
+        self._tree.heading("tamano", text="Tamano")
+        self._tree.heading("cliente", text="Cliente")
+        self._tree.heading("categoria", text="Categoria")
+        self._tree.column("nombre", width=540, anchor="w")
+        self._tree.column("tamano", width=90, anchor="e")
+        self._tree.column("cliente", width=180, anchor="w")
+        self._tree.column("categoria", width=150, anchor="w")
+        self._tree.pack(fill="both", expand=True)
+        for name, item in self._members.items():
+            self._tree.insert("", "end", iid=name, values=(
+                name, f"{item['size'] / 1024:.1f} KB", "", "",
+            ))
+        self._tree.bind("<Double-1>", lambda _event: self._open())
+        controls = ttk.Frame(frame)
+        controls.pack(fill="x", pady=(10, 0))
+        ttk.Label(controls, text="Asignar seleccionados a").pack(side="left")
+        self._company = tk.StringVar()
+        ttk.Combobox(
+            controls, textvariable=self._company, state="readonly", width=28,
+            values=sorted(self._companies),
+        ).pack(side="left", padx=5)
+        self._category = tk.StringVar()
+        ttk.Combobox(
+            controls, textvariable=self._category, state="readonly", width=22,
+            values=sorted(self._categories),
+        ).pack(side="left", padx=5)
+        ttk.Button(controls, text="Aplicar", command=self._apply_assignment).pack(side="left")
+        ttk.Button(controls, text="Abrir documento", command=self._open).pack(side="right")
+        if self._on_assign:
+            ttk.Button(controls, text="Guardar asignaciones", command=self._assign).pack(side="right", padx=(0, 7))
+        if members:
+            self._tree.selection_set(members[0]["name"])
+
+    def _open(self):
+        selected = self._tree.selection()
+        if selected:
+            self._on_open(selected[0])
+
+    def _apply_assignment(self):
+        company = self._company.get()
+        category = self._category.get()
+        if not company or not category:
+            messagebox.showwarning("ZIP", "Selecciona cliente y categoria.", parent=self)
+            return
+        for name in self._tree.selection():
+            self._values[name] = {"company": company, "category": category}
+            values = list(self._tree.item(name, "values"))
+            values[2], values[3] = company, category
+            self._tree.item(name, values=values)
+
+    def _assign(self):
+        decisions = [
+            {"name": name, **value}
+            for name, value in self._values.items()
+            if value["company"] and value["category"]
+        ]
+        if not decisions:
+            messagebox.showwarning("ZIP", "Asigna al menos un documento.", parent=self)
+            return
+        self._on_assign(decisions)
+        self.destroy()
 
 
 class AttachmentClassificationDialog(tk.Toplevel):
@@ -320,6 +460,7 @@ class UIComunicacionesGlobal(ttk.Frame):
         self._company_var = tk.StringVar()
         self._company_combo = ttk.Combobox(assign, textvariable=self._company_var, state="readonly", width=42)
         self._company_combo.grid(row=0, column=3, sticky="ew", padx=5)
+        self._company_combo.bind("<<ComboboxSelected>>", lambda _event: self._suggest_pending_responsible())
         ttk.Label(assign, text="Responsable").grid(row=1, column=0, sticky="w", pady=(7, 0))
         self._user_var = tk.StringVar()
         self._user_combo = ttk.Combobox(assign, textvariable=self._user_var, state="readonly", width=28)
@@ -782,6 +923,9 @@ class UIComunicacionesGlobal(ttk.Frame):
 
     def _on_pending_selection(self, _event=None):
         selected = self._pending_tree.selection()
+        # Nunca arrastrar el responsable del correo anterior. La propuesta se
+        # recalcula abajo para el cliente/correo actualmente seleccionado.
+        self._user_var.set("")
         self._selection_label.configure(
             text=f"{len(selected)} mensajes seleccionados",
         )
@@ -799,7 +943,19 @@ class UIComunicacionesGlobal(ttk.Frame):
                     str(company.get("nombre") or company.get("codigo") or ""),
                 )
                 self._company_var.set(label)
+                self._suggest_pending_responsible()
                 break
+
+    def _suggest_pending_responsible(self):
+        """Propone el responsable configurado en la ficha del cliente."""
+        self._user_var.set("")
+        company = self._companies.get(self._company_var.get())
+        user = _buscar_usuario_responsable(company or {}, self._users)
+        if user:
+            for label, candidate in self._users.items():
+                if candidate.get("id") == user.get("id"):
+                    self._user_var.set(label)
+                    break
 
     def _select_automatic_responsible(self):
         selected = self._pending_tree.selection()
@@ -1391,7 +1547,92 @@ class UIComunicacionesGlobal(ttk.Frame):
             on_open=lambda attachment_id: self._open_temporary_attachment(
                 message, attachment_id,
             ),
+            on_inspect=lambda attachment_id: self._inspect_zip(
+                message, attachment_id,
+            ),
         )
+
+    def _inspect_zip(self, message, attachment_id):
+        self.winfo_toplevel().configure(cursor="watch")
+
+        def worker():
+            try:
+                service = DocumentosCorreoService(self._gestor)
+                archive = service.descargar_adjunto_temporal(
+                    mailbox=str(message.get("mailbox") or ""),
+                    graph_message_id=str(message.get("graph_message_id") or ""),
+                    attachment_id=attachment_id,
+                )
+                members = service.listar_contenido_zip(archive)
+                error = None
+            except Exception as exc:
+                archive, members, error = None, [], exc
+            self.after(0, lambda: self._show_zip_contents(message, archive, members, error))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_zip_contents(self, message, archive, members, error):
+        self.winfo_toplevel().configure(cursor="")
+        if error:
+            messagebox.showerror("ZIP", f"No se pudo leer el ZIP:\n{error}", parent=self)
+            return
+        if not members:
+            messagebox.showinfo("ZIP", "El ZIP no contiene documentos.", parent=self)
+            return
+        service = DocumentosCorreoService(self._gestor)
+        categories = self._gestor.listar_categorias_documentales()
+        ArchiveContentsDialog(
+            self, members,
+            on_open=lambda name: self._open_extracted_zip_member(service, archive, name),
+            companies=self._companies,
+            categories=categories,
+            on_assign=lambda decisions: self._assign_zip_members(archive, decisions),
+        )
+
+    def _open_extracted_zip_member(self, service, archive, name):
+        try:
+            path = service.extraer_zip_temporal(archive, name)
+            os.startfile(str(path))
+        except Exception as exc:
+            messagebox.showerror("ZIP", f"No se pudo abrir el documento:\n{exc}", parent=self)
+
+    def _assign_zip_members(self, archive, decisions):
+        self.winfo_toplevel().configure(cursor="watch")
+
+        def worker():
+            saved, errors = [], []
+            service = DocumentosCorreoService(self._gestor)
+            documental = GestionDocumentalService(self._gestor)
+            for decision in decisions:
+                try:
+                    company = self._companies[decision["company"]]
+                    path = service.extraer_zip_temporal(archive, decision["name"])
+                    documental.importar_archivo(
+                        codigo_empresa=company["codigo"],
+                        ejercicio=int(company.get("ejercicio") or 0),
+                        categoria_id=self._category_id(decision["category"]),
+                        source=path, usuario=self._session.user.nombre,
+                    )
+                    saved.append(decision["name"])
+                except Exception as exc:
+                    errors.append(f"{decision['name']}: {exc}")
+            self.after(0, lambda: self._finish_zip_assignment(saved, errors))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _category_id(self, name):
+        category = next(
+            item for item in self._gestor.listar_categorias_documentales()
+            if item["nombre"] == name
+        )
+        return str(category["id"])
+
+    def _finish_zip_assignment(self, saved, errors):
+        self.winfo_toplevel().configure(cursor="")
+        text = f"Documentos asignados: {len(saved)}"
+        if errors:
+            text += "\n\nErrores:\n- " + "\n- ".join(errors)
+        messagebox.showinfo("ZIP", text, parent=self)
 
     def _open_temporary_attachment(self, message: dict, attachment_id: str):
         self.winfo_toplevel().configure(cursor="watch")
