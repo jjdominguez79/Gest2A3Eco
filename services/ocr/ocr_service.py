@@ -11,8 +11,6 @@ Flujo principal:
   7. Marcar estado: pendiente_revision | error | duplicado.
 
 Compatible con el contrato OcrInvoiceResult de services/ocr/types.py.
-No reemplaza services/ocr_service.py (que sigue activo para el flujo
-existente de facturas_recibidas_docs).
 """
 from __future__ import annotations
 
@@ -431,7 +429,7 @@ class OcrService:
             from utils.utilidades import load_app_config
             cfg = load_app_config()
             return {
-                "motor_activo":    cfg.get("ocr_motor_activo") or cfg.get("ocr_provider") or "",
+                "motor_activo":    cfg.get("ocr_motor_activo") or "",
                 "azure_endpoint":  cfg.get("azure_doc_intelligence_endpoint") or "",
                 "azure_key":       cfg.get("azure_doc_intelligence_key") or "",
                 "azure_model_id":  cfg.get("azure_doc_intelligence_model_id") or "",

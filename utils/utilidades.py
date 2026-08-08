@@ -181,7 +181,6 @@ def _apply_env_overrides(data: dict) -> dict:
         "GEST2A3ECO_DATABASE_ENGINE": "database_engine",
         "GEST2A3ECO_POSTGRES_DSN": "postgres_dsn",
         "GEST2A3ECO_WORD_TEMPLATES_DIR": "word_templates_dir",
-        "GEST2A3ECO_OCR_ENDPOINT": "ocr_endpoint",
         "GEST2A3ECO_OCR_MOTOR_ACTIVO": "ocr_motor_activo",
         "GEST2A3ECO_AZURE_DOC_INTELLIGENCE_ENDPOINT": "azure_doc_intelligence_endpoint",
         "GEST2A3ECO_AZURE_DOC_INTELLIGENCE_KEY": "azure_doc_intelligence_key",
@@ -250,7 +249,6 @@ def _normalize_config(data: dict) -> dict:
     # recuperacion o pruebas controladas.
     out.setdefault("database_engine", "postgres")
     out.setdefault("postgres_dsn", "")
-    out.setdefault("ocr_endpoint", "")
     out.setdefault("ocr_motor_activo", "")
     out.setdefault("azure_doc_intelligence_endpoint", "")
     out.setdefault("azure_doc_intelligence_key", "")

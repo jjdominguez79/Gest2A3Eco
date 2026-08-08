@@ -54,17 +54,15 @@ procesos/facturas_recibidas.py      ← registros A3ECO tipo 1/2 + 9 + 6
 
 ## Fases completadas
 
-### Fase 1 — OCR basico funcional (anterior a 2026-06-09)
-- [x] `OCRService.procesar_factura()` con pypdf
-- [x] `OcrParserService` con regex (NIF, fecha, total, IVA multi-base)
-- [x] Bandejas de estado en `ui_ocr_facturas.py`
-- [x] Generacion suenlace.dat desde documentos OCR
-- [x] Tabla `facturas_recibidas_docs` y `ocr_lineas_fiscales`
+### Fase 1 — OCR basico funcional (anterior a 2026-06-09, retirado)
+- [x] Primera ruta OCR basada en servicios y pantallas legacy.
+- [x] Generacion suenlace.dat desde `facturas_recibidas_docs`.
+- [x] Tabla `facturas_recibidas_docs` y `ocr_lineas_fiscales`.
 
 ### Fase 2 — Enriquecimiento de datos (anterior a 2026-06-09)
 - [x] Tabla `captura_documental_retenciones`
 - [x] Tabla `maestro_subcuentas_empresa`
-- [x] Dialog de detalle `ui_ocr_detalle.py`
+- [x] Revision de detalle integrada en la pantalla OCR actual.
 - [x] Resolucion de terceros por NIF
 
 ### Fase 3 — Modulo OCR tipado (2026-06-09)

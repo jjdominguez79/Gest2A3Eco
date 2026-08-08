@@ -8,8 +8,8 @@ Jerarquia:
   services/ocr/ocr_service.py      — orquestador con gestion de BD
   services/ocr/engines/            — implementaciones concretas de motores
 
-Compatibilidad: el paquete no altera services/ocr_service.py ni servicios
-existentes.  Ambas capas pueden coexistir durante la transicion.
+Este paquete es el unico nucleo OCR activo.  La proyeccion hacia
+facturas_recibidas_docs vive fuera, en services/ocr_contabilidad_service.py.
 """
 from services.ocr.types import (
     OcrInvoiceResult,

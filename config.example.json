@@ -5,7 +5,6 @@
   "postgres_dsn": "",
   "last_db_path": "",
   "word_templates_dir": "",
-  "ocr_endpoint": "",
   "ocr_motor_activo": "",
   "azure_doc_intelligence_endpoint": "",
   "azure_doc_intelligence_key": "",

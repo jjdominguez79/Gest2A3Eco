@@ -7,11 +7,8 @@ Arquitectura: listado + zona de revision vertical
 
 Puntos de integracion:
   - services/ocr/OcrService       — procesamiento OCR tipado
-  - services/ocr_recibidas_service — generacion suenlace.dat (flujo existente)
+  - services/ocr_contabilidad_service — proyeccion hacia contabilidad
   - models/gestor_sqlite           — persistencia
-  - controllers/ui_ocr_facturas_controller — logica existente de bandejas
-
-Esta pantalla complementa (no reemplaza) ui_ocr_facturas.py + ui_ocr_detalle.py.
 """
 from __future__ import annotations
 
@@ -30,6 +27,7 @@ from tkinter import filedialog, messagebox, ttk
 import tkinter as tk
 
 from services.terceros_empresa_fiscal_service import PROVEEDOR_TIPOS_IVA
+from services.ocr_contabilidad_service import OcrContabilidadService
 from services.terceros_ocr_service import TercerosOcrService
 from utils.utilidades import load_app_config, save_app_config
 from utils.validaciones import normalizar_nif_cif
@@ -1446,97 +1444,13 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                 )
             except Exception as exc:
                 logger.warning("[aprendizaje OCR] No se pudo registrar ejemplo: %s", exc)
-            self._crear_o_actualizar_documento_contable(doc, factura)
+            OcrContabilidadService(
+                self._gestor, self._codigo, self._ejercicio
+            ).proyectar_factura_validada(doc, factura)
         self._refresh_all()
         messagebox.showinfo(
             "OCR", "Documento validado y enviado a Contabilidad.\nGenera alli el suenlace.dat."
         )
-
-    def _crear_o_actualizar_documento_contable(self, documento: dict, factura: dict):
-        """Proyecta el documento OCR tipado al flujo que genera SUENLACE.
-
-        Ambos modelos convivian, pero sin esta proyeccion los documentos nuevos
-        (incluidos los que vienen de correo) no podian llegar a contabilidad.
-        Se conserva el mismo ID para mantener trazabilidad directa.
-        """
-        doc_id = str(documento.get("id") or "")
-        lineas = []
-        try:
-            for item in self._gestor.listar_lineas_iva_ocr(str(factura.get("id") or "")):
-                lineas.append({
-                    "base_imponible": item.get("base") or 0.0,
-                    "tipo_iva": item.get("tipo_iva") or 0.0,
-                    "cuota_iva": item.get("cuota_iva") or 0.0,
-                    "tipo_recargo": item.get("tipo_recargo") or 0.0,
-                    "cuota_recargo": item.get("cuota_recargo") or 0.0,
-                    "tipo_operacion_iva": item.get("tipo_operacion_iva") or factura.get("tipo_operacion_iva"),
-                })
-        except Exception as exc:
-            logger.warning("[OCR] No se pudieron obtener las lineas IVA: %s", exc)
-        ruta = str(documento.get("ruta_original") or "")
-        # Las cuentas elegidas en la revision OCR viven en la relacion
-        # tercero-empresa. Al proyectar a facturas_recibidas_docs hay que
-        # copiarlas, porque Contabilidad genera el asiento desde ese registro
-        # y, si faltan, aplica 629/472/400 por defecto.
-        relacion = {}
-        proveedor_id = str(factura.get("proveedor_id") or "").strip()
-        # Si el usuario no selecciono manualmente el proveedor, vincularlo por
-        # NIF exacto contra los terceros de la empresa antes de crear el
-        # documento contable. Asi se recuperan sus subcuentas configuradas.
-        if not proveedor_id:
-            nif_ocr = str(factura.get("nif_proveedor") or "").strip()
-            try:
-                nif_norm = normalizar_nif_cif(nif_ocr)
-            except Exception:
-                nif_norm = nif_ocr.upper().replace("-", "").replace(" ", "")
-            if nif_norm:
-                try:
-                    for tercero in self._gestor.listar_terceros_por_empresa(self._codigo, self._ejercicio) or []:
-                        try:
-                            tercero_nif = normalizar_nif_cif(tercero.get("nif"))
-                        except Exception:
-                            tercero_nif = str(tercero.get("nif") or "").upper().replace("-", "").replace(" ", "")
-                        if tercero_nif and tercero_nif == nif_norm:
-                            proveedor_id = str(tercero.get("id") or tercero.get("tercero_id") or "")
-                            factura["proveedor_id"] = proveedor_id
-                            break
-                except Exception:
-                    pass
-        if proveedor_id:
-            try:
-                relacion = self._gestor.get_tercero_empresa(
-                    self._codigo, proveedor_id, self._ejercicio,
-                ) or {}
-            except Exception as exc:
-                logger.warning("[OCR] No se pudo cargar la relacion contable del proveedor: %s", exc)
-        payload = {
-            "id": doc_id, "codigo_empresa": self._codigo, "ejercicio": self._ejercicio,
-            "origen_path": ruta, "pdf_path": ruta if Path(ruta).suffix.lower() == ".pdf" else "",
-            "estado_ocr": "procesado", "estado_validacion": "validada",
-            "estado_contable": "pendiente_contabilizar", "tipo_documento": "factura_recibida",
-            "tercero_id": factura.get("proveedor_id") or "",
-            "cuenta_proveedor": factura.get("cuenta_proveedor") or relacion.get("subcuenta_proveedor") or "",
-            "cuenta_gasto": factura.get("cuenta_gasto") or relacion.get("subcuenta_gasto") or "",
-            "cuenta_iva": factura.get("cuenta_iva") or "",
-            "proveedor_nif": factura.get("nif_proveedor") or "",
-            "proveedor_nombre": factura.get("nombre_proveedor") or "",
-            "proveedor_tipo_operacion_iva": factura.get("tipo_operacion_iva") or "INTERIOR_DEDUCIBLE",
-            "numero_factura": factura.get("numero_factura") or "",
-            "fecha_factura": factura.get("fecha_factura") or "",
-            "fecha_operacion": factura.get("fecha_operacion") or factura.get("fecha_factura") or "",
-            "fecha_asiento": factura.get("fecha_factura") or "",
-            "fecha_vencimiento": factura.get("fecha_vencimiento") or "",
-            "descripcion": f"Factura {factura.get('numero_factura') or ''}".strip(),
-            "moneda_codigo": "EUR", "base_imponible": factura.get("base_total") or 0.0,
-            "cuota_iva": factura.get("iva_total") or 0.0,
-            "cuota_retencion": factura.get("retencion_total") or 0.0,
-            "total": factura.get("total_factura") or 0.0, "lineas": lineas,
-            "datos_extra": {
-                "documento_ocr_id": doc_id,
-                "tipo_operacion_iva": factura.get("tipo_operacion_iva") or "INTERIOR_DEDUCIBLE",
-            },
-        }
-        self._gestor.upsert_factura_recibida_doc(payload)
 
     def _enviar_a_error(self, estado: str):
         doc_id = self._get_selected_id()
@@ -1563,31 +1477,6 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             return
         self._limpiar_editor()
         self._refresh_all()
-
-    def _abrir_detalle(self, estado: str):
-        """Abre el dialogo de detalle existente (ui_ocr_detalle.py) para edicion completa."""
-        doc_id = self._get_selected_id()
-        if not doc_id:
-            return
-        try:
-            # Intentar abrir el detalle del sistema existente si hay doc en facturas_recibidas_docs
-            all_docs = self._gestor.listar_facturas_recibidas_docs_filtrado(
-                self._codigo, self._ejercicio, estado
-            )
-            all_ids = [str(d["id"]) for d in all_docs]
-            if all_ids:
-                from views.ui_ocr_detalle import UIOcrDetalle
-                UIOcrDetalle(
-                    master=self,
-                    gestor=self._gestor,
-                    codigo_empresa=self._codigo,
-                    ejercicio=self._ejercicio,
-                    doc_ids=all_ids,
-                    current_id=all_ids[0],
-                    on_close=self._refresh_all,
-                )
-        except Exception as exc:
-            logger.debug("[abrir_detalle] %s", exc)
 
     # ── Utilidades ────────────────────────────────────────────────────────────
 

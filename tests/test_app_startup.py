@@ -8,7 +8,7 @@ def test_app_controller_no_carga_modulos_pesados_antes_del_login():
         "import controllers.app_controller; "
         "prohibidos = ["
         "'pandas', 'views.ui_procesos', 'views.ui_comunicaciones', "
-        "'views.ui_facturas_emitidas', 'views.ui_ocr_facturas'"
+        "'views.ui_facturas_emitidas', 'views.ui_facturas_recibidas_ocr'"
         "]; "
         "cargados = [nombre for nombre in prohibidos if nombre in sys.modules]; "
         "assert not cargados, cargados"

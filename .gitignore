@@ -7,8 +7,15 @@ __pycache__/
 .pytest_cache/
 .pytest_tmp/
 .pytest_tmp*/
+.hypothesis/
 .mypy_cache/
 .ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 
 # Virtual environments
 .venv/
@@ -35,7 +42,16 @@ Thumbs.db
 *.log
 *.tmp
 *.temp
+*.bak
+*.backup
+*.orig
+*.old
+*.swp
+*.swo
+*.pid
+~$*
 logs/
+.tmp/
 
 # Local runtime / generated data
 config.json
@@ -43,6 +59,8 @@ config.local.json
 user.config.json
 .env
 .env.*
+!.env.example
+!**/.env.example
 pdfs_emitidas/
 plantillas/gest2a3eco.db
 plantillas/graph_token_cache.bin
@@ -50,6 +68,12 @@ plantillas/graph_token_cache.bin
 # Clave de cifrado de contrasenas de certificados (NUNCA subir al repo)
 plantillas/.notif_key
 .notif_key
+*.p12
+*.pfx
+*.pem
+*.key
+*.crt
+*.cer
 
 # Local AI / analysis workspace files
 CLAUDE.md
@@ -63,7 +87,11 @@ z_tecodir_*.txt
 *.sqlite3
 backend/runtime/
 /tramites_dgt/
+migration_backups/
 
 # Instaladores
 dist_installer/
 *.exe
+*.msi
+*.zip
+*.7z
