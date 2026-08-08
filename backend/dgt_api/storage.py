@@ -17,7 +17,7 @@ ALLOWED_TYPES = {
 }
 
 
-async def save_private_upload(file: UploadFile, referencia: str, rol: str) -> dict:
+async def read_validated_upload(file: UploadFile) -> tuple[bytes, dict]:
     content_type = str(file.content_type or "").lower()
     rule = ALLOWED_TYPES.get(content_type)
     if not rule:
@@ -28,7 +28,24 @@ async def save_private_upload(file: UploadFile, referencia: str, rol: str) -> di
     extension, signature = rule
     if not data.startswith(signature):
         raise HTTPException(422, "El contenido no coincide con el tipo declarado")
+    return data, {
+        "nombre_archivo": Path(file.filename or f"documento{extension}").name,
+        "content_type": content_type,
+        "size": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "extension": extension,
+    }
+
+
+def save_private_upload_bytes(
+    data: bytes, referencia: str, rol: str, metadata: dict,
+) -> dict:
     safe_ref = re.sub(r"[^A-Za-z0-9_-]", "_", referencia)
+    extension = str(
+        metadata.get("extension")
+        or Path(str(metadata.get("nombre_archivo") or "")).suffix
+        or ".bin"
+    )
     key = f"{safe_ref}/{rol}/{uuid.uuid4().hex}{extension}"
     root = Path(get_settings().storage_dir).resolve()
     target = (root / key).resolve()
@@ -38,11 +55,16 @@ async def save_private_upload(file: UploadFile, referencia: str, rol: str) -> di
     target.write_bytes(data)
     return {
         "storage_key": key,
-        "nombre_archivo": Path(file.filename or f"documento{extension}").name,
-        "content_type": content_type,
-        "size": len(data),
-        "sha256": hashlib.sha256(data).hexdigest(),
+        "nombre_archivo": metadata["nombre_archivo"],
+        "content_type": metadata["content_type"],
+        "size": metadata["size"],
+        "sha256": metadata["sha256"],
     }
+
+
+async def save_private_upload(file: UploadFile, referencia: str, rol: str) -> dict:
+    data, metadata = await read_validated_upload(file)
+    return save_private_upload_bytes(data, referencia, rol, metadata)
 
 
 def delete_private_upload(storage_key: str) -> bool:

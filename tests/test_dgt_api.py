@@ -84,6 +84,30 @@ def _client(tmp_path: Path, monkeypatch):
     return TestClient(app_module.app), engine
 
 
+def test_documento_aportado_dataprius_usa_carpeta_del_expediente(monkeypatch):
+    llamadas = []
+
+    class DatapriusFalso:
+        def subir(self, ruta, nombre, contenido):
+            llamadas.append((ruta, nombre, contenido))
+            return {"provider": "dataprius", "id": "file-1", "ruta": ruta}
+
+    monkeypatch.setattr(app_module, "DatapriusBackend", DatapriusFalso)
+
+    result = app_module._subir_aportado_dataprius(
+        "DGT-2026-0001", "vendedor", "factura", "factura.pdf", b"%PDF-1.4"
+    )
+
+    assert result["id"] == "file-1"
+    assert llamadas == [
+        (
+            "expedientes/DGT-2026-0001/Aportados/vendedor/factura",
+            "factura.pdf",
+            b"%PDF-1.4",
+        )
+    ]
+
+
 def test_flujo_api_separa_roles_y_audita(tmp_path, monkeypatch):
     client, engine = _client(tmp_path, monkeypatch)
     headers = {"X-API-Key": "test-secret"}

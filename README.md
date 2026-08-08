@@ -79,7 +79,9 @@ para que todos los equipos trabajen sobre la misma informacion.
   llama al backend online configurado con `dgt_api_url` y `dgt_api_key`; ese
   backend se despliega en Railway y usa su propia PostgreSQL mediante
   `DGT_DATABASE_URL`. En la base principal solo se conserva el vinculo contable
-  `dgt_facturas` cuando un expediente remoto genera una factura local.
+  `dgt_facturas` cuando un expediente remoto genera una factura local. Los
+  documentos aportados o generados para el tramite se archivan en Dataprius bajo
+  la carpeta del expediente, con metadatos registrados en Railway.
 - **Comunicaciones / Microsoft Graph:** los mensajes se almacenan en la base
   principal, en tablas `comunicaciones_*`. La sincronizacion automatica no
   depende de que un usuario tenga abierta la aplicacion: la realiza el

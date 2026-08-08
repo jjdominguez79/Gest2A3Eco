@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request,
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.orm import Session, selectinload
 
 from backend.dgt_api.database import Base, SessionLocal, engine
@@ -36,7 +36,11 @@ from backend.dgt_api.service import (
     serializar_expediente,
     verificar_enlace,
 )
-from backend.dgt_api.storage import delete_private_upload, save_private_upload
+from backend.dgt_api.storage import (
+    delete_private_upload,
+    read_validated_upload,
+    save_private_upload_bytes,
+)
 from backend.dgt_api.integrations import DatapriusBackend, ProviderError, SignRequestBackend
 from backend.dgt_api.validation import validar_parte
 
@@ -49,6 +53,13 @@ app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="stati
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE dgt_documentos "
+                "ADD COLUMN IF NOT EXISTS dataprius_json JSONB NOT NULL DEFAULT '{}'"
+            )
+        )
 
 
 def get_db():
@@ -65,6 +76,53 @@ internal = Depends(require_internal_key)
 def asegurar_expediente_editable(item: Expediente) -> None:
     if item.estado == "terminado":
         raise HTTPException(409, "El expediente esta terminado y es de solo lectura")
+
+
+def _dataprius_ruta_aportado(referencia: str, rol: str, tipo: str) -> str:
+    safe_ref = re.sub(r"[^A-Za-z0-9_-]", "_", str(referencia or "expediente"))
+    safe_rol = re.sub(r"[^A-Za-z0-9_-]", "_", str(rol or "gestor"))[:32]
+    safe_tipo = re.sub(r"[^A-Za-z0-9_-]", "_", str(tipo or "documentacion"))[:64]
+    return f"expedientes/{safe_ref}/Aportados/{safe_rol}/{safe_tipo}"
+
+
+def _subir_aportado_dataprius(
+    referencia: str, rol: str, tipo: str, nombre: str, contenido: bytes,
+) -> dict:
+    try:
+        return DatapriusBackend().subir(
+            _dataprius_ruta_aportado(referencia, rol, tipo),
+            nombre,
+            contenido,
+        )
+    except ProviderError as exc:
+        message = str(exc)
+        if "no esta configurado" in message.lower():
+            return {}
+        raise HTTPException(
+            502,
+            f"No se pudo guardar el documento aportado en Dataprius: {message}",
+        ) from exc
+
+
+async def _guardar_documento_aportado(
+    *, file: UploadFile, expediente: Expediente, referencia: str, rol: str, tipo: str,
+) -> Documento:
+    contenido, metadata = await read_validated_upload(file)
+    stored = save_private_upload_bytes(contenido, referencia, rol, metadata)
+    try:
+        dataprius = _subir_aportado_dataprius(
+            referencia, rol, tipo, stored["nombre_archivo"], contenido,
+        )
+    except Exception:
+        delete_private_upload(stored["storage_key"])
+        raise
+    return Documento(
+        expediente_id=expediente.id,
+        rol=rol[:16],
+        tipo=tipo[:64],
+        dataprius=dataprius,
+        **stored,
+    )
 
 
 @app.get("/health")
@@ -456,6 +514,7 @@ def documentos_aportados(expediente_id: str, db: Session = Depends(get_db)):
         {
             "id": doc.id, "rol": doc.rol, "tipo": doc.tipo, "nombre_archivo": doc.nombre_archivo,
             "content_type": doc.content_type, "size": doc.size, "sha256": doc.sha256, "created_at": doc.created_at,
+            "dataprius": doc.dataprius or {},
         }
         for doc in docs
     ]
@@ -473,15 +532,31 @@ async def post_documento_interno(
     asegurar_expediente_editable(item)
     if tipo not in {"factura", "modelo_620", "documentacion"}:
         raise HTTPException(422, "Tipo de documento no valido")
-    stored = await save_private_upload(file, item.referencia, rol)
-    doc = Documento(expediente_id=item.id, rol=rol[:16], tipo=tipo, **stored)
+    doc = await _guardar_documento_aportado(
+        file=file,
+        expediente=item,
+        referencia=item.referencia,
+        rol=rol,
+        tipo=tipo,
+    )
     db.add(doc)
     registrar_evento(
         db, item.id, "documento_subido_internamente", "gest2a3eco",
-        {"tipo": doc.tipo, "nombre": doc.nombre_archivo, "sha256": doc.sha256},
+        {
+            "tipo": doc.tipo,
+            "nombre": doc.nombre_archivo,
+            "sha256": doc.sha256,
+            "dataprius": doc.dataprius or {},
+        },
     )
     db.commit()
-    return {"id": doc.id, "tipo": doc.tipo, "nombre_archivo": doc.nombre_archivo, "sha256": doc.sha256}
+    return {
+        "id": doc.id,
+        "tipo": doc.tipo,
+        "nombre_archivo": doc.nombre_archivo,
+        "sha256": doc.sha256,
+        "dataprius": doc.dataprius or {},
+    }
 
 
 @app.get("/api/v1/documentos/{documento_id}/download", dependencies=[internal])
@@ -675,14 +750,31 @@ async def post_public_documento(
     parte = next(part for part in item.partes if part.rol == rol)
     if rol != "vendedor" or parte.tipo_persona != "juridica" or tipo != "factura":
         raise HTTPException(422, "Solo el vendedor juridico debe aportar la factura.")
-    stored = await save_private_upload(file, referencia, rol)
-    doc = Documento(expediente_id=item.id, rol=rol, tipo=tipo[:64], **stored)
+    doc = await _guardar_documento_aportado(
+        file=file,
+        expediente=item,
+        referencia=referencia,
+        rol=rol,
+        tipo=tipo,
+    )
     db.add(doc)
     registrar_evento(
-        db, item.id, "documento_subido", rol, {"tipo": doc.tipo, "nombre": doc.nombre_archivo, "sha256": doc.sha256}
+        db, item.id, "documento_subido", rol,
+        {
+            "tipo": doc.tipo,
+            "nombre": doc.nombre_archivo,
+            "sha256": doc.sha256,
+            "dataprius": doc.dataprius or {},
+        },
     )
     db.commit()
-    return {"id": doc.id, "tipo": doc.tipo, "nombre_archivo": doc.nombre_archivo, "sha256": doc.sha256}
+    return {
+        "id": doc.id,
+        "tipo": doc.tipo,
+        "nombre_archivo": doc.nombre_archivo,
+        "sha256": doc.sha256,
+        "dataprius": doc.dataprius or {},
+    }
 
 
 @app.get("/api/v1/sync", dependencies=[internal])

@@ -90,6 +90,7 @@ class Documento(Base):
     content_type: Mapped[str] = mapped_column(String(100))
     size: Mapped[int] = mapped_column(Integer)
     sha256: Mapped[str] = mapped_column(String(64))
+    dataprius: Mapped[dict] = mapped_column("dataprius_json", JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

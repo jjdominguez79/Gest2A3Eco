@@ -48,6 +48,18 @@ de escritorio. No existe fallback a base local.
 6. Definir retencion, copias, restauracion y borrado de documentos conforme a
    la politica de proteccion de datos de Gestinem.
 
+## Almacenamiento documental
+
+- Los datos del expediente viven en la PostgreSQL del backend Railway.
+- Los documentos aportados por vendedor, comprador o Gestinem se reciben en el
+  backend y se suben a Dataprius en la carpeta del expediente:
+  `expedientes/{referencia}/Aportados/{rol}/{tipo}`.
+- El backend mantiene una copia privada tecnica para descarga/control y guarda
+  en `dgt_documentos.dataprius_json` los metadatos devueltos por Dataprius.
+- Los documentos generados por Gestinem tambien se suben a Dataprius desde la
+  aplicacion cuando la integracion esta disponible, y sus metadatos quedan
+  registrados como documento generado.
+
 ## Verificacion ejecutada
 
 Las pruebas focalizadas DGT pasan (`12 passed`). La suite amplia alcanza
