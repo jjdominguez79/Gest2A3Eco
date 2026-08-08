@@ -69,6 +69,16 @@ class MessagingInvitation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class MessagingPasswordReset(Base):
+    __tablename__ = "msg_password_resets"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    client_id: Mapped[str] = mapped_column(ForeignKey("msg_clients.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class MessagingSession(Base):
     __tablename__ = "msg_sessions"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)

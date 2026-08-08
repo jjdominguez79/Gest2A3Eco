@@ -13,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.dgt_api.database import Base
+from backend.dgt_api import messaging_api
 from backend.dgt_api.messaging_api import get_db, router
 from backend.dgt_api import messaging_models  # noqa: F401
 
@@ -38,7 +39,7 @@ def _client(tmp_path: Path):
     return TestClient(app)
 
 
-def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path):
+def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatch):
     client = _client(tmp_path)
     internal = {"X-API-Key": "test-secret"}
     for staff_id, name in (("7", "Titular"), ("8", "Empleado")):
@@ -120,3 +121,29 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path):
         f"/api/v1/messaging/staff/attachments/{outgoing_id}/downloads", headers=staff7,
     ).json()
     assert len(audit) == 1 and audit[0]["client_name"] == "Ana"
+
+    reset_urls = []
+    monkeypatch.setattr(messaging_api, "mail_configured", lambda: True)
+    monkeypatch.setattr(
+        messaging_api, "send_password_reset",
+        lambda _to, _name, url: reset_urls.append(url),
+    )
+    forgotten = client.post(
+        "/api/v1/messaging/auth/forgot-password",
+        json={"email": "ana@example.test"},
+    )
+    assert forgotten.status_code == 202 and reset_urls
+    reset_token = reset_urls[0].split("reset=", 1)[1]
+    changed = client.post(
+        "/api/v1/messaging/auth/reset-password",
+        json={"token": reset_token, "password": "nueva-segura-6789"},
+    )
+    assert changed.status_code == 200
+    assert client.post(
+        "/api/v1/messaging/auth/login",
+        json={"email": "ana@example.test", "password": "segura-12345"},
+    ).status_code == 401
+    assert client.post(
+        "/api/v1/messaging/auth/login",
+        json={"email": "ana@example.test", "password": "nueva-segura-6789"},
+    ).status_code == 200

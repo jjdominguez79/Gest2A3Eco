@@ -48,3 +48,12 @@ def send_message_notice(to: str, name: str, portal_url: str) -> bool:
         f"<p><a href=\"{escape(portal_url)}\">Consultar mensaje</a></p>"
         "<p>Por seguridad, el contenido no se incluye en este email.</p>",
     )
+
+
+def send_password_reset(to: str, name: str, url: str) -> bool:
+    return send_mail(
+        to, "Recuperar contraseña de Mensajes Gestinem",
+        f"<p>Hola {escape(name)},</p><p>Hemos recibido una solicitud para cambiar tu contraseña.</p>"
+        f"<p><a href=\"{escape(url)}\">Crear una nueva contraseña</a></p>"
+        "<p>El enlace caduca en una hora. Si no lo has solicitado, ignora este email.</p>",
+    )

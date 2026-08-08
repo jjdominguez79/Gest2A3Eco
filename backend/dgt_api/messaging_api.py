@@ -18,9 +18,12 @@ from backend.dgt_api.database import SessionLocal
 from backend.dgt_api.messaging_models import (
     MessagingAttachment, MessagingClient, MessagingConversation, MessagingDevice, MessagingDownload,
     MessagingEvent, MessagingInvitation, MessagingMessage, MessagingOrganization,
-    MessagingPresence, MessagingRead, MessagingSession, MessagingStaff,
+    MessagingPasswordReset, MessagingPresence, MessagingRead, MessagingSession, MessagingStaff,
 )
-from backend.dgt_api.messaging_mail import configured as mail_configured, send_invitation, send_message_notice
+from backend.dgt_api.messaging_mail import (
+    configured as mail_configured, send_invitation, send_message_notice,
+    send_password_reset,
+)
 from backend.dgt_api.messaging_security import (
     hash_password, hash_token, invitation_expiry, new_token, session_expiry,
     is_expired, utcnow, verify_password,
@@ -73,6 +76,15 @@ class AcceptInviteIn(BaseModel):
 class LoginIn(BaseModel):
     email: str
     password: str
+
+
+class ForgotPasswordIn(BaseModel):
+    email: str
+
+
+class ResetPasswordIn(BaseModel):
+    token: str
+    password: str = Field(min_length=10, max_length=200)
 
 
 class ConversationPatch(BaseModel):
@@ -326,6 +338,47 @@ def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)):
         raise HTTPException(401, "Credenciales no validas")
     token = _new_session(db, client); db.commit(); _set_cookie(response, token)
     return {"token": token, "client": {"id": client.id, "name": client.name, "email": client.email}}
+
+
+@router.post("/auth/forgot-password", status_code=202)
+def forgot_password(payload: ForgotPasswordIn, background: BackgroundTasks, db: Session = Depends(get_db)):
+    client = db.scalar(select(MessagingClient).where(
+        MessagingClient.email == payload.email.strip().lower(),
+        MessagingClient.active.is_(True),
+    ))
+    if client:
+        token = new_token()
+        db.add(MessagingPasswordReset(
+            client_id=client.id, token_hash=hash_token(token),
+            expires_at=utcnow() + timedelta(hours=1),
+        ))
+        db.commit()
+        if mail_configured():
+            url = f"{get_settings().messaging_public_base_url}/mensajes?reset={token}"
+            background.add_task(send_password_reset, client.email, client.name, url)
+    # Respuesta deliberadamente identica para no revelar cuentas existentes.
+    return {"ok": True, "email_queued": mail_configured()}
+
+
+@router.post("/auth/reset-password")
+def reset_password(payload: ResetPasswordIn, db: Session = Depends(get_db)):
+    reset = db.scalar(select(MessagingPasswordReset).where(
+        MessagingPasswordReset.token_hash == hash_token(payload.token),
+    ))
+    if not reset or reset.used_at or is_expired(reset.expires_at):
+        raise HTTPException(400, "El enlace no es valido o ha caducado")
+    client = db.get(MessagingClient, reset.client_id)
+    if not client or not client.active:
+        raise HTTPException(400, "La cuenta ya no esta disponible")
+    client.password_hash = hash_password(payload.password)
+    reset.used_at = utcnow()
+    for session in db.scalars(select(MessagingSession).where(
+        MessagingSession.client_id == client.id,
+        MessagingSession.revoked_at.is_(None),
+    )).all():
+        session.revoked_at = utcnow()
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/auth/logout")

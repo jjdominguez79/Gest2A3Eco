@@ -11,22 +11,35 @@
 <body>
   <main class="shell">
     <section id="auth" class="card auth-card">
-      <h1>Mensajes con Gestinem</h1>
+      <img class="brand-logo" src="/static/gestinem-logo.png" alt="Gestinem">
+      <h1>Área de clientes</h1>
       <p id="auth-help">Accede para consultar tus conversaciones.</p>
       <form id="login-form">
         <label>Email<input id="email" type="email" autocomplete="email" required></label>
         <label>Contraseña<input id="password" type="password" autocomplete="current-password" minlength="10" required></label>
         <button>Entrar</button>
+        <button id="forgot-link" class="text-button" type="button">¿Has olvidado tu contraseña?</button>
       </form>
       <form id="invite-form" hidden>
         <label>Nueva contraseña<input id="invite-password" type="password" autocomplete="new-password" minlength="10" required></label>
         <button>Activar cuenta</button>
       </form>
+      <form id="forgot-form" hidden>
+        <label>Email<input id="forgot-email" type="email" autocomplete="email" required></label>
+        <button>Enviar enlace de recuperación</button>
+        <button class="text-button back-login" type="button">Volver al acceso</button>
+      </form>
+      <form id="reset-form" hidden>
+        <label>Nueva contraseña<input id="reset-password" type="password" autocomplete="new-password" minlength="10" required></label>
+        <label>Repite la contraseña<input id="reset-password-confirm" type="password" autocomplete="new-password" minlength="10" required></label>
+        <button>Guardar nueva contraseña</button>
+      </form>
       <p id="auth-error" class="error" role="alert"></p>
+      <p id="auth-success" class="success" role="status"></p>
     </section>
 
     <section id="chat" class="chat" hidden>
-      <header><div><strong>Gestinem</strong><small id="client-name"></small></div><button id="logout" class="secondary">Salir</button></header>
+      <header><div class="header-brand"><img src="/static/gestinem-logo.png" alt="Gestinem"><small id="client-name"></small></div><button id="logout" class="secondary">Salir</button></header>
       <nav id="conversations" aria-label="Conversaciones"></nav>
       <section id="thread" class="thread" aria-live="polite"></section>
       <form id="composer" class="composer">

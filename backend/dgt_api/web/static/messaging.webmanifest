@@ -6,6 +6,6 @@
   "background_color": "#eef3f8",
   "theme_color": "#0759af",
   "icons": [
-    {"src": "/static/messaging-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}
+    {"src": "/static/gestinem-logo.png", "sizes": "267x94", "type": "image/png", "purpose": "any"}
   ]
 }
