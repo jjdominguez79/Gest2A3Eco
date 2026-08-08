@@ -76,3 +76,14 @@ def test_load_app_config_no_incluye_motor_legacy(monkeypatch, tmp_path):
     cfg = utilidades.load_app_config()
     assert "database_engine" not in cfg
     assert "postgres_dsn" in cfg
+
+
+def test_subcarpetas_word_se_derivan_de_la_raiz_configurada(monkeypatch, tmp_path):
+    monkeypatch.setattr(utilidades, "get_word_templates_dir", lambda default_dir=None: str(tmp_path))
+
+    facturas = utilidades.get_word_templates_subdir("facturas")
+    firmas = utilidades.get_word_templates_subdir("firmas")
+
+    assert facturas == tmp_path / "facturas"
+    assert firmas == tmp_path / "firmas"
+    assert facturas.is_dir() and firmas.is_dir()

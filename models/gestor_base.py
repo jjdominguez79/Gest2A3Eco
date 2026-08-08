@@ -652,6 +652,86 @@ CREATE TABLE IF NOT EXISTS firma_eventos (
   created_at TEXT NOT NULL,
   FOREIGN KEY (solicitud_id) REFERENCES firma_solicitudes(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS plantillas_firma (
+  id TEXT PRIMARY KEY,
+  nombre TEXT NOT NULL UNIQUE,
+  descripcion TEXT,
+  archivo_relativo TEXT NOT NULL UNIQUE,
+  alcance TEXT NOT NULL DEFAULT 'global',
+  version INTEGER NOT NULL DEFAULT 1,
+  hash_docx TEXT NOT NULL,
+  asunto TEXT,
+  mensaje TEXT,
+  activa INTEGER NOT NULL DEFAULT 0,
+  zonas_revisadas INTEGER NOT NULL DEFAULT 0,
+  creado_por TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS plantillas_firma_empresas (
+  plantilla_id TEXT NOT NULL,
+  codigo_empresa TEXT NOT NULL,
+  PRIMARY KEY (plantilla_id, codigo_empresa),
+  FOREIGN KEY (plantilla_id) REFERENCES plantillas_firma(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS plantillas_firma_campos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  plantilla_id TEXT NOT NULL,
+  clave TEXT NOT NULL,
+  etiqueta TEXT NOT NULL,
+  origen TEXT NOT NULL DEFAULT 'manual',
+  campo_origen TEXT,
+  tipo TEXT NOT NULL DEFAULT 'texto',
+  obligatorio INTEGER NOT NULL DEFAULT 0,
+  valor_defecto TEXT,
+  orden INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (plantilla_id, clave),
+  FOREIGN KEY (plantilla_id) REFERENCES plantillas_firma(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS plantillas_firma_firmantes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  plantilla_id TEXT NOT NULL,
+  rol TEXT NOT NULL,
+  origen TEXT NOT NULL DEFAULT 'manual',
+  orden INTEGER NOT NULL DEFAULT 1,
+  usar_sms INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (plantilla_id, orden),
+  FOREIGN KEY (plantilla_id) REFERENCES plantillas_firma(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS plantillas_firma_zonas (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  plantilla_id TEXT NOT NULL,
+  rol TEXT NOT NULL,
+  pagina INTEGER NOT NULL,
+  x REAL NOT NULL,
+  y REAL NOT NULL,
+  ancho REAL NOT NULL,
+  alto REAL NOT NULL,
+  FOREIGN KEY (plantilla_id) REFERENCES plantillas_firma(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS documentos_firma_generados (
+  id TEXT PRIMARY KEY,
+  plantilla_id TEXT NOT NULL,
+  plantilla_version INTEGER NOT NULL,
+  plantilla_hash TEXT NOT NULL,
+  codigo_empresa TEXT,
+  tercero_id TEXT,
+  titulo TEXT NOT NULL,
+  datos_json TEXT NOT NULL,
+  firmantes_json TEXT NOT NULL,
+  ruta_docx TEXT NOT NULL,
+  ruta_pdf TEXT NOT NULL,
+  hash_docx TEXT,
+  hash_pdf TEXT,
+  estado TEXT NOT NULL DEFAULT 'borrador',
+  solicitud_id TEXT UNIQUE,
+  creado_por TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (plantilla_id) REFERENCES plantillas_firma(id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_documentos_firma_generados
+  ON documentos_firma_generados(codigo_empresa, created_at DESC);
 """
 
 AUTH_SCHEMA = """
@@ -3336,6 +3416,176 @@ class GestorBase:
             (str(solicitud_id),),
         ).fetchall()
         return [self._row_to_dict(row) for row in rows]
+
+    # ---------- PLANTILLAS DE FIRMA ----------
+    def guardar_plantilla_firma(self, plantilla: dict) -> str:
+        plantilla_id = str(plantilla.get("id") or uuid.uuid4())
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        existe = self.conn.execute(
+            "SELECT id,version,hash_docx,created_at FROM plantillas_firma WHERE id=?",
+            (plantilla_id,),
+        ).fetchone()
+        version = int(plantilla.get("version") or (existe["version"] if existe else 1))
+        if existe and str(existe.get("hash_docx") or "") != str(plantilla.get("hash_docx") or ""):
+            version = max(version, int(existe["version"]) + 1)
+        valores = (
+            plantilla.get("nombre"), plantilla.get("descripcion"),
+            plantilla.get("archivo_relativo"), plantilla.get("alcance") or "global",
+            version, plantilla.get("hash_docx") or "", plantilla.get("asunto"),
+            plantilla.get("mensaje"), 1 if plantilla.get("activa") else 0,
+            1 if plantilla.get("zonas_revisadas") else 0,
+            plantilla.get("creado_por"), now,
+        )
+        if existe:
+            self.conn.execute(
+                """UPDATE plantillas_firma SET nombre=?,descripcion=?,archivo_relativo=?,
+                alcance=?,version=?,hash_docx=?,asunto=?,mensaje=?,activa=?,zonas_revisadas=?,
+                creado_por=COALESCE(creado_por,?),updated_at=? WHERE id=?""",
+                (*valores, plantilla_id),
+            )
+        else:
+            self.conn.execute(
+                """INSERT INTO plantillas_firma
+                (id,nombre,descripcion,archivo_relativo,alcance,version,hash_docx,asunto,mensaje,
+                 activa,zonas_revisadas,creado_por,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (plantilla_id, *valores[:-1], now, now),
+            )
+        for tabla in (
+            "plantillas_firma_empresas", "plantillas_firma_campos",
+            "plantillas_firma_firmantes", "plantillas_firma_zonas",
+        ):
+            self.conn.execute(f"DELETE FROM {tabla} WHERE plantilla_id=?", (plantilla_id,))
+        for codigo in plantilla.get("empresas") or []:
+            self.conn.execute(
+                "INSERT INTO plantillas_firma_empresas(plantilla_id,codigo_empresa) VALUES (?,?)",
+                (plantilla_id, str(codigo)),
+            )
+        for pos, campo in enumerate(plantilla.get("campos") or []):
+            self.conn.execute(
+                """INSERT INTO plantillas_firma_campos
+                (plantilla_id,clave,etiqueta,origen,campo_origen,tipo,obligatorio,valor_defecto,orden)
+                VALUES (?,?,?,?,?,?,?,?,?)""",
+                (plantilla_id, campo["clave"], campo.get("etiqueta") or campo["clave"],
+                 campo.get("origen") or "manual", campo.get("campo_origen"),
+                 campo.get("tipo") or "texto", 1 if campo.get("obligatorio") else 0,
+                 campo.get("valor_defecto"), int(campo.get("orden", pos))),
+            )
+        for pos, firmante in enumerate(plantilla.get("firmantes") or []):
+            self.conn.execute(
+                """INSERT INTO plantillas_firma_firmantes
+                (plantilla_id,rol,origen,orden,usar_sms) VALUES (?,?,?,?,?)""",
+                (plantilla_id, firmante.get("rol") or f"Firmante {pos + 1}",
+                 firmante.get("origen") or "manual", int(firmante.get("orden") or pos + 1),
+                 1 if firmante.get("usar_sms") else 0),
+            )
+        for zona in plantilla.get("zonas") or []:
+            self.conn.execute(
+                """INSERT INTO plantillas_firma_zonas
+                (plantilla_id,rol,pagina,x,y,ancho,alto) VALUES (?,?,?,?,?,?,?)""",
+                (plantilla_id, zona["rol"], int(zona["pagina"]), float(zona["x"]),
+                 float(zona["y"]), float(zona["ancho"]), float(zona["alto"])),
+            )
+        self.conn.commit()
+        return plantilla_id
+
+    def get_plantilla_firma(self, plantilla_id: str) -> dict | None:
+        row = self.conn.execute("SELECT * FROM plantillas_firma WHERE id=?", (str(plantilla_id),)).fetchone()
+        if not row:
+            return None
+        item = self._row_to_dict(row)
+        item["empresas"] = [r["codigo_empresa"] for r in self.conn.execute(
+            "SELECT codigo_empresa FROM plantillas_firma_empresas WHERE plantilla_id=? ORDER BY codigo_empresa",
+            (str(plantilla_id),),
+        ).fetchall()]
+        for key, tabla, order in (
+            ("campos", "plantillas_firma_campos", "orden,id"),
+            ("firmantes", "plantillas_firma_firmantes", "orden,id"),
+            ("zonas", "plantillas_firma_zonas", "pagina,id"),
+        ):
+            item[key] = [self._row_to_dict(r) for r in self.conn.execute(
+                f"SELECT * FROM {tabla} WHERE plantilla_id=? ORDER BY {order}",
+                (str(plantilla_id),),
+            ).fetchall()]
+        return item
+
+    def listar_plantillas_firma(self, codigo_empresa: str = "", incluir_inactivas: bool = False) -> list[dict]:
+        clauses = ["1=1"]
+        params: list = []
+        if not incluir_inactivas:
+            clauses.append("p.activa=1")
+        if codigo_empresa:
+            clauses.append("(p.alcance='global' OR EXISTS (SELECT 1 FROM plantillas_firma_empresas pe WHERE pe.plantilla_id=p.id AND pe.codigo_empresa=?))")
+            params.append(str(codigo_empresa))
+        elif not incluir_inactivas:
+            clauses.append("p.alcance='global'")
+        rows = self.conn.execute(
+            "SELECT p.* FROM plantillas_firma p WHERE " + " AND ".join(clauses) + " ORDER BY LOWER(p.nombre)",
+            tuple(params),
+        ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    def eliminar_plantilla_firma(self, plantilla_id: str) -> None:
+        usados = self.conn.execute(
+            "SELECT 1 FROM documentos_firma_generados WHERE plantilla_id=? LIMIT 1", (str(plantilla_id),)
+        ).fetchone()
+        if usados:
+            self.conn.execute("UPDATE plantillas_firma SET activa=0 WHERE id=?", (str(plantilla_id),))
+        else:
+            self.conn.execute("DELETE FROM plantillas_firma WHERE id=?", (str(plantilla_id),))
+        self.conn.commit()
+
+    def guardar_documento_firma_generado(self, documento: dict) -> str:
+        documento_id = str(documento.get("id") or uuid.uuid4())
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        self.conn.execute(
+            """INSERT INTO documentos_firma_generados
+            (id,plantilla_id,plantilla_version,plantilla_hash,codigo_empresa,tercero_id,titulo,
+             datos_json,firmantes_json,ruta_docx,ruta_pdf,hash_docx,hash_pdf,estado,solicitud_id,
+             creado_por,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (documento_id, documento["plantilla_id"], int(documento["plantilla_version"]),
+             documento["plantilla_hash"], documento.get("codigo_empresa"), documento.get("tercero_id"),
+             documento["titulo"], json.dumps(documento.get("datos") or {}, ensure_ascii=False),
+             json.dumps(documento.get("firmantes") or [], ensure_ascii=False), documento["ruta_docx"],
+             documento["ruta_pdf"], documento.get("hash_docx"), documento.get("hash_pdf"),
+             documento.get("estado") or "borrador", documento.get("solicitud_id"),
+             documento.get("creado_por"), now, now),
+        )
+        self.conn.commit()
+        return documento_id
+
+    def vincular_documento_firma_solicitud(self, documento_id: str, solicitud_id: str) -> None:
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        self.conn.execute(
+            "UPDATE documentos_firma_generados SET solicitud_id=?,estado='enviado',updated_at=? WHERE id=?",
+            (str(solicitud_id), now, str(documento_id)),
+        )
+        self.conn.commit()
+
+    def get_documento_firma_generado(self, documento_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM documentos_firma_generados WHERE id=?", (str(documento_id),)
+        ).fetchone()
+        if not row:
+            return None
+        item = self._row_to_dict(row)
+        item["datos"] = json.loads(item.pop("datos_json") or "{}")
+        item["firmantes"] = json.loads(item.pop("firmantes_json") or "[]")
+        return item
+
+    def actualizar_documento_firma_generado(self, documento_id: str, cambios: dict) -> None:
+        permitidos = {"ruta_docx", "ruta_pdf", "hash_docx", "hash_pdf", "estado", "solicitud_id"}
+        cambios = {key: value for key, value in cambios.items() if key in permitidos}
+        if not cambios:
+            return
+        cambios["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        self.conn.execute(
+            "UPDATE documentos_firma_generados SET "
+            + ",".join(f"{key}=?" for key in cambios) + " WHERE id=?",
+            (*cambios.values(), str(documento_id)),
+        )
+        self.conn.commit()
 
     def devolver_facturas_recibidas_a_documentacion(
         self, codigo_empresa: str, ejercicio: int | None = None,

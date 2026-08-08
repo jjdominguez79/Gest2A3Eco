@@ -16,7 +16,7 @@ from xml.sax.saxutils import escape as xml_escape
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from services.tramites_dgt_repository import DgtRepository
-from utils.utilidades import get_app_data_dir, get_word_templates_dir
+from utils.utilidades import get_app_data_dir, get_word_templates_subdir
 from utils.validaciones import normalizar_nif_cif, validar_nif_cif_nie
 
 
@@ -800,9 +800,7 @@ class TramitesDgtService:
         return download(documento_id, target_path)
 
     def get_templates_dir(self) -> Path:
-        path = Path(get_word_templates_dir()) / "tramites_dgt"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return get_word_templates_subdir("tramites_dgt")
 
     def listar_plantillas_editables(self) -> list[dict]:
         base = self.get_templates_dir()
@@ -1022,15 +1020,8 @@ class TramitesDgtService:
         filename = TEMPLATE_FILENAMES.get(tipo)
         if not filename:
             return None
-        base = Path(get_word_templates_dir())
-        candidates = [
-            base / "tramites_dgt" / filename,
-            base / filename,
-        ]
-        for path in candidates:
-            if path.exists() and path.is_file():
-                return path
-        return None
+        path = self.get_templates_dir() / filename
+        return path if path.exists() and path.is_file() else None
 
     def _render_basic_docx(self, context: dict, titulo: str, out_docx_path: Path) -> bool:
         try:

@@ -440,9 +440,8 @@ class CuotasController:
 
     def _listar_plantillas_word(self) -> list[str]:
         try:
-            from pathlib import Path
-            from utils.utilidades import get_word_templates_dir
-            d = Path(get_word_templates_dir())
+            from utils.utilidades import get_word_templates_subdir
+            d = get_word_templates_subdir("facturas")
             if not d.exists():
                 return []
             return sorted([p.name for p in d.glob("*.docx") if p.is_file()],

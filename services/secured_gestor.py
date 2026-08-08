@@ -41,6 +41,38 @@ class SecuredGestor:
     def listar_categorias_documentales(self, solo_activas: bool = True):
         return self._base.listar_categorias_documentales(solo_activas)
 
+    def guardar_plantilla_firma(self, plantilla: dict):
+        self.security.ensure_admin("Solo un administrador puede modificar plantillas de firma.")
+        return self._base.guardar_plantilla_firma(plantilla)
+
+    def eliminar_plantilla_firma(self, plantilla_id: str):
+        self.security.ensure_admin("Solo un administrador puede desactivar plantillas de firma.")
+        return self._base.eliminar_plantilla_firma(plantilla_id)
+
+    def listar_plantillas_firma(self, codigo_empresa: str = "", incluir_inactivas: bool = False):
+        self.security.ensure_firmas()
+        return self._base.listar_plantillas_firma(codigo_empresa, incluir_inactivas)
+
+    def get_plantilla_firma(self, plantilla_id: str):
+        self.security.ensure_firmas()
+        return self._base.get_plantilla_firma(plantilla_id)
+
+    def guardar_documento_firma_generado(self, documento: dict):
+        self.security.ensure_firmas()
+        return self._base.guardar_documento_firma_generado(documento)
+
+    def get_documento_firma_generado(self, documento_id: str):
+        self.security.ensure_firmas()
+        return self._base.get_documento_firma_generado(documento_id)
+
+    def actualizar_documento_firma_generado(self, documento_id: str, cambios: dict):
+        self.security.ensure_firmas()
+        return self._base.actualizar_documento_firma_generado(documento_id, cambios)
+
+    def vincular_documento_firma_solicitud(self, documento_id: str, solicitud_id: str):
+        self.security.ensure_firmas()
+        return self._base.vincular_documento_firma_solicitud(documento_id, solicitud_id)
+
     def listar_documentos_archivo(self, codigo_empresa: str, ejercicio=None, categoria_id: str = ""):
         self.security.ensure_company_read(codigo_empresa)
         return self._base.listar_documentos_archivo(codigo_empresa, ejercicio, categoria_id)

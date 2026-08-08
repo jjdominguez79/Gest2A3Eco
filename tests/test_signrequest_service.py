@@ -42,6 +42,7 @@ def test_envia_documento_con_token_y_contenido_base64(tmp_path: Path):
     assert kwargs["headers"]["Authorization"] == "Token token-secreto"
     assert kwargs["json"]["signers"][0]["verify_phone_number"] == "+34600000000"
     assert kwargs["json"]["file_from_content"]
+    assert "events_callback_url" not in kwargs["json"]
 
 
 class _RouteResponse:

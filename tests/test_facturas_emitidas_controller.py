@@ -1,4 +1,5 @@
 from controllers.ui_facturas_emitidas_controller import FacturasEmitidasController
+from controllers import ui_facturas_emitidas_controller as module
 
 
 def test_numero_factura_contable_concatena_serie_y_numero():
@@ -42,3 +43,14 @@ def test_totales_separan_suplidos_de_base_imponible():
         "ret": 0.0,
         "total": 176.7,
     }
+
+
+def test_resuelve_facturas_y_albaranes_en_subcarpetas_distintas(monkeypatch, tmp_path):
+    controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
+    monkeypatch.setattr(module, "get_word_templates_subdir", lambda tipo: tmp_path / tipo)
+
+    factura = controller._docx_template_path(default_filename="factura_emitida_template.docx")
+    albaran = controller._docx_template_path(default_filename="albaran_template.docx")
+
+    assert factura == str(tmp_path / "facturas" / "factura_emitida_template.docx")
+    assert albaran == str(tmp_path / "albaranes" / "albaran_template.docx")

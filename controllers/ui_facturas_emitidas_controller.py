@@ -18,7 +18,7 @@ from utils.utilidades import (
     aplicar_descuento_total_lineas,
     get_default_output_dir,
     get_log_path,
-    get_word_templates_dir,
+    get_word_templates_subdir,
     load_app_config,
     load_monedas,
 )
@@ -1779,7 +1779,8 @@ class FacturasEmitidasController:
         warn_missing: bool = False,
         default_filename: str = "factura_emitida_template.docx",
     ) -> str:
-        tpl_dir = get_word_templates_dir()
+        tipo_carpeta = "albaranes" if str(default_filename).lower().startswith("albaran") else "facturas"
+        tpl_dir = str(get_word_templates_subdir(tipo_carpeta))
         default_path = os.path.join(tpl_dir, default_filename)
         if not fac:
             return default_path
@@ -1887,7 +1888,11 @@ class FacturasEmitidasController:
         """Genera un PDF usando siempre la plantilla Word. Lanza excepcion si no hay plantilla o falla."""
         template_path = self._docx_template_path(fac, warn_missing=False, default_filename=default_template or "factura_emitida_template.docx")
         if not os.path.exists(template_path):
-            raise FileNotFoundError(f"No se encuentra la plantilla Word:\n{template_path}")
+            raise FileNotFoundError(
+                f"No se encuentra la plantilla Word:\n{template_path}\n\n"
+                "Un administrador puede copiar las plantillas antiguas desde "
+                "Firmas > Gestionar plantillas > Organizar carpeta compartida."
+            )
         cliente = self._cliente_factura(fac)
         tot = self._totales_factura(fac)
         context = build_context_emitida(self._empresa_conf_for_word(), fac, cliente, tot)

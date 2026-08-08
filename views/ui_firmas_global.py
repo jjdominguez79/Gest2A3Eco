@@ -9,10 +9,13 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from services.firma.firma_service import FirmaService
+from services.firma.plantillas_service import PlantillasFirmaService
 from services.firma.provider import build_firma_provider
 from services.gestion_documental_service import GestionDocumentalService
 from utils.utilidades import get_document_repository_dir, load_app_config
 from views.ui_firma_dialog import UIFirmaDialog
+from views.ui_documento_firma_plantilla import UIDocumentoFirmaPlantillaDialog
+from views.ui_plantillas_firma import UIPlantillasFirmaManager
 
 GLOBAL_CODE = "__GLOBAL__"
 
@@ -31,6 +34,9 @@ class UIFirmasGlobal(ttk.Frame):
         header.pack(fill="x", pady=(0, 8))
         ttk.Label(header, text="Firmas", font=("Segoe UI", 16, "bold")).pack(side="left")
         ttk.Button(header, text="Nueva solicitud desde disco", command=self._new_request).pack(side="right")
+        ttk.Button(header, text="Nueva desde plantilla", command=self._new_from_template).pack(side="right", padx=6)
+        if self._is_admin():
+            ttk.Button(header, text="Gestionar plantillas", command=self._manage_templates).pack(side="right")
         filters = ttk.Frame(self)
         filters.pack(fill="x", pady=(0, 8))
         ttk.Label(filters, text="Estado").pack(side="left")
@@ -109,6 +115,169 @@ class UIFirmasGlobal(ttk.Frame):
     def _selected(self):
         selected = self._tree.selection()
         return self._rows.get(selected[0]) if selected else None
+
+    def _manage_templates(self):
+        dialog = UIPlantillasFirmaManager(self, self._gestor, self._user_name())
+        self.wait_window(dialog)
+
+    def _new_from_template(self):
+        service = PlantillasFirmaService(self._gestor)
+        dialog = UIDocumentoFirmaPlantillaDialog(
+            self, service, self._gestor, usuario=self._user_name()
+        )
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        setup = dict(dialog.result)
+        empresa = setup.get("empresa") or {}
+        tercero = setup.get("tercero") or {}
+        plantilla = setup["plantilla"]
+        firmantes, zonas = self._defaults_from_template(plantilla, empresa, tercero)
+        self.configure(cursor="watch")
+
+        def worker():
+            try:
+                documento = service.generar_documento(
+                    plantilla["id"], setup["valores"], empresa=empresa, tercero=tercero,
+                    firmantes=firmantes, usuario=self._user_name(),
+                    ejercicio=int(empresa.get("ejercicio") or datetime.now().year),
+                )
+                self.after(0, self._review_generated, service, setup, documento, firmantes, zonas)
+            except Exception as exc:
+                self.after(0, self._done, "", str(exc))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _review_generated(self, service, setup, documento, firmantes, zonas):
+        self.configure(cursor="")
+        try:
+            os.startfile(documento["ruta_docx"])
+        except Exception as exc:
+            messagebox.showerror("Documento", str(exc), parent=self)
+            return
+        if not messagebox.askyesno(
+            "Revisar documento",
+            "Revise y guarde el documento en Word. Cuando haya cerrado Word, pulse Si para regenerar y revisar el PDF.",
+            parent=self,
+        ):
+            return
+        self.configure(cursor="watch")
+
+        def worker():
+            try:
+                actualizado = service.regenerar_pdf(documento["id"])
+                self.after(0, self._configure_generated_signature, service, setup, actualizado, firmantes, zonas)
+            except Exception as exc:
+                self.after(0, self._done, "", str(exc))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _configure_generated_signature(self, service, setup, documento, firmantes, zonas):
+        self.configure(cursor="")
+        plantilla = setup["plantilla"]
+        cfg = load_app_config()
+        initial = {
+            "asunto": plantilla.get("asunto") or plantilla.get("nombre") or documento["titulo"],
+            "mensaje": plantilla.get("mensaje") or "",
+            "firmantes": firmantes,
+            "zonas": zonas,
+        }
+        empresa = setup.get("empresa") or {}
+        codigo = str(empresa.get("codigo") or GLOBAL_CODE)
+        ejercicio = int(empresa.get("ejercicio") or datetime.now().year)
+        terceros = self._gestor.listar_terceros_por_empresa(codigo, ejercicio) if codigo != GLOBAL_CODE else []
+        dialog = UIFirmaDialog(
+            self, documento["ruta_pdf"], terceros=terceros,
+            remitente=self._remitente_config(cfg), initial=initial,
+        )
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        result = dict(dialog.result)
+        result["usar_sms"] = any(bool(f.get("usar_sms")) for f in plantilla.get("firmantes") or [])
+        self._save_template_zones_if_admin(plantilla, result.get("zonas") or [])
+        self.configure(cursor="watch")
+
+        def worker():
+            try:
+                archived_id = ""
+                envio = documento["ruta_pdf"]
+                if codigo != GLOBAL_CODE:
+                    archived_id = GestionDocumentalService(self._gestor).importar_archivo(
+                        codigo_empresa=codigo, ejercicio=ejercicio, categoria_id="firmas",
+                        source=envio, usuario=self._user_name(),
+                    )
+                    envio = self._gestor.get_documento_archivo(archived_id)["ruta"]
+                firma = FirmaService(
+                    self._gestor, provider=build_firma_provider(cfg),
+                    max_mb=cfg.get("firma_max_mb", 15),
+                )
+                solicitud_id = firma.crear_solicitud(
+                    codigo, ejercicio, envio, result["firmantes"], origen="plantilla",
+                    documento_archivo_id=archived_id, asunto=result["asunto"], mensaje=result["mensaje"],
+                    usar_sms=bool(result.get("usar_sms")), zonas=result["zonas"], creado_por=self._user_name(),
+                )
+                firma.enviar(solicitud_id)
+                self._gestor.vincular_documento_firma_solicitud(documento["id"], solicitud_id)
+                self.after(0, self._done, "Documento generado y enviado a firma.", "")
+            except Exception as exc:
+                self.after(0, self._done, "", str(exc))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _defaults_from_template(self, plantilla, empresa, tercero):
+        cfg = load_app_config()
+        sources = {
+            "empresa": empresa,
+            "tercero": tercero,
+            "gestor": self._remitente_config(cfg),
+            "manual": {},
+        }
+        firmantes = []
+        roles = []
+        for pos, definition in enumerate(plantilla.get("firmantes") or []):
+            source = dict(sources.get(str(definition.get("origen") or "manual"), {}) or {})
+            firmantes.append({
+                "orden": pos + 1,
+                "nombre": source.get("nombre_legal") or source.get("nombre") or "",
+                "email": source.get("email") or source.get("correo") or "",
+                "telefono": source.get("telefono") or "",
+                "tercero_id": source.get("tercero_id") or source.get("id"),
+                "es_remitente": str(definition.get("origen")) == "gestor",
+            })
+            roles.append(str(definition.get("rol") or f"Firmante {pos + 1}"))
+        if not firmantes:
+            firmantes = [{"orden": 1, "nombre": "", "email": "", "telefono": "", "es_remitente": False}]
+            roles = ["Firmante 1"]
+        zones = []
+        for zone in plantilla.get("zonas") or []:
+            role = str(zone.get("rol") or "")
+            if role not in roles:
+                continue
+            zones.append({
+                "pagina": int(zone["pagina"]), "x": float(zone["x"]), "y": float(zone["y"]),
+                "ancho": float(zone["ancho"]), "alto": float(zone["alto"]),
+                "firmante": roles.index(role),
+            })
+        return firmantes, zones
+
+    def _save_template_zones_if_admin(self, plantilla, zones):
+        if not self._is_admin() or not zones:
+            return
+        roles = [str(f.get("rol") or "") for f in plantilla.get("firmantes") or []]
+        if not roles or any(int(z.get("firmante", -1)) not in range(len(roles)) for z in zones):
+            return
+        updated = dict(plantilla)
+        updated["zonas"] = [
+            {**{key: zone[key] for key in ("pagina", "x", "y", "ancho", "alto")},
+             "rol": roles[int(zone["firmante"])]}
+            for zone in zones
+        ]
+        updated["zonas_revisadas"] = True
+        try:
+            PlantillasFirmaService(self._gestor).guardar_configuracion(updated, self._user_name())
+        except Exception:
+            pass
+
+    def _is_admin(self):
+        return bool(self._session and self._session.is_admin())
 
     def _new_request(self):
         ruta = filedialog.askopenfilename(parent=self, title="Seleccionar PDF", filetypes=(("PDF", "*.pdf"),))

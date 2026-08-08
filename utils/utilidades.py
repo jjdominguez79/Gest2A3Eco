@@ -12,6 +12,13 @@ SEP = "\t"
 APP_VENDOR = "Gestinem"
 APP_NAME = "Gest2A3Eco"
 
+WORD_TEMPLATE_SUBDIRS = {
+    "facturas": "facturas",
+    "albaranes": "albaranes",
+    "firmas": "firmas",
+    "tramites_dgt": "tramites_dgt",
+}
+
 DEFAULT_MONEDAS = [
     {"codigo": "EUR", "simbolo": "€", "nombre": "Euro"},
     {"codigo": "USD", "simbolo": "$", "nombre": "Dolar"},
@@ -330,6 +337,18 @@ def get_word_templates_dir(default_dir: str | None = None) -> str:
     fallback = Path(default_dir) if default_dir else get_default_templates_dir()
     fallback.mkdir(parents=True, exist_ok=True)
     return str(fallback)
+
+
+def get_word_templates_subdir(tipo: str, *, crear: bool = True) -> Path:
+    """Devuelve una subcarpeta funcional de la raiz Word compartida."""
+    clave = str(tipo or "").strip().lower()
+    nombre = WORD_TEMPLATE_SUBDIRS.get(clave)
+    if not nombre:
+        raise ValueError(f"Tipo de plantillas Word no valido: {tipo}")
+    path = Path(get_word_templates_dir()) / nombre
+    if crear:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
 
 def set_word_templates_dir(path: str) -> None:
     cfg = load_app_config()
