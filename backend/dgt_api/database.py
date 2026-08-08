@@ -16,8 +16,9 @@ def build_engine(database_url: str | None = None):
         url = f"postgresql+psycopg://{url.removeprefix('postgresql://')}"
     elif url.startswith("postgres://"):
         url = f"postgresql+psycopg://{url.removeprefix('postgres://')}"
-    kwargs = {"check_same_thread": False} if url.startswith("sqlite") else {}
-    return create_engine(url, connect_args=kwargs, pool_pre_ping=True)
+    if not url.startswith("postgresql+psycopg://"):
+        raise RuntimeError("La API DGT solo admite PostgreSQL.")
+    return create_engine(url, pool_pre_ping=True)
 
 
 engine = build_engine()

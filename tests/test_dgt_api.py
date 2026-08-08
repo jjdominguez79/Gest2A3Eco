@@ -1,8 +1,15 @@
+import os
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
+
+os.environ.setdefault(
+    "DGT_DATABASE_URL",
+    "postgresql+psycopg://gest2a3eco_test:gest2a3eco_test@localhost:5432/gest2a3eco_test",
+)
 
 from backend.dgt_api import app as app_module
 from backend.dgt_api.database import Base, build_engine
@@ -56,8 +63,11 @@ def _party_payload(*, role="vendedor", tipo_persona="fisica"):
 
 
 def _client(tmp_path: Path, monkeypatch):
-    db_path = (tmp_path / "api.db").as_posix()
-    engine = build_engine(f"sqlite:///{db_path}")
+    dsn = os.getenv("DGT_TEST_DATABASE_URL", "").strip()
+    if not dsn:
+        pytest.skip("DGT_TEST_DATABASE_URL no configurado para tests PostgreSQL.")
+    engine = build_engine(dsn)
+    Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 

@@ -34,13 +34,8 @@ class DgtRepository(Protocol):
         ...
 
 
-class SQLiteDgtRepository:
-    """
-    Adaptador SQLite actual para Trámites DGT.
-
-    Mantiene el servicio desacoplado del gestor concreto para poder sustituirlo
-    por una API online o un repositorio híbrido sin cambiar la UI.
-    """
+class GestorDgtRepository:
+    """Adaptador del gestor principal para Tramites DGT."""
 
     def __init__(self, gestor):
         self._gestor = gestor

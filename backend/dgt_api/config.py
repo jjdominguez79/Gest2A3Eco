@@ -23,8 +23,14 @@ class Settings:
 
 
 def get_settings() -> Settings:
+    database_url = os.getenv("DGT_DATABASE_URL", "").strip()
+    if not database_url:
+        raise RuntimeError(
+            "DGT_DATABASE_URL es obligatorio y debe apuntar a PostgreSQL."
+        )
+
     return Settings(
-        database_url=os.getenv("DGT_DATABASE_URL", "sqlite:///./dgt_api.db"),
+        database_url=database_url,
         internal_api_key=os.getenv("DGT_INTERNAL_API_KEY", ""),
         public_base_url=os.getenv("DGT_PUBLIC_BASE_URL", "https://tramites.gestinem.es").rstrip("/"),
         token_ttl_hours=max(1, int(os.getenv("DGT_TOKEN_TTL_HOURS", "168"))),

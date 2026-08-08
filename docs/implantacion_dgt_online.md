@@ -32,7 +32,8 @@ En `config.local.json` de Gest2A3Eco:
 }
 ```
 
-Sin esas dos opciones, el modulo conserva el repositorio SQLite anterior.
+Sin esas dos opciones, el modulo DGT no queda operativo desde la aplicacion
+de escritorio. No existe fallback a base local.
 
 ## Produccion
 

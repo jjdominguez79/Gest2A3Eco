@@ -29,7 +29,7 @@ class PostgresConfigDialog(tk.Toplevel):
         ttk.Label(
             frame,
             text=(
-                "Este puesto dejara de utilizar la antigua base SQLite.\n"
+                "Este puesto utilizara la base PostgreSQL central.\n"
                 "Introduce la contraseña de la base de datos central."
             ),
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 16))

@@ -2,7 +2,6 @@
 import json
 import math
 import os
-import sqlite3
 import sys
 import traceback
 from datetime import datetime
@@ -99,10 +98,6 @@ def get_document_repository_dir() -> Path:
     return path
 
 
-def get_default_db_path() -> Path:
-    return get_app_data_dir() / "gest2a3eco.db"
-
-
 def get_packaged_templates_dir() -> Path:
     return get_install_dir() / "plantillas"
 
@@ -177,8 +172,6 @@ def _apply_env_overrides(data: dict) -> dict:
 
     direct_map = {
         "GEST2A3ECO_A3_BASE_PATH": "a3_base_path",
-        "GEST2A3ECO_LAST_DB_PATH": "last_db_path",
-        "GEST2A3ECO_DATABASE_ENGINE": "database_engine",
         "GEST2A3ECO_POSTGRES_DSN": "postgres_dsn",
         "GEST2A3ECO_WORD_TEMPLATES_DIR": "word_templates_dir",
         "GEST2A3ECO_OCR_MOTOR_ACTIVO": "ocr_motor_activo",
@@ -241,13 +234,6 @@ def _normalize_config(data: dict) -> dict:
     out.setdefault("templates_path", "")
     out.setdefault("word_templates_dir", "")
     out.setdefault("a3_base_path", "")
-    out.setdefault("db_path", "")
-    out.setdefault("last_db_path", "")
-    # Desde la version 1.4.0 PostgreSQL es el motor central. Si un puesto no
-    # tiene DSN configurada, el arranque se detiene antes de escribir en la
-    # antigua SQLite. Se puede indicar "sqlite" explicitamente solo para
-    # recuperacion o pruebas controladas.
-    out.setdefault("database_engine", "postgres")
     out.setdefault("postgres_dsn", "")
     out.setdefault("ocr_motor_activo", "")
     out.setdefault("azure_doc_intelligence_endpoint", "")
@@ -271,13 +257,6 @@ def _normalize_config(data: dict) -> dict:
     out.setdefault("dataprius_base_url", "https://api.v2.dataprius.com")
     out.setdefault("dataprius_base_path", "FOLDERS/Gest2A3Eco/Tramites DGT")
 
-    if not str(out.get("db_path") or "").strip():
-        out["db_path"] = str(out.get("last_db_path") or "").strip()
-    if not str(out.get("last_db_path") or "").strip():
-        out["last_db_path"] = str(out.get("db_path") or "").strip()
-    out["database_engine"] = str(out.get("database_engine") or "postgres").strip().lower()
-    if out["database_engine"] not in {"sqlite", "postgres"}:
-        out["database_engine"] = "sqlite"
     if not str(out.get("documentos_output_dir") or "").strip():
         repository = Path(
             os.getenv("GEST2A3ECO_DOCUMENT_REPOSITORY_DIR")
@@ -356,55 +335,6 @@ def set_word_templates_dir(path: str) -> None:
     cfg = load_app_config()
     cfg["word_templates_dir"] = path
     save_app_config(cfg)
-
-
-def get_configured_db_path() -> str:
-    cfg = load_app_config()
-    raw = str(cfg.get("db_path") or cfg.get("last_db_path") or "").strip()
-    return raw or str(get_default_db_path())
-
-
-def set_configured_db_path(path: str) -> None:
-    cfg = load_app_config()
-    cfg["db_path"] = path
-    cfg["last_db_path"] = path
-    save_app_config(cfg)
-
-
-def validate_sqlite_db_path(path: str, *, allow_create: bool = True) -> str:
-    raw = str(path or "").strip().strip('"')
-    if not raw:
-        raise ValueError("Debes indicar una ruta para la base de datos SQLite.")
-
-    db_path = Path(raw).expanduser()
-    parent = db_path.parent
-    if not str(parent):
-        raise ValueError(f"Ruta de base de datos no válida: {raw}")
-    if not parent.exists():
-        if allow_create:
-            raise FileNotFoundError(f"No existe la carpeta de la base de datos:\n{parent}")
-        raise FileNotFoundError(f"No existe la base de datos:\n{db_path}")
-    if not parent.is_dir():
-        raise NotADirectoryError(f"La carpeta de la base de datos no es válida:\n{parent}")
-    if db_path.exists() and db_path.is_dir():
-        raise IsADirectoryError(f"La ruta seleccionada es una carpeta, no un fichero SQLite:\n{db_path}")
-    if not db_path.exists() and not allow_create:
-        raise FileNotFoundError(f"No existe la base de datos seleccionada:\n{db_path}")
-
-    conn = None
-    try:
-        conn = sqlite3.connect(str(db_path))
-        conn.execute("CREATE TABLE IF NOT EXISTS __gest2a3eco_access_check__ (id INTEGER PRIMARY KEY)")
-        conn.execute("DROP TABLE IF EXISTS __gest2a3eco_access_check__")
-        conn.commit()
-    except Exception as exc:
-        raise PermissionError(
-            f"No se puede abrir la base de datos con permisos de lectura y escritura:\n{db_path}\n\nDetalle: {exc}"
-        ) from exc
-    finally:
-        if conn is not None:
-            conn.close()
-    return str(db_path)
 
 
 def save_app_config(data: dict) -> None:

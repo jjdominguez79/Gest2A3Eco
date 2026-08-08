@@ -8,7 +8,7 @@ Arquitectura: listado + zona de revision vertical
 Puntos de integracion:
   - services/ocr/OcrService       — procesamiento OCR tipado
   - services/ocr_contabilidad_service — proyeccion hacia contabilidad
-  - models/gestor_sqlite           — persistencia
+  - gestor principal              — persistencia PostgreSQL
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 def _normalizar_confianza(value) -> float:
-    """Normaliza valores de confianza de SQLite/Azure para mostrarlos en UI."""
+    """Normaliza valores de confianza para mostrarlos en UI."""
     try:
         raw = str(value or "").strip().replace(",", ".")
         is_percentage = raw.endswith("%")
@@ -90,7 +90,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
 
     Parametros:
       master        — widget padre (normalmente el area de contenido del dashboard)
-      gestor        — instancia de GestorSQLite
+      gestor        — instancia del gestor principal de datos
       codigo_empresa
       ejercicio
       nombre_empresa
@@ -1400,7 +1400,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                 "tipo_operacion_iva": payload["tipo_operacion_iva"],
             })
         self._factura_seleccionada = payload
-        # Recargar desde SQLite para que el formulario derecho refleje tambien
+        # Recargar desde la base de datos para que el formulario derecho refleje tambien
         # las facturas creadas manualmente cuando no habia propuesta OCR.
         marcas_guardadas = dict(self._marcas_campos)
         # La recarga busca por documento_id, no por el id de la factura OCR.

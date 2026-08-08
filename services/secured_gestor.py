@@ -4,7 +4,7 @@ from models.auth import CompanyPermission
 from services.auth_service import AuthorizationService
 
 
-class SecuredGestorSQLite:
+class SecuredGestor:
     """
     Proxy del gestor real para aplicar filtrado y comprobaciones de seguridad.
     """
@@ -17,8 +17,8 @@ class SecuredGestorSQLite:
         return getattr(self._base, item)
 
     @property
-    def db_path(self):
-        return self._base.db_path
+    def data_source(self):
+        return getattr(self._base, "data_source", "PostgreSQL")
 
     @property
     def conn(self):

@@ -8,21 +8,16 @@ from tkinter import filedialog, messagebox, ttk
 
 from controllers.app_controller import AppController
 from services.email_service import ensure_template_file
-from models.gestor_sqlite import GestorSQLite
 from models.gestor_postgres import GestorPostgres, crear_dsn_postgres
 from services.auth_service import AuthService, AuthorizationService
-from services.secured_gestor import SecuredGestorSQLite
+from services.secured_gestor import SecuredGestor
 from utils.utilidades import (
-    get_default_db_path,
     get_default_templates_dir,
-    get_seed_json_path,
     get_word_templates_dir,
     load_app_config,
     log_exception,
     save_app_config,
-    set_configured_db_path,
     set_word_templates_dir,
-    validate_sqlite_db_path,
 )
 from views.ui_auth import ChangePasswordDialog, UILogin
 from views.ui_config_monedas import MonedasDialog
@@ -76,7 +71,7 @@ def _build_header(
     on_open_notificaciones=None,
     on_open_tramites_dgt=None,
     on_logout=None,
-    db_path: str | None = None,
+    db_label: str | None = None,
     word_tpl_dir: str | None = None,
 ) -> tk.Frame:
     COLOR_PRIMARY      = "#002C57"
@@ -234,8 +229,8 @@ def _build_header(
 
     # ── Barra de información secundaria ─────────────────────────────────
     parts = []
-    if db_path:
-        parts.append(f"BD: {db_path}")
+    if db_label:
+        parts.append(f"BD: {db_label}")
     if word_tpl_dir:
         parts.append(f"Plantillas Word: {word_tpl_dir}")
     if parts:
@@ -250,17 +245,6 @@ def _build_header(
 
     header.set_mail_counts = _set_mail_counts
     return header
-
-
-def _select_db_path(default_path: str) -> str:
-    path = filedialog.asksaveasfilename(
-        title="Selecciona o crea base de datos",
-        initialdir=os.path.dirname(default_path),
-        initialfile=os.path.basename(default_path),
-        filetypes=[("SQLite DB", "*.db"), ("Todos", "*.*")],
-        defaultextension=".db",
-    )
-    return path or default_path
 
 
 def _select_word_templates_dir(default_dir: str) -> str:
@@ -304,61 +288,46 @@ def main():
     aplicar_tema(root)
 
     cfg = load_app_config()
-    database_engine = str(cfg.get("database_engine") or "postgres").strip().lower()
     postgres_dsn = str(cfg.get("postgres_dsn") or "").strip()
-    db_path = str(cfg.get("db_path") or cfg.get("last_db_path") or "").strip() or str(get_default_db_path())
+    db_label = "PostgreSQL"
     word_tpl_dir = get_word_templates_dir(str(get_default_templates_dir()))
-    if not str(cfg.get("db_path") or "").strip():
-        cfg["db_path"] = db_path
-    if not str(cfg.get("last_db_path") or "").strip():
-        cfg["last_db_path"] = db_path
     if not str(cfg.get("word_templates_dir") or "").strip():
         cfg["word_templates_dir"] = word_tpl_dir
     save_app_config(cfg)
 
     try:
-        if database_engine == "postgres":
-            while True:
-                if not postgres_dsn:
-                    root.deiconify()
-                    dialog = PostgresConfigDialog(root)
-                    root.withdraw()
-                    if not dialog.result:
-                        root.destroy()
-                        return
-                    postgres_dsn = crear_dsn_postgres(**dialog.result)
-                    cfg["database_engine"] = "postgres"
-                    cfg["postgres_dsn"] = postgres_dsn
-                    save_app_config(cfg)
-                try:
-                    gestor_base = GestorPostgres(postgres_dsn)
-                    break
-                except Exception as exc:
-                    log_exception(
-                        "Error conectando con PostgreSQL.",
-                        exc,
-                        extra={"database_engine": database_engine},
-                    )
-                    reconfigurar = messagebox.askretrycancel(
-                        "Gest2A3Eco",
-                        "No se ha podido conectar con PostgreSQL.\n\n"
-                        f"Detalle: {exc}\n\n"
-                        "Pulsa Reintentar para revisar servidor, usuario y contraseña.",
-                        parent=root,
-                    )
-                    if not reconfigurar:
-                        root.destroy()
-                        return
-                    postgres_dsn = ""
-            db_path = "PostgreSQL"
-        else:
-            db_path = validate_sqlite_db_path(db_path, allow_create=True)
-            gestor_base = GestorSQLite(db_path, json_seed=get_seed_json_path())
+        while True:
+            if not postgres_dsn:
+                root.deiconify()
+                dialog = PostgresConfigDialog(root)
+                root.withdraw()
+                if not dialog.result:
+                    root.destroy()
+                    return
+                postgres_dsn = crear_dsn_postgres(**dialog.result)
+                cfg["postgres_dsn"] = postgres_dsn
+                save_app_config(cfg)
+            try:
+                gestor_base = GestorPostgres(postgres_dsn)
+                break
+            except Exception as exc:
+                log_exception("Error conectando con PostgreSQL.", exc)
+                reconfigurar = messagebox.askretrycancel(
+                    "Gest2A3Eco",
+                    "No se ha podido conectar con PostgreSQL.\n\n"
+                    f"Detalle: {exc}\n\n"
+                    "Pulsa Reintentar para revisar servidor, usuario y contrasena.",
+                    parent=root,
+                )
+                if not reconfigurar:
+                    root.destroy()
+                    return
+                postgres_dsn = ""
     except Exception as exc:
-        log_exception("Error abriendo la base de datos.", exc, extra={"database_engine": database_engine})
+        log_exception("Error abriendo PostgreSQL.", exc)
         messagebox.showerror(
             "Gest2A3Eco",
-            f"No se ha podido abrir la base de datos {database_engine}:\n\nDetalle: {exc}",
+            f"No se ha podido abrir PostgreSQL:\n\nDetalle: {exc}",
             parent=root,
         )
         root.destroy()
@@ -396,33 +365,19 @@ def main():
 
     state = {"controller": None, "session": None, "login_view": None}
 
-    def _on_cambiar_db():
+    def _on_config_postgres():
         if not state["session"] or not state["session"].is_admin():
-            messagebox.showerror("Gest2A3Eco", "Solo el administrador puede cambiar la base de datos.", parent=root)
+            messagebox.showerror("Gest2A3Eco", "Solo el administrador puede cambiar la conexion PostgreSQL.", parent=root)
             return
-        if database_engine != "sqlite":
-            messagebox.showinfo(
-                "Gest2A3Eco",
-                "La conexion PostgreSQL se configura en config.local.json o mediante GEST2A3ECO_POSTGRES_DSN.",
-                parent=root,
-            )
+        dialog = PostgresConfigDialog(root)
+        if not dialog.result:
             return
-        new_path = _select_db_path(db_path)
-        if new_path and new_path != db_path:
-            try:
-                validated = validate_sqlite_db_path(new_path, allow_create=True)
-            except Exception as exc:
-                log_exception("Error validando una base de datos seleccionada manualmente.", exc, extra={"db_path": new_path})
-                messagebox.showerror(
-                    "Gest2A3Eco",
-                    f"No se puede usar la base de datos seleccionada:\n{new_path}\n\nDetalle: {exc}",
-                    parent=root,
-                )
-                return
-            set_configured_db_path(validated)
-            messagebox.showinfo("Gest2A3Eco", "Base de datos cambiada. La aplicacion se reiniciara.", parent=root)
-            root.destroy()
-            _restart_app()
+        cfg = load_app_config()
+        cfg["postgres_dsn"] = crear_dsn_postgres(**dialog.result)
+        save_app_config(cfg)
+        messagebox.showinfo("Gest2A3Eco", "Conexion PostgreSQL actualizada. La aplicacion se reiniciara.", parent=root)
+        root.destroy()
+        _restart_app()
 
     def _on_cambiar_plantillas_word():
         if not state["session"] or not state["session"].is_admin():
@@ -454,7 +409,7 @@ def main():
             messagebox.showerror("Gest2A3Eco", "Solo el administrador puede modificar la configuracion global.", parent=root)
             return
         menu = tk.Menu(root, tearoff=0)
-        menu.add_command(label="Seleccionar base de datos", command=_on_cambiar_db)
+        menu.add_command(label="Configurar PostgreSQL", command=_on_config_postgres)
         menu.add_command(label="Seleccionar plantillas Word", command=_on_cambiar_plantillas_word)
         menu.add_command(label="Configurar monedas y clave desmarcar", command=_on_config_monedas)
         menu.add_separator()
@@ -471,7 +426,7 @@ def main():
         _clear_root(root)
         _set_window_geometry(root, 1850, 1100, resizable=True)
         state["session"] = session
-        secured_gestor = SecuredGestorSQLite(gestor_base, AuthorizationService(session))
+        secured_gestor = SecuredGestor(gestor_base, AuthorizationService(session))
         content = ttk.Frame(root, padding=10, style="TFrame")
         controller = AppController(content, secured_gestor, auth_service, session)
         state["controller"] = controller
@@ -496,7 +451,7 @@ def main():
             on_open_config=_show_config_menu,
             on_open_users=controller.open_user_admin,
             on_logout=_logout,
-            db_path=db_path,
+            db_label=db_label,
             word_tpl_dir=word_tpl_dir,
         )
         controller.set_mail_status_callback(header.set_mail_counts)

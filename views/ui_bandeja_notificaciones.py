@@ -3,7 +3,7 @@ Vista: Bandeja de Notificaciones Electronicas.
 
 Pantalla principal del modulo. Muestra todas las notificaciones recibidas de
 organismos, con panel de detalle lateral, filtros por estado/organismo, y
-acciones de aceptacion, rechazo y eliminacion. Operativo sobre SQLite local.
+acciones de aceptacion, rechazo y eliminacion.
 """
 from __future__ import annotations
 

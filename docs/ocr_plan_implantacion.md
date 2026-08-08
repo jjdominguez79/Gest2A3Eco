@@ -33,7 +33,7 @@ services/ocr/
     └── types.py                    ← OcrInvoiceResult, OcrVatLine, etc.
         │
         ▼
-models/gestor_sqlite.py
+models/gestor_postgres.py
     ├── documentos_ocr              ← hash, motor, estado, texto
     ├── facturas_recibidas_ocr      ← datos de factura propuesta
     ├── facturas_recibidas_ocr_lineas_iva

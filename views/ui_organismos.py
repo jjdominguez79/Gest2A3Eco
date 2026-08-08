@@ -2,7 +2,7 @@
 Vista: Gestion de Organismos (catalogo global).
 
 Catalogo de organismos/administraciones (AEAT, TGSS, DGT...) que pueden
-emitir notificaciones electronicas. Operativo sobre SQLite local.
+emitir notificaciones electronicas.
 """
 from __future__ import annotations
 

@@ -1,5 +1,4 @@
 import json
-import sqlite3
 import time
 import re
 import uuid
@@ -37,11 +36,11 @@ def _ensure_dir(path: Path):
 
 
 class DatabaseOpenError(RuntimeError):
-    def __init__(self, db_path: Path, action: str, original: Exception):
-        self.db_path = Path(db_path)
+    def __init__(self, source: Path, action: str, original: Exception):
+        self.source = Path(source)
         self.action = action
         self.original = original
-        super().__init__(f"No se pudo {action} la base de datos SQLite en '{self.db_path}': {original}")
+        super().__init__(f"No se pudo {action} la base de datos en '{self.source}': {original}")
 
 
 SCHEMA = """
@@ -683,42 +682,16 @@ CREATE INDEX IF NOT EXISTS idx_usuarios_empresas_empresa ON usuarios_empresas(em
 """
 
 
-class GestorSQLite:
+class GestorBase:
     """
-    Gestor de datos respaldado por SQLite, manteniendo la API de GestorPlantillas.
+    Base historica de metodos de negocio del gestor.
+
+    No debe instanciarse directamente. La aplicacion usa GestorPostgres como
+    gestor concreto.
     """
 
-    def __init__(self, db_path: str | Path, json_seed: str | Path | None = None):
-        self.db_path = Path(db_path)
-        try:
-            _ensure_dir(self.db_path)
-        except Exception as exc:
-            raise DatabaseOpenError(self.db_path, "preparar la carpeta de", exc) from exc
-        try:
-            self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
-            self.conn.execute("PRAGMA foreign_keys = ON")
-            self.conn.execute("PRAGMA busy_timeout = 5000")
-            self.conn.row_factory = sqlite3.Row
-            self._init_schema()
-            self._ensure_column("facturas_recibidas_ocr", "tipo_operacion_iva", "TEXT")
-            self.conn.execute(
-                "UPDATE facturas_recibidas_ocr SET tipo_operacion_iva='INTERIOR_DEDUCIBLE' "
-                "WHERE tipo_operacion_iva IS NULL OR TRIM(tipo_operacion_iva)=''"
-            )
-            self.conn.commit()
-            self._migrate_terceros_global()
-            self._migrate_maestro_subcuentas()
-            self._migrate_notificaciones()
-            self._migrate_seguridad_social()
-            self._migrate_prefijo_ingreso_empresa()
-            if json_seed:
-                self._maybe_seed_from_json(json_seed)
-        except Exception as exc:
-            try:
-                self.conn.close()
-            except Exception:
-                pass
-            raise DatabaseOpenError(self.db_path, "abrir", exc) from exc
+    def __init__(self, source: str | Path, json_seed: str | Path | None = None):
+        raise RuntimeError("GestorBase no se instancia directamente; usa GestorPostgres.")
 
     # ---------- utilidades internas ----------
     def _init_schema(self):
@@ -2889,17 +2862,10 @@ class GestorSQLite:
             ("terceros_empresas", "codigo_empresa"),
             ("usuarios_empresas", "empresa_codigo"),
         )
-        # Algunas bases SQLite antiguas no tienen aun todas las tablas de los
-        # modulos recientes. PostgreSQL si las tiene tras la migracion.
-        try:
-            filas_tablas = self.conn.execute(
-                "SELECT name AS table_name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        except Exception:
-            filas_tablas = self.conn.execute(
-                "SELECT table_name FROM information_schema.tables "
-                "WHERE table_schema=current_schema()"
-            ).fetchall()
+        filas_tablas = self.conn.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema=current_schema()"
+        ).fetchall()
         existentes = {
             str(fila["table_name"] or "").lower()
             for fila in filas_tablas
@@ -3990,7 +3956,7 @@ class GestorSQLite:
             )
             if (cur.fetchone() or {}).get("n"):
                 raise ValueError("No se puede eliminar el tercero: tiene albaranes asociados.")
-        except sqlite3.OperationalError:
+        except Exception:
             pass
         self.conn.execute("DELETE FROM terceros WHERE id=?", (tercero_id,))
         self.conn.execute("DELETE FROM terceros_empresas WHERE tercero_id=?", (tercero_id,))
@@ -4177,7 +4143,7 @@ class GestorSQLite:
             row = cur.fetchone()
             if row and row["n"]:
                 raise ValueError("No se puede eliminar: hay albaranes de este tercero en la empresa.")
-        except sqlite3.OperationalError:
+        except Exception:
             pass
         self.conn.execute(
             "DELETE FROM terceros_empresas WHERE codigo_empresa=? AND tercero_id=?",

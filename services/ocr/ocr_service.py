@@ -39,7 +39,7 @@ class OcrService:
     facturas_recibidas_ocr.
 
     Parametros:
-      gestor     — instancia de GestorSQLite
+      gestor     — instancia del gestor principal de datos
       empresa_id — codigo de empresa (ej: 'E00001')
       ejercicio  — ejercicio fiscal (ej: 2024)
       usuario    — nombre de usuario (para auditoría)

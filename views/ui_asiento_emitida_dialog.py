@@ -216,7 +216,7 @@ class AsientoEmitidaDialog(tk.Toplevel):
       parent        — ventana padre Tkinter
       fac           — dict de la factura emitida (con campo 'lineas': list[dict])
       plantilla     — dict de la plantilla de facturacion (cuentas por defecto)
-      gestor        — GestorSQLite para buscar subcuentas del maestro
+      gestor        — gestor principal para buscar subcuentas del maestro
       codigo_empresa — codigo de empresa activa
       ndig          — digitos del plan contable
       on_save       — callable(fac_modificada) llamado si el usuario guarda cambios

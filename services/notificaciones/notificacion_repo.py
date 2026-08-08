@@ -2,7 +2,7 @@
 Repositorio de Notificaciones Electronicas.
 
 Abstrae el acceso a datos para que NotificacionService no dependa directamente
-de GestorSQLite. En GestinemAppFull se puede sustituir por una implementacion
+del gestor principal. En GestinemAppFull se puede sustituir por una implementacion
 sobre SQLAlchemy o una API REST sin modificar el servicio.
 """
 from __future__ import annotations
@@ -12,7 +12,7 @@ from typing import Any
 
 class NotificacionRepo:
     """
-    Repositorio sobre GestorSQLite.
+    Repositorio sobre el gestor principal.
     Delega en los metodos listar/get/upsert/eliminar_notificacion del gestor.
     """
 
