@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0759af">
+  <link rel="manifest" href="/static/messaging.webmanifest">
+  <title>Mensajes · Gestinem</title>
+  <link rel="stylesheet" href="/static/messaging.css">
+</head>
+<body>
+  <main class="shell">
+    <section id="auth" class="card auth-card">
+      <h1>Mensajes con Gestinem</h1>
+      <p id="auth-help">Accede para consultar tus conversaciones.</p>
+      <form id="login-form">
+        <label>Email<input id="email" type="email" autocomplete="email" required></label>
+        <label>Contraseña<input id="password" type="password" autocomplete="current-password" minlength="10" required></label>
+        <button>Entrar</button>
+      </form>
+      <form id="invite-form" hidden>
+        <label>Nueva contraseña<input id="invite-password" type="password" autocomplete="new-password" minlength="10" required></label>
+        <button>Activar cuenta</button>
+      </form>
+      <p id="auth-error" class="error" role="alert"></p>
+    </section>
+
+    <section id="chat" class="chat" hidden>
+      <header><div><strong>Gestinem</strong><small id="client-name"></small></div><button id="logout" class="secondary">Salir</button></header>
+      <nav id="conversations" aria-label="Conversaciones"></nav>
+      <section id="thread" class="thread" aria-live="polite"></section>
+      <form id="composer" class="composer">
+        <textarea id="body" rows="2" maxlength="10000" placeholder="Escribe un mensaje"></textarea>
+        <label class="file">Adjuntar<input id="files" type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.gif,.tif,.tiff,.txt,.xml,.csv,.xls,.xlsx,.doc,.docx,.zip"></label>
+        <button>Enviar</button>
+      </form>
+      <p id="chat-error" class="error" role="alert"></p>
+    </section>
+  </main>
+  <script src="/static/messaging.js"></script>
+</body>
+</html>

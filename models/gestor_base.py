@@ -652,6 +652,26 @@ CREATE TABLE IF NOT EXISTS firma_eventos (
   created_at TEXT NOT NULL,
   FOREIGN KEY (solicitud_id) REFERENCES firma_solicitudes(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS mensajeria_adjuntos_entrada (
+  id TEXT PRIMARY KEY,
+  mensaje_remoto_id TEXT NOT NULL,
+  conversacion_remota_id TEXT NOT NULL,
+  codigo_empresa TEXT NOT NULL,
+  empresa_nombre TEXT,
+  nombre_original TEXT NOT NULL,
+  ruta_entrada TEXT NOT NULL,
+  hash_archivo TEXT NOT NULL,
+  tamano INTEGER,
+  mime_type TEXT,
+  remitente TEXT,
+  estado TEXT NOT NULL DEFAULT 'pendiente_clasificar',
+  error_detalle TEXT,
+  documento_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_msg_adjuntos_entrada_estado
+  ON mensajeria_adjuntos_entrada(estado, codigo_empresa, created_at);
 CREATE TABLE IF NOT EXISTS plantillas_firma (
   id TEXT PRIMARY KEY,
   nombre TEXT NOT NULL UNIQUE,
@@ -3416,6 +3436,58 @@ class GestorBase:
             (str(solicitud_id),),
         ).fetchall()
         return [self._row_to_dict(row) for row in rows]
+
+    def upsert_adjunto_mensajeria_entrada(self, datos: dict) -> None:
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        self.conn.execute(
+            """
+            INSERT INTO mensajeria_adjuntos_entrada
+              (id,mensaje_remoto_id,conversacion_remota_id,codigo_empresa,
+               empresa_nombre,nombre_original,ruta_entrada,hash_archivo,tamano,
+               mime_type,remitente,estado,error_detalle,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+              ruta_entrada=excluded.ruta_entrada,hash_archivo=excluded.hash_archivo,
+              tamano=excluded.tamano,mime_type=excluded.mime_type,
+              estado=excluded.estado,error_detalle=excluded.error_detalle,
+              updated_at=excluded.updated_at
+            """,
+            (
+                datos["id"], datos["mensaje_remoto_id"],
+                datos["conversacion_remota_id"], datos["codigo_empresa"],
+                datos.get("empresa_nombre"), datos["nombre_original"],
+                datos["ruta_entrada"], datos["hash_archivo"],
+                datos.get("tamano"), datos.get("mime_type"),
+                datos.get("remitente"), datos.get("estado") or "pendiente_clasificar",
+                datos.get("error_detalle"), now, now,
+            ),
+        )
+        self.conn.commit()
+
+    def get_adjunto_mensajeria_entrada(self, adjunto_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM mensajeria_adjuntos_entrada WHERE id=?", (adjunto_id,),
+        ).fetchone()
+        return self._row_to_dict(row) if row else None
+
+    def listar_adjuntos_mensajeria_entrada(self, estado: str = "pendiente_clasificar") -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM mensajeria_adjuntos_entrada WHERE estado=? "
+            "ORDER BY created_at", (estado,),
+        ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    def actualizar_adjunto_mensajeria_entrada(
+        self, adjunto_id: str, estado: str, *, documento_id: str | None = None,
+        error_detalle: str = "",
+    ) -> None:
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        self.conn.execute(
+            "UPDATE mensajeria_adjuntos_entrada SET estado=?,documento_id=?,"
+            "error_detalle=?,updated_at=? WHERE id=?",
+            (estado, documento_id, error_detalle or None, now, adjunto_id),
+        )
+        self.conn.commit()
 
     # ---------- PLANTILLAS DE FIRMA ----------
     def guardar_plantilla_firma(self, plantilla: dict) -> str:

@@ -330,6 +330,7 @@ class GestorPostgres(GestorBase):
         dia.
         """
         self._asegurar_esquema_plantillas_firma()
+        self._asegurar_esquema_mensajeria_local()
         columnas = (
             ("empresas", "cuenta_bancaria", "TEXT"),
             ("empresas", "cuentas_bancarias", "TEXT"),
@@ -631,6 +632,33 @@ class GestorPostgres(GestorBase):
                 """
             )
         self._seed_categorias_documentales()
+        self.conn.commit()
+
+    def _asegurar_esquema_mensajeria_local(self) -> None:
+        row = self.conn.execute(
+            "SELECT to_regclass('public.mensajeria_adjuntos_entrada') AS tabla"
+        ).fetchone()
+        # Dobles de prueba/diagnostico antiguos pueden no exponer esta consulta.
+        if row is None or "tabla" not in row:
+            return
+        if row is not None and row.get("tabla"):
+            return
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mensajeria_adjuntos_entrada (
+              id TEXT PRIMARY KEY,mensaje_remoto_id TEXT NOT NULL,
+              conversacion_remota_id TEXT NOT NULL,codigo_empresa TEXT NOT NULL,
+              empresa_nombre TEXT,nombre_original TEXT NOT NULL,ruta_entrada TEXT NOT NULL,
+              hash_archivo TEXT NOT NULL,tamano INTEGER,mime_type TEXT,remitente TEXT,
+              estado TEXT NOT NULL DEFAULT 'pendiente_clasificar',error_detalle TEXT,
+              documento_id TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL
+            )
+            """
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_msg_adjuntos_entrada_estado "
+            "ON mensajeria_adjuntos_entrada(estado,codigo_empresa,created_at)"
+        )
         self.conn.commit()
 
     def _asegurar_esquema_plantillas_firma(self) -> None:

@@ -186,6 +186,10 @@ def _apply_env_overrides(data: dict) -> dict:
         "GEST2A3ECO_AZURE_DOC_INTELLIGENCE_KEY": "azure_doc_intelligence_key",
         "GEST2A3ECO_DGT_API_URL": "dgt_api_url",
         "GEST2A3ECO_DGT_API_KEY": "dgt_api_key",
+        "GEST2A3ECO_MESSAGING_API_URL": "messaging_api_url",
+        "GEST2A3ECO_MESSAGING_API_KEY": "messaging_api_key",
+        "GEST2A3ECO_MESSAGING_WORKSTATION_ID": "messaging_workstation_id",
+        "GEST2A3ECO_MESSAGING_DEVICE_TOKEN": "messaging_device_token",
         "GEST2A3ECO_SIGNREQUEST_TOKEN": "signrequest_token",
         "GEST2A3ECO_SIGNREQUEST_FROM_EMAIL": "signrequest_from_email",
         "GEST2A3ECO_SIGNREQUEST_GESTOR_EMAIL": "signrequest_gestor_email",
@@ -248,6 +252,10 @@ def _normalize_config(data: dict) -> dict:
     out.setdefault("documentos_output_dir", "")
     out.setdefault("dgt_api_url", "")
     out.setdefault("dgt_api_key", "")
+    out.setdefault("messaging_api_url", "")
+    out.setdefault("messaging_api_key", "")
+    out.setdefault("messaging_workstation_id", "")
+    out.setdefault("messaging_device_token", "")
     out.setdefault("signrequest_token", "")
     out.setdefault("signrequest_from_email", "")
     out.setdefault("signrequest_gestor_email", "")

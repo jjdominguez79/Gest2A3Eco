@@ -1,0 +1,11 @@
+{
+  "name": "Mensajes Gestinem",
+  "short_name": "Gestinem",
+  "start_url": "/mensajes",
+  "display": "standalone",
+  "background_color": "#eef3f8",
+  "theme_color": "#0759af",
+  "icons": [
+    {"src": "/static/messaging-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}
+  ]
+}

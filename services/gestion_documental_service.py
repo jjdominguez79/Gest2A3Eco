@@ -163,6 +163,50 @@ class GestionDocumentalService:
             destination.unlink(missing_ok=True)
             raise
 
+    def archivar_adjunto_mensajeria(
+        self, adjunto: dict, *, ejercicio: int, categoria_id: str,
+        usuario: str = "",
+    ) -> str:
+        """Clasifica una descarga de chat usando el mismo repositorio documental."""
+        source = Path(str(adjunto.get("ruta_entrada") or ""))
+        category = next(
+            (item for item in self.categorias() if item["id"] == categoria_id), None,
+        )
+        if not source.is_file() or not category:
+            raise ValueError("El adjunto de mensajeria o la categoria no son validos.")
+        content = source.read_bytes()
+        digest = hashlib.sha256(content).hexdigest()
+        if digest != str(adjunto.get("hash_archivo") or ""):
+            raise ValueError("El adjunto local no supera la comprobacion de integridad.")
+        duplicate = self._gestor.conn.execute(
+            "SELECT id FROM documentos_archivo WHERE codigo_empresa=? AND hash_archivo=?",
+            (adjunto["codigo_empresa"], digest),
+        ).fetchone()
+        if duplicate:
+            source.unlink(missing_ok=True)
+            return str(duplicate["id"])
+        folder = self._category_directory(
+            adjunto["codigo_empresa"], int(ejercicio), category["carpeta"],
+        )
+        filename = self._available_filename(folder, adjunto["nombre_original"])
+        destination = folder / filename
+        shutil.copy2(source, destination)
+        try:
+            document_id = self._gestor.registrar_documento_archivo({
+                "codigo_empresa": adjunto["codigo_empresa"], "ejercicio": int(ejercicio),
+                "categoria_id": categoria_id, "nombre_original": adjunto["nombre_original"],
+                "nombre_archivo": filename, "ruta": str(destination), "hash_archivo": digest,
+                "tamano": len(content), "mime_type": adjunto.get("mime_type"), "origen": "chat",
+                "mensaje_id": adjunto.get("mensaje_remoto_id"),
+                "correo_remitente": adjunto.get("remitente"), "correo_asunto": "Mensajeria cliente",
+                "creado_por": usuario,
+            })
+        except Exception:
+            destination.unlink(missing_ok=True)
+            raise
+        source.unlink(missing_ok=True)
+        return document_id
+
     def enviar_a_ocr(self, documento_id: str, usuario: str = "") -> dict:
         document = self._gestor.get_documento_archivo(documento_id)
         if not document:

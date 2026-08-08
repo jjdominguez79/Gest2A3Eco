@@ -43,11 +43,14 @@ from backend.dgt_api.storage import (
 )
 from backend.dgt_api.integrations import DatapriusBackend, ProviderError, SignRequestBackend
 from backend.dgt_api.validation import validar_parte
+from backend.dgt_api import messaging_models  # noqa: F401 - registra tablas SQLAlchemy
+from backend.dgt_api.messaging_api import cleanup_expired_attachments, router as messaging_router
 
 app = FastAPI(title="Gestinem Tramites DGT API", version="1.0.0")
 WEB_DIR = Path(__file__).with_name("web")
 templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
 app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
+app.include_router(messaging_router)
 
 
 @app.on_event("startup")
@@ -60,6 +63,12 @@ def startup():
                 "ADD COLUMN IF NOT EXISTS dataprius_json JSONB NOT NULL DEFAULT '{}'"
             )
         )
+    try:
+        cleanup_expired_attachments()
+    except Exception:
+        # La limpieza no debe impedir que el servicio arranque; se reintentara
+        # en el siguiente despliegue/arranque.
+        pass
 
 
 def get_db():
@@ -128,6 +137,13 @@ async def _guardar_documento_aportado(
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/mensajes", response_class=HTMLResponse)
+def messaging_portal(request: Request):
+    return templates.TemplateResponse(
+        request=request, name="messages.html", context={},
+    )
 
 
 @app.get("/api/v1/integrations/status", dependencies=[internal])
