@@ -22,9 +22,13 @@ Variables:
 - `MESSAGING_AZURE_CONTAINER`: contenedor privado, `mensajeria-temporal` por defecto.
 - `MESSAGING_ATTACHMENT_DAYS`: disponibilidad de documentos enviados al cliente;
   nunca puede ser inferior a 15 y por defecto son 30 dias.
-- `MESSAGING_SMTP_*`: cuenta de servicio para invitaciones y avisos sin contenido
-  sensible. Los avisos de mensajes se envian solo si el cliente no mantiene una
-  conexion activa con la PWA.
+- `MESSAGING_GRAPH_*`: credenciales de aplicacion de Microsoft Graph
+  (`TENANT_ID`, `CLIENT_ID`, `CLIENT_SECRET` y `FROM`) para enviar invitaciones,
+  recuperaciones y avisos desde el backend. La aplicacion de Azure necesita el
+  permiso de aplicacion `Mail.Send` con consentimiento de administrador.
+- `MESSAGING_SMTP_*`: respaldo opcional cuando Graph no esta configurado. Los
+  avisos de mensajes se envian solo si el cliente no mantiene una conexion
+  activa con la PWA.
 
 En cada puesto de Gest2A3Eco se configuran `messaging_api_url` y
 `messaging_api_key` (pueden reutilizar inicialmente la URL y clave internas de

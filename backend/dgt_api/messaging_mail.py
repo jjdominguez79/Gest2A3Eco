@@ -4,19 +4,93 @@ import smtplib
 import ssl
 from email.message import EmailMessage
 from html import escape
+from urllib.parse import quote
+
+import requests
 
 from backend.dgt_api.config import get_settings
 
 
 def configured() -> bool:
     cfg = get_settings()
+    return _graph_configured(cfg) or _smtp_configured(cfg)
+
+
+def _graph_configured(cfg) -> bool:
+    return bool(
+        cfg.messaging_graph_tenant_id
+        and cfg.messaging_graph_client_id
+        and cfg.messaging_graph_client_secret
+        and cfg.messaging_graph_from
+    )
+
+
+def _smtp_configured(cfg) -> bool:
     return bool(cfg.messaging_smtp_host and cfg.messaging_smtp_from)
 
 
 def send_mail(to: str, subject: str, html: str) -> bool:
     cfg = get_settings()
-    if not configured():
+    if _graph_configured(cfg):
+        return _send_mail_graph(cfg, to, subject, html)
+    if not _smtp_configured(cfg):
         return False
+    return _send_mail_smtp(cfg, to, subject, html)
+
+
+def _send_mail_graph(cfg, to: str, subject: str, html: str) -> bool:
+    token_response = requests.post(
+        "https://login.microsoftonline.com/"
+        f"{quote(cfg.messaging_graph_tenant_id, safe='')}/oauth2/v2.0/token",
+        data={
+            "client_id": cfg.messaging_graph_client_id,
+            "client_secret": cfg.messaging_graph_client_secret,
+            "scope": "https://graph.microsoft.com/.default",
+            "grant_type": "client_credentials",
+        },
+        timeout=30,
+    )
+    if token_response.status_code != 200:
+        raise RuntimeError(_graph_error(token_response, "autenticacion"))
+    access_token = str(token_response.json().get("access_token") or "")
+    if not access_token:
+        raise RuntimeError("Microsoft Graph no devolvio un token de acceso")
+
+    sent = requests.post(
+        "https://graph.microsoft.com/v1.0/users/"
+        f"{quote(cfg.messaging_graph_from, safe='')}/sendMail",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "message": {
+                "subject": subject,
+                "body": {"contentType": "HTML", "content": html},
+                "toRecipients": [{"emailAddress": {"address": to}}],
+            },
+            "saveToSentItems": True,
+        },
+        timeout=30,
+    )
+    if sent.status_code != 202:
+        raise RuntimeError(_graph_error(sent, "envio"))
+    return True
+
+
+def _graph_error(response, operation: str) -> str:
+    try:
+        payload = response.json()
+        detail = payload.get("error", {})
+        message = (
+            detail.get("message") if isinstance(detail, dict) else ""
+        ) or payload.get("error_description")
+    except Exception:
+        message = ""
+    return message or f"Error de {operation} de Microsoft Graph (HTTP {response.status_code})"
+
+
+def _send_mail_smtp(cfg, to: str, subject: str, html: str) -> bool:
     message = EmailMessage()
     message["From"] = cfg.messaging_smtp_from
     message["To"] = to

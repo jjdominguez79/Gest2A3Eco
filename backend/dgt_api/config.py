@@ -25,6 +25,10 @@ class Settings:
     messaging_azure_connection_string: str
     messaging_azure_container: str
     messaging_attachment_days: int
+    messaging_graph_tenant_id: str
+    messaging_graph_client_id: str
+    messaging_graph_client_secret: str
+    messaging_graph_from: str
     messaging_smtp_host: str
     messaging_smtp_port: int
     messaging_smtp_user: str
@@ -63,6 +67,10 @@ def get_settings() -> Settings:
         messaging_azure_connection_string=os.getenv("MESSAGING_AZURE_CONNECTION_STRING", ""),
         messaging_azure_container=os.getenv("MESSAGING_AZURE_CONTAINER", "mensajeria-temporal"),
         messaging_attachment_days=max(15, int(os.getenv("MESSAGING_ATTACHMENT_DAYS", "30"))),
+        messaging_graph_tenant_id=os.getenv("MESSAGING_GRAPH_TENANT_ID", ""),
+        messaging_graph_client_id=os.getenv("MESSAGING_GRAPH_CLIENT_ID", ""),
+        messaging_graph_client_secret=os.getenv("MESSAGING_GRAPH_CLIENT_SECRET", ""),
+        messaging_graph_from=os.getenv("MESSAGING_GRAPH_FROM", ""),
         messaging_smtp_host=os.getenv("MESSAGING_SMTP_HOST", ""),
         messaging_smtp_port=int(os.getenv("MESSAGING_SMTP_PORT", "587")),
         messaging_smtp_user=os.getenv("MESSAGING_SMTP_USER", ""),
