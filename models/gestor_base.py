@@ -878,61 +878,6 @@ class GestorBase:
             );
             CREATE INDEX IF NOT EXISTS idx_usuarios_permisos_globales_usuario
               ON usuarios_permisos_globales(usuario_id);
-            CREATE TABLE IF NOT EXISTS dgt_expedientes (
-              id TEXT PRIMARY KEY,
-              referencia TEXT NOT NULL UNIQUE,
-              tipo TEXT NOT NULL DEFAULT 'compraventa_cambio_titularidad',
-              estado TEXT NOT NULL DEFAULT 'borrador',
-              titulo TEXT,
-              vendedor_nombre TEXT,
-              vendedor_email TEXT,
-              vendedor_telefono TEXT,
-              comprador_nombre TEXT,
-              comprador_email TEXT,
-              comprador_telefono TEXT,
-              vehiculo_matricula TEXT,
-              vehiculo_bastidor TEXT,
-              precio_venta REAL,
-              fecha_operacion TEXT,
-              codigo_tasa TEXT,
-              modelo_620_presentado INTEGER NOT NULL DEFAULT 0,
-              observaciones TEXT,
-              vendedor_token_hash TEXT,
-              comprador_token_hash TEXT,
-              vendedor_token_created_at TEXT,
-              comprador_token_created_at TEXT,
-              vendedor_payload_json TEXT,
-              comprador_payload_json TEXT,
-              documentos_json TEXT,
-              validado_por INTEGER,
-              validado_at TEXT,
-              firma_estado TEXT,
-              firma_provider TEXT,
-              firma_request_id TEXT,
-              created_by INTEGER,
-              created_at TEXT NOT NULL,
-              updated_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_dgt_expedientes_estado
-              ON dgt_expedientes(estado, created_at);
-            CREATE INDEX IF NOT EXISTS idx_dgt_expedientes_matricula
-              ON dgt_expedientes(vehiculo_matricula);
-            CREATE TABLE IF NOT EXISTS dgt_documentos_generados (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              expediente_id TEXT NOT NULL,
-              tipo_documento TEXT NOT NULL,
-              titulo TEXT,
-              ruta_docx TEXT,
-              ruta_pdf TEXT,
-              ruta_txt TEXT,
-              json_datos_generacion TEXT,
-              hash_contenido TEXT,
-              estado TEXT NOT NULL DEFAULT 'generado',
-              created_at TEXT NOT NULL,
-              FOREIGN KEY (expediente_id) REFERENCES dgt_expedientes(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_dgt_documentos_expediente
-              ON dgt_documentos_generados(expediente_id, tipo_documento);
             CREATE TABLE IF NOT EXISTS dgt_facturas (
               expediente_id TEXT PRIMARY KEY,
               factura_id TEXT NOT NULL UNIQUE,
@@ -949,9 +894,6 @@ class GestorBase:
             CREATE INDEX IF NOT EXISTS idx_dgt_facturas_factura
               ON dgt_facturas(factura_id);
         """)
-        self.conn.commit()
-        self._ensure_column("dgt_expedientes", "codigo_tasa", "TEXT")
-        self._ensure_column("dgt_expedientes", "modelo_620_presentado", "INTEGER NOT NULL DEFAULT 0")
         self.conn.commit()
         # Migración: crear tabla plan_cuentas si no existe (idempotente via SCHEMA)
         self.conn.executescript(
@@ -4657,188 +4599,7 @@ class GestorBase:
         )
         self.conn.commit()
 
-    # ---------- TRAMITES DGT ----------
-    def listar_dgt_expedientes(self) -> list[dict]:
-        cur = self.conn.execute(
-            "SELECT * FROM dgt_expedientes ORDER BY created_at DESC, referencia DESC"
-        )
-        return [self._decode_dgt_expediente(row) for row in cur.fetchall()]
-
-    def get_dgt_expediente(self, expediente_id: str) -> dict | None:
-        cur = self.conn.execute("SELECT * FROM dgt_expedientes WHERE id=?", (str(expediente_id),))
-        return self._decode_dgt_expediente(cur.fetchone())
-
-    def get_dgt_expediente_por_referencia(self, referencia: str) -> dict | None:
-        cur = self.conn.execute(
-            "SELECT * FROM dgt_expedientes WHERE referencia=?",
-            (str(referencia or "").strip(),),
-        )
-        return self._decode_dgt_expediente(cur.fetchone())
-
-    def upsert_dgt_expediente(self, expediente: dict) -> str:
-        now = self._utc_now()
-        expediente_id = str(expediente.get("id") or "").strip()
-        payload_vendedor = json.dumps(expediente.get("vendedor_payload") or {}, ensure_ascii=False)
-        payload_comprador = json.dumps(expediente.get("comprador_payload") or {}, ensure_ascii=False)
-        documentos = json.dumps(expediente.get("documentos") or [], ensure_ascii=False)
-        if expediente_id and self.get_dgt_expediente(expediente_id):
-            self.conn.execute(
-                """
-                UPDATE dgt_expedientes
-                SET estado=?, titulo=?, vendedor_nombre=?, vendedor_email=?, vendedor_telefono=?,
-                    comprador_nombre=?, comprador_email=?, comprador_telefono=?,
-                    vehiculo_matricula=?, vehiculo_bastidor=?, precio_venta=?, fecha_operacion=?,
-                    codigo_tasa=?, modelo_620_presentado=?, observaciones=?,
-                    vendedor_token_hash=?, comprador_token_hash=?,
-                    vendedor_token_created_at=?, comprador_token_created_at=?,
-                    vendedor_payload_json=?, comprador_payload_json=?, documentos_json=?,
-                    validado_por=?, validado_at=?, firma_estado=?, firma_provider=?, firma_request_id=?,
-                    updated_at=?
-                WHERE id=?
-                """,
-                (
-                    expediente.get("estado") or "borrador",
-                    expediente.get("titulo"),
-                    expediente.get("vendedor_nombre"),
-                    expediente.get("vendedor_email"),
-                    expediente.get("vendedor_telefono"),
-                    expediente.get("comprador_nombre"),
-                    expediente.get("comprador_email"),
-                    expediente.get("comprador_telefono"),
-                    expediente.get("vehiculo_matricula"),
-                    expediente.get("vehiculo_bastidor"),
-                    expediente.get("precio_venta"),
-                    expediente.get("fecha_operacion"),
-                    expediente.get("codigo_tasa"),
-                    1 if expediente.get("modelo_620_presentado") else 0,
-                    expediente.get("observaciones"),
-                    expediente.get("vendedor_token_hash"),
-                    expediente.get("comprador_token_hash"),
-                    expediente.get("vendedor_token_created_at"),
-                    expediente.get("comprador_token_created_at"),
-                    payload_vendedor,
-                    payload_comprador,
-                    documentos,
-                    expediente.get("validado_por"),
-                    expediente.get("validado_at"),
-                    expediente.get("firma_estado"),
-                    expediente.get("firma_provider"),
-                    expediente.get("firma_request_id"),
-                    now,
-                    expediente_id,
-                ),
-            )
-            self.conn.commit()
-            return expediente_id
-        cur = self.conn.execute(
-            """
-            INSERT INTO dgt_expedientes
-            (id, referencia, tipo, estado, titulo, vendedor_nombre, vendedor_email, vendedor_telefono,
-             comprador_nombre, comprador_email, comprador_telefono, vehiculo_matricula, vehiculo_bastidor,
-             precio_venta, fecha_operacion, codigo_tasa, modelo_620_presentado, observaciones,
-             vendedor_token_hash, comprador_token_hash,
-             vendedor_token_created_at, comprador_token_created_at, vendedor_payload_json, comprador_payload_json,
-             documentos_json, firma_estado, firma_provider, firma_request_id, created_by, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                expediente_id,
-                expediente.get("referencia"),
-                expediente.get("tipo") or "compraventa_cambio_titularidad",
-                expediente.get("estado") or "borrador",
-                expediente.get("titulo"),
-                expediente.get("vendedor_nombre"),
-                expediente.get("vendedor_email"),
-                expediente.get("vendedor_telefono"),
-                expediente.get("comprador_nombre"),
-                expediente.get("comprador_email"),
-                expediente.get("comprador_telefono"),
-                expediente.get("vehiculo_matricula"),
-                expediente.get("vehiculo_bastidor"),
-                expediente.get("precio_venta"),
-                expediente.get("fecha_operacion"),
-                expediente.get("codigo_tasa"),
-                1 if expediente.get("modelo_620_presentado") else 0,
-                expediente.get("observaciones"),
-                expediente.get("vendedor_token_hash"),
-                expediente.get("comprador_token_hash"),
-                expediente.get("vendedor_token_created_at"),
-                expediente.get("comprador_token_created_at"),
-                payload_vendedor,
-                payload_comprador,
-                documentos,
-                expediente.get("firma_estado"),
-                expediente.get("firma_provider"),
-                expediente.get("firma_request_id"),
-                expediente.get("created_by"),
-                now,
-                now,
-            ),
-        )
-        self.conn.commit()
-        return expediente_id or str(cur.lastrowid)
-
-    def validar_dgt_expediente(self, expediente_id: str, user_id: int) -> None:
-        now = self._utc_now()
-        self.conn.execute(
-            "UPDATE dgt_expedientes SET estado='validado', validado_por=?, validado_at=?, updated_at=? WHERE id=?",
-            (int(user_id), now, now, str(expediente_id)),
-        )
-        self.conn.commit()
-
-    def insertar_dgt_documento_generado(self, doc: dict) -> int:
-        now = self._utc_now()
-        cur = self.conn.execute(
-            """
-            INSERT INTO dgt_documentos_generados
-            (expediente_id, tipo_documento, titulo, ruta_docx, ruta_pdf, ruta_txt,
-             json_datos_generacion, hash_contenido, estado, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                doc.get("expediente_id"),
-                doc.get("tipo_documento"),
-                doc.get("titulo"),
-                doc.get("ruta_docx"),
-                doc.get("ruta_pdf"),
-                doc.get("ruta_txt"),
-                json.dumps(doc.get("json_datos_generacion") or {}, ensure_ascii=False),
-                doc.get("hash_contenido"),
-                doc.get("estado") or "generado",
-                now,
-            ),
-        )
-        self.conn.commit()
-        return int(cur.lastrowid)
-
-    def listar_dgt_documentos_generados(self, expediente_id: str) -> list[dict]:
-        cur = self.conn.execute(
-            "SELECT * FROM dgt_documentos_generados WHERE expediente_id=? ORDER BY created_at DESC, id DESC",
-            (str(expediente_id),),
-        )
-        out = []
-        for row in cur.fetchall():
-            item = self._row_to_dict(row)
-            item["json_datos_generacion"] = json.loads(item.get("json_datos_generacion") or "{}")
-            out.append(item)
-        return out
-
-    def eliminar_dgt_documento_generado(self, documento_id: int) -> dict | None:
-        cur = self.conn.execute("SELECT * FROM dgt_documentos_generados WHERE id=?", (int(documento_id),))
-        row = cur.fetchone()
-        if not row:
-            return None
-        item = self._row_to_dict(row)
-        self.conn.execute("DELETE FROM dgt_documentos_generados WHERE id=?", (int(documento_id),))
-        self.conn.commit()
-        return item
-
-    def eliminar_dgt_expediente(self, expediente_id: str) -> None:
-        self.conn.execute("DELETE FROM dgt_facturas WHERE expediente_id=?", (str(expediente_id),))
-        self.conn.execute("DELETE FROM dgt_documentos_generados WHERE expediente_id=?", (str(expediente_id),))
-        self.conn.execute("DELETE FROM dgt_expedientes WHERE id=?", (str(expediente_id),))
-        self.conn.commit()
-
+    # ---------- VINCULO CONTABLE TRAMITES DGT ----------
     def get_dgt_factura(self, expediente_id: str) -> dict | None:
         row = self.conn.execute(
             "SELECT * FROM dgt_facturas WHERE expediente_id=?",
@@ -4880,19 +4641,6 @@ class GestorBase:
             ),
         )
         self.conn.commit()
-
-    def _decode_dgt_expediente(self, row) -> dict | None:
-        item = self._row_to_dict(row)
-        if not item:
-            return None
-        item["vendedor_payload"] = json.loads(item.get("vendedor_payload_json") or "{}")
-        item["comprador_payload"] = json.loads(item.get("comprador_payload_json") or "{}")
-        item["documentos"] = json.loads(item.get("documentos_json") or "[]")
-        item["modelo_620_presentado"] = bool(item.get("modelo_620_presentado"))
-        item.pop("vendedor_payload_json", None)
-        item.pop("comprador_payload_json", None)
-        item.pop("documentos_json", None)
-        return item
 
     def reemplazar_permisos_usuario(self, user_id: int, permisos: dict[str, str]) -> None:
         now = self._utc_now()

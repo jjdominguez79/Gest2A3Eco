@@ -11,8 +11,8 @@
   email, WhatsApp, refresco, estados separados y descarga bajo demanda.
 - Fase 4: pendiente de plantillas legales definitivas y seleccion/credenciales
   del proveedor de firma.
-- Fase 5: imagen Docker y CI preparadas. El despliegue real queda pendiente de
-  la suscripcion Azure/Supabase, DNS, certificados y secretos de produccion.
+- Fase 5: imagen Docker y CI preparadas. El despliegue real se ejecuta en
+  Railway con PostgreSQL gestionado, DNS, certificados y secretos de produccion.
 
 ## Puesta en marcha local
 
@@ -37,7 +37,7 @@ de escritorio. No existe fallback a base local.
 
 ## Produccion
 
-1. Crear PostgreSQL y ejecutar `backend/migrations/001_initial.sql`.
+1. Crear PostgreSQL en Railway y ejecutar `backend/migrations/001_initial.sql`.
 2. Sustituir el almacenamiento de desarrollo por un volumen cifrado o un
    adaptador de bucket privado antes de escalar a mas de una instancia.
 3. Configurar las variables de `backend/.env.example` como secretos del

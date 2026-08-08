@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 from xml.sax.saxutils import escape as xml_escape
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from services.tramites_dgt_repository import DgtRepository, GestorDgtRepository
+from services.tramites_dgt_repository import DgtRepository
 from utils.utilidades import get_app_data_dir, get_word_templates_dir
 from utils.validaciones import normalizar_nif_cif, validar_nif_cif_nie
 
@@ -59,9 +59,11 @@ class TramitesDgtService:
         almacenamiento_client=None,
         almacenamiento_base_path: str = "",
     ):
-        if repository is None and gestor is None:
-            raise ValueError("TramitesDgtService necesita un gestor o un DgtRepository.")
-        self._repo = repository or GestorDgtRepository(gestor)
+        if repository is None:
+            raise ValueError(
+                "TramitesDgtService necesita el backend DGT configurado."
+            )
+        self._repo = repository
         self._session = session
         self._firma_client = firma_client
         self._firma_gestor_email = str(
