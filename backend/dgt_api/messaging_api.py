@@ -411,7 +411,7 @@ def _create_message(
     )
     db.add(message)
     db.flush()
-    storage = MessagingStorage()
+    storage = MessagingStorage() if files else None
     for upload in files:
         content = upload.file.read(MAX_ATTACHMENT + 1)
         if len(content) > MAX_ATTACHMENT:

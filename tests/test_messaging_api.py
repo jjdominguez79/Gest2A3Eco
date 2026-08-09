@@ -193,6 +193,44 @@ def test_cuenta_cliente_prueba_genera_enlace_sin_enviar_email(tmp_path, monkeypa
     ).status_code == 200
 
 
+def test_mensaje_sin_adjunto_no_inicializa_almacenamiento(tmp_path, monkeypatch):
+    client = _client(tmp_path)
+    internal = {"X-API-Key": "test-secret"}
+    assert client.put(
+        "/api/v1/messaging/internal/organizations/E00000", headers=internal,
+        json={"company_code": "E00000", "name": "Empresa de prueba"},
+    ).status_code == 200
+    invitation = client.post(
+        "/api/v1/messaging/internal/invitations", headers=internal,
+        json={
+            "company_code": "E00000", "name": "Cliente de prueba",
+            "email": "prueba@gestinem.es", "send_email": False,
+        },
+    ).json()
+    token = invitation["url"].split("invite=", 1)[1]
+    accepted = client.post(
+        "/api/v1/messaging/auth/accept-invite",
+        json={"token": token, "password": "prueba-segura-1234"},
+    ).json()
+    conversations = client.get(
+        "/api/v1/messaging/client/conversations",
+        headers={"Authorization": f"Bearer {accepted['token']}"},
+    ).json()
+
+    class StorageNoPermitido:
+        def __init__(self):
+            raise AssertionError("Un mensaje de texto no debe abrir el almacenamiento")
+
+    monkeypatch.setattr(messaging_api, "MessagingStorage", StorageNoPermitido)
+    response = client.post(
+        f"/api/v1/messaging/client/conversations/{conversations[0]['id']}/messages",
+        headers={"Authorization": f"Bearer {accepted['token']}"},
+        data={"body": "Mensaje de prueba", "idempotency_key": "solo-texto"},
+    )
+    assert response.status_code == 200
+    assert response.json()["body"] == "Mensaje de prueba"
+
+
 def test_chats_internos_privados_y_grupos_respetan_permisos(tmp_path):
     client = _client(tmp_path)
     internal = {"X-API-Key": "test-secret"}

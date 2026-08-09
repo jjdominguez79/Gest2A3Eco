@@ -18,6 +18,7 @@ class MessagingStorage:
         self.cfg = get_settings()
         self._container = None
         if self.cfg.messaging_azure_connection_string:
+            from azure.core.exceptions import ResourceExistsError
             from azure.storage.blob import BlobServiceClient
 
             service = BlobServiceClient.from_connection_string(
@@ -28,9 +29,8 @@ class MessagingStorage:
             )
             try:
                 self._container.create_container()
-            except Exception as exc:
-                if "ContainerAlreadyExists" not in type(exc).__name__:
-                    raise
+            except ResourceExistsError:
+                pass
 
     def put(self, content: bytes, filename: str) -> str:
         key = f"{uuid.uuid4().hex}/{safe_name(filename)}"
