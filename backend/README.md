@@ -26,6 +26,17 @@ Variables:
   (`TENANT_ID`, `CLIENT_ID`, `CLIENT_SECRET` y `FROM`) para enviar invitaciones,
   recuperaciones y avisos desde el backend. La aplicacion de Azure necesita el
   permiso de aplicacion `Mail.Send` con consentimiento de administrador.
+- `MESSAGING_GRAPH_INVITATION_FROM`: buzon autorizado desde el que salen las
+  invitaciones creadas por el administrador.
+- `MESSAGING_STAFF_*`: configuracion del acceso Microsoft 365 de empleados. Si
+  no se indican `TENANT_ID`, `CLIENT_ID` y `CLIENT_SECRET`, se reutilizan los de
+  Graph. `ADMIN_EMAILS` define los administradores iniciales y
+  `ALLOWED_DOMAIN` restringe el dominio corporativo.
+- `MESSAGING_SYNC_TOKEN`: secreto exclusivo del recolector de adjuntos del
+  Synology; no debe reutilizar la clave general de la API.
+- `MESSAGING_VAPID_PUBLIC_KEY`, `MESSAGING_VAPID_PRIVATE_KEY` y
+  `MESSAGING_VAPID_SUBJECT`: credenciales Web Push para avisar a los empleados
+  aunque la PWA no este abierta.
 - `MESSAGING_SMTP_*`: respaldo opcional cuando Graph no esta configurado. Los
   avisos de mensajes se envian solo si el cliente no mantiene una conexion
   activa con la PWA.

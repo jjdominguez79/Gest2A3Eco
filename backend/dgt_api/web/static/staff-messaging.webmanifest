@@ -1,0 +1,11 @@
+{
+  "name": "Mensajería del despacho · Gestinem",
+  "short_name": "Gestinem Equipo",
+  "start_url": "/equipo/mensajes",
+  "display": "standalone",
+  "background_color": "#edf2f6",
+  "theme_color": "#00345d",
+  "icons": [
+    {"src": "/static/gestinem-logo.png", "sizes": "267x94", "type": "image/png", "purpose": "any"}
+  ]
+}

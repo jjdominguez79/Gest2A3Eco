@@ -22,6 +22,7 @@ def _client(tmp_path: Path):
     os.environ["DGT_INTERNAL_API_KEY"] = "test-secret"
     os.environ["MESSAGING_STORAGE_DIR"] = str(tmp_path / "cloud")
     os.environ["MESSAGING_PUBLIC_BASE_URL"] = "https://mensajes.example.test"
+    os.environ["MESSAGING_SYNC_TOKEN"] = "sync-secret"
     engine = create_engine(
         "sqlite+pysqlite://", connect_args={"check_same_thread": False},
         poolclass=StaticPool,
@@ -45,7 +46,10 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
     for staff_id, name in (("7", "Titular"), ("8", "Empleado")):
         assert client.put(
             f"/api/v1/messaging/internal/staff/{staff_id}", headers=internal,
-            json={"external_id": staff_id, "name": name, "role": "empleado", "active": True},
+            json={
+                "external_id": staff_id, "name": name, "role": "empleado",
+                "active": True, "channels": ["fiscal"],
+            },
         ).status_code == 200
     device = client.post(
         "/api/v1/messaging/internal/devices/puesto-1", headers=internal,
@@ -68,7 +72,7 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
     conversations = client.get(
         "/api/v1/messaging/client/conversations", headers=client_auth,
     ).json()
-    general = next(row for row in conversations if row["kind"] == "general")
+    general = next(row for row in conversations if row["kind"] == "fiscal")
 
     sent = client.post(
         f"/api/v1/messaging/client/conversations/{general['id']}/messages",
@@ -106,6 +110,34 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
         headers=staff7, data={"workstation": "puesto-1", "sha256": digest},
     ).status_code == 200
     assert client.get("/api/v1/messaging/staff/attachments/pending", headers=staff7).json() == []
+
+    private = next(row for row in conversations if row["kind"] == "private")
+    private_sent = client.post(
+        f"/api/v1/messaging/client/conversations/{private['id']}/messages",
+        headers=client_auth, data={"body": "Documento privado", "idempotency_key": "private-1"},
+        files={"files": ("privado.pdf", b"privado", "application/pdf")},
+    )
+    private_attachment = private_sent.json()["attachments"][0]
+    sync_headers = {"X-Sync-Token": "sync-secret"}
+    pending_sync = client.get(
+        "/api/v1/messaging/sync/attachments/pending", headers=sync_headers,
+    ).json()
+    assert [row["id"] for row in pending_sync] == [private_attachment["id"]]
+    assert pending_sync[0]["channel"] == "private"
+    assert client.post(
+        f"/api/v1/messaging/sync/attachments/{private_attachment['id']}/claim",
+        headers=sync_headers, data={"worker": "synology"},
+    ).status_code == 200
+    private_content = client.get(
+        f"/api/v1/messaging/sync/attachments/{private_attachment['id']}/content",
+        headers=sync_headers, params={"worker": "synology"},
+    )
+    assert private_content.content == b"privado"
+    assert client.post(
+        f"/api/v1/messaging/sync/attachments/{private_attachment['id']}/confirm",
+        headers=sync_headers,
+        data={"worker": "synology", "sha256": private_attachment["sha256"]},
+    ).status_code == 200
 
     outgoing = client.post(
         f"/api/v1/messaging/staff/conversations/{general['id']}/messages",

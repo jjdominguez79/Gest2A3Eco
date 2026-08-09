@@ -35,6 +35,12 @@ No descarga adjuntos automaticamente. Solo guarda `tiene_adjuntos` y los
 identificadores de Graph dentro del `payload_json`. La descarga/importacion de
 adjuntos se hace desde la aplicacion de escritorio cuando el usuario lo decide.
 
+El mismo proyecto incluye un segundo servicio, `messaging-sync`, dedicado a
+descargar los adjuntos enviados por clientes desde la PWA. Este servicio no lee
+el contenido de los chats: solo recibe los metadatos necesarios, reclama cada
+archivo, verifica su SHA-256, lo guarda en el repositorio documental y confirma
+la entrega para que el backend elimine la copia temporal de Azure Blob.
+
 ## Secretos requeridos
 
 Crear en `deploy/mail-sync/secrets/` estos archivos, sin saltos adicionales:
@@ -42,9 +48,22 @@ Crear en `deploy/mail-sync/secrets/` estos archivos, sin saltos adicionales:
 - `Gest2A3Eco-Sync.pfx`: certificado privado exportado desde Windows.
 - `pfx_password.txt`: contrasena del PFX.
 - `postgres_password.txt`: contrasena del usuario `gest2a3eco_sync`.
+- `messaging_sync_token.txt`: token aleatorio compartido exclusivamente con el
+  endpoint tecnico de adjuntos del backend.
 
 Los secretos estan excluidos de Git. El contenedor los recibe como archivos de
 solo lectura bajo `/run/secrets`.
+
+Antes de levantar `messaging-sync`, confirmar la ruta real de la carpeta
+compartida en el Synology. Por defecto el compose usa
+`/volume1/Doc_Compartidos/Gest2A3Eco`; puede sobrescribirse creando un archivo
+`.env` con `DOCUMENT_REPOSITORY_HOST_PATH=/ruta/real`.
+
+El usuario PostgreSQL tecnico necesita permisos minimos sobre la cola local:
+
+```sql
+GRANT SELECT, INSERT, UPDATE ON TABLE mensajeria_adjuntos_entrada TO gest2a3eco_sync;
+```
 
 ## Ejecucion
 

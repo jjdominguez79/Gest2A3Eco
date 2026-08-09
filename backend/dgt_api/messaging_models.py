@@ -32,8 +32,54 @@ class MessagingStaff(Base):
     __tablename__ = "msg_staff"
     external_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(160))
+    email: Mapped[str] = mapped_column(String(254), default="", index=True)
     role: Mapped[str] = mapped_column(String(32), default="empleado")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class MessagingStaffChannel(Base):
+    __tablename__ = "msg_staff_channels"
+    __table_args__ = (UniqueConstraint("staff_external_id", "channel"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    staff_external_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_staff.external_id", ondelete="CASCADE"), index=True,
+    )
+    channel: Mapped[str] = mapped_column(String(20), index=True)  # laboral | fiscal
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MessagingStaffSession(Base):
+    __tablename__ = "msg_staff_sessions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    staff_external_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_staff.external_id", ondelete="CASCADE"), index=True,
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MessagingStaffAuthFlow(Base):
+    __tablename__ = "msg_staff_auth_flows"
+    state: Mapped[str] = mapped_column(String(160), primary_key=True)
+    flow_json: Mapped[str] = mapped_column(Text)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MessagingPushSubscription(Base):
+    __tablename__ = "msg_push_subscriptions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    staff_external_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_staff.external_id", ondelete="CASCADE"), index=True,
+    )
+    endpoint: Mapped[str] = mapped_column(Text, unique=True)
+    p256dh: Mapped[str] = mapped_column(Text)
+    auth: Mapped[str] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
@@ -101,7 +147,7 @@ class MessagingConversation(Base):
     __table_args__ = (UniqueConstraint("organization_id", "kind"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     organization_id: Mapped[str] = mapped_column(ForeignKey("msg_organizations.id", ondelete="CASCADE"), index=True)
-    kind: Mapped[str] = mapped_column(String(16))  # general | private
+    kind: Mapped[str] = mapped_column(String(16))  # laboral | fiscal | private
     state: Mapped[str] = mapped_column(String(20), default="pendiente", index=True)
     assigned_staff_external_id: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

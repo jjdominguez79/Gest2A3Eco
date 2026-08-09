@@ -29,16 +29,16 @@ def _smtp_configured(cfg) -> bool:
     return bool(cfg.messaging_smtp_host and cfg.messaging_smtp_from)
 
 
-def send_mail(to: str, subject: str, html: str) -> bool:
+def send_mail(to: str, subject: str, html: str, *, sender: str = "") -> bool:
     cfg = get_settings()
     if _graph_configured(cfg):
-        return _send_mail_graph(cfg, to, subject, html)
+        return _send_mail_graph(cfg, to, subject, html, sender=sender)
     if not _smtp_configured(cfg):
         return False
     return _send_mail_smtp(cfg, to, subject, html)
 
 
-def _send_mail_graph(cfg, to: str, subject: str, html: str) -> bool:
+def _send_mail_graph(cfg, to: str, subject: str, html: str, *, sender: str = "") -> bool:
     token_response = requests.post(
         "https://login.microsoftonline.com/"
         f"{quote(cfg.messaging_graph_tenant_id, safe='')}/oauth2/v2.0/token",
@@ -58,7 +58,7 @@ def _send_mail_graph(cfg, to: str, subject: str, html: str) -> bool:
 
     sent = requests.post(
         "https://graph.microsoft.com/v1.0/users/"
-        f"{quote(cfg.messaging_graph_from, safe='')}/sendMail",
+        f"{quote(sender or cfg.messaging_graph_from, safe='')}/sendMail",
         headers={
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
@@ -107,11 +107,13 @@ def _send_mail_smtp(cfg, to: str, subject: str, html: str) -> bool:
 
 
 def send_invitation(to: str, name: str, url: str) -> bool:
+    cfg = get_settings()
     return send_mail(
         to, "Invitacion a la mensajeria de Gestinem",
         f"<p>Hola {escape(name)},</p><p>Gestinem te invita a utilizar su canal seguro de mensajeria.</p>"
         f"<p><a href=\"{escape(url)}\">Activar mi cuenta</a></p>"
         "<p>El enlace es personal y caduca en 72 horas.</p>",
+        sender=cfg.messaging_graph_invitation_from,
     )
 
 

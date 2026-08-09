@@ -29,6 +29,16 @@ class Settings:
     messaging_graph_client_id: str
     messaging_graph_client_secret: str
     messaging_graph_from: str
+    messaging_graph_invitation_from: str
+    messaging_staff_tenant_id: str
+    messaging_staff_client_id: str
+    messaging_staff_client_secret: str
+    messaging_staff_admin_emails: str
+    messaging_staff_allowed_domain: str
+    messaging_sync_token: str
+    messaging_vapid_public_key: str
+    messaging_vapid_private_key: str
+    messaging_vapid_subject: str
     messaging_smtp_host: str
     messaging_smtp_port: int
     messaging_smtp_user: str
@@ -71,6 +81,28 @@ def get_settings() -> Settings:
         messaging_graph_client_id=os.getenv("MESSAGING_GRAPH_CLIENT_ID", ""),
         messaging_graph_client_secret=os.getenv("MESSAGING_GRAPH_CLIENT_SECRET", ""),
         messaging_graph_from=os.getenv("MESSAGING_GRAPH_FROM", ""),
+        messaging_graph_invitation_from=os.getenv("MESSAGING_GRAPH_INVITATION_FROM", ""),
+        messaging_staff_tenant_id=os.getenv(
+            "MESSAGING_STAFF_TENANT_ID", os.getenv("MESSAGING_GRAPH_TENANT_ID", ""),
+        ),
+        messaging_staff_client_id=os.getenv(
+            "MESSAGING_STAFF_CLIENT_ID", os.getenv("MESSAGING_GRAPH_CLIENT_ID", ""),
+        ),
+        messaging_staff_client_secret=os.getenv(
+            "MESSAGING_STAFF_CLIENT_SECRET", os.getenv("MESSAGING_GRAPH_CLIENT_SECRET", ""),
+        ),
+        messaging_staff_admin_emails=os.getenv(
+            "MESSAGING_STAFF_ADMIN_EMAILS", "jjdominguez@gestinem.es",
+        ),
+        messaging_staff_allowed_domain=os.getenv(
+            "MESSAGING_STAFF_ALLOWED_DOMAIN", "gestinem.es",
+        ).strip().lower(),
+        messaging_sync_token=os.getenv("MESSAGING_SYNC_TOKEN", ""),
+        messaging_vapid_public_key=os.getenv("MESSAGING_VAPID_PUBLIC_KEY", ""),
+        messaging_vapid_private_key=os.getenv("MESSAGING_VAPID_PRIVATE_KEY", ""),
+        messaging_vapid_subject=os.getenv(
+            "MESSAGING_VAPID_SUBJECT", "mailto:oficina@gestinem.es",
+        ),
         messaging_smtp_host=os.getenv("MESSAGING_SMTP_HOST", ""),
         messaging_smtp_port=int(os.getenv("MESSAGING_SMTP_PORT", "587")),
         messaging_smtp_user=os.getenv("MESSAGING_SMTP_USER", ""),

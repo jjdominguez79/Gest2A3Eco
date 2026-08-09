@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#00345d">
+  <link rel="manifest" href="/static/staff-messaging.webmanifest">
+  <link rel="stylesheet" href="/static/staff-messaging.css?v=1">
+  <title>Mensajería del despacho · Gestinem</title>
+</head>
+<body>
+  <section id="staff-login" class="login-card" hidden>
+    <img src="/static/gestinem-logo.png" alt="Gestinem">
+    <h1>Mensajería del despacho</h1>
+    <p>Accede con tu cuenta corporativa de Microsoft 365.</p>
+    <a class="primary-button" href="/api/v1/messaging/staff-auth/login">Entrar con Microsoft</a>
+  </section>
+
+  <main id="staff-app" class="app-shell" hidden>
+    <header class="topbar">
+      <div class="brand"><img src="/static/gestinem-logo.png" alt="Gestinem"><span>Mensajería</span></div>
+      <div class="user-actions"><span id="staff-name"></span><button id="push-enable" class="ghost" hidden>Activar avisos</button><button id="admin-open" class="ghost" hidden>Administrar</button><button id="staff-logout" class="ghost">Salir</button></div>
+    </header>
+    <aside class="channels">
+      <h2>Bandejas</h2>
+      <button class="channel active" data-channel="all">Todos <span id="badge-all" class="badge"></span></button>
+      <button class="channel" data-channel="laboral">Laboral <span id="badge-laboral" class="badge"></span></button>
+      <button class="channel" data-channel="fiscal">Contable / Fiscal <span id="badge-fiscal" class="badge"></span></button>
+      <button class="channel" data-channel="private">Directos <span id="badge-private" class="badge"></span></button>
+      <button class="channel" data-channel="unread">No leídos</button>
+    </aside>
+    <section class="conversation-list">
+      <div class="list-head"><h2>Conversaciones</h2><button id="refresh" class="icon-button" title="Actualizar">↻</button></div>
+      <input id="search" class="search" type="search" placeholder="Buscar cliente">
+      <div id="conversation-items"></div>
+    </section>
+    <section class="thread-panel">
+      <div id="empty-thread" class="empty-state"><strong>Selecciona una conversación</strong><span>Los mensajes nuevos aparecerán aquí.</span></div>
+      <div id="active-thread" class="thread-layout" hidden>
+        <header class="thread-head"><div><h2 id="thread-company"></h2><span id="thread-channel"></span></div><select id="thread-state"><option value="pendiente">Pendiente</option><option value="en_curso">En curso</option><option value="resuelta">Resuelta</option></select></header>
+        <div id="messages" class="messages" aria-live="polite"></div>
+        <form id="composer" class="composer">
+          <textarea id="message-body" rows="2" maxlength="10000" placeholder="Escribe un mensaje"></textarea>
+          <label class="attach">Adjuntar<input id="message-files" type="file" multiple></label>
+          <button class="send-button">Enviar</button>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="admin-dialog" class="admin-dialog">
+    <form method="dialog" class="dialog-head"><h2>Administración de mensajería</h2><button class="ghost">Cerrar</button></form>
+    <div class="admin-grid">
+      <section><h3>Permisos del equipo</h3><div id="staff-directory"></div></section>
+      <section><h3>Activar cliente / invitar</h3>
+        <form id="invite-form" class="stack">
+          <label>Código de empresa<input id="invite-code" required></label>
+          <label>Nombre de empresa<input id="invite-company" required></label>
+          <label>Chat privado con<select id="invite-owner" required></select></label>
+          <label>Nombre del contacto<input id="invite-name" required></label>
+          <label>Email del contacto<input id="invite-email" type="email" required></label>
+          <button class="primary-button">Crear y enviar invitación</button>
+        </form>
+        <p id="admin-result" role="status"></p>
+      </section>
+    </div>
+  </dialog>
+  <div id="toast" class="toast" hidden></div>
+  <script src="/static/staff-messaging.js?v=1"></script>
+</body>
+</html>

@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from services.gestion_documental_service import GestionDocumentalService
@@ -35,6 +36,10 @@ class UIGestionDocumental(ttk.Frame):
             font=("Segoe UI", 16, "bold"),
         ).pack(side="left")
         ttk.Button(top, text="Incorporar archivo", command=self._add_file).pack(side="right")
+        self._messaging_button = ttk.Button(
+            top, text="Adjuntos de mensajeria", command=self._open_messaging_incoming,
+        )
+        self._messaging_button.pack(side="right", padx=(0, 6))
         filters = ttk.Frame(self)
         filters.pack(fill="x", pady=(0, 8))
         ttk.Label(filters, text="Categoria").pack(side="left")
@@ -98,6 +103,80 @@ class UIGestionDocumental(ttk.Frame):
                 row.get("correo_remitente") or "", row.get("estado") or "",
             ))
         self._summary.configure(text=f"Documentos: {len(self._rows)}")
+        pending = self._pending_messaging_rows()
+        self._messaging_button.configure(text=f"Adjuntos de mensajeria ({len(pending)})")
+
+    def _pending_messaging_rows(self):
+        return [
+            row for row in self._gestor.listar_adjuntos_mensajeria_entrada()
+            if str(row.get("codigo_empresa") or "") == str(self._codigo)
+        ]
+
+    def _open_messaging_incoming(self):
+        rows = self._pending_messaging_rows()
+        if not rows:
+            messagebox.showinfo(
+                "Adjuntos de mensajeria", "No hay documentos pendientes para este cliente.", parent=self,
+            )
+            return
+        dialog = tk.Toplevel(self)
+        dialog.title("Adjuntos de mensajeria pendientes")
+        dialog.geometry("850x420")
+        dialog.transient(self.winfo_toplevel())
+        tree = ttk.Treeview(
+            dialog, columns=("fecha", "archivo", "remitente"), show="headings",
+        )
+        for key, title, width in (
+            ("fecha", "Recibido", 180), ("archivo", "Documento", 420),
+            ("remitente", "Enviado por", 210),
+        ):
+            tree.heading(key, text=title)
+            tree.column(key, width=width, anchor="w")
+        tree.pack(fill="both", expand=True, padx=10, pady=10)
+        current = {row["id"]: row for row in rows}
+        for row in rows:
+            tree.insert("", "end", iid=row["id"], values=(
+                row.get("created_at") or "", row.get("nombre_original") or "",
+                row.get("remitente") or "Cliente",
+            ))
+
+        def selected():
+            selection = tree.selection()
+            return current.get(selection[0]) if selection else None
+
+        def open_file():
+            item = selected()
+            if item and Path(item["ruta_entrada"]).is_file():
+                os.startfile(item["ruta_entrada"])
+
+        def classify():
+            item = selected()
+            if not item:
+                return
+            category_dialog = _CategoryDialog(dialog, [row["nombre"] for row in self._categories])
+            dialog.wait_window(category_dialog)
+            if not category_dialog.result:
+                return
+            category = next(row for row in self._categories if row["nombre"] == category_dialog.result)
+            try:
+                document_id = self._service.archivar_adjunto_mensajeria(
+                    item, ejercicio=self._ejercicio, categoria_id=category["id"],
+                    usuario=getattr(getattr(self._session, "user", None), "nombre", ""),
+                )
+                self._gestor.actualizar_adjunto_mensajeria_entrada(
+                    item["id"], "archivado", documento_id=document_id,
+                )
+                tree.delete(item["id"])
+                current.pop(item["id"], None)
+                self._refresh()
+            except Exception as exc:
+                messagebox.showerror("Adjuntos de mensajeria", str(exc), parent=dialog)
+
+        actions = ttk.Frame(dialog)
+        actions.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Button(actions, text="Abrir", command=open_file).pack(side="left")
+        ttk.Button(actions, text="Clasificar", command=classify).pack(side="left", padx=6)
+        ttk.Button(actions, text="Cerrar", command=dialog.destroy).pack(side="right")
 
     def _open(self):
         selected = self._tree.selection()

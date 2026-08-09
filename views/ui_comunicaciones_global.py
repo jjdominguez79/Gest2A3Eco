@@ -6,6 +6,7 @@ import os
 import threading
 import tkinter as tk
 import unicodedata
+import webbrowser
 from tkinter import messagebox, simpledialog, ttk
 
 from services.documentos_correo_service import DocumentosCorreoService
@@ -425,6 +426,9 @@ class UIComunicacionesGlobal(ttk.Frame):
         ttk.Label(top, text="Buzon de comunicaciones", font=("Segoe UI", 16, "bold")).pack(side="left")
         self._loading_label = ttk.Label(top, text="Cargando mensajes...", foreground="#64748b")
         self._loading_label.pack(side="right")
+        ttk.Button(
+            top, text="Abrir mensajeria web", command=self._open_messaging_web,
+        ).pack(side="right", padx=(0, 10))
 
         tabs = ttk.Notebook(self)
         self._tabs = tabs
@@ -433,10 +437,6 @@ class UIComunicacionesGlobal(ttk.Frame):
         mine_tab = ttk.Frame(tabs, padding=8)
         tabs.add(pending_tab, text="Entrada sin asignar")
         tabs.add(mine_tab, text="Mi buzon")
-        messaging_tab = ttk.Frame(tabs, padding=4)
-        tabs.add(messaging_tab, text="Mensajeria")
-        from views.ui_mensajeria import UIMensajeria
-        UIMensajeria(messaging_tab, self._gestor, self._session).pack(fill="both", expand=True)
         supervision_tab = None
         if self._session.is_admin():
             supervision_tab = ttk.Frame(tabs, padding=8)
@@ -933,6 +933,19 @@ class UIComunicacionesGlobal(ttk.Frame):
         self._selection_label.configure(
             text=f"{len(selected)} mensajes seleccionados",
         )
+
+    def _open_messaging_web(self):
+        cfg = load_app_config()
+        base_url = str(
+            cfg.get("messaging_api_url") or cfg.get("integrations_api_url")
+            or cfg.get("dgt_api_url") or ""
+        ).rstrip("/")
+        if not base_url:
+            messagebox.showerror(
+                "Mensajeria", "No esta configurada la URL de mensajeria.", parent=self,
+            )
+            return
+        webbrowser.open(f"{base_url}/equipo/mensajes")
         self._select_suggestion()
         self._select_automatic_responsible()
 

@@ -1,0 +1,7 @@
+const CACHE='gestinem-staff-messaging-v1';
+const ASSETS=['/equipo/mensajes','/static/staff-messaging.css?v=1','/static/staff-messaging.js?v=1','/static/staff-messaging.webmanifest','/static/gestinem-logo.png'];
+self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS))));
+self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith('gestinem-staff-messaging-')&&key!==CACHE).map(key=>caches.delete(key))))));
+self.addEventListener('fetch',event=>{if(event.request.method==='GET'&&new URL(event.request.url).origin===location.origin)event.respondWith(fetch(event.request).catch(()=>caches.match(event.request)))});
+self.addEventListener('push',event=>{const data=event.data?event.data.json():{};event.waitUntil(self.registration.showNotification(data.title||'Gestinem Mensajería',{body:data.body||'Tienes un mensaje nuevo',icon:'/static/gestinem-logo.png',badge:'/static/gestinem-logo.png',tag:data.tag||'gestinem-message',data:{url:data.url||'/equipo/mensajes'}}))});
+self.addEventListener('notificationclick',event=>{event.notification.close();const target=new URL(event.notification.data.url,self.location.origin).href;event.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(windows=>{for(const window of windows){if('focus' in window){window.navigate(target);return window.focus()}}return clients.openWindow(target)}))});

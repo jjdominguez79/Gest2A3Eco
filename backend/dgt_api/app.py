@@ -63,6 +63,20 @@ def startup():
                 "ADD COLUMN IF NOT EXISTS dataprius_json JSONB NOT NULL DEFAULT '{}'"
             )
         )
+        conn.execute(text("ALTER TABLE msg_staff ADD COLUMN IF NOT EXISTS email VARCHAR(254) NOT NULL DEFAULT ''"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_msg_staff_email ON msg_staff(email)"))
+        conn.execute(text("UPDATE msg_conversations SET kind='fiscal' WHERE kind='general'"))
+    with SessionLocal() as db:
+        for org in db.scalars(select(messaging_models.MessagingOrganization)).all():
+            existing = set(db.scalars(select(messaging_models.MessagingConversation.kind).where(
+                messaging_models.MessagingConversation.organization_id == org.id,
+            )))
+            for channel in ("laboral", "fiscal", "private"):
+                if channel not in existing:
+                    db.add(messaging_models.MessagingConversation(
+                        organization_id=org.id, kind=channel,
+                    ))
+        db.commit()
     try:
         cleanup_expired_attachments()
     except Exception:
@@ -143,6 +157,13 @@ def health():
 def messaging_portal(request: Request):
     return templates.TemplateResponse(
         request=request, name="messages.html", context={},
+    )
+
+
+@app.get("/equipo/mensajes", response_class=HTMLResponse)
+def staff_messaging_portal(request: Request):
+    return templates.TemplateResponse(
+        request=request, name="staff_messages.html", context={},
     )
 
 
