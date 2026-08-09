@@ -1,5 +1,8 @@
 import os
+from io import BytesIO
 from pathlib import Path
+
+from PIL import Image
 
 os.environ.setdefault(
     "DGT_DATABASE_URL",
@@ -64,12 +67,26 @@ def test_admin_preautoriza_empleado_y_primer_login_vincula_microsoft(tmp_path, m
         "/api/v1/messaging/staff/admin/directory", headers=admin_headers,
         json={
             "name": "Ana Laboral", "email": "ana@gestinem.es",
-            "role": "empleado", "active": True, "channels": ["laboral"],
+            "chat_alias": "Ana · Laboral", "role": "empleado",
+            "active": True, "channels": ["laboral"],
         },
     )
     assert created.status_code == 201
     staff_id = created.json()["id"]
     assert created.json()["linked"] is False
+    avatar = BytesIO()
+    Image.new("RGB", (400, 300), "#145a86").save(avatar, format="PNG")
+    uploaded = client.put(
+        f"/api/v1/messaging/staff/admin/directory/{staff_id}/avatar",
+        headers=admin_headers,
+        files={"avatar": ("ana.png", avatar.getvalue(), "image/png")},
+    )
+    assert uploaded.status_code == 200
+    avatar_response = client.get(
+        f"/api/v1/messaging/staff/avatars/{staff_id}", headers=admin_headers,
+    )
+    assert avatar_response.status_code == 200
+    assert avatar_response.headers["content-type"] == "image/webp"
 
     class FakeMsal:
         def initiate_auth_code_flow(self, **_kwargs):
@@ -93,6 +110,7 @@ def test_admin_preautoriza_empleado_y_primer_login_vincula_microsoft(tmp_path, m
     employee_token = client.cookies.get("msg_staff_session")
     me = client.get("/api/v1/messaging/staff/me").json()
     assert me["id"] == staff_id
+    assert me["chat_alias"] == "Ana · Laboral"
     assert me["channels"] == ["laboral"]
 
     client.cookies.clear()
@@ -101,9 +119,13 @@ def test_admin_preautoriza_empleado_y_primer_login_vincula_microsoft(tmp_path, m
     ).json()
     employee = next(row for row in directory if row["id"] == staff_id)
     assert employee["linked"] is True
+    assert employee["avatar_configured"] is True
     suspended = client.put(
         f"/api/v1/messaging/staff/admin/directory/{staff_id}", headers=admin_headers,
-        json={"channels": ["laboral"], "role": "empleado", "active": False},
+        json={
+            "channels": ["laboral"], "role": "empleado", "active": False,
+            "chat_alias": "Ana · Laboral",
+        },
     )
     assert suspended.status_code == 200
     assert client.get(
@@ -141,7 +163,9 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
         assert client.put(
             f"/api/v1/messaging/internal/staff/{staff_id}", headers=internal,
             json={
-                "external_id": staff_id, "name": name, "role": "empleado",
+                "external_id": staff_id, "name": name,
+                "role": "admin" if staff_id == "7" else "empleado",
+                "chat_alias": "Titular fiscal" if staff_id == "7" else "",
                 "active": True, "channels": ["fiscal"],
             },
         ).status_code == 200
@@ -179,6 +203,12 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
     device_headers = {"X-Device-Id": "puesto-1", "X-Device-Token": device["device_token"]}
     staff7 = {**internal, **device_headers, "X-Staff-Id": "7"}
     staff8 = {**internal, **device_headers, "X-Staff-Id": "8"}
+    avatar = BytesIO()
+    Image.new("RGB", (80, 80), "#145a86").save(avatar, format="PNG")
+    assert client.put(
+        "/api/v1/messaging/staff/admin/directory/7/avatar", headers=staff7,
+        files={"avatar": ("titular.png", avatar.getvalue(), "image/png")},
+    ).status_code == 200
     visible7 = client.get("/api/v1/messaging/staff/conversations", headers=staff7).json()
     assert len(visible7) == 2
     assert next(row for row in visible7 if row["id"] == general["id"])["unread_count"] == 1
@@ -239,6 +269,17 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
         files={"files": ("respuesta.pdf", b"respuesta", "application/pdf")},
     )
     outgoing_id = outgoing.json()["attachments"][0]["id"]
+    assert outgoing.json()["author_name"] == "Titular fiscal"
+    client_messages = client.get(
+        f"/api/v1/messaging/client/conversations/{general['id']}/messages",
+        headers=client_auth,
+    ).json()
+    staff_message = next(row for row in client_messages if row["id"] == outgoing.json()["id"])
+    assert staff_message["author_name"] == "Titular fiscal"
+    assert staff_message["author_avatar_url"].endswith("/client/avatars/7")
+    assert client.get(
+        "/api/v1/messaging/client/avatars/7", headers=client_auth,
+    ).headers["content-type"] == "image/webp"
     assert outgoing.json()["attachments"][0]["expires_at"]
     assert client.get(
         f"/api/v1/messaging/client/attachments/{outgoing_id}", headers=client_auth,

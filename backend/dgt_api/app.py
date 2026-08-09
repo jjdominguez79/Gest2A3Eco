@@ -67,6 +67,9 @@ def startup():
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_msg_staff_email ON msg_staff(email)"))
         conn.execute(text("ALTER TABLE msg_staff ADD COLUMN IF NOT EXISTS entra_oid VARCHAR(64) NOT NULL DEFAULT ''"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_msg_staff_entra_oid ON msg_staff(entra_oid)"))
+        conn.execute(text("ALTER TABLE msg_staff ADD COLUMN IF NOT EXISTS chat_alias VARCHAR(160) NOT NULL DEFAULT ''"))
+        conn.execute(text("ALTER TABLE msg_staff ADD COLUMN IF NOT EXISTS avatar_storage_key VARCHAR(500) NOT NULL DEFAULT ''"))
+        conn.execute(text("ALTER TABLE msg_staff ADD COLUMN IF NOT EXISTS avatar_content_type VARCHAR(120) NOT NULL DEFAULT ''"))
         conn.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_msg_staff_entra_oid_asignado "
             "ON msg_staff(entra_oid) WHERE entra_oid <> ''"

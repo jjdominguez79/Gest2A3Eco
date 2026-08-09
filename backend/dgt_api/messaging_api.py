@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
 import json
 import mimetypes
 import secrets
@@ -9,6 +10,7 @@ import uuid
 from datetime import timedelta
 
 import msal
+from PIL import Image, ImageOps, UnidentifiedImageError
 from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
@@ -38,6 +40,7 @@ from backend.dgt_api.security import require_internal_key
 
 router = APIRouter(prefix="/api/v1/messaging", tags=["messaging"])
 MAX_ATTACHMENT = 50 * 1024 * 1024
+MAX_AVATAR = 5 * 1024 * 1024
 ALLOWED_SUFFIXES = {
     ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".tif", ".tiff",
     ".txt", ".xml", ".csv", ".xls", ".xlsx", ".doc", ".docx", ".zip",
@@ -65,6 +68,7 @@ class StaffIn(BaseModel):
     external_id: str
     name: str
     email: str = ""
+    chat_alias: str = ""
     role: str = "empleado"
     active: bool = True
     channels: list[str] | None = None
@@ -106,12 +110,14 @@ class StaffPermissionsIn(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=160)
     email: str | None = Field(default=None, min_length=3, max_length=254)
     role: str | None = None
+    chat_alias: str | None = Field(default=None, max_length=160)
 
 
 class StaffCreateIn(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     email: str = Field(min_length=3, max_length=254)
     role: str = "empleado"
+    chat_alias: str = Field(default="", max_length=160)
     active: bool = True
     channels: list[str] = Field(default_factory=list)
 
@@ -283,12 +289,21 @@ def _serialize_conversation(db: Session, conv: MessagingConversation) -> dict:
     }
 
 
-def _serialize_message(db: Session, item: MessagingMessage) -> dict:
+def _serialize_message(db: Session, item: MessagingMessage, audience: str = "") -> dict:
     attachments = list(db.scalars(select(MessagingAttachment).where(MessagingAttachment.message_id == item.id)))
+    author_name = item.author_name
+    author_avatar_url = ""
+    if item.author_type == "staff":
+        author = db.get(MessagingStaff, item.author_id)
+        if author:
+            author_name = author.chat_alias.strip() or item.author_name
+            if author.avatar_storage_key and audience in {"client", "staff"}:
+                author_avatar_url = f"/api/v1/messaging/{audience}/avatars/{author.external_id}"
     return {
         "id": item.id, "conversation_id": item.conversation_id,
         "author_type": item.author_type, "author_id": item.author_id,
-        "author_name": item.author_name, "body": item.body,
+        "author_name": author_name, "author_avatar_url": author_avatar_url,
+        "body": item.body,
         "created_at": item.created_at.isoformat(),
         "attachments": [{
             "id": a.id, "name": a.name, "content_type": a.content_type,
@@ -394,6 +409,7 @@ def put_staff(external_id: str, payload: StaffIn, db: Session = Depends(get_db))
         raise HTTPException(422, "Identificador incoherente")
     item = db.get(MessagingStaff, external_id) or MessagingStaff(external_id=external_id)
     item.name, item.email = payload.name, payload.email.strip().lower()
+    item.chat_alias = payload.chat_alias.strip()
     item.role, item.active = payload.role, payload.active
     if payload.channels is not None:
         channels = set(payload.channels)
@@ -590,7 +606,9 @@ def staff_auth_logout(
 def staff_me(staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db)):
     return {
         "id": staff.external_id, "name": staff.name, "email": staff.email,
-        "role": staff.role, "channels": sorted(_channels_for_staff(db, staff)),
+        "role": staff.role, "chat_alias": staff.chat_alias,
+        "avatar_configured": bool(staff.avatar_storage_key),
+        "channels": sorted(_channels_for_staff(db, staff)),
     }
 
 
@@ -634,6 +652,8 @@ def staff_directory(
         "id": row.external_id, "name": row.name, "email": row.email,
         "role": row.role, "active": row.active,
         "linked": bool(row.entra_oid),
+        "chat_alias": row.chat_alias,
+        "avatar_configured": bool(row.avatar_storage_key),
         "channels": sorted(_channels_for_staff(db, row)),
     } for row in rows]
 
@@ -653,7 +673,8 @@ def create_staff_user(
         raise HTTPException(409, "Ya existe un usuario con ese email")
     staff = MessagingStaff(
         external_id=str(uuid.uuid4()), name=payload.name.strip(), email=email,
-        entra_oid="", role=payload.role, active=payload.active,
+        entra_oid="", chat_alias=payload.chat_alias.strip(),
+        role=payload.role, active=payload.active,
     )
     db.add(staff)
     db.flush()
@@ -662,6 +683,7 @@ def create_staff_user(
     return {
         "id": staff.external_id, "name": staff.name, "email": staff.email,
         "role": staff.role, "active": staff.active, "linked": False,
+        "chat_alias": staff.chat_alias, "avatar_configured": False,
         "channels": sorted(channels),
     }
 
@@ -698,6 +720,8 @@ def update_staff_permissions(
         staff.email = email
     if payload.name is not None:
         staff.name = payload.name.strip()
+    if payload.chat_alias is not None:
+        staff.chat_alias = payload.chat_alias.strip()
     _set_staff_channels(db, external_id, channels)
     staff.role = role
     staff.active = payload.active
@@ -707,7 +731,68 @@ def update_staff_permissions(
     return {
         "ok": True, "channels": sorted(channels), "role": staff.role,
         "active": staff.active, "linked": bool(staff.entra_oid),
+        "chat_alias": staff.chat_alias,
     }
+
+
+def _normalized_avatar(upload: UploadFile) -> bytes:
+    content = upload.file.read(MAX_AVATAR + 1)
+    if len(content) > MAX_AVATAR:
+        raise HTTPException(413, "La imagen supera 5 MB")
+    try:
+        with Image.open(io.BytesIO(content)) as source:
+            if source.width * source.height > 25_000_000:
+                raise HTTPException(413, "La imagen tiene demasiada resolucion")
+            avatar = ImageOps.fit(
+                source.convert("RGB"), (256, 256), method=Image.Resampling.LANCZOS,
+            )
+            output = io.BytesIO()
+            avatar.save(output, format="WEBP", quality=86, method=6)
+            return output.getvalue()
+    except (UnidentifiedImageError, OSError) as exc:
+        raise HTTPException(415, "El archivo no es una imagen valida") from exc
+
+
+@router.put("/staff/admin/directory/{external_id}/avatar")
+def update_staff_avatar(
+    external_id: str, avatar: UploadFile = File(...),
+    _admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
+):
+    staff = db.get(MessagingStaff, external_id)
+    if not staff:
+        raise HTTPException(404, "Empleado no encontrado")
+    content = _normalized_avatar(avatar)
+    storage = MessagingStorage()
+    old_key = staff.avatar_storage_key
+    staff.avatar_storage_key = storage.put(content, f"avatar-{external_id}.webp")
+    staff.avatar_content_type = "image/webp"
+    db.commit()
+    if old_key:
+        try:
+            storage.delete(old_key)
+        except Exception:
+            pass
+    return {"ok": True, "avatar_configured": True}
+
+
+@router.delete("/staff/admin/directory/{external_id}/avatar")
+def delete_staff_avatar(
+    external_id: str,
+    _admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
+):
+    staff = db.get(MessagingStaff, external_id)
+    if not staff:
+        raise HTTPException(404, "Empleado no encontrado")
+    key = staff.avatar_storage_key
+    staff.avatar_storage_key = ""
+    staff.avatar_content_type = ""
+    db.commit()
+    if key:
+        try:
+            MessagingStorage().delete(key)
+        except Exception:
+            pass
+    return {"ok": True}
 
 
 @router.post("/staff/admin/directory/{external_id}/revoke-sessions")
@@ -876,7 +961,7 @@ def messages(audience: str, conversation_id: str, request: Request, db: Session 
     rows = db.scalars(select(MessagingMessage).where(
         MessagingMessage.conversation_id == conv.id,
     ).order_by(MessagingMessage.created_at.asc()).limit(500)).all()
-    return [_serialize_message(db, row) for row in rows]
+    return [_serialize_message(db, row, audience) for row in rows]
 
 
 def _resolve_actor(audience: str, request: Request, db: Session):
@@ -885,6 +970,33 @@ def _resolve_actor(audience: str, request: Request, db: Session):
     if audience == "staff":
         return _staff_from_request(db, request)
     raise HTTPException(404)
+
+
+@router.get("/{audience}/avatars/{external_id}")
+def staff_avatar(
+    audience: str, external_id: str, request: Request, db: Session = Depends(get_db),
+):
+    actor = _resolve_actor(audience, request, db)
+    staff = db.get(MessagingStaff, external_id)
+    if not staff or not staff.avatar_storage_key:
+        raise HTTPException(404, "Avatar no disponible")
+    if audience == "client":
+        authored = int(db.scalar(
+            select(func.count(MessagingMessage.id))
+            .join(MessagingConversation, MessagingConversation.id == MessagingMessage.conversation_id)
+            .where(
+                MessagingMessage.author_type == "staff",
+                MessagingMessage.author_id == external_id,
+                MessagingConversation.organization_id == actor.organization_id,
+            )
+        ) or 0)
+        if not authored:
+            raise HTTPException(403, "Avatar no autorizado")
+    return Response(
+        content=MessagingStorage().get(staff.avatar_storage_key),
+        media_type=staff.avatar_content_type or "image/webp",
+        headers={"Cache-Control": "private, no-cache"},
+    )
 
 
 @router.post("/{audience}/conversations/{conversation_id}/read")
@@ -923,7 +1035,8 @@ def post_message(
     key = idempotency_key.strip() or str(uuid.uuid4())
     item = _create_message(
         db, conv, actor_type=audience, actor_id=(actor.id if audience == "client" else actor.external_id),
-        actor_name=actor.name, body=body, idempotency_key=key, files=files,
+        actor_name=(actor.chat_alias.strip() or actor.name) if audience == "staff" else actor.name,
+        body=body, idempotency_key=key, files=files,
     )
     if audience == "client":
         _queue_staff_pushes(db, background, conv)
@@ -939,7 +1052,7 @@ def post_message(
                     send_message_notice, recipient.email, recipient.name,
                     f"{get_settings().messaging_public_base_url}/mensajes",
                 )
-    return _serialize_message(db, item)
+    return _serialize_message(db, item, audience)
 
 
 @router.patch("/staff/conversations/{conversation_id}")

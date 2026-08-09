@@ -19,6 +19,45 @@
   color: #8c2525;
 }
 
+.staff-identity {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+}
+
+.staff-avatar {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--brand);
+  color: white;
+  font-weight: 750;
+}
+
+.staff-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.staff-profile {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .6rem;
+}
+
+.staff-profile input {
+  min-width: 0;
+  padding: .55rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font: inherit;
+}
+
 .staff-checks,
 .staff-actions,
 .permission-line {
@@ -52,4 +91,10 @@
 .danger {
   background: #f9e2e2;
   color: #8c2525;
+}
+
+@media (max-width: 700px) {
+  .staff-profile {
+    grid-template-columns: 1fr;
+  }
 }
