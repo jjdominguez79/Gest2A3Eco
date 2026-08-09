@@ -67,11 +67,11 @@ GRANT SELECT, INSERT, UPDATE ON TABLE mensajeria_adjuntos_entrada TO gest2a3eco_
 
 ## Ejecucion
 
-Desde `deploy/mail-sync`:
+Desde la raiz del repositorio:
 
 ```text
-docker compose up --build -d
-docker compose logs -f mail-sync
+docker compose -f deploy/mail-sync/compose.synology.yaml up --build -d
+docker compose -f deploy/mail-sync/compose.synology.yaml logs -f mail-sync
 ```
 
 La periodicidad se configura con `SYNC_INTERVAL_SECONDS` en `compose.yaml`. El
@@ -88,6 +88,13 @@ Para verificar que el contenedor esta funcionando:
 ```text
 docker compose ps
 docker compose logs -f mail-sync
+```
+
+Para comprobar especificamente el recolector de adjuntos de la PWA:
+
+```text
+docker compose -f deploy/mail-sync/compose.synology.yaml ps messaging-sync
+docker compose -f deploy/mail-sync/compose.synology.yaml logs -f messaging-sync
 ```
 
 En PostgreSQL, la tabla `comunicaciones_sync` debe mostrar una fila para

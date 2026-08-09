@@ -79,6 +79,7 @@ class InviteIn(BaseModel):
     company_code: str
     name: str
     email: str
+    send_email: bool = True
 
 
 class AcceptInviteIn(BaseModel):
@@ -510,11 +511,12 @@ def create_invitation(payload: InviteIn, background: BackgroundTasks, db: Sessio
     )
     db.add(invitation); db.commit()
     url = f"{get_settings().messaging_public_base_url}/mensajes?invite={token}"
-    if mail_configured():
+    email_queued = payload.send_email and mail_configured()
+    if email_queued:
         background.add_task(send_invitation, client.email, client.name, url)
     return {
         "invitation_id": invitation.id,
-        "url": url, "email_queued": mail_configured(),
+        "url": url, "email_queued": email_queued,
         "expires_at": invitation.expires_at.isoformat(),
     }
 

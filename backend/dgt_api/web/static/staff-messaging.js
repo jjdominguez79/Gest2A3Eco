@@ -148,8 +148,10 @@ byId('invite-form').onsubmit=async event=>{
   event.preventDefault();const code=byId('invite-code').value.trim();
   try{
     await request(`/staff/admin/organizations/${encodeURIComponent(code)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({company_code:code,name:byId('invite-company').value.trim(),private_owner_external_id:byId('invite-owner').value,active:true})});
-    const result=await request('/staff/admin/invitations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({company_code:code,name:byId('invite-name').value.trim(),email:byId('invite-email').value.trim()})});
-    byId('admin-result').textContent=result.email_queued?'Invitación enviada por email.':`Invitación creada: ${result.url}`;
+    const isTest=byId('invite-test').checked;
+    const result=await request('/staff/admin/invitations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({company_code:code,name:byId('invite-name').value.trim(),email:byId('invite-email').value.trim(),send_email:!isTest})});
+    const status=byId('admin-result');status.replaceChildren(document.createTextNode(result.email_queued?'Invitación enviada por email. ':'Cuenta de prueba creada sin enviar email. '));
+    const link=document.createElement('a');link.href=result.url;link.target='_blank';link.rel='noopener';link.textContent='Abrir enlace de activación';status.append(link);
   }catch(error){byId('admin-result').textContent=error.message}
 };
 if('serviceWorker' in navigator)navigator.serviceWorker.register('/static/staff-messaging-sw.js').catch(()=>{});

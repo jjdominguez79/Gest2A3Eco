@@ -1,8 +1,8 @@
 services:
   mail-sync:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: deploy/mail-sync/Dockerfile
     container_name: gest2a3eco-mail-sync
     restart: unless-stopped
     read_only: true
@@ -37,8 +37,8 @@ services:
 
   messaging-sync:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: deploy/mail-sync/Dockerfile
     container_name: gest2a3eco-messaging-sync
     command: ["python", "-m", "sync_worker.messaging_worker"]
     restart: unless-stopped

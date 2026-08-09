@@ -156,6 +156,43 @@ def test_login_corporativo_sin_preautorizacion_es_rechazado(tmp_path, monkeypatc
     assert response.status_code == 403
 
 
+def test_cuenta_cliente_prueba_genera_enlace_sin_enviar_email(tmp_path, monkeypatch):
+    client = _client(tmp_path)
+    internal = {"X-API-Key": "test-secret"}
+    assert client.put(
+        "/api/v1/messaging/internal/organizations/E00000", headers=internal,
+        json={"company_code": "E00000", "name": "Empresa de prueba"},
+    ).status_code == 200
+    sent = []
+    monkeypatch.setattr(messaging_api, "mail_configured", lambda: True)
+    monkeypatch.setattr(
+        messaging_api, "send_invitation",
+        lambda email, name, url: sent.append((email, name, url)),
+    )
+
+    invitation = client.post(
+        "/api/v1/messaging/internal/invitations", headers=internal,
+        json={
+            "company_code": "E00000", "name": "Cliente de prueba",
+            "email": "prueba@gestinem.es", "send_email": False,
+        },
+    )
+    assert invitation.status_code == 200
+    assert invitation.json()["email_queued"] is False
+    assert invitation.json()["url"].startswith("https://mensajes.example.test/mensajes?invite=")
+    assert sent == []
+
+    token = invitation.json()["url"].split("invite=", 1)[1]
+    assert client.post(
+        "/api/v1/messaging/auth/accept-invite",
+        json={"token": token, "password": "prueba-segura-1234"},
+    ).status_code == 200
+    assert client.post(
+        "/api/v1/messaging/auth/login",
+        json={"email": "prueba@gestinem.es", "password": "prueba-segura-1234"},
+    ).status_code == 200
+
+
 def test_chats_internos_privados_y_grupos_respetan_permisos(tmp_path):
     client = _client(tmp_path)
     internal = {"X-API-Key": "test-secret"}
