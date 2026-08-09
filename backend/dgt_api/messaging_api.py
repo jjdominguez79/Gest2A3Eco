@@ -24,6 +24,7 @@ from backend.dgt_api.messaging_models import (
     MessagingEvent, MessagingInvitation, MessagingMessage, MessagingOrganization,
     MessagingPasswordReset, MessagingPresence, MessagingRead, MessagingSession, MessagingStaff,
     MessagingPushSubscription, MessagingStaffAuthFlow, MessagingStaffChannel, MessagingStaffSession,
+    MessagingStaffThread, MessagingStaffThreadMessage, MessagingStaffThreadRead,
 )
 from backend.dgt_api.messaging_mail import (
     configured as mail_configured, send_invitation, send_message_notice,
@@ -202,6 +203,38 @@ def _revoke_staff_access(db: Session, external_id: str) -> None:
     db.query(MessagingPushSubscription).filter(
         MessagingPushSubscription.staff_external_id == external_id,
     ).update({MessagingPushSubscription.active: False}, synchronize_session=False)
+
+
+def _ensure_staff_group_threads(db: Session) -> None:
+    changed = False
+    for channel in sorted(STAFF_CHANNELS):
+        key = f"group:{channel}"
+        if not db.scalar(select(MessagingStaffThread).where(MessagingStaffThread.key == key)):
+            db.add(MessagingStaffThread(key=key, kind="group", channel=channel))
+            changed = True
+    if changed:
+        db.commit()
+
+
+def _can_access_staff_thread(
+    db: Session, thread: MessagingStaffThread, staff: MessagingStaff,
+) -> bool:
+    if thread.kind == "group":
+        return staff.role == "admin" or thread.channel in _channels_for_staff(db, staff)
+    return staff.external_id in {
+        thread.admin_staff_external_id, thread.member_staff_external_id,
+    }
+
+
+def _staff_thread(
+    db: Session, thread_id: str, staff: MessagingStaff,
+) -> MessagingStaffThread:
+    thread = db.get(MessagingStaffThread, thread_id)
+    if not thread:
+        raise HTTPException(404, "Chat interno no encontrado")
+    if not _can_access_staff_thread(db, thread, staff):
+        raise HTTPException(403, "Chat interno no autorizado")
+    return thread
 
 
 def _can_access_conversation(
@@ -639,6 +672,204 @@ def subscribe_staff_push(
     db.add(item)
     db.commit()
     return {"ok": True}
+
+
+def _serialize_staff_thread_message(db: Session, item: MessagingStaffThreadMessage) -> dict:
+    author = db.get(MessagingStaff, item.author_staff_external_id)
+    return {
+        "id": item.id, "thread_id": item.thread_id,
+        "author_id": item.author_staff_external_id,
+        "author_name": (author.chat_alias.strip() or author.name) if author else item.author_name,
+        "author_avatar_url": (
+            f"/api/v1/messaging/staff/avatars/{author.external_id}"
+            if author and author.avatar_storage_key else ""
+        ),
+        "body": item.body, "created_at": item.created_at.isoformat(),
+    }
+
+
+def _staff_thread_title(db: Session, thread: MessagingStaffThread, staff: MessagingStaff) -> str:
+    if thread.kind == "group":
+        return "Equipo Laboral" if thread.channel == "laboral" else "Equipo Contable / Fiscal"
+    other_id = (
+        thread.member_staff_external_id
+        if staff.external_id == thread.admin_staff_external_id
+        else thread.admin_staff_external_id
+    )
+    other = db.get(MessagingStaff, other_id)
+    return (other.chat_alias.strip() or other.name) if other else "Chat privado"
+
+
+def _staff_thread_unread(db: Session, thread: MessagingStaffThread, staff: MessagingStaff) -> int:
+    read = db.scalar(select(MessagingStaffThreadRead).where(
+        MessagingStaffThreadRead.thread_id == thread.id,
+        MessagingStaffThreadRead.staff_external_id == staff.external_id,
+    ))
+    stmt = select(func.count(MessagingStaffThreadMessage.id)).where(
+        MessagingStaffThreadMessage.thread_id == thread.id,
+        MessagingStaffThreadMessage.author_staff_external_id != staff.external_id,
+    )
+    if read:
+        stmt = stmt.where(MessagingStaffThreadMessage.created_at > read.read_at)
+    return int(db.scalar(stmt) or 0)
+
+
+def _serialize_staff_thread(
+    db: Session, thread: MessagingStaffThread, staff: MessagingStaff,
+) -> dict:
+    last = db.scalar(select(MessagingStaffThreadMessage).where(
+        MessagingStaffThreadMessage.thread_id == thread.id,
+    ).order_by(MessagingStaffThreadMessage.created_at.desc()).limit(1))
+    return {
+        "id": thread.id, "kind": thread.kind, "channel": thread.channel,
+        "title": _staff_thread_title(db, thread, staff),
+        "unread_count": _staff_thread_unread(db, thread, staff),
+        "updated_at": thread.updated_at.isoformat(),
+        "last_message": _serialize_staff_thread_message(db, last) if last else None,
+    }
+
+
+@router.get("/staff/internal/threads")
+def list_staff_threads(
+    staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
+):
+    _ensure_staff_group_threads(db)
+    rows = db.scalars(select(MessagingStaffThread).order_by(
+        MessagingStaffThread.updated_at.desc(), MessagingStaffThread.kind,
+    )).all()
+    return [
+        _serialize_staff_thread(db, row, staff)
+        for row in rows if _can_access_staff_thread(db, row, staff)
+    ]
+
+
+@router.post("/staff/internal/direct/{member_external_id}", status_code=201)
+def create_staff_direct_thread(
+    member_external_id: str, admin: MessagingStaff = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    member = db.get(MessagingStaff, member_external_id)
+    if not member or not member.active or member.external_id == admin.external_id:
+        raise HTTPException(404, "Empleado no disponible")
+    key = f"direct:{admin.external_id}:{member.external_id}"
+    thread = db.scalar(select(MessagingStaffThread).where(MessagingStaffThread.key == key))
+    if not thread:
+        thread = MessagingStaffThread(
+            key=key, kind="direct", admin_staff_external_id=admin.external_id,
+            member_staff_external_id=member.external_id,
+        )
+        db.add(thread)
+        db.commit()
+        db.refresh(thread)
+    return _serialize_staff_thread(db, thread, admin)
+
+
+@router.get("/staff/internal/threads/{thread_id}/messages")
+def staff_thread_messages(
+    thread_id: str, staff: MessagingStaff = Depends(_staff),
+    db: Session = Depends(get_db),
+):
+    thread = _staff_thread(db, thread_id, staff)
+    rows = db.scalars(select(MessagingStaffThreadMessage).where(
+        MessagingStaffThreadMessage.thread_id == thread.id,
+    ).order_by(MessagingStaffThreadMessage.created_at).limit(500)).all()
+    return [_serialize_staff_thread_message(db, row) for row in rows]
+
+
+@router.post("/staff/internal/threads/{thread_id}/read")
+def mark_staff_thread_read(
+    thread_id: str, staff: MessagingStaff = Depends(_staff),
+    db: Session = Depends(get_db),
+):
+    thread = _staff_thread(db, thread_id, staff)
+    last = db.scalar(select(MessagingStaffThreadMessage).where(
+        MessagingStaffThreadMessage.thread_id == thread.id,
+    ).order_by(MessagingStaffThreadMessage.created_at.desc()).limit(1))
+    read = db.scalar(select(MessagingStaffThreadRead).where(
+        MessagingStaffThreadRead.thread_id == thread.id,
+        MessagingStaffThreadRead.staff_external_id == staff.external_id,
+    )) or MessagingStaffThreadRead(thread_id=thread.id, staff_external_id=staff.external_id)
+    read.last_message_id = last.id if last else ""
+    read.read_at = utcnow()
+    db.add(read)
+    db.commit()
+    return {"ok": True}
+
+
+def _queue_internal_pushes(
+    db: Session, background: BackgroundTasks, thread: MessagingStaffThread,
+    sender: MessagingStaff,
+) -> None:
+    if not push_configured():
+        return
+    if thread.kind == "direct":
+        recipient_ids = {
+            thread.admin_staff_external_id, thread.member_staff_external_id,
+        }
+    else:
+        recipient_ids = set(db.scalars(select(MessagingStaff.external_id).where(
+            MessagingStaff.active.is_(True), MessagingStaff.role == "admin",
+        )))
+        recipient_ids.update(db.scalars(select(MessagingStaffChannel.staff_external_id).where(
+            MessagingStaffChannel.channel == thread.channel,
+        )))
+    recipient_ids.discard(sender.external_id)
+    if not recipient_ids:
+        return
+    subscriptions = db.scalars(select(MessagingPushSubscription).where(
+        MessagingPushSubscription.staff_external_id.in_(recipient_ids),
+        MessagingPushSubscription.active.is_(True),
+    )).all()
+    title = (
+        _staff_thread_title(db, thread, sender)
+        if thread.kind == "group" else (sender.chat_alias.strip() or sender.name)
+    )
+    payload = {
+        "title": f"Nuevo mensaje interno · {title}",
+        "body": sender.chat_alias.strip() or sender.name,
+        "url": f"/equipo/mensajes?internal={thread.id}",
+        "tag": f"internal-{thread.id}",
+    }
+    for subscription in subscriptions:
+        background.add_task(send_push, {
+            "endpoint": subscription.endpoint,
+            "keys": {"p256dh": subscription.p256dh, "auth": subscription.auth},
+        }, payload)
+
+
+@router.post("/staff/internal/threads/{thread_id}/messages")
+def post_staff_thread_message(
+    thread_id: str, background: BackgroundTasks,
+    body: str = Form(...), idempotency_key: str = Form(default=""),
+    staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
+):
+    thread = _staff_thread(db, thread_id, staff)
+    text_body = body.strip()
+    if not text_body:
+        raise HTTPException(422, "El mensaje esta vacio")
+    if len(text_body) > 10000:
+        raise HTTPException(422, "El mensaje es demasiado largo")
+    key = idempotency_key.strip() or str(uuid.uuid4())
+    existing = db.scalar(select(MessagingStaffThreadMessage).where(
+        MessagingStaffThreadMessage.thread_id == thread.id,
+        MessagingStaffThreadMessage.idempotency_key == key,
+    ))
+    if existing:
+        return _serialize_staff_thread_message(db, existing)
+    item = MessagingStaffThreadMessage(
+        thread_id=thread.id, author_staff_external_id=staff.external_id,
+        author_name=staff.chat_alias.strip() or staff.name,
+        body=text_body, idempotency_key=key,
+    )
+    thread.updated_at = utcnow()
+    db.add(item)
+    db.add(MessagingEvent(
+        organization_id="", conversation_id=thread.id, event_type="internal_message",
+    ))
+    db.commit()
+    db.refresh(item)
+    _queue_internal_pushes(db, background, thread, staff)
+    return _serialize_staff_thread_message(db, item)
 
 
 @router.get("/staff/admin/directory")
@@ -1288,10 +1519,19 @@ async def events(audience: str, request: Request, after: int = 0, db: Session = 
                         event_db.commit()
                 rows = event_db.scalars(select(MessagingEvent).where(MessagingEvent.id > cursor).order_by(MessagingEvent.id).limit(100)).all()
                 for row in rows:
-                    conv = event_db.get(MessagingConversation, row.conversation_id) if row.conversation_id else None
                     cursor = max(cursor, row.id)
                     if org_id and row.organization_id != org_id:
                         continue
+                    if audience == "staff" and row.event_type == "internal_message":
+                        thread = event_db.get(MessagingStaffThread, row.conversation_id)
+                        event_staff = event_db.get(MessagingStaff, staff_id)
+                        if not thread or not event_staff or not _can_access_staff_thread(
+                            event_db, thread, event_staff,
+                        ):
+                            continue
+                        yield f"id: {row.id}\nevent: {row.event_type}\ndata: {json.dumps({'thread_id': row.conversation_id})}\n\n"
+                        continue
+                    conv = event_db.get(MessagingConversation, row.conversation_id) if row.conversation_id else None
                     if audience == "staff" and conv and conv.kind == "private":
                         org = event_db.get(MessagingOrganization, conv.organization_id)
                         if org.private_owner_external_id != staff_id:

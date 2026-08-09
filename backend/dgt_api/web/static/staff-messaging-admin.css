@@ -93,8 +93,34 @@
   color: #8c2525;
 }
 
+.workspace {
+  font-weight: 700;
+}
+
+#client-channels {
+  margin-top: 1.2rem;
+  padding-top: .8rem;
+  border-top: 1px solid var(--line);
+}
+
+.compact-dialog {
+  width: min(480px, 94vw);
+}
+
+.dialog-body {
+  padding: 1.25rem;
+}
+
 @media (max-width: 700px) {
   .staff-profile {
     grid-template-columns: 1fr;
+  }
+
+  #client-channels {
+    display: flex;
+    gap: .3rem;
+    margin: 0;
+    padding: 0;
+    border: 0;
   }
 }

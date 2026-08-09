@@ -1,7 +1,7 @@
 const API='/api/v1/messaging';
 const byId=id=>document.getElementById(id);
 const channelLabels={laboral:'Laboral',fiscal:'Contable / Fiscal',private:'Directo'};
-let me=null,conversations=[],selectedId='',filter='all',events=null;
+let me=null,conversations=[],internalThreads=[],selectedId='',selectedInternalId='',filter='all',space='clients',events=null;
 
 async function request(path,options={}){
   const response=await fetch(API+path,{credentials:'same-origin',...options});
@@ -15,14 +15,20 @@ async function start(){
   try{me=await request('/staff/me')}catch(error){if(error.status===401){byId('staff-login').hidden=false;return}throw error}
   byId('staff-app').hidden=false;byId('staff-name').textContent=me.name;
   byId('admin-open').hidden=me.role!=='admin';
-  await loadConversations();
+  await Promise.all([loadConversations(),loadInternalThreads()]);
   const requested=new URLSearchParams(location.search).get('conversation');
+  const requestedInternal=new URLSearchParams(location.search).get('internal');
   if(requested&&conversations.some(row=>row.id===requested))await selectConversation(requested);
+  if(requestedInternal&&internalThreads.some(row=>row.id===requestedInternal)){switchSpace('team');await selectInternalThread(requestedInternal)}
   await preparePush();startEvents();
 }
 async function loadConversations(){
   conversations=await request('/staff/conversations');renderConversations();renderBadges();
   if(selectedId&&!conversations.some(row=>row.id===selectedId))selectConversation('');
+}
+async function loadInternalThreads(){
+  internalThreads=await request('/staff/internal/threads');renderConversations();renderBadges();
+  if(selectedInternalId&&!internalThreads.some(row=>row.id===selectedInternalId))selectInternalThread('');
 }
 function visibleConversations(){
   const query=byId('search').value.trim().toLowerCase();
@@ -32,6 +38,7 @@ function visibleConversations(){
   });
 }
 function renderConversations(){
+  if(space==='team'){renderInternalThreads();return}
   const root=byId('conversation-items');root.replaceChildren(...visibleConversations().map(row=>{
     const button=document.createElement('button');button.className='conversation-item'+(row.id===selectedId?' active':'');
     const top=document.createElement('div');top.className='row';
@@ -46,15 +53,25 @@ function renderConversations(){
     button.append(top,info,preview);button.onclick=()=>selectConversation(row.id);return button;
   }));
 }
+function renderInternalThreads(){
+  const query=byId('search').value.trim().toLowerCase();const root=byId('conversation-items');root.replaceChildren(...internalThreads.filter(row=>!query||row.title.toLowerCase().includes(query)).map(row=>{
+    const button=document.createElement('button');button.className='conversation-item'+(row.id===selectedInternalId?' active':'');
+    const top=document.createElement('div');top.className='row';const name=document.createElement('strong');name.textContent=row.title;const time=document.createElement('small');time.textContent=row.last_message?new Date(row.last_message.created_at).toLocaleString():'';top.append(name,time);
+    const info=document.createElement('div');info.className='row';const kind=document.createElement('span');kind.className='pill';kind.textContent=row.kind==='group'?'Grupo interno':'Privado';info.append(kind);if(row.unread_count){const unread=document.createElement('span');unread.className='pill unread';unread.textContent=String(row.unread_count);info.append(unread)}
+    const preview=document.createElement('p');preview.textContent=row.last_message?.body||'Sin mensajes';button.append(top,info,preview);button.onclick=()=>selectInternalThread(row.id);return button;
+  }))
+}
 function renderBadges(){
   const totals={all:0,laboral:0,fiscal:0,private:0};
   for(const row of conversations){totals.all+=row.unread_count||0;totals[row.kind]=(totals[row.kind]||0)+(row.unread_count||0)}
   for(const key of Object.keys(totals)){const badge=byId(`badge-${key}`);if(badge)badge.textContent=totals[key]?String(totals[key]):''}
-  if('setAppBadge' in navigator){totals.all?navigator.setAppBadge(totals.all):navigator.clearAppBadge()}
+  const internalTotal=internalThreads.reduce((sum,row)=>sum+(row.unread_count||0),0);byId('badge-clients').textContent=totals.all?String(totals.all):'';byId('badge-team').textContent=internalTotal?String(internalTotal):'';
+  const grandTotal=totals.all+internalTotal;if('setAppBadge' in navigator){grandTotal?navigator.setAppBadge(grandTotal):navigator.clearAppBadge()}
 }
 async function selectConversation(id){
   selectedId=id;renderConversations();byId('empty-thread').hidden=!!id;byId('active-thread').hidden=!id;if(!id)return;
   const row=conversations.find(item=>item.id===id);if(!row)return;
+  byId('thread-state').hidden=false;byId('composer-attach').hidden=false;
   byId('thread-company').textContent=`${row.company_name} · ${row.company_code}`;
   byId('thread-channel').textContent=channelLabels[row.kind]||row.kind;byId('thread-state').value=row.state;
   const messages=await request(`/staff/conversations/${id}/messages`);
@@ -62,22 +79,29 @@ async function selectConversation(id){
   const root=byId('messages');root.replaceChildren(...messages.map(renderMessage));root.scrollTop=root.scrollHeight;
   await loadConversations();
 }
+async function selectInternalThread(id){
+  selectedInternalId=id;renderConversations();byId('empty-thread').hidden=!!id;byId('active-thread').hidden=!id;if(!id)return;
+  const row=internalThreads.find(item=>item.id===id);if(!row)return;byId('thread-company').textContent=row.title;byId('thread-channel').textContent=row.kind==='group'?'Grupo interno del despacho':'Conversación privada';byId('thread-state').hidden=true;byId('composer-attach').hidden=true;
+  const messages=await request(`/staff/internal/threads/${id}/messages`);await request(`/staff/internal/threads/${id}/read`,{method:'POST'});const root=byId('messages');root.replaceChildren(...messages.map(renderMessage));root.scrollTop=root.scrollHeight;await loadInternalThreads();
+}
 function renderMessage(row){
-  const article=document.createElement('article');article.className='message'+(row.author_type==='staff'?' mine':'');
+  const article=document.createElement('article');article.className='message'+((row.author_type==='staff'||row.author_id===me.id)?' mine':'');
   const author=document.createElement('div');author.className='message-author';if(row.author_avatar_url){const avatar=document.createElement('img');avatar.className='message-avatar';avatar.src=row.author_avatar_url;avatar.alt='';author.append(avatar)}const meta=document.createElement('span');meta.className='meta';meta.textContent=`${row.author_name} · ${new Date(row.created_at).toLocaleString()}`;author.append(meta);article.append(author);
   if(row.body){const body=document.createElement('div');body.textContent=row.body;article.append(body)}
   for(const file of row.attachments||[]){const link=document.createElement('a');link.textContent=`📎 ${file.name}`;if(!file.local_confirmed)link.href=`${API}/staff/attachments/${file.id}/download`;else link.title='Documento entregado al repositorio del despacho';article.append(link)}
   return article;
 }
 byId('composer').onsubmit=async event=>{
-  event.preventDefault();if(!selectedId)return;
+  event.preventDefault();if(space==='team'){if(!selectedInternalId)return;const data=new FormData();data.append('body',byId('message-body').value);data.append('idempotency_key',crypto.randomUUID());try{await request(`/staff/internal/threads/${selectedInternalId}/messages`,{method:'POST',body:data});byId('message-body').value='';await selectInternalThread(selectedInternalId)}catch(error){toast(error.message)}return}if(!selectedId)return;
   const data=new FormData();data.append('body',byId('message-body').value);data.append('idempotency_key',crypto.randomUUID());
   for(const file of byId('message-files').files)data.append('files',file);
   try{await request(`/staff/conversations/${selectedId}/messages`,{method:'POST',body:data});byId('message-body').value='';byId('message-files').value='';await selectConversation(selectedId)}catch(error){toast(error.message)}
 };
-byId('thread-state').onchange=async()=>{if(selectedId){await request(`/staff/conversations/${selectedId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({state:byId('thread-state').value})});await loadConversations()}};
-document.querySelectorAll('.channel').forEach(button=>button.onclick=()=>{filter=button.dataset.channel;document.querySelectorAll('.channel').forEach(item=>item.classList.toggle('active',item===button));renderConversations()});
-byId('search').oninput=renderConversations;byId('refresh').onclick=loadConversations;
+byId('thread-state').onchange=async()=>{if(space==='clients'&&selectedId){await request(`/staff/conversations/${selectedId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({state:byId('thread-state').value})});await loadConversations()}};
+document.querySelectorAll('#client-channels .channel').forEach(button=>button.onclick=()=>{filter=button.dataset.channel;document.querySelectorAll('#client-channels .channel').forEach(item=>item.classList.toggle('active',item===button));renderConversations()});
+function switchSpace(next){space=next;byId('space-clients').classList.toggle('active',space==='clients');byId('space-team').classList.toggle('active',space==='team');byId('client-channels').hidden=space==='team';byId('internal-new-direct').hidden=space!=='team'||me.role!=='admin';byId('list-title').textContent=space==='team'?'Equipo':'Conversaciones';byId('search').placeholder=space==='team'?'Buscar chat interno':'Buscar cliente';byId('empty-thread').hidden=false;byId('active-thread').hidden=true;renderConversations()}
+byId('space-clients').onclick=()=>switchSpace('clients');byId('space-team').onclick=()=>switchSpace('team');
+byId('search').oninput=renderConversations;byId('refresh').onclick=()=>space==='team'?loadInternalThreads():loadConversations();
 byId('staff-logout').onclick=async()=>{await request('/staff-auth/logout',{method:'POST'});location.reload()};
 function base64Bytes(value){const padding='='.repeat((4-value.length%4)%4);const raw=atob((value+padding).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from([...raw].map(char=>char.charCodeAt(0)))}
 async function preparePush(){
@@ -88,7 +112,10 @@ async function preparePush(){
   byId('push-enable').onclick=async()=>{if(await Notification.requestPermission()!=='granted')return;const subscription=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:base64Bytes(config.public_key)});await savePush(subscription);byId('push-enable').hidden=true;toast('Avisos activados')};
 }
 async function savePush(subscription){const value=subscription.toJSON();await request('/staff/push/subscriptions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:value.endpoint,p256dh:value.keys.p256dh,auth:value.keys.auth})})}
-function startEvents(){if(events)events.close();events=new EventSource(`${API}/staff/events`);const refresh=()=>{loadConversations();if(selectedId)selectConversation(selectedId)};['message_created','conversation_updated'].forEach(name=>events.addEventListener(name,refresh));events.onerror=()=>{events.close();setTimeout(startEvents,3000)}}
+function startEvents(){if(events)events.close();events=new EventSource(`${API}/staff/events`);const refresh=()=>{loadConversations();if(space==='clients'&&selectedId)selectConversation(selectedId)};['message_created','conversation_updated'].forEach(name=>events.addEventListener(name,refresh));events.addEventListener('internal_message',()=>{loadInternalThreads();if(space==='team'&&selectedInternalId)selectInternalThread(selectedInternalId)});events.onerror=()=>{events.close();setTimeout(startEvents,3000)}}
+
+byId('internal-new-direct').onclick=async()=>{try{const staff=await request('/staff/admin/directory');const select=byId('internal-direct-member');select.replaceChildren(...staff.filter(row=>row.active&&row.id!==me.id).map(row=>{const option=document.createElement('option');option.value=row.id;option.textContent=`${row.chat_alias||row.name} (${row.email})`;return option}));if(!select.options.length){toast('No hay otros usuarios activos');return}byId('internal-direct-dialog').showModal()}catch(error){toast(error.message)}};
+byId('internal-direct-form').onsubmit=async event=>{event.preventDefault();try{const thread=await request(`/staff/internal/direct/${byId('internal-direct-member').value}`,{method:'POST'});byId('internal-direct-dialog').close();await loadInternalThreads();switchSpace('team');await selectInternalThread(thread.id)}catch(error){toast(error.message)}};
 
 byId('admin-open').onclick=async()=>{await loadAdmin();byId('admin-dialog').showModal()};
 async function loadAdmin(){

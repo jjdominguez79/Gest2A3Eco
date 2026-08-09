@@ -87,6 +87,48 @@ class MessagingPushSubscription(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class MessagingStaffThread(Base):
+    __tablename__ = "msg_staff_threads"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    key: Mapped[str] = mapped_column(String(180), unique=True, index=True)
+    kind: Mapped[str] = mapped_column(String(16), index=True)  # group | direct
+    channel: Mapped[str] = mapped_column(String(20), default="", index=True)
+    admin_staff_external_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    member_staff_external_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, index=True)
+
+
+class MessagingStaffThreadMessage(Base):
+    __tablename__ = "msg_staff_thread_messages"
+    __table_args__ = (UniqueConstraint("thread_id", "idempotency_key"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    thread_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_staff_threads.id", ondelete="CASCADE"), index=True,
+    )
+    author_staff_external_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_staff.external_id", ondelete="CASCADE"), index=True,
+    )
+    author_name: Mapped[str] = mapped_column(String(160))
+    body: Mapped[str] = mapped_column(Text)
+    idempotency_key: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class MessagingStaffThreadRead(Base):
+    __tablename__ = "msg_staff_thread_reads"
+    __table_args__ = (UniqueConstraint("thread_id", "staff_external_id"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    thread_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_staff_threads.id", ondelete="CASCADE"), index=True,
+    )
+    staff_external_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_staff.external_id", ondelete="CASCADE"), index=True,
+    )
+    last_message_id: Mapped[str] = mapped_column(String(36), default="")
+    read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class MessagingDevice(Base):
     __tablename__ = "msg_devices"
     id: Mapped[str] = mapped_column(String(120), primary_key=True)

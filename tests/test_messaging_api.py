@@ -156,6 +156,90 @@ def test_login_corporativo_sin_preautorizacion_es_rechazado(tmp_path, monkeypatc
     assert response.status_code == 403
 
 
+def test_chats_internos_privados_y_grupos_respetan_permisos(tmp_path):
+    client = _client(tmp_path)
+    internal = {"X-API-Key": "test-secret"}
+    users = (
+        ("admin", "Administrador", "admin", []),
+        ("labor", "Laura Laboral", "empleado", ["laboral"]),
+        ("fiscal", "Felipe Fiscal", "empleado", ["fiscal"]),
+    )
+    for user_id, name, role, channels in users:
+        assert client.put(
+            f"/api/v1/messaging/internal/staff/{user_id}", headers=internal,
+            json={
+                "external_id": user_id, "name": name,
+                "email": f"{user_id}@gestinem.es", "chat_alias": name.split()[0],
+                "role": role, "active": True, "channels": channels,
+            },
+        ).status_code == 200
+    device = client.post(
+        "/api/v1/messaging/internal/devices/puesto-interno", headers=internal,
+    ).json()
+
+    def auth(user_id):
+        return {
+            **internal, "X-Device-Id": "puesto-interno",
+            "X-Device-Token": device["device_token"], "X-Staff-Id": user_id,
+        }
+
+    admin_threads = client.get(
+        "/api/v1/messaging/staff/internal/threads", headers=auth("admin"),
+    ).json()
+    assert {row["channel"] for row in admin_threads} == {"laboral", "fiscal"}
+    labor_threads = client.get(
+        "/api/v1/messaging/staff/internal/threads", headers=auth("labor"),
+    ).json()
+    assert [row["channel"] for row in labor_threads] == ["laboral"]
+    fiscal_threads = client.get(
+        "/api/v1/messaging/staff/internal/threads", headers=auth("fiscal"),
+    ).json()
+    assert [row["channel"] for row in fiscal_threads] == ["fiscal"]
+
+    direct = client.post(
+        "/api/v1/messaging/staff/internal/direct/labor", headers=auth("admin"),
+    )
+    assert direct.status_code == 201
+    direct_id = direct.json()["id"]
+    assert client.get(
+        f"/api/v1/messaging/staff/internal/threads/{direct_id}/messages",
+        headers=auth("fiscal"),
+    ).status_code == 403
+
+    labor_group = next(row for row in admin_threads if row["channel"] == "laboral")
+    sent_group = client.post(
+        f"/api/v1/messaging/staff/internal/threads/{labor_group['id']}/messages",
+        headers=auth("admin"),
+        data={"body": "Aviso para laboral", "idempotency_key": "grupo-1"},
+    )
+    assert sent_group.status_code == 200
+    labor_threads = client.get(
+        "/api/v1/messaging/staff/internal/threads", headers=auth("labor"),
+    ).json()
+    assert next(row for row in labor_threads if row["id"] == labor_group["id"])["unread_count"] == 1
+    assert client.get(
+        f"/api/v1/messaging/staff/internal/threads/{labor_group['id']}/messages",
+        headers=auth("fiscal"),
+    ).status_code == 403
+    assert client.post(
+        f"/api/v1/messaging/staff/internal/threads/{labor_group['id']}/read",
+        headers=auth("labor"),
+    ).status_code == 200
+
+    reply = client.post(
+        f"/api/v1/messaging/staff/internal/threads/{direct_id}/messages",
+        headers=auth("labor"),
+        data={"body": "Respuesta privada", "idempotency_key": "directo-1"},
+    )
+    assert reply.status_code == 200
+    assert reply.json()["author_name"] == "Laura"
+    private_messages = client.get(
+        f"/api/v1/messaging/staff/internal/threads/{direct_id}/messages",
+        headers=auth("admin"),
+    ).json()
+    assert [row["body"] for row in private_messages] == ["Respuesta privada"]
+
+
 def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatch):
     client = _client(tmp_path)
     internal = {"X-API-Key": "test-secret"}
