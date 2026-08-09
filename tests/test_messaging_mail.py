@@ -18,6 +18,7 @@ def _settings(**overrides):
         "messaging_graph_client_id": "client-id",
         "messaging_graph_client_secret": "secret",
         "messaging_graph_from": "oficina@gestinem.es",
+        "messaging_graph_invitation_from": "jjdominguez@gestinem.es",
         "messaging_smtp_host": "",
         "messaging_smtp_port": 587,
         "messaging_smtp_user": "",
@@ -72,3 +73,16 @@ def test_send_mail_graph_informa_error_sin_mostrar_secretos(monkeypatch):
         assert "secret" not in str(exc)
     else:
         raise AssertionError("Se esperaba un error de autenticacion de Graph")
+
+
+def test_invitacion_usa_remitente_personal_configurado(monkeypatch):
+    calls = []
+
+    def post(url, **kwargs):
+        calls.append((url, kwargs))
+        return _Response(200, {"access_token": "token"}) if url.endswith("/token") else _Response(202)
+
+    monkeypatch.setattr(messaging_mail, "get_settings", _settings)
+    monkeypatch.setattr(messaging_mail.requests, "post", post)
+    assert messaging_mail.send_invitation("ana@example.test", "Ana", "https://example.test/invite")
+    assert calls[1][0].endswith("/users/jjdominguez%40gestinem.es/sendMail")
