@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/static/staff-messaging.css?v=4">
   <link rel="stylesheet" href="/static/staff-messaging-admin.css?v=4">
   <link rel="stylesheet" href="/static/messaging-avatar.css?v=4">
+  <link rel="stylesheet" href="/static/messaging-files.css?v=1">
   <title>Mensajería del despacho · Gestinem</title>
 </head>
 <body>
@@ -48,8 +49,9 @@
         <div id="messages" class="messages" aria-live="polite"></div>
         <form id="composer" class="composer">
           <textarea id="message-body" rows="2" maxlength="10000" placeholder="Escribe un mensaje"></textarea>
-          <label id="composer-attach" class="attach">Adjuntar<input id="message-files" type="file" multiple></label>
-          <button class="send-button">Enviar</button>
+          <label id="composer-attach" class="attach"><span id="message-files-label">Adjuntar</span><input id="message-files" type="file" multiple></label>
+          <button id="send-message" class="send-button">Enviar</button>
+          <div id="message-selected-files" class="selected-files" aria-live="polite" hidden></div>
         </form>
       </div>
     </section>
@@ -99,6 +101,6 @@
     </div>
   </dialog>
   <div id="toast" class="toast" hidden></div>
-  <script src="/static/staff-messaging.js?v=5"></script>
+  <script src="/static/staff-messaging.js?v=6"></script>
 </body>
 </html>

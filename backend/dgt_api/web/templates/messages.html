@@ -8,6 +8,7 @@
   <title>Mensajes · Gestinem</title>
   <link rel="stylesheet" href="/static/messaging.css?v=4">
   <link rel="stylesheet" href="/static/messaging-avatar.css?v=4">
+  <link rel="stylesheet" href="/static/messaging-files.css?v=1">
 </head>
 <body>
   <main class="shell">
@@ -45,12 +46,13 @@
       <section id="thread" class="thread" aria-live="polite"></section>
       <form id="composer" class="composer">
         <textarea id="body" rows="2" maxlength="10000" placeholder="Escribe un mensaje"></textarea>
-        <label class="file">Adjuntar<input id="files" type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.gif,.tif,.tiff,.txt,.xml,.csv,.xls,.xlsx,.doc,.docx,.zip"></label>
-        <button>Enviar</button>
+        <label class="file"><span id="files-label">Adjuntar</span><input id="files" type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.gif,.tif,.tiff,.txt,.xml,.csv,.xls,.xlsx,.doc,.docx,.zip"></label>
+        <button id="send-message">Enviar</button>
+        <div id="selected-files" class="selected-files" aria-live="polite" hidden></div>
       </form>
       <p id="chat-error" class="error" role="alert"></p>
     </section>
   </main>
-  <script src="/static/messaging.js?v=4"></script>
+  <script src="/static/messaging.js?v=5"></script>
 </body>
 </html>

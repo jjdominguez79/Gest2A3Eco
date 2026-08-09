@@ -1,7 +1,7 @@
 const API='/api/v1/messaging';
 const byId=id=>document.getElementById(id);
 const channelLabels={laboral:'Laboral',fiscal:'Contable / Fiscal',private:'Directo'};
-let me=null,conversations=[],internalThreads=[],selectedId='',selectedInternalId='',filter='all',space='clients',events=null;
+let me=null,conversations=[],internalThreads=[],selectedId='',selectedInternalId='',filter='all',space='clients',events=null,selectedStaffFiles=[];
 
 async function request(path,options={}){
   const response=await fetch(API+path,{credentials:'same-origin',...options});
@@ -9,6 +9,10 @@ async function request(path,options={}){
   return (response.headers.get('content-type')||'').includes('json')?response.json():response;
 }
 function toast(message){const box=byId('toast');box.textContent=message;box.hidden=false;setTimeout(()=>box.hidden=true,3500)}
+function staffFileSummary(file){const size=file.size<1024*1024?`${Math.max(1,Math.round(file.size/1024))} KB`:`${(file.size/1024/1024).toFixed(1)} MB`;return `${file.name} (${size})`}
+function renderStaffFiles(){const summary=byId('message-selected-files');const label=byId('message-files-label');const picker=byId('composer-attach');if(!selectedStaffFiles.length){summary.hidden=true;summary.textContent='';label.textContent='Adjuntar';picker.classList.remove('has-files');return}summary.hidden=false;summary.textContent=`Adjuntos preparados: ${selectedStaffFiles.map(staffFileSummary).join(' · ')}`;label.textContent=selectedStaffFiles.length===1?'1 archivo':'Archivos ('+selectedStaffFiles.length+')';picker.classList.add('has-files')}
+function clearStaffFiles(){selectedStaffFiles=[];byId('message-files').value='';renderStaffFiles()}
+byId('message-files').addEventListener('change',()=>{selectedStaffFiles=Array.from(byId('message-files').files||[]);renderStaffFiles()})
 function escapeText(value){return String(value||'')}
 
 async function start(){
@@ -94,8 +98,8 @@ function renderMessage(row){
 byId('composer').onsubmit=async event=>{
   event.preventDefault();if(space==='team'){if(!selectedInternalId)return;const data=new FormData();data.append('body',byId('message-body').value);data.append('idempotency_key',crypto.randomUUID());try{await request(`/staff/internal/threads/${selectedInternalId}/messages`,{method:'POST',body:data});byId('message-body').value='';await selectInternalThread(selectedInternalId)}catch(error){toast(error.message)}return}if(!selectedId)return;
   const data=new FormData();data.append('body',byId('message-body').value);data.append('idempotency_key',crypto.randomUUID());
-  for(const file of byId('message-files').files)data.append('files',file);
-  try{await request(`/staff/conversations/${selectedId}/messages`,{method:'POST',body:data});byId('message-body').value='';byId('message-files').value='';await selectConversation(selectedId)}catch(error){toast(error.message)}
+  const files=Array.from(selectedStaffFiles);for(const file of files)data.append('files',file,file.name);const send=byId('send-message');const picker=byId('composer-attach');send.disabled=true;picker.classList.add('uploading');
+  try{const sent=await request(`/staff/conversations/${selectedId}/messages`,{method:'POST',body:data});if(files.length&&(sent.attachments||[]).length!==files.length)throw new Error('El mensaje llegó, pero el servidor no confirmó todos los adjuntos. No vuelvas a enviarlo.');byId('message-body').value='';clearStaffFiles();await selectConversation(selectedId)}catch(error){toast(error.message)}finally{send.disabled=false;picker.classList.remove('uploading')}
 };
 byId('thread-state').onchange=async()=>{if(space==='clients'&&selectedId){await request(`/staff/conversations/${selectedId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({state:byId('thread-state').value})});await loadConversations()}};
 document.querySelectorAll('#client-channels .channel').forEach(button=>button.onclick=()=>{filter=button.dataset.channel;document.querySelectorAll('#client-channels .channel').forEach(item=>item.classList.toggle('active',item===button));renderConversations()});
