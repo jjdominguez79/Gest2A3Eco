@@ -1,6 +1,6 @@
 {
-  "version": "1.5.1",
-  "tag": "v1.5.1",
-  "changelog": "Se ha implementado el envio de documentos para firma electrónica. Mejoras en la lectura OCR de facturas recibidas. Mejoras varias.",
-  "force_update": true
+  "version": "1.6.0",
+  "tag": "v1.6.0",
+  "changelog": "Nuevo modulo de mensajeria segura para clientes y equipo del despacho. Incluye canales Laboral, Contable/Fiscal y Privado, chats internos, permisos por usuario, alias y avatares, invitaciones desde el backend, adjuntos integrados con gestion documental, PWA instalable y notificaciones push. Tambien incorpora mejoras de visualizacion en movil, recuperacion de contrasena y estabilidad en el envio de mensajes y documentos.",
+  "force_update": false
 }
