@@ -38,11 +38,11 @@ class UITramitesDgt(ttk.Frame):
         self._gestor = gestor
         self._facturacion_service = TramitesDgtFacturacionService(gestor)
         cfg = load_app_config()
-        api_url = str(cfg.get("dgt_api_url") or "").strip()
-        api_key = str(cfg.get("dgt_api_key") or "").strip()
+        api_url = str(cfg.get("integrations_api_url") or cfg.get("dgt_api_url") or "").strip()
+        api_key = str(cfg.get("integrations_api_key") or cfg.get("dgt_api_key") or "").strip()
         if not api_url or not api_key:
             raise RuntimeError(
-                "Tramites DGT requiere dgt_api_url y dgt_api_key. "
+                "Tramites DGT requiere integrations_api_url e integrations_api_key. "
                 "No usa la base principal de la aplicacion."
             )
         repository = ApiDgtRepository(api_url, api_key)

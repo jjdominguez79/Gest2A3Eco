@@ -9,6 +9,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from services.firma.firma_service import FirmaService
+from services.firma.datos_firma_service import listar_terceros_para_firma
 from services.firma.plantillas_service import PlantillasFirmaService
 from services.firma.provider import build_firma_provider
 from services.gestion_documental_service import GestionDocumentalService
@@ -183,7 +184,9 @@ class UIFirmasGlobal(ttk.Frame):
         empresa = setup.get("empresa") or {}
         codigo = str(empresa.get("codigo") or GLOBAL_CODE)
         ejercicio = int(empresa.get("ejercicio") or datetime.now().year)
-        terceros = self._gestor.listar_terceros_por_empresa(codigo, ejercicio) if codigo != GLOBAL_CODE else []
+        terceros = listar_terceros_para_firma(
+            self._gestor, "" if codigo == GLOBAL_CODE else codigo, ejercicio,
+        )
         dialog = UIFirmaDialog(
             self, documento["ruta_pdf"], terceros=terceros,
             remitente=self._remitente_config(cfg), initial=initial,
@@ -236,9 +239,9 @@ class UIFirmasGlobal(ttk.Frame):
             source = dict(sources.get(str(definition.get("origen") or "manual"), {}) or {})
             firmantes.append({
                 "orden": pos + 1,
-                "nombre": source.get("nombre_legal") or source.get("nombre") or "",
-                "email": source.get("email") or source.get("correo") or "",
-                "telefono": source.get("telefono") or "",
+                "nombre": source.get("nombre_legal") or source.get("nombre") or definition.get("nombre") or "",
+                "email": source.get("email") or source.get("correo") or definition.get("email") or "",
+                "telefono": source.get("telefono") or definition.get("telefono") or "",
                 "tercero_id": source.get("tercero_id") or source.get("id"),
                 "es_remitente": str(definition.get("origen")) == "gestor",
             })
@@ -290,7 +293,9 @@ class UIFirmasGlobal(ttk.Frame):
             return
         codigo = setup.result.get("codigo") or GLOBAL_CODE
         ejercicio = int(setup.result.get("ejercicio") or datetime.now().year)
-        terceros = self._gestor.listar_terceros_por_empresa(codigo, ejercicio) if codigo != GLOBAL_CODE else []
+        terceros = listar_terceros_para_firma(
+            self._gestor, "" if codigo == GLOBAL_CODE else codigo, ejercicio,
+        )
         cfg = load_app_config()
         remitente = {
             "nombre": cfg.get("signrequest_gestor_email") or cfg.get("signrequest_from_email") or "Remitente",
@@ -343,7 +348,11 @@ class UIFirmasGlobal(ttk.Frame):
                 result = service.actualizar_estado(row["id"], str(destination))
                 if result.get("estado") == "firmado":
                     service.archivar_evidencias(row["id"])
-                self.after(0, self._done, f"Estado: {self._estado_visible(result.get('estado'))}.", "")
+                detalle = self._resumen_entrega((result.get("proveedor") or {}).get("firmantes") or [])
+                mensaje = f"Estado: {self._estado_visible(result.get('estado'))}."
+                if detalle:
+                    mensaje += "\n\n" + detalle
+                self.after(0, self._done, mensaje, "")
             except Exception as exc:
                 self.after(0, self._done, "", str(exc))
         threading.Thread(target=worker, daemon=True).start()
@@ -360,7 +369,9 @@ class UIFirmasGlobal(ttk.Frame):
             return
         codigo = str(solicitud.get("codigo_empresa") or "")
         ejercicio = int(solicitud.get("ejercicio") or datetime.now().year)
-        terceros = self._gestor.listar_terceros_por_empresa(codigo, ejercicio) if codigo != GLOBAL_CODE else []
+        terceros = listar_terceros_para_firma(
+            self._gestor, "" if codigo == GLOBAL_CODE else codigo, ejercicio,
+        )
         cfg = load_app_config()
         remitente = self._remitente_config(cfg)
         dialog = UIFirmaDialog(
@@ -467,6 +478,25 @@ class UIFirmasGlobal(ttk.Frame):
             self._refresh()
             messagebox.showinfo("Firmas", success, parent=self)
 
+    @staticmethod
+    def _resumen_entrega(firmantes):
+        lineas = []
+        for item in sorted(firmantes, key=lambda row: int(row.get("order") or 0)):
+            email = str(item.get("email") or "Firmante")
+            orden = int(item.get("order") or 0)
+            if item.get("signed"):
+                estado = "firmado"
+            elif item.get("declined"):
+                estado = "rechazado"
+            elif item.get("viewed") or item.get("email_viewed"):
+                estado = "correo abierto"
+            elif item.get("emailed"):
+                estado = "correo enviado"
+            else:
+                estado = "en espera del firmante anterior" if orden > 1 else "correo aun no enviado"
+            lineas.append(f"{orden}. {email}: {estado}")
+        return "Entrega por firmante:\n" + "\n".join(lineas) if lineas else ""
+
 
 class _FirmaGlobalSetup(tk.Toplevel):
     def __init__(self, parent, empresas):
@@ -478,16 +508,55 @@ class _FirmaGlobalSetup(tk.Toplevel):
         self._empresas = list(empresas or [])
         ttk.Label(self, text="Cliente (opcional)").pack(anchor="w", padx=12, pady=(12, 3))
         self._client = tk.StringVar(value="Sin cliente")
-        values = ["Sin cliente"] + [f"{e.get('codigo')} - {e.get('nombre')}" for e in self._empresas]
-        ttk.Combobox(self, textvariable=self._client, values=values, state="readonly", width=48).pack(padx=12)
+        self._client_values = ["Sin cliente"] + [self._company_label(e) for e in self._empresas]
+        self._client_cb = ttk.Combobox(
+            self, textvariable=self._client, values=self._client_values, state="normal", width=48,
+        )
+        self._client_cb.pack(padx=12)
+        self._client_cb.bind("<KeyRelease>", self._filter_clients)
+        self._client_cb.bind("<Return>", lambda _e: self._select_match())
         ttk.Label(self, text="Si eliges cliente, el original y las evidencias iran a la categoria Firmas.", wraplength=380).pack(padx=12, pady=10)
         ttk.Button(self, text="Continuar", command=self._accept).pack(side="right", padx=12, pady=(0, 12))
         ttk.Button(self, text="Cancelar", command=self.destroy).pack(side="right", pady=(0, 12))
+
+    @staticmethod
+    def _company_label(empresa):
+        return f"{empresa.get('codigo')} - {empresa.get('nombre')}"
+
+    def _matches(self):
+        texto = self._client.get().strip().lower()
+        return [value for value in self._client_values if not texto or texto in value.lower()]
+
+    def _filter_clients(self, event=None):
+        if event and event.keysym in ("Return", "Tab", "Down", "Up", "Escape"):
+            return
+        self._client_cb["values"] = self._matches()
+
+    def _select_match(self):
+        matches = self._matches()
+        if len(matches) == 1:
+            self._client.set(matches[0])
 
     def _accept(self):
         value = self._client.get()
         codigo = ""
         if value != "Sin cliente":
-            codigo = value.split(" - ", 1)[0]
+            empresa = next(
+                (item for item in self._empresas if self._company_label(item) == value), None,
+            )
+            if not empresa:
+                matches = self._matches()
+                if len(matches) == 1:
+                    value = matches[0]
+                    self._client.set(value)
+                    empresa = next(
+                        (item for item in self._empresas if self._company_label(item) == value), None,
+                    )
+            if not empresa:
+                messagebox.showwarning(
+                    "Firma", "Selecciona un cliente de las coincidencias.", parent=self,
+                )
+                return
+            codigo = str(empresa.get("codigo") or "")
         self.result = {"codigo": codigo, "ejercicio": datetime.now().year}
         self.destroy()

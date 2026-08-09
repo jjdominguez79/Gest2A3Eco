@@ -54,12 +54,20 @@ class UIFirmaDialog(tk.Toplevel):
         body.add(right, weight=1)
 
         ttk.Label(left, text="Firmantes", font=("Segoe UI", 11, "bold")).pack(anchor="w")
-        ttk.Label(left, text="Puedes usar terceros o escribir cualquier email externo.", wraplength=280).pack(anchor="w", pady=(2, 4))
+        ttk.Label(
+            left,
+            text="Busca una persona o entidad del maestro de terceros, o escribe cualquier email externo abajo.",
+            wraplength=310,
+        ).pack(anchor="w", pady=(2, 4))
         self._tercero_var = tk.StringVar()
-        opciones = [self._etiqueta_tercero(t) for t in self._terceros if t.get("email") or t.get("correo")]
-        self._tercero_combo = ttk.Combobox(left, textvariable=self._tercero_var, values=opciones, width=38, state="readonly")
+        self._tercero_opciones = [self._etiqueta_tercero(t) for t in self._terceros]
+        self._tercero_combo = ttk.Combobox(
+            left, textvariable=self._tercero_var, values=self._tercero_opciones, width=38, state="normal",
+        )
         self._tercero_combo.pack(fill="x")
-        ttk.Button(left, text="Anadir tercero seleccionado", command=self._add_tercero).pack(fill="x", pady=(4, 8))
+        self._tercero_combo.bind("<KeyRelease>", self._filter_terceros)
+        self._tercero_combo.bind("<Return>", lambda _e: self._add_tercero())
+        ttk.Button(left, text="Usar tercero seleccionado", command=self._add_tercero).pack(fill="x", pady=(4, 8))
         columns = ttk.Frame(left)
         columns.pack(fill="x")
         ttk.Label(columns, text="Nombre", width=18).grid(row=0, column=0, padx=(0, 3), sticky="w")
@@ -81,12 +89,25 @@ class UIFirmaDialog(tk.Toplevel):
         ttk.Label(right, text="Firmante de la nueva zona").pack(anchor="w")
         self._zona_combo = ttk.Combobox(right, textvariable=self._zona_firmante, state="readonly")
         self._zona_combo.pack(anchor="w", pady=(0, 5))
-        self._canvas = tk.Canvas(right, background="#d1d5db", cursor="crosshair", highlightthickness=0)
-        self._canvas.pack(fill="both", expand=True)
+        canvas_wrap = ttk.Frame(right)
+        canvas_wrap.pack(fill="both", expand=True)
+        canvas_wrap.columnconfigure(0, weight=1)
+        canvas_wrap.rowconfigure(0, weight=1)
+        self._canvas = tk.Canvas(
+            canvas_wrap, background="#d1d5db", cursor="crosshair", highlightthickness=0,
+        )
+        scroll_y = ttk.Scrollbar(canvas_wrap, orient="vertical", command=self._canvas.yview)
+        scroll_x = ttk.Scrollbar(canvas_wrap, orient="horizontal", command=self._canvas.xview)
+        self._canvas.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+        self._canvas.grid(row=0, column=0, sticky="nsew")
+        scroll_y.grid(row=0, column=1, sticky="ns")
+        scroll_x.grid(row=1, column=0, sticky="ew")
         self._canvas.bind("<ButtonPress-1>", self._start_zone)
         self._canvas.bind("<B1-Motion>", self._move_zone)
         self._canvas.bind("<ButtonRelease-1>", self._finish_zone)
         self._canvas.bind("<Button-3>", self._delete_zone_at)
+        self._canvas.bind("<MouseWheel>", self._scroll_vertical)
+        self._canvas.bind("<Shift-MouseWheel>", self._scroll_horizontal)
         ttk.Label(
             right, text="Clic derecho sobre una zona para borrarla.",
             foreground="#6b7280",
@@ -109,13 +130,33 @@ class UIFirmaDialog(tk.Toplevel):
     def _etiqueta_tercero(tercero):
         nombre = tercero.get("nombre_legal") or tercero.get("nombre") or "Sin nombre"
         email = tercero.get("email") or tercero.get("correo") or ""
-        return f"{nombre} <{email}>"
+        nif = tercero.get("nif") or ""
+        detalles = " | ".join(str(value).strip() for value in (nif, email) if str(value).strip())
+        return f"{nombre} <{detalles}>" if detalles else str(nombre)
+
+    def _filter_terceros(self, event=None):
+        if event and event.keysym in ("Return", "Tab", "Down", "Up", "Escape"):
+            return
+        texto = self._tercero_var.get().strip().lower()
+        filtradas = [value for value in self._tercero_opciones if texto in value.lower()]
+        self._tercero_combo["values"] = filtradas if texto else self._tercero_opciones
 
     def _add_tercero(self):
         seleccionado = self._tercero_var.get()
         tercero = next((t for t in self._terceros if self._etiqueta_tercero(t) == seleccionado), None)
+        if not tercero:
+            coincidencias = [
+                t for t in self._terceros
+                if seleccionado.strip().lower() in self._etiqueta_tercero(t).lower()
+            ]
+            tercero = coincidencias[0] if len(coincidencias) == 1 else None
         if tercero:
+            self._tercero_var.set(self._etiqueta_tercero(tercero))
             self._add_row(tercero)
+            return
+        messagebox.showwarning(
+            "Firmantes", "Selecciona un tercero concreto de las coincidencias.", parent=self,
+        )
 
     def _add_manual(self):
         self._add_row({})
@@ -211,6 +252,12 @@ class UIFirmaDialog(tk.Toplevel):
             x2, y2 = x + zone["ancho"] * width, y + zone["alto"] * height
             self._canvas.create_rectangle(x, y, x2, y2, outline="#16a34a", width=2, tags=("zona",))
             self._canvas.create_text(x + 3, y + 3, anchor="nw", text=f"Firmante {zone['firmante'] + 1}", fill="#166534", tags=("zona",))
+
+    def _scroll_vertical(self, event):
+        self._canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+
+    def _scroll_horizontal(self, event):
+        self._canvas.xview_scroll(-1 if event.delta > 0 else 1, "units")
 
     def _change_page(self, delta):
         if not self._doc:

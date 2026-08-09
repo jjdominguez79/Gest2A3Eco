@@ -29,6 +29,20 @@ CAMPOS_POR_ORIGEN = {
     "sistema": ("fecha_actual", "anio_actual", "usuario_nombre"),
 }
 
+_ALIAS_CAMPO_ORIGEN = {
+    "empresa": {
+        "nombre_legal": "nombre", "nombre_comercial": "nombre",
+        "nif": "cif", "dni": "cif", "nif_cif": "cif",
+        "codigo_postal": "cp", "municipio": "poblacion", "localidad": "poblacion",
+        "correo": "email",
+    },
+    "tercero": {
+        "cif": "nif", "dni": "nif", "nif_cif": "nif",
+        "codigo_postal": "cp", "municipio": "poblacion", "localidad": "poblacion",
+        "correo": "email",
+    },
+}
+
 _TAG = re.compile(r"{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}")
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _SAFE = re.compile(r"[^A-Za-z0-9_. -]+")
@@ -176,7 +190,11 @@ class PlantillasFirmaService:
             key = str(campo.get("campo_origen") or campo.get("clave") or "")
             valor = campo.get("valor_defecto") or ""
             if origen in fuentes:
-                valor = fuentes[origen].get(key, valor)
+                fuente = fuentes[origen]
+                clave_real = key
+                if clave_real not in fuente:
+                    clave_real = _ALIAS_CAMPO_ORIGEN.get(origen, {}).get(clave_real, clave_real)
+                valor = fuente.get(clave_real, valor)
             elif origen == "fijo":
                 valor = campo.get("valor_defecto") or ""
             out[str(campo["clave"])] = "" if valor is None else str(valor)
@@ -298,6 +316,15 @@ class PlantillasFirmaService:
         ordenes = [int(f.get("orden") or 0) for f in plantilla.get("firmantes") or []]
         if ordenes and sorted(ordenes) != list(range(1, len(ordenes) + 1)):
             raise ValueError("El orden de los firmantes debe ser correlativo desde 1.")
+        for firmante in plantilla.get("firmantes") or []:
+            origen = str(firmante.get("origen") or "manual")
+            email = str(firmante.get("email") or "").strip()
+            if origen not in ORIGENES_FIRMANTE:
+                raise ValueError(f"Origen no valido para el firmante {firmante.get('rol')}.")
+            if origen == "manual" and not email:
+                raise ValueError(f"El firmante manual {firmante.get('rol')} necesita un email.")
+            if email and not _EMAIL.match(email):
+                raise ValueError(f"El email configurado para {firmante.get('rol')} no es valido.")
         roles = {str(f.get("rol") or "") for f in plantilla.get("firmantes") or []}
         if any(str(z.get("rol") or "") not in roles for z in plantilla.get("zonas") or []):
             raise ValueError("Hay zonas asociadas a roles firmantes inexistentes.")

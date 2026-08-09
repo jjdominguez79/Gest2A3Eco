@@ -186,6 +186,8 @@ def _apply_env_overrides(data: dict) -> dict:
         "GEST2A3ECO_AZURE_DOC_INTELLIGENCE_KEY": "azure_doc_intelligence_key",
         "GEST2A3ECO_DGT_API_URL": "dgt_api_url",
         "GEST2A3ECO_DGT_API_KEY": "dgt_api_key",
+        "GEST2A3ECO_INTEGRATIONS_API_URL": "integrations_api_url",
+        "GEST2A3ECO_INTEGRATIONS_API_KEY": "integrations_api_key",
         "GEST2A3ECO_MESSAGING_API_URL": "messaging_api_url",
         "GEST2A3ECO_MESSAGING_API_KEY": "messaging_api_key",
         "GEST2A3ECO_MESSAGING_WORKSTATION_ID": "messaging_workstation_id",
@@ -252,6 +254,16 @@ def _normalize_config(data: dict) -> dict:
     out.setdefault("documentos_output_dir", "")
     out.setdefault("dgt_api_url", "")
     out.setdefault("dgt_api_key", "")
+    out.setdefault("integrations_api_url", "")
+    out.setdefault("integrations_api_key", "")
+    if not out["integrations_api_url"]:
+        out["integrations_api_url"] = out["dgt_api_url"]
+    if not out["integrations_api_key"]:
+        out["integrations_api_key"] = out["dgt_api_key"]
+    if not out["dgt_api_url"]:
+        out["dgt_api_url"] = out["integrations_api_url"]
+    if not out["dgt_api_key"]:
+        out["dgt_api_key"] = out["integrations_api_key"]
     out.setdefault("messaging_api_url", "")
     out.setdefault("messaging_api_key", "")
     out.setdefault("messaging_workstation_id", "")

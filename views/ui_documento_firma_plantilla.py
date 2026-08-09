@@ -5,6 +5,8 @@ import tkinter as tk
 from datetime import datetime
 from tkinter import messagebox, ttk
 
+from services.firma.datos_firma_service import listar_terceros_para_firma
+
 
 class UIDocumentoFirmaPlantillaDialog(tk.Toplevel):
     def __init__(self, parent, service, gestor, usuario: str = ""):
@@ -37,22 +39,38 @@ class UIDocumentoFirmaPlantillaDialog(tk.Toplevel):
         header = ttk.Frame(self, padding=10)
         header.pack(fill="x")
         ttk.Label(header, text="Datos de origen", font=("Segoe UI", 12, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
-        ttk.Label(header, text="Empresa cliente").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Label(header, text="Cliente (empresa asesorada)").grid(row=1, column=0, sticky="w", pady=4)
         self._company = tk.StringVar(value="Sin empresa (datos manuales)")
-        values = ["Sin empresa (datos manuales)"] + [self._company_label(e) for e in self._empresas]
-        cb = ttk.Combobox(header, textvariable=self._company, values=values, state="readonly", width=58)
-        cb.grid(row=1, column=1, sticky="ew", padx=6)
-        cb.bind("<<ComboboxSelected>>", lambda _e: self._on_company())
+        self._company_values = ["Sin empresa (datos manuales)"] + [self._company_label(e) for e in self._empresas]
+        self._company_cb = ttk.Combobox(
+            header, textvariable=self._company, values=self._company_values, state="normal", width=58,
+        )
+        self._company_cb.grid(row=1, column=1, sticky="ew", padx=6)
+        self._company_cb.bind("<KeyRelease>", self._filter_companies)
+        self._company_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_company())
+        self._company_cb.bind("<Return>", lambda _e: self._select_company_match())
         ttk.Label(header, text="Plantilla").grid(row=2, column=0, sticky="w", pady=4)
         self._template = tk.StringVar()
         self._template_cb = ttk.Combobox(header, textvariable=self._template, state="readonly", width=58)
         self._template_cb.grid(row=2, column=1, sticky="ew", padx=6)
         self._template_cb.bind("<<ComboboxSelected>>", lambda _e: self._load_fields())
-        ttk.Label(header, text="Tercero (opcional)").grid(row=3, column=0, sticky="w", pady=4)
+        ttk.Label(header, text="Tercero del cliente (opcional)").grid(row=3, column=0, sticky="w", pady=4)
         self._third = tk.StringVar(value="Sin tercero")
-        self._third_cb = ttk.Combobox(header, textvariable=self._third, state="readonly", width=58)
+        self._third_cb = ttk.Combobox(header, textvariable=self._third, state="normal", width=58)
         self._third_cb.grid(row=3, column=1, sticky="ew", padx=6)
+        self._third_cb.bind("<KeyRelease>", self._filter_thirds)
         self._third_cb.bind("<<ComboboxSelected>>", lambda _e: self._load_fields())
+        self._third_cb.bind("<Return>", lambda _e: self._select_third_match())
+        ttk.Label(
+            header,
+            text="Tercero significa una persona o entidad del maestro (cliente, proveedor o contacto del cliente).",
+            foreground="#555", wraplength=620,
+        ).grid(row=4, column=1, sticky="w", padx=6, pady=(0, 5))
+        ttk.Label(
+            header,
+            text="Al cambiar cliente o tercero se actualizan los campos vinculados; los configurados como manuales se conservan para introducirlos aqui.",
+            foreground="#555", wraplength=620,
+        ).grid(row=5, column=1, sticky="w", padx=6, pady=(0, 5))
         header.columnconfigure(1, weight=1)
 
         wrapper = ttk.LabelFrame(self, text="Campos del documento", padding=8)
@@ -78,7 +96,11 @@ class UIDocumentoFirmaPlantillaDialog(tk.Toplevel):
 
     @staticmethod
     def _third_label(row):
-        return f"{row.get('nombre_legal') or row.get('nombre') or 'Sin nombre'} <{row.get('nif') or ''}>"
+        nombre = row.get("nombre_legal") or row.get("nombre") or "Sin nombre"
+        nif = str(row.get("nif") or "").strip()
+        email = str(row.get("email") or row.get("correo") or "").strip()
+        detalles = " | ".join(value for value in (nif, email) if value)
+        return f"{nombre} <{detalles}>" if detalles else str(nombre)
 
     def _selected_company(self):
         label = self._company.get()
@@ -91,6 +113,33 @@ class UIDocumentoFirmaPlantillaDialog(tk.Toplevel):
     def _selected_third(self):
         label = self._third.get()
         return next((row for row in self._terceros if self._third_label(row) == label), None)
+
+    @staticmethod
+    def _matches(values, text):
+        needle = str(text or "").strip().lower()
+        return [value for value in values if not needle or needle in value.lower()]
+
+    def _filter_companies(self, event=None):
+        if event and event.keysym in ("Return", "Tab", "Down", "Up", "Escape"):
+            return
+        self._company_cb["values"] = self._matches(self._company_values, self._company.get())
+
+    def _select_company_match(self):
+        matches = self._matches(self._company_values, self._company.get())
+        if len(matches) == 1:
+            self._company.set(matches[0])
+            self._on_company()
+
+    def _filter_thirds(self, event=None):
+        if event and event.keysym in ("Return", "Tab", "Down", "Up", "Escape"):
+            return
+        self._third_cb["values"] = self._matches(self._third_values, self._third.get())
+
+    def _select_third_match(self):
+        matches = self._matches(self._third_values, self._third.get())
+        if len(matches) == 1:
+            self._third.set(matches[0])
+            self._load_fields()
 
     def _on_company(self):
         empresa = self._selected_company()
@@ -106,14 +155,12 @@ class UIDocumentoFirmaPlantillaDialog(tk.Toplevel):
         names = [str(row.get("nombre") or "") for row in self._templates]
         self._template_cb["values"] = names
         self._template.set(names[0] if names else "")
-        if empresa:
-            self._terceros = self._gestor.listar_terceros_por_empresa(
-                codigo, int(empresa.get("ejercicio") or datetime.now().year)
-            )
-        else:
-            self._terceros = []
-        thirds = ["Sin tercero"] + [self._third_label(row) for row in self._terceros]
-        self._third_cb["values"] = thirds
+        self._company_cb["values"] = self._company_values
+        self._terceros = listar_terceros_para_firma(
+            self._gestor, codigo, int((empresa or {}).get("ejercicio") or datetime.now().year),
+        )
+        self._third_values = ["Sin tercero"] + [self._third_label(row) for row in self._terceros]
+        self._third_cb["values"] = self._third_values
         self._third.set("Sin tercero")
         self._load_fields()
 
@@ -145,6 +192,16 @@ class UIDocumentoFirmaPlantillaDialog(tk.Toplevel):
         self._fields.columnconfigure(1, weight=1)
 
     def _accept(self):
+        if self._company.get() != "Sin empresa (datos manuales)" and not self._selected_company():
+            messagebox.showwarning(
+                "Documento", "Selecciona un cliente de las coincidencias del desplegable.", parent=self,
+            )
+            return
+        if self._third.get() != "Sin tercero" and not self._selected_third():
+            messagebox.showwarning(
+                "Documento", "Selecciona un tercero de las coincidencias del desplegable.", parent=self,
+            )
+            return
         plantilla = getattr(self, "_current_template", None)
         if not plantilla:
             messagebox.showwarning("Documento", "Selecciona una plantilla.", parent=self)

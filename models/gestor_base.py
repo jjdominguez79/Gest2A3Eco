@@ -713,6 +713,9 @@ CREATE TABLE IF NOT EXISTS plantillas_firma_firmantes (
   plantilla_id TEXT NOT NULL,
   rol TEXT NOT NULL,
   origen TEXT NOT NULL DEFAULT 'manual',
+  nombre TEXT,
+  email TEXT,
+  telefono TEXT,
   orden INTEGER NOT NULL DEFAULT 1,
   usar_sms INTEGER NOT NULL DEFAULT 0,
   UNIQUE (plantilla_id, orden),
@@ -3546,9 +3549,12 @@ class GestorBase:
         for pos, firmante in enumerate(plantilla.get("firmantes") or []):
             self.conn.execute(
                 """INSERT INTO plantillas_firma_firmantes
-                (plantilla_id,rol,origen,orden,usar_sms) VALUES (?,?,?,?,?)""",
+                (plantilla_id,rol,origen,nombre,email,telefono,orden,usar_sms)
+                VALUES (?,?,?,?,?,?,?,?)""",
                 (plantilla_id, firmante.get("rol") or f"Firmante {pos + 1}",
-                 firmante.get("origen") or "manual", int(firmante.get("orden") or pos + 1),
+                 firmante.get("origen") or "manual", firmante.get("nombre"),
+                 firmante.get("email"), firmante.get("telefono"),
+                 int(firmante.get("orden") or pos + 1),
                  1 if firmante.get("usar_sms") else 0),
             )
         for zona in plantilla.get("zonas") or []:

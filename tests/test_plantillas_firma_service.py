@@ -71,6 +71,25 @@ def test_precarga_por_origen_sin_modificar_maestros():
     assert tercero == {"email": "persona@example.com"}
 
 
+def test_precarga_admite_aliases_entre_fichas_de_cliente_y_tercero():
+    service = PlantillasFirmaService(object())
+    plantilla = {"campos": [
+        {"clave": "cliente", "origen": "empresa", "campo_origen": "nombre_legal"},
+        {"clave": "dni", "origen": "empresa", "campo_origen": "nif"},
+        {"clave": "municipio", "origen": "tercero", "campo_origen": "municipio"},
+    ]}
+
+    values = service.valores_iniciales(
+        plantilla,
+        {"nombre": "Cliente SL", "cif": "B12345678"},
+        {"poblacion": "Madrid"},
+    )
+
+    assert values == {
+        "cliente": "Cliente SL", "dni": "B12345678", "municipio": "Madrid",
+    }
+
+
 def test_valida_obligatorios_email_y_fecha():
     plantilla = {"campos": [
         {"clave": "email", "etiqueta": "Email", "tipo": "email", "obligatorio": 1},
@@ -84,3 +103,16 @@ def test_valida_obligatorios_email_y_fecha():
         PlantillasFirmaService.validar_valores(
             plantilla, {"email": "incorrecto", "fecha": "08/08/2026"}
         )
+
+
+def test_firmante_manual_requiere_email_configurado():
+    plantilla = {
+        "nombre": "Autorizacion", "alcance": "global", "campos": [], "zonas": [],
+        "firmantes": [{"rol": "Cliente", "origen": "manual", "orden": 1, "email": ""}],
+    }
+
+    with pytest.raises(ValueError, match="necesita un email"):
+        PlantillasFirmaService._validar_configuracion(plantilla)
+
+    plantilla["firmantes"][0]["email"] = "cliente@example.com"
+    PlantillasFirmaService._validar_configuracion(plantilla)

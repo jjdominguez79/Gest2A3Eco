@@ -24,8 +24,8 @@ def build_firma_provider(cfg: dict[str, Any]) -> FirmaProvider | None:
     """Construye el proveedor sin exponer el token del puesto por defecto."""
     if not bool(cfg.get("firma_habilitada", True)):
         return None
-    api_url = str(cfg.get("dgt_api_url") or "").strip()
-    api_key = str(cfg.get("dgt_api_key") or "").strip()
+    api_url = str(cfg.get("integrations_api_url") or cfg.get("dgt_api_url") or "").strip()
+    api_key = str(cfg.get("integrations_api_key") or cfg.get("dgt_api_key") or "").strip()
     if api_url and api_key:
         from services.dgt_remote_integrations import BackendSignRequestClient
 

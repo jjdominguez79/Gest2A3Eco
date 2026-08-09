@@ -24,8 +24,14 @@ class SyncAdjuntosResult:
 class MensajeriaRemoteClient:
     def __init__(self, *, user_id: int | str, user_name: str, config: dict | None = None, session=None):
         cfg = config or load_app_config()
-        self.base_url = str(cfg.get("messaging_api_url") or cfg.get("dgt_api_url") or "").rstrip("/")
-        self.api_key = str(cfg.get("messaging_api_key") or cfg.get("dgt_api_key") or "")
+        self.base_url = str(
+            cfg.get("messaging_api_url") or cfg.get("integrations_api_url")
+            or cfg.get("dgt_api_url") or ""
+        ).rstrip("/")
+        self.api_key = str(
+            cfg.get("messaging_api_key") or cfg.get("integrations_api_key")
+            or cfg.get("dgt_api_key") or ""
+        )
         self.workstation = str(cfg.get("messaging_workstation_id") or socket.gethostname()).strip()
         self.device_token = str(cfg.get("messaging_device_token") or "").strip()
         self.user_id = str(user_id)

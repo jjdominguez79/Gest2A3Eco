@@ -43,7 +43,7 @@ class ApiDgtRepository:
         self.base_url = str(base_url or "").rstrip("/")
         self.api_key = str(api_key or "")
         if not self.base_url or not self.api_key:
-            raise ValueError("Configura dgt_api_url y dgt_api_key para usar Tramites DGT online.")
+            raise ValueError("Configura integrations_api_url e integrations_api_key para usar Tramites DGT online.")
         self.timeout = timeout
         self._http = session or requests.Session()
 

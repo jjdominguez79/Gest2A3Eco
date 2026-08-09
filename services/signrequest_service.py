@@ -105,8 +105,20 @@ class SignRequestClient:
             estado = "preparing"
         else:
             estado = "sent"
+        if estado == "se":
+            estado = "sent"
+        firmantes = [
+            {
+                "email": item.get("email") or "", "order": int(item.get("order") or 0),
+                "emailed": bool(item.get("emailed")), "email_viewed": bool(item.get("email_viewed")),
+                "viewed": bool(item.get("viewed")), "signed": bool(item.get("signed")),
+                "declined": bool(item.get("declined")),
+            }
+            for item in (solicitud.get("signers") or [])
+        ]
         return {
             "status": estado,
+            "firmantes": sorted(firmantes, key=lambda item: item["order"]),
             "document_uuid": documento.get("uuid") or "",
             "signed_pdf_url": documento.get("pdf") or "",
             "signing_log_url": signing_log.get("pdf") or "",

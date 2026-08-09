@@ -70,8 +70,20 @@ class SignRequestBackend:
         documento = self._json("GET", document_url)
         log = documento.get("signing_log") or {}
         estado = "signed" if documento.get("pdf") and log.get("pdf") else str(documento.get("status") or "sent")
+        if estado == "se":
+            estado = "sent"
+        firmantes = [
+            {
+                "email": item.get("email") or "", "order": int(item.get("order") or 0),
+                "emailed": bool(item.get("emailed")), "email_viewed": bool(item.get("email_viewed")),
+                "viewed": bool(item.get("viewed")), "signed": bool(item.get("signed")),
+                "declined": bool(item.get("declined")),
+            }
+            for item in (solicitud.get("signers") or documento.get("signrequest", {}).get("signers") or [])
+        ]
         return {
             "status": estado,
+            "firmantes": sorted(firmantes, key=lambda item: item["order"]),
             "document_uuid": documento.get("uuid") or "",
             "security_hash": documento.get("security_hash") or "",
             "signing_log_security_hash": log.get("security_hash") or "",

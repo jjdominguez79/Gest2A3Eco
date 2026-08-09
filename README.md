@@ -75,9 +75,12 @@ para que todos los equipos trabajen sobre la misma informacion.
 - **Repositorio documental:** rutas compartidas de red, por defecto
   `\\GestinemMain\Doc_Compartidos\Gest2A3Eco`. Aqui se guardan documentos,
   adjuntos importados, PDFs y evidencias que deben compartir todos los equipos.
-- **Tramites DGT:** no usa la base principal para expedientes. La aplicacion
-  llama al backend online configurado con `dgt_api_url` y `dgt_api_key`; ese
-  backend se despliega en Railway y usa su propia PostgreSQL mediante
+- **Backend de integraciones:** un unico proyecto Railway sirve Tramites DGT,
+  firma documental, mensajeria y los conectores remotos. Se configura con
+  `integrations_api_url` e `integrations_api_key`; las claves historicas
+  `dgt_api_url` y `dgt_api_key` siguen aceptandose por compatibilidad.
+- **Tramites DGT:** no usa la base principal para expedientes. Este backend
+  usa su propia PostgreSQL mediante
   `DGT_DATABASE_URL`. En la base principal solo se conserva el vinculo contable
   `dgt_facturas` cuando un expediente remoto genera una factura local. Los
   documentos aportados o generados para el tramite se archivan en Dataprius bajo

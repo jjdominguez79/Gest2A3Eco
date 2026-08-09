@@ -46,7 +46,7 @@ from backend.dgt_api.validation import validar_parte
 from backend.dgt_api import messaging_models  # noqa: F401 - registra tablas SQLAlchemy
 from backend.dgt_api.messaging_api import cleanup_expired_attachments, router as messaging_router
 
-app = FastAPI(title="Gestinem Tramites DGT API", version="1.0.0")
+app = FastAPI(title="Gestinem Integraciones API", version="1.1.0")
 WEB_DIR = Path(__file__).with_name("web")
 templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
 app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")

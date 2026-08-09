@@ -61,7 +61,7 @@ class TramitesDgtService:
     ):
         if repository is None:
             raise ValueError(
-                "TramitesDgtService necesita el backend DGT configurado."
+                "TramitesDgtService necesita el backend de integraciones configurado."
             )
         self._repo = repository
         self._session = session

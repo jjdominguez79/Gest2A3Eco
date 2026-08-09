@@ -27,8 +27,8 @@ En `config.local.json` de Gest2A3Eco:
 
 ```json
 {
-  "dgt_api_url": "http://localhost:8000",
-  "dgt_api_key": "secreto-local"
+  "integrations_api_url": "http://localhost:8000",
+  "integrations_api_key": "secreto-local"
 }
 ```
 

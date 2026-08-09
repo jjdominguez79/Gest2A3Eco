@@ -84,3 +84,32 @@ def test_descarga_documento_firmado_y_registro(tmp_path: Path):
     assert Path(result["ruta_firmado"]).read_bytes() == b"%PDF evidencia"
     assert Path(result["ruta_registro_firma"]).read_bytes() == b"%PDF evidencia"
     assert len(result["sha256_firmado"]) == 64
+
+
+class _EstadoEnvioSession:
+    def request(self, method, url, **kwargs):
+        if "/signrequests/" in url:
+            return _RouteResponse({
+                "document": "https://signrequest.com/api/v1/documents/doc-2/",
+                "signers": [
+                    {"email": "primero@example.com", "order": 1, "emailed": True},
+                    {"email": "segundo@example.com", "order": 2, "emailed": False},
+                ],
+            })
+        return _RouteResponse({"uuid": "doc-2", "status": "se", "signing_log": {}})
+
+
+def test_consulta_normaliza_sent_y_devuelve_entrega_por_firmante():
+    client = SignRequestClient(
+        "token-secreto", "gestoria@example.com", session=_EstadoEnvioSession()
+    )
+
+    result = client.consultar("firma-2")
+
+    assert result["status"] == "sent"
+    assert result["firmantes"] == [
+        {"email": "primero@example.com", "order": 1, "emailed": True,
+         "email_viewed": False, "viewed": False, "signed": False, "declined": False},
+        {"email": "segundo@example.com", "order": 2, "emailed": False,
+         "email_viewed": False, "viewed": False, "signed": False, "declined": False},
+    ]

@@ -15,6 +15,21 @@ from services.firma.plantillas_service import (
 )
 
 
+_ORIGEN_CAMPO_LABELS = {
+    "empresa": "Cliente (empresa asesorada)",
+    "tercero": "Tercero del cliente (cliente/proveedor)",
+    "sistema": "Sistema (fecha/usuario)",
+    "fijo": "Valor fijo",
+    "manual": "Introduccion manual",
+}
+_ORIGEN_FIRMANTE_LABELS = {
+    "empresa": "Cliente (empresa asesorada)",
+    "tercero": "Tercero del cliente (cliente/proveedor)",
+    "gestor": "Gestor/remitente",
+    "manual": "Datos predeterminados/manuales",
+}
+
+
 class UIPlantillasFirmaManager(tk.Toplevel):
     def __init__(self, parent, gestor, usuario: str = ""):
         super().__init__(parent)
@@ -181,10 +196,29 @@ class _PlantillaEditor(tk.Toplevel):
         ttk.Label(defaults, text="Mensaje").pack(anchor="w")
         self._mensaje = tk.Text(defaults, height=6, width=36)
         self._mensaje.pack(fill="x", pady=(2, 8))
-        ttk.Label(defaults, text="Firmantes: un Rol|origen|sms por linea").pack(anchor="w")
-        ttk.Label(defaults, text="Origen: empresa, tercero, gestor o manual. SMS es opcional.", foreground="#555").pack(anchor="w")
-        self._firmantes = tk.Text(defaults, height=8, width=36)
-        self._firmantes.pack(fill="both", expand=True, pady=(4, 0))
+        ttk.Label(defaults, text="Firmantes predeterminados").pack(anchor="w")
+        ttk.Label(
+            defaults,
+            text="Empresa/tercero/gestor toman sus datos de la ficha. Manual usa los datos indicados aqui.",
+            foreground="#555", wraplength=330,
+        ).pack(anchor="w", pady=(0, 4))
+        self._firmantes_tree = ttk.Treeview(
+            defaults, columns=("orden", "rol", "origen", "nombre", "email", "sms"),
+            show="headings", height=7, selectmode="browse",
+        )
+        for col, title, width in (
+            ("orden", "#", 28), ("rol", "Rol", 80), ("origen", "Origen", 65),
+            ("nombre", "Nombre", 100), ("email", "Email", 145), ("sms", "SMS", 38),
+        ):
+            self._firmantes_tree.heading(col, text=title)
+            self._firmantes_tree.column(col, width=width, anchor="w")
+        self._firmantes_tree.pack(fill="both", expand=True)
+        self._firmantes_tree.bind("<Double-1>", lambda _e: self._edit_signer())
+        signer_actions = ttk.Frame(defaults)
+        signer_actions.pack(fill="x", pady=(5, 0))
+        ttk.Button(signer_actions, text="Anadir", command=self._add_signer).pack(side="left")
+        ttk.Button(signer_actions, text="Editar", command=self._edit_signer).pack(side="left", padx=4)
+        ttk.Button(signer_actions, text="Quitar", command=self._remove_signer).pack(side="left")
 
         buttons = ttk.Frame(self, padding=10)
         buttons.pack(fill="x")
@@ -235,11 +269,12 @@ class _PlantillaEditor(tk.Toplevel):
         self._activa.set(bool(data.get("activa")))
         self._asunto.set(str(data.get("asunto") or ""))
         self._mensaje.insert("1.0", str(data.get("mensaje") or ""))
-        firmantes = data.get("firmantes") or [{"rol": "Cliente", "origen": "empresa", "orden": 1}]
-        self._firmantes.insert("1.0", "\n".join(
-            f"{f.get('rol')}|{f.get('origen')}" + ("|sms" if f.get("usar_sms") else "")
-            for f in firmantes
-        ))
+        firmantes = data.get("firmantes") or [{
+            "rol": "Cliente", "origen": "empresa", "nombre": "", "email": "",
+            "telefono": "", "orden": 1, "usar_sms": 0,
+        }]
+        self._firmantes_data = [dict(item) for item in firmantes]
+        self._refresh_signers()
         self._campos = {str(c["clave"]): dict(c) for c in campos}
         self._refresh_fields()
 
@@ -262,23 +297,44 @@ class _PlantillaEditor(tk.Toplevel):
             self._campos[key] = dialog.result
             self._refresh_fields()
 
+    def _refresh_signers(self):
+        self._firmantes_tree.delete(*self._firmantes_tree.get_children())
+        for pos, item in enumerate(self._firmantes_data):
+            item["orden"] = pos + 1
+            self._firmantes_tree.insert("", "end", iid=str(pos), values=(
+                pos + 1, item.get("rol"), item.get("origen"), item.get("nombre"),
+                item.get("email"), "Si" if item.get("usar_sms") else "No",
+            ))
+
+    def _add_signer(self):
+        dialog = _FirmanteEditor(self, {"orden": len(self._firmantes_data) + 1})
+        self.wait_window(dialog)
+        if dialog.result:
+            self._firmantes_data.append(dialog.result)
+            self._refresh_signers()
+
+    def _edit_signer(self):
+        selected = self._firmantes_tree.selection()
+        if not selected:
+            return
+        index = int(selected[0])
+        dialog = _FirmanteEditor(self, self._firmantes_data[index])
+        self.wait_window(dialog)
+        if dialog.result:
+            self._firmantes_data[index] = dialog.result
+            self._refresh_signers()
+
+    def _remove_signer(self):
+        selected = self._firmantes_tree.selection()
+        if not selected:
+            return
+        self._firmantes_data.pop(int(selected[0]))
+        self._refresh_signers()
+
     def _save(self):
         try:
             empresas = [p.strip() for p in self._empresas.get().split(",") if p.strip()]
-            firmantes = []
-            for pos, line in enumerate(self._firmantes.get("1.0", "end").splitlines()):
-                if not line.strip():
-                    continue
-                parts = [part.strip() for part in line.split("|")]
-                rol = parts[0]
-                origen = parts[1] if len(parts) > 1 and parts[1] else "manual"
-                if origen not in ORIGENES_FIRMANTE:
-                    raise ValueError(f"Origen de firmante no valido: {origen}")
-                firmantes.append({
-                    "rol": rol.strip() or f"Firmante {pos + 1}", "origen": origen,
-                    "orden": len(firmantes) + 1,
-                    "usar_sms": len(parts) > 2 and parts[2].lower() == "sms",
-                })
+            firmantes = [dict(item, orden=pos + 1) for pos, item in enumerate(self._firmantes_data)]
             data = {
                 **self._plantilla,
                 "nombre": self._nombre.get().strip(), "descripcion": self._descripcion.get().strip(),
@@ -297,6 +353,63 @@ class _PlantillaEditor(tk.Toplevel):
             messagebox.showerror("Plantillas", str(exc), parent=self)
 
 
+class _FirmanteEditor(tk.Toplevel):
+    def __init__(self, parent, firmante):
+        super().__init__(parent)
+        self.title("Configurar firmante")
+        self.transient(parent)
+        self.grab_set()
+        self.result = None
+        self._original = dict(firmante or {})
+        self._rol = tk.StringVar(value=str(self._original.get("rol") or "Cliente"))
+        origen_actual = str(self._original.get("origen") or "manual")
+        self._origen = tk.StringVar(value=_ORIGEN_FIRMANTE_LABELS[origen_actual])
+        self._nombre = tk.StringVar(value=str(self._original.get("nombre") or ""))
+        self._email = tk.StringVar(value=str(self._original.get("email") or ""))
+        self._telefono = tk.StringVar(value=str(self._original.get("telefono") or ""))
+        self._sms = tk.BooleanVar(value=bool(self._original.get("usar_sms")))
+        frm = ttk.Frame(self, padding=12)
+        frm.pack(fill="both", expand=True)
+        rows = (
+            ("Rol", self._rol), ("Origen", self._origen), ("Nombre predeterminado", self._nombre),
+            ("Email predeterminado", self._email), ("Telefono", self._telefono),
+        )
+        for row, (label, var) in enumerate(rows):
+            ttk.Label(frm, text=label).grid(row=row, column=0, sticky="w", pady=4)
+            if label == "Origen":
+                widget = ttk.Combobox(
+                    frm, textvariable=var,
+                    values=[_ORIGEN_FIRMANTE_LABELS[key] for key in ORIGENES_FIRMANTE],
+                    state="readonly", width=42,
+                )
+            else:
+                widget = ttk.Entry(frm, textvariable=var, width=37)
+            widget.grid(row=row, column=1, padx=6, pady=4)
+        ttk.Checkbutton(frm, text="Verificar por SMS", variable=self._sms).grid(row=5, column=1, sticky="w")
+        ttk.Label(
+            frm, text="Con origen manual se usaran estos datos. Con otro origen sirven como respaldo si la ficha esta incompleta.",
+            foreground="#555", wraplength=340,
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(7, 0))
+        ttk.Button(frm, text="Aceptar", command=self._accept).grid(row=7, column=1, sticky="e", pady=(10, 0))
+
+    def _accept(self):
+        origen = next(
+            key for key, label in _ORIGEN_FIRMANTE_LABELS.items() if label == self._origen.get()
+        )
+        email = self._email.get().strip()
+        if origen == "manual" and not email:
+            messagebox.showwarning(
+                "Firmante", "Indica un email predeterminado o cambia el origen.", parent=self,
+            )
+            return
+        self.result = {
+            **self._original, "rol": self._rol.get().strip() or "Firmante", "origen": origen,
+            "nombre": self._nombre.get().strip(), "email": email,
+            "telefono": self._telefono.get().strip(), "usar_sms": self._sms.get(),
+        }
+        self.destroy()
+
+
 class _CampoEditor(tk.Toplevel):
     def __init__(self, parent, campo):
         super().__init__(parent)
@@ -306,32 +419,58 @@ class _CampoEditor(tk.Toplevel):
         self.result = None
         self._campo = dict(campo)
         self._label = tk.StringVar(value=str(campo.get("etiqueta") or ""))
-        self._origin = tk.StringVar(value=str(campo.get("origen") or "manual"))
+        origen_actual = str(campo.get("origen") or "manual")
+        self._origin = tk.StringVar(value=_ORIGEN_CAMPO_LABELS[origen_actual])
         self._source = tk.StringVar(value=str(campo.get("campo_origen") or ""))
         self._type = tk.StringVar(value=str(campo.get("tipo") or "texto"))
         self._required = tk.BooleanVar(value=bool(campo.get("obligatorio")))
         self._default = tk.StringVar(value=str(campo.get("valor_defecto") or ""))
+        self._source_widget = None
         frm = ttk.Frame(self, padding=12)
         frm.pack(fill="both", expand=True)
         for row, (label, var, values) in enumerate((
-            ("Titulo visible", self._label, None), ("Origen", self._origin, ORIGENES_CAMPO),
+            ("Titulo visible", self._label, None),
+            ("Origen", self._origin, [_ORIGEN_CAMPO_LABELS[key] for key in ORIGENES_CAMPO]),
             ("Campo de origen", self._source, None), ("Tipo", self._type, TIPOS_CAMPO),
             ("Valor predeterminado", self._default, None),
         )):
             ttk.Label(frm, text=label).grid(row=row, column=0, sticky="w", pady=4)
             if values:
                 widget = ttk.Combobox(frm, textvariable=var, values=values, state="readonly", width=32)
+                if label == "Origen":
+                    self._origin_widget = widget
             elif label == "Campo de origen":
-                sugerencias = sorted({key for campos in CAMPOS_POR_ORIGEN.values() for key in campos})
-                widget = ttk.Combobox(frm, textvariable=var, values=sugerencias, state="normal", width=32)
+                widget = ttk.Combobox(frm, textvariable=var, state="normal", width=32)
+                self._source_widget = widget
             else:
                 widget = ttk.Entry(frm, textvariable=var, width=35)
             widget.grid(row=row, column=1, padx=6, pady=4)
+        self._origin_widget.bind("<<ComboboxSelected>>", self._on_origin_changed)
+        self._refresh_source_suggestions()
         ttk.Checkbutton(frm, text="Obligatorio", variable=self._required).grid(row=5, column=1, sticky="w")
         ttk.Button(frm, text="Aceptar", command=self._accept).grid(row=6, column=1, sticky="e", pady=(10, 0))
 
+    def _selected_origin(self):
+        return next(
+            (key for key, label in _ORIGEN_CAMPO_LABELS.items() if label == self._origin.get()),
+            "manual",
+        )
+
+    def _refresh_source_suggestions(self):
+        if self._source_widget is not None:
+            self._source_widget["values"] = CAMPOS_POR_ORIGEN.get(self._selected_origin(), ())
+
+    def _on_origin_changed(self, _event=None):
+        self._refresh_source_suggestions()
+        sugerencias = list(CAMPOS_POR_ORIGEN.get(self._selected_origin(), ()))
+        if not sugerencias:
+            self._source.set("")
+        elif self._source.get() not in sugerencias:
+            self._source.set("")
+
     def _accept(self):
-        self.result = {**self._campo, "etiqueta": self._label.get().strip(), "origen": self._origin.get(),
+        origen = self._selected_origin()
+        self.result = {**self._campo, "etiqueta": self._label.get().strip(), "origen": origen,
                        "campo_origen": self._source.get().strip(), "tipo": self._type.get(),
                        "obligatorio": self._required.get(), "valor_defecto": self._default.get()}
         self.destroy()

@@ -8,6 +8,8 @@
   "azure_doc_intelligence_key": "",
   "azure_storage_connection_string": "",
   "azure_ocr_training_container": "facturas-entrenamiento",
+  "integrations_api_url": "",
+  "integrations_api_key": "",
   "dgt_api_url": "",
   "dgt_api_key": "",
   "messaging_api_url": "",
