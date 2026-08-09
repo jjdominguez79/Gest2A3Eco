@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/static/staff-messaging-admin.css?v=4">
   <link rel="stylesheet" href="/static/messaging-avatar.css?v=4">
   <link rel="stylesheet" href="/static/messaging-files.css?v=1">
+  <link rel="stylesheet" href="/static/staff-messaging-responsive.css?v=1">
   <title>Mensajería del despacho · Gestinem</title>
 </head>
 <body>
@@ -22,7 +23,7 @@
   <main id="staff-app" class="app-shell" hidden>
     <header class="topbar">
       <div class="brand"><img src="/static/gestinem-logo.png" alt="Gestinem"><span>Mensajería</span></div>
-      <div class="user-actions"><span id="staff-name"></span><button id="push-enable" class="ghost" hidden>Activar avisos</button><button id="admin-open" class="ghost" hidden>Administrar</button><button id="staff-logout" class="ghost">Salir</button></div>
+      <div class="user-actions"><span id="staff-name"></span><button id="push-enable" class="ghost notification-button" hidden>Activar avisos</button><button id="admin-open" class="ghost" hidden>Administrar</button><button id="staff-logout" class="ghost">Salir</button></div>
     </header>
     <aside class="channels">
       <h2>Espacios</h2>
@@ -45,7 +46,7 @@
     <section class="thread-panel">
       <div id="empty-thread" class="empty-state"><strong>Selecciona una conversación</strong><span>Los mensajes nuevos aparecerán aquí.</span></div>
       <div id="active-thread" class="thread-layout" hidden>
-        <header class="thread-head"><div><h2 id="thread-company"></h2><span id="thread-channel"></span></div><select id="thread-state"><option value="pendiente">Pendiente</option><option value="en_curso">En curso</option><option value="resuelta">Resuelta</option></select></header>
+        <header class="thread-head"><button id="thread-back" class="mobile-back ghost" type="button">‹ Chats</button><div class="thread-title"><h2 id="thread-company"></h2><span id="thread-channel"></span></div><select id="thread-state"><option value="pendiente">Pendiente</option><option value="en_curso">En curso</option><option value="resuelta">Resuelta</option></select></header>
         <div id="messages" class="messages" aria-live="polite"></div>
         <form id="composer" class="composer">
           <textarea id="message-body" rows="2" maxlength="10000" placeholder="Escribe un mensaje"></textarea>
@@ -101,6 +102,6 @@
     </div>
   </dialog>
   <div id="toast" class="toast" hidden></div>
-  <script src="/static/staff-messaging.js?v=6"></script>
+  <script src="/static/staff-messaging.js?v=7"></script>
 </body>
 </html>

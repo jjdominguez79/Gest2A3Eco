@@ -75,6 +75,7 @@ function renderBadges(){
 async function selectConversation(id){
   selectedId=id;renderConversations();byId('empty-thread').hidden=!!id;byId('active-thread').hidden=!id;if(!id)return;
   const row=conversations.find(item=>item.id===id);if(!row)return;
+  byId('staff-app').classList.add('thread-open');
   byId('thread-state').hidden=false;byId('composer-attach').hidden=false;
   byId('thread-company').textContent=`${row.company_name} · ${row.company_code}`;
   byId('thread-channel').textContent=channelLabels[row.kind]||row.kind;byId('thread-state').value=row.state;
@@ -85,7 +86,7 @@ async function selectConversation(id){
 }
 async function selectInternalThread(id){
   selectedInternalId=id;renderConversations();byId('empty-thread').hidden=!!id;byId('active-thread').hidden=!id;if(!id)return;
-  const row=internalThreads.find(item=>item.id===id);if(!row)return;byId('thread-company').textContent=row.title;byId('thread-channel').textContent=row.kind==='group'?'Grupo interno del despacho':'Conversación privada';byId('thread-state').hidden=true;byId('composer-attach').hidden=true;
+  const row=internalThreads.find(item=>item.id===id);if(!row)return;byId('staff-app').classList.add('thread-open');byId('thread-company').textContent=row.title;byId('thread-channel').textContent=row.kind==='group'?'Grupo interno del despacho':'Conversación privada';byId('thread-state').hidden=true;byId('composer-attach').hidden=true;
   const messages=await request(`/staff/internal/threads/${id}/messages`);await request(`/staff/internal/threads/${id}/read`,{method:'POST'});const root=byId('messages');root.replaceChildren(...messages.map(renderMessage));root.scrollTop=root.scrollHeight;await loadInternalThreads();
 }
 function renderMessage(row){
@@ -103,19 +104,25 @@ byId('composer').onsubmit=async event=>{
 };
 byId('thread-state').onchange=async()=>{if(space==='clients'&&selectedId){await request(`/staff/conversations/${selectedId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({state:byId('thread-state').value})});await loadConversations()}};
 document.querySelectorAll('#client-channels .channel').forEach(button=>button.onclick=()=>{filter=button.dataset.channel;document.querySelectorAll('#client-channels .channel').forEach(item=>item.classList.toggle('active',item===button));renderConversations()});
-function switchSpace(next){space=next;byId('space-clients').classList.toggle('active',space==='clients');byId('space-team').classList.toggle('active',space==='team');byId('client-channels').hidden=space==='team';byId('internal-new-direct').hidden=space!=='team'||me.role!=='admin';byId('list-title').textContent=space==='team'?'Equipo':'Conversaciones';byId('search').placeholder=space==='team'?'Buscar chat interno':'Buscar cliente';byId('empty-thread').hidden=false;byId('active-thread').hidden=true;renderConversations()}
+function closeMobileThread(){byId('staff-app').classList.remove('thread-open');byId('active-thread').hidden=true;byId('empty-thread').hidden=false;selectedId='';selectedInternalId='';renderConversations()}
+function switchSpace(next){space=next;byId('staff-app').classList.remove('thread-open');byId('space-clients').classList.toggle('active',space==='clients');byId('space-team').classList.toggle('active',space==='team');byId('client-channels').hidden=space==='team';byId('internal-new-direct').hidden=space!=='team'||me.role!=='admin';byId('list-title').textContent=space==='team'?'Equipo':'Conversaciones';byId('search').placeholder=space==='team'?'Buscar chat interno':'Buscar cliente';byId('empty-thread').hidden=false;byId('active-thread').hidden=true;renderConversations()}
+byId('thread-back').onclick=closeMobileThread;
 byId('space-clients').onclick=()=>switchSpace('clients');byId('space-team').onclick=()=>switchSpace('team');
 byId('search').oninput=renderConversations;byId('refresh').onclick=()=>space==='team'?loadInternalThreads():loadConversations();
 byId('staff-logout').onclick=async()=>{await request('/staff-auth/logout',{method:'POST'});location.reload()};
 function base64Bytes(value){const padding='='.repeat((4-value.length%4)%4);const raw=atob((value+padding).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from([...raw].map(char=>char.charCodeAt(0)))}
 async function preparePush(){
-  if(!('serviceWorker' in navigator)||!('PushManager' in window))return;
-  const config=await request('/staff/push/config');if(!config.enabled)return;
+  const button=byId('push-enable');button.hidden=false;
+  if(!('serviceWorker' in navigator)||!('PushManager' in window)||!('Notification' in window)){setPushButton('blocked','Avisos no disponibles');button.disabled=true;return}
+  const config=await request('/staff/push/config');if(!config.enabled){setPushButton('blocked','Avisos sin configurar');button.disabled=true;return}
   const registration=await navigator.serviceWorker.ready;const current=await registration.pushManager.getSubscription();
-  byId('push-enable').hidden=!!current;if(current)await savePush(current);
-  byId('push-enable').onclick=async()=>{if(await Notification.requestPermission()!=='granted')return;const subscription=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:base64Bytes(config.public_key)});await savePush(subscription);byId('push-enable').hidden=true;toast('Avisos activados')};
+  if(current){await savePush(current);setPushButton('active','Avisos activos');button.onclick=testPush;return}
+  if(Notification.permission==='denied'){setPushButton('blocked','Avisos bloqueados');button.onclick=()=>toast('Permite las notificaciones de Gestinem en la configuración de Edge');return}
+  setPushButton('needs-action','Activar avisos');button.onclick=async()=>{try{if(await Notification.requestPermission()!=='granted'){setPushButton('blocked','Avisos bloqueados');return}const subscription=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:base64Bytes(config.public_key)});await savePush(subscription);setPushButton('active','Avisos activos');button.onclick=testPush;await testPush()}catch(error){toast(error.message)}};
 }
+function setPushButton(state,text){const button=byId('push-enable');button.classList.remove('needs-action','active','blocked');button.classList.add(state);button.textContent=text}
 async function savePush(subscription){const value=subscription.toJSON();await request('/staff/push/subscriptions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:value.endpoint,p256dh:value.keys.p256dh,auth:value.keys.auth})})}
+async function testPush(){try{await request('/staff/push/test',{method:'POST'});toast('Notificación de prueba enviada')}catch(error){toast(error.message)}}
 function startEvents(){if(events)events.close();events=new EventSource(`${API}/staff/events`);const refresh=()=>{loadConversations();if(space==='clients'&&selectedId)selectConversation(selectedId)};['message_created','conversation_updated'].forEach(name=>events.addEventListener(name,refresh));events.addEventListener('internal_message',()=>{loadInternalThreads();if(space==='team'&&selectedInternalId)selectInternalThread(selectedInternalId)});events.onerror=()=>{events.close();setTimeout(startEvents,3000)}}
 
 byId('internal-new-direct').onclick=async()=>{try{const staff=await request('/staff/admin/directory');const select=byId('internal-direct-member');select.replaceChildren(...staff.filter(row=>row.active&&row.id!==me.id).map(row=>{const option=document.createElement('option');option.value=row.id;option.textContent=`${row.chat_alias||row.name} (${row.email})`;return option}));if(!select.options.length){toast('No hay otros usuarios activos');return}byId('internal-direct-dialog').showModal()}catch(error){toast(error.message)}};

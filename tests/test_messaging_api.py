@@ -362,6 +362,23 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
     device_headers = {"X-Device-Id": "puesto-1", "X-Device-Token": device["device_token"]}
     staff7 = {**internal, **device_headers, "X-Staff-Id": "7"}
     staff8 = {**internal, **device_headers, "X-Staff-Id": "8"}
+    assert client.post(
+        "/api/v1/messaging/staff/push/test", headers=staff7,
+    ).status_code == 503
+    monkeypatch.setattr(messaging_api, "push_configured", lambda: True)
+    monkeypatch.setattr(messaging_api, "send_push", lambda _subscription, _payload: True)
+    assert client.post(
+        "/api/v1/messaging/staff/push/subscriptions", headers=staff7,
+        json={
+            "endpoint": "https://push.example.test/device-7",
+            "p256dh": "public-key-device-7", "auth": "auth-device-7",
+        },
+    ).status_code == 200
+    push_test = client.post(
+        "/api/v1/messaging/staff/push/test", headers=staff7,
+    )
+    assert push_test.status_code == 200
+    assert push_test.json()["delivered"] == 1
     avatar = BytesIO()
     Image.new("RGB", (80, 80), "#145a86").save(avatar, format="PNG")
     assert client.put(

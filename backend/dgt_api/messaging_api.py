@@ -676,6 +676,33 @@ def subscribe_staff_push(
     return {"ok": True}
 
 
+@router.post("/staff/push/test")
+def test_staff_push(
+    staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
+):
+    if not push_configured():
+        raise HTTPException(503, "Los avisos push no estan configurados")
+    subscriptions = db.scalars(select(MessagingPushSubscription).where(
+        MessagingPushSubscription.staff_external_id == staff.external_id,
+        MessagingPushSubscription.active.is_(True),
+    )).all()
+    if not subscriptions:
+        raise HTTPException(409, "Este dispositivo no tiene los avisos activados")
+    payload = {
+        "title": "Avisos de Gestinem activados",
+        "body": "Este equipo recibira los nuevos mensajes asignados.",
+        "url": "/equipo/mensajes",
+        "tag": "gestinem-push-test",
+    }
+    delivered = sum(bool(send_push({
+        "endpoint": item.endpoint,
+        "keys": {"p256dh": item.p256dh, "auth": item.auth},
+    }, payload)) for item in subscriptions)
+    if not delivered:
+        raise HTTPException(502, "El navegador no ha aceptado la notificacion de prueba")
+    return {"ok": True, "delivered": delivered}
+
+
 def _serialize_staff_thread_message(db: Session, item: MessagingStaffThreadMessage) -> dict:
     author = db.get(MessagingStaff, item.author_staff_external_id)
     return {
