@@ -1,11 +1,15 @@
 {
+  "id": "/mensajes",
   "name": "Mensajes Gestinem",
   "short_name": "Gestinem",
   "start_url": "/mensajes",
+  "scope": "/mensajes",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
   "background_color": "#eef3f8",
   "theme_color": "#0759af",
   "icons": [
-    {"src": "/static/gestinem-logo.png", "sizes": "267x94", "type": "image/png", "purpose": "any"}
+    {"src": "/static/gestinem-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "/static/gestinem-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"}
   ]
 }

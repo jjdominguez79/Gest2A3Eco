@@ -176,6 +176,24 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/mensajes-sw.js", include_in_schema=False)
+def messaging_service_worker():
+    return FileResponse(
+        WEB_DIR / "static" / "messaging-sw.js",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+@app.get("/equipo/mensajes-sw.js", include_in_schema=False)
+def staff_messaging_service_worker():
+    return FileResponse(
+        WEB_DIR / "static" / "staff-messaging-sw.js",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
 @app.get("/mensajes", response_class=HTMLResponse)
 def messaging_portal(request: Request):
     return templates.TemplateResponse(

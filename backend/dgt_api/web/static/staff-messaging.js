@@ -165,5 +165,5 @@ byId('invite-form').onsubmit=async event=>{
     const link=document.createElement('a');link.href=result.url;link.target='_blank';link.rel='noopener';link.textContent='Abrir enlace de activación';status.append(link);
   }catch(error){byId('admin-result').textContent=error.message}
 };
-if('serviceWorker' in navigator)navigator.serviceWorker.register('/static/staff-messaging-sw.js').catch(()=>{});
+if('serviceWorker' in navigator)navigator.serviceWorker.register('/equipo/mensajes-sw.js',{scope:'/equipo/'}).catch(()=>{});
 start().catch(error=>{byId('staff-login').hidden=false;toast(error.message)});
