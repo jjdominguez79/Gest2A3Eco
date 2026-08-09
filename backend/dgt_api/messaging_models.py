@@ -33,6 +33,7 @@ class MessagingStaff(Base):
     external_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(160))
     email: Mapped[str] = mapped_column(String(254), default="", index=True)
+    entra_oid: Mapped[str] = mapped_column(String(64), default="", index=True)
     role: Mapped[str] = mapped_column(String(32), default="empleado")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

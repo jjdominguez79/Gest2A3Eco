@@ -65,6 +65,12 @@ def startup():
         )
         conn.execute(text("ALTER TABLE msg_staff ADD COLUMN IF NOT EXISTS email VARCHAR(254) NOT NULL DEFAULT ''"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_msg_staff_email ON msg_staff(email)"))
+        conn.execute(text("ALTER TABLE msg_staff ADD COLUMN IF NOT EXISTS entra_oid VARCHAR(64) NOT NULL DEFAULT ''"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_msg_staff_entra_oid ON msg_staff(entra_oid)"))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_msg_staff_entra_oid_asignado "
+            "ON msg_staff(entra_oid) WHERE entra_oid <> ''"
+        ))
         conn.execute(text("UPDATE msg_conversations SET kind='fiscal' WHERE kind='general'"))
     with SessionLocal() as db:
         for org in db.scalars(select(messaging_models.MessagingOrganization)).all():

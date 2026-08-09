@@ -23,6 +23,8 @@ def _client(tmp_path: Path):
     os.environ["MESSAGING_STORAGE_DIR"] = str(tmp_path / "cloud")
     os.environ["MESSAGING_PUBLIC_BASE_URL"] = "https://mensajes.example.test"
     os.environ["MESSAGING_SYNC_TOKEN"] = "sync-secret"
+    os.environ["MESSAGING_STAFF_ALLOWED_DOMAIN"] = "gestinem.es"
+    os.environ["MESSAGING_STAFF_ADMIN_EMAILS"] = "admin@gestinem.es"
     engine = create_engine(
         "sqlite+pysqlite://", connect_args={"check_same_thread": False},
         poolclass=StaticPool,
@@ -37,7 +39,99 @@ def _client(tmp_path: Path):
             yield db
 
     app.dependency_overrides[get_db] = override
-    return TestClient(app)
+    return TestClient(app, base_url="https://mensajes.example.test")
+
+
+def test_admin_preautoriza_empleado_y_primer_login_vincula_microsoft(tmp_path, monkeypatch):
+    client = _client(tmp_path)
+    internal = {"X-API-Key": "test-secret"}
+    assert client.put(
+        "/api/v1/messaging/internal/staff/admin-local", headers=internal,
+        json={
+            "external_id": "admin-local", "name": "Administrador",
+            "email": "admin@gestinem.es", "role": "admin", "active": True,
+            "channels": ["laboral", "fiscal"],
+        },
+    ).status_code == 200
+    device = client.post(
+        "/api/v1/messaging/internal/devices/puesto-admin", headers=internal,
+    ).json()
+    admin_headers = {
+        **internal, "X-Device-Id": "puesto-admin",
+        "X-Device-Token": device["device_token"], "X-Staff-Id": "admin-local",
+    }
+    created = client.post(
+        "/api/v1/messaging/staff/admin/directory", headers=admin_headers,
+        json={
+            "name": "Ana Laboral", "email": "ana@gestinem.es",
+            "role": "empleado", "active": True, "channels": ["laboral"],
+        },
+    )
+    assert created.status_code == 201
+    staff_id = created.json()["id"]
+    assert created.json()["linked"] is False
+
+    class FakeMsal:
+        def initiate_auth_code_flow(self, **_kwargs):
+            return {"state": "state-ana", "auth_uri": "https://login.example.test"}
+
+        def acquire_token_by_auth_code_flow(self, _flow, _params):
+            return {"id_token_claims": {
+                "preferred_username": "ana@gestinem.es", "oid": "entra-ana",
+                "name": "Ana Laboral",
+            }}
+
+    monkeypatch.setattr(messaging_api, "_staff_msal_app", lambda: FakeMsal())
+    assert client.get(
+        "/api/v1/messaging/staff-auth/login", follow_redirects=False,
+    ).status_code == 302
+    callback = client.get(
+        "/api/v1/messaging/staff-auth/callback?state=state-ana&code=ok",
+        follow_redirects=False,
+    )
+    assert callback.status_code == 302
+    employee_token = client.cookies.get("msg_staff_session")
+    me = client.get("/api/v1/messaging/staff/me").json()
+    assert me["id"] == staff_id
+    assert me["channels"] == ["laboral"]
+
+    client.cookies.clear()
+    directory = client.get(
+        "/api/v1/messaging/staff/admin/directory", headers=admin_headers,
+    ).json()
+    employee = next(row for row in directory if row["id"] == staff_id)
+    assert employee["linked"] is True
+    suspended = client.put(
+        f"/api/v1/messaging/staff/admin/directory/{staff_id}", headers=admin_headers,
+        json={"channels": ["laboral"], "role": "empleado", "active": False},
+    )
+    assert suspended.status_code == 200
+    assert client.get(
+        "/api/v1/messaging/staff/me",
+        headers={"Authorization": f"Bearer {employee_token}"},
+    ).status_code == 401
+
+
+def test_login_corporativo_sin_preautorizacion_es_rechazado(tmp_path, monkeypatch):
+    client = _client(tmp_path)
+
+    class FakeMsal:
+        def initiate_auth_code_flow(self, **_kwargs):
+            return {"state": "state-no-autorizado", "auth_uri": "https://login.example.test"}
+
+        def acquire_token_by_auth_code_flow(self, _flow, _params):
+            return {"id_token_claims": {
+                "preferred_username": "desconocido@gestinem.es",
+                "oid": "entra-desconocido", "name": "Desconocido",
+            }}
+
+    monkeypatch.setattr(messaging_api, "_staff_msal_app", lambda: FakeMsal())
+    client.get("/api/v1/messaging/staff-auth/login", follow_redirects=False)
+    response = client.get(
+        "/api/v1/messaging/staff-auth/callback?state=state-no-autorizado&code=ok",
+        follow_redirects=False,
+    )
+    assert response.status_code == 403
 
 
 def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatch):

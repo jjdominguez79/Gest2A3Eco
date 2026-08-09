@@ -93,13 +93,26 @@ function startEvents(){if(events)events.close();events=new EventSource(`${API}/s
 byId('admin-open').onclick=async()=>{await loadAdmin();byId('admin-dialog').showModal()};
 async function loadAdmin(){
   const staff=await request('/staff/admin/directory');const root=byId('staff-directory');root.replaceChildren(...staff.map(row=>{
-    const box=document.createElement('div');box.className='staff-row';const who=document.createElement('div');const strong=document.createElement('strong');strong.textContent=row.name;const small=document.createElement('small');small.textContent=row.email||row.id;who.append(strong,small);
+    const box=document.createElement('div');box.className='staff-row';const who=document.createElement('div');const strong=document.createElement('strong');strong.textContent=row.name;const small=document.createElement('small');small.textContent=row.email||row.id;
+    const status=document.createElement('span');status.className='staff-status'+(row.active?'':' suspended');status.textContent=row.active?(row.linked?'Acceso activado':'Pendiente del primer acceso'):'Suspendido';who.append(strong,small,status);
     const checks=document.createElement('div');checks.className='staff-checks';
     for(const channel of ['laboral','fiscal']){const label=document.createElement('label');const input=document.createElement('input');input.type='checkbox';input.checked=row.channels.includes(channel);input.dataset.channel=channel;label.append(input,document.createTextNode(channel==='laboral'?' Laboral':' Fiscal'));checks.append(label)}
-    const save=document.createElement('button');save.type='button';save.className='ghost';save.textContent='Guardar';save.onclick=async()=>{const channels=[...checks.querySelectorAll('input:checked')].map(input=>input.dataset.channel);await request(`/staff/admin/directory/${row.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({channels,active:true})});toast('Permisos actualizados')};checks.append(save);box.append(who,checks);return box;
+    const adminLabel=document.createElement('label');const adminCheck=document.createElement('input');adminCheck.type='checkbox';adminCheck.checked=row.role==='admin';adminLabel.append(adminCheck,document.createTextNode(' Administrador'));checks.append(adminLabel);
+    const activeLabel=document.createElement('label');const activeCheck=document.createElement('input');activeCheck.type='checkbox';activeCheck.checked=row.active;activeLabel.append(activeCheck,document.createTextNode(' Activo'));checks.append(activeLabel);
+    const actions=document.createElement('div');actions.className='staff-actions';
+    if(row.linked&&row.id!==me.id){const revoke=document.createElement('button');revoke.type='button';revoke.className='ghost danger';revoke.textContent='Cerrar sesiones';revoke.onclick=async()=>{try{await request(`/staff/admin/directory/${row.id}/revoke-sessions`,{method:'POST'});toast('Sesiones cerradas')}catch(error){toast(error.message)}};actions.append(revoke)}
+    const save=document.createElement('button');save.type='button';save.className='ghost';save.textContent='Guardar';save.onclick=async()=>{const channels=[...checks.querySelectorAll('input[data-channel]:checked')].map(input=>input.dataset.channel);try{await request(`/staff/admin/directory/${row.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({channels,active:activeCheck.checked,role:adminCheck.checked?'admin':'empleado'})});toast('Usuario actualizado');await loadAdmin()}catch(error){toast(error.message)}};actions.append(save);box.append(who,checks,actions);return box;
   }));
   const owner=byId('invite-owner');owner.replaceChildren(...staff.filter(row=>row.active).map(row=>{const option=document.createElement('option');option.value=row.id;option.textContent=`${row.name} (${row.email||row.id})`;option.selected=row.id===me.id;return option}));
 }
+byId('staff-create-form').onsubmit=async event=>{
+  event.preventDefault();const result=byId('staff-create-result');result.textContent='';
+  const channels=[];if(byId('staff-create-laboral').checked)channels.push('laboral');if(byId('staff-create-fiscal').checked)channels.push('fiscal');
+  try{
+    await request('/staff/admin/directory',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:byId('staff-create-name').value.trim(),email:byId('staff-create-email').value.trim(),channels,role:byId('staff-create-admin').checked?'admin':'empleado',active:true})});
+    event.target.reset();result.textContent='Usuario autorizado. Ya puede entrar con Microsoft 365.';await loadAdmin();
+  }catch(error){result.textContent=error.message}
+};
 byId('invite-form').onsubmit=async event=>{
   event.preventDefault();const code=byId('invite-code').value.trim();
   try{

@@ -43,6 +43,7 @@ ALLOWED_SUFFIXES = {
     ".txt", ".xml", ".csv", ".xls", ".xlsx", ".doc", ".docx", ".zip",
 }
 STAFF_CHANNELS = {"laboral", "fiscal"}
+STAFF_ROLES = {"admin", "empleado"}
 
 
 def get_db():
@@ -102,6 +103,17 @@ class ConversationPatch(BaseModel):
 class StaffPermissionsIn(BaseModel):
     channels: list[str] = Field(default_factory=list)
     active: bool = True
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    email: str | None = Field(default=None, min_length=3, max_length=254)
+    role: str | None = None
+
+
+class StaffCreateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    email: str = Field(min_length=3, max_length=254)
+    role: str = "empleado"
+    active: bool = True
+    channels: list[str] = Field(default_factory=list)
 
 
 class PushSubscriptionIn(BaseModel):
@@ -151,6 +163,39 @@ def _channels_for_staff(db: Session, staff: MessagingStaff) -> set[str]:
     return set(db.scalars(select(MessagingStaffChannel.channel).where(
         MessagingStaffChannel.staff_external_id == staff.external_id,
     )))
+
+
+def _validated_staff_email(value: str) -> str:
+    email = value.strip().lower()
+    domain = get_settings().messaging_staff_allowed_domain.strip().lower()
+    if email.count("@") != 1 or email.startswith("@") or email.endswith("@"):
+        raise HTTPException(422, "Email corporativo no valido")
+    if domain and not email.endswith(f"@{domain}"):
+        raise HTTPException(422, f"El usuario debe pertenecer a @{domain}")
+    return email
+
+
+def _set_staff_channels(db: Session, external_id: str, channels: set[str]) -> None:
+    if not channels <= STAFF_CHANNELS:
+        raise HTTPException(422, "Canal no valido")
+    db.query(MessagingStaffChannel).filter(
+        MessagingStaffChannel.staff_external_id == external_id,
+    ).delete(synchronize_session=False)
+    db.add_all([
+        MessagingStaffChannel(staff_external_id=external_id, channel=channel)
+        for channel in sorted(channels)
+    ])
+
+
+def _revoke_staff_access(db: Session, external_id: str) -> None:
+    now = utcnow()
+    db.query(MessagingStaffSession).filter(
+        MessagingStaffSession.staff_external_id == external_id,
+        MessagingStaffSession.revoked_at.is_(None),
+    ).update({MessagingStaffSession.revoked_at: now}, synchronize_session=False)
+    db.query(MessagingPushSubscription).filter(
+        MessagingPushSubscription.staff_external_id == external_id,
+    ).update({MessagingPushSubscription.active: False}, synchronize_session=False)
 
 
 def _can_access_conversation(
@@ -481,21 +526,32 @@ def staff_auth_callback(request: Request, db: Session = Depends(get_db)):
     domain = get_settings().messaging_staff_allowed_domain
     if not email or not external_id or (domain and not email.endswith(f"@{domain}")):
         raise HTTPException(403, "La cuenta no pertenece al despacho")
-    staff = db.get(MessagingStaff, external_id)
-    if not staff:
-        staff = db.scalar(select(MessagingStaff).where(MessagingStaff.email == email))
     admin_emails = {
         value.strip().lower()
         for value in get_settings().messaging_staff_admin_emails.replace(";", ",").split(",")
         if value.strip()
     }
+    staff = db.scalar(select(MessagingStaff).where(MessagingStaff.entra_oid == external_id))
     if not staff:
+        # Compatibilidad con empleados creados antes de separar el identificador
+        # interno del OID de Microsoft Entra.
+        staff = db.get(MessagingStaff, external_id)
+    if not staff:
+        staff = db.scalar(select(MessagingStaff).where(MessagingStaff.email == email))
+    if not staff:
+        if email not in admin_emails:
+            raise HTTPException(403, "Tu cuenta todavia no ha sido autorizada por un administrador")
         staff = MessagingStaff(
-            external_id=external_id, name=name, email=email,
-            role="admin" if email in admin_emails else "empleado", active=True,
+            external_id=str(uuid.uuid4()), name=name, email=email, entra_oid=external_id,
+            role="admin", active=True,
         )
     else:
+        if staff.entra_oid and staff.entra_oid != external_id:
+            raise HTTPException(403, "La cuenta esta vinculada a otra identidad de Microsoft")
+        if not staff.active:
+            raise HTTPException(403, "Usuario del despacho suspendido")
         staff.name, staff.email = name, email
+        staff.entra_oid = external_id
         if email in admin_emails:
             staff.role = "admin"
     db.add(staff)
@@ -577,31 +633,96 @@ def staff_directory(
     return [{
         "id": row.external_id, "name": row.name, "email": row.email,
         "role": row.role, "active": row.active,
+        "linked": bool(row.entra_oid),
         "channels": sorted(_channels_for_staff(db, row)),
     } for row in rows]
+
+
+@router.post("/staff/admin/directory", status_code=201)
+def create_staff_user(
+    payload: StaffCreateIn,
+    _admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
+):
+    email = _validated_staff_email(payload.email)
+    if payload.role not in STAFF_ROLES:
+        raise HTTPException(422, "Rol no valido")
+    channels = set(payload.channels)
+    if not channels <= STAFF_CHANNELS:
+        raise HTTPException(422, "Canal no valido")
+    if db.scalar(select(MessagingStaff).where(MessagingStaff.email == email)):
+        raise HTTPException(409, "Ya existe un usuario con ese email")
+    staff = MessagingStaff(
+        external_id=str(uuid.uuid4()), name=payload.name.strip(), email=email,
+        entra_oid="", role=payload.role, active=payload.active,
+    )
+    db.add(staff)
+    db.flush()
+    _set_staff_channels(db, staff.external_id, channels)
+    db.commit()
+    return {
+        "id": staff.external_id, "name": staff.name, "email": staff.email,
+        "role": staff.role, "active": staff.active, "linked": False,
+        "channels": sorted(channels),
+    }
 
 
 @router.put("/staff/admin/directory/{external_id}")
 def update_staff_permissions(
     external_id: str, payload: StaffPermissionsIn,
-    _admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
+    admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
 ):
     staff = db.get(MessagingStaff, external_id)
     if not staff:
         raise HTTPException(404, "Empleado no encontrado")
     channels = set(payload.channels)
-    if not channels <= STAFF_CHANNELS:
-        raise HTTPException(422, "Canal no valido")
-    db.query(MessagingStaffChannel).filter(
-        MessagingStaffChannel.staff_external_id == external_id,
-    ).delete(synchronize_session=False)
-    db.add_all([
-        MessagingStaffChannel(staff_external_id=external_id, channel=channel)
-        for channel in sorted(channels)
-    ])
+    role = payload.role or staff.role
+    if role not in STAFF_ROLES:
+        raise HTTPException(422, "Rol no valido")
+    if staff.external_id == admin.external_id and (not payload.active or role != "admin"):
+        raise HTTPException(409, "No puedes suspender ni retirar tu propio acceso de administrador")
+    if staff.role == "admin" and staff.active and (not payload.active or role != "admin"):
+        other_admins = int(db.scalar(select(func.count(MessagingStaff.external_id)).where(
+            MessagingStaff.role == "admin", MessagingStaff.active.is_(True),
+            MessagingStaff.external_id != external_id,
+        )) or 0)
+        if not other_admins:
+            raise HTTPException(409, "Debe permanecer al menos un administrador activo")
+    if payload.email is not None:
+        email = _validated_staff_email(payload.email)
+        duplicate = db.scalar(select(MessagingStaff).where(
+            MessagingStaff.email == email,
+            MessagingStaff.external_id != external_id,
+        ))
+        if duplicate:
+            raise HTTPException(409, "Ya existe un usuario con ese email")
+        staff.email = email
+    if payload.name is not None:
+        staff.name = payload.name.strip()
+    _set_staff_channels(db, external_id, channels)
+    staff.role = role
     staff.active = payload.active
+    if not staff.active:
+        _revoke_staff_access(db, external_id)
     db.commit()
-    return {"ok": True, "channels": sorted(channels)}
+    return {
+        "ok": True, "channels": sorted(channels), "role": staff.role,
+        "active": staff.active, "linked": bool(staff.entra_oid),
+    }
+
+
+@router.post("/staff/admin/directory/{external_id}/revoke-sessions")
+def revoke_staff_sessions(
+    external_id: str,
+    admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
+):
+    staff = db.get(MessagingStaff, external_id)
+    if not staff:
+        raise HTTPException(404, "Empleado no encontrado")
+    if staff.external_id == admin.external_id:
+        raise HTTPException(409, "Usa Salir para cerrar tu sesion actual")
+    _revoke_staff_access(db, external_id)
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/staff/admin/organizations")

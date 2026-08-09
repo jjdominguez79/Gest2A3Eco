@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#00345d">
   <link rel="manifest" href="/static/staff-messaging.webmanifest">
-  <link rel="stylesheet" href="/static/staff-messaging.css?v=1">
+  <link rel="stylesheet" href="/static/staff-messaging.css?v=2">
+  <link rel="stylesheet" href="/static/staff-messaging-admin.css?v=2">
   <title>Mensajería del despacho · Gestinem</title>
 </head>
 <body>
@@ -51,7 +52,22 @@
   <dialog id="admin-dialog" class="admin-dialog">
     <form method="dialog" class="dialog-head"><h2>Administración de mensajería</h2><button class="ghost">Cerrar</button></form>
     <div class="admin-grid">
-      <section><h3>Permisos del equipo</h3><div id="staff-directory"></div></section>
+      <section>
+        <h3>Alta de usuarios del despacho</h3>
+        <form id="staff-create-form" class="stack staff-create-form">
+          <label>Nombre<input id="staff-create-name" required maxlength="160"></label>
+          <label>Email corporativo<input id="staff-create-email" type="email" required maxlength="254"></label>
+          <div class="permission-line">
+            <label><input id="staff-create-laboral" type="checkbox"> Laboral</label>
+            <label><input id="staff-create-fiscal" type="checkbox"> Fiscal</label>
+            <label><input id="staff-create-admin" type="checkbox"> Administrador</label>
+          </div>
+          <button class="primary-button">Dar de alta</button>
+        </form>
+        <p id="staff-create-result" role="status"></p>
+        <h3>Usuarios y permisos</h3>
+        <div id="staff-directory"></div>
+      </section>
       <section><h3>Activar cliente / invitar</h3>
         <form id="invite-form" class="stack">
           <label>Código de empresa<input id="invite-code" required></label>
@@ -66,6 +82,6 @@
     </div>
   </dialog>
   <div id="toast" class="toast" hidden></div>
-  <script src="/static/staff-messaging.js?v=1"></script>
+  <script src="/static/staff-messaging.js?v=2"></script>
 </body>
 </html>

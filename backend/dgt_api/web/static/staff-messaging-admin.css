@@ -1,0 +1,55 @@
+.staff-row {
+  grid-template-columns: 1fr;
+  gap: .65rem;
+  padding: .9rem 0;
+}
+
+.staff-row .staff-status {
+  display: inline-block;
+  margin-top: .3rem;
+  padding: .15rem .45rem;
+  border-radius: 999px;
+  background: #e8eff4;
+  color: var(--brand);
+  font-size: .72rem;
+}
+
+.staff-row .staff-status.suspended {
+  background: #f9e2e2;
+  color: #8c2525;
+}
+
+.staff-checks,
+.staff-actions,
+.permission-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .6rem;
+  align-items: center;
+}
+
+.staff-checks label,
+.permission-line label {
+  font-weight: 500;
+}
+
+.staff-actions {
+  justify-content: flex-end;
+}
+
+.staff-create-form {
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.stack .permission-line input,
+.staff-checks input {
+  display: inline;
+  width: auto;
+  margin: 0;
+}
+
+.danger {
+  background: #f9e2e2;
+  color: #8c2525;
+}
