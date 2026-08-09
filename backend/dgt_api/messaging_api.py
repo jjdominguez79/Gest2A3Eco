@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from backend.dgt_api.config import get_settings
 from backend.dgt_api.database import SessionLocal
 from backend.dgt_api.messaging_models import (
-    MessagingAttachment, MessagingClient, MessagingConversation, MessagingDevice, MessagingDownload,
+    MessagingAttachment, MessagingClient, MessagingClientPushSubscription, MessagingConversation, MessagingDevice, MessagingDownload,
     MessagingEvent, MessagingInvitation, MessagingMessage, MessagingOrganization,
     MessagingPasswordReset, MessagingPresence, MessagingRead, MessagingSession, MessagingStaff,
     MessagingPushSubscription, MessagingStaffAuthFlow, MessagingStaffChannel, MessagingStaffSession,
@@ -395,6 +395,34 @@ def _queue_staff_pushes(
         }, payload)
 
 
+def _queue_client_pushes(
+    db: Session, background: BackgroundTasks, conv: MessagingConversation,
+) -> None:
+    if not push_configured():
+        return
+    client_ids = list(db.scalars(select(MessagingClient.id).where(
+        MessagingClient.organization_id == conv.organization_id,
+        MessagingClient.active.is_(True),
+    )))
+    if not client_ids:
+        return
+    subscriptions = db.scalars(select(MessagingClientPushSubscription).where(
+        MessagingClientPushSubscription.client_id.in_(client_ids),
+        MessagingClientPushSubscription.active.is_(True),
+    )).all()
+    payload = {
+        "title": "Nuevo mensaje de Gestinem",
+        "body": "Tienes una nueva respuesta del despacho.",
+        "url": f"/mensajes?conversation={conv.id}",
+        "tag": f"client-conversation-{conv.id}",
+    }
+    for subscription in subscriptions:
+        background.add_task(send_push, {
+            "endpoint": subscription.endpoint,
+            "keys": {"p256dh": subscription.p256dh, "auth": subscription.auth},
+        }, payload)
+
+
 def _create_message(
     db: Session, conv: MessagingConversation, *, actor_type: str, actor_id: str,
     actor_name: str, body: str, idempotency_key: str, files: list[UploadFile],
@@ -693,6 +721,62 @@ def test_staff_push(
         "body": "Este equipo recibira los nuevos mensajes asignados.",
         "url": "/equipo/mensajes",
         "tag": "gestinem-push-test",
+    }
+    delivered = sum(bool(send_push({
+        "endpoint": item.endpoint,
+        "keys": {"p256dh": item.p256dh, "auth": item.auth},
+    }, payload)) for item in subscriptions)
+    if not delivered:
+        raise HTTPException(502, "El navegador no ha aceptado la notificacion de prueba")
+    return {"ok": True, "delivered": delivered}
+
+
+@router.get("/client/push/config")
+def client_push_config(_client_user: MessagingClient = Depends(_client)):
+    return {
+        "enabled": push_configured(),
+        "public_key": get_settings().messaging_vapid_public_key if push_configured() else "",
+    }
+
+
+@router.post("/client/push/subscriptions")
+def subscribe_client_push(
+    payload: PushSubscriptionIn, client: MessagingClient = Depends(_client),
+    db: Session = Depends(get_db),
+):
+    item = db.scalar(select(MessagingClientPushSubscription).where(
+        MessagingClientPushSubscription.endpoint == payload.endpoint,
+    ))
+    if not item:
+        item = MessagingClientPushSubscription(
+            client_id=client.id, endpoint=payload.endpoint,
+            p256dh=payload.p256dh, auth=payload.auth,
+        )
+    else:
+        item.client_id = client.id
+        item.p256dh, item.auth, item.active = payload.p256dh, payload.auth, True
+    db.add(item)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/client/push/test")
+def test_client_push(
+    client: MessagingClient = Depends(_client), db: Session = Depends(get_db),
+):
+    if not push_configured():
+        raise HTTPException(503, "Los avisos push no estan configurados")
+    subscriptions = db.scalars(select(MessagingClientPushSubscription).where(
+        MessagingClientPushSubscription.client_id == client.id,
+        MessagingClientPushSubscription.active.is_(True),
+    )).all()
+    if not subscriptions:
+        raise HTTPException(409, "Este dispositivo no tiene los avisos activados")
+    payload = {
+        "title": "Avisos de Gestinem activados",
+        "body": "Recibiras un aviso cuando el despacho te responda.",
+        "url": "/mensajes",
+        "tag": "gestinem-client-push-test",
     }
     delivered = sum(bool(send_push({
         "endpoint": item.endpoint,
@@ -1300,6 +1384,8 @@ def post_message(
     )
     if audience == "client":
         _queue_staff_pushes(db, background, conv)
+    if audience == "staff":
+        _queue_client_pushes(db, background, conv)
     if audience == "staff" and mail_configured():
         clients = db.scalars(select(MessagingClient).where(
             MessagingClient.organization_id == conv.organization_id,

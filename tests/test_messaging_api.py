@@ -350,6 +350,16 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
         "/api/v1/messaging/client/conversations", headers=client_auth,
     ).json()
     general = next(row for row in conversations if row["kind"] == "fiscal")
+    assert client.post(
+        "/api/v1/messaging/client/push/subscriptions", headers=client_auth,
+        json={
+            "endpoint": "https://push.example.test/client-ana",
+            "p256dh": "public-key-client-ana", "auth": "auth-client-ana",
+        },
+    ).status_code == 200
+    assert client.post(
+        "/api/v1/messaging/client/push/test", headers=client_auth,
+    ).status_code == 503
 
     sent = client.post(
         f"/api/v1/messaging/client/conversations/{general['id']}/messages",
@@ -366,7 +376,13 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
         "/api/v1/messaging/staff/push/test", headers=staff7,
     ).status_code == 503
     monkeypatch.setattr(messaging_api, "push_configured", lambda: True)
-    monkeypatch.setattr(messaging_api, "send_push", lambda _subscription, _payload: True)
+    push_payloads = []
+
+    def fake_push(_subscription, payload):
+        push_payloads.append(payload)
+        return True
+
+    monkeypatch.setattr(messaging_api, "send_push", fake_push)
     assert client.post(
         "/api/v1/messaging/staff/push/subscriptions", headers=staff7,
         json={
@@ -379,6 +395,11 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
     )
     assert push_test.status_code == 200
     assert push_test.json()["delivered"] == 1
+    client_push_test = client.post(
+        "/api/v1/messaging/client/push/test", headers=client_auth,
+    )
+    assert client_push_test.status_code == 200
+    assert client_push_test.json()["delivered"] == 1
     avatar = BytesIO()
     Image.new("RGB", (80, 80), "#145a86").save(avatar, format="PNG")
     assert client.put(
@@ -446,6 +467,7 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
     )
     outgoing_id = outgoing.json()["attachments"][0]["id"]
     assert outgoing.json()["author_name"] == "Titular fiscal"
+    assert any(payload["title"] == "Nuevo mensaje de Gestinem" for payload in push_payloads)
     client_messages = client.get(
         f"/api/v1/messaging/client/conversations/{general['id']}/messages",
         headers=client_auth,

@@ -1,0 +1,57 @@
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+
+.notification-button {
+  background: #fff3cd;
+  color: #704d00;
+  box-shadow: inset 0 0 0 1px #e7c45b;
+}
+
+.notification-button.active {
+  background: #e3f4e8;
+  color: #17663a;
+  box-shadow: inset 0 0 0 1px #9bcbaa;
+}
+
+.notification-button.blocked {
+  background: #fde8e7;
+  color: #9b1c1c;
+  box-shadow: inset 0 0 0 1px #e6aaa6;
+}
+
+@media (max-width: 600px) {
+  .chat header {
+    gap: .45rem;
+    padding: .65rem;
+  }
+
+  .header-brand {
+    min-width: 0;
+    gap: .45rem;
+  }
+
+  .header-brand img {
+    width: 92px;
+  }
+
+  .chat header small {
+    max-width: 92px;
+    overflow: hidden;
+    padding-left: .45rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .header-actions {
+    gap: .3rem;
+  }
+
+  .header-actions button {
+    padding: .52rem .58rem;
+    font-size: .76rem;
+    white-space: nowrap;
+  }
+}

@@ -150,6 +150,20 @@ class MessagingClient(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class MessagingClientPushSubscription(Base):
+    __tablename__ = "msg_client_push_subscriptions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    client_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_clients.id", ondelete="CASCADE"), index=True,
+    )
+    endpoint: Mapped[str] = mapped_column(Text, unique=True)
+    p256dh: Mapped[str] = mapped_column(Text)
+    auth: Mapped[str] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class MessagingInvitation(Base):
     __tablename__ = "msg_invitations"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)

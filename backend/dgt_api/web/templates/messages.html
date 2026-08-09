@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/static/messaging.css?v=4">
   <link rel="stylesheet" href="/static/messaging-avatar.css?v=4">
   <link rel="stylesheet" href="/static/messaging-files.css?v=1">
+  <link rel="stylesheet" href="/static/messaging-notifications.css?v=1">
 </head>
 <body>
   <main class="shell">
@@ -41,7 +42,7 @@
     </section>
 
     <section id="chat" class="chat" hidden>
-      <header><div class="header-brand"><img src="/static/gestinem-logo.png" alt="Gestinem"><small id="client-name"></small></div><button id="logout" class="secondary">Salir</button></header>
+      <header><div class="header-brand"><img src="/static/gestinem-logo.png" alt="Gestinem"><small id="client-name"></small></div><div class="header-actions"><button id="client-push-enable" class="notification-button" hidden>Activar avisos</button><button id="logout" class="secondary">Salir</button></div></header>
       <nav id="conversations" aria-label="Conversaciones"></nav>
       <section id="thread" class="thread" aria-live="polite"></section>
       <form id="composer" class="composer">
@@ -53,6 +54,6 @@
       <p id="chat-error" class="error" role="alert"></p>
     </section>
   </main>
-  <script src="/static/messaging.js?v=5"></script>
+  <script src="/static/messaging.js?v=6"></script>
 </body>
 </html>

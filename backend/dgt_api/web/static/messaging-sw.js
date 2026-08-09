@@ -1,5 +1,7 @@
-const CACHE='gestinem-messaging-v5';
-const ASSETS=['/mensajes','/static/messaging.css?v=4','/static/messaging-files.css?v=1','/static/messaging.js?v=5','/static/messaging.webmanifest','/static/gestinem-logo.png'];
+const CACHE='gestinem-messaging-v6';
+const ASSETS=['/mensajes','/static/messaging.css?v=4','/static/messaging-files.css?v=1','/static/messaging-notifications.css?v=1','/static/messaging.js?v=6','/static/messaging.webmanifest','/static/gestinem-logo.png'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS))));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key))))));
 self.addEventListener('fetch',event=>{if(event.request.method==='GET'&&new URL(event.request.url).origin===location.origin)event.respondWith(fetch(event.request).catch(()=>caches.match(event.request))) });
+self.addEventListener('push',event=>{const data=event.data?event.data.json():{};event.waitUntil(self.registration.showNotification(data.title||'Gestinem',{body:data.body||'Tienes un mensaje nuevo',icon:'/static/gestinem-logo.png',badge:'/static/gestinem-logo.png',tag:data.tag||'gestinem-client-message',data:{url:data.url||'/mensajes'}}))});
+self.addEventListener('notificationclick',event=>{event.notification.close();const target=new URL(event.notification.data.url,self.location.origin).href;event.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(windows=>{for(const window of windows){if('focus' in window){window.navigate(target);return window.focus()}}return clients.openWindow(target)}))});

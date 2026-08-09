@@ -18,7 +18,7 @@
   color: #9b1c1c;
 }
 
-@media (max-width: 700px) {
+@media (max-width: 900px) {
   body {
     overflow: hidden;
   }
