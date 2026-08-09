@@ -71,6 +71,12 @@ def startup():
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_msg_staff_entra_oid_asignado "
             "ON msg_staff(entra_oid) WHERE entra_oid <> ''"
         ))
+        conn.execute(text(
+            "UPDATE msg_staff AS staff SET entra_oid=staff.external_id "
+            "WHERE staff.entra_oid='' AND staff.email<>'' AND EXISTS ("
+            "SELECT 1 FROM msg_staff_sessions AS session "
+            "WHERE session.staff_external_id=staff.external_id)"
+        ))
         conn.execute(text("UPDATE msg_conversations SET kind='fiscal' WHERE kind='general'"))
     with SessionLocal() as db:
         for org in db.scalars(select(messaging_models.MessagingOrganization)).all():
