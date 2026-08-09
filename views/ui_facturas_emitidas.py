@@ -466,6 +466,46 @@ class TercerosGlobalDialog(tk.Toplevel):
     def ask_yes_no(self, title, message):
         return messagebox.askyesno(title, message)
 
+    def ask_share_channel(self) -> str | None:
+        dlg = tk.Toplevel(self)
+        dlg.title("Compartir factura")
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        result = {"value": None}
+        frame = ttk.Frame(dlg, padding=18)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame, text="¿Cómo quieres enviar la factura?",
+            font=("Segoe UI", 11, "bold"),
+        ).pack(anchor="w", pady=(0, 12))
+        ttk.Label(
+            frame,
+            text=(
+                "Mensajería la enviará al canal Contable / Fiscal del cliente.\n"
+                "Correo electrónico mantiene el envío habitual."
+            ),
+            justify="left",
+        ).pack(anchor="w", pady=(0, 14))
+
+        def choose(value):
+            result["value"] = value
+            dlg.destroy()
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill="x")
+        ttk.Button(
+            buttons, text="Mensajería interna",
+            command=lambda: choose("mensajeria"), style="Primary.TButton",
+        ).pack(side="left")
+        ttk.Button(
+            buttons, text="Correo electrónico", command=lambda: choose("email"),
+        ).pack(side="left", padx=8)
+        ttk.Button(buttons, text="Cancelar", command=dlg.destroy).pack(side="right")
+        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+        dlg.grab_set()
+        dlg.wait_window(dlg)
+        return result["value"]
+
     def show_info(self, title, message):
         messagebox.showinfo(title, message)
 

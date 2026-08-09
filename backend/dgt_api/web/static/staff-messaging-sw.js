@@ -1,5 +1,5 @@
-const CACHE='gestinem-staff-messaging-v7';
-const ASSETS=['/equipo/mensajes','/static/staff-messaging.css?v=4','/static/staff-messaging-responsive.css?v=2','/static/staff-messaging-admin.css?v=4','/static/messaging-avatar.css?v=4','/static/messaging-files.css?v=1','/static/staff-messaging.js?v=8','/static/staff-messaging.webmanifest?v=2','/static/gestinem-logo.png','/static/gestinem-icon-192.png','/static/gestinem-icon-512.png'];
+const CACHE='gestinem-staff-messaging-v8';
+const ASSETS=['/equipo/mensajes','/static/staff-messaging.css?v=4','/static/staff-messaging-responsive.css?v=2','/static/staff-messaging-admin.css?v=4','/static/messaging-avatar.css?v=4','/static/messaging-files.css?v=1','/static/staff-messaging.js?v=9','/static/staff-messaging.webmanifest?v=2','/static/gestinem-logo.png','/static/gestinem-icon-192.png','/static/gestinem-icon-512.png'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS))));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith('gestinem-staff-messaging-')&&key!==CACHE).map(key=>caches.delete(key))))));
 self.addEventListener('fetch',event=>{if(event.request.method==='GET'&&new URL(event.request.url).origin===location.origin)event.respondWith(fetch(event.request).catch(()=>caches.match(event.request)))});

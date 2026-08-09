@@ -130,7 +130,7 @@ byId('internal-direct-form').onsubmit=async event=>{event.preventDefault();try{c
 
 byId('admin-open').onclick=async()=>{await loadAdmin();byId('admin-dialog').showModal()};
 async function loadAdmin(){
-  const staff=await request('/staff/admin/directory');const root=byId('staff-directory');root.replaceChildren(...staff.map(row=>{
+  const [staff,organizations]=await Promise.all([request('/staff/admin/directory'),request('/staff/admin/organizations')]);const root=byId('staff-directory');root.replaceChildren(...staff.map(row=>{
     const box=document.createElement('div');box.className='staff-row';const who=document.createElement('div');const strong=document.createElement('strong');strong.textContent=row.name;const small=document.createElement('small');small.textContent=row.email||row.id;
     const status=document.createElement('span');status.className='staff-status'+(row.active?'':' suspended');status.textContent=row.active?(row.linked?'Acceso activado':'Pendiente del primer acceso'):'Suspendido';who.append(strong,small,status);
     const identity=document.createElement('div');identity.className='staff-identity';const avatar=document.createElement('div');avatar.className='staff-avatar';if(row.avatar_configured){const image=document.createElement('img');image.src=`${API}/staff/avatars/${row.id}?v=${Date.now()}`;image.alt=`Imagen de ${row.chat_alias||row.name}`;avatar.append(image)}else avatar.textContent=(row.chat_alias||row.name||'?').slice(0,1).toUpperCase();identity.append(avatar,who);
@@ -145,6 +145,7 @@ async function loadAdmin(){
     const save=document.createElement('button');save.type='button';save.className='ghost';save.textContent='Guardar';save.onclick=async()=>{const channels=[...checks.querySelectorAll('input[data-channel]:checked')].map(input=>input.dataset.channel);try{await request(`/staff/admin/directory/${row.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({channels,active:activeCheck.checked,role:adminCheck.checked?'admin':'empleado',chat_alias:alias.value.trim()})});if(avatarFile.files[0]){const data=new FormData();data.append('avatar',avatarFile.files[0]);await request(`/staff/admin/directory/${row.id}/avatar`,{method:'PUT',body:data})}toast('Usuario actualizado');await loadAdmin()}catch(error){toast(error.message)}};actions.append(save);box.append(identity,profile,checks,actions);return box;
   }));
   const owner=byId('invite-owner');owner.replaceChildren(...staff.filter(row=>row.active).map(row=>{const option=document.createElement('option');option.value=row.id;option.textContent=`${row.name} (${row.email||row.id})`;option.selected=row.id===me.id;return option}));
+  const organization=byId('invite-organization');const available=organizations.filter(row=>row.active);const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent=available.length?'Seleccione un cliente':'No hay clientes sincronizados';organization.replaceChildren(placeholder,...available.map(row=>{const option=document.createElement('option');option.value=row.company_code;option.dataset.name=row.name;option.textContent=`${row.name} (${row.company_code})`;return option}));
 }
 byId('staff-create-form').onsubmit=async event=>{
   event.preventDefault();const result=byId('staff-create-result');result.textContent='';
@@ -156,9 +157,9 @@ byId('staff-create-form').onsubmit=async event=>{
   }catch(error){result.textContent=error.message}
 };
 byId('invite-form').onsubmit=async event=>{
-  event.preventDefault();const code=byId('invite-code').value.trim();
+  event.preventDefault();const organization=byId('invite-organization');const code=organization.value;const company=organization.selectedOptions[0]?.dataset.name||'';
   try{
-    await request(`/staff/admin/organizations/${encodeURIComponent(code)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({company_code:code,name:byId('invite-company').value.trim(),private_owner_external_id:byId('invite-owner').value,active:true})});
+    await request(`/staff/admin/organizations/${encodeURIComponent(code)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({company_code:code,name:company,private_owner_external_id:byId('invite-owner').value,active:true})});
     const isTest=byId('invite-test').checked;
     const result=await request('/staff/admin/invitations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({company_code:code,name:byId('invite-name').value.trim(),email:byId('invite-email').value.trim(),send_email:!isTest})});
     const status=byId('admin-result');status.replaceChildren(document.createTextNode(result.email_queued?'Invitación enviada por email. ':'Cuenta de prueba creada sin enviar email. '));

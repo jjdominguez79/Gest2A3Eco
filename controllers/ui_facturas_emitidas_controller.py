@@ -917,7 +917,10 @@ class FacturasEmitidasController:
             return
         if not self._ensure_write("Necesitas permiso de escritura para enviar y registrar la factura."):
             return
-        canal = "email"
+        ask_channel = getattr(self._view, "ask_share_channel", None)
+        canal = ask_channel() if callable(ask_channel) else "email"
+        if not canal:
+            return
 
         pdf_path = self._resolve_app_pdf(fac)
         if not pdf_path:
@@ -1001,6 +1004,53 @@ class FacturasEmitidasController:
                 internet_message_id=result.internet_message_id,
             )
             self._view.show_info("Gest2A3Eco", "Email enviado y registrado en Comunicaciones.")
+
+        elif canal == "mensajeria":
+            from services.mensajeria_service import MensajeriaRemoteClient
+
+            empresa_cliente = self._gestor.buscar_empresa_por_nif(cliente.get("nif"))
+            if not empresa_cliente:
+                self._view.show_warning(
+                    "Gest2A3Eco",
+                    "El destinatario de la factura no coincide por NIF con ningún cliente "
+                    "de Gest2A3Eco. No se ha enviado para evitar usar un chat incorrecto.",
+                )
+                return
+            codigo_cliente = str(empresa_cliente.get("codigo") or "").strip()
+            nombre_cliente = str(empresa_cliente.get("nombre") or codigo_cliente).strip()
+            user = getattr(getattr(self._view, "session", None), "user", None)
+            if not user:
+                self._view.show_error("Gest2A3Eco", "No se pudo identificar al usuario que realiza el envío.")
+                return
+            client = MensajeriaRemoteClient(user_id=user.id, user_name=user.nombre)
+            if not client.configured:
+                self._view.show_warning(
+                    "Gest2A3Eco", "La mensajería no está configurada en este equipo.",
+                )
+                return
+            try:
+                role = "admin" if self._is_admin() else "empleado"
+                client.sync_staff(role=role, channels=None if role == "admin" else ["fiscal"])
+                client.sync_organization(code=codigo_cliente, name=nombre_cliente)
+                conversation = client.company_conversation(codigo_cliente, "fiscal")
+                if not conversation:
+                    raise ValueError("No existe el canal Contable / Fiscal del cliente.")
+                if int(conversation.get("active_client_count") or 0) < 1:
+                    self._view.show_warning(
+                        "Gest2A3Eco",
+                        "Este cliente todavía no tiene ningún usuario activo en la mensajería. "
+                        "Envíale primero una invitación.",
+                    )
+                    return
+                body = f"Le enviamos la factura {numero}." if numero else "Le enviamos una factura."
+                client.send_message(conversation["id"], body, attachment_paths)
+            except Exception as exc:
+                self._view.show_error("Gest2A3Eco", f"No se pudo enviar por mensajería:\n{exc}")
+                return
+            self._view.show_info(
+                "Gest2A3Eco",
+                f"Factura enviada al canal Contable / Fiscal de {nombre_cliente}.",
+            )
 
         if self._view.ask_yes_no("Gest2A3Eco", "¿Marcar factura como enviada?"):
             if not self._ensure_write("Necesitas permiso de escritura para marcar la factura como enviada."):

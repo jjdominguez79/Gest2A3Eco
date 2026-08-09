@@ -193,6 +193,50 @@ def test_cuenta_cliente_prueba_genera_enlace_sin_enviar_email(tmp_path, monkeypa
     ).status_code == 200
 
 
+def test_worker_sincroniza_directorio_de_empresas_sin_borrar_titular_privado(tmp_path):
+    client = _client(tmp_path)
+    internal = {"X-API-Key": "test-secret"}
+    assert client.put(
+        "/api/v1/messaging/internal/staff/admin-local", headers=internal,
+        json={
+            "external_id": "admin-local", "name": "Administrador",
+            "email": "admin@gestinem.es", "role": "admin", "active": True,
+        },
+    ).status_code == 200
+    assert client.put(
+        "/api/v1/messaging/internal/organizations/E00042", headers=internal,
+        json={
+            "company_code": "E00042", "name": "Nombre anterior",
+            "private_owner_external_id": "admin-local", "active": True,
+        },
+    ).status_code == 200
+
+    synced = client.put(
+        "/api/v1/messaging/sync/organizations",
+        headers={"X-Sync-Token": "sync-secret"},
+        json=[
+            {"company_code": "E00042", "name": "Cliente actualizado", "active": True},
+            {"company_code": "E00043", "name": "Cliente nuevo", "active": True},
+        ],
+    )
+    assert synced.status_code == 200
+    assert synced.json()["synchronized"] == 2
+
+    device = client.post(
+        "/api/v1/messaging/internal/devices/puesto-admin", headers=internal,
+    ).json()
+    rows = client.get(
+        "/api/v1/messaging/staff/admin/organizations",
+        headers={
+            **internal, "X-Device-Id": "puesto-admin",
+            "X-Device-Token": device["device_token"], "X-Staff-Id": "admin-local",
+        },
+    ).json()
+    updated = next(row for row in rows if row["company_code"] == "E00042")
+    assert updated["name"] == "Cliente actualizado"
+    assert updated["private_owner_external_id"] == "admin-local"
+
+
 def test_mensaje_sin_adjunto_no_inicializa_almacenamiento(tmp_path, monkeypatch):
     client = _client(tmp_path)
     internal = {"X-API-Key": "test-secret"}

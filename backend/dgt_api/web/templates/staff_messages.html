@@ -90,8 +90,8 @@
       </section>
       <section><h3>Activar cliente / invitar</h3>
         <form id="invite-form" class="stack">
-          <label>Código de empresa<input id="invite-code" required></label>
-          <label>Nombre de empresa<input id="invite-company" required></label>
+          <label>Cliente de Gest2A3Eco<select id="invite-organization" required></select></label>
+          <small id="invite-directory-help">El listado se sincroniza automáticamente desde Gest2A3Eco.</small>
           <label>Chat privado con<select id="invite-owner" required></select></label>
           <label>Nombre del contacto<input id="invite-name" required></label>
           <label>Email del contacto<input id="invite-email" type="email" required></label>
@@ -103,6 +103,6 @@
     </div>
   </dialog>
   <div id="toast" class="toast" hidden></div>
-  <script src="/static/staff-messaging.js?v=8"></script>
+  <script src="/static/staff-messaging.js?v=9"></script>
 </body>
 </html>

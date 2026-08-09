@@ -61,7 +61,7 @@ def get_db():
 class OrganizationIn(BaseModel):
     company_code: str = Field(min_length=1, max_length=32)
     name: str = Field(min_length=1, max_length=200)
-    private_owner_external_id: str = ""
+    private_owner_external_id: str | None = None
     active: bool = True
 
 
@@ -314,9 +314,15 @@ def _serialize_conversation(db: Session, conv: MessagingConversation) -> dict:
         select(MessagingMessage).where(MessagingMessage.conversation_id == conv.id)
         .order_by(MessagingMessage.created_at.desc()).limit(1)
     )
+    active_client_count = int(db.scalar(select(func.count(MessagingClient.id)).where(
+        MessagingClient.organization_id == conv.organization_id,
+        MessagingClient.active.is_(True),
+        MessagingClient.password_hash != "",
+    )) or 0)
     return {
         "id": conv.id, "company_code": org.company_code, "company_name": org.name,
         "kind": conv.kind, "state": conv.state,
+        "active_client_count": active_client_count,
         "assigned_staff_external_id": conv.assigned_staff_external_id,
         "updated_at": conv.updated_at.isoformat(),
         "last_message": _serialize_message(db, last) if last else None,
@@ -514,7 +520,8 @@ def put_organization(company_code: str, payload: OrganizationIn, db: Session = D
         ])
     item.name = payload.name
     item.active = payload.active
-    item.private_owner_external_id = payload.private_owner_external_id
+    if payload.private_owner_external_id is not None:
+        item.private_owner_external_id = payload.private_owner_external_id
     db.commit()
     return {"id": item.id, "ok": True}
 
@@ -1561,6 +1568,30 @@ def sync_pending_attachments(db: Session = Depends(get_db)):
             "author_name": message.author_name, "created_at": item.created_at.isoformat(),
         })
     return result
+
+
+@router.put("/sync/organizations", dependencies=[Depends(_sync_worker)])
+def sync_organizations(payload: list[OrganizationIn], db: Session = Depends(get_db)):
+    synchronized = 0
+    for row in payload:
+        code = row.company_code.strip()
+        item = db.scalar(select(MessagingOrganization).where(
+            MessagingOrganization.company_code == code,
+        ))
+        if not item:
+            item = MessagingOrganization(company_code=code, name=row.name.strip())
+            db.add(item); db.flush()
+            db.add_all([
+                MessagingConversation(organization_id=item.id, kind="laboral"),
+                MessagingConversation(organization_id=item.id, kind="fiscal"),
+                MessagingConversation(organization_id=item.id, kind="private"),
+            ])
+        item.name = row.name.strip()
+        item.active = row.active
+        db.add(item)
+        synchronized += 1
+    db.commit()
+    return {"ok": True, "synchronized": synchronized}
 
 
 @router.post("/sync/attachments/{attachment_id}/claim", dependencies=[Depends(_sync_worker)])

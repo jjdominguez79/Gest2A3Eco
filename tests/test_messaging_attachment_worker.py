@@ -35,6 +35,10 @@ class Session:
         self.calls.append(("POST", url, kwargs))
         return Response(payload={"ok": True})
 
+    def put(self, url, **kwargs):
+        self.calls.append(("PUT", url, kwargs))
+        return Response(payload={"ok": True, "synchronized": len(kwargs.get("json") or [])})
+
 
 def test_worker_descarga_verifica_guarda_y_confirma(tmp_path, monkeypatch):
     content = b"%PDF-adjunto-chat"
@@ -61,3 +65,24 @@ def test_worker_descarga_verifica_guarda_y_confirma(tmp_path, monkeypatch):
     assert saved[0][1] == destination
     assert saved[0][2] == item["sha256"]
     assert any(method == "POST" and url.endswith("/confirm") for method, url, _ in session.calls)
+
+
+def test_worker_sincroniza_directorio_de_clientes(tmp_path, monkeypatch):
+    session = Session({}, b"")
+    config = SimpleNamespace(
+        api_url="https://mensajes.example.test", sync_token="secret",
+        repository_dir=tmp_path, postgres_dsn="unused", worker_id="synology",
+        interval_seconds=60,
+    )
+    worker = MessagingAttachmentWorker(config, session=session)
+    rows = [
+        {"company_code": "E00042", "name": "Cliente Uno", "active": True},
+        {"company_code": "E00043", "name": "Cliente Dos", "active": False},
+    ]
+    monkeypatch.setattr(worker, "_load_organizations", lambda: rows)
+
+    assert worker.sync_organizations() == 2
+    method, url, kwargs = session.calls[-1]
+    assert method == "PUT"
+    assert url.endswith("/sync/organizations")
+    assert kwargs["json"] == rows

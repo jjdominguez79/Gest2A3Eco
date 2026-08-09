@@ -54,11 +54,20 @@ class MensajeriaRemoteClient:
             raise ValueError("Configura messaging_api_url y messaging_api_key.")
         return f"{self.base_url}/api/v1/messaging{path}"
 
-    def sync_staff(self, role: str = "empleado", active: bool = True) -> None:
+    def sync_staff(
+        self, role: str = "empleado", active: bool = True,
+        channels: list[str] | None = None,
+    ) -> None:
         self.ensure_device_enrolled()
+        payload = {
+            "external_id": self.user_id, "name": self.user_name,
+            "role": role, "active": active,
+        }
+        if channels is not None:
+            payload["channels"] = channels
         response = self.http.put(
             self._url(f"/internal/staff/{self.user_id}"), headers={"X-API-Key": self.api_key},
-            json={"external_id": self.user_id, "name": self.user_name, "role": role, "active": active}, timeout=20,
+            json=payload, timeout=20,
         )
         response.raise_for_status()
 
@@ -76,7 +85,10 @@ class MensajeriaRemoteClient:
         cfg["messaging_device_token"] = self.device_token
         save_app_config(cfg)
 
-    def sync_organization(self, *, code: str, name: str, private_owner_id: str = "", active: bool = True) -> None:
+    def sync_organization(
+        self, *, code: str, name: str,
+        private_owner_id: str | None = None, active: bool = True,
+    ) -> None:
         response = self.http.put(
             self._url(f"/internal/organizations/{code}"), headers={"X-API-Key": self.api_key},
             json={"company_code": code, "name": name, "private_owner_external_id": private_owner_id, "active": active}, timeout=20,
@@ -95,6 +107,15 @@ class MensajeriaRemoteClient:
         response = self.http.get(self._url("/staff/conversations"), headers=self._headers(), timeout=20)
         response.raise_for_status()
         return response.json()
+
+    def company_conversation(self, company_code: str, kind: str) -> dict | None:
+        code = str(company_code or "").strip().upper()
+        channel = str(kind or "").strip().lower()
+        return next((
+            row for row in self.list_conversations()
+            if str(row.get("company_code") or "").strip().upper() == code
+            and str(row.get("kind") or "").strip().lower() == channel
+        ), None)
 
     def list_messages(self, conversation_id: str) -> list[dict]:
         response = self.http.get(
