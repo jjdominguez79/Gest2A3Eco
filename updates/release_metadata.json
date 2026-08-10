@@ -1,6 +1,6 @@
 {
-  "version": "1.6.1",
-  "tag": "v1.6.1",
-  "changelog": "Mejoras importantes en la gestion de empresas, facturas, albaranes, firmas y comunicaciones. Permite cambiar el codigo A3 de una empresa conservando sus referencias, libera los albaranes al eliminar su factura y regenera sus PDF cuando quedan obsoletos. Simplifica el envio de facturas mediante Outlook con varios adjuntos, sustituye opciones antiguas de SMTP y WhatsApp por la mensajeria de Gestinem, mejora la identificacion de clientes y firmantes, y corrige la sincronizacion del buzon compartido.",
-  "force_update": false
+  "version": "1.6.2",
+  "tag": "v1.6.2",
+  "changelog": "﻿Mejoras introducidas: \n- Posibilidad de enviar por email el albaran y la factura, previsuzalizando ambos documentos para verificar que son correctos.\n- Posibilidad de enviar adjuntos a través de la mensajeria interna del despacho.\n- Al borrar una factura el albaran quedaba como facturado y no se podia modificar.\n- Cuando se modifican datos de una factura el programa genera nuevamente los pdf antes de enviarlos.",
+  "force_update": true
 }

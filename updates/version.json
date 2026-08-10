@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.6.0",
+  "latest_version": "1.6.2",
   "minimum_required_version": "1.5.1",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.6.0/Setup_Gest2A3Eco_1.6.0.exe",
-  "changelog": "Nuevo modulo de mensajeria segura para clientes y equipo del despacho. Incluye canales Laboral, Contable/Fiscal y Privado, chats internos, permisos por usuario, alias y avatares, invitaciones desde el backend, adjuntos integrados con gestion documental, PWA instalable y notificaciones push. Tambien incorpora mejoras de visualizacion en movil, recuperacion de contrasena y estabilidad en el envio de mensajes y documentos.",
-  "force_update": false
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.6.2/Setup_Gest2A3Eco_1.6.2.exe",
+  "changelog": "Posibilidad de enviar por email el albaran y la factura, previsualizando ambos documentos para verificar que son correctos. Posibilidad de enviar adjuntos a traves de la mensajeria interna del despacho. Al borrar una factura el albaran quedaba como facturado y no se podia modificar. Cuando se modifican datos de una factura el programa genera nuevamente los pdf antes de enviarlos.",
+  "force_update": true
 }
