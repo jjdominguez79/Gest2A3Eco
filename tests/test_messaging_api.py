@@ -337,11 +337,21 @@ def test_chats_internos_privados_y_grupos_respetan_permisos(tmp_path):
     ).json()
     assert [row["channel"] for row in fiscal_threads] == ["fiscal"]
 
+    avatar = BytesIO()
+    Image.new("RGB", (90, 90), "#145a86").save(avatar, format="PNG")
+    assert client.put(
+        "/api/v1/messaging/staff/admin/directory/labor/avatar",
+        headers=auth("admin"),
+        files={"avatar": ("laura.png", avatar.getvalue(), "image/png")},
+    ).status_code == 200
     direct = client.post(
         "/api/v1/messaging/staff/internal/direct/labor", headers=auth("admin"),
     )
     assert direct.status_code == 201
     direct_id = direct.json()["id"]
+    assert direct.json()["counterpart_id"] == "labor"
+    assert direct.json()["counterpart_name"] == "Laura"
+    assert direct.json()["counterpart_avatar_url"].endswith("/staff/avatars/labor")
     assert client.get(
         f"/api/v1/messaging/staff/internal/threads/{direct_id}/messages",
         headers=auth("fiscal"),

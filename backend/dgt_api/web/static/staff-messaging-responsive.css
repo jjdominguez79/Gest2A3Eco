@@ -76,7 +76,8 @@
     display: none;
   }
 
-  #client-channels {
+  .nav-section,
+  .shortcut-list {
     display: contents;
   }
 
@@ -86,6 +87,25 @@
     margin: 0;
     padding: .58rem .7rem;
     white-space: nowrap;
+  }
+
+  .staff-shortcut {
+    flex: 0 0 auto;
+    display: flex;
+    width: auto;
+    min-width: 46px;
+    padding: .34rem .45rem;
+    white-space: nowrap;
+  }
+
+  .staff-shortcut .shortcut-copy,
+  .staff-shortcut > .badge {
+    display: none;
+  }
+
+  .shortcut-avatar {
+    width: 32px;
+    height: 32px;
   }
 
   .conversation-list {
@@ -120,6 +140,12 @@
   .thread-head {
     gap: .55rem;
     padding: .7rem;
+  }
+
+  .thread-avatar {
+    width: 40px;
+    height: 40px;
+    flex-basis: 40px;
   }
 
   .mobile-back {

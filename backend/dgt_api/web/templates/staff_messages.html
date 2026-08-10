@@ -7,10 +7,10 @@
   <link rel="manifest" href="/static/staff-messaging.webmanifest?v=2">
   <link rel="apple-touch-icon" href="/static/gestinem-icon-192.png">
   <link rel="stylesheet" href="/static/staff-messaging.css?v=4">
-  <link rel="stylesheet" href="/static/staff-messaging-admin.css?v=4">
+  <link rel="stylesheet" href="/static/staff-messaging-admin.css?v=5">
   <link rel="stylesheet" href="/static/messaging-avatar.css?v=4">
   <link rel="stylesheet" href="/static/messaging-files.css?v=1">
-  <link rel="stylesheet" href="/static/staff-messaging-responsive.css?v=2">
+  <link rel="stylesheet" href="/static/staff-messaging-responsive.css?v=3">
   <title>Mensajería del despacho · Gestinem</title>
 </head>
 <body>
@@ -27,27 +27,32 @@
       <div class="user-actions"><span id="staff-name"></span><button id="push-enable" class="ghost notification-button" hidden>Activar avisos</button><button id="admin-open" class="ghost" hidden>Administrar</button><button id="staff-logout" class="ghost">Salir</button></div>
     </header>
     <aside class="channels">
-      <h2>Espacios</h2>
-      <button id="space-clients" class="channel workspace active">Clientes <span id="badge-clients" class="badge"></span></button>
-      <button id="space-team" class="channel workspace">Equipo <span id="badge-team" class="badge"></span></button>
-      <div id="client-channels">
-      <h2>Bandejas</h2>
-      <button class="channel active" data-channel="all">Todos <span id="badge-all" class="badge"></span></button>
-      <button class="channel" data-channel="laboral">Laboral <span id="badge-laboral" class="badge"></span></button>
-      <button class="channel" data-channel="fiscal">Contable / Fiscal <span id="badge-fiscal" class="badge"></span></button>
-      <button class="channel" data-channel="private">Directos <span id="badge-private" class="badge"></span></button>
-      <button class="channel" data-channel="unread">No leídos</button>
+      <div id="client-navigation" class="nav-section">
+        <h2>Clientes</h2>
+        <button class="channel active" data-channel="all">Todos <span id="badge-all" class="badge"></span></button>
+        <button class="channel" data-channel="laboral" data-permission="laboral">Laboral <span id="badge-laboral" class="badge"></span></button>
+        <button class="channel" data-channel="fiscal" data-permission="fiscal">Contable / Fiscal <span id="badge-fiscal" class="badge"></span></button>
+        <button class="channel" data-channel="private" data-permission="private">Privados con clientes <span id="badge-private" class="badge"></span></button>
+        <button class="channel" data-channel="unread">No leídos <span id="badge-unread" class="badge"></span></button>
+      </div>
+      <div id="team-navigation" class="nav-section">
+        <h2>Equipos</h2>
+        <div id="team-shortcuts" class="shortcut-list"></div>
+      </div>
+      <div id="people-navigation" class="nav-section">
+        <h2 id="people-title">Personas</h2>
+        <div id="people-shortcuts" class="shortcut-list"></div>
       </div>
     </aside>
     <section class="conversation-list">
-      <div class="list-head"><h2 id="list-title">Conversaciones</h2><div><button id="internal-new-direct" class="ghost" hidden>Nuevo privado</button> <button id="refresh" class="icon-button" title="Actualizar">↻</button></div></div>
+      <div class="list-head"><h2 id="list-title">Todos los clientes</h2><button id="refresh" class="icon-button" title="Actualizar">↻</button></div>
       <input id="search" class="search" type="search" placeholder="Buscar cliente">
       <div id="conversation-items"></div>
     </section>
     <section class="thread-panel">
       <div id="empty-thread" class="empty-state"><strong>Selecciona una conversación</strong><span>Los mensajes nuevos aparecerán aquí.</span></div>
       <div id="active-thread" class="thread-layout" hidden>
-        <header class="thread-head"><button id="thread-back" class="mobile-back ghost" type="button">‹ Chats</button><div class="thread-title"><h2 id="thread-company"></h2><span id="thread-channel"></span></div><select id="thread-state"><option value="pendiente">Pendiente</option><option value="en_curso">En curso</option><option value="resuelta">Resuelta</option></select></header>
+        <header class="thread-head"><button id="thread-back" class="mobile-back ghost" type="button">‹ Chats</button><div id="thread-avatar" class="thread-avatar" hidden></div><div class="thread-title"><h2 id="thread-company"></h2><span id="thread-channel"></span></div><select id="thread-state"><option value="pendiente">Pendiente</option><option value="en_curso">En curso</option><option value="resuelta">Resuelta</option></select></header>
         <div id="messages" class="messages" aria-live="polite"></div>
         <form id="composer" class="composer">
           <textarea id="message-body" rows="2" maxlength="10000" placeholder="Escribe un mensaje"></textarea>
@@ -58,14 +63,6 @@
       </div>
     </section>
   </main>
-
-  <dialog id="internal-direct-dialog" class="admin-dialog compact-dialog">
-    <form method="dialog" class="dialog-head"><h2>Nuevo chat privado</h2><button class="ghost">Cerrar</button></form>
-    <form id="internal-direct-form" class="stack dialog-body">
-      <label>Usuario del despacho<select id="internal-direct-member" required></select></label>
-      <button class="primary-button">Abrir conversación</button>
-    </form>
-  </dialog>
 
   <dialog id="admin-dialog" class="admin-dialog">
     <form method="dialog" class="dialog-head"><h2>Administración de mensajería</h2><button class="ghost">Cerrar</button></form>
@@ -103,6 +100,6 @@
     </div>
   </dialog>
   <div id="toast" class="toast" hidden></div>
-  <script src="/static/staff-messaging.js?v=9"></script>
+  <script src="/static/staff-messaging.js?v=10"></script>
 </body>
 </html>

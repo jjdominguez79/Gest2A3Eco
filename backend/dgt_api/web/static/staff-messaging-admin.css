@@ -93,14 +93,124 @@
   color: #8c2525;
 }
 
-.workspace {
-  font-weight: 700;
+.app-shell {
+  grid-template-columns: 260px 340px minmax(420px, 1fr);
 }
 
-#client-channels {
-  margin-top: 1.2rem;
-  padding-top: .8rem;
+.channels {
+  overflow-y: auto;
+}
+
+.nav-section + .nav-section {
+  margin-top: 1rem;
+  padding-top: 1rem;
   border-top: 1px solid var(--line);
+}
+
+.shortcut-list {
+  display: grid;
+  gap: .25rem;
+}
+
+.staff-shortcut {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .6rem;
+  width: 100%;
+  padding: .48rem .55rem;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #30404f;
+  text-align: left;
+  cursor: pointer;
+}
+
+.staff-shortcut:hover,
+.staff-shortcut.active {
+  background: #e4eef5;
+  color: var(--brand);
+}
+
+.staff-shortcut.active {
+  box-shadow: inset 3px 0 var(--accent);
+}
+
+.shortcut-avatar,
+.thread-avatar {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--brand);
+  color: white;
+  font-size: .72rem;
+  font-weight: 800;
+}
+
+.shortcut-avatar {
+  width: 34px;
+  height: 34px;
+}
+
+.shortcut-avatar.group,
+.thread-avatar.group {
+  background: #0876c9;
+}
+
+.thread-avatar.client {
+  border-radius: 12px;
+  background: #e4eef5;
+  color: var(--brand);
+}
+
+.shortcut-avatar img,
+.thread-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.shortcut-copy {
+  min-width: 0;
+}
+
+.shortcut-copy strong,
+.shortcut-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shortcut-copy strong {
+  font-size: .86rem;
+}
+
+.shortcut-copy small {
+  margin-top: .12rem;
+  color: var(--muted);
+  font-size: .68rem;
+}
+
+.thread-avatar {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  font-size: .9rem;
+}
+
+.thread-head {
+  justify-content: flex-start;
+}
+
+.thread-title {
+  flex: 1;
+}
+
+.thread-head select {
+  margin-left: auto;
 }
 
 .compact-dialog {
@@ -116,11 +226,4 @@
     grid-template-columns: 1fr;
   }
 
-  #client-channels {
-    display: flex;
-    gap: .3rem;
-    margin: 0;
-    padding: 0;
-    border: 0;
-  }
 }

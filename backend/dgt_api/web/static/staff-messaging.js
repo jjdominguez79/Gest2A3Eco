@@ -1,7 +1,8 @@
 const API='/api/v1/messaging';
 const byId=id=>document.getElementById(id);
 const channelLabels={laboral:'Laboral',fiscal:'Contable / Fiscal',private:'Directo'};
-let me=null,conversations=[],internalThreads=[],selectedId='',selectedInternalId='',filter='all',space='clients',events=null,selectedStaffFiles=[];
+const filterTitles={all:'Todos los clientes',laboral:'Clientes · Laboral',fiscal:'Clientes · Contable / Fiscal',private:'Privados con clientes',unread:'Mensajes no leídos'};
+let me=null,conversations=[],internalThreads=[],staffDirectory=[],selectedId='',selectedInternalId='',filter='all',space='clients',events=null,selectedStaffFiles=[];
 
 async function request(path,options={}){
   const response=await fetch(API+path,{credentials:'same-origin',...options});
@@ -19,20 +20,25 @@ async function start(){
   try{me=await request('/staff/me')}catch(error){if(error.status===401){byId('staff-login').hidden=false;return}throw error}
   byId('staff-app').hidden=false;byId('staff-name').textContent=me.name;
   byId('admin-open').hidden=me.role!=='admin';
-  await Promise.all([loadConversations(),loadInternalThreads()]);
+  await Promise.all([loadConversations(),loadInternalThreads(),loadStaffDirectory()]);
+  configureNavigation();renderNavigation();
   const requested=new URLSearchParams(location.search).get('conversation');
   const requestedInternal=new URLSearchParams(location.search).get('internal');
   if(requested&&conversations.some(row=>row.id===requested))await selectConversation(requested);
-  if(requestedInternal&&internalThreads.some(row=>row.id===requestedInternal)){switchSpace('team');await selectInternalThread(requestedInternal)}
+  if(requestedInternal&&internalThreads.some(row=>row.id===requestedInternal))await selectInternalThread(requestedInternal);
   await preparePush();startEvents();
 }
 async function loadConversations(){
-  conversations=await request('/staff/conversations');renderConversations();renderBadges();
+  conversations=await request('/staff/conversations');configureNavigation();renderConversations();renderBadges();
   if(selectedId&&!conversations.some(row=>row.id===selectedId))selectConversation('');
 }
 async function loadInternalThreads(){
-  internalThreads=await request('/staff/internal/threads');renderConversations();renderBadges();
+  internalThreads=await request('/staff/internal/threads');renderNavigation();renderBadges();
   if(selectedInternalId&&!internalThreads.some(row=>row.id===selectedInternalId))selectInternalThread('');
+}
+async function loadStaffDirectory(){
+  if(me.role!=='admin'){staffDirectory=[];return}
+  staffDirectory=await request('/staff/admin/directory');renderNavigation();
 }
 function visibleConversations(){
   const query=byId('search').value.trim().toLowerCase();
@@ -42,7 +48,6 @@ function visibleConversations(){
   });
 }
 function renderConversations(){
-  if(space==='team'){renderInternalThreads();return}
   const root=byId('conversation-items');root.replaceChildren(...visibleConversations().map(row=>{
     const button=document.createElement('button');button.className='conversation-item'+(row.id===selectedId?' active':'');
     const top=document.createElement('div');top.className='row';
@@ -57,27 +62,21 @@ function renderConversations(){
     button.append(top,info,preview);button.onclick=()=>selectConversation(row.id);return button;
   }));
 }
-function renderInternalThreads(){
-  const query=byId('search').value.trim().toLowerCase();const root=byId('conversation-items');root.replaceChildren(...internalThreads.filter(row=>!query||row.title.toLowerCase().includes(query)).map(row=>{
-    const button=document.createElement('button');button.className='conversation-item'+(row.id===selectedInternalId?' active':'');
-    const top=document.createElement('div');top.className='row';const name=document.createElement('strong');name.textContent=row.title;const time=document.createElement('small');time.textContent=row.last_message?new Date(row.last_message.created_at).toLocaleString():'';top.append(name,time);
-    const info=document.createElement('div');info.className='row';const kind=document.createElement('span');kind.className='pill';kind.textContent=row.kind==='group'?'Grupo interno':'Privado';info.append(kind);if(row.unread_count){const unread=document.createElement('span');unread.className='pill unread';unread.textContent=String(row.unread_count);info.append(unread)}
-    const preview=document.createElement('p');preview.textContent=row.last_message?.body||'Sin mensajes';button.append(top,info,preview);button.onclick=()=>selectInternalThread(row.id);return button;
-  }))
-}
 function renderBadges(){
   const totals={all:0,laboral:0,fiscal:0,private:0};
   for(const row of conversations){totals.all+=row.unread_count||0;totals[row.kind]=(totals[row.kind]||0)+(row.unread_count||0)}
   for(const key of Object.keys(totals)){const badge=byId(`badge-${key}`);if(badge)badge.textContent=totals[key]?String(totals[key]):''}
-  const internalTotal=internalThreads.reduce((sum,row)=>sum+(row.unread_count||0),0);byId('badge-clients').textContent=totals.all?String(totals.all):'';byId('badge-team').textContent=internalTotal?String(internalTotal):'';
+  const unread=byId('badge-unread');if(unread)unread.textContent=totals.all?String(totals.all):'';
+  const internalTotal=internalThreads.reduce((sum,row)=>sum+(row.unread_count||0),0);renderNavigation();
   const grandTotal=totals.all+internalTotal;if('setAppBadge' in navigator){grandTotal?navigator.setAppBadge(grandTotal):navigator.clearAppBadge()}
 }
 async function selectConversation(id){
-  selectedId=id;renderConversations();byId('empty-thread').hidden=!!id;byId('active-thread').hidden=!id;if(!id)return;
+  space='clients';selectedInternalId='';selectedId=id;renderConversations();renderNavigation();byId('empty-thread').hidden=!!id;byId('active-thread').hidden=!id;if(!id)return;
   const row=conversations.find(item=>item.id===id);if(!row)return;
   byId('staff-app').classList.add('thread-open');
   byId('thread-state').hidden=false;byId('composer-attach').hidden=false;
   byId('thread-company').textContent=`${row.company_name} · ${row.company_code}`;
+  setThreadAvatar('',row.company_name,'client');
   byId('thread-channel').textContent=channelLabels[row.kind]||row.kind;byId('thread-state').value=row.state;
   const messages=await request(`/staff/conversations/${id}/messages`);
   await request(`/staff/conversations/${id}/read`,{method:'POST'});
@@ -85,10 +84,16 @@ async function selectConversation(id){
   await loadConversations();
 }
 async function selectInternalThread(id){
-  selectedInternalId=id;renderConversations();byId('empty-thread').hidden=!!id;byId('active-thread').hidden=!id;if(!id)return;
-  const row=internalThreads.find(item=>item.id===id);if(!row)return;byId('staff-app').classList.add('thread-open');byId('thread-company').textContent=row.title;byId('thread-channel').textContent=row.kind==='group'?'Grupo interno del despacho':'Conversación privada';byId('thread-state').hidden=true;byId('composer-attach').hidden=true;
+  space='team';selectedId='';selectedInternalId=id;renderConversations();renderNavigation();byId('empty-thread').hidden=!!id;byId('active-thread').hidden=!id;if(!id)return;
+  const row=internalThreads.find(item=>item.id===id);if(!row)return;byId('staff-app').classList.add('thread-open');byId('thread-company').textContent=row.title;byId('thread-channel').textContent=row.kind==='group'?'Grupo interno del despacho':'Conversación privada';setThreadAvatar(row.counterpart_avatar_url||'',row.title,row.kind==='group'?'group':'person');byId('thread-state').hidden=true;byId('composer-attach').hidden=true;
   const messages=await request(`/staff/internal/threads/${id}/messages`);await request(`/staff/internal/threads/${id}/read`,{method:'POST'});const root=byId('messages');root.replaceChildren(...messages.map(renderMessage));root.scrollTop=root.scrollHeight;await loadInternalThreads();
 }
+function initials(value){return String(value||'?').split(/\s+/).filter(Boolean).slice(0,2).map(part=>part[0]).join('').toUpperCase()||'?'}
+function setThreadAvatar(url,label,kind){const root=byId('thread-avatar');root.className=`thread-avatar ${kind||''}`;root.replaceChildren();root.hidden=false;if(url){const image=document.createElement('img');image.src=url;image.alt=`Foto de ${label}`;root.append(image)}else{root.textContent=initials(label)}}
+function shortcutButton({label,subtitle='',avatarUrl='',unread=0,kind='',active=false,onClick}){const button=document.createElement('button');button.type='button';button.className='staff-shortcut'+(active?' active':'');const avatar=document.createElement('span');avatar.className=`shortcut-avatar ${kind}`;if(avatarUrl){const image=document.createElement('img');image.src=avatarUrl;image.alt='';avatar.append(image)}else avatar.textContent=initials(label);const text=document.createElement('span');text.className='shortcut-copy';const strong=document.createElement('strong');strong.textContent=label;const small=document.createElement('small');small.textContent=subtitle;text.append(strong,small);button.append(avatar,text);if(unread){const badge=document.createElement('span');badge.className='badge unread';badge.textContent=String(unread);button.append(badge)}button.onclick=onClick;return button}
+function configureNavigation(){if(!me)return;const kinds=new Set(conversations.map(row=>row.kind));const permissions=new Set(me.channels||[]);const buttons=[...document.querySelectorAll('#client-navigation [data-channel]')];for(const button of buttons){const permission=button.dataset.permission;let visible=true;if(permission==='laboral'||permission==='fiscal')visible=me.role==='admin'||permissions.has(permission);if(permission==='private')visible=kinds.has('private');if(button.dataset.channel==='all'&&me.role!=='admin'){const available=['laboral','fiscal','private'].filter(kind=>(kind==='private'?kinds.has(kind):permissions.has(kind)));visible=available.length>1}button.hidden=!visible}const active=buttons.find(button=>button.dataset.channel===filter&&!button.hidden);if(!active){const first=buttons.find(button=>!button.hidden&&button.dataset.channel!=='unread');filter=first?.dataset.channel||'unread'}for(const button of buttons)button.classList.toggle('active',button.dataset.channel===filter);byId('list-title').textContent=filterTitles[filter]||'Conversaciones'}
+function renderNavigation(){if(!me)return;const teams=internalThreads.filter(row=>row.kind==='group');byId('team-navigation').hidden=!teams.length;byId('team-shortcuts').replaceChildren(...teams.map(row=>shortcutButton({label:row.title,subtitle:'Grupo interno',unread:row.unread_count,kind:'group',active:row.id===selectedInternalId,onClick:()=>selectInternalThread(row.id)})));let people=[];if(me.role==='admin'){people=staffDirectory.filter(row=>row.active&&row.id!==me.id).map(person=>({person,thread:internalThreads.find(row=>row.kind==='direct'&&row.counterpart_id===person.id)}))}else{people=internalThreads.filter(row=>row.kind==='direct').map(thread=>({person:{id:thread.counterpart_id,name:thread.counterpart_name||thread.title,chat_alias:thread.title,avatar_configured:!!thread.counterpart_avatar_url},thread}))}byId('people-navigation').hidden=!people.length;byId('people-title').textContent=me.role==='admin'?'Personas':'Privados';byId('people-shortcuts').replaceChildren(...people.map(({person,thread})=>shortcutButton({label:person.chat_alias||person.name,subtitle:thread?'Chat privado':'Abrir chat',avatarUrl:person.avatar_configured?`${API}/staff/avatars/${person.id}`:'',unread:thread?.unread_count||0,kind:'person',active:thread?.id===selectedInternalId,onClick:()=>openPerson(person.id,thread?.id)})))}
+async function openPerson(memberId,threadId){try{let id=threadId;if(!id){if(me.role!=='admin')return;const thread=await request(`/staff/internal/direct/${memberId}`,{method:'POST'});id=thread.id;await loadInternalThreads()}await selectInternalThread(id)}catch(error){toast(error.message)}}
 function renderMessage(row){
   const article=document.createElement('article');article.className='message'+((row.author_type==='staff'||row.author_id===me.id)?' mine':'');
   const author=document.createElement('div');author.className='message-author';if(row.author_avatar_url){const avatar=document.createElement('img');avatar.className='message-avatar';avatar.src=row.author_avatar_url;avatar.alt='';author.append(avatar)}const meta=document.createElement('span');meta.className='meta';meta.textContent=`${row.author_name} · ${new Date(row.created_at).toLocaleString()}`;author.append(meta);article.append(author);
@@ -103,12 +108,10 @@ byId('composer').onsubmit=async event=>{
   try{const sent=await request(`/staff/conversations/${selectedId}/messages`,{method:'POST',body:data});if(files.length&&(sent.attachments||[]).length!==files.length)throw new Error('El mensaje llegó, pero el servidor no confirmó todos los adjuntos. No vuelvas a enviarlo.');byId('message-body').value='';clearStaffFiles();await selectConversation(selectedId)}catch(error){toast(error.message)}finally{send.disabled=false;picker.classList.remove('uploading')}
 };
 byId('thread-state').onchange=async()=>{if(space==='clients'&&selectedId){await request(`/staff/conversations/${selectedId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({state:byId('thread-state').value})});await loadConversations()}};
-document.querySelectorAll('#client-channels .channel').forEach(button=>button.onclick=()=>{filter=button.dataset.channel;document.querySelectorAll('#client-channels .channel').forEach(item=>item.classList.toggle('active',item===button));renderConversations()});
-function closeMobileThread(){byId('staff-app').classList.remove('thread-open');byId('active-thread').hidden=true;byId('empty-thread').hidden=false;selectedId='';selectedInternalId='';renderConversations()}
-function switchSpace(next){space=next;byId('staff-app').classList.remove('thread-open');byId('space-clients').classList.toggle('active',space==='clients');byId('space-team').classList.toggle('active',space==='team');byId('client-channels').hidden=space==='team';byId('internal-new-direct').hidden=space!=='team'||me.role!=='admin';byId('list-title').textContent=space==='team'?'Equipo':'Conversaciones';byId('search').placeholder=space==='team'?'Buscar chat interno':'Buscar cliente';byId('empty-thread').hidden=false;byId('active-thread').hidden=true;renderConversations()}
+document.querySelectorAll('#client-navigation .channel').forEach(button=>button.onclick=()=>{space='clients';filter=button.dataset.channel;selectedInternalId='';configureNavigation();renderNavigation();renderConversations()});
+function closeMobileThread(){byId('staff-app').classList.remove('thread-open');byId('active-thread').hidden=true;byId('empty-thread').hidden=false;selectedId='';selectedInternalId='';renderConversations();renderNavigation()}
 byId('thread-back').onclick=closeMobileThread;
-byId('space-clients').onclick=()=>switchSpace('clients');byId('space-team').onclick=()=>switchSpace('team');
-byId('search').oninput=renderConversations;byId('refresh').onclick=()=>space==='team'?loadInternalThreads():loadConversations();
+byId('search').oninput=renderConversations;byId('refresh').onclick=()=>Promise.all([loadConversations(),loadInternalThreads(),loadStaffDirectory()]);
 byId('staff-logout').onclick=async()=>{await request('/staff-auth/logout',{method:'POST'});location.reload()};
 function base64Bytes(value){const padding='='.repeat((4-value.length%4)%4);const raw=atob((value+padding).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from([...raw].map(char=>char.charCodeAt(0)))}
 async function preparePush(){
@@ -124,9 +127,6 @@ function setPushButton(state,text){const button=byId('push-enable');button.class
 async function savePush(subscription){const value=subscription.toJSON();await request('/staff/push/subscriptions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:value.endpoint,p256dh:value.keys.p256dh,auth:value.keys.auth})})}
 async function testPush(){try{await request('/staff/push/test',{method:'POST'});toast('Notificación de prueba enviada')}catch(error){toast(error.message)}}
 function startEvents(){if(events)events.close();events=new EventSource(`${API}/staff/events`);const refresh=()=>{loadConversations();if(space==='clients'&&selectedId)selectConversation(selectedId)};['message_created','conversation_updated'].forEach(name=>events.addEventListener(name,refresh));events.addEventListener('internal_message',()=>{loadInternalThreads();if(space==='team'&&selectedInternalId)selectInternalThread(selectedInternalId)});events.onerror=()=>{events.close();setTimeout(startEvents,3000)}}
-
-byId('internal-new-direct').onclick=async()=>{try{const staff=await request('/staff/admin/directory');const select=byId('internal-direct-member');select.replaceChildren(...staff.filter(row=>row.active&&row.id!==me.id).map(row=>{const option=document.createElement('option');option.value=row.id;option.textContent=`${row.chat_alias||row.name} (${row.email})`;return option}));if(!select.options.length){toast('No hay otros usuarios activos');return}byId('internal-direct-dialog').showModal()}catch(error){toast(error.message)}};
-byId('internal-direct-form').onsubmit=async event=>{event.preventDefault();try{const thread=await request(`/staff/internal/direct/${byId('internal-direct-member').value}`,{method:'POST'});byId('internal-direct-dialog').close();await loadInternalThreads();switchSpace('team');await selectInternalThread(thread.id)}catch(error){toast(error.message)}};
 
 byId('admin-open').onclick=async()=>{await loadAdmin();byId('admin-dialog').showModal()};
 async function loadAdmin(){
@@ -144,6 +144,7 @@ async function loadAdmin(){
     if(row.linked&&row.id!==me.id){const revoke=document.createElement('button');revoke.type='button';revoke.className='ghost danger';revoke.textContent='Cerrar sesiones';revoke.onclick=async()=>{try{await request(`/staff/admin/directory/${row.id}/revoke-sessions`,{method:'POST'});toast('Sesiones cerradas')}catch(error){toast(error.message)}};actions.append(revoke)}
     const save=document.createElement('button');save.type='button';save.className='ghost';save.textContent='Guardar';save.onclick=async()=>{const channels=[...checks.querySelectorAll('input[data-channel]:checked')].map(input=>input.dataset.channel);try{await request(`/staff/admin/directory/${row.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({channels,active:activeCheck.checked,role:adminCheck.checked?'admin':'empleado',chat_alias:alias.value.trim()})});if(avatarFile.files[0]){const data=new FormData();data.append('avatar',avatarFile.files[0]);await request(`/staff/admin/directory/${row.id}/avatar`,{method:'PUT',body:data})}toast('Usuario actualizado');await loadAdmin()}catch(error){toast(error.message)}};actions.append(save);box.append(identity,profile,checks,actions);return box;
   }));
+  staffDirectory=staff;renderNavigation();
   const owner=byId('invite-owner');owner.replaceChildren(...staff.filter(row=>row.active).map(row=>{const option=document.createElement('option');option.value=row.id;option.textContent=`${row.name} (${row.email||row.id})`;option.selected=row.id===me.id;return option}));
   const organization=byId('invite-organization');const available=organizations.filter(row=>row.active);const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent=available.length?'Seleccione un cliente':'No hay clientes sincronizados';organization.replaceChildren(placeholder,...available.map(row=>{const option=document.createElement('option');option.value=row.company_code;option.dataset.name=row.name;option.textContent=`${row.name} (${row.company_code})`;return option}));
 }

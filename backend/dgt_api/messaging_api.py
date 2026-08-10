@@ -820,6 +820,19 @@ def _staff_thread_title(db: Session, thread: MessagingStaffThread, staff: Messag
     return (other.chat_alias.strip() or other.name) if other else "Chat privado"
 
 
+def _staff_thread_counterpart(
+    db: Session, thread: MessagingStaffThread, staff: MessagingStaff,
+) -> MessagingStaff | None:
+    if thread.kind != "direct":
+        return None
+    other_id = (
+        thread.member_staff_external_id
+        if staff.external_id == thread.admin_staff_external_id
+        else thread.admin_staff_external_id
+    )
+    return db.get(MessagingStaff, other_id)
+
+
 def _staff_thread_unread(db: Session, thread: MessagingStaffThread, staff: MessagingStaff) -> int:
     read = db.scalar(select(MessagingStaffThreadRead).where(
         MessagingStaffThreadRead.thread_id == thread.id,
@@ -840,9 +853,18 @@ def _serialize_staff_thread(
     last = db.scalar(select(MessagingStaffThreadMessage).where(
         MessagingStaffThreadMessage.thread_id == thread.id,
     ).order_by(MessagingStaffThreadMessage.created_at.desc()).limit(1))
+    counterpart = _staff_thread_counterpart(db, thread, staff)
     return {
         "id": thread.id, "kind": thread.kind, "channel": thread.channel,
         "title": _staff_thread_title(db, thread, staff),
+        "counterpart_id": counterpart.external_id if counterpart else "",
+        "counterpart_name": (
+            counterpart.chat_alias.strip() or counterpart.name
+        ) if counterpart else "",
+        "counterpart_avatar_url": (
+            f"/api/v1/messaging/staff/avatars/{counterpart.external_id}"
+            if counterpart and counterpart.avatar_storage_key else ""
+        ),
         "unread_count": _staff_thread_unread(db, thread, staff),
         "updated_at": thread.updated_at.isoformat(),
         "last_message": _serialize_staff_thread_message(db, last) if last else None,
