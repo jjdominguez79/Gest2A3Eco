@@ -100,6 +100,42 @@ def test_send_push_converts_raw_vapid_private_key_to_der(monkeypatch):
     assert private_key.private_numbers().private_value == int.from_bytes(raw_key, "big")
 
 
+def test_send_push_converts_pem_vapid_private_key_to_der(monkeypatch):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    captured = {}
+
+    def fake_webpush(**kwargs):
+        captured.update(kwargs)
+
+    scalar = int.from_bytes(bytes(range(1, 33)), "big")
+    private_key = ec.derive_private_key(scalar, ec.SECP256R1())
+    pem_key = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+    _install_fake_pywebpush(monkeypatch, fake_webpush, private_key=pem_key)
+
+    delivered = messaging_push.send_push(
+        {
+            "endpoint": "https://db5p.notify.windows.com/w/?token=test",
+            "keys": {"p256dh": "key", "auth": "auth"},
+        },
+        {"title": "Prueba"},
+    )
+
+    encoded_der_key = captured["vapid_private_key"]
+    padding = "=" * (-len(encoded_der_key) % 4)
+    normalized_key = serialization.load_der_private_key(
+        base64.urlsafe_b64decode(encoded_der_key + padding),
+        password=None,
+    )
+    assert delivered is True
+    assert normalized_key.private_numbers().private_value == scalar
+
+
 def test_send_push_logs_and_returns_false_for_unexpected_errors(monkeypatch):
     def fake_webpush(**_kwargs):
         raise ValueError("invalid key")

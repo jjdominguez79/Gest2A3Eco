@@ -31,8 +31,22 @@ def _headers_for_subscription(subscription: dict) -> dict[str, str]:
 def _normalize_private_key(private_key: str) -> str:
     """Convierte una clave VAPID Web Push de 32 bytes al DER que espera py_vapid."""
     value = private_key.strip()
-    if not value or "-----BEGIN" in value:
+    if not value:
         return value
+
+    if "-----BEGIN" in value:
+        try:
+            from cryptography.hazmat.primitives import serialization
+
+            key = serialization.load_pem_private_key(value.encode("ascii"), password=None)
+            der_key = key.private_bytes(
+                encoding=serialization.Encoding.DER,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+        except (ValueError, TypeError, UnicodeEncodeError):
+            return value
+        return base64.urlsafe_b64encode(der_key).rstrip(b"=").decode("ascii")
 
     try:
         padding = "=" * (-len(value) % 4)
