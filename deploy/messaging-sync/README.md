@@ -5,6 +5,9 @@ por clientes desde la PWA, comprueba su SHA-256, los guarda en el repositorio
 documental compartido y registra la entrada pendiente de clasificar en
 PostgreSQL. Tambien sincroniza el directorio de empresas para que el
 administrador pueda elegir un cliente de Gest2A3Eco al crear una invitacion.
+Los archivos se escriben dentro del volumen Docker, pero en PostgreSQL se
+registra la ruta UNC indicada por `DOCUMENT_REPOSITORY_PUBLIC_DIR`, accesible
+desde los puestos Windows.
 
 Antes de crear el proyecto deben existir, sin saltos adicionales:
 
@@ -34,4 +37,5 @@ docker compose logs -f messaging-sync
 
 La periodicidad se configura con `MESSAGING_SYNC_INTERVAL_SECONDS` en
 `compose.yaml`. El valor minimo admitido es 30 segundos y el valor inicial es
-60 segundos.
+60 segundos. Cada ciclo deja en el registro el numero de clientes
+sincronizados, los adjuntos pendientes y el tiempo hasta la siguiente consulta.

@@ -1,5 +1,5 @@
 import hashlib
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 
 from sync_worker.messaging_worker import MessagingAttachmentWorker
@@ -52,6 +52,7 @@ def test_worker_descarga_verifica_guarda_y_confirma(tmp_path, monkeypatch):
     config = SimpleNamespace(
         api_url="https://mensajes.example.test", sync_token="secret",
         repository_dir=tmp_path, postgres_dsn="unused", worker_id="synology",
+        public_repository_dir=PureWindowsPath(r"\\Servidor\Documentos\Gest2A3Eco"),
         interval_seconds=60,
     )
     worker = MessagingAttachmentWorker(config, session=session)
@@ -62,7 +63,10 @@ def test_worker_descarga_verifica_guarda_y_confirma(tmp_path, monkeypatch):
     assert worker.run_once() == (1, 0)
     destination = tmp_path / "Entrada" / "Mensajeria" / "E00042" / "att-1_factura.pdf"
     assert destination.read_bytes() == content
-    assert saved[0][1] == destination
+    assert saved[0][1] == (
+        r"\\Servidor\Documentos\Gest2A3Eco\Entrada\Mensajeria"
+        r"\E00042\att-1_factura.pdf"
+    )
     assert saved[0][2] == item["sha256"]
     assert any(method == "POST" and url.endswith("/confirm") for method, url, _ in session.calls)
 
@@ -72,6 +76,7 @@ def test_worker_sincroniza_directorio_de_clientes(tmp_path, monkeypatch):
     config = SimpleNamespace(
         api_url="https://mensajes.example.test", sync_token="secret",
         repository_dir=tmp_path, postgres_dsn="unused", worker_id="synology",
+        public_repository_dir=PureWindowsPath(r"\\Servidor\Documentos\Gest2A3Eco"),
         interval_seconds=60,
     )
     worker = MessagingAttachmentWorker(config, session=session)

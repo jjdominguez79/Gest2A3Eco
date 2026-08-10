@@ -8,7 +8,7 @@ import signal
 import threading
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import psycopg
 import requests
@@ -26,6 +26,7 @@ class MessagingWorkerConfig:
     api_url: str
     sync_token: str
     repository_dir: Path
+    public_repository_dir: PureWindowsPath
     postgres_dsn: str
     worker_id: str
     interval_seconds: int
@@ -41,6 +42,7 @@ class MessagingWorkerConfig:
             api_url=_required("MESSAGING_API_URL").rstrip("/"),
             sync_token=_secret("MESSAGING_SYNC_TOKEN_FILE"),
             repository_dir=repository,
+            public_repository_dir=PureWindowsPath(_required("DOCUMENT_REPOSITORY_PUBLIC_DIR")),
             postgres_dsn=make_conninfo(
                 host=_required("POSTGRES_HOST"),
                 port=int(os.environ.get("POSTGRES_PORT", "5432")),
@@ -69,12 +71,15 @@ class MessagingAttachmentWorker:
         return f"{self.config.api_url}/api/v1/messaging{path}"
 
     def run_once(self) -> tuple[int, int]:
+        LOG.info("Consultando adjuntos pendientes en el backend")
         response = self.http.get(
             self._url("/sync/attachments/pending"), headers=self._headers, timeout=30,
         )
         response.raise_for_status()
+        pending = response.json()
+        LOG.info("Consulta de adjuntos completada: pendientes=%d", len(pending))
         downloaded = errors = 0
-        for item in response.json():
+        for item in pending:
             try:
                 self._sync_one(item)
                 downloaded += 1
@@ -86,6 +91,7 @@ class MessagingAttachmentWorker:
 
     def sync_organizations(self) -> int:
         rows = self._load_organizations()
+        LOG.info("Sincronizando directorio de clientes: encontrados=%d", len(rows))
         response = self.http.put(
             self._url("/sync/organizations"), headers=self._headers,
             json=rows, timeout=60,
@@ -116,10 +122,12 @@ class MessagingAttachmentWorker:
 
     def _sync_one(self, item: dict) -> None:
         destination = self._destination(item)
+        public_destination = self._public_destination(item)
         existing = self._existing(item["id"])
-        if existing and Path(existing[0]).is_file():
-            digest = self._file_hash(Path(existing[0]))
+        if existing and destination.is_file():
+            digest = self._file_hash(destination)
             if digest == item["sha256"]:
+                self._save(item, public_destination, digest)
                 self._confirm(item["id"], digest)
                 return
         claimed = self.http.post(
@@ -140,7 +148,7 @@ class MessagingAttachmentWorker:
         temporary = destination.with_suffix(destination.suffix + ".part")
         temporary.write_bytes(content)
         os.replace(temporary, destination)
-        self._save(item, destination, digest)
+        self._save(item, public_destination, digest)
         self._confirm(item["id"], digest)
 
     def _confirm(self, attachment_id: str, digest: str) -> None:
@@ -157,7 +165,7 @@ class MessagingAttachmentWorker:
                 (attachment_id,),
             ).fetchone()
 
-    def _save(self, item: dict, path: Path, digest: str) -> None:
+    def _save(self, item: dict, public_path: str, digest: str) -> None:
         now = datetime.now().astimezone().isoformat(timespec="seconds")
         with psycopg.connect(self.config.postgres_dsn) as conn:
             conn.execute(
@@ -174,16 +182,23 @@ class MessagingAttachmentWorker:
                 (
                     item["id"], item["message_id"], item["conversation_id"],
                     item["company_code"], item.get("company_name"), item["name"],
-                    str(path), digest, item["size"], item.get("content_type"),
+                    public_path, digest, item["size"], item.get("content_type"),
                     item.get("author_name"), now, now,
                 ),
             )
 
     def _destination(self, item: dict) -> Path:
+        return self.config.repository_dir.joinpath(*self._relative_destination(item))
+
+    def _public_destination(self, item: dict) -> str:
+        return str(self.config.public_repository_dir.joinpath(*self._relative_destination(item)))
+
+    @staticmethod
+    def _relative_destination(item: dict) -> tuple[str, ...]:
         safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", Path(item["name"]).name).strip(". ") or "adjunto"
         digits = "".join(ch for ch in str(item["company_code"]) if ch.isdigit())
         company = f"E{digits.zfill(5)[:5]}"
-        return self.config.repository_dir / "Entrada" / "Mensajeria" / company / f"{item['id']}_{safe}"
+        return "Entrada", "Mensajeria", company, f"{item['id']}_{safe}"
 
     @staticmethod
     def _file_hash(path: Path) -> str:
@@ -195,6 +210,7 @@ class MessagingAttachmentWorker:
 
     def run_forever(self) -> None:
         while not self.stop_event.is_set():
+            LOG.info("Iniciando ciclo de sincronizacion")
             try:
                 self.sync_organizations()
             except Exception as exc:
@@ -203,6 +219,10 @@ class MessagingAttachmentWorker:
                 self.run_once()
             except Exception as exc:
                 LOG.exception("Fallo del sincronizador de mensajeria: %s", exc)
+            LOG.info(
+                "Ciclo finalizado; siguiente consulta en %d segundos",
+                self.config.interval_seconds,
+            )
             self.stop_event.wait(self.config.interval_seconds)
 
     def stop(self, *_args) -> None:
@@ -210,7 +230,11 @@ class MessagingAttachmentWorker:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        force=True,
+    )
     worker = MessagingAttachmentWorker(MessagingWorkerConfig.from_environment())
     signal.signal(signal.SIGTERM, worker.stop)
     signal.signal(signal.SIGINT, worker.stop)
