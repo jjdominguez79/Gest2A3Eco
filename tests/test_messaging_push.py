@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import sys
 from types import ModuleType, SimpleNamespace
 
@@ -10,7 +11,7 @@ class FakeWebPushException(Exception):
     pass
 
 
-def _install_fake_pywebpush(monkeypatch, webpush):
+def _install_fake_pywebpush(monkeypatch, webpush, private_key="private"):
     module = ModuleType("pywebpush")
     module.WebPushException = FakeWebPushException
     module.webpush = webpush
@@ -20,7 +21,7 @@ def _install_fake_pywebpush(monkeypatch, webpush):
         "get_settings",
         lambda: SimpleNamespace(
             messaging_vapid_public_key="public",
-            messaging_vapid_private_key="private",
+            messaging_vapid_private_key=private_key,
             messaging_vapid_subject="mailto:oficina@gestinem.es",
         ),
     )
@@ -67,6 +68,36 @@ def test_send_push_does_not_add_wns_headers_to_other_services(monkeypatch):
 
     assert delivered is True
     assert captured["headers"] == {}
+
+
+def test_send_push_converts_raw_vapid_private_key_to_der(monkeypatch):
+    from cryptography.hazmat.primitives.serialization import load_der_private_key
+
+    captured = {}
+
+    def fake_webpush(**kwargs):
+        captured.update(kwargs)
+
+    raw_key = bytes(range(1, 33))
+    encoded_raw_key = base64.urlsafe_b64encode(raw_key).rstrip(b"=").decode("ascii")
+    _install_fake_pywebpush(monkeypatch, fake_webpush, private_key=encoded_raw_key)
+
+    delivered = messaging_push.send_push(
+        {
+            "endpoint": "https://db5p.notify.windows.com/w/?token=test",
+            "keys": {"p256dh": "key", "auth": "auth"},
+        },
+        {"title": "Prueba"},
+    )
+
+    encoded_der_key = captured["vapid_private_key"]
+    padding = "=" * (-len(encoded_der_key) % 4)
+    private_key = load_der_private_key(
+        base64.urlsafe_b64decode(encoded_der_key + padding),
+        password=None,
+    )
+    assert delivered is True
+    assert private_key.private_numbers().private_value == int.from_bytes(raw_key, "big")
 
 
 def test_send_push_logs_and_returns_false_for_unexpected_errors(monkeypatch):
