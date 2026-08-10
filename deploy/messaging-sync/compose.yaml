@@ -25,11 +25,6 @@ services:
     secrets:
       - messaging_sync_token
       - postgres_password
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "5"
     security_opt:
       - no-new-privileges:true
     cap_drop:

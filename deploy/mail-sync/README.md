@@ -90,6 +90,10 @@ docker compose ps
 docker compose logs -f mail-sync
 ```
 
+En Synology, los archivos Compose no fuerzan un controlador de logs. Container
+Manager utiliza asi su controlador `db` predeterminado y muestra la salida en
+la pestana **Registro** de cada contenedor.
+
 Para comprobar especificamente el recolector de adjuntos de la PWA:
 
 ```text

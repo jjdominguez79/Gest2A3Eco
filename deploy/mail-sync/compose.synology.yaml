@@ -25,11 +25,6 @@ services:
       - graph_certificate
       - graph_certificate_password
       - postgres_password
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "5"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -51,6 +46,7 @@ services:
       MESSAGING_WORKER_ID: "synology"
       MESSAGING_SYNC_INTERVAL_SECONDS: "60"
       DOCUMENT_REPOSITORY_DIR: "/data/gest2a3eco"
+      DOCUMENT_REPOSITORY_PUBLIC_DIR: '\\GestinemMain\Doc_Compartidos\Gest2A3Eco'
       POSTGRES_HOST: "192.168.0.19"
       POSTGRES_PORT: "5432"
       POSTGRES_DB: "gest2a3eco"
@@ -61,11 +57,6 @@ services:
     secrets:
       - messaging_sync_token
       - postgres_password
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "5"
     security_opt:
       - no-new-privileges:true
     cap_drop:

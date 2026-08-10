@@ -39,3 +39,6 @@ La periodicidad se configura con `MESSAGING_SYNC_INTERVAL_SECONDS` en
 `compose.yaml`. El valor minimo admitido es 30 segundos y el valor inicial es
 60 segundos. Cada ciclo deja en el registro el numero de clientes
 sincronizados, los adjuntos pendientes y el tiempo hasta la siguiente consulta.
+El `compose.yaml` no fuerza un controlador de logs: Container Manager utiliza
+el controlador `db` predeterminado de Synology y muestra la salida en
+**Contenedor > gest2a3eco-messaging-sync > Registro**.
