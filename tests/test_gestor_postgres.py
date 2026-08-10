@@ -355,6 +355,8 @@ _COLUMNAS_ESENCIALES = {
     ("ocr_aprendizaje_ejemplos", "marcas_json"),
     ("facturas_emitidas_docs", "updated_at"),
     ("facturas_emitidas_docs", "pdf_generated_at"),
+    ("albaranes_emitidas_docs", "updated_at"),
+    ("albaranes_emitidas_docs", "pdf_generated_at"),
 }
 
 

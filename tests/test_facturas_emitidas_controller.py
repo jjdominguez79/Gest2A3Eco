@@ -112,3 +112,89 @@ def test_compartir_factura_por_mensajeria_usa_cliente_por_nif(monkeypatch, tmp_p
     assert message[1] == "conv-fiscal"
     assert message[2] == "Le enviamos la factura F-42."
     assert message[3] == [str(pdf)]
+
+
+def test_compartir_factura_email_muestra_factura_y_albaran_en_adjuntos(monkeypatch, tmp_path):
+    recibidos = {}
+    factura_pdf = tmp_path / "factura.pdf"
+    albaran_pdf = tmp_path / "albaran.pdf"
+    factura_pdf.write_bytes(b"%PDF factura")
+    albaran_pdf.write_bytes(b"%PDF albaran")
+
+    def ask_email_compose(*args, **kwargs):
+        recibidos.update(kwargs)
+        return None
+
+    view = SimpleNamespace(
+        get_selected_ids=lambda: ["fac-1"],
+        ask_share_channel=lambda: "email",
+        ask_yes_no=lambda *_args: True,
+        ask_email_compose=ask_email_compose,
+        show_info=lambda *_args: None,
+        show_warning=lambda *_args: None,
+    )
+    controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
+    controller._view = view
+    controller._codigo = "E00701"
+    controller._empresa_conf = {}
+    controller._get_factura_by_id = lambda _id: {"id": _id, "numero": "000058"}
+    controller._ensure_write = lambda *_args: True
+    controller._resolve_app_pdf = lambda _fac: str(factura_pdf)
+    controller._albaranes_de_factura = lambda _fac: [{"id": "alb-1"}]
+    controller._resolve_albaran_pdf = lambda _alb: str(albaran_pdf)
+    controller._cliente_factura = lambda _fac: {}
+    controller._totales_factura = lambda _fac: {}
+
+    monkeypatch.setattr("services.email_service.build_invoice_email_text", lambda *_args: "Texto")
+    controller.compartir_pdf()
+
+    assert recibidos["attachment_paths"] == [str(factura_pdf), str(albaran_pdf)]
+
+
+def test_eliminar_factura_refresca_albaranes_para_que_queden_editables():
+    llamadas = []
+    view = SimpleNamespace(
+        get_selected_ids=lambda: ["fac-58"],
+        ask_yes_no=lambda *_args: True,
+    )
+    gestor = SimpleNamespace(
+        eliminar_factura_emitida=lambda *args: llamadas.append(("eliminar", args)),
+    )
+    controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
+    controller._view = view
+    controller._gestor = gestor
+    controller._codigo = "E00701"
+    controller._ejercicio = 2026
+    controller._ensure_write = lambda *_args: True
+    controller._get_factura_by_id = lambda _id: {
+        "id": "fac-58", "ejercicio": 2026, "generada": False,
+    }
+    controller.refresh_facturas = lambda: llamadas.append(("refresh_facturas",))
+    controller.refresh_albaranes = lambda: llamadas.append(("refresh_albaranes",))
+
+    controller.eliminar()
+
+    assert llamadas == [
+        ("eliminar", ("E00701", "fac-58", 2026)),
+        ("refresh_facturas",),
+        ("refresh_albaranes",),
+    ]
+
+
+def test_resolver_pdf_albaran_regenera_si_fue_modificado(tmp_path):
+    pdf = tmp_path / "albaran.pdf"
+    pdf.write_bytes(b"PDF antiguo")
+    controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
+    controller._albaran_app_pdf_path = lambda _alb: str(pdf)
+    controller._can_write = lambda: False
+    controller._log_pdf_error = lambda *args: None
+    controller._generar_pdf_word = lambda _doc, _path, **_kwargs: pdf.write_bytes(b"PDF nuevo")
+    albaran = {
+        "updated_at": "2026-08-10T13:30:00",
+        "pdf_generated_at": "2026-08-10T13:20:00",
+    }
+
+    result = controller._resolve_albaran_pdf(albaran)
+
+    assert result == str(pdf)
+    assert pdf.read_bytes() == b"PDF nuevo"

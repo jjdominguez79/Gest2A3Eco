@@ -1,0 +1,42 @@
+services:
+  messaging-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gest2a3eco-messaging-sync
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    environment:
+      MESSAGING_API_URL: "https://gest2a3eco-production.up.railway.app"
+      MESSAGING_SYNC_TOKEN_FILE: "/run/secrets/messaging_sync_token"
+      MESSAGING_WORKER_ID: "synology"
+      MESSAGING_SYNC_INTERVAL_SECONDS: "60"
+      DOCUMENT_REPOSITORY_DIR: "/data/gest2a3eco"
+      DOCUMENT_REPOSITORY_PUBLIC_DIR: '\\GestinemMain\Doc_Compartidos\Gest2A3Eco'
+      POSTGRES_HOST: "192.168.0.19"
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: "gest2a3eco"
+      POSTGRES_USER: "gest2a3eco_sync"
+      POSTGRES_PASSWORD_FILE: "/run/secrets/postgres_password"
+    volumes:
+      - "/volume1/Doc_Compartidos/Gest2A3Eco:/data/gest2a3eco:rw"
+    secrets:
+      - messaging_sync_token
+      - postgres_password
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+secrets:
+  messaging_sync_token:
+    file: ./secrets/messaging_sync_token.txt
+  postgres_password:
+    file: ./secrets/postgres_password.txt

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from controllers.app_controller import AppController
 from views.ui_comunicaciones_global import UIComunicacionesGlobal
 
 
@@ -85,3 +86,92 @@ def test_auto_refresh_descarta_resultado_obsoleto():
     assert applied == []
     assert scheduled == [True]
     assert view._auto_refresh_running is False
+
+
+class TreeStub:
+    def __init__(self):
+        self.rows = {}
+
+    def selection(self):
+        return ()
+
+    def get_children(self):
+        return tuple(self.rows)
+
+    def delete(self, *items):
+        for item in items:
+            self.rows.pop(item, None)
+
+    def insert(self, _parent, _position, *, iid, values):
+        self.rows[iid] = values
+
+    def exists(self, iid):
+        return iid in self.rows
+
+    def selection_set(self, _items):
+        pass
+
+
+def test_apply_refresh_no_oculta_correos_por_configuracion_local():
+    view = view_stub(admin=False)
+    view._pending_tree = TreeStub()
+    view._mine_tree = TreeStub()
+    view._company_combo = {}
+    view._user_combo = {}
+    view._filter_companies = lambda: None
+
+    UIComunicacionesGlobal._apply_refresh_data(view, {
+        "companies": [],
+        "users": [],
+        "pending": [{
+            "graph_message_id": "entrada",
+            "mailbox": "buzon-central@gestinem.es",
+            "payload_json": "{}",
+        }],
+        "mine": [{
+            "id": "asignado",
+            "mailbox": "buzon-central@gestinem.es",
+            "codigo_empresa": "E00001",
+        }],
+        "mine_pending": [{
+            "graph_message_id": "sin-cliente",
+            "mailbox": "buzon-central@gestinem.es",
+        }],
+    })
+
+    assert set(view._pending_tree.rows) == {"entrada"}
+    assert set(view._mine_tree.rows) == {"asignado", "pending::sin-cliente"}
+
+
+def test_contadores_no_se_filtran_con_buzon_local(monkeypatch):
+    calls = []
+
+    class Gestor:
+        def obtener_nuevos_avisos_correo(self, usuario_id, mailbox):
+            return []
+
+        def resumen_buzon_responsable(self, *args, **kwargs):
+            calls.append((args, kwargs))
+            return {"pendiente": 2, "respondido": 1, "gestionado": 0}
+
+    class ImmediateThread:
+        def __init__(self, *, target, daemon):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    controller = object.__new__(AppController)
+    controller._mail_poll_scheduled = True
+    controller._mail_poll_stopped = False
+    controller._mail_poll_running = False
+    controller._session = SimpleNamespace(user=SimpleNamespace(id=7))
+    controller._gestor = Gestor()
+    controller._content = SimpleNamespace(after=lambda _delay, callback, *args: callback(*args))
+    controller._shared_mailbox = lambda: "configuracion-local-erronea@gestinem.es"
+    controller._finish_mail_poll = lambda *_args: None
+    monkeypatch.setattr("controllers.app_controller.threading.Thread", ImmediateThread)
+
+    AppController._start_mail_poll(controller)
+
+    assert calls == [((7,), {})]

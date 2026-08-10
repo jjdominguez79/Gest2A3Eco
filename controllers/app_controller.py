@@ -86,9 +86,11 @@ class AppController:
                 rows = self._gestor.obtener_nuevos_avisos_correo(
                     usuario_id, mailbox,
                 )
-                summary = self._gestor.resumen_buzon_responsable(
-                    usuario_id, mailbox=mailbox,
-                )
+                # El buzón del usuario vive en PostgreSQL. No se debe recortar
+                # el resumen con la configuración local de este equipo: dos
+                # puestos pueden tener config.local.json distintos aunque
+                # consulten exactamente la misma base compartida.
+                summary = self._gestor.resumen_buzon_responsable(usuario_id)
                 error = None
             except Exception as exc:
                 rows, summary, error = [], None, exc

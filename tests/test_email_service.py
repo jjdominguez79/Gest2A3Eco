@@ -60,3 +60,11 @@ def test_load_user_config_crea_archivo_en_localappdata(monkeypatch, tmp_path):
     assert cfg_path.exists()
     assert cfg["email_mode"] == "outlook"
     assert cfg["open_outlook_before_send"] is True
+
+
+def test_configuracion_local_descarta_smtp_obsoleto():
+    cfg = utilidades._normalize_config({
+        "smtp": {"host": "smtp.example.com", "password": "secreto"},
+    })
+
+    assert "smtp" not in cfg

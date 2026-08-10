@@ -683,10 +683,7 @@ class UIComunicacionesGlobal(ttk.Frame):
 
         self._pending_tree.delete(*self._pending_tree.get_children())
         self._pending = {}
-        allowed = self._allowed_mailboxes()
         for item in data["pending"]:
-            if str(item.get("mailbox") or "").lower() not in allowed:
-                continue
             graph_id = item["graph_message_id"]
             try:
                 payload = json.loads(item.get("payload_json") or "{}")
@@ -703,10 +700,7 @@ class UIComunicacionesGlobal(ttk.Frame):
 
         self._mine_tree.delete(*self._mine_tree.get_children())
         self._mine = {}
-        shared_mailbox = self._shared_mailbox()
         for item in data["mine"]:
-            if str(item.get("mailbox") or "").strip().lower() != shared_mailbox:
-                continue
             comm_id = item["id"]
             self._mine[comm_id] = item
             company = companies.get(str(item.get("codigo_empresa") or ""), {})
@@ -718,8 +712,6 @@ class UIComunicacionesGlobal(ttk.Frame):
                 item.get("estado") or "pendiente",
             ))
         for item in data["mine_pending"]:
-            if str(item.get("mailbox") or "").strip().lower() != shared_mailbox:
-                continue
             iid = f"pending::{item['graph_message_id']}"
             item["_pending_client"] = True
             self._mine[iid] = item
@@ -756,7 +748,6 @@ class UIComunicacionesGlobal(ttk.Frame):
     def _refresh_discarded(self, discarded=None, conversations=None):
         self._discarded_tree.delete(*self._discarded_tree.get_children())
         self._discarded = {}
-        shared_mailbox = self._shared_mailbox()
         discarded = (
             self._gestor.listar_comunicaciones_descartadas()
             if discarded is None else discarded
@@ -766,8 +757,6 @@ class UIComunicacionesGlobal(ttk.Frame):
             if conversations is None else conversations
         )
         for item in discarded:
-            if str(item.get("mailbox") or "").strip().lower() != shared_mailbox:
-                continue
             graph_id = item["graph_message_id"]
             iid = f"queue::{graph_id}"
             self._discarded[iid] = item
@@ -777,8 +766,6 @@ class UIComunicacionesGlobal(ttk.Frame):
                 item.get("descartado_por") or "", item.get("motivo_descarte") or "",
             ))
         for item in conversations:
-            if str(item.get("mailbox") or "").strip().lower() != shared_mailbox:
-                continue
             iid = f"comm::{item['id']}"
             self._discarded[iid] = item
             self._discarded_tree.insert("", "end", iid=iid, values=(
@@ -788,7 +775,6 @@ class UIComunicacionesGlobal(ttk.Frame):
             ))
 
     def _refresh_supervision(self, supervision=None, unassigned=None):
-        shared_mailbox = self._shared_mailbox()
         supervision = (
             self._gestor.listar_comunicaciones_supervision()
             if supervision is None else supervision
@@ -800,11 +786,8 @@ class UIComunicacionesGlobal(ttk.Frame):
         self._supervision = {
             item["id"]: item
             for item in supervision
-            if str(item.get("mailbox") or "").strip().lower() == shared_mailbox
         }
         for item in unassigned:
-            if str(item.get("mailbox") or "").strip().lower() != shared_mailbox:
-                continue
             self._supervision[f"queue::{item['graph_message_id']}"] = item
         statuses = sorted({str(item.get("estado") or "pendiente") for item in self._supervision.values()})
         users = sorted({str(item.get("responsable_nombre") or "") for item in self._supervision.values() if item.get("responsable_nombre")})
@@ -856,16 +839,6 @@ class UIComunicacionesGlobal(ttk.Frame):
                 f"Gestionados: {counts.get('gestionado', 0)}"
             )
         )
-
-    @staticmethod
-    def _shared_mailbox() -> str:
-        return str(
-            (load_app_config().get("microsoft_graph") or {}).get("shared_mailbox")
-            or "Oficina@gestinem.es"
-        ).strip().lower()
-
-    def _allowed_mailboxes(self) -> set[str]:
-        return {self._shared_mailbox()}
 
     def _schedule_auto_refresh(self):
         if self._destroying or self._auto_refresh_after_id is not None:

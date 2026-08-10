@@ -351,6 +351,8 @@ class GestorPostgres(GestorBase):
             ("ocr_aprendizaje_ejemplos", "marcas_json", "TEXT NOT NULL DEFAULT '{}'"),
             ("facturas_emitidas_docs", "updated_at", "TEXT"),
             ("facturas_emitidas_docs", "pdf_generated_at", "TEXT"),
+            ("albaranes_emitidas_docs", "updated_at", "TEXT"),
+            ("albaranes_emitidas_docs", "pdf_generated_at", "TEXT"),
             ("firma_solicitudes", "documento_firmado_archivo_id", "TEXT"),
         )
         existentes = {
@@ -364,6 +366,7 @@ class GestorPostgres(GestorBase):
                     'empresas', 'usuarios', 'comunicaciones', 'comunicaciones_mensajes',
                     'comunicaciones_sin_asignar', 'facturas_recibidas_ocr'
                     , 'ocr_aprendizaje_ejemplos', 'facturas_emitidas_docs',
+                    'albaranes_emitidas_docs',
                     'firma_solicitudes'
                   )
                 """

@@ -508,6 +508,17 @@ class SecuredGestor:
             self.security.session.company_permissions[codigo] = CompanyPermission.WRITE
         return result
 
+    def cambiar_codigo_empresa(self, codigo_actual: str, codigo_nuevo: str):
+        if not self.security.can_manage_company_catalog():
+            raise PermissionError("Solo administradores y empleados pueden gestionar empresas.")
+        if not self.security.can_manage_companies():
+            self.security.ensure_company_write(codigo_actual)
+        result = self._base.cambiar_codigo_empresa(codigo_actual, codigo_nuevo)
+        permisos = self.security.session.company_permissions
+        if codigo_actual in permisos:
+            permisos[codigo_nuevo] = permisos.pop(codigo_actual)
+        return result
+
     def copiar_empresa(self, codigo_origen: str, ejercicio_origen: int, nueva_empresa: dict):
         self.security.ensure_admin("Solo el administrador puede copiar empresas.")
         return self._base.copiar_empresa(codigo_origen, ejercicio_origen, nueva_empresa)

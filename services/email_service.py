@@ -1,11 +1,6 @@
 import os
 import shutil
-import smtplib
-import ssl
 import traceback
-from email.mime.application import MIMEApplication
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from html import escape
 from pathlib import Path
 
@@ -13,9 +8,7 @@ from utils.utilidades import (
     get_default_templates_dir,
     get_log_path,
     get_packaged_email_template_path,
-    load_app_config,
     load_user_config,
-    save_app_config,
     save_user_config,
 )
 
@@ -89,18 +82,6 @@ def ensure_template_file() -> Path:
         else:
             path.write_text(DEFAULT_HTML_TEMPLATE, encoding="utf-8")
     return path
-
-
-def load_smtp_config() -> dict:
-    return load_app_config().get("smtp") or {}
-
-
-def save_smtp_config(cfg: dict) -> None:
-    app_cfg = load_app_config()
-    sanitized = dict(cfg or {})
-    sanitized["password"] = ""
-    app_cfg["smtp"] = sanitized
-    save_app_config(app_cfg)
 
 
 def load_email_preferences() -> dict:
@@ -268,74 +249,6 @@ def _fmt_total(totales: dict, fac: dict | None = None) -> str:
         return f"{s} {simbolo}".strip()
     except Exception:
         return str(totales.get("total", ""))
-
-
-def send_email_smtp(
-    smtp_cfg: dict,
-    to_addrs: list,
-    subject: str,
-    body: str,
-    attachment_path: str = None,
-    attachment_paths: list[str] | None = None,
-    html_body: str = None,
-) -> None:
-    host      = str(smtp_cfg.get("host") or "").strip()
-    port      = int(smtp_cfg.get("port") or 587)
-    user      = str(smtp_cfg.get("user") or "").strip()
-    password  = str(smtp_cfg.get("password") or "")
-    from_addr = str(smtp_cfg.get("from_addr") or user).strip()
-    use_tls   = bool(smtp_cfg.get("use_tls", True))
-    use_ssl   = bool(smtp_cfg.get("use_ssl", False))
-
-    if not host:
-        raise ValueError("Servidor SMTP no configurado.")
-    if not to_addrs:
-        raise ValueError("No hay destinatarios.")
-
-    msg = MIMEMultipart("mixed")
-    msg["From"]    = from_addr
-    msg["To"]      = ", ".join(to_addrs)
-    msg["Subject"] = subject
-
-    # Parte de texto: plain + HTML (multipart/alternative)
-    if html_body:
-        alt = MIMEMultipart("alternative")
-        alt.attach(MIMEText(body, "plain", "utf-8"))
-        alt.attach(MIMEText(html_body, "html", "utf-8"))
-        msg.attach(alt)
-    else:
-        msg.attach(MIMEText(body, "plain", "utf-8"))
-
-    all_attachments = []
-    if attachment_path:
-        all_attachments.append(attachment_path)
-    for extra_path in attachment_paths or []:
-        if extra_path and extra_path not in all_attachments:
-            all_attachments.append(extra_path)
-
-    for file_path in all_attachments:
-        if not os.path.exists(file_path):
-            continue
-        with open(file_path, "rb") as f:
-            part = MIMEApplication(f.read(), Name=os.path.basename(file_path))
-        part["Content-Disposition"] = f'attachment; filename="{os.path.basename(file_path)}"'
-        msg.attach(part)
-
-    if use_ssl:
-        context = ssl.create_default_context()
-        with smtplib.SMTP_SSL(host, port, context=context) as server:
-            if user:
-                server.login(user, password)
-            server.sendmail(from_addr, to_addrs, msg.as_bytes())
-    else:
-        with smtplib.SMTP(host, port) as server:
-            server.ehlo()
-            if use_tls:
-                server.starttls()
-                server.ehlo()
-            if user:
-                server.login(user, password)
-            server.sendmail(from_addr, to_addrs, msg.as_bytes())
 
 
 def _log_email_error(message: str, exc: Exception) -> None:

@@ -1,6 +1,6 @@
 {
-  "version": "1.6.0",
-  "tag": "v1.6.0",
-  "changelog": "Nuevo modulo de mensajeria segura para clientes y equipo del despacho. Incluye canales Laboral, Contable/Fiscal y Privado, chats internos, permisos por usuario, alias y avatares, invitaciones desde el backend, adjuntos integrados con gestion documental, PWA instalable y notificaciones push. Tambien incorpora mejoras de visualizacion en movil, recuperacion de contrasena y estabilidad en el envio de mensajes y documentos.",
+  "version": "1.6.1",
+  "tag": "v1.6.1",
+  "changelog": "Mejoras importantes en la gestion de empresas, facturas, albaranes, firmas y comunicaciones. Permite cambiar el codigo A3 de una empresa conservando sus referencias, libera los albaranes al eliminar su factura y regenera sus PDF cuando quedan obsoletos. Simplifica el envio de facturas mediante Outlook con varios adjuntos, sustituye opciones antiguas de SMTP y WhatsApp por la mensajeria de Gestinem, mejora la identificacion de clientes y firmantes, y corrige la sincronizacion del buzon compartido.",
   "force_update": false
 }

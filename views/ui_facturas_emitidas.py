@@ -2748,7 +2748,7 @@ class UIFacturasEmitidas(ttk.Frame):
         btns = ttk.Frame(frm)
         btns.pack(fill="x")
         ttk.Button(btns, text="Email", style="Primary.TButton", command=lambda: _set("email")).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btns, text="WhatsApp", style="Primary.TButton", command=lambda: _set("whatsapp")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="Mensajería Gestinem", style="Primary.TButton", command=lambda: _set("mensajeria")).pack(side=tk.LEFT, padx=4)
         ttk.Button(btns, text="Cancelar", command=dlg.destroy).pack(side=tk.LEFT, padx=4)
 
         dlg.update_idletasks()
@@ -2773,138 +2773,42 @@ class UIFacturasEmitidas(ttk.Frame):
         except Exception:
             pass
 
-    def ask_smtp_config(self, current_cfg: dict) -> dict | None:
-        dlg = tk.Toplevel(self)
-        dlg.title("Configuracion SMTP")
-        dlg.resizable(False, False)
-        result = {"value": None}
-
-        frm = ttk.Frame(dlg, padding=16)
-        frm.pack(fill="both", expand=True)
-        frm.columnconfigure(1, weight=1)
-
-        fields = [
-            ("Servidor SMTP:", "host", str(current_cfg.get("host") or ""), False),
-            ("Puerto:", "port", str(current_cfg.get("port") or "587"), False),
-            ("Usuario:", "user", str(current_cfg.get("user") or ""), False),
-            ("Contrasena:", "password", str(current_cfg.get("password") or ""), True),
-            ("Email remitente:", "from_addr", str(current_cfg.get("from_addr") or ""), False),
-        ]
-
-        vars_ = {}
-        for row, (label, key, default, is_password) in enumerate(fields):
-            ttk.Label(frm, text=label).grid(row=row, column=0, sticky="e", padx=(0, 8), pady=4)
-            var = tk.StringVar(value=default)
-            vars_[key] = var
-            ttk.Entry(frm, textvariable=var, width=35, show="*" if is_password else "").grid(
-                row=row, column=1, sticky="ew", pady=4
-            )
-
-        chk_row = len(fields)
-        use_tls = tk.BooleanVar(value=bool(current_cfg.get("use_tls", True)))
-        use_ssl = tk.BooleanVar(value=bool(current_cfg.get("use_ssl", False)))
-        ttk.Checkbutton(frm, text="Usar STARTTLS (puerto 587)", variable=use_tls).grid(
-            row=chk_row, column=0, columnspan=2, sticky="w", pady=2
-        )
-        ttk.Checkbutton(frm, text="Usar SSL (puerto 465)", variable=use_ssl).grid(
-            row=chk_row + 1, column=0, columnspan=2, sticky="w", pady=2
-        )
-
-        lbl_test = ttk.Label(frm, text="", foreground="gray", wraplength=320, justify="left")
-        lbl_test.grid(row=chk_row + 2, column=0, columnspan=2, sticky="w", pady=(6, 0))
-
-        def _build_cfg():
-            try:
-                port_val = int(vars_["port"].get().strip() or "587")
-            except ValueError:
-                port_val = 587
-            return {
-                "host": vars_["host"].get().strip(),
-                "port": port_val,
-                "user": vars_["user"].get().strip(),
-                "password": vars_["password"].get(),
-                "from_addr": vars_["from_addr"].get().strip(),
-                "use_tls": use_tls.get(),
-                "use_ssl": use_ssl.get(),
-            }
-
-        def _probar():
-            import smtplib, ssl as _ssl
-            cfg = _build_cfg()
-            host = cfg["host"]
-            port = cfg["port"]
-            if not host:
-                lbl_test.configure(text="Error: el servidor SMTP esta vacio.", foreground="#c0392b")
-                return
-            lbl_test.configure(text=f"Conectando a {host}:{port} ...", foreground="gray")
-            dlg.update()
-            try:
-                if cfg["use_ssl"]:
-                    ctx = _ssl.create_default_context()
-                    with smtplib.SMTP_SSL(host, port, context=ctx, timeout=8) as s:
-                        if cfg["user"]:
-                            s.login(cfg["user"], cfg["password"])
-                else:
-                    with smtplib.SMTP(host, port, timeout=8) as s:
-                        s.ehlo()
-                        if cfg["use_tls"]:
-                            s.starttls()
-                            s.ehlo()
-                        if cfg["user"]:
-                            s.login(cfg["user"], cfg["password"])
-                lbl_test.configure(text=f"Conexion correcta con {host}:{port}", foreground="#27ae60")
-            except Exception as exc:
-                lbl_test.configure(text=f"Error: {exc}", foreground="#c0392b")
-
-        def _save():
-            result["value"] = _build_cfg()
-            dlg.destroy()
-
-        btn_frm = ttk.Frame(frm)
-        btn_frm.grid(row=chk_row + 3, column=0, columnspan=2, pady=(10, 0))
-        ttk.Button(btn_frm, text="Probar conexion", command=_probar).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btn_frm, text="Guardar", style="Primary.TButton", command=_save).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btn_frm, text="Cancelar", command=dlg.destroy).pack(side=tk.LEFT, padx=4)
-
-        dlg.update_idletasks()
-        w, h = dlg.winfo_width(), dlg.winfo_height()
-        x = (dlg.winfo_screenwidth() - w) // 2
-        y = (dlg.winfo_screenheight() - h) // 2
-        dlg.geometry(f"+{x}+{y}")
-        dlg.grab_set()
-        dlg.transient(self)
-        dlg.wait_window(dlg)
-        return result["value"]
-
     def ask_email_compose(
         self,
         email_cliente: str,
         asunto: str,
         cuerpo: str,
         pdf_path: str,
-        smtp_cfg: dict,
         *,
         email_empresa: str = "",
-        email_mode: str = "outlook",
         default_cc: str = "",
         default_bcc: str = "",
-        email_signature: str = "",
+        attachment_paths: list[str] | None = None,
     ) -> dict | None:
         dlg = tk.Toplevel(self)
-        using_outlook = False
         dlg.title("Enviar factura por email")
         dlg.resizable(True, True)
         result = {"value": None}
-        current_smtp = [dict(smtp_cfg)]
-
         frm = ttk.Frame(dlg, padding=16)
         frm.pack(fill="both", expand=True)
         frm.columnconfigure(1, weight=1)
 
-        # PDF adjunto
-        pdf_name = Path(pdf_path).name if pdf_path else ""
-        ttk.Label(frm, text="PDF:").grid(row=0, column=0, sticky="e", padx=(0, 8), pady=4)
-        ttk.Label(frm, text=pdf_name, foreground="gray").grid(row=0, column=1, sticky="w", pady=4)
+        # Adjuntos que se enviaran (factura y, si se eligieron, albaranes).
+        adjuntos = []
+        for path in attachment_paths or [pdf_path]:
+            value = str(path or "").strip()
+            if value and value not in adjuntos:
+                adjuntos.append(value)
+        adjunto_por_nombre = {f"{idx + 1}. {Path(path).name}": path for idx, path in enumerate(adjuntos)}
+        adjunto_var = tk.StringVar(value=next(iter(adjunto_por_nombre), ""))
+        ttk.Label(frm, text="Adjuntos:").grid(row=0, column=0, sticky="e", padx=(0, 8), pady=4)
+        adjuntos_combo = ttk.Combobox(
+            frm,
+            textvariable=adjunto_var,
+            values=list(adjunto_por_nombre),
+            state="readonly",
+        )
+        adjuntos_combo.grid(row=0, column=1, sticky="ew", pady=4)
 
         def _editar_plantilla_html():
             from services.email_service import ensure_template_file
@@ -2924,15 +2828,16 @@ class UIFacturasEmitidas(ttk.Frame):
 
         btn_row_top = ttk.Frame(frm)
         btn_row_top.grid(row=0, column=2, padx=(8, 0), pady=4, sticky="e")
-        def _abrir_pdf_adjunto():
+        def _abrir_adjunto():
             try:
-                if not pdf_path or not Path(pdf_path).exists():
-                    raise FileNotFoundError(pdf_path or "(sin PDF)")
-                os.startfile(str(pdf_path))
+                path = adjunto_por_nombre.get(adjunto_var.get(), "")
+                if not path or not Path(path).exists():
+                    raise FileNotFoundError(path or "(sin adjunto)")
+                os.startfile(path)
             except Exception as exc:
-                messagebox.showerror("Gest2A3Eco", f"No se pudo abrir el PDF adjunto:\n{exc}", parent=dlg)
+                messagebox.showerror("Gest2A3Eco", f"No se pudo abrir el adjunto:\n{exc}", parent=dlg)
 
-        ttk.Button(btn_row_top, text="Abrir PDF adjunto", command=_abrir_pdf_adjunto).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_row_top, text="Abrir adjunto", command=_abrir_adjunto).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_row_top, text="Editar plantilla HTML", command=_editar_plantilla_html).pack(side=tk.LEFT)
 
         # --- Destinatarios ---
@@ -3042,7 +2947,6 @@ class UIFacturasEmitidas(ttk.Frame):
                 "cc": cc_var.get().strip(),
                 "bcc": bcc_var.get().strip(),
                 "sender_mode": sender_mode.get(),
-                "smtp_cfg": current_smtp[0],
             }
             dlg.destroy()
 

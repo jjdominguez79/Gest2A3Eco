@@ -3,7 +3,7 @@ import shutil
 import sys
 import subprocess
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import traceback
 
@@ -447,6 +447,7 @@ class FacturasEmitidasController:
             eje = fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio
             self._gestor.eliminar_factura_emitida(self._codigo, fid, eje)
         self.refresh_facturas()
+        self.refresh_albaranes()
 
     def desmarcar_generadas(self):
         if not self._ensure_write():
@@ -958,9 +959,9 @@ class FacturasEmitidasController:
             cuerpo = build_invoice_email_text(fac, cliente, tot)
 
             compose = self._view.ask_email_compose(
-                email_cliente, asunto, cuerpo, pdf_path, {},
+                email_cliente, asunto, cuerpo, pdf_path,
                 email_empresa=email_empresa,
-                email_mode="graph",
+                attachment_paths=attachment_paths,
             )
             if not compose:
                 return
@@ -1430,18 +1431,34 @@ class FacturasEmitidasController:
         return os.path.join(pdf_dir, company_dir, ejercicio, "Albaranes_emitidos", f"{filename}.pdf")
 
     def _resolve_albaran_pdf(self, alb: dict) -> str:
-        pdf_path = str(alb.get("pdf_path") or "").strip()
-        if pdf_path and os.path.exists(pdf_path):
-            return pdf_path
         app_path = self._albaran_app_pdf_path(alb)
         if not app_path:
             return ""
         if os.path.exists(app_path):
-            if pdf_path != app_path and self._can_write():
-                upd = dict(alb)
-                upd["pdf_path"] = app_path
-                self._gestor.upsert_albaran_emitida(upd)
-            return app_path
+            updated_at = str(alb.get("updated_at") or "").strip()
+            pdf_generated_at = str(alb.get("pdf_generated_at") or "").strip()
+            pdf_obsoleto = not pdf_generated_at
+            if not pdf_obsoleto and updated_at:
+                try:
+                    updated_dt = datetime.strptime(
+                        updated_at.replace("T", " ").replace("Z", "").strip()[:19],
+                        "%Y-%m-%d %H:%M:%S",
+                    )
+                    generated_dt = datetime.strptime(
+                        pdf_generated_at.replace("T", " ").replace("Z", "").strip()[:19],
+                        "%Y-%m-%d %H:%M:%S",
+                    )
+                    pdf_obsoleto = updated_dt > generated_dt
+                except Exception:
+                    pdf_obsoleto = True
+            if not pdf_obsoleto:
+                return app_path
+            try:
+                os.unlink(app_path)
+            except Exception:
+                # El generador intentara sobrescribirlo y mostrara el error
+                # habitual si el PDF esta abierto o bloqueado.
+                pass
         doc = dict(alb)
         doc.setdefault("fecha_expedicion", alb.get("fecha_asiento", ""))
         doc.setdefault("fecha_operacion", alb.get("fecha_asiento", ""))
@@ -1453,6 +1470,7 @@ class FacturasEmitidasController:
         if self._can_write():
             upd = dict(alb)
             upd["pdf_path"] = app_path
+            upd["pdf_generated_at"] = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0).isoformat()
             self._gestor.upsert_albaran_emitida(upd)
         return app_path if os.path.exists(app_path) else ""
 
@@ -2052,7 +2070,10 @@ class FacturasEmitidasController:
         if os.path.exists(app_path):
             upd = dict(fac)
             upd["pdf_path"] = app_path
-            upd["pdf_generated_at"] = datetime.now().replace(microsecond=0).isoformat()
+            # updated_at se guarda en UTC en el gestor. Mantener la misma base
+            # temporal evita considerar vigente un PDF antiguo durante el
+            # desfase horario local (una o dos horas en Espana).
+            upd["pdf_generated_at"] = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0).isoformat()
             self._persist_factura_if_allowed(upd)
             return app_path
         return ""
@@ -2098,7 +2119,7 @@ class FacturasEmitidasController:
             return
         upd = dict(fac)
         upd["pdf_path"] = app_path
-        upd["pdf_generated_at"] = datetime.now().replace(microsecond=0).isoformat()
+        upd["pdf_generated_at"] = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0).isoformat()
         self._persist_factura_if_allowed(upd)
 
     def _ensure_a3_pdf(self, fac: dict) -> None:

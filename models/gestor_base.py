@@ -2,7 +2,7 @@ import json
 import time
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from services.terceros_empresa_fiscal_service import validate_tercero_empresa_rel
@@ -294,7 +294,9 @@ CREATE TABLE IF NOT EXISTS albaranes_emitidas_docs (
   facturado INTEGER DEFAULT 0,
   factura_id TEXT,
   fecha_facturacion TEXT,
-  lineas_json TEXT
+  lineas_json TEXT,
+  updated_at TEXT,
+  pdf_generated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS terceros (
   id TEXT PRIMARY KEY,
@@ -916,6 +918,8 @@ class GestorBase:
         self._ensure_column("albaranes_emitidas_docs", "facturado", "INTEGER")
         self._ensure_column("albaranes_emitidas_docs", "factura_id", "TEXT")
         self._ensure_column("albaranes_emitidas_docs", "fecha_facturacion", "TEXT")
+        self._ensure_column("albaranes_emitidas_docs", "updated_at", "TEXT")
+        self._ensure_column("albaranes_emitidas_docs", "pdf_generated_at", "TEXT")
         self._ensure_column("terceros_empresas", "subcuenta_ingreso", "TEXT")
         self._ensure_column("terceros_empresas", "subcuenta_gasto", "TEXT")
         self._ensure_column("terceros_empresas", "cliente_tipo_operacion_iva", "TEXT")
@@ -1377,7 +1381,7 @@ class GestorBase:
         self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
 
     def _utc_now(self) -> str:
-        return datetime.utcnow().replace(microsecond=0).isoformat()
+        return datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0).isoformat()
 
     def _migrate_series_emitidas(self):
         """Migra series existentes en empresas a la tabla series_emitidas si aun no existen."""
@@ -1429,19 +1433,27 @@ class GestorBase:
 
     def upsert_serie_emitida(self, codigo: str, ejercicio: int, nombre: str, siguiente_num: int = 1, es_rectificativa: int = 0, activa: int = 1) -> int:
         """Crea o actualiza una serie. Devuelve el id."""
-        self.conn.execute(
-            """INSERT INTO series_emitidas (codigo_empresa, ejercicio, nombre, siguiente_num, es_rectificativa, activa)
-               VALUES (?,?,?,?,?,?)
-               ON CONFLICT(codigo_empresa, ejercicio, nombre) DO UPDATE SET
-                 siguiente_num=excluded.siguiente_num,
-                 es_rectificativa=excluded.es_rectificativa,
-                 activa=excluded.activa""",
-            (codigo, _ej_val(ejercicio), nombre, int(siguiente_num), int(es_rectificativa), int(activa))
-        )
+        eje = _ej_val(ejercicio)
+        existente = self.conn.execute(
+            "SELECT id FROM series_emitidas WHERE codigo_empresa=? AND ejercicio=? AND nombre=?",
+            (codigo, eje, nombre),
+        ).fetchone()
+        if existente:
+            self.conn.execute(
+                "UPDATE series_emitidas SET siguiente_num=?, es_rectificativa=?, activa=? WHERE id=?",
+                (int(siguiente_num), int(es_rectificativa), int(activa), existente[0]),
+            )
+        else:
+            # No depender de una restriccion UNIQUE para guardar. Algunas bases
+            # creadas con versiones antiguas no la incorporaron al actualizar el esquema.
+            self.conn.execute(
+                "INSERT INTO series_emitidas (codigo_empresa, ejercicio, nombre, siguiente_num, es_rectificativa, activa) VALUES (?,?,?,?,?,?)",
+                (codigo, eje, nombre, int(siguiente_num), int(es_rectificativa), int(activa)),
+            )
         self.conn.commit()
         row = self.conn.execute(
             "SELECT id FROM series_emitidas WHERE codigo_empresa=? AND ejercicio=? AND nombre=?",
-            (codigo, _ej_val(ejercicio), nombre)
+            (codigo, eje, nombre)
         ).fetchone()
         return row[0] if row else None
 
@@ -1788,6 +1800,51 @@ class GestorBase:
         self.conn.commit()
         if not existe:
             self._clonar_plantillas_si_hace_falta(codigo, emp.get("ejercicio"))
+
+    def cambiar_codigo_empresa(self, codigo_actual: str, codigo_nuevo: str) -> bool:
+        """Renombra una empresa y todas sus referencias dentro de una transaccion."""
+        actual = normalizar_codigo_empresa_a3(codigo_actual)
+        nuevo = normalizar_codigo_empresa_a3(codigo_nuevo)
+        if not actual or not nuevo:
+            raise ValueError("El codigo A3 de la empresa es obligatorio.")
+        if actual == nuevo:
+            return False
+        if not self.get_empresa(actual):
+            raise ValueError(f"No existe la empresa con codigo {actual}.")
+        if self.get_empresa(nuevo):
+            raise ValueError(f"Ya existe una empresa con el codigo {nuevo}.")
+
+        # codigo_empresa es el nombre comun en el esquema. Las dos variantes
+        # historicas se limitan a tablas conocidas para no tocar otros IDs.
+        columnas = [("codigo_empresa", None), ("empresa_codigo", {"usuarios_empresas"})]
+        columnas.append(("empresa_id", {
+            "documentos_ocr", "facturas_recibidas_ocr", "ocr_aprendizaje_ejemplos",
+        }))
+        try:
+            for columna, tablas_permitidas in columnas:
+                filas = self.conn.execute(
+                    "SELECT table_name FROM information_schema.columns "
+                    "WHERE table_schema=current_schema() AND column_name=?",
+                    (columna,),
+                ).fetchall()
+                for fila in filas:
+                    tabla = str(fila["table_name"] or "")
+                    if tablas_permitidas is not None and tabla not in tablas_permitidas:
+                        continue
+                    if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", tabla):
+                        continue
+                    self.conn.execute(
+                        f"UPDATE {tabla} SET {columna}=? WHERE {columna}=?",
+                        (nuevo, actual),
+                    )
+            self.conn.execute(
+                "UPDATE empresas SET codigo=? WHERE codigo=?", (nuevo, actual),
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return True
 
     # ---------- Cuenta ingreso predeterminada en maestro ----------
     def _migrate_prefijo_ingreso_empresa(self):
@@ -2957,11 +3014,25 @@ class GestorBase:
         return bool(cur.rowcount)
 
     def eliminar_factura_emitida(self, codigo_empresa: str, factura_id: str, ejercicio: int):
-        self.conn.execute(
-            "DELETE FROM facturas_emitidas_docs WHERE codigo_empresa=? AND ejercicio=? AND id=?",
-            (codigo_empresa, _ej_val(ejercicio), factura_id),
-        )
-        self.conn.commit()
+        ejercicio_key = _ej_val(ejercicio)
+        try:
+            # Una factura creada desde albaranes deja de bloquearlos al borrarse.
+            # Ambas operaciones forman una sola transaccion para no dejar enlaces
+            # huerfanos si falla la eliminacion de la factura.
+            self.conn.execute(
+                "UPDATE albaranes_emitidas_docs "
+                "SET facturado=0, factura_id=NULL, fecha_facturacion=NULL "
+                "WHERE codigo_empresa=? AND ejercicio=? AND factura_id=?",
+                (codigo_empresa, ejercicio_key, factura_id),
+            )
+            self.conn.execute(
+                "DELETE FROM facturas_emitidas_docs WHERE codigo_empresa=? AND ejercicio=? AND id=?",
+                (codigo_empresa, ejercicio_key, factura_id),
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def marcar_facturas_emitidas_generadas(self, codigo_empresa: str, ids: list, fecha: str, ejercicio: int):
         ids = ids or []
@@ -3025,8 +3096,8 @@ class GestorBase:
              fecha_asiento, fecha_expedicion, fecha_operacion, nif, nombre, descripcion, observaciones,
              subcuenta_cliente, forma_pago, cuenta_bancaria, pdf_path, pdf_ref, retencion_aplica, retencion_pct,
              retencion_base, retencion_importe, moneda_codigo, moneda_simbolo, facturado, factura_id, fecha_facturacion,
-             tipo_operacion, plantilla_emitidas, plantilla_word, lineas_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             tipo_operacion, plantilla_emitidas, plantilla_word, lineas_json, updated_at, pdf_generated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -3058,7 +3129,9 @@ class GestorBase:
                 tipo_operacion=excluded.tipo_operacion,
                 plantilla_emitidas=excluded.plantilla_emitidas,
                 plantilla_word=excluded.plantilla_word,
-                lineas_json=excluded.lineas_json
+                lineas_json=excluded.lineas_json,
+                updated_at=excluded.updated_at,
+                pdf_generated_at=excluded.pdf_generated_at
             """,
             (
                 aid,
@@ -3093,6 +3166,8 @@ class GestorBase:
                 albaran.get("plantilla_emitidas"),
                 albaran.get("plantilla_word"),
                 json.dumps(albaran.get("lineas", []), ensure_ascii=False),
+                self._utc_now(),
+                albaran.get("pdf_generated_at"),
             ),
         )
         self.conn.commit()

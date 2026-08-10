@@ -38,14 +38,5 @@
       "simbolo": "$",
       "nombre": "Dolar"
     }
-  ],
-  "smtp": {
-    "host": "",
-    "port": 587,
-    "user": "",
-    "password": "",
-    "from_addr": "",
-    "use_tls": true,
-    "use_ssl": false
-  }
+  ]
 }

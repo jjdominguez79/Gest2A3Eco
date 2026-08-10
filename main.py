@@ -21,7 +21,7 @@ from utils.utilidades import (
 )
 from views.ui_auth import ChangePasswordDialog, UILogin
 from views.ui_config_monedas import MonedasDialog
-from views.ui_configuracion import abrir_configuracion_email, abrir_configuracion_ocr
+from views.ui_configuracion import abrir_configuracion_ocr
 from views.ui_postgres_config import PostgresConfigDialog
 from views.ui_tramites_dgt_public import UITramitesDgtPublicForm
 from views.ui_theme import aplicar_icono_ventana, aplicar_tema
@@ -414,7 +414,6 @@ def main():
         menu.add_command(label="Configurar monedas y clave desmarcar", command=_on_config_monedas)
         menu.add_separator()
         menu.add_command(label="Configurar OCR (Azure)", command=lambda: abrir_configuracion_ocr(root))
-        menu.add_command(label="Configurar email (SMTP)", command=lambda: abrir_configuracion_email(root))
         try:
             x = root.winfo_rootx() + root.winfo_width() - 220
             y = root.winfo_rooty() + 110

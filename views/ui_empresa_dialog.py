@@ -1258,8 +1258,9 @@ class EmpresaDialog(tk.Toplevel):
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self)
             return
+        codigo_excluido = self._empresa.get("codigo") or data.get("codigo")
         existente = self._gestor.buscar_empresa_por_nif(
-            data.get("cif"), excluir_codigo=data.get("codigo")
+            data.get("cif"), excluir_codigo=codigo_excluido
         ) if data.get("cif") else None
         if existente:
             messagebox.showwarning(

@@ -508,6 +508,14 @@ class UIConfiguracionEmpresa(ttk.Frame):
                 raise ValueError("Debes configurar al menos un ejercicio.")
             codigo = normalizar_codigo_empresa_a3(self.var_codigo.get())
             self.var_codigo.set(codigo)
+            codigo_anterior = normalizar_codigo_empresa_a3(
+                self._empresa.get("codigo") or self._codigo
+            )
+            if codigo_anterior and codigo != codigo_anterior:
+                self._gestor.cambiar_codigo_empresa(codigo_anterior, codigo)
+                self._codigo = codigo
+                self._codigo_para_ccc = codigo
+                self._empresa["codigo"] = codigo
             self._sync_bank_items_from_records()
             logo_w_txt = self.var_logo_w.get().strip()
             logo_h_txt = self.var_logo_h.get().strip()
@@ -553,15 +561,12 @@ class UIConfiguracionEmpresa(ttk.Frame):
                 except Exception:
                     continue
                 for s in (series or []):
-                    try:
-                        self._gestor.upsert_serie_emitida(
-                            base["codigo"], eje,
-                            s["nombre"],
-                            int(s.get("siguiente_num") or 1),
-                            int(s.get("es_rectificativa") or 0),
-                        )
-                    except Exception:
-                        pass
+                    self._gestor.upsert_serie_emitida(
+                        base["codigo"], eje,
+                        s["nombre"],
+                        int(s.get("siguiente_num") or 1),
+                        int(s.get("es_rectificativa") or 0),
+                    )
 
             # Siempre guardar/limpiar (aunque este vacia) para que el DELETE persista
             self._gestor.reemplazar_cuentas_bancarias(base["codigo"], 0, self._bank_records)
@@ -1150,8 +1155,9 @@ class UIConfiguracionEmpresa(ttk.Frame):
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc))
             return
+        codigo_excluido = self._empresa.get("codigo") or data.get("codigo")
         existente = self._gestor.buscar_empresa_por_nif(
-            data.get("cif"), excluir_codigo=data.get("codigo")
+            data.get("cif"), excluir_codigo=codigo_excluido
         ) if data.get("cif") else None
         if existente:
             messagebox.showwarning(

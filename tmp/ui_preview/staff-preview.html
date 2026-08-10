@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/backend/dgt_api/web/static/staff-messaging.css">
+  <link rel="stylesheet" href="/backend/dgt_api/web/static/staff-messaging-admin.css">
+  <link rel="stylesheet" href="/backend/dgt_api/web/static/messaging-avatar.css">
+  <link rel="stylesheet" href="/backend/dgt_api/web/static/staff-messaging-responsive.css">
+  <title>Vista previa de mensajería</title>
+</head>
+<body>
+<main class="app-shell">
+  <header class="topbar">
+    <div class="brand"><img src="/backend/dgt_api/web/static/gestinem-logo.png" alt="Gestinem"><span>Mensajería</span></div>
+    <div class="user-actions"><span>Juanjo</span><button class="ghost notification-button active">Avisos activos</button><button class="ghost">Administrar</button><button class="ghost">Salir</button></div>
+  </header>
+  <aside class="channels">
+    <div class="nav-section">
+      <h2>Clientes</h2>
+      <button class="channel">Todos <span class="badge">3</span></button>
+      <button class="channel">Laboral</button>
+      <button class="channel">Contable / Fiscal <span class="badge">2</span></button>
+      <button class="channel">Privados con clientes</button>
+      <button class="channel">No leídos <span class="badge unread">3</span></button>
+    </div>
+    <div class="nav-section">
+      <h2>Equipos</h2>
+      <div class="shortcut-list">
+        <button class="staff-shortcut"><span class="shortcut-avatar group">EL</span><span class="shortcut-copy"><strong>Equipo Laboral</strong><small>Grupo interno</small></span></button>
+        <button class="staff-shortcut"><span class="shortcut-avatar group">EC</span><span class="shortcut-copy"><strong>Equipo Contable / Fiscal</strong><small>Grupo interno</small></span></button>
+      </div>
+    </div>
+    <div class="nav-section">
+      <h2>Personas</h2>
+      <div class="shortcut-list">
+        <button class="staff-shortcut active"><span class="shortcut-avatar"><img src="/backend/dgt_api/web/static/gestinem-icon-192.png" alt=""></span><span class="shortcut-copy"><strong>Olya</strong><small>Chat privado</small></span><span class="badge unread">1</span></button>
+        <button class="staff-shortcut"><span class="shortcut-avatar">AL</span><span class="shortcut-copy"><strong>Ana · Laboral</strong><small>Abrir chat</small></span></button>
+        <button class="staff-shortcut"><span class="shortcut-avatar">FC</span><span class="shortcut-copy"><strong>Felipe · Contabilidad</strong><small>Abrir chat</small></span></button>
+      </div>
+    </div>
+  </aside>
+  <section class="conversation-list">
+    <div class="list-head"><h2>Todos los clientes</h2><button class="icon-button">↻</button></div>
+    <input class="search" placeholder="Buscar cliente">
+    <div>
+      <button class="conversation-item"><div class="row"><strong>Empresa de Pruebas</strong><small>10:20</small></div><div class="row"><span class="pill">Contable / Fiscal</span><span class="pill unread">2</span></div><p>Adjunto la factura de julio.</p></button>
+      <button class="conversation-item"><div class="row"><strong>Cliente Laboral</strong><small>Ayer</small></div><div class="row"><span class="pill">Laboral</span></div><p>Gracias, recibido.</p></button>
+    </div>
+  </section>
+  <section class="thread-panel">
+    <div class="thread-layout">
+      <header class="thread-head"><div class="thread-avatar"><img src="/backend/dgt_api/web/static/gestinem-icon-192.png" alt="Foto de Olya"></div><div class="thread-title"><h2>Olya</h2><span>Conversación privada</span></div></header>
+      <div class="messages">
+        <article class="message mine"><div class="message-author"><span class="message-avatar">J</span><span class="meta">Juanjo · 10/8/2026, 9:26</span></div><div>Hola. Mensaje de pruebas.</div></article>
+        <article class="message"><div class="message-author"><img class="message-avatar" src="/backend/dgt_api/web/static/gestinem-icon-192.png" alt=""><span class="meta">Olya · 10/8/2026, 9:27</span></div><div>Hola. Respuesta desde Olya.</div></article>
+      </div>
+      <form class="composer"><textarea rows="2" placeholder="Escribe un mensaje"></textarea><button type="button" class="send-button">Enviar</button></form>
+    </div>
+  </section>
+</main>
+</body>
+</html>

@@ -213,37 +213,14 @@ def _apply_env_overrides(data: dict) -> dict:
         if value is not None:
             out[config_key] = value
 
-    smtp_cfg = dict(out.get("smtp") or {})
-    smtp_map = {
-        "GEST2A3ECO_SMTP_HOST": "host",
-        "GEST2A3ECO_SMTP_PORT": "port",
-        "GEST2A3ECO_SMTP_USER": "user",
-        "GEST2A3ECO_SMTP_PASSWORD": "password",
-        "GEST2A3ECO_SMTP_FROM_ADDR": "from_addr",
-        "GEST2A3ECO_SMTP_USE_TLS": "use_tls",
-        "GEST2A3ECO_SMTP_USE_SSL": "use_ssl",
-    }
-    for env_name, config_key in smtp_map.items():
-        value = os.getenv(env_name)
-        if value is None:
-            continue
-        if config_key == "port":
-            try:
-                smtp_cfg[config_key] = int(value)
-            except Exception:
-                continue
-        elif config_key in {"use_tls", "use_ssl"}:
-            smtp_cfg[config_key] = str(value).strip().lower() in {"1", "true", "yes", "si"}
-        else:
-            smtp_cfg[config_key] = value
-    if smtp_cfg:
-        out["smtp"] = smtp_cfg
-
     return out
 
 
 def _normalize_config(data: dict) -> dict:
     out = dict(data or {})
+    # SMTP pertenecia a un flujo local retirado. Si queda en una configuracion
+    # antigua, no se expone ni se vuelve a guardar desde la aplicacion.
+    out.pop("smtp", None)
     out.setdefault("templates_path", "")
     out.setdefault("word_templates_dir", "")
     out.setdefault("a3_base_path", "")
@@ -290,18 +267,6 @@ def _normalize_config(data: dict) -> dict:
             or r"\\GestinemMain\Doc_Compartidos\Gest2A3Eco"
         )
         out["documentos_output_dir"] = str(repository / "Empresas")
-
-    smtp = out.get("smtp")
-    if not isinstance(smtp, dict):
-        smtp = {}
-    smtp.setdefault("host", "")
-    smtp.setdefault("port", 587)
-    smtp.setdefault("user", "")
-    smtp.setdefault("password", "")
-    smtp.setdefault("from_addr", "")
-    smtp.setdefault("use_tls", True)
-    smtp.setdefault("use_ssl", False)
-    out["smtp"] = smtp
 
     monedas = out.get("monedas")
     if not isinstance(monedas, list) or not monedas:

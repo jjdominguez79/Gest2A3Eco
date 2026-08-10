@@ -89,11 +89,16 @@ class UIFirmasGlobal(ttk.Frame):
         }
         if estado in grupos:
             rows = [row for row in rows if str(row.get("estado") or "") in grupos[estado]]
+        nombres_empresas = {}
+        for empresa in self._gestor.listar_empresas():
+            codigo_empresa = str(empresa.get("codigo") or "")
+            if codigo_empresa:
+                nombres_empresas[codigo_empresa] = str(empresa.get("nombre") or "").strip()
         self._rows = {str(row["id"]): row for row in rows}
         self._tree.delete(*self._tree.get_children())
         for row in rows:
             codigo = str(row.get("codigo_empresa") or "")
-            cliente = "Sin cliente" if codigo == GLOBAL_CODE else codigo
+            cliente = self._cliente_visible(codigo, nombres_empresas.get(codigo))
             estado_visible = self._estado_visible(row.get("estado"))
             resultado = row.get("ruta_firmado") or "Pendiente de descarga"
             self._tree.insert("", "end", iid=str(row["id"]), values=(
@@ -101,6 +106,14 @@ class UIFirmasGlobal(ttk.Frame):
                 row.get("created_at") or "", resultado,
             ))
         self._summary.configure(text=f"Solicitudes: {len(rows)}")
+
+    @staticmethod
+    def _cliente_visible(codigo, nombre=""):
+        codigo = str(codigo or "").strip()
+        nombre = str(nombre or "").strip()
+        if not codigo or codigo == GLOBAL_CODE:
+            return "Sin cliente"
+        return f"{codigo} - {nombre}" if nombre else codigo
 
     @staticmethod
     def _estado_visible(estado):
@@ -302,7 +315,11 @@ class UIFirmasGlobal(ttk.Frame):
             "email": cfg.get("signrequest_gestor_email") or cfg.get("signrequest_from_email") or "",
             "telefono": cfg.get("signrequest_gestor_telefono") or "",
         }
-        dialog = UIFirmaDialog(self, ruta, terceros=terceros, remitente=remitente)
+        firmante_cliente = self._firmante_desde_empresa(setup.result)
+        initial = {"firmantes": [firmante_cliente]} if firmante_cliente else None
+        dialog = UIFirmaDialog(
+            self, ruta, terceros=terceros, remitente=remitente, initial=initial,
+        )
         self.wait_window(dialog)
         if not dialog.result:
             return
@@ -408,6 +425,21 @@ class UIFirmasGlobal(ttk.Frame):
             "telefono": cfg.get("signrequest_gestor_telefono") or "",
         }
 
+    @staticmethod
+    def _firmante_desde_empresa(empresa):
+        """Prepara el contacto principal de la ficha para una firma desde disco."""
+        if not empresa or not empresa.get("codigo"):
+            return None
+        correos = str(empresa.get("email") or empresa.get("correo") or "")
+        # La ficha admite varios correos; SignRequest necesita un destinatario
+        # por firmante, por lo que proponemos el primero y queda editable.
+        email = correos.replace(";", ",").split(",", 1)[0].strip()
+        return {
+            "nombre": str(empresa.get("nombre") or "").strip(),
+            "email": email,
+            "telefono": str(empresa.get("telefono") or "").strip(),
+        }
+
     def _cancel_selected(self):
         self._simple_action("cancelar", "Solicitud cancelada.")
 
@@ -505,7 +537,17 @@ class _FirmaGlobalSetup(tk.Toplevel):
         self.transient(parent)
         self.grab_set()
         self.result = None
-        self._empresas = list(empresas or [])
+        # listar_empresas devuelve una fila por ejercicio; conservamos la mas
+        # reciente para no repetir clientes ni recuperar un email antiguo.
+        empresas_por_codigo = {}
+        for item in empresas or []:
+            codigo = str(item.get("codigo") or "")
+            anterior = empresas_por_codigo.get(codigo)
+            if anterior is None or int(item.get("ejercicio") or 0) >= int(
+                anterior.get("ejercicio") or 0
+            ):
+                empresas_por_codigo[codigo] = item
+        self._empresas = list(empresas_por_codigo.values())
         ttk.Label(self, text="Cliente (opcional)").pack(anchor="w", padx=12, pady=(12, 3))
         self._client = tk.StringVar(value="Sin cliente")
         self._client_values = ["Sin cliente"] + [self._company_label(e) for e in self._empresas]
@@ -540,6 +582,7 @@ class _FirmaGlobalSetup(tk.Toplevel):
     def _accept(self):
         value = self._client.get()
         codigo = ""
+        empresa = None
         if value != "Sin cliente":
             empresa = next(
                 (item for item in self._empresas if self._company_label(item) == value), None,
@@ -558,5 +601,11 @@ class _FirmaGlobalSetup(tk.Toplevel):
                 )
                 return
             codigo = str(empresa.get("codigo") or "")
-        self.result = {"codigo": codigo, "ejercicio": datetime.now().year}
+        self.result = {
+            "codigo": codigo,
+            "ejercicio": datetime.now().year,
+            "nombre": str((empresa or {}).get("nombre") or ""),
+            "email": str((empresa or {}).get("email") or ""),
+            "telefono": str((empresa or {}).get("telefono") or ""),
+        }
         self.destroy()
