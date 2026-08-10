@@ -48,6 +48,7 @@ ALLOWED_SUFFIXES = {
 }
 STAFF_CHANNELS = {"laboral", "fiscal"}
 STAFF_ROLES = {"admin", "empleado"}
+TEST_COMPANY_CODES = {"E0000", "E00000"}
 
 
 def get_db():
@@ -242,6 +243,8 @@ def _can_access_conversation(
     db: Session, conv: MessagingConversation, staff: MessagingStaff,
 ) -> bool:
     org = db.get(MessagingOrganization, conv.organization_id)
+    if org and org.company_code.strip().upper() in TEST_COMPANY_CODES:
+        return bool(org.private_owner_external_id == staff.external_id)
     if conv.kind == "private":
         return bool(org and org.private_owner_external_id == staff.external_id)
     return conv.kind in _channels_for_staff(db, staff)
@@ -375,7 +378,7 @@ def _queue_staff_pushes(
     if not push_configured():
         return
     org = db.get(MessagingOrganization, conv.organization_id)
-    if conv.kind == "private":
+    if org.company_code.strip().upper() in TEST_COMPANY_CODES or conv.kind == "private":
         staff_ids = {org.private_owner_external_id} if org.private_owner_external_id else set()
     else:
         staff_ids = set(db.scalars(select(MessagingStaffChannel.staff_external_id).where(
@@ -1190,28 +1193,47 @@ def revoke_staff_sessions(
 
 @router.get("/staff/admin/organizations")
 def staff_organizations(
-    _admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
+    admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
 ):
     rows = db.scalars(select(MessagingOrganization).order_by(MessagingOrganization.name)).all()
     return [{
         "company_code": row.company_code, "name": row.name, "active": row.active,
         "private_owner_external_id": row.private_owner_external_id,
-    } for row in rows]
+    } for row in rows if (
+        row.company_code.strip().upper() not in TEST_COMPANY_CODES
+        or row.private_owner_external_id == admin.external_id
+    )]
 
 
 @router.put("/staff/admin/organizations/{company_code}")
 def staff_put_organization(
     company_code: str, payload: OrganizationIn,
-    _admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
+    admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
 ):
+    if company_code.strip().upper() in TEST_COMPANY_CODES:
+        current = db.scalar(select(MessagingOrganization).where(
+            MessagingOrganization.company_code == company_code,
+        ))
+        if current and current.private_owner_external_id != admin.external_id:
+            raise HTTPException(403, "Cliente de pruebas privado")
+        if not current and payload.private_owner_external_id not in {None, admin.external_id}:
+            raise HTTPException(403, "Cliente de pruebas privado")
+        if payload.private_owner_external_id is None:
+            payload.private_owner_external_id = admin.external_id
     return put_organization(company_code, payload, db)
 
 
 @router.post("/staff/admin/invitations")
 def staff_create_invitation(
     payload: InviteIn, background: BackgroundTasks,
-    _admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
+    admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
 ):
+    org = _organization(db, payload.company_code)
+    if (
+        org.company_code.strip().upper() in TEST_COMPANY_CODES
+        and org.private_owner_external_id != admin.external_id
+    ):
+        raise HTTPException(403, "Cliente de pruebas privado")
     return create_invitation(payload, background, db)
 
 
@@ -1705,9 +1727,11 @@ async def events(audience: str, request: Request, after: int = 0, db: Session = 
                         yield f"id: {row.id}\nevent: {row.event_type}\ndata: {json.dumps({'thread_id': row.conversation_id})}\n\n"
                         continue
                     conv = event_db.get(MessagingConversation, row.conversation_id) if row.conversation_id else None
-                    if audience == "staff" and conv and conv.kind == "private":
-                        org = event_db.get(MessagingOrganization, conv.organization_id)
-                        if org.private_owner_external_id != staff_id:
+                    if audience == "staff" and conv:
+                        event_staff = event_db.get(MessagingStaff, staff_id)
+                        if not event_staff or not _can_access_conversation(
+                            event_db, conv, event_staff,
+                        ):
                             continue
                     yield f"id: {row.id}\nevent: {row.event_type}\ndata: {json.dumps({'conversation_id': row.conversation_id})}\n\n"
             yield ": keepalive\n\n"

@@ -215,6 +215,107 @@ def test_cuenta_cliente_prueba_genera_enlace_sin_enviar_email(tmp_path, monkeypa
     ).status_code == 200
 
 
+def test_empresa_pruebas_solo_es_visible_para_su_titular(tmp_path, monkeypatch):
+    client = _client(tmp_path)
+    internal = {"X-API-Key": "test-secret"}
+    for staff_id, name in (("admin-owner", "Titular"), ("admin-other", "Otro admin")):
+        assert client.put(
+            f"/api/v1/messaging/internal/staff/{staff_id}", headers=internal,
+            json={
+                "external_id": staff_id, "name": name,
+                "email": f"{staff_id}@gestinem.es", "role": "admin",
+                "active": True, "channels": ["laboral", "fiscal"],
+            },
+        ).status_code == 200
+    device = client.post(
+        "/api/v1/messaging/internal/devices/puesto-pruebas", headers=internal,
+    ).json()
+    common = {
+        **internal, "X-Device-Id": "puesto-pruebas",
+        "X-Device-Token": device["device_token"],
+    }
+    owner = {**common, "X-Staff-Id": "admin-owner"}
+    other = {**common, "X-Staff-Id": "admin-other"}
+    assert client.put(
+        "/api/v1/messaging/internal/organizations/E0000", headers=internal,
+        json={
+            "company_code": "E0000", "name": "Empresa de Pruebas",
+            "private_owner_external_id": "admin-owner", "active": True,
+        },
+    ).status_code == 200
+
+    owner_conversations = client.get(
+        "/api/v1/messaging/staff/conversations", headers=owner,
+    ).json()
+    assert {row["kind"] for row in owner_conversations} == {"laboral", "fiscal", "private"}
+    assert client.get(
+        "/api/v1/messaging/staff/conversations", headers=other,
+    ).json() == []
+    assert client.get(
+        f"/api/v1/messaging/staff/conversations/{owner_conversations[0]['id']}/messages",
+        headers=other,
+    ).status_code == 403
+
+    assert any(
+        row["company_code"] == "E0000"
+        for row in client.get(
+            "/api/v1/messaging/staff/admin/organizations", headers=owner,
+        ).json()
+    )
+    assert all(
+        row["company_code"] != "E0000"
+        for row in client.get(
+            "/api/v1/messaging/staff/admin/organizations", headers=other,
+        ).json()
+    )
+    assert client.post(
+        "/api/v1/messaging/staff/admin/invitations", headers=other,
+        json={
+            "company_code": "E0000", "name": "Prueba",
+            "email": "prueba-privada@gestinem.es", "send_email": False,
+        },
+    ).status_code == 403
+
+    invitation = client.post(
+        "/api/v1/messaging/staff/admin/invitations", headers=owner,
+        json={
+            "company_code": "E0000", "name": "Prueba",
+            "email": "prueba-privada@gestinem.es", "send_email": False,
+        },
+    )
+    token = invitation.json()["url"].split("invite=", 1)[1]
+    accepted = client.post(
+        "/api/v1/messaging/auth/accept-invite",
+        json={"token": token, "password": "prueba-segura-1234"},
+    ).json()
+    client_auth = {"Authorization": f"Bearer {accepted['token']}"}
+    fiscal = next(
+        row for row in client.get(
+            "/api/v1/messaging/client/conversations", headers=client_auth,
+        ).json() if row["kind"] == "fiscal"
+    )
+    monkeypatch.setattr(messaging_api, "push_configured", lambda: True)
+    delivered_to = []
+    monkeypatch.setattr(
+        messaging_api, "send_push",
+        lambda subscription, _payload: delivered_to.append(subscription["endpoint"]) or True,
+    )
+    for headers, endpoint in ((owner, "owner-device"), (other, "other-device")):
+        assert client.post(
+            "/api/v1/messaging/staff/push/subscriptions", headers=headers,
+            json={
+                "endpoint": f"https://push.example.test/{endpoint}",
+                "p256dh": "public-key", "auth": "auth-key",
+            },
+        ).status_code == 200
+    assert client.post(
+        f"/api/v1/messaging/client/conversations/{fiscal['id']}/messages",
+        headers=client_auth,
+        data={"body": "Mensaje privado de pruebas", "idempotency_key": "test-private"},
+    ).status_code == 200
+    assert delivered_to == ["https://push.example.test/owner-device"]
+
+
 def test_worker_sincroniza_directorio_de_empresas_sin_borrar_titular_privado(tmp_path):
     client = _client(tmp_path)
     internal = {"X-API-Key": "test-secret"}
