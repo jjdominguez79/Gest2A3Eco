@@ -1094,6 +1094,11 @@ def _normalized_avatar(upload: UploadFile) -> bytes:
         with Image.open(io.BytesIO(content)) as source:
             if source.width * source.height > 25_000_000:
                 raise HTTPException(413, "La imagen tiene demasiada resolucion")
+            # Las fotos tomadas con el movil suelen guardar la orientacion en
+            # EXIF sin girar fisicamente los pixeles. Hay que aplicarla antes
+            # de recortar el avatar, porque los navegadores no conservan ese
+            # metadato al recibir el WEBP normalizado.
+            source = ImageOps.exif_transpose(source)
             avatar = ImageOps.fit(
                 source.convert("RGB"), (256, 256), method=Image.Resampling.LANCZOS,
             )

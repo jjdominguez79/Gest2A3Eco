@@ -9,7 +9,7 @@ os.environ.setdefault(
     "postgresql+psycopg://gest2a3eco_test:gest2a3eco_test@localhost:5432/gest2a3eco_test",
 )
 
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -43,6 +43,28 @@ def _client(tmp_path: Path):
 
     app.dependency_overrides[get_db] = override
     return TestClient(app, base_url="https://mensajes.example.test")
+
+
+def test_avatar_aplica_orientacion_exif_de_fotos_moviles():
+    source = Image.new("RGB", (120, 60), "#1c4f9c")
+    for x in range(60):
+        for y in range(60):
+            source.putpixel((x, y), (220, 45, 45))
+    exif = Image.Exif()
+    exif[274] = 6  # Rotacion de 90 grados en sentido horario.
+    encoded = BytesIO()
+    source.save(encoded, format="JPEG", quality=95, exif=exif)
+    encoded.seek(0)
+
+    normalized = messaging_api._normalized_avatar(
+        UploadFile(filename="foto-movil.jpg", file=encoded),
+    )
+    with Image.open(BytesIO(normalized)) as avatar:
+        assert avatar.size == (256, 256)
+        top = avatar.getpixel((128, 30))
+        bottom = avatar.getpixel((128, 225))
+        assert top[0] > top[2]
+        assert bottom[2] > bottom[0]
 
 
 def test_admin_preautoriza_empleado_y_primer_login_vincula_microsoft(tmp_path, monkeypatch):
