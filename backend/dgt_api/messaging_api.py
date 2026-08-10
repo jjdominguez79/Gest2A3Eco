@@ -1342,8 +1342,18 @@ def client_conversations(client: MessagingClient = Depends(_client), db: Session
 
 
 @router.get("/staff/conversations")
-def staff_conversations(staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db)):
-    rows = db.scalars(select(MessagingConversation).order_by(MessagingConversation.updated_at.desc())).all()
+def staff_conversations(
+    active_only: bool = False,
+    staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
+):
+    stmt = select(MessagingConversation)
+    if active_only:
+        stmt = stmt.where(
+            select(MessagingMessage.id).where(
+                MessagingMessage.conversation_id == MessagingConversation.id,
+            ).exists()
+        )
+    rows = db.scalars(stmt.order_by(MessagingConversation.updated_at.desc())).all()
     result = []
     for row in rows:
         if not _can_access_conversation(db, row, staff):

@@ -289,10 +289,10 @@ def test_empresa_pruebas_solo_es_visible_para_su_titular(tmp_path, monkeypatch):
         json={"token": token, "password": "prueba-segura-1234"},
     ).json()
     client_auth = {"Authorization": f"Bearer {accepted['token']}"}
-    fiscal = next(
+    private = next(
         row for row in client.get(
             "/api/v1/messaging/client/conversations", headers=client_auth,
-        ).json() if row["kind"] == "fiscal"
+        ).json() if row["kind"] == "private"
     )
     monkeypatch.setattr(messaging_api, "push_configured", lambda: True)
     delivered_to = []
@@ -309,11 +309,15 @@ def test_empresa_pruebas_solo_es_visible_para_su_titular(tmp_path, monkeypatch):
             },
         ).status_code == 200
     assert client.post(
-        f"/api/v1/messaging/client/conversations/{fiscal['id']}/messages",
+        f"/api/v1/messaging/client/conversations/{private['id']}/messages",
         headers=client_auth,
-        data={"body": "Mensaje privado de pruebas", "idempotency_key": "test-private"},
+        data={"body": "Mensaje directo de pruebas", "idempotency_key": "test-private"},
     ).status_code == 200
     assert delivered_to == ["https://push.example.test/owner-device"]
+    visible = client.get(
+        "/api/v1/messaging/staff/conversations?active_only=true", headers=owner,
+    ).json()
+    assert [row["kind"] for row in visible] == ["private"]
 
 
 def test_worker_sincroniza_directorio_de_empresas_sin_borrar_titular_privado(tmp_path):
@@ -583,10 +587,14 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
         "/api/v1/messaging/staff/admin/directory/7/avatar", headers=staff7,
         files={"avatar": ("titular.png", avatar.getvalue(), "image/png")},
     ).status_code == 200
-    visible7 = client.get("/api/v1/messaging/staff/conversations", headers=staff7).json()
-    assert len(visible7) == 2
+    visible7 = client.get(
+        "/api/v1/messaging/staff/conversations?active_only=true", headers=staff7,
+    ).json()
+    assert len(visible7) == 1
     assert next(row for row in visible7 if row["id"] == general["id"])["unread_count"] == 1
-    assert len(client.get("/api/v1/messaging/staff/conversations", headers=staff8).json()) == 1
+    assert len(client.get(
+        "/api/v1/messaging/staff/conversations?active_only=true", headers=staff8,
+    ).json()) == 1
     assert client.post(
         f"/api/v1/messaging/staff/conversations/{general['id']}/read", headers=staff7,
     ).status_code == 200

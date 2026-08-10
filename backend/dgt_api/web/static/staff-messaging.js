@@ -30,7 +30,7 @@ async function start(){
   await preparePush();startEvents();
 }
 async function loadConversations(){
-  conversations=await request('/staff/conversations');configureNavigation();renderConversations();renderBadges();
+  conversations=await request('/staff/conversations?active_only=true');configureNavigation();renderConversations();renderBadges();
   if(selectedId&&!conversations.some(row=>row.id===selectedId))selectConversation('');
 }
 async function loadInternalThreads(){
