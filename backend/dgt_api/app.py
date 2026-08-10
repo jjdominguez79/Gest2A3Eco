@@ -57,23 +57,51 @@ app.include_router(messaging_router)
 def startup():
     Base.metadata.create_all(engine)
     with engine.begin() as conn:
-        conn.execute(
-            text(
+        existing_columns = set(conn.execute(text(
+            "SELECT table_name, column_name FROM information_schema.columns "
+            "WHERE table_schema=current_schema() "
+            "AND table_name IN ('dgt_documentos', 'msg_staff')"
+        )).tuples())
+        column_migrations = {
+            ("dgt_documentos", "dataprius_json"): (
                 "ALTER TABLE dgt_documentos "
-                "ADD COLUMN IF NOT EXISTS dataprius_json JSONB NOT NULL DEFAULT '{}'"
-            )
-        )
-        conn.execute(text("ALTER TABLE msg_staff ADD COLUMN IF NOT EXISTS email VARCHAR(254) NOT NULL DEFAULT ''"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_msg_staff_email ON msg_staff(email)"))
-        conn.execute(text("ALTER TABLE msg_staff ADD COLUMN IF NOT EXISTS entra_oid VARCHAR(64) NOT NULL DEFAULT ''"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_msg_staff_entra_oid ON msg_staff(entra_oid)"))
-        conn.execute(text("ALTER TABLE msg_staff ADD COLUMN IF NOT EXISTS chat_alias VARCHAR(160) NOT NULL DEFAULT ''"))
-        conn.execute(text("ALTER TABLE msg_staff ADD COLUMN IF NOT EXISTS avatar_storage_key VARCHAR(500) NOT NULL DEFAULT ''"))
-        conn.execute(text("ALTER TABLE msg_staff ADD COLUMN IF NOT EXISTS avatar_content_type VARCHAR(120) NOT NULL DEFAULT ''"))
-        conn.execute(text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS ux_msg_staff_entra_oid_asignado "
-            "ON msg_staff(entra_oid) WHERE entra_oid <> ''"
-        ))
+                "ADD COLUMN dataprius_json JSONB NOT NULL DEFAULT '{}'"
+            ),
+            ("msg_staff", "email"): (
+                "ALTER TABLE msg_staff ADD COLUMN email VARCHAR(254) NOT NULL DEFAULT ''"
+            ),
+            ("msg_staff", "entra_oid"): (
+                "ALTER TABLE msg_staff ADD COLUMN entra_oid VARCHAR(64) NOT NULL DEFAULT ''"
+            ),
+            ("msg_staff", "chat_alias"): (
+                "ALTER TABLE msg_staff ADD COLUMN chat_alias VARCHAR(160) NOT NULL DEFAULT ''"
+            ),
+            ("msg_staff", "avatar_storage_key"): (
+                "ALTER TABLE msg_staff ADD COLUMN avatar_storage_key VARCHAR(500) NOT NULL DEFAULT ''"
+            ),
+            ("msg_staff", "avatar_content_type"): (
+                "ALTER TABLE msg_staff ADD COLUMN avatar_content_type VARCHAR(120) NOT NULL DEFAULT ''"
+            ),
+        }
+        for column, ddl in column_migrations.items():
+            if column not in existing_columns:
+                conn.execute(text(ddl))
+
+        existing_indexes = set(conn.execute(text(
+            "SELECT indexname FROM pg_indexes WHERE schemaname=current_schema() "
+            "AND tablename='msg_staff'"
+        )).scalars())
+        index_migrations = {
+            "ix_msg_staff_email": "CREATE INDEX ix_msg_staff_email ON msg_staff(email)",
+            "ix_msg_staff_entra_oid": "CREATE INDEX ix_msg_staff_entra_oid ON msg_staff(entra_oid)",
+            "ux_msg_staff_entra_oid_asignado": (
+                "CREATE UNIQUE INDEX ux_msg_staff_entra_oid_asignado "
+                "ON msg_staff(entra_oid) WHERE entra_oid <> ''"
+            ),
+        }
+        for index_name, ddl in index_migrations.items():
+            if index_name not in existing_indexes:
+                conn.execute(text(ddl))
         conn.execute(text(
             "UPDATE msg_staff AS staff SET entra_oid=staff.external_id "
             "WHERE staff.entra_oid='' AND staff.email<>'' AND EXISTS ("
