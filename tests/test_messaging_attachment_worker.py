@@ -40,6 +40,24 @@ class Session:
         return Response(payload={"ok": True, "synchronized": len(kwargs.get("json") or [])})
 
 
+def _config(tmp_path):
+    return SimpleNamespace(
+        api_url="https://mensajes.example.test", sync_token="secret",
+        repository_dir=tmp_path, postgres_dsn="unused", worker_id="synology",
+        public_repository_dir=PureWindowsPath(r"\\Servidor\Documentos\Gest2A3Eco"),
+        interval_seconds=60,
+    )
+
+
+def test_worker_configura_reintentos_y_evitar_conexion_persistente(tmp_path):
+    worker = MessagingAttachmentWorker(_config(tmp_path))
+
+    retry = worker.http.get_adapter("https://").max_retries
+    assert retry.total == 3
+    assert retry.allowed_methods == frozenset({"GET", "PUT"})
+    assert worker._headers["Connection"] == "close"
+
+
 def test_worker_descarga_verifica_guarda_y_confirma(tmp_path, monkeypatch):
     content = b"%PDF-adjunto-chat"
     item = {
@@ -49,13 +67,7 @@ def test_worker_descarga_verifica_guarda_y_confirma(tmp_path, monkeypatch):
         "content_type": "application/pdf", "author_name": "Ana",
     }
     session = Session(item, content)
-    config = SimpleNamespace(
-        api_url="https://mensajes.example.test", sync_token="secret",
-        repository_dir=tmp_path, postgres_dsn="unused", worker_id="synology",
-        public_repository_dir=PureWindowsPath(r"\\Servidor\Documentos\Gest2A3Eco"),
-        interval_seconds=60,
-    )
-    worker = MessagingAttachmentWorker(config, session=session)
+    worker = MessagingAttachmentWorker(_config(tmp_path), session=session)
     saved = []
     monkeypatch.setattr(worker, "_existing", lambda _attachment_id: None)
     monkeypatch.setattr(worker, "_save", lambda row, path, digest: saved.append((row, path, digest)))
@@ -73,13 +85,7 @@ def test_worker_descarga_verifica_guarda_y_confirma(tmp_path, monkeypatch):
 
 def test_worker_sincroniza_directorio_de_clientes(tmp_path, monkeypatch):
     session = Session({}, b"")
-    config = SimpleNamespace(
-        api_url="https://mensajes.example.test", sync_token="secret",
-        repository_dir=tmp_path, postgres_dsn="unused", worker_id="synology",
-        public_repository_dir=PureWindowsPath(r"\\Servidor\Documentos\Gest2A3Eco"),
-        interval_seconds=60,
-    )
-    worker = MessagingAttachmentWorker(config, session=session)
+    worker = MessagingAttachmentWorker(_config(tmp_path), session=session)
     rows = [
         {"company_code": "E00042", "name": "Cliente Uno", "active": True},
         {"company_code": "E00043", "name": "Cliente Dos", "active": False},

@@ -14,11 +14,14 @@ import psycopg
 import requests
 from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from sync_worker.config import _required, _secret
 
 
 LOG = logging.getLogger("gest2a3eco.messaging_sync")
+WORKER_VERSION = "2026.08.10.2"
 
 
 @dataclass(frozen=True)
@@ -60,12 +63,33 @@ class MessagingWorkerConfig:
 class MessagingAttachmentWorker:
     def __init__(self, config: MessagingWorkerConfig, session=None):
         self.config = config
-        self.http = session or requests.Session()
+        self.http = session or self._build_session()
         self.stop_event = threading.Event()
+
+    @staticmethod
+    def _build_session() -> requests.Session:
+        retry = Retry(
+            total=3,
+            connect=3,
+            read=3,
+            status=3,
+            backoff_factor=1,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=frozenset({"GET", "PUT"}),
+            raise_on_status=False,
+        )
+        session = requests.Session()
+        adapter = HTTPAdapter(max_retries=retry)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        return session
 
     @property
     def _headers(self) -> dict[str, str]:
-        return {"X-Sync-Token": self.config.sync_token}
+        return {
+            "X-Sync-Token": self.config.sync_token,
+            "Connection": "close",
+        }
 
     def _url(self, path: str) -> str:
         return f"{self.config.api_url}/api/v1/messaging{path}"
@@ -236,6 +260,7 @@ def main() -> None:
         force=True,
     )
     worker = MessagingAttachmentWorker(MessagingWorkerConfig.from_environment())
+    LOG.info("Iniciando sincronizador de mensajeria version=%s", WORKER_VERSION)
     signal.signal(signal.SIGTERM, worker.stop)
     signal.signal(signal.SIGINT, worker.stop)
     LOG.info("Iniciando sincronizador de adjuntos cada %d segundos", worker.config.interval_seconds)
