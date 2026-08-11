@@ -140,6 +140,23 @@ class UIFirmaDialog(tk.Toplevel):
         texto = self._tercero_var.get().strip().lower()
         filtradas = [value for value in self._tercero_opciones if texto in value.lower()]
         self._tercero_combo["values"] = filtradas if texto else self._tercero_opciones
+        # Abrir el desplegable automaticamente para mostrar los resultados filtrados.
+        # Se usa after(1) para que Tkinter haya procesado el cambio de valores antes.
+        if texto and filtradas:
+            self._tercero_combo.after(1, self._abrir_dropdown_tercero)
+
+    def _abrir_dropdown_tercero(self):
+        """Abre el desplegable del combo de terceros si no esta ya visible."""
+        try:
+            popdown = self._tercero_combo.tk.call(
+                "ttk::combobox::PopdownWindow", str(self._tercero_combo)
+            )
+            if not self._tercero_combo.tk.call("winfo", "ismapped", popdown):
+                self._tercero_combo.tk.call(
+                    "ttk::combobox::Post", str(self._tercero_combo)
+                )
+        except Exception:
+            pass
 
     def _add_tercero(self):
         seleccionado = self._tercero_var.get()

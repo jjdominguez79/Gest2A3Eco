@@ -1,6 +1,6 @@
 {
-  "version": "1.6.2",
-  "tag": "v1.6.2",
-  "changelog": "﻿Mejoras introducidas: \n- Posibilidad de enviar por email el albaran y la factura, previsuzalizando ambos documentos para verificar que son correctos.\n- Posibilidad de enviar adjuntos a través de la mensajeria interna del despacho.\n- Al borrar una factura el albaran quedaba como facturado y no se podia modificar.\n- Cuando se modifican datos de una factura el programa genera nuevamente los pdf antes de enviarlos.",
+  "version": "1.6.3",
+  "tag": "v1.6.3",
+  "changelog": "﻿Se han corregido errores en la generacion de cuotas periodicas y de ha añadido la posibilidad de navegar entra facturas sin tener que salir al listado principal.",
   "force_update": true
 }

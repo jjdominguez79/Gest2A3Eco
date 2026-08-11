@@ -64,7 +64,10 @@ class CuotaDialog(tk.Toplevel):
                  terceros: list[dict] | None = None,
                  empresa_defaults: dict | None = None,
                  plantillas_word: list[str] | None = None,
-                 plantillas_emitidas: list[str] | None = None):
+                 plantillas_emitidas: list[str] | None = None,
+                 nav_index: int | None = None,
+                 nav_total: int | None = None,
+                 on_save=None):
         super().__init__(parent)
         self.title("Cuota periodica" if not cuota or not cuota.get("id") else "Editar cuota")
         self.resizable(True, True)
@@ -78,6 +81,10 @@ class CuotaDialog(tk.Toplevel):
         except Exception:
             pass
         self.result = None
+        self._on_save = on_save
+        self._dirty = False
+        self._nav_index = nav_index
+        self._nav_total = nav_total
         self._cuota = dict(cuota or {})
         self._series = series or []
         self._terceros = terceros or []
@@ -89,6 +96,8 @@ class CuotaDialog(tk.Toplevel):
         self.grab_set()
         self.transient(parent)
         _center_window(self, parent)
+        # Activar el seguimiento de cambios despues de que la UI este lista
+        self.after(0, self._setup_dirty_tracking)
         self.wait_window(self)
 
     # ── Construccion UI ───────────────────────────────────────────────────────
@@ -338,6 +347,23 @@ class CuotaDialog(tk.Toplevel):
         # ── Botones finales ───────────────────────────────────────────────────
         btns = ttk.Frame(frm)
         btns.grid(row=row, column=0, columnspan=5, pady=(6, 4))
+        # Navegacion entre registros
+        if self._nav_total is not None and self._nav_total > 1:
+            nav_frame = ttk.Frame(btns)
+            nav_frame.pack(side=tk.LEFT, padx=(0, 12))
+            idx = self._nav_index or 0
+            self._btn_nav_prev = ttk.Button(
+                nav_frame, text="\u2190 Anterior", command=self._nav_prev,
+                state="normal" if idx > 0 else "disabled",
+            )
+            self._btn_nav_prev.pack(side=tk.LEFT, padx=2)
+            ttk.Label(nav_frame, text=f"  {idx + 1} / {self._nav_total}  ",
+                      foreground="#555").pack(side=tk.LEFT)
+            self._btn_nav_next = ttk.Button(
+                nav_frame, text="Siguiente \u2192", command=self._nav_next,
+                state="normal" if idx < self._nav_total - 1 else "disabled",
+            )
+            self._btn_nav_next.pack(side=tk.LEFT, padx=2)
         ttk.Button(btns, text="Guardar cuota", style="Primary.TButton",
                    command=self._ok).pack(side=tk.LEFT, padx=4)
         ttk.Button(btns, text="Cancelar", command=self.destroy).pack(side=tk.LEFT, padx=4)
@@ -443,6 +469,7 @@ class CuotaDialog(tk.Toplevel):
         self._rebuild_tv()
         self._clear_editor()
         self._refresh_totales()
+        self._mark_dirty()
 
     def _clear_editor(self):
         self._line_vars["concepto"].set("")
@@ -469,13 +496,14 @@ class CuotaDialog(tk.Toplevel):
         sel = self.tv.selection()
         if not sel:
             return
-        idx = self.tv.index(sel[0])
         self.tv.delete(sel[0])
+        # Sincronizar desde los tags del Treeview; el item ya fue eliminado
+        # del TV antes de llamar a _lineas_from_tv, por lo que self._lineas
+        # queda correctamente sin ese elemento. No se debe hacer pop adicional.
         self._lineas_from_tv()
-        if 0 <= idx < len(self._lineas):
-            self._lineas.pop(idx)
         self._rebuild_tv()
         self._refresh_totales()
+        self._mark_dirty()
 
     def _move_up(self):
         sel = self.tv.selection()
@@ -487,6 +515,7 @@ class CuotaDialog(tk.Toplevel):
             return
         self._lineas[idx - 1], self._lineas[idx] = self._lineas[idx], self._lineas[idx - 1]
         self._rebuild_tv()
+        self._mark_dirty()
 
     def _move_down(self):
         sel = self.tv.selection()
@@ -498,6 +527,7 @@ class CuotaDialog(tk.Toplevel):
             return
         self._lineas[idx], self._lineas[idx + 1] = self._lineas[idx + 1], self._lineas[idx]
         self._rebuild_tv()
+        self._mark_dirty()
 
     def _lineas_from_tv(self):
         """Sincroniza self._lineas desde el Treeview (usando los tags)."""
@@ -527,9 +557,65 @@ class CuotaDialog(tk.Toplevel):
         self.lbl_iva.config(text=f"IVA: {fmt2(round2(iva))}")
         self.lbl_total.config(text=f"Total: {fmt2(round2(total))}")
 
+    # ── Dirty tracking ────────────────────────────────────────────────────────
+
+    def _mark_dirty(self, *_):
+        self._dirty = True
+
+    def _setup_dirty_tracking(self):
+        """Activa trazas en todas las variables de la UI para detectar cambios."""
+        try:
+            for v in (
+                self.var_tercero, self.var_nif, self.var_nombre, self.var_subcuenta,
+                self.var_desc, self.var_serie, self.var_forma_pago, self.var_cuenta,
+                self.var_obs, self.var_retencion_aplica, self.var_retencion_pct,
+                self.var_plantilla_word, self.var_plantilla_emitidas,
+                self.var_periodicidad, self.var_fecha_inicio, self.var_fecha_fin,
+                self.var_activa,
+            ):
+                v.trace_add("write", self._mark_dirty)
+        except Exception:
+            pass
+
+    def _show_save_feedback(self):
+        """Muestra brevemente en el titulo que el registro fue guardado."""
+        try:
+            base = self.title().replace(" \u2014 Guardado", "")
+            self.title(f"{base} \u2014 Guardado")
+            self.after(2000, lambda: self.title(base) if self.winfo_exists() else None)
+        except Exception:
+            pass
+
+    # ── Navegacion ────────────────────────────────────────────────────────────
+
+    def _nav_prev(self):
+        self._do_nav("prev")
+
+    def _nav_next(self):
+        self._do_nav("next")
+
+    def _do_nav(self, direction: str):
+        """Gestiona la navegacion: pregunta si hay cambios sin guardar."""
+        if self._dirty:
+            answer = messagebox.askyesnocancel(
+                "Cambios sin guardar",
+                "Hay cambios sin guardar.\n\n"
+                "¿Deseas guardar los cambios antes de continuar?",
+                parent=self,
+            )
+            if answer is None:  # Cancelar → quedarse
+                return
+            if answer:  # Si → guardar y navegar
+                self._ok(nav=direction)
+                return
+            # No → navegar sin guardar
+        # Navegar sin datos (no habia cambios o el usuario descarto)
+        self.result = {"_nav": direction, "_no_save": True}
+        self.destroy()
+
     # ── Guardar ───────────────────────────────────────────────────────────────
 
-    def _ok(self):
+    def _ok(self, nav=None):
         nif = self.var_nif.get().strip()
         nombre = self.var_nombre.get().strip()
         if not nombre:
@@ -583,5 +669,13 @@ class CuotaDialog(tk.Toplevel):
             "plantilla_emitidas": self.var_plantilla_emitidas.get().strip(),
             "lineas": self._lineas,
         })
+        if nav:
+            doc["_nav"] = nav
+        # Modo guardar-y-seguir: hay callback y no es navegacion
+        if self._on_save and not nav:
+            self._on_save(doc)
+            self._dirty = False
+            self._show_save_feedback()
+            return
         self.result = doc
         self.destroy()

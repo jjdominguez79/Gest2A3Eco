@@ -152,7 +152,7 @@ class UIContabilidad(ttk.Frame):
             foreground="#888", font=("Segoe UI", 8),
         ).pack(side=tk.LEFT)
         ttk.Separator(bar2, orient="vertical").pack(side=tk.LEFT, fill="y", padx=8)
-        ttk.Label(bar2, text="Filtrar:").pack(side=tk.LEFT)
+        ttk.Label(bar2, text="Estado:").pack(side=tk.LEFT)
         self.cmb_filtro_emitidas = ttk.Combobox(
             bar2,
             values=["Todos", "Pendiente", "Generado"],
@@ -162,6 +162,10 @@ class UIContabilidad(ttk.Frame):
         self.cmb_filtro_emitidas.set("Todos")
         self.cmb_filtro_emitidas.pack(side=tk.LEFT, padx=(4, 8))
         self.cmb_filtro_emitidas.bind("<<ComboboxSelected>>", self._aplicar_filtro_emitidas)
+        ttk.Label(bar2, text="Cliente:").pack(side=tk.LEFT)
+        self._filtro_cliente_var = tk.StringVar()
+        self._filtro_cliente_var.trace_add("write", lambda *_: self._aplicar_filtro_emitidas())
+        ttk.Entry(bar2, textvariable=self._filtro_cliente_var, width=20).pack(side=tk.LEFT, padx=(4, 8))
         ttk.Button(
             bar2, text="Seleccionar todas",
             command=self._seleccionar_todas_emitidas,
@@ -344,12 +348,15 @@ class UIContabilidad(ttk.Frame):
 
     def _aplicar_filtro_emitidas(self, _event=None):
         filtro = self.cmb_filtro_emitidas.get()
+        texto_cliente = self._filtro_cliente_var.get().strip().lower()
         self.tv_emitidas.delete(*self.tv_emitidas.get_children())
         for doc in (self._emitidas_docs or []):
             estado = doc.get("estado_contable") or ""
             if filtro == "Pendiente" and estado != "pendiente":
                 continue
             if filtro == "Generado" and estado != "generado":
+                continue
+            if texto_cliente and texto_cliente not in (str(doc.get("nombre") or "")).lower():
                 continue
             serie = str(doc.get("serie") or "").strip()
             numero = str(doc.get("numero") or "").strip()

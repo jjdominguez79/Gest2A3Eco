@@ -5,8 +5,8 @@ Reutiliza la logica de numeracion de FacturasEmitidasController.
 """
 from __future__ import annotations
 
+import hashlib
 import json
-import time
 from datetime import date, datetime
 
 
@@ -105,31 +105,74 @@ class CuotasController:
     def editar_cuota(self, cuota_id: str):
         if not self._ensure_write():
             return
-        cuota = self._gestor.get_cuota_periodica(cuota_id)
-        if not cuota:
-            return
-        # lineas_json puede ser str o list
-        if isinstance(cuota.get("lineas_json"), str):
-            try:
-                cuota["lineas"] = json.loads(cuota["lineas_json"])
-            except Exception:
-                cuota["lineas"] = []
-        else:
-            cuota["lineas"] = cuota.get("lineas_json") or []
+
+        # Obtener lista ordenada de IDs visibles para la navegacion
+        all_ids = self._view.get_all_cuota_ids()
+        try:
+            idx = all_ids.index(str(cuota_id))
+        except ValueError:
+            idx = 0
+
         series = self._listar_series_activas()
         defaults = self._empresa_defaults()
-        result = self._view.open_cuota_dialog(
-            cuota,
-            series=series,
-            terceros=self._listar_terceros_empresa(),
-            empresa_defaults=defaults,
-            plantillas_word=self._listar_plantillas_word(),
-            plantillas_emitidas=self._listar_plantillas_emitidas(),
-        )
-        if result:
-            result["id"] = cuota_id
+        terceros = self._listar_terceros_empresa()
+        plantillas_word = self._listar_plantillas_word()
+        plantillas_emitidas = self._listar_plantillas_emitidas()
+
+        # Funcion de guardado para el modo "guardar y seguir"
+        current_idx = [idx]
+
+        def _do_save(result):
+            no_save = result.pop("_no_save", False)
+            result.pop("_nav", None)
+            if no_save:
+                return
+            result["id"] = all_ids[current_idx[0]]
             self._gestor.upsert_cuota_periodica(result)
             self.refresh_cuotas()
+
+        while True:
+            if idx < 0 or idx >= len(all_ids):
+                break
+            current_idx[0] = idx
+            cuota = self._gestor.get_cuota_periodica(all_ids[idx])
+            if not cuota:
+                break
+            # lineas_json puede ser str o list
+            if isinstance(cuota.get("lineas_json"), str):
+                try:
+                    cuota["lineas"] = json.loads(cuota["lineas_json"])
+                except Exception:
+                    cuota["lineas"] = []
+            else:
+                cuota["lineas"] = cuota.get("lineas_json") or []
+            result = self._view.open_cuota_dialog(
+                cuota,
+                series=series,
+                terceros=terceros,
+                empresa_defaults=defaults,
+                plantillas_word=plantillas_word,
+                plantillas_emitidas=plantillas_emitidas,
+                nav_index=idx,
+                nav_total=len(all_ids),
+                on_save=_do_save,
+            )
+            if not result:
+                break
+            nav = result.pop("_nav", None)
+            no_save = result.pop("_no_save", False)
+            if not no_save:
+                result["id"] = all_ids[idx]
+                self._gestor.upsert_cuota_periodica(result)
+                self.refresh_cuotas()
+            # Actualizar la lista por si el orden cambio tras guardar
+            all_ids = self._view.get_all_cuota_ids()
+            if nav == "prev" and idx > 0:
+                idx -= 1
+            elif nav == "next" and idx < len(all_ids) - 1:
+                idx += 1
+            else:
+                break
 
     def duplicar_cuota(self, cuota_id: str):
         if not self._ensure_write():
@@ -310,6 +353,20 @@ class CuotasController:
                 lineas = json.loads(lineas_raw)
             except Exception:
                 lineas = []
+        # Normalizar nombres de campo: la vista de facturas usa "unidades" y
+        # "precio"; cuotas antiguas pueden haber guardado "cantidad" y
+        # "precio_unitario". Se asegura la presencia de los campos canónicos.
+        lineas_norm = []
+        for ln in lineas:
+            if not isinstance(ln, dict):
+                continue
+            nl = dict(ln)
+            if "unidades" not in nl:
+                nl["unidades"] = nl.get("cantidad", 1.0)
+            if "precio" not in nl:
+                nl["precio"] = nl.get("precio_unitario", 0.0)
+            lineas_norm.append(nl)
+        lineas = lineas_norm
 
         # ── Resolver tercero_id (obligatorio) ────────────────────────────────
         tercero_id = self._resolver_tercero_id(
@@ -345,7 +402,11 @@ class CuotasController:
             except Exception:
                 pass
 
-        fid = str(int(time.time() * 1000))
+        # ID deterministico: el mismo (cuota, periodo) siempre produce el mismo fid.
+        # Asi, si un intento anterior creo un borrador pero fallo al registrar el
+        # periodo, el siguiente intento actualiza ese borrador en vez de duplicarlo.
+        _fid_key = f"cuota:{cuota['id']}:{periodo}"
+        fid = str(int(hashlib.md5(_fid_key.encode()).hexdigest()[:15], 16))
         doc = {
             "id": fid,
             "codigo_empresa": cuota["codigo_empresa"],

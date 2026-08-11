@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.6.2",
+  "latest_version": "1.6.3",
   "minimum_required_version": "1.5.1",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.6.2/Setup_Gest2A3Eco_1.6.2.exe",
-  "changelog": "Posibilidad de enviar por email el albaran y la factura, previsualizando ambos documentos para verificar que son correctos. Posibilidad de enviar adjuntos a traves de la mensajeria interna del despacho. Al borrar una factura el albaran quedaba como facturado y no se podia modificar. Cuando se modifican datos de una factura el programa genera nuevamente los pdf antes de enviarlos.",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.6.3/Setup_Gest2A3Eco_1.6.3.exe",
+  "changelog": "Correccion en generacion de cuotas periodicas (unidades y precio). Navegacion entre facturas y cuotas sin salir al listado. Actualizacion masiva de estado de firmas. Filtro por cliente en contabilidad. Resetear facturas generadas vuelve a estado pendiente en lugar de eliminarlas de contabilidad.",
   "force_update": true
 }

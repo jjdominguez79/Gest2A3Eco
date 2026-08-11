@@ -55,7 +55,7 @@ class UIFirmasGlobal(ttk.Frame):
 
         self._tree = ttk.Treeview(
             self, columns=("estado", "cliente", "documento", "fecha", "resultado"),
-            show="headings", selectmode="browse",
+            show="headings", selectmode="extended",
         )
         for key, title, width in (
             ("estado", "Estado", 130), ("cliente", "Cliente", 180),
@@ -66,6 +66,7 @@ class UIFirmasGlobal(ttk.Frame):
             self._tree.column(key, width=width, anchor="w")
         self._tree.pack(fill="both", expand=True)
         self._tree.bind("<Double-1>", lambda _event: self._open_selected())
+        self._tree.bind("<Control-a>", lambda _e: self._tree.selection_set(self._tree.get_children()))
         actions = ttk.Frame(self)
         actions.pack(fill="x", pady=(8, 0))
         ttk.Button(actions, text="Actualizar estado", command=self._update_selected).pack(side="left")
@@ -351,27 +352,46 @@ class UIFirmasGlobal(ttk.Frame):
         threading.Thread(target=worker, daemon=True).start()
 
     def _update_selected(self):
-        row = self._selected()
-        if not row:
+        sel = self._tree.selection()
+        if not sel:
+            messagebox.showinfo("Firmas", "Selecciona al menos una solicitud.", parent=self)
+            return
+        rows = [self._rows[iid] for iid in sel if iid in self._rows]
+        if not rows:
             return
         cfg = load_app_config()
         self.configure(cursor="watch")
 
         def worker():
-            try:
-                provider = build_firma_provider(cfg)
-                service = FirmaService(self._gestor, provider=provider, max_mb=cfg.get("firma_max_mb", 15))
-                destination = self._evidence_dir(row)
-                result = service.actualizar_estado(row["id"], str(destination))
-                if result.get("estado") == "firmado":
-                    service.archivar_evidencias(row["id"])
-                detalle = self._resumen_entrega((result.get("proveedor") or {}).get("firmantes") or [])
-                mensaje = f"Estado: {self._estado_visible(result.get('estado'))}."
+            provider = build_firma_provider(cfg)
+            service = FirmaService(self._gestor, provider=provider, max_mb=cfg.get("firma_max_mb", 15))
+            ok = 0
+            errores = []
+            ultimo_result = None
+            for row in rows:
+                try:
+                    destination = self._evidence_dir(row)
+                    ultimo_result = service.actualizar_estado(row["id"], str(destination))
+                    if ultimo_result.get("estado") == "firmado":
+                        service.archivar_evidencias(row["id"])
+                    ok += 1
+                except Exception as exc:
+                    errores.append(f"{row.get('nombre_documento') or row['id']}: {exc}")
+            # Componer mensaje de resultado
+            if len(rows) == 1:
+                estado_txt = self._estado_visible((ultimo_result or {}).get("estado")) if ok else ""
+                detalle = self._resumen_entrega(((ultimo_result or {}).get("proveedor") or {}).get("firmantes") or []) if ok else ""
+                mensaje = f"Estado: {estado_txt}." if ok else ""
                 if detalle:
                     mensaje += "\n\n" + detalle
-                self.after(0, self._done, mensaje, "")
-            except Exception as exc:
-                self.after(0, self._done, "", str(exc))
+                error_txt = errores[0] if errores else ""
+                self.after(0, self._done, mensaje, error_txt)
+            else:
+                partes = [f"{ok} de {len(rows)} solicitud(es) actualizadas correctamente."]
+                if errores:
+                    partes.append(f"\n{len(errores)} con error:\n" + "\n".join(errores[:10]))
+                self.after(0, self._done, "\n".join(partes), "")
+
         threading.Thread(target=worker, daemon=True).start()
 
     def _resend_selected(self):

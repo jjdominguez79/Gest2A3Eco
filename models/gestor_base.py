@@ -2626,13 +2626,18 @@ class GestorBase:
         return cur.rowcount
 
     def resetear_facturas_emitidas_generadas(self, codigo_empresa: str, ejercicio: int, ids: list):
-        """Revierte el estado 'generado' a NULL para permitir regenerar el suenlace."""
+        """Revierte el estado 'generado' a 'pendiente' para permitir regenerar el suenlace.
+
+        La factura permanece en el modulo de contabilidad (estado_contable no queda NULL)
+        de modo que el usuario puede volver a generar el suenlace sin tener que
+        volver a añadirla desde el modulo de facturacion.
+        """
         ids = ids or []
         if not ids:
             return 0
         qmarks = ",".join("?" for _ in ids)
         cur = self.conn.execute(
-            f"UPDATE facturas_emitidas_docs SET estado_contable=NULL WHERE codigo_empresa=? AND estado_contable='generado' AND id IN ({qmarks})",
+            f"UPDATE facturas_emitidas_docs SET estado_contable='pendiente' WHERE codigo_empresa=? AND estado_contable='generado' AND id IN ({qmarks})",
             (codigo_empresa, *ids),
         )
         self.conn.commit()

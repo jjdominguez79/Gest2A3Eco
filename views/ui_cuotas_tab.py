@@ -143,13 +143,23 @@ class UICuotasTab(ttk.Frame):
     def open_cuota_dialog(self, cuota: dict, series: list, terceros: list,
                           empresa_defaults: dict | None = None,
                           plantillas_word: list | None = None,
-                          plantillas_emitidas: list | None = None):
+                          plantillas_emitidas: list | None = None,
+                          nav_index: int | None = None,
+                          nav_total: int | None = None,
+                          on_save=None):
         from views.ui_cuota_dialog import CuotaDialog
         dlg = CuotaDialog(self, cuota=cuota, series=series, terceros=terceros,
                           empresa_defaults=empresa_defaults,
                           plantillas_word=plantillas_word,
-                          plantillas_emitidas=plantillas_emitidas)
+                          plantillas_emitidas=plantillas_emitidas,
+                          nav_index=nav_index,
+                          nav_total=nav_total,
+                          on_save=on_save)
         return dlg.result
+
+    def get_all_cuota_ids(self) -> list[str]:
+        """IDs de todas las cuotas visibles en el treeview, en orden de pantalla."""
+        return list(self.tv.get_children())
 
     def open_generar_dialog(self, pendientes: list) -> dict | None:
         from views.ui_generar_cuotas_dialog import GenerarCuotasDialog

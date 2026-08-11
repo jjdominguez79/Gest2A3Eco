@@ -1050,6 +1050,9 @@ class FacturaDialog(tk.Toplevel):
         factura=None,
         numero_sugerido="",
         titulo="Factura emitida",
+        nav_index=None,
+        nav_total=None,
+        on_save=None,
     ):
         super().__init__(parent)
         self.title(titulo)
@@ -1067,6 +1070,11 @@ class FacturaDialog(tk.Toplevel):
         except Exception:
             pass
         self.result = None
+        self._nav_pending = None
+        self._nav_index = nav_index
+        self._nav_total = nav_total
+        self._on_save = on_save
+        self._dirty = False
         self.gestor = gestor
         self.codigo = codigo_empresa
         self.ejercicio = ejercicio
@@ -1496,6 +1504,23 @@ class FacturaDialog(tk.Toplevel):
 
         btns = ttk.Frame(frm)
         btns.grid(row=row, column=0, columnspan=3, pady=(6, 2))
+        # Navegacion entre registros
+        if self._nav_total is not None and self._nav_total > 1:
+            nav_frame = ttk.Frame(btns)
+            nav_frame.pack(side=tk.LEFT, padx=(0, 12))
+            idx = self._nav_index or 0
+            self._btn_nav_prev = ttk.Button(
+                nav_frame, text="\u2190 Anterior", command=self._nav_prev,
+                state="normal" if idx > 0 else "disabled",
+            )
+            self._btn_nav_prev.pack(side=tk.LEFT, padx=2)
+            ttk.Label(nav_frame, text=f"  {idx + 1} / {self._nav_total}  ",
+                      foreground="#555").pack(side=tk.LEFT)
+            self._btn_nav_next = ttk.Button(
+                nav_frame, text="Siguiente \u2192", command=self._nav_next,
+                state="normal" if idx < self._nav_total - 1 else "disabled",
+            )
+            self._btn_nav_next.pack(side=tk.LEFT, padx=2)
         _lbl_guardar = "Guardar albaran" if "albaran" in self._titulo.lower() else "Guardar factura"
         ttk.Button(btns, text=_lbl_guardar, style="Primary.TButton", command=self._ok).pack(side=tk.LEFT, padx=4)
         ttk.Button(btns, text="Guardar borrador", command=self._ok_borrador).pack(side=tk.LEFT, padx=4)
@@ -1519,6 +1544,8 @@ class FacturaDialog(tk.Toplevel):
         self.grab_set()
         self.transient(parent)
         _center_window(self, parent)
+        # Activar seguimiento de cambios despues de que la UI este lista
+        self.after(0, self._setup_dirty_tracking)
         self.wait_window(self)
 
     def _parse_cuentas_banco(self):
@@ -1577,15 +1604,19 @@ class FacturaDialog(tk.Toplevel):
 
     def _add_update_linea(self):
         self.controller.add_update_linea()
+        self._mark_dirty()
 
     def _del_linea(self):
         self.controller.del_linea()
+        self._mark_dirty()
 
     def _move_linea_up(self):
         self.controller.move_linea_up()
+        self._mark_dirty()
 
     def _move_linea_down(self):
         self.controller.move_linea_down()
+        self._mark_dirty()
 
     def _refresh_totales(self):
         self.controller.refresh_totales()
@@ -1593,11 +1624,71 @@ class FacturaDialog(tk.Toplevel):
     def _insert_linea(self, ln: dict):
         self.controller.insert_linea(ln)
 
+    # ── Dirty tracking ────────────────────────────────────────────────────────
+
+    def _mark_dirty(self, *_):
+        self._dirty = True
+
+    def _setup_dirty_tracking(self):
+        """Activa trazas en todas las variables StringVar/BooleanVar del dialogo."""
+        try:
+            for name in dir(self):
+                if name.startswith("var_"):
+                    v = getattr(self, name, None)
+                    if isinstance(v, (tk.StringVar, tk.BooleanVar, tk.IntVar)):
+                        v.trace_add("write", self._mark_dirty)
+        except Exception:
+            pass
+
+    def _show_save_feedback(self):
+        """Muestra brevemente en el titulo que el registro fue guardado."""
+        try:
+            base = self.title().replace(" \u2014 Guardado", "")
+            self.title(f"{base} \u2014 Guardado")
+            self.after(2000, lambda: self.title(base) if self.winfo_exists() else None)
+        except Exception:
+            pass
+
+    # ── Guardar y navegacion ──────────────────────────────────────────────────
+
     def _ok(self):
         self.controller.ok()
+        # Si llegamos aqui sin que el dialogo se haya cerrado, la validacion
+        # fallo; limpiar el pendiente de navegacion para no contaminarlo.
+        self._nav_pending = None
 
     def _ok_borrador(self):
         self.controller.ok_borrador()
+        self._nav_pending = None
+
+    def _nav_prev(self):
+        self._do_nav("prev")
+
+    def _nav_next(self):
+        self._do_nav("next")
+
+    def _do_nav(self, direction: str):
+        """Gestiona la navegacion: pregunta si hay cambios sin guardar."""
+        if self._dirty:
+            answer = messagebox.askyesnocancel(
+                "Cambios sin guardar",
+                "Hay cambios sin guardar.\n\n"
+                "¿Deseas guardar los cambios antes de continuar?",
+                parent=self,
+            )
+            if answer is None:  # Cancelar → quedarse
+                return
+            if answer:  # Si → guardar y navegar
+                self._nav_pending = direction
+                if self.var_numero.get().strip():
+                    self.controller.ok()
+                else:
+                    self.controller.ok_borrador()
+                self._nav_pending = None  # reset si la validacion fallo
+                return
+            # No → navegar sin guardar
+        self.result = {"_nav": direction, "_no_save": True}
+        self.destroy()
 
     def _on_serie_changed(self):
         nombre = self.var_serie.get().strip()
@@ -2035,6 +2126,14 @@ class FacturaDialog(tk.Toplevel):
         messagebox.showerror(title, message)
 
     def set_result_and_close(self, result):
+        if self._nav_pending:
+            result["_nav"] = self._nav_pending
+        # Modo guardar-y-seguir: hay callback on_save y no es navegacion
+        if self._on_save and not result.get("_nav"):
+            self._on_save(result)
+            self._dirty = False
+            self._show_save_feedback()
+            return  # No cerrar el dialogo
         self.result = result
         self.destroy()
 class UIFacturasEmitidas(ttk.Frame):
@@ -2639,7 +2738,7 @@ class UIFacturasEmitidas(ttk.Frame):
         focus = self.tv_albaranes.focus()
         return [focus] if focus else []
 
-    def open_factura_dialog(self, factura, numero_sugerido=""):
+    def open_factura_dialog(self, factura, numero_sugerido="", nav_index=None, nav_total=None, on_save=None):
         ejercicio = self.ejercicio
         if self.allow_all_years and factura.get("ejercicio") is not None:
             ejercicio = factura.get("ejercicio")
@@ -2656,8 +2755,15 @@ class UIFacturasEmitidas(ttk.Frame):
             factura,
             numero_sugerido=numero_sugerido,
             titulo="Factura emitida",
+            nav_index=nav_index,
+            nav_total=nav_total,
+            on_save=on_save,
         )
         return dlg.result
+
+    def get_all_factura_ids(self) -> list[str]:
+        """IDs de todas las facturas visibles en el treeview, en orden de pantalla."""
+        return list(self.tv.get_children())
 
     def set_facturas_years(self, years):
         if not self.allow_all_years:

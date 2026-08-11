@@ -314,23 +314,29 @@ class FacturasEmitidasController:
         if not sel:
             self._view.show_info("Gest2A3Eco", "Selecciona una factura.")
             return
-        fac = self._get_factura_by_id(sel[0])
-        if not fac:
-            return
-        if not self._check_not_generada(fac):
-            return
-        year = self._year_from_factura(fac) or self._ejercicio
-        series_disponibles = self._listar_series_for_year(year, rectificativa=False)
-        fac["_series_disponibles"] = series_disponibles
-        era_borrador = bool(fac.get("borrador"))
-        serie_orig = str(fac.get("serie") or "").strip()
-        result = self._view.open_factura_dialog(fac)
-        if result:
-            es_borrador = bool(result.pop("_borrador", era_borrador))
-            if era_borrador and not es_borrador:
-                # Convertir borrador a factura: asignar numero
+
+        # Obtener la lista ordenada de IDs visibles para la navegacion
+        all_ids = self._view.get_all_factura_ids()
+        try:
+            idx = all_ids.index(str(sel[0]))
+        except ValueError:
+            idx = 0
+
+        # Definir la funcion de guardado para el modo "guardar y seguir"
+        current_era_borrador = [True]
+        current_serie_orig = [""]
+
+        def _do_save(result):
+            era_bor = current_era_borrador[0]
+            serie_o = current_serie_orig[0]
+            no_save = result.pop("_no_save", False)
+            if no_save:
+                return
+            nav = result.pop("_nav", None)
+            es_borrador = bool(result.pop("_borrador", era_bor))
+            if era_bor and not es_borrador:
                 fecha_base = result.get("fecha_asiento") or datetime.now().strftime("%d/%m/%Y")
-                serie_pref = str(result.get("serie") or serie_orig or "").strip() or None
+                serie_pref = str(result.get("serie") or serie_o or "").strip() or None
                 sugerido, serie_sug, yr = self._proximo_numero_por_fecha(fecha_base, rectificativa=False, nombre_serie=serie_pref)
                 result["numero"] = sugerido
                 result["serie"] = serie_sug
@@ -339,10 +345,42 @@ class FacturasEmitidasController:
                     result["ejercicio"] = yr
                 self._gestor.upsert_factura_emitida(result)
                 self._incrementar_numeracion_por_factura(result, rectificativa=False)
+                current_era_borrador[0] = False
             else:
                 result["borrador"] = 1 if es_borrador else 0
                 self._gestor.upsert_factura_emitida(result)
             self.refresh_facturas()
+
+        while True:
+            if idx < 0 or idx >= len(all_ids):
+                break
+            fac = self._get_factura_by_id(all_ids[idx])
+            if not fac:
+                break
+            if not self._check_not_generada(fac):
+                break
+            year = self._year_from_factura(fac) or self._ejercicio
+            series_disponibles = self._listar_series_for_year(year, rectificativa=False)
+            fac["_series_disponibles"] = series_disponibles
+            current_era_borrador[0] = bool(fac.get("borrador"))
+            current_serie_orig[0] = str(fac.get("serie") or "").strip()
+            result = self._view.open_factura_dialog(
+                fac, nav_index=idx, nav_total=len(all_ids), on_save=_do_save,
+            )
+            if not result:
+                break
+            nav = result.pop("_nav", None)
+            no_save = result.pop("_no_save", False)
+            if not no_save:
+                _do_save(result)
+            # Actualizar la lista por si el orden cambio tras guardar
+            all_ids = self._view.get_all_factura_ids()
+            if nav == "prev" and idx > 0:
+                idx -= 1
+            elif nav == "next" and idx < len(all_ids) - 1:
+                idx += 1
+            else:
+                break
 
     def copiar(self):
         if not self._ensure_write():
