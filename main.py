@@ -388,11 +388,23 @@ def main():
             root.destroy()
         return
     auth_service = AuthService(gestor_base)
-    initial_admin_info = auth_service.ensure_initial_admin(
+    _bootstrap_cfg = load_app_config()
+    _bootstrap_password = (
         os.getenv("GEST2A3ECO_ADMIN_PASSWORD")
-        or str(load_app_config().get("initial_admin_password") or "").strip()
-        or str(load_app_config().get("admin_password") or "").strip()
+        or str(_bootstrap_cfg.get("initial_admin_password") or "").strip()
+        or str(_bootstrap_cfg.get("admin_password") or "").strip()
     )
+    initial_admin_info = auth_service.ensure_initial_admin(_bootstrap_password)
+    # Si el admin ya existe y la password sigue en config local, avisar para limpiarla
+    if initial_admin_info is None and (
+        _bootstrap_cfg.get("initial_admin_password") or _bootstrap_cfg.get("admin_password")
+    ):
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "Las claves 'admin_password'/'initial_admin_password' aun estan en la "
+            "configuracion local pero el usuario administrador ya existe. "
+            "Eliminalas de config.local.json para mayor seguridad."
+        )
 
     state = {"controller": None, "session": None, "login_view": None}
 

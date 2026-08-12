@@ -372,6 +372,45 @@ def log_exception(message: str, exc: Exception | None = None, *, log_name: str =
 def load_monedas() -> list:
     return load_app_config().get("monedas") or list(DEFAULT_MONEDAS)
 
+
+# Palabras clave cuyo valor nunca debe aparecer en logs
+_SECRET_KEYWORDS = frozenset({
+    "password", "passwd", "key", "secret", "token", "dsn", "connection_string",
+    "api_key", "api_secret", "credential", "credentials",
+})
+
+
+def redact_config_for_logging(cfg: dict) -> dict:
+    """
+    Devuelve una copia del dict de configuracion con los valores sensibles
+    sustituidos por '***'.
+
+    Criterio: si el nombre de la clave (en minusculas) contiene alguna de las
+    palabras en _SECRET_KEYWORDS, su valor se oculta.
+
+    Uso:
+      logger.debug("Config: %s", redact_config_for_logging(load_app_config()))
+    """
+    out = {}
+    for k, v in cfg.items():
+        key_lower = str(k).lower()
+        if any(kw in key_lower for kw in _SECRET_KEYWORDS):
+            out[k] = "***" if v else ""
+        elif isinstance(v, dict):
+            out[k] = redact_config_for_logging(v)
+        else:
+            out[k] = v
+    return out
+
+
+def redact_dsn(dsn: str) -> str:
+    """
+    Devuelve el DSN con la password sustituida por '***'.
+    Ejemplo: postgresql://user:secret@host:5433/db -> postgresql://user:***@host:5433/db
+    """
+    import re
+    return re.sub(r"(://[^:@/]+:)[^@]+(@)", r"\1***\2", dsn or "")
+
 def d2(x):
     """
     Convierte a Decimal con 2 decimales de forma tolerante:
