@@ -16,6 +16,7 @@ azure-storage-blob
 packaging
 cryptography
 psycopg[binary]
+keyring
 # Notificaciones electronicas (Opcion A, conector por navegador):
 #   tras instalar, ejecutar tambien:  playwright install chromium
 playwright

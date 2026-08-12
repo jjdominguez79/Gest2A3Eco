@@ -288,12 +288,33 @@ def main():
     aplicar_tema(root)
 
     cfg = load_app_config()
-    postgres_dsn = str(cfg.get("postgres_dsn") or "").strip()
-    db_label = "PostgreSQL"
     word_tpl_dir = get_word_templates_dir(str(get_default_templates_dir()))
     if not str(cfg.get("word_templates_dir") or "").strip():
         cfg["word_templates_dir"] = word_tpl_dir
+
+    # Migracion automatica: si el DSN contiene password, moverla al almacen seguro
+    postgres_dsn = str(cfg.get("postgres_dsn") or "").strip()
+    if postgres_dsn:
+        from utils.credential_store import migrate_from_dsn
+        migrated = migrate_from_dsn(postgres_dsn)
+        if migrated:
+            # Guardar solo config no sensible; eliminar DSN con password
+            cfg.pop("postgres_dsn", None)
+            cfg.update(migrated)
+            postgres_dsn = ""  # Se reconstruira desde almacen
     save_app_config(cfg)
+
+    # Intentar reconstruir DSN desde almacen seguro o campos individuales
+    if not postgres_dsn:
+        _host = str(cfg.get("postgres_host") or "").strip()
+        _port = cfg.get("postgres_port") or 5432
+        _db = str(cfg.get("postgres_database") or "").strip()
+        _user = str(cfg.get("postgres_user") or "").strip()
+        if _host and _db:
+            from utils.credential_store import build_dsn_from_store
+            postgres_dsn = build_dsn_from_store(_host, _port, _db, _user) or ""
+
+    db_label = "PostgreSQL"
 
     try:
         while True:
@@ -304,9 +325,19 @@ def main():
                 if not dialog.result:
                     root.destroy()
                     return
-                postgres_dsn = crear_dsn_postgres(**dialog.result)
-                cfg["postgres_dsn"] = postgres_dsn
+                from utils.credential_store import store_postgres_credentials
+                _r = dialog.result
+                store_postgres_credentials(_r.get("user", ""), _r.get("password", ""))
+                cfg.update({
+                    "database_engine": "postgres",
+                    "postgres_host": _r.get("host", ""),
+                    "postgres_port": _r.get("port", 5432),
+                    "postgres_database": _r.get("database", ""),
+                    "postgres_user": _r.get("user", ""),
+                })
+                cfg.pop("postgres_dsn", None)
                 save_app_config(cfg)
+                postgres_dsn = crear_dsn_postgres(**_r)
             try:
                 gestor_base = GestorPostgres(postgres_dsn)
                 break
@@ -372,8 +403,18 @@ def main():
         dialog = PostgresConfigDialog(root)
         if not dialog.result:
             return
+        _r = dialog.result
+        from utils.credential_store import store_postgres_credentials
+        store_postgres_credentials(_r.get("user", ""), _r.get("password", ""))
         cfg = load_app_config()
-        cfg["postgres_dsn"] = crear_dsn_postgres(**dialog.result)
+        cfg.pop("postgres_dsn", None)
+        cfg.update({
+            "database_engine": "postgres",
+            "postgres_host": _r.get("host", ""),
+            "postgres_port": _r.get("port", 5432),
+            "postgres_database": _r.get("database", ""),
+            "postgres_user": _r.get("user", ""),
+        })
         save_app_config(cfg)
         messagebox.showinfo("Gest2A3Eco", "Conexion PostgreSQL actualizada. La aplicacion se reiniciara.", parent=root)
         root.destroy()
