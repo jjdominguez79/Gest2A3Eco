@@ -25,9 +25,10 @@ from backend.dgt_api.models import (
     Firma,
     Parte,
     SolicitudSubsanacion,
+    Workstation,
 )
 from backend.dgt_api.schemas import DocumentoGeneradoCreate, ExpedienteCreate, ExpedientePatch, PartePatch, SubsanacionCreate
-from backend.dgt_api.security import require_internal_key, utcnow
+from backend.dgt_api.security import new_workstation_token, require_internal_key, require_workstation_or_internal, utcnow
 from backend.dgt_api.service import (
     cargar_expediente,
     crear_enlace,
@@ -913,3 +914,66 @@ async def post_public_documento(
 @app.get("/api/v1/sync", dependencies=[internal])
 def sync(updated_since: datetime | None = None, db: Session = Depends(get_db)):
     return get_expedientes(updated_since=updated_since, db=db)
+
+
+# ── Administracion de puestos (workstations) ─────────────────────────────────
+
+@app.post("/api/v1/admin/workstations", dependencies=[internal], status_code=201)
+def admin_crear_workstation(body: dict, db: Session = Depends(get_db)):
+    """
+    Crea un nuevo puesto y devuelve el token plano (solo una vez).
+    Body JSON: {"name": "PC-OFICINA-1"}
+    """
+    from backend.dgt_api.security import hash_token
+    name = str(body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "El campo 'name' es obligatorio")
+    existing = db.scalar(select(Workstation).where(Workstation.name == name))
+    if existing:
+        raise HTTPException(409, f"Ya existe un puesto con nombre '{name}'")
+    token = new_workstation_token()
+    ws = Workstation(name=name, token_hash=hash_token(token))
+    db.add(ws)
+    db.commit()
+    db.refresh(ws)
+    return {
+        "id": ws.id,
+        "name": ws.name,
+        "token": token,
+        "active": ws.active,
+        "created_at": ws.created_at.isoformat(),
+        "nota": "Guarda el token ahora. No se puede recuperar despues.",
+    }
+
+
+@app.get("/api/v1/admin/workstations", dependencies=[internal])
+def admin_listar_workstations(db: Session = Depends(get_db)):
+    """Lista todos los puestos sin incluir tokens."""
+    workstations = db.scalars(select(Workstation).order_by(Workstation.created_at)).all()
+    return [
+        {
+            "id": ws.id,
+            "name": ws.name,
+            "active": ws.active,
+            "created_at": ws.created_at.isoformat(),
+            "last_seen_at": ws.last_seen_at.isoformat() if ws.last_seen_at else None,
+        }
+        for ws in workstations
+    ]
+
+
+@app.patch("/api/v1/admin/workstations/{workstation_id}", dependencies=[internal])
+def admin_actualizar_workstation(workstation_id: str, body: dict, db: Session = Depends(get_db)):
+    """Activa o desactiva un puesto. Body JSON: {"active": true/false}"""
+    ws = db.get(Workstation, workstation_id)
+    if not ws:
+        raise HTTPException(404, "Puesto no encontrado")
+    if "active" in body:
+        ws.active = bool(body["active"])
+    db.commit()
+    return {
+        "id": ws.id,
+        "name": ws.name,
+        "active": ws.active,
+        "last_seen_at": ws.last_seen_at.isoformat() if ws.last_seen_at else None,
+    }

@@ -7,6 +7,7 @@
   "azure_doc_intelligence_endpoint": "",
   "integrations_api_url": "",
   "integrations_api_key": "",
+  "workstation_token": "",
   "dgt_api_url": "",
   "dgt_api_key": "",
   "messaging_api_url": "",

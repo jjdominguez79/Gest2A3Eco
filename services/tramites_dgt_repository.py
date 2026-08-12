@@ -39,11 +39,13 @@ class ApiDgtRepository:
 
     online = True
 
-    def __init__(self, base_url: str, api_key: str, timeout: int = 20, session=None):
+    def __init__(self, base_url: str, api_key: str, timeout: int = 20, session=None,
+                 workstation_token: str = ""):
         self.base_url = str(base_url or "").rstrip("/")
-        self.api_key = str(api_key or "")
+        # Preferir workstation_token si esta disponible
+        self.api_key = str(workstation_token or api_key or "")
         if not self.base_url or not self.api_key:
-            raise ValueError("Configura integrations_api_url e integrations_api_key para usar Tramites DGT online.")
+            raise ValueError("Configura integrations_api_url e integrations_api_key (o workstation_token) para usar Tramites DGT online.")
         self.timeout = timeout
         self._http = session or requests.Session()
 

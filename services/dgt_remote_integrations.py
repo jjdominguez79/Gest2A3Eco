@@ -8,9 +8,11 @@ import requests
 
 
 class _BackendClient:
-    def __init__(self, base_url: str, api_key: str, timeout: int = 90, session=None):
+    def __init__(self, base_url: str, api_key: str, timeout: int = 90, session=None,
+                 workstation_token: str = ""):
         self.base_url = str(base_url or "").rstrip("/")
-        self.api_key = str(api_key or "")
+        # Preferir workstation_token si esta disponible; si no, usar api_key
+        self.api_key = str(workstation_token or api_key or "")
         self.timeout = timeout
         self.http = session or requests.Session()
 

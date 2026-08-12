@@ -39,21 +39,23 @@ class UITramitesDgt(ttk.Frame):
         self._facturacion_service = TramitesDgtFacturacionService(gestor)
         cfg = load_app_config()
         api_url = str(cfg.get("integrations_api_url") or cfg.get("dgt_api_url") or "").strip()
+        workstation_token = str(cfg.get("workstation_token") or "").strip()
         api_key = str(cfg.get("integrations_api_key") or cfg.get("dgt_api_key") or "").strip()
-        if not api_url or not api_key:
+        effective_key = workstation_token or api_key
+        if not api_url or not effective_key:
             raise RuntimeError(
-                "Tramites DGT requiere integrations_api_url e integrations_api_key. "
+                "Tramites DGT requiere integrations_api_url y workstation_token (o integrations_api_key). "
                 "No usa la base principal de la aplicacion."
             )
-        repository = ApiDgtRepository(api_url, api_key)
+        repository = ApiDgtRepository(api_url, effective_key)
         firma_client = None
         almacenamiento_client = None
         try:
-            firma_client = BackendSignRequestClient(api_url, api_key)
+            firma_client = BackendSignRequestClient(api_url, effective_key)
         except (ValueError, requests.RequestException):
             firma_client = None
         try:
-            almacenamiento_client = BackendDatapriusClient(api_url, api_key)
+            almacenamiento_client = BackendDatapriusClient(api_url, effective_key)
         except (ValueError, requests.RequestException):
             almacenamiento_client = None
         self._signrequest_use_sms = bool(cfg.get("signrequest_use_sms", False))

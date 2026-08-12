@@ -192,6 +192,7 @@ def _apply_env_overrides(data: dict) -> dict:
         "GEST2A3ECO_MESSAGING_API_KEY": "messaging_api_key",
         "GEST2A3ECO_MESSAGING_WORKSTATION_ID": "messaging_workstation_id",
         "GEST2A3ECO_MESSAGING_DEVICE_TOKEN": "messaging_device_token",
+        "GEST2A3ECO_WORKSTATION_TOKEN": "workstation_token",
         "GEST2A3ECO_FIRMA_HABILITADA": "firma_habilitada",
         "GEST2A3ECO_FIRMA_CATEGORIA_FIRMADOS": "firma_categoria_firmados",
         "GEST2A3ECO_FIRMA_MAX_MB": "firma_max_mb",
@@ -237,6 +238,7 @@ def _normalize_config(data: dict) -> dict:
     out.setdefault("messaging_api_key", "")
     out.setdefault("messaging_workstation_id", "")
     out.setdefault("messaging_device_token", "")
+    out.setdefault("workstation_token", "")
     out.setdefault("signrequest_base_url", "https://signrequest.com/api/v1")
     out.setdefault("signrequest_use_sms", False)
     out.setdefault("firma_habilitada", True)
