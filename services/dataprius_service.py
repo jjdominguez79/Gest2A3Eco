@@ -1,8 +1,21 @@
+"""
+OBSOLETO: Las credenciales Dataprius residen ahora exclusivamente en el backend.
+El escritorio utiliza BackendDatapriusClient (services/dgt_remote_integrations.py).
+Este modulo se conserva unicamente para tests y migracion controlada.
+"""
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import requests
+
+warnings.warn(
+    "dataprius_service.DatapriusClient esta obsoleto. "
+    "Usa BackendDatapriusClient de services.dgt_remote_integrations.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 class DatapriusClient:

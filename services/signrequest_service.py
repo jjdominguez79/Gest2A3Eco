@@ -1,10 +1,23 @@
+"""
+OBSOLETO: Las credenciales SignRequest residen ahora exclusivamente en el backend.
+El escritorio utiliza BackendSignRequestClient (services/dgt_remote_integrations.py).
+Este modulo se conserva unicamente para tests y migracion controlada.
+"""
 from __future__ import annotations
 
 import base64
 import hashlib
+import warnings
 from pathlib import Path
 
 import requests
+
+warnings.warn(
+    "signrequest_service.SignRequestClient esta obsoleto. "
+    "Usa BackendSignRequestClient de services.dgt_remote_integrations.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 class SignRequestClient:

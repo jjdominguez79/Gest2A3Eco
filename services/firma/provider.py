@@ -21,7 +21,7 @@ class FirmaProvider(Protocol):
 
 
 def build_firma_provider(cfg: dict[str, Any]) -> FirmaProvider | None:
-    """Construye el proveedor sin exponer el token del puesto por defecto."""
+    """Construye el proveedor de firma electronica via backend."""
     if not bool(cfg.get("firma_habilitada", True)):
         return None
     api_url = str(cfg.get("integrations_api_url") or cfg.get("dgt_api_url") or "").strip()
@@ -30,13 +30,4 @@ def build_firma_provider(cfg: dict[str, Any]) -> FirmaProvider | None:
         from services.dgt_remote_integrations import BackendSignRequestClient
 
         return BackendSignRequestClient(api_url, api_key)
-    if bool(cfg.get("firma_permitir_cliente_local")):
-        token = str(cfg.get("signrequest_token") or "").strip()
-        from_email = str(cfg.get("signrequest_from_email") or "").strip()
-        if token and from_email:
-            from services.signrequest_service import SignRequestClient
-
-            return SignRequestClient(
-                token, from_email, base_url=cfg.get("signrequest_base_url") or None,
-            )
     return None

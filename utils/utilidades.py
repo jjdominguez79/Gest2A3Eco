@@ -192,18 +192,10 @@ def _apply_env_overrides(data: dict) -> dict:
         "GEST2A3ECO_MESSAGING_API_KEY": "messaging_api_key",
         "GEST2A3ECO_MESSAGING_WORKSTATION_ID": "messaging_workstation_id",
         "GEST2A3ECO_MESSAGING_DEVICE_TOKEN": "messaging_device_token",
-        "GEST2A3ECO_SIGNREQUEST_TOKEN": "signrequest_token",
-        "GEST2A3ECO_SIGNREQUEST_FROM_EMAIL": "signrequest_from_email",
-        "GEST2A3ECO_SIGNREQUEST_GESTOR_EMAIL": "signrequest_gestor_email",
-        "GEST2A3ECO_SIGNREQUEST_GESTOR_TELEFONO": "signrequest_gestor_telefono",
         "GEST2A3ECO_FIRMA_HABILITADA": "firma_habilitada",
-        "GEST2A3ECO_FIRMA_PERMITIR_CLIENTE_LOCAL": "firma_permitir_cliente_local",
         "GEST2A3ECO_FIRMA_CATEGORIA_FIRMADOS": "firma_categoria_firmados",
         "GEST2A3ECO_FIRMA_MAX_MB": "firma_max_mb",
         "GEST2A3ECO_FIRMA_WEBHOOK_SECRET": "firma_webhook_secret",
-        "GEST2A3ECO_DATAPRIUS_API_KEY": "dataprius_api_key",
-        "GEST2A3ECO_DATAPRIUS_API_SECRET": "dataprius_api_secret",
-        "GEST2A3ECO_DATAPRIUS_BASE_PATH": "dataprius_base_path",
         "GEST2A3ECO_ADMIN_PASSWORD": "admin_password",
         "GEST2A3ECO_INITIAL_ADMIN_PASSWORD": "initial_admin_password",
         "GEST2A3ECO_DESMARCAR_GENERADAS_PASSWORD": "desmarcar_generadas_password",
@@ -245,21 +237,26 @@ def _normalize_config(data: dict) -> dict:
     out.setdefault("messaging_api_key", "")
     out.setdefault("messaging_workstation_id", "")
     out.setdefault("messaging_device_token", "")
-    out.setdefault("signrequest_token", "")
-    out.setdefault("signrequest_from_email", "")
-    out.setdefault("signrequest_gestor_email", "")
-    out.setdefault("signrequest_gestor_telefono", "")
     out.setdefault("signrequest_base_url", "https://signrequest.com/api/v1")
     out.setdefault("signrequest_use_sms", False)
     out.setdefault("firma_habilitada", True)
-    out.setdefault("firma_permitir_cliente_local", False)
     out.setdefault("firma_categoria_firmados", "FIRMAS")
     out.setdefault("firma_max_mb", 15)
     out.setdefault("firma_webhook_secret", "")
-    out.setdefault("dataprius_api_key", "")
-    out.setdefault("dataprius_api_secret", "")
     out.setdefault("dataprius_base_url", "https://api.v2.dataprius.com")
     out.setdefault("dataprius_base_path", "FOLDERS/Gest2A3Eco/Tramites DGT")
+    # Secretos Dataprius y SignRequest: migrados al backend. Si aun aparecen
+    # en la config local (instalacion antigua), se ignoran silenciosamente.
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    for _clave in ("dataprius_api_key", "dataprius_api_secret", "signrequest_token",
+                   "signrequest_from_email", "signrequest_gestor_email",
+                   "signrequest_gestor_telefono", "firma_permitir_cliente_local"):
+        if out.pop(_clave, None):
+            _log.warning(
+                "Clave de configuracion obsoleta '%s' ignorada. "
+                "Las credenciales de Dataprius y SignRequest residen ahora en el backend.", _clave
+            )
 
     if not str(out.get("documentos_output_dir") or "").strip():
         repository = Path(
