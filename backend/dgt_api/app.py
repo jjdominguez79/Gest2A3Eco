@@ -244,7 +244,34 @@ def integrations_status():
         "dataprius": bool(cfg.dataprius_api_key and cfg.dataprius_api_secret),
         "firma_gestor_email": cfg.signrequest_gestor_email or cfg.signrequest_from_email,
         "firma_gestor_telefono": cfg.signrequest_gestor_telefono,
+        "ocr": bool(cfg.azure_doc_intelligence_key),
     }
+
+
+_ALLOWED_OCR_MIMETYPES = {"application/pdf", "image/jpeg", "image/png", "image/tiff"}
+_MAX_OCR_BYTES = 20 * 1024 * 1024  # 20 MB
+
+
+@app.post("/api/v1/ocr/invoices/analyze", dependencies=[internal])
+async def ocr_analyze_invoice(
+    file: UploadFile = File(...),
+    model_id: str = Form(""),
+):
+    content = await file.read()
+    if len(content) > _MAX_OCR_BYTES:
+        raise HTTPException(413, "El fichero supera el limite de 20 MB")
+    ct = (file.content_type or "").split(";")[0].strip().lower()
+    ext = Path(file.filename or "").suffix.lower()
+    if ct not in _ALLOWED_OCR_MIMETYPES and ext not in {".pdf", ".jpg", ".jpeg", ".png", ".tif", ".tiff"}:
+        raise HTTPException(415, "Tipo de fichero no admitido para OCR")
+    try:
+        from backend.dgt_api.ocr_service import analyze_invoice
+        result = analyze_invoice(content, file.filename or "documento.pdf", model_id)
+        return result
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, "Error en el servicio OCR") from exc
 
 
 @app.post("/api/v1/integrations/signrequest/send", dependencies=[internal])

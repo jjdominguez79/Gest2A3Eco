@@ -235,21 +235,35 @@ class OcrService:
         # Azure se ejecuta primero cuando se configura expresamente: su modelo
         # prebuilt-invoice entrega campos estructurados y evita depender de
         # expresiones regulares sobre el texto local.
+        # Preferencia: BackendOcrEngine (delega en el servidor) si hay URL de
+        # backend configurada; de lo contrario, AzureInvoiceEngine local.
         try:
             cfg = self._leer_config_ocr()
             if cfg.get("motor_activo") == "azure":
-                from services.ocr.engines.azure_invoice_engine import AzureInvoiceEngine
-                engine = AzureInvoiceEngine(
-                    endpoint=cfg.get("azure_endpoint", ""),
-                    api_key=cfg.get("azure_key", ""),
-                    model_id=cfg.get("azure_model_id", ""),
-                )
-                if engine.disponible():
-                    motores.append(engine)
+                api_url = cfg.get("integrations_api_url", "")
+                api_key = cfg.get("integrations_api_key", "")
+                if api_url:
+                    from services.ocr.engines.backend_ocr_engine import BackendOcrEngine
+                    engine = BackendOcrEngine(
+                        base_url=api_url,
+                        api_key=api_key,
+                        model_id=cfg.get("azure_model_id", ""),
+                    )
+                    if engine.disponible():
+                        motores.append(engine)
+                else:
+                    from services.ocr.engines.azure_invoice_engine import AzureInvoiceEngine
+                    engine = AzureInvoiceEngine(
+                        endpoint=cfg.get("azure_endpoint", ""),
+                        api_key=cfg.get("azure_key", ""),
+                        model_id=cfg.get("azure_model_id", ""),
+                    )
+                    if engine.disponible():
+                        motores.append(engine)
         except Exception:
             pass
 
-        # 1. PDF texto nativo (siempre primero si disponible)
+        # 1. PDF texto nativo (siempre disponible si el motor esta instalado)
         try:
             from services.ocr.engines.pdf_text_engine import PdfTextEngine
             e = PdfTextEngine()
@@ -258,10 +272,11 @@ class OcrService:
         except Exception:
             pass
 
-        # 2. Azure (si configurado)
+        # 2. Azure local (si configurado y no se ha anadido ya ningun motor azure*)
         try:
             cfg = self._leer_config_ocr()
-            if cfg.get("motor_activo") == "azure" and not any(m.nombre == "azure" for m in motores):
+            azure_ya_presente = any(m.nombre in ("azure", "azure_backend") for m in motores)
+            if cfg.get("motor_activo") == "azure" and not azure_ya_presente:
                 from services.ocr.engines.azure_invoice_engine import AzureInvoiceEngine
                 e = AzureInvoiceEngine(
                     endpoint=cfg.get("azure_endpoint", ""),
@@ -295,7 +310,7 @@ class OcrService:
         )
 
         diagnosticos = []
-        azure_prioritario = any(motor.nombre == "azure" for motor in self._motores)
+        azure_prioritario = any(motor.nombre in ("azure", "azure_backend") for motor in self._motores)
         for motor in self._motores:
             try:
                 resultado = motor.extraer(path)
@@ -311,7 +326,7 @@ class OcrService:
             # modelo personalizado usando silenciosamente PDF/texto. La
             # aplicacion debe mostrar el error para que se pueda corregir el
             # endpoint, la clave o el ID del modelo.
-            if motor.nombre == "azure" and azure_prioritario:
+            if motor.nombre in ("azure", "azure_backend") and azure_prioritario:
                 resultado.raw_json = dict(resultado.raw_json or {})
                 resultado.raw_json["diagnostico_motores"] = {
                     "cadena": [m.nombre for m in self._motores],
@@ -429,10 +444,12 @@ class OcrService:
             from utils.utilidades import load_app_config
             cfg = load_app_config()
             return {
-                "motor_activo":    cfg.get("ocr_motor_activo") or "",
-                "azure_endpoint":  cfg.get("azure_doc_intelligence_endpoint") or "",
-                "azure_key":       cfg.get("azure_doc_intelligence_key") or "",
-                "azure_model_id":  cfg.get("azure_doc_intelligence_model_id") or "",
+                "motor_activo":        cfg.get("ocr_motor_activo") or "",
+                "azure_endpoint":      cfg.get("azure_doc_intelligence_endpoint") or "",
+                "azure_key":           cfg.get("azure_doc_intelligence_key") or "",
+                "azure_model_id":      cfg.get("azure_doc_intelligence_model_id") or "",
+                "integrations_api_url": cfg.get("integrations_api_url") or "",
+                "integrations_api_key": cfg.get("integrations_api_key") or cfg.get("dgt_api_key") or "",
             }
         except Exception:
             return {}

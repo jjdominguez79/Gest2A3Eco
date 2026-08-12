@@ -45,6 +45,11 @@ class Settings:
     messaging_smtp_password: str
     messaging_smtp_from: str
     messaging_smtp_use_tls: bool
+    azure_doc_intelligence_endpoint: str
+    azure_doc_intelligence_key: str
+    azure_doc_intelligence_model_id: str
+    azure_ocr_training_connection_string: str
+    azure_ocr_training_container: str
 
 
 def get_settings() -> Settings:
@@ -109,4 +114,9 @@ def get_settings() -> Settings:
         messaging_smtp_password=os.getenv("MESSAGING_SMTP_PASSWORD", ""),
         messaging_smtp_from=os.getenv("MESSAGING_SMTP_FROM", ""),
         messaging_smtp_use_tls=os.getenv("MESSAGING_SMTP_USE_TLS", "true").strip().lower() in {"1", "true", "yes", "si"},
+        azure_doc_intelligence_endpoint=os.getenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", ""),
+        azure_doc_intelligence_key=os.getenv("AZURE_DOC_INTELLIGENCE_KEY", ""),
+        azure_doc_intelligence_model_id=os.getenv("AZURE_DOC_INTELLIGENCE_MODEL_ID", "prebuilt-invoice"),
+        azure_ocr_training_connection_string=os.getenv("AZURE_OCR_TRAINING_CONNECTION_STRING", ""),
+        azure_ocr_training_container=os.getenv("AZURE_OCR_TRAINING_CONTAINER", "facturas-entrenamiento"),
     )
