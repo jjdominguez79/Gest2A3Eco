@@ -28,7 +28,13 @@ class DatapriusClient:
         base_url: str = "https://api.v2.dataprius.com",
         timeout: int = 60,
         session=None,
+        _allow_legacy: bool = False,
     ):
+        if not _allow_legacy:
+            raise RuntimeError(
+                "DatapriusClient esta obsoleto y no puede usarse en produccion. "
+                "Usa BackendDatapriusClient de services.dgt_remote_integrations."
+            )
         self.client_id = str(client_id or "").strip()
         self.client_secret = str(client_secret or "").strip()
         self.base_url = str(base_url or "").rstrip("/")

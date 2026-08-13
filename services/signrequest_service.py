@@ -30,7 +30,13 @@ class SignRequestClient:
         base_url: str = "https://signrequest.com/api/v1",
         timeout: int = 30,
         session=None,
+        _allow_legacy: bool = False,
     ):
+        if not _allow_legacy:
+            raise RuntimeError(
+                "SignRequestClient esta obsoleto y no puede usarse en produccion. "
+                "Usa BackendSignRequestClient de services.dgt_remote_integrations."
+            )
         self.token = str(token or "").strip()
         self.from_email = str(from_email or "").strip()
         self.base_url = str(base_url or "").rstrip("/")
