@@ -328,6 +328,43 @@ def test_migrate_from_dsn_extrae_credenciales(monkeypatch):
     assert stored["password"] == "mipassword"
 
 
+def test_migrate_from_dsn_password_con_arroba(monkeypatch):
+    """migrate_from_dsn debe extraer correctamente la password si contiene '@'."""
+    stored = {}
+
+    def _fake_set(service, username, value):
+        stored[(service, username)] = value
+
+    def _fake_get(service, username):
+        return stored.get((service, username))
+
+    import sys
+    class _FakeKeyring:
+        set_password = staticmethod(_fake_set)
+        get_password = staticmethod(_fake_get)
+        @staticmethod
+        def delete_password(s, u): pass
+
+    monkeypatch.setitem(sys.modules, "keyring", _FakeKeyring)
+    from utils import credential_store
+    monkeypatch.setattr(credential_store, "_keyring_available", lambda: True)
+
+    from utils.credential_store import migrate_from_dsn
+    # Password contiene '@' sin URL-encodear
+    dsn = "postgresql://gest2a3eco:M@rio05072011_@192.168.0.18:5433/gest2a3eco"
+    result = migrate_from_dsn(dsn)
+
+    assert result, "La migracion debe tener exito con password que contiene '@'"
+    assert result["postgres_host"] == "192.168.0.18"
+    assert result["postgres_port"] == 5433
+    assert result["postgres_database"] == "gest2a3eco"
+    assert result["postgres_user"] == "gest2a3eco"
+    # Verificar que la password completa (con @) fue almacenada
+    from utils.credential_store import SERVICE_POSTGRES, USERNAME_POSTGRES
+    stored_value = stored.get((SERVICE_POSTGRES, USERNAME_POSTGRES), "")
+    assert "M@rio05072011_" in stored_value, "La password con '@' debe almacenarse completa"
+
+
 def test_migrate_from_dsn_sin_password_no_almacena(monkeypatch):
     """Si el DSN no tiene password, no debe guardar nada en keyring."""
     stored = {}

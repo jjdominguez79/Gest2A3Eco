@@ -141,6 +141,52 @@ def delete_postgres_credentials() -> None:
         pass
 
 
+def _parse_dsn_manual(dsn: str) -> dict | None:
+    """
+    Parsea un DSN PostgreSQL de forma manual dividiendo por el ULTIMO '@'.
+
+    Soporta contrasenas que contienen '@' sin URL-encodear, lo que hace que
+    los parsers estandar (psycopg, regex con [^@]) fallen al dividir por el
+    primer '@' en lugar del ultimo.
+
+    Ejemplos validos:
+      postgresql://user:p@ss@host:5433/db  -> password='p@ss', host='host'
+      postgresql://user:pass@192.168.0.18:5432/db
+    """
+    # Eliminar el esquema
+    stripped = re.sub(r'^postgres(?:ql)?://', '', dsn.strip())
+    if not stripped:
+        return None
+
+    # Dividir credenciales y host por el ULTIMO '@'
+    at_pos = stripped.rfind('@')
+    if at_pos == -1:
+        return None
+
+    creds_str = stripped[:at_pos]
+    host_str = stripped[at_pos + 1:]
+
+    # Parsear user:password (la password puede contener ':' tambien, pero
+    # el user no puede, asi que dividimos por el PRIMER ':')
+    if ':' in creds_str:
+        user, password = creds_str.split(':', 1)
+    else:
+        user, password = creds_str, ''
+
+    # Parsear host:port/dbname
+    m = re.match(r'(?P<host>[^:/]+)(?::(?P<port>\d+))?/(?P<dbname>[^?]+)', host_str)
+    if not m:
+        return None
+
+    return {
+        "user": user,
+        "password": password,
+        "host": m.group("host"),
+        "port": int(m.group("port") or 5432),
+        "dbname": m.group("dbname"),
+    }
+
+
 def migrate_from_dsn(dsn: str) -> dict:
     """
     Extrae credenciales del DSN, las guarda en el almacen seguro y devuelve
@@ -155,31 +201,24 @@ def migrate_from_dsn(dsn: str) -> dict:
 
     Si no se puede parsear el DSN, devuelve un dict vacio.
     No muestra la password en logs bajo ningun concepto.
+
+    Nota: soporta contrasenas que contienen el caracter '@' sin escapar,
+    usando el ultimo '@' del DSN como separador credentials/host.
     """
+    dsn_clean = dsn.strip()
     try:
         from psycopg.conninfo import conninfo_to_dict
-        params = conninfo_to_dict(dsn)
+        params = conninfo_to_dict(dsn_clean)
+        # psycopg puede devolver el host malformado si la password tiene '@' sin
+        # URL-encodear. Detectarlo comprobando que el host no contenga '@'.
+        if "@" in str(params.get("host") or ""):
+            raise ValueError("Host malformado (contiene '@'); probablemente password con '@' sin escapar.")
     except Exception:
-        # Fallback: parsear con regex si psycopg no esta disponible
-        pattern = re.compile(
-            r"(?:postgres(?:ql)?://)"
-            r"(?P<user>[^:@/]+)"
-            r"(?::(?P<password>[^@]+))?"
-            r"@(?P<host>[^:/]+)"
-            r"(?::(?P<port>\d+))?"
-            r"/(?P<dbname>[^?]+)"
-        )
-        m = pattern.match(dsn.strip())
-        if not m:
+        # Fallback manual: dividir por el ULTIMO '@' para soportar passwords con '@'
+        params = _parse_dsn_manual(dsn_clean)
+        if not params:
             logger.warning("No se pudo parsear el DSN para migracion de credenciales.")
             return {}
-        params = {
-            "user": m.group("user") or "",
-            "password": m.group("password") or "",
-            "host": m.group("host") or "",
-            "port": int(m.group("port") or 5432),
-            "dbname": m.group("dbname") or "",
-        }
 
     user = str(params.get("user") or "")
     password = str(params.get("password") or "")
