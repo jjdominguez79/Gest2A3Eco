@@ -5,7 +5,7 @@ import json
 import logging
 from urllib.parse import urlparse
 
-from backend.dgt_api.config import get_settings
+from backend.api.config import get_settings
 
 
 LOG = logging.getLogger(__name__)

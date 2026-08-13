@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1] / "backend" / "dgt_api" / "web"
+ROOT = Path(__file__).resolve().parents[1] / "backend" / "api" / "web"
 
 
 def test_portal_equipo_usa_navegacion_directa_simplificada():

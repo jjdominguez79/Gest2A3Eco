@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from datetime import date
 
-from backend.dgt_api.models import Parte
+from backend.api.models import Parte
 
 _DNI_LETTERS = "TRWAGMYFPDXBNJZSQVHLCKE"
 _CIF_CONTROL = "JABCDEFGHI"

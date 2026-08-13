@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-from backend.dgt_api.config import get_settings
+from backend.api.config import get_settings
 
 
 class Base(DeclarativeBase):

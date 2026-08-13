@@ -20,7 +20,7 @@ def test_backend_config_lee_variables_azure_ocr(monkeypatch):
     monkeypatch.setenv("AZURE_OCR_TRAINING_CONNECTION_STRING", "DefaultEndpointsProtocol=https;...")
     monkeypatch.setenv("AZURE_OCR_TRAINING_CONTAINER", "mi-contenedor")
 
-    from backend.dgt_api.config import get_settings
+    from backend.api.config import get_settings
     cfg = get_settings()
 
     assert cfg.azure_doc_intelligence_endpoint == "https://test.cognitiveservices.azure.com/"
@@ -35,7 +35,7 @@ def test_backend_config_sin_azure_key_ocr_no_disponible(monkeypatch):
     monkeypatch.setenv("DGT_DATABASE_URL", "postgresql+psycopg://u:p@h:5432/db")
     monkeypatch.delenv("AZURE_DOC_INTELLIGENCE_KEY", raising=False)
 
-    from backend.dgt_api.ocr_service import ocr_available
+    from backend.api.ocr_service import ocr_available
     assert ocr_available() is False
 
 
@@ -45,7 +45,7 @@ def test_backend_config_con_azure_key_ocr_disponible(monkeypatch):
     monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", "https://endpoint.azure.com/")
     monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_KEY", "mi-clave-secreta")
 
-    from backend.dgt_api.ocr_service import ocr_available
+    from backend.api.ocr_service import ocr_available
     assert ocr_available() is True
 
 
@@ -58,7 +58,7 @@ def test_ocr_endpoint_sin_credenciales_devuelve_503(monkeypatch):
     monkeypatch.delenv("AZURE_DOC_INTELLIGENCE_KEY", raising=False)
 
     from fastapi.testclient import TestClient
-    from backend.dgt_api.app import app
+    from backend.api.app import app
 
     client = TestClient(app, raise_server_exceptions=False)
     pdf_bytes = b"%PDF-1.4 test"
@@ -77,7 +77,7 @@ def test_ocr_endpoint_sin_autenticacion_devuelve_401(monkeypatch):
     monkeypatch.setenv("DGT_INTERNAL_API_KEY", "test-internal-key")
 
     from fastapi.testclient import TestClient
-    from backend.dgt_api.app import app
+    from backend.api.app import app
 
     client = TestClient(app, raise_server_exceptions=False)
     response = client.post(
@@ -94,7 +94,7 @@ def test_ocr_endpoint_tipo_no_permitido_devuelve_415(monkeypatch):
     monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_KEY", "cualquier-clave")
 
     from fastapi.testclient import TestClient
-    from backend.dgt_api.app import app
+    from backend.api.app import app
 
     client = TestClient(app, raise_server_exceptions=False)
     response = client.post(
@@ -112,7 +112,7 @@ def test_ocr_endpoint_fichero_demasiado_grande(monkeypatch):
     monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_KEY", "cualquier-clave")
 
     from fastapi.testclient import TestClient
-    from backend.dgt_api.app import app
+    from backend.api.app import app
 
     client = TestClient(app, raise_server_exceptions=False)
     big_content = b"A" * (21 * 1024 * 1024)
@@ -150,11 +150,11 @@ def test_ocr_endpoint_con_azure_mock_devuelve_resultado(monkeypatch):
         "errores": [],
     }
 
-    import backend.dgt_api.ocr_service as ocr_module
+    import backend.api.ocr_service as ocr_module
     monkeypatch.setattr(ocr_module, "analyze_invoice", lambda *a, **kw: expected_result)
 
     from fastapi.testclient import TestClient
-    from backend.dgt_api.app import app
+    from backend.api.app import app
 
     client = TestClient(app, raise_server_exceptions=False)
     response = client.post(
@@ -180,7 +180,7 @@ def test_integrations_status_incluye_campo_ocr(monkeypatch):
     monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_KEY", "cualquier-clave")
 
     from fastapi.testclient import TestClient
-    from backend.dgt_api.app import app
+    from backend.api.app import app
 
     client = TestClient(app, raise_server_exceptions=False)
     response = client.get(
@@ -197,7 +197,7 @@ def test_integrations_status_incluye_campo_ocr(monkeypatch):
 
 def test_workstation_token_hash_es_sha256():
     """El hash de un token debe ser SHA-256."""
-    from backend.dgt_api.security import hash_token, new_workstation_token
+    from backend.api.security import hash_token, new_workstation_token
     token = new_workstation_token()
     assert token.startswith("g2a3_wks_")
     h = hash_token(token)
@@ -208,7 +208,7 @@ def test_workstation_token_hash_es_sha256():
 
 def test_workstation_token_formato():
     """El token de puesto debe tener el prefijo correcto."""
-    from backend.dgt_api.security import new_workstation_token
+    from backend.api.security import new_workstation_token
     for _ in range(5):
         token = new_workstation_token()
         assert token.startswith("g2a3_wks_")
@@ -220,7 +220,7 @@ def test_require_internal_key_acepta_clave_correcta(monkeypatch):
     monkeypatch.setenv("DGT_DATABASE_URL", "postgresql+psycopg://u:p@h:5432/db")
     monkeypatch.setenv("DGT_INTERNAL_API_KEY", "mi-clave-interna")
 
-    from backend.dgt_api.security import require_internal_key
+    from backend.api.security import require_internal_key
     result = require_internal_key("mi-clave-interna")
     assert result == "gest2a3eco"
 
@@ -231,7 +231,7 @@ def test_require_internal_key_rechaza_clave_incorrecta(monkeypatch):
     monkeypatch.setenv("DGT_DATABASE_URL", "postgresql+psycopg://u:p@h:5432/db")
     monkeypatch.setenv("DGT_INTERNAL_API_KEY", "mi-clave-interna")
 
-    from backend.dgt_api.security import require_internal_key
+    from backend.api.security import require_internal_key
     with pytest.raises(HTTPException) as exc_info:
         require_internal_key("clave-incorrecta")
     assert exc_info.value.status_code == 401

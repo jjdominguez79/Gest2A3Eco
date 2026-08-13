@@ -14,4 +14,4 @@ RUN useradd --create-home --uid 10001 gestinem \
 USER gestinem
 
 EXPOSE 8000
-CMD ["sh", "-c", "exec uvicorn backend.dgt_api.app:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers"]
+CMD ["sh", "-c", "exec uvicorn backend.api.app:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers"]

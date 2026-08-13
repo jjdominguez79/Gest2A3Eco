@@ -11,10 +11,10 @@ os.environ.setdefault(
     "postgresql+psycopg://gest2a3eco_test:gest2a3eco_test@localhost:5432/gest2a3eco_test",
 )
 
-from backend.dgt_api import app as app_module
-from backend.dgt_api.database import Base, build_engine
-from backend.dgt_api.integrations import DatapriusBackend
-from backend.dgt_api.models import Parte
+from backend.api import app as app_module
+from backend.api.database import Base, build_engine
+from backend.api.integrations import DatapriusBackend
+from backend.api.models import Parte
 
 
 def _party_payload(*, role="vendedor", tipo_persona="fisica"):

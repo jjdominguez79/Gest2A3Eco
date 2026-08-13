@@ -4,7 +4,7 @@ import re
 import uuid
 from pathlib import Path
 
-from backend.dgt_api.config import get_settings
+from backend.api.config import get_settings
 
 
 def safe_name(value: str) -> str:

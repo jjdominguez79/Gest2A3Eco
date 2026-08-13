@@ -7,9 +7,9 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from backend.dgt_api.config import get_settings
-from backend.dgt_api.models import Enlace, Evento, Expediente, Operacion, Parte, Vehiculo
-from backend.dgt_api.security import hash_token, new_token, utcnow
+from backend.api.config import get_settings
+from backend.api.models import Enlace, Evento, Expediente, Operacion, Parte, Vehiculo
+from backend.api.security import hash_token, new_token, utcnow
 
 ROLES = {"vendedor", "comprador"}
 

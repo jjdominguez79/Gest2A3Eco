@@ -15,10 +15,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from backend.dgt_api.database import Base
-from backend.dgt_api import messaging_api
-from backend.dgt_api.messaging_api import get_db, router
-from backend.dgt_api import messaging_models  # noqa: F401
+from backend.api.database import Base
+from backend.api import messaging_api
+from backend.api.messaging_api import get_db, router
+from backend.api import messaging_models  # noqa: F401
 
 
 def _client(tmp_path: Path):

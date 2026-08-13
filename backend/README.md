@@ -6,7 +6,7 @@ mediante `DGT_DATABASE_URL`.
 ```powershell
 pip install -r backend/requirements.txt
 $env:DGT_INTERNAL_API_KEY = "cambiar-en-produccion"
-uvicorn backend.dgt_api.app:app --reload
+uvicorn backend.api.app:app --reload
 ```
 
 Variables:

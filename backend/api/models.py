@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from backend.dgt_api.database import Base
+from backend.api.database import Base
 
 
 def utcnow() -> datetime:

@@ -20,7 +20,7 @@
 pip install -r backend/requirements.txt
 $env:DGT_INTERNAL_API_KEY = "secreto-local"
 $env:DGT_PUBLIC_BASE_URL = "http://localhost:8000"
-uvicorn backend.dgt_api.app:app --reload
+uvicorn backend.api.app:app --reload
 ```
 
 En `config.local.json` de Gest2A3Eco:

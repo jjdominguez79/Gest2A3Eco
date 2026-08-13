@@ -17,26 +17,26 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from backend.dgt_api.config import get_settings
-from backend.dgt_api.database import SessionLocal
-from backend.dgt_api.messaging_models import (
+from backend.api.config import get_settings
+from backend.api.database import SessionLocal
+from backend.api.messaging_models import (
     MessagingAttachment, MessagingClient, MessagingClientPushSubscription, MessagingConversation, MessagingDevice, MessagingDownload,
     MessagingEvent, MessagingInvitation, MessagingMessage, MessagingOrganization,
     MessagingPasswordReset, MessagingPresence, MessagingRead, MessagingSession, MessagingStaff,
     MessagingPushSubscription, MessagingStaffAuthFlow, MessagingStaffChannel, MessagingStaffSession,
     MessagingStaffThread, MessagingStaffThreadMessage, MessagingStaffThreadRead,
 )
-from backend.dgt_api.messaging_mail import (
+from backend.api.messaging_mail import (
     configured as mail_configured, send_invitation, send_message_notice,
     send_password_reset,
 )
-from backend.dgt_api.messaging_security import (
+from backend.api.messaging_security import (
     hash_password, hash_token, invitation_expiry, new_token, session_expiry,
     is_expired, utcnow, verify_password,
 )
-from backend.dgt_api.messaging_storage import MessagingStorage, safe_name
-from backend.dgt_api.messaging_push import configured as push_configured, send_push
-from backend.dgt_api.security import require_internal_key
+from backend.api.messaging_storage import MessagingStorage, safe_name
+from backend.api.messaging_push import configured as push_configured, send_push
+from backend.api.security import require_internal_key
 
 
 router = APIRouter(prefix="/api/v1/messaging", tags=["messaging"])

@@ -8,7 +8,7 @@ from urllib.parse import quote
 
 import requests
 
-from backend.dgt_api.config import get_settings
+from backend.api.config import get_settings
 
 
 def configured() -> bool:

@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from backend.dgt_api import messaging_mail
+from backend.api import messaging_mail
 
 
 class _Response:

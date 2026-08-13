@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 
-from backend.dgt_api.config import get_settings
+from backend.api.config import get_settings
 
 
 # ── Helpers de mapeo Azure → dict ────────────────────────────────────────────

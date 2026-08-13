@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
 
-from backend.dgt_api.config import get_settings
+from backend.api.config import get_settings
 
 MAX_FILE_SIZE = 10 * 1024 * 1024
 ALLOWED_TYPES = {

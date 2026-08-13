@@ -5,7 +5,7 @@ from pathlib import Path
 
 import requests
 
-from backend.dgt_api.config import get_settings
+from backend.api.config import get_settings
 
 
 class ProviderError(RuntimeError):

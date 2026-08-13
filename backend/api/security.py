@@ -8,7 +8,7 @@ from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.dgt_api.config import get_settings
+from backend.api.config import get_settings
 
 
 def hash_token(token: str) -> str:
@@ -52,8 +52,8 @@ def require_workstation_or_internal(x_api_key: str = Header(default="")) -> str:
 
     # 2. Token de puesto
     if x_api_key.startswith("g2a3_wks_"):
-        from backend.dgt_api.database import SessionLocal
-        from backend.dgt_api.models import Workstation
+        from backend.api.database import SessionLocal
+        from backend.api.models import Workstation
         token_hash = hash_token(x_api_key)
         with SessionLocal() as db:
             ws = db.scalar(

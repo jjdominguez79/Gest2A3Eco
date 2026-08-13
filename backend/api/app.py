@@ -13,9 +13,9 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import delete, select, text, update
 from sqlalchemy.orm import Session, selectinload
 
-from backend.dgt_api.database import Base, SessionLocal, engine
-from backend.dgt_api.config import get_settings
-from backend.dgt_api.models import (
+from backend.api.database import Base, SessionLocal, engine
+from backend.api.config import get_settings
+from backend.api.models import (
     Comunicacion,
     Documento,
     DocumentoGenerado,
@@ -27,9 +27,9 @@ from backend.dgt_api.models import (
     SolicitudSubsanacion,
     Workstation,
 )
-from backend.dgt_api.schemas import DocumentoGeneradoCreate, ExpedienteCreate, ExpedientePatch, PartePatch, SubsanacionCreate
-from backend.dgt_api.security import new_workstation_token, require_internal_key, require_workstation_or_internal, utcnow
-from backend.dgt_api.service import (
+from backend.api.schemas import DocumentoGeneradoCreate, ExpedienteCreate, ExpedientePatch, PartePatch, SubsanacionCreate
+from backend.api.security import new_workstation_token, require_internal_key, require_workstation_or_internal, utcnow
+from backend.api.service import (
     cargar_expediente,
     crear_enlace,
     crear_expediente,
@@ -37,15 +37,15 @@ from backend.dgt_api.service import (
     serializar_expediente,
     verificar_enlace,
 )
-from backend.dgt_api.storage import (
+from backend.api.storage import (
     delete_private_upload,
     read_validated_upload,
     save_private_upload_bytes,
 )
-from backend.dgt_api.integrations import DatapriusBackend, ProviderError, SignRequestBackend
-from backend.dgt_api.validation import validar_parte
-from backend.dgt_api import messaging_models  # noqa: F401 - registra tablas SQLAlchemy
-from backend.dgt_api.messaging_api import cleanup_expired_attachments, router as messaging_router
+from backend.api.integrations import DatapriusBackend, ProviderError, SignRequestBackend
+from backend.api.validation import validar_parte
+from backend.api import messaging_models  # noqa: F401 - registra tablas SQLAlchemy
+from backend.api.messaging_api import cleanup_expired_attachments, router as messaging_router
 
 app = FastAPI(title="Gestinem Integraciones API", version="1.1.0")
 WEB_DIR = Path(__file__).with_name("web")
@@ -266,7 +266,7 @@ async def ocr_analyze_invoice(
     if ct not in _ALLOWED_OCR_MIMETYPES and ext not in {".pdf", ".jpg", ".jpeg", ".png", ".tif", ".tiff"}:
         raise HTTPException(415, "Tipo de fichero no admitido para OCR")
     try:
-        from backend.dgt_api.ocr_service import analyze_invoice
+        from backend.api.ocr_service import analyze_invoice
         result = analyze_invoice(content, file.filename or "documento.pdf", model_id)
         return result
     except RuntimeError as exc:
@@ -924,7 +924,7 @@ def admin_crear_workstation(body: dict, db: Session = Depends(get_db)):
     Crea un nuevo puesto y devuelve el token plano (solo una vez).
     Body JSON: {"name": "PC-OFICINA-1"}
     """
-    from backend.dgt_api.security import hash_token
+    from backend.api.security import hash_token
     name = str(body.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "El campo 'name' es obligatorio")

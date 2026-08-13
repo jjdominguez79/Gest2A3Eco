@@ -4,7 +4,7 @@ import base64
 import sys
 from types import ModuleType, SimpleNamespace
 
-from backend.dgt_api import messaging_push
+from backend.api import messaging_push
 
 
 class FakeWebPushException(Exception):

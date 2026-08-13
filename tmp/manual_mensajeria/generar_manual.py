@@ -18,8 +18,8 @@ LOGIN_CAPTURE = WORK / "01-acceso-clientes.png"
 PHONE_CAPTURE = Path(
     r"C:\Users\GestinemFiscal\Gest2A3Eco\.codex-remote-attachments\019fe198-7886-76d2-9470-1048d1873012\91700766-a988-4721-8e23-532c3145a0ef\1-Photo-1.jpg"
 )
-LOGO = ROOT / "backend" / "dgt_api" / "web" / "static" / "gestinem-logo.png"
-ICON = ROOT / "backend" / "dgt_api" / "web" / "static" / "gestinem-icon-512.png"
+LOGO = ROOT / "backend" / "api" / "web" / "static" / "gestinem-logo.png"
+ICON = ROOT / "backend" / "api" / "web" / "static" / "gestinem-icon-512.png"
 URL = "https://gest2a3eco-production.up.railway.app/mensajes"
 
 NAVY = "00345D"
