@@ -24,7 +24,11 @@ a = Analysis(
         (str(python_tcl / 'tcl8.6'), '_tcl_data'),
         (str(python_tcl / 'tk8.6'), '_tk_data'),
     ],
-    hiddenimports=[],
+    hiddenimports=[
+        'keyring',
+        'keyring.backends',
+        'keyring.backends.Windows',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=['hooks/runtime_tkinter.py'],
