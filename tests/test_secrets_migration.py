@@ -660,3 +660,293 @@ def test_pyinstaller_spec_contiene_keyring_hiddenimports():
     contenido = spec_path.read_text(encoding="utf-8")
     assert "keyring" in contenido, "keyring debe aparecer en hiddenimports del .spec"
     assert "keyring.backends.Windows" in contenido, "keyring.backends.Windows debe estar en hiddenimports"
+
+
+# ── Autenticacion por puesto en endpoints funcionales ─────────────────────────
+
+def _make_active_workstation(name="GESTINEMFISCAL"):
+    """Crea un mock de Workstation activo para pruebas."""
+    from unittest.mock import MagicMock
+    ws = MagicMock()
+    ws.name = name
+    ws.active = True
+    ws.last_seen_at = None
+    return ws
+
+
+def _patch_workstation_db(monkeypatch, workstation_obj):
+    """
+    Parchea backend.api.database.SessionLocal para que require_workstation_or_internal
+    resuelva el token contra workstation_obj (None simula no encontrado/desactivado).
+    Devuelve el mock de sesion para inspeccionar llamadas posteriores.
+    """
+    import backend.api.database as _db_mod
+    from unittest.mock import MagicMock
+
+    mock_db = MagicMock()
+    mock_db.scalar.return_value = workstation_obj
+    mock_db.__enter__ = MagicMock(return_value=mock_db)
+    mock_db.__exit__ = MagicMock(return_value=False)
+
+    monkeypatch.setattr(_db_mod, "SessionLocal", MagicMock(return_value=mock_db))
+    return mock_db
+
+
+def test_workstation_token_valido_permite_integrations_status(monkeypatch):
+    """Token valido → GET /api/v1/integrations/status → 200."""
+    monkeypatch.setenv("DGT_DATABASE_URL", "postgresql+psycopg://u:p@h:5432/db")
+    monkeypatch.setenv("DGT_INTERNAL_API_KEY", "test-internal-key")
+
+    from backend.api.security import new_workstation_token
+    token = new_workstation_token()
+    _patch_workstation_db(monkeypatch, _make_active_workstation())
+
+    from fastapi.testclient import TestClient
+    from backend.api.app import app
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.get(
+        "/api/v1/integrations/status",
+        headers={"X-API-Key": token},
+    )
+    assert response.status_code == 200
+    assert "ocr" in response.json()
+
+
+def test_workstation_token_valido_permite_sync(monkeypatch):
+    """Token valido → GET /api/v1/sync → 200."""
+    monkeypatch.setenv("DGT_DATABASE_URL", "postgresql+psycopg://u:p@h:5432/db")
+    monkeypatch.setenv("DGT_INTERNAL_API_KEY", "test-internal-key")
+
+    from unittest.mock import MagicMock
+    from backend.api.security import new_workstation_token
+    from backend.api.app import app, get_db
+
+    token = new_workstation_token()
+    _patch_workstation_db(monkeypatch, _make_active_workstation())
+
+    mock_endpoint_db = MagicMock()
+    mock_endpoint_db.scalars.return_value.unique.return_value = []
+    app.dependency_overrides[get_db] = lambda: mock_endpoint_db
+
+    try:
+        from fastapi.testclient import TestClient
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.get(
+            "/api/v1/sync",
+            headers={"X-API-Key": token},
+        )
+        assert response.status_code == 200
+        assert response.json() == []
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+def test_workstation_token_supera_auth_ocr(monkeypatch):
+    """Token valido → POST /api/v1/ocr/invoices/analyze → supera auth (503 sin Azure)."""
+    monkeypatch.setenv("DGT_DATABASE_URL", "postgresql+psycopg://u:p@h:5432/db")
+    monkeypatch.setenv("DGT_INTERNAL_API_KEY", "test-internal-key")
+    monkeypatch.delenv("AZURE_DOC_INTELLIGENCE_KEY", raising=False)
+
+    from backend.api.security import new_workstation_token
+    token = new_workstation_token()
+    _patch_workstation_db(monkeypatch, _make_active_workstation())
+
+    from fastapi.testclient import TestClient
+    from backend.api.app import app
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.post(
+        "/api/v1/ocr/invoices/analyze",
+        headers={"X-API-Key": token},
+        files={"file": ("factura.pdf", b"%PDF-1.4", "application/pdf")},
+        data={"model_id": ""},
+    )
+    # 503 = supero la autenticacion; Azure no esta configurado
+    assert response.status_code == 503, (
+        f"Esperado 503 (auth superada, Azure no conf.), got {response.status_code}"
+    )
+
+
+def test_token_invalido_devuelve_401(monkeypatch):
+    """Token invalido (sin prefijo g2a3_wks_ y no es internal key) → 401."""
+    monkeypatch.setenv("DGT_DATABASE_URL", "postgresql+psycopg://u:p@h:5432/db")
+    monkeypatch.setenv("DGT_INTERNAL_API_KEY", "test-internal-key")
+
+    from fastapi.testclient import TestClient
+    from backend.api.app import app
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.get(
+        "/api/v1/integrations/status",
+        headers={"X-API-Key": "token-completamente-invalido"},
+    )
+    assert response.status_code == 401
+
+
+def test_workstation_inexistente_devuelve_401(monkeypatch):
+    """Token g2a3_wks_ no registrado en BD → 401."""
+    monkeypatch.setenv("DGT_DATABASE_URL", "postgresql+psycopg://u:p@h:5432/db")
+    monkeypatch.setenv("DGT_INTERNAL_API_KEY", "test-internal-key")
+
+    from backend.api.security import new_workstation_token
+    token = new_workstation_token()
+    # DB devuelve None → workstation no existe
+    _patch_workstation_db(monkeypatch, None)
+
+    from fastapi.testclient import TestClient
+    from backend.api.app import app
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.get(
+        "/api/v1/integrations/status",
+        headers={"X-API-Key": token},
+    )
+    assert response.status_code == 401
+
+
+def test_workstation_desactivado_devuelve_401(monkeypatch):
+    """Token g2a3_wks_ de puesto desactivado → 401 (la query filtra active=True)."""
+    monkeypatch.setenv("DGT_DATABASE_URL", "postgresql+psycopg://u:p@h:5432/db")
+    monkeypatch.setenv("DGT_INTERNAL_API_KEY", "test-internal-key")
+
+    from backend.api.security import new_workstation_token
+    token = new_workstation_token()
+    # La query WHERE active=True no devuelve el puesto desactivado → scalar() = None
+    _patch_workstation_db(monkeypatch, None)
+
+    from fastapi.testclient import TestClient
+    from backend.api.app import app
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.get(
+        "/api/v1/integrations/status",
+        headers={"X-API-Key": token},
+    )
+    assert response.status_code == 401
+
+
+def test_internal_key_sigue_funcionando_en_sync(monkeypatch):
+    """DGT_INTERNAL_API_KEY sigue funcionando en endpoints funcionales."""
+    monkeypatch.setenv("DGT_DATABASE_URL", "postgresql+psycopg://u:p@h:5432/db")
+    monkeypatch.setenv("DGT_INTERNAL_API_KEY", "mi-internal-key")
+
+    from unittest.mock import MagicMock
+    from backend.api.app import app, get_db
+
+    mock_endpoint_db = MagicMock()
+    mock_endpoint_db.scalars.return_value.unique.return_value = []
+    app.dependency_overrides[get_db] = lambda: mock_endpoint_db
+
+    try:
+        from fastapi.testclient import TestClient
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.get(
+            "/api/v1/sync",
+            headers={"X-API-Key": "mi-internal-key"},
+        )
+        assert response.status_code == 200
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+def test_internal_key_sigue_funcionando_en_integrations_status(monkeypatch):
+    """DGT_INTERNAL_API_KEY sigue funcionando en GET /api/v1/integrations/status."""
+    monkeypatch.setenv("DGT_DATABASE_URL", "postgresql+psycopg://u:p@h:5432/db")
+    monkeypatch.setenv("DGT_INTERNAL_API_KEY", "mi-internal-key")
+
+    from fastapi.testclient import TestClient
+    from backend.api.app import app
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.get(
+        "/api/v1/integrations/status",
+        headers={"X-API-Key": "mi-internal-key"},
+    )
+    assert response.status_code == 200
+
+
+def test_workstation_token_rechazado_en_admin_crear(monkeypatch):
+    """Workstation token → 401 en POST /api/v1/admin/workstations (solo internal)."""
+    monkeypatch.setenv("DGT_DATABASE_URL", "postgresql+psycopg://u:p@h:5432/db")
+    monkeypatch.setenv("DGT_INTERNAL_API_KEY", "test-internal-key")
+
+    from backend.api.security import new_workstation_token
+    token = new_workstation_token()
+    _patch_workstation_db(monkeypatch, _make_active_workstation())
+
+    from fastapi.testclient import TestClient
+    from backend.api.app import app
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.post(
+        "/api/v1/admin/workstations",
+        headers={"X-API-Key": token},
+        json={"name": "PC-TEST"},
+    )
+    assert response.status_code == 401
+
+
+def test_workstation_token_rechazado_en_admin_listar(monkeypatch):
+    """Workstation token → 401 en GET /api/v1/admin/workstations (solo internal)."""
+    monkeypatch.setenv("DGT_DATABASE_URL", "postgresql+psycopg://u:p@h:5432/db")
+    monkeypatch.setenv("DGT_INTERNAL_API_KEY", "test-internal-key")
+
+    from backend.api.security import new_workstation_token
+    token = new_workstation_token()
+    _patch_workstation_db(monkeypatch, _make_active_workstation())
+
+    from fastapi.testclient import TestClient
+    from backend.api.app import app
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.get(
+        "/api/v1/admin/workstations",
+        headers={"X-API-Key": token},
+    )
+    assert response.status_code == 401
+
+
+def test_workstation_token_rechazado_en_admin_patch(monkeypatch):
+    """Workstation token → 401 en PATCH /api/v1/admin/workstations/{id} (solo internal)."""
+    monkeypatch.setenv("DGT_DATABASE_URL", "postgresql+psycopg://u:p@h:5432/db")
+    monkeypatch.setenv("DGT_INTERNAL_API_KEY", "test-internal-key")
+
+    from backend.api.security import new_workstation_token
+    token = new_workstation_token()
+    _patch_workstation_db(monkeypatch, _make_active_workstation())
+
+    from fastapi.testclient import TestClient
+    from backend.api.app import app
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.patch(
+        "/api/v1/admin/workstations/some-uuid",
+        headers={"X-API-Key": token},
+        json={"active": False},
+    )
+    assert response.status_code == 401
+
+
+def test_last_seen_at_se_actualiza_al_autenticar(monkeypatch):
+    """last_seen_at se actualiza y se hace commit al autenticar con workstation token."""
+    monkeypatch.setenv("DGT_DATABASE_URL", "postgresql+psycopg://u:p@h:5432/db")
+    monkeypatch.setenv("DGT_INTERNAL_API_KEY", "test-internal-key")
+
+    from backend.api.security import new_workstation_token
+    token = new_workstation_token()
+    ws = _make_active_workstation()
+    mock_db = _patch_workstation_db(monkeypatch, ws)
+
+    from fastapi.testclient import TestClient
+    from backend.api.app import app
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.get(
+        "/api/v1/integrations/status",
+        headers={"X-API-Key": token},
+    )
+    assert response.status_code == 200
+    # last_seen_at debe haber sido asignado dentro de require_workstation_or_internal
+    assert ws.last_seen_at is not None, "last_seen_at debe actualizarse tras autenticar"
+    mock_db.commit.assert_called()

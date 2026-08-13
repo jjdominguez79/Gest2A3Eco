@@ -146,6 +146,7 @@ def get_db():
 
 
 internal = Depends(require_internal_key)
+workstation_or_internal = Depends(require_workstation_or_internal)
 
 
 def asegurar_expediente_editable(item: Expediente) -> None:
@@ -237,7 +238,7 @@ def staff_messaging_portal(request: Request):
     )
 
 
-@app.get("/api/v1/integrations/status", dependencies=[internal])
+@app.get("/api/v1/integrations/status", dependencies=[workstation_or_internal])
 def integrations_status():
     cfg = get_settings()
     return {
@@ -253,7 +254,7 @@ _ALLOWED_OCR_MIMETYPES = {"application/pdf", "image/jpeg", "image/png", "image/t
 _MAX_OCR_BYTES = 20 * 1024 * 1024  # 20 MB
 
 
-@app.post("/api/v1/ocr/invoices/analyze", dependencies=[internal])
+@app.post("/api/v1/ocr/invoices/analyze", dependencies=[workstation_or_internal])
 async def ocr_analyze_invoice(
     file: UploadFile = File(...),
     model_id: str = Form(""),
@@ -275,7 +276,7 @@ async def ocr_analyze_invoice(
         raise HTTPException(502, "Error en el servicio OCR") from exc
 
 
-@app.post("/api/v1/integrations/signrequest/send", dependencies=[internal])
+@app.post("/api/v1/integrations/signrequest/send", dependencies=[workstation_or_internal])
 async def integration_signrequest_send(
     file: UploadFile = File(...), firmantes: str = Form(...), asunto: str = Form(""),
     mensaje: str = Form(""), external_id: str = Form(""), callback_url: str = Form(""),
@@ -290,7 +291,7 @@ async def integration_signrequest_send(
         raise HTTPException(502, str(exc)) from exc
 
 
-@app.get("/api/v1/integrations/signrequest/{request_id}", dependencies=[internal])
+@app.get("/api/v1/integrations/signrequest/{request_id}", dependencies=[workstation_or_internal])
 def integration_signrequest_status(request_id: str):
     try:
         estado = SignRequestBackend().consultar(request_id)
@@ -299,7 +300,7 @@ def integration_signrequest_status(request_id: str):
         raise HTTPException(502, str(exc)) from exc
 
 
-@app.post("/api/v1/integrations/signrequest/{request_id}/cancel", dependencies=[internal])
+@app.post("/api/v1/integrations/signrequest/{request_id}/cancel", dependencies=[workstation_or_internal])
 def integration_signrequest_cancel(request_id: str):
     try:
         return SignRequestBackend().cancelar(request_id)
@@ -307,7 +308,7 @@ def integration_signrequest_cancel(request_id: str):
         raise HTTPException(502, str(exc)) from exc
 
 
-@app.delete("/api/v1/integrations/signrequest/{request_id}", dependencies=[internal])
+@app.delete("/api/v1/integrations/signrequest/{request_id}", dependencies=[workstation_or_internal])
 def integration_signrequest_delete(request_id: str):
     try:
         return SignRequestBackend().eliminar(request_id)
@@ -315,7 +316,7 @@ def integration_signrequest_delete(request_id: str):
         raise HTTPException(502, str(exc)) from exc
 
 
-@app.post("/api/v1/integrations/signrequest/{request_id}/resend", dependencies=[internal])
+@app.post("/api/v1/integrations/signrequest/{request_id}/resend", dependencies=[workstation_or_internal])
 def integration_signrequest_resend(request_id: str):
     try:
         return SignRequestBackend().reenviar(request_id)
@@ -323,7 +324,7 @@ def integration_signrequest_resend(request_id: str):
         raise HTTPException(502, str(exc)) from exc
 
 
-@app.get("/api/v1/integrations/signrequest/{request_id}/evidence/{tipo}", dependencies=[internal])
+@app.get("/api/v1/integrations/signrequest/{request_id}/evidence/{tipo}", dependencies=[workstation_or_internal])
 def integration_signrequest_evidence(request_id: str, tipo: str):
     if tipo not in {"documento", "registro"}:
         raise HTTPException(422, "Tipo de evidencia no valido")
@@ -333,7 +334,7 @@ def integration_signrequest_evidence(request_id: str, tipo: str):
         raise HTTPException(502, str(exc)) from exc
 
 
-@app.post("/api/v1/integrations/dataprius/upload", dependencies=[internal])
+@app.post("/api/v1/integrations/dataprius/upload", dependencies=[workstation_or_internal])
 async def integration_dataprius_upload(ruta: str = Form(""), file: UploadFile = File(...)):
     try:
         return DatapriusBackend().subir(ruta, file.filename or "documento", await file.read())
@@ -353,14 +354,14 @@ def portal_form(request: Request, referencia: str, rol: str, token: str = Query(
     )
 
 
-@app.post("/api/v1/expedientes", dependencies=[internal], status_code=201)
+@app.post("/api/v1/expedientes", dependencies=[workstation_or_internal], status_code=201)
 def post_expediente(payload: ExpedienteCreate, db: Session = Depends(get_db)):
     item = crear_expediente(db, payload)
     db.commit()
     return serializar_expediente(cargar_expediente(db, item.id))
 
 
-@app.get("/api/v1/expedientes", dependencies=[internal])
+@app.get("/api/v1/expedientes", dependencies=[workstation_or_internal])
 def get_expedientes(updated_since: datetime | None = None, db: Session = Depends(get_db)):
     stmt = select(Expediente).options(
         selectinload(Expediente.partes), selectinload(Expediente.vehiculo), selectinload(Expediente.operacion)
@@ -370,7 +371,7 @@ def get_expedientes(updated_since: datetime | None = None, db: Session = Depends
     return [serializar_expediente(item) for item in db.scalars(stmt).unique()]
 
 
-@app.get("/api/v1/expedientes/{expediente_id}", dependencies=[internal])
+@app.get("/api/v1/expedientes/{expediente_id}", dependencies=[workstation_or_internal])
 def get_expediente(expediente_id: str, db: Session = Depends(get_db)):
     item = cargar_expediente(db, expediente_id)
     result = serializar_expediente(item)
@@ -389,7 +390,7 @@ def get_expediente(expediente_id: str, db: Session = Depends(get_db)):
     return result
 
 
-@app.patch("/api/v1/expedientes/{expediente_id}", dependencies=[internal])
+@app.patch("/api/v1/expedientes/{expediente_id}", dependencies=[workstation_or_internal])
 def patch_expediente(expediente_id: str, payload: ExpedientePatch, db: Session = Depends(get_db)):
     item = cargar_expediente(db, expediente_id)
     asegurar_expediente_editable(item)
@@ -465,7 +466,7 @@ def patch_expediente(expediente_id: str, payload: ExpedientePatch, db: Session =
     return serializar_expediente(cargar_expediente(db, item.id))
 
 
-@app.post("/api/v1/expedientes/{expediente_id}/finalizar", dependencies=[internal])
+@app.post("/api/v1/expedientes/{expediente_id}/finalizar", dependencies=[workstation_or_internal])
 def finalizar_expediente(expediente_id: str, db: Session = Depends(get_db)):
     item = cargar_expediente(db, expediente_id)
     if item.estado == "terminado":
@@ -482,7 +483,7 @@ def finalizar_expediente(expediente_id: str, db: Session = Depends(get_db)):
     return serializar_expediente(cargar_expediente(db, item.id))
 
 
-@app.delete("/api/v1/expedientes/{expediente_id}", dependencies=[internal], status_code=204)
+@app.delete("/api/v1/expedientes/{expediente_id}", dependencies=[workstation_or_internal], status_code=204)
 def delete_expediente(expediente_id: str, db: Session = Depends(get_db)):
     item = cargar_expediente(db, expediente_id)
     storage_keys = list(
@@ -499,7 +500,7 @@ def delete_expediente(expediente_id: str, db: Session = Depends(get_db)):
         delete_private_upload(storage_key)
 
 
-@app.post("/api/v1/expedientes/{expediente_id}/links", dependencies=[internal])
+@app.post("/api/v1/expedientes/{expediente_id}/links", dependencies=[workstation_or_internal])
 def post_links(expediente_id: str, db: Session = Depends(get_db)):
     item = cargar_expediente(db, expediente_id)
     asegurar_expediente_editable(item)
@@ -509,7 +510,7 @@ def post_links(expediente_id: str, db: Session = Depends(get_db)):
     return links
 
 
-@app.post("/api/v1/expedientes/{expediente_id}/links/{rol}/revoke", dependencies=[internal])
+@app.post("/api/v1/expedientes/{expediente_id}/links/{rol}/revoke", dependencies=[workstation_or_internal])
 def revoke_link(expediente_id: str, rol: str, db: Session = Depends(get_db)):
     item = cargar_expediente(db, expediente_id)
     asegurar_expediente_editable(item)
@@ -524,7 +525,7 @@ def revoke_link(expediente_id: str, rol: str, db: Session = Depends(get_db)):
     return {"revoked": len(links)}
 
 
-@app.post("/api/v1/expedientes/{expediente_id}/subsanaciones", dependencies=[internal], status_code=201)
+@app.post("/api/v1/expedientes/{expediente_id}/subsanaciones", dependencies=[workstation_or_internal], status_code=201)
 def post_subsanacion(expediente_id: str, payload: SubsanacionCreate, db: Session = Depends(get_db)):
     item = cargar_expediente(db, expediente_id)
     asegurar_expediente_editable(item)
@@ -540,7 +541,7 @@ def post_subsanacion(expediente_id: str, payload: SubsanacionCreate, db: Session
     return {"status": "pendiente", "rol": payload.rol, "url": link["url"], "expires_at": link["expires_at"]}
 
 
-@app.post("/api/v1/expedientes/{expediente_id}/validar", dependencies=[internal])
+@app.post("/api/v1/expedientes/{expediente_id}/validar", dependencies=[workstation_or_internal])
 def validar_interno(expediente_id: str, db: Session = Depends(get_db)):
     item = cargar_expediente(db, expediente_id)
     asegurar_expediente_editable(item)
@@ -576,7 +577,7 @@ def validar_interno(expediente_id: str, db: Session = Depends(get_db)):
     return {"status": "validado"}
 
 
-@app.patch("/api/v1/expedientes/{expediente_id}/partes/{rol}", dependencies=[internal])
+@app.patch("/api/v1/expedientes/{expediente_id}/partes/{rol}", dependencies=[workstation_or_internal])
 def patch_parte_interna(
     expediente_id: str, rol: str, payload: PartePatch, db: Session = Depends(get_db)
 ):
@@ -640,7 +641,7 @@ def ultima_actualizacion_fue_interna(db: Session, expediente_id: str, rol: str) 
     return False
 
 
-@app.get("/api/v1/expedientes/{expediente_id}/documentos", dependencies=[internal])
+@app.get("/api/v1/expedientes/{expediente_id}/documentos", dependencies=[workstation_or_internal])
 def documentos_aportados(expediente_id: str, db: Session = Depends(get_db)):
     cargar_expediente(db, expediente_id)
     docs = db.scalars(select(Documento).where(Documento.expediente_id == expediente_id)).all()
@@ -654,7 +655,7 @@ def documentos_aportados(expediente_id: str, db: Session = Depends(get_db)):
     ]
 
 
-@app.post("/api/v1/expedientes/{expediente_id}/documentos", dependencies=[internal], status_code=201)
+@app.post("/api/v1/expedientes/{expediente_id}/documentos", dependencies=[workstation_or_internal], status_code=201)
 async def post_documento_interno(
     expediente_id: str,
     rol: str = Form(default="gestor"),
@@ -693,7 +694,7 @@ async def post_documento_interno(
     }
 
 
-@app.get("/api/v1/documentos/{documento_id}/download", dependencies=[internal])
+@app.get("/api/v1/documentos/{documento_id}/download", dependencies=[workstation_or_internal])
 def download_documento(documento_id: str, db: Session = Depends(get_db)):
     doc = db.get(Documento, documento_id)
     if not doc:
@@ -705,7 +706,7 @@ def download_documento(documento_id: str, db: Session = Depends(get_db)):
     return FileResponse(path, media_type=doc.content_type, filename=doc.nombre_archivo)
 
 
-@app.delete("/api/v1/documentos/{documento_id}", dependencies=[internal], status_code=204)
+@app.delete("/api/v1/documentos/{documento_id}", dependencies=[workstation_or_internal], status_code=204)
 def delete_documento(documento_id: str, db: Session = Depends(get_db)):
     doc = db.get(Documento, documento_id)
     if not doc:
@@ -721,7 +722,7 @@ def delete_documento(documento_id: str, db: Session = Depends(get_db)):
     delete_private_upload(storage_key)
 
 
-@app.post("/api/v1/expedientes/{expediente_id}/documentos-generados", dependencies=[internal], status_code=201)
+@app.post("/api/v1/expedientes/{expediente_id}/documentos-generados", dependencies=[workstation_or_internal], status_code=201)
 def post_documento_generado(
     expediente_id: str, payload: DocumentoGeneradoCreate, db: Session = Depends(get_db)
 ):
@@ -741,7 +742,7 @@ def post_documento_generado(
     return {"id": doc.id}
 
 
-@app.get("/api/v1/expedientes/{expediente_id}/documentos-generados", dependencies=[internal])
+@app.get("/api/v1/expedientes/{expediente_id}/documentos-generados", dependencies=[workstation_or_internal])
 def get_documentos_generados(expediente_id: str, db: Session = Depends(get_db)):
     cargar_expediente(db, expediente_id)
     docs = db.scalars(select(DocumentoGenerado).where(DocumentoGenerado.expediente_id == expediente_id)).all()
@@ -749,7 +750,7 @@ def get_documentos_generados(expediente_id: str, db: Session = Depends(get_db)):
     return sorted(result, key=lambda item: item.get("fecha_generacion") or "", reverse=True)
 
 
-@app.delete("/api/v1/documentos-generados/{documento_id}", dependencies=[internal])
+@app.delete("/api/v1/documentos-generados/{documento_id}", dependencies=[workstation_or_internal])
 def delete_documento_generado(documento_id: str, db: Session = Depends(get_db)):
     doc = db.get(DocumentoGenerado, documento_id)
     if not doc:
@@ -911,7 +912,7 @@ async def post_public_documento(
     }
 
 
-@app.get("/api/v1/sync", dependencies=[internal])
+@app.get("/api/v1/sync", dependencies=[workstation_or_internal])
 def sync(updated_since: datetime | None = None, db: Session = Depends(get_db)):
     return get_expedientes(updated_since=updated_since, db=db)
 
