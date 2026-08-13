@@ -220,7 +220,6 @@ def _normalize_config(data: dict) -> dict:
     out.setdefault("postgres_dsn", "")
     out.setdefault("ocr_motor_activo", "")
     out.setdefault("azure_doc_intelligence_endpoint", "")
-    out.setdefault("azure_doc_intelligence_key", "")
     out.setdefault("documentos_output_dir", "")
     out.setdefault("dgt_api_url", "")
     out.setdefault("dgt_api_key", "")
@@ -235,10 +234,7 @@ def _normalize_config(data: dict) -> dict:
     if not out["dgt_api_key"]:
         out["dgt_api_key"] = out["integrations_api_key"]
     out.setdefault("messaging_api_url", "")
-    out.setdefault("messaging_api_key", "")
     out.setdefault("messaging_workstation_id", "")
-    out.setdefault("messaging_device_token", "")
-    out.setdefault("workstation_token", "")
     out.setdefault("signrequest_base_url", "https://signrequest.com/api/v1")
     out.setdefault("signrequest_use_sms", False)
     out.setdefault("firma_habilitada", True)
@@ -340,10 +336,35 @@ def set_word_templates_dir(path: str) -> None:
     save_app_config(cfg)
 
 
+# Claves que deben residir en Windows Credential Manager, nunca en JSON.
+_CLAVES_SECRETAS_DISCO = (
+    "workstation_token",
+    "integrations_api_key", "dgt_api_key",
+    "azure_doc_intelligence_key", "azure_storage_connection_string",
+    "messaging_api_key", "messaging_device_token",
+    "admin_password", "initial_admin_password", "desmarcar_generadas_password",
+)
+
+
+def _strip_secret_keys_for_disk(data: dict) -> dict:
+    """Elimina claves sensibles del dict antes de escribirlo a disco."""
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    out = dict(data)
+    for _clave in _CLAVES_SECRETAS_DISCO:
+        if out.pop(_clave, None):
+            _log.warning(
+                "Clave sensible '%s' eliminada de la configuracion antes de guardar en disco. "
+                "Debe residir en Windows Credential Manager.", _clave
+            )
+    return out
+
+
 def save_app_config(data: dict) -> None:
     cfg_path = _config_local_path()
     current = _load_json_file(cfg_path)
     payload = _normalize_config(_merge_dicts(current, dict(data or {})))
+    payload = _strip_secret_keys_for_disk(payload)
     _write_json_file(cfg_path, payload)
 
 

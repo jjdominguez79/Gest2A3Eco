@@ -4,13 +4,23 @@ Almacenamiento seguro de credenciales en Windows Credential Manager.
 Utiliza la libreria 'keyring' que delega en el proveedor nativo del sistema
 operativo (Windows Credential Manager en Windows, Keychain en macOS, etc.).
 
-Las credenciales de PostgreSQL se almacenan con:
-  - SERVICE_POSTGRES: clave de servicio para el par usuario/password de BD
-  - USERNAME_POSTGRES: nombre de usuario fijo para la entrada del almacen
+Servicios registrados:
+  - Gest2A3Eco/PostgreSQL          usuario:password de la base de datos
+  - Gest2A3Eco/WorkstationToken    token de autenticacion del puesto
+  - Gest2A3Eco/IntegrationsApiKey  clave de API del backend de integraciones
+  - Gest2A3Eco/AzureDocIntelligence clave de Azure Document Intelligence
+  - Gest2A3Eco/AzureStorage        cadena de conexion Azure Storage
+  - Gest2A3Eco/MessagingApiKey     clave de API de mensajeria
+  - Gest2A3Eco/MessagingDevice     token de dispositivo de mensajeria
+  - Gest2A3Eco/AdminPassword       contrasena de administrador inicial
+  - Gest2A3Eco/DesmarcarGeneradas  contrasena para desmarcar facturas generadas
 
 Uso tipico:
   store_postgres_credentials("gest2a3eco", "secreto")
   user, pwd = get_postgres_credentials() or ("", "")
+
+  store_workstation_token("g2a3_wks_...")
+  token = get_workstation_token()
 """
 from __future__ import annotations
 
@@ -22,6 +32,27 @@ logger = logging.getLogger(__name__)
 SERVICE_POSTGRES = "Gest2A3Eco/PostgreSQL"
 USERNAME_POSTGRES = "db_user"
 
+SERVICE_WORKSTATION = "Gest2A3Eco/WorkstationToken"
+USERNAME_WORKSTATION = "workstation"
+
+SERVICE_INTEGRATIONS_KEY = "Gest2A3Eco/IntegrationsApiKey"
+USERNAME_INTEGRATIONS_KEY = "api_key"
+
+SERVICE_AZURE_DOC_KEY = "Gest2A3Eco/AzureDocIntelligence"
+USERNAME_AZURE_DOC_KEY = "azure_key"
+
+SERVICE_AZURE_STORAGE = "Gest2A3Eco/AzureStorage"
+USERNAME_AZURE_STORAGE = "connection_string"
+
+SERVICE_MESSAGING_KEY = "Gest2A3Eco/MessagingApiKey"
+USERNAME_MESSAGING_KEY = "api_key"
+
+SERVICE_MESSAGING_DEVICE = "Gest2A3Eco/MessagingDevice"
+USERNAME_MESSAGING_DEVICE = "device_token"
+
+SERVICE_ADMIN_PWD = "Gest2A3Eco/AdminPassword"
+USERNAME_ADMIN_PWD = "admin"
+
 SERVICE_DESMARCAR = "Gest2A3Eco/DesmarcarGeneradas"
 USERNAME_DESMARCAR = "desmarcar"
 
@@ -32,6 +63,38 @@ def _keyring_available() -> bool:
         return True
     except ImportError:
         return False
+
+
+# ── Helpers genericos (privados) ──────────────────────────────────────────────
+
+def _store_single(service: str, username: str, value: str) -> bool:
+    """Guarda un valor unico en el almacen seguro. Devuelve True si OK."""
+    if not _keyring_available():
+        logger.warning("keyring no disponible; no se puede guardar '%s'.", service)
+        return False
+    import keyring
+    keyring.set_password(service, username, value)
+    logger.debug("Credencial guardada en Windows Credential Manager: %s.", service)
+    return True
+
+
+def _get_single(service: str, username: str) -> str | None:
+    """Recupera un valor unico del almacen. Devuelve None si no existe o keyring no disponible."""
+    if not _keyring_available():
+        return None
+    import keyring
+    return keyring.get_password(service, username) or None
+
+
+def _delete_single(service: str, username: str) -> None:
+    """Elimina una entrada del almacen seguro, ignorando errores."""
+    if not _keyring_available():
+        return
+    import keyring
+    try:
+        keyring.delete_password(service, username)
+    except Exception:
+        pass
 
 
 def store_postgres_credentials(username: str, password: str) -> bool:
@@ -148,6 +211,144 @@ def migrate_from_dsn(dsn: str) -> dict:
         "postgres_user": user,
     }
 
+
+# ── Workstation token ─────────────────────────────────────────────────────────
+
+def store_workstation_token(token: str) -> bool:
+    """Guarda el token de estacion de trabajo en el almacen seguro."""
+    return _store_single(SERVICE_WORKSTATION, USERNAME_WORKSTATION, token)
+
+
+def get_workstation_token() -> str | None:
+    """Recupera el token de estacion de trabajo del almacen seguro."""
+    return _get_single(SERVICE_WORKSTATION, USERNAME_WORKSTATION)
+
+
+def delete_workstation_token() -> None:
+    """Elimina el token de estacion de trabajo del almacen seguro."""
+    _delete_single(SERVICE_WORKSTATION, USERNAME_WORKSTATION)
+
+
+# ── Integrations API key ──────────────────────────────────────────────────────
+
+def store_integrations_api_key(key: str) -> bool:
+    """Guarda la clave de API del backend de integraciones."""
+    return _store_single(SERVICE_INTEGRATIONS_KEY, USERNAME_INTEGRATIONS_KEY, key)
+
+
+def get_integrations_api_key() -> str | None:
+    """Recupera la clave de API del backend de integraciones."""
+    return _get_single(SERVICE_INTEGRATIONS_KEY, USERNAME_INTEGRATIONS_KEY)
+
+
+def delete_integrations_api_key() -> None:
+    """Elimina la clave de API del backend de integraciones."""
+    _delete_single(SERVICE_INTEGRATIONS_KEY, USERNAME_INTEGRATIONS_KEY)
+
+
+# ── Azure Document Intelligence key ──────────────────────────────────────────
+
+def store_azure_doc_key(key: str) -> bool:
+    """Guarda la clave de Azure Document Intelligence."""
+    return _store_single(SERVICE_AZURE_DOC_KEY, USERNAME_AZURE_DOC_KEY, key)
+
+
+def get_azure_doc_key() -> str | None:
+    """Recupera la clave de Azure Document Intelligence."""
+    return _get_single(SERVICE_AZURE_DOC_KEY, USERNAME_AZURE_DOC_KEY)
+
+
+def delete_azure_doc_key() -> None:
+    """Elimina la clave de Azure Document Intelligence."""
+    _delete_single(SERVICE_AZURE_DOC_KEY, USERNAME_AZURE_DOC_KEY)
+
+
+# ── Azure Storage connection string ──────────────────────────────────────────
+
+def store_azure_storage_conn(conn: str) -> bool:
+    """Guarda la cadena de conexion de Azure Storage."""
+    return _store_single(SERVICE_AZURE_STORAGE, USERNAME_AZURE_STORAGE, conn)
+
+
+def get_azure_storage_conn() -> str | None:
+    """Recupera la cadena de conexion de Azure Storage."""
+    return _get_single(SERVICE_AZURE_STORAGE, USERNAME_AZURE_STORAGE)
+
+
+def delete_azure_storage_conn() -> None:
+    """Elimina la cadena de conexion de Azure Storage."""
+    _delete_single(SERVICE_AZURE_STORAGE, USERNAME_AZURE_STORAGE)
+
+
+# ── Messaging API key ─────────────────────────────────────────────────────────
+
+def store_messaging_api_key(key: str) -> bool:
+    """Guarda la clave de API de mensajeria."""
+    return _store_single(SERVICE_MESSAGING_KEY, USERNAME_MESSAGING_KEY, key)
+
+
+def get_messaging_api_key() -> str | None:
+    """Recupera la clave de API de mensajeria."""
+    return _get_single(SERVICE_MESSAGING_KEY, USERNAME_MESSAGING_KEY)
+
+
+def delete_messaging_api_key() -> None:
+    """Elimina la clave de API de mensajeria."""
+    _delete_single(SERVICE_MESSAGING_KEY, USERNAME_MESSAGING_KEY)
+
+
+# ── Messaging device token ────────────────────────────────────────────────────
+
+def store_messaging_device_token(token: str) -> bool:
+    """Guarda el token de dispositivo de mensajeria."""
+    return _store_single(SERVICE_MESSAGING_DEVICE, USERNAME_MESSAGING_DEVICE, token)
+
+
+def get_messaging_device_token() -> str | None:
+    """Recupera el token de dispositivo de mensajeria."""
+    return _get_single(SERVICE_MESSAGING_DEVICE, USERNAME_MESSAGING_DEVICE)
+
+
+def delete_messaging_device_token() -> None:
+    """Elimina el token de dispositivo de mensajeria."""
+    _delete_single(SERVICE_MESSAGING_DEVICE, USERNAME_MESSAGING_DEVICE)
+
+
+# ── Admin password ────────────────────────────────────────────────────────────
+
+def store_admin_password(pwd: str) -> bool:
+    """Guarda la contrasena de administrador inicial."""
+    return _store_single(SERVICE_ADMIN_PWD, USERNAME_ADMIN_PWD, pwd)
+
+
+def get_admin_password() -> str | None:
+    """Recupera la contrasena de administrador inicial."""
+    return _get_single(SERVICE_ADMIN_PWD, USERNAME_ADMIN_PWD)
+
+
+def delete_admin_password() -> None:
+    """Elimina la contrasena de administrador inicial."""
+    _delete_single(SERVICE_ADMIN_PWD, USERNAME_ADMIN_PWD)
+
+
+# ── Desmarcar generadas password ──────────────────────────────────────────────
+
+def store_desmarcar_password(pwd: str) -> bool:
+    """Guarda la contrasena para desmarcar facturas generadas."""
+    return _store_single(SERVICE_DESMARCAR, USERNAME_DESMARCAR, pwd)
+
+
+def get_desmarcar_password() -> str | None:
+    """Recupera la contrasena para desmarcar facturas generadas."""
+    return _get_single(SERVICE_DESMARCAR, USERNAME_DESMARCAR)
+
+
+def delete_desmarcar_password() -> None:
+    """Elimina la contrasena para desmarcar facturas generadas."""
+    _delete_single(SERVICE_DESMARCAR, USERNAME_DESMARCAR)
+
+
+# ── PostgreSQL (funciones heredadas con logica compuesta) ─────────────────────
 
 def build_dsn_from_store(host: str, port: int | str, database: str, user: str = "") -> str | None:
     """

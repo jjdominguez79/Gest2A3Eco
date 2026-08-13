@@ -302,6 +302,48 @@ def main():
             cfg.pop("postgres_dsn", None)
             cfg.update(migrated)
             postgres_dsn = ""  # Se reconstruira desde almacen
+
+    # Migracion automatica: mover secretos de config.local.json a Credential Manager
+    import logging as _log_module
+    _log_migration = _log_module.getLogger(__name__)
+
+    from utils.credential_store import (
+        store_workstation_token, store_integrations_api_key,
+        store_azure_doc_key, store_azure_storage_conn,
+        store_messaging_api_key, store_messaging_device_token,
+        store_admin_password, store_desmarcar_password,
+    )
+
+    def _migrar_secreto(config_key: str, store_fn, label: str) -> bool:
+        value = str(cfg.get(config_key) or "").strip()
+        if not value:
+            return False
+        ok = store_fn(value)
+        if ok:
+            cfg.pop(config_key, None)
+            _log_migration.info("Secreto '%s' migrado a Windows Credential Manager.", label)
+            return True
+        _log_migration.warning(
+            "No se pudo migrar '%s' al almacen seguro. Se conserva en config local.", label
+        )
+        return False
+
+    _any_migrated = False
+    for _cfg_key, _store_fn, _label in [
+        ("workstation_token",               store_workstation_token,     "workstation_token"),
+        ("integrations_api_key",            store_integrations_api_key,  "integrations_api_key"),
+        ("dgt_api_key",                     store_integrations_api_key,  "dgt_api_key"),
+        ("azure_doc_intelligence_key",      store_azure_doc_key,         "azure_doc_intelligence_key"),
+        ("azure_storage_connection_string", store_azure_storage_conn,    "azure_storage_connection_string"),
+        ("messaging_api_key",              store_messaging_api_key,      "messaging_api_key"),
+        ("messaging_device_token",         store_messaging_device_token, "messaging_device_token"),
+        ("admin_password",                 store_admin_password,         "admin_password"),
+        ("initial_admin_password",         store_admin_password,         "initial_admin_password"),
+        ("desmarcar_generadas_password",   store_desmarcar_password,     "desmarcar_generadas_password"),
+    ]:
+        if _migrar_secreto(_cfg_key, _store_fn, _label):
+            _any_migrated = True
+
     save_app_config(cfg)
 
     # Intentar reconstruir DSN desde almacen seguro o campos individuales
@@ -389,21 +431,20 @@ def main():
         return
     auth_service = AuthService(gestor_base)
     _bootstrap_cfg = load_app_config()
+    from utils.credential_store import get_admin_password, delete_admin_password
     _bootstrap_password = (
         os.getenv("GEST2A3ECO_ADMIN_PASSWORD")
+        or get_admin_password()
         or str(_bootstrap_cfg.get("initial_admin_password") or "").strip()
         or str(_bootstrap_cfg.get("admin_password") or "").strip()
     )
     initial_admin_info = auth_service.ensure_initial_admin(_bootstrap_password)
-    # Si el admin ya existe y la password sigue en config local, avisar para limpiarla
-    if initial_admin_info is None and (
-        _bootstrap_cfg.get("initial_admin_password") or _bootstrap_cfg.get("admin_password")
-    ):
+    # Si el admin ya existe, eliminar la password del almacen seguro (ya no es necesaria)
+    if initial_admin_info is None and get_admin_password():
+        delete_admin_password()
         import logging as _logging
-        _logging.getLogger(__name__).warning(
-            "Las claves 'admin_password'/'initial_admin_password' aun estan en la "
-            "configuracion local pero el usuario administrador ya existe. "
-            "Eliminalas de config.local.json para mayor seguridad."
+        _logging.getLogger(__name__).info(
+            "Admin inicial ya existe; contrasena de bootstrap eliminada del almacen seguro."
         )
 
     state = {"controller": None, "session": None, "login_view": None}
