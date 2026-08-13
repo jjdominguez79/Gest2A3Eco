@@ -25,7 +25,14 @@ def build_firma_provider(cfg: dict[str, Any]) -> FirmaProvider | None:
     if not bool(cfg.get("firma_habilitada", True)):
         return None
     api_url = str(cfg.get("integrations_api_url") or cfg.get("dgt_api_url") or "").strip()
-    api_key = str(cfg.get("integrations_api_key") or cfg.get("dgt_api_key") or "").strip()
+    from utils.credential_store import get_workstation_token, get_integrations_api_key
+    import os
+    api_key = (
+        get_workstation_token()
+        or get_integrations_api_key()
+        or os.getenv("GEST2A3ECO_INTEGRATIONS_API_KEY", "")
+        or os.getenv("GEST2A3ECO_DGT_API_KEY", "")
+    )
     if api_url and api_key:
         from services.dgt_remote_integrations import BackendSignRequestClient
 

@@ -272,11 +272,13 @@ class OcrService:
         except Exception:
             pass
 
-        # 2. Azure local (si configurado y no se ha anadido ya ningun motor azure*)
+        # 2. Azure local (solo si no hay backend configurado y no hay motor azure ya)
+        # Si hay backend URL, el escritorio no debe acceder directamente a Azure.
         try:
             cfg = self._leer_config_ocr()
+            backend_configurado = bool(cfg.get("integrations_api_url"))
             azure_ya_presente = any(m.nombre in ("azure", "azure_backend") for m in motores)
-            if cfg.get("motor_activo") == "azure" and not azure_ya_presente:
+            if cfg.get("motor_activo") == "azure" and not azure_ya_presente and not backend_configurado:
                 from services.ocr.engines.azure_invoice_engine import AzureInvoiceEngine
                 e = AzureInvoiceEngine(
                     endpoint=cfg.get("azure_endpoint", ""),
@@ -441,15 +443,27 @@ class OcrService:
     def _leer_config_ocr(self) -> dict:
         """Lee configuracion OCR desde BD o config.json."""
         try:
+            import os
             from utils.utilidades import load_app_config
+            from utils.credential_store import (
+                get_azure_doc_key, get_workstation_token, get_integrations_api_key,
+            )
             cfg = load_app_config()
             return {
                 "motor_activo":        cfg.get("ocr_motor_activo") or "",
                 "azure_endpoint":      cfg.get("azure_doc_intelligence_endpoint") or "",
-                "azure_key":           cfg.get("azure_doc_intelligence_key") or "",
+                "azure_key": (
+                    get_azure_doc_key()
+                    or os.getenv("GEST2A3ECO_AZURE_DOC_INTELLIGENCE_KEY", "")
+                ),
                 "azure_model_id":      cfg.get("azure_doc_intelligence_model_id") or "",
                 "integrations_api_url": cfg.get("integrations_api_url") or "",
-                "integrations_api_key": cfg.get("integrations_api_key") or cfg.get("dgt_api_key") or "",
+                "integrations_api_key": (
+                    get_workstation_token()
+                    or get_integrations_api_key()
+                    or os.getenv("GEST2A3ECO_INTEGRATIONS_API_KEY", "")
+                    or os.getenv("GEST2A3ECO_DGT_API_KEY", "")
+                ),
             }
         except Exception:
             return {}

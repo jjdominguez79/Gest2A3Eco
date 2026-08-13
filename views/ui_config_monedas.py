@@ -76,7 +76,8 @@ class MonedasDialog(tk.Toplevel):
     def _load(self):
         cfg = load_app_config()
         self._monedas = cfg.get("monedas") or []
-        self.var_password.set(str(cfg.get("desmarcar_generadas_password") or ""))
+        from utils.credential_store import get_desmarcar_password
+        self.var_password.set(get_desmarcar_password() or "")
         self.lb.delete(0, tk.END)
         for m in self._monedas:
             codigo = str(m.get("codigo") or "").upper()
@@ -131,7 +132,6 @@ class MonedasDialog(tk.Toplevel):
 
     def _save_password(self):
         password = (self.var_password.get() or "").strip()
-        cfg = load_app_config()
-        cfg["desmarcar_generadas_password"] = password
-        save_app_config(cfg)
+        from utils.credential_store import store_desmarcar_password
+        store_desmarcar_password(password)
         messagebox.showinfo("Gest2A3Eco", "Contraseña guardada.")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tkinter as tk
 import webbrowser
 import requests
@@ -39,8 +40,16 @@ class UITramitesDgt(ttk.Frame):
         self._facturacion_service = TramitesDgtFacturacionService(gestor)
         cfg = load_app_config()
         api_url = str(cfg.get("integrations_api_url") or cfg.get("dgt_api_url") or "").strip()
-        workstation_token = str(cfg.get("workstation_token") or "").strip()
-        api_key = str(cfg.get("integrations_api_key") or cfg.get("dgt_api_key") or "").strip()
+        from utils.credential_store import get_workstation_token, get_integrations_api_key
+        workstation_token = (
+            get_workstation_token()
+            or os.getenv("GEST2A3ECO_WORKSTATION_TOKEN", "")
+        )
+        api_key = (
+            get_integrations_api_key()
+            or os.getenv("GEST2A3ECO_INTEGRATIONS_API_KEY", "")
+            or os.getenv("GEST2A3ECO_DGT_API_KEY", "")
+        )
         effective_key = workstation_token or api_key
         if not api_url or not effective_key:
             raise RuntimeError(

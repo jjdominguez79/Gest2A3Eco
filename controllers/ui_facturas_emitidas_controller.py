@@ -290,8 +290,8 @@ class FacturasEmitidasController:
         """Devuelve True si se puede proceder. Si está generada pide contraseña."""
         if not fac.get("generada"):
             return True
-        cfg = load_app_config()
-        expected = str(cfg.get("desmarcar_generadas_password") or "").strip()
+        from utils.credential_store import get_desmarcar_password
+        expected = get_desmarcar_password() or ""
         if not expected:
             self._view.show_warning(
                 "Gest2A3Eco",
@@ -494,8 +494,8 @@ class FacturasEmitidasController:
         if not sel:
             self._view.show_info("Gest2A3Eco", "Selecciona una factura.")
             return
-        cfg = load_app_config()
-        expected_password = str(cfg.get("desmarcar_generadas_password") or "").strip()
+        from utils.credential_store import get_desmarcar_password
+        expected_password = get_desmarcar_password() or ""
         if not expected_password:
             self._view.show_warning(
                 "Gest2A3Eco",

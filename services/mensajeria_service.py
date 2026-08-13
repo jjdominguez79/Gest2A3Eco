@@ -28,12 +28,24 @@ class MensajeriaRemoteClient:
             cfg.get("messaging_api_url") or cfg.get("integrations_api_url")
             or cfg.get("dgt_api_url") or ""
         ).rstrip("/")
-        self.api_key = str(
-            cfg.get("messaging_api_key") or cfg.get("integrations_api_key")
-            or cfg.get("dgt_api_key") or ""
+        from utils.credential_store import (
+            get_messaging_api_key, get_integrations_api_key,
+            get_workstation_token, get_messaging_device_token,
+        )
+        self.api_key = (
+            get_messaging_api_key()
+            or get_workstation_token()
+            or get_integrations_api_key()
+            or os.getenv("GEST2A3ECO_MESSAGING_API_KEY", "")
+            or os.getenv("GEST2A3ECO_INTEGRATIONS_API_KEY", "")
+            or ""
         )
         self.workstation = str(cfg.get("messaging_workstation_id") or socket.gethostname()).strip()
-        self.device_token = str(cfg.get("messaging_device_token") or "").strip()
+        self.device_token = (
+            get_messaging_device_token()
+            or os.getenv("GEST2A3ECO_MESSAGING_DEVICE_TOKEN", "")
+            or ""
+        )
         self.user_id = str(user_id)
         self.user_name = str(user_name or user_id)
         self.http = session or requests.Session()
@@ -80,9 +92,10 @@ class MensajeriaRemoteClient:
         )
         response.raise_for_status()
         self.device_token = str(response.json()["device_token"])
+        from utils.credential_store import store_messaging_device_token
+        store_messaging_device_token(self.device_token)
         cfg = load_app_config()
         cfg["messaging_workstation_id"] = self.workstation
-        cfg["messaging_device_token"] = self.device_token
         save_app_config(cfg)
 
     def sync_organization(

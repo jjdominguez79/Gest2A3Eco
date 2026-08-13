@@ -203,9 +203,10 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         frame = ttk.Frame(dialog, padding=14)
         frame.pack(fill="both", expand=True)
         cfg = load_app_config()
+        from utils.credential_store import get_azure_doc_key, store_azure_doc_key
         motor = tk.StringVar(value=str(cfg.get("ocr_motor_activo") or ""))
         endpoint = tk.StringVar(value=str(cfg.get("azure_doc_intelligence_endpoint") or ""))
-        key = tk.StringVar(value=str(cfg.get("azure_doc_intelligence_key") or ""))
+        key = tk.StringVar(value=get_azure_doc_key() or "")
         model_id = tk.StringVar(value=str(cfg.get("azure_doc_intelligence_model_id") or ""))
         ttk.Label(frame, text="Motor OCR").grid(row=0, column=0, sticky="w", pady=3)
         ttk.Combobox(frame, textvariable=motor, state="readonly", values=("", "azure"), width=42).grid(row=0, column=1, sticky="ew", padx=(8, 0), pady=3)
@@ -228,9 +229,11 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             if selected == "azure" and (not endpoint.get().strip() or not key.get().strip()):
                 messagebox.showwarning("OCR", "Indica endpoint y clave de Azure.", parent=dialog)
                 return
+            azure_key = key.get().strip()
+            if azure_key:
+                store_azure_doc_key(azure_key)
             cfg["ocr_motor_activo"] = selected
             cfg["azure_doc_intelligence_endpoint"] = endpoint.get().strip()
-            cfg["azure_doc_intelligence_key"] = key.get().strip()
             cfg["azure_doc_intelligence_model_id"] = model_id.get().strip()
             save_app_config(cfg)
             dialog.destroy()
@@ -881,8 +884,13 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         actions = ttk.Frame(dialog); actions.pack(fill="x", padx=14, pady=(0, 14))
         def exportar():
             try:
+                from utils.credential_store import get_azure_storage_conn
+                _conn_str = (
+                    get_azure_storage_conn()
+                    or os.getenv("GEST2A3ECO_AZURE_STORAGE_CONNECTION_STRING", "")
+                )
                 resultado = AprendizajeOcrService(self._gestor, self._codigo).exportar_a_blob(
-                    connection_string=str(cfg.get("azure_storage_connection_string") or ""),
+                    connection_string=_conn_str,
                     container=str(cfg.get("azure_ocr_training_container") or "facturas-entrenamiento"),
                 )
                 messagebox.showinfo("Aprendizaje OCR", f"Documentos subidos: {resultado['subidos']}\nOmitidos: {resultado['omitidos']}\n\nAhora revisa y etiqueta los PDF en Document Intelligence Studio.", parent=dialog)
