@@ -56,7 +56,7 @@ def test_crea_ruta_y_sube_archivo_a_dataprius(tmp_path: Path):
     path = tmp_path / "contrato.pdf"
     path.write_bytes(b"%PDF prueba")
     session = _Session()
-    client = DatapriusClient("key", "secret", session=session)
+    client = DatapriusClient("key", "secret", session=session, _allow_legacy=True)
 
     result = client.subir_archivo(
         "FOLDERS/Gest2A3Eco/Tramites DGT/DGT-2026-0001/Generados",

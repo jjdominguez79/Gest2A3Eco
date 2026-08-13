@@ -24,7 +24,7 @@ def test_envia_documento_con_token_y_contenido_base64(tmp_path: Path):
     pdf = tmp_path / "contrato.pdf"
     pdf.write_bytes(b"%PDF-1.4 prueba")
     session = _Session()
-    client = SignRequestClient("token-secreto", "gestoria@example.com", session=session)
+    client = SignRequestClient("token-secreto", "gestoria@example.com", session=session, _allow_legacy=True)
 
     result = client.enviar_documento(
         str(pdf),
@@ -76,7 +76,7 @@ class _RouteSession:
 
 def test_descarga_documento_firmado_y_registro(tmp_path: Path):
     client = SignRequestClient(
-        "token-secreto", "gestoria@example.com", session=_RouteSession()
+        "token-secreto", "gestoria@example.com", session=_RouteSession(), _allow_legacy=True
     )
 
     result = client.descargar_evidencias("firma-1", str(tmp_path), "contrato")
@@ -101,7 +101,7 @@ class _EstadoEnvioSession:
 
 def test_consulta_normaliza_sent_y_devuelve_entrega_por_firmante():
     client = SignRequestClient(
-        "token-secreto", "gestoria@example.com", session=_EstadoEnvioSession()
+        "token-secreto", "gestoria@example.com", session=_EstadoEnvioSession(), _allow_legacy=True
     )
 
     result = client.consultar("firma-2")

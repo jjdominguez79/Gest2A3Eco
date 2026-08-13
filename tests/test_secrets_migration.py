@@ -383,6 +383,243 @@ def test_config_ejemplo_no_contiene_secretos():
         "signrequest_token",
         "signrequest_from_email",
         "firma_permitir_cliente_local",
+        "workstation_token",
+        "integrations_api_key",
+        "dgt_api_key",
+        "messaging_api_key",
+        "messaging_device_token",
+        "admin_password",
+        "initial_admin_password",
+        "desmarcar_generadas_password",
     }
     present = forbidden_keys & set(cfg.keys())
     assert not present, f"Claves de secretos encontradas en config.example.json: {present}"
+
+
+# ── Nuevos tests: credential store generico ───────────────────────────────────
+
+def _mock_keyring(monkeypatch):
+    """Devuelve un dict que actua como almacen keyring en memoria."""
+    store = {}
+
+    class _FakeKeyring:
+        @staticmethod
+        def set_password(service, username, value):
+            store[(service, username)] = value
+
+        @staticmethod
+        def get_password(service, username):
+            return store.get((service, username))
+
+        @staticmethod
+        def delete_password(service, username):
+            store.pop((service, username), None)
+
+    import sys
+    monkeypatch.setitem(sys.modules, "keyring", _FakeKeyring)
+    from utils import credential_store
+    monkeypatch.setattr(credential_store, "_keyring_available", lambda: True)
+    return store
+
+
+def test_store_get_workstation_token(monkeypatch):
+    """Round-trip workstation token en almacen mock."""
+    _mock_keyring(monkeypatch)
+    from utils.credential_store import store_workstation_token, get_workstation_token
+
+    assert get_workstation_token() is None
+    ok = store_workstation_token("g2a3_wks_abc123")
+    assert ok is True
+    assert get_workstation_token() == "g2a3_wks_abc123"
+
+
+def test_store_get_integrations_api_key(monkeypatch):
+    """Round-trip integrations API key en almacen mock."""
+    _mock_keyring(monkeypatch)
+    from utils.credential_store import store_integrations_api_key, get_integrations_api_key
+
+    assert get_integrations_api_key() is None
+    ok = store_integrations_api_key("clave-api-integraciones")
+    assert ok is True
+    assert get_integrations_api_key() == "clave-api-integraciones"
+
+
+def test_store_get_azure_doc_key(monkeypatch):
+    """Round-trip Azure Doc Intelligence key en almacen mock."""
+    _mock_keyring(monkeypatch)
+    from utils.credential_store import store_azure_doc_key, get_azure_doc_key
+
+    assert get_azure_doc_key() is None
+    ok = store_azure_doc_key("azure-key-xyz")
+    assert ok is True
+    assert get_azure_doc_key() == "azure-key-xyz"
+
+
+def test_store_get_desmarcar_password(monkeypatch):
+    """Round-trip desmarcar password en almacen mock."""
+    _mock_keyring(monkeypatch)
+    from utils.credential_store import store_desmarcar_password, get_desmarcar_password
+
+    assert get_desmarcar_password() is None
+    ok = store_desmarcar_password("mipassword")
+    assert ok is True
+    assert get_desmarcar_password() == "mipassword"
+
+
+def test_migrate_workstation_token_from_config(monkeypatch):
+    """La migracion extrae workstation_token de config y lo guarda en Credential Manager."""
+    _mock_keyring(monkeypatch)
+    from utils.credential_store import store_workstation_token, get_workstation_token
+
+    stored_calls = []
+    original_store = store_workstation_token.__wrapped__ if hasattr(store_workstation_token, "__wrapped__") else None
+
+    # Simular la logica de migracion de main.py directamente
+    cfg = {"workstation_token": "g2a3_wks_test123", "other_key": "value"}
+
+    token = str(cfg.get("workstation_token") or "").strip()
+    assert token == "g2a3_wks_test123"
+
+    ok = store_workstation_token(token)
+    assert ok is True
+    cfg.pop("workstation_token", None)
+
+    assert "workstation_token" not in cfg
+    assert get_workstation_token() == "g2a3_wks_test123"
+
+
+def test_save_app_config_no_persists_secrets(monkeypatch):
+    """save_app_config no debe escribir claves secretas en disco."""
+    import json
+
+    written_payload = {}
+
+    def _fake_write(path, payload):
+        written_payload.update(payload)
+
+    monkeypatch.setattr("utils.utilidades._write_json_file", _fake_write)
+    monkeypatch.setattr("utils.utilidades._load_json_file", lambda p: {})
+
+    from utils.utilidades import save_app_config
+
+    data = {
+        "postgres_host": "192.168.0.18",
+        "workstation_token": "g2a3_wks_secret",
+        "integrations_api_key": "api-key-secret",
+        "azure_doc_intelligence_key": "azure-key-secret",
+        "azure_storage_connection_string": "DefaultEndpointsProtocol=...",
+        "admin_password": "adminpass",
+        "desmarcar_generadas_password": "desmarcar123",
+        "messaging_device_token": "device-tok",
+    }
+    save_app_config(data)
+
+    secret_keys = {
+        "workstation_token", "integrations_api_key", "azure_doc_intelligence_key",
+        "azure_storage_connection_string", "admin_password", "desmarcar_generadas_password",
+        "messaging_device_token",
+    }
+    present = secret_keys & set(written_payload.keys())
+    assert not present, f"Claves secretas encontradas en config guardado: {present}"
+    # La clave no sensible si debe estar
+    assert written_payload.get("postgres_host") == "192.168.0.18"
+
+
+def test_dataprius_client_raises_on_direct_use():
+    """DatapriusClient debe lanzar RuntimeError si se instancia sin _allow_legacy."""
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        from services.dataprius_service import DatapriusClient
+
+    with pytest.raises(RuntimeError, match="obsoleto"):
+        DatapriusClient("key", "secret")
+
+
+def test_signrequest_client_raises_on_direct_use():
+    """SignRequestClient debe lanzar RuntimeError si se instancia sin _allow_legacy."""
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        from services.signrequest_service import SignRequestClient
+
+    with pytest.raises(RuntimeError, match="obsoleto"):
+        SignRequestClient("token", "from@example.com")
+
+
+def test_ocr_no_local_azure_fallback_with_backend(monkeypatch):
+    """Con backend configurado, AzureInvoiceEngine local no debe anadirse a la cadena."""
+    from unittest.mock import MagicMock, patch
+
+    fake_cfg = {
+        "motor_activo": "azure",
+        "azure_endpoint": "https://test.azure.com",
+        "azure_key": "local-key",
+        "azure_model_id": "modelo",
+        "integrations_api_url": "https://backend.example.com",
+        "integrations_api_key": "api-key",
+    }
+
+    azure_local_instantiated = []
+
+    class FakeBackendEngine:
+        nombre = "azure_backend"
+        def disponible(self): return True
+
+    class FakeAzureLocal:
+        nombre = "azure"
+        def __init__(self, **kwargs):
+            azure_local_instantiated.append(kwargs)
+        def disponible(self): return True
+
+    with patch("services.ocr.ocr_service.OcrService._leer_config_ocr", return_value=fake_cfg):
+        with patch("services.ocr.engines.backend_ocr_engine.BackendOcrEngine", FakeBackendEngine):
+            with patch("services.ocr.engines.azure_invoice_engine.AzureInvoiceEngine", FakeAzureLocal):
+                from services.ocr.ocr_service import OcrService
+                svc = OcrService.__new__(OcrService)
+                svc._leer_config_ocr = lambda: fake_cfg
+                # Forzar que BackendOcrEngine se importe desde el modulo correcto
+                import services.ocr.engines.backend_ocr_engine as _bmod
+                import services.ocr.engines.azure_invoice_engine as _amod
+                _bmod.BackendOcrEngine = FakeBackendEngine
+                _amod.AzureInvoiceEngine = FakeAzureLocal
+                motores = svc._construir_cadena_motores()
+
+    nombres = [type(m).__name__ for m in motores]
+    assert "FakeAzureLocal" not in nombres, "AzureInvoiceEngine local no debe usarse con backend configurado"
+
+
+def test_redact_covers_all_secret_types():
+    """redact_config_for_logging debe ocultar todos los tipos de secretos conocidos."""
+    from utils.utilidades import redact_config_for_logging
+
+    cfg = {
+        "workstation_token": "g2a3_wks_abc",
+        "integrations_api_key": "key123",
+        "dgt_api_key": "key456",
+        "azure_doc_intelligence_key": "azure-key",
+        "azure_storage_connection_string": "DefaultEndpoints...",
+        "messaging_api_key": "msg-key",
+        "messaging_device_token": "device-tok",
+        "admin_password": "adminpass",
+        "desmarcar_generadas_password": "desp",
+        "postgres_host": "192.168.0.18",
+    }
+    redacted = redact_config_for_logging(cfg)
+
+    for k in cfg:
+        if k == "postgres_host":
+            assert redacted[k] == "192.168.0.18"
+        else:
+            assert redacted[k] == "***", f"'{k}' no fue redactado"
+
+
+def test_pyinstaller_spec_contiene_keyring_hiddenimports():
+    """Gest2A3Eco.spec debe incluir keyring en hiddenimports."""
+    from pathlib import Path
+    spec_path = Path(__file__).parent.parent / "Gest2A3Eco.spec"
+    if not spec_path.exists():
+        pytest.skip("Gest2A3Eco.spec no encontrado")
+    contenido = spec_path.read_text(encoding="utf-8")
+    assert "keyring" in contenido, "keyring debe aparecer en hiddenimports del .spec"
+    assert "keyring.backends.Windows" in contenido, "keyring.backends.Windows debe estar en hiddenimports"
