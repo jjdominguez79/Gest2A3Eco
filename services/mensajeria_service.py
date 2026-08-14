@@ -29,15 +29,16 @@ class MensajeriaRemoteClient:
             or cfg.get("dgt_api_url") or ""
         ).rstrip("/")
         from utils.credential_store import (
-            get_messaging_api_key, get_integrations_api_key,
+            get_messaging_api_key,
             get_workstation_token, get_messaging_device_token,
         )
+        # Autenticacion: MessagingApiKey especifica o WorkstationToken.
+        # Las claves legacy (integrations_api_key, dgt_api_key) ya no se usan.
         self.api_key = (
             get_messaging_api_key()
             or get_workstation_token()
-            or get_integrations_api_key()
             or os.getenv("GEST2A3ECO_MESSAGING_API_KEY", "")
-            or os.getenv("GEST2A3ECO_INTEGRATIONS_API_KEY", "")
+            or os.getenv("GEST2A3ECO_WORKSTATION_TOKEN", "")
             or ""
         )
         self.workstation = str(cfg.get("messaging_workstation_id") or socket.gethostname()).strip()

@@ -308,10 +308,11 @@ def main():
     _log_migration = _log_module.getLogger(__name__)
 
     from utils.credential_store import (
-        store_workstation_token, store_integrations_api_key,
-        store_azure_doc_key, store_azure_storage_conn,
+        store_workstation_token,
+        store_azure_storage_conn,
         store_messaging_api_key, store_messaging_device_token,
         store_admin_password, store_desmarcar_password,
+        delete_integrations_api_key, delete_azure_doc_key,
     )
 
     def _migrar_secreto(config_key: str, store_fn, label: str) -> bool:
@@ -328,12 +329,26 @@ def main():
         )
         return False
 
+    def _limpiar_secreto_legacy(config_key: str, label: str) -> bool:
+        """Elimina un secreto legacy del config JSON sin migrarlo al almacen.
+
+        Usado para claves que ya no son necesarias en el escritorio:
+        - integrations_api_key / dgt_api_key: sustituidas por WorkstationToken.
+        - azure_doc_intelligence_key: el escritorio no debe conectarse a Azure directamente.
+        """
+        value = str(cfg.get(config_key) or "").strip()
+        if not value:
+            return False
+        cfg.pop(config_key, None)
+        _log_migration.info(
+            "Secreto legacy '%s' eliminado de la configuracion local (ya no necesario en escritorio).",
+            label,
+        )
+        return True
+
     _any_migrated = False
     for _cfg_key, _store_fn, _label in [
         ("workstation_token",               store_workstation_token,     "workstation_token"),
-        ("integrations_api_key",            store_integrations_api_key,  "integrations_api_key"),
-        ("dgt_api_key",                     store_integrations_api_key,  "dgt_api_key"),
-        ("azure_doc_intelligence_key",      store_azure_doc_key,         "azure_doc_intelligence_key"),
         ("azure_storage_connection_string", store_azure_storage_conn,    "azure_storage_connection_string"),
         ("messaging_api_key",              store_messaging_api_key,      "messaging_api_key"),
         ("messaging_device_token",         store_messaging_device_token, "messaging_device_token"),
@@ -343,6 +358,27 @@ def main():
     ]:
         if _migrar_secreto(_cfg_key, _store_fn, _label):
             _any_migrated = True
+
+    # Secretos legacy que ya no son necesarios en el escritorio: eliminar del JSON
+    # y del Credential Manager si existiesen. El escritorio autentica exclusivamente
+    # con WorkstationToken; Azure lo gestiona el backend Railway.
+    for _legacy_key, _legacy_label in [
+        ("integrations_api_key",       "integrations_api_key"),
+        ("dgt_api_key",                "dgt_api_key"),
+        ("azure_doc_intelligence_key", "azure_doc_intelligence_key"),
+    ]:
+        if _limpiar_secreto_legacy(_legacy_key, _legacy_label):
+            _any_migrated = True
+
+    # Eliminar tambien del Credential Manager si quedaron de instalaciones anteriores
+    try:
+        delete_integrations_api_key()
+    except Exception:
+        pass
+    try:
+        delete_azure_doc_key()
+    except Exception:
+        pass
 
     save_app_config(cfg)
 
