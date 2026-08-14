@@ -189,7 +189,6 @@ def _apply_env_overrides(data: dict) -> dict:
         "GEST2A3ECO_INTEGRATIONS_API_URL": "integrations_api_url",
         "GEST2A3ECO_INTEGRATIONS_API_KEY": "integrations_api_key",
         "GEST2A3ECO_MESSAGING_API_URL": "messaging_api_url",
-        "GEST2A3ECO_MESSAGING_API_KEY": "messaging_api_key",
         "GEST2A3ECO_MESSAGING_WORKSTATION_ID": "messaging_workstation_id",
         "GEST2A3ECO_MESSAGING_DEVICE_TOKEN": "messaging_device_token",
         "GEST2A3ECO_WORKSTATION_TOKEN": "workstation_token",

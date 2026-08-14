@@ -310,9 +310,10 @@ def main():
     from utils.credential_store import (
         store_workstation_token,
         store_azure_storage_conn,
-        store_messaging_api_key, store_messaging_device_token,
+        store_messaging_device_token,
         store_admin_password, store_desmarcar_password,
         delete_integrations_api_key, delete_azure_doc_key,
+        delete_messaging_api_key,
     )
 
     def _migrar_secreto(config_key: str, store_fn, label: str) -> bool:
@@ -346,11 +347,15 @@ def main():
         )
         return True
 
+    # Eliminar credencial legacy MessagingApiKey del Credential Manager y del JSON.
+    # Desde 1.6.3 el puesto autentica mensajeria con WorkstationToken.
+    delete_messaging_api_key()
+    cfg.pop("messaging_api_key", None)
+
     _any_migrated = False
     for _cfg_key, _store_fn, _label in [
         ("workstation_token",               store_workstation_token,     "workstation_token"),
         ("azure_storage_connection_string", store_azure_storage_conn,    "azure_storage_connection_string"),
-        ("messaging_api_key",              store_messaging_api_key,      "messaging_api_key"),
         ("messaging_device_token",         store_messaging_device_token, "messaging_device_token"),
         ("admin_password",                 store_admin_password,         "admin_password"),
         ("initial_admin_password",         store_admin_password,         "initial_admin_password"),

@@ -20,7 +20,10 @@ class SessionStub:
         return ResponseStub(self.conversations)
 
 
-def test_busca_conversacion_por_empresa_y_canal_sin_confundir_clientes():
+def test_busca_conversacion_por_empresa_y_canal_sin_confundir_clientes(monkeypatch):
+    monkeypatch.setattr("utils.credential_store.get_workstation_token", lambda: "g2a3_wks_test")
+    monkeypatch.setattr("utils.credential_store.get_messaging_device_token", lambda: None)
+
     conversations = [
         {"id": "a", "company_code": "E00041", "kind": "fiscal"},
         {"id": "b", "company_code": "E00042", "kind": "laboral"},
@@ -28,7 +31,7 @@ def test_busca_conversacion_por_empresa_y_canal_sin_confundir_clientes():
     ]
     client = MensajeriaRemoteClient(
         user_id=1, user_name="Admin",
-        config={"messaging_api_url": "https://example.test", "messaging_api_key": "secret"},
+        config={"messaging_api_url": "https://example.test"},
         session=SessionStub(conversations),
     )
 

@@ -132,6 +132,7 @@ class PushSubscriptionIn(BaseModel):
 
 
 def _staff_from_request(db: Session, request: Request) -> MessagingStaff:
+    # Camino 1: token de sesion del despacho (Bearer o cookie)
     token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
     token = token or request.cookies.get("msg_staff_session", "")
     if token:
@@ -145,10 +146,28 @@ def _staff_from_request(db: Session, request: Request) -> MessagingStaff:
             raise HTTPException(403, "Usuario del despacho no autorizado")
         return staff
 
-    expected = get_settings().internal_api_key
+    # Camino 2: clave interna de administracion O WorkstationToken del puesto
     supplied = request.headers.get("x-api-key", "")
-    if not expected or not secrets.compare_digest(supplied, expected):
+    settings = get_settings()
+
+    key_valid = bool(settings.internal_api_key and secrets.compare_digest(supplied, settings.internal_api_key))
+
+    if not key_valid and supplied.startswith("g2a3_wks_"):
+        from backend.api.models import Workstation
+        from backend.api.security import hash_token as _wks_hash
+        ws = db.scalar(
+            select(Workstation).where(
+                Workstation.token_hash == _wks_hash(supplied),
+                Workstation.active.is_(True),
+            )
+        )
+        if ws:
+            ws.last_seen_at = utcnow()
+            key_valid = True
+
+    if not key_valid:
         raise HTTPException(401, "Credencial interna no valida")
+
     device_id = request.headers.get("x-device-id", "")
     device_token = request.headers.get("x-device-token", "")
     device = db.get(MessagingDevice, device_id)
