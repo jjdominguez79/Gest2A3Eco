@@ -1,16 +1,19 @@
 """
 Utilidad de linea de comandos para provisionar credenciales de un puesto de trabajo.
 
-Permite registrar el workstation token y la clave de API de integraciones en
-Windows Credential Manager sin necesidad de escribirlas en config.local.json.
+Permite registrar el workstation token en Windows Credential Manager sin necesidad
+de escribirlo en config.local.json.
 
 Uso:
   python -m utils.provision_workstation
   python -m utils.provision_workstation --only-token
-  python -m utils.provision_workstation --only-key
+  python -m utils.provision_workstation --only-azure
 
 El usuario no necesita volver a introducir las credenciales en cada arranque:
 la aplicacion las recupera automaticamente de Windows Credential Manager.
+
+NOTA: integrations_api_key y dgt_api_key son claves legacy eliminadas en v1.7.0.
+El puesto autentica exclusivamente con WorkstationToken.
 """
 from __future__ import annotations
 
@@ -46,20 +49,6 @@ def provisionar_workstation_token() -> None:
         print("  ERROR: keyring no disponible. Token no guardado.", file=sys.stderr)
 
 
-def provisionar_integrations_api_key() -> None:
-    from utils.credential_store import get_integrations_api_key, store_integrations_api_key
-    print("\n--- Integrations API Key ---")
-    actual = get_integrations_api_key()
-    key = _solicitar_valor("Clave de API del backend de integraciones", "integrations_api_key", actual)
-    if key is None:
-        return
-    ok = store_integrations_api_key(key)
-    if ok:
-        print("  Clave almacenada en Windows Credential Manager.")
-    else:
-        print("  ERROR: keyring no disponible. Clave no guardada.", file=sys.stderr)
-
-
 def provisionar_azure_doc_key() -> None:
     from utils.credential_store import get_azure_doc_key, store_azure_doc_key
     print("\n--- Azure Document Intelligence Key ---")
@@ -79,7 +68,6 @@ def main() -> None:
         description="Provisiona credenciales del puesto en Windows Credential Manager."
     )
     parser.add_argument("--only-token", action="store_true", help="Solo provisionar workstation token.")
-    parser.add_argument("--only-key", action="store_true", help="Solo provisionar integrations API key.")
     parser.add_argument("--only-azure", action="store_true", help="Solo provisionar clave Azure OCR.")
     args = parser.parse_args()
 
@@ -89,13 +77,10 @@ def main() -> None:
 
     if args.only_token:
         provisionar_workstation_token()
-    elif args.only_key:
-        provisionar_integrations_api_key()
     elif args.only_azure:
         provisionar_azure_doc_key()
     else:
         provisionar_workstation_token()
-        provisionar_integrations_api_key()
         provisionar_azure_doc_key()
 
     print("\nProvisionado completado.")
