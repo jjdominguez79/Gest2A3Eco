@@ -547,3 +547,96 @@ def test_migracion_dsn_continua_funcionando(monkeypatch):
     assert "postgres_dsn" not in result
     assert "postgres_password" not in result
     assert "password" not in result
+
+
+# ── Tests firma_webhook_secret (campo legacy eliminado) ───────────────────────
+
+def test_normalize_config_elimina_firma_webhook_secret_legacy():
+    """Una config antigua con firma_webhook_secret lo elimina al normalizar."""
+    from utils.utilidades import _normalize_config
+
+    cfg_antigua = {
+        "firma_habilitada": True,
+        "firma_webhook_secret": "secreto-legacy-de-webhook",
+        "integrations_api_url": "https://backend.example.com",
+    }
+    resultado = _normalize_config(cfg_antigua)
+
+    assert "firma_webhook_secret" not in resultado, (
+        "firma_webhook_secret es un campo legacy y debe eliminarse al normalizar."
+    )
+
+
+def test_save_app_config_no_persiste_firma_webhook_secret(monkeypatch):
+    """save_app_config no debe escribir firma_webhook_secret al disco."""
+    written_payload = {}
+
+    def _fake_write(path, payload):
+        written_payload.update(payload)
+
+    monkeypatch.setattr("utils.utilidades._write_json_file", _fake_write)
+    monkeypatch.setattr("utils.utilidades._load_json_file", lambda p: {})
+
+    from utils.utilidades import save_app_config
+
+    save_app_config({
+        "firma_habilitada": True,
+        "firma_webhook_secret": "secreto-que-no-debe-guardarse",
+        "integrations_api_url": "https://backend.example.com",
+    })
+
+    assert "firma_webhook_secret" not in written_payload, (
+        "firma_webhook_secret no debe persistirse en disco: es un campo legacy sin uso."
+    )
+
+
+def test_save_app_config_no_introduce_firma_webhook_secret_vacio(monkeypatch):
+    """save_app_config no debe introducir firma_webhook_secret vacio en configs nuevas."""
+    written_payload = {}
+
+    def _fake_write(path, payload):
+        written_payload.update(payload)
+
+    monkeypatch.setattr("utils.utilidades._write_json_file", _fake_write)
+    monkeypatch.setattr("utils.utilidades._load_json_file", lambda p: {})
+
+    from utils.utilidades import save_app_config
+
+    save_app_config({"integrations_api_url": "https://backend.example.com"})
+
+    assert "firma_webhook_secret" not in written_payload, (
+        "save_app_config no debe crear firma_webhook_secret aunque no este en la config original."
+    )
+
+
+def test_env_var_firma_webhook_secret_no_carga_en_config(monkeypatch):
+    """La variable de entorno GEST2A3ECO_FIRMA_WEBHOOK_SECRET ya no inyecta el campo."""
+    monkeypatch.setenv("GEST2A3ECO_FIRMA_WEBHOOK_SECRET", "valor-de-entorno")
+    monkeypatch.setattr("utils.utilidades._load_json_file", lambda p: {})
+
+    import importlib
+    import utils.utilidades as _uu
+    importlib.reload(_uu)
+
+    cfg = _uu.load_app_config()
+
+    assert "firma_webhook_secret" not in cfg, (
+        "GEST2A3ECO_FIRMA_WEBHOOK_SECRET no debe inyectarse en la config: campo legacy eliminado."
+    )
+
+
+def test_ningun_flujo_activo_depende_de_firma_webhook_secret(monkeypatch):
+    """Ninguna funcion activa consume firma_webhook_secret de la config."""
+    monkeypatch.setattr("utils.utilidades._load_json_file", lambda p: {
+        "firma_habilitada": True,
+        "integrations_api_url": "https://backend.example.com",
+        "firma_webhook_secret": "secreto-inyectado-en-config",
+    })
+
+    from utils.utilidades import load_app_config
+    cfg = load_app_config()
+
+    # El campo no sobrevive a la normalizacion: load_app_config lo descarta.
+    assert "firma_webhook_secret" not in cfg, (
+        "load_app_config debe descartar firma_webhook_secret al normalizar."
+    )

@@ -195,7 +195,6 @@ def _apply_env_overrides(data: dict) -> dict:
         "GEST2A3ECO_FIRMA_HABILITADA": "firma_habilitada",
         "GEST2A3ECO_FIRMA_CATEGORIA_FIRMADOS": "firma_categoria_firmados",
         "GEST2A3ECO_FIRMA_MAX_MB": "firma_max_mb",
-        "GEST2A3ECO_FIRMA_WEBHOOK_SECRET": "firma_webhook_secret",
         "GEST2A3ECO_ADMIN_PASSWORD": "admin_password",
         "GEST2A3ECO_INITIAL_ADMIN_PASSWORD": "initial_admin_password",
         "GEST2A3ECO_DESMARCAR_GENERADAS_PASSWORD": "desmarcar_generadas_password",
@@ -210,9 +209,13 @@ def _apply_env_overrides(data: dict) -> dict:
 
 def _normalize_config(data: dict) -> dict:
     out = dict(data or {})
-    # SMTP pertenecia a un flujo local retirado. Si queda en una configuracion
-    # antigua, no se expone ni se vuelve a guardar desde la aplicacion.
+    # Campos legacy retirados: si quedan en una instalacion antigua, se eliminan
+    # silenciosamente para que no vuelvan a escribirse en disco.
+    # - smtp: flujo de correo local retirado.
+    # - firma_webhook_secret: el webhook nunca llego a produccion; el secreto
+    #   nunca se valido ni se uso en ningun flujo activo.
     out.pop("smtp", None)
+    out.pop("firma_webhook_secret", None)
     out.setdefault("templates_path", "")
     out.setdefault("word_templates_dir", "")
     out.setdefault("a3_base_path", "")
@@ -235,7 +238,6 @@ def _normalize_config(data: dict) -> dict:
     out.setdefault("firma_habilitada", True)
     out.setdefault("firma_categoria_firmados", "FIRMAS")
     out.setdefault("firma_max_mb", 15)
-    out.setdefault("firma_webhook_secret", "")
     out.setdefault("dataprius_base_url", "https://api.v2.dataprius.com")
     out.setdefault("dataprius_base_path", "FOLDERS/Gest2A3Eco/Tramites DGT")
     # Secretos Dataprius y SignRequest: migrados al backend. Si aun aparecen
