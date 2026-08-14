@@ -29,15 +29,11 @@ class MensajeriaRemoteClient:
             or cfg.get("dgt_api_url") or ""
         ).rstrip("/")
         from utils.credential_store import (
-            get_messaging_api_key, get_integrations_api_key,
             get_workstation_token, get_messaging_device_token,
         )
         self.api_key = (
-            get_messaging_api_key()
-            or get_workstation_token()
-            or get_integrations_api_key()
-            or os.getenv("GEST2A3ECO_MESSAGING_API_KEY", "")
-            or os.getenv("GEST2A3ECO_INTEGRATIONS_API_KEY", "")
+            get_workstation_token()
+            or os.getenv("GEST2A3ECO_WORKSTATION_TOKEN", "")
             or ""
         )
         self.workstation = str(cfg.get("messaging_workstation_id") or socket.gethostname()).strip()
@@ -63,7 +59,10 @@ class MensajeriaRemoteClient:
 
     def _url(self, path: str) -> str:
         if not self.configured:
-            raise ValueError("Configura messaging_api_url y messaging_api_key.")
+            raise ValueError(
+                "Mensajeria no disponible: configura messaging_api_url y provisiona "
+                "el puesto con WorkstationToken."
+            )
         return f"{self.base_url}/api/v1/messaging{path}"
 
     def sync_staff(

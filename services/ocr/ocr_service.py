@@ -441,28 +441,41 @@ class OcrService:
     # ── Configuracion ─────────────────────────────────────────────────────────
 
     def _leer_config_ocr(self) -> dict:
-        """Lee configuracion OCR desde BD o config.json."""
+        """Lee configuracion OCR desde BD o config.json.
+
+        La autenticacion del escritorio frente al backend usa EXCLUSIVAMENTE
+        WorkstationToken. Las claves legacy (integrations_api_key, dgt_api_key)
+        ya no se aceptan.
+
+        La clave azure_doc_intelligence_key del escritorio solo se usa cuando NO
+        hay backend configurado (modo local directo). Con backend, el escritorio
+        delega en el servidor Railway, que tiene su propia clave Azure.
+        """
         try:
             import os
             from utils.utilidades import load_app_config
             from utils.credential_store import (
-                get_azure_doc_key, get_workstation_token, get_integrations_api_key,
+                get_azure_doc_key, get_workstation_token,
             )
             cfg = load_app_config()
+            api_url = cfg.get("integrations_api_url") or ""
+            # Solo se carga la clave Azure local si NO hay backend configurado.
+            # Con backend, la clave la gestiona Railway, no el escritorio.
+            azure_key_local = ""
+            if not api_url:
+                azure_key_local = (
+                    get_azure_doc_key()
+                    or os.getenv("GEST2A3ECO_AZURE_DOC_INTELLIGENCE_KEY", "")
+                )
             return {
                 "motor_activo":        cfg.get("ocr_motor_activo") or "",
                 "azure_endpoint":      cfg.get("azure_doc_intelligence_endpoint") or "",
-                "azure_key": (
-                    get_azure_doc_key()
-                    or os.getenv("GEST2A3ECO_AZURE_DOC_INTELLIGENCE_KEY", "")
-                ),
+                "azure_key":           azure_key_local,
                 "azure_model_id":      cfg.get("azure_doc_intelligence_model_id") or "",
-                "integrations_api_url": cfg.get("integrations_api_url") or "",
+                "integrations_api_url": api_url,
                 "integrations_api_key": (
                     get_workstation_token()
-                    or get_integrations_api_key()
-                    or os.getenv("GEST2A3ECO_INTEGRATIONS_API_KEY", "")
-                    or os.getenv("GEST2A3ECO_DGT_API_KEY", "")
+                    or os.getenv("GEST2A3ECO_WORKSTATION_TOKEN", "")
                 ),
             }
         except Exception:

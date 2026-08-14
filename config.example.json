@@ -20,7 +20,6 @@
   "firma_habilitada": true,
   "firma_categoria_firmados": "FIRMAS",
   "firma_max_mb": 15,
-  "firma_webhook_secret": "",
   "monedas": [
     {
       "codigo": "EUR",

@@ -40,21 +40,17 @@ class UITramitesDgt(ttk.Frame):
         self._facturacion_service = TramitesDgtFacturacionService(gestor)
         cfg = load_app_config()
         api_url = str(cfg.get("integrations_api_url") or cfg.get("dgt_api_url") or "").strip()
-        from utils.credential_store import get_workstation_token, get_integrations_api_key
-        workstation_token = (
+        from utils.credential_store import get_workstation_token
+        # La autenticacion del escritorio usa EXCLUSIVAMENTE WorkstationToken.
+        # Las claves legacy (integrations_api_key, dgt_api_key) ya no se aceptan.
+        effective_key = (
             get_workstation_token()
             or os.getenv("GEST2A3ECO_WORKSTATION_TOKEN", "")
         )
-        api_key = (
-            get_integrations_api_key()
-            or os.getenv("GEST2A3ECO_INTEGRATIONS_API_KEY", "")
-            or os.getenv("GEST2A3ECO_DGT_API_KEY", "")
-        )
-        effective_key = workstation_token or api_key
         if not api_url or not effective_key:
             raise RuntimeError(
-                "Tramites DGT requiere integrations_api_url y workstation_token (o integrations_api_key). "
-                "No usa la base principal de la aplicacion."
+                "Puesto no registrado: falta WorkstationToken. "
+                "Registra este puesto de trabajo en el backend para usar Tramites DGT."
             )
         repository = ApiDgtRepository(api_url, effective_key)
         firma_client = None
