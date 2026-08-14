@@ -48,36 +48,119 @@ def _campo_fecha(fields: dict, *nombres: str) -> str:
     return ""
 
 
+def _parse_importe(raw) -> float:
+    """
+    Convierte un string de importe en float, soportando formatos ES y EN.
+
+    Ejemplos soportados:
+      "340,00€"    → 340.0
+      "280,98€"    → 280.98
+      "1.234,56 €" → 1234.56
+      "1,234.56"   → 1234.56
+      "1234.56"    → 1234.56
+      "1234,56"    → 1234.56
+      "€340,00"    → 340.0
+      ""           → 0.0
+      None         → 0.0
+
+    Logica: si hay tanto '.' como ',' el que aparece mas a la derecha es el
+    separador decimal. Si solo hay ',' es separador decimal estilo espanol.
+    """
+    if not raw:
+        return 0.0
+    s = str(raw).strip()
+    s = re.sub(r'[€$£\s]', '', s)
+    s = s.replace('%', '')
+    if not s:
+        return 0.0
+    try:
+        pos_punto = s.rfind('.')
+        pos_coma  = s.rfind(',')
+        if pos_punto != -1 and pos_coma != -1:
+            if pos_punto > pos_coma:
+                # Formato EN: 1,234.56
+                s = s.replace(',', '')
+            else:
+                # Formato ES: 1.234,56
+                s = s.replace('.', '').replace(',', '.')
+        elif pos_coma != -1:
+            # Solo coma: separador decimal espanol
+            s = s.replace(',', '.')
+        return float(s)
+    except Exception:
+        return 0.0
+
+
+def _parse_fecha(raw) -> str:
+    """
+    Normaliza una fecha a formato ISO YYYY-MM-DD.
+
+    Formatos soportados:
+      "22/07/2026" → "2026-07-22"
+      "22-07-2026" → "2026-07-22"
+      "2026-07-22" → "2026-07-22"
+      None/""      → ""
+    """
+    if not raw:
+        return ""
+    s = str(raw).strip()
+    if not s:
+        return ""
+    if re.match(r'^\d{4}-\d{2}-\d{2}$', s):
+        return s
+    m = re.match(r'^(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})$', s)
+    if m:
+        d, mo, y = m.group(1), m.group(2), m.group(3)
+        return f"{y}-{mo.zfill(2)}-{d.zfill(2)}"
+    return s
+
+
 def _azure_float(field) -> float:
     if field is None:
         return 0.0
+    # Prioridad 1: valueCurrency (objeto con .amount)
     val = _azure_value(field) or getattr(field, "value_number", None)
-    if val is None:
-        return 0.0
-    try:
-        if hasattr(val, "amount"):
-            return float(val.amount or 0.0)
-        if isinstance(val, str):
-            raw = val.strip().replace("%", "")
-            if "," in raw and "." in raw:
-                raw = raw.replace(".", "").replace(",", ".")
-            elif "," in raw:
-                raw = raw.replace(",", ".")
-            return float(raw)
-        return float(val)
-    except Exception:
-        return 0.0
+    if val is not None:
+        try:
+            if hasattr(val, "amount"):
+                return float(val.amount or 0.0)
+            if isinstance(val, str):
+                return _parse_importe(val)
+            return float(val)
+        except Exception:
+            pass
+    # Prioridad 2: valueString como fallback
+    vs = getattr(field, "value_string", None)
+    if vs:
+        result = _parse_importe(vs)
+        if result:
+            return result
+    # Prioridad 3: content como ultimo recurso
+    content = getattr(field, "content", None)
+    if content:
+        return _parse_importe(str(content))
+    return 0.0
 
 
 def _azure_fecha(field) -> str:
     if field is None:
         return ""
     val = _azure_value(field) or getattr(field, "value_date", None)
-    if val is None:
-        return ""
-    if hasattr(val, "isoformat"):
-        return val.isoformat()
-    return str(val)
+    if val is not None:
+        if hasattr(val, "isoformat"):
+            return val.isoformat()
+        if isinstance(val, str):
+            return _parse_fecha(val)
+        return str(val)
+    # Fallback: valueString
+    vs = getattr(field, "value_string", None)
+    if vs:
+        return _parse_fecha(str(vs))
+    # Fallback: content
+    content = getattr(field, "content", None)
+    if content:
+        return _parse_fecha(str(content))
+    return ""
 
 
 def _azure_value(field):
