@@ -1,6 +1,6 @@
 {
-  "version": "1.6.3",
-  "tag": "v1.6.3",
-  "changelog": "﻿Se han corregido errores en la generacion de cuotas periodicas y de ha añadido la posibilidad de navegar entra facturas sin tener que salir al listado principal.",
+  "version": "1.7.0",
+  "tag": "v1.7.0",
+  "changelog": "Nueva autenticacion segura por puesto con WorkstationToken almacenado en Windows Credential Manager. Secretos eliminados de config.local.json: la instalacion no escribe ni sobreescribe credenciales locales. OCR Azure centralizado en el backend Railway con parser robusto de importes ES/EN y normalizacion de fechas. Mensajeria autenticada con WorkstationToken; MessagingApiKey legacy eliminado. Refactor de backend (dgt_api a api). Correccion en alta de empresa A3: no valida codigo anterior al crear empresa nueva. Mejoras generales de seguridad y compatibilidad.",
   "force_update": true
 }

@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.6.3",
-  "minimum_required_version": "1.5.1",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.6.3/Setup_Gest2A3Eco_1.6.3.exe",
-  "changelog": "Correccion en generacion de cuotas periodicas (unidades y precio). Navegacion entre facturas y cuotas sin salir al listado. Actualizacion masiva de estado de firmas. Filtro por cliente en contabilidad. Resetear facturas generadas vuelve a estado pendiente en lugar de eliminarlas de contabilidad.",
+  "latest_version": "1.7.0",
+  "minimum_required_version": "1.7.0",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.7.0/Setup_Gest2A3Eco_1.7.0.exe",
+  "changelog": "Nueva autenticacion segura por puesto con WorkstationToken almacenado en Windows Credential Manager. Secretos eliminados de config.local.json: la instalacion no escribe ni sobreescribe credenciales locales. OCR Azure centralizado en el backend Railway con parser robusto de importes ES/EN y normalizacion de fechas. Mensajeria autenticada con WorkstationToken; MessagingApiKey legacy eliminado. Refactor de backend (dgt_api a api). Correccion en alta de empresa A3: no valida codigo anterior al crear empresa nueva. Mejoras generales de seguridad y compatibilidad.",
   "force_update": true
 }
