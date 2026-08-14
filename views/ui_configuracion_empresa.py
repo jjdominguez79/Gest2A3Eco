@@ -508,8 +508,11 @@ class UIConfiguracionEmpresa(ttk.Frame):
                 raise ValueError("Debes configurar al menos un ejercicio.")
             codigo = normalizar_codigo_empresa_a3(self.var_codigo.get())
             self.var_codigo.set(codigo)
-            codigo_anterior = normalizar_codigo_empresa_a3(
-                self._empresa.get("codigo") or self._codigo
+            codigo_anterior_raw = self._empresa.get("codigo") or self._codigo or ""
+            codigo_anterior = (
+                normalizar_codigo_empresa_a3(codigo_anterior_raw)
+                if codigo_anterior_raw
+                else ""
             )
             if codigo_anterior and codigo != codigo_anterior:
                 self._gestor.cambiar_codigo_empresa(codigo_anterior, codigo)
