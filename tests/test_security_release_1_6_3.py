@@ -166,8 +166,8 @@ def test_ocr_service_usa_solo_workstation_token(monkeypatch):
     svc = OcrService.__new__(OcrService)
     cfg = svc._leer_config_ocr()
 
-    assert cfg["integrations_api_key"] == "g2a3_wks_ocr_token", (
-        "OCR service debe usar WorkstationToken para integrations_api_key."
+    assert cfg["backend_api_key"] == "g2a3_wks_ocr_token", (
+        "OCR service debe usar WorkstationToken como backend_api_key."
     )
 
 
@@ -270,12 +270,15 @@ def test_ocr_service_sin_workstation_token_no_usa_integrations_key(monkeypatch):
     svc = OcrService.__new__(OcrService)
     cfg = svc._leer_config_ocr()
 
-    assert cfg["integrations_api_key"] != "api-key-legacy", (
-        "OCR service no debe usar integrations_api_key legacy. "
+    assert cfg.get("backend_api_key") != "api-key-legacy", (
+        "OCR service no debe usar integrations_api_key legacy como backend_api_key. "
         "Solo WorkstationToken es valido."
     )
-    assert not cfg["integrations_api_key"], (
-        "Sin WorkstationToken, integrations_api_key debe ser vacio."
+    assert not cfg.get("backend_api_key"), (
+        "Sin WorkstationToken, backend_api_key debe ser vacio."
+    )
+    assert "integrations_api_key" not in cfg, (
+        "El dict de config OCR no debe exponer la clave 'integrations_api_key'."
     )
 
 

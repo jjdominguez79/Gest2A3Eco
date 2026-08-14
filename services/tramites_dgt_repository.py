@@ -45,7 +45,7 @@ class ApiDgtRepository:
         # Preferir workstation_token si esta disponible
         self.api_key = str(workstation_token or api_key or "")
         if not self.base_url or not self.api_key:
-            raise ValueError("Configura integrations_api_url e integrations_api_key (o workstation_token) para usar Tramites DGT online.")
+            raise ValueError("Configura integrations_api_url y workstation_token para usar Tramites DGT online.")
         self.timeout = timeout
         self._http = session or requests.Session()
 

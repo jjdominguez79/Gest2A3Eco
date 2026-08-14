@@ -241,7 +241,7 @@ class OcrService:
             cfg = self._leer_config_ocr()
             if cfg.get("motor_activo") == "azure":
                 api_url = cfg.get("integrations_api_url", "")
-                api_key = cfg.get("integrations_api_key", "")
+                api_key = cfg.get("backend_api_key", "")
                 if api_url:
                     from services.ocr.engines.backend_ocr_engine import BackendOcrEngine
                     engine = BackendOcrEngine(
@@ -473,7 +473,8 @@ class OcrService:
                 "azure_key":           azure_key_local,
                 "azure_model_id":      cfg.get("azure_doc_intelligence_model_id") or "",
                 "integrations_api_url": api_url,
-                "integrations_api_key": (
+                # backend_api_key: siempre WorkstationToken; nunca integrations_api_key legacy.
+                "backend_api_key": (
                     get_workstation_token()
                     or os.getenv("GEST2A3ECO_WORKSTATION_TOKEN", "")
                 ),
