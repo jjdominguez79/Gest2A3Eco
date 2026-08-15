@@ -1,0 +1,30 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:gestinem/features/auth/presentation/auth_controller.dart';
+import 'package:gestinem/features/messaging/domain/message.dart';
+import 'package:gestinem/features/messaging/presentation/conversation_screen.dart';
+import 'package:gestinem/features/messaging/presentation/messaging_providers.dart';
+
+import 'test_helpers.dart';
+
+void main() {
+  testWidgets('conversacion renderiza historial y compositor', (tester) async {
+    final message = Message(
+      id: 'm1', conversationId: 't1', authorType: 'staff', authorId: 'staff-1',
+      authorName: 'Ana', body: 'Buenos dias', createdAt: DateTime(2026, 8, 15), deleted: false,
+    );
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+        internalMessagesProvider.overrideWith((ref, id) async => [message]),
+      ],
+      child: const MaterialApp(home: Scaffold(body: ConversationView(conversationId: 't1', internal: true))),
+    ));
+    await tester.pump();
+
+    expect(find.text('Buenos dias'), findsOneWidget);
+    expect(find.byKey(const Key('message-composer')), findsOneWidget);
+    expect(find.byKey(const Key('send-message')), findsOneWidget);
+  });
+}
