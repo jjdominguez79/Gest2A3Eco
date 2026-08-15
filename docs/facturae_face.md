@@ -1,52 +1,42 @@
 # Facturae / FACe en Gest2A3Eco
 
-Gest2A3Eco permite generar, desde una factura emitida existente, un fichero XML Facturae 3.2.2 preparado para validacion estructural y uso posterior en FACe/MiFacturae.
+**Estado:** generacion y validacion de Facturae 3.2.2 implementadas.
 
-## Que hace
+**Ultima revision contra el codigo:** 2026-08-15.
 
-- Anade la accion `Generar Facturae/FACe` en la pantalla de facturas emitidas.
-- Valida datos obligatorios de emisor, receptor, lineas, impuestos, retenciones y totales.
-- Genera un XML Facturae 3.2.2 con `FileHeader`, `Parties`, `Invoices`, `TaxesOutputs`, `TaxesWithheld`, `InvoiceTotals` e `Items`.
-- Guarda en la factura la ruta del XML, fecha de generacion, estado Facturae y ultimo error de validacion.
+Gest2A3Eco genera un XML Facturae 3.2.2 desde una factura emitida existente. El
+resultado esta preparado para validacion externa y firma posterior; la
+aplicacion no lo presenta automaticamente en FACe.
 
-## Datos necesarios
+## Flujo
 
-### Emisor
+1. Abrir una factura emitida y elegir `Generar Facturae/FACe`.
+2. Cargar emisor, receptor, relacion empresa-tercero y lineas de factura.
+3. Validar identificacion, direcciones, impuestos, retenciones y totales.
+4. Si el receptor es Administracion Publica, validar los centros DIR3.
+5. Elegir destino y generar
+   `FACTURAE_<NIF_EMISOR>_<NUMERO_FACTURA>.xml`.
+6. Guardar ruta, fecha, estado y ultimo error en la factura.
 
-- Nombre o razon social.
-- CIF/NIF.
-- Direccion.
-- Codigo postal.
-- Poblacion.
-- Provincia.
-- Pais.
+Si hay errores, no se escribe el XML y la interfaz muestra el listado completo.
 
-### Cliente / receptor
+## Datos obligatorios
 
-- Nombre o razon social.
-- CIF/NIF.
-- Direccion.
-- Codigo postal.
-- Poblacion.
-- Provincia.
-- Pais.
+Emisor y receptor necesitan nombre o razon social, NIF/CIF/VAT, direccion,
+codigo postal, poblacion, provincia y pais. Las lineas deben permitir reconstruir
+bases, impuestos, retenciones y total sin descuadres.
 
-### Si el cliente es Administracion Publica
+Para Administraciones Publicas se requieren:
 
-- Marcar `Es Administracion Publica`.
-- Oficina contable DIR3.
-- Organo gestor DIR3.
-- Unidad tramitadora DIR3.
-- Opcionalmente organo proponente.
-- Referencia de expediente, contrato y pedido si existen.
+- oficina contable DIR3;
+- organo gestor DIR3;
+- unidad tramitadora DIR3;
+- opcionalmente organo proponente;
+- referencias de expediente, contrato y pedido cuando existan.
 
-## Campos nuevos
+## Persistencia
 
-### Empresa
-
-- `pais`
-
-### Relacion empresa-tercero
+Relacion empresa-tercero:
 
 - `facturae_es_administracion_publica`
 - `facturae_dir3_oficina_contable`
@@ -57,36 +47,43 @@ Gest2A3Eco permite generar, desde una factura emitida existente, un fichero XML 
 - `facturae_referencia_contrato`
 - `facturae_referencia_pedido`
 
-### Factura emitida
+Factura emitida:
 
 - `facturae_xml_path`
 - `facturae_generated_at`
 - `facturae_status`
 - `facturae_error`
 
-## Flujo de uso
+El campo `pais` de empresa y tercero participa en la construccion de las partes.
 
-1. Abre la factura emitida.
-2. Pulsa `Generar Facturae/FACe`.
-3. Si faltan datos, la aplicacion muestra el listado de errores y no genera el XML.
-4. Si todo es correcto, el usuario elige la ruta de salida.
-5. Se crea un fichero con el formato `FACTURAE_<NIF_EMISOR>_<NUMERO_FACTURA>.xml`.
+## Implementacion
 
-## Limitaciones actuales
+- `services/facturae/facturae_models.py`: contrato del documento.
+- `services/facturae/facturae_builder.py`: mapeo y XML 3.2.2.
+- `services/facturae/facturae_validator.py`: reglas de validacion.
+- `services/facturae/facturae_exporter.py`: orquestacion y datos de persistencia.
 
-- Esta primera fase genera XML Facturae sin firma electronica.
-- No realiza envio automatico a FACe.
-- La firma XAdES-EPES queda preparada como punto de extension: `sign_facturae_xml(xml_path, certificate_path, certificate_password)`.
-- La arquitectura soporta factura rectificativa, pero el mapeo funcional avanzado de motivos puede requerir ajuste adicional segun casuistica real.
+Se generan `FileHeader`, `Parties`, `Invoices`, `TaxesOutputs`,
+`TaxesWithheld`, `InvoiceTotals`, `Items` y centros administrativos cuando
+corresponde. Se contemplan multiples tipos de IVA, IRPF y datos rectificativos.
 
-## Validacion en MiFacturae / FACe
+## Limitaciones
 
-- El XML puede revisarse con MiFacturae o con los validadores compatibles con Facturae 3.2.2.
-- Para presentacion real en FACe normalmente sera necesario firmarlo con certificado digital.
+- `sign_facturae_xml()` es un punto de extension y todavia no firma XAdES-EPES.
+- No hay envio automatico ni consulta de estado en FACe.
+- No se incluye el XSD oficial para validacion local completa.
+- Los casos avanzados de facturas rectificativas deben validarse con ejemplos
+  reales antes de su presentacion.
 
-## Pendiente para siguientes fases
+Antes de una presentacion real, validar el XML con las herramientas oficiales o
+compatibles de Facturae 3.2.2 y firmarlo con un certificado admitido por FACe.
 
-- Firma XAdES-EPES.
-- Presentacion automatica.
-- Validacion contra XSD oficial en local si se incorpora el esquema al proyecto.
-- Ajustes finos de codigos funcionales segun escenarios concretos de Administracion Publica.
+## Pruebas
+
+```powershell
+$env:PYTHONPATH = "."
+python -m pytest tests/test_facturae_service.py -q
+```
+
+Los escenarios cubren factura simple, multiples IVAs, IRPF, DIR3 obligatorio,
+descuadre de totales, ausencia de lineas y persistencia de la ruta exportada.

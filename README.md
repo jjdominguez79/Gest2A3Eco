@@ -1,126 +1,156 @@
 # Gest2A3Eco
 
-Aplicacion de escritorio en Python/Tkinter para Windows orientada a gestion
-contable de Gestinem.
+Aplicacion de escritorio para Windows, desarrollada con Python y Tkinter, que
+centraliza la gestion contable y documental de Gestinem e integra los datos con
+A3ECO.
 
 Funciones principales:
 
-- Generacion de `suenlace.dat` para A3ECO.
-- Gestion de facturas emitidas y recibidas.
-- Generacion de PDF desde plantillas Word.
-- OCR de facturas recibidas.
-- Comunicaciones, notificaciones, firma documental y tramites DGT.
+- Generacion de `suenlace.dat` para movimientos bancarios y facturas.
+- Gestion de facturas emitidas, recibidas, cuotas y Facturae 3.2.2.
+- Generacion de PDF desde plantillas Word y firma documental.
+- Captura y revision OCR de facturas recibidas.
+- Comunicaciones por Microsoft Graph, mensajeria web y notificaciones.
+- Gestion documental, certificados de Administraciones Publicas y tramites DGT.
+- Importacion de empresas, cuentas, terceros y asientos desde ficheros A3.
 
-## Requisitos
+Documentacion especializada:
 
-- Python 3.10+
-- Windows
-- PostgreSQL accesible desde todos los puestos
-- Dependencias de `requirements.txt`
+- [Backend e integraciones](backend/README.md)
+- [OCR: estado actual](docs/ocr_estado_actual.md)
+- [Facturae / FACe](docs/facturae_face.md)
+- [Tramites DGT](docs/implantacion_dgt_online.md)
+- [Arquitectura de secretos](docs/security/secrets-architecture.md)
+- [Publicacion de versiones](docs/PUBLICACION_VERSIONES.md)
+- [Servicios Synology](deploy/mail-sync/README.md)
+- [Cliente Flutter en preparacion](gestinem_app/README.md)
 
-```bash
+Documentacion contrastada con el repositorio el 2026-08-15.
+
+## Requisitos y desarrollo
+
+- Windows.
+- Python 3.10 o posterior. La publicacion automatizada usa Python 3.14.2.
+- PostgreSQL accesible desde los puestos de escritorio.
+- Microsoft Word para la conversion de plantillas DOCX a PDF.
+- Dependencias de `requirements.txt` y, para pruebas, `requirements-dev.txt`.
+
+```powershell
 python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-pip install -r requirements-dev.txt
-```
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 
-## Ejecucion
-
-```bash
 python main.py
+$env:PYTHONPATH = "."
+python -m pytest
 ```
 
-La conexion de datos se configura con `postgres_dsn` en `config.local.json` o
-con la variable `GEST2A3ECO_POSTGRES_DSN`.
+Para las notificaciones electronicas automatizadas tambien hay que instalar el
+navegador de Playwright:
 
-## Compilacion
-
-```bash
-pyinstaller Gest2A3Eco.spec
+```powershell
+playwright install chromium
 ```
 
-La build empaqueta recursos de aplicacion como `logo.png`, `icono.ico`,
-`assets/`, `plantillas/email_factura.html` y `config.example.json`. No debe
-incluir datos reales, configuracion local ni documentos generados.
+## Configuracion del escritorio
+
+En una instalacion normal, la configuracion se guarda en
+`%LOCALAPPDATA%\Gest2A3Eco\config.local.json`. Los antiguos `config.json` y
+`config.local.json` junto al ejecutable solo se leen para migrarlos en el primer
+arranque.
+
+El JSON contiene exclusivamente valores no sensibles, entre otros:
+
+- conexion PostgreSQL separada en `postgres_host`, `postgres_port`,
+  `postgres_database` y `postgres_user`;
+- rutas de A3ECO, plantillas Word y repositorio documental;
+- URLs del backend para integraciones y mensajeria;
+- preferencias de OCR, firma y monedas.
+
+La contrasena PostgreSQL y el `WorkstationToken` se guardan en Windows
+Credential Manager. Para provisionar un puesto:
+
+```powershell
+python -m utils.provision_workstation --only-token
+```
+
+`GEST2A3ECO_POSTGRES_DSN` sigue disponible para automatizacion y migracion, pero
+un DSN con contrasena nunca se persiste en el JSON. Las API keys historicas
+`dgt_api_key`, `integrations_api_key` y `messaging_api_key` no autentican al
+escritorio y se eliminan al guardar la configuracion.
 
 ## Arquitectura
 
 ```text
-main.py                     Punto de entrada
-controllers/                Coordinacion y validacion
+main.py                     Arranque, actualizaciones y autenticacion
+controllers/                Navegacion, validacion y coordinacion
 views/                      Pantallas Tkinter
-procesos/                   Generadores A3ECO y PDF
-models/                     Gestor PostgreSQL y renderizadores A3ECO
-services/                   Auth, email, OCR, notificaciones, integraciones
-utils/                      Configuracion, validaciones y formato
-plantillas/                 Plantillas versionables
-assets/                     Recursos graficos
+procesos/                   Registros A3ECO y generacion Word/PDF
+models/                     Persistencia PostgreSQL y renderizadores A3ECO
+services/                   OCR, correo, firma, DGT y gestion documental
+backend/api/                API FastAPI y portales web
+sync_worker/                Workers de correo y adjuntos para Synology
+gestinem_app/               Scaffold Flutter para el futuro cliente movil
+utils/                      Configuracion, credenciales y validaciones
 ```
 
-## Datos
+El escritorio aplica una arquitectura MVC con servicios y procesos. El backend
+FastAPI concentra los secretos de proveedores externos y expone DGT, OCR,
+SignRequest, Dataprius y los portales de mensajeria. Los procesos de Synology
+mantienen la sincronizacion aunque ningun usuario tenga abierta la aplicacion.
+El backend ya contiene contratos para dispositivos moviles, FCM, WebSocket,
+grupos y campanas; `gestinem_app/` sigue siendo un scaffold Flutter y aun no es
+un cliente funcional.
 
-PostgreSQL es la unica base operativa. No hay flujo soportado con bases locales
-en fichero. El gestor PostgreSQL inicializa el esquema si la base esta vacia y
-aplica comprobaciones aditivas necesarias al arrancar.
+## Datos y documentos
 
-Los documentos generados se almacenan en rutas compartidas de red configuradas
-para que todos los equipos trabajen sobre la misma informacion.
+PostgreSQL es la unica base operativa del escritorio. El gestor
+`models/gestor_postgres.py` inicializa una base vacia y aplica comprobaciones
+aditivas de esquema al arrancar. No existe un fallback soportado a SQLite.
 
-### Distribucion de datos y servicios
+La distribucion es:
 
-- **Base principal de la aplicacion:** PostgreSQL en la maquina virtual de red.
-  Todos los puestos de escritorio se conectan a esta base mediante
-  `postgres_dsn`.
-- **Repositorio documental:** rutas compartidas de red, por defecto
-  `\\GestinemMain\Doc_Compartidos\Gest2A3Eco`. Aqui se guardan documentos,
-  adjuntos importados, PDFs y evidencias que deben compartir todos los equipos.
-- **Backend de integraciones:** un unico proyecto Railway sirve Tramites DGT,
-  firma documental, mensajeria y los conectores remotos. Se configura con
-  `integrations_api_url` e `integrations_api_key`; las claves historicas
-  `dgt_api_url` y `dgt_api_key` siguen aceptandose por compatibilidad.
-- **Tramites DGT:** no usa la base principal para expedientes. Este backend
-  usa su propia PostgreSQL mediante
-  `DGT_DATABASE_URL`. En la base principal solo se conserva el vinculo contable
-  `dgt_facturas` cuando un expediente remoto genera una factura local. Los
-  documentos aportados o generados para el tramite se archivan en Dataprius bajo
-  la carpeta del expediente, con metadatos registrados en Railway.
-- **Comunicaciones / Microsoft Graph:** los mensajes se almacenan en la base
-  principal, en tablas `comunicaciones_*`. La sincronizacion automatica no
-  depende de que un usuario tenga abierta la aplicacion: la realiza el
-  contenedor `mail-sync` del NAS/Synology.
-- **Contenedor NAS `mail-sync`:** no tiene base de datos propia ni estado
-  persistente relevante. Lee `oficina@gestinem.es` con Microsoft Graph usando
-  credenciales de aplicacion/certificado y escribe los mensajes nuevos en la
-  PostgreSQL principal. El cursor incremental de Graph se guarda en
-  `comunicaciones_sync`.
+- **PostgreSQL principal:** empresas, usuarios, facturacion, OCR, contabilidad,
+  comunicaciones, firma y gestion documental.
+- **PostgreSQL del backend:** expedientes DGT, portales de mensajeria, tokens,
+  auditoria y estado temporal de integraciones.
+- **Repositorio documental compartido:** por defecto
+  `\\GestinemMain\Doc_Compartidos\Gest2A3Eco`; contiene documentos definitivos
+  que deben compartir todos los puestos.
+- **Dataprius:** archivo de documentos asociados a expedientes DGT.
+- **Azure Blob privado:** almacenamiento temporal de adjuntos enviados desde la
+  PWA hasta que el worker los verifica y copia al repositorio compartido.
 
-### Comunicaciones: almacenamiento de mensajes
+Los correos de `oficina@gestinem.es` llegan mediante Microsoft Graph y el
+contenedor `mail-sync`. Se guardan en PostgreSQL sin descargar masivamente sus
+adjuntos; el usuario decide cuales incorpora al repositorio documental. El
+worker `messaging-sync` atiende por separado los adjuntos enviados desde la PWA.
 
-El flujo de entrada de correo es:
+## Compilacion y publicacion
 
-```text
-Microsoft Graph / oficina@gestinem.es
-  -> contenedor NAS mail-sync
-  -> PostgreSQL principal
-      -> comunicaciones_sin_asignar     correos nuevos pendientes de asignar
-      -> comunicaciones                 conversaciones ya asignadas a cliente
-      -> comunicaciones_mensajes        mensajes entrantes/salientes
-      -> comunicaciones_adjuntos        adjuntos importados desde correo
-      -> comunicaciones_sync            delta_link y ultimo estado de sync
-      -> comunicaciones_adjuntos_decisiones
-      -> documentos_archivo             documentos archivados en repositorio comun
+```powershell
+python -m PyInstaller --clean --noconfirm Gest2A3Eco.spec
 ```
 
-La sincronizacion guarda metadatos y cuerpo HTML del mensaje. Los adjuntos no se
-descargan de forma masiva durante la sincronizacion: se listan bajo demanda y se
-guardan en el repositorio documental comun solo cuando el usuario decide
-importarlos.
+La build empaqueta codigo, recursos, plantillas versionables y
+`config.example.json`; no debe incluir configuracion local, secretos ni
+documentos generados. La publicacion completa de una version se realiza con:
+
+```powershell
+.\publicar_version.ps1
+```
+
+El procedimiento y la recuperacion ante errores se describen en
+[`docs/PUBLICACION_VERSIONES.md`](docs/PUBLICACION_VERSIONES.md).
 
 ## Convenciones
 
-- UI en `views/`.
-- Logica de negocio en `controllers/`, `services/` o `procesos/`.
-- Persistencia en `models/gestor_postgres.py`.
-- Los PDFs se generan siempre con `procesos/facturas_word.py`.
-- La carpeta A3ECO solo recibe PDFs durante la generacion de `suenlace.dat`.
+- UI en `views/`; orquestacion en `controllers/`; negocio en `services/` o
+  `procesos/`; persistencia en `models/`.
+- Identificadores, textos de interfaz y comentarios en espanol.
+- `plantillas.json` es material de semilla, no la fuente de verdad.
+- Los PDFs se generan mediante `procesos/facturas_word.py`; no hay fallback a
+  PDF basico.
+- Los PDFs solo se copian a la carpeta enlazada de A3ECO al generar
+  `suenlace.dat`.

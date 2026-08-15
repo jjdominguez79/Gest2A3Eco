@@ -1,5 +1,10 @@
 # Informe técnico: cómo Inmatic se integra con A3 (a3ASESOR / A3ECO–A3CON de Wolters Kluwer)
 
+> **Naturaleza del documento:** investigacion historica sobre el conector de
+> Inmatic. No es una especificacion oficial de A3 ni describe por si sola la
+> implementacion vigente de Gest2A3Eco. El contraste con el codigo actual se
+> recoge en la seccion 9. Revision: 2026-08-15.
+
 **Objetivo:** documentar en detalle el mecanismo de enlace de Inmatic con A3 para que puedas replicarlo en tu propia aplicación de escritorio en Python: (1) leer y escribir el plan contable en ambas direcciones, (2) capturar el número de asiento tras contabilizar facturas, y (3) entender el mecanismo de conexión.
 
 **Fuente analizada:** `C:\Users\GestinemFiscal\Desktop\inmatic_extracted`, principalmente el paquete `python_worker/plugins/a3/` (código real de producción en Python).
@@ -379,6 +384,48 @@ df = df[df['status'] == 4]
 - La recuperación del asiento **sólo funciona después** de que A3 haya ejecutado el enlace; el número no es inmediato.
 - Verifica el nº de dígitos del plan (8–12) por empresa: condiciona el `ljust(12,'0')` de las cuentas y el recorte en lectura.
 - Los ficheros del proyecto `contanet.exe`, `contanet_connector.exe`, `inmatic*.exe` son binarios PyInstaller; **el código fuente Python de la sección `python_worker/plugins/a3/` es la fuente de verdad** y es lo que se ha analizado aquí (no hizo falta desensamblar los .exe).
+
+---
+
+## 9. Contraste con Gest2A3Eco (2026-08-15)
+
+Gest2A3Eco adopta el mismo principio de seguridad: lee los `.DAT` para importar
+informacion y escribe altas/asientos mediante `suenlace.dat`; no modifica
+directamente los ficheros binarios de A3.
+
+La implementacion vigente esta en `services/import_a3_empresa.py`,
+`models/facturas_common.py` y `procesos/`. Sus layouts se han calibrado contra
+la instalacion de Gestinem y no deben sustituirse por las longitudes observadas
+en Inmatic sin validar ficheros reales:
+
+| Fichero | Lectura actual en Gest2A3Eco |
+|---|---|
+| `TECODIR.DAT` | cabecera 128, registros de 516 bytes |
+| `*CU.DAT` | cabecera 128, registros de 260 bytes |
+| `TCLIPRO.DAT` | registros de 256 bytes, enlazados con `CU.DAT` |
+| `*DA.DAT` | cabecera 128, registros de 260 bytes |
+| `ASECLI/ASECCC` | directorio y cuentas bancarias del entorno A3 |
+| `*A.DAT` | longitud derivada de cabecera; numero, concepto y referencia interna |
+
+El texto se decodifica actualmente con `cp1252` para los maestros importados y
+con sustitucion controlada de caracteres. Los renderizadores de enlace producen
+registros de ancho fijo y normalizan los textos antes de codificarlos. Por tanto,
+la recomendacion historica de usar siempre `latin-1` debe interpretarse como
+hallazgo del conector Inmatic, no como una regla que permita cambiar la
+codificacion actual sin pruebas.
+
+La recuperacion del asiento ya esta implementada por
+`leer_numero_asiento_desde_a3()`. Soporta numeracion mensual —referencia interna
+de cuatro bytes y resultado `MM/NNNNN`—, modo anual y busqueda alternativa por
+concepto. Las pruebas sinteticas estan en `tests/test_import_a3_asiento.py`.
+
+Las reglas practicas para cambios futuros son:
+
+1. mantener la escritura exclusivamente en el formato de enlace soportado;
+2. calibrar offsets y estados contra muestras reales de la version instalada;
+3. conservar pruebas sinteticas por cada variante anual/mensual;
+4. no asumir que una longitud expresada en hexadecimal por otro conector es una
+   longitud de bytes equivalente en Gest2A3Eco.
 
 ---
 

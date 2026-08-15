@@ -1,68 +1,103 @@
 # Implantacion de Tramites DGT online
 
-## Estado de las fases
+**Estado del codigo:** modulo integrado con backend FastAPI, portal publico,
+persistencia PostgreSQL, Dataprius y firma.
 
-- Fase 0: `main` integrado en `feature/modulo-tramites-dgt`.
-- Fase 1: API FastAPI, modelo relacional, migracion PostgreSQL, tokens,
-  caducidad, revocacion, auditoria y autenticacion interna.
-- Fase 2: portal responsive por rol, autoguardado, revision, privacidad y
-  carga privada validada.
-- Fase 3: `ApiDgtRepository`, configuracion externa, enlaces HTTPS, copia,
-  email, WhatsApp, refresco, estados separados y descarga bajo demanda.
-- Fase 4: pendiente de plantillas legales definitivas y seleccion/credenciales
-  del proveedor de firma.
-- Fase 5: imagen Docker y CI preparadas. El despliegue real se ejecuta en
-  Railway con PostgreSQL gestionado, DNS, certificados y secretos de produccion.
+**Ultima revision:** 2026-08-15.
 
-## Puesta en marcha local
+La URL de Railway incluida en la configuracion de nuevas instalaciones es un
+valor predeterminado del repositorio; esta guia no certifica por si sola la
+disponibilidad del servicio externo.
+
+## Capacidades actuales
+
+- Expedientes con partes vendedor/comprador, vehiculo y operacion.
+- Enlaces por rol con caducidad, revocacion y regeneracion independiente.
+- Portal responsive, autoguardado, envio, subsanaciones y modo solo lectura al
+  finalizar.
+- Documentos privados validados y archivo en Dataprius por expediente.
+- Estados y evidencias de firma mediante SignRequest.
+- Auditoria de eventos, control de versiones y eliminacion controlada.
+- Vinculo `dgt_facturas` en la PostgreSQL principal cuando un expediente genera
+  una factura local.
+
+Siguen dependiendo de decisiones operativas las plantillas legales definitivas,
+las politicas de retencion y copias, y la supervision de proveedores externos.
+
+## Desarrollo local
 
 ```powershell
-pip install -r backend/requirements.txt
-$env:DGT_INTERNAL_API_KEY = "secreto-local"
+python -m pip install -r backend/requirements.txt
+$env:DGT_DATABASE_URL = "postgresql+psycopg://usuario:password@localhost:5432/dgt"
+$env:DGT_INTERNAL_API_KEY = "secreto-interno-local"
 $env:DGT_PUBLIC_BASE_URL = "http://localhost:8000"
-uvicorn backend.api.app:app --reload
+python -m uvicorn backend.api.app:app --reload
 ```
 
-En `config.local.json` de Gest2A3Eco:
+Crear un puesto de desarrollo con la clave interna:
+
+```text
+POST /api/v1/admin/workstations
+X-API-Key: <DGT_INTERNAL_API_KEY>
+{"name": "PC-DESARROLLO"}
+```
+
+Provisionar el token devuelto en Windows Credential Manager:
+
+```powershell
+python -m utils.provision_workstation --only-token
+```
+
+Configuracion no sensible del escritorio:
 
 ```json
 {
-  "integrations_api_url": "http://localhost:8000",
-  "integrations_api_key": "secreto-local"
+  "integrations_api_url": "http://localhost:8000"
 }
 ```
 
-Sin esas dos opciones, el modulo DGT no queda operativo desde la aplicacion
-de escritorio. No existe fallback a base local.
+`DGT_INTERNAL_API_KEY` nunca se instala en el escritorio. Las claves legacy
+`integrations_api_key` y `dgt_api_key` no autentican este flujo. Sin URL y
+`WorkstationToken`, el modulo remoto no esta operativo; no existe fallback a
+una base local.
 
 ## Produccion
 
-1. Crear PostgreSQL en Railway y ejecutar `backend/migrations/001_initial.sql`.
-2. Sustituir el almacenamiento de desarrollo por un volumen cifrado o un
-   adaptador de bucket privado antes de escalar a mas de una instancia.
-3. Configurar las variables de `backend/.env.example` como secretos del
-   servicio, nunca en Git.
-4. Construir `backend/Dockerfile` y desplegarlo detras de HTTPS.
-5. Configurar `tramites.gestinem.es` y verificar `/health`, `/docs` y un flujo
-   completo de vendedor/comprador en el entorno de pruebas.
-6. Definir retencion, copias, restauracion y borrado de documentos conforme a
-   la politica de proteccion de datos de Gestinem.
+1. Configurar `DGT_DATABASE_URL` en Railway y aplicar
+   `backend/migrations/001_initial.sql` sobre una base vacia.
+2. Configurar `DGT_INTERNAL_API_KEY`, URL publica, SignRequest, Dataprius y los
+   restantes secretos descritos en
+   [`security/secrets-architecture.md`](security/secrets-architecture.md).
+3. Construir `backend/Dockerfile` y desplegar detras de HTTPS.
+4. Verificar `/health`, `/docs`, autenticacion de un puesto y un flujo completo
+   de vendedor/comprador en un entorno de prueba.
+5. Probar carga, descarga, firma, subsanacion, finalizacion y borrado conforme a
+   la politica de proteccion de datos.
+6. Definir monitorizacion, copias, restauracion y retencion antes de considerar
+   el servicio operativo.
 
-## Almacenamiento documental
+## Almacenamiento
 
-- Los datos del expediente viven en la PostgreSQL del backend Railway.
-- Los documentos aportados por vendedor, comprador o Gestinem se reciben en el
-  backend y se suben a Dataprius en la carpeta del expediente:
-  `expedientes/{referencia}/Aportados/{rol}/{tipo}`.
-- El backend mantiene una copia privada tecnica para descarga/control y guarda
-  en `dgt_documentos.dataprius_json` los metadatos devueltos por Dataprius.
-- Los documentos generados por Gestinem tambien se suben a Dataprius desde la
-  aplicacion cuando la integracion esta disponible, y sus metadatos quedan
-  registrados como documento generado.
+- Expedientes, enlaces, auditoria y metadatos viven en la PostgreSQL del
+  backend.
+- Los documentos aportados se suben a Dataprius bajo la carpeta del expediente
+  y sus metadatos quedan en `dgt_documentos.dataprius_json`.
+- El backend puede mantener una copia privada tecnica para descarga y control;
+  `DGT_STORAGE_DIR` es solo la opcion local de desarrollo.
+- Los documentos generados desde el escritorio se registran por el endpoint de
+  documentos generados y se archivan cuando la integracion esta disponible.
+- La base principal del escritorio no replica expedientes; conserva solo el
+  vinculo contable necesario.
 
-## Verificacion ejecutada
+## Verificacion
 
-Las pruebas focalizadas DGT pasan (`12 passed`). La suite amplia alcanza
-`254 passed` y conserva cuatro fallos ajenos a DGT en maestro contable,
-maestro de terceros y OCR. No se modificaron esos modulos por estar fuera del
-alcance expresamente fijado para esta rama.
+Ejecutar desde la raiz:
+
+```powershell
+$env:PYTHONPATH = "."
+python -m pytest tests/test_dgt_api.py tests/test_dgt_postgres_migration.py tests/test_ui_tramites_dgt.py -q
+```
+
+La suite completa se recopila con `python -m pytest --collect-only -q`. No deben
+mantenerse cifras historicas de pruebas como garantia permanente; el resultado
+valido es el de la revision ejecutada sobre el commit que se va a desplegar.

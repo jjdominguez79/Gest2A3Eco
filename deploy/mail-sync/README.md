@@ -1,106 +1,119 @@
-# Sincronizador de comunicaciones en Synology
+# Servicios de sincronizacion en Synology
 
-Servicio sin interfaz que consulta exclusivamente `oficina@gestinem.es` mediante
-Microsoft Graph y registra los mensajes nuevos en PostgreSQL.
-
-Este contenedor **no tiene base de datos propia**. Es un proceso sin estado
-persistente: se puede reiniciar o recrear sin perdida de datos siempre que
-mantenga acceso a PostgreSQL y a los secretos de Graph.
-
-## Arquitectura
+El proyecto `deploy/mail-sync/compose.synology.yaml` ejecuta dos servicios sin
+interfaz. Revisado contra los Compose y `sync_worker/` el 2026-08-15.
 
 ```text
 Microsoft Graph / oficina@gestinem.es
-  -> contenedor Synology gest2a3eco-mail-sync
-  -> PostgreSQL principal de Gest2A3Eco
+  -> mail-sync
+  -> PostgreSQL principal
+
+Backend de mensajeria / Azure Blob temporal
+  -> messaging-sync
+  -> repositorio documental compartido + PostgreSQL principal
 ```
 
-La base de destino se define en `compose.yaml` / `compose.synology.yaml` con:
+Ambos contenedores son `read_only`, eliminan capabilities Linux, aplican
+`no-new-privileges` y usan `/tmp` mediante `tmpfs`.
 
-- `POSTGRES_HOST`: host de la maquina virtual que sirve PostgreSQL.
-- `POSTGRES_PORT`: puerto PostgreSQL.
-- `POSTGRES_DB`: base principal de Gest2A3Eco.
-- `POSTGRES_USER`: usuario tecnico del sincronizador, normalmente
-  `gest2a3eco_sync`.
-- `POSTGRES_PASSWORD_FILE`: secreto con la contrasena del usuario tecnico.
+## mail-sync
 
-El sincronizador escribe en estas tablas de la base principal:
+Consulta Microsoft Graph con credenciales de aplicacion y certificado. Escribe
+los correos nuevos en `comunicaciones_sin_asignar` y mantiene el cursor delta y
+el ultimo estado en `comunicaciones_sync`.
 
-- `comunicaciones_sin_asignar`: mensajes nuevos pendientes de asignar a cliente
-  o responsable.
-- `comunicaciones_sync`: cursor `delta_link`, fecha de ultima sincronizacion y
-  ultimo error.
+No descarga adjuntos automaticamente: guarda los metadatos e identificadores de
+Graph en el payload. La aplicacion de escritorio lista y archiva solo los que el
+usuario selecciona.
 
-No descarga adjuntos automaticamente. Solo guarda `tiene_adjuntos` y los
-identificadores de Graph dentro del `payload_json`. La descarga/importacion de
-adjuntos se hace desde la aplicacion de escritorio cuando el usuario lo decide.
+Variables:
 
-El mismo proyecto incluye un segundo servicio, `messaging-sync`, dedicado a
-descargar los adjuntos enviados por clientes desde la PWA. Este servicio no lee
-el contenido de los chats: solo recibe los metadatos necesarios, reclama cada
-archivo, verifica su SHA-256, lo guarda en el repositorio documental y confirma
-la entrega para que el backend elimine la copia temporal de Azure Blob.
+- `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`, `GRAPH_MAILBOX`.
+- `GRAPH_CERTIFICATE_FILE`, `GRAPH_CERTIFICATE_PASSWORD_FILE`.
+- `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER` y
+  `POSTGRES_PASSWORD_FILE`.
+- `SYNC_INTERVAL_SECONDS`: minimo 30; 300 segundos por defecto.
+- `IMPORT_EXISTING_ON_FIRST_RUN`: `false` establece un punto de partida sin
+  importar el historico; `true` realiza una carga inicial deliberada.
 
-## Secretos requeridos
+## messaging-sync
 
-Crear en `deploy/mail-sync/secrets/` estos archivos, sin saltos adicionales:
+Consulta la cola de adjuntos del backend, reclama cada archivo, verifica su
+SHA-256, lo guarda en el volumen documental y confirma la entrega. Tambien
+sincroniza el directorio de empresas desde PostgreSQL para las invitaciones del
+portal.
 
-- `Gest2A3Eco-Sync.pfx`: certificado privado exportado desde Windows.
-- `pfx_password.txt`: contrasena del PFX.
-- `postgres_password.txt`: contrasena del usuario `gest2a3eco_sync`.
-- `messaging_sync_token.txt`: token aleatorio compartido exclusivamente con el
-  endpoint tecnico de adjuntos del backend.
+Variables:
 
-Los secretos estan excluidos de Git. El contenedor los recibe como archivos de
-solo lectura bajo `/run/secrets`.
+- `MESSAGING_API_URL`, `MESSAGING_SYNC_TOKEN_FILE` y `MESSAGING_WORKER_ID`.
+- `MESSAGING_SYNC_INTERVAL_SECONDS`: minimo 30; 60 segundos por defecto.
+- `DOCUMENT_REPOSITORY_DIR`: ruta del volumen dentro del contenedor.
+- `DOCUMENT_REPOSITORY_PUBLIC_DIR`: ruta UNC que se registra para los puestos
+  Windows.
+- las mismas variables PostgreSQL separadas que usa `mail-sync`.
 
-Antes de levantar `messaging-sync`, confirmar la ruta real de la carpeta
-compartida en el Synology. Por defecto el compose usa
-`/volume1/Doc_Compartidos/Gest2A3Eco`; puede sobrescribirse creando un archivo
-`.env` con `DOCUMENT_REPOSITORY_HOST_PATH=/ruta/real`.
+Las peticiones GET/PUT reintentan hasta tres veces errores de conexion, lectura,
+`429` y errores transitorios `5xx`. Cada fichero conserva su estado en la cola,
+por lo que un fallo no confirma ni elimina el contenido remoto.
 
-El usuario PostgreSQL tecnico necesita permisos minimos sobre la cola local:
+## Secretos y volumen
+
+Crear en `deploy/mail-sync/secrets/`, sin saltos adicionales:
+
+```text
+Gest2A3Eco-Sync.pfx
+pfx_password.txt
+postgres_password.txt
+messaging_sync_token.txt
+```
+
+Los secretos estan excluidos de Git y se montan como solo lectura bajo
+`/run/secrets`. `MESSAGING_SYNC_TOKEN` es exclusivo del worker; no debe
+reutilizarse como clave interna ni como token de un puesto.
+
+El volumen documental predeterminado es
+`/volume1/Doc_Compartidos/Gest2A3Eco`. Puede cambiarse mediante un `.env` junto
+al Compose:
+
+```text
+DOCUMENT_REPOSITORY_HOST_PATH=/ruta/real/en/synology
+```
+
+La ruta UNC de `DOCUMENT_REPOSITORY_PUBLIC_DIR` debe apuntar a ese mismo
+contenido desde Windows.
+
+## Permisos PostgreSQL
+
+El usuario tecnico necesita los permisos minimos que requieran ambos flujos:
 
 ```sql
+GRANT SELECT, INSERT, UPDATE ON TABLE comunicaciones_sin_asignar TO gest2a3eco_sync;
+GRANT SELECT, INSERT, UPDATE ON TABLE comunicaciones_sync TO gest2a3eco_sync;
 GRANT SELECT, INSERT, UPDATE ON TABLE mensajeria_adjuntos_entrada TO gest2a3eco_sync;
+GRANT SELECT ON TABLE empresas TO gest2a3eco_sync;
 ```
 
-## Ejecucion
+Los permisos exactos deben ajustarse a las operaciones del esquema desplegado;
+no se debe conceder propiedad de la base al usuario del worker.
+
+## Puesta en marcha y comprobacion
 
 Desde la raiz del repositorio:
 
 ```text
+docker compose -f deploy/mail-sync/compose.synology.yaml config
 docker compose -f deploy/mail-sync/compose.synology.yaml up --build -d
+docker compose -f deploy/mail-sync/compose.synology.yaml ps
 docker compose -f deploy/mail-sync/compose.synology.yaml logs -f mail-sync
-```
-
-La periodicidad se configura con `SYNC_INTERVAL_SECONDS` en `compose.yaml`. El
-valor minimo admitido es 30 segundos y el valor inicial es 300 (cinco minutos).
-
-En la primera ejecucion, si la base de datos no contiene todavia un delta, se
-establece el punto de partida sin importar mensajes antiguos. Para una carga
-historica deliberada se puede cambiar `IMPORT_EXISTING_ON_FIRST_RUN` a `true`.
-
-## Comprobacion operativa
-
-Para verificar que el contenedor esta funcionando:
-
-```text
-docker compose ps
-docker compose logs -f mail-sync
-```
-
-En Synology, los archivos Compose no fuerzan un controlador de logs. Container
-Manager utiliza asi su controlador `db` predeterminado y muestra la salida en
-la pestana **Registro** de cada contenedor.
-
-Para comprobar especificamente el recolector de adjuntos de la PWA:
-
-```text
-docker compose -f deploy/mail-sync/compose.synology.yaml ps messaging-sync
 docker compose -f deploy/mail-sync/compose.synology.yaml logs -f messaging-sync
 ```
 
-En PostgreSQL, la tabla `comunicaciones_sync` debe mostrar una fila para
-`oficina@gestinem.es` con `ultima_sincronizacion` reciente y `ultimo_error`
-vacio. Los mensajes nuevos aparecen primero en `comunicaciones_sin_asignar`.
+Comprobar despues:
+
+- `comunicaciones_sync` tiene una fila reciente para el buzon y sin error.
+- los mensajes nuevos aparecen en `comunicaciones_sin_asignar`;
+- `mensajeria_adjuntos_entrada` avanza de pendiente a archivado;
+- el archivo descargado existe tanto en el volumen Linux como en la ruta UNC.
+
+Container Manager usa su controlador de logs predeterminado cuando el Compose
+no fuerza otro, por lo que la salida tambien aparece en la pestana **Registro**.

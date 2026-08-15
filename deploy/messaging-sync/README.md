@@ -1,44 +1,67 @@
-# Sincronizador de adjuntos de mensajeria para Synology
+# Paquete independiente de adjuntos de mensajeria
 
-Paquete independiente para Container Manager. Descarga los adjuntos enviados
-por clientes desde la PWA, comprueba su SHA-256, los guarda en el repositorio
-documental compartido y registra la entrada pendiente de clasificar en
-PostgreSQL. Tambien sincroniza el directorio de empresas para que el
-administrador pueda elegir un cliente de Gest2A3Eco al crear una invitacion.
-Los archivos se escriben dentro del volumen Docker, pero en PostgreSQL se
-registra la ruta UNC indicada por `DOCUMENT_REPOSITORY_PUBLIC_DIR`, accesible
-desde los puestos Windows.
+`deploy/messaging-sync` permite desplegar solo `messaging-sync` en Container
+Manager, sin reconstruir ni sustituir `mail-sync`. Revisado el 2026-08-15.
 
-Antes de crear el proyecto deben existir, sin saltos adicionales:
+El worker:
+
+1. sincroniza el directorio de empresas desde PostgreSQL con el backend;
+2. consulta adjuntos pendientes de la PWA;
+3. reclama cada archivo con un identificador de worker;
+4. descarga y verifica su SHA-256;
+5. lo guarda en el repositorio documental compartido;
+6. registra la ruta UNC en PostgreSQL y confirma la entrega al backend.
+
+La confirmacion permite eliminar la copia temporal de Azure Blob. Si una
+descarga falla, el elemento permanece recuperable para otro intento.
+
+## Contenido y secretos
+
+El paquete debe contener `compose.yaml`, `Dockerfile`, `requirements.txt`, el
+directorio `sync_worker/` y:
 
 ```text
 secrets/messaging_sync_token.txt
 secrets/postgres_password.txt
 ```
 
-La imagen se construye separadamente del sincronizador de correo para no
-detener ni reemplazar `gest2a3eco-mail-sync`.
+`messaging_sync_token.txt` debe coincidir exclusivamente con
+`MESSAGING_SYNC_TOKEN` del backend. No se reutilizan `DGT_INTERNAL_API_KEY` ni
+un `WorkstationToken`.
 
-El usuario PostgreSQL tecnico necesita permisos de escritura sobre la cola
-local y de lectura sobre el directorio de empresas:
+## Configuracion
+
+Revisar en `compose.yaml`:
+
+- `MESSAGING_API_URL` y `MESSAGING_WORKER_ID`;
+- `MESSAGING_SYNC_INTERVAL_SECONDS` (60 por defecto, minimo 30);
+- `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB` y `POSTGRES_USER`;
+- el volumen Synology montado en `DOCUMENT_REPOSITORY_DIR`;
+- `DOCUMENT_REPOSITORY_PUBLIC_DIR`, que debe ser la ruta UNC equivalente para
+  los puestos Windows.
+
+El usuario tecnico necesita:
 
 ```sql
 GRANT SELECT, INSERT, UPDATE ON TABLE mensajeria_adjuntos_entrada TO gest2a3eco_sync;
 GRANT SELECT ON TABLE empresas TO gest2a3eco_sync;
 ```
 
-Desde la carpeta que contiene `compose.yaml`, `Dockerfile`,
-`requirements.txt`, `sync_worker` y `secrets`:
+## Ejecucion y comprobacion
+
+Desde la carpeta del paquete:
 
 ```text
+docker compose config
 docker compose up --build -d
+docker compose ps
 docker compose logs -f messaging-sync
 ```
 
-La periodicidad se configura con `MESSAGING_SYNC_INTERVAL_SECONDS` en
-`compose.yaml`. El valor minimo admitido es 30 segundos y el valor inicial es
-60 segundos. Cada ciclo deja en el registro el numero de clientes
-sincronizados, los adjuntos pendientes y el tiempo hasta la siguiente consulta.
-El `compose.yaml` no fuerza un controlador de logs: Container Manager utiliza
-el controlador `db` predeterminado de Synology y muestra la salida en
-**Contenedor > gest2a3eco-messaging-sync > Registro**.
+El contenedor es de solo lectura salvo `/tmp` y el volumen documental. Las
+peticiones GET/PUT reintentan errores transitorios hasta tres veces. Verificar
+en PostgreSQL el estado de `mensajeria_adjuntos_entrada` y comprobar que la ruta
+UNC registrada abre el mismo archivo guardado en el volumen.
+
+La guia del despliegue conjunto con correo esta en
+[`../mail-sync/README.md`](../mail-sync/README.md).
