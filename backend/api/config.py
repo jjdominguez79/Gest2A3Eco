@@ -45,6 +45,9 @@ class Settings:
     messaging_smtp_password: str
     messaging_smtp_from: str
     messaging_smtp_use_tls: bool
+    messaging_firebase_credentials: str
+    messaging_app_redirect_uri: str
+    messaging_app_web_redirect_uri: str
     azure_doc_intelligence_endpoint: str
     azure_doc_intelligence_key: str
     azure_doc_intelligence_model_id: str
@@ -114,6 +117,11 @@ def get_settings() -> Settings:
         messaging_smtp_password=os.getenv("MESSAGING_SMTP_PASSWORD", ""),
         messaging_smtp_from=os.getenv("MESSAGING_SMTP_FROM", ""),
         messaging_smtp_use_tls=os.getenv("MESSAGING_SMTP_USE_TLS", "true").strip().lower() in {"1", "true", "yes", "si"},
+        messaging_firebase_credentials=os.getenv("MESSAGING_FIREBASE_CREDENTIALS", ""),
+        messaging_app_redirect_uri=os.getenv(
+            "MESSAGING_APP_REDIRECT_URI", "es.gestinem.app://auth/callback",
+        ),
+        messaging_app_web_redirect_uri=os.getenv("MESSAGING_APP_WEB_REDIRECT_URI", ""),
         azure_doc_intelligence_endpoint=os.getenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", ""),
         azure_doc_intelligence_key=os.getenv("AZURE_DOC_INTELLIGENCE_KEY", ""),
         azure_doc_intelligence_model_id=os.getenv("AZURE_DOC_INTELLIGENCE_MODEL_ID", "prebuilt-invoice"),

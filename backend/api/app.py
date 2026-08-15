@@ -61,7 +61,7 @@ def startup():
         existing_columns = set(conn.execute(text(
             "SELECT table_name, column_name FROM information_schema.columns "
             "WHERE table_schema=current_schema() "
-            "AND table_name IN ('dgt_documentos', 'msg_staff')"
+            "AND table_name IN ('dgt_documentos', 'msg_staff', 'msg_messages', 'msg_staff_thread_messages')"
         )).tuples())
         column_migrations = {
             ("dgt_documentos", "dataprius_json"): (
@@ -83,6 +83,22 @@ def startup():
             ("msg_staff", "avatar_content_type"): (
                 "ALTER TABLE msg_staff ADD COLUMN avatar_content_type VARCHAR(120) NOT NULL DEFAULT ''"
             ),
+            ("msg_messages", "reply_to_message_id"): (
+                "ALTER TABLE msg_messages ADD COLUMN reply_to_message_id VARCHAR(36) "
+                "REFERENCES msg_messages(id) ON DELETE SET NULL"
+            ),
+            ("msg_messages", "deleted_at"): "ALTER TABLE msg_messages ADD COLUMN deleted_at TIMESTAMPTZ",
+            ("msg_messages", "deleted_by"): "ALTER TABLE msg_messages ADD COLUMN deleted_by VARCHAR(64) NOT NULL DEFAULT ''",
+            ("msg_messages", "deleted_by_type"): "ALTER TABLE msg_messages ADD COLUMN deleted_by_type VARCHAR(16) NOT NULL DEFAULT ''",
+            ("msg_messages", "delete_reason"): "ALTER TABLE msg_messages ADD COLUMN delete_reason VARCHAR(500) NOT NULL DEFAULT ''",
+            ("msg_staff_thread_messages", "reply_to_message_id"): (
+                "ALTER TABLE msg_staff_thread_messages ADD COLUMN reply_to_message_id VARCHAR(36) "
+                "REFERENCES msg_staff_thread_messages(id) ON DELETE SET NULL"
+            ),
+            ("msg_staff_thread_messages", "deleted_at"): "ALTER TABLE msg_staff_thread_messages ADD COLUMN deleted_at TIMESTAMPTZ",
+            ("msg_staff_thread_messages", "deleted_by"): "ALTER TABLE msg_staff_thread_messages ADD COLUMN deleted_by VARCHAR(64) NOT NULL DEFAULT ''",
+            ("msg_staff_thread_messages", "deleted_by_type"): "ALTER TABLE msg_staff_thread_messages ADD COLUMN deleted_by_type VARCHAR(16) NOT NULL DEFAULT ''",
+            ("msg_staff_thread_messages", "delete_reason"): "ALTER TABLE msg_staff_thread_messages ADD COLUMN delete_reason VARCHAR(500) NOT NULL DEFAULT ''",
         }
         for column, ddl in column_migrations.items():
             if column not in existing_columns:
