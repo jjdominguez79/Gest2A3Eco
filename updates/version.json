@@ -2,6 +2,6 @@
   "latest_version": "1.7.1",
   "minimum_required_version": "1.5.1",
   "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.7.1/Setup_Gest2A3Eco_1.7.1.exe",
-  "changelog": "Corrige la configuracion inicial de instalaciones nuevas. Configura automaticamente el backend de Gest2A3Eco para OCR e integraciones. Corrige el puerto PostgreSQL predeterminado a 5433. Las instalaciones nuevas pueden utilizar Azure OCR via backend sin configurar claves Azure localmente. Mantiene la configuracion existente de los puestos actualizados.",
+  "changelog": "Corrige la configuracion inicial de instalaciones nuevas. Configura automaticamente el backend de Gest2A3Eco para OCR, integraciones y mensajeria. Corrige el puerto PostgreSQL predeterminado a 5433. Las instalaciones nuevas pueden utilizar Azure OCR via backend sin configurar claves Azure localmente. Corrige el autoaprovisionamiento de mensajeria con WorkstationToken y muestra version y fecha de publicacion en la pantalla de acceso. Mantiene la configuracion existente de los puestos actualizados.",
   "force_update": false
 }
