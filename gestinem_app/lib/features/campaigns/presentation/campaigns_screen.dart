@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../data/campaigns_repository.dart';
 import '../domain/campaign.dart';
+import '../../groups/presentation/groups_screen.dart';
 
 final campaignsRepositoryProvider = Provider<CampaignsRepository>((ref) => CampaignsRepository(ref.watch(apiClientProvider)));
 final campaignsProvider = FutureProvider.autoDispose<List<Campaign>>((ref) => ref.watch(campaignsRepositoryProvider).list());
@@ -13,24 +14,50 @@ class CampaignsScreen extends ConsumerWidget {
   const CampaignsScreen({super.key});
 
   Future<void> _create(BuildContext context, WidgetRef ref) async {
+    final groups = (await ref.read(groupsProvider.future)).where((group) => group.type == 'client_list').toList();
+    final clients = await ref.read(campaignsRepositoryProvider).clients();
+    if (!context.mounted) return;
     final name = TextEditingController();
     final body = TextEditingController();
     var channel = 'fiscal';
+    var allClients = true;
+    final groupIds = <String>{};
+    final clientIds = <String>{};
     final accepted = await showDialog<bool>(context: context, builder: (context) => StatefulBuilder(builder: (context, setState) => AlertDialog(
       title: const Text('Nueva campana'),
-      content: SizedBox(width: 480, child: Column(mainAxisSize: MainAxisSize.min, children: [
+      content: SizedBox(width: 520, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
         TextField(controller: name, decoration: const InputDecoration(labelText: 'Nombre')),
         const SizedBox(height: 12),
         TextField(controller: body, minLines: 4, maxLines: 8, decoration: const InputDecoration(labelText: 'Mensaje')),
         const SizedBox(height: 12),
         DropdownButtonFormField<String>(initialValue: channel, items: const [DropdownMenuItem(value: 'fiscal', child: Text('Contable / Fiscal')), DropdownMenuItem(value: 'laboral', child: Text('Laboral'))], onChanged: (value) => setState(() => channel = value!)),
-        const SizedBox(height: 10),
-        const Text('Esta primera interfaz envia a todos los clientes. Las listas y la seleccion manual ya estan disponibles en la API.'),
-      ])),
+        CheckboxListTile(
+          value: allClients, title: const Text('Todos los clientes'),
+          onChanged: (value) => setState(() => allClients = value ?? false),
+        ),
+        if (!allClients) ...[
+          if (groups.isNotEmpty) const Align(alignment: Alignment.centerLeft, child: Text('Listas', style: TextStyle(fontWeight: FontWeight.bold))),
+          for (final group in groups)
+            CheckboxListTile(
+              value: groupIds.contains(group.id), title: Text(group.name), dense: true,
+              onChanged: (selected) => setState(() => selected == true ? groupIds.add(group.id) : groupIds.remove(group.id)),
+            ),
+          const Align(alignment: Alignment.centerLeft, child: Text('Clientes individuales', style: TextStyle(fontWeight: FontWeight.bold))),
+          for (final client in clients)
+            CheckboxListTile(
+              value: clientIds.contains(client.id),
+              title: Text(client.name), subtitle: Text(client.company), dense: true,
+              onChanged: (selected) => setState(() => selected == true ? clientIds.add(client.id) : clientIds.remove(client.id)),
+            ),
+        ],
+      ]))),
       actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')), FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Enviar'))],
     )));
     if (accepted == true && name.text.trim().isNotEmpty && body.text.trim().isNotEmpty) {
-      await ref.read(campaignsRepositoryProvider).create(name: name.text.trim(), body: body.text.trim(), channel: channel, allClients: true);
+      await ref.read(campaignsRepositoryProvider).create(
+        name: name.text.trim(), body: body.text.trim(), channel: channel,
+        allClients: allClients, groupIds: groupIds.toList(), clientIds: clientIds.toList(),
+      );
       ref.invalidate(campaignsProvider);
     }
   }

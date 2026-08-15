@@ -108,6 +108,52 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     }
   }
 
+  Future<void> _messageActions(Message message, bool mine) async {
+    final profile = ref.read(sessionProvider).valueOrNull!.profile;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(child: Wrap(children: [
+        ListTile(
+          leading: const Icon(Icons.reply), title: const Text('Responder'),
+          onTap: () => Navigator.pop(context, 'reply'),
+        ),
+        if (mine || profile.isAdmin)
+          ListTile(
+            leading: const Icon(Icons.delete_outline), title: const Text('Eliminar mensaje'),
+            textColor: Theme.of(context).colorScheme.error,
+            iconColor: Theme.of(context).colorScheme.error,
+            onTap: () => Navigator.pop(context, 'delete'),
+          ),
+      ])),
+    );
+    if (!mounted) return;
+    if (action == 'reply') {
+      setState(() => _replyingTo = message);
+    } else if (action == 'delete') {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Eliminar mensaje'),
+          content: const Text('El contenido se sustituira por "Mensaje eliminado".'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Eliminar')),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+      final repository = ref.read(messagingRepositoryProvider);
+      if (widget.internal) {
+        await repository.softDeleteInternal(message.id);
+        ref.invalidate(internalMessagesProvider(widget.conversationId));
+      } else {
+        await repository.softDelete(profile, message.id);
+        ref.invalidate(messagesProvider(widget.conversationId));
+        ref.invalidate(conversationsProvider);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final profile = ref.watch(sessionProvider).valueOrNull!.profile;
@@ -157,7 +203,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                 mine: mine,
                 onReplyTap: message.replyTo == null ? null : () => _scrollToMessage(messages, message.replyTo!.id),
                 onAttachmentTap: _download,
-                onLongPress: message.deleted ? null : () => setState(() => _replyingTo = message),
+                onLongPress: message.deleted ? null : () => _messageActions(message, mine),
               );
             },
           ),

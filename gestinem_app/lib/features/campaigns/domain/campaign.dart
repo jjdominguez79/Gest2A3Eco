@@ -11,3 +11,15 @@ class Campaign {
   final String status;
   final int recipientCount;
 }
+
+class CampaignClientTarget {
+  const CampaignClientTarget({required this.id, required this.name, required this.company});
+  factory CampaignClientTarget.fromJson(Map<String, dynamic> json) => CampaignClientTarget(
+        id: json['id'] as String,
+        name: json['name'] as String? ?? '',
+        company: json['company_name'] as String? ?? '',
+      );
+  final String id;
+  final String name;
+  final String company;
+}

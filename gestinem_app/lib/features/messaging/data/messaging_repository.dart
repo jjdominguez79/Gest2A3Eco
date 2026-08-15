@@ -71,6 +71,11 @@ class MessagingRepository {
         data: {'reason': ''},
       );
 
+  Future<void> softDeleteInternal(String messageId) => _api.dio.delete<void>(
+        '/staff/internal/messages/$messageId',
+        data: {'reason': ''},
+      );
+
   Future<Uint8List> download(UserProfile profile, Attachment attachment) {
     final path = profile.type == UserType.client
         ? '/client/attachments/${attachment.id}'

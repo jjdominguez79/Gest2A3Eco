@@ -2288,6 +2288,27 @@ def list_campaigns(_admin: MessagingStaff = Depends(_require_admin), db: Session
     return [_serialize_campaign(db, row) for row in rows]
 
 
+@router.get("/staff/admin/campaign-targets/clients")
+def campaign_client_targets(
+    _admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
+):
+    rows = db.scalars(select(MessagingClient).where(
+        MessagingClient.active.is_(True),
+    ).order_by(MessagingClient.name, MessagingClient.email)).all()
+    return [{
+        "id": row.id, "name": row.name, "email": row.email,
+        "organization_id": row.organization_id,
+        "company_code": (
+            db.get(MessagingOrganization, row.organization_id).company_code
+            if db.get(MessagingOrganization, row.organization_id) else ""
+        ),
+        "company_name": (
+            db.get(MessagingOrganization, row.organization_id).name
+            if db.get(MessagingOrganization, row.organization_id) else ""
+        ),
+    } for row in rows]
+
+
 @router.post("/staff/admin/campaigns", status_code=201)
 def create_campaign(
     payload: CampaignIn, background: BackgroundTasks,
