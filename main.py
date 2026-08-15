@@ -390,7 +390,7 @@ def main():
     # Intentar reconstruir DSN desde almacen seguro o campos individuales
     if not postgres_dsn:
         _host = str(cfg.get("postgres_host") or "").strip()
-        _port = cfg.get("postgres_port") or 5432
+        _port = cfg.get("postgres_port") or 5433
         _db = str(cfg.get("postgres_database") or "").strip()
         _user = str(cfg.get("postgres_user") or "").strip()
         if _host and _db:

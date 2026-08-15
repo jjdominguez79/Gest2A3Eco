@@ -36,7 +36,7 @@ from backend.api.messaging_security import (
 )
 from backend.api.messaging_storage import MessagingStorage, safe_name
 from backend.api.messaging_push import configured as push_configured, send_push
-from backend.api.security import require_internal_key
+from backend.api.security import require_internal_key, require_workstation_or_internal
 
 
 router = APIRouter(prefix="/api/v1/messaging", tags=["messaging"])
@@ -493,7 +493,7 @@ def _create_message(
     return message
 
 
-@router.put("/internal/staff/{external_id}", dependencies=[Depends(require_internal_key)])
+@router.put("/internal/staff/{external_id}", dependencies=[Depends(require_workstation_or_internal)])
 def put_staff(external_id: str, payload: StaffIn, db: Session = Depends(get_db)):
     if external_id != payload.external_id:
         raise HTTPException(422, "Identificador incoherente")
@@ -516,7 +516,7 @@ def put_staff(external_id: str, payload: StaffIn, db: Session = Depends(get_db))
     return {"ok": True}
 
 
-@router.post("/internal/devices/{device_id}", dependencies=[Depends(require_internal_key)])
+@router.post("/internal/devices/{device_id}", dependencies=[Depends(require_workstation_or_internal)])
 def enroll_device(device_id: str, db: Session = Depends(get_db)):
     token = new_token()
     item = db.get(MessagingDevice, device_id) or MessagingDevice(

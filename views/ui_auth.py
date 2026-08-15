@@ -4,7 +4,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from app_version import APP_VERSION
+from app_version import get_version_label
 
 try:
     from PIL import Image, ImageTk
@@ -110,7 +110,7 @@ class UILogin(ttk.Frame):
             footer, text=COPYRIGHT, bg="#ffffff", fg="#98a2b3", font=("Segoe UI", 8),
         ).pack(pady=(5, 0))
         tk.Label(
-            footer, text=f"Version {APP_VERSION}", bg="#ffffff", fg="#98a2b3", font=("Segoe UI", 8),
+            footer, text=get_version_label(), bg="#ffffff", fg="#98a2b3", font=("Segoe UI", 8),
         ).pack(pady=(5, 0))
 
         self._entry_user.bind("<Return>", lambda _e: entry_password.focus_set())

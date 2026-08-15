@@ -14,7 +14,7 @@ class PostgresConfigDialog(tk.Toplevel):
         self.result = None
 
         self.var_host = tk.StringVar(value="192.168.0.19")
-        self.var_port = tk.StringVar(value="5432")
+        self.var_port = tk.StringVar(value="5433")
         self.var_database = tk.StringVar(value="gest2a3eco")
         self.var_user = tk.StringVar(value="gest2a3eco")
         self.var_password = tk.StringVar()
