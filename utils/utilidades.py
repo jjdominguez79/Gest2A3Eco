@@ -216,22 +216,49 @@ def _normalize_config(data: dict) -> dict:
     #   nunca se valido ni se uso en ningun flujo activo.
     out.pop("smtp", None)
     out.pop("firma_webhook_secret", None)
+    # URL del backend de produccion Railway. Se aplica cuando el campo esta
+    # vacio (instalacion nueva o legacy sin configurar). Un valor ya existente
+    # no se sobreescribe, de modo que puestos con URL personalizada no se ven
+    # afectados.
+    _PROD_API_URL = "https://gest2a3eco-production.up.railway.app"
+
     out.setdefault("templates_path", "")
     out.setdefault("word_templates_dir", "")
     out.setdefault("a3_base_path", "")
     out.setdefault("postgres_dsn", "")
+
+    # Motor OCR: "azure" delega en el backend Railway (no requiere clave Azure local).
     out.setdefault("ocr_motor_activo", "")
+    if not out["ocr_motor_activo"]:
+        out["ocr_motor_activo"] = "azure"
+
+    # azure_doc_intelligence_endpoint: pertenece al backend Railway, NO al escritorio.
+    # El escritorio llama a /api/v1/ocr/invoices/analyze usando WorkstationToken;
+    # el endpoint Azure real lo gestiona el servidor. Puede permanecer vacio aqui.
     out.setdefault("azure_doc_intelligence_endpoint", "")
+
+    # Modelo de produccion. Solo se aplica cuando esta vacio.
+    out.setdefault("azure_doc_intelligence_model_id", "")
+    if not out["azure_doc_intelligence_model_id"]:
+        out["azure_doc_intelligence_model_id"] = "facturas-produccion-v1"
+
     out.setdefault("documentos_output_dir", "")
     out.setdefault("dgt_api_url", "")
     out.setdefault("integrations_api_url", "")
+    # Sincronizacion legacy dgt_api_url <-> integrations_api_url; si ambos estan
+    # vacios se aplica la URL de produccion por defecto.
     if not out["integrations_api_url"]:
-        out["integrations_api_url"] = out["dgt_api_url"]
+        if out["dgt_api_url"]:
+            out["integrations_api_url"] = out["dgt_api_url"]
+        else:
+            out["integrations_api_url"] = _PROD_API_URL
     if not out["dgt_api_url"]:
         out["dgt_api_url"] = out["integrations_api_url"]
     # dgt_api_key e integrations_api_key son secretos que no deben normalizarse
     # ni propagarse en la config: residen en Windows Credential Manager.
     out.setdefault("messaging_api_url", "")
+    if not out["messaging_api_url"]:
+        out["messaging_api_url"] = _PROD_API_URL
     out.setdefault("messaging_workstation_id", "")
     out.setdefault("signrequest_base_url", "https://signrequest.com/api/v1")
     out.setdefault("signrequest_use_sms", False)
