@@ -51,6 +51,13 @@ def test_app_release_date_formato_iso():
     assert 1 <= int(d) <= 31
 
 
+def test_app_release_date_es_1_7_1():
+    from app_version import APP_RELEASE_DATE
+    assert APP_RELEASE_DATE == "2026-08-15", (
+        f"La fecha de publicacion de v1.7.1 debe ser 2026-08-15, obtenido {APP_RELEASE_DATE!r}"
+    )
+
+
 # ===========================================================================
 # 4. get_version_label() contiene version y fecha en espanol
 # ===========================================================================

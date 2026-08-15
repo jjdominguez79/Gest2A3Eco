@@ -82,6 +82,25 @@ def _make_messaging_http(tmp: Path):
     return TestClient(app, base_url="https://mensajes.example.test"), factory
 
 
+def _make_messaging_http_with_wks(tmp: Path, wks_token: str):
+    """Como _make_messaging_http pero acepta un WorkstationToken especifico en require_workstation_or_internal."""
+    http, factory = _make_messaging_http(tmp)
+    from fastapi import Header, HTTPException
+    from backend.api.security import require_workstation_or_internal
+
+    _app = http.app
+
+    def override_wks(x_api_key: str = Header(default="")) -> str:
+        if x_api_key == "test-internal-secret":
+            return "gest2a3eco"
+        if x_api_key == wks_token:
+            return "workstation-test"
+        raise HTTPException(status_code=401, detail="Credencial no valida")
+
+    _app.dependency_overrides[require_workstation_or_internal] = override_wks
+    return http, factory
+
+
 # ── 1. MensajeriaRemoteClient usa WorkstationToken ───────────────────────────
 
 def test_cliente_usa_workstation_token(monkeypatch):
@@ -262,20 +281,67 @@ def test_sync_token_correcto_aceptado(workdir):
 
 
 def test_internal_endpoint_rechaza_workstation_token(workdir):
-    """PUT /internal/staff/* solo acepta la clave interna de admin, no WorkstationToken."""
+    """
+    PUT /internal/organizations/* y POST /internal/invitations solo aceptan la clave
+    interna de admin. Son operaciones de administracion (alta de empresa, invitacion a
+    cliente) que el escritorio no debe poder hacer autonomamente.
+
+    PUT /internal/staff/* y POST /internal/devices/* SI aceptan WorkstationToken porque
+    son operaciones de auto-registro que el puesto hace por si mismo en el primer inicio.
+    """
     http, factory = _make_messaging_http(workdir)
     wks_token = f"g2a3_wks_{secrets.token_urlsafe(32)}"
     from backend.api.security import hash_token
     from backend.api.models import Workstation
     with factory() as db:
-        db.add(Workstation(name="puesto-intento", token_hash=hash_token(wks_token), active=True))
+        db.add(Workstation(name="puesto-admin-test", token_hash=hash_token(wks_token), active=True))
         db.commit()
+
+    # Organizations y invitations rechazan WorkstationToken
     r = http.put(
-        "/api/v1/messaging/internal/staff/usr-intento",
+        "/api/v1/messaging/internal/organizations/EMP001",
         headers={"X-API-Key": wks_token},
-        json={"external_id": "usr-intento", "name": "X", "email": "x@gestinem.es", "role": "empleado"},
+        json={"company_code": "EMP001", "name": "Empresa Test", "active": True},
     )
-    assert r.status_code == 401, "WorkstationToken no debe aceptarse en endpoints /internal/*"
+    assert r.status_code == 401, "WorkstationToken no debe aceptarse en /internal/organizations/"
+
+    r = http.post(
+        "/api/v1/messaging/internal/invitations",
+        headers={"X-API-Key": wks_token},
+        json={"company_code": "EMP001", "name": "Cliente", "email": "cliente@test.es"},
+    )
+    assert r.status_code == 401, "WorkstationToken no debe aceptarse en /internal/invitations"
+
+
+def test_internal_staff_y_devices_aceptan_workstation_token(workdir):
+    """
+    PUT /internal/staff/* y POST /internal/devices/* deben aceptar WorkstationToken.
+    Son operaciones de auto-registro que el puesto realiza en el primer inicio.
+
+    Nota de implementacion: require_workstation_or_internal usa SessionLocal() directamente,
+    por lo que se inyecta un override en el test para evitar acceso a PostgreSQL real.
+    """
+    wks_token = f"g2a3_wks_{secrets.token_urlsafe(32)}"
+    http, _ = _make_messaging_http_with_wks(workdir, wks_token)
+
+    # Staff sync acepta WorkstationToken
+    r = http.put(
+        "/api/v1/messaging/internal/staff/usr-self",
+        headers={"X-API-Key": wks_token},
+        json={
+            "external_id": "usr-self", "name": "Self User",
+            "email": "self@gestinem.es", "role": "empleado", "active": True,
+        },
+    )
+    assert r.status_code == 200, f"WorkstationToken rechazado en /internal/staff/: {r.text}"
+
+    # Device enrollment acepta WorkstationToken
+    r = http.post(
+        "/api/v1/messaging/internal/devices/puesto-self-reg",
+        headers={"X-API-Key": wks_token},
+    )
+    assert r.status_code in (200, 201), f"WorkstationToken rechazado en /internal/devices/: {r.text}"
+    assert "device_token" in r.json()
 
 
 def test_credencial_aleatoria_rechazada_en_staff(workdir):
