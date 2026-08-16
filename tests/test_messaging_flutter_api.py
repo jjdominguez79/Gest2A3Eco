@@ -1,4 +1,5 @@
 import os
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,7 @@ os.environ.setdefault(
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -20,6 +21,7 @@ from backend.api.database import Base
 from backend.api.messaging_api import get_db, router
 from backend.api.messaging_models import (
     MessagingAttachment,
+    MessagingCampaign,
     MessagingCampaignRecipient,
     MessagingDeletionAudit,
     MessagingMessage,
@@ -206,6 +208,158 @@ def test_grupos_miembros_campana_e_idempotencia(tmp_path, monkeypatch):
         assert db.scalar(select(func.count(MessagingMessage.id)).where(
             MessagingMessage.idempotency_key.like(f"campaign:{campaign_id}:%"),
         )) == 1
+
+
+def test_campana_futura_se_rechaza_y_pasada_se_envia(tmp_path, monkeypatch):
+    client, factory, staff_headers, _auth, client_id, _conversation_id = _setup(tmp_path, monkeypatch)
+    admin = staff_headers("admin")
+    future = client.post(
+        "/api/v1/messaging/staff/admin/campaigns", headers=admin,
+        json={
+            "name": "Aviso futuro", "body": "No debe quedar pendiente",
+            "client_ids": [client_id],
+            "scheduled_at": (messaging_api.utcnow() + timedelta(days=1)).isoformat(),
+        },
+    )
+    assert future.status_code == 422
+    assert "programacion de campanas" in future.json()["detail"]
+
+    immediate = client.post(
+        "/api/v1/messaging/staff/admin/campaigns", headers=admin,
+        json={
+            "name": "Aviso inmediato", "body": "Debe enviarse ahora",
+            "client_ids": [client_id],
+            "scheduled_at": (messaging_api.utcnow() - timedelta(seconds=1)).isoformat(),
+        },
+    )
+    assert immediate.status_code == 201
+    with factory() as db:
+        assert db.get(MessagingCampaign, immediate.json()["id"]).status == "sent"
+
+
+def test_retry_parcial_no_duplica_mensajes_enviados(tmp_path, monkeypatch):
+    client, factory, staff_headers, _auth, first_client_id, _conversation_id = _setup(tmp_path, monkeypatch)
+    admin = staff_headers("admin")
+    with factory() as db:
+        first_client = db.get(messaging_api.MessagingClient, first_client_id)
+        second = messaging_api.MessagingClient(
+            organization_id=first_client.organization_id,
+            name="Ana", email="ana@example.test", password_hash="unused",
+        )
+        db.add(second)
+        db.commit()
+        second_client_id = second.id
+
+    original_create_message = messaging_api._create_message
+
+    def fail_second_client(db, conv, **kwargs):
+        key = kwargs["idempotency_key"]
+        if key.endswith(f":client:{second_client_id}"):
+            raise RuntimeError("fallo transitorio")
+        return original_create_message(db, conv, **kwargs)
+
+    monkeypatch.setattr(messaging_api, "_create_message", fail_second_client)
+    created = client.post(
+        "/api/v1/messaging/staff/admin/campaigns", headers=admin,
+        json={
+            "name": "Envio parcial", "body": "Mensaje unico",
+            "client_ids": [first_client_id, second_client_id],
+        },
+    )
+    assert created.status_code == 201
+    campaign_id = created.json()["id"]
+    with factory() as db:
+        assert db.get(MessagingCampaign, campaign_id).status == "partial"
+        interrupted = db.scalar(select(MessagingCampaignRecipient).where(
+            MessagingCampaignRecipient.campaign_id == campaign_id,
+            MessagingCampaignRecipient.client_id == first_client_id,
+        ))
+        assert interrupted.status == "sent"
+        interrupted.status = "error"
+        interrupted.error = "interrupcion despues de confirmar el mensaje"
+        db.commit()
+
+    monkeypatch.setattr(messaging_api, "_create_message", original_create_message)
+    retried = client.post(
+        f"/api/v1/messaging/staff/admin/campaigns/{campaign_id}/retry", headers=admin,
+    )
+    assert retried.status_code == 202
+    with factory() as db:
+        campaign = db.get(MessagingCampaign, campaign_id)
+        assert campaign.status == "sent"
+        assert db.scalar(select(func.count(MessagingMessage.id)).where(
+            MessagingMessage.idempotency_key.like(f"campaign:{campaign_id}:%"),
+        )) == 2
+        keys = list(db.scalars(select(MessagingMessage.idempotency_key).where(
+            MessagingMessage.idempotency_key.like(f"campaign:{campaign_id}:%"),
+        )))
+        assert len(keys) == len(set(keys))
+
+
+def test_selector_clientes_usa_un_join_y_mantiene_contrato(tmp_path, monkeypatch):
+    client, factory, staff_headers, _auth, client_id, _conversation_id = _setup(tmp_path, monkeypatch)
+    statements = []
+    engine = factory.kw["bind"]
+
+    def record_statement(_connection, _cursor, statement, _parameters, _context, _many):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", record_statement)
+    try:
+        response = client.get(
+            "/api/v1/messaging/staff/admin/campaign-targets/clients",
+            headers=staff_headers("admin"),
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", record_statement)
+
+    assert response.status_code == 200
+    assert response.json() == [{
+        "id": client_id,
+        "name": "Maria",
+        "email": "maria@example.test",
+        "organization_id": response.json()[0]["organization_id"],
+        "company_code": "E10001",
+        "company_name": "Cliente Uno",
+    }]
+    target_queries = [
+        statement for statement in statements
+        if "FROM msg_clients" in statement or "FROM msg_organizations" in statement
+    ]
+    assert len(target_queries) == 1
+    assert "JOIN msg_organizations" in target_queries[0]
+
+
+def test_enums_de_entrada_rechazan_valores_desconocidos(tmp_path, monkeypatch):
+    client, _factory, staff_headers, auth, client_id, _conversation_id = _setup(tmp_path, monkeypatch)
+    admin = staff_headers("admin")
+    assert client.post(
+        "/api/v1/messaging/staff/admin/groups", headers=admin,
+        json={"name": "Invalido", "group_type": "broadcast"},
+    ).status_code == 422
+    group = client.post(
+        "/api/v1/messaging/staff/admin/groups", headers=admin,
+        json={"name": "Lista valida", "group_type": "client_list"},
+    ).json()
+    assert client.post(
+        f"/api/v1/messaging/staff/admin/groups/{group['id']}/members", headers=admin,
+        json={"member_type": "unknown", "member_id": client_id},
+    ).status_code == 422
+    assert client.post(
+        f"/api/v1/messaging/staff/admin/groups/{group['id']}/members", headers=admin,
+        json={"member_type": "client", "member_id": client_id, "role": "superuser"},
+    ).status_code == 422
+    assert client.put(
+        "/api/v1/messaging/client/app-devices", headers=auth,
+        json={"platform": "symbian", "push_token": "x" * 20},
+    ).status_code == 422
+    assert client.put(
+        "/api/v1/messaging/internal/staff/invalid-role", headers=admin,
+        json={
+            "external_id": "invalid-role", "name": "Rol invalido",
+            "role": "superuser",
+        },
+    ).status_code == 422
 
 
 def test_dispositivo_fcm_mockeado_y_websocket(tmp_path, monkeypatch):

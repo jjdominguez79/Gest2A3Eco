@@ -8,6 +8,7 @@ import mimetypes
 import secrets
 import uuid
 from datetime import datetime, timedelta
+from typing import Literal
 from urllib.parse import urlencode
 
 import msal
@@ -77,7 +78,7 @@ class StaffIn(BaseModel):
     name: str
     email: str = ""
     chat_alias: str = ""
-    role: str = "empleado"
+    role: Literal["admin", "empleado"] = "empleado"
     active: bool = True
     channels: list[str] | None = None
 
@@ -118,14 +119,14 @@ class StaffPermissionsIn(BaseModel):
     active: bool = True
     name: str | None = Field(default=None, min_length=1, max_length=160)
     email: str | None = Field(default=None, min_length=3, max_length=254)
-    role: str | None = None
+    role: Literal["admin", "empleado"] | None = None
     chat_alias: str | None = Field(default=None, max_length=160)
 
 
 class StaffCreateIn(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     email: str = Field(min_length=3, max_length=254)
-    role: str = "empleado"
+    role: Literal["admin", "empleado"] = "empleado"
     chat_alias: str = Field(default="", max_length=160)
     active: bool = True
     channels: list[str] = Field(default_factory=list)
@@ -142,7 +143,7 @@ class StaffAppCodeIn(BaseModel):
 
 
 class AppDeviceIn(BaseModel):
-    platform: str
+    platform: Literal["android", "ios", "windows", "macos", "web"]
     push_token: str = Field(min_length=20, max_length=5000)
     device_name: str = Field(default="", max_length=160)
     app_version: str = Field(default="", max_length=40)
@@ -155,14 +156,14 @@ class MessageDeleteIn(BaseModel):
 class GroupIn(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     description: str = Field(default="", max_length=2000)
-    group_type: str
+    group_type: Literal["staff_chat", "client_list"]
     active: bool = True
 
 
 class GroupMemberIn(BaseModel):
-    member_type: str
+    member_type: Literal["staff", "client"]
     member_id: str = Field(min_length=1, max_length=64)
-    role: str = Field(default="member", max_length=20)
+    role: Literal["owner", "member"] = "member"
 
 
 class CampaignIn(BaseModel):
@@ -2229,8 +2230,6 @@ def process_campaign(campaign_id: str) -> None:
         campaign = db.get(MessagingCampaign, campaign_id)
         if not campaign or campaign.status == "sent":
             return
-        if campaign.scheduled_at and campaign.scheduled_at > utcnow():
-            return
         campaign.status = "sending"
         db.commit()
         recipients = db.scalars(select(MessagingCampaignRecipient).where(
@@ -2292,21 +2291,21 @@ def list_campaigns(_admin: MessagingStaff = Depends(_require_admin), db: Session
 def campaign_client_targets(
     _admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
 ):
-    rows = db.scalars(select(MessagingClient).where(
-        MessagingClient.active.is_(True),
-    ).order_by(MessagingClient.name, MessagingClient.email)).all()
+    rows = db.execute(
+        select(MessagingClient, MessagingOrganization)
+        .outerjoin(
+            MessagingOrganization,
+            MessagingOrganization.id == MessagingClient.organization_id,
+        )
+        .where(MessagingClient.active.is_(True))
+        .order_by(MessagingClient.name, MessagingClient.email)
+    ).all()
     return [{
-        "id": row.id, "name": row.name, "email": row.email,
-        "organization_id": row.organization_id,
-        "company_code": (
-            db.get(MessagingOrganization, row.organization_id).company_code
-            if db.get(MessagingOrganization, row.organization_id) else ""
-        ),
-        "company_name": (
-            db.get(MessagingOrganization, row.organization_id).name
-            if db.get(MessagingOrganization, row.organization_id) else ""
-        ),
-    } for row in rows]
+        "id": client.id, "name": client.name, "email": client.email,
+        "organization_id": client.organization_id,
+        "company_code": organization.company_code if organization else "",
+        "company_name": organization.name if organization else "",
+    } for client, organization in rows]
 
 
 @router.post("/staff/admin/campaigns", status_code=201)
@@ -2316,6 +2315,15 @@ def create_campaign(
 ):
     if payload.channel not in STAFF_CHANNELS:
         raise HTTPException(422, "Canal de campana no valido")
+    if payload.scheduled_at is not None:
+        if payload.scheduled_at.tzinfo is None:
+            raise HTTPException(422, "scheduled_at debe incluir zona horaria")
+        if payload.scheduled_at > utcnow():
+            raise HTTPException(
+                422,
+                "La programacion de campanas todavia no esta disponible; "
+                "el envio debe ser inmediato",
+            )
     client_ids = set(payload.client_ids)
     if payload.all_clients:
         client_ids.update(db.scalars(select(MessagingClient.id).where(MessagingClient.active.is_(True))))
@@ -2349,8 +2357,7 @@ def create_campaign(
     ])
     db.commit()
     db.refresh(campaign)
-    if not campaign.scheduled_at or campaign.scheduled_at <= utcnow():
-        background.add_task(process_campaign, campaign.id)
+    background.add_task(process_campaign, campaign.id)
     return _serialize_campaign(db, campaign)
 
 

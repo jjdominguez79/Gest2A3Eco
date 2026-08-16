@@ -61,9 +61,12 @@ de 1 a 30 segundos. Una caida WebSocket no bloquea historial ni envio.
 El bearer de sesion nunca viaja en la URL: REST emite un ticket de un solo uso
 con 60 segundos de validez para cada conexion o reconexion.
 
-El bus actual es seguro dentro de un proceso FastAPI. Para varios workers o
-replicas debe sustituirse por pub/sub de Redis/PostgreSQL manteniendo el mismo
-contrato. SSE se conserva para la PWA.
+Produccion arranca el backend mediante el `CMD` de `backend/Dockerfile`:
+`exec uvicorn backend.api.app:app --host 0.0.0.0 --port ${PORT:-8000}
+--proxy-headers`. Al no indicar `--workers`, Uvicorn utiliza un unico worker.
+El bus actual en memoria requiere ese unico proceso FastAPI. Si se habilitan
+varios workers o replicas, debe sustituirse por pub/sub compartido (por ejemplo,
+Redis o PostgreSQL) manteniendo el mismo contrato. SSE se conserva para la PWA.
 
 ## Respuestas y eliminacion
 
@@ -85,8 +88,14 @@ Una campana materializa destinatarios individuales. Cada mensaje usa
 `campaign:{campaign_id}:client:{client_id}` como clave idempotente. El trabajo se
 ejecuta despues de responder HTTP mediante `BackgroundTasks`, registra error por
 destinatario y admite reintento. Esta interfaz esta encapsulada para migrarla a
-una cola persistente cuando aumente el volumen. Las campanas futuras quedan en
-`pending`; un scheduler externo/worker debe invocar su procesamiento.
+una cola persistente en una segunda fase. El reintento selecciona solo
+destinatarios `pending` o `error`; la clave idempotente evita duplicar mensajes
+si una ejecucion se interrumpio despues de crearlos.
+
+En esta primera fase las campanas son exclusivamente inmediatas. La API rechaza
+con HTTP 422 un `scheduled_at` futuro, y Flutter no muestra controles de
+programacion. Las campanas programadas y su scheduler persistente quedan para
+una segunda fase.
 
 ## Firebase Cloud Messaging
 
@@ -120,5 +129,5 @@ Los entornos usan `--dart-define`: `API_BASE_URL`, `WEBSOCKET_URL` opcional y
 2. Configurar deep link y Firebase en un entorno de pruebas.
 3. Publicar Gestinem por plataforma sin tocar Gest2A3Eco Desktop.
 4. Mantener PWA/SSE/Web Push durante adopcion y comparar trazabilidad.
-5. En una fase posterior, implantar pub/sub multi-worker, cola persistente y
-   decidir la retirada de la PWA con datos reales de uso.
+5. En una fase posterior, implantar scheduler y cola persistentes, pub/sub
+   multi-worker y decidir la retirada de la PWA con datos reales de uso.

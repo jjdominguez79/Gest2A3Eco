@@ -40,9 +40,8 @@ aditivas posteriores.
 - **Mensajeria:** invitaciones, autenticacion de clientes, acceso Microsoft 365
   del personal, chats con adjuntos, respuestas, borrado auditado, grupos,
   campanas, Web Push, FCM y eventos en tiempo real.
-- **Cliente movil:** codigos de acceso para empleados, registro/presencia de
-  dispositivos y WebSocket. El backend esta preparado, pero el proyecto Flutter
-  todavia es un scaffold sin integracion funcional.
+- **Cliente movil:** aplicacion Flutter funcional para clientes y empleados,
+  con codigos de acceso, registro/presencia de dispositivos y WebSocket.
 - **Worker de adjuntos:** endpoints tecnicos para reclamar, descargar, verificar
   y confirmar archivos temporales.
 
@@ -124,8 +123,13 @@ respuestas a mensajes, borrado logico con auditoria, grupos, campanas,
 dispositivos de app y codigos de acceso de empleados. Debe aplicarse en
 despliegues existentes antes de habilitar esas rutas.
 
+Railway usa `railway.toml`, que construye `backend/Dockerfile`. Su comando de
+produccion es `exec uvicorn backend.api.app:app --host 0.0.0.0 --port
+${PORT:-8000} --proxy-headers`; sin `--workers`, Uvicorn arranca un unico worker.
+
 `/api/v1/messaging/ws/{audience}` ofrece WebSocket autenticado. El hub actual es
-en memoria y sirve una sola instancia de proceso; REST y el endpoint de eventos
-siguen siendo la fuente de verdad y el fallback. Un despliegue con varias
-instancias necesitara sustituir el bus por un componente compartido, como Redis,
-sin cambiar el contrato exterior.
+en memoria y requiere mantener ese unico worker/proceso FastAPI; REST y el
+endpoint de eventos siguen siendo la fuente de verdad y el fallback. Antes de
+usar varios workers o escalar horizontalmente debe sustituirse el bus por
+pub/sub compartido (Redis, PostgreSQL u otro equivalente), sin cambiar el
+contrato exterior.
