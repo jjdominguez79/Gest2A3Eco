@@ -12,7 +12,7 @@ void main() {
   testWidgets('conversacion renderiza historial y compositor', (tester) async {
     final message = Message(
       id: 'm1', conversationId: 't1', authorType: 'staff', authorId: 'staff-1',
-      authorName: 'Ana', body: 'Buenos dias', createdAt: DateTime(2026, 8, 15), deleted: false,
+      authorName: 'Ana', authorAvatarUrl: '', body: 'Buenos dias', createdAt: DateTime(2026, 8, 15), deleted: false,
     );
     await tester.pumpWidget(ProviderScope(
       overrides: [

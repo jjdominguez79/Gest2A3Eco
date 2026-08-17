@@ -23,7 +23,42 @@ class _FakeNotifications extends NotificationsService {
 }
 
 void main() {
-  testWidgets('lista de chats muestra canal, empresa y no leidos', (tester) async {
+  testWidgets('cliente ve tile unificado "Gestinem"', (tester) async {
+    // Para clientes, la pantalla muestra la vista unificada con un tile "Gestinem"
+    final meta = {
+      'unread_count': 3,
+      'channel_ids': {'fiscal': 'c1'},
+      'last_message': {'body': 'Mensaje de prueba', 'deleted': false},
+    };
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+        conversationsProvider.overrideWith((ref) async => []),
+        unifiedConversationProvider.overrideWith((ref) async => meta),
+        realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
+        notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
+      ],
+      child: const MaterialApp(home: ConversationsScreen()),
+    ));
+    await tester.pump();
+    await tester.pump(); // segundo pump para el FutureProvider
+
+    expect(find.byKey(const Key('unified-conversation-tile')), findsOneWidget);
+    // "Gestinem" aparece en el AppBar y en el tile
+    expect(find.text('Gestinem'), findsAtLeastNWidgets(1));
+    expect(find.text('3'), findsOneWidget);
+  });
+
+  testWidgets('staff ve lista agrupada por cliente', (tester) async {
+    const staffProfile = UserProfile(
+      id: 'staff-1',
+      name: 'Gestor',
+      email: 'gestor@gestinem.es',
+      type: UserType.staff,
+      staffRole: StaffRole.admin,
+    );
+    const staffSession = AuthSession(token: 'staff-token', profile: staffProfile);
+
     final row = Conversation(
       id: 'c1', companyCode: 'E00001', companyName: 'Empresa Uno',
       kind: 'fiscal', state: 'pendiente', unreadCount: 3,
@@ -31,13 +66,14 @@ void main() {
     );
     await tester.pumpWidget(ProviderScope(
       overrides: [
-        sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+        sessionProvider.overrideWith((ref) => FakeSessionController(ref, staffSession)),
         conversationsProvider.overrideWith((ref) async => [row]),
         realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
         notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
       ],
       child: const MaterialApp(home: ConversationsScreen()),
     ));
+    await tester.pump();
     await tester.pump();
 
     expect(find.byKey(const Key('conversation-list')), findsOneWidget);

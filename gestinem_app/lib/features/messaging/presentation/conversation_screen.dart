@@ -201,6 +201,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
               return MessageBubble(
                 message: message,
                 mine: mine,
+                baseUrl: ref.read(apiClientProvider).dio.options.baseUrl.replaceAll(RegExp(r'/api/v1/messaging/?$'), ''),
                 onReplyTap: message.replyTo == null ? null : () => _scrollToMessage(messages, message.replyTo!.id),
                 onAttachmentTap: _download,
                 onLongPress: message.deleted ? null : () => _messageActions(message, mine),

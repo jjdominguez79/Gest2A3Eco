@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
 import 'auth_controller.dart';
@@ -44,7 +45,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Icon(Icons.forum_rounded, size: 54, color: Color(0xFF004B76)),
+                    Image.asset('assets/images/logo.png', height: 72, semanticLabel: 'Gestinem'),
                     const SizedBox(height: 12),
                     Text('Gestinem', textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineMedium),
                     const SizedBox(height: 6),
@@ -92,6 +93,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       onPressed: state.isLoading ? null : () => ref.read(sessionProvider.notifier).loginStaff(),
                       icon: const Icon(Icons.business_center_outlined),
                       label: const Text('Personal del despacho'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextButton(
+                      onPressed: () => context.go('/forgot-password'),
+                      child: const Text('Has olvidado tu contrasena?'),
                     ),
                   ],
                 ),
