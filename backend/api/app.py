@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -48,6 +49,20 @@ from backend.api import messaging_models  # noqa: F401 - registra tablas SQLAlch
 from backend.api.messaging_api import cleanup_expired_attachments, router as messaging_router
 
 app = FastAPI(title="Gestinem Integraciones API", version="1.1.0")
+
+# CORS: se configura en startup para evitar llamar get_settings() en tiempo de import
+# (puede fallar si DGT_DATABASE_URL no esta definida)
+_cors_origins_raw = __import__("os").getenv("MESSAGING_CORS_ORIGINS", "")
+_cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
 WEB_DIR = Path(__file__).with_name("web")
 templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
 app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")

@@ -48,6 +48,7 @@ class Settings:
     messaging_firebase_credentials: str
     messaging_app_redirect_uri: str
     messaging_app_web_redirect_uri: str
+    messaging_cors_origins: str
     azure_doc_intelligence_endpoint: str
     azure_doc_intelligence_key: str
     azure_doc_intelligence_model_id: str
@@ -122,6 +123,7 @@ def get_settings() -> Settings:
             "MESSAGING_APP_REDIRECT_URI", "es.gestinem.app://auth/callback",
         ),
         messaging_app_web_redirect_uri=os.getenv("MESSAGING_APP_WEB_REDIRECT_URI", ""),
+        messaging_cors_origins=os.getenv("MESSAGING_CORS_ORIGINS", ""),
         azure_doc_intelligence_endpoint=os.getenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", ""),
         azure_doc_intelligence_key=os.getenv("AZURE_DOC_INTELLIGENCE_KEY", ""),
         azure_doc_intelligence_model_id=os.getenv("AZURE_DOC_INTELLIGENCE_MODEL_ID", "prebuilt-invoice"),
