@@ -149,6 +149,10 @@ class AppDeviceIn(BaseModel):
     app_version: str = Field(default="", max_length=40)
 
 
+class StaffSelfPatchIn(BaseModel):
+    chat_alias: str | None = Field(default=None, max_length=160)
+
+
 class MessageDeleteIn(BaseModel):
     reason: str = Field(default="", max_length=500)
 
@@ -878,6 +882,42 @@ def staff_me(staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_
     }
 
 
+@router.patch("/staff/me")
+def patch_staff_me(
+    payload: StaffSelfPatchIn,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Actualiza el perfil propio del staff (alias de chat)."""
+    staff = _staff_from_request(db, request)
+    if payload.chat_alias is not None:
+        staff.chat_alias = payload.chat_alias.strip()
+    db.commit()
+    return {"ok": True}
+
+
+@router.put("/staff/me/avatar", status_code=200)
+def upload_own_avatar(
+    avatar: UploadFile = File(...),
+    request: Request = ...,
+    db: Session = Depends(get_db),
+):
+    """Sube o reemplaza el avatar propio del staff autenticado."""
+    staff = _staff_from_request(db, request)
+    content = _normalized_avatar(avatar)
+    storage = MessagingStorage()
+    old_key = staff.avatar_storage_key
+    staff.avatar_storage_key = storage.put(content, f"avatar-{staff.external_id}.webp")
+    staff.avatar_content_type = "image/webp"
+    if old_key:
+        try:
+            storage.delete(old_key)
+        except Exception:
+            pass
+    db.commit()
+    return {"ok": True, "avatar_url": f"/api/v1/messaging/staff/avatars/{staff.external_id}"}
+
+
 @router.get("/staff/push/config")
 def staff_push_config(_staff_user: MessagingStaff = Depends(_staff)):
     return {
@@ -1567,6 +1607,163 @@ def client_conversations(client: MessagingClient = Depends(_client), db: Session
     return result
 
 
+@router.get("/client/unified-conversation")
+def client_unified_conversation(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Vista unificada de todas las conversaciones del cliente."""
+    client = _client(db, request.headers.get("authorization", ""), request.cookies.get("msg_session", ""))
+    org = db.get(MessagingOrganization, client.organization_id)
+    convs = db.scalars(
+        select(MessagingConversation).where(
+            MessagingConversation.organization_id == client.organization_id
+        ).order_by(MessagingConversation.updated_at.desc())
+    ).all()
+
+    total_unread = 0
+    last_message = None
+    last_updated = None
+    channel_ids: dict = {}
+
+    for conv in convs:
+        unread = _unread_count(db, conv, "client", client.id)
+        total_unread += unread
+        channel_ids[conv.kind] = conv.id
+        if last_updated is None or conv.updated_at > last_updated:
+            last_updated = conv.updated_at
+            last_msg_row = db.scalar(
+                select(MessagingMessage).where(
+                    MessagingMessage.conversation_id == conv.id
+                ).order_by(MessagingMessage.created_at.desc()).limit(1)
+            )
+            if last_msg_row:
+                last_message = _serialize_message(db, last_msg_row, "client")
+
+    return {
+        "organization_name": org.name if org else "",
+        "company_code": org.company_code if org else "",
+        "channel_ids": channel_ids,
+        "unread_count": total_unread,
+        "last_message": last_message,
+        "updated_at": last_updated.isoformat() if last_updated else None,
+    }
+
+
+@router.get("/client/unified-messages")
+def client_unified_messages(
+    request: Request,
+    limit: int = Query(default=100, le=500),
+    db: Session = Depends(get_db),
+):
+    """Todos los mensajes del cliente de todos los canales, ordenados cronologicamente."""
+    client = _client(db, request.headers.get("authorization", ""), request.cookies.get("msg_session", ""))
+    convs = db.scalars(
+        select(MessagingConversation).where(
+            MessagingConversation.organization_id == client.organization_id
+        )
+    ).all()
+    conv_ids = [c.id for c in convs]
+    if not conv_ids:
+        return []
+
+    rows = db.scalars(
+        select(MessagingMessage).where(
+            MessagingMessage.conversation_id.in_(conv_ids)
+        ).order_by(MessagingMessage.created_at.asc()).limit(limit)
+    ).all()
+
+    return [_serialize_message(db, row, "client") for row in rows]
+
+
+@router.post("/client/unified-messages", status_code=201)
+def client_send_unified(
+    request: Request,
+    background: BackgroundTasks,
+    body: str = Form(default=""),
+    idempotency_key: str = Form(default=""),
+    reply_to_message_id: str | None = Form(default=None),
+    files: list[UploadFile] = File(default=[]),
+    db: Session = Depends(get_db),
+):
+    """Envia un mensaje al canal del ultimo mensaje recibido del staff, o fiscal como fallback."""
+    client = _client(db, request.headers.get("authorization", ""), request.cookies.get("msg_session", ""))
+    convs = db.scalars(
+        select(MessagingConversation).where(
+            MessagingConversation.organization_id == client.organization_id
+        ).order_by(MessagingConversation.updated_at.desc())
+    ).all()
+
+    # Elegir conversacion: la que tenga el ultimo mensaje de staff
+    target_conv = None
+    latest_staff_msg_at = None
+
+    for conv in convs:
+        last_staff_msg = db.scalar(
+            select(MessagingMessage).where(
+                MessagingMessage.conversation_id == conv.id,
+                MessagingMessage.author_type == "staff",
+                MessagingMessage.deleted_at.is_(None),
+            ).order_by(MessagingMessage.created_at.desc()).limit(1)
+        )
+        if last_staff_msg and (latest_staff_msg_at is None or last_staff_msg.created_at > latest_staff_msg_at):
+            latest_staff_msg_at = last_staff_msg.created_at
+            target_conv = conv
+
+    # Fallback: preferir canal fiscal, luego laboral, luego cualquiera
+    if target_conv is None:
+        for kind in ("fiscal", "laboral"):
+            target_conv = next((c for c in convs if c.kind == kind), None)
+            if target_conv:
+                break
+        if target_conv is None and convs:
+            target_conv = convs[0]
+
+    if target_conv is None:
+        raise HTTPException(404, "No hay conversaciones disponibles")
+
+    key = idempotency_key.strip() or str(uuid.uuid4())
+
+    # Comprobar idempotencia
+    existing = db.scalar(
+        select(MessagingMessage).where(
+            MessagingMessage.conversation_id == target_conv.id,
+            MessagingMessage.idempotency_key == key,
+        )
+    )
+    if existing:
+        return _serialize_message(db, existing, "client")
+
+    if not body.strip() and not files:
+        raise HTTPException(422, "El mensaje esta vacio")
+
+    # Validar reply_to dentro de las conversaciones del cliente
+    conv_ids = [c.id for c in convs]
+    reply_id = reply_to_message_id or None
+    if reply_id:
+        reply_msg = db.get(MessagingMessage, reply_id)
+        if not reply_msg or reply_msg.conversation_id not in conv_ids:
+            reply_id = None
+
+    item = _create_message(
+        db, target_conv,
+        actor_type="client",
+        actor_id=client.id,
+        actor_name=client.name,
+        body=body,
+        idempotency_key=key,
+        files=files,
+        reply_to_message_id=reply_id,
+    )
+    _queue_staff_pushes(db, background, target_conv)
+    _queue_app_pushes(db, background, target_conv, "staff")
+
+    if mail_configured():
+        pass  # notificacion de email manejada en post_message
+
+    return _serialize_message(db, item, "client")
+
+
 @router.get("/staff/conversations")
 def staff_conversations(
     active_only: bool = False,
@@ -1667,6 +1864,34 @@ def mark_read(audience: str, conversation_id: str, request: Request, db: Session
     db.commit()
     _publish_conversation_event(db, conv, "message.read", actor_type=audience, actor_id=actor_id)
     return {"ok": True, "changed": True}
+
+
+@router.delete("/{audience}/conversations/{conversation_id}/read", status_code=204)
+def mark_unread(
+    audience: str,
+    conversation_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Marca la conversacion como no leida eliminando el registro de lectura."""
+    if audience == "client":
+        client = _client(db, request.headers.get("authorization", ""), request.cookies.get("msg_session", ""))
+        conv = _conversation_for_client(db, conversation_id, client)
+        db.query(MessagingRead).filter(
+            MessagingRead.conversation_id == conv.id,
+            MessagingRead.actor_type == "client",
+            MessagingRead.actor_id == client.id,
+        ).delete()
+    elif audience == "staff":
+        staff = _staff_from_request(db, request)
+        db.query(MessagingRead).filter(
+            MessagingRead.conversation_id == conversation_id,
+            MessagingRead.actor_type == "staff",
+            MessagingRead.actor_id == staff.external_id,
+        ).delete()
+    else:
+        raise HTTPException(400, "audience invalido")
+    db.commit()
 
 
 @router.post("/{audience}/conversations/{conversation_id}/messages")
