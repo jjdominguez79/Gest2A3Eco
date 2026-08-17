@@ -10,6 +10,7 @@ class UserProfile {
     required this.type,
     this.staffRole,
     this.channels = const [],
+    this.avatarUrl = '',
   });
 
   factory UserProfile.fromJson(Map<String, dynamic> json, UserType type) {
@@ -25,6 +26,7 @@ class UserProfile {
       channels: (json['channels'] as List<dynamic>? ?? const [])
           .map((item) => item.toString())
           .toList(growable: false),
+      avatarUrl: json['avatar_url'] as String? ?? '',
     );
   }
 
@@ -34,6 +36,7 @@ class UserProfile {
   final UserType type;
   final StaffRole? staffRole;
   final List<String> channels;
+  final String avatarUrl;
 
   bool get isAdmin => staffRole == StaffRole.admin;
 
@@ -44,6 +47,7 @@ class UserProfile {
         'type': type.name,
         'role': staffRole?.name,
         'channels': channels,
+        'avatar_url': avatarUrl,
       };
 }
 
