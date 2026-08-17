@@ -1,161 +1,122 @@
-# Sistema de actualizaciones automáticas - Gest2A3Eco
+# Sistema de actualizaciones automaticas
 
-## Resumen del flujo
+**Estado:** activo.
+
+**Ultima revision contra el codigo:** 2026-08-15.
+
+Este documento describe el contrato tecnico del actualizador. El procedimiento
+para publicar una version esta en
+[`PUBLICACION_VERSIONES.md`](PUBLICACION_VERSIONES.md).
+
+## Flujo
 
 ```text
-Nueva versión lista
-       |
-       v
-1. Mantener APP_VERSION en app_version.py
-2. Compilar .exe con PyInstaller
-3. Generar instalador .exe con Inno Setup
-4. Crear tag vX.Y.Z
-5. Publicar release en GitHub
-6. Subir el instalador como asset del release
-7. Actualizar updates/version.json
-       |
-       v
-Al arrancar la app:
-  update_checker.py descarga version.json desde GitHub Raw
-  Si hay actualización obligatoria -> bloquea y ofrece descargar
-  Si hay actualización opcional    -> ofrece descargar, permite omitir
-  Si no hay conexión               -> continúa sin interrupciones
+app_version.py
+  -> PyInstaller
+  -> Inno Setup
+  -> Git tag vX.Y.Z
+  -> GitHub Actions crea Release y sube el instalador
+  -> workflow actualiza updates/version.json en main
+
+Arranque de la aplicacion
+  -> update_checker.py consulta GitHub Raw
+  -> compara la version instalada con latest/minimum
+  -> ofrece o exige la actualizacion
 ```
 
-## 1. Versión actual de la aplicación
+Si no hay conexion o no se puede leer el manifiesto, la aplicacion registra el
+problema y continua. Una actualizacion obligatoria bloquea el uso hasta instalar
+una version admitida; una opcional puede posponerse.
 
-La versión actual se mantiene en [app_version.py](/C:/Users/GestinemFiscal/Gest2A3Eco/app_version.py:1):
+## Fuentes de version
+
+[`../app_version.py`](../app_version.py) contiene:
 
 ```python
-APP_VERSION = "1.1.0"
+APP_VERSION = "X.Y.Z"
+APP_RELEASE_DATE = "YYYY-MM-DD"
 UPDATE_CHECK_URL = "https://raw.githubusercontent.com/jjdominguez79/Gest2A3Eco/main/updates/version.json"
 ```
 
-Usar siempre formato semver: `MAJOR.MINOR.PATCH`.
+`get_version_label()` genera la etiqueta mostrada por la interfaz. No consulta
+Internet: usa exclusivamente la version y fecha empaquetadas.
 
-## 2. Dónde se publica `version.json`
+[`../setup.iss`](../setup.iss) debe contener la misma `MyAppVersion`. El script
+de publicacion y `release_utils.py` validan la coherencia entre:
 
-El archivo [updates/version.json](/C:/Users/GestinemFiscal/Gest2A3Eco/updates/version.json:1) vive en el repositorio y debe quedar accesible mediante GitHub Raw:
+- `app_version.py`;
+- `setup.iss`;
+- `updates/release_metadata.json`;
+- tag `vX.Y.Z`.
 
-```text
-https://raw.githubusercontent.com/jjdominguez79/Gest2A3Eco/main/updates/version.json
-```
+## Manifiesto remoto
 
-Ese es el endpoint que consulta la aplicación al iniciarse.
-
-## 3. Generar el ejecutable con PyInstaller
-
-Requisitos previos:
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-pip install pyinstaller
-```
-
-Compilación:
-
-```bash
-pyinstaller Gest2A3Eco.spec
-```
-
-El ejecutable principal queda en `dist\Gest2A3Eco\Gest2A3Eco.exe`.
-
-## 4. Generar el instalador con Inno Setup
-
-La versión de [setup.iss](/C:/Users/GestinemFiscal/Gest2A3Eco/setup.iss:17) debe coincidir con `APP_VERSION`:
-
-```iss
-#define MyAppVersion   "1.1.0"
-```
-
-Compilación:
-
-```bash
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup.iss
-```
-
-El instalador esperado para esta versión es:
-
-```text
-dist_installer\Setup_Gest2A3Eco_1.1.0.exe
-```
-
-## 5. Publicar releases en GitHub
-
-Cada versión distribuible debe publicarse como GitHub Release.
-
-Reglas obligatorias:
-
-- Cada release debe tener un tag con formato `vX.Y.Z`, por ejemplo `v1.1.0`.
-- El instalador debe subirse como asset del release, no al repositorio normal.
-- No deben subirse instaladores `.exe` al árbol del repositorio ni a commits de `main`.
-- El nombre del instalador debe coincidir exactamente con el indicado en `download_url`.
-
-Para la versión `1.1.0`, la URL de descarga queda así:
-
-```text
-https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.1.0/Setup_Gest2A3Eco_1.1.0.exe
-```
-
-## 6. Estructura de `version.json`
-
-Contenido inicial de [updates/version.json](/C:/Users/GestinemFiscal/Gest2A3Eco/updates/version.json:1):
+[`../updates/version.json`](../updates/version.json) se publica mediante GitHub
+Raw y contiene:
 
 ```json
 {
-  "latest_version": "1.1.0",
-  "minimum_required_version": "1.1.0",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.1.0/Setup_Gest2A3Eco_1.1.0.exe",
-  "changelog": "Primera versión con sistema de actualización automática.",
+  "latest_version": "X.Y.Z",
+  "minimum_required_version": "A.B.C",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/vX.Y.Z/Setup_Gest2A3Eco_X.Y.Z.exe",
+  "changelog": "Resumen visible para el usuario.",
   "force_update": false
 }
 ```
 
-Campos:
+| Campo | Funcion |
+|---|---|
+| `latest_version` | Version mas reciente publicada |
+| `minimum_required_version` | Version minima que puede continuar |
+| `download_url` | Asset exacto de la GitHub Release |
+| `changelog` | Novedades mostradas al usuario |
+| `force_update` | Fuerza el bloqueo para la nueva version |
 
-| Campo | Tipo | Descripción |
-|---|---|---|
-| `latest_version` | string | Versión más reciente disponible |
-| `minimum_required_version` | string | Versión mínima permitida |
-| `download_url` | string | URL exacta del asset del release |
-| `changelog` | string | Novedades visibles para el usuario |
-| `force_update` | boolean | Si es `true`, obliga a actualizar |
+Cuando `force_update` es `false`, el workflow conserva el minimo anterior. Si
+es `true`, establece la version publicada como nuevo minimo requerido.
 
-## 7. Checklist de nueva versión
+## Construccion
 
-```text
-[ ] 1. Desarrollar y probar los cambios
-[ ] 2. Actualizar APP_VERSION en app_version.py
-[ ] 3. Actualizar #define MyAppVersion en setup.iss
-[ ] 4. Generar el tag vX.Y.Z
-[ ] 5. Ejecutar pyinstaller Gest2A3Eco.spec
-[ ] 6. Probar dist\Gest2A3Eco\Gest2A3Eco.exe
-[ ] 7. Compilar setup.iss con ISCC
-[ ] 8. Crear GitHub Release para el tag vX.Y.Z
-[ ] 9. Subir Setup_Gest2A3Eco_X.Y.Z.exe como asset del release
-[ ] 10. Actualizar updates/version.json
-[ ] 11. Verificar GitHub Raw y la URL del asset
-[ ] 12. Probar la actualización desde una versión anterior
-```
-
-## 8. Estructura de archivos relevantes
+El workflow `.github/workflows/publicar-version.yml` usa Windows y Python
+3.14.2, instala las dependencias, compila con PyInstaller e instala Inno Setup
+6. Los artefactos esperados son:
 
 ```text
-Gest2A3Eco/
-|-- app_version.py
-|-- update_checker.py
-|-- setup.iss
-|-- Gest2A3Eco.spec
-|-- updates/
-|   `-- version.json
-`-- docs/
-    `-- actualizaciones.md
+dist\Gest2A3Eco\Gest2A3Eco.exe
+dist_installer\Setup_Gest2A3Eco_X.Y.Z.exe
 ```
 
-## 9. Notas operativas
+El instalador es un asset de GitHub Release. No se incorpora al historial de
+`main`.
 
-- `update_checker.py` no necesita cambios para este flujo mientras `version.json` siga teniendo la misma estructura.
-- Si `version.json` no es accesible, la aplicación continúa iniciándose con normalidad.
-- `requests` consulta tanto `version.json` como el instalador remoto.
+Antes de actualizar `version.json`, el workflow comprueba que el asset publicado
+responde. Despues cambia a `main`, genera el manifiesto con `release_utils.py` y
+hace un commit limitado a ese archivo.
+
+## Comportamiento del cliente
+
+`update_checker.py`:
+
+- compara versiones con semantica `MAJOR.MINOR.PATCH`;
+- valida el manifiesto antes de mostrar una actualizacion;
+- descarga el instalador a una ubicacion temporal;
+- lanza el instalador y permite cerrar la aplicacion de forma controlada;
+- distingue actualizacion opcional de version minima obligatoria;
+- no usa `updates/release_metadata.json`, que solo participa en publicacion.
+
+## Validacion
+
+```powershell
+$env:PYTHONPATH = "."
+python -m pytest tests/test_release_utils.py tests/test_version_label_1_7_1.py -q
+python -m release_utils validate-release-state `
+  --tag vX.Y.Z `
+  --repo jjdominguez79/Gest2A3Eco `
+  --app-version-file app_version.py `
+  --setup-file setup.iss `
+  --metadata-file updates/release_metadata.json
+```
+
+No deben copiarse numeros de version fijos en esta guia. La fuente de verdad
+para una publicacion concreta son los cuatro archivos/valores validados por
+`release_utils.py`.

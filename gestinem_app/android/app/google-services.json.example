@@ -1,0 +1,4 @@
+{
+  "project_info": {"project_id": "YOUR_FIREBASE_PROJECT_ID"},
+  "client": [{"client_info": {"android_client_info": {"package_name": "es.gestinem.app"}}}]
+}

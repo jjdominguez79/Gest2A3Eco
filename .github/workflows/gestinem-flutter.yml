@@ -1,0 +1,28 @@
+name: Gestinem Flutter
+
+on:
+  push:
+    paths:
+      - "gestinem_app/**"
+      - ".github/workflows/gestinem-flutter.yml"
+  pull_request:
+    paths:
+      - "gestinem_app/**"
+      - ".github/workflows/gestinem-flutter.yml"
+
+jobs:
+  test-and-build-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gestinem_app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      - run: flutter build web --dart-define=API_BASE_URL=https://api.invalid --dart-define=ENVIRONMENT=production

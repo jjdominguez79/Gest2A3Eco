@@ -1,158 +1,116 @@
-# Integracion Azure Document Intelligence — Gest2A3Eco
+# Azure Document Intelligence en Gest2A3Eco
 
-**Estado:** Esqueleto preparado, no activo por defecto.  
-**Motor:** `services/ocr/engines/azure_invoice_engine.py`
+**Estado:** activo a traves del backend cuando `ocr_motor_activo` es `azure`.
 
----
+**Ultima revision contra el codigo:** 2026-08-15.
 
-## 1. Que es Azure Document Intelligence
+## Arquitectura vigente
 
-Azure Document Intelligence (antes Form Recognizer) es un servicio de Microsoft
-que analiza documentos de forma estructurada.  El modelo **prebuilt-invoice**
-extrae directamente los campos de una factura (proveedor, NIF, numero, fecha,
-importes, impuestos) sin necesidad de configurar reglas de extraccion.
-
-Ventajas frente al OCR local (Tesseract):
-- Funciona con PDFs escaneados e imagenes de baja calidad.
-- Devuelve campos estructurados (no texto libre).
-- Soporta facturas en multiple idiomas.
-- Devuelve nivel de confianza por campo.
-
----
-
-## 2. Requisitos
-
-### Azure
-1. Crear un recurso **Document Intelligence** en Azure Portal (plan Free F0 disponible).
-2. Anotar el **Endpoint** y la **Clave de API** del recurso.
-
-### Python
-```bash
-pip install azure-ai-documentintelligence
+```text
+Escritorio
+  |-- integrations_api_url
+  |-- WorkstationToken
+  `-- POST /api/v1/ocr/invoices/analyze
+         -> Backend FastAPI / Railway
+              |-- AZURE_DOC_INTELLIGENCE_ENDPOINT
+              |-- AZURE_DOC_INTELLIGENCE_KEY
+              `-- AZURE_DOC_INTELLIGENCE_MODEL_ID
 ```
 
-Agregar al `requirements.txt`:
-```
-azure-ai-documentintelligence
-```
+La clave Azure se mantiene en Railway. El escritorio envia el documento y el ID
+de modelo, y recibe un `OcrInvoiceResult` normalizado. No recibe ni persiste la
+clave del proveedor.
 
----
+El modo Azure directo se conserva solo para instalaciones sin
+`integrations_api_url`. En ese caso, endpoint y clave se obtienen de la
+configuracion/entorno seguro del puesto y se usa `AzureInvoiceEngine`.
 
-## 3. Configuracion
+## Configuracion
 
-### Opcion A: config.json / config.local.json
+Escritorio, sin secretos:
+
 ```json
 {
   "ocr_motor_activo": "azure",
-  "azure_doc_intelligence_endpoint": "https://mi-recurso.cognitiveservices.azure.com/",
-  "azure_doc_intelligence_key": "tu_clave_de_api_aqui"
+  "azure_doc_intelligence_model_id": "facturas-produccion-v1",
+  "integrations_api_url": "https://gest2a3eco-production.up.railway.app"
 }
 ```
 
-### Opcion B: Base de datos (futuro)
-Pendiente implementar tabla `ocr_configuracion` para guardar credenciales cifradas.
+Backend:
 
-**IMPORTANTE:** No incluir claves de API en el control de versiones.  
-Usar `config.local.json` (excluido del repo via `.gitignore`).
-
----
-
-## 4. Activacion del motor
-
-El motor se activa automaticamente si:
-1. `ocr_motor_activo = "azure"` esta configurado.
-2. El SDK `azure-ai-documentintelligence` esta instalado.
-3. Endpoint y clave son validos.
-
-La cadena de motores en `OcrService` tiene este orden:
-```
-1. PdfTextEngine   (PDF con texto nativo — siempre primero, gratuito)
-2. AzureInvoiceEngine  (si configurado)
-3. LocalOcrEngine  (Tesseract — si instalado)
+```text
+AZURE_DOC_INTELLIGENCE_ENDPOINT=https://mi-recurso.cognitiveservices.azure.com/
+AZURE_DOC_INTELLIGENCE_KEY=<secreto-en-Railway>
+AZURE_DOC_INTELLIGENCE_MODEL_ID=facturas-produccion-v1
 ```
 
-Si el PDF tiene texto, Azure no se invoca (economia de llamadas API).
+El endpoint devuelve `503` si Azure no esta configurado, `401` si falta una
+credencial valida y `415` para tipos de archivo no admitidos.
 
-### Modelo personalizado para el despacho
+## Orden y errores
 
-El modelo prebuilt-invoice es generalista: las correcciones hechas en la
-aplicacion quedan auditadas, pero **no lo reentrenan automaticamente**. Para
-que el OCR aprenda de las facturas reales hay que crear un modelo de extraccion
-personalizado en Azure Document Intelligence Studio:
+Si Azure esta seleccionado y hay backend, `BackendOcrEngine` es prioritario. Su
+resultado, incluido un error de configuracion o de modelo, se devuelve al
+usuario para que el problema sea visible. No se sustituye silenciosamente por
+la interpretacion local de PDF.
 
-1. Reunir facturas ya revisadas, incluyendo las distintas calidades de escaneo,
-   proveedores y formatos habituales. Cinco ejemplos permiten empezar; se
-   recomienda una muestra diversa antes de medir resultados.
-2. Subir las copias al contenedor Blob configurado en un proyecto de
-   *Custom extraction* y marcar visualmente estos campos: `ProveedorNif`,
-   `ProveedorNombre`, `NumeroFactura`, `FechaFactura`, `BaseTotal`, `IvaTotal`,
-   `TotalFactura` y, cuando aplique, una tabla `LineasIva`.
-3. Entrenar y probar el modelo. Azure devuelve un ID de modelo; introducirlo en
-   **OCR > Configurar OCR > ID modelo personalizado**.
-4. Conservar una muestra de control no usada al entrenar. Solo sustituir el ID
-   configurado cuando la prueba mejore el modelo anterior.
+Sin backend, Azure local puede ejecutarse antes que los motores de texto. En
+configuraciones no Azure, `PdfTextEngine` procesa primero los PDF con texto y
+`LocalOcrEngine` usa Tesseract cuando esta instalado.
 
-El motor reconoce esos nombres de campo y tambien los nombres estandar de
-`prebuilt-invoice`, de modo que dejar vacio el ID revierte de forma segura al
-modelo generico. Para facturas con formatos muy diferentes, crear modelos por
-familia y combinarlos en un modelo compuesto o con clasificador en Azure.
+## Campos normalizados
 
----
-
-## 5. Mapeo de campos Azure → OcrInvoiceResult
-
-| Campo Azure (prebuilt-invoice) | Campo OcrInvoiceResult | Notas |
+| Campo Azure | Campo Gest2A3Eco | Notas |
 |---|---|---|
-| `VendorName` | `proveedor_nombre` | Nombre del emisor |
-| `VendorTaxId` | `proveedor_nif` | CIF/NIF/VAT del emisor |
-| `InvoiceId` | `numero_factura` | Numero de la factura |
-| `InvoiceDate` | `fecha_factura` | Fecha de emision (ISO) |
-| `DueDate` | `fecha_vencimiento` | Fecha de vencimiento |
-| `InvoiceTotal` | `total` | Total a pagar (con IVA) |
+| `VendorName` | `proveedor_nombre` | Razon social del emisor |
+| `VendorTaxId` | `proveedor_nif` | NIF/CIF/VAT del emisor |
+| `InvoiceId` | `numero_factura` | Serie y numero |
+| `InvoiceDate` | `fecha_factura` | Fecha ISO |
+| `DueDate` | `fecha_vencimiento` | Fecha ISO |
+| `InvoiceTotal` | `total` | Total con impuestos |
 | `SubTotal` | `base_total` | Base imponible total |
-| `TotalTax` | `iva_total` | Suma de cuotas de IVA |
-| `TaxDetails[].Amount` | `bases_iva[].cuota_iva` | Desglose por tipo IVA |
-| `Items[]` | (futuro) | Lineas de detalle de factura |
-| confidence de campos | `confianza` | Media de confianzas de campos clave |
+| `TotalTax` | `iva_total` | Cuota total de IVA |
+| `TaxDetails` | `bases_iva` | Desglose fiscal si Azure lo identifica |
+| confianza | `confianza` | Valor normalizado entre 0 y 1 |
 
-### Limitaciones conocidas
-- Azure no siempre desglosa la base imponible por tipo de IVA; en ese caso
-  se usa la base total con un tipo inferido.
-- El numero de factura puede incluir prefijos de serie; revisar manualmente.
-- Para facturas en castellano, el modelo puede confundir "Retenciones" con IVA.
+El motor tambien reconoce los nombres del modelo personalizado:
+`ProveedorNif`, `ProveedorNombre`, `NumeroFactura`, `FechaFactura`,
+`BaseTotal`, `IvaTotal`, `TotalFactura` y `LineasIva`.
 
----
+## Modelo personalizado y aprendizaje
 
-## 6. Costes Azure
+Las correcciones hechas en la aplicacion se auditan, pero no reentrenan Azure
+automaticamente. Cuando una factura se valida,
+`services/ocr/aprendizaje_service.py` puede registrar una copia privada y sus
+datos estructurados en `ocr_aprendizaje_ejemplos`. El conjunto puede exportarse
+a un contenedor Blob de entrenamiento configurado mediante:
 
-| Plan | Llamadas/mes | Precio adicional |
-|---|---|---|
-| Free (F0) | 500 | Gratuito |
-| Standard (S0) | Ilimitado | ~1,50 €/1.000 paginas |
-
-Referencia: https://azure.microsoft.com/es-es/pricing/details/ai-document-intelligence/
-
----
-
-## 7. Ejemplo de codigo (ya implementado en azure_invoice_engine.py)
-
-```python
-from services.ocr.engines.azure_invoice_engine import AzureInvoiceEngine
-
-engine = AzureInvoiceEngine(
-    endpoint="https://mi-recurso.cognitiveservices.azure.com/",
-    api_key="mi_clave",
-)
-if engine.disponible():
-    result = engine.extraer(Path("factura.pdf"))
-    print(result.proveedor_nif, result.total)
+```text
+AZURE_OCR_TRAINING_CONNECTION_STRING
+AZURE_OCR_TRAINING_CONTAINER
 ```
 
----
+El entrenamiento sigue realizandose en Azure Document Intelligence Studio:
 
-## 8. Seguridad
+1. preparar una muestra diversa de documentos ya revisados;
+2. etiquetar los campos acordados;
+3. entrenar y validar con una muestra de control separada;
+4. publicar el nuevo ID en Railway y en la configuracion no sensible del
+   escritorio;
+5. conservar el modelo anterior para rollback.
 
-- Las claves de API se almacenan en `config.local.json` (no versionado).
-- En produccion, considerar Azure Key Vault o variables de entorno.
-- No loguear la api_key en ningun registro de log.
-- El motor nunca expone la clave fuera de la llamada HTTP.
+## Limitaciones y operacion
+
+- Azure puede no desglosar correctamente todas las bases de IVA o retenciones;
+  la revision manual sigue siendo obligatoria.
+- El modelo puede confundir el NIF del cliente con el emisor; el normalizador y
+  las reglas de cabecera reducen ese riesgo, pero no lo eliminan.
+- Los importes y fechas aceptan formatos europeos e internacionales antes de
+  normalizarse.
+- Nunca se deben registrar claves, connection strings ni documentos completos
+  en logs de error.
+
+Los precios y cuotas de Azure cambian con el tiempo; deben consultarse en la
+pagina oficial antes de estimar costes, no mantenerse como una cifra fija en
+esta documentacion.

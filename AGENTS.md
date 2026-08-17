@@ -1,58 +1,91 @@
 # AGENTS.md
 
-Guidance for Codex when working in this repository.
+Guidance for coding agents working in this repository. Verified against the
+repository on 2026-08-15.
 
 ## Project Overview
 
-Gest2A3Eco is a Windows desktop accounting application built with Python,
-Tkinter and PostgreSQL. Core responsibilities:
+Gest2A3Eco is a Windows desktop accounting and document-management application
+built with Python, Tkinter and PostgreSQL. It generates A3ECO `suenlace.dat`
+files and manages invoicing, OCR review, communications, signatures, public
+administration certificates and DGT procedures.
 
-1. Generate `suenlace.dat` binary files for A3ECO from bank extracts and invoice data.
-2. Manage issued and received invoices, including Word-template PDF generation,
-   communication workflows and OCR review.
+The repository also contains a FastAPI backend and two Synology workers. The
+backend owns provider secrets and serves DGT, OCR, SignRequest, Dataprius and
+messaging/PWA flows. The workers synchronize Microsoft Graph mail and PWA
+attachments without requiring the desktop application to be open.
+
+`gestinem_app/` is an initial Flutter scaffold for a future mobile messaging
+client. The backend contracts may exist before the Flutter UI consumes them;
+do not describe the scaffold as a finished application.
 
 ## Development Commands
 
-```bash
+```powershell
 python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-pip install -r requirements-dev.txt
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 
 python main.py
-pytest
-pyinstaller Gest2A3Eco.spec
+$env:PYTHONPATH = "."
+python -m pytest
+python -m PyInstaller --clean --noconfirm Gest2A3Eco.spec
+
+Set-Location gestinem_app
+flutter pub get
+flutter test
 ```
 
-## Architecture
+The release workflow builds with Python 3.14.2. The supported source baseline
+is Python 3.10 or newer.
 
-MVC + Services + Process layer. Entry point: `main.py`.
+## Architecture
 
 | Layer | Directory | Role |
 |---|---|---|
 | Views | `views/ui_*.py` | Tkinter screens; UI only |
-| Controllers | `controllers/*.py` | Navigation, validation, orchestration |
-| Services | `services/*.py` | Auth, email, OCR, notifications, imports |
-| Processes | `procesos/*.py` | A3ECO binary generation and PDF generation |
-| Models | `models/` | PostgreSQL data access and A3ECO record renderers |
-| Utilities | `utils/` | Config I/O, NIF/CIF validation, number formatting |
+| Controllers | `controllers/*.py` | Navigation, validation and orchestration |
+| Services | `services/*.py` | OCR, mail, signatures, DGT and integrations |
+| Processes | `procesos/*.py` | A3ECO records and Word/PDF generation |
+| Models | `models/` | PostgreSQL access and A3ECO renderers |
+| Backend | `backend/api/` | FastAPI integrations and web portals |
+| Workers | `sync_worker/` | Synology mail and attachment synchronization |
+| Mobile | `gestinem_app/` | Flutter scaffold; not yet a functional client |
+| Utilities | `utils/` | Configuration, credentials and validation |
 
-## Database
+Entry point: `main.py`. The company workspace is coordinated by
+`controllers/app_controller.py`.
 
-PostgreSQL is the only application database. Configure it through
-`postgres_dsn` in `config.local.json` or `GEST2A3ECO_POSTGRES_DSN`.
+## Data and Configuration
 
-Do not add local file-database fallbacks, local `.db` paths, or migration flows
-that require a workstation database file. Schema initialization and additive
-checks belong in the PostgreSQL data layer.
+PostgreSQL is the only application database. Do not add SQLite or other local
+file-database fallbacks. Schema initialization and additive checks belong in
+`models/gestor_postgres.py`. The DGT/messaging backend uses its own PostgreSQL
+through `DGT_DATABASE_URL`.
+
+Desktop configuration lives in
+`%LOCALAPPDATA%\Gest2A3Eco\config.local.json`. It must contain only non-secret
+values. PostgreSQL credentials and the workstation token belong in Windows
+Credential Manager; `utils/credential_store.py` is the source of truth. Legacy
+API keys must not be restored as desktop authentication mechanisms.
+
+Documents shared by workstations belong under the configured network document
+repository. Temporary cloud storage is not the definitive archive.
 
 ## Conventions
 
-- Spanish identifiers, UI text and comments.
-- Source files should remain ASCII unless the edited file already requires otherwise.
-- UI in `views/`; business logic in `controllers/`, `services/` or `procesos/`; data in `models/`.
-- Data access goes through the PostgreSQL gestor exposed by `models/gestor_postgres.py`.
-- `plantillas.json` is seed/template material only, not the source of truth.
-- PDFs are generated through `procesos/facturas_word.py`; no basic-PDF fallback.
-- PDFs are copied to the A3ECO linked folder only during `suenlace.dat` generation.
-- Target platform is Windows.
+- Use Spanish identifiers, UI text and comments.
+- Keep source ASCII unless the edited file already requires Unicode.
+- UI belongs in `views/`; business logic in `controllers/`, `services/` or
+  `procesos/`; data access in `models/`.
+- Access application data through the PostgreSQL gestor exposed by
+  `models/gestor_postgres.py`.
+- Treat `plantillas.json` as seed/template material only.
+- Generate PDFs through `procesos/facturas_word.py`; there is no supported
+  basic-PDF fallback.
+- Copy PDFs to the A3ECO linked folder only while generating `suenlace.dat`.
+- Never persist provider secrets, workstation tokens or DSNs with passwords in
+  JSON files.
+- Preserve the Windows target and test both source and frozen path behavior
+  when changing configuration or resources.

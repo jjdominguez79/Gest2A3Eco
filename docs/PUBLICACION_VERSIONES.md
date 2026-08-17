@@ -1,5 +1,9 @@
 # Publicacion de versiones de Gest2A3Eco
 
+**Estado:** procedimiento operativo vigente.
+
+**Ultima revision contra el workflow:** 2026-08-15.
+
 ## Objetivo
 
 Este flujo permite publicar una nueva version de Gest2A3Eco desde Windows con un unico comando local:
@@ -49,6 +53,9 @@ git push --dry-run origin main
 python --version
 ```
 
+El workflow de GitHub usa Python 3.14.2. Antes de publicar conviene ejecutar la
+suite en una version equivalente a la usada para compilar.
+
 4. Revisa en GitHub:
 
 ```text
@@ -86,6 +93,7 @@ El workflow necesita permisos de escritura para:
    `app_version.py`
    `setup.iss`
    `updates/release_metadata.json`
+   (incluyendo `APP_RELEASE_DATE` en `app_version.py`)
 11. crea el commit de preparacion;
 12. hace push a `main`;
 13. crea el tag anotado `vX.Y.Z`;
@@ -113,7 +121,17 @@ El workflow necesita permisos de escritura para:
 ## Publicar una nueva version
 
 1. Termina los cambios de codigo.
-2. Ejecuta pruebas locales.
+2. Ejecuta pruebas locales desde la raiz:
+
+```powershell
+$env:PYTHONPATH = "."
+python -m pytest
+```
+
+Si falla una prueba dependiente de Tkinter, corrige primero la instalacion de
+Tcl/Tk del interprete de compilacion; no publiques interpretando ese fallo como
+un problema ajeno al instalador.
+
 3. Ejecuta:
 
 ```powershell
@@ -213,6 +231,8 @@ https://github.com/jjdominguez79/Gest2A3Eco/releases/download/vX.Y.Z/Setup_Gest2
 - `publicar_version.bat`
 - `.github/workflows/publicar-version.yml`
 - `release_utils.py`
+- `app_version.py`
+- `setup.iss`
 - `updates/release_metadata.json` en cada publicacion
 - `updates/version.json`
 

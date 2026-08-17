@@ -1,0 +1,31 @@
+import 'package:dio/dio.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:gestinem/core/api/api_client.dart';
+import 'package:gestinem/features/messaging/data/messaging_repository.dart';
+
+import 'test_helpers.dart';
+
+void main() {
+  test('repository carga conversaciones cliente con token Bearer', () async {
+    final adapter = JsonAdapter([
+      {
+        'id': 'conversation-1',
+        'company_code': 'E00001',
+        'company_name': 'Empresa Uno',
+        'kind': 'fiscal',
+        'state': 'pendiente',
+        'unread_count': 2,
+        'updated_at': '2026-08-15T10:00:00Z',
+        'last_message': null,
+      }
+    ]);
+    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'))..httpClientAdapter = adapter;
+    final api = ApiClient(dio: dio, tokenProvider: () => testSession.token);
+    final rows = await MessagingRepository(api).conversations(testProfile);
+
+    expect(rows.single.companyCode, 'E00001');
+    expect(rows.single.unreadCount, 2);
+    expect(adapter.lastRequest!.path, '/client/conversations');
+    expect(adapter.lastRequest!.headers['Authorization'], 'Bearer test-token');
+  });
+}

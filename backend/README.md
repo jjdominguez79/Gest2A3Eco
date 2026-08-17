@@ -1,50 +1,135 @@
-# API Tramites DGT y Mensajeria
+# Backend de integraciones y mensajeria
 
-Backend independiente para expedientes DGT. Usa PostgreSQL exclusivamente
-mediante `DGT_DATABASE_URL`.
+Backend FastAPI independiente del escritorio. Sirve los tramites DGT, OCR
+Azure, SignRequest, Dataprius y los portales de mensajeria de clientes y
+empleados. Revisado contra el codigo el 2026-08-15.
+
+## Desarrollo local
 
 ```powershell
-pip install -r backend/requirements.txt
-$env:DGT_INTERNAL_API_KEY = "cambiar-en-produccion"
-uvicorn backend.api.app:app --reload
+python -m pip install -r backend/requirements.txt
+$env:DGT_DATABASE_URL = "postgresql+psycopg://usuario:password@localhost:5432/gest2a3eco_backend"
+$env:DGT_INTERNAL_API_KEY = "secreto-solo-desarrollo"
+$env:DGT_PUBLIC_BASE_URL = "http://localhost:8000"
+python -m uvicorn backend.api.app:app --reload
 ```
 
-Variables:
+Comprobaciones:
 
-- `DGT_DATABASE_URL`: URL SQLAlchemy de PostgreSQL. Es obligatoria.
-- `DGT_INTERNAL_API_KEY`: credencial de Gest2A3Eco (obligatoria fuera de tests).
-- `DGT_PUBLIC_BASE_URL`: base de enlaces HTTPS.
-- `DGT_TOKEN_TTL_HOURS`: caducidad, 168 horas por defecto.
+- `GET /health`
+- OpenAPI en `/docs` y `/openapi.json`
+- portal DGT en `/t/{referencia}/{rol}`
+- PWA de clientes en `/mensajes`
+- PWA de empleados en `/equipo/mensajes`
+
+La base del backend es PostgreSQL y se configura exclusivamente mediante
+`DGT_DATABASE_URL`. No existe fallback a SQLite. El esquema inicial esta en
+`backend/migrations/001_initial.sql`; los modelos aplican las ampliaciones
+aditivas posteriores.
+
+## Servicios
+
+- **DGT:** expedientes, partes, vehiculos, enlaces con caducidad, documentos,
+  subsanaciones, validacion, firma, auditoria y portal publico por rol.
+- **OCR:** `POST /api/v1/ocr/invoices/analyze` delega en Azure Document
+  Intelligence sin exponer su clave al escritorio.
+- **Firma:** proxy de envio, consulta, cancelacion, reenvio y evidencias de
+  SignRequest.
+- **Dataprius:** carga de documentos en la ruta solicitada por el escritorio o
+  por el flujo DGT.
+- **Mensajeria:** invitaciones, autenticacion de clientes, acceso Microsoft 365
+  del personal, chats con adjuntos, respuestas, borrado auditado, grupos,
+  campanas, Web Push, FCM y eventos en tiempo real.
+- **Cliente movil:** aplicacion Flutter funcional para clientes y empleados,
+  con codigos de acceso, registro/presencia de dispositivos y WebSocket.
+- **Worker de adjuntos:** endpoints tecnicos para reclamar, descargar, verificar
+  y confirmar archivos temporales.
+
+## Autenticacion
+
+La cabecera `X-API-Key` tiene dos credenciales posibles segun la ruta:
+
+- `DGT_INTERNAL_API_KEY`: administracion de puestos y organizaciones,
+  invitaciones internas y otras rutas exclusivas del servidor.
+- `WorkstationToken`: operaciones del escritorio en DGT, OCR, firma,
+  Dataprius, estado de integraciones y alta del dispositivo de mensajeria.
+
+Un `WorkstationToken` no puede acceder a endpoints administrativos. Los portales
+web usan sesiones propias y el worker de adjuntos usa `X-Sync-Token` con
+`MESSAGING_SYNC_TOKEN`.
+
+En cada puesto se configuran las URLs `integrations_api_url` y
+`messaging_api_url`; el token se guarda en Windows Credential Manager, nunca en
+el JSON local. En el primer acceso, el escritorio obtiene un token de dispositivo
+revocable y tambien lo guarda en Credential Manager.
+
+## Variables de entorno
+
+### Nucleo y DGT
+
+- `DGT_DATABASE_URL`: DSN SQLAlchemy PostgreSQL obligatorio.
+- `DGT_INTERNAL_API_KEY`: credencial interna obligatoria fuera de pruebas.
+- `DGT_PUBLIC_BASE_URL`: origen de enlaces publicos.
+- `DGT_TOKEN_TTL_HOURS`: caducidad de enlaces; 168 horas por defecto.
 - `DGT_STORAGE_DIR`: almacenamiento privado local de desarrollo.
-- `MESSAGING_PUBLIC_BASE_URL`: origen HTTPS del portal `/mensajes`.
-- `MESSAGING_AZURE_CONNECTION_STRING`: almacenamiento temporal de adjuntos de
-  mensajeria. Debe configurarse en produccion; el disco local es solo para desarrollo.
-- `MESSAGING_AZURE_CONTAINER`: contenedor privado, `mensajeria-temporal` por defecto.
-- `MESSAGING_ATTACHMENT_DAYS`: disponibilidad de documentos enviados al cliente;
-  nunca puede ser inferior a 15 y por defecto son 30 dias.
-- `MESSAGING_GRAPH_*`: credenciales de aplicacion de Microsoft Graph
-  (`TENANT_ID`, `CLIENT_ID`, `CLIENT_SECRET` y `FROM`) para enviar invitaciones,
-  recuperaciones y avisos desde el backend. La aplicacion de Azure necesita el
-  permiso de aplicacion `Mail.Send` con consentimiento de administrador.
-- `MESSAGING_GRAPH_INVITATION_FROM`: buzon autorizado desde el que salen las
-  invitaciones creadas por el administrador.
-- `MESSAGING_STAFF_*`: configuracion del acceso Microsoft 365 de empleados. Si
-  no se indican `TENANT_ID`, `CLIENT_ID` y `CLIENT_SECRET`, se reutilizan los de
-  Graph. `ADMIN_EMAILS` define los administradores iniciales y
-  `ALLOWED_DOMAIN` restringe el dominio corporativo.
-- `MESSAGING_SYNC_TOKEN`: secreto exclusivo del recolector de adjuntos del
-  Synology; no debe reutilizar la clave general de la API.
-- `MESSAGING_VAPID_PUBLIC_KEY`, `MESSAGING_VAPID_PRIVATE_KEY` y
-  `MESSAGING_VAPID_SUBJECT`: credenciales Web Push para avisar a los empleados
-  aunque la PWA no este abierta.
-- `MESSAGING_SMTP_*`: respaldo opcional cuando Graph no esta configurado. Los
-  avisos de mensajes se envian solo si el cliente no mantiene una conexion
-  activa con la PWA.
 
-En cada puesto de Gest2A3Eco se configuran `messaging_api_url` y
-`messaging_api_key` (pueden reutilizar inicialmente la URL y clave internas de
-DGT). En el primer acceso se registra una credencial revocable propia del puesto
-en `messaging_device_token`. Los adjuntos recibidos se descargan a la entrada del repositorio documental
-compartido, se verifican por SHA-256 y se elimina entonces la copia temporal cloud.
+### OCR e integraciones
 
-La documentacion OpenAPI queda disponible en `/docs` y `/openapi.json`.
+- `AZURE_DOC_INTELLIGENCE_ENDPOINT`, `AZURE_DOC_INTELLIGENCE_KEY` y
+  `AZURE_DOC_INTELLIGENCE_MODEL_ID`.
+- `AZURE_OCR_TRAINING_CONNECTION_STRING` y
+  `AZURE_OCR_TRAINING_CONTAINER` para exportaciones de aprendizaje.
+- `SIGNREQUEST_TOKEN`, `SIGNREQUEST_FROM_EMAIL`,
+  `SIGNREQUEST_GESTOR_EMAIL`, `SIGNREQUEST_GESTOR_TELEFONO` y
+  `SIGNREQUEST_BASE_URL`.
+- `DATAPRIUS_API_KEY`, `DATAPRIUS_API_SECRET`, `DATAPRIUS_BASE_URL` y
+  `DATAPRIUS_BASE_PATH`.
+
+### Mensajeria
+
+- `MESSAGING_PUBLIC_BASE_URL`: origen HTTPS de los portales.
+- `MESSAGING_STORAGE_DIR`: almacenamiento local de desarrollo.
+- `MESSAGING_AZURE_CONNECTION_STRING` y `MESSAGING_AZURE_CONTAINER`:
+  almacenamiento temporal privado de adjuntos en produccion.
+- `MESSAGING_ATTACHMENT_DAYS`: retencion temporal, minimo 15 y 30 por defecto.
+- `MESSAGING_GRAPH_*`: credenciales Graph y buzones de envio.
+- `MESSAGING_STAFF_*`: acceso Microsoft 365 de empleados, dominio permitido y
+  administradores iniciales.
+- `MESSAGING_VAPID_*`: credenciales Web Push.
+- `MESSAGING_FIREBASE_CREDENTIALS`: ruta privada al JSON de cuenta de servicio
+  usado por Firebase Admin para FCM.
+- `MESSAGING_APP_REDIRECT_URI`: deep link del cliente movil; por defecto
+  `es.gestinem.app://auth/callback`.
+- `MESSAGING_SYNC_TOKEN`: secreto exclusivo del worker Synology.
+- `MESSAGING_SMTP_*`: respaldo opcional si Graph no esta disponible.
+
+La aplicacion Azure necesita los permisos Graph correspondientes; `Mail.Send`
+de aplicacion es necesario para invitaciones, recuperaciones y avisos.
+
+## Almacenamiento de adjuntos
+
+Los adjuntos enviados desde la PWA permanecen temporalmente en Azure Blob. El
+worker Synology los reclama, verifica su SHA-256, copia el contenido al
+repositorio documental compartido y confirma la entrega. Solo entonces el
+backend elimina la copia temporal.
+
+El disco local configurado por `MESSAGING_STORAGE_DIR` es valido para desarrollo,
+pero no es el archivo definitivo de produccion.
+
+## Mensajeria movil y tiempo real
+
+La ampliacion aditiva `backend/migrations/002_flutter_messaging.sql` incorpora
+respuestas a mensajes, borrado logico con auditoria, grupos, campanas,
+dispositivos de app y codigos de acceso de empleados. Debe aplicarse en
+despliegues existentes antes de habilitar esas rutas.
+
+Railway usa `railway.toml`, que construye `backend/Dockerfile`. Su comando de
+produccion es `exec uvicorn backend.api.app:app --host 0.0.0.0 --port
+${PORT:-8000} --proxy-headers`; sin `--workers`, Uvicorn arranca un unico worker.
+
+`/api/v1/messaging/ws/{audience}` ofrece WebSocket autenticado. El hub actual es
+en memoria y requiere mantener ese unico worker/proceso FastAPI; REST y el
+endpoint de eventos siguen siendo la fuente de verdad y el fallback. Antes de
+usar varios workers o escalar horizontalmente debe sustituirse el bus por
+pub/sub compartido (Redis, PostgreSQL u otro equivalente), sin cambiar el
+contrato exterior.

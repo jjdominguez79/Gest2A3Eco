@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>PRODUCT_BUNDLE_IDENTIFIER</key><string>es.gestinem.app</string>
+  <key>PROJECT_ID</key><string>YOUR_FIREBASE_PROJECT_ID</string>
+</dict></plist>

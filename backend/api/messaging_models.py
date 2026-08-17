@@ -111,6 +111,13 @@ class MessagingStaffThreadMessage(Base):
     )
     author_name: Mapped[str] = mapped_column(String(160))
     body: Mapped[str] = mapped_column(Text)
+    reply_to_message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("msg_staff_thread_messages.id", ondelete="SET NULL"), index=True,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_by: Mapped[str] = mapped_column(String(64), default="")
+    deleted_by_type: Mapped[str] = mapped_column(String(16), default="")
+    delete_reason: Mapped[str] = mapped_column(String(500), default="")
     idempotency_key: Mapped[str] = mapped_column(String(80))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
@@ -223,6 +230,13 @@ class MessagingMessage(Base):
     author_id: Mapped[str] = mapped_column(String(64))
     author_name: Mapped[str] = mapped_column(String(160))
     body: Mapped[str] = mapped_column(Text, default="")
+    reply_to_message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("msg_messages.id", ondelete="SET NULL"), index=True,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_by: Mapped[str] = mapped_column(String(64), default="")
+    deleted_by_type: Mapped[str] = mapped_column(String(16), default="")
+    delete_reason: Mapped[str] = mapped_column(String(500), default="")
     idempotency_key: Mapped[str] = mapped_column(String(80))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
@@ -275,3 +289,102 @@ class MessagingEvent(Base):
     conversation_id: Mapped[str] = mapped_column(String(36), default="", index=True)
     event_type: Mapped[str] = mapped_column(String(40), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class MessagingGroup(Base):
+    __tablename__ = "msg_groups"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(160), index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    group_type: Mapped[str] = mapped_column(String(20), index=True)  # staff_chat | client_list
+    created_by: Mapped[str] = mapped_column(String(64), index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class MessagingGroupMember(Base):
+    __tablename__ = "msg_group_members"
+    __table_args__ = (UniqueConstraint("group_id", "member_type", "member_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    group_id: Mapped[str] = mapped_column(ForeignKey("msg_groups.id", ondelete="CASCADE"), index=True)
+    member_type: Mapped[str] = mapped_column(String(16), index=True)  # staff | client
+    member_id: Mapped[str] = mapped_column(String(64), index=True)
+    role: Mapped[str] = mapped_column(String(20), default="member")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MessagingCampaign(Base):
+    __tablename__ = "msg_campaigns"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(160))
+    body: Mapped[str] = mapped_column(Text)
+    channel: Mapped[str] = mapped_column(String(20), default="fiscal")
+    created_by: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="draft", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MessagingCampaignRecipient(Base):
+    __tablename__ = "msg_campaign_recipients"
+    __table_args__ = (UniqueConstraint("campaign_id", "client_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("msg_campaigns.id", ondelete="CASCADE"), index=True)
+    client_id: Mapped[str] = mapped_column(ForeignKey("msg_clients.id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    message_id: Mapped[str | None] = mapped_column(ForeignKey("msg_messages.id", ondelete="SET NULL"), index=True)
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MessagingAppDevice(Base):
+    __tablename__ = "msg_app_devices"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_type: Mapped[str] = mapped_column(String(16), index=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    platform: Mapped[str] = mapped_column(String(16), index=True)
+    push_token: Mapped[str] = mapped_column(Text, unique=True)
+    device_name: Mapped[str] = mapped_column(String(160), default="")
+    app_version: Mapped[str] = mapped_column(String(40), default="")
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    active_conversation_id: Mapped[str] = mapped_column(String(36), default="", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MessagingDeletionAudit(Base):
+    __tablename__ = "msg_deletion_audit"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    message_id: Mapped[str] = mapped_column(String(36), index=True)
+    conversation_id: Mapped[str] = mapped_column(String(36), index=True)
+    actor_id: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(16))  # soft_delete | hard_delete
+    reason: Mapped[str] = mapped_column(String(500), default="")
+    attachment_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MessagingStaffAppCode(Base):
+    __tablename__ = "msg_staff_app_codes"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    staff_external_id: Mapped[str] = mapped_column(ForeignKey("msg_staff.external_id", ondelete="CASCADE"), index=True)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MessagingWebSocketTicket(Base):
+    __tablename__ = "msg_websocket_tickets"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_type: Mapped[str] = mapped_column(String(16), index=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

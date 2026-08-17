@@ -7,11 +7,13 @@ import json
 import mimetypes
 import secrets
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
+from typing import Literal
+from urllib.parse import urlencode
 
 import msal
 from PIL import Image, ImageOps, UnidentifiedImageError
-from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -21,10 +23,13 @@ from backend.api.config import get_settings
 from backend.api.database import SessionLocal
 from backend.api.messaging_models import (
     MessagingAttachment, MessagingClient, MessagingClientPushSubscription, MessagingConversation, MessagingDevice, MessagingDownload,
-    MessagingEvent, MessagingInvitation, MessagingMessage, MessagingOrganization,
+    MessagingAppDevice, MessagingCampaign, MessagingCampaignRecipient,
+    MessagingDeletionAudit, MessagingEvent, MessagingGroup, MessagingGroupMember,
+    MessagingInvitation, MessagingMessage, MessagingOrganization,
     MessagingPasswordReset, MessagingPresence, MessagingRead, MessagingSession, MessagingStaff,
     MessagingPushSubscription, MessagingStaffAuthFlow, MessagingStaffChannel, MessagingStaffSession,
-    MessagingStaffThread, MessagingStaffThreadMessage, MessagingStaffThreadRead,
+    MessagingStaffAppCode, MessagingStaffThread, MessagingStaffThreadMessage,
+    MessagingStaffThreadRead, MessagingWebSocketTicket,
 )
 from backend.api.messaging_mail import (
     configured as mail_configured, send_invitation, send_message_notice,
@@ -36,6 +41,8 @@ from backend.api.messaging_security import (
 )
 from backend.api.messaging_storage import MessagingStorage, safe_name
 from backend.api.messaging_push import configured as push_configured, send_push
+from backend.api.messaging_firebase import configured as fcm_configured, send_fcm
+from backend.api.messaging_realtime import hub
 from backend.api.security import require_internal_key, require_workstation_or_internal
 
 
@@ -71,7 +78,7 @@ class StaffIn(BaseModel):
     name: str
     email: str = ""
     chat_alias: str = ""
-    role: str = "empleado"
+    role: Literal["admin", "empleado"] = "empleado"
     active: bool = True
     channels: list[str] | None = None
 
@@ -112,14 +119,14 @@ class StaffPermissionsIn(BaseModel):
     active: bool = True
     name: str | None = Field(default=None, min_length=1, max_length=160)
     email: str | None = Field(default=None, min_length=3, max_length=254)
-    role: str | None = None
+    role: Literal["admin", "empleado"] | None = None
     chat_alias: str | None = Field(default=None, max_length=160)
 
 
 class StaffCreateIn(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     email: str = Field(min_length=3, max_length=254)
-    role: str = "empleado"
+    role: Literal["admin", "empleado"] = "empleado"
     chat_alias: str = Field(default="", max_length=160)
     active: bool = True
     channels: list[str] = Field(default_factory=list)
@@ -129,6 +136,44 @@ class PushSubscriptionIn(BaseModel):
     endpoint: str = Field(min_length=10, max_length=4000)
     p256dh: str = Field(min_length=10, max_length=1000)
     auth: str = Field(min_length=5, max_length=1000)
+
+
+class StaffAppCodeIn(BaseModel):
+    code: str = Field(min_length=20, max_length=300)
+
+
+class AppDeviceIn(BaseModel):
+    platform: Literal["android", "ios", "windows", "macos", "web"]
+    push_token: str = Field(min_length=20, max_length=5000)
+    device_name: str = Field(default="", max_length=160)
+    app_version: str = Field(default="", max_length=40)
+
+
+class MessageDeleteIn(BaseModel):
+    reason: str = Field(default="", max_length=500)
+
+
+class GroupIn(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    description: str = Field(default="", max_length=2000)
+    group_type: Literal["staff_chat", "client_list"]
+    active: bool = True
+
+
+class GroupMemberIn(BaseModel):
+    member_type: Literal["staff", "client"]
+    member_id: str = Field(min_length=1, max_length=64)
+    role: Literal["owner", "member"] = "member"
+
+
+class CampaignIn(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    body: str = Field(min_length=1, max_length=20000)
+    channel: str = "fiscal"
+    all_clients: bool = False
+    group_ids: list[str] = Field(default_factory=list)
+    client_ids: list[str] = Field(default_factory=list)
+    scheduled_at: datetime | None = None
 
 
 def _staff_from_request(db: Session, request: Request) -> MessagingStaff:
@@ -241,6 +286,13 @@ def _can_access_staff_thread(
     db: Session, thread: MessagingStaffThread, staff: MessagingStaff,
 ) -> bool:
     if thread.kind == "group":
+        if thread.key.startswith("dynamic-group:"):
+            group_id = thread.key.split(":", 1)[1]
+            return staff.role == "admin" or bool(db.scalar(select(MessagingGroupMember.id).where(
+                MessagingGroupMember.group_id == group_id,
+                MessagingGroupMember.member_type == "staff",
+                MessagingGroupMember.member_id == staff.external_id,
+            )))
         return staff.role == "admin" or thread.channel in _channels_for_staff(db, staff)
     return staff.external_id in {
         thread.admin_staff_external_id, thread.member_staff_external_id,
@@ -352,7 +404,7 @@ def _serialize_conversation(db: Session, conv: MessagingConversation) -> dict:
 
 
 def _serialize_message(db: Session, item: MessagingMessage, audience: str = "") -> dict:
-    attachments = list(db.scalars(select(MessagingAttachment).where(MessagingAttachment.message_id == item.id)))
+    attachments = [] if item.deleted_at else list(db.scalars(select(MessagingAttachment).where(MessagingAttachment.message_id == item.id)))
     author_name = item.author_name
     author_avatar_url = ""
     if item.author_type == "staff":
@@ -361,11 +413,24 @@ def _serialize_message(db: Session, item: MessagingMessage, audience: str = "") 
             author_name = author.chat_alias.strip() or item.author_name
             if author.avatar_storage_key and audience in {"client", "staff"}:
                 author_avatar_url = f"/api/v1/messaging/{audience}/avatars/{author.external_id}"
+    reply = db.get(MessagingMessage, item.reply_to_message_id) if item.reply_to_message_id else None
+    reply_data = None
+    if reply:
+        reply_data = {
+            "id": reply.id,
+            "author_name": reply.author_name,
+            "body_fragment": "Mensaje eliminado" if reply.deleted_at else reply.body[:180],
+            "deleted": bool(reply.deleted_at),
+        }
     return {
         "id": item.id, "conversation_id": item.conversation_id,
         "author_type": item.author_type, "author_id": item.author_id,
         "author_name": author_name, "author_avatar_url": author_avatar_url,
-        "body": item.body,
+        "body": "" if item.deleted_at else item.body,
+        "deleted": bool(item.deleted_at),
+        "deleted_at": item.deleted_at.isoformat() if item.deleted_at else None,
+        "delete_reason": item.delete_reason if item.deleted_at and audience == "staff" else "",
+        "reply_to": reply_data,
         "created_at": item.created_at.isoformat(),
         "attachments": [{
             "id": a.id, "name": a.name, "content_type": a.content_type,
@@ -451,9 +516,61 @@ def _queue_client_pushes(
         }, payload)
 
 
+def _queue_app_pushes(
+    db: Session, background: BackgroundTasks, conv: MessagingConversation,
+    recipient_type: str,
+) -> None:
+    if not fcm_configured():
+        return
+    now = utcnow()
+    if recipient_type == "client":
+        user_ids = set(db.scalars(select(MessagingClient.id).where(
+            MessagingClient.organization_id == conv.organization_id,
+            MessagingClient.active.is_(True),
+        )))
+    else:
+        org = db.get(MessagingOrganization, conv.organization_id)
+        if conv.kind == "private" or org.company_code.strip().upper() in TEST_COMPANY_CODES:
+            user_ids = {org.private_owner_external_id} if org.private_owner_external_id else set()
+        else:
+            user_ids = set(db.scalars(select(MessagingStaffChannel.staff_external_id).where(
+                MessagingStaffChannel.channel == conv.kind,
+            )))
+    if not user_ids:
+        return
+    devices = db.scalars(select(MessagingAppDevice).where(
+        MessagingAppDevice.user_type == recipient_type,
+        MessagingAppDevice.user_id.in_(user_ids),
+        MessagingAppDevice.active.is_(True),
+    )).all()
+    payload = {
+        "title": "Nuevo mensaje de Gestinem",
+        "body": "Tienes un nuevo mensaje",
+        "event": "message.created",
+        "conversation_id": conv.id,
+    }
+    for device in devices:
+        viewing = (
+            device.active_conversation_id == conv.id
+            and (now - device.last_seen_at).total_seconds() < 75
+        )
+        if not viewing:
+            background.add_task(send_fcm, device.push_token, payload)
+
+
+def _publish_conversation_event(db: Session, conv: MessagingConversation, event_type: str, **extra) -> None:
+    payload = {"type": event_type, "conversation_id": conv.id, **extra}
+    org = db.get(MessagingOrganization, conv.organization_id)
+    staff_ids = None
+    if conv.kind == "private" or (org and org.company_code.strip().upper() in TEST_COMPANY_CODES):
+        staff_ids = {org.private_owner_external_id} if org and org.private_owner_external_id else set()
+    hub.publish(payload, organization_id=conv.organization_id, channel=conv.kind, staff_ids=staff_ids)
+
+
 def _create_message(
     db: Session, conv: MessagingConversation, *, actor_type: str, actor_id: str,
     actor_name: str, body: str, idempotency_key: str, files: list[UploadFile],
+    reply_to_message_id: str | None = None,
 ) -> MessagingMessage:
     existing = db.scalar(select(MessagingMessage).where(
         MessagingMessage.conversation_id == conv.id,
@@ -461,9 +578,15 @@ def _create_message(
     ))
     if existing:
         return existing
+    reply_to = None
+    if reply_to_message_id:
+        reply_to = db.get(MessagingMessage, reply_to_message_id)
+        if not reply_to or reply_to.conversation_id != conv.id:
+            raise HTTPException(422, "El mensaje respondido no pertenece a la conversacion")
     message = MessagingMessage(
         conversation_id=conv.id, author_type=actor_type, author_id=actor_id,
         author_name=actor_name, body=body.strip(), idempotency_key=idempotency_key,
+        reply_to_message_id=reply_to.id if reply_to else None,
     )
     db.add(message)
     db.flush()
@@ -490,6 +613,7 @@ def _create_message(
     _event(db, conv, "message_created")
     db.commit()
     db.refresh(message)
+    _publish_conversation_event(db, conv, "message.created", message_id=message.id)
     return message
 
 
@@ -594,7 +718,17 @@ def _staff_redirect_uri() -> str:
 
 
 @router.get("/staff-auth/login")
-def staff_auth_login(db: Session = Depends(get_db)):
+def staff_auth_login(
+    app: bool = Query(default=False), web_redirect: str = Query(default=""),
+    db: Session = Depends(get_db),
+):
+    allowed_web_redirect = get_settings().messaging_app_web_redirect_uri.strip()
+    if web_redirect and (
+        not app or not allowed_web_redirect
+        or not secrets.compare_digest(web_redirect, allowed_web_redirect)
+        or not web_redirect.lower().startswith("https://")
+    ):
+        raise HTTPException(422, "Retorno web de Gestinem no autorizado")
     flow = _staff_msal_app().initiate_auth_code_flow(
         # MSAL agrega automaticamente openid/profile/offline_access.
         scopes=["email"],
@@ -605,7 +739,7 @@ def staff_auth_login(db: Session = Depends(get_db)):
         raise HTTPException(502, "Microsoft no pudo iniciar el acceso")
     db.add(MessagingStaffAuthFlow(
         state=state,
-        flow_json=json.dumps(flow),
+        flow_json=json.dumps({"msal": flow, "mobile": app, "web_redirect": web_redirect}),
         expires_at=utcnow() + timedelta(minutes=10),
     ))
     db.commit()
@@ -619,9 +753,11 @@ def staff_auth_callback(request: Request, db: Session = Depends(get_db)):
     if not stored or is_expired(stored.expires_at):
         raise HTTPException(400, "El acceso de Microsoft ha caducado")
     try:
-        result = _staff_msal_app().acquire_token_by_auth_code_flow(
-            json.loads(stored.flow_json), dict(request.query_params),
-        )
+        stored_flow = json.loads(stored.flow_json)
+        mobile = bool(stored_flow.get("mobile")) if "msal" in stored_flow else False
+        web_redirect = str(stored_flow.get("web_redirect") or "") if "msal" in stored_flow else ""
+        msal_flow = stored_flow.get("msal", stored_flow)
+        result = _staff_msal_app().acquire_token_by_auth_code_flow(msal_flow, dict(request.query_params))
     except ValueError as exc:
         raise HTTPException(400, "Microsoft no pudo validar el acceso") from exc
     finally:
@@ -663,10 +799,21 @@ def staff_auth_callback(request: Request, db: Session = Depends(get_db)):
         if email in admin_emails:
             staff.role = "admin"
     db.add(staff)
+    if mobile:
+        code = new_token()
+        db.add(MessagingStaffAppCode(
+            staff_external_id=staff.external_id, code_hash=hash_token(code),
+            expires_at=utcnow() + timedelta(minutes=2),
+        ))
+        db.commit()
+        redirect = web_redirect or get_settings().messaging_app_redirect_uri
+        separator = "&" if "?" in redirect else "?"
+        return RedirectResponse(
+            f"{redirect}{separator}{urlencode({'code': code})}", status_code=302,
+        )
     token = new_token()
     db.add(MessagingStaffSession(
-        staff_external_id=staff.external_id,
-        token_hash=hash_token(token),
+        staff_external_id=staff.external_id, token_hash=hash_token(token),
         expires_at=utcnow() + timedelta(days=30),
     ))
     db.commit()
@@ -678,11 +825,38 @@ def staff_auth_callback(request: Request, db: Session = Depends(get_db)):
     return response
 
 
+@router.post("/staff-auth/mobile/exchange")
+def staff_app_exchange(payload: StaffAppCodeIn, db: Session = Depends(get_db)):
+    item = db.scalar(select(MessagingStaffAppCode).where(
+        MessagingStaffAppCode.code_hash == hash_token(payload.code),
+    ))
+    if not item or item.used_at or is_expired(item.expires_at):
+        raise HTTPException(400, "Codigo de acceso no valido o caducado")
+    staff = db.get(MessagingStaff, item.staff_external_id)
+    if not staff or not staff.active:
+        raise HTTPException(403, "Usuario del despacho no autorizado")
+    item.used_at = utcnow()
+    token = new_token()
+    db.add(MessagingStaffSession(
+        staff_external_id=staff.external_id, token_hash=hash_token(token),
+        expires_at=utcnow() + timedelta(days=30),
+    ))
+    db.commit()
+    return {
+        "token": token,
+        "staff": {
+            "id": staff.external_id, "name": staff.name, "email": staff.email,
+            "role": staff.role, "channels": sorted(_channels_for_staff(db, staff)),
+        },
+    }
+
+
 @router.post("/staff-auth/logout")
 def staff_auth_logout(
     response: Response, request: Request, db: Session = Depends(get_db),
 ):
-    token = request.cookies.get("msg_staff_session", "")
+    token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    token = token or request.cookies.get("msg_staff_session", "")
     if token:
         item = db.scalar(select(MessagingStaffSession).where(
             MessagingStaffSession.token_hash == hash_token(token),
@@ -818,6 +992,7 @@ def test_client_push(
 
 def _serialize_staff_thread_message(db: Session, item: MessagingStaffThreadMessage) -> dict:
     author = db.get(MessagingStaff, item.author_staff_external_id)
+    reply = db.get(MessagingStaffThreadMessage, item.reply_to_message_id) if item.reply_to_message_id else None
     return {
         "id": item.id, "thread_id": item.thread_id,
         "author_id": item.author_staff_external_id,
@@ -826,12 +1001,23 @@ def _serialize_staff_thread_message(db: Session, item: MessagingStaffThreadMessa
             f"/api/v1/messaging/staff/avatars/{author.external_id}"
             if author and author.avatar_storage_key else ""
         ),
-        "body": item.body, "created_at": item.created_at.isoformat(),
+        "body": "" if item.deleted_at else item.body,
+        "deleted": bool(item.deleted_at),
+        "deleted_at": item.deleted_at.isoformat() if item.deleted_at else None,
+        "reply_to": ({
+            "id": reply.id, "author_name": reply.author_name,
+            "body_fragment": "Mensaje eliminado" if reply.deleted_at else reply.body[:180],
+            "deleted": bool(reply.deleted_at),
+        } if reply else None),
+        "created_at": item.created_at.isoformat(),
     }
 
 
 def _staff_thread_title(db: Session, thread: MessagingStaffThread, staff: MessagingStaff) -> str:
     if thread.kind == "group":
+        if thread.key.startswith("dynamic-group:"):
+            group = db.get(MessagingGroup, thread.key.split(":", 1)[1])
+            return group.name if group else "Grupo interno"
         return "Equipo Laboral" if thread.channel == "laboral" else "Equipo Contable / Fiscal"
     other_id = (
         thread.member_staff_external_id
@@ -970,6 +1156,11 @@ def _queue_internal_pushes(
         recipient_ids = {
             thread.admin_staff_external_id, thread.member_staff_external_id,
         }
+    elif thread.key.startswith("dynamic-group:"):
+        recipient_ids = set(db.scalars(select(MessagingGroupMember.member_id).where(
+            MessagingGroupMember.group_id == thread.key.split(":", 1)[1],
+            MessagingGroupMember.member_type == "staff",
+        )))
     else:
         recipient_ids = set(db.scalars(select(MessagingStaff.external_id).where(
             MessagingStaff.active.is_(True), MessagingStaff.role == "admin",
@@ -1005,6 +1196,7 @@ def _queue_internal_pushes(
 def post_staff_thread_message(
     thread_id: str, background: BackgroundTasks,
     body: str = Form(...), idempotency_key: str = Form(default=""),
+    reply_to_message_id: str = Form(default=""),
     staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
 ):
     thread = _staff_thread(db, thread_id, staff)
@@ -1020,10 +1212,16 @@ def post_staff_thread_message(
     ))
     if existing:
         return _serialize_staff_thread_message(db, existing)
+    reply = None
+    if reply_to_message_id:
+        reply = db.get(MessagingStaffThreadMessage, reply_to_message_id)
+        if not reply or reply.thread_id != thread.id:
+            raise HTTPException(422, "El mensaje respondido no pertenece al chat")
     item = MessagingStaffThreadMessage(
         thread_id=thread.id, author_staff_external_id=staff.external_id,
         author_name=staff.chat_alias.strip() or staff.name,
         body=text_body, idempotency_key=key,
+        reply_to_message_id=reply.id if reply else None,
     )
     thread.updated_at = utcnow()
     db.add(item)
@@ -1033,6 +1231,15 @@ def post_staff_thread_message(
     db.commit()
     db.refresh(item)
     _queue_internal_pushes(db, background, thread, staff)
+    recipients = {
+        thread.admin_staff_external_id, thread.member_staff_external_id,
+    } if thread.kind == "direct" else set(db.scalars(select(MessagingStaff.external_id).where(
+        MessagingStaff.active.is_(True),
+    )))
+    hub.publish(
+        {"type": "message.created", "thread_id": thread.id, "message_id": item.id},
+        staff_ids=recipients,
+    )
     return _serialize_staff_thread_message(db, item)
 
 
@@ -1446,7 +1653,19 @@ def mark_read(audience: str, conversation_id: str, request: Request, db: Session
         return {"ok": True, "changed": False}
     read = read or MessagingRead(conversation_id=conv.id, actor_type=audience, actor_id=actor_id)
     read.last_message_id = last_id
-    read.read_at = utcnow(); db.add(read); _event(db, conv, "read_updated"); db.commit()
+    read.read_at = utcnow(); db.add(read); _event(db, conv, "read_updated")
+    if audience == "client":
+        recipients = db.scalars(select(MessagingCampaignRecipient).where(
+            MessagingCampaignRecipient.client_id == actor.id,
+            MessagingCampaignRecipient.status == "sent",
+        )).all()
+        for recipient in recipients:
+            message = db.get(MessagingMessage, recipient.message_id) if recipient.message_id else None
+            if message and message.conversation_id == conv.id and message.created_at <= read.read_at:
+                recipient.status = "read"
+                recipient.read_at = read.read_at
+    db.commit()
+    _publish_conversation_event(db, conv, "message.read", actor_type=audience, actor_id=actor_id)
     return {"ok": True, "changed": True}
 
 
@@ -1455,6 +1674,7 @@ def post_message(
     audience: str, conversation_id: str, request: Request,
     background: BackgroundTasks,
     body: str = Form(default=""), idempotency_key: str = Form(default=""),
+    reply_to_message_id: str = Form(default=""),
     files: list[UploadFile] = File(default=[]), db: Session = Depends(get_db),
 ):
     actor = _resolve_actor(audience, request, db)
@@ -1466,11 +1686,14 @@ def post_message(
         db, conv, actor_type=audience, actor_id=(actor.id if audience == "client" else actor.external_id),
         actor_name=(actor.chat_alias.strip() or actor.name) if audience == "staff" else actor.name,
         body=body, idempotency_key=key, files=files,
+        reply_to_message_id=reply_to_message_id or None,
     )
     if audience == "client":
         _queue_staff_pushes(db, background, conv)
+        _queue_app_pushes(db, background, conv, "staff")
     if audience == "staff":
         _queue_client_pushes(db, background, conv)
+        _queue_app_pushes(db, background, conv, "client")
     if audience == "staff" and mail_configured():
         clients = db.scalars(select(MessagingClient).where(
             MessagingClient.organization_id == conv.organization_id,
@@ -1496,6 +1719,7 @@ def patch_conversation(conversation_id: str, payload: ConversationPatch, staff: 
     if payload.assigned_staff_external_id is not None:
         conv.assigned_staff_external_id = payload.assigned_staff_external_id
     conv.updated_at = utcnow(); _event(db, conv, "conversation_updated"); db.commit()
+    _publish_conversation_event(db, conv, "conversation.updated")
     return _serialize_conversation(db, conv)
 
 
@@ -1508,6 +1732,8 @@ def pending_attachments(staff: MessagingStaff = Depends(_staff), db: Session = D
     result = []
     for item in rows:
         message = db.get(MessagingMessage, item.message_id)
+        if not message or message.deleted_at:
+            continue
         conv = db.get(MessagingConversation, message.conversation_id)
         org = db.get(MessagingOrganization, conv.organization_id)
         if not _can_access_conversation(db, conv, staff):
@@ -1580,6 +1806,8 @@ def client_download(attachment_id: str, request: Request, client: MessagingClien
     if not item or item.direction != "outgoing" or item.storage_deleted_at or is_expired(item.expires_at):
         raise HTTPException(404, "Adjunto caducado o no disponible")
     message = db.get(MessagingMessage, item.message_id)
+    if not message or message.deleted_at:
+        raise HTTPException(404, "Adjunto no disponible")
     _conversation_for_client(db, message.conversation_id, client)
     content = MessagingStorage().get(item.storage_key)
     valid = hmac_compare(hashlib.sha256(content).hexdigest(), item.sha256)
@@ -1600,6 +1828,8 @@ def download_audit(attachment_id: str, staff: MessagingStaff = Depends(_staff), 
     if not item:
         raise HTTPException(404)
     message = db.get(MessagingMessage, item.message_id)
+    if not message or message.deleted_at:
+        raise HTTPException(404, "Adjunto no disponible")
     _conversation_for_staff(db, message.conversation_id, staff)
     rows = db.scalars(select(MessagingDownload).where(MessagingDownload.attachment_id == item.id).order_by(MessagingDownload.downloaded_at)).all()
     return [{
@@ -1618,6 +1848,8 @@ def staff_download_attachment(
     if not item or item.storage_deleted_at or not item.storage_key:
         raise HTTPException(404, "Adjunto no disponible")
     message = db.get(MessagingMessage, item.message_id)
+    if not message or message.deleted_at:
+        raise HTTPException(404, "Adjunto no disponible")
     _conversation_for_staff(db, message.conversation_id, staff)
     content = MessagingStorage().get(item.storage_key)
     if not hmac_compare(hashlib.sha256(content).hexdigest(), item.sha256):
@@ -1636,6 +1868,8 @@ def sync_pending_attachments(db: Session = Depends(get_db)):
     result = []
     for item in rows:
         message = db.get(MessagingMessage, item.message_id)
+        if not message or message.deleted_at:
+            continue
         conv = db.get(MessagingConversation, message.conversation_id)
         org = db.get(MessagingOrganization, conv.organization_id)
         result.append({
@@ -1720,6 +1954,568 @@ def sync_confirm_attachment(
     except Exception:
         cleanup_pending = True
     return {"ok": True, "storage_cleanup_pending": cleanup_pending}
+
+
+@router.delete("/{audience}/messages/{message_id}")
+def soft_delete_message(
+    audience: str, message_id: str, request: Request,
+    payload: MessageDeleteIn | None = None, db: Session = Depends(get_db),
+):
+    actor = _resolve_actor(audience, request, db)
+    item = db.get(MessagingMessage, message_id)
+    if not item:
+        raise HTTPException(404, "Mensaje no encontrado")
+    conv = (
+        _conversation_for_client(db, item.conversation_id, actor)
+        if audience == "client" else _conversation_for_staff(db, item.conversation_id, actor)
+    )
+    actor_id = actor.id if audience == "client" else actor.external_id
+    is_admin = audience == "staff" and actor.role == "admin"
+    if not is_admin and not (item.author_type == audience and item.author_id == actor_id):
+        raise HTTPException(403, "No puedes eliminar este mensaje")
+    if item.deleted_at:
+        return _serialize_message(db, item, audience)
+    reason = (payload.reason if payload else "").strip()
+    item.deleted_at = utcnow()
+    item.deleted_by = actor_id
+    item.deleted_by_type = audience
+    item.delete_reason = reason
+    db.add(MessagingDeletionAudit(
+        message_id=item.id, conversation_id=conv.id, actor_id=actor_id,
+        action="soft_delete", reason=reason,
+        attachment_count=int(db.scalar(select(func.count(MessagingAttachment.id)).where(
+            MessagingAttachment.message_id == item.id,
+        )) or 0),
+    ))
+    _event(db, conv, "message_deleted")
+    db.commit()
+    _publish_conversation_event(db, conv, "message.deleted", message_id=item.id)
+    return _serialize_message(db, item, audience)
+
+
+@router.delete("/staff/internal/messages/{message_id}")
+def soft_delete_internal_message(
+    message_id: str, payload: MessageDeleteIn | None = None,
+    staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
+):
+    item = db.get(MessagingStaffThreadMessage, message_id)
+    if not item:
+        raise HTTPException(404, "Mensaje interno no encontrado")
+    thread = _staff_thread(db, item.thread_id, staff)
+    if staff.role != "admin" and item.author_staff_external_id != staff.external_id:
+        raise HTTPException(403, "No puedes eliminar este mensaje")
+    if not item.deleted_at:
+        reason = (payload.reason if payload else "").strip()
+        item.deleted_at, item.deleted_by = utcnow(), staff.external_id
+        item.deleted_by_type, item.delete_reason = "staff", reason
+        db.add(MessagingDeletionAudit(
+            message_id=item.id, conversation_id=thread.id,
+            actor_id=staff.external_id, action="soft_delete", reason=reason,
+        ))
+        db.add(MessagingEvent(
+            organization_id="", conversation_id=thread.id,
+            event_type="internal_message",
+        ))
+        db.commit()
+        hub.publish(
+            {"type": "message.deleted", "thread_id": thread.id, "message_id": item.id},
+            staff_ids=set(db.scalars(select(MessagingStaff.external_id).where(
+                MessagingStaff.active.is_(True),
+            ))),
+        )
+    return _serialize_staff_thread_message(db, item)
+
+
+@router.delete("/staff/admin/internal/messages/{message_id}/hard", status_code=204)
+def hard_delete_internal_message(
+    message_id: str, payload: MessageDeleteIn | None = None,
+    admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
+):
+    item = db.get(MessagingStaffThreadMessage, message_id)
+    if not item:
+        raise HTTPException(404, "Mensaje interno no encontrado")
+    thread = _staff_thread(db, item.thread_id, admin)
+    db.add(MessagingDeletionAudit(
+        message_id=item.id, conversation_id=thread.id, actor_id=admin.external_id,
+        action="hard_delete", reason=(payload.reason if payload else "").strip(),
+    ))
+    db.delete(item)
+    thread.updated_at = utcnow()
+    db.commit()
+    hub.publish(
+        {"type": "message.deleted", "thread_id": thread.id, "message_id": message_id, "hard": True},
+        staff_ids=set(db.scalars(select(MessagingStaff.external_id).where(
+            MessagingStaff.active.is_(True),
+        ))),
+    )
+    return Response(status_code=204)
+
+
+@router.delete("/staff/admin/messages/{message_id}/hard", status_code=204)
+def hard_delete_message(
+    message_id: str, payload: MessageDeleteIn | None = None,
+    admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
+):
+    item = db.get(MessagingMessage, message_id)
+    if not item:
+        raise HTTPException(404, "Mensaje no encontrado")
+    conv = _conversation_for_staff(db, item.conversation_id, admin)
+    attachments = list(db.scalars(select(MessagingAttachment).where(
+        MessagingAttachment.message_id == item.id,
+    )))
+    storage = MessagingStorage()
+    for attachment in attachments:
+        if attachment.storage_key and not attachment.storage_deleted_at:
+            storage.delete(attachment.storage_key)
+    reason = (payload.reason if payload else "").strip()
+    db.add(MessagingDeletionAudit(
+        message_id=item.id, conversation_id=conv.id, actor_id=admin.external_id,
+        action="hard_delete", reason=reason, attachment_count=len(attachments),
+    ))
+    db.delete(item)
+    conv.updated_at = utcnow()
+    _event(db, conv, "message_deleted")
+    db.commit()
+    _publish_conversation_event(db, conv, "message.deleted", message_id=message_id, hard=True)
+    return Response(status_code=204)
+
+
+def _serialize_group(db: Session, group: MessagingGroup) -> dict:
+    members = db.scalars(select(MessagingGroupMember).where(
+        MessagingGroupMember.group_id == group.id,
+    ).order_by(MessagingGroupMember.created_at)).all()
+    return {
+        "id": group.id, "name": group.name, "description": group.description,
+        "group_type": group.group_type, "created_by": group.created_by,
+        "active": group.active, "created_at": group.created_at.isoformat(),
+        "updated_at": group.updated_at.isoformat(),
+        "members": [{
+            "id": row.id, "member_type": row.member_type,
+            "member_id": row.member_id, "role": row.role,
+        } for row in members],
+    }
+
+
+@router.get("/staff/groups")
+def list_groups(staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db)):
+    rows = db.scalars(select(MessagingGroup).where(MessagingGroup.active.is_(True)).order_by(
+        MessagingGroup.name,
+    )).all()
+    if staff.role != "admin":
+        allowed = set(db.scalars(select(MessagingGroupMember.group_id).where(
+            MessagingGroupMember.member_type == "staff",
+            MessagingGroupMember.member_id == staff.external_id,
+        )))
+        rows = [row for row in rows if row.group_type == "staff_chat" and row.id in allowed]
+    return [_serialize_group(db, row) for row in rows]
+
+
+@router.post("/staff/admin/groups", status_code=201)
+def create_group(
+    payload: GroupIn, admin: MessagingStaff = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    if payload.group_type not in {"staff_chat", "client_list"}:
+        raise HTTPException(422, "Tipo de grupo no valido")
+    group = MessagingGroup(
+        name=payload.name.strip(), description=payload.description.strip(),
+        group_type=payload.group_type, created_by=admin.external_id,
+        active=payload.active,
+    )
+    db.add(group)
+    db.flush()
+    if group.group_type == "staff_chat":
+        db.add(MessagingGroupMember(
+            group_id=group.id, member_type="staff",
+            member_id=admin.external_id, role="owner",
+        ))
+        db.add(MessagingStaffThread(
+            key=f"dynamic-group:{group.id}", kind="group", channel="",
+        ))
+    db.commit()
+    db.refresh(group)
+    hub.publish({"type": "group.updated", "group_id": group.id}, staff_ids={admin.external_id})
+    return _serialize_group(db, group)
+
+
+@router.patch("/staff/admin/groups/{group_id}")
+def update_group(
+    group_id: str, payload: GroupIn, admin: MessagingStaff = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    group = db.get(MessagingGroup, group_id)
+    if not group:
+        raise HTTPException(404, "Grupo no encontrado")
+    if payload.group_type != group.group_type:
+        raise HTTPException(409, "No se puede cambiar el tipo de un grupo existente")
+    group.name, group.description, group.active = (
+        payload.name.strip(), payload.description.strip(), payload.active,
+    )
+    group.updated_at = utcnow()
+    db.commit()
+    hub.publish({"type": "group.updated", "group_id": group.id}, staff_ids={admin.external_id})
+    return _serialize_group(db, group)
+
+
+@router.post("/staff/admin/groups/{group_id}/members", status_code=201)
+def add_group_member(
+    group_id: str, payload: GroupMemberIn,
+    admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
+):
+    group = db.get(MessagingGroup, group_id)
+    if not group:
+        raise HTTPException(404, "Grupo no encontrado")
+    expected = "staff" if group.group_type == "staff_chat" else "client"
+    if payload.member_type != expected:
+        raise HTTPException(422, "Tipo de miembro incompatible con el grupo")
+    target = db.get(MessagingStaff if expected == "staff" else MessagingClient, payload.member_id)
+    if not target:
+        raise HTTPException(404, "Miembro no encontrado")
+    item = db.scalar(select(MessagingGroupMember).where(
+        MessagingGroupMember.group_id == group.id,
+        MessagingGroupMember.member_type == expected,
+        MessagingGroupMember.member_id == payload.member_id,
+    ))
+    if not item:
+        item = MessagingGroupMember(
+            group_id=group.id, member_type=expected,
+            member_id=payload.member_id, role=payload.role,
+        )
+        db.add(item)
+    else:
+        item.role = payload.role
+    group.updated_at = utcnow()
+    db.commit()
+    hub.publish({"type": "group.updated", "group_id": group.id}, staff_ids={payload.member_id, admin.external_id})
+    return _serialize_group(db, group)
+
+
+@router.delete("/staff/admin/groups/{group_id}/members/{member_id}", status_code=204)
+def remove_group_member(
+    group_id: str, member_id: str, _admin: MessagingStaff = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    item = db.scalar(select(MessagingGroupMember).where(
+        MessagingGroupMember.group_id == group_id,
+        MessagingGroupMember.member_id == member_id,
+    ))
+    if not item:
+        raise HTTPException(404, "Miembro no encontrado")
+    db.delete(item)
+    db.commit()
+    return Response(status_code=204)
+
+
+def _serialize_campaign(db: Session, campaign: MessagingCampaign) -> dict:
+    recipients = db.scalars(select(MessagingCampaignRecipient).where(
+        MessagingCampaignRecipient.campaign_id == campaign.id,
+    )).all()
+    counts = {status: 0 for status in ("pending", "sent", "read", "error")}
+    for recipient in recipients:
+        counts[recipient.status] = counts.get(recipient.status, 0) + 1
+    return {
+        "id": campaign.id, "name": campaign.name, "body": campaign.body,
+        "channel": campaign.channel, "status": campaign.status,
+        "created_by": campaign.created_by,
+        "created_at": campaign.created_at.isoformat(),
+        "scheduled_at": campaign.scheduled_at.isoformat() if campaign.scheduled_at else None,
+        "sent_at": campaign.sent_at.isoformat() if campaign.sent_at else None,
+        "recipient_counts": counts, "recipient_count": len(recipients),
+    }
+
+
+def process_campaign(campaign_id: str) -> None:
+    """Procesa destinatarios pendientes; cada mensaje tiene clave idempotente estable."""
+    with SessionLocal() as db:
+        campaign = db.get(MessagingCampaign, campaign_id)
+        if not campaign or campaign.status == "sent":
+            return
+        campaign.status = "sending"
+        db.commit()
+        recipients = db.scalars(select(MessagingCampaignRecipient).where(
+            MessagingCampaignRecipient.campaign_id == campaign.id,
+            MessagingCampaignRecipient.status.in_(["pending", "error"]),
+        )).all()
+        for recipient in recipients:
+            try:
+                client = db.get(MessagingClient, recipient.client_id)
+                if not client or not client.active:
+                    raise ValueError("Cliente inactivo o inexistente")
+                conv = db.scalar(select(MessagingConversation).where(
+                    MessagingConversation.organization_id == client.organization_id,
+                    MessagingConversation.kind == campaign.channel,
+                ))
+                if not conv:
+                    raise ValueError("La organizacion no dispone del canal solicitado")
+                message = _create_message(
+                    db, conv, actor_type="staff", actor_id=campaign.created_by,
+                    actor_name="Gestinem", body=campaign.body,
+                    idempotency_key=f"campaign:{campaign.id}:client:{client.id}", files=[],
+                )
+                recipient.message_id = message.id
+                recipient.status = "sent"
+                recipient.sent_at = utcnow()
+                recipient.error = ""
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                recipient = db.scalar(select(MessagingCampaignRecipient).where(
+                    MessagingCampaignRecipient.campaign_id == campaign_id,
+                    MessagingCampaignRecipient.client_id == recipient.client_id,
+                ))
+                if recipient:
+                    recipient.status = "error"
+                    recipient.error = str(exc)[:2000]
+                    db.commit()
+        campaign = db.get(MessagingCampaign, campaign_id)
+        statuses = set(db.scalars(select(MessagingCampaignRecipient.status).where(
+            MessagingCampaignRecipient.campaign_id == campaign_id,
+        )))
+        if statuses <= {"sent", "read"}:
+            campaign.status = "sent"
+            campaign.sent_at = utcnow()
+        elif statuses & {"sent", "read"}:
+            campaign.status = "partial"
+        else:
+            campaign.status = "failed"
+        db.commit()
+
+
+@router.get("/staff/admin/campaigns")
+def list_campaigns(_admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db)):
+    rows = db.scalars(select(MessagingCampaign).order_by(MessagingCampaign.created_at.desc())).all()
+    return [_serialize_campaign(db, row) for row in rows]
+
+
+@router.get("/staff/admin/campaign-targets/clients")
+def campaign_client_targets(
+    _admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
+):
+    rows = db.execute(
+        select(MessagingClient, MessagingOrganization)
+        .outerjoin(
+            MessagingOrganization,
+            MessagingOrganization.id == MessagingClient.organization_id,
+        )
+        .where(MessagingClient.active.is_(True))
+        .order_by(MessagingClient.name, MessagingClient.email)
+    ).all()
+    return [{
+        "id": client.id, "name": client.name, "email": client.email,
+        "organization_id": client.organization_id,
+        "company_code": organization.company_code if organization else "",
+        "company_name": organization.name if organization else "",
+    } for client, organization in rows]
+
+
+@router.post("/staff/admin/campaigns", status_code=201)
+def create_campaign(
+    payload: CampaignIn, background: BackgroundTasks,
+    admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
+):
+    if payload.channel not in STAFF_CHANNELS:
+        raise HTTPException(422, "Canal de campana no valido")
+    if payload.scheduled_at is not None:
+        if payload.scheduled_at.tzinfo is None:
+            raise HTTPException(422, "scheduled_at debe incluir zona horaria")
+        if payload.scheduled_at > utcnow():
+            raise HTTPException(
+                422,
+                "La programacion de campanas todavia no esta disponible; "
+                "el envio debe ser inmediato",
+            )
+    client_ids = set(payload.client_ids)
+    if payload.all_clients:
+        client_ids.update(db.scalars(select(MessagingClient.id).where(MessagingClient.active.is_(True))))
+    if payload.group_ids:
+        valid_groups = set(db.scalars(select(MessagingGroup.id).where(
+            MessagingGroup.id.in_(payload.group_ids),
+            MessagingGroup.group_type == "client_list",
+            MessagingGroup.active.is_(True),
+        )))
+        if valid_groups != set(payload.group_ids):
+            raise HTTPException(422, "Alguna lista de clientes no es valida")
+        client_ids.update(db.scalars(select(MessagingGroupMember.member_id).where(
+            MessagingGroupMember.group_id.in_(valid_groups),
+            MessagingGroupMember.member_type == "client",
+        )))
+    existing_clients = set(db.scalars(select(MessagingClient.id).where(
+        MessagingClient.id.in_(client_ids), MessagingClient.active.is_(True),
+    ))) if client_ids else set()
+    if existing_clients != client_ids or not client_ids:
+        raise HTTPException(422, "La campana necesita destinatarios validos")
+    campaign = MessagingCampaign(
+        name=payload.name.strip(), body=payload.body.strip(), channel=payload.channel,
+        created_by=admin.external_id, status="pending",
+        scheduled_at=payload.scheduled_at,
+    )
+    db.add(campaign)
+    db.flush()
+    db.add_all([
+        MessagingCampaignRecipient(campaign_id=campaign.id, client_id=client_id)
+        for client_id in sorted(client_ids)
+    ])
+    db.commit()
+    db.refresh(campaign)
+    background.add_task(process_campaign, campaign.id)
+    return _serialize_campaign(db, campaign)
+
+
+@router.post("/staff/admin/campaigns/{campaign_id}/retry", status_code=202)
+def retry_campaign(
+    campaign_id: str, background: BackgroundTasks,
+    _admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
+):
+    campaign = db.get(MessagingCampaign, campaign_id)
+    if not campaign:
+        raise HTTPException(404, "Campana no encontrada")
+    if campaign.status == "sent":
+        return {"ok": True, "already_sent": True}
+    campaign.status = "pending"
+    db.commit()
+    background.add_task(process_campaign, campaign.id)
+    return {"ok": True, "already_sent": False}
+
+
+@router.get("/staff/admin/campaigns/{campaign_id}/recipients")
+def campaign_recipients(
+    campaign_id: str, _admin: MessagingStaff = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    if not db.get(MessagingCampaign, campaign_id):
+        raise HTTPException(404, "Campana no encontrada")
+    rows = db.scalars(select(MessagingCampaignRecipient).where(
+        MessagingCampaignRecipient.campaign_id == campaign_id,
+    )).all()
+    return [{
+        "id": row.id, "client_id": row.client_id, "status": row.status,
+        "message_id": row.message_id, "error": row.error,
+        "sent_at": row.sent_at.isoformat() if row.sent_at else None,
+        "read_at": row.read_at.isoformat() if row.read_at else None,
+    } for row in rows]
+
+
+@router.put("/{audience}/app-devices")
+def register_app_device(
+    audience: str, payload: AppDeviceIn, request: Request, db: Session = Depends(get_db),
+):
+    actor = _resolve_actor(audience, request, db)
+    if payload.platform not in {"android", "ios", "windows", "macos", "web"}:
+        raise HTTPException(422, "Plataforma no valida")
+    actor_id = actor.id if audience == "client" else actor.external_id
+    item = db.scalar(select(MessagingAppDevice).where(
+        MessagingAppDevice.push_token == payload.push_token,
+    ))
+    if not item:
+        item = MessagingAppDevice(
+            user_type=audience, user_id=actor_id, platform=payload.platform,
+            push_token=payload.push_token,
+        )
+    item.user_type, item.user_id = audience, actor_id
+    item.platform, item.device_name = payload.platform, payload.device_name.strip()
+    item.app_version, item.active = payload.app_version.strip(), True
+    item.last_seen_at = utcnow()
+    db.add(item)
+    db.commit()
+    return {"id": item.id, "active": item.active, "fcm_configured": fcm_configured()}
+
+
+@router.patch("/{audience}/app-devices/{device_id}/presence")
+def app_device_presence(
+    audience: str, device_id: str, request: Request,
+    conversation_id: str = Form(default=""), db: Session = Depends(get_db),
+):
+    actor = _resolve_actor(audience, request, db)
+    actor_id = actor.id if audience == "client" else actor.external_id
+    item = db.get(MessagingAppDevice, device_id)
+    if not item or item.user_type != audience or item.user_id != actor_id:
+        raise HTTPException(404, "Dispositivo no encontrado")
+    if conversation_id:
+        if audience == "client":
+            _conversation_for_client(db, conversation_id, actor)
+        else:
+            _conversation_for_staff(db, conversation_id, actor)
+    item.active_conversation_id = conversation_id
+    item.last_seen_at = utcnow()
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/{audience}/app-devices/{device_id}", status_code=204)
+def unregister_app_device(
+    audience: str, device_id: str, request: Request, db: Session = Depends(get_db),
+):
+    actor = _resolve_actor(audience, request, db)
+    actor_id = actor.id if audience == "client" else actor.external_id
+    item = db.get(MessagingAppDevice, device_id)
+    if not item or item.user_type != audience or item.user_id != actor_id:
+        raise HTTPException(404, "Dispositivo no encontrado")
+    item.active = False
+    item.active_conversation_id = ""
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.post("/{audience}/ws-ticket")
+def create_websocket_ticket(
+    audience: str, request: Request, db: Session = Depends(get_db),
+):
+    actor = _resolve_actor(audience, request, db)
+    actor_id = actor.id if audience == "client" else actor.external_id
+    token = new_token()
+    db.add(MessagingWebSocketTicket(
+        user_type=audience, user_id=actor_id, token_hash=hash_token(token),
+        expires_at=utcnow() + timedelta(seconds=60),
+    ))
+    db.commit()
+    return {"ticket": token, "expires_in": 60}
+
+
+@router.websocket("/ws/{audience}")
+async def messaging_websocket(websocket: WebSocket, audience: str, ticket: str = Query(default="")):
+    if audience not in {"client", "staff"} or not ticket:
+        await websocket.close(code=4401)
+        return
+    with SessionLocal() as db:
+        ws_ticket = db.scalar(select(MessagingWebSocketTicket).where(
+            MessagingWebSocketTicket.token_hash == hash_token(ticket),
+            MessagingWebSocketTicket.user_type == audience,
+        ))
+        if not ws_ticket or ws_ticket.used_at or is_expired(ws_ticket.expires_at):
+            await websocket.close(code=4401)
+            return
+        ws_ticket.used_at = utcnow()
+        if audience == "client":
+            actor = db.get(MessagingClient, ws_ticket.user_id)
+            if not actor or not actor.active:
+                await websocket.close(code=4401)
+                return
+            subscription = hub.subscribe(
+                audience="client", actor_id=actor.id, organization_id=actor.organization_id,
+            )
+        else:
+            actor = db.get(MessagingStaff, ws_ticket.user_id)
+            if not actor or not actor.active:
+                await websocket.close(code=4401)
+                return
+            subscription = hub.subscribe(
+                audience="staff", actor_id=actor.external_id,
+                channels=_channels_for_staff(db, actor),
+            )
+        db.commit()
+    await websocket.accept()
+    try:
+        await websocket.send_json({"type": "connected"})
+        while True:
+            try:
+                event = await asyncio.wait_for(subscription.queue.get(), timeout=25)
+                await websocket.send_json(event)
+            except asyncio.TimeoutError:
+                await websocket.send_json({"type": "ping"})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        hub.unsubscribe(subscription)
 
 
 @router.get("/{audience}/events")
