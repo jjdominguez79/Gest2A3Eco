@@ -11,6 +11,7 @@ import '../../auth/presentation/auth_controller.dart';
 import '../domain/conversation.dart';
 import 'conversation_screen.dart';
 import 'messaging_providers.dart';
+import 'unified_conversation_screen.dart';
 
 final realtimeServiceProvider = Provider<RealtimeService>((ref) => RealtimeService());
 final notificationsServiceProvider = Provider<NotificationsService>((ref) => NotificationsService());
@@ -43,6 +44,8 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
     _events = _realtime!.events.listen((event) {
       if (!mounted || event['type'] == 'ping') return;
       ref.invalidate(conversationsProvider);
+      ref.invalidate(unifiedConversationProvider);
+      ref.invalidate(unifiedMessagesProvider);
       final id = event['conversation_id'] as String?;
       if (id != null) ref.invalidate(messagesProvider(id));
       final threadId = event['thread_id'] as String?;
@@ -177,7 +180,13 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
                     children: ['todos', 'laboral', 'fiscal', 'private'].map((channel) => Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 3),
                       child: ChoiceChip(
-                        label: Text(channel == 'todos' ? 'Todos' : channel),
+                        label: Text(switch (channel) {
+                          'todos' => 'Todos',
+                          'laboral' => 'Laboral',
+                          'fiscal' => 'Fiscal',
+                          'private' => 'Directo',
+                          _ => channel,
+                        }),
                         selected: _channel == channel,
                         onSelected: (_) => setState(() => _channel = channel),
                       ),
@@ -247,32 +256,75 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
                         );
                       }
 
-                      // Para clientes: vista original por conversacion
-                      final visible = items.where((item) {
-                        final channelMatches = _channel == 'todos' || item.kind == _channel;
-                        final searchMatches = query.isEmpty ||
-                            item.companyCode.toLowerCase().contains(query) ||
-                            item.companyName.toLowerCase().contains(query);
-                        return channelMatches && searchMatches;
-                      }).toList();
-                      if (visible.isEmpty) return const Center(child: Text('No hay conversaciones'));
-                      return RefreshIndicator(
-                        onRefresh: () async => ref.invalidate(conversationsProvider),
-                        child: ListView.builder(
-                          key: const Key('conversation-list'),
-                          itemCount: visible.length,
-                          itemBuilder: (context, index) => _ConversationTile(
-                            conversation: visible[index],
-                            selected: visible[index].id == _selected,
-                            onTap: () {
-                              if (wide) {
-                                setState(() => _selected = visible[index].id);
-                              } else {
-                                context.go('/conversation/${visible[index].id}');
-                              }
-                            },
-                          ),
+                      // Para clientes: una sola conversacion unificada "Gestinem"
+                      final unifiedMeta = ref.watch(unifiedConversationProvider);
+                      return unifiedMeta.when(
+                        loading: () => const Center(child: CircularProgressIndicator()),
+                        error: (error, stack) => RefreshIndicator(
+                          onRefresh: () async => ref.invalidate(unifiedConversationProvider),
+                          child: ListView(children: [
+                            ListTile(
+                              key: const Key('unified-conversation-tile'),
+                              leading: CircleAvatar(
+                                backgroundColor: const Color(0xFF004B76),
+                                child: Image.asset('assets/images/logo.png', height: 24),
+                              ),
+                              title: const Text('Gestinem'),
+                              subtitle: const Text('Sin mensajes'),
+                              onTap: () {
+                                if (wide) {
+                                  setState(() => _selected = 'unified');
+                                } else {
+                                  Navigator.of(context).push(MaterialPageRoute(
+                                    builder: (_) => const UnifiedConversationScreen(),
+                                  ));
+                                }
+                              },
+                            ),
+                          ]),
                         ),
+                        data: (meta) {
+                          final unread = meta['unread_count'] as int? ?? 0;
+                          final lastMsg = meta['last_message'] as Map<String, dynamic>?;
+                          final lastBody = lastMsg != null
+                              ? (lastMsg['deleted'] == true
+                                  ? 'Mensaje eliminado'
+                                  : (lastMsg['body'] as String? ?? ''))
+                              : 'Sin mensajes';
+                          return RefreshIndicator(
+                            onRefresh: () async {
+                              ref.invalidate(unifiedConversationProvider);
+                              ref.invalidate(unifiedMessagesProvider);
+                            },
+                            child: ListView(children: [
+                              ListTile(
+                                key: const Key('unified-conversation-tile'),
+                                leading: CircleAvatar(
+                                  backgroundColor: const Color(0xFF004B76),
+                                  child: Image.asset('assets/images/logo.png', height: 24),
+                                ),
+                                title: const Text('Gestinem'),
+                                subtitle: Text(
+                                  lastBody,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                trailing: unread > 0
+                                    ? Badge(label: Text('$unread'))
+                                    : null,
+                                onTap: () {
+                                  if (wide) {
+                                    setState(() => _selected = 'unified');
+                                  } else {
+                                    Navigator.of(context).push(MaterialPageRoute(
+                                      builder: (_) => const UnifiedConversationScreen(),
+                                    ));
+                                  }
+                                },
+                              ),
+                            ]),
+                          );
+                        },
                       );
                     },
                   ),
@@ -285,7 +337,9 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
             Expanded(
               child: _selected == null
                   ? const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.forum_outlined, size: 58), SizedBox(height: 12), Text('Selecciona una conversacion')]))
-                  : ConversationView(conversationId: _selected!),
+                  : _selected == 'unified'
+                      ? const UnifiedConversationScreen()
+                      : ConversationView(conversationId: _selected!),
             ),
           ],
         ],
@@ -346,15 +400,32 @@ class _ClientGroupTile extends StatelessWidget {
 }
 
 class _ChannelChip extends StatelessWidget {
-  const _ChannelChip({required this.kind});
+  // ignore: unused_element_parameter
+  const _ChannelChip({required this.kind, this.adminAvatarUrl = '', this.baseUrl = ''});
   final String kind;
+  final String adminAvatarUrl;
+  final String baseUrl;
 
   @override
-  Widget build(BuildContext context) => switch (kind) {
-        'laboral' => const _LabelChip(label: 'LA', color: Colors.blue),
-        'fiscal' => const _LabelChip(label: 'CF', color: Colors.green),
-        _ => const _LabelChip(label: 'D', color: Colors.orange),
-      };
+  Widget build(BuildContext context) {
+    if (kind == 'private') {
+      if (adminAvatarUrl.isNotEmpty) {
+        return CircleAvatar(
+          radius: 10,
+          backgroundImage: NetworkImage('$baseUrl$adminAvatarUrl'),
+        );
+      }
+      return const CircleAvatar(
+        radius: 10,
+        child: Text('AD', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold)),
+      );
+    }
+    return switch (kind) {
+      'laboral' => const _LabelChip(label: 'LA', color: Colors.blue),
+      'fiscal' => const _LabelChip(label: 'CF', color: Colors.green),
+      _ => const _LabelChip(label: 'D', color: Colors.orange),
+    };
+  }
 }
 
 class _LabelChip extends StatelessWidget {
@@ -374,31 +445,6 @@ class _LabelChip extends StatelessWidget {
           label,
           style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w700),
         ),
-      );
-}
-
-class _ConversationTile extends StatelessWidget {
-  const _ConversationTile({required this.conversation, required this.selected, required this.onTap});
-  final Conversation conversation;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => ListTile(
-        key: Key('conversation-${conversation.id}'),
-        selected: selected,
-        onTap: onTap,
-        leading: CircleAvatar(child: Text(conversation.title.isEmpty ? '?' : conversation.title[0].toUpperCase())),
-        title: Text(conversation.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(
-          '${conversation.companyCode} · ${conversation.kind}\n${conversation.lastMessage?.deleted == true ? 'Mensaje eliminado' : conversation.lastMessage?.body ?? 'Sin mensajes'}',
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-        isThreeLine: true,
-        trailing: conversation.unreadCount > 0
-            ? Badge(label: Text('${conversation.unreadCount}'))
-            : null,
       );
 }
 

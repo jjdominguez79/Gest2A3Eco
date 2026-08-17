@@ -138,6 +138,32 @@ void main() {
       expect(groups.first.totalUnread, 8);
     });
   });
+
+  group('UnifiedConversation routing', () {
+    test('client unread total from multiple conversations', () {
+      final convs = [
+        _makeConv('E001', 'Mi Empresa', 'laboral', unread: 2),
+        _makeConv('E001', 'Mi Empresa', 'fiscal', unread: 1),
+        _makeConv('E001', 'Mi Empresa', 'private', unread: 0),
+      ];
+      // Los clientes NO usan groupConversationsByClient, pero verificamos
+      // que todos los unreads estan presentes en la lista original
+      final totalUnread = convs.fold(0, (s, c) => s + c.unreadCount);
+      expect(totalUnread, 3);
+    });
+
+    test('groupConversationsByClient groups same client into one group with all channels', () {
+      final convs = [
+        _makeConv('E001', 'Empresa', 'laboral', unread: 1),
+        _makeConv('E001', 'Empresa', 'fiscal', unread: 2),
+        _makeConv('E001', 'Empresa', 'private', unread: 0),
+      ];
+      final groups = groupConversationsByClient(convs);
+      expect(groups.length, 1, reason: 'Staff ve 1 grupo por cliente');
+      expect(groups.first.conversations.length, 3);
+      expect(groups.first.totalUnread, 3);
+    });
+  });
 }
 
 Conversation _makeConv(

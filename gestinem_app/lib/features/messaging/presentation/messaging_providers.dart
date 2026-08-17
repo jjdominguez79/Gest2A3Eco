@@ -1,12 +1,17 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../auth/presentation/auth_controller.dart';
+import '../../profile/data/profile_repository.dart';
 import '../data/messaging_repository.dart';
 import '../domain/conversation.dart';
 import '../domain/message.dart';
 
 final messagingRepositoryProvider = Provider<MessagingRepository>((ref) {
   return MessagingRepository(ref.watch(apiClientProvider));
+});
+
+final profileRepositoryProvider = Provider<ProfileRepository>((ref) {
+  return ProfileRepository(ref.watch(apiClientProvider));
 });
 
 final conversationsProvider = FutureProvider.autoDispose<List<Conversation>>((ref) async {
@@ -25,4 +30,14 @@ final internalThreadsProvider = FutureProvider.autoDispose<List<InternalThread>>
 
 final internalMessagesProvider = FutureProvider.autoDispose.family<List<Message>, String>((ref, id) {
   return ref.watch(messagingRepositoryProvider).internalMessages(id);
+});
+
+/// Metadatos de conversacion unificada del cliente.
+final unifiedConversationProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
+  return ref.watch(messagingRepositoryProvider).unifiedConversation();
+});
+
+/// Mensajes unificados del cliente (todos los canales, cronologico).
+final unifiedMessagesProvider = FutureProvider.autoDispose<List<Message>>((ref) async {
+  return ref.watch(messagingRepositoryProvider).unifiedMessages();
 });

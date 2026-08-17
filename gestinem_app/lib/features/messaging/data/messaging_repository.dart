@@ -113,4 +113,58 @@ class MessagingRepository {
     );
     return Message.fromJson(response.data!);
   }
+
+  /// Vista unificada del cliente: metadatos de todas las conversaciones.
+  Future<Map<String, dynamic>> unifiedConversation() async {
+    final response = await _api.dio.get<Map<String, dynamic>>(
+      '/api/v1/messaging/client/unified-conversation',
+    );
+    return response.data!;
+  }
+
+  /// Todos los mensajes del cliente (cross-canal) en orden cronologico.
+  Future<List<Message>> unifiedMessages({int limit = 100}) async {
+    final response = await _api.dio.get<List<dynamic>>(
+      '/api/v1/messaging/client/unified-messages',
+      queryParameters: {'limit': limit},
+    );
+    return response.data!
+        .map((item) => Message.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
+  /// Enviar mensaje en la vista unificada del cliente.
+  Future<Message> sendUnified(
+    String body,
+    List<PlatformFile> files, {
+    String? replyToMessageId,
+  }) async {
+    final uploads = <MultipartFile>[];
+    for (final file in files) {
+      uploads.add(MultipartFile.fromBytes(await file.readAsBytes(), filename: file.name));
+    }
+    final fields = <String, dynamic>{
+      'body': body,
+      'idempotency_key': '${DateTime.now().microsecondsSinceEpoch}',
+      'files': uploads,
+    };
+    if (replyToMessageId != null) fields['reply_to_message_id'] = replyToMessageId;
+    final form = FormData.fromMap(fields);
+    final response = await _api.dio.post<Map<String, dynamic>>(
+      '/api/v1/messaging/client/unified-messages',
+      data: form,
+    );
+    return Message.fromJson(response.data!);
+  }
+
+  /// Marca como leidas todas las conversaciones del cliente.
+  Future<void> markAllRead() async {
+    final meta = await unifiedConversation();
+    final channelIds = meta['channel_ids'] as Map<String, dynamic>? ?? {};
+    for (final id in channelIds.values) {
+      try {
+        await _api.dio.post<void>('/api/v1/messaging/client/conversations/$id/read');
+      } catch (_) {}
+    }
+  }
 }
