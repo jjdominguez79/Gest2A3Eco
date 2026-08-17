@@ -61,6 +61,10 @@ class MessagingRepository {
         '/${_audience(profile)}/conversations/$conversationId/read',
       );
 
+  Future<void> markUnread(UserProfile profile, String conversationId) => _api.dio.delete<void>(
+        '/${_audience(profile)}/conversations/$conversationId/read',
+      );
+
   Future<void> changeState(String conversationId, String state) => _api.dio.patch<void>(
         '/staff/conversations/$conversationId',
         data: {'state': state},

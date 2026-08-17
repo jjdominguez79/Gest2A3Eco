@@ -47,6 +47,7 @@ class Message {
     required this.authorType,
     required this.authorId,
     required this.authorName,
+    required this.authorAvatarUrl,
     required this.body,
     required this.createdAt,
     required this.deleted,
@@ -60,6 +61,7 @@ class Message {
         authorType: json['author_type'] as String? ?? 'staff',
         authorId: (json['author_id'] ?? '') as String,
         authorName: json['author_name'] as String? ?? '',
+        authorAvatarUrl: json['author_avatar_url'] as String? ?? '',
         body: json['body'] as String? ?? '',
         createdAt: DateTime.parse(json['created_at'] as String).toLocal(),
         deleted: json['deleted'] as bool? ?? false,
@@ -76,6 +78,7 @@ class Message {
   final String authorType;
   final String authorId;
   final String authorName;
+  final String authorAvatarUrl;
   final String body;
   final DateTime createdAt;
   final bool deleted;

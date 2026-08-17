@@ -1,5 +1,53 @@
 import 'message.dart';
 
+class ClientGroup {
+  const ClientGroup({
+    required this.companyCode,
+    required this.companyName,
+    required this.conversations,
+    required this.totalUnread,
+    this.lastMessage,
+    this.updatedAt,
+  });
+
+  final String companyCode;
+  final String companyName;
+  final List<Conversation> conversations;
+  final int totalUnread;
+  final Message? lastMessage;
+  final DateTime? updatedAt;
+
+  String get displayName => companyName.isEmpty ? companyCode : companyName;
+}
+
+List<ClientGroup> groupConversationsByClient(List<Conversation> conversations) {
+  final map = <String, List<Conversation>>{};
+  for (final conv in conversations) {
+    map.putIfAbsent(conv.companyCode, () => []).add(conv);
+  }
+  return map.entries.map((e) {
+    final convs = e.value..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    final totalUnread = convs.fold(0, (sum, c) => sum + c.unreadCount);
+    Message? lastMsg;
+    DateTime? lastUpdated;
+    for (final c in convs) {
+      if (lastUpdated == null || c.updatedAt.isAfter(lastUpdated)) {
+        lastUpdated = c.updatedAt;
+        lastMsg = c.lastMessage;
+      }
+    }
+    return ClientGroup(
+      companyCode: e.key,
+      companyName: convs.first.companyName,
+      conversations: convs,
+      totalUnread: totalUnread,
+      lastMessage: lastMsg,
+      updatedAt: lastUpdated,
+    );
+  }).toList()
+    ..sort((a, b) => (b.updatedAt ?? DateTime(0)).compareTo(a.updatedAt ?? DateTime(0)));
+}
+
 class Conversation {
   const Conversation({
     required this.id,
