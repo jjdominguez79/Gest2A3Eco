@@ -1567,13 +1567,17 @@ class FacturaDialog(tk.Toplevel):
         return out
 
     def _listar_plantillas_word(self):
-        from utils.utilidades import get_word_templates_subdir
+        from utils.utilidades import get_word_templates_dir, get_word_templates_subdir
         tipo = "albaranes" if "albaran" in self._titulo.lower() else "facturas"
         plantillas_dir = get_word_templates_subdir(tipo)
-        if not plantillas_dir.exists():
-            return []
-        items = [p.name for p in plantillas_dir.glob("*.docx") if p.is_file()]
-        return sorted(items, key=lambda s: s.lower())
+        nombres: set[str] = set()
+        if plantillas_dir.exists():
+            nombres.update(p.name for p in plantillas_dir.glob("*.docx") if p.is_file())
+        # Incluir plantillas de la raiz que aun no se hayan migrado a la subcarpeta
+        raiz = Path(get_word_templates_dir())
+        if raiz.exists():
+            nombres.update(p.name for p in raiz.glob("*.docx") if p.is_file())
+        return sorted(nombres, key=lambda s: s.lower())
 
     def _listar_plantillas_emitidas(self):
         try:

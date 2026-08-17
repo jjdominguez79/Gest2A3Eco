@@ -18,6 +18,7 @@ from utils.utilidades import (
     aplicar_descuento_total_lineas,
     get_default_output_dir,
     get_log_path,
+    get_word_templates_dir,
     get_word_templates_subdir,
     load_app_config,
     load_monedas,
@@ -1896,6 +1897,10 @@ class FacturasEmitidasController:
         candidate = os.path.join(tpl_dir, chosen)
         if os.path.exists(candidate):
             return candidate
+        # Fallback: buscar en la raiz de plantillas (plantillas aun no migradas)
+        candidate_raiz = os.path.join(get_word_templates_dir(), chosen)
+        if os.path.exists(candidate_raiz):
+            return candidate_raiz
         if warn_missing:
             self._view.show_warning(
                 "Gest2A3Eco",
