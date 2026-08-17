@@ -878,6 +878,7 @@ def staff_me(staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_
         "id": staff.external_id, "name": staff.name, "email": staff.email,
         "role": staff.role, "chat_alias": staff.chat_alias,
         "avatar_configured": bool(staff.avatar_storage_key),
+        "avatar_url": f"/api/v1/messaging/staff/avatars/{staff.external_id}" if staff.avatar_storage_key else "",
         "channels": sorted(_channels_for_staff(db, staff)),
     }
 
@@ -1529,7 +1530,52 @@ def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)):
 
 
 @router.post("/auth/forgot-password", status_code=202)
-def forgot_password(payload: ForgotPasswordIn, background: BackgroundTasks, db: Session = Depends(get_db)):
+def forgot_password(
+    payload: ForgotPasswordIn,
+    background: BackgroundTasks,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Solicita un enlace de recuperacion de contrasena.
+
+    Responde siempre de forma neutra para evitar enumeracion de usuarios.
+    Rate limiting: max 5 intentos por email o por IP en ventana de 15 minutos.
+    """
+    from sqlalchemy import text as _text
+
+    email_key = f"pwd_reset:{payload.email.strip().lower()}"
+    ip = (
+        request.headers.get("x-forwarded-for", "")
+        .split(",")[0]
+        .strip()
+        or (request.client.host if request.client else "unknown")
+    )
+    ip_key = f"pwd_reset_ip:{ip}"
+    now = utcnow()
+    window_15m = now.replace(
+        minute=(now.minute // 15) * 15, second=0, microsecond=0
+    )
+
+    # Verificar y registrar intentos para email e IP
+    for rate_key in (email_key, ip_key):
+        existing = db.execute(
+            _text(
+                "SELECT count FROM msg_rate_limits WHERE key = :k AND window_start = :w"
+            ),
+            {"k": rate_key, "w": window_15m},
+        ).first()
+        count = existing[0] if existing else 0
+        if count >= 5:
+            # Misma respuesta para no revelar el rate limiting exacto
+            return {"ok": True, "email_queued": mail_configured()}
+        db.execute(
+            _text(
+                "INSERT INTO msg_rate_limits (key, window_start, count) VALUES (:k, :w, 1) "
+                "ON CONFLICT (key, window_start) DO UPDATE SET count = msg_rate_limits.count + 1"
+            ),
+            {"k": rate_key, "w": window_15m},
+        )
+
     client = db.scalar(select(MessagingClient).where(
         MessagingClient.email == payload.email.strip().lower(),
         MessagingClient.active.is_(True),
@@ -1544,6 +1590,9 @@ def forgot_password(payload: ForgotPasswordIn, background: BackgroundTasks, db: 
         if mail_configured():
             url = f"{get_settings().messaging_public_base_url}/mensajes?reset={token}"
             background.add_task(send_password_reset, client.email, client.name, url)
+    else:
+        db.commit()  # persist rate limit counts
+
     # Respuesta deliberadamente identica para no revelar cuentas existentes.
     return {"ok": True, "email_queued": mail_configured()}
 
