@@ -58,7 +58,12 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
     final updatedAt = group.updatedAt ?? DateTime.now();
     await ref.read(hiddenConversationsStorageProvider).hide(profile.id, group.companyCode, updatedAt);
     if (mounted) {
-      setState(() => _hiddenGroups = {..._hiddenGroups, group.companyCode: updatedAt.toUtc()});
+      setState(() {
+        _hiddenGroups = {..._hiddenGroups, group.companyCode: updatedAt.toUtc()};
+        if (group.conversations.any((conversation) => conversation.id == _selected)) {
+          _selected = null;
+        }
+      });
     }
   }
 
