@@ -14,8 +14,6 @@ import 'messaging_providers.dart';
 import 'unified_conversation_screen.dart';
 
 final realtimeServiceProvider = Provider<RealtimeService>((ref) => RealtimeService());
-final notificationsServiceProvider = Provider<NotificationsService>((ref) => NotificationsService());
-
 class ConversationsScreen extends ConsumerStatefulWidget {
   const ConversationsScreen({super.key});
 

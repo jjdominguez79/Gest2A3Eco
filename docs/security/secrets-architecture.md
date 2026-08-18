@@ -139,7 +139,8 @@ Variables principales de Railway:
 
 `DGT_STORAGE_DIR` y `MESSAGING_STORAGE_DIR` son almacenamiento local de
 desarrollo, no sustituyen el almacenamiento privado configurado en produccion.
-El fichero apuntado por `MESSAGING_FIREBASE_CREDENTIALS` es una cuenta de
+El fichero apuntado por `MESSAGING_FIREBASE_CREDENTIALS`, o el JSON secreto de
+`MESSAGING_FIREBASE_CREDENTIALS_JSON` en Railway, es una cuenta de
 servicio y debe montarse como secreto; nunca se incorpora al repositorio ni al
 paquete Flutter. `MESSAGING_APP_REDIRECT_URI` no es secreto.
 

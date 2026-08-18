@@ -26,6 +26,21 @@ class AuthRepository {
     );
   }
 
+  Future<AuthSession> acceptInvite(String token, String password) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/auth/accept-invite',
+      data: {'token': token, 'password': password},
+    );
+    final data = response.data!;
+    return AuthSession(
+      token: data['token'] as String,
+      profile: UserProfile.fromJson(
+        data['client'] as Map<String, dynamic>,
+        UserType.client,
+      ),
+    );
+  }
+
   Future<AuthSession> loginStaff() async {
     if (kIsWeb) {
       const configuredRedirect = String.fromEnvironment('APP_AUTH_REDIRECT_URI');

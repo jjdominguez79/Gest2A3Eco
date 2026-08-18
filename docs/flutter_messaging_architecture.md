@@ -88,18 +88,13 @@ Web Push/VAPID ha sido eliminado:
 Los tokens FCM se guardan en `msg_app_devices`. Una presencia de dispositivo con
 conversacion activa evita notificaciones redundantes.
 
-## Invitaciones y correos (estado temporal)
+## Invitaciones y correos
 
-Las siguientes funcionalidades estan **temporalmente deshabilitadas** a la espera
-de que Flutter implemente deep links correspondientes:
-
-- **Invitaciones de cliente por email:** el endpoint sigue creando la invitacion
-  y devuelve el token/URL en el JSON de respuesta (para que el admin la comparta
-  manualmente), pero `email_queued: false`. Ver `TODO(flutter-invites)`.
-- **Recuperacion de contrasena por email:** el endpoint no envia email hasta
-  implementar deep link Flutter para reset. Ver `TODO(flutter-reset)`.
-- **Aviso de nuevo mensaje por email:** se envia un aviso informativo sin enlace
-  (la URL de la PWA ha sido suprimida).
+- Las invitaciones usan `es.gestinem.app://auth/invite?token=...`; Flutter permite
+  crear la contrasena y abre la sesion del cliente.
+- La recuperacion usa `es.gestinem.app://auth/reset?token=...`; Flutter permite
+  establecer una contrasena nueva.
+- El aviso de nuevo mensaje se envia sin enlace y pide abrir la aplicacion.
 
 ## Service workers de retirada (TRANSITORIOS)
 
@@ -113,6 +108,8 @@ despliegue de esta version** (aproximadamente 2026-10-18).
 - `MESSAGING_APP_REDIRECT_URI=es.gestinem.app://auth/callback`
 - `MESSAGING_APP_WEB_REDIRECT_URI=https://app.example.com/auth/callback`
 - `MESSAGING_FIREBASE_CREDENTIALS=C:\ruta\privada\firebase-service-account.json`
+- En Railway, `MESSAGING_FIREBASE_CREDENTIALS_JSON` puede contener el JSON
+  completo como variable secreta en lugar de una ruta de fichero.
 - Variables de Entra, almacenamiento Azure/local y PostgreSQL.
 
 **Variables eliminadas:** `MESSAGING_VAPID_PUBLIC_KEY`, `MESSAGING_VAPID_PRIVATE_KEY`,

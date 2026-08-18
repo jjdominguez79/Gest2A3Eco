@@ -1,0 +1,4 @@
+storePassword=CAMBIAR
+keyPassword=CAMBIAR
+keyAlias=gestinem
+storeFile=C:\\ruta\\privada\\gestinem-upload.jks

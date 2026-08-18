@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/auth/presentation/auth_controller.dart';
+import '../features/auth/presentation/accept_invite_screen.dart';
 import '../features/auth/presentation/forgot_password_screen.dart';
 import '../features/auth/presentation/login_screen.dart';
 import '../features/auth/presentation/reset_password_screen.dart';
@@ -11,30 +12,49 @@ import '../features/groups/presentation/groups_screen.dart';
 import '../features/messaging/presentation/conversation_screen.dart';
 import '../features/messaging/presentation/conversations_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
+import '../core/deep_links/deep_link_controller.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   final session = ref.watch(sessionProvider);
+  final deepLinkRoute = routeForDeepLink(ref.watch(deepLinkProvider));
   return GoRouter(
     initialLocation: '/',
     redirect: (context, state) {
+      final loggedIn = session.valueOrNull != null;
+      if (!loggedIn && deepLinkRoute != null &&
+          state.uri.toString() != deepLinkRoute) {
+        return deepLinkRoute;
+      }
       if (session.isLoading) {
+        if (deepLinkRoute != null) return null;
         return {'/splash', '/auth/callback'}.contains(state.matchedLocation) ? null : '/splash';
       }
-      final loggedIn = session.valueOrNull != null;
       if (!loggedIn) {
         if (state.matchedLocation == '/login' ||
+            state.matchedLocation == '/accept-invite' ||
             state.matchedLocation == '/forgot-password' ||
             state.matchedLocation.startsWith('/reset-password')) {
           return null;
         }
         return '/login';
       }
-      if (state.matchedLocation == '/login' || state.matchedLocation == '/splash') return '/';
+      if (state.matchedLocation == '/login' ||
+          state.matchedLocation == '/splash' ||
+          state.matchedLocation == '/accept-invite' ||
+          state.matchedLocation == '/reset-password') {
+        return '/';
+      }
       return null;
     },
     routes: [
       GoRoute(path: '/splash', builder: (_, _) => const _SplashScreen()),
       GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
+      GoRoute(
+        path: '/accept-invite',
+        builder: (_, state) => AcceptInviteScreen(
+          token: state.uri.queryParameters['token'] ?? '',
+        ),
+      ),
       GoRoute(path: '/forgot-password', builder: (_, _) => const ForgotPasswordScreen()),
       GoRoute(
         path: '/reset-password',
