@@ -311,8 +311,8 @@ def test_ocr_no_carga_azure_key_si_hay_backend(monkeypatch):
     )
 
 
-def test_ocr_carga_azure_key_sin_backend(monkeypatch):
-    """Sin backend, el escritorio SI puede usar azure_doc_intelligence_key (modo local)."""
+def test_ocr_no_carga_azure_key_sin_backend(monkeypatch):
+    """El escritorio nunca carga azure_doc_intelligence_key, tampoco sin backend."""
     store = _mock_keyring(monkeypatch)
 
     from utils.credential_store import SERVICE_AZURE_DOC_KEY, USERNAME_AZURE_DOC_KEY
@@ -331,9 +331,7 @@ def test_ocr_carga_azure_key_sin_backend(monkeypatch):
     svc = OcrService.__new__(OcrService)
     cfg = svc._leer_config_ocr()
 
-    assert cfg.get("azure_key") == "azure-key-local-valida", (
-        "Sin backend, el escritorio puede usar azure_key local para OCR directo."
-    )
+    assert "azure_key" not in cfg
 
 
 # ── Test 6: Azure OCR backend Railway funciona con variables de entorno ────────
@@ -467,7 +465,7 @@ def test_migracion_conserva_campos_no_sensibles(monkeypatch):
     assert written_payload.get("postgres_host") == "192.168.0.18"
     assert written_payload.get("postgres_port") == 5433
     assert written_payload.get("integrations_api_url") == "https://backend.example.com"
-    assert written_payload.get("ocr_motor_activo") == "azure"
+    assert "ocr_motor_activo" not in written_payload
 
 
 # ── Test 9: save_app_config() no puede reintroducir secretos ─────────────────

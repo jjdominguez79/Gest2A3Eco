@@ -5,7 +5,7 @@ Las credenciales Azure residen exclusivamente en las variables de entorno
 del servidor; el escritorio nunca accede a ellas directamente.
 
 Exporta:
-  analyze_invoice(content, filename, model_id_override) -> dict
+  analyze_invoice(content, filename) -> dict
   ocr_available() -> bool
 """
 from __future__ import annotations
@@ -184,14 +184,27 @@ def _mapear_documento(doc, model_id: str, texto: str = "") -> dict:
     f = doc.fields or {}
 
     # Proveedor
-    proveedor_modelo = _campo(f, "VendorName", "ProveedorNombre", "nombre_proveedor")
+    proveedor_modelo = _campo(
+        f, "VendorName", "ProveedorNombre", "EmisorNombre", "nombre_proveedor",
+    )
     proveedor_destinatario = _campo(f, "VendorAddressRecipient")
     proveedor_nombre = (
         proveedor_destinatario
         if _parece_razon_social(proveedor_destinatario)
         else proveedor_modelo or proveedor_destinatario
     )
-    proveedor_nif = _campo(f, "VendorTaxId", "ProveedorNif", "NifProveedor", "nif_proveedor")
+    proveedor_nif = _campo(
+        f, "VendorTaxId", "ProveedorNif", "EmisorNif", "NifProveedor", "nif_proveedor",
+    )
+
+    # Destinatario/cliente. Se devuelve junto al proveedor para que el mismo
+    # analisis sirva tanto a facturas recibidas como a emitidas externas.
+    cliente_nombre = _campo(
+        f, "CustomerName", "CustomerAddressRecipient", "ClienteNombre", "nombre_cliente",
+    )
+    cliente_nif = _campo(
+        f, "CustomerTaxId", "CustomerId", "ClienteNif", "NifCliente", "nif_cliente",
+    )
 
     # Numero y fechas
     numero_factura = _campo(f, "InvoiceId", "NumeroFactura", "numero_factura")
@@ -280,6 +293,8 @@ def _mapear_documento(doc, model_id: str, texto: str = "") -> dict:
     return {
         "proveedor_nombre": proveedor_nombre,
         "proveedor_nif": proveedor_nif,
+        "cliente_nombre": cliente_nombre,
+        "cliente_nif": cliente_nif,
         "numero_factura": numero_factura,
         "fecha_factura": fecha_factura,
         "fecha_vencimiento": fecha_vencimiento,
@@ -304,15 +319,13 @@ def ocr_available() -> bool:
     return bool(get_settings().azure_doc_intelligence_key)
 
 
-def analyze_invoice(content: bytes, filename: str, model_id_override: str = "") -> dict:
+def analyze_invoice(content: bytes, filename: str) -> dict:
     """
     Analiza una factura con Azure Document Intelligence.
 
     Parametros:
       content          — bytes del fichero PDF o imagen
       filename         — nombre original del fichero (solo informativo)
-      model_id_override — si no esta vacio, sustituye al model_id de configuracion
-
     Devuelve un dict con la misma estructura que OcrInvoiceResult.to_dict()
     mas el campo motor="azure_backend".
 
@@ -326,11 +339,7 @@ def analyze_invoice(content: bytes, filename: str, model_id_override: str = "") 
     if not settings.azure_doc_intelligence_key:
         raise RuntimeError("Azure OCR no configurado")
 
-    model_id = (
-        model_id_override
-        or settings.azure_doc_intelligence_model_id
-        or "prebuilt-invoice"
-    )
+    model_id = settings.azure_doc_intelligence_model_id or "prebuilt-invoice"
 
     client = DocumentIntelligenceClient(
         endpoint=settings.azure_doc_intelligence_endpoint,
@@ -348,6 +357,8 @@ def analyze_invoice(content: bytes, filename: str, model_id_override: str = "") 
         return {
             "proveedor_nombre": "",
             "proveedor_nif": "",
+            "cliente_nombre": "",
+            "cliente_nif": "",
             "numero_factura": "",
             "fecha_factura": "",
             "fecha_vencimiento": "",

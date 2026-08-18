@@ -181,9 +181,6 @@ def _apply_env_overrides(data: dict) -> dict:
         "GEST2A3ECO_A3_BASE_PATH": "a3_base_path",
         "GEST2A3ECO_POSTGRES_DSN": "postgres_dsn",
         "GEST2A3ECO_WORD_TEMPLATES_DIR": "word_templates_dir",
-        "GEST2A3ECO_OCR_MOTOR_ACTIVO": "ocr_motor_activo",
-        "GEST2A3ECO_AZURE_DOC_INTELLIGENCE_ENDPOINT": "azure_doc_intelligence_endpoint",
-        "GEST2A3ECO_AZURE_DOC_INTELLIGENCE_KEY": "azure_doc_intelligence_key",
         "GEST2A3ECO_DGT_API_URL": "dgt_api_url",
         # GEST2A3ECO_DGT_API_KEY eliminada: dgt_api_key es legacy, reemplazada por WorkstationToken.
         "GEST2A3ECO_INTEGRATIONS_API_URL": "integrations_api_url",
@@ -216,6 +213,11 @@ def _normalize_config(data: dict) -> dict:
     #   nunca se valido ni se uso en ningun flujo activo.
     out.pop("smtp", None)
     out.pop("firma_webhook_secret", None)
+    # El OCR se configura exclusivamente en el backend. Retirar valores que
+    # puedan quedar en configuraciones de puestos anteriores.
+    out.pop("ocr_motor_activo", None)
+    out.pop("azure_doc_intelligence_endpoint", None)
+    out.pop("azure_doc_intelligence_model_id", None)
     # URL del backend de produccion Railway. Se aplica cuando el campo esta
     # vacio (instalacion nueva o legacy sin configurar). Un valor ya existente
     # no se sobreescribe, de modo que puestos con URL personalizada no se ven
@@ -226,21 +228,6 @@ def _normalize_config(data: dict) -> dict:
     out.setdefault("word_templates_dir", "")
     out.setdefault("a3_base_path", "")
     out.setdefault("postgres_dsn", "")
-
-    # Motor OCR: "azure" delega en el backend Railway (no requiere clave Azure local).
-    out.setdefault("ocr_motor_activo", "")
-    if not out["ocr_motor_activo"]:
-        out["ocr_motor_activo"] = "azure"
-
-    # azure_doc_intelligence_endpoint: pertenece al backend Railway, NO al escritorio.
-    # El escritorio llama a /api/v1/ocr/invoices/analyze usando WorkstationToken;
-    # el endpoint Azure real lo gestiona el servidor. Puede permanecer vacio aqui.
-    out.setdefault("azure_doc_intelligence_endpoint", "")
-
-    # Modelo de produccion. Solo se aplica cuando esta vacio.
-    out.setdefault("azure_doc_intelligence_model_id", "")
-    if not out["azure_doc_intelligence_model_id"]:
-        out["azure_doc_intelligence_model_id"] = "facturas-produccion-v1"
 
     out.setdefault("documentos_output_dir", "")
     out.setdefault("dgt_api_url", "")

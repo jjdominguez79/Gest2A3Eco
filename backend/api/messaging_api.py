@@ -22,12 +22,12 @@ from sqlalchemy.orm import Session
 from backend.api.config import get_settings
 from backend.api.database import SessionLocal
 from backend.api.messaging_models import (
-    MessagingAttachment, MessagingClient, MessagingClientPushSubscription, MessagingConversation, MessagingDevice, MessagingDownload,
+    MessagingAttachment, MessagingClient, MessagingConversation, MessagingDevice, MessagingDownload,
     MessagingAppDevice, MessagingCampaign, MessagingCampaignRecipient,
     MessagingDeletionAudit, MessagingEvent, MessagingGroup, MessagingGroupMember,
     MessagingInvitation, MessagingMessage, MessagingOrganization,
     MessagingPasswordReset, MessagingPresence, MessagingRead, MessagingSession, MessagingStaff,
-    MessagingPushSubscription, MessagingStaffAuthFlow, MessagingStaffChannel, MessagingStaffSession,
+    MessagingStaffAuthFlow, MessagingStaffChannel, MessagingStaffSession,
     MessagingStaffAppCode, MessagingStaffThread, MessagingStaffThreadMessage,
     MessagingStaffThreadRead, MessagingWebSocketTicket,
 )
@@ -40,7 +40,6 @@ from backend.api.messaging_security import (
     is_expired, utcnow, verify_password,
 )
 from backend.api.messaging_storage import MessagingStorage, safe_name
-from backend.api.messaging_push import configured as push_configured, send_push
 from backend.api.messaging_firebase import configured as fcm_configured, send_fcm
 from backend.api.messaging_realtime import hub
 from backend.api.security import require_internal_key, require_workstation_or_internal
@@ -130,12 +129,6 @@ class StaffCreateIn(BaseModel):
     chat_alias: str = Field(default="", max_length=160)
     active: bool = True
     channels: list[str] = Field(default_factory=list)
-
-
-class PushSubscriptionIn(BaseModel):
-    endpoint: str = Field(min_length=10, max_length=4000)
-    p256dh: str = Field(min_length=10, max_length=1000)
-    auth: str = Field(min_length=5, max_length=1000)
 
 
 class StaffAppCodeIn(BaseModel):
@@ -270,9 +263,7 @@ def _revoke_staff_access(db: Session, external_id: str) -> None:
         MessagingStaffSession.staff_external_id == external_id,
         MessagingStaffSession.revoked_at.is_(None),
     ).update({MessagingStaffSession.revoked_at: now}, synchronize_session=False)
-    db.query(MessagingPushSubscription).filter(
-        MessagingPushSubscription.staff_external_id == external_id,
-    ).update({MessagingPushSubscription.active: False}, synchronize_session=False)
+    # Web Push/VAPID retirado: ya no hay suscripciones que desactivar aqui.
 
 
 def _ensure_staff_group_threads(db: Session) -> None:
@@ -463,61 +454,13 @@ def _unread_count(db: Session, conv: MessagingConversation, actor_type: str, act
 def _queue_staff_pushes(
     db: Session, background: BackgroundTasks, conv: MessagingConversation,
 ) -> None:
-    if not push_configured():
-        return
-    org = db.get(MessagingOrganization, conv.organization_id)
-    if org.company_code.strip().upper() in TEST_COMPANY_CODES or conv.kind == "private":
-        staff_ids = {org.private_owner_external_id} if org.private_owner_external_id else set()
-    else:
-        staff_ids = set(db.scalars(select(MessagingStaffChannel.staff_external_id).where(
-            MessagingStaffChannel.channel == conv.kind,
-        )))
-    if not staff_ids:
-        return
-    subscriptions = db.scalars(select(MessagingPushSubscription).where(
-        MessagingPushSubscription.staff_external_id.in_(staff_ids),
-        MessagingPushSubscription.active.is_(True),
-    )).all()
-    labels = {"laboral": "Laboral", "fiscal": "Contable / Fiscal", "private": "Directo"}
-    payload = {
-        "title": f"Nuevo mensaje · {org.name}",
-        "body": f"Canal {labels.get(conv.kind, conv.kind)}",
-        "url": f"/equipo/mensajes?conversation={conv.id}",
-        "tag": f"conversation-{conv.id}",
-    }
-    for subscription in subscriptions:
-        background.add_task(send_push, {
-            "endpoint": subscription.endpoint,
-            "keys": {"p256dh": subscription.p256dh, "auth": subscription.auth},
-        }, payload)
+    """Web Push (VAPID) retirado. Las notificaciones al despacho van solo por FCM."""
 
 
 def _queue_client_pushes(
     db: Session, background: BackgroundTasks, conv: MessagingConversation,
 ) -> None:
-    if not push_configured():
-        return
-    client_ids = list(db.scalars(select(MessagingClient.id).where(
-        MessagingClient.organization_id == conv.organization_id,
-        MessagingClient.active.is_(True),
-    )))
-    if not client_ids:
-        return
-    subscriptions = db.scalars(select(MessagingClientPushSubscription).where(
-        MessagingClientPushSubscription.client_id.in_(client_ids),
-        MessagingClientPushSubscription.active.is_(True),
-    )).all()
-    payload = {
-        "title": "Nuevo mensaje de Gestinem",
-        "body": "Tienes una nueva respuesta del despacho.",
-        "url": f"/mensajes?conversation={conv.id}",
-        "tag": f"client-conversation-{conv.id}",
-    }
-    for subscription in subscriptions:
-        background.add_task(send_push, {
-            "endpoint": subscription.endpoint,
-            "keys": {"p256dh": subscription.p256dh, "auth": subscription.auth},
-        }, payload)
+    """Web Push (VAPID) retirado. Las notificaciones al cliente van solo por FCM."""
 
 
 def _queue_app_pushes(
@@ -695,13 +638,19 @@ def create_invitation(payload: InviteIn, background: BackgroundTasks, db: Sessio
         client_id=client.id, token_hash=hash_token(token), expires_at=invitation_expiry(),
     )
     db.add(invitation); db.commit()
+    # TODO(flutter-invites): sustituir por un deep link de Flutter cuando este implementado.
+    # Mientras tanto el envio de email de invitacion esta deshabilitado; el administrador
+    # debe compartir manualmente el token o la URL que devuelve este endpoint.
     url = f"{get_settings().messaging_public_base_url}/mensajes?invite={token}"
-    email_queued = payload.send_email and mail_configured()
-    if email_queued:
-        background.add_task(send_invitation, client.email, client.name, url)
     return {
         "invitation_id": invitation.id,
-        "url": url, "email_queued": email_queued,
+        "url": url,
+        "email_queued": False,
+        "invitation_note": (
+            "El envio de email de invitacion esta temporalmente deshabilitado. "
+            "La mensajeria web ha sido retirada y el deep link Flutter para aceptar "
+            "invitaciones todavia no esta implementado."
+        ),
         "expires_at": invitation.expires_at.isoformat(),
     }
 
@@ -826,18 +775,15 @@ def staff_auth_callback(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse(
             f"{redirect}{separator}{urlencode({'code': code})}", status_code=302,
         )
-    token = new_token()
-    db.add(MessagingStaffSession(
-        staff_external_id=staff.external_id, token_hash=hash_token(token),
-        expires_at=utcnow() + timedelta(days=30),
-    ))
+    # El acceso web al despacho (/equipo/mensajes) ha sido retirado.
+    # El flujo OAuth sin app=true ya no tiene destino valido.
+    # Para iniciar sesion en la mensajeria, usa la aplicacion Flutter con app=true.
     db.commit()
-    response = RedirectResponse("/equipo/mensajes", status_code=302)
-    response.set_cookie(
-        "msg_staff_session", token, httponly=True, secure=True,
-        samesite="lax", max_age=30 * 86400,
+    raise HTTPException(
+        410,
+        "La interfaz web de mensajeria del despacho ha sido retirada. "
+        "Usa la aplicacion Gestinem (app=true en el parametro de inicio de sesion).",
     )
-    return response
 
 
 @router.post("/staff-auth/mobile/exchange")
@@ -930,116 +876,9 @@ def upload_own_avatar(
     return {"ok": True, "avatar_url": f"/api/v1/messaging/staff/avatars/{staff.external_id}"}
 
 
-@router.get("/staff/push/config")
-def staff_push_config(_staff_user: MessagingStaff = Depends(_staff)):
-    return {
-        "enabled": push_configured(),
-        "public_key": get_settings().messaging_vapid_public_key if push_configured() else "",
-    }
-
-
-@router.post("/staff/push/subscriptions")
-def subscribe_staff_push(
-    payload: PushSubscriptionIn, staff: MessagingStaff = Depends(_staff),
-    db: Session = Depends(get_db),
-):
-    item = db.scalar(select(MessagingPushSubscription).where(
-        MessagingPushSubscription.endpoint == payload.endpoint,
-    ))
-    if not item:
-        item = MessagingPushSubscription(
-            staff_external_id=staff.external_id, endpoint=payload.endpoint,
-            p256dh=payload.p256dh, auth=payload.auth,
-        )
-    else:
-        item.staff_external_id = staff.external_id
-        item.p256dh, item.auth, item.active = payload.p256dh, payload.auth, True
-    db.add(item)
-    db.commit()
-    return {"ok": True}
-
-
-@router.post("/staff/push/test")
-def test_staff_push(
-    staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
-):
-    if not push_configured():
-        raise HTTPException(503, "Los avisos push no estan configurados")
-    subscriptions = db.scalars(select(MessagingPushSubscription).where(
-        MessagingPushSubscription.staff_external_id == staff.external_id,
-        MessagingPushSubscription.active.is_(True),
-    )).all()
-    if not subscriptions:
-        raise HTTPException(409, "Este dispositivo no tiene los avisos activados")
-    payload = {
-        "title": "Avisos de Gestinem activados",
-        "body": "Este equipo recibira los nuevos mensajes asignados.",
-        "url": "/equipo/mensajes",
-        "tag": "gestinem-push-test",
-    }
-    delivered = sum(bool(send_push({
-        "endpoint": item.endpoint,
-        "keys": {"p256dh": item.p256dh, "auth": item.auth},
-    }, payload)) for item in subscriptions)
-    if not delivered:
-        raise HTTPException(502, "El navegador no ha aceptado la notificacion de prueba")
-    return {"ok": True, "delivered": delivered}
-
-
-@router.get("/client/push/config")
-def client_push_config(_client_user: MessagingClient = Depends(_client)):
-    return {
-        "enabled": push_configured(),
-        "public_key": get_settings().messaging_vapid_public_key if push_configured() else "",
-    }
-
-
-@router.post("/client/push/subscriptions")
-def subscribe_client_push(
-    payload: PushSubscriptionIn, client: MessagingClient = Depends(_client),
-    db: Session = Depends(get_db),
-):
-    item = db.scalar(select(MessagingClientPushSubscription).where(
-        MessagingClientPushSubscription.endpoint == payload.endpoint,
-    ))
-    if not item:
-        item = MessagingClientPushSubscription(
-            client_id=client.id, endpoint=payload.endpoint,
-            p256dh=payload.p256dh, auth=payload.auth,
-        )
-    else:
-        item.client_id = client.id
-        item.p256dh, item.auth, item.active = payload.p256dh, payload.auth, True
-    db.add(item)
-    db.commit()
-    return {"ok": True}
-
-
-@router.post("/client/push/test")
-def test_client_push(
-    client: MessagingClient = Depends(_client), db: Session = Depends(get_db),
-):
-    if not push_configured():
-        raise HTTPException(503, "Los avisos push no estan configurados")
-    subscriptions = db.scalars(select(MessagingClientPushSubscription).where(
-        MessagingClientPushSubscription.client_id == client.id,
-        MessagingClientPushSubscription.active.is_(True),
-    )).all()
-    if not subscriptions:
-        raise HTTPException(409, "Este dispositivo no tiene los avisos activados")
-    payload = {
-        "title": "Avisos de Gestinem activados",
-        "body": "Recibiras un aviso cuando el despacho te responda.",
-        "url": "/mensajes",
-        "tag": "gestinem-client-push-test",
-    }
-    delivered = sum(bool(send_push({
-        "endpoint": item.endpoint,
-        "keys": {"p256dh": item.p256dh, "auth": item.auth},
-    }, payload)) for item in subscriptions)
-    if not delivered:
-        raise HTTPException(502, "El navegador no ha aceptado la notificacion de prueba")
-    return {"ok": True, "delivered": delivered}
+# Web Push/VAPID retirado. Los endpoints /staff/push/* y /client/push/* han sido eliminados.
+# Las notificaciones van exclusivamente por Firebase Cloud Messaging (FCM) a traves de
+# los endpoints /{audience}/app-devices existentes.
 
 
 def _serialize_staff_thread_message(db: Session, item: MessagingStaffThreadMessage) -> dict:
@@ -1202,46 +1041,7 @@ def _queue_internal_pushes(
     db: Session, background: BackgroundTasks, thread: MessagingStaffThread,
     sender: MessagingStaff,
 ) -> None:
-    if not push_configured():
-        return
-    if thread.kind == "direct":
-        recipient_ids = {
-            thread.admin_staff_external_id, thread.member_staff_external_id,
-        }
-    elif thread.key.startswith("dynamic-group:"):
-        recipient_ids = set(db.scalars(select(MessagingGroupMember.member_id).where(
-            MessagingGroupMember.group_id == thread.key.split(":", 1)[1],
-            MessagingGroupMember.member_type == "staff",
-        )))
-    else:
-        recipient_ids = set(db.scalars(select(MessagingStaff.external_id).where(
-            MessagingStaff.active.is_(True), MessagingStaff.role == "admin",
-        )))
-        recipient_ids.update(db.scalars(select(MessagingStaffChannel.staff_external_id).where(
-            MessagingStaffChannel.channel == thread.channel,
-        )))
-    recipient_ids.discard(sender.external_id)
-    if not recipient_ids:
-        return
-    subscriptions = db.scalars(select(MessagingPushSubscription).where(
-        MessagingPushSubscription.staff_external_id.in_(recipient_ids),
-        MessagingPushSubscription.active.is_(True),
-    )).all()
-    title = (
-        _staff_thread_title(db, thread, sender)
-        if thread.kind == "group" else (sender.chat_alias.strip() or sender.name)
-    )
-    payload = {
-        "title": f"Nuevo mensaje interno · {title}",
-        "body": sender.chat_alias.strip() or sender.name,
-        "url": f"/equipo/mensajes?internal={thread.id}",
-        "tag": f"internal-{thread.id}",
-    }
-    for subscription in subscriptions:
-        background.add_task(send_push, {
-            "endpoint": subscription.endpoint,
-            "keys": {"p256dh": subscription.p256dh, "auth": subscription.auth},
-        }, payload)
+    """Web Push (VAPID) retirado. Los mensajes internos notifican solo por FCM."""
 
 
 @router.post("/staff/internal/threads/{thread_id}/messages")
@@ -1606,8 +1406,13 @@ def forgot_password(
         ))
         db.commit()
         if mail_configured():
-            url = f"{get_settings().messaging_public_base_url}/mensajes?reset={token}"
-            background.add_task(send_password_reset, client.email, client.name, url)
+            # Deep link Flutter: la PWA /mensajes ha sido retirada.
+            # El cliente Flutter intercepta gestinem://auth/reset?reset=<token>.
+            reset_url = (
+                get_settings().messaging_app_redirect_uri.split("://auth/")[0]
+                + "://auth/reset?reset=" + token
+            )
+            background.add_task(send_password_reset, client.email, client.name, reset_url)
     else:
         db.commit()  # persist rate limit counts
 
@@ -1994,9 +1799,10 @@ def post_message(
         for recipient in clients:
             presence = db.get(MessagingPresence, recipient.id)
             if not presence or is_expired(presence.connected_until):
+                # TODO(flutter-notice): sustituir por deep link Flutter cuando este implementado.
+                # Se envia aviso informativo sin enlace (la PWA ha sido retirada).
                 background.add_task(
-                    send_message_notice, recipient.email, recipient.name,
-                    f"{get_settings().messaging_public_base_url}/mensajes",
+                    send_message_notice, recipient.email, recipient.name, "",
                 )
     return _serialize_message(db, item, audience)
 

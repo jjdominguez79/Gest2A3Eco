@@ -4,9 +4,8 @@ Tests para v1.7.1: correccion de configuracion inicial en instalaciones nuevas.
 Cubre:
 1.  integrations_api_url por defecto es la URL de produccion Railway.
 2.  messaging_api_url por defecto es la URL de produccion Railway.
-3.  ocr_motor_activo por defecto es "azure".
-4.  azure_doc_intelligence_model_id por defecto es "facturas-produccion-v1".
-5.  azure_doc_intelligence_key no se persiste en config.local.json.
+3.  La configuracion Azure OCR legacy se elimina del escritorio.
+4.  azure_doc_intelligence_key no se persiste en config.local.json.
 6.  PostgreSQL inicial usa puerto 5433 (config.example.json + dialogo).
 7.  postgres_dsn (que contiene password) no se persiste en config.local.json.
 8.  Config existente con URL personalizada no se sobreescribe.
@@ -24,7 +23,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 _PROD_URL = "https://gest2a3eco-production.up.railway.app"
-_PROD_MODEL = "facturas-produccion-v1"
 
 
 # ---------------------------------------------------------------------------
@@ -79,23 +77,18 @@ def test_nueva_instalacion_messaging_api_url_produccion():
 
 
 # ===========================================================================
-# 3. ocr_motor_activo por defecto
+# 3. Configuracion OCR legacy retirada
 # ===========================================================================
 
-def test_nueva_instalacion_ocr_motor_activo_azure():
-    """Sin config previa, ocr_motor_activo debe ser 'azure'."""
-    cfg = _normalize({})
-    assert cfg["ocr_motor_activo"] == "azure"
-
-
-# ===========================================================================
-# 4. azure_doc_intelligence_model_id por defecto
-# ===========================================================================
-
-def test_nueva_instalacion_model_id_produccion():
-    """Sin config previa, azure_doc_intelligence_model_id debe ser el modelo de produccion."""
-    cfg = _normalize({})
-    assert cfg["azure_doc_intelligence_model_id"] == _PROD_MODEL
+def test_normalize_elimina_configuracion_ocr_local_legacy():
+    cfg = _normalize({
+        "ocr_motor_activo": "azure",
+        "azure_doc_intelligence_endpoint": "https://azure.example.com",
+        "azure_doc_intelligence_model_id": "modelo-antiguo",
+    })
+    assert "ocr_motor_activo" not in cfg
+    assert "azure_doc_intelligence_endpoint" not in cfg
+    assert "azure_doc_intelligence_model_id" not in cfg
 
 
 # ===========================================================================
@@ -199,10 +192,6 @@ def test_postgres_existente_no_se_sobreescribe():
 def test_ocr_usa_backend_cuando_hay_workstation_token():
     """Con integrations_api_url configurado y WorkstationToken, el motor debe ser BackendOcrEngine."""
     fake_cfg = {
-        "motor_activo": "azure",
-        "azure_endpoint": "",
-        "azure_key": "",
-        "azure_model_id": _PROD_MODEL,
         "integrations_api_url": _PROD_URL,
         "backend_api_key": "g2a3_wks_TESTTOKEN",
     }
@@ -212,19 +201,11 @@ def test_ocr_usa_backend_cuando_hay_workstation_token():
         def __init__(self, **kwargs): pass
         def disponible(self): return True
 
-    class FakeAzureLocal:
-        nombre = "azure"
-        def __init__(self, **kwargs): pass
-        def disponible(self): return True
-
     import services.ocr.engines.backend_ocr_engine as _bmod
-    import services.ocr.engines.azure_invoice_engine as _amod
     original_backend = getattr(_bmod, "BackendOcrEngine", None)
-    original_azure = getattr(_amod, "AzureInvoiceEngine", None)
 
     try:
         _bmod.BackendOcrEngine = FakeBackendEngine
-        _amod.AzureInvoiceEngine = FakeAzureLocal
 
         from services.ocr.ocr_service import OcrService
         svc = OcrService.__new__(OcrService)
@@ -235,14 +216,9 @@ def test_ocr_usa_backend_cuando_hay_workstation_token():
         assert "FakeBackendEngine" in nombres, (
             f"Se esperaba BackendOcrEngine en la cadena; motores encontrados: {nombres}"
         )
-        assert "FakeAzureLocal" not in nombres, (
-            "AzureInvoiceEngine local no debe estar en la cadena cuando hay backend configurado"
-        )
     finally:
         if original_backend is not None:
             _bmod.BackendOcrEngine = original_backend
-        if original_azure is not None:
-            _amod.AzureInvoiceEngine = original_azure
 
 
 # ===========================================================================
@@ -270,10 +246,8 @@ def test_pdf_sin_texto_usa_backend_ocr():
     svc = OcrService.__new__(OcrService)
     svc._motores = [FakeBackendEngine(), FakePdfTextEngine()]
     svc._leer_config_ocr = lambda: {
-        "motor_activo": "azure",
         "integrations_api_url": _PROD_URL,
         "backend_api_key": "g2a3_wks_TESTTOKEN",
-        "azure_model_id": _PROD_MODEL,
     }
 
     resultado = svc._ejecutar_motores(Path("factura_escaneada.jpg"))
@@ -302,7 +276,6 @@ def test_pdf_text_funciona_cuando_hay_texto():
     svc = OcrService.__new__(OcrService)
     svc._motores = [FakePdfTextEngine()]
     svc._leer_config_ocr = lambda: {
-        "motor_activo": "pdf_text",
         "integrations_api_url": "",
         "backend_api_key": "",
     }

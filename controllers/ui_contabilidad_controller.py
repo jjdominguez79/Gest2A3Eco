@@ -85,6 +85,7 @@ class UIContabilidadController:
             "cuenta_gasto_por_defecto": doc.get("cuenta_gasto") or plantilla.get("cuenta_gasto_por_defecto") or "62900000",
             "cuenta_iva_soportado_defecto": doc.get("cuenta_iva") or plantilla.get("cuenta_iva_soportado_defecto") or "47200000",
             "cuenta_proveedor_por_defecto": doc.get("cuenta_proveedor") or "",
+            "cuenta_suplidos": doc.get("cuenta_suplidos") or "55509999",
         }
         lineas = generar_asiento_recibida(row, conf)
         payload_lineas = [
@@ -233,6 +234,54 @@ class UIContabilidadController:
         self.refresh(select_id="__clear_selection__")
         self._view.clear_preview()
         self._view.show_info("Gest2A3Eco", f"Fichero generado:\n{save_path}")
+
+    def devolver_a_ocr(self):
+        """Retira de Contabilidad y devuelve a Errores OCR para corregir."""
+        seleccionados = self._view.get_selected_received_ids()
+        if not seleccionados:
+            self._view.show_warning(
+                "Gest2A3Eco", "Selecciona al menos una factura para devolver.",
+            )
+            return
+        permitidas, bloqueadas, enlazadas = [], [], []
+        for documento_id in seleccionados:
+            doc = self._gestor.get_factura_recibida_doc(documento_id) or {}
+            if str(doc.get("numero_asiento") or "").strip():
+                bloqueadas.append(documento_id)
+                continue
+            permitidas.append(documento_id)
+            if doc.get("generada") or doc.get("estado_contable") == "contabilizada":
+                enlazadas.append(documento_id)
+        if bloqueadas:
+            self._view.show_warning(
+                "Gest2A3Eco",
+                f"{len(bloqueadas)} factura(s) tienen asiento confirmado y no pueden devolverse.",
+            )
+        if not permitidas:
+            return
+        if enlazadas and not self._view.ask_yes_no(
+            "Anular suenlace y devolver",
+            f"{len(enlazadas)} factura(s) ya tienen suenlace generado.\n"
+            "Se anulara esa marca y volveran a Errores OCR.\n\n¿Continuar?",
+        ):
+            return
+        motivo = self._view.ask_return_reason(
+            "Motivo de devolucion",
+            "Indica el motivo. Se mostrara al revisar de nuevo la factura en OCR.",
+        )
+        if motivo is None:
+            return
+        resultado = self._gestor.devolver_facturas_recibidas_a_ocr(
+            self._codigo, permitidas,
+            motivo.strip() or "Devuelta desde Contabilidad para corregirla.",
+        )
+        self._selected_id = None
+        self.refresh(select_id="__clear_selection__")
+        self._view.clear_preview()
+        self._view.show_info(
+            "Gest2A3Eco",
+            f"{resultado.get('ocr', 0)} factura(s) devueltas a Errores OCR.",
+        )
 
     def capturar_numero_asiento_desde_a3(self):
         seleccionados = self._view.get_selected_received_ids()

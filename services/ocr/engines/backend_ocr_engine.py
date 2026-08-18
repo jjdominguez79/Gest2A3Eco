@@ -17,10 +17,9 @@ logger = logging.getLogger(__name__)
 class BackendOcrEngine(OcrEngineBase):
     """Motor OCR que delega en el backend FastAPI."""
 
-    def __init__(self, base_url: str, api_key: str, model_id: str = "", timeout: int = 120):
+    def __init__(self, base_url: str, api_key: str, timeout: int = 120):
         self._base_url = str(base_url or "").rstrip("/")
         self._api_key = str(api_key or "")
-        self._model_id = str(model_id or "")
         self._timeout = timeout
         self._disponible: bool | None = None  # cache
 
@@ -55,7 +54,6 @@ class BackendOcrEngine(OcrEngineBase):
                 resp = requests.post(
                     f"{self._base_url}/api/v1/ocr/invoices/analyze",
                     headers={"X-API-Key": self._api_key},
-                    data={"model_id": self._model_id},
                     files={"file": (path.name, fh)},
                     timeout=self._timeout,
                 )

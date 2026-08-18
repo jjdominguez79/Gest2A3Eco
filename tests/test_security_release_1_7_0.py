@@ -255,9 +255,7 @@ def test_config_antigua_claves_legacy_se_limpian_juntas(monkeypatch):
 
     assert "integrations_api_key" not in written_payload
     assert "dgt_api_key" not in written_payload
-    assert written_payload.get("ocr_motor_activo") == "azure", (
-        "Los campos no sensibles si deben conservarse."
-    )
+    assert "ocr_motor_activo" not in written_payload
 
 
 # ── Test 6: Gest2A3Eco/IntegrationsApiKey se borra del Credential Manager ────

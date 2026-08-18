@@ -142,6 +142,20 @@ def aplicar_tema(root: tk.Tk) -> None:
     )
 
     style.configure(
+        "DropZone.TFrame",
+        background="#eef6ff",
+        relief="solid",
+        borderwidth=2,
+    )
+    style.configure(
+        "DropZone.TLabel",
+        background="#eef6ff",
+        foreground="#002C57",
+        font=("Segoe UI", 10, "bold"),
+        padding=(10, 8),
+    )
+
+    style.configure(
         "TLabel",
         background=COLOR_BG,
         foreground=COLOR_TEXT,

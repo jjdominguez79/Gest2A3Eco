@@ -79,6 +79,11 @@ class OcrInvoiceResult:
     proveedor_nombre: str = ""
     proveedor_nif: str = ""
 
+    # Destinatario de la factura. Es imprescindible al procesar facturas
+    # emitidas por clientes, donde el proveedor es el propio emisor.
+    cliente_nombre: str = ""
+    cliente_nif: str = ""
+
     # Numero y fechas
     numero_factura: str = ""
     fecha_factura: str = ""         # ISO YYYY-MM-DD o formato original
@@ -141,6 +146,8 @@ class OcrInvoiceResult:
         return {
             "proveedor_nombre":  self.proveedor_nombre,
             "proveedor_nif":     self.proveedor_nif,
+            "cliente_nombre":    self.cliente_nombre,
+            "cliente_nif":       self.cliente_nif,
             "numero_factura":    self.numero_factura,
             "fecha_factura":     self.fecha_factura,
             "fecha_vencimiento": self.fecha_vencimiento,
@@ -184,7 +191,7 @@ class OcrInvoiceResult:
     @classmethod
     def from_dict(cls, d: dict) -> "OcrInvoiceResult":
         r = cls()
-        for k in ("proveedor_nombre", "proveedor_nif", "numero_factura",
+        for k in ("proveedor_nombre", "proveedor_nif", "cliente_nombre", "cliente_nif", "numero_factura",
                    "fecha_factura", "fecha_vencimiento", "total", "base_total",
                    "iva_total", "retencion_total", "texto", "confianza", "motor"):
             if k in d:

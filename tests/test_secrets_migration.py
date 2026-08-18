@@ -481,17 +481,6 @@ def test_store_get_integrations_api_key(monkeypatch):
     assert get_integrations_api_key() == "clave-api-integraciones"
 
 
-def test_store_get_azure_doc_key(monkeypatch):
-    """Round-trip Azure Doc Intelligence key en almacen mock."""
-    _mock_keyring(monkeypatch)
-    from utils.credential_store import store_azure_doc_key, get_azure_doc_key
-
-    assert get_azure_doc_key() is None
-    ok = store_azure_doc_key("azure-key-xyz")
-    assert ok is True
-    assert get_azure_doc_key() == "azure-key-xyz"
-
-
 def test_store_get_desmarcar_password(monkeypatch):
     """Round-trip desmarcar password en almacen mock."""
     _mock_keyring(monkeypatch)
@@ -582,48 +571,6 @@ def test_signrequest_client_raises_on_direct_use():
 
     with pytest.raises(RuntimeError, match="obsoleto"):
         SignRequestClient("token", "from@example.com")
-
-
-def test_ocr_no_local_azure_fallback_with_backend(monkeypatch):
-    """Con backend configurado, AzureInvoiceEngine local no debe anadirse a la cadena."""
-    from unittest.mock import MagicMock, patch
-
-    fake_cfg = {
-        "motor_activo": "azure",
-        "azure_endpoint": "https://test.azure.com",
-        "azure_key": "local-key",
-        "azure_model_id": "modelo",
-        "integrations_api_url": "https://backend.example.com",
-        "integrations_api_key": "api-key",
-    }
-
-    azure_local_instantiated = []
-
-    class FakeBackendEngine:
-        nombre = "azure_backend"
-        def disponible(self): return True
-
-    class FakeAzureLocal:
-        nombre = "azure"
-        def __init__(self, **kwargs):
-            azure_local_instantiated.append(kwargs)
-        def disponible(self): return True
-
-    with patch("services.ocr.ocr_service.OcrService._leer_config_ocr", return_value=fake_cfg):
-        with patch("services.ocr.engines.backend_ocr_engine.BackendOcrEngine", FakeBackendEngine):
-            with patch("services.ocr.engines.azure_invoice_engine.AzureInvoiceEngine", FakeAzureLocal):
-                from services.ocr.ocr_service import OcrService
-                svc = OcrService.__new__(OcrService)
-                svc._leer_config_ocr = lambda: fake_cfg
-                # Forzar que BackendOcrEngine se importe desde el modulo correcto
-                import services.ocr.engines.backend_ocr_engine as _bmod
-                import services.ocr.engines.azure_invoice_engine as _amod
-                _bmod.BackendOcrEngine = FakeBackendEngine
-                _amod.AzureInvoiceEngine = FakeAzureLocal
-                motores = svc._construir_cadena_motores()
-
-    nombres = [type(m).__name__ for m in motores]
-    assert "FakeAzureLocal" not in nombres, "AzureInvoiceEngine local no debe usarse con backend configurado"
 
 
 def test_redact_covers_all_secret_types():

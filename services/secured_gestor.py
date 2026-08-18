@@ -456,6 +456,22 @@ class SecuredGestor:
         self.security.ensure_company_write(codigo_empresa)
         return self._base.marcar_facturas_emitidas_generadas(codigo_empresa, ids, fecha, ejercicio)
 
+    def devolver_facturas_emitidas_desde_contabilidad(
+        self, codigo_empresa: str, ejercicio: int, ids: list, motivo: str,
+    ):
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.devolver_facturas_emitidas_desde_contabilidad(
+            codigo_empresa, ejercicio, ids, motivo,
+        )
+
+    def devolver_facturas_recibidas_a_ocr(
+        self, codigo_empresa: str, ids: list, motivo: str,
+    ):
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.devolver_facturas_recibidas_a_ocr(
+            codigo_empresa, ids, motivo,
+        )
+
     def desmarcar_facturas_emitidas_generadas(self, codigo_empresa: str, ids: list, ejercicio: int):
         self.security.ensure_company_write(codigo_empresa)
         return self._base.desmarcar_facturas_emitidas_generadas(codigo_empresa, ids, ejercicio)

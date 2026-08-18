@@ -1,22 +1,19 @@
+"""
+Tests de la interfaz web del despacho.
+
+NOTA: Los tests de los templates de la PWA heredada (staff_messages.html,
+staff-messaging.js) han sido eliminados junto con la propia PWA.
+Flutter es el unico cliente de interfaz de mensajeria.
+"""
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1] / "backend" / "api" / "web"
 
 
-def test_portal_equipo_usa_navegacion_directa_simplificada():
-    template = (ROOT / "templates" / "staff_messages.html").read_text(encoding="utf-8")
-    assert 'id="team-shortcuts"' in template
-    assert 'id="people-shortcuts"' in template
-    assert 'id="thread-avatar"' in template
-    assert 'id="space-clients"' not in template
-    assert 'id="space-team"' not in template
-    assert 'id="internal-direct-dialog"' not in template
-
-
-def test_portal_equipo_crea_privado_desde_la_lista_de_personas():
-    script = (ROOT / "static" / "staff-messaging.js").read_text(encoding="utf-8")
-    assert "function renderNavigation()" in script
-    assert "function openPerson(memberId,threadId)" in script
-    assert "counterpart_avatar_url" in script
-    assert "data-permission" not in script  # Los permisos se leen desde el DOM y /staff/me.
+def test_portal_equipo_pwa_eliminada():
+    """Los templates de la PWA del despacho deben haber sido eliminados."""
+    assert not (ROOT / "templates" / "staff_messages.html").exists()
+    assert not (ROOT / "static" / "staff-messaging.js").exists()
+    assert not (ROOT / "static" / "staff-messaging.webmanifest").exists()
+    assert not (ROOT / "static" / "staff-messaging-sw.js").exists()

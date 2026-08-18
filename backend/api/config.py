@@ -36,9 +36,6 @@ class Settings:
     messaging_staff_admin_emails: str
     messaging_staff_allowed_domain: str
     messaging_sync_token: str
-    messaging_vapid_public_key: str
-    messaging_vapid_private_key: str
-    messaging_vapid_subject: str
     messaging_smtp_host: str
     messaging_smtp_port: int
     messaging_smtp_user: str
@@ -107,11 +104,6 @@ def get_settings() -> Settings:
             "MESSAGING_STAFF_ALLOWED_DOMAIN", "gestinem.es",
         ).strip().lower(),
         messaging_sync_token=os.getenv("MESSAGING_SYNC_TOKEN", ""),
-        messaging_vapid_public_key=os.getenv("MESSAGING_VAPID_PUBLIC_KEY", ""),
-        messaging_vapid_private_key=os.getenv("MESSAGING_VAPID_PRIVATE_KEY", ""),
-        messaging_vapid_subject=os.getenv(
-            "MESSAGING_VAPID_SUBJECT", "mailto:oficina@gestinem.es",
-        ),
         messaging_smtp_host=os.getenv("MESSAGING_SMTP_HOST", ""),
         messaging_smtp_port=int(os.getenv("MESSAGING_SMTP_PORT", "587")),
         messaging_smtp_user=os.getenv("MESSAGING_SMTP_USER", ""),

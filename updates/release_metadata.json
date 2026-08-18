@@ -1,6 +1,6 @@
 {
-  "version": "1.7.1",
-  "tag": "v1.7.1",
-  "changelog": "Corrige la configuracion inicial de instalaciones nuevas. Configura automaticamente el backend de Gest2A3Eco para OCR, integraciones y mensajeria. Corrige el puerto PostgreSQL predeterminado a 5433. Las instalaciones nuevas pueden utilizar Azure OCR via backend sin configurar claves Azure localmente. Corrige el autoaprovisionamiento de mensajeria con WorkstationToken y muestra version y fecha de publicacion en la pantalla de acceso. Mantiene la configuracion existente de los puestos actualizados.",
+  "version": "1.8.0",
+  "tag": "v1.8.0",
+  "changelog": "Renueva el modulo OCR con carga de documentos, facturas recibidas y emitidas externas, aprendizaje diferenciado y una pantalla de revision adaptable. Refuerza la validacion contable, bloquea la edicion despues de validar y separa los estados de OCR, SUENLACE, asiento y FACe. Distingue en Contabilidad las facturas emitidas procedentes de OCR y de Facturacion y permite devolver cada documento a su origen con trazabilidad. Retira la mensajeria web heredada y deja el backend preparado para que Flutter sea el unico cliente de mensajeria.",
   "force_update": false
 }

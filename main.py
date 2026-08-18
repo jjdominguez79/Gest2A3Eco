@@ -21,7 +21,6 @@ from utils.utilidades import (
 )
 from views.ui_auth import ChangePasswordDialog, UILogin
 from views.ui_config_monedas import MonedasDialog
-from views.ui_configuracion import abrir_configuracion_ocr
 from views.ui_postgres_config import PostgresConfigDialog
 from views.ui_tramites_dgt_public import UITramitesDgtPublicForm
 from views.ui_theme import aplicar_icono_ventana, aplicar_tema
@@ -280,7 +279,16 @@ def _set_window_geometry(root: tk.Tk, width: int, height: int, *, resizable: boo
 
 def main():
     ensure_template_file()  # Crea plantillas/email_factura.html si no existe
-    root = tk.Tk()
+    try:
+        from tkinterdnd2 import TkinterDnD
+        root = TkinterDnD.Tk()
+        root._dnd_available = True
+        root._dnd_error = ""
+    except Exception as exc:
+        root = tk.Tk()
+        root._dnd_available = False
+        root._dnd_error = str(exc)
+        log_exception("No se pudo inicializar el arrastre de archivos.", exc)
     root.withdraw()  # ocultar ventana vacia durante inicializacion y comprobacion de actualizaciones
     root.title("Gestinem Suite")
     _set_window_geometry(root, 980, 600, resizable=False)
@@ -547,8 +555,6 @@ def main():
         menu.add_command(label="Configurar PostgreSQL", command=_on_config_postgres)
         menu.add_command(label="Seleccionar plantillas Word", command=_on_cambiar_plantillas_word)
         menu.add_command(label="Configurar monedas y clave desmarcar", command=_on_config_monedas)
-        menu.add_separator()
-        menu.add_command(label="Configurar OCR (Azure)", command=lambda: abrir_configuracion_ocr(root))
         try:
             x = root.winfo_rootx() + root.winfo_width() - 220
             y = root.winfo_rooty() + 110

@@ -1,8 +1,8 @@
 # Azure Document Intelligence en Gest2A3Eco
 
-**Estado:** activo a traves del backend cuando `ocr_motor_activo` es `azure`.
+**Estado:** activo exclusivamente a traves del backend.
 
-**Ultima revision contra el codigo:** 2026-08-15.
+**Ultima revision contra el codigo:** 2026-08-18.
 
 ## Arquitectura vigente
 
@@ -17,13 +17,9 @@ Escritorio
               `-- AZURE_DOC_INTELLIGENCE_MODEL_ID
 ```
 
-La clave Azure se mantiene en Railway. El escritorio envia el documento y el ID
-de modelo, y recibe un `OcrInvoiceResult` normalizado. No recibe ni persiste la
-clave del proveedor.
-
-El modo Azure directo se conserva solo para instalaciones sin
-`integrations_api_url`. En ese caso, endpoint y clave se obtienen de la
-configuracion/entorno seguro del puesto y se usa `AzureInvoiceEngine`.
+La clave y el ID del modelo se mantienen en Railway. El escritorio envia el
+documento y recibe un `OcrInvoiceResult` normalizado. No recibe ni persiste
+configuracion del proveedor y tampoco puede sustituir el modelo del servidor.
 
 ## Configuracion
 
@@ -31,8 +27,6 @@ Escritorio, sin secretos:
 
 ```json
 {
-  "ocr_motor_activo": "azure",
-  "azure_doc_intelligence_model_id": "facturas-produccion-v1",
   "integrations_api_url": "https://gest2a3eco-production.up.railway.app"
 }
 ```
@@ -50,14 +44,13 @@ credencial valida y `415` para tipos de archivo no admitidos.
 
 ## Orden y errores
 
-Si Azure esta seleccionado y hay backend, `BackendOcrEngine` es prioritario. Su
+`BackendOcrEngine` es prioritario cuando el backend esta disponible. Su
 resultado, incluido un error de configuracion o de modelo, se devuelve al
 usuario para que el problema sea visible. No se sustituye silenciosamente por
 la interpretacion local de PDF.
 
-Sin backend, Azure local puede ejecutarse antes que los motores de texto. En
-configuraciones no Azure, `PdfTextEngine` procesa primero los PDF con texto y
-`LocalOcrEngine` usa Tesseract cuando esta instalado.
+Sin backend, `PdfTextEngine` procesa los PDF con texto y `LocalOcrEngine` usa
+Tesseract cuando esta instalado. No existe acceso directo a Azure desde el puesto.
 
 ## Campos normalizados
 
@@ -96,8 +89,7 @@ El entrenamiento sigue realizandose en Azure Document Intelligence Studio:
 1. preparar una muestra diversa de documentos ya revisados;
 2. etiquetar los campos acordados;
 3. entrenar y validar con una muestra de control separada;
-4. publicar el nuevo ID en Railway y en la configuracion no sensible del
-   escritorio;
+4. publicar el nuevo ID exclusivamente en Railway;
 5. conservar el modelo anterior para rollback.
 
 ## Limitaciones y operacion

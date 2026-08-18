@@ -45,7 +45,7 @@ X-API-Key: <DGT_INTERNAL_API_KEY>
 Provisionar el token devuelto en Windows Credential Manager:
 
 ```powershell
-python -m utils.provision_workstation --only-token
+python -m utils.provision_workstation
 ```
 
 Configuracion no sensible del escritorio:

@@ -29,6 +29,9 @@ class OcrContabilidadService:
         proveedor_id, relacion = self._resolver_relacion_proveedor(factura)
         ruta = str(documento.get("ruta_original") or "")
         tipo_operacion = factura.get("tipo_operacion_iva") or "INTERIOR_DEDUCIBLE"
+        fecha_contable = factura.get("fecha_contable") or factura.get("fecha_factura") or ""
+        suplidos = float(factura.get("suplidos") or 0.0)
+        cuenta_suplidos = str(factura.get("cuenta_suplidos") or "").strip()
 
         return {
             "id": doc_id,
@@ -62,18 +65,25 @@ class OcrContabilidadService:
                 or factura.get("fecha_factura")
                 or ""
             ),
-            "fecha_asiento": factura.get("fecha_factura") or "",
+            "fecha_asiento": fecha_contable,
             "fecha_vencimiento": factura.get("fecha_vencimiento") or "",
             "descripcion": f"Factura {factura.get('numero_factura') or ''}".strip(),
             "moneda_codigo": "EUR",
             "base_imponible": factura.get("base_total") or 0.0,
             "cuota_iva": factura.get("iva_total") or 0.0,
             "cuota_retencion": factura.get("retencion_total") or 0.0,
+            "pagada": 1 if factura.get("pagada") else 0,
+            "suplidos": suplidos,
+            "cuenta_suplidos": cuenta_suplidos,
             "total": factura.get("total_factura") or 0.0,
             "lineas": lineas,
             "datos_extra": {
                 "documento_ocr_id": doc_id,
                 "tipo_operacion_iva": tipo_operacion,
+                "fecha_contable": fecha_contable,
+                "pagada": bool(factura.get("pagada")),
+                "suplidos": suplidos,
+                "cuenta_suplidos": cuenta_suplidos,
             },
         }
 
@@ -87,6 +97,7 @@ class OcrContabilidadService:
                     "cuota_iva": item.get("cuota_iva") or 0.0,
                     "tipo_recargo": item.get("tipo_recargo") or 0.0,
                     "cuota_recargo": item.get("cuota_recargo") or 0.0,
+                    "cuenta_base": item.get("cuenta_gasto") or "",
                     "tipo_operacion_iva": (
                         item.get("tipo_operacion_iva")
                         or factura.get("tipo_operacion_iva")

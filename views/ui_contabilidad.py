@@ -1,11 +1,15 @@
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from controllers.ui_contabilidad_controller import UIContabilidadController
 from controllers.ui_contabilidad_emitidas_controller import UIContabilidadEmitidasController
 
-_ESTADO_LABELS = {"pendiente": "Pendiente", "generado": "Generado"}
+_ESTADO_LABELS = {
+    "pendiente": "Pendiente",
+    "generado": "Contabilizada",
+    "contabilizada": "Contabilizada",
+}
 
 
 class UIContabilidad(ttk.Frame):
@@ -63,6 +67,10 @@ class UIContabilidad(ttk.Frame):
         ttk.Button(bar, text="Generar asiento", style="Primary.TButton", command=self.controller.generar_asiento).pack(side=tk.LEFT)
         ttk.Button(bar, text="Editar asiento", command=self.controller.editar_asiento).pack(side=tk.LEFT, padx=(6, 0))
         ttk.Button(bar, text="Exportar suenlace.dat", command=self.controller.exportar_suenlace).pack(side=tk.LEFT, padx=6)
+        ttk.Button(
+            bar, text="Devolver a Errores OCR",
+            command=self.controller.devolver_a_ocr,
+        ).pack(side=tk.LEFT, padx=(0, 6))
 
         ttk.Label(bar, text="Mostrar").pack(side=tk.LEFT, padx=(14, 4))
         self.cmb_filtro_recibidas = ttk.Combobox(
@@ -132,15 +140,15 @@ class UIContabilidad(ttk.Frame):
             command=self.emitidas_ctrl.generar_suenlace,
         ).pack(side=tk.LEFT)
         ttk.Button(
-            bar, text="Quitar de contabilidad",
+            bar, text="Devolver a origen",
             command=self.emitidas_ctrl.quitar_de_contabilidad,
         ).pack(side=tk.LEFT, padx=(6, 0))
         ttk.Button(
-            bar, text="Resetear a no generado",
+            bar, text="Anular suenlace",
             command=self.emitidas_ctrl.resetear_generadas,
         ).pack(side=tk.LEFT, padx=6)
         ttk.Button(
-            bar, text="Marcar con asiento como generadas",
+            bar, text="Marcar con asiento como contabilizadas",
             command=self.emitidas_ctrl.marcar_con_asiento_como_generadas,
         ).pack(side=tk.LEFT)
 
@@ -155,7 +163,7 @@ class UIContabilidad(ttk.Frame):
         ttk.Label(bar2, text="Estado:").pack(side=tk.LEFT)
         self.cmb_filtro_emitidas = ttk.Combobox(
             bar2,
-            values=["Todos", "Pendiente", "Generado"],
+            values=["Todos", "Pendiente", "Contabilizada"],
             state="readonly",
             width=12,
         )
@@ -178,7 +186,7 @@ class UIContabilidad(ttk.Frame):
 
         self.tv_emitidas = ttk.Treeview(
             tv_wrap,
-            columns=("numero", "fecha", "cliente", "total", "estado"),
+            columns=("numero", "fecha", "cliente", "origen", "total", "estado"),
             show="headings",
             selectmode="extended",
             height=18,
@@ -187,6 +195,7 @@ class UIContabilidad(ttk.Frame):
             ("numero", "Nº Factura", 110, "w"),
             ("fecha", "Fecha", 90, "w"),
             ("cliente", "Cliente", 200, "w"),
+            ("origen", "Origen", 90, "center"),
             ("total", "Total", 90, "e"),
             ("estado", "Estado", 100, "center"),
         ):
@@ -197,6 +206,7 @@ class UIContabilidad(ttk.Frame):
         vsb_e.grid(row=0, column=1, sticky="ns")
         self.tv_emitidas.configure(yscrollcommand=vsb_e.set)
         self.tv_emitidas.tag_configure("generado", foreground="#2a7a2a")
+        self.tv_emitidas.tag_configure("contabilizada", foreground="#2a7a2a")
         self.tv_emitidas.tag_configure("pendiente", foreground="#b85c00")
         self.tv_emitidas.bind("<<TreeviewSelect>>", self._on_emitida_select)
 
@@ -354,7 +364,7 @@ class UIContabilidad(ttk.Frame):
             estado = doc.get("estado_contable") or ""
             if filtro == "Pendiente" and estado != "pendiente":
                 continue
-            if filtro == "Generado" and estado != "generado":
+            if filtro == "Contabilizada" and estado not in {"generado", "contabilizada"}:
                 continue
             if texto_cliente and texto_cliente not in (str(doc.get("nombre") or "")).lower():
                 continue
@@ -375,7 +385,7 @@ class UIContabilidad(ttk.Frame):
                             pass
             except Exception:
                 total = 0.0
-            tag = estado if estado in ("pendiente", "generado") else ""
+            tag = estado if estado in ("pendiente", "generado", "contabilizada") else ""
             self.tv_emitidas.insert(
                 "", tk.END,
                 iid=str(doc.get("id")),
@@ -384,6 +394,7 @@ class UIContabilidad(ttk.Frame):
                     num_display,
                     str(doc.get("fecha_asiento") or doc.get("fecha_expedicion") or ""),
                     str(doc.get("nombre") or ""),
+                    "OCR" if doc.get("origen_factura") == "ocr" else "Facturacion",
                     f"{total:.2f}",
                     _ESTADO_LABELS.get(estado, estado),
                 ),
@@ -433,6 +444,9 @@ class UIContabilidad(ttk.Frame):
     def ask_yes_no(self, title: str, message: str) -> bool:
         return messagebox.askyesno(title, message)
 
+    def ask_return_reason(self, title: str, message: str) -> str | None:
+        return simpledialog.askstring(title, message, parent=self.winfo_toplevel())
+
     def ask_save_dat_path(self, initialfile: str) -> str:
         return filedialog.asksaveasfilename(
             title="Guardar fichero suenlace.dat",
@@ -444,7 +458,12 @@ class UIContabilidad(ttk.Frame):
     # ── Recibidas tab interface (UIContabilidadController) ──────────────────
 
     def set_documents(self, docs: list[dict]):
-        self._docs = docs or []
+        self._docs = [
+            doc for doc in (docs or [])
+            if str(doc.get("estado_contable") or "") in {
+                "pendiente_contabilizar", "contabilizada",
+            }
+        ]
         self._aplicar_filtro_recibidas()
 
     def _aplicar_filtro_recibidas(self, _event=None):

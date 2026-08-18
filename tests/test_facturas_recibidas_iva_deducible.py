@@ -1,4 +1,4 @@
-from procesos.facturas_recibidas import generar_asiento_recibida
+from procesos.facturas_recibidas import generar_asiento_recibida, generar_recibidas_suenlace
 
 
 def _base_row(**overrides):
@@ -56,3 +56,42 @@ def test_iva_parcial_divide_entre_472_y_gasto():
     iva = next(l for l in lineas if l.subcuenta == "47200000" and l.dh == "D")
     assert float(gasto.importe) == 110.5
     assert float(iva.importe) == 10.5
+
+
+def test_suplidos_generan_linea_separada_sin_aumentar_base_iva():
+    lineas = generar_asiento_recibida(
+        _base_row(Suplidos=15.0, **{"Cuenta Suplidos": "55509999", "Total": 136.0}),
+        _base_conf(),
+    )
+    suplido = next(l for l in lineas if l.subcuenta == "55509999")
+    gasto = next(l for l in lineas if l.subcuenta == "62900000")
+    assert float(suplido.importe) == 15.0
+    assert float(gasto.importe) == 100.0
+
+
+def test_suenlace_incluye_detalle_separado_para_suplidos(monkeypatch):
+    detalles = []
+    monkeypatch.setattr(
+        "procesos.facturas_recibidas.render_a3_tipo12_cabecera",
+        lambda **kwargs: "CABECERA",
+    )
+    monkeypatch.setattr(
+        "procesos.facturas_recibidas.render_a3_tipo9_detalle",
+        lambda **kwargs: detalles.append(kwargs) or "DETALLE",
+    )
+    registros = generar_recibidas_suenlace(
+        [_base_row(
+            Suplidos=15.0,
+            **{
+                "Cuenta Suplidos": "55509999", "Numero Factura": "F-1",
+                "NIF Cliente Proveedor": "B12345678", "Nombre Cliente Proveedor": "Proveedor",
+            },
+        )],
+        {**_base_conf(), "subtipo_recibidas": "01"},
+        "E00001",
+        8,
+    )
+    assert registros == ["CABECERA", "DETALLE", "DETALLE"]
+    assert detalles[-1]["cuenta_base_iva"] == "55509999"
+    assert detalles[-1]["pct_iva"] == 0.0
+    assert detalles[-1]["base"] == 15.0

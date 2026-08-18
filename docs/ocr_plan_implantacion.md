@@ -2,16 +2,16 @@
 
 **Inicio del plan:** 2026-06-09.
 
-**Estado revisado:** 2026-08-15.
+**Estado revisado:** 2026-08-18.
 
 **Nota:** este documento conserva la evolucion del modulo. La descripcion
 operativa vigente esta en [`ocr_estado_actual.md`](ocr_estado_actual.md).
 
 ## Objetivo original
 
-Importar facturas recibidas en PDF o imagen, extraer datos fiscales, revisarlos,
-validarlos y proyectarlos al flujo contable que genera `suenlace.dat`, con
-trazabilidad de las correcciones manuales.
+Importar facturas de proveedor y facturas de cliente externas en PDF o imagen,
+extraer datos fiscales, revisarlos, validarlos y proyectarlos al flujo contable
+que genera `suenlace.dat`, con trazabilidad de las correcciones manuales.
 
 ## Arquitectura alcanzada
 
@@ -19,13 +19,12 @@ trazabilidad de las correcciones manuales.
 Documento
   -> OcrService
        |-- BackendOcrEngine -> FastAPI -> Azure
-       |-- AzureInvoiceEngine local de compatibilidad
        |-- PdfTextEngine
        `-- LocalOcrEngine / Tesseract
   -> tablas OCR tipadas
   -> revision y validacion
-  -> OcrContabilidadService
-  -> facturas_recibidas_docs
+  -> OcrContabilidadService / OcrEmitContabilidadService
+  -> facturas_recibidas_docs / facturas_emitidas_docs
   -> Contabilidad -> suenlace.dat
 ```
 
@@ -43,6 +42,7 @@ Documento
 - Motores desacoplados mediante `OcrEngineBase`.
 - Interpretacion de texto, hash, duplicados, persistencia y auditoria.
 - Pantalla unificada de captura y revision.
+- Arrastre de varios documentos, selector proveedor/cliente y fecha contable.
 - Tablas `documentos_ocr`, `facturas_recibidas_ocr`, detalles fiscales y
   `ocr_correcciones`.
 
@@ -57,9 +57,9 @@ Documento
 
 - Motor Tesseract implementado y opcional; su disponibilidad depende de la
   instalacion del ejecutable y del idioma en cada puesto.
-- SDK Azure incluido en dependencias y mapeo del modelo generico y personalizado.
+- SDK Azure y mapeo del modelo generico y personalizado alojados en el backend.
 - OCR Azure delegado al backend mediante `WorkstationToken`.
-- Claves Azure retiradas de la configuracion persistida del escritorio.
+- Configuracion y motor Azure directo retirados del escritorio.
 
 ### Fase 6 — aprendizaje asistido
 
@@ -77,7 +77,7 @@ en Azure Studio; las correcciones no modifican automaticamente el modelo.
   necesite ese detalle.
 - Mejorar el preprocesado local de escaneos y documentar una instalacion
   reproducible de Tesseract para produccion.
-- Incorporar una UI de seleccion/promocion de modelos con rollback controlado.
+- Incorporar un proceso de promocion de modelos con rollback controlado en el backend.
 - Automatizar un conjunto anonimizado de regresion con documentos reales.
 
 ## Criterios de aceptacion vigentes

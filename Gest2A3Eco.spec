@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_data_files
 
 
 python_root = Path(sys.base_prefix)
@@ -23,11 +24,12 @@ a = Analysis(
         (str(python_root / 'Lib' / 'tkinter'), 'tkinter'),
         (str(python_tcl / 'tcl8.6'), '_tcl_data'),
         (str(python_tcl / 'tk8.6'), '_tk_data'),
-    ],
+    ] + collect_data_files('tkinterdnd2'),
     hiddenimports=[
         'keyring',
         'keyring.backends',
         'keyring.backends.Windows',
+        'tkinterdnd2',
     ],
     hookspath=[],
     hooksconfig={},

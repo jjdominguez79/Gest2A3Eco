@@ -36,7 +36,7 @@ _MIN_TEXT_CHARS = 50
 class OcrService:
     """
     Orquestador OCR con persistencia en las tablas documentos_ocr y
-    facturas_recibidas_ocr.
+    facturas_recibidas_ocr o facturas_emitidas_ocr.
 
     Parametros:
       gestor     — instancia del gestor principal de datos
@@ -45,16 +45,28 @@ class OcrService:
       usuario    — nombre de usuario (para auditoría)
     """
 
-    def __init__(self, gestor, empresa_id: str, ejercicio: int, usuario: str = ""):
+    def __init__(
+        self,
+        gestor,
+        empresa_id: str,
+        ejercicio: int,
+        usuario: str = "",
+        tipo_documento: str = "factura_recibida",
+        fecha_contable: str | None = None,
+    ):
         self._gestor    = gestor
         self._empresa   = empresa_id
         self._ejercicio = ejercicio
         self._usuario   = usuario
+        if tipo_documento not in {"factura_recibida", "factura_emitida"}:
+            raise ValueError(f"Tipo de documento OCR no admitido: {tipo_documento}")
+        self._tipo_documento = tipo_documento
+        self._fecha_contable = str(fecha_contable or "").strip()
         self._motores   = self._construir_cadena_motores()
 
     # ── Punto de entrada publico ──────────────────────────────────────────────
 
-    def procesar_archivo(self, file_path: str) -> dict:
+    def procesar_archivo(self, file_path: str, progress_callback=None) -> dict:
         """
         Procesa un fichero PDF o imagen.
 
@@ -75,6 +87,36 @@ class OcrService:
         # 2. Comprobar duplicado
         doc_dup = self._gestor.buscar_documento_ocr_por_hash(self._empresa, hash_archivo)
         if doc_dup:
+            tipo_anterior = str(doc_dup.get("tipo_documento") or "factura_recibida")
+            if tipo_anterior != self._tipo_documento:
+                estado_anterior = str(doc_dup.get("estado") or "")
+                if estado_anterior not in {
+                    OcrDocumentState.ERROR.value,
+                    OcrDocumentState.PENDIENTE_REVISION.value,
+                    OcrDocumentState.DUPLICADO.value,
+                }:
+                    return self._respuesta_error(
+                        str(doc_dup.get("id") or ""),
+                        "El documento ya existe con otra clasificacion y esta "
+                        f"en estado '{estado_anterior}'. No se ha cambiado automaticamente.",
+                    )
+                # Una importacion de prueba clasificada al reves puede corregirse
+                # mientras aun no haya entrado en Contabilidad.
+                for tabla in ("facturas_recibidas_ocr", "facturas_emitidas_ocr"):
+                    self._gestor.conn.execute(
+                        f"DELETE FROM {tabla} WHERE documento_id=?",
+                        (str(doc_dup["id"]),),
+                    )
+                self._gestor.conn.commit()
+                payload_dup = dict(doc_dup)
+                payload_dup["tipo_documento"] = self._tipo_documento
+                payload_dup["estado"] = OcrDocumentState.PROCESANDO.value
+                payload_dup["error_ocr"] = ""
+                self._gestor.upsert_documento_ocr(payload_dup)
+                self._notificar_progreso(progress_callback, payload_dup)
+                return self.reprocesar_documento(
+                    str(doc_dup["id"]), progress_callback=progress_callback,
+                )
             # Recupera documentos antiguos que apuntaban al Escritorio de un
             # puesto: la nueva seleccion pasa a ser la copia compartida.
             ruta_existente = Path(str(doc_dup.get("ruta_original") or ""))
@@ -113,7 +155,7 @@ class OcrService:
             "ruta_original":   str(path),
             "nombre_archivo":  path.name,
             "hash_archivo":    hash_archivo,
-            "tipo_documento":  "factura_recibida",
+            "tipo_documento":  self._tipo_documento,
             "estado":          OcrDocumentState.PROCESANDO.value,
             "fecha_alta":      _now(),
             "fecha_procesado": None,
@@ -124,6 +166,7 @@ class OcrService:
             "json_ocr":        "",
         }
         self._gestor.upsert_documento_ocr(doc_payload)
+        self._notificar_progreso(progress_callback, doc_payload)
 
         # 5. Intentar extraccion con cadena de motores
         result = self._ejecutar_motores(path)
@@ -160,7 +203,7 @@ class OcrService:
             "errores":      result.errores,
         }
 
-    def reprocesar_documento(self, documento_id: str) -> dict:
+    def reprocesar_documento(self, documento_id: str, progress_callback=None) -> dict:
         """Vuelve a analizar un documento existente sin tratarlo como duplicado."""
         doc = self._gestor.get_documento_ocr(documento_id)
         if not doc:
@@ -172,6 +215,7 @@ class OcrService:
         doc_payload = dict(doc)
         doc_payload.update({"estado": OcrDocumentState.PROCESANDO.value, "error_ocr": ""})
         self._gestor.upsert_documento_ocr(doc_payload)
+        self._notificar_progreso(progress_callback, doc_payload)
         result = self._ejecutar_motores(path)
         doc_payload.update({
             "estado": result.estado_sugerido.value,
@@ -186,10 +230,17 @@ class OcrService:
 
         # La propuesta anterior y sus lineas se eliminan por cascada antes de
         # guardar la nueva. Asi nunca se acumulan IVAs de intentos previos.
+        tipo = doc.get("tipo_documento") or "factura_recibida"
+        tabla_ocr = (
+            "facturas_emitidas_ocr"
+            if tipo == "factura_emitida"
+            else "facturas_recibidas_ocr"
+        )
         self._gestor.conn.execute(
-            "DELETE FROM facturas_recibidas_ocr WHERE documento_id=?", (str(documento_id),)
+            f"DELETE FROM {tabla_ocr} WHERE documento_id=?", (str(documento_id),)
         )
         self._gestor.conn.commit()
+        self._tipo_documento = tipo
         factura_id = self._guardar_factura(str(documento_id), result) if (
             result.proveedor_nif or result.numero_factura
         ) else None
@@ -200,6 +251,15 @@ class OcrService:
             "resultado": result.to_dict(),
             "errores": result.errores,
         }
+
+    @staticmethod
+    def _notificar_progreso(callback, documento: dict) -> None:
+        if not callback:
+            return
+        try:
+            callback(dict(documento))
+        except Exception as exc:
+            logger.warning("[OcrService] No se pudo notificar el progreso: %s", exc)
 
     def _archivar_en_repositorio_compartido(self, source: Path) -> Path:
         """Devuelve la copia definitiva del OCR en el repositorio compartido."""
@@ -214,7 +274,12 @@ class OcrService:
 
         digits = "".join(ch for ch in str(self._empresa) if ch.isdigit())
         empresa = f"E{digits.zfill(5)[:5]}"
-        destination_dir = root / empresa / str(self._ejercicio) / "Facturas_recibidas"
+        subdir = (
+            "Facturas_emitidas"
+            if getattr(self, "_tipo_documento", "factura_recibida") == "factura_emitida"
+            else "Facturas_recibidas"
+        )
+        destination_dir = root / empresa / str(self._ejercicio) / subdir
         destination_dir.mkdir(parents=True, exist_ok=True)
         safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", source.name).strip(". ") or "Documento"
         destination = destination_dir / safe_name
@@ -232,34 +297,18 @@ class OcrService:
         """Construye la lista ordenada de motores disponibles."""
         motores = []
 
-        # Azure se ejecuta primero cuando se configura expresamente: su modelo
-        # prebuilt-invoice entrega campos estructurados y evita depender de
-        # expresiones regulares sobre el texto local.
-        # Preferencia: BackendOcrEngine (delega en el servidor) si hay URL de
-        # backend configurada; de lo contrario, AzureInvoiceEngine local.
+        # El OCR estructurado se ejecuta exclusivamente en el backend. El
+        # escritorio solo conoce su URL y el WorkstationToken; endpoint, clave
+        # y modelo de Azure son configuracion privada del servidor.
         try:
             cfg = self._leer_config_ocr()
-            if cfg.get("motor_activo") == "azure":
-                api_url = cfg.get("integrations_api_url", "")
-                api_key = cfg.get("backend_api_key", "")
-                if api_url:
-                    from services.ocr.engines.backend_ocr_engine import BackendOcrEngine
-                    engine = BackendOcrEngine(
-                        base_url=api_url,
-                        api_key=api_key,
-                        model_id=cfg.get("azure_model_id", ""),
-                    )
-                    if engine.disponible():
-                        motores.append(engine)
-                else:
-                    from services.ocr.engines.azure_invoice_engine import AzureInvoiceEngine
-                    engine = AzureInvoiceEngine(
-                        endpoint=cfg.get("azure_endpoint", ""),
-                        api_key=cfg.get("azure_key", ""),
-                        model_id=cfg.get("azure_model_id", ""),
-                    )
-                    if engine.disponible():
-                        motores.append(engine)
+            api_url = cfg.get("integrations_api_url", "")
+            api_key = cfg.get("backend_api_key", "")
+            if api_url:
+                from services.ocr.engines.backend_ocr_engine import BackendOcrEngine
+                engine = BackendOcrEngine(base_url=api_url, api_key=api_key)
+                if engine.disponible():
+                    motores.append(engine)
         except Exception:
             pass
 
@@ -272,25 +321,7 @@ class OcrService:
         except Exception:
             pass
 
-        # 2. Azure local (solo si no hay backend configurado y no hay motor azure ya)
-        # Si hay backend URL, el escritorio no debe acceder directamente a Azure.
-        try:
-            cfg = self._leer_config_ocr()
-            backend_configurado = bool(cfg.get("integrations_api_url"))
-            azure_ya_presente = any(m.nombre in ("azure", "azure_backend") for m in motores)
-            if cfg.get("motor_activo") == "azure" and not azure_ya_presente and not backend_configurado:
-                from services.ocr.engines.azure_invoice_engine import AzureInvoiceEngine
-                e = AzureInvoiceEngine(
-                    endpoint=cfg.get("azure_endpoint", ""),
-                    api_key=cfg.get("azure_key", ""),
-                    model_id=cfg.get("azure_model_id", ""),
-                )
-                if e.disponible():
-                    motores.append(e)
-        except Exception:
-            pass
-
-        # 3. Tesseract local (si disponible)
+        # 2. Tesseract local (si disponible)
         try:
             from services.ocr.engines.local_engine import LocalOcrEngine
             e = LocalOcrEngine()
@@ -312,7 +343,7 @@ class OcrService:
         )
 
         diagnosticos = []
-        azure_prioritario = any(motor.nombre in ("azure", "azure_backend") for motor in self._motores)
+        azure_prioritario = any(motor.nombre == "azure_backend" for motor in self._motores)
         for motor in self._motores:
             try:
                 resultado = motor.extraer(path)
@@ -324,15 +355,13 @@ class OcrService:
             if resultado.errores:
                 diagnosticos.extend(f"{motor.nombre}: {error}" for error in resultado.errores)
 
-            # Si el usuario ha seleccionado Azure, no ocultar un fallo del
-            # modelo personalizado usando silenciosamente PDF/texto. La
-            # aplicacion debe mostrar el error para que se pueda corregir el
-            # endpoint, la clave o el ID del modelo.
-            if motor.nombre in ("azure", "azure_backend") and azure_prioritario:
+            # No ocultar un fallo del backend usando silenciosamente texto
+            # local: la configuracion debe corregirse en el servidor.
+            if motor.nombre == "azure_backend" and azure_prioritario:
                 resultado.raw_json = dict(resultado.raw_json or {})
                 resultado.raw_json["diagnostico_motores"] = {
                     "cadena": [m.nombre for m in self._motores],
-                    "motor_elegido": "azure",
+                    "motor_elegido": "azure_backend",
                     "diagnosticos_previos": diagnosticos,
                 }
                 return resultado
@@ -341,10 +370,10 @@ class OcrService:
                 (resultado.texto and len(resultado.texto.strip()) >= _MIN_TEXT_CHARS)
                 or (resultado.proveedor_nif and resultado.numero_factura)
             ):
-                # Si Azure fallo y se uso la lectura local como respaldo, no
+                # Si el backend fallo y se uso la lectura local como respaldo, no
                 # ocultar el motivo: el usuario necesita poder corregir la
                 # configuracion en vez de confiar en datos heurísticos.
-                if diagnosticos and motor.nombre != "azure":
+                if diagnosticos and motor.nombre != "azure_backend":
                     resultado.errores = list(dict.fromkeys(diagnosticos + resultado.errores))
                 resultado.raw_json = dict(resultado.raw_json or {})
                 resultado.raw_json["diagnostico_motores"] = {
@@ -362,7 +391,8 @@ class OcrService:
             ext = path.suffix.lower()
             if ext == ".pdf":
                 ultimo_resultado.errores = [
-                    "El PDF no tiene texto embebido. Configura Tesseract o Azure para PDFs escaneados."
+                    "El PDF no tiene texto embebido. Comprueba el acceso al backend OCR "
+                    "o configura Tesseract para PDFs escaneados."
                 ]
             else:
                 ultimo_resultado.errores = [
@@ -376,53 +406,94 @@ class OcrService:
     # ── Persistencia ──────────────────────────────────────────────────────────
 
     def _guardar_factura(self, doc_id: str, result: OcrInvoiceResult) -> str:
-        """Guarda la factura propuesta en facturas_recibidas_ocr. Devuelve el ID."""
+        """Guarda la factura propuesta en la tabla OCR correspondiente. Devuelve el ID."""
         factura_id = str(uuid.uuid4())
-        payload = {
-            "id":              factura_id,
-            "documento_id":    doc_id,
-            "empresa_id":      self._empresa,
-            "proveedor_id":    None,
-            "nif_proveedor":   result.proveedor_nif,
-            "nombre_proveedor": result.proveedor_nombre,
-            "numero_factura":  result.numero_factura,
-            "fecha_factura":   result.fecha_factura,
-            "fecha_operacion": result.fecha_factura,
-            "fecha_vencimiento": result.fecha_vencimiento,
-            "total_factura":   result.total,
-            "base_total":      result.base_total,
-            "iva_total":       result.iva_total,
-            "retencion_total": result.retencion_total,
-            "estado_validacion": "pendiente",
-            "observaciones":   "; ".join(result.errores) if result.errores else "",
-        }
-        self._gestor.upsert_factura_recibida_ocr(payload)
-
-        # Lineas de IVA
-        for i, linea in enumerate(result.bases_iva):
-            self._gestor.upsert_linea_iva_ocr({
-                "factura_id":           factura_id,
-                "tipo_iva":             linea.tipo_iva,
-                "base":                 linea.base,
-                "cuota_iva":            linea.cuota_iva,
-                "tipo_recargo":         linea.tipo_recargo,
-                "cuota_recargo":        linea.cuota_recargo,
-                "deducible":            1 if linea.deducible else 0,
-                "porcentaje_deduccion": linea.porcentaje_deduccion,
-                "cuenta_gasto":         linea.cuenta_gasto,
-                "tipo_operacion_iva":   linea.tipo_operacion_iva,
-            })
-
-        # Retenciones
-        for ret in result.retenciones:
-            self._gestor.upsert_retencion_ocr({
-                "factura_id":        factura_id,
-                "base_retencion":    ret.base_retencion,
-                "tipo_retencion":    ret.tipo_retencion,
-                "importe_retencion": ret.importe_retencion,
-                "clase_retencion":   ret.clase_retencion,
-            })
-
+        if self._tipo_documento == "factura_emitida":
+            payload = {
+                "id":              factura_id,
+                "documento_id":    doc_id,
+                "empresa_id":      self._empresa,
+                "cliente_id":      None,
+                "nif_cliente":     result.cliente_nif,
+                "nombre_cliente":  result.cliente_nombre,
+                "numero_factura":  result.numero_factura,
+                "fecha_factura":   result.fecha_factura,
+                "fecha_operacion": result.fecha_factura,
+                "fecha_vencimiento": result.fecha_vencimiento,
+                "fecha_contable": self._fecha_contable or result.fecha_factura,
+                "total_factura":   result.total,
+                "base_total":      result.base_total,
+                "iva_total":       result.iva_total,
+                "retencion_total": result.retencion_total,
+                "estado_validacion": "pendiente",
+                "observaciones":   "; ".join(
+                    result.errores
+                    + ([] if result.cliente_nif else ["NIF del cliente no detectado."])
+                ),
+            }
+            self._gestor.upsert_factura_emitida_ocr(payload)
+            for linea in result.bases_iva:
+                self._gestor.upsert_linea_iva_emitida_ocr({
+                    "factura_id":   factura_id,
+                    "tipo_iva":     linea.tipo_iva,
+                    "base":         linea.base,
+                    "cuota_iva":    linea.cuota_iva,
+                    "tipo_recargo": linea.tipo_recargo,
+                    "cuota_recargo": linea.cuota_recargo,
+                    "cuenta_ingreso": "",
+                    "es_suplido":   0,
+                    "tipo_operacion": "01",
+                })
+            for ret in result.retenciones:
+                self._gestor.upsert_retencion_emitida_ocr({
+                    "factura_id":        factura_id,
+                    "base_retencion":    ret.base_retencion,
+                    "tipo_retencion":    ret.tipo_retencion,
+                    "importe_retencion": ret.importe_retencion,
+                    "clase_retencion":   ret.clase_retencion,
+                })
+        else:
+            payload = {
+                "id":              factura_id,
+                "documento_id":    doc_id,
+                "empresa_id":      self._empresa,
+                "proveedor_id":    None,
+                "nif_proveedor":   result.proveedor_nif,
+                "nombre_proveedor": result.proveedor_nombre,
+                "numero_factura":  result.numero_factura,
+                "fecha_factura":   result.fecha_factura,
+                "fecha_operacion": result.fecha_factura,
+                "fecha_vencimiento": result.fecha_vencimiento,
+                "fecha_contable": self._fecha_contable or result.fecha_factura,
+                "total_factura":   result.total,
+                "base_total":      result.base_total,
+                "iva_total":       result.iva_total,
+                "retencion_total": result.retencion_total,
+                "estado_validacion": "pendiente",
+                "observaciones":   "; ".join(result.errores) if result.errores else "",
+            }
+            self._gestor.upsert_factura_recibida_ocr(payload)
+            for i, linea in enumerate(result.bases_iva):
+                self._gestor.upsert_linea_iva_ocr({
+                    "factura_id":           factura_id,
+                    "tipo_iva":             linea.tipo_iva,
+                    "base":                 linea.base,
+                    "cuota_iva":            linea.cuota_iva,
+                    "tipo_recargo":         linea.tipo_recargo,
+                    "cuota_recargo":        linea.cuota_recargo,
+                    "deducible":            1 if linea.deducible else 0,
+                    "porcentaje_deduccion": linea.porcentaje_deduccion,
+                    "cuenta_gasto":         linea.cuenta_gasto,
+                    "tipo_operacion_iva":   linea.tipo_operacion_iva,
+                })
+            for ret in result.retenciones:
+                self._gestor.upsert_retencion_ocr({
+                    "factura_id":        factura_id,
+                    "base_retencion":    ret.base_retencion,
+                    "tipo_retencion":    ret.tipo_retencion,
+                    "importe_retencion": ret.importe_retencion,
+                    "clase_retencion":   ret.clase_retencion,
+                })
         return factura_id
 
     # ── Correcciones manuales ─────────────────────────────────────────────────
@@ -441,39 +512,20 @@ class OcrService:
     # ── Configuracion ─────────────────────────────────────────────────────────
 
     def _leer_config_ocr(self) -> dict:
-        """Lee configuracion OCR desde BD o config.json.
+        """Lee la URL y credencial necesarias para acceder al backend OCR.
 
         La autenticacion del escritorio frente al backend usa EXCLUSIVAMENTE
         WorkstationToken. Las claves legacy (integrations_api_key, dgt_api_key)
         ya no se aceptan.
-
-        La clave azure_doc_intelligence_key del escritorio solo se usa cuando NO
-        hay backend configurado (modo local directo). Con backend, el escritorio
-        delega en el servidor Railway, que tiene su propia clave Azure.
         """
         try:
             import os
             from utils.utilidades import load_app_config
-            from utils.credential_store import (
-                get_azure_doc_key, get_workstation_token,
-            )
+            from utils.credential_store import get_workstation_token
             cfg = load_app_config()
             api_url = cfg.get("integrations_api_url") or ""
-            # Solo se carga la clave Azure local si NO hay backend configurado.
-            # Con backend, la clave la gestiona Railway, no el escritorio.
-            azure_key_local = ""
-            if not api_url:
-                azure_key_local = (
-                    get_azure_doc_key()
-                    or os.getenv("GEST2A3ECO_AZURE_DOC_INTELLIGENCE_KEY", "")
-                )
             return {
-                "motor_activo":        cfg.get("ocr_motor_activo") or "",
-                "azure_endpoint":      cfg.get("azure_doc_intelligence_endpoint") or "",
-                "azure_key":           azure_key_local,
-                "azure_model_id":      cfg.get("azure_doc_intelligence_model_id") or "",
                 "integrations_api_url": api_url,
-                # backend_api_key: siempre WorkstationToken; nunca integrations_api_key legacy.
                 "backend_api_key": (
                     get_workstation_token()
                     or os.getenv("GEST2A3ECO_WORKSTATION_TOKEN", "")

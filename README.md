@@ -9,7 +9,7 @@ Funciones principales:
 - Generacion de `suenlace.dat` para movimientos bancarios y facturas.
 - Gestion de facturas emitidas, recibidas, cuotas y Facturae 3.2.2.
 - Generacion de PDF desde plantillas Word y firma documental.
-- Captura y revision OCR de facturas recibidas.
+- Captura y revision OCR de facturas de proveedor y de cliente externas.
 - Comunicaciones por Microsoft Graph, mensajeria web y notificaciones.
 - Gestion documental, certificados de Administraciones Publicas y tramites DGT.
 - Importacion de empresas, cuentas, terceros y asientos desde ficheros A3.
@@ -66,13 +66,13 @@ El JSON contiene exclusivamente valores no sensibles, entre otros:
   `postgres_database` y `postgres_user`;
 - rutas de A3ECO, plantillas Word y repositorio documental;
 - URLs del backend para integraciones y mensajeria;
-- preferencias de OCR, firma y monedas.
+- preferencias de firma y monedas.
 
 La contrasena PostgreSQL y el `WorkstationToken` se guardan en Windows
 Credential Manager. Para provisionar un puesto:
 
 ```powershell
-python -m utils.provision_workstation --only-token
+python -m utils.provision_workstation
 ```
 
 `GEST2A3ECO_POSTGRES_DSN` sigue disponible para automatizacion y migracion, pero

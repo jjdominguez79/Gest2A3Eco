@@ -237,35 +237,67 @@ def health():
     return {"status": "ok"}
 
 
+# ── Retirada de la PWA heredada de mensajeria ────────────────────────────────
+# TRANSITORIO: estos endpoints sirven service workers de desinstalacion para que
+# los navegadores que tenian la PWA instalada limpien sus cachés y se desregistren.
+# Flutter es el único cliente de mensajeria. Deben eliminarse una vez que haya
+# transcurrido el periodo de limpieza (se recomienda 60 dias desde el despliegue).
+_RETIREMENT_SW = b"""
+// Service worker de retirada - solo limpia cache y se desregistra.
+self.addEventListener('install', () => {
+  self.skipWaiting();
+  caches.keys().then(keys => keys.forEach(key => {
+    if (key.startsWith('gestinem-messaging-') ||
+        key.startsWith('gestinem-staff-messaging-')) {
+      caches.delete(key);
+    }
+  }));
+});
+self.addEventListener('activate', () => {
+  self.registration.unregister();
+  clients.matchAll().then(all => all.forEach(c => c.navigate(c.url)));
+});
+self.addEventListener('fetch', () => {});
+"""
+
+
 @app.get("/mensajes-sw.js", include_in_schema=False)
-def messaging_service_worker():
-    return FileResponse(
-        WEB_DIR / "static" / "messaging-sw.js",
+def messaging_service_worker_retirement():
+    """Transitorio: desinstala la antigua PWA de mensajeria del cliente."""
+    return Response(
+        _RETIREMENT_SW,
         media_type="application/javascript",
-        headers={"Cache-Control": "no-cache"},
+        headers={"Cache-Control": "no-cache, no-store"},
     )
 
 
 @app.get("/equipo/mensajes-sw.js", include_in_schema=False)
-def staff_messaging_service_worker():
-    return FileResponse(
-        WEB_DIR / "static" / "staff-messaging-sw.js",
+def staff_messaging_service_worker_retirement():
+    """Transitorio: desinstala la antigua PWA de mensajeria del despacho."""
+    return Response(
+        _RETIREMENT_SW,
         media_type="application/javascript",
-        headers={"Cache-Control": "no-cache"},
+        headers={"Cache-Control": "no-cache, no-store"},
     )
 
 
-@app.get("/mensajes", response_class=HTMLResponse)
-def messaging_portal(request: Request):
-    return templates.TemplateResponse(
-        request=request, name="messages.html", context={},
+@app.get("/mensajes")
+def messaging_portal_gone():
+    """La interfaz web de mensajeria ha sido retirada. Usa la aplicacion Flutter."""
+    return Response(
+        content="La mensajeria web ha sido retirada. Usa la aplicacion Gestinem para iOS/Android.",
+        status_code=410,
+        media_type="text/plain; charset=utf-8",
     )
 
 
-@app.get("/equipo/mensajes", response_class=HTMLResponse)
-def staff_messaging_portal(request: Request):
-    return templates.TemplateResponse(
-        request=request, name="staff_messages.html", context={},
+@app.get("/equipo/mensajes")
+def staff_messaging_portal_gone():
+    """La interfaz web de mensajeria del despacho ha sido retirada. Usa la aplicacion Flutter."""
+    return Response(
+        content="La mensajeria web del despacho ha sido retirada. Usa la aplicacion Gestinem para iOS/Android.",
+        status_code=410,
+        media_type="text/plain; charset=utf-8",
     )
 
 
@@ -288,7 +320,6 @@ _MAX_OCR_BYTES = 20 * 1024 * 1024  # 20 MB
 @app.post("/api/v1/ocr/invoices/analyze", dependencies=[workstation_or_internal])
 async def ocr_analyze_invoice(
     file: UploadFile = File(...),
-    model_id: str = Form(""),
 ):
     content = await file.read()
     if len(content) > _MAX_OCR_BYTES:
@@ -299,7 +330,7 @@ async def ocr_analyze_invoice(
         raise HTTPException(415, "Tipo de fichero no admitido para OCR")
     try:
         from backend.api.ocr_service import analyze_invoice
-        result = analyze_invoice(content, file.filename or "documento.pdf", model_id)
+        result = analyze_invoice(content, file.filename or "documento.pdf")
         return result
     except RuntimeError as exc:
         raise HTTPException(503, str(exc)) from exc

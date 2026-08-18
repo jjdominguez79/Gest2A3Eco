@@ -27,13 +27,17 @@ from utils.validaciones import inferir_pais_desde_identificacion, normalizar_nif
 
 
 class FacturasEmitidasController:
-    def __init__(self, gestor, codigo, ejercicio, empresa_conf, view, allow_all_years: bool = False):
+    def __init__(
+        self, gestor, codigo, ejercicio, empresa_conf, view,
+        allow_all_years: bool = False, incluir_origen_ocr: bool = False,
+    ):
         self._gestor = gestor
         self._codigo = codigo
         self._ejercicio = ejercicio
         self._empresa_conf = empresa_conf
         self._view = view
         self._allow_all_years = bool(allow_all_years)
+        self._incluir_origen_ocr = bool(incluir_origen_ocr)
         self._facturas_cache = []
         self._facturae_exporter = FacturaeExporter()
 
@@ -146,12 +150,12 @@ class FacturasEmitidasController:
                 ec = (fac.get("estado_contable") or "").strip().lower()
                 # "pendiente" → sin estado contable (null/vacio en BD)
                 # "contabilidad" → estado_contable='pendiente'
-                # "generado" → estado_contable='generado'
+                # "generado" → suenlace generado/contabilizada
                 if estado_filter == "pendiente" and ec != "":
                     continue
                 elif estado_filter == "contabilidad" and ec != "pendiente":
                     continue
-                elif estado_filter == "generado" and ec != "generado":
+                elif estado_filter == "generado" and ec not in {"generado", "contabilizada"}:
                     continue
             total = self._compute_total(fac)
             self._view.insert_factura_row(fac, total)
@@ -289,6 +293,14 @@ class FacturasEmitidasController:
 
     def _check_not_generada(self, fac: dict) -> bool:
         """Devuelve True si se puede proceder. Si está generada pide contraseña."""
+        estado_contable = str(fac.get("estado_contable") or "").strip().lower()
+        if estado_contable in {"pendiente", "generado", "contabilizada"}:
+            self._view.show_warning(
+                "Gest2A3Eco",
+                "La factura esta bloqueada porque se encuentra en Contabilidad.\n"
+                "Devuelvela desde el modulo de Contabilidad para poder modificarla.",
+            )
+            return False
         if not fac.get("generada"):
             return True
         from utils.credential_store import get_desmarcar_password
@@ -401,8 +413,7 @@ class FacturasEmitidasController:
         nuevo["numero"] = sugerido
         nuevo["serie"] = serie_sug
         nuevo["ejercicio"] = eje_sug if eje_sug is not None else self._ejercicio
-        nuevo["generada"] = False
-        nuevo["fecha_generacion"] = ""
+        self._reiniciar_estados_nueva_factura(nuevo)
         series_disponibles = self._listar_series_for_year(eje_sug, rectificativa=False)
         nuevo["_series_disponibles"] = series_disponibles
         result = self._view.open_factura_dialog(nuevo, numero_sugerido=nuevo["numero"])
@@ -440,8 +451,7 @@ class FacturasEmitidasController:
         nuevo["numero"] = sugerido
         nuevo["serie"] = serie_sug
         nuevo["ejercicio"] = eje_sug if eje_sug is not None else self._ejercicio
-        nuevo["generada"] = False
-        nuevo["fecha_generacion"] = ""
+        self._reiniciar_estados_nueva_factura(nuevo)
         nuevo["enviado"] = False
         nuevo["fecha_envio"] = ""
         nuevo["canal_envio"] = ""
@@ -462,6 +472,26 @@ class FacturasEmitidasController:
             self._incrementar_numeracion_por_factura(result, rectificativa=True)
             self.refresh_facturas()
 
+    @staticmethod
+    def _reiniciar_estados_nueva_factura(factura: dict) -> None:
+        """Una copia o rectificativa nace sin estados heredados del original."""
+        factura.update({
+            "generada": False,
+            "fecha_generacion": "",
+            "estado_contable": None,
+            "numero_asiento": "",
+            "origen_factura": "facturacion",
+            "ocr_documento_id": None,
+            "facturae_status": "no_generado",
+            "facturae_xml_path": "",
+            "facturae_generated_at": "",
+            "facturae_error": "",
+            "pdf_ref": "",
+            "pdf_path": "",
+            "pdf_path_a3": "",
+            "pdf_generated_at": "",
+        })
+
     def eliminar(self):
         if not self._ensure_write():
             return
@@ -469,7 +499,13 @@ class FacturasEmitidasController:
         if not sel:
             return
         # Bloquear eliminacion de facturas generadas
-        generadas_sel = [fid for fid in sel if (self._get_factura_by_id(fid) or {}).get("generada")]
+        generadas_sel = [
+            fid for fid in sel
+            if (self._get_factura_by_id(fid) or {}).get("generada")
+            or str(
+                (self._get_factura_by_id(fid) or {}).get("estado_contable") or ""
+            ).strip().lower() in {"pendiente", "generado", "contabilizada"}
+        ]
         if generadas_sel:
             self._view.show_warning(
                 "Gest2A3Eco",
@@ -494,6 +530,19 @@ class FacturasEmitidasController:
         sel = self._view.get_selected_ids()
         if not sel:
             self._view.show_info("Gest2A3Eco", "Selecciona una factura.")
+            return
+        en_contabilidad = [
+            fid for fid in sel
+            if str(
+                (self._get_factura_by_id(fid) or {}).get("estado_contable") or ""
+            ).strip()
+        ]
+        if en_contabilidad:
+            self._view.show_warning(
+                "Gest2A3Eco",
+                "Las facturas enviadas a Contabilidad solo pueden devolverse "
+                "desde el modulo de Contabilidad.",
+            )
             return
         from utils.credential_store import get_desmarcar_password
         expected_password = get_desmarcar_password() or ""
@@ -1336,8 +1385,17 @@ class FacturasEmitidasController:
 
     def _listar_facturas_base(self):
         if self._allow_all_years:
-            return self._gestor.listar_facturas_emitidas_global(self._codigo, None)
-        return self._gestor.listar_facturas_emitidas(self._codigo, self._ejercicio)
+            facturas = self._gestor.listar_facturas_emitidas_global(self._codigo, None)
+        else:
+            facturas = self._gestor.listar_facturas_emitidas(
+                self._codigo, self._ejercicio,
+            )
+        if self._incluir_origen_ocr:
+            return facturas
+        return [
+            fac for fac in facturas
+            if str(fac.get("origen_factura") or "facturacion") != "ocr"
+        ]
 
     def _year_from_factura(self, fac: dict):
         txt = str(fac.get("fecha_asiento") or fac.get("fecha_expedicion") or "").strip()

@@ -23,10 +23,17 @@ class AprendizajeOcrService:
     def registrar_factura_validada(
         self, documento: dict, factura: dict, marcas_campos: dict | None = None,
     ) -> int:
-        lineas = self._gestor.listar_lineas_iva_ocr(str(factura["id"]))
+        tipo_documento = str(
+            documento.get("tipo_documento") or "factura_recibida"
+        )
+        es_emitida = tipo_documento == "factura_emitida"
+        if es_emitida:
+            lineas = self._gestor.listar_lineas_iva_emitida_ocr(str(factura["id"]))
+        else:
+            lineas = self._gestor.listar_lineas_iva_ocr(str(factura["id"]))
+        datos_ocr = self._datos_ocr_documento(documento)
         datos = {
-            "ProveedorNif": str(factura.get("nif_proveedor") or ""),
-            "ProveedorNombre": str(factura.get("nombre_proveedor") or ""),
+            "TipoDocumento": tipo_documento,
             "NumeroFactura": str(factura.get("numero_factura") or ""),
             "FechaFactura": str(factura.get("fecha_factura") or ""),
             "FechaVencimiento": str(factura.get("fecha_vencimiento") or ""),
@@ -42,18 +49,54 @@ class AprendizajeOcrService:
                 for linea in lineas
             ],
         }
+        if es_emitida:
+            datos.update({
+                "EmisorNif": str(datos_ocr.get("proveedor_nif") or ""),
+                "EmisorNombre": str(datos_ocr.get("proveedor_nombre") or ""),
+                "ClienteNif": str(
+                    factura.get("nif_cliente") or factura.get("nif_proveedor") or ""
+                ),
+                "ClienteNombre": str(
+                    factura.get("nombre_cliente")
+                    or factura.get("nombre_proveedor")
+                    or ""
+                ),
+            })
+            tercero_nif = datos["ClienteNif"]
+        else:
+            datos.update({
+                "ProveedorNif": str(factura.get("nif_proveedor") or ""),
+                "ProveedorNombre": str(factura.get("nombre_proveedor") or ""),
+            })
+            tercero_nif = datos["ProveedorNif"]
         return self._gestor.upsert_ejemplo_aprendizaje_ocr({
             "empresa_id": self._empresa_id,
             "documento_id": str(documento["id"]),
             "factura_id": str(factura["id"]),
-            "proveedor_nif": datos["ProveedorNif"],
+            # La columna conserva su nombre historico; en emitidas identifica
+            # al cliente para poder agrupar los ejemplos por tercero.
+            "proveedor_nif": tercero_nif,
             "origen_path": str(documento.get("ruta_original") or ""),
             "datos_validados_json": json.dumps(datos, ensure_ascii=True, sort_keys=True),
             "estado": "pendiente",
             "fecha_validacion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "notas": "Validado en Gest2A3Eco; pendiente de exportacion a modelo.",
+            "notas": (
+                f"{tipo_documento} validada en Gest2A3Eco; "
+                "pendiente de exportacion a modelo."
+            ),
             "marcas_json": json.dumps(marcas_campos or {}, ensure_ascii=True, sort_keys=True),
         })
+
+    @staticmethod
+    def _datos_ocr_documento(documento: dict) -> dict:
+        raw = documento.get("json_ocr") or {}
+        if isinstance(raw, dict):
+            return raw
+        try:
+            parsed = json.loads(str(raw))
+            return parsed if isinstance(parsed, dict) else {}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
 
     def resumen(self) -> dict:
         return self._gestor.resumen_aprendizaje_ocr(self._empresa_id)

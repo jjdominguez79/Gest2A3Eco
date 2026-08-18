@@ -117,11 +117,12 @@ def send_invitation(to: str, name: str, url: str) -> bool:
     )
 
 
-def send_message_notice(to: str, name: str, portal_url: str) -> bool:
+def send_message_notice(to: str, name: str, portal_url: str = "") -> bool:
+    """Aviso de nuevo mensaje. portal_url ignorado (mensajeria web retirada)."""
     return send_mail(
         to, "Nuevo mensaje de Gestinem",
         f"<p>Hola {escape(name)},</p><p>Tienes un nuevo mensaje en el canal seguro de Gestinem.</p>"
-        f"<p><a href=\"{escape(portal_url)}\">Consultar mensaje</a></p>"
+        "<p>Abre la aplicacion Gestinem para leer y responder tu mensaje.</p>"
         "<p>Por seguridad, el contenido no se incluye en este email.</p>",
     )
 

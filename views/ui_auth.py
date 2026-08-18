@@ -13,9 +13,9 @@ except Exception:  # pragma: no cover
     ImageTk = None
 
 
-APP_TITLE = "Gestinem Suite"
+APP_TITLE = "Gestinem ERP"
 CONTACT_EMAIL = "jjdominguez@gestinem.es"
-CONTACT_PHONE = "942 791 123"
+CONTACT_PHONE = "942 791 404"
 COPYRIGHT = "Copyright 2026 Asesoria Gestinem S.L. Todos los derechos reservados."
 
 
@@ -78,6 +78,20 @@ class UILogin(ttk.Frame):
         ).pack(pady=(6, 0))
 
     def _build_access_panel(self, parent):
+        # Pack footer first so pack reserves space from the bottom before top elements fill
+        footer = tk.Frame(parent, bg="#ffffff")
+        footer.pack(side="bottom", fill="x", pady=(16, 0))
+        tk.Label(
+            footer, text=get_version_label(), bg="#ffffff", fg="#98a2b3", font=("Segoe UI", 8),
+        ).pack()
+        tk.Label(
+            footer, text=COPYRIGHT, bg="#ffffff", fg="#98a2b3", font=("Segoe UI", 8),
+        ).pack(pady=(3, 0))
+        tk.Label(
+            footer, text=f"{CONTACT_EMAIL}  |  Tel.: {CONTACT_PHONE}", bg="#ffffff", fg="#667085",
+            font=("Segoe UI", 9),
+        ).pack(pady=(3, 0))
+
         tk.Label(
             parent, text="Bienvenido de nuevo.", bg="#ffffff", fg="#002C57",
             font=("Segoe UI", 23, "bold"), anchor="w",
@@ -85,7 +99,7 @@ class UILogin(ttk.Frame):
         tk.Label(
             parent, text="Accede a tu espacio de trabajo", bg="#ffffff", fg="#667085",
             font=("Segoe UI", 11), anchor="w",
-        ).pack(fill="x", pady=(6, 34))
+        ).pack(fill="x", pady=(6, 24))
 
         self._field(parent, "Usuario", self.var_username, show=None)
         entry_password = self._field(parent, "Contraseña", self.var_password, show="*")
@@ -99,19 +113,6 @@ class UILogin(ttk.Frame):
             activebackground="#002C57", activeforeground="#ffffff", relief="flat", borderwidth=0,
             cursor="hand2", font=("Segoe UI", 11, "bold"), pady=10,
         ).pack(fill="x")
-
-        footer = tk.Frame(parent, bg="#ffffff")
-        footer.pack(side="bottom", fill="x", pady=(58, 0))
-        tk.Label(
-            footer, text=f"{CONTACT_EMAIL}  |  Tel.: {CONTACT_PHONE}", bg="#ffffff", fg="#667085",
-            font=("Segoe UI", 9),
-        ).pack()
-        tk.Label(
-            footer, text=COPYRIGHT, bg="#ffffff", fg="#98a2b3", font=("Segoe UI", 8),
-        ).pack(pady=(5, 0))
-        tk.Label(
-            footer, text=get_version_label(), bg="#ffffff", fg="#98a2b3", font=("Segoe UI", 8),
-        ).pack(pady=(5, 0))
 
         self._entry_user.bind("<Return>", lambda _e: entry_password.focus_set())
         entry_password.bind("<Return>", lambda _e: self._submit())

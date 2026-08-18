@@ -349,9 +349,24 @@ class GestorPostgres(GestorBase):
             ("comunicaciones_mensajes", "tiene_adjuntos", "INTEGER NOT NULL DEFAULT 0"),
             ("comunicaciones_sin_asignar", "etiqueta", "TEXT"),
             ("facturas_recibidas_ocr", "tipo_operacion_iva", "TEXT"),
+            ("facturas_recibidas_ocr", "fecha_contable", "TEXT"),
+            ("facturas_recibidas_ocr", "pagada", "INTEGER NOT NULL DEFAULT 0"),
+            ("facturas_recibidas_ocr", "suplidos", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
+            ("facturas_recibidas_ocr", "cuenta_suplidos", "TEXT"),
+            ("facturas_recibidas_docs", "pagada", "INTEGER NOT NULL DEFAULT 0"),
+            ("facturas_recibidas_docs", "suplidos", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
+            ("facturas_recibidas_docs", "cuenta_suplidos", "TEXT"),
+            ("facturas_emitidas_ocr", "subcuenta_cliente", "TEXT"),
+            ("facturas_emitidas_ocr", "cuenta_ingreso", "TEXT"),
+            ("facturas_emitidas_ocr", "cuenta_iva", "TEXT"),
             ("ocr_aprendizaje_ejemplos", "marcas_json", "TEXT NOT NULL DEFAULT '{}'"),
             ("facturas_emitidas_docs", "updated_at", "TEXT"),
             ("facturas_emitidas_docs", "pdf_generated_at", "TEXT"),
+            (
+                "facturas_emitidas_docs", "origen_factura",
+                "TEXT NOT NULL DEFAULT 'facturacion'",
+            ),
+            ("facturas_emitidas_docs", "ocr_documento_id", "TEXT"),
             ("albaranes_emitidas_docs", "updated_at", "TEXT"),
             ("albaranes_emitidas_docs", "pdf_generated_at", "TEXT"),
             ("firma_solicitudes", "documento_firmado_archivo_id", "TEXT"),
@@ -365,7 +380,8 @@ class GestorPostgres(GestorBase):
                 WHERE table_schema=current_schema()
                   AND table_name IN (
                     'empresas', 'usuarios', 'comunicaciones', 'comunicaciones_mensajes',
-                    'comunicaciones_sin_asignar', 'facturas_recibidas_ocr'
+                    'comunicaciones_sin_asignar', 'facturas_recibidas_ocr',
+                    'facturas_recibidas_docs'
                     , 'ocr_aprendizaje_ejemplos', 'facturas_emitidas_docs',
                     'albaranes_emitidas_docs',
                     'firma_solicitudes'
@@ -391,7 +407,10 @@ class GestorPostgres(GestorBase):
               to_regclass('public.firma_zonas') AS tabla_firma_zonas,
               to_regclass('public.firma_eventos') AS tabla_firma_eventos,
               to_regclass('public.ocr_aprendizaje_ejemplos') AS tabla_ocr_aprendizaje,
-              to_regclass('public.idx_ocr_aprendizaje_empresa') AS indice_ocr_aprendizaje
+              to_regclass('public.idx_ocr_aprendizaje_empresa') AS indice_ocr_aprendizaje,
+              to_regclass('public.facturas_emitidas_ocr') AS tabla_emitidas_ocr,
+              to_regclass('public.facturas_emitidas_ocr_lineas_iva') AS tabla_emitidas_ocr_lineas,
+              to_regclass('public.facturas_emitidas_ocr_retenciones') AS tabla_emitidas_ocr_ret
             """
         ).fetchone()
         tabla_permisos_existe = bool(objetos and objetos["tabla_permisos"])
@@ -414,6 +433,9 @@ class GestorPostgres(GestorBase):
         tabla_firma_eventos_existe = bool(objetos and objetos.get("tabla_firma_eventos"))
         tabla_ocr_aprendizaje_existe = bool(objetos and objetos.get("tabla_ocr_aprendizaje"))
         indice_ocr_aprendizaje_existe = bool(objetos and objetos.get("indice_ocr_aprendizaje"))
+        tabla_emitidas_ocr_existe = bool(objetos and objetos.get("tabla_emitidas_ocr"))
+        tabla_emitidas_ocr_lineas_existe = bool(objetos and objetos.get("tabla_emitidas_ocr_lineas"))
+        tabla_emitidas_ocr_ret_existe = bool(objetos and objetos.get("tabla_emitidas_ocr_ret"))
         tablas_faltantes = {
             tabla
             for tabla, existe in (
@@ -446,6 +468,9 @@ class GestorPostgres(GestorBase):
             and tabla_firma_eventos_existe
             and tabla_ocr_aprendizaje_existe
             and indice_ocr_aprendizaje_existe
+            and tabla_emitidas_ocr_existe
+            and tabla_emitidas_ocr_lineas_existe
+            and tabla_emitidas_ocr_ret_existe
         ):
             self._seed_categorias_documentales()
             self.conn.commit()
@@ -526,10 +551,100 @@ class GestorPostgres(GestorBase):
                 "CREATE INDEX IF NOT EXISTS idx_ocr_aprendizaje_empresa "
                 "ON ocr_aprendizaje_ejemplos(empresa_id, estado, proveedor_nif)"
             )
+        if not tabla_emitidas_ocr_existe:
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS facturas_emitidas_ocr (
+                  id                TEXT PRIMARY KEY,
+                  documento_id      TEXT NOT NULL REFERENCES documentos_ocr(id) ON DELETE CASCADE,
+                  empresa_id        TEXT NOT NULL,
+                  cliente_id        TEXT,
+                  nif_cliente       TEXT,
+                  nombre_cliente    TEXT,
+                  numero_factura    TEXT,
+                  fecha_factura     TEXT,
+                  fecha_operacion   TEXT,
+                  fecha_vencimiento TEXT,
+                  fecha_contable    TEXT,
+                  cobrada           INTEGER DEFAULT 0,
+                  total_factura     DOUBLE PRECISION,
+                  base_total        DOUBLE PRECISION,
+                  iva_total         DOUBLE PRECISION,
+                  retencion_total   DOUBLE PRECISION,
+                  tipo_operacion    TEXT DEFAULT '01',
+                  subcuenta_cliente TEXT,
+                  cuenta_ingreso    TEXT,
+                  cuenta_iva        TEXT,
+                  estado_validacion TEXT DEFAULT 'pendiente',
+                  observaciones     TEXT
+                )
+                """
+            )
+            self.conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_feo_unicidad "
+                "ON facturas_emitidas_ocr(empresa_id, nif_cliente, numero_factura, fecha_factura, total_factura)"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_feo_empresa "
+                "ON facturas_emitidas_ocr(empresa_id, estado_validacion)"
+            )
+        if not tabla_emitidas_ocr_lineas_existe:
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS facturas_emitidas_ocr_lineas_iva (
+                  id              BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                  factura_id      TEXT NOT NULL REFERENCES facturas_emitidas_ocr(id) ON DELETE CASCADE,
+                  tipo_iva        DOUBLE PRECISION,
+                  base            DOUBLE PRECISION,
+                  cuota_iva       DOUBLE PRECISION,
+                  tipo_recargo    DOUBLE PRECISION,
+                  cuota_recargo   DOUBLE PRECISION,
+                  cuenta_ingreso  TEXT,
+                  es_suplido      INTEGER DEFAULT 0,
+                  tipo_operacion  TEXT DEFAULT '01'
+                )
+                """
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_feoli_factura "
+                "ON facturas_emitidas_ocr_lineas_iva(factura_id)"
+            )
+        if not tabla_emitidas_ocr_ret_existe:
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS facturas_emitidas_ocr_retenciones (
+                  id                BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                  factura_id        TEXT NOT NULL REFERENCES facturas_emitidas_ocr(id) ON DELETE CASCADE,
+                  base_retencion    DOUBLE PRECISION DEFAULT 0,
+                  tipo_retencion    DOUBLE PRECISION DEFAULT 0,
+                  importe_retencion DOUBLE PRECISION DEFAULT 0,
+                  clase_retencion   TEXT DEFAULT 'PROFESIONAL'
+                )
+                """
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_feor_factura "
+                "ON facturas_emitidas_ocr_retenciones(factura_id)"
+            )
 
         for tabla, columna, tipo in faltantes:
             self.conn.execute(
                 f"ALTER TABLE {tabla} ADD COLUMN IF NOT EXISTS {columna} {tipo}"
+            )
+        if any(
+            tabla == "facturas_emitidas_docs"
+            and columna in {"origen_factura", "ocr_documento_id"}
+            for tabla, columna, _tipo in faltantes
+        ):
+            self.conn.execute(
+                "UPDATE facturas_emitidas_docs SET origen_factura='facturacion' "
+                "WHERE origen_factura IS NULL OR TRIM(origen_factura)=''"
+            )
+            self.conn.execute(
+                "UPDATE facturas_emitidas_docs f SET origen_factura='ocr', "
+                "ocr_documento_id=COALESCE(NULLIF(f.ocr_documento_id, ''), f.id) "
+                "WHERE EXISTS (SELECT 1 FROM documentos_ocr o WHERE o.id=f.id "
+                "AND o.tipo_documento='factura_emitida')"
             )
         if not tabla_permisos_existe:
             self.conn.execute(

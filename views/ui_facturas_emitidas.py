@@ -26,7 +26,11 @@ from utils.validaciones import (
     validar_nif_o_nif_iva_intracomunitario,
 )
 
-_ESTADO_LABELS = {"pendiente": "Contabilidad", "generado": "Generado"}
+_ESTADO_LABELS = {
+    "pendiente": "Contabilidad",
+    "generado": "Contabilizada",
+    "contabilizada": "Contabilizada",
+}
 _FACTURAE_LABELS = {
     "no_generado": "No generado",
     "generado": "Generado",

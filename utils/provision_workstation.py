@@ -6,8 +6,6 @@ de escribirlo en config.local.json.
 
 Uso:
   python -m utils.provision_workstation
-  python -m utils.provision_workstation --only-token
-  python -m utils.provision_workstation --only-azure
 
 El usuario no necesita volver a introducir las credenciales en cada arranque:
 la aplicacion las recupera automaticamente de Windows Credential Manager.
@@ -49,39 +47,17 @@ def provisionar_workstation_token() -> None:
         print("  ERROR: keyring no disponible. Token no guardado.", file=sys.stderr)
 
 
-def provisionar_azure_doc_key() -> None:
-    from utils.credential_store import get_azure_doc_key, store_azure_doc_key
-    print("\n--- Azure Document Intelligence Key ---")
-    actual = get_azure_doc_key()
-    key = _solicitar_valor("Clave de Azure Document Intelligence", "azure_doc_intelligence_key", actual)
-    if key is None:
-        return
-    ok = store_azure_doc_key(key)
-    if ok:
-        print("  Clave Azure almacenada en Windows Credential Manager.")
-    else:
-        print("  ERROR: keyring no disponible. Clave no guardada.", file=sys.stderr)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Provisiona credenciales del puesto en Windows Credential Manager."
     )
-    parser.add_argument("--only-token", action="store_true", help="Solo provisionar workstation token.")
-    parser.add_argument("--only-azure", action="store_true", help="Solo provisionar clave Azure OCR.")
-    args = parser.parse_args()
+    parser.parse_args()
 
     print("=== Provisionado de credenciales Gest2A3Eco ===")
     print("Las credenciales se guardan en Windows Credential Manager.")
     print("No se almacenan en ningun fichero de texto ni config.local.json.\n")
 
-    if args.only_token:
-        provisionar_workstation_token()
-    elif args.only_azure:
-        provisionar_azure_doc_key()
-    else:
-        provisionar_workstation_token()
-        provisionar_azure_doc_key()
+    provisionar_workstation_token()
 
     print("\nProvisionado completado.")
 

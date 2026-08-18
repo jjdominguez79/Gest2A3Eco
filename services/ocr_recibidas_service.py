@@ -47,6 +47,8 @@ def doc_to_row(doc: dict) -> dict:
         "Cuota Recargo Equivalencia": doc.get("cuota_recargo") or 0.0,
         "Cuota Retencion IRPF":      doc.get("cuota_retencion") or 0.0,
         "Total":                     doc.get("total") or 0.0,
+        "Suplidos":                  doc.get("suplidos") or 0.0,
+        "Cuenta Suplidos":           doc.get("cuenta_suplidos") or "",
         "_cuenta_tercero_override":  doc.get("cuenta_proveedor") or "",
         "_cuenta_py_gv_override":    doc.get("cuenta_gasto") or "",
         "_cuenta_iva_override":      doc.get("cuenta_iva") or "",
@@ -56,6 +58,7 @@ def doc_to_row(doc: dict) -> dict:
         # A3 abre el documento mediante esta referencia. El PDF se copia como
         # ``<pdf_ref>.pdf`` en A3ECO, no con el UUID interno del documento.
         "_pdf_ref":                  doc.get("pdf_ref") or "",
+        "Cuenta Suplidos":           doc.get("cuenta_suplidos") or "",
     }
 
 
@@ -91,10 +94,11 @@ def doc_to_rows(doc: dict, lineas: list[dict] | None = None) -> list[dict]:
         "_proveedor_iva_deducible": int(doc.get("proveedor_iva_deducible", 1) or 0),
         "_proveedor_porcentaje_deduccion_iva": doc.get("proveedor_porcentaje_deduccion_iva", 100.0),
         "_pdf_ref":                  doc.get("pdf_ref") or "",
+        "Cuenta Suplidos":           doc.get("cuenta_suplidos") or "",
     }
 
     rows = []
-    for linea in _lineas:
+    for indice, linea in enumerate(_lineas):
         row = dict(base_row)
         row["Base"]                        = linea.get("base_imponible") or 0.0
         row["Porcentaje IVA"]              = linea.get("tipo_iva") or 0.0
@@ -103,6 +107,7 @@ def doc_to_rows(doc: dict, lineas: list[dict] | None = None) -> list[dict]:
         row["Cuota Recargo Equivalencia"]  = linea.get("cuota_recargo") or 0.0
         row["Porcentaje Retencion IRPF"]   = linea.get("tipo_retencion") or 0.0
         row["Cuota Retencion IRPF"]        = linea.get("cuota_retencion") or 0.0
+        row["Suplidos"]                    = (doc.get("suplidos") or 0.0) if indice == 0 else 0.0
         # Cuentas contables a nivel de linea (opcionales)
         if linea.get("cuenta_base"):
             row["Cuenta Compras Ventas"] = linea["cuenta_base"]

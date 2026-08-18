@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Guidance for coding agents working in this repository. Verified against the
-repository on 2026-08-15.
+repository on 2026-08-18. PWA de mensajeria retirada en esta version.
 
 ## Project Overview
 
@@ -12,12 +12,17 @@ administration certificates and DGT procedures.
 
 The repository also contains a FastAPI backend and two Synology workers. The
 backend owns provider secrets and serves DGT, OCR, SignRequest, Dataprius and
-messaging/PWA flows. The workers synchronize Microsoft Graph mail and PWA
+messaging API flows. The workers synchronize Microsoft Graph mail and messaging
 attachments without requiring the desktop application to be open.
 
-`gestinem_app/` is an initial Flutter scaffold for a future mobile messaging
-client. The backend contracts may exist before the Flutter UI consumes them;
-do not describe the scaffold as a finished application.
+**La PWA heredada de mensajeria (`/mensajes`, `/equipo/mensajes`) ha sido retirada.**
+FastAPI ya no sirve ninguna interfaz web de mensajeria. Flutter es el unico
+cliente de interfaz previsto para mensajeria. Los adjuntos de mensajeria
+proceden del cliente Flutter, no de ninguna PWA.
+
+`gestinem_app/` es el proyecto Flutter para el cliente movil de mensajeria.
+Los contratos backend existen antes de que la UI Flutter los consuma;
+no describas el scaffold como una aplicacion terminada.
 
 ## Development Commands
 
@@ -51,7 +56,7 @@ is Python 3.10 or newer.
 | Models | `models/` | PostgreSQL access and A3ECO renderers |
 | Backend | `backend/api/` | FastAPI integrations and web portals |
 | Workers | `sync_worker/` | Synology mail and attachment synchronization |
-| Mobile | `gestinem_app/` | Flutter scaffold; not yet a functional client |
+| Mobile | `gestinem_app/` | Cliente Flutter de mensajeria (en desarrollo, no funcional aun) |
 | Utilities | `utils/` | Configuration, credentials and validation |
 
 Entry point: `main.py`. The company workspace is coordinated by
@@ -72,6 +77,20 @@ API keys must not be restored as desktop authentication mechanisms.
 
 Documents shared by workstations belong under the configured network document
 repository. Temporary cloud storage is not the definitive archive.
+
+## Mensajeria: estado post-retirada PWA
+
+- FastAPI solo proporciona API REST, WebSocket, FCM, almacenamiento y auth.
+- No hay interfaz web de mensajeria. `/mensajes` y `/equipo/mensajes` devuelven 410.
+- Los service workers de retirada en `/mensajes-sw.js` y `/equipo/mensajes-sw.js`
+  son **transitorios**: eliminarlos 60 dias despues del despliegue de esta version.
+- Web Push/VAPID (`pywebpush`, `MESSAGING_VAPID_*`) eliminados. Notificaciones
+  via Firebase Cloud Messaging (FCM) unicamente.
+- La aplicacion de escritorio ya no abre ninguna URL de mensajeria web.
+- Invitaciones y recuperacion de contrasena por email deshabilitadas temporalmente:
+  ver TODO(flutter-invites) y TODO(flutter-reset) en `messaging_api.py`.
+- La migracion `004_remove_web_push.sql` elimina `msg_push_subscriptions` y
+  `msg_client_push_subscriptions`. Aplicar en produccion despues de este despliegue.
 
 ## Conventions
 

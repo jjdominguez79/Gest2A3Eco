@@ -174,6 +174,9 @@ CREATE TABLE IF NOT EXISTS facturas_recibidas_docs (
   fecha_factura TEXT,
   fecha_operacion TEXT,
   fecha_asiento TEXT,
+  pagada INTEGER DEFAULT 0,
+  suplidos REAL DEFAULT 0,
+  cuenta_suplidos TEXT,
   descripcion TEXT,
   moneda_codigo TEXT,
   base_imponible REAL,
@@ -222,6 +225,8 @@ CREATE TABLE IF NOT EXISTS facturas_emitidas_docs (
   id TEXT PRIMARY KEY,
   codigo_empresa TEXT NOT NULL,
   ejercicio INTEGER NOT NULL,
+  origen_factura TEXT NOT NULL DEFAULT 'facturacion',
+  ocr_documento_id TEXT,
   tercero_id TEXT,
   serie TEXT,
   numero TEXT,
@@ -895,6 +900,22 @@ class GestorBase:
         self._ensure_column("facturas_emitidas_docs", "tipo_operacion", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "modelo_fiscal", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "estado_contable", "TEXT")
+        self._ensure_column(
+            "facturas_emitidas_docs", "origen_factura",
+            "TEXT NOT NULL DEFAULT 'facturacion'",
+        )
+        self._ensure_column("facturas_emitidas_docs", "ocr_documento_id", "TEXT")
+        self.conn.execute(
+            "UPDATE facturas_emitidas_docs SET origen_factura='facturacion' "
+            "WHERE origen_factura IS NULL OR TRIM(origen_factura)=''"
+        )
+        self.conn.execute(
+            "UPDATE facturas_emitidas_docs SET origen_factura='ocr', "
+            "ocr_documento_id=COALESCE(NULLIF(ocr_documento_id, ''), id) "
+            "WHERE EXISTS (SELECT 1 FROM documentos_ocr o "
+            "WHERE o.id=facturas_emitidas_docs.id "
+            "AND o.tipo_documento='factura_emitida')"
+        )
         self.conn.execute(
             "UPDATE facturas_emitidas_docs SET tipo_operacion='01' WHERE tipo_operacion IS NULL OR TRIM(tipo_operacion)=''"
         )
@@ -1070,6 +1091,9 @@ class GestorBase:
         self._ensure_column("facturas_recibidas_docs", "fecha_validacion", "TEXT")
         self._ensure_column("facturas_recibidas_docs", "lote_generacion", "TEXT")
         self._ensure_column("facturas_recibidas_docs", "error_mensaje", "TEXT")
+        self._ensure_column("facturas_recibidas_docs", "pagada", "INTEGER DEFAULT 0")
+        self._ensure_column("facturas_recibidas_docs", "suplidos", "REAL DEFAULT 0")
+        self._ensure_column("facturas_recibidas_docs", "cuenta_suplidos", "TEXT")
         self.conn.execute(
             "UPDATE facturas_recibidas_docs SET proveedor_tipo_operacion_iva='INTERIOR_DEDUCIBLE' "
             "WHERE proveedor_tipo_operacion_iva IS NULL OR TRIM(proveedor_tipo_operacion_iva)=''"
@@ -1227,6 +1251,10 @@ class GestorBase:
                 fecha_factura     TEXT,
                 fecha_operacion   TEXT,
                 fecha_vencimiento TEXT,
+                fecha_contable    TEXT,
+                pagada            INTEGER DEFAULT 0,
+                suplidos          REAL DEFAULT 0,
+                cuenta_suplidos   TEXT,
                 total_factura     REAL,
                 base_total        REAL,
                 iva_total         REAL,
@@ -1267,6 +1295,61 @@ class GestorBase:
             CREATE INDEX IF NOT EXISTS idx_fror_factura
                 ON facturas_recibidas_ocr_retenciones(factura_id);
 
+            CREATE TABLE IF NOT EXISTS facturas_emitidas_ocr (
+                id                TEXT PRIMARY KEY,
+                documento_id      TEXT NOT NULL REFERENCES documentos_ocr(id) ON DELETE CASCADE,
+                empresa_id        TEXT NOT NULL,
+                cliente_id        TEXT,
+                nif_cliente       TEXT,
+                nombre_cliente    TEXT,
+                numero_factura    TEXT,
+                fecha_factura     TEXT,
+                fecha_operacion   TEXT,
+                fecha_vencimiento TEXT,
+                fecha_contable    TEXT,
+                cobrada           INTEGER DEFAULT 0,
+                total_factura     REAL,
+                base_total        REAL,
+                iva_total         REAL,
+                retencion_total   REAL,
+                tipo_operacion    TEXT DEFAULT '01',
+                subcuenta_cliente TEXT,
+                cuenta_ingreso    TEXT,
+                cuenta_iva        TEXT,
+                estado_validacion TEXT DEFAULT 'pendiente',
+                observaciones     TEXT
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_feo_unicidad
+                ON facturas_emitidas_ocr(empresa_id, nif_cliente, numero_factura, fecha_factura, total_factura);
+            CREATE INDEX IF NOT EXISTS idx_feo_empresa
+                ON facturas_emitidas_ocr(empresa_id, estado_validacion);
+
+            CREATE TABLE IF NOT EXISTS facturas_emitidas_ocr_lineas_iva (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                factura_id          TEXT NOT NULL REFERENCES facturas_emitidas_ocr(id) ON DELETE CASCADE,
+                tipo_iva            REAL,
+                base                REAL,
+                cuota_iva           REAL,
+                tipo_recargo        REAL,
+                cuota_recargo       REAL,
+                cuenta_ingreso      TEXT,
+                es_suplido          INTEGER DEFAULT 0,
+                tipo_operacion      TEXT DEFAULT '01'
+            );
+            CREATE INDEX IF NOT EXISTS idx_feoli_factura
+                ON facturas_emitidas_ocr_lineas_iva(factura_id);
+
+            CREATE TABLE IF NOT EXISTS facturas_emitidas_ocr_retenciones (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                factura_id          TEXT NOT NULL REFERENCES facturas_emitidas_ocr(id) ON DELETE CASCADE,
+                base_retencion      REAL DEFAULT 0,
+                tipo_retencion      REAL DEFAULT 0,
+                importe_retencion   REAL DEFAULT 0,
+                clase_retencion     TEXT DEFAULT 'PROFESIONAL'
+            );
+            CREATE INDEX IF NOT EXISTS idx_feor_factura
+                ON facturas_emitidas_ocr_retenciones(factura_id);
+
             CREATE TABLE IF NOT EXISTS ocr_correcciones (
                 id               INTEGER PRIMARY KEY AUTOINCREMENT,
                 factura_id       TEXT NOT NULL,
@@ -1297,9 +1380,18 @@ class GestorBase:
             CREATE INDEX IF NOT EXISTS idx_ocr_aprendizaje_empresa
                 ON ocr_aprendizaje_ejemplos(empresa_id, estado, proveedor_nif);
         """)
+        self._ensure_column("facturas_recibidas_ocr", "fecha_contable", "TEXT")
+        self._ensure_column("facturas_recibidas_ocr", "pagada", "INTEGER DEFAULT 0")
+        self._ensure_column("facturas_recibidas_ocr", "suplidos", "REAL DEFAULT 0")
+        self._ensure_column("facturas_recibidas_ocr", "cuenta_suplidos", "TEXT")
         self._ensure_column("facturas_recibidas", "pct_fraccion", "INTEGER")
         self._ensure_column("facturas_emitidas", "pct_fraccion", "INTEGER")
         self._ensure_column("ocr_aprendizaje_ejemplos", "marcas_json", "TEXT NOT NULL DEFAULT '{}'")
+        self._ensure_column("facturas_emitidas_ocr", "cobrada", "INTEGER DEFAULT 0")
+        self._ensure_column("facturas_emitidas_ocr", "fecha_contable", "TEXT")
+        self._ensure_column("facturas_emitidas_ocr", "subcuenta_cliente", "TEXT")
+        self._ensure_column("facturas_emitidas_ocr", "cuenta_ingreso", "TEXT")
+        self._ensure_column("facturas_emitidas_ocr", "cuenta_iva", "TEXT")
         self.conn.commit()
         self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS cuotas_periodicas (
@@ -2581,9 +2673,11 @@ class GestorBase:
         self.conn.commit()
 
     def listar_facturas_emitidas_en_contabilidad(self, codigo_empresa: str, ejercicio: int):
-        """Devuelve las facturas emitidas con estado_contable pendiente o generado (todos los ejercicios)."""
+        """Devuelve emitidas pendientes o enlazadas, conservando su origen."""
         cur = self.conn.execute(
-            "SELECT * FROM facturas_emitidas_docs WHERE codigo_empresa=? AND estado_contable IS NOT NULL AND estado_contable != '' ORDER BY fecha_asiento, numero",
+            "SELECT * FROM facturas_emitidas_docs WHERE codigo_empresa=? "
+            "AND estado_contable IN ('pendiente', 'generado', 'contabilizada') "
+            "ORDER BY fecha_asiento, numero",
             (codigo_empresa,),
         )
         out = []
@@ -2612,11 +2706,60 @@ class GestorBase:
         self.conn.commit()
         return cur.rowcount
 
+    def devolver_facturas_emitidas_desde_contabilidad(
+        self, codigo_empresa: str, ejercicio: int, ids: list,
+        motivo: str = "Devuelta desde Contabilidad.",
+    ) -> dict:
+        """Devuelve cada emitida a su modulo de origen y conserva trazabilidad."""
+        ids = [str(item) for item in (ids or []) if str(item)]
+        resultado = {"facturacion": 0, "ocr": 0, "bloqueadas": []}
+        if not ids:
+            return resultado
+        qmarks = ",".join("?" for _ in ids)
+        rows = self.conn.execute(
+            f"SELECT id, origen_factura, ocr_documento_id, numero_asiento "
+            f"FROM facturas_emitidas_docs WHERE codigo_empresa=? AND id IN ({qmarks})",
+            (codigo_empresa, *ids),
+        ).fetchall()
+        try:
+            for row in rows:
+                item = self._row_to_dict(row)
+                factura_id = str(item.get("id") or "")
+                if str(item.get("numero_asiento") or "").strip():
+                    resultado["bloqueadas"].append(factura_id)
+                    continue
+                origen = str(item.get("origen_factura") or "facturacion").lower()
+                self.conn.execute(
+                    "UPDATE facturas_emitidas_docs SET estado_contable=NULL, "
+                    "generada=0, fecha_generacion='' WHERE id=? AND codigo_empresa=?",
+                    (factura_id, codigo_empresa),
+                )
+                if origen == "ocr":
+                    documento_id = str(item.get("ocr_documento_id") or factura_id)
+                    self.conn.execute(
+                        "UPDATE documentos_ocr SET estado='error', error_ocr=? "
+                        "WHERE id=? AND empresa_id=?",
+                        (motivo, documento_id, codigo_empresa),
+                    )
+                    self.conn.execute(
+                        "UPDATE facturas_emitidas_ocr SET estado_validacion='pendiente', "
+                        "observaciones=? WHERE documento_id=? AND empresa_id=?",
+                        (motivo, documento_id, codigo_empresa),
+                    )
+                    resultado["ocr"] += 1
+                else:
+                    resultado["facturacion"] += 1
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return resultado
+
     def marcar_generadas_con_asiento(self, codigo_empresa: str, ejercicio: int) -> int:
         """Marca como 'generado' todas las facturas en contabilidad con numero_asiento relleno."""
         cur = self.conn.execute(
             """UPDATE facturas_emitidas_docs
-               SET estado_contable='generado'
+               SET estado_contable='contabilizada'
                WHERE codigo_empresa=?
                  AND estado_contable='pendiente'
                  AND numero_asiento IS NOT NULL AND TRIM(numero_asiento) != ''""",
@@ -2637,7 +2780,9 @@ class GestorBase:
             return 0
         qmarks = ",".join("?" for _ in ids)
         cur = self.conn.execute(
-            f"UPDATE facturas_emitidas_docs SET estado_contable='pendiente' WHERE codigo_empresa=? AND estado_contable='generado' AND id IN ({qmarks})",
+            f"UPDATE facturas_emitidas_docs SET estado_contable='pendiente' "
+            f"WHERE codigo_empresa=? AND estado_contable IN ('generado', 'contabilizada') "
+            f"AND (numero_asiento IS NULL OR TRIM(numero_asiento)='') AND id IN ({qmarks})",
             (codigo_empresa, *ids),
         )
         self.conn.commit()
@@ -2918,6 +3063,17 @@ class GestorBase:
                 factura.get("pdf_generated_at"),
             ),
         )
+        if "origen_factura" in factura or "ocr_documento_id" in factura:
+            origen = str(
+                factura.get("origen_factura") or "facturacion"
+            ).strip().lower()
+            if origen not in {"facturacion", "ocr"}:
+                origen = "facturacion"
+            self.conn.execute(
+                "UPDATE facturas_emitidas_docs SET origen_factura=?, "
+                "ocr_documento_id=? WHERE id=?",
+                (origen, factura.get("ocr_documento_id"), fid),
+            )
         self.conn.commit()
         return fid
 
@@ -3049,7 +3205,13 @@ class GestorBase:
             (fecha, codigo_empresa, *ids),
         )
         self.conn.execute(
-            f"UPDATE facturas_emitidas_docs SET estado_contable='generado' WHERE codigo_empresa=? AND estado_contable='pendiente' AND id IN ({qmarks})",
+            f"UPDATE facturas_emitidas_docs SET estado_contable='contabilizada' "
+            f"WHERE codigo_empresa=? AND estado_contable='pendiente' AND id IN ({qmarks})",
+            (codigo_empresa, *ids),
+        )
+        self.conn.execute(
+            f"UPDATE documentos_ocr SET estado='contabilizada' "
+            f"WHERE empresa_id=? AND tipo_documento='factura_emitida' AND id IN ({qmarks})",
             (codigo_empresa, *ids),
         )
         self.conn.commit()
@@ -3898,6 +4060,51 @@ class GestorBase:
         self.conn.commit()
         return bool(cursor.rowcount)
 
+    def devolver_facturas_recibidas_a_ocr(
+        self, codigo_empresa: str, ids: list,
+        motivo: str = "Devuelta desde Contabilidad.",
+    ) -> dict:
+        """Retira proyecciones contables sin asiento y reactiva su revision OCR."""
+        ids = [str(item) for item in (ids or []) if str(item)]
+        resultado = {"ocr": 0, "bloqueadas": []}
+        if not ids:
+            return resultado
+        qmarks = ",".join("?" for _ in ids)
+        rows = self.conn.execute(
+            f"SELECT id, numero_asiento FROM facturas_recibidas_docs "
+            f"WHERE codigo_empresa=? AND id IN ({qmarks})",
+            (codigo_empresa, *ids),
+        ).fetchall()
+        try:
+            for row in rows:
+                item = self._row_to_dict(row)
+                documento_id = str(item.get("id") or "")
+                if str(item.get("numero_asiento") or "").strip():
+                    resultado["bloqueadas"].append(documento_id)
+                    continue
+                self.conn.execute(
+                    "UPDATE facturas_recibidas_docs SET estado_contable='devuelta_ocr', "
+                    "estado_validacion='pendiente', generada=0, fecha_generacion='' "
+                    "WHERE id=? AND codigo_empresa=?",
+                    (documento_id, codigo_empresa),
+                )
+                self.conn.execute(
+                    "UPDATE documentos_ocr SET estado='error', error_ocr=? "
+                    "WHERE id=? AND empresa_id=?",
+                    (motivo, documento_id, codigo_empresa),
+                )
+                self.conn.execute(
+                    "UPDATE facturas_recibidas_ocr SET estado_validacion='pendiente', "
+                    "observaciones=? WHERE documento_id=? AND empresa_id=?",
+                    (motivo, documento_id, codigo_empresa),
+                )
+                resultado["ocr"] += 1
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return resultado
+
     def upsert_factura_recibida_doc(self, doc: dict):
         now = self._utc_now()
         doc_id = str(doc.get("id") or int(time.time() * 1000))
@@ -3914,13 +4121,14 @@ class GestorBase:
             INSERT INTO facturas_recibidas_docs
             (id, codigo_empresa, ejercicio, tercero_id, origen_path, pdf_path, texto_ocr, estado_ocr, estado_validacion,
              estado_contable, proveedor_nif, proveedor_nombre, numero_factura, fecha_factura, fecha_operacion, fecha_asiento,
+             pagada, suplidos, cuenta_suplidos,
              descripcion, moneda_codigo, base_imponible, cuota_iva, cuota_recargo, cuota_retencion, total, cuenta_gasto,
              cuenta_iva, cuenta_proveedor, proveedor_tipo_operacion_iva, proveedor_iva_deducible, proveedor_porcentaje_deduccion_iva,
              pdf_ref, numero_asiento, generada, fecha_generacion, confianza_ocr, datos_extra_json,
              lineas_json, tipo_documento, tipo_operacion, fecha_vencimiento, fecha_contabilizacion,
              fecha_ocr, fecha_validacion, lote_generacion, error_mensaje,
              created_at, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 codigo_empresa=excluded.codigo_empresa,
                 ejercicio=excluded.ejercicio,
@@ -3937,6 +4145,9 @@ class GestorBase:
                 fecha_factura=excluded.fecha_factura,
                 fecha_operacion=excluded.fecha_operacion,
                 fecha_asiento=excluded.fecha_asiento,
+                pagada=excluded.pagada,
+                suplidos=excluded.suplidos,
+                cuenta_suplidos=excluded.cuenta_suplidos,
                 descripcion=excluded.descripcion,
                 moneda_codigo=excluded.moneda_codigo,
                 base_imponible=excluded.base_imponible,
@@ -3984,6 +4195,9 @@ class GestorBase:
                 doc.get("fecha_factura"),
                 doc.get("fecha_operacion"),
                 doc.get("fecha_asiento"),
+                1 if doc.get("pagada") else 0,
+                float(doc.get("suplidos") or 0.0),
+                doc.get("cuenta_suplidos") or "",
                 doc.get("descripcion"),
                 doc.get("moneda_codigo"),
                 doc.get("base_imponible"),
@@ -5600,9 +5814,10 @@ class GestorBase:
             INSERT INTO facturas_recibidas_ocr
               (id, documento_id, empresa_id, proveedor_id, nif_proveedor,
                nombre_proveedor, numero_factura, fecha_factura, fecha_operacion,
-               fecha_vencimiento, total_factura, base_total, iva_total,
+               fecha_vencimiento, fecha_contable, pagada, suplidos, cuenta_suplidos,
+               total_factura, base_total, iva_total,
                retencion_total, tipo_operacion_iva, estado_validacion, observaciones)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
               proveedor_id=excluded.proveedor_id,
               nif_proveedor=excluded.nif_proveedor,
@@ -5611,6 +5826,10 @@ class GestorBase:
               fecha_factura=excluded.fecha_factura,
               fecha_operacion=excluded.fecha_operacion,
               fecha_vencimiento=excluded.fecha_vencimiento,
+              fecha_contable=excluded.fecha_contable,
+              pagada=excluded.pagada,
+              suplidos=excluded.suplidos,
+              cuenta_suplidos=excluded.cuenta_suplidos,
               total_factura=excluded.total_factura,
               base_total=excluded.base_total,
               iva_total=excluded.iva_total,
@@ -5625,6 +5844,10 @@ class GestorBase:
                 factura.get("nombre_proveedor"), factura.get("numero_factura"),
                 factura.get("fecha_factura"), factura.get("fecha_operacion"),
                 factura.get("fecha_vencimiento"),
+                factura.get("fecha_contable") or factura.get("fecha_factura"),
+                1 if factura.get("pagada") else 0,
+                float(factura.get("suplidos") or 0.0),
+                factura.get("cuenta_suplidos") or "",
                 float(factura.get("total_factura") or 0.0),
                 float(factura.get("base_total") or 0.0),
                 float(factura.get("iva_total") or 0.0),
@@ -5732,6 +5955,173 @@ class GestorBase:
         )
         cols = [c[0] for c in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def eliminar_retenciones_ocr(self, factura_id: str) -> None:
+        self.conn.execute(
+            "DELETE FROM facturas_recibidas_ocr_retenciones WHERE factura_id=?",
+            (str(factura_id),),
+        )
+        self.conn.commit()
+
+    # facturas_emitidas_ocr ───────────────────────────────────────────────────
+
+    def upsert_factura_emitida_ocr(self, factura: dict) -> str:
+        """Inserta o actualiza una factura emitida OCR. Devuelve el id."""
+        self.conn.execute(
+            """
+            INSERT INTO facturas_emitidas_ocr
+              (id, documento_id, empresa_id, cliente_id, nif_cliente,
+               nombre_cliente, numero_factura, fecha_factura, fecha_operacion,
+               fecha_vencimiento, fecha_contable, cobrada,
+               total_factura, base_total, iva_total,
+               retencion_total, tipo_operacion, subcuenta_cliente, cuenta_ingreso,
+               cuenta_iva, estado_validacion, observaciones)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+              cliente_id=excluded.cliente_id,
+              nif_cliente=excluded.nif_cliente,
+              nombre_cliente=excluded.nombre_cliente,
+              numero_factura=excluded.numero_factura,
+              fecha_factura=excluded.fecha_factura,
+              fecha_operacion=excluded.fecha_operacion,
+              fecha_vencimiento=excluded.fecha_vencimiento,
+              fecha_contable=excluded.fecha_contable,
+              cobrada=excluded.cobrada,
+              total_factura=excluded.total_factura,
+              base_total=excluded.base_total,
+              iva_total=excluded.iva_total,
+              retencion_total=excluded.retencion_total,
+              tipo_operacion=excluded.tipo_operacion,
+              subcuenta_cliente=excluded.subcuenta_cliente,
+              cuenta_ingreso=excluded.cuenta_ingreso,
+              cuenta_iva=excluded.cuenta_iva,
+              estado_validacion=excluded.estado_validacion,
+              observaciones=excluded.observaciones
+            """,
+            (
+                factura["id"], factura.get("documento_id"), factura.get("empresa_id"),
+                factura.get("cliente_id"), factura.get("nif_cliente"),
+                factura.get("nombre_cliente"), factura.get("numero_factura"),
+                factura.get("fecha_factura"), factura.get("fecha_operacion"),
+                factura.get("fecha_vencimiento"),
+                factura.get("fecha_contable") or factura.get("fecha_factura"),
+                1 if factura.get("cobrada") else 0,
+                float(factura.get("total_factura") or 0.0),
+                float(factura.get("base_total") or 0.0),
+                float(factura.get("iva_total") or 0.0),
+                float(factura.get("retencion_total") or 0.0),
+                factura.get("tipo_operacion") or "01",
+                factura.get("subcuenta_cliente") or "",
+                factura.get("cuenta_ingreso") or "",
+                factura.get("cuenta_iva") or "",
+                factura.get("estado_validacion", "pendiente"),
+                factura.get("observaciones", ""),
+            ),
+        )
+        self.conn.commit()
+        return factura["id"]
+
+    def get_factura_emitida_ocr(self, factura_id: str) -> dict | None:
+        cur = self.conn.execute(
+            "SELECT * FROM facturas_emitidas_ocr WHERE id=?", (str(factura_id),)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        cols = [c[0] for c in cur.description]
+        return dict(zip(cols, row))
+
+    def listar_facturas_emitidas_ocr(
+        self, empresa_id: str, estado: str | None = None
+    ) -> list[dict]:
+        if estado:
+            cur = self.conn.execute(
+                "SELECT * FROM facturas_emitidas_ocr WHERE empresa_id=? AND estado_validacion=? "
+                "ORDER BY fecha_factura DESC",
+                (empresa_id, estado),
+            )
+        else:
+            cur = self.conn.execute(
+                "SELECT * FROM facturas_emitidas_ocr WHERE empresa_id=? ORDER BY fecha_factura DESC",
+                (empresa_id,),
+            )
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    # facturas_emitidas_ocr_lineas_iva ────────────────────────────────────────
+
+    def upsert_linea_iva_emitida_ocr(self, linea: dict) -> int:
+        cur = self.conn.execute(
+            """
+            INSERT INTO facturas_emitidas_ocr_lineas_iva
+              (factura_id, tipo_iva, base, cuota_iva, tipo_recargo, cuota_recargo,
+               cuenta_ingreso, es_suplido, tipo_operacion)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                str(linea["factura_id"]),
+                float(linea.get("tipo_iva") or 0.0),
+                float(linea.get("base") or 0.0),
+                float(linea.get("cuota_iva") or 0.0),
+                float(linea.get("tipo_recargo") or 0.0),
+                float(linea.get("cuota_recargo") or 0.0),
+                linea.get("cuenta_ingreso", ""),
+                1 if linea.get("es_suplido") else 0,
+                linea.get("tipo_operacion", "01"),
+            ),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def listar_lineas_iva_emitida_ocr(self, factura_id: str) -> list[dict]:
+        cur = self.conn.execute(
+            "SELECT * FROM facturas_emitidas_ocr_lineas_iva WHERE factura_id=?",
+            (str(factura_id),),
+        )
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def eliminar_lineas_iva_emitida_ocr(self, factura_id: str):
+        self.conn.execute(
+            "DELETE FROM facturas_emitidas_ocr_lineas_iva WHERE factura_id=?",
+            (str(factura_id),),
+        )
+        self.conn.commit()
+
+    # facturas_emitidas_ocr_retenciones ───────────────────────────────────────
+
+    def upsert_retencion_emitida_ocr(self, ret: dict) -> int:
+        cur = self.conn.execute(
+            """
+            INSERT INTO facturas_emitidas_ocr_retenciones
+              (factura_id, base_retencion, tipo_retencion, importe_retencion, clase_retencion)
+            VALUES (?,?,?,?,?)
+            """,
+            (
+                str(ret["factura_id"]),
+                float(ret.get("base_retencion") or 0.0),
+                float(ret.get("tipo_retencion") or 0.0),
+                float(ret.get("importe_retencion") or 0.0),
+                ret.get("clase_retencion", "PROFESIONAL"),
+            ),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def listar_retenciones_emitida_ocr(self, factura_id: str) -> list[dict]:
+        cur = self.conn.execute(
+            "SELECT * FROM facturas_emitidas_ocr_retenciones WHERE factura_id=?",
+            (str(factura_id),),
+        )
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def eliminar_retenciones_emitida_ocr(self, factura_id: str) -> None:
+        self.conn.execute(
+            "DELETE FROM facturas_emitidas_ocr_retenciones WHERE factura_id=?",
+            (str(factura_id),),
+        )
+        self.conn.commit()
 
     # ocr_correcciones ────────────────────────────────────────────────────────
 

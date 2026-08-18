@@ -8,7 +8,7 @@ Servicios registrados:
   - Gest2A3Eco/PostgreSQL          usuario:password de la base de datos
   - Gest2A3Eco/WorkstationToken    token de autenticacion del puesto
   - Gest2A3Eco/IntegrationsApiKey  clave de API del backend de integraciones
-  - Gest2A3Eco/AzureDocIntelligence clave de Azure Document Intelligence
+  - Gest2A3Eco/AzureDocIntelligence clave legacy de Azure (solo para eliminarla)
   - Gest2A3Eco/AzureStorage        cadena de conexion Azure Storage
   - Gest2A3Eco/MessagingApiKey     clave de API de mensajeria
   - Gest2A3Eco/MessagingDevice     token de dispositivo de mensajeria
@@ -285,20 +285,10 @@ def delete_integrations_api_key() -> None:
     _delete_single(SERVICE_INTEGRATIONS_KEY, USERNAME_INTEGRATIONS_KEY)
 
 
-# ── Azure Document Intelligence key ──────────────────────────────────────────
-
-def store_azure_doc_key(key: str) -> bool:
-    """Guarda la clave de Azure Document Intelligence."""
-    return _store_single(SERVICE_AZURE_DOC_KEY, USERNAME_AZURE_DOC_KEY, key)
-
-
-def get_azure_doc_key() -> str | None:
-    """Recupera la clave de Azure Document Intelligence."""
-    return _get_single(SERVICE_AZURE_DOC_KEY, USERNAME_AZURE_DOC_KEY)
-
+# ── Azure Document Intelligence key legacy ───────────────────────────────────
 
 def delete_azure_doc_key() -> None:
-    """Elimina la clave de Azure Document Intelligence."""
+    """Elimina una clave Azure dejada por versiones antiguas del escritorio."""
     _delete_single(SERVICE_AZURE_DOC_KEY, USERNAME_AZURE_DOC_KEY)
 
 

@@ -28,8 +28,9 @@ import tkinter as tk
 
 from services.terceros_empresa_fiscal_service import PROVEEDOR_TIPOS_IVA
 from services.ocr_contabilidad_service import OcrContabilidadService
+from services.ocr_emitidas_contabilidad_service import OcrEmitContabilidadService
 from services.terceros_ocr_service import TercerosOcrService
-from utils.utilidades import load_app_config, save_app_config
+from utils.utilidades import load_app_config
 from utils.validaciones import normalizar_nif_cif
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,75 @@ def _parse_importe(value) -> float:
     elif "," in raw:
         raw = raw.replace(",", ".")
     return float(raw)
+
+
+IVA_TIPOS_CATALOGO = (21.0, 10.0, 7.5, 5.0, 4.0, 2.0, 0.0)
+CAMPOS_APRENDIZAJE_COMUNES = (
+    "NumeroFactura", "FechaFactura", "FechaVencimiento",
+    "BaseTotal", "IvaTotal", "TotalFactura",
+)
+CAMPOS_APRENDIZAJE_POR_TIPO = {
+    "factura_recibida": (
+        "ProveedorNif", "ProveedorNombre", *CAMPOS_APRENDIZAJE_COMUNES,
+    ),
+    "factura_emitida": (
+        "EmisorNif", "EmisorNombre", "ClienteNif", "ClienteNombre",
+        *CAMPOS_APRENDIZAJE_COMUNES,
+    ),
+}
+CAMPO_MARCA_A_ENTRY_COMUN = {
+    "ProveedorNif": "nif_proveedor", "ProveedorNombre": "nombre_proveedor",
+    "ClienteNif": "nif_proveedor", "ClienteNombre": "nombre_proveedor",
+    "NumeroFactura": "numero_factura", "FechaFactura": "fecha_factura",
+    "FechaVencimiento": "fecha_vencimiento", "BaseTotal": "base_total",
+    "IvaTotal": "iva_total", "TotalFactura": "total_factura",
+}
+
+
+def _campos_aprendizaje(tipo_documento: str) -> tuple[str, ...]:
+    return CAMPOS_APRENDIZAJE_POR_TIPO.get(
+        tipo_documento, CAMPOS_APRENDIZAJE_POR_TIPO["factura_recibida"],
+    )
+
+
+def _zoom_para_ajustar(
+    ancho_documento: int, alto_documento: int,
+    ancho_disponible: int, alto_disponible: int,
+) -> float:
+    """Calcula un zoom que muestra la pagina completa sin recortarla."""
+    if min(ancho_documento, alto_documento, ancho_disponible, alto_disponible) <= 1:
+        return 1.0
+    margen = 10
+    return max(0.1, min(
+        3.0,
+        (ancho_disponible - margen) / ancho_documento,
+        (alto_disponible - margen) / alto_documento,
+    ))
+
+
+def _resumen_fiscal(
+    lineas_iva: list[dict], retenciones: list[dict], suplidos=0.0,
+) -> dict[str, float]:
+    """Calcula los totales visibles y el total esperado de la factura."""
+    base = round(sum(float(linea.get("base") or 0.0) for linea in lineas_iva), 2)
+    iva = round(sum(float(linea.get("cuota_iva") or 0.0) for linea in lineas_iva), 2)
+    recargo = round(sum(float(linea.get("cuota_recargo") or 0.0) for linea in lineas_iva), 2)
+    retencion = round(
+        sum(float(linea.get("importe_retencion") or 0.0) for linea in retenciones), 2,
+    )
+    suplidos_num = round(float(suplidos or 0.0), 2)
+    return {
+        "base": base,
+        "iva": iva,
+        "recargo": recargo,
+        "retencion": retencion,
+        "suplidos": suplidos_num,
+        "total_esperado": round(base + iva + recargo + suplidos_num - retencion, 2),
+    }
+
+
+def _totales_coherentes(total, resumen: dict[str, float], tolerancia: float = 0.05) -> bool:
+    return abs(float(total or 0.0) - resumen["total_esperado"]) <= tolerancia
 
 # Bandejas de estado
 BANDEJAS = [
@@ -117,6 +187,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         self._session   = session
         self._ocr_q: queue.Queue = queue.Queue()
         self._ocr_thread: threading.Thread | None = None
+        self._ocr_mensajes: list[str] = []
         self._doc_seleccionado: dict | None = None
         self._factura_seleccionada: dict | None = None
         self._terceros_svc = TercerosOcrService()
@@ -130,6 +201,13 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         self._marcas_campos: dict[str, dict] = {}
         self._marca_inicio: tuple[float, float] | None = None
         self._marca_rect_id = None
+        self._preview_page = 0
+        self._preview_page_count = 1
+        self._ocultar_iva_vacias = False
+        self._iva_catalog_items: list[str] = []
+        self._cargando_editor = False
+        self._tipo_doc_var = tk.StringVar(value="factura_recibida")
+        self._fecha_contable_modo_var = tk.StringVar(value="Fecha de factura")
 
         self._build()
         self.after_idle(self._refresh_all)
@@ -140,36 +218,74 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         # Cabecera
         hdr = ttk.Frame(self)
         hdr.pack(fill="x", padx=10, pady=(8, 4))
+        titulo = ttk.Frame(hdr)
+        titulo.pack(fill="x")
         ttk.Label(
-            hdr,
+            titulo,
             text=f"Captura documental OCR  —  {self._nombre} ({self._codigo})",
             font=("Segoe UI", 12, "bold"),
         ).pack(side="left")
-        btn_frame = ttk.Frame(hdr)
-        btn_frame.pack(side="right")
         ttk.Button(
+            titulo, text="Aprendizaje",
+            command=self._mostrar_estado_aprendizaje,
+        ).pack(side="right", padx=(4, 0))
+        ttk.Button(
+            titulo, text="Reprocesar seleccionado",
+            command=self._reprocesar_seleccionado,
+        ).pack(side="right", padx=4)
+
+        btn_frame = ttk.Frame(hdr)
+        btn_frame.pack(fill="x", pady=(6, 0))
+        self._btn_importar = ttk.Button(
             btn_frame, text="Importar PDF / imagen",
             style="Primary.TButton",
             command=self._importar,
-        ).pack(side="left", padx=4)
-        ttk.Button(
-            btn_frame, text="Reprocesar seleccionado",
-            command=self._reprocesar_seleccionado,
-        ).pack(side="left", padx=4)
-        ttk.Button(
-            btn_frame, text="Aprendizaje",
-            command=self._mostrar_estado_aprendizaje,
-        ).pack(side="left", padx=4)
+        )
+        self._btn_importar.pack(side="left", padx=4)
+        ttk.Separator(btn_frame, orient="vertical").pack(side="left", padx=6, fill="y")
+        ttk.Label(btn_frame, text="Documento:").pack(side="left", padx=(0, 2))
+        self._radio_recibida = ttk.Radiobutton(
+            btn_frame, text="Factura de proveedor",
+            variable=self._tipo_doc_var, value="factura_recibida",
+            command=self._on_tipo_doc_changed,
+        )
+        self._radio_recibida.pack(side="left")
+        self._radio_emitida = ttk.Radiobutton(
+            btn_frame, text="Factura de cliente",
+            variable=self._tipo_doc_var, value="factura_emitida",
+            command=self._on_tipo_doc_changed,
+        )
+        self._radio_emitida.pack(side="left", padx=(0, 4))
+        ttk.Label(btn_frame, text="Fecha contable:").pack(side="left", padx=(8, 2))
+        self._cb_fecha_contable_modo = ttk.Combobox(
+            btn_frame,
+            textvariable=self._fecha_contable_modo_var,
+            values=("Fecha de factura", "Hoy"),
+            state="readonly",
+            width=16,
+        )
+        self._cb_fecha_contable_modo.pack(side="left", padx=(0, 4))
 
         # La pantalla inicial solo es el listado de estados. La revision se
         # abre en una ventana propia al seleccionar una factura.
         lista = ttk.Frame(self)
         lista.pack(fill="both", expand=True, padx=10, pady=4)
+        self._frm_lista = lista
+        self._zona_arrastre = ttk.Label(
+            lista,
+            text="Arrastra aquí uno o varios PDF o imágenes, o pulsa «Importar PDF / imagen»",
+            style="DropZone.TLabel",
+            anchor="center",
+        )
+        self._zona_arrastre.pack(fill="x", pady=(0, 6))
+        self._zona_arrastre.bind("<Button-1>", lambda _event: self._importar())
         self._build_bandejas(lista)
 
         # Barra de estado
         self._lbl_status = ttk.Label(self, text="", foreground="#555")
         self._lbl_status.pack(fill="x", padx=10, pady=(0, 6))
+
+        self._setup_drag_and_drop()
 
     def _crear_editor_desplazable(self, parent: ttk.Frame) -> ttk.Frame:
         """Crea un formulario vertical desplazable para no comprimir sus campos."""
@@ -193,57 +309,6 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         canvas.bind("<MouseWheel>", lambda event: canvas.yview_scroll(-int(event.delta / 120), "units"))
         self._editor_canvas = canvas
         return contenido
-
-    def _configurar_ocr(self):
-        """Configura Azure Document Intelligence sin exponer la clave en la pantalla."""
-        dialog = tk.Toplevel(self)
-        dialog.title("Configuracion OCR")
-        dialog.transient(self.winfo_toplevel())
-        dialog.grab_set()
-        frame = ttk.Frame(dialog, padding=14)
-        frame.pack(fill="both", expand=True)
-        cfg = load_app_config()
-        from utils.credential_store import get_azure_doc_key, store_azure_doc_key
-        motor = tk.StringVar(value=str(cfg.get("ocr_motor_activo") or ""))
-        endpoint = tk.StringVar(value=str(cfg.get("azure_doc_intelligence_endpoint") or ""))
-        key = tk.StringVar(value=get_azure_doc_key() or "")
-        model_id = tk.StringVar(value=str(cfg.get("azure_doc_intelligence_model_id") or ""))
-        ttk.Label(frame, text="Motor OCR").grid(row=0, column=0, sticky="w", pady=3)
-        ttk.Combobox(frame, textvariable=motor, state="readonly", values=("", "azure"), width=42).grid(row=0, column=1, sticky="ew", padx=(8, 0), pady=3)
-        ttk.Label(frame, text="Endpoint Azure").grid(row=1, column=0, sticky="w", pady=3)
-        ttk.Entry(frame, textvariable=endpoint, width=55).grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=3)
-        ttk.Label(frame, text="Clave Azure").grid(row=2, column=0, sticky="w", pady=3)
-        ttk.Entry(frame, textvariable=key, show="*", width=55).grid(row=2, column=1, sticky="ew", padx=(8, 0), pady=3)
-        ttk.Label(frame, text="ID modelo personalizado").grid(row=3, column=0, sticky="w", pady=3)
-        ttk.Entry(frame, textvariable=model_id, width=55).grid(row=3, column=1, sticky="ew", padx=(8, 0), pady=3)
-        ttk.Label(
-            frame,
-            text=("Deja el ID vacio para usar prebuilt-invoice. Indica el ID de un "
-                  "modelo personalizado entrenado con facturas etiquetadas para "
-                  "usar sus campos. Los documentos se enviaran a Azure para su analisis."),
-            wraplength=520, foreground="#555",
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(10, 0))
-
-        def save():
-            selected = motor.get().strip().lower()
-            if selected == "azure" and (not endpoint.get().strip() or not key.get().strip()):
-                messagebox.showwarning("OCR", "Indica endpoint y clave de Azure.", parent=dialog)
-                return
-            azure_key = key.get().strip()
-            if azure_key:
-                store_azure_doc_key(azure_key)
-            cfg["ocr_motor_activo"] = selected
-            cfg["azure_doc_intelligence_endpoint"] = endpoint.get().strip()
-            cfg["azure_doc_intelligence_model_id"] = model_id.get().strip()
-            save_app_config(cfg)
-            dialog.destroy()
-            self._lbl_status.configure(text="Configuracion OCR guardada. Los documentos nuevos usaran el motor seleccionado.")
-
-        actions = ttk.Frame(frame)
-        actions.grid(row=5, column=0, columnspan=2, sticky="e", pady=(12, 0))
-        ttk.Button(actions, text="Cancelar", command=dialog.destroy).pack(side="left", padx=(0, 6))
-        ttk.Button(actions, text="Guardar", command=save).pack(side="left")
-        frame.columnconfigure(1, weight=1)
 
     def _build_bandejas(self, parent: ttk.Frame):
         self._nb = ttk.Notebook(parent)
@@ -298,10 +363,10 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                        command=lambda: self._eliminar(estado)).pack(side="left", padx=2)
         elif estado == "pendiente_contabilizar":
             ttk.Label(
-                bar, text="Documento enviado a Contabilidad. Genera alli el suenlace.dat."
+                bar, text=(
+                    "Documento bloqueado. Para corregirlo, devuelvelo desde Contabilidad."
+                )
             ).pack(side="left", padx=2)
-            ttk.Button(bar, text="Enviar a errores",
-                       command=lambda: self._enviar_a_error(estado)).pack(side="left", padx=2)
         elif estado == "contabilizada":
             ttk.Label(
                 bar, text="Exportada a suenlace.dat. Importala en A3 y captura el asiento para confirmarla."
@@ -312,161 +377,267 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             ).pack(side="left", padx=6)
 
     def _build_editor(self, parent: ttk.Frame):
-        """Panel derecho: cabecera, IVA y retenciones del documento seleccionado."""
-        ttk.Label(
-            parent, text="Revision y edicion del documento",
-            font=("Segoe UI", 10, "bold"),
-        ).pack(anchor="w", padx=8, pady=(6, 2))
+        """Panel fiscal inspirado en el flujo de validacion de la referencia."""
+        self._entries = {
+            campo: tk.StringVar()
+            for campo in (
+                "nif_proveedor", "nombre_proveedor", "numero_factura",
+                "fecha_factura", "fecha_vencimiento", "fecha_contable",
+                "total_factura", "base_total", "iva_total", "retencion_total",
+                "suplidos",
+            )
+        }
+        self._pagada_var = tk.BooleanVar(value=False)
 
-        # Seccion cabecera
-        cab = ttk.LabelFrame(parent, text="Cabecera de factura")
-        cab.pack(fill="x", padx=8, pady=4)
-        self._entries: dict[str, tk.Variable] = {}
-        campos = [
-            ("nif_proveedor",    "NIF proveedor"),
-            ("nombre_proveedor", "Nombre proveedor"),
-            ("numero_factura",   "Numero factura"),
-            ("fecha_factura",    "Fecha factura (YYYY-MM-DD)"),
-            ("fecha_vencimiento","Vencimiento (YYYY-MM-DD)"),
-            ("total_factura",    "Total factura"),
-            ("base_total",       "Base total"),
-            ("iva_total",        "IVA total"),
-            ("retencion_total",  "Retencion total"),
-        ]
-        for row_idx, (campo, etiqueta) in enumerate(campos):
-            ttk.Label(cab, text=etiqueta + ":").grid(row=row_idx, column=0, sticky="e", padx=4, pady=2)
-            var = tk.StringVar()
-            entry = ttk.Entry(cab, textvariable=var, width=28)
-            entry.grid(row=row_idx, column=1, sticky="ew", padx=4, pady=2)
-            self._entries[campo] = var
-        cab.columnconfigure(1, weight=1)
+        factura = ttk.LabelFrame(parent, text="FACTURA", style="Section.TLabelframe")
+        factura.pack(fill="x", padx=8, pady=(6, 4))
+        ttk.Label(factura, text="Num. factura").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        ttk.Entry(factura, textvariable=self._entries["numero_factura"]).grid(
+            row=0, column=1, sticky="ew", padx=4, pady=4,
+        )
+        ttk.Label(factura, text="NIF").grid(row=0, column=2, sticky="w", padx=(12, 4), pady=4)
+        ttk.Entry(factura, textvariable=self._entries["nif_proveedor"], width=18).grid(
+            row=0, column=3, sticky="ew", padx=(0, 6), pady=4,
+        )
 
-        tercero_frame = ttk.LabelFrame(parent, text="Proveedor / acreedor (maestro)")
-        tercero_frame.pack(fill="x", padx=8, pady=4)
+        self._lbl_tercero = ttk.Label(factura, text="Proveedor")
+        self._lbl_tercero.grid(row=1, column=0, sticky="w", padx=6, pady=4)
         self._proveedor_var = tk.StringVar()
         self._cb_proveedor = ttk.Combobox(
-            tercero_frame, textvariable=self._proveedor_var, state="normal", width=52,
+            factura, textvariable=self._proveedor_var, state="normal", width=36,
         )
-        self._cb_proveedor.grid(row=0, column=0, sticky="ew", padx=4, pady=3)
+        self._cb_proveedor.grid(row=1, column=1, columnspan=2, sticky="ew", padx=4, pady=4)
         self._cb_proveedor.bind("<<ComboboxSelected>>", self._seleccionar_proveedor_maestro)
-        ttk.Button(tercero_frame, text="Buscar NIF", command=self._buscar_proveedor_maestro).grid(
-            row=0, column=1, padx=3, pady=3
+        proveedor_acciones = ttk.Frame(factura)
+        proveedor_acciones.grid(row=1, column=3, sticky="ew", padx=6, pady=4)
+        ttk.Button(
+            proveedor_acciones, text="Buscar", width=9,
+            command=self._buscar_proveedor_maestro,
+        ).pack(
+            side="left", padx=2,
         )
-        ttk.Button(tercero_frame, text="Alta proveedor / acreedor", command=self._alta_proveedor).grid(
-            row=0, column=2, padx=(3, 4), pady=3
+        ttk.Button(
+            proveedor_acciones, text="Alta", width=8, command=self._alta_proveedor,
+        ).pack(
+            side="left", padx=2,
         )
-        ttk.Label(tercero_frame, text="Tipo de operacion").grid(row=1, column=0, sticky="w", padx=4, pady=(2, 4))
+        self._lbl_proveedor_maestro = ttk.Label(factura, text="", foreground="#555")
+        self._lbl_proveedor_maestro.grid(row=2, column=1, columnspan=3, sticky="w", padx=4)
+
+        campos_fecha = (
+            ("fecha_factura", "Fecha factura", 3, 0),
+            ("fecha_contable", "Fecha contable", 3, 2),
+            ("fecha_vencimiento", "Vencimiento", 4, 0),
+        )
+        for campo, etiqueta, fila, columna in campos_fecha:
+            ttk.Label(factura, text=etiqueta).grid(row=fila, column=columna, sticky="w", padx=6, pady=4)
+            ttk.Entry(factura, textvariable=self._entries[campo], width=18).grid(
+                row=fila, column=columna + 1, sticky="ew", padx=4, pady=4,
+            )
+        self._chk_pagada = ttk.Checkbutton(factura, text="Pagada", variable=self._pagada_var)
+        self._chk_pagada.grid(
+            row=4, column=2, sticky="w", padx=(12, 4), pady=4,
+        )
+        ttk.Label(factura, text="Tipo de operacion").grid(row=5, column=0, sticky="w", padx=6, pady=4)
         self._tipo_operacion_iva_var = tk.StringVar(value="INTERIOR_DEDUCIBLE")
         ttk.Combobox(
-            tercero_frame, textvariable=self._tipo_operacion_iva_var,
+            factura, textvariable=self._tipo_operacion_iva_var,
             values=PROVEEDOR_TIPOS_IVA, state="readonly", width=30,
-        ).grid(row=1, column=1, sticky="w", padx=3, pady=(2, 4))
-        self._lbl_proveedor_maestro = ttk.Label(tercero_frame, text="", foreground="#555")
-        self._lbl_proveedor_maestro.grid(row=1, column=2, sticky="w", padx=3, pady=(2, 4))
-        ttk.Label(tercero_frame, text="Subcuenta del plan empresa").grid(
-            row=2, column=0, sticky="w", padx=4, pady=(2, 4)
-        )
+        ).grid(row=5, column=1, columnspan=3, sticky="ew", padx=4, pady=4)
+
+        cuentas = ttk.LabelFrame(parent, text="CUENTAS CONTABLES", style="Section.TLabelframe")
+        cuentas.pack(fill="x", padx=8, pady=4)
+        self._lbl_cuenta_tercero = ttk.Label(cuentas, text="Proveedor")
+        self._lbl_cuenta_tercero.grid(row=0, column=0, sticky="w", padx=6, pady=4)
         self._subcuenta_plan_var = tk.StringVar()
         self._cb_subcuenta_plan = ttk.Combobox(
-            tercero_frame, textvariable=self._subcuenta_plan_var, state="readonly", width=42,
+            cuentas, textvariable=self._subcuenta_plan_var, state="readonly", width=42,
         )
-        self._cb_subcuenta_plan.grid(row=2, column=1, columnspan=2, sticky="ew", padx=3, pady=(2, 4))
-        ttk.Label(tercero_frame, text="Subcuenta de gastos del proveedor").grid(
-            row=3, column=0, sticky="w", padx=4, pady=(2, 4)
-        )
+        self._cb_subcuenta_plan.grid(row=0, column=1, sticky="ew", padx=4, pady=4)
+        self._lbl_cuenta_resultado = ttk.Label(cuentas, text="Gasto")
+        self._lbl_cuenta_resultado.grid(row=1, column=0, sticky="w", padx=6, pady=4)
         self._subcuenta_gasto_var = tk.StringVar()
         self._cuentas_gasto_por_etiqueta = {}
         self._cb_subcuenta_gasto = ttk.Combobox(
-            tercero_frame, textvariable=self._subcuenta_gasto_var, state="readonly", width=42,
+            cuentas, textvariable=self._subcuenta_gasto_var, state="readonly", width=42,
         )
-        self._cb_subcuenta_gasto.grid(row=3, column=1, columnspan=2, sticky="ew", padx=3, pady=(2, 4))
-        tercero_frame.columnconfigure(0, weight=1)
+        self._cb_subcuenta_gasto.grid(row=1, column=1, sticky="ew", padx=4, pady=4)
+        ttk.Label(cuentas, text="Suplidos").grid(row=2, column=0, sticky="w", padx=6, pady=4)
+        self._cuenta_suplidos_var = tk.StringVar(value="55509999")
+        self._cuentas_suplidos_por_etiqueta = {}
+        self._cb_cuenta_suplidos = ttk.Combobox(
+            cuentas, textvariable=self._cuenta_suplidos_var, state="normal", width=42,
+        )
+        self._cb_cuenta_suplidos.grid(row=2, column=1, sticky="ew", padx=4, pady=4)
+        cuentas.columnconfigure(1, weight=1)
 
-        # Seccion lineas IVA
-        iva_frame = ttk.LabelFrame(parent, text="Lineas de IVA")
-        iva_frame.pack(fill="both", expand=True, padx=8, pady=4)
-        iva_cols = ("tipo_iva", "base", "cuota_iva", "tipo_recargo", "cuota_recargo")
-        self._tv_iva = ttk.Treeview(iva_frame, columns=iva_cols, show="headings", height=4)
-        for c in iva_cols:
-            self._tv_iva.heading(c, text=c.replace("_", " ").title())
-            self._tv_iva.column(c, width=90, anchor="e")
-        self._tv_iva.pack(fill="both", expand=True, padx=4, pady=4)
+        fiscal = ttk.Notebook(parent)
+        fiscal.pack(fill="both", expand=True, padx=8, pady=4)
+        iva_frame = ttk.Frame(fiscal)
+        ret_frame = ttk.Frame(fiscal)
+        fiscal.add(iva_frame, text="IVA")
+        fiscal.add(ret_frame, text="RETENCIONES")
+
+        iva_cols = ("tipo_iva", "base", "cuota_iva", "cuenta_gasto", "tipo_recargo", "cuota_recargo")
+        self._tv_iva = ttk.Treeview(iva_frame, columns=iva_cols, show="headings", height=8, selectmode="browse")
+        titulos_iva = {
+            "tipo_iva": "Tipo", "base": "Base", "cuota_iva": "Cuota",
+            "cuenta_gasto": "Cuenta", "tipo_recargo": "% R.E.", "cuota_recargo": "Cuota R.E.",
+        }
+        for campo in iva_cols:
+            self._tv_iva.heading(campo, text=titulos_iva[campo])
+            self._tv_iva.column(campo, width=75 if campo != "cuenta_gasto" else 105,
+                                anchor="e" if campo != "cuenta_gasto" else "w")
+        self._tv_iva.pack(fill="both", expand=True, padx=4, pady=(4, 2))
         self._tv_iva.bind("<<TreeviewSelect>>", self._cargar_linea_iva_en_editor)
+        self._inicializar_catalogo_iva()
 
         iva_editor = ttk.Frame(iva_frame)
-        iva_editor.pack(fill="x", padx=4, pady=(0, 4))
+        iva_editor.pack(fill="x", padx=4, pady=3)
         self._iva_vars = {
-            "tipo_iva": tk.StringVar(value="21"),
-            "base": tk.StringVar(),
-            "cuota_iva": tk.StringVar(),
-            "tipo_recargo": tk.StringVar(value="0"),
-            "cuota_recargo": tk.StringVar(value="0"),
+            "tipo_iva": tk.StringVar(value="21"), "base": tk.StringVar(),
+            "cuota_iva": tk.StringVar(), "cuenta_gasto": tk.StringVar(),
+            "tipo_recargo": tk.StringVar(value="0"), "cuota_recargo": tk.StringVar(value="0"),
         }
         etiquetas = (
-            ("tipo_iva", "Tipo IVA", 8), ("base", "Base", 10),
-            ("cuota_iva", "Cuota IVA", 10), ("tipo_recargo", "Recargo", 8),
-            ("cuota_recargo", "Cuota R.", 10),
+            ("tipo_iva", "% IVA", 7), ("base", "Base", 10),
+            ("cuota_iva", "Cuota", 10), ("cuenta_gasto", "Cuenta", 12),
+            ("tipo_recargo", "% R.E.", 7), ("cuota_recargo", "Cuota R.E.", 10),
         )
-        for col, (campo, etiqueta, ancho) in enumerate(etiquetas):
-            ttk.Label(iva_editor, text=etiqueta).grid(row=0, column=col, sticky="w", padx=2)
+        for columna, (campo, etiqueta, ancho) in enumerate(etiquetas):
+            ttk.Label(iva_editor, text=etiqueta).grid(row=0, column=columna, sticky="w", padx=2)
+            estado = "readonly" if campo == "tipo_iva" else "normal"
             if campo == "tipo_iva":
                 widget = ttk.Combobox(
                     iva_editor, textvariable=self._iva_vars[campo],
-                    values=("0", "4", "5", "10", "21"), width=ancho, state="normal",
+                    values=tuple(f"{v:g}" for v in IVA_TIPOS_CATALOGO), width=ancho, state=estado,
                 )
             else:
                 widget = ttk.Entry(iva_editor, textvariable=self._iva_vars[campo], width=ancho)
-            widget.grid(row=1, column=col, sticky="ew", padx=2)
-        ttk.Button(iva_editor, text="Anadir / actualizar", command=self._guardar_linea_iva).grid(
-            row=1, column=len(etiquetas), padx=(6, 2)
+            widget.grid(row=1, column=columna, sticky="ew", padx=2)
+        acciones_iva = ttk.Frame(iva_editor)
+        acciones_iva.grid(
+            row=2, column=0, columnspan=len(etiquetas), sticky="e", pady=(5, 0),
         )
-        ttk.Button(iva_editor, text="Quitar", command=self._quitar_linea_iva).grid(
-            row=1, column=len(etiquetas) + 1, padx=2
+        ttk.Button(
+            acciones_iva, text="Aplicar", command=self._guardar_linea_iva,
+        ).pack(side="left", padx=2)
+        ttk.Button(
+            acciones_iva, text="Vaciar", command=self._quitar_linea_iva,
+        ).pack(side="left", padx=2)
+        self._btn_iva_vacias = ttk.Button(
+            iva_frame, text="Ocultar lineas vacias", command=self._alternar_iva_vacias,
         )
+        self._btn_iva_vacias.pack(anchor="w", padx=4, pady=(0, 4))
 
-        # Seccion retenciones
-        ret_frame = ttk.LabelFrame(parent, text="Retenciones IRPF")
-        ret_frame.pack(fill="x", padx=8, pady=4)
         ret_cols = ("base_retencion", "tipo_retencion", "importe_retencion", "clase_retencion")
-        self._tv_ret = ttk.Treeview(ret_frame, columns=ret_cols, show="headings", height=2)
+        self._tv_ret = ttk.Treeview(ret_frame, columns=ret_cols, show="headings", height=5, selectmode="browse")
         for c in ret_cols:
             self._tv_ret.heading(c, text=c.replace("_", " ").title())
             self._tv_ret.column(c, width=100, anchor="e")
         self._tv_ret.pack(fill="both", expand=True, padx=4, pady=4)
+        self._tv_ret.bind("<<TreeviewSelect>>", self._cargar_retencion_en_editor)
+        self._ret_vars = {
+            "base_retencion": tk.StringVar(), "tipo_retencion": tk.StringVar(),
+            "importe_retencion": tk.StringVar(), "clase_retencion": tk.StringVar(value="PROFESIONAL"),
+        }
+        ret_editor = ttk.Frame(ret_frame)
+        ret_editor.pack(fill="x", padx=4, pady=(0, 4))
+        for columna, (campo, etiqueta) in enumerate((
+            ("base_retencion", "Base"), ("tipo_retencion", "% Ret."),
+            ("importe_retencion", "Retencion"), ("clase_retencion", "Clase"),
+        )):
+            ttk.Label(ret_editor, text=etiqueta).grid(row=0, column=columna, sticky="w", padx=2)
+            if campo == "clase_retencion":
+                widget = ttk.Combobox(
+                    ret_editor, textvariable=self._ret_vars[campo], state="readonly",
+                    values=("PROFESIONAL", "ARRENDAMIENTO", "CAPITAL"), width=16,
+                )
+            else:
+                widget = ttk.Entry(ret_editor, textvariable=self._ret_vars[campo], width=11)
+            widget.grid(row=1, column=columna, sticky="ew", padx=2)
+        ttk.Button(ret_editor, text="Anadir / actualizar", command=self._guardar_retencion).grid(
+            row=1, column=4, padx=(6, 2),
+        )
+        ttk.Button(ret_editor, text="Quitar", command=self._quitar_retencion).grid(row=1, column=5, padx=2)
 
-        # Botones de accion
-        btn_frame = ttk.Frame(parent)
-        btn_frame.pack(fill="x", padx=8, pady=6)
-        ttk.Button(btn_frame, text="Guardar cambios",
-                   style="Primary.TButton",
-                   command=self._guardar).pack(side="left", padx=4)
-        ttk.Button(btn_frame, text="Validar y pasar a contabilizar",
-                   command=self._validar_seleccionado).pack(side="left", padx=4)
+        totales = ttk.LabelFrame(parent, text="TOTALES", style="Section.TLabelframe")
+        totales.pack(fill="x", padx=8, pady=4)
+        for columna, (campo, etiqueta) in enumerate((
+            ("base_total", "Base"), ("iva_total", "IVA"),
+            ("retencion_total", "Retencion"), ("suplidos", "Suplidos"),
+            ("total_factura", "Total factura"),
+        )):
+            ttk.Label(totales, text=etiqueta).grid(row=0, column=columna, sticky="w", padx=4, pady=(4, 1))
+            ttk.Entry(totales, textvariable=self._entries[campo], width=12).grid(
+                row=1, column=columna, sticky="ew", padx=4, pady=(0, 6),
+            )
+            totales.columnconfigure(columna, weight=1)
+        self._entries["suplidos"].trace_add(
+            "write", lambda *_args: None if self._cargando_editor else self._recalcular_totales_iva(),
+        )
 
-        # Errores OCR
+        detalles = ttk.LabelFrame(parent, text="DETALLES DEL DOCUMENTO", style="Section.TLabelframe")
+        detalles.pack(fill="x", padx=8, pady=4)
+        self._detalle_vars = {campo: tk.StringVar() for campo in ("archivo", "origen", "motor", "confianza")}
+        for fila, (campo, etiqueta) in enumerate((
+            ("archivo", "Archivo"), ("origen", "Origen"),
+            ("motor", "Motor OCR"), ("confianza", "Confianza"),
+        )):
+            ttk.Label(detalles, text=etiqueta).grid(row=fila, column=0, sticky="w", padx=6, pady=2)
+            ttk.Entry(detalles, textvariable=self._detalle_vars[campo], state="readonly").grid(
+                row=fila, column=1, sticky="ew", padx=4, pady=2,
+            )
+        detalles.columnconfigure(1, weight=1)
+
         self._lbl_errores = ttk.Label(parent, text="", foreground="#c0392b",
-                                       wraplength=400, justify="left")
-        self._lbl_errores.pack(anchor="w", padx=8, pady=2)
+                                       wraplength=520, justify="left")
+        self._lbl_errores.pack(anchor="w", fill="x", padx=8, pady=(2, 8))
+        factura.columnconfigure(1, weight=1)
+        factura.columnconfigure(3, weight=1, minsize=180)
 
     def _build_preview(self, parent: ttk.Frame):
         """Vista local de la primera pagina; no envia el documento a ningun servicio."""
         barra = ttk.Frame(parent)
         barra.pack(fill="x", padx=8, pady=(8, 4))
         self._lbl_preview = ttk.Label(barra, text="Selecciona una factura para verla.")
-        self._lbl_preview.pack(side="left", fill="x", expand=True)
-        ttk.Label(barra, text="Campo a marcar:").pack(side="left", padx=(12, 4))
-        ttk.Combobox(
-            barra, textvariable=self._campo_marcado_var, state="readonly", width=20,
-            values=("ProveedorNif", "ProveedorNombre", "NumeroFactura", "FechaFactura",
-                    "FechaVencimiento", "BaseTotal", "IvaTotal", "TotalFactura"),
-        ).pack(side="left")
-        ttk.Label(barra, text="Arrastra un rectangulo sobre el valor", foreground="#555").pack(
-            side="left", padx=8,
+        self._lbl_preview.grid(row=0, column=0, columnspan=4, sticky="w")
+        ttk.Button(barra, text="Abrir", command=self._abrir_documento).grid(
+            row=0, column=4, sticky="e",
         )
-        ttk.Button(barra, text="-", width=3, command=lambda: self._cambiar_zoom_preview(-0.2)).pack(side="right", padx=(4, 0))
-        ttk.Button(barra, text="+", width=3, command=lambda: self._cambiar_zoom_preview(0.2)).pack(side="right", padx=(4, 0))
-        ttk.Button(barra, text="100 %", command=self._restablecer_zoom_preview).pack(side="right", padx=(4, 0))
-        ttk.Button(barra, text="Abrir documento", command=self._abrir_documento).pack(side="right")
+        ttk.Button(barra, text="<", width=3, command=lambda: self._cambiar_pagina_preview(-1)).grid(
+            row=1, column=0, sticky="w", pady=4,
+        )
+        self._lbl_pagina_preview = ttk.Label(barra, text="1 / 1")
+        self._lbl_pagina_preview.grid(row=1, column=1, padx=4)
+        ttk.Button(barra, text=">", width=3, command=lambda: self._cambiar_pagina_preview(1)).grid(
+            row=1, column=2, sticky="w", pady=4,
+        )
+        ttk.Button(barra, text="Ajustar", command=self._restablecer_zoom_preview).grid(
+            row=1, column=3, padx=(8, 2), pady=4,
+        )
+        zoom_acciones = ttk.Frame(barra)
+        zoom_acciones.grid(row=1, column=4, sticky="e", pady=4)
+        ttk.Button(
+            zoom_acciones, text="-", width=3,
+            command=lambda: self._cambiar_zoom_preview(-0.2),
+        ).pack(side="left", padx=(0, 2))
+        ttk.Button(
+            zoom_acciones, text="+", width=3,
+            command=lambda: self._cambiar_zoom_preview(0.2),
+        ).pack(side="left")
+        ttk.Label(barra, text="Campo:").grid(row=2, column=0, sticky="w")
+        self._cb_campo_marcado = ttk.Combobox(
+            barra, textvariable=self._campo_marcado_var, state="readonly", width=18,
+            values=_campos_aprendizaje("factura_recibida"),
+        )
+        self._cb_campo_marcado.grid(row=2, column=1, columnspan=2, sticky="ew", padx=4)
+        ttk.Label(
+            barra, text="Marca el valor en el PDF", foreground="#555",
+        ).grid(
+            row=2, column=3, columnspan=2, sticky="e", padx=(6, 0),
+        )
+        barra.columnconfigure(3, weight=1)
         marco = ttk.Frame(parent)
         marco.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         marco.rowconfigure(0, weight=1)
@@ -483,41 +654,101 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         self._preview_photo = None
         self._preview_imagen_original = None
         self._preview_zoom = 1.0
+        self._preview_auto_fit = True
+        self._preview_fit_after = None
         self._preview_path = ""
+        self._canvas_preview.bind("<Configure>", self._programar_ajuste_preview)
         self._canvas_preview.bind("<ButtonPress-1>", self._iniciar_marca)
         self._canvas_preview.bind("<B1-Motion>", self._actualizar_marca)
         self._canvas_preview.bind("<ButtonRelease-1>", self._terminar_marca)
 
     def _mostrar_preview(self, doc: dict):
+        self._actualizar_campos_aprendizaje(
+            str(doc.get("tipo_documento") or "factura_recibida")
+        )
         ruta = Path(str(doc.get("ruta_original") or ""))
         self._preview_path = str(ruta)
         self._preview_photo = None
         self._preview_imagen_original = None
         self._canvas_preview.delete("all")
         self._marcas_campos = {}
+        self._preview_page = 0
+        self._preview_page_count = self._contar_paginas_preview(ruta)
         if not ruta.exists():
             self._lbl_preview.configure(text=f"No se encuentra el documento original: {ruta}")
             return
         try:
-            imagen = self._cargar_primera_pagina(ruta)
+            imagen = self._cargar_pagina(ruta, self._preview_page)
             self._preview_imagen_original = imagen
-            self._preview_zoom = 1.0
-            self._aplicar_zoom_preview()
-            self._lbl_preview.configure(text=f"{ruta.name} - primera pagina")
+            self._preview_auto_fit = True
+            self._ajustar_preview_al_documento()
+            self._actualizar_etiqueta_pagina()
         except Exception as exc:
             self._lbl_preview.configure(text=f"No se pudo generar la vista previa: {exc}")
             self._canvas_preview.create_text(20, 20, anchor="nw", text="Usa 'Abrir documento' para verlo en el visor PDF.")
 
+    def _contar_paginas_preview(self, ruta: Path) -> int:
+        if not ruta.exists() or ruta.suffix.lower() != ".pdf":
+            return 1
+        try:
+            import fitz
+            with fitz.open(str(ruta)) as pdf:
+                return max(1, int(pdf.page_count))
+        except Exception:
+            return 1
+
+    def _actualizar_etiqueta_pagina(self):
+        pagina = self._preview_page + 1
+        self._lbl_pagina_preview.configure(text=f"{pagina} / {self._preview_page_count}")
+        nombre = Path(self._preview_path).name if self._preview_path else "Documento"
+        self._lbl_preview.configure(text=f"{nombre} - pagina {pagina}")
+
+    def _cambiar_pagina_preview(self, desplazamiento: int):
+        if not self._preview_path:
+            return
+        nueva = max(0, min(self._preview_page_count - 1, self._preview_page + desplazamiento))
+        if nueva == self._preview_page:
+            return
+        try:
+            self._preview_page = nueva
+            self._preview_imagen_original = self._cargar_pagina(Path(self._preview_path), nueva)
+            self._preview_auto_fit = True
+            self._ajustar_preview_al_documento()
+            self._actualizar_etiqueta_pagina()
+        except Exception as exc:
+            messagebox.showerror("OCR", f"No se pudo cargar la pagina {nueva + 1}:\n{exc}")
+
     def _cambiar_zoom_preview(self, incremento: float):
         if self._preview_imagen_original is None:
             return
+        self._preview_auto_fit = False
         self._preview_zoom = max(0.3, min(3.0, self._preview_zoom + incremento))
         self._aplicar_zoom_preview()
 
     def _restablecer_zoom_preview(self):
         if self._preview_imagen_original is None:
             return
-        self._preview_zoom = 1.0
+        self._preview_auto_fit = True
+        self._ajustar_preview_al_documento()
+
+    def _programar_ajuste_preview(self, _event=None):
+        if not self._preview_auto_fit or self._preview_imagen_original is None:
+            return
+        if self._preview_fit_after is not None:
+            self.after_cancel(self._preview_fit_after)
+        self._preview_fit_after = self.after(100, self._ajustar_preview_al_documento)
+
+    def _ajustar_preview_al_documento(self):
+        self._preview_fit_after = None
+        if self._preview_imagen_original is None:
+            return
+        self._canvas_preview.update_idletasks()
+        self._preview_zoom = _zoom_para_ajustar(
+            self._preview_imagen_original.width,
+            self._preview_imagen_original.height,
+            self._canvas_preview.winfo_width(),
+            self._canvas_preview.winfo_height(),
+        )
         self._aplicar_zoom_preview()
 
     def _aplicar_zoom_preview(self):
@@ -563,6 +794,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         if right - left >= 4 and bottom - top >= 4:
             campo = self._campo_marcado_var.get().strip()
             marca = {
+                "page": self._preview_page,
                 "x": round(max(0, left) / self._preview_zoom, 2),
                 "y": round(max(0, top) / self._preview_zoom, 2),
                 "width": round(min(width, right / self._preview_zoom) - max(0, left) / self._preview_zoom, 2),
@@ -570,8 +802,9 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             }
             self._marcas_campos[campo] = marca
             texto = self._extraer_texto_marca(marca)
-            if texto and campo in self._entries:
-                self._entries[campo].set(texto)
+            entry_campo = CAMPO_MARCA_A_ENTRY_COMUN.get(campo, campo)
+            if texto and entry_campo in self._entries:
+                self._entries[entry_campo].set(texto)
         self._marca_inicio = None
         self._marca_rect_id = None
         self._dibujar_marcas()
@@ -581,6 +814,8 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             return
         self._canvas_preview.delete("marca")
         for campo, marca in self._marcas_campos.items():
+            if int(marca.get("page") or 0) != self._preview_page:
+                continue
             try:
                 x = float(marca["x"]) * self._preview_zoom
                 y = float(marca["y"]) * self._preview_zoom
@@ -599,7 +834,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             import fitz
             pdf = fitz.open(self._preview_path)
             try:
-                page = pdf.load_page(0)
+                page = pdf.load_page(self._preview_page)
                 palabras = page.get_text("words") or []
                 escala_x = self._preview_imagen_original.width / page.rect.width
                 escala_y = self._preview_imagen_original.height / page.rect.height
@@ -621,7 +856,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         except Exception:
             return ""
 
-    def _cargar_primera_pagina(self, ruta: Path):
+    def _cargar_pagina(self, ruta: Path, numero_pagina: int = 0):
         from PIL import Image
         if ruta.suffix.lower() != ".pdf":
             imagen = Image.open(ruta)
@@ -631,7 +866,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             import fitz
             pdf = fitz.open(str(ruta))
             try:
-                pagina = pdf.load_page(0)
+                pagina = pdf.load_page(numero_pagina)
                 pix = pagina.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
                 imagen = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
             finally:
@@ -645,10 +880,10 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             carpeta = Path(tempfile.mkdtemp(prefix="gest2a3eco_preview_"))
             prefijo = carpeta / "pagina"
             subprocess.run(
-                [ejecutable, "-f", "1", "-l", "1", "-scale-to", "1400", "-png", str(ruta), str(prefijo)],
+                [ejecutable, "-f", str(numero_pagina + 1), "-l", str(numero_pagina + 1), "-singlefile", "-scale-to", "1400", "-png", str(ruta), str(prefijo)],
                 check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
             )
-            png = next(carpeta.glob("pagina-1.png"), None)
+            png = next(carpeta.glob("pagina.png"), None)
             if not png:
                 raise RuntimeError("No se genero la imagen de la primera pagina.")
             imagen = Image.open(png).copy()
@@ -665,6 +900,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
 
     def _cargar_maestro_proveedores(self, seleccionado_id: str = ""):
         """Carga maestro global y relaciones de la empresa en el selector."""
+        es_emitida = str((self._doc_seleccionado or {}).get("tipo_documento") or "") == "factura_emitida"
         relaciones = {
             str(t.get("id") or ""): t
             for t in self._gestor.listar_terceros_por_empresa(self._codigo, self._ejercicio)
@@ -681,7 +917,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             nombre = str(tercero.get("nombre") or tercero.get("nombre_legal") or "").strip()
             if not (nif or nombre):
                 continue
-            cuenta = str(tercero.get("subcuenta_proveedor") or "").strip()
+            cuenta = str(tercero.get("subcuenta_cliente" if es_emitida else "subcuenta_proveedor") or "").strip()
             etiqueta = f"{nombre} - {nif}".strip(" -")
             if cuenta:
                 etiqueta += f" ({cuenta})"
@@ -696,6 +932,8 @@ class UIFacturasRecibidasOcr(ttk.Frame):
 
     def _cargar_subcuentas_plan_empresa(self, seleccionada: str = ""):
         """Carga cuentas personales del maestro contable local de la empresa."""
+        es_emitida = str((self._doc_seleccionado or {}).get("tipo_documento") or "") == "factura_emitida"
+        prefijos = ("430",) if es_emitida else ("400", "410")
         self._cuentas_plan_por_etiqueta.clear()
         etiquetas = []
         codigos_vistos: set[str] = set()
@@ -709,7 +947,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             cuentas = []
         for cuenta in cuentas:
             codigo = str(cuenta.get("subcuenta") or cuenta.get("cuenta") or "").strip()
-            if not (codigo.startswith("400") or codigo.startswith("410")):
+            if not codigo.startswith(prefijos):
                 continue
             codigos_vistos.add(codigo)
             texto = f"{codigo} - {str(cuenta.get('nombre_subcuenta') or cuenta.get('descripcion') or '').strip()}".rstrip(" -")
@@ -726,7 +964,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             for fila in cur.fetchall():
                 cuenta = dict(zip(columnas, fila))
                 codigo = str(cuenta.get("cuenta") or "").strip()
-                if codigo in codigos_vistos or not (codigo.startswith("400") or codigo.startswith("410")):
+                if codigo in codigos_vistos or not codigo.startswith(prefijos):
                     continue
                 texto = f"{codigo} - {str(cuenta.get('descripcion') or '').strip()}".rstrip(" -")
                 self._cuentas_plan_por_etiqueta[texto] = codigo
@@ -741,7 +979,9 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         return self._cuentas_plan_por_etiqueta.get(self._subcuenta_plan_var.get(), "")
 
     def _cargar_subcuentas_gasto(self, seleccionada: str = ""):
-        """Carga cuentas de gasto del plan contable de la empresa."""
+        """Carga cuentas de gasto o ingreso del plan contable de la empresa."""
+        es_emitida = str((self._doc_seleccionado or {}).get("tipo_documento") or "") == "factura_emitida"
+        iniciales = "7" if es_emitida else "6"
         self._cuentas_gasto_por_etiqueta.clear()
         cuentas = []
         try:
@@ -760,7 +1000,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         etiquetas, vistos = [], set()
         for cuenta in cuentas:
             codigo = str(cuenta.get("subcuenta") or cuenta.get("cuenta") or "").strip()
-            if not codigo or codigo in vistos or codigo[0] not in "67":
+            if not codigo or codigo in vistos or codigo[0] not in iniciales:
                 continue
             vistos.add(codigo)
             texto = f"{codigo} - {str(cuenta.get('nombre_subcuenta') or cuenta.get('descripcion') or '').strip()}".rstrip(" -")
@@ -772,6 +1012,34 @@ class UIFacturasRecibidasOcr(ttk.Frame):
     def _subcuenta_gasto_seleccionada(self) -> str:
         return self._cuentas_gasto_por_etiqueta.get(self._subcuenta_gasto_var.get(), "")
 
+    def _cargar_subcuentas_suplidos(self, seleccionada: str = ""):
+        """Carga cuentas candidatas para suplidos, permitiendo escritura manual."""
+        self._cuentas_suplidos_por_etiqueta.clear()
+        cuentas = []
+        try:
+            cuentas = list(self._gestor.listar_maestro_subcuentas_empresa(self._codigo, activo=None) or [])
+        except Exception:
+            pass
+        etiquetas, vistos = [], set()
+        for cuenta in cuentas:
+            codigo = str(cuenta.get("subcuenta") or cuenta.get("cuenta") or "").strip()
+            if not codigo or codigo in vistos or not codigo.startswith(("55", "56")):
+                continue
+            vistos.add(codigo)
+            descripcion = str(cuenta.get("nombre_subcuenta") or cuenta.get("descripcion") or "").strip()
+            etiqueta = f"{codigo} - {descripcion}".rstrip(" -")
+            self._cuentas_suplidos_por_etiqueta[etiqueta] = codigo
+            etiquetas.append(etiqueta)
+        self._cb_cuenta_suplidos.configure(values=etiquetas)
+        seleccion = str(seleccionada or "55509999").strip()
+        self._cuenta_suplidos_var.set(
+            next((e for e, c in self._cuentas_suplidos_por_etiqueta.items() if c == seleccion), seleccion)
+        )
+
+    def _cuenta_suplidos_seleccionada(self) -> str:
+        texto = self._cuenta_suplidos_var.get().strip()
+        return self._cuentas_suplidos_por_etiqueta.get(texto, texto.split(" - ", 1)[0].strip())
+
     def _aplicar_proveedor_maestro(self, tercero: dict):
         tercero_id = str(tercero.get("id") or "").strip()
         if not tercero_id:
@@ -779,12 +1047,15 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         self._proveedor_id_seleccionado = tercero_id
         self._entries["nif_proveedor"].set(normalizar_nif_cif(tercero.get("nif")))
         self._entries["nombre_proveedor"].set(str(tercero.get("nombre") or tercero.get("nombre_legal") or ""))
+        es_emitida = str((self._doc_seleccionado or {}).get("tipo_documento") or "") == "factura_emitida"
         tipo = str(tercero.get("proveedor_tipo_operacion_iva") or "").strip()
         if tipo in PROVEEDOR_TIPOS_IVA:
             self._tipo_operacion_iva_var.set(tipo)
-        cuenta = str(tercero.get("subcuenta_proveedor") or "").strip()
+        cuenta = str(tercero.get("subcuenta_cliente" if es_emitida else "subcuenta_proveedor") or "").strip()
         self._cargar_subcuentas_plan_empresa(cuenta)
-        self._cargar_subcuentas_gasto(str(tercero.get("subcuenta_gasto") or ""))
+        self._cargar_subcuentas_gasto(str(
+            tercero.get("subcuenta_ingreso" if es_emitida else "subcuenta_gasto") or ""
+        ))
         texto = f"Vinculado al maestro{f' - cuenta {cuenta}' if cuenta else ''}."
         self._lbl_proveedor_maestro.configure(text=texto)
 
@@ -800,7 +1071,13 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             self._gestor, nif, nombre, self._codigo, self._ejercicio,
         )
         if not tercero:
-            self._lbl_proveedor_maestro.configure(text="No existe en el maestro. Usa Alta proveedor / acreedor.")
+            es_emitida = str(
+                (self._doc_seleccionado or {}).get("tipo_documento") or ""
+            ) == "factura_emitida"
+            tipo_tercero = "cliente" if es_emitida else "proveedor / acreedor"
+            self._lbl_proveedor_maestro.configure(
+                text=f"No existe en el maestro. Usa Alta de {tipo_tercero}."
+            )
             return
         self._cargar_maestro_proveedores(str(tercero.get("id") or ""))
         self._aplicar_proveedor_maestro(tercero)
@@ -823,21 +1100,40 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         relacion["subcuenta_gasto"] = self._subcuenta_gasto_seleccionada()
         self._gestor.upsert_tercero_empresa(relacion)
 
+    def _asegurar_cliente_en_empresa(self):
+        """Guarda las cuentas elegidas para un cliente de factura emitida OCR."""
+        tercero_id = str(self._proveedor_id_seleccionado or "")
+        if not tercero_id:
+            return
+        relacion = self._gestor.get_tercero_empresa(
+            self._codigo, tercero_id, self._ejercicio,
+        ) or {"codigo_empresa": self._codigo, "tercero_id": tercero_id}
+        relacion["subcuenta_cliente"] = self._subcuenta_plan_seleccionada()
+        relacion["subcuenta_ingreso"] = self._subcuenta_gasto_seleccionada()
+        self._gestor.upsert_tercero_empresa(relacion)
+
     def _alta_proveedor(self):
+        es_emitida = str(
+            (self._doc_seleccionado or {}).get("tipo_documento") or ""
+        ) == "factura_emitida"
         dialog = tk.Toplevel(self)
-        dialog.title("Alta de proveedor / acreedor")
+        dialog.title("Alta de cliente" if es_emitida else "Alta de proveedor / acreedor")
         dialog.transient(self.winfo_toplevel())
         dialog.grab_set()
         frame = ttk.Frame(dialog, padding=12)
         frame.pack(fill="both", expand=True)
         nif = tk.StringVar(value=normalizar_nif_cif(self._entries["nif_proveedor"].get()))
         nombre = tk.StringVar(value=self._entries["nombre_proveedor"].get().strip())
-        clase = tk.StringVar(value="proveedor")
+        clase = tk.StringVar(value="cliente" if es_emitida else "proveedor")
         for fila, (texto, var) in enumerate((("NIF", nif), ("Nombre", nombre))):
             ttk.Label(frame, text=texto).grid(row=fila, column=0, sticky="e", padx=(0, 6), pady=3)
             ttk.Entry(frame, textvariable=var, width=42).grid(row=fila, column=1, sticky="ew", pady=3)
         ttk.Label(frame, text="Clase").grid(row=2, column=0, sticky="e", padx=(0, 6), pady=3)
-        ttk.Combobox(frame, textvariable=clase, values=("proveedor", "acreedor"), state="readonly", width=18).grid(row=2, column=1, sticky="w", pady=3)
+        ttk.Combobox(
+            frame, textvariable=clase,
+            values=(("cliente",) if es_emitida else ("proveedor", "acreedor")),
+            state="readonly", width=18,
+        ).grid(row=2, column=1, sticky="w", pady=3)
 
         def guardar():
             nif_val = normalizar_nif_cif(nif.get())
@@ -870,7 +1166,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         lineas = [f"Ejemplos validados pendientes de entrenamiento: {pendientes}"]
         if proveedores:
             lineas.append("")
-            lineas.append("Por proveedor (NIF):")
+            lineas.append("Por tercero (proveedor o cliente, segun el documento):")
             lineas.extend(f"- {nif}: {total}" for nif, total in sorted(proveedores.items()))
         lineas.extend([
             "",
@@ -900,54 +1196,154 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         ttk.Button(actions, text="Exportar pendientes a Azure", command=exportar).pack(side="left")
         ttk.Button(actions, text="Cerrar", command=dialog.destroy).pack(side="right")
 
+    def _inicializar_catalogo_iva(self):
+        for item in list(self._iva_catalog_items):
+            if self._tv_iva.exists(item):
+                self._tv_iva.delete(item)
+        otros = self._tv_iva.get_children()
+        if otros:
+            self._tv_iva.delete(*otros)
+        self._iva_catalog_items = []
+        for tipo in IVA_TIPOS_CATALOGO:
+            iid = "iva_" + str(tipo).replace(".", "_")
+            self._tv_iva.insert(
+                "", "end", iid=iid,
+                values=(f"{tipo:g}", "", "", "", "0", "0"),
+            )
+            self._iva_catalog_items.append(iid)
+
     def _cargar_linea_iva_en_editor(self, _event=None):
         seleccion = self._tv_iva.selection()
         if not seleccion:
             return
         valores = self._tv_iva.item(seleccion[0], "values")
-        for campo, valor in zip(self._iva_vars, valores):
+        for campo, valor in zip(("tipo_iva", "base", "cuota_iva", "cuenta_gasto", "tipo_recargo", "cuota_recargo"), valores):
             self._iva_vars[campo].set(str(valor))
 
     def _guardar_linea_iva(self):
         try:
-            valores = [_parse_importe(self._iva_vars[campo].get()) for campo in self._iva_vars]
+            tipo = _parse_importe(self._iva_vars["tipo_iva"].get())
+            base = _parse_importe(self._iva_vars["base"].get())
+            cuota = _parse_importe(self._iva_vars["cuota_iva"].get())
+            tipo_recargo = _parse_importe(self._iva_vars["tipo_recargo"].get())
+            cuota_recargo = _parse_importe(self._iva_vars["cuota_recargo"].get())
         except ValueError:
             messagebox.showerror("OCR", "Los valores de la linea de IVA deben ser numericos.")
             return
-        tipo, base, cuota, tipo_recargo, cuota_recargo = valores
         if not 0 <= tipo <= 100:
             messagebox.showerror("OCR", "El tipo de IVA debe estar entre 0 y 100.")
             return
-        fila = tuple(f"{valor:.2f}" for valor in valores)
+        cuenta = self._iva_vars["cuenta_gasto"].get().strip()
+        fila = (f"{tipo:g}", f"{base:.2f}", f"{cuota:.2f}", cuenta,
+                f"{tipo_recargo:g}", f"{cuota_recargo:.2f}")
         seleccion = self._tv_iva.selection()
         if seleccion:
             self._tv_iva.item(seleccion[0], values=fila)
         else:
-            self._tv_iva.insert("", "end", values=fila)
+            iid = next((item for item in self._iva_catalog_items
+                        if _parse_importe(self._tv_iva.item(item, "values")[0]) == tipo), None)
+            if iid:
+                self._tv_iva.item(iid, values=fila)
         self._recalcular_totales_iva()
+        if self._ocultar_iva_vacias:
+            self._aplicar_filtro_iva()
 
     def _quitar_linea_iva(self):
         for item in self._tv_iva.selection():
-            self._tv_iva.delete(item)
+            tipo = self._tv_iva.item(item, "values")[0]
+            self._tv_iva.item(item, values=(tipo, "", "", "", "0", "0"))
         for var in self._iva_vars.values():
             var.set("")
         self._iva_vars["tipo_iva"].set("21")
         self._iva_vars["tipo_recargo"].set("0")
         self._recalcular_totales_iva()
 
+    def _alternar_iva_vacias(self):
+        self._ocultar_iva_vacias = not self._ocultar_iva_vacias
+        self._btn_iva_vacias.configure(
+            text="Mostrar lineas vacias" if self._ocultar_iva_vacias else "Ocultar lineas vacias",
+        )
+        self._aplicar_filtro_iva()
+
+    def _aplicar_filtro_iva(self):
+        for indice, item in enumerate(self._iva_catalog_items):
+            valores = self._tv_iva.item(item, "values")
+            tiene_importe = any(abs(_parse_importe(v)) > 0 for v in (valores[1], valores[2], valores[4], valores[5]))
+            if self._ocultar_iva_vacias and not tiene_importe:
+                self._tv_iva.detach(item)
+            else:
+                self._tv_iva.move(item, "", indice)
+
     def _lineas_iva_editor(self) -> list[dict]:
         lineas = []
-        for item in self._tv_iva.get_children():
+        for item in self._iva_catalog_items:
             valores = self._tv_iva.item(item, "values")
             try:
-                tipo, base, cuota, tipo_recargo, cuota_recargo = [_parse_importe(v) for v in valores]
+                tipo = _parse_importe(valores[0])
+                base = _parse_importe(valores[1])
+                cuota = _parse_importe(valores[2])
+                tipo_recargo = _parse_importe(valores[4])
+                cuota_recargo = _parse_importe(valores[5])
             except ValueError:
                 raise ValueError("Hay una linea de IVA con importes invalidos.")
+            if not any(abs(v) > 0 for v in (base, cuota, cuota_recargo)):
+                continue
             lineas.append({
                 "tipo_iva": tipo, "base": base, "cuota_iva": cuota,
                 "tipo_recargo": tipo_recargo, "cuota_recargo": cuota_recargo,
+                "cuenta_gasto": str(valores[3] or "").strip(),
             })
         return lineas
+
+    def _cargar_retencion_en_editor(self, _event=None):
+        seleccion = self._tv_ret.selection()
+        if not seleccion:
+            return
+        valores = self._tv_ret.item(seleccion[0], "values")
+        for campo, valor in zip(self._ret_vars, valores):
+            self._ret_vars[campo].set(str(valor))
+
+    def _guardar_retencion(self):
+        try:
+            base = _parse_importe(self._ret_vars["base_retencion"].get())
+            tipo = _parse_importe(self._ret_vars["tipo_retencion"].get())
+            importe = _parse_importe(self._ret_vars["importe_retencion"].get())
+        except ValueError:
+            messagebox.showerror("OCR", "Los valores de la retencion deben ser numericos.")
+            return
+        clase = self._ret_vars["clase_retencion"].get().strip() or "PROFESIONAL"
+        valores = (f"{base:.2f}", f"{tipo:g}", f"{importe:.2f}", clase)
+        seleccion = self._tv_ret.selection()
+        if seleccion:
+            self._tv_ret.item(seleccion[0], values=valores)
+        else:
+            self._tv_ret.insert("", "end", values=valores)
+        self._recalcular_totales_iva()
+
+    def _quitar_retencion(self):
+        for item in self._tv_ret.selection():
+            self._tv_ret.delete(item)
+        for var in self._ret_vars.values():
+            var.set("")
+        self._ret_vars["clase_retencion"].set("PROFESIONAL")
+        self._recalcular_totales_iva()
+
+    def _retenciones_editor(self) -> list[dict]:
+        resultado = []
+        for item in self._tv_ret.get_children():
+            valores = self._tv_ret.item(item, "values")
+            try:
+                base, tipo, importe = [_parse_importe(v) for v in valores[:3]]
+            except ValueError as exc:
+                raise ValueError("Hay una retencion con importes invalidos.") from exc
+            if not any(abs(v) > 0 for v in (base, tipo, importe)):
+                continue
+            resultado.append({
+                "base_retencion": base, "tipo_retencion": tipo,
+                "importe_retencion": importe,
+                "clase_retencion": str(valores[3] or "PROFESIONAL"),
+            })
+        return resultado
 
     def _recalcular_totales_iva(self):
         try:
@@ -956,13 +1352,16 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             return
         if not lineas:
             return
-        base = round(sum(linea["base"] for linea in lineas), 2)
-        iva = round(sum(linea["cuota_iva"] for linea in lineas), 2)
-        recargo = round(sum(linea["cuota_recargo"] for linea in lineas), 2)
-        retencion = _parse_importe(self._entries["retencion_total"].get())
-        self._entries["base_total"].set(f"{base:.2f}")
-        self._entries["iva_total"].set(f"{iva:.2f}")
-        self._entries["total_factura"].set(f"{base + iva + recargo - retencion:.2f}")
+        try:
+            retenciones = self._retenciones_editor()
+            suplidos = _parse_importe(self._entries["suplidos"].get())
+        except (ValueError, tk.TclError):
+            return
+        resumen = _resumen_fiscal(lineas, retenciones, suplidos)
+        self._entries["base_total"].set(f"{resumen['base']:.2f}")
+        self._entries["iva_total"].set(f"{resumen['iva']:.2f}")
+        self._entries["retencion_total"].set(f"{resumen['retencion']:.2f}")
+        self._entries["total_factura"].set(f"{resumen['total_esperado']:.2f}")
 
     # ── Refresco de bandejas ──────────────────────────────────────────────────
 
@@ -971,9 +1370,15 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             self._refresh_bandeja(estado)
 
     def _refresh_bandeja(self, estado: str):
+        tipo_doc = self._tipo_doc_var.get()
         # Cargar documentos OCR por estado (via tabla documentos_ocr)
         try:
-            docs = self._gestor.listar_documentos_ocr(self._empresa_id, estado)
+            todos_docs = self._gestor.listar_documentos_ocr(self._empresa_id, estado)
+            # Filtrar por tipo de documento seleccionado
+            docs = [
+                d for d in todos_docs
+                if str(d.get("tipo_documento") or "factura_recibida") == tipo_doc
+            ]
         except Exception:
             # Compatibilidad: si metodo no existe, fallback
             docs = []
@@ -982,17 +1387,34 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         enriquecidos = []
         for doc in docs:
             factura = None
-            try:
-                cur = self._gestor.conn.execute(
-                    "SELECT * FROM facturas_recibidas_ocr WHERE documento_id=?",
-                    (doc["id"],),
-                )
-                row = cur.fetchone()
-                if row:
-                    cols = [c[0] for c in cur.description]
-                    factura = dict(zip(cols, row))
-            except Exception:
-                pass
+            if tipo_doc == "factura_emitida":
+                try:
+                    cur = self._gestor.conn.execute(
+                        "SELECT * FROM facturas_emitidas_ocr WHERE documento_id=?",
+                        (doc["id"],),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        cols = [c[0] for c in cur.description]
+                        raw = dict(zip(cols, row))
+                        # Mapear campos para compatibilidad con COLS_LISTA
+                        factura = raw
+                        factura["nif_proveedor"] = raw.get("nif_cliente") or ""
+                        factura["nombre_proveedor"] = raw.get("nombre_cliente") or ""
+                except Exception:
+                    pass
+            else:
+                try:
+                    cur = self._gestor.conn.execute(
+                        "SELECT * FROM facturas_recibidas_ocr WHERE documento_id=?",
+                        (doc["id"],),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        cols = [c[0] for c in cur.description]
+                        factura = dict(zip(cols, row))
+                except Exception:
+                    pass
             merged = dict(doc)
             if factura:
                 merged.update({k: v for k, v in factura.items() if k not in ("id", "estado")})
@@ -1077,25 +1499,58 @@ class UIFacturasRecibidasOcr(ttk.Frame):
 
         cabecera = ttk.Frame(ventana, padding=(12, 8))
         cabecera.pack(fill="x")
-        ttk.Label(cabecera, text="Revision de factura", font=("Segoe UI", 11, "bold")).pack(side="left")
+        ttk.Label(cabecera, text="Detalle de la factura", font=("Segoe UI", 13, "bold")).pack(side="left")
         ttk.Button(cabecera, text="Cerrar", command=self._cerrar_ventana_revision).pack(side="right")
+        self._btn_revision_validar = ttk.Button(
+            cabecera, text="Validar", style="Primary.TButton", command=self._validar_seleccionado,
+        )
+        self._btn_revision_validar.pack(side="right", padx=4)
+        self._btn_revision_guardar = ttk.Button(cabecera, text="Guardar", command=self._guardar)
+        self._btn_revision_guardar.pack(side="right", padx=4)
+        self._btn_revision_reprocesar = ttk.Button(
+            cabecera, text="Reprocesar", command=self._reprocesar_seleccionado,
+        )
+        self._btn_revision_reprocesar.pack(side="right", padx=4)
+        estado_texto = str(doc.get("estado") or "pendiente").replace("_", " ").title()
+        self._lbl_estado_revision = ttk.Label(cabecera, text=f"Estado: {estado_texto}", foreground="#002C57")
+        self._lbl_estado_revision.pack(side="right", padx=12)
 
         # En la ventana propia hay espacio para trabajar en dos columnas:
         # documento grande a la izquierda y datos editables a la derecha.
-        detalle = ttk.PanedWindow(ventana, orient="horizontal")
+        detalle = tk.PanedWindow(
+            ventana, orient="horizontal", sashwidth=7, sashrelief="raised",
+            borderwidth=0, background="#d1d5db",
+        )
         detalle.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         preview = ttk.Frame(detalle)
         editor_shell = ttk.Frame(detalle)
-        detalle.add(preview, weight=55)
-        detalle.add(editor_shell, weight=45)
+        detalle.add(preview, minsize=360, stretch="always")
+        detalle.add(editor_shell, minsize=740, stretch="always")
         self._build_preview(preview)
         self._build_editor(self._crear_editor_desplazable(editor_shell))
+        self._actualizar_etiquetas_editor(
+            str(doc.get("tipo_documento") or "factura_recibida") == "factura_emitida"
+        )
         self._cargar_factura_en_editor(str(doc.get("id") or ""))
         self._mostrar_preview(doc)
-        if estado_revision in ("pendiente_contabilizar", "contabilizada"):
-            self._bloquear_editor_revision(editor_shell, permitir_error=(estado_revision == "pendiente_contabilizar"))
 
-    def _bloquear_editor_revision(self, contenedor, *, permitir_error: bool):
+        def ajustar_paneles_iniciales():
+            """Reserva al formulario su ancho util y deja el resto al PDF."""
+            total = detalle.winfo_width()
+            if total <= 1:
+                return
+            ancho_editor = min(max(740, round(total * 0.56)), max(740, total - 360))
+            detalle.sash_place(0, max(360, total - ancho_editor), 0)
+            self._ajustar_preview_al_documento()
+
+        ventana.after_idle(ajustar_paneles_iniciales)
+        if estado_revision in ("pendiente_contabilizar", "contabilizada"):
+            self._btn_revision_guardar.configure(state="disabled")
+            self._btn_revision_validar.configure(state="disabled")
+            self._btn_revision_reprocesar.configure(state="disabled")
+            self._bloquear_editor_revision(editor_shell)
+
+    def _bloquear_editor_revision(self, contenedor):
         """Impide cambios en documentos ya revisados/contabilizados."""
         def recorrer(widget):
             for hijo in widget.winfo_children():
@@ -1106,20 +1561,6 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                         pass
                 recorrer(hijo)
         recorrer(contenedor)
-        if permitir_error:
-            ttk.Button(
-                contenedor, text="Pasar a errores para editar",
-                command=self._pasar_revision_a_error,
-            ).pack(anchor="w", padx=12, pady=(0, 8))
-
-    def _pasar_revision_a_error(self):
-        doc = self._doc_seleccionado
-        if not doc:
-            return
-        doc["estado"] = "error"
-        self._gestor.upsert_documento_ocr(doc)
-        self._cerrar_ventana_revision()
-        self._refresh_all()
 
     def _cerrar_ventana_revision(self):
         if self._revision_window and self._revision_window.winfo_exists():
@@ -1128,22 +1569,36 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         self._editor_activo = False
 
     def _cargar_factura_en_editor(self, doc_id: str):
-        """Carga datos de facturas_recibidas_ocr en el editor."""
+        """Carga datos de la tabla OCR correspondiente en el editor."""
+        tipo = str((self._doc_seleccionado or {}).get("tipo_documento") or "factura_recibida")
         try:
-            cur = self._gestor.conn.execute(
-                "SELECT * FROM facturas_recibidas_ocr WHERE documento_id=?", (doc_id,)
-            )
+            if tipo == "factura_emitida":
+                cur = self._gestor.conn.execute(
+                    "SELECT * FROM facturas_emitidas_ocr WHERE documento_id=?", (doc_id,)
+                )
+            else:
+                cur = self._gestor.conn.execute(
+                    "SELECT * FROM facturas_recibidas_ocr WHERE documento_id=?", (doc_id,)
+                )
             row = cur.fetchone()
             if not row:
                 self._limpiar_editor()
                 return
             cols = [c[0] for c in cur.description]
             factura = dict(zip(cols, row))
+            # Para emitidas, mapear campos al esquema del editor (que usa nombres de recibidas)
+            if tipo == "factura_emitida":
+                factura.setdefault("nif_proveedor", factura.get("nif_cliente") or "")
+                factura.setdefault("nombre_proveedor", factura.get("nombre_cliente") or "")
+                factura.setdefault("proveedor_id", factura.get("cliente_id") or "")
+                factura.setdefault("pagada", factura.get("cobrada") or 0)
+                factura.setdefault("tipo_operacion_iva", factura.get("tipo_operacion") or "INTERIOR_DEDUCIBLE")
         except Exception:
             self._limpiar_editor()
             return
 
         self._factura_seleccionada = factura
+        self._cargando_editor = True
         self._marcas_campos = {}
         try:
             ejemplo = self._gestor.get_ejemplo_aprendizaje_ocr(str(factura["id"]))
@@ -1157,12 +1612,19 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             self._gestor.get_tercero_empresa(self._codigo, self._proveedor_id_seleccionado, self._ejercicio)
             if self._proveedor_id_seleccionado else None
         )
+        campo_cuenta_tercero = "subcuenta_cliente" if tipo == "factura_emitida" else "subcuenta_proveedor"
+        campo_cuenta_resultado = "subcuenta_ingreso" if tipo == "factura_emitida" else "subcuenta_gasto"
         self._cargar_subcuentas_plan_empresa(
-            str((relacion or {}).get("subcuenta_proveedor") or "")
+            str((relacion or {}).get(campo_cuenta_tercero) or "")
         )
         self._cargar_subcuentas_gasto(
-            str((relacion or {}).get("subcuenta_gasto") or factura.get("cuenta_gasto") or "")
+            str(
+                (relacion or {}).get(campo_cuenta_resultado)
+                or factura.get("cuenta_ingreso" if tipo == "factura_emitida" else "cuenta_gasto")
+                or ""
+            )
         )
+        self._cargar_subcuentas_suplidos(str(factura.get("cuenta_suplidos") or "55509999"))
         self._tipo_operacion_iva_var.set(
             str(factura.get("tipo_operacion_iva") or "INTERIOR_DEDUCIBLE")
         )
@@ -1171,25 +1633,48 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         # Rellenar entradas de cabecera
         for campo, var in self._entries.items():
             val = factura.get(campo)
+            if campo == "fecha_contable" and not val:
+                val = factura.get("fecha_factura")
             var.set("" if val is None else str(val))
+        self._pagada_var.set(bool(factura.get("pagada")))
 
         # Lineas IVA
-        self._tv_iva.delete(*self._tv_iva.get_children())
+        self._inicializar_catalogo_iva()
         try:
-            lineas = self._gestor.listar_lineas_iva_ocr(factura["id"])
-            for l in lineas:
-                self._tv_iva.insert("", "end", values=(
-                    l.get("tipo_iva", ""), l.get("base", ""),
-                    l.get("cuota_iva", ""), l.get("tipo_recargo", ""),
-                    l.get("cuota_recargo", ""),
-                ))
+            if tipo == "factura_emitida":
+                lineas = self._gestor.listar_lineas_iva_emitida_ocr(factura["id"])
+                for l in lineas:
+                    tipo_iva = float(l.get("tipo_iva") or 0.0)
+                    item = next((iid for iid in self._iva_catalog_items
+                                 if abs(_parse_importe(self._tv_iva.item(iid, "values")[0]) - tipo_iva) < 0.001), None)
+                    if item:
+                        self._tv_iva.item(item, values=(
+                            f"{tipo_iva:g}", l.get("base", ""), l.get("cuota_iva", ""),
+                            l.get("cuenta_ingreso", ""), l.get("tipo_recargo", ""),
+                            l.get("cuota_recargo", ""),
+                        ))
+            else:
+                lineas = self._gestor.listar_lineas_iva_ocr(factura["id"])
+                for l in lineas:
+                    tipo_iva = float(l.get("tipo_iva") or 0.0)
+                    item = next((iid for iid in self._iva_catalog_items
+                                 if abs(_parse_importe(self._tv_iva.item(iid, "values")[0]) - tipo_iva) < 0.001), None)
+                    if item:
+                        self._tv_iva.item(item, values=(
+                            f"{tipo_iva:g}", l.get("base", ""), l.get("cuota_iva", ""),
+                            l.get("cuenta_gasto", ""), l.get("tipo_recargo", ""),
+                            l.get("cuota_recargo", ""),
+                        ))
         except Exception:
             pass
 
         # Retenciones
         self._tv_ret.delete(*self._tv_ret.get_children())
         try:
-            rets = self._gestor.listar_retenciones_ocr(factura["id"])
+            if tipo == "factura_emitida":
+                rets = self._gestor.listar_retenciones_emitida_ocr(factura["id"])
+            else:
+                rets = self._gestor.listar_retenciones_ocr(factura["id"])
             for r in rets:
                 self._tv_ret.insert("", "end", values=(
                     r.get("base_retencion", ""), r.get("tipo_retencion", ""),
@@ -1201,6 +1686,13 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         # Errores
         errores = factura.get("observaciones") or ""
         self._lbl_errores.configure(text=f"Avisos: {errores}" if errores else "")
+        doc = self._doc_seleccionado or {}
+        self._detalle_vars["archivo"].set(str(doc.get("nombre_archivo") or ""))
+        self._detalle_vars["origen"].set(str(doc.get("tipo_documento") or "factura_recibida"))
+        self._detalle_vars["motor"].set(str(doc.get("motor_ocr") or ""))
+        confianza = _normalizar_confianza(doc.get("confianza_global"))
+        self._detalle_vars["confianza"].set(f"{confianza * 100:.0f} %")
+        self._cargando_editor = False
 
     def _limpiar_editor(self):
         if not self._editor_activo:
@@ -1209,25 +1701,148 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             return
         for var in self._entries.values():
             var.set("")
-        self._tv_iva.delete(*self._tv_iva.get_children())
+        self._inicializar_catalogo_iva()
         for var in self._iva_vars.values():
             var.set("")
         self._iva_vars["tipo_iva"].set("21")
         self._iva_vars["tipo_recargo"].set("0")
         self._tv_ret.delete(*self._tv_ret.get_children())
+        for var in self._ret_vars.values():
+            var.set("")
+        self._ret_vars["clase_retencion"].set("PROFESIONAL")
         self._lbl_errores.configure(text="")
         self._factura_seleccionada = None
         self._proveedor_id_seleccionado = ""
         self._proveedor_var.set("")
         self._subcuenta_plan_var.set("")
         self._subcuenta_gasto_var.set("")
+        self._cuenta_suplidos_var.set("55509999")
+        self._pagada_var.set(False)
         self._tipo_operacion_iva_var.set("INTERIOR_DEDUCIBLE")
         self._lbl_proveedor_maestro.configure(text="")
+        for var in self._detalle_vars.values():
+            var.set("")
 
     def _on_tab_changed(self, _e):
         idx = self._nb.index(self._nb.select())
         estado = BANDEJAS[idx][0]
         self._refresh_bandeja(estado)
+
+    def _on_tipo_doc_changed(self):
+        """Refresca las bandejas al cambiar el tipo de factura."""
+        self._actualizar_campos_aprendizaje(self._tipo_doc_var.get())
+        self._actualizar_cabeceras_listado(self._tipo_doc_var.get())
+        self._refresh_all()
+
+    def _actualizar_cabeceras_listado(self, tipo_documento: str):
+        """Evita mostrar 'Proveedor' al consultar facturas de cliente."""
+        titulo_tercero = (
+            "Cliente" if tipo_documento == "factura_emitida" else "Proveedor"
+        )
+        for treeview in self._tvs.values():
+            treeview.heading("proveedor_nombre", text=titulo_tercero)
+
+    def _actualizar_campos_aprendizaje(self, tipo_documento: str):
+        """Muestra etiquetas de proveedor o cliente segun el documento."""
+        campos = _campos_aprendizaje(tipo_documento)
+        combobox = getattr(self, "_cb_campo_marcado", None)
+        if combobox is not None:
+            combobox.configure(values=campos)
+        if self._campo_marcado_var.get() not in campos:
+            self._campo_marcado_var.set(campos[0])
+
+    def _tipo_doc_activo(self) -> str:
+        return self._tipo_doc_var.get()
+
+    def _actualizar_etiquetas_editor(self, es_emitida: bool):
+        """Adapta el mismo editor fiscal a proveedor o cliente."""
+        self._lbl_tercero.configure(text="Cliente" if es_emitida else "Proveedor")
+        self._lbl_cuenta_tercero.configure(text="Cliente" if es_emitida else "Proveedor")
+        self._lbl_cuenta_resultado.configure(text="Ingreso" if es_emitida else "Gasto")
+        self._chk_pagada.configure(text="Cobrada" if es_emitida else "Pagada")
+
+    # ── Drag & Drop ───────────────────────────────────────────────────────────
+
+    def _setup_drag_and_drop(self):
+        """Registra la zona de arrastre en el panel de bandejas."""
+        raiz = self.winfo_toplevel()
+        if getattr(raiz, "_dnd_available", True) is False:
+            detalle = str(getattr(raiz, "_dnd_error", "") or "").strip()
+            self._mostrar_dnd_no_disponible(detalle)
+            return
+        try:
+            from tkinterdnd2 import DND_FILES
+            targets = [self._zona_arrastre, *self._tvs.values(), self._nb, self._frm_lista, self]
+            registrados = 0
+            ultimo_error = None
+            for target in targets:
+                try:
+                    target.drop_target_register(DND_FILES)
+                    target.dnd_bind("<<Drop>>", self._on_dnd_drop)
+                    target.dnd_bind("<<DragEnter>>", self._on_dnd_enter)
+                    target.dnd_bind("<<DragLeave>>", self._on_dnd_leave)
+                    registrados += 1
+                except Exception as exc:
+                    ultimo_error = exc
+            if not registrados:
+                raise RuntimeError(str(ultimo_error or "No se pudo registrar la zona de arrastre."))
+            raiz._dnd_available = True
+        except Exception as exc:
+            logger.warning("[OCR] Arrastre no disponible: %s", exc)
+            self._mostrar_dnd_no_disponible(str(exc))
+
+    def _mostrar_dnd_no_disponible(self, detalle: str = ""):
+        texto = "Arrastre no disponible. Haz clic aquí para seleccionar PDF o imágenes."
+        self._zona_arrastre.configure(text=texto)
+        self._lbl_status.configure(
+            text=(
+                "No se pudo activar el arrastre de Windows. Puedes importar con un clic."
+                + (f" Detalle: {detalle}" if detalle else "")
+            )
+        )
+
+    def _on_dnd_enter(self, event):
+        try:
+            self._zona_arrastre.configure(text="Suelta los documentos para procesarlos")
+        except Exception:
+            pass
+        return getattr(event, "action", "copy")
+
+    def _on_dnd_leave(self, event):
+        try:
+            self._restaurar_texto_arrastre()
+        except Exception:
+            pass
+        return getattr(event, "action", "copy")
+
+    def _on_dnd_drop(self, event):
+        try:
+            self._restaurar_texto_arrastre()
+        except Exception:
+            pass
+        paths = self._parse_dnd_paths(event.data)
+        validos = [p for p in paths if Path(p).suffix.lower() in {".pdf", ".png", ".jpg", ".jpeg"}]
+        if not validos:
+            messagebox.showwarning("OCR", "Ningun fichero soportado arrastrado.")
+            return getattr(event, "action", "copy")
+        self._iniciar_procesamiento(validos)
+        return getattr(event, "action", "copy")
+
+    def _restaurar_texto_arrastre(self):
+        self._zona_arrastre.configure(
+            text="Arrastra aquí uno o varios PDF o imágenes, o pulsa «Importar PDF / imagen»"
+        )
+
+    @staticmethod
+    def _parse_dnd_paths(raw: str) -> list[str]:
+        """Parsea el formato Tcl list de tkinterdnd2 (paths con espacios entre llaves)."""
+        import re
+        paths = []
+        for m in re.finditer(r'\{([^}]+)\}|(\S+)', raw):
+            p = m.group(1) or m.group(2)
+            if p:
+                paths.append(p)
+        return paths
 
     # ── Importar ──────────────────────────────────────────────────────────────
 
@@ -1246,13 +1861,42 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         if not validos:
             messagebox.showwarning("OCR", "Ningun fichero soportado seleccionado.")
             return
-        self._lbl_status.configure(text=f"Procesando {len(validos)} documento(s)...")
-        t = threading.Thread(target=self._worker_ocr, args=(validos,), daemon=True)
+        self._iniciar_procesamiento(validos)
+
+    def _iniciar_procesamiento(self, paths: list[str]):
+        if self._ocr_thread and self._ocr_thread.is_alive():
+            messagebox.showwarning("OCR", "Ya hay documentos procesándose.")
+            return
+        tipo_documento = self._tipo_doc_var.get()
+        fecha_contable = (
+            datetime.now().strftime("%Y-%m-%d")
+            if self._fecha_contable_modo_var.get() == "Hoy"
+            else ""
+        )
+        self._lbl_status.configure(text=f"Procesando {len(paths)} documento(s)...")
+        self._ocr_mensajes = []
+        self._bloquear_opciones_importacion(True)
+        t = threading.Thread(
+            target=self._worker_ocr,
+            args=(paths, tipo_documento, fecha_contable),
+            daemon=True,
+        )
         self._ocr_thread = t
         t.start()
-        self.after(300, self._poll_ocr)
+        self.after(75, self._poll_ocr)
 
-    def _worker_ocr(self, paths: list[str]):
+    def _bloquear_opciones_importacion(self, bloquear: bool):
+        estado = "disabled" if bloquear else "normal"
+        self._btn_importar.configure(state=estado)
+        self._radio_recibida.configure(state=estado)
+        self._radio_emitida.configure(state=estado)
+        self._cb_fecha_contable_modo.configure(
+            state="disabled" if bloquear else "readonly"
+        )
+
+    def _worker_ocr(
+        self, paths: list[str], tipo_documento: str, fecha_contable: str,
+    ):
         try:
             from services.ocr import OcrService
             svc = OcrService(
@@ -1260,10 +1904,17 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                 empresa_id=self._codigo,
                 ejercicio=self._ejercicio,
                 usuario=getattr(self._session, "usuario", ""),
+                tipo_documento=tipo_documento,
+                fecha_contable=fecha_contable,
             )
             for path in paths:
                 try:
-                    resultado = svc.procesar_archivo(path)
+                    resultado = svc.procesar_archivo(
+                        path,
+                        progress_callback=lambda documento: self._ocr_q.put(
+                            ("progress", documento)
+                        ),
+                    )
                     self._ocr_q.put(("ok", resultado))
                 except Exception as exc:
                     self._ocr_q.put(("error", str(exc)))
@@ -1275,15 +1926,25 @@ class UIFacturasRecibidasOcr(ttk.Frame):
     def _poll_ocr(self):
         changed = False
         done = False
+        mensajes = self._ocr_mensajes
         try:
             while True:
                 tipo, payload = self._ocr_q.get_nowait()
                 if tipo == "done":
                     done = True
+                elif tipo == "progress":
+                    changed = True
+                    nombre = str((payload or {}).get("nombre_archivo") or "documento")
+                    self._lbl_status.configure(text=f"Procesando {nombre}...")
                 elif tipo == "ok":
                     changed = True
+                    if payload.get("errores") and payload.get("estado") in {
+                        "error", "duplicado",
+                    }:
+                        mensajes.extend(str(error) for error in payload["errores"])
                 elif tipo == "error":
                     logger.warning("[UIFacturasRecibidasOcr] Worker OCR: %s", payload)
+                    mensajes.append(str(payload))
                     changed = True
         except queue.Empty:
             pass
@@ -1303,8 +1964,11 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                     self._mostrar_preview(doc_actualizado)
 
         if done:
-            self._lbl_status.configure(text="")
+            self._lbl_status.configure(
+                text=" · ".join(dict.fromkeys(mensajes)) if mensajes else "Procesamiento finalizado."
+            )
             self._ocr_thread = None
+            self._bloquear_opciones_importacion(False)
         else:
             self.after(300, self._poll_ocr)
 
@@ -1319,10 +1983,12 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         if not doc:
             return
         self._lbl_status.configure(text="Reprocesando...")
+        self._ocr_mensajes = []
+        self._bloquear_opciones_importacion(True)
         t = threading.Thread(target=self._worker_reprocesar, args=(doc_id,), daemon=True)
         self._ocr_thread = t
         t.start()
-        self.after(300, self._poll_ocr)
+        self.after(75, self._poll_ocr)
 
     def _worker_reprocesar(self, doc_id: str):
         try:
@@ -1331,16 +1997,23 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                 gestor=self._gestor, empresa_id=self._codigo,
                 ejercicio=self._ejercicio, usuario=getattr(self._session, "usuario", ""),
             )
-            self._ocr_q.put(("ok", svc.reprocesar_documento(doc_id)))
+            self._ocr_q.put(("ok", svc.reprocesar_documento(
+                doc_id,
+                progress_callback=lambda documento: self._ocr_q.put(
+                    ("progress", documento)
+                ),
+            )))
         except Exception as exc:
             self._ocr_q.put(("error", str(exc)))
         finally:
             self._ocr_q.put(("done", None))
 
-    def _guardar(self):
+    def _guardar(self, mostrar_confirmacion: bool = True) -> bool:
         if not self._factura_seleccionada and not self._doc_seleccionado:
             messagebox.showwarning("OCR", "No hay documento seleccionado.")
-            return
+            return False
+        tipo = str((self._doc_seleccionado or {}).get("tipo_documento") or "factura_recibida")
+        es_emitida = tipo == "factura_emitida"
         factura_id = str((self._factura_seleccionada or {}).get("id") or uuid.uuid4())
         payload = dict(self._factura_seleccionada or {
             "id": factura_id,
@@ -1350,6 +2023,10 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             "tipo_operacion_iva": "INTERIOR_DEDUCIBLE",
             "estado_validacion": "pendiente",
             "observaciones": "Factura creada desde revision manual OCR.",
+            "fecha_contable": "",
+            "pagada": 0,
+            "suplidos": 0.0,
+            "cuenta_suplidos": "55509999",
         })
         payload["id"] = factura_id
         payload["documento_id"] = str(payload.get("documento_id") or self._doc_seleccionado.get("id") or "")
@@ -1357,12 +2034,12 @@ class UIFacturasRecibidasOcr(ttk.Frame):
 
         for campo, var in self._entries.items():
             valor = var.get().strip()
-            if campo in ("total_factura", "base_total", "iva_total", "retencion_total"):
+            if campo in ("total_factura", "base_total", "iva_total", "retencion_total", "suplidos"):
                 try:
                     payload[campo] = _parse_importe(valor)
                 except ValueError:
                     messagebox.showerror("OCR", f"Valor numerico invalido en '{campo}'.")
-                    return
+                    return False
             else:
                 payload[campo] = valor
 
@@ -1370,15 +2047,32 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             lineas_iva = self._lineas_iva_editor()
         except ValueError as exc:
             messagebox.showerror("OCR", str(exc))
-            return
+            return False
+        try:
+            retenciones = self._retenciones_editor()
+        except ValueError as exc:
+            messagebox.showerror("OCR", str(exc))
+            return False
 
         payload["proveedor_id"] = self._proveedor_id_seleccionado or None
         payload["tipo_operacion_iva"] = self._tipo_operacion_iva_var.get().strip() or "INTERIOR_DEDUCIBLE"
-        try:
-            self._asegurar_proveedor_en_empresa()
-        except Exception as exc:
-            messagebox.showerror("OCR", f"No se pudo asignar el proveedor a la empresa: {exc}")
-            return
+        payload["pagada"] = 1 if self._pagada_var.get() else 0
+        payload["cuenta_suplidos"] = self._cuenta_suplidos_seleccionada() or "55509999"
+        if (
+            self._proveedor_id_seleccionado
+            and self._subcuenta_plan_seleccionada()
+            and self._subcuenta_gasto_seleccionada()
+        ):
+            try:
+                if es_emitida:
+                    self._asegurar_cliente_en_empresa()
+                else:
+                    self._asegurar_proveedor_en_empresa()
+            except Exception as exc:
+                messagebox.showerror(
+                    "OCR", f"No se pudieron guardar las cuentas del tercero: {exc}",
+                )
+                return False
 
         # Registrar correcciones si hay cambios
         try:
@@ -1397,16 +2091,48 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         except Exception as exc:
             logger.warning("[guardar] Error al registrar correcciones: %s", exc)
 
-        self._gestor.upsert_factura_recibida_ocr(payload)
-        self._gestor.eliminar_lineas_iva_ocr(factura_id)
-        for linea in lineas_iva:
-            self._gestor.upsert_linea_iva_ocr({
-                "factura_id": factura_id,
-                **linea,
-                "deducible": 1,
-                "porcentaje_deduccion": 100.0,
-                "tipo_operacion_iva": payload["tipo_operacion_iva"],
+        if es_emitida:
+            payload.update({
+                "cliente_id": self._proveedor_id_seleccionado or None,
+                "nif_cliente": payload.get("nif_proveedor") or "",
+                "nombre_cliente": payload.get("nombre_proveedor") or "",
+                "cobrada": 1 if self._pagada_var.get() else 0,
+                "tipo_operacion": "01",
+                "subcuenta_cliente": self._subcuenta_plan_seleccionada(),
+                "cuenta_ingreso": self._subcuenta_gasto_seleccionada(),
             })
+            self._gestor.upsert_factura_emitida_ocr(payload)
+            self._gestor.eliminar_lineas_iva_emitida_ocr(factura_id)
+            for linea in lineas_iva:
+                self._gestor.upsert_linea_iva_emitida_ocr({
+                    "factura_id": factura_id,
+                    "tipo_iva": linea.get("tipo_iva") or 0.0,
+                    "base": linea.get("base") or 0.0,
+                    "cuota_iva": linea.get("cuota_iva") or 0.0,
+                    "tipo_recargo": linea.get("tipo_recargo") or 0.0,
+                    "cuota_recargo": linea.get("cuota_recargo") or 0.0,
+                    "cuenta_ingreso": linea.get("cuenta_gasto") or "",
+                    "tipo_operacion": "01",
+                })
+            self._gestor.eliminar_retenciones_emitida_ocr(factura_id)
+            for retencion in retenciones:
+                self._gestor.upsert_retencion_emitida_ocr({
+                    "factura_id": factura_id, **retencion,
+                })
+        else:
+            self._gestor.upsert_factura_recibida_ocr(payload)
+            self._gestor.eliminar_lineas_iva_ocr(factura_id)
+            for linea in lineas_iva:
+                self._gestor.upsert_linea_iva_ocr({
+                    "factura_id": factura_id,
+                    **linea,
+                    "deducible": 1,
+                    "porcentaje_deduccion": 100.0,
+                    "tipo_operacion_iva": payload["tipo_operacion_iva"],
+                })
+            self._gestor.eliminar_retenciones_ocr(factura_id)
+            for retencion in retenciones:
+                self._gestor.upsert_retencion_ocr({"factura_id": factura_id, **retencion})
         self._factura_seleccionada = payload
         # Recargar desde la base de datos para que el formulario derecho refleje tambien
         # las facturas creadas manualmente cuando no habia propuesta OCR.
@@ -1416,30 +2142,106 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         self._marcas_campos = marcas_guardadas
         self._dibujar_marcas()
         self._refresh_all()
-        messagebox.showinfo("OCR", "Cambios guardados.")
+        if mostrar_confirmacion:
+            messagebox.showinfo("OCR", "Cambios guardados.")
+        return True
+
+    def _errores_validacion_revision(self) -> list[str]:
+        """Comprueba que la factura esta completa y lista para contabilidad."""
+        tipo = str(
+            (self._doc_seleccionado or {}).get("tipo_documento")
+            or "factura_recibida"
+        )
+        tercero = "cliente" if tipo == "factura_emitida" else "proveedor"
+        errores = []
+        nif = self._entries["nif_proveedor"].get().strip()
+        if not nif:
+            errores.append(f"NIF del {tercero}")
+        if not self._entries["nombre_proveedor"].get().strip():
+            errores.append(f"Nombre del {tercero}")
+        if not self._proveedor_id_seleccionado:
+            errores.append(f"{tercero.title()} vinculado al maestro")
+        if not self._entries["numero_factura"].get().strip():
+            errores.append("Numero de factura")
+
+        for campo, etiqueta in (
+            ("fecha_factura", "Fecha de factura"),
+            ("fecha_contable", "Fecha contable"),
+        ):
+            valor = self._entries[campo].get().strip()
+            fecha = None
+            for formato in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+                try:
+                    fecha = datetime.strptime(valor, formato)
+                    break
+                except ValueError:
+                    continue
+            if fecha is None:
+                errores.append(f"{etiqueta} valida")
+            elif campo == "fecha_contable" and fecha.year != int(self._ejercicio):
+                errores.append(f"Fecha contable dentro del ejercicio {self._ejercicio}")
+
+        cuenta_tercero = self._subcuenta_plan_seleccionada()
+        cuenta_resultado = self._subcuenta_gasto_seleccionada()
+        if not cuenta_tercero:
+            errores.append(f"Cuenta contable del {tercero}")
+        if not cuenta_resultado:
+            errores.append(
+                "Cuenta de ingresos" if tipo == "factura_emitida" else "Cuenta de gastos"
+            )
+
+        try:
+            lineas = self._lineas_iva_editor()
+            retenciones = self._retenciones_editor()
+            base_total = _parse_importe(self._entries["base_total"].get())
+            iva_total = _parse_importe(self._entries["iva_total"].get())
+            retencion_total = _parse_importe(self._entries["retencion_total"].get())
+            suplidos = _parse_importe(self._entries["suplidos"].get())
+            total = _parse_importe(self._entries["total_factura"].get())
+        except ValueError as exc:
+            errores.append(str(exc))
+            return errores
+        if not lineas:
+            errores.append("Al menos una linea fiscal con base e IVA")
+            return errores
+        resumen = _resumen_fiscal(lineas, retenciones, suplidos)
+        for informado, calculado, etiqueta in (
+            (base_total, resumen["base"], "Base total"),
+            (iva_total, resumen["iva"], "IVA total"),
+            (retencion_total, resumen["retencion"], "Retencion total"),
+            (total, resumen["total_esperado"], "Total factura"),
+        ):
+            if abs(informado - calculado) > 0.05:
+                errores.append(
+                    f"{etiqueta} no cuadra: informado {informado:.2f}, "
+                    f"calculado {calculado:.2f}"
+                )
+        if abs(total) <= 0.0001:
+            errores.append("Total de factura distinto de cero")
+        if abs(suplidos) > 0.0001 and not self._cuenta_suplidos_seleccionada():
+            errores.append("Cuenta contable de suplidos")
+        return errores
 
     def _validar_seleccionado(self):
-        if not self._factura_seleccionada:
+        if not self._factura_seleccionada and not self._doc_seleccionado:
             messagebox.showwarning("OCR", "Selecciona un documento.")
             return
-        factura = self._factura_seleccionada
-        errores = []
-        if not str(factura.get("nif_proveedor") or "").strip():
-            errores.append("NIF del proveedor")
-        if not str(factura.get("numero_factura") or "").strip():
-            errores.append("Numero de factura")
-        if not str(factura.get("fecha_factura") or "").strip():
-            errores.append("Fecha de factura")
-        if not float(factura.get("total_factura") or 0.0):
-            errores.append("Total (es 0)")
+        errores = self._errores_validacion_revision()
         if errores:
             messagebox.showwarning(
                 "OCR",
-                "No se puede validar. Faltan campos obligatorios:\n- " + "\n- ".join(errores),
+                "No se puede validar. Corrige estos datos:\n- " + "\n- ".join(errores),
             )
             return
+        if not self._guardar(mostrar_confirmacion=False):
+            return
+        factura = self._factura_seleccionada
+        tipo = str((self._doc_seleccionado or {}).get("tipo_documento") or "factura_recibida")
         factura["estado_validacion"] = "validada"
-        self._gestor.upsert_factura_recibida_ocr(factura)
+        if tipo == "factura_emitida":
+            self._gestor.upsert_factura_emitida_ocr(factura)
+        else:
+            self._gestor.upsert_factura_recibida_ocr(factura)
         # Actualizar documento a pendiente_contabilizar
         doc = self._doc_seleccionado
         if doc:
@@ -1452,9 +2254,19 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                 )
             except Exception as exc:
                 logger.warning("[aprendizaje OCR] No se pudo registrar ejemplo: %s", exc)
-            OcrContabilidadService(
-                self._gestor, self._codigo, self._ejercicio
-            ).proyectar_factura_validada(doc, factura)
+            if tipo == "factura_emitida":
+                svc_contab = OcrEmitContabilidadService(
+                    gestor=self._gestor,
+                    codigo_empresa=self._codigo,
+                    ejercicio=self._ejercicio,
+                )
+            else:
+                svc_contab = OcrContabilidadService(
+                    gestor=self._gestor,
+                    codigo_empresa=self._codigo,
+                    ejercicio=self._ejercicio,
+                )
+            svc_contab.proyectar_factura_validada(doc, factura)
         self._refresh_all()
         messagebox.showinfo(
             "OCR", "Documento validado y enviado a Contabilidad.\nGenera alli el suenlace.dat."

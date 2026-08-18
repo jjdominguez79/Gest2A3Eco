@@ -11,6 +11,10 @@ class GestorPrueba:
         assert factura_id == "fac-1"
         return [{"tipo_iva": 21, "base": 100, "cuota_iva": 21}]
 
+    def listar_lineas_iva_emitida_ocr(self, factura_id):
+        assert factura_id == "fac-1"
+        return [{"tipo_iva": 21, "base": 200, "cuota_iva": 42}]
+
     def upsert_ejemplo_aprendizaje_ocr(self, ejemplo):
         existente = next(
             (
@@ -54,5 +58,37 @@ def test_registrar_factura_validada_crea_ejemplo_privado_y_estructurado():
     data = json.loads(row["datos_validados_json"])
     assert row["empresa_id"] == "E00001"
     assert data["NumeroFactura"] == "F-1"
+    assert data["TipoDocumento"] == "factura_recibida"
     assert data["LineasIva"] == [{"Base": 100.0, "CuotaIva": 21.0, "TipoIva": 21.0}]
     assert service.resumen() == {"pendientes": 1, "por_proveedor": {"A123": 1}}
+
+
+def test_registrar_factura_emitida_separa_emisor_cliente_y_lineas():
+    gestor = GestorPrueba()
+    service = AprendizajeOcrService(gestor, "E00001")
+    service.registrar_factura_validada(
+        {
+            "id": "doc-2", "ruta_original": "C:/emitida.pdf",
+            "tipo_documento": "factura_emitida",
+            "json_ocr": json.dumps({
+                "proveedor_nif": "B11111111",
+                "proveedor_nombre": "Empresa emisora SL",
+            }),
+        },
+        {
+            "id": "fac-1", "nif_cliente": "B22222222",
+            "nombre_cliente": "Cliente SL", "numero_factura": "E-1",
+            "fecha_factura": "2026-08-18", "base_total": 200,
+            "iva_total": 42, "total_factura": 242,
+        },
+    )
+    row = gestor.ejemplos[0]
+    data = json.loads(row["datos_validados_json"])
+    assert data["TipoDocumento"] == "factura_emitida"
+    assert data["EmisorNif"] == "B11111111"
+    assert data["ClienteNif"] == "B22222222"
+    assert "ProveedorNif" not in data
+    assert data["LineasIva"] == [
+        {"Base": 200.0, "CuotaIva": 42.0, "TipoIva": 21.0}
+    ]
+    assert row["proveedor_nif"] == "B22222222"

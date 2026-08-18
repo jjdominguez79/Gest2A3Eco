@@ -2,13 +2,17 @@
 
 **Estado:** vigente desde la serie 1.7.x.
 
-**Ultima revision contra el codigo:** 2026-08-15.
+**Ultima revision contra el codigo:** 2026-08-18. PWA retirada; VAPID eliminado.
 
 ## Principio de seguridad
 
 Las credenciales maestras de Azure, SignRequest, Dataprius, Microsoft Graph,
-Azure Blob, Web Push y correo pertenecen al backend o a los contenedores que las
+Azure Blob, FCM y correo pertenecen al backend o a los contenedores que las
 usan. Nunca se entregan al escritorio como respuesta de una API.
+
+**VAPID/Web Push ha sido eliminado.** Las notificaciones push van exclusivamente
+por Firebase Cloud Messaging (FCM). Las variables `MESSAGING_VAPID_*` ya no
+deben configurarse.
 
 Cada puesto Windows conserva solo credenciales propias y revocables:
 
@@ -28,8 +32,8 @@ Escritorio Windows
               |-- SignRequest
               |-- Dataprius
               |-- Azure Blob temporal
-              |-- Microsoft Graph / Web Push
-              `-- Firebase Cloud Messaging
+              |-- Microsoft Graph
+              `-- Firebase Cloud Messaging (FCM)
 
 Workers Synology
   |-- mail-sync: certificado Graph + usuario PostgreSQL tecnico
@@ -60,8 +64,6 @@ Ejemplo sin secretos:
   "postgres_database": "gest2a3eco",
   "postgres_user": "gest2a3eco",
   "word_templates_dir": "\\\\servidor\\Doc_Compartidos\\Plantillas",
-  "ocr_motor_activo": "azure",
-  "azure_doc_intelligence_model_id": "facturas-produccion-v1",
   "integrations_api_url": "https://gest2a3eco-production.up.railway.app",
   "messaging_api_url": "https://gest2a3eco-production.up.railway.app",
   "messaging_workstation_id": "PC-OFICINA-1",
@@ -90,14 +92,15 @@ Los servicios activos definidos por `utils/credential_store.py` incluyen:
 | `Gest2A3Eco/MessagingDevice` | Token del dispositivo de mensajeria |
 | `Gest2A3Eco/DesmarcarGeneradas` | Credencial de la operacion protegida |
 
-Las entradas Azure y Azure Storage solo conservan compatibilidad con el modo
-local sin backend. En produccion, OCR se delega al backend y las claves Azure no
-se cargan en el escritorio.
+La antigua entrada `Gest2A3Eco/AzureDocIntelligence` solo se conserva como
+identificador para borrar credenciales dejadas por versiones anteriores. Azure
+Storage sigue usandose en la exportacion controlada de ejemplos de aprendizaje.
+El OCR se delega siempre al backend y su clave nunca se carga en el escritorio.
 
 Para provisionar interactivamente un puesto:
 
 ```powershell
-python -m utils.provision_workstation --only-token
+python -m utils.provision_workstation
 ```
 
 El valor tambien puede suministrarse temporalmente mediante
@@ -130,7 +133,7 @@ Variables principales de Railway:
 | Aprendizaje OCR | `AZURE_OCR_TRAINING_CONNECTION_STRING`, `AZURE_OCR_TRAINING_CONTAINER` |
 | Firma | `SIGNREQUEST_TOKEN`, `SIGNREQUEST_FROM_EMAIL`, `SIGNREQUEST_GESTOR_EMAIL`, `SIGNREQUEST_GESTOR_TELEFONO` |
 | Dataprius | `DATAPRIUS_API_KEY`, `DATAPRIUS_API_SECRET`, `DATAPRIUS_BASE_URL`, `DATAPRIUS_BASE_PATH` |
-| Mensajeria | `MESSAGING_AZURE_*`, `MESSAGING_GRAPH_*`, `MESSAGING_STAFF_*`, `MESSAGING_VAPID_*`, `MESSAGING_SMTP_*` |
+| Mensajeria | `MESSAGING_AZURE_*`, `MESSAGING_GRAPH_*`, `MESSAGING_STAFF_*`, `MESSAGING_SMTP_*` |
 | App movil | `MESSAGING_FIREBASE_CREDENTIALS`, `MESSAGING_APP_REDIRECT_URI` |
 | Worker | `MESSAGING_SYNC_TOKEN` |
 
@@ -146,7 +149,7 @@ paquete Flutter. `MESSAGING_APP_REDIRECT_URI` no es secreto.
    `POST /api/v1/admin/workstations`, autenticado mediante
    `DGT_INTERNAL_API_KEY`.
 2. El token devuelto se muestra una sola vez y se introduce con
-   `python -m utils.provision_workstation --only-token`.
+   `python -m utils.provision_workstation`.
 3. El puesto comprueba `GET /api/v1/integrations/status` y completa el alta del
    dispositivo de mensajeria automaticamente.
 4. Para revocar, el administrador usa

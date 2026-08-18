@@ -242,6 +242,9 @@ class _ConexionMigracionesFalsa:
         tabla_firma_eventos=True,
         tabla_ocr_aprendizaje=True,
         indice_ocr_aprendizaje=True,
+        tabla_emitidas_ocr=True,
+        tabla_emitidas_ocr_lineas=True,
+        tabla_emitidas_ocr_ret=True,
     ):
         self.columnas = columnas
         self.tabla_permisos = tabla_permisos
@@ -260,6 +263,9 @@ class _ConexionMigracionesFalsa:
         self.tabla_firma_eventos = tabla_firma_eventos
         self.tabla_ocr_aprendizaje = tabla_ocr_aprendizaje
         self.indice_ocr_aprendizaje = indice_ocr_aprendizaje
+        self.tabla_emitidas_ocr = tabla_emitidas_ocr
+        self.tabla_emitidas_ocr_lineas = tabla_emitidas_ocr_lineas
+        self.tabla_emitidas_ocr_ret = tabla_emitidas_ocr_ret
         self.sentencias = []
         self.commit_count = 0
 
@@ -327,6 +333,17 @@ class _ConexionMigracionesFalsa:
                     "idx_ocr_aprendizaje_empresa"
                     if self.indice_ocr_aprendizaje else None
                 ),
+                "tabla_emitidas_ocr": (
+                    "facturas_emitidas_ocr" if self.tabla_emitidas_ocr else None
+                ),
+                "tabla_emitidas_ocr_lineas": (
+                    "facturas_emitidas_ocr_lineas_iva"
+                    if self.tabla_emitidas_ocr_lineas else None
+                ),
+                "tabla_emitidas_ocr_ret": (
+                    "facturas_emitidas_ocr_retenciones"
+                    if self.tabla_emitidas_ocr_ret else None
+                ),
             })
         return _Resultado()
 
@@ -351,10 +368,22 @@ _COLUMNAS_ESENCIALES = {
     ("comunicaciones_mensajes", "tiene_adjuntos"),
     ("comunicaciones_sin_asignar", "etiqueta"),
     ("facturas_recibidas_ocr", "tipo_operacion_iva"),
+    ("facturas_recibidas_ocr", "fecha_contable"),
+    ("facturas_recibidas_ocr", "pagada"),
+    ("facturas_recibidas_ocr", "suplidos"),
+    ("facturas_recibidas_ocr", "cuenta_suplidos"),
+    ("facturas_recibidas_docs", "pagada"),
+    ("facturas_recibidas_docs", "suplidos"),
+    ("facturas_recibidas_docs", "cuenta_suplidos"),
+    ("facturas_emitidas_ocr", "subcuenta_cliente"),
+    ("facturas_emitidas_ocr", "cuenta_ingreso"),
+    ("facturas_emitidas_ocr", "cuenta_iva"),
     ("firma_solicitudes", "documento_firmado_archivo_id"),
     ("ocr_aprendizaje_ejemplos", "marcas_json"),
     ("facturas_emitidas_docs", "updated_at"),
     ("facturas_emitidas_docs", "pdf_generated_at"),
+    ("facturas_emitidas_docs", "origen_factura"),
+    ("facturas_emitidas_docs", "ocr_documento_id"),
     ("albaranes_emitidas_docs", "updated_at"),
     ("albaranes_emitidas_docs", "pdf_generated_at"),
 }
@@ -417,3 +446,27 @@ def test_fila_postgres_es_compatible_con_iteracion_por_valores():
     }
     assert fila[0] == "factura.pdf"
     assert dict(fila)["motor_ocr"] == "azure"
+
+
+def test_upsert_ocr_persiste_fecha_contable_pagada_y_suplidos():
+    class Conexion:
+        def execute(self, sql, params=None):
+            self.sql = sql
+            self.params = params
+            return _Resultado()
+
+        def commit(self):
+            pass
+
+    conexion = Conexion()
+    gestor = object.__new__(GestorPostgres)
+    gestor.conn = conexion
+
+    gestor.upsert_factura_recibida_ocr({
+        "id": "fac-1", "documento_id": "doc-1", "empresa_id": "E00001",
+        "fecha_factura": "2026-08-08", "fecha_contable": "2026-08-12",
+        "pagada": True, "suplidos": 12.0, "cuenta_suplidos": "55509999",
+    })
+
+    assert "fecha_contable, pagada, suplidos, cuenta_suplidos" in conexion.sql
+    assert conexion.params[10:14] == ("2026-08-12", 1, 12.0, "55509999")

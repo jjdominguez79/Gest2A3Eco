@@ -46,6 +46,61 @@ def test_totales_separan_suplidos_de_base_imponible():
     }
 
 
+def test_facturacion_oculta_emitidas_ocr_y_contabilidad_las_incluye():
+    facturas = [
+        {"id": "fac-1", "origen_factura": "facturacion"},
+        {"id": "ocr-1", "origen_factura": "ocr"},
+        {"id": "legacy-1"},
+    ]
+    controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
+    controller._gestor = SimpleNamespace(
+        listar_facturas_emitidas=lambda *_args: list(facturas),
+    )
+    controller._codigo = "E00001"
+    controller._ejercicio = 2026
+    controller._allow_all_years = False
+    controller._incluir_origen_ocr = False
+
+    assert [item["id"] for item in controller._listar_facturas_base()] == [
+        "fac-1", "legacy-1",
+    ]
+
+    controller._incluir_origen_ocr = True
+    assert [item["id"] for item in controller._listar_facturas_base()] == [
+        "fac-1", "ocr-1", "legacy-1",
+    ]
+
+
+def test_copia_o_rectificativa_no_hereda_estados_suenlace_face_ni_ocr():
+    factura = {
+        "generada": True,
+        "fecha_generacion": "2026-08-18",
+        "estado_contable": "contabilizada",
+        "numero_asiento": "42",
+        "origen_factura": "ocr",
+        "ocr_documento_id": "doc-1",
+        "facturae_status": "generado",
+        "facturae_xml_path": r"C:\\face\\factura.xml",
+        "facturae_generated_at": "2026-08-18T10:00:00",
+        "facturae_error": "error anterior",
+        "pdf_ref": "ref-anterior",
+        "pdf_path": r"C:\\docs\\factura.pdf",
+        "pdf_path_a3": r"C:\\a3\\factura.pdf",
+        "pdf_generated_at": "2026-08-18T09:00:00",
+    }
+
+    FacturasEmitidasController._reiniciar_estados_nueva_factura(factura)
+
+    assert factura["generada"] is False
+    assert factura["estado_contable"] is None
+    assert factura["numero_asiento"] == ""
+    assert factura["origen_factura"] == "facturacion"
+    assert factura["ocr_documento_id"] is None
+    assert factura["facturae_status"] == "no_generado"
+    assert factura["facturae_xml_path"] == ""
+    assert factura["pdf_path_a3"] == ""
+
+
 def test_resuelve_facturas_y_albaranes_en_subcarpetas_distintas(monkeypatch, tmp_path):
     controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
     monkeypatch.setattr(module, "get_word_templates_subdir", lambda tipo: tmp_path / tipo)

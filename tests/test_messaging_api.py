@@ -121,16 +121,39 @@ def test_admin_preautoriza_empleado_y_primer_login_vincula_microsoft(tmp_path, m
             }}
 
     monkeypatch.setattr(messaging_api, "_staff_msal_app", lambda: FakeMsal())
+    # El flujo web (sin app=true) ya no redirige a /equipo/mensajes: devuelve 410.
     assert client.get(
         "/api/v1/messaging/staff-auth/login", follow_redirects=False,
     ).status_code == 302
-    callback = client.get(
+    web_callback = client.get(
         "/api/v1/messaging/staff-auth/callback?state=state-ana&code=ok",
         follow_redirects=False,
     )
-    assert callback.status_code == 302
-    employee_token = client.cookies.get("msg_staff_session")
-    me = client.get("/api/v1/messaging/staff/me").json()
+    assert web_callback.status_code == 410
+
+    # El flujo movil (app=true) sigue funcionando: devuelve 302 al deep link.
+    login_app = client.get(
+        "/api/v1/messaging/staff-auth/login?app=true", follow_redirects=False,
+    )
+    assert login_app.status_code == 302
+    callback_app = client.get(
+        "/api/v1/messaging/staff-auth/callback?state=state-ana&code=ok",
+        follow_redirects=False,
+    )
+    assert callback_app.status_code == 302
+    redirect_url = callback_app.headers.get("location", "")
+    assert "code=" in redirect_url
+    code = redirect_url.split("code=", 1)[1].split("&")[0]
+    exchange = client.post(
+        "/api/v1/messaging/staff-auth/mobile/exchange",
+        json={"code": code},
+    )
+    assert exchange.status_code == 200
+    employee_token = exchange.json()["token"]
+    me = client.get(
+        "/api/v1/messaging/staff/me",
+        headers={"Authorization": f"Bearer {employee_token}"},
+    ).json()
     assert me["id"] == staff_id
     assert me["chat_alias"] == "Ana · Laboral"
     assert me["channels"] == ["laboral"]
@@ -294,26 +317,20 @@ def test_empresa_pruebas_solo_es_visible_para_su_titular(tmp_path, monkeypatch):
             "/api/v1/messaging/client/conversations", headers=client_auth,
         ).json() if row["kind"] == "private"
     )
-    monkeypatch.setattr(messaging_api, "push_configured", lambda: True)
-    delivered_to = []
-    monkeypatch.setattr(
-        messaging_api, "send_push",
-        lambda subscription, _payload: delivered_to.append(subscription["endpoint"]) or True,
-    )
-    for headers, endpoint in ((owner, "owner-device"), (other, "other-device")):
+    # Web Push/VAPID retirado: los endpoints de suscripcion devuelven 404.
+    for headers in (owner, other):
         assert client.post(
             "/api/v1/messaging/staff/push/subscriptions", headers=headers,
             json={
-                "endpoint": f"https://push.example.test/{endpoint}",
+                "endpoint": "https://push.example.test/device",
                 "p256dh": "public-key", "auth": "auth-key",
             },
-        ).status_code == 200
+        ).status_code == 404
     assert client.post(
         f"/api/v1/messaging/client/conversations/{private['id']}/messages",
         headers=client_auth,
         data={"body": "Mensaje directo de pruebas", "idempotency_key": "test-private"},
     ).status_code == 200
-    assert delivered_to == ["https://push.example.test/owner-device"]
     visible = client.get(
         "/api/v1/messaging/staff/conversations?active_only=true", headers=owner,
     ).json()
@@ -531,16 +548,17 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
         "/api/v1/messaging/client/conversations", headers=client_auth,
     ).json()
     general = next(row for row in conversations if row["kind"] == "fiscal")
+    # Web Push/VAPID retirado: los endpoints de suscripcion devuelven 404.
     assert client.post(
         "/api/v1/messaging/client/push/subscriptions", headers=client_auth,
         json={
             "endpoint": "https://push.example.test/client-ana",
             "p256dh": "public-key-client-ana", "auth": "auth-client-ana",
         },
-    ).status_code == 200
+    ).status_code == 404
     assert client.post(
         "/api/v1/messaging/client/push/test", headers=client_auth,
-    ).status_code == 503
+    ).status_code == 404
 
     sent = client.post(
         f"/api/v1/messaging/client/conversations/{general['id']}/messages",
@@ -553,34 +571,20 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
     device_headers = {"X-Device-Id": "puesto-1", "X-Device-Token": device["device_token"]}
     staff7 = {**internal, **device_headers, "X-Staff-Id": "7"}
     staff8 = {**internal, **device_headers, "X-Staff-Id": "8"}
+    # Web Push/VAPID retirado: todos los endpoints push devuelven 404.
     assert client.post(
         "/api/v1/messaging/staff/push/test", headers=staff7,
-    ).status_code == 503
-    monkeypatch.setattr(messaging_api, "push_configured", lambda: True)
-    push_payloads = []
-
-    def fake_push(_subscription, payload):
-        push_payloads.append(payload)
-        return True
-
-    monkeypatch.setattr(messaging_api, "send_push", fake_push)
+    ).status_code == 404
     assert client.post(
         "/api/v1/messaging/staff/push/subscriptions", headers=staff7,
         json={
             "endpoint": "https://push.example.test/device-7",
             "p256dh": "public-key-device-7", "auth": "auth-device-7",
         },
-    ).status_code == 200
-    push_test = client.post(
-        "/api/v1/messaging/staff/push/test", headers=staff7,
-    )
-    assert push_test.status_code == 200
-    assert push_test.json()["delivered"] == 1
-    client_push_test = client.post(
+    ).status_code == 404
+    assert client.post(
         "/api/v1/messaging/client/push/test", headers=client_auth,
-    )
-    assert client_push_test.status_code == 200
-    assert client_push_test.json()["delivered"] == 1
+    ).status_code == 404
     avatar = BytesIO()
     Image.new("RGB", (80, 80), "#145a86").save(avatar, format="PNG")
     assert client.put(
@@ -652,7 +656,7 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
     )
     outgoing_id = outgoing.json()["attachments"][0]["id"]
     assert outgoing.json()["author_name"] == "Titular fiscal"
-    assert any(payload["title"] == "Nuevo mensaje de Gestinem" for payload in push_payloads)
+    # Web Push/VAPID retirado; las notificaciones van por FCM, no por push_payloads.
     client_messages = client.get(
         f"/api/v1/messaging/client/conversations/{general['id']}/messages",
         headers=client_auth,

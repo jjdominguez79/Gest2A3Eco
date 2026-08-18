@@ -94,7 +94,7 @@ class UIContabilidadEmitidasController:
             self._empresa_conf = self._gestor.get_empresa(self._codigo, self._ejercicio) or {}
             self._fac_ctrl = FacturasEmitidasController(
                 self._gestor, self._codigo, self._ejercicio, self._empresa_conf,
-                self._adapter, allow_all_years=False,
+                self._adapter, allow_all_years=False, incluir_origen_ocr=True,
             )
         return self._fac_ctrl
 
@@ -106,8 +106,7 @@ class UIContabilidadEmitidasController:
         self._facturas_controller().generar_suenlace()
 
     def quitar_de_contabilidad(self):
-        """Quita las facturas seleccionadas del modulo de contabilidad.
-        Solo permite quitar las que aun no tienen el suenlace generado."""
+        """Devuelve cada factura a Facturacion o a Errores OCR segun su origen."""
         sel = self._view.get_selected_emitida_ids()
         if not sel:
             self._view.show_warning(
@@ -115,35 +114,55 @@ class UIContabilidadEmitidasController:
                 "Selecciona al menos una factura para quitar del modulo de contabilidad.",
             )
             return
-        # Separar pendientes y generadas
         docs_map = {str(d.get("id")): d for d in (self._view._emitidas_docs or [])}
-        ya_generadas = [fid for fid in sel if (docs_map.get(fid) or {}).get("estado_contable") == "generado"]
-        pendientes = [fid for fid in sel if fid not in ya_generadas]
-
-        if ya_generadas and not pendientes:
+        con_asiento = [
+            fid for fid in sel
+            if str((docs_map.get(fid) or {}).get("numero_asiento") or "").strip()
+        ]
+        permitidas = [fid for fid in sel if fid not in con_asiento]
+        if con_asiento:
             self._view.show_warning(
                 "Gest2A3Eco",
-                "Las facturas seleccionadas ya tienen el suenlace generado y no pueden quitarse.\n"
-                "Solo se pueden quitar facturas en estado 'Pendiente'.",
+                f"{len(con_asiento)} factura(s) tienen asiento confirmado y no pueden devolverse.",
             )
+        if not permitidas:
             return
-        if ya_generadas:
-            n = len(ya_generadas)
-            self._view.show_warning(
-                "Gest2A3Eco",
-                f"{n} factura(s) ya tienen el suenlace generado y no se quitaran.\n"
-                f"Se quitaran solo las {len(pendientes)} factura(s) en estado pendiente.",
-            )
-        if not pendientes:
+        enlazadas = [
+            fid for fid in permitidas
+            if (docs_map.get(fid) or {}).get("estado_contable") in {
+                "generado", "contabilizada",
+            }
+            or bool((docs_map.get(fid) or {}).get("generada"))
+        ]
+        if enlazadas and not self._view.ask_yes_no(
+            "Anular suenlace y devolver",
+            f"{len(enlazadas)} factura(s) ya tienen suenlace generado.\n"
+            "Se anulara esa marca y se devolveran a su modulo de origen.\n\n¿Continuar?",
+        ):
             return
-        removidas = self._gestor.quitar_facturas_emitidas_de_contabilidad(
-            self._codigo, self._ejercicio, pendientes
+        motivo = self._view.ask_return_reason(
+            "Motivo de devolucion",
+            "Indica por que se devuelve la factura. El motivo sera visible en OCR.",
+        )
+        if motivo is None:
+            return
+        resultado = self._gestor.devolver_facturas_emitidas_desde_contabilidad(
+            self._codigo, self._ejercicio, permitidas,
+            motivo.strip() or "Devuelta desde Contabilidad para corregirla.",
         )
         self.refresh()
+        partes = []
+        if resultado.get("facturacion"):
+            partes.append(
+                f"{resultado['facturacion']} devuelta(s) al modulo de Facturacion."
+            )
+        if resultado.get("ocr"):
+            partes.append(f"{resultado['ocr']} devuelta(s) a Errores OCR.")
+        if resultado.get("bloqueadas"):
+            partes.append(f"{len(resultado['bloqueadas'])} bloqueada(s) por tener asiento.")
         self._view.show_info(
             "Gest2A3Eco",
-            f"{removidas} factura(s) quitadas del modulo de contabilidad.\n"
-            "Vuelven a aparecer como pendientes en el modulo de facturacion.",
+            "\n".join(partes) or "Sin cambios.",
         )
 
     def marcar_con_asiento_como_generadas(self):
@@ -176,7 +195,12 @@ class UIContabilidadEmitidasController:
             )
             return
         docs_map = {str(d.get("id")): d for d in (self._view._emitidas_docs or [])}
-        generadas = [fid for fid in sel if (docs_map.get(fid) or {}).get("estado_contable") == "generado"]
+        generadas = [
+            fid for fid in sel
+            if (docs_map.get(fid) or {}).get("estado_contable") in {
+                "generado", "contabilizada",
+            }
+        ]
         if not generadas:
             self._view.show_warning(
                 "Gest2A3Eco",

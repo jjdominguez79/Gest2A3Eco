@@ -136,12 +136,13 @@ def generar_asiento_recibida(row: Dict[str, Any], conf: Dict[str, Any]) -> List[
     cuota_iva = d2(row.get("Cuota IVA", 0))
     cuota_re = d2(row.get("Cuota Recargo Equivalencia", 0))
     ret = d2(row.get("Cuota Retencion IRPF", 0))
+    suplidos = d2(row.get("Suplidos", 0))
     pct_deduccion_iva = row.get("_proveedor_porcentaje_deduccion_iva", 100.0)
     iva_deducible, iva_no_deducible = split_iva_deducible(cuota_iva, pct_deduccion_iva)
 
     # Total = base + iva + recargo - retención (si no viene)
     total = d2(
-        row.get("Total", base + cuota_iva + cuota_re - ret)
+        row.get("Total", base + cuota_iva + cuota_re + suplidos - ret)
     )
     signo = -1 if total < 0 else 1
 
@@ -169,6 +170,13 @@ def generar_asiento_recibida(row: Dict[str, Any], conf: Dict[str, Any]) -> List[
     c_ret = conf.get("cuenta_retenciones_irpf", "47510000")
     c_ret = _ajustar_cuenta(c_ret, nd)
 
+    c_suplidos = (
+        row.get("Cuenta Suplidos")
+        or conf.get("cuenta_suplidos")
+        or "55509999"
+    )
+    c_suplidos = _ajustar_cuenta(c_suplidos, nd)
+
     lineas: List[Linea] = []
 
     gasto_total = d2(base + iva_no_deducible)
@@ -182,6 +190,12 @@ def generar_asiento_recibida(row: Dict[str, Any], conf: Dict[str, Any]) -> List[
     if iva_deducible != d2(0):
         dh_iva = "D" if signo > 0 else "H"
         lineas.append(Linea(fecha, c_iva, dh_iva, abs(iva_deducible), desc))
+
+    # Los suplidos no forman parte de la base imponible y se contabilizan
+    # de forma separada para no alterar el IVA deducible.
+    if suplidos != d2(0):
+        dh_suplido = "D" if signo > 0 else "H"
+        lineas.append(Linea(fecha, c_suplidos, dh_suplido, abs(suplidos), desc))
 
     # Debe: recargo de equivalencia (si hay y hay cuenta configurada)
     if cuota_re != d2(0) and c_re:
@@ -365,6 +379,8 @@ def generar_recibidas_suenlace(
             re_c  = _fv(rr.get("Cuota Recargo Equivalencia"))
             ret_c = _fv(rr.get("Cuota Retencion IRPF"))
             total += base + cuota + re_c - ret_c
+        suplidos = _fv(r0.get("Suplidos"))
+        total += suplidos
         signo = -1 if total < 0 else 1
         total_abs = abs(total)
         tipo_registro = "2" if signo < 0 else "1"  # 2=rectificativa (abono)
@@ -441,7 +457,34 @@ def generar_recibidas_suenlace(
                     cuota_re=(re_c if signo > 0 else -abs(re_c)),
                     pct_ret=abs(ret_pct),
                     cuota_ret=(ret_c if signo > 0 else -abs(ret_c)),
-                    es_ultimo=(i == n_lineas - 1),
+                    es_ultimo=(i == n_lineas - 1 and suplidos == 0),
+                    dh=("A" if signo < 0 else "C"),
+                    keep_sign=True,
+                )
+            )
+
+        if suplidos != 0:
+            cuenta_suplidos = _ajustar_cuenta(
+                r0.get("Cuenta Suplidos") or plantilla.get("cuenta_suplidos") or "55509999",
+                ndig,
+            )
+            registros.append(
+                render_a3_tipo9_detalle(
+                    codigo_empresa=codigo_empresa,
+                    fecha=fecha,
+                    cuenta_base_iva=cuenta_suplidos,
+                    ndig_plan=ndig,
+                    num_factura=num_fact,
+                    desc_apunte="Suplidos",
+                    subtipo=subtipo_def,
+                    base=(suplidos if signo > 0 else -abs(suplidos)),
+                    pct_iva=0.0,
+                    cuota_iva=0.0,
+                    pct_re=0.0,
+                    cuota_re=0.0,
+                    pct_ret=0.0,
+                    cuota_ret=0.0,
+                    es_ultimo=True,
                     dh=("A" if signo < 0 else "C"),
                     keep_sign=True,
                 )

@@ -1,4 +1,5 @@
 from services.ocr_contabilidad_service import OcrContabilidadService
+from services.ocr_recibidas_service import doc_to_rows
 
 
 def test_proyecta_factura_validada_a_documento_contable():
@@ -36,6 +37,10 @@ def test_proyecta_factura_validada_a_documento_contable():
         "nombre_proveedor": "Proveedor SL",
         "numero_factura": "F-1",
         "fecha_factura": "2026-08-08",
+        "fecha_contable": "2026-08-12",
+        "pagada": True,
+        "suplidos": 12.0,
+        "cuenta_suplidos": "55509999",
         "base_total": 100.0,
         "iva_total": 21.0,
         "total_factura": 121.0,
@@ -54,3 +59,22 @@ def test_proyecta_factura_validada_a_documento_contable():
     assert payload["cuenta_gasto"] == "62900001"
     assert payload["lineas"][0]["base_imponible"] == 100.0
     assert payload["datos_extra"]["documento_ocr_id"] == "doc-1"
+    assert payload["fecha_asiento"] == "2026-08-12"
+    assert payload["pagada"] == 1
+    assert payload["suplidos"] == 12.0
+    assert payload["cuenta_suplidos"] == "55509999"
+
+
+def test_suplidos_solo_se_proyectan_en_el_primer_tramo_fiscal():
+    filas = doc_to_rows(
+        {
+            "fecha_factura": "2026-08-08", "numero_factura": "F-1",
+            "suplidos": 12.0, "cuenta_suplidos": "55509999",
+        },
+        [
+            {"base_imponible": 100.0, "tipo_iva": 21.0, "cuota_iva": 21.0},
+            {"base_imponible": 50.0, "tipo_iva": 10.0, "cuota_iva": 5.0},
+        ],
+    )
+    assert [fila["Suplidos"] for fila in filas] == [12.0, 0.0]
+    assert all(fila["Cuenta Suplidos"] == "55509999" for fila in filas)

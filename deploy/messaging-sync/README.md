@@ -1,12 +1,15 @@
 # Paquete independiente de adjuntos de mensajeria
 
 `deploy/messaging-sync` permite desplegar solo `messaging-sync` en Container
-Manager, sin reconstruir ni sustituir `mail-sync`. Revisado el 2026-08-15.
+Manager, sin reconstruir ni sustituir `mail-sync`. Revisado el 2026-08-18.
+
+> **Nota:** La PWA de mensajeria ha sido retirada. Los adjuntos que procesa
+> este worker proceden del **cliente Flutter**, no de ninguna interfaz web.
 
 El worker:
 
 1. sincroniza el directorio de empresas desde PostgreSQL con el backend;
-2. consulta adjuntos pendientes de la PWA;
+2. consulta adjuntos pendientes del cliente Flutter;
 3. reclama cada archivo con un identificador de worker;
 4. descarga y verifica su SHA-256;
 5. lo guarda en el repositorio documental compartido;
