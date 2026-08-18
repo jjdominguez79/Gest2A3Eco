@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 
 import '../../../core/api/api_client.dart';
+import '../../../core/images/avatar_image.dart';
 import '../domain/empleado_despacho.dart';
 
 class EmpleadosRepository {
@@ -58,11 +59,11 @@ class EmpleadosRepository {
   );
 
   Future<void> subirAvatar(String id, PlatformFile archivo) async {
-    final bytes = await archivo.readAsBytes();
+    final bytes = await prepararAvatar(archivo);
     await _api.dio.put<void>(
       '/staff/admin/directory/$id/avatar',
       data: FormData.fromMap({
-        'avatar': MultipartFile.fromBytes(bytes, filename: archivo.name),
+        'avatar': MultipartFile.fromBytes(bytes, filename: 'avatar.jpg'),
       }),
     );
   }
