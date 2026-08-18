@@ -1,8 +1,10 @@
 import os
 from datetime import timedelta
+from io import BytesIO
 from pathlib import Path
 
 import pytest
+from PIL import Image
 from starlette.websockets import WebSocketDisconnect
 
 os.environ.setdefault(
@@ -75,7 +77,10 @@ def _setup(tmp_path: Path, monkeypatch):
 
     assert client.put(
         "/api/v1/messaging/internal/organizations/E10001", headers=internal,
-        json={"company_code": "E10001", "name": "Cliente Uno"},
+        json={
+            "company_code": "E10001", "name": "Cliente Uno",
+            "private_owner_external_id": "admin",
+        },
     ).status_code == 200
     invitation = client.post(
         "/api/v1/messaging/internal/invitations", headers=internal,
@@ -97,6 +102,32 @@ def _setup(tmp_path: Path, monkeypatch):
         ).json() if row["kind"] == "fiscal"
     )
     return client, factory, staff_headers, auth, accepted["client"]["id"], conversation["id"]
+
+
+def test_cliente_recibe_etiquetas_para_sus_tres_canales(tmp_path, monkeypatch):
+    client, _factory, staff_headers, auth, _client_id, _conversation_id = _setup(
+        tmp_path, monkeypatch,
+    )
+    avatar = BytesIO()
+    Image.new("RGB", (100, 100), "#145a86").save(avatar, format="PNG")
+    assert client.put(
+        "/api/v1/messaging/staff/admin/directory/admin/avatar",
+        headers=staff_headers("admin"),
+        files={"avatar": ("admin.png", avatar.getvalue(), "image/png")},
+    ).status_code == 200
+
+    rows = client.get(
+        "/api/v1/messaging/client/conversations", headers=auth,
+    ).json()
+
+    assert {row["kind"]: row["channel_label"] for row in rows} == {
+        "laboral": "LA",
+        "fiscal": "CF",
+        "private": "AD",
+    }
+    private = next(row for row in rows if row["kind"] == "private")
+    assert private["channel_avatar_url"].endswith("/client/avatars/admin")
+    assert client.get(private["channel_avatar_url"], headers=auth).status_code == 200
 
 
 def test_reply_soft_delete_hard_delete_y_permisos(tmp_path, monkeypatch):

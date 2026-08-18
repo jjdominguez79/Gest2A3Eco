@@ -69,6 +69,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     if (alias.isEmpty) return;
     try {
       await ref.read(profileRepositoryProvider).updateChatAlias(alias);
+      await ref.read(sessionProvider.notifier).restore();
       setState(() => _editingAlias = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -89,7 +90,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     if (avatarUrl.isNotEmpty) {
       return CircleAvatar(
         radius: 48,
-        backgroundImage: NetworkImage('$baseUrl$avatarUrl'),
+        backgroundImage: NetworkImage(
+          '$baseUrl$avatarUrl',
+          headers: {
+            'Authorization':
+                'Bearer ${ref.read(sessionProvider).valueOrNull?.token ?? ''}',
+          },
+        ),
       );
     }
     final initials = profile.name.isEmpty

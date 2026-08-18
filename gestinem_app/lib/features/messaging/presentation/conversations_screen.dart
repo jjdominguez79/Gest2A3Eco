@@ -11,7 +11,6 @@ import '../../auth/presentation/auth_controller.dart';
 import '../domain/conversation.dart';
 import 'conversation_screen.dart';
 import 'messaging_providers.dart';
-import 'unified_conversation_screen.dart';
 
 final realtimeServiceProvider = Provider<RealtimeService>((ref) => RealtimeService());
 class ConversationsScreen extends ConsumerStatefulWidget {
@@ -143,6 +142,9 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
   Widget build(BuildContext context) {
     final profile = ref.watch(sessionProvider).valueOrNull!.profile;
     final conversations = ref.watch(conversationsProvider);
+    if (profile.type == UserType.client) {
+      return _buildClientScreen(profile, conversations);
+    }
     final wide = MediaQuery.sizeOf(context).width >= 900;
     return Scaffold(
       appBar: AppBar(
@@ -254,76 +256,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
                         );
                       }
 
-                      // Para clientes: una sola conversacion unificada "Gestinem"
-                      final unifiedMeta = ref.watch(unifiedConversationProvider);
-                      return unifiedMeta.when(
-                        loading: () => const Center(child: CircularProgressIndicator()),
-                        error: (error, stack) => RefreshIndicator(
-                          onRefresh: () async => ref.invalidate(unifiedConversationProvider),
-                          child: ListView(children: [
-                            ListTile(
-                              key: const Key('unified-conversation-tile'),
-                              leading: CircleAvatar(
-                                backgroundColor: const Color(0xFF004B76),
-                                child: Image.asset('assets/images/logo.png', height: 24),
-                              ),
-                              title: const Text('Gestinem'),
-                              subtitle: const Text('Sin mensajes'),
-                              onTap: () {
-                                if (wide) {
-                                  setState(() => _selected = 'unified');
-                                } else {
-                                  Navigator.of(context).push(MaterialPageRoute(
-                                    builder: (_) => const UnifiedConversationScreen(),
-                                  ));
-                                }
-                              },
-                            ),
-                          ]),
-                        ),
-                        data: (meta) {
-                          final unread = meta['unread_count'] as int? ?? 0;
-                          final lastMsg = meta['last_message'] as Map<String, dynamic>?;
-                          final lastBody = lastMsg != null
-                              ? (lastMsg['deleted'] == true
-                                  ? 'Mensaje eliminado'
-                                  : (lastMsg['body'] as String? ?? ''))
-                              : 'Sin mensajes';
-                          return RefreshIndicator(
-                            onRefresh: () async {
-                              ref.invalidate(unifiedConversationProvider);
-                              ref.invalidate(unifiedMessagesProvider);
-                            },
-                            child: ListView(children: [
-                              ListTile(
-                                key: const Key('unified-conversation-tile'),
-                                leading: CircleAvatar(
-                                  backgroundColor: const Color(0xFF004B76),
-                                  child: Image.asset('assets/images/logo.png', height: 24),
-                                ),
-                                title: const Text('Gestinem'),
-                                subtitle: Text(
-                                  lastBody,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                trailing: unread > 0
-                                    ? Badge(label: Text('$unread'))
-                                    : null,
-                                onTap: () {
-                                  if (wide) {
-                                    setState(() => _selected = 'unified');
-                                  } else {
-                                    Navigator.of(context).push(MaterialPageRoute(
-                                      builder: (_) => const UnifiedConversationScreen(),
-                                    ));
-                                  }
-                                },
-                              ),
-                            ]),
-                          );
-                        },
-                      );
+                      return const SizedBox.shrink();
                     },
                   ),
                 ),
@@ -335,15 +268,193 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
             Expanded(
               child: _selected == null
                   ? const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.forum_outlined, size: 58), SizedBox(height: 12), Text('Selecciona una conversacion')]))
-                  : _selected == 'unified'
-                      ? const UnifiedConversationScreen()
-                      : ConversationView(conversationId: _selected!),
+                  : ConversationView(conversationId: _selected!),
             ),
           ],
         ],
       ),
     );
   }
+
+  Widget _buildClientScreen(
+    UserProfile profile,
+    AsyncValue<List<Conversation>> conversations,
+  ) => Scaffold(
+    appBar: AppBar(
+      toolbarHeight: 72,
+      titleSpacing: 16,
+      title: Row(children: [
+        Image.asset('assets/images/logo.png', height: 38, semanticLabel: 'Gestinem'),
+        const SizedBox(width: 12),
+        const Expanded(child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Gestinem', style: TextStyle(fontWeight: FontWeight.w700)),
+            Text(
+              'Asesoria fiscal, contable y laboral',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
+            ),
+          ],
+        )),
+      ]),
+      actions: [
+        IconButton(
+          key: const Key('client-profile-button'),
+          tooltip: 'Mi perfil',
+          onPressed: () => context.go('/profile'),
+          icon: CircleAvatar(radius: 17, child: Text(_initials(profile.name))),
+        ),
+        const SizedBox(width: 8),
+      ],
+    ),
+    body: conversations.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (error, _) => Center(child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('No se pudieron cargar los canales.'),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: () => ref.invalidate(conversationsProvider),
+            icon: const Icon(Icons.refresh),
+            label: const Text('Reintentar'),
+          ),
+        ],
+      )),
+      data: (items) {
+        final channels = [...items]
+          ..sort((a, b) => _clientChannelOrder(a.kind).compareTo(_clientChannelOrder(b.kind)));
+        if (channels.isEmpty) return const Center(child: Text('No hay canales disponibles.'));
+        final selected = channels.any((item) => item.id == _selected)
+            ? channels.firstWhere((item) => item.id == _selected)
+            : channels.first;
+        return Column(children: [
+          _ClientChannelSelector(
+            conversations: channels,
+            selectedId: selected.id,
+            baseUrl: ref.read(apiClientProvider).dio.options.baseUrl
+                .replaceAll(RegExp(r'/api/v1/messaging/?$'), ''),
+            authToken: ref.read(sessionProvider).valueOrNull?.token ?? '',
+            onSelected: (id) => setState(() => _selected = id),
+          ),
+          const Divider(height: 1),
+          Expanded(child: ConversationView(
+            key: ValueKey('client-conversation-${selected.id}'),
+            conversationId: selected.id,
+          )),
+        ]);
+      },
+    ),
+  );
+}
+
+class _ClientChannelSelector extends StatelessWidget {
+  const _ClientChannelSelector({
+    required this.conversations,
+    required this.selectedId,
+    required this.baseUrl,
+    required this.authToken,
+    required this.onSelected,
+  });
+
+  final List<Conversation> conversations;
+  final String selectedId;
+  final String baseUrl;
+  final String authToken;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Material(
+      color: colors.surface,
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+          child: Row(children: [
+            for (final conversation in conversations)
+              Expanded(child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: InkWell(
+                  key: Key('client-channel-${conversation.kind}'),
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: () => onSelected(conversation.id),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 9),
+                    decoration: BoxDecoration(
+                      color: conversation.id == selectedId
+                          ? colors.primaryContainer : colors.surfaceContainerLow,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: conversation.id == selectedId
+                            ? colors.primary : colors.outlineVariant,
+                      ),
+                    ),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      Badge(
+                        isLabelVisible: conversation.unreadCount > 0,
+                        label: Text('${conversation.unreadCount}'),
+                        child: CircleAvatar(
+                          radius: 22,
+                          backgroundColor: conversation.id == selectedId
+                              ? colors.primary : colors.secondaryContainer,
+                          foregroundColor: conversation.id == selectedId
+                              ? colors.onPrimary : colors.onSecondaryContainer,
+                          backgroundImage: conversation.channelAvatarUrl.isEmpty
+                              ? null
+                              : NetworkImage(
+                                  '$baseUrl${conversation.channelAvatarUrl}',
+                                  headers: {'Authorization': 'Bearer $authToken'},
+                                ),
+                          child: conversation.channelAvatarUrl.isEmpty
+                              ? Text(
+                                  conversation.displayChannelLabel,
+                                  style: const TextStyle(fontWeight: FontWeight.w800),
+                                )
+                              : null,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _clientChannelName(conversation.kind),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelMedium,
+                      ),
+                    ]),
+                  ),
+                ),
+              )),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+int _clientChannelOrder(String kind) => switch (kind) {
+  'laboral' => 0,
+  'fiscal' => 1,
+  'private' => 2,
+  _ => 3,
+};
+
+String _clientChannelName(String kind) => switch (kind) {
+  'laboral' => 'Laboral',
+  'fiscal' => 'Fiscal',
+  'private' => 'Tu asesor',
+  _ => 'Canal',
+};
+
+String _initials(String value) {
+  final words = value.trim().split(RegExp(r'\s+')).where((word) => word.isNotEmpty);
+  final initials = words.take(2).map((word) => word[0]).join().toUpperCase();
+  return initials.isEmpty ? '?' : initials;
 }
 
 String _channelLabel(String kind) => switch (kind) {
@@ -463,6 +574,8 @@ class _AppDrawer extends StatelessWidget {
             ListTile(leading: const Icon(Icons.groups_outlined), title: const Text('Chats internos y grupos'), onTap: () => context.go('/groups')),
           if (profile.isAdmin)
             ListTile(leading: const Icon(Icons.campaign_outlined), title: const Text('Campanas'), onTap: () => context.go('/campaigns')),
+          if (profile.isAdmin)
+            ListTile(leading: const Icon(Icons.badge_outlined), title: const Text('Empleados'), onTap: () => context.go('/employees')),
           ListTile(leading: const Icon(Icons.person_outline), title: const Text('Perfil'), onTap: () => context.go('/profile')),
         ]),
       );

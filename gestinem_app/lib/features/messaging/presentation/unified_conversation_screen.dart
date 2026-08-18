@@ -208,6 +208,7 @@ class _UnifiedConversationScreenState
                       message: message,
                       mine: mine,
                       baseUrl: baseUrl,
+                      authToken: ref.read(sessionProvider).valueOrNull?.token ?? '',
                       onReplyTap: message.replyTo == null
                           ? null
                           : () => _scrollToMessage(messages, message.replyTo!.id),

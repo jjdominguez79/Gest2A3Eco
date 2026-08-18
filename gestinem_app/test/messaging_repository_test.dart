@@ -17,9 +17,10 @@ void main() {
         'unread_count': 2,
         'updated_at': '2026-08-15T10:00:00Z',
         'last_message': null,
-      }
+      },
     ]);
-    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'))..httpClientAdapter = adapter;
+    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'))
+      ..httpClientAdapter = adapter;
     final api = ApiClient(dio: dio, tokenProvider: () => testSession.token);
     final rows = await MessagingRepository(api).conversations(testProfile);
 
@@ -27,5 +28,37 @@ void main() {
     expect(rows.single.unreadCount, 2);
     expect(adapter.lastRequest!.path, '/client/conversations');
     expect(adapter.lastRequest!.headers['Authorization'], 'Bearer test-token');
+  });
+
+  test(
+    'repository usa rutas relativas para la conversacion unificada',
+    () async {
+      final adapter = JsonAdapter({
+        'channel_ids': <String, dynamic>{},
+        'unread_count': 0,
+        'last_message': null,
+      });
+      final dio = Dio(
+        BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+      )..httpClientAdapter = adapter;
+      final api = ApiClient(dio: dio, tokenProvider: () => testSession.token);
+
+      await MessagingRepository(api).unifiedConversation();
+
+      expect(adapter.lastRequest!.path, '/client/unified-conversation');
+    },
+  );
+
+  test('repository usa ruta relativa para los mensajes unificados', () async {
+    final adapter = JsonAdapter(<Object>[]);
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+    )..httpClientAdapter = adapter;
+    final api = ApiClient(dio: dio, tokenProvider: () => testSession.token);
+
+    final rows = await MessagingRepository(api).unifiedMessages();
+
+    expect(rows, isEmpty);
+    expect(adapter.lastRequest!.path, '/client/unified-messages');
   });
 }

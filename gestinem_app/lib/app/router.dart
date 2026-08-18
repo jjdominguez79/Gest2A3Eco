@@ -8,6 +8,7 @@ import '../features/auth/presentation/forgot_password_screen.dart';
 import '../features/auth/presentation/login_screen.dart';
 import '../features/auth/presentation/reset_password_screen.dart';
 import '../features/campaigns/presentation/campaigns_screen.dart';
+import '../features/empleados/presentation/empleados_screen.dart';
 import '../features/groups/presentation/groups_screen.dart';
 import '../features/messaging/presentation/conversation_screen.dart';
 import '../features/messaging/presentation/conversations_screen.dart';
@@ -77,6 +78,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(path: '/groups', builder: (_, _) => const GroupsScreen()),
       GoRoute(path: '/campaigns', builder: (_, _) => const CampaignsScreen()),
+      GoRoute(path: '/employees', builder: (_, _) => const EmpleadosScreen()),
       GoRoute(path: '/profile', builder: (_, _) => const ProfileScreen()),
     ],
   );

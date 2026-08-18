@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gestinem/features/auth/presentation/auth_controller.dart';
@@ -23,30 +24,79 @@ class _FakeNotifications extends NotificationsService {
 }
 
 void main() {
-  testWidgets('cliente ve tile unificado "Gestinem"', (tester) async {
-    // Para clientes, la pantalla muestra la vista unificada con un tile "Gestinem"
-    final meta = {
-      'unread_count': 3,
-      'channel_ids': {'fiscal': 'c1'},
-      'last_message': {'body': 'Mensaje de prueba', 'deleted': false},
-    };
-    await tester.pumpWidget(ProviderScope(
-      overrides: [
-        sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
-        conversationsProvider.overrideWith((ref) async => []),
-        unifiedConversationProvider.overrideWith((ref) async => meta),
-        realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
-        notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
-      ],
-      child: const MaterialApp(home: ConversationsScreen()),
-    ));
-    await tester.pump();
-    await tester.pump(); // segundo pump para el FutureProvider
+  testWidgets('cliente ve canales separados sin buscador ni menu', (
+    tester,
+  ) async {
+    final channels = [
+      Conversation(
+        id: 'laboral',
+        companyCode: 'E00006',
+        companyName: 'Cliente',
+        kind: 'laboral',
+        channelLabel: 'LA',
+        state: 'pendiente',
+        unreadCount: 0,
+        updatedAt: DateTime(2026, 8, 18),
+      ),
+      Conversation(
+        id: 'fiscal',
+        companyCode: 'E00006',
+        companyName: 'Cliente',
+        kind: 'fiscal',
+        channelLabel: 'CF',
+        state: 'pendiente',
+        unreadCount: 3,
+        updatedAt: DateTime(2026, 8, 18),
+      ),
+      Conversation(
+        id: 'private',
+        companyCode: 'E00006',
+        companyName: 'Cliente',
+        kind: 'private',
+        channelLabel: 'JJ',
+        state: 'pendiente',
+        unreadCount: 0,
+        updatedAt: DateTime(2026, 8, 18),
+      ),
+    ];
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+          apiClientProvider.overrideWithValue(
+            ApiClient(
+              dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
+                ..httpClientAdapter = JsonAdapter(<String, dynamic>{}),
+              tokenProvider: () => testSession.token,
+            ),
+          ),
+          conversationsProvider.overrideWith((ref) async => channels),
+          messagesProvider.overrideWith((ref, id) async => []),
+          realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
+          notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
+        ],
+        child: const MaterialApp(home: ConversationsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('unified-conversation-tile')), findsOneWidget);
-    // "Gestinem" aparece en el AppBar y en el tile
-    expect(find.text('Gestinem'), findsAtLeastNWidgets(1));
+    expect(find.byKey(const Key('client-channel-laboral')), findsOneWidget);
+    expect(find.byKey(const Key('client-channel-fiscal')), findsOneWidget);
+    expect(find.byKey(const Key('client-channel-private')), findsOneWidget);
+    expect(find.text('LA'), findsOneWidget);
+    expect(find.text('CF'), findsOneWidget);
+    expect(find.text('JJ'), findsOneWidget);
     expect(find.text('3'), findsOneWidget);
+    expect(find.byType(TextField), findsOneWidget);
+    expect(find.text('Buscar por codigo o nombre'), findsNothing);
+    expect(find.byKey(const Key('client-profile-button')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('client-channel-fiscal')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('client-conversation-fiscal')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('staff ve lista agrupada por cliente', (tester) async {
@@ -57,22 +107,33 @@ void main() {
       type: UserType.staff,
       staffRole: StaffRole.admin,
     );
-    const staffSession = AuthSession(token: 'staff-token', profile: staffProfile);
+    const staffSession = AuthSession(
+      token: 'staff-token',
+      profile: staffProfile,
+    );
 
     final row = Conversation(
-      id: 'c1', companyCode: 'E00001', companyName: 'Empresa Uno',
-      kind: 'fiscal', state: 'pendiente', unreadCount: 3,
+      id: 'c1',
+      companyCode: 'E00001',
+      companyName: 'Empresa Uno',
+      kind: 'fiscal',
+      state: 'pendiente',
+      unreadCount: 3,
       updatedAt: DateTime(2026, 8, 15),
     );
-    await tester.pumpWidget(ProviderScope(
-      overrides: [
-        sessionProvider.overrideWith((ref) => FakeSessionController(ref, staffSession)),
-        conversationsProvider.overrideWith((ref) async => [row]),
-        realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
-        notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
-      ],
-      child: const MaterialApp(home: ConversationsScreen()),
-    ));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith(
+            (ref) => FakeSessionController(ref, staffSession),
+          ),
+          conversationsProvider.overrideWith((ref) async => [row]),
+          realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
+          notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
+        ],
+        child: const MaterialApp(home: ConversationsScreen()),
+      ),
+    );
     await tester.pump();
     await tester.pump();
 

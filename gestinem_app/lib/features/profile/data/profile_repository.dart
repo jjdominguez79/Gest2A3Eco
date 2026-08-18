@@ -9,7 +9,7 @@ class ProfileRepository {
 
   Future<void> updateChatAlias(String alias) async {
     await api.dio.patch<void>(
-      '/api/v1/messaging/staff/me',
+      '/staff/me',
       data: {'chat_alias': alias},
     );
   }
@@ -20,7 +20,7 @@ class ProfileRepository {
       'avatar': MultipartFile.fromBytes(bytes, filename: file.name),
     });
     final response = await api.dio.put<Map<String, dynamic>>(
-      '/api/v1/messaging/staff/me/avatar',
+      '/staff/me/avatar',
       data: form,
     );
     return response.data?['avatar_url'] as String? ?? '';

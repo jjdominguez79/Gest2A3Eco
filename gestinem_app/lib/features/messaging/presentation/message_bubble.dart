@@ -8,6 +8,7 @@ class MessageBubble extends StatelessWidget {
     required this.message,
     required this.mine,
     this.baseUrl = '',
+    this.authToken = '',
     this.showAuthor = true,
     this.onReplyTap,
     this.onAttachmentTap,
@@ -17,6 +18,7 @@ class MessageBubble extends StatelessWidget {
   final Message message;
   final bool mine;
   final String baseUrl;
+  final String authToken;
   final bool showAuthor;
   final VoidCallback? onReplyTap;
   final void Function(Attachment attachment)? onAttachmentTap;
@@ -26,7 +28,12 @@ class MessageBubble extends StatelessWidget {
     if (message.authorAvatarUrl.isNotEmpty) {
       return CircleAvatar(
         radius: 16,
-        backgroundImage: NetworkImage('$baseUrl${message.authorAvatarUrl}'),
+        backgroundImage: NetworkImage(
+          '$baseUrl${message.authorAvatarUrl}',
+          headers: authToken.isEmpty
+              ? const {}
+              : {'Authorization': 'Bearer $authToken'},
+        ),
       );
     }
     final initials = message.authorName.isEmpty
