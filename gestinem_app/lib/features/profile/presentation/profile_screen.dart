@@ -44,7 +44,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         allowedExtensions: ['jpg', 'jpeg', 'png', 'webp'],
       );
     } catch (error) {
-      if (mounted) setState(() => _error = 'No se pudo abrir el selector de imagen.');
+      if (mounted) {
+        setState(() => _error = 'No se pudo abrir el selector de imagen.');
+      }
       return;
     }
     if (result.isEmpty) return;
@@ -53,11 +55,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       _error = null;
     });
     try {
-      final url = await ref.read(profileRepositoryProvider).uploadAvatar(result.first);
+      final url = await ref
+          .read(profileRepositoryProvider)
+          .uploadAvatar(result.first);
       setState(() {
-        _localAvatarUrl = url.isNotEmpty ? url : null;
+        _localAvatarUrl = url.isNotEmpty
+            ? '$url?v=${DateTime.now().millisecondsSinceEpoch}'
+            : null;
       });
-      await ref.read(sessionProvider.notifier).restore();
+      await ref.read(sessionProvider.notifier).refreshProfile();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Avatar actualizado correctamente')),
@@ -75,18 +81,18 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     if (alias.isEmpty) return;
     try {
       await ref.read(profileRepositoryProvider).updateChatAlias(alias);
-      await ref.read(sessionProvider.notifier).restore();
+      await ref.read(sessionProvider.notifier).refreshProfile();
       setState(() => _editingAlias = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Nombre actualizado')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Nombre actualizado')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(apiErrorMessage(e))),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(e))));
       }
     }
   }
@@ -108,11 +114,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final initials = profile.name.isEmpty
         ? '?'
         : profile.name
-            .split(' ')
-            .take(2)
-            .map((w) => w.isEmpty ? '' : w[0])
-            .join()
-            .toUpperCase();
+              .split(' ')
+              .take(2)
+              .map((w) => w.isEmpty ? '' : w[0])
+              .join()
+              .toUpperCase();
     return CircleAvatar(
       radius: 48,
       child: Text(initials, style: const TextStyle(fontSize: 28)),
@@ -178,21 +184,27 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               const SizedBox(height: 20),
               if (profile.type == UserType.staff) ...[
                 _editingAlias
-                    ? Row(children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _aliasController,
-                            decoration: const InputDecoration(
-                              labelText: 'Nombre visible',
+                    ? Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _aliasController,
+                              decoration: const InputDecoration(
+                                labelText: 'Nombre visible',
+                              ),
                             ),
                           ),
-                        ),
-                        IconButton(onPressed: _saveAlias, icon: const Icon(Icons.check)),
-                        IconButton(
-                          onPressed: () => setState(() => _editingAlias = false),
-                          icon: const Icon(Icons.close),
-                        ),
-                      ])
+                          IconButton(
+                            onPressed: _saveAlias,
+                            icon: const Icon(Icons.check),
+                          ),
+                          IconButton(
+                            onPressed: () =>
+                                setState(() => _editingAlias = false),
+                            icon: const Icon(Icons.close),
+                          ),
+                        ],
+                      )
                     : ListTile(
                         leading: const Icon(Icons.person_outline),
                         title: const Text('Nombre visible'),

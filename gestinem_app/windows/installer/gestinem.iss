@@ -8,6 +8,7 @@ AppId={{6D522A0D-07CF-47F7-875F-162EC47CBB38}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+SetupIconFile=..\runner\resources\app_icon.ico
 DefaultDirName={localappdata}\Programs\Gestinem
 DefaultGroupName=Gestinem
 DisableProgramGroupPage=yes

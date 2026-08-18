@@ -8,13 +8,16 @@ import '../../../core/deep_links/deep_link_controller.dart';
 import '../data/auth_repository.dart';
 import '../domain/user_profile.dart';
 
-final sessionStorageProvider = Provider<SessionStorage>((ref) => SessionStorage());
+final sessionStorageProvider = Provider<SessionStorage>(
+  (ref) => SessionStorage(),
+);
 
-final sessionProvider = StateNotifierProvider<SessionController, AsyncValue<AuthSession?>>((ref) {
-  final controller = SessionController(ref);
-  controller.restore();
-  return controller;
-});
+final sessionProvider =
+    StateNotifierProvider<SessionController, AsyncValue<AuthSession?>>((ref) {
+      final controller = SessionController(ref);
+      controller.restore();
+      return controller;
+    });
 
 final apiClientProvider = Provider<ApiClient>((ref) {
   return ApiClient(
@@ -32,11 +35,23 @@ class SessionController extends StateNotifier<AsyncValue<AuthSession?>> {
 
   final Ref ref;
 
+  Future<AuthSession> _refreshSession(AuthSession saved) async {
+    final refreshed = AuthSession(
+      token: saved.token,
+      profile: await ref.read(authRepositoryProvider).currentProfile(saved),
+    );
+    await ref.read(sessionStorageProvider).write(refreshed);
+    state = AsyncData(refreshed);
+    return refreshed;
+  }
+
   Future<void> restore() async {
     final saved = await ref.read(sessionStorageProvider).read();
     if (saved == null) {
       try {
-        final exchanged = await ref.read(authRepositoryProvider).exchangeInitialCode();
+        final exchanged = await ref
+            .read(authRepositoryProvider)
+            .exchangeInitialCode();
         if (exchanged != null) {
           await ref.read(sessionStorageProvider).write(exchanged);
           state = AsyncData(exchanged);
@@ -49,20 +64,25 @@ class SessionController extends StateNotifier<AsyncValue<AuthSession?>> {
       return;
     }
     try {
-      state = AsyncData(AuthSession(
-        token: saved.token,
-        profile: await ref.read(authRepositoryProvider).currentProfile(saved),
-      ));
+      await _refreshSession(saved);
     } catch (_) {
       await ref.read(sessionStorageProvider).clear();
       state = const AsyncData(null);
     }
   }
 
+  Future<void> refreshProfile() async {
+    final session = state.valueOrNull;
+    if (session == null) return;
+    await _refreshSession(session);
+  }
+
   Future<void> loginClient(String email, String password) async {
     state = const AsyncLoading();
     state = await AsyncValue.guard(() async {
-      final session = await ref.read(authRepositoryProvider).loginClient(email, password);
+      final session = await ref
+          .read(authRepositoryProvider)
+          .loginClient(email, password);
       await ref.read(sessionStorageProvider).write(session);
       return session;
     });
@@ -71,8 +91,9 @@ class SessionController extends StateNotifier<AsyncValue<AuthSession?>> {
   Future<void> acceptInvite(String token, String password) async {
     state = const AsyncLoading();
     state = await AsyncValue.guard(() async {
-      final session =
-          await ref.read(authRepositoryProvider).acceptInvite(token, password);
+      final session = await ref
+          .read(authRepositoryProvider)
+          .acceptInvite(token, password);
       await ref.read(sessionStorageProvider).write(session);
       ref.read(deepLinkProvider.notifier).clear();
       return session;

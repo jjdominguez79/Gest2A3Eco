@@ -10,6 +10,7 @@ import 'package:gestinem/core/api/api_client.dart';
 import 'package:gestinem/core/notifications/notifications_service.dart';
 import 'package:gestinem/core/websocket/realtime_service.dart';
 import 'package:gestinem/features/auth/domain/user_profile.dart';
+import 'package:go_router/go_router.dart';
 
 import 'test_helpers.dart';
 
@@ -141,5 +142,55 @@ void main() {
     expect(find.text('Empresa Uno'), findsOneWidget);
     expect(find.textContaining('E00001'), findsOneWidget);
     expect(find.text('3'), findsOneWidget);
+  });
+
+  testWidgets('Conversaciones cierra el menu aunque ya sea la ruta activa', (
+    tester,
+  ) async {
+    const staffProfile = UserProfile(
+      id: 'staff-1',
+      name: 'Gestor',
+      email: 'gestor@gestinem.es',
+      type: UserType.staff,
+      staffRole: StaffRole.admin,
+    );
+    const staffSession = AuthSession(
+      token: 'staff-token',
+      profile: staffProfile,
+    );
+    final router = GoRouter(
+      routes: [
+        GoRoute(path: '/', builder: (_, _) => const ConversationsScreen()),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith(
+            (ref) => FakeSessionController(ref, staffSession),
+          ),
+          apiClientProvider.overrideWithValue(
+            ApiClient(
+              dio: Dio(BaseOptions(baseUrl: 'https://example.test')),
+              tokenProvider: () => staffSession.token,
+            ),
+          ),
+          conversationsProvider.overrideWith((ref) async => []),
+          realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
+          notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('drawer-conversations')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('drawer-conversations')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('drawer-conversations')), findsNothing);
   });
 }
