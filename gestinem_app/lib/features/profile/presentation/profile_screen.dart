@@ -37,10 +37,16 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 
   Future<void> _pickAndUploadAvatar() async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.image,
-      allowedExtensions: ['jpg', 'jpeg', 'png', 'webp'],
-    );
+    late final List<PlatformFile> result;
+    try {
+      result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['jpg', 'jpeg', 'png', 'webp'],
+      );
+    } catch (error) {
+      if (mounted) setState(() => _error = 'No se pudo abrir el selector de imagen.');
+      return;
+    }
     if (result.isEmpty) return;
     setState(() {
       _uploadingAvatar = true;

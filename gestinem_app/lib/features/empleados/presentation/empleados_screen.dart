@@ -196,10 +196,20 @@ class EmpleadosScreen extends ConsumerWidget {
     WidgetRef ref,
     EmpleadoDespacho empleado,
   ) async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.image,
-      allowedExtensions: ['jpg', 'jpeg', 'png', 'webp'],
-    );
+    late final List<PlatformFile> result;
+    try {
+      result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['jpg', 'jpeg', 'png', 'webp'],
+      );
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo abrir el selector de imagen.')),
+        );
+      }
+      return;
+    }
     if (result.isEmpty) return;
     try {
       await ref
