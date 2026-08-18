@@ -451,3 +451,71 @@ def test_login_staff_app_usa_codigo_un_solo_uso(tmp_path, monkeypatch):
     assert client.post(
         "/api/v1/messaging/staff-auth/mobile/exchange", json={"code": code},
     ).status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Validacion de web_redirect en staff-auth/login
+# ---------------------------------------------------------------------------
+
+class _FakeMsal:
+    def initiate_auth_code_flow(self, **_kwargs):
+        return {"state": "s1", "auth_uri": "https://login.example.test"}
+
+
+def _web_redirect_client(tmp_path, monkeypatch, web_redirect_uri: str):
+    monkeypatch.setenv("MESSAGING_APP_WEB_REDIRECT_URI", web_redirect_uri)
+    client, _ = _api(tmp_path, monkeypatch)
+    monkeypatch.setattr(messaging_api, "_staff_msal_app", lambda: _FakeMsal())
+    return client
+
+
+def test_web_redirect_https_permitido(tmp_path, monkeypatch):
+    uri = "https://app.gestinem.es/auth/callback"
+    client = _web_redirect_client(tmp_path, monkeypatch, uri)
+    r = client.get(
+        f"/api/v1/messaging/staff-auth/login?app=true&web_redirect={uri}",
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+
+
+def test_web_redirect_http_localhost_permitido(tmp_path, monkeypatch):
+    uri = "http://localhost:8080/auth/callback"
+    client = _web_redirect_client(tmp_path, monkeypatch, uri)
+    r = client.get(
+        f"/api/v1/messaging/staff-auth/login?app=true&web_redirect={uri}",
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+
+
+def test_web_redirect_http_127_permitido(tmp_path, monkeypatch):
+    uri = "http://127.0.0.1:8080/auth/callback"
+    client = _web_redirect_client(tmp_path, monkeypatch, uri)
+    r = client.get(
+        f"/api/v1/messaging/staff-auth/login?app=true&web_redirect={uri}",
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+
+
+def test_web_redirect_http_externo_rechazado(tmp_path, monkeypatch):
+    # La URI configurada usa HTTP con host externo; aun asi debe rechazarse.
+    uri = "http://evil.example.com/auth/callback"
+    client = _web_redirect_client(tmp_path, monkeypatch, uri)
+    r = client.get(
+        f"/api/v1/messaging/staff-auth/login?app=true&web_redirect={uri}",
+        follow_redirects=False,
+    )
+    assert r.status_code == 422
+
+
+def test_web_redirect_uri_distinta_rechazada(tmp_path, monkeypatch):
+    configured = "https://app.gestinem.es/auth/callback"
+    other = "https://attacker.example.com/auth/callback"
+    client = _web_redirect_client(tmp_path, monkeypatch, configured)
+    r = client.get(
+        f"/api/v1/messaging/staff-auth/login?app=true&web_redirect={other}",
+        follow_redirects=False,
+    )
+    assert r.status_code == 422

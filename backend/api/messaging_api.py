@@ -9,7 +9,7 @@ import secrets
 import uuid
 from datetime import datetime, timedelta
 from typing import Literal
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import msal
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -721,6 +721,17 @@ def _staff_redirect_uri() -> str:
     return f"{get_settings().messaging_public_base_url}/api/v1/messaging/staff-auth/callback"
 
 
+def _web_redirect_scheme_allowed(url: str) -> bool:
+    """HTTPS siempre permitido; HTTP solo para localhost/127.0.0.1."""
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    if scheme == "https":
+        return True
+    if scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1"):
+        return True
+    return False
+
+
 @router.get("/staff-auth/login")
 def staff_auth_login(
     app: bool = Query(default=False), web_redirect: str = Query(default=""),
@@ -730,7 +741,7 @@ def staff_auth_login(
     if web_redirect and (
         not app or not allowed_web_redirect
         or not secrets.compare_digest(web_redirect, allowed_web_redirect)
-        or not web_redirect.lower().startswith("https://")
+        or not _web_redirect_scheme_allowed(web_redirect)
     ):
         raise HTTPException(422, "Retorno web de Gestinem no autorizado")
     flow = _staff_msal_app().initiate_auth_code_flow(
