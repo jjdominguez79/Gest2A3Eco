@@ -5,15 +5,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/websocket/realtime_service.dart';
-import '../../../core/notifications/notifications_service.dart';
+import '../../../core/storage/hidden_conversations_storage.dart';
+import '../../../core/widgets/authenticated_avatar.dart';
 import '../../auth/domain/user_profile.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../domain/conversation.dart';
 import 'conversation_screen.dart';
 import 'messaging_providers.dart';
-import 'unified_conversation_screen.dart';
 
 final realtimeServiceProvider = Provider<RealtimeService>((ref) => RealtimeService());
+final hiddenConversationsStorageProvider = Provider<HiddenConversationsStorage>((ref) => HiddenConversationsStorage());
 class ConversationsScreen extends ConsumerStatefulWidget {
   const ConversationsScreen({super.key});
 
@@ -21,31 +22,75 @@ class ConversationsScreen extends ConsumerStatefulWidget {
   ConsumerState<ConversationsScreen> createState() => _ConversationsScreenState();
 }
 
-class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
+class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
+    with WidgetsBindingObserver {
   final _search = TextEditingController();
   RealtimeService? _realtime;
   StreamSubscription<Map<String, dynamic>>? _events;
   String _channel = 'todos';
   String? _selected;
+  Map<String, DateTime> _hiddenGroups = {};
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _connectRealtime());
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _connectRealtime();
+      unawaited(_loadHiddenGroups());
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refreshMessaging();
+  }
+
+  void _refreshMessaging([String? conversationId]) {
+    ref.invalidate(conversationsProvider);
+    ref.invalidate(unifiedConversationProvider);
+    ref.invalidate(unifiedMessagesProvider);
+    if (conversationId != null && conversationId.isNotEmpty) {
+      ref.invalidate(messagesProvider(conversationId));
+    }
+  }
+
+  Future<void> _loadHiddenGroups() async {
+    final profile = ref.read(sessionProvider).valueOrNull?.profile;
+    if (profile == null || profile.type != UserType.staff) return;
+    final hidden = await ref.read(hiddenConversationsStorageProvider).read(profile.id);
+    if (mounted) setState(() => _hiddenGroups = hidden);
+  }
+
+  bool _isHidden(ClientGroup group) {
+    final hiddenAt = _hiddenGroups[group.companyCode];
+    if (hiddenAt == null) return false;
+    final updatedAt = group.updatedAt;
+    return updatedAt == null || !updatedAt.toUtc().isAfter(hiddenAt);
+  }
+
+  Future<void> _hideGroup(ClientGroup group) async {
+    final profile = ref.read(sessionProvider).valueOrNull!.profile;
+    final updatedAt = group.updatedAt ?? DateTime.now();
+    await ref.read(hiddenConversationsStorageProvider).hide(profile.id, group.companyCode, updatedAt);
+    if (mounted) {
+      setState(() {
+        _hiddenGroups = {..._hiddenGroups, group.companyCode: updatedAt.toUtc()};
+        if (group.conversations.any((conversation) => conversation.id == _selected)) {
+          _selected = null;
+        }
+      });
+    }
   }
 
   void _connectRealtime() {
     final session = ref.read(sessionProvider).valueOrNull;
     if (session == null) return;
     _realtime = ref.read(realtimeServiceProvider);
-    unawaited(ref.read(notificationsServiceProvider).initialize(session, ref.read(apiClientProvider)));
     _events = _realtime!.events.listen((event) {
       if (!mounted || event['type'] == 'ping') return;
-      ref.invalidate(conversationsProvider);
-      ref.invalidate(unifiedConversationProvider);
-      ref.invalidate(unifiedMessagesProvider);
       final id = event['conversation_id'] as String?;
-      if (id != null) ref.invalidate(messagesProvider(id));
+      _refreshMessaging(id);
       final threadId = event['thread_id'] as String?;
       if (threadId != null) {
         ref.invalidate(internalThreadsProvider);
@@ -57,6 +102,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _search.dispose();
     _events?.cancel();
     _realtime?.close();
@@ -102,16 +148,16 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
     );
   }
 
-  Future<bool?> _confirmDelete(BuildContext context) => showDialog<bool>(
+  Future<bool?> _confirmHide(BuildContext context) => showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('Eliminar conversaciones'),
-          content: const Text('Esta accion no se puede deshacer. Solo borra el historial local.'),
+          title: const Text('Ocultar conversaciones'),
+          content: const Text('Se ocultarán solo en este dispositivo. Volverán a aparecer cuando llegue un mensaje nuevo.'),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
             FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Eliminar'),
+              child: const Text('Ocultar'),
             ),
           ],
         ),
@@ -143,13 +189,21 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
   Widget build(BuildContext context) {
     final profile = ref.watch(sessionProvider).valueOrNull!.profile;
     final conversations = ref.watch(conversationsProvider);
+    if (profile.type == UserType.client) {
+      return _buildClientScreen(profile, conversations);
+    }
     final wide = MediaQuery.sizeOf(context).width >= 900;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Gestinem'),
         actions: [
           IconButton(onPressed: () => ref.invalidate(conversationsProvider), icon: const Icon(Icons.refresh)),
-          IconButton(onPressed: () => context.go('/profile'), icon: const Icon(Icons.account_circle_outlined)),
+          IconButton(
+            key: const Key('staff-profile-button'),
+            tooltip: 'Mi perfil',
+            onPressed: () => context.go('/profile'),
+            icon: _ProfileAvatar(profile: profile, radius: 17),
+          ),
         ],
       ),
       drawer: _AppDrawer(profile: profile),
@@ -165,7 +219,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
                     controller: _search,
                     decoration: const InputDecoration(
                       prefixIcon: Icon(Icons.search),
-                      hintText: 'Buscar por codigo o nombre',
+                      hintText: 'Buscar por código o nombre',
                     ),
                     onChanged: (_) => setState(() {}),
                   ),
@@ -208,7 +262,9 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
                           return channelMatches && searchMatches;
                         }).toList();
 
-                        final groups = groupConversationsByClient(filtered);
+                        final groups = groupConversationsByClient(filtered)
+                            .where((group) => !_isHidden(group))
+                            .toList();
                         if (groups.isEmpty) {
                           return const Center(child: Text('No hay conversaciones'));
                         }
@@ -225,17 +281,21 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
                                 confirmDismiss: (direction) async {
                                   if (direction == DismissDirection.startToEnd) {
                                     if (!profile.isAdmin) return false;
-                                    return await _confirmDelete(context);
+                                    final confirmed = await _confirmHide(context);
+                                    if (confirmed == true) {
+                                      await _hideGroup(group);
+                                    }
+                                    return false;
                                   } else {
                                     await _toggleRead(group);
                                     return false;
                                   }
                                 },
                                 background: Container(
-                                  color: Colors.red,
+                                  color: Colors.orange,
                                   alignment: Alignment.centerLeft,
                                   padding: const EdgeInsets.symmetric(horizontal: 20),
-                                  child: const Icon(Icons.delete_outline, color: Colors.white),
+                                  child: const Icon(Icons.visibility_off_outlined, color: Colors.white),
                                 ),
                                 secondaryBackground: Container(
                                   color: Colors.blue,
@@ -254,76 +314,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
                         );
                       }
 
-                      // Para clientes: una sola conversacion unificada "Gestinem"
-                      final unifiedMeta = ref.watch(unifiedConversationProvider);
-                      return unifiedMeta.when(
-                        loading: () => const Center(child: CircularProgressIndicator()),
-                        error: (error, stack) => RefreshIndicator(
-                          onRefresh: () async => ref.invalidate(unifiedConversationProvider),
-                          child: ListView(children: [
-                            ListTile(
-                              key: const Key('unified-conversation-tile'),
-                              leading: CircleAvatar(
-                                backgroundColor: const Color(0xFF004B76),
-                                child: Image.asset('assets/images/logo.png', height: 24),
-                              ),
-                              title: const Text('Gestinem'),
-                              subtitle: const Text('Sin mensajes'),
-                              onTap: () {
-                                if (wide) {
-                                  setState(() => _selected = 'unified');
-                                } else {
-                                  Navigator.of(context).push(MaterialPageRoute(
-                                    builder: (_) => const UnifiedConversationScreen(),
-                                  ));
-                                }
-                              },
-                            ),
-                          ]),
-                        ),
-                        data: (meta) {
-                          final unread = meta['unread_count'] as int? ?? 0;
-                          final lastMsg = meta['last_message'] as Map<String, dynamic>?;
-                          final lastBody = lastMsg != null
-                              ? (lastMsg['deleted'] == true
-                                  ? 'Mensaje eliminado'
-                                  : (lastMsg['body'] as String? ?? ''))
-                              : 'Sin mensajes';
-                          return RefreshIndicator(
-                            onRefresh: () async {
-                              ref.invalidate(unifiedConversationProvider);
-                              ref.invalidate(unifiedMessagesProvider);
-                            },
-                            child: ListView(children: [
-                              ListTile(
-                                key: const Key('unified-conversation-tile'),
-                                leading: CircleAvatar(
-                                  backgroundColor: const Color(0xFF004B76),
-                                  child: Image.asset('assets/images/logo.png', height: 24),
-                                ),
-                                title: const Text('Gestinem'),
-                                subtitle: Text(
-                                  lastBody,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                trailing: unread > 0
-                                    ? Badge(label: Text('$unread'))
-                                    : null,
-                                onTap: () {
-                                  if (wide) {
-                                    setState(() => _selected = 'unified');
-                                  } else {
-                                    Navigator.of(context).push(MaterialPageRoute(
-                                      builder: (_) => const UnifiedConversationScreen(),
-                                    ));
-                                  }
-                                },
-                              ),
-                            ]),
-                          );
-                        },
-                      );
+                      return const SizedBox.shrink();
                     },
                   ),
                 ),
@@ -334,16 +325,185 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
             const VerticalDivider(width: 1),
             Expanded(
               child: _selected == null
-                  ? const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.forum_outlined, size: 58), SizedBox(height: 12), Text('Selecciona una conversacion')]))
-                  : _selected == 'unified'
-                      ? const UnifiedConversationScreen()
-                      : ConversationView(conversationId: _selected!),
+                  ? const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.forum_outlined, size: 58), SizedBox(height: 12), Text('Selecciona una conversación')]))
+                  : ConversationView(conversationId: _selected!),
             ),
           ],
         ],
       ),
     );
   }
+
+  Widget _buildClientScreen(
+    UserProfile profile,
+    AsyncValue<List<Conversation>> conversations,
+  ) => Scaffold(
+    appBar: AppBar(
+      toolbarHeight: 72,
+      titleSpacing: 16,
+      title: Row(children: [
+        Image.asset('assets/images/logo.png', height: 38, semanticLabel: 'Gestinem'),
+        const SizedBox(width: 12),
+        const Expanded(child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Gestinem', style: TextStyle(fontWeight: FontWeight.w700)),
+            Text(
+              'Asesoría fiscal, contable y laboral',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
+            ),
+          ],
+        )),
+      ]),
+      actions: [
+        IconButton(
+          key: const Key('client-profile-button'),
+          tooltip: 'Mi perfil',
+          onPressed: () => context.go('/profile'),
+          icon: _ProfileAvatar(profile: profile, radius: 17),
+        ),
+        const SizedBox(width: 8),
+      ],
+    ),
+    body: conversations.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (error, _) => Center(child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('No se pudieron cargar los canales.'),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: () => ref.invalidate(conversationsProvider),
+            icon: const Icon(Icons.refresh),
+            label: const Text('Reintentar'),
+          ),
+        ],
+      )),
+      data: (items) {
+        final channels = [...items]
+          ..sort((a, b) => _clientChannelOrder(a.kind).compareTo(_clientChannelOrder(b.kind)));
+        if (channels.isEmpty) return const Center(child: Text('No hay canales disponibles.'));
+        final selected = channels.any((item) => item.id == _selected)
+            ? channels.firstWhere((item) => item.id == _selected)
+            : channels.first;
+        return Column(children: [
+          _ClientChannelSelector(
+            conversations: channels,
+            selectedId: selected.id,
+            baseUrl: ref.read(apiClientProvider).dio.options.baseUrl
+                .replaceAll(RegExp(r'/api/v1/messaging/?$'), ''),
+            authToken: ref.read(sessionProvider).valueOrNull?.token ?? '',
+            onSelected: (id) => setState(() => _selected = id),
+          ),
+          const Divider(height: 1),
+          Expanded(child: ConversationView(
+            key: ValueKey('client-conversation-${selected.id}'),
+            conversationId: selected.id,
+          )),
+        ]);
+      },
+    ),
+  );
+}
+
+class _ClientChannelSelector extends StatelessWidget {
+  const _ClientChannelSelector({
+    required this.conversations,
+    required this.selectedId,
+    required this.baseUrl,
+    required this.authToken,
+    required this.onSelected,
+  });
+
+  final List<Conversation> conversations;
+  final String selectedId;
+  final String baseUrl;
+  final String authToken;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Material(
+      color: colors.surface,
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+          child: Row(children: [
+            for (final conversation in conversations)
+              Expanded(child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: InkWell(
+                  key: Key('client-channel-${conversation.kind}'),
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: () => onSelected(conversation.id),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 9),
+                    decoration: BoxDecoration(
+                      color: conversation.id == selectedId
+                          ? colors.primaryContainer : colors.surfaceContainerLow,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: conversation.id == selectedId
+                            ? colors.primary : colors.outlineVariant,
+                      ),
+                    ),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      Badge(
+                        isLabelVisible: conversation.unreadCount > 0,
+                        label: Text('${conversation.unreadCount}'),
+                        child: AuthenticatedAvatar(
+                          radius: 22,
+                          baseUrl: baseUrl,
+                          authToken: authToken,
+                          imagePath: conversation.channelAvatarUrl,
+                          fallbackText: conversation.displayChannelLabel,
+                          cacheVersion: conversation.updatedAt
+                              .millisecondsSinceEpoch
+                              .toString(),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _clientChannelName(conversation.kind),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelMedium,
+                      ),
+                    ]),
+                  ),
+                ),
+              )),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+int _clientChannelOrder(String kind) => switch (kind) {
+  'laboral' => 0,
+  'fiscal' => 1,
+  'private' => 2,
+  _ => 3,
+};
+
+String _clientChannelName(String kind) => switch (kind) {
+  'laboral' => 'Laboral',
+  'fiscal' => 'Fiscal',
+  'private' => 'Tu asesor',
+  _ => 'Canal',
+};
+
+String _initials(String value) {
+  final words = value.trim().split(RegExp(r'\s+')).where((word) => word.isNotEmpty);
+  final initials = words.take(2).map((word) => word[0]).join().toUpperCase();
+  return initials.isEmpty ? '?' : initials;
 }
 
 String _channelLabel(String kind) => switch (kind) {
@@ -456,14 +616,37 @@ class _AppDrawer extends StatelessWidget {
           UserAccountsDrawerHeader(
             accountName: Text(profile.name),
             accountEmail: Text(profile.email),
-            currentAccountPicture: CircleAvatar(child: Text(profile.name.isEmpty ? '?' : profile.name[0])),
+            currentAccountPicture: _ProfileAvatar(profile: profile, radius: 32),
           ),
           ListTile(leading: const Icon(Icons.forum_outlined), title: const Text('Conversaciones'), onTap: () => context.go('/')),
           if (profile.type == UserType.staff)
             ListTile(leading: const Icon(Icons.groups_outlined), title: const Text('Chats internos y grupos'), onTap: () => context.go('/groups')),
           if (profile.isAdmin)
-            ListTile(leading: const Icon(Icons.campaign_outlined), title: const Text('Campanas'), onTap: () => context.go('/campaigns')),
+            ListTile(leading: const Icon(Icons.campaign_outlined), title: const Text('Campañas'), onTap: () => context.go('/campaigns')),
+          if (profile.isAdmin)
+            ListTile(leading: const Icon(Icons.badge_outlined), title: const Text('Empleados'), onTap: () => context.go('/employees')),
           ListTile(leading: const Icon(Icons.person_outline), title: const Text('Perfil'), onTap: () => context.go('/profile')),
         ]),
       );
+}
+
+class _ProfileAvatar extends ConsumerWidget {
+  const _ProfileAvatar({required this.profile, required this.radius});
+
+  final UserProfile profile;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final avatarUrl = profile.avatarUrl;
+    return AuthenticatedAvatar(
+      radius: radius,
+      baseUrl: ref.read(apiClientProvider).dio.options.baseUrl
+          .replaceAll(RegExp(r'/api/v1/messaging/?$'), ''),
+      authToken: ref.read(sessionProvider).valueOrNull?.token ?? '',
+      imagePath: avatarUrl,
+      fallbackText: _initials(profile.name),
+      cacheVersion: avatarUrl.hashCode.toString(),
+    );
+  }
 }

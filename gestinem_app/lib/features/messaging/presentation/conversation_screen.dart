@@ -18,7 +18,7 @@ class ConversationScreen extends StatelessWidget {
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
           leading: IconButton(onPressed: () => context.go(internal ? '/groups' : '/'), icon: const Icon(Icons.arrow_back)),
-          title: Text(internal ? 'Chat interno' : 'Conversacion'),
+          title: Text(internal ? 'Chat interno' : 'Conversación'),
         ),
         body: ConversationView(conversationId: conversationId, internal: internal),
       );
@@ -134,7 +134,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('Eliminar mensaje'),
-          content: const Text('El contenido se sustituira por "Mensaje eliminado".'),
+          content: const Text('El contenido se sustituirá por "Mensaje eliminado".'),
           actions: [
             TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
             FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Eliminar')),
@@ -186,6 +186,21 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
             ]),
           ),
         ),
+      if (!widget.internal && profile.type.name == 'client')
+        Material(
+          color: Theme.of(context).colorScheme.secondaryContainer,
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            child: Row(children: [
+              Icon(Icons.touch_app_outlined, size: 19),
+              SizedBox(width: 8),
+              Expanded(child: Text(
+                'Pulsa sobre un mensaje para responderlo.',
+                style: TextStyle(fontSize: 13),
+              )),
+            ]),
+          ),
+        ),
       Expanded(
         child: asyncMessages.when(
           loading: () => const Center(child: CircularProgressIndicator()),
@@ -202,8 +217,10 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                 message: message,
                 mine: mine,
                 baseUrl: ref.read(apiClientProvider).dio.options.baseUrl.replaceAll(RegExp(r'/api/v1/messaging/?$'), ''),
+                authToken: ref.read(sessionProvider).valueOrNull?.token ?? '',
                 onReplyTap: message.replyTo == null ? null : () => _scrollToMessage(messages, message.replyTo!.id),
                 onAttachmentTap: _download,
+                onTap: message.deleted ? null : () => _messageActions(message, mine),
                 onLongPress: message.deleted ? null : () => _messageActions(message, mine),
               );
             },

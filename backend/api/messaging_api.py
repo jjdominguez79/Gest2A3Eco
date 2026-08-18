@@ -377,7 +377,9 @@ def _event(db: Session, conv: MessagingConversation, event_type: str) -> None:
     ))
 
 
-def _serialize_conversation(db: Session, conv: MessagingConversation) -> dict:
+def _serialize_conversation(
+    db: Session, conv: MessagingConversation, audience: str = "staff",
+) -> dict:
     org = db.get(MessagingOrganization, conv.organization_id)
     last = db.scalar(
         select(MessagingMessage).where(MessagingMessage.conversation_id == conv.id)
@@ -388,9 +390,27 @@ def _serialize_conversation(db: Session, conv: MessagingConversation) -> dict:
         MessagingClient.active.is_(True),
         MessagingClient.password_hash != "",
     )) or 0)
+    channel_label = {"laboral": "LA", "fiscal": "CF"}.get(conv.kind, "")
+    channel_avatar_url = ""
+    if conv.kind == "private":
+        owner_id = org.private_owner_external_id or conv.assigned_staff_external_id
+        owner = db.get(MessagingStaff, owner_id) if owner_id else None
+        owner_name = (owner.chat_alias.strip() or owner.name.strip()) if owner else ""
+        words = [word for word in owner_name.split() if word]
+        if len(words) >= 2:
+            channel_label = "".join(word[0] for word in words[:2]).upper()
+        elif words:
+            channel_label = words[0][:2].upper()
+        else:
+            channel_label = "DP"
+        if owner and owner.avatar_storage_key:
+            channel_avatar_url = (
+                f"/api/v1/messaging/{audience}/avatars/{owner.external_id}"
+            )
     return {
         "id": conv.id, "company_code": org.company_code, "company_name": org.name,
-        "kind": conv.kind, "state": conv.state,
+        "kind": conv.kind, "channel_label": channel_label,
+        "channel_avatar_url": channel_avatar_url, "state": conv.state,
         "active_client_count": active_client_count,
         "assigned_staff_external_id": conv.assigned_staff_external_id,
         "updated_at": conv.updated_at.isoformat(),
@@ -1472,7 +1492,7 @@ def client_conversations(client: MessagingClient = Depends(_client), db: Session
     ).order_by(MessagingConversation.kind)).all()
     result = []
     for row in rows:
-        item = _serialize_conversation(db, row)
+        item = _serialize_conversation(db, row, "client")
         item["unread_count"] = _unread_count(db, row, "client", client.id)
         result.append(item)
     return result
@@ -1694,7 +1714,12 @@ def staff_avatar(
                 MessagingConversation.organization_id == actor.organization_id,
             )
         ) or 0)
-        if not authored:
+        organization = db.get(MessagingOrganization, actor.organization_id)
+        owns_private_channel = bool(
+            organization
+            and organization.private_owner_external_id == external_id
+        )
+        if not authored and not owns_private_channel:
             raise HTTPException(403, "Avatar no autorizado")
     return Response(
         content=MessagingStorage().get(staff.avatar_storage_key),

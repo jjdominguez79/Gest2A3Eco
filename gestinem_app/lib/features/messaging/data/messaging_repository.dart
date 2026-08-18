@@ -16,14 +16,19 @@ class MessagingRepository {
   String _audience(UserProfile profile) => profile.type.name;
 
   Future<List<Conversation>> conversations(UserProfile profile) async {
-    final path = profile.type == UserType.client ? '/client/conversations' : '/staff/conversations';
+    final path = profile.type == UserType.client
+        ? '/client/conversations'
+        : '/staff/conversations';
     final response = await _api.dio.get<List<dynamic>>(path);
     return response.data!
         .map((item) => Conversation.fromJson(item as Map<String, dynamic>))
         .toList(growable: false);
   }
 
-  Future<List<Message>> messages(UserProfile profile, String conversationId) async {
+  Future<List<Message>> messages(
+    UserProfile profile,
+    String conversationId,
+  ) async {
     final response = await _api.dio.get<List<dynamic>>(
       '/${_audience(profile)}/conversations/$conversationId/messages',
     );
@@ -41,14 +46,19 @@ class MessagingRepository {
   }) async {
     final uploads = <MultipartFile>[];
     for (final file in files) {
-      uploads.add(MultipartFile.fromBytes(await file.readAsBytes(), filename: file.name));
+      uploads.add(
+        MultipartFile.fromBytes(await file.readAsBytes(), filename: file.name),
+      );
     }
     final fields = <String, dynamic>{
       'body': body,
-      'idempotency_key': '${DateTime.now().microsecondsSinceEpoch}-${profile.id}',
+      'idempotency_key':
+          '${DateTime.now().microsecondsSinceEpoch}-${profile.id}',
       'files': uploads,
     };
-    if (replyToMessageId != null) fields['reply_to_message_id'] = replyToMessageId;
+    if (replyToMessageId != null) {
+      fields['reply_to_message_id'] = replyToMessageId;
+    }
     final form = FormData.fromMap(fields);
     final response = await _api.dio.post<Map<String, dynamic>>(
       '/${_audience(profile)}/conversations/$conversationId/messages',
@@ -57,28 +67,30 @@ class MessagingRepository {
     return Message.fromJson(response.data!);
   }
 
-  Future<void> markRead(UserProfile profile, String conversationId) => _api.dio.post<void>(
+  Future<void> markRead(UserProfile profile, String conversationId) => _api.dio
+      .post<void>('/${_audience(profile)}/conversations/$conversationId/read');
+
+  Future<void> markUnread(UserProfile profile, String conversationId) =>
+      _api.dio.delete<void>(
         '/${_audience(profile)}/conversations/$conversationId/read',
       );
 
-  Future<void> markUnread(UserProfile profile, String conversationId) => _api.dio.delete<void>(
-        '/${_audience(profile)}/conversations/$conversationId/read',
-      );
-
-  Future<void> changeState(String conversationId, String state) => _api.dio.patch<void>(
+  Future<void> changeState(String conversationId, String state) =>
+      _api.dio.patch<void>(
         '/staff/conversations/$conversationId',
         data: {'state': state},
       );
 
-  Future<void> softDelete(UserProfile profile, String messageId) => _api.dio.delete<void>(
+  Future<void> softDelete(UserProfile profile, String messageId) =>
+      _api.dio.delete<void>(
         '/${_audience(profile)}/messages/$messageId',
         data: {'reason': ''},
       );
 
   Future<void> softDeleteInternal(String messageId) => _api.dio.delete<void>(
-        '/staff/internal/messages/$messageId',
-        data: {'reason': ''},
-      );
+    '/staff/internal/messages/$messageId',
+    data: {'reason': ''},
+  );
 
   Future<Uint8List> download(UserProfile profile, Attachment attachment) {
     final path = profile.type == UserType.client
@@ -88,25 +100,35 @@ class MessagingRepository {
   }
 
   Future<List<InternalThread>> internalThreads() async {
-    final response = await _api.dio.get<List<dynamic>>('/staff/internal/threads');
+    final response = await _api.dio.get<List<dynamic>>(
+      '/staff/internal/threads',
+    );
     return response.data!
         .map((item) => InternalThread.fromJson(item as Map<String, dynamic>))
         .toList(growable: false);
   }
 
   Future<List<Message>> internalMessages(String threadId) async {
-    final response = await _api.dio.get<List<dynamic>>('/staff/internal/threads/$threadId/messages');
+    final response = await _api.dio.get<List<dynamic>>(
+      '/staff/internal/threads/$threadId/messages',
+    );
     return response.data!
         .map((item) => Message.fromJson(item as Map<String, dynamic>))
         .toList(growable: false);
   }
 
-  Future<Message> sendInternal(String threadId, String body, {String? replyToMessageId}) async {
+  Future<Message> sendInternal(
+    String threadId,
+    String body, {
+    String? replyToMessageId,
+  }) async {
     final fields = <String, dynamic>{
       'body': body,
       'idempotency_key': DateTime.now().microsecondsSinceEpoch.toString(),
     };
-    if (replyToMessageId != null) fields['reply_to_message_id'] = replyToMessageId;
+    if (replyToMessageId != null) {
+      fields['reply_to_message_id'] = replyToMessageId;
+    }
     final response = await _api.dio.post<Map<String, dynamic>>(
       '/staff/internal/threads/$threadId/messages',
       data: FormData.fromMap(fields),
@@ -117,7 +139,7 @@ class MessagingRepository {
   /// Vista unificada del cliente: metadatos de todas las conversaciones.
   Future<Map<String, dynamic>> unifiedConversation() async {
     final response = await _api.dio.get<Map<String, dynamic>>(
-      '/api/v1/messaging/client/unified-conversation',
+      '/client/unified-conversation',
     );
     return response.data!;
   }
@@ -125,7 +147,7 @@ class MessagingRepository {
   /// Todos los mensajes del cliente (cross-canal) en orden cronologico.
   Future<List<Message>> unifiedMessages({int limit = 100}) async {
     final response = await _api.dio.get<List<dynamic>>(
-      '/api/v1/messaging/client/unified-messages',
+      '/client/unified-messages',
       queryParameters: {'limit': limit},
     );
     return response.data!
@@ -141,17 +163,21 @@ class MessagingRepository {
   }) async {
     final uploads = <MultipartFile>[];
     for (final file in files) {
-      uploads.add(MultipartFile.fromBytes(await file.readAsBytes(), filename: file.name));
+      uploads.add(
+        MultipartFile.fromBytes(await file.readAsBytes(), filename: file.name),
+      );
     }
     final fields = <String, dynamic>{
       'body': body,
       'idempotency_key': '${DateTime.now().microsecondsSinceEpoch}',
       'files': uploads,
     };
-    if (replyToMessageId != null) fields['reply_to_message_id'] = replyToMessageId;
+    if (replyToMessageId != null) {
+      fields['reply_to_message_id'] = replyToMessageId;
+    }
     final form = FormData.fromMap(fields);
     final response = await _api.dio.post<Map<String, dynamic>>(
-      '/api/v1/messaging/client/unified-messages',
+      '/client/unified-messages',
       data: form,
     );
     return Message.fromJson(response.data!);
@@ -163,7 +189,7 @@ class MessagingRepository {
     final channelIds = meta['channel_ids'] as Map<String, dynamic>? ?? {};
     for (final id in channelIds.values) {
       try {
-        await _api.dio.post<void>('/api/v1/messaging/client/conversations/$id/read');
+        await _api.dio.post<void>('/client/conversations/$id/read');
       } catch (_) {}
     }
   }

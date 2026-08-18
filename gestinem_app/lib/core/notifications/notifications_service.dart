@@ -11,16 +11,33 @@ import '../../features/auth/domain/user_profile.dart';
 final notificationsServiceProvider =
     Provider<NotificationsService>((ref) => NotificationsService());
 
+class NotificationEvent {
+  const NotificationEvent({
+    required this.conversationId,
+    required this.opened,
+    this.threadId,
+  });
+
+  final String conversationId;
+  final String? threadId;
+  final bool opened;
+}
+
 class NotificationsService {
   String? _owner;
   String? _deviceId;
   StreamSubscription<String>? _tokenRefresh;
+  final _events = StreamController<NotificationEvent>.broadcast();
+  bool _messageListenersConfigured = false;
+
+  Stream<NotificationEvent> get events => _events.stream;
 
   Future<void> initialize(AuthSession session, ApiClient api) async {
     if (!_supported || _owner == _ownerFor(session)) return;
     try {
       if (Firebase.apps.isEmpty) await Firebase.initializeApp();
       final messaging = FirebaseMessaging.instance;
+      await _configureMessageListeners(messaging);
       await messaging.requestPermission();
       final token = await messaging.getToken();
       if (token == null) return;
@@ -34,6 +51,32 @@ class NotificationsService {
       // Firebase es opcional en desarrollo y no debe impedir usar REST/WebSocket.
       debugPrint('No se pudieron activar las notificaciones: $error\n$stackTrace');
     }
+  }
+
+  Future<void> _configureMessageListeners(FirebaseMessaging messaging) async {
+    if (_messageListenersConfigured) return;
+    _messageListenersConfigured = true;
+    FirebaseMessaging.onMessage.listen(
+      (message) => _emit(message, opened: false),
+    );
+    FirebaseMessaging.onMessageOpenedApp.listen(
+      (message) => _emit(message, opened: true),
+    );
+    final initial = await messaging.getInitialMessage();
+    if (initial != null) _emit(initial, opened: true);
+  }
+
+  void _emit(RemoteMessage message, {required bool opened}) {
+    final conversationId = message.data['conversation_id']?.toString() ?? '';
+    final threadId = message.data['thread_id']?.toString();
+    if (conversationId.isEmpty && (threadId == null || threadId.isEmpty)) {
+      return;
+    }
+    _events.add(NotificationEvent(
+      conversationId: conversationId,
+      threadId: threadId,
+      opened: opened,
+    ));
   }
 
   Future<void> unregister(AuthSession session, ApiClient api) async {

@@ -6,10 +6,12 @@ import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/config/app_config.dart';
+import '../../../core/deep_links/external_auth_handoff.dart';
 import '../domain/user_profile.dart';
 
 class AuthRepository {
-  AuthRepository(this._dio, {AppLinks? appLinks}) : _appLinks = appLinks ?? AppLinks();
+  AuthRepository(this._dio, {AppLinks? appLinks})
+    : _appLinks = appLinks ?? AppLinks();
 
   final Dio _dio;
   final AppLinks _appLinks;
@@ -22,7 +24,10 @@ class AuthRepository {
     final data = response.data!;
     return AuthSession(
       token: data['token'] as String,
-      profile: UserProfile.fromJson(data['client'] as Map<String, dynamic>, UserType.client),
+      profile: UserProfile.fromJson(
+        data['client'] as Map<String, dynamic>,
+        UserType.client,
+      ),
     );
   }
 
@@ -43,13 +48,15 @@ class AuthRepository {
 
   Future<AuthSession> loginStaff() async {
     if (kIsWeb) {
-      const configuredRedirect = String.fromEnvironment('APP_AUTH_REDIRECT_URI');
+      const configuredRedirect = String.fromEnvironment(
+        'APP_AUTH_REDIRECT_URI',
+      );
       final redirect = configuredRedirect.isNotEmpty
           ? configuredRedirect
           : Uri.base.replace(path: '/auth/callback', query: '').toString();
-      final loginUrl = Uri.parse('${appConfig.apiBaseUrl}/staff-auth/login').replace(
-        queryParameters: {'app': 'true', 'web_redirect': redirect},
-      );
+      final loginUrl = Uri.parse(
+        '${appConfig.apiBaseUrl}/staff-auth/login',
+      ).replace(queryParameters: {'app': 'true', 'web_redirect': redirect});
       if (!await launchUrl(loginUrl, webOnlyWindowName: '_self')) {
         throw StateError('No se pudo abrir el acceso de Microsoft.');
       }
@@ -58,13 +65,18 @@ class AuthRepository {
     final callback = _appLinks.uriLinkStream.firstWhere(
       (uri) => uri.scheme == 'es.gestinem.app' && uri.host == 'auth',
     );
-    final loginUrl = Uri.parse('${appConfig.apiBaseUrl}/staff-auth/login?app=true');
+    final loginUrl = Uri.parse(
+      '${appConfig.apiBaseUrl}/staff-auth/login?app=true',
+    );
     if (!await launchUrl(loginUrl, mode: LaunchMode.externalApplication)) {
       throw StateError('No se pudo abrir el acceso de Microsoft.');
     }
+    await finishExternalAuthHandoff();
     final uri = await callback.timeout(const Duration(minutes: 5));
     final code = uri.queryParameters['code'];
-    if (code == null || code.isEmpty) throw StateError('Microsoft no devolvio un codigo de acceso.');
+    if (code == null || code.isEmpty) {
+      throw StateError('Microsoft no devolvió un código de acceso.');
+    }
     return exchangeStaffCode(code);
   }
 
@@ -76,13 +88,17 @@ class AuthRepository {
     final data = response.data!;
     return AuthSession(
       token: data['token'] as String,
-      profile: UserProfile.fromJson(data['staff'] as Map<String, dynamic>, UserType.staff),
+      profile: UserProfile.fromJson(
+        data['staff'] as Map<String, dynamic>,
+        UserType.staff,
+      ),
     );
   }
 
   Future<AuthSession?> exchangeInitialCode() async {
     final initial = await _appLinks.getInitialLink();
-    final code = initial?.queryParameters['code'] ?? Uri.base.queryParameters['code'];
+    final code =
+        initial?.queryParameters['code'] ?? Uri.base.queryParameters['code'];
     if (code == null || code.isEmpty) return null;
     return exchangeStaffCode(code);
   }
@@ -90,7 +106,7 @@ class AuthRepository {
   Future<UserProfile> currentProfile(AuthSession session) async {
     if (session.profile.type == UserType.client) {
       final response = await _dio.get<List<dynamic>>('/client/conversations');
-      if (response.statusCode != 200) throw StateError('Sesion no valida');
+      if (response.statusCode != 200) throw StateError('Sesión no válida');
       return session.profile;
     }
     final response = await _dio.get<Map<String, dynamic>>('/staff/me');

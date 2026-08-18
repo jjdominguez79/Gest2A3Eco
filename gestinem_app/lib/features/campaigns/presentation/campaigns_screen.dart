@@ -66,7 +66,7 @@ class CampaignsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final campaigns = ref.watch(campaignsProvider);
     return Scaffold(
-      appBar: AppBar(leading: IconButton(onPressed: () => context.go('/'), icon: const Icon(Icons.arrow_back)), title: const Text('Campanas'), actions: [IconButton(onPressed: () => _create(context, ref), icon: const Icon(Icons.add))]),
+      appBar: AppBar(leading: IconButton(onPressed: () => context.go('/'), icon: const Icon(Icons.arrow_back)), title: const Text('Campañas'), actions: [IconButton(onPressed: () => _create(context, ref), icon: const Icon(Icons.add))]),
       body: campaigns.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, _) => Center(child: Text('No se pudieron cargar las campanas: $error')),

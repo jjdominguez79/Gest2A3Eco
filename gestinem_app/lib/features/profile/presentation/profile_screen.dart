@@ -37,10 +37,16 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 
   Future<void> _pickAndUploadAvatar() async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.image,
-      allowedExtensions: ['jpg', 'jpeg', 'png', 'webp'],
-    );
+    late final List<PlatformFile> result;
+    try {
+      result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['jpg', 'jpeg', 'png', 'webp'],
+      );
+    } catch (error) {
+      if (mounted) setState(() => _error = 'No se pudo abrir el selector de imagen.');
+      return;
+    }
     if (result.isEmpty) return;
     setState(() {
       _uploadingAvatar = true;
@@ -69,6 +75,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     if (alias.isEmpty) return;
     try {
       await ref.read(profileRepositoryProvider).updateChatAlias(alias);
+      await ref.read(sessionProvider.notifier).restore();
       setState(() => _editingAlias = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -89,7 +96,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     if (avatarUrl.isNotEmpty) {
       return CircleAvatar(
         radius: 48,
-        backgroundImage: NetworkImage('$baseUrl$avatarUrl'),
+        backgroundImage: NetworkImage(
+          '$baseUrl$avatarUrl',
+          headers: {
+            'Authorization':
+                'Bearer ${ref.read(sessionProvider).valueOrNull?.token ?? ''}',
+          },
+        ),
       );
     }
     final initials = profile.name.isEmpty
@@ -219,7 +232,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               FilledButton.tonalIcon(
                 onPressed: () => ref.read(sessionProvider.notifier).logout(),
                 icon: const Icon(Icons.logout),
-                label: const Text('Cerrar sesion'),
+                label: const Text('Cerrar sesión'),
               ),
             ],
           ),
