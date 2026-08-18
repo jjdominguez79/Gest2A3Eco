@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/websocket/realtime_service.dart';
 import '../../../core/notifications/notifications_service.dart';
+import '../../../core/storage/hidden_conversations_storage.dart';
 import '../../auth/domain/user_profile.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../domain/conversation.dart';
@@ -13,6 +14,7 @@ import 'conversation_screen.dart';
 import 'messaging_providers.dart';
 
 final realtimeServiceProvider = Provider<RealtimeService>((ref) => RealtimeService());
+final hiddenConversationsStorageProvider = Provider<HiddenConversationsStorage>((ref) => HiddenConversationsStorage());
 class ConversationsScreen extends ConsumerStatefulWidget {
   const ConversationsScreen({super.key});
 
@@ -26,11 +28,38 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
   StreamSubscription<Map<String, dynamic>>? _events;
   String _channel = 'todos';
   String? _selected;
+  Map<String, DateTime> _hiddenGroups = {};
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _connectRealtime());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _connectRealtime();
+      unawaited(_loadHiddenGroups());
+    });
+  }
+
+  Future<void> _loadHiddenGroups() async {
+    final profile = ref.read(sessionProvider).valueOrNull?.profile;
+    if (profile == null || profile.type != UserType.staff) return;
+    final hidden = await ref.read(hiddenConversationsStorageProvider).read(profile.id);
+    if (mounted) setState(() => _hiddenGroups = hidden);
+  }
+
+  bool _isHidden(ClientGroup group) {
+    final hiddenAt = _hiddenGroups[group.companyCode];
+    if (hiddenAt == null) return false;
+    final updatedAt = group.updatedAt;
+    return updatedAt == null || !updatedAt.toUtc().isAfter(hiddenAt);
+  }
+
+  Future<void> _hideGroup(ClientGroup group) async {
+    final profile = ref.read(sessionProvider).valueOrNull!.profile;
+    final updatedAt = group.updatedAt ?? DateTime.now();
+    await ref.read(hiddenConversationsStorageProvider).hide(profile.id, group.companyCode, updatedAt);
+    if (mounted) {
+      setState(() => _hiddenGroups = {..._hiddenGroups, group.companyCode: updatedAt.toUtc()});
+    }
   }
 
   void _connectRealtime() {
@@ -101,16 +130,16 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
     );
   }
 
-  Future<bool?> _confirmDelete(BuildContext context) => showDialog<bool>(
+  Future<bool?> _confirmHide(BuildContext context) => showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('Eliminar conversaciones'),
-          content: const Text('Esta accion no se puede deshacer. Solo borra el historial local.'),
+          title: const Text('Ocultar conversaciones'),
+          content: const Text('Se ocultaran solo en este dispositivo. Volveran a aparecer cuando llegue un mensaje nuevo.'),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
             FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Eliminar'),
+              child: const Text('Ocultar'),
             ),
           ],
         ),
@@ -210,7 +239,9 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
                           return channelMatches && searchMatches;
                         }).toList();
 
-                        final groups = groupConversationsByClient(filtered);
+                        final groups = groupConversationsByClient(filtered)
+                            .where((group) => !_isHidden(group))
+                            .toList();
                         if (groups.isEmpty) {
                           return const Center(child: Text('No hay conversaciones'));
                         }
@@ -227,17 +258,21 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
                                 confirmDismiss: (direction) async {
                                   if (direction == DismissDirection.startToEnd) {
                                     if (!profile.isAdmin) return false;
-                                    return await _confirmDelete(context);
+                                    final confirmed = await _confirmHide(context);
+                                    if (confirmed == true) {
+                                      await _hideGroup(group);
+                                    }
+                                    return false;
                                   } else {
                                     await _toggleRead(group);
                                     return false;
                                   }
                                 },
                                 background: Container(
-                                  color: Colors.red,
+                                  color: Colors.orange,
                                   alignment: Alignment.centerLeft,
                                   padding: const EdgeInsets.symmetric(horizontal: 20),
-                                  child: const Icon(Icons.delete_outline, color: Colors.white),
+                                  child: const Icon(Icons.visibility_off_outlined, color: Colors.white),
                                 ),
                                 secondaryBackground: Container(
                                   color: Colors.blue,
