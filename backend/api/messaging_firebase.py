@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -11,15 +12,31 @@ _APP = None
 
 
 def configured() -> bool:
-    path = get_settings().messaging_firebase_credentials.strip()
-    return bool(path and Path(path).is_file())
+    return _credential_source() is not None
+
+
+def _credential_source() -> str | dict | None:
+    settings = get_settings()
+    path = settings.messaging_firebase_credentials.strip()
+    if path and Path(path).is_file():
+        return path
+    raw = settings.messaging_firebase_credentials_json.strip()
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    required = {"type", "project_id", "private_key", "client_email"}
+    return value if isinstance(value, dict) and required <= value.keys() else None
 
 
 def _app():
     global _APP
     if _APP is not None:
         return _APP
-    if not configured():
+    source = _credential_source()
+    if source is None:
         return None
     import firebase_admin
     from firebase_admin import credentials
@@ -28,7 +45,7 @@ def _app():
         _APP = firebase_admin.get_app("gestinem-messaging")
     except ValueError:
         _APP = firebase_admin.initialize_app(
-            credentials.Certificate(get_settings().messaging_firebase_credentials),
+            credentials.Certificate(source),
             name="gestinem-messaging",
         )
     return _APP

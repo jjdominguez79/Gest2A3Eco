@@ -43,6 +43,7 @@ class Settings:
     messaging_smtp_from: str
     messaging_smtp_use_tls: bool
     messaging_firebase_credentials: str
+    messaging_firebase_credentials_json: str
     messaging_app_redirect_uri: str
     messaging_app_web_redirect_uri: str
     messaging_cors_origins: str
@@ -111,6 +112,9 @@ def get_settings() -> Settings:
         messaging_smtp_from=os.getenv("MESSAGING_SMTP_FROM", ""),
         messaging_smtp_use_tls=os.getenv("MESSAGING_SMTP_USE_TLS", "true").strip().lower() in {"1", "true", "yes", "si"},
         messaging_firebase_credentials=os.getenv("MESSAGING_FIREBASE_CREDENTIALS", ""),
+        messaging_firebase_credentials_json=os.getenv(
+            "MESSAGING_FIREBASE_CREDENTIALS_JSON", "",
+        ),
         messaging_app_redirect_uri=os.getenv(
             "MESSAGING_APP_REDIRECT_URI", "es.gestinem.app://auth/callback",
         ),

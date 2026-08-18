@@ -224,10 +224,10 @@ def test_cuenta_cliente_prueba_genera_enlace_sin_enviar_email(tmp_path, monkeypa
     )
     assert invitation.status_code == 200
     assert invitation.json()["email_queued"] is False
-    assert invitation.json()["url"].startswith("https://mensajes.example.test/mensajes?invite=")
+    assert invitation.json()["url"].startswith("es.gestinem.app://auth/invite?token=")
     assert sent == []
 
-    token = invitation.json()["url"].split("invite=", 1)[1]
+    token = invitation.json()["url"].split("token=", 1)[1]
     assert client.post(
         "/api/v1/messaging/auth/accept-invite",
         json={"token": token, "password": "prueba-segura-1234"},
@@ -306,7 +306,7 @@ def test_empresa_pruebas_solo_es_visible_para_su_titular(tmp_path, monkeypatch):
             "email": "prueba-privada@gestinem.es", "send_email": False,
         },
     )
-    token = invitation.json()["url"].split("invite=", 1)[1]
+    token = invitation.json()["url"].split("token=", 1)[1]
     accepted = client.post(
         "/api/v1/messaging/auth/accept-invite",
         json={"token": token, "password": "prueba-segura-1234"},
@@ -395,7 +395,7 @@ def test_mensaje_sin_adjunto_no_inicializa_almacenamiento(tmp_path, monkeypatch)
             "email": "prueba@gestinem.es", "send_email": False,
         },
     ).json()
-    token = invitation["url"].split("invite=", 1)[1]
+    token = invitation["url"].split("token=", 1)[1]
     accepted = client.post(
         "/api/v1/messaging/auth/accept-invite",
         json={"token": token, "password": "prueba-segura-1234"},
@@ -537,7 +537,7 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
         "/api/v1/messaging/internal/invitations", headers=internal,
         json={"company_code": "E00001", "name": "Ana", "email": "ana@example.test"},
     ).json()
-    token = invited["url"].split("invite=", 1)[1]
+    token = invited["url"].split("token=", 1)[1]
     accepted = client.post(
         "/api/v1/messaging/auth/accept-invite",
         json={"token": token, "password": "segura-12345"},
@@ -687,7 +687,7 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
         json={"email": "ana@example.test"},
     )
     assert forgotten.status_code == 202 and reset_urls
-    reset_token = reset_urls[0].split("reset=", 1)[1]
+    reset_token = reset_urls[0].split("token=", 1)[1]
     changed = client.post(
         "/api/v1/messaging/auth/reset-password",
         json={"token": reset_token, "password": "nueva-segura-6789"},

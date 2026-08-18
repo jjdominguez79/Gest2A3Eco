@@ -84,7 +84,7 @@ def _setup(tmp_path: Path, monkeypatch):
             "email": "maria@example.test", "send_email": False,
         },
     ).json()
-    invite_token = invitation["url"].split("invite=", 1)[1]
+    invite_token = invitation["url"].split("token=", 1)[1]
     accepted = client.post(
         "/api/v1/messaging/auth/accept-invite",
         json={"token": invite_token, "password": "contrasena-muy-segura"},

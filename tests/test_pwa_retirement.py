@@ -177,19 +177,14 @@ def test_get_settings_no_lee_vapid_env(monkeypatch):
 
 # ── URLs de mensajeria no generadas ──────────────────────────────────────────
 
-def test_invitacion_no_envia_email_y_documenta_bloqueo():
-    """La creacion de invitaciones no debe enviar email hasta tener deep link Flutter."""
+def test_invitacion_usa_deep_link_flutter_y_no_pwa():
+    """La invitacion se entrega a Flutter sin restaurar rutas de la PWA."""
     import inspect
     from backend.api import messaging_api
     source = inspect.getsource(messaging_api.create_invitation)
-    # La invitacion ya no llama a send_invitation en background
-    assert "background.add_task(send_invitation" not in source
-    # Debe documentar el bloqueo con una nota
-    assert "invitation_note" in source or "email_queued" in source
-    # No debe construir URL de la antigua PWA para el email (la URL de respuesta
-    # del admin esta permitida como referencia transitoria documentada)
-    # La clave es que no se envie el email
-    assert "email_queued: False" in source or '"email_queued": False' in source or "email_queued=False" in source or "False" in source
+    assert "background.add_task(send_invitation" in source
+    assert '_app_deep_link("invite", token)' in source
+    assert "/mensajes?invite=" not in source
 
 
 def test_staff_auth_callback_web_no_redirige_a_equipo_mensajes():

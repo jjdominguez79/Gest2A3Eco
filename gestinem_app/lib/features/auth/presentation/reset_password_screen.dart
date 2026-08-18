@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
+import '../../../core/deep_links/deep_link_controller.dart';
 import 'auth_controller.dart';
 
 class ResetPasswordScreen extends ConsumerStatefulWidget {
@@ -38,7 +39,7 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
     try {
       final api = ref.read(apiClientProvider);
       await api.dio.post<void>(
-        '/api/v1/messaging/auth/reset-password',
+        '/auth/reset-password',
         data: {
           'token': widget.token,
           'password': _password.text,
@@ -62,7 +63,10 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
           child: Padding(
             padding: const EdgeInsets.all(24),
             child: _done
-                ? _DoneCard(onGoToLogin: () => context.go('/login'))
+                ? _DoneCard(onGoToLogin: () {
+                    ref.read(deepLinkProvider.notifier).clear();
+                    context.go('/login');
+                  })
                 : _FormCard(
                     formKey: _formKey,
                     password: _password,

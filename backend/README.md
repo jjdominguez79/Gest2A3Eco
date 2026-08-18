@@ -39,7 +39,7 @@ aditivas posteriores.
   por el flujo DGT.
 - **Mensajeria:** invitaciones, autenticacion de clientes, acceso Microsoft 365
   del personal, chats con adjuntos, respuestas, borrado auditado, grupos,
-  campanas, Web Push, FCM y eventos en tiempo real.
+  campanas, FCM y eventos en tiempo real.
 - **Cliente movil:** aplicacion Flutter funcional para clientes y empleados,
   con codigos de acceso, registro/presencia de dispositivos y WebSocket.
 - **Worker de adjuntos:** endpoints tecnicos para reclamar, descargar, verificar
@@ -95,9 +95,10 @@ revocable y tambien lo guarda en Credential Manager.
 - `MESSAGING_GRAPH_*`: credenciales Graph y buzones de envio.
 - `MESSAGING_STAFF_*`: acceso Microsoft 365 de empleados, dominio permitido y
   administradores iniciales.
-- `MESSAGING_VAPID_*`: credenciales Web Push.
 - `MESSAGING_FIREBASE_CREDENTIALS`: ruta privada al JSON de cuenta de servicio
   usado por Firebase Admin para FCM.
+- `MESSAGING_FIREBASE_CREDENTIALS_JSON`: JSON completo de la misma cuenta de
+  servicio como variable secreta, util para Railway cuando no se monta un fichero.
 - `MESSAGING_APP_REDIRECT_URI`: deep link del cliente movil; por defecto
   `es.gestinem.app://auth/callback`.
 - `MESSAGING_SYNC_TOKEN`: secreto exclusivo del worker Synology.
@@ -108,7 +109,7 @@ de aplicacion es necesario para invitaciones, recuperaciones y avisos.
 
 ## Almacenamiento de adjuntos
 
-Los adjuntos enviados desde la PWA permanecen temporalmente en Azure Blob. El
+Los adjuntos enviados desde Flutter permanecen temporalmente en Azure Blob. El
 worker Synology los reclama, verifica su SHA-256, copia el contenido al
 repositorio documental compartido y confirma la entrega. Solo entonces el
 backend elimina la copia temporal.

@@ -638,21 +638,25 @@ def create_invitation(payload: InviteIn, background: BackgroundTasks, db: Sessio
         client_id=client.id, token_hash=hash_token(token), expires_at=invitation_expiry(),
     )
     db.add(invitation); db.commit()
-    # TODO(flutter-invites): sustituir por un deep link de Flutter cuando este implementado.
-    # Mientras tanto el envio de email de invitacion esta deshabilitado; el administrador
-    # debe compartir manualmente el token o la URL que devuelve este endpoint.
-    url = f"{get_settings().messaging_public_base_url}/mensajes?invite={token}"
+    url = _app_deep_link("invite", token)
+    email_queued = payload.send_email and mail_configured()
+    if email_queued:
+        background.add_task(send_invitation, client.email, client.name, url)
     return {
         "invitation_id": invitation.id,
         "url": url,
-        "email_queued": False,
-        "invitation_note": (
-            "El envio de email de invitacion esta temporalmente deshabilitado. "
-            "La mensajeria web ha sido retirada y el deep link Flutter para aceptar "
-            "invitaciones todavia no esta implementado."
-        ),
+        "email_queued": email_queued,
         "expires_at": invitation.expires_at.isoformat(),
     }
+
+
+def _app_deep_link(action: str, token: str) -> str:
+    configured = get_settings().messaging_app_redirect_uri.strip()
+    parsed = urlparse(configured)
+    if not parsed.scheme or not parsed.netloc:
+        raise RuntimeError("MESSAGING_APP_REDIRECT_URI no es una URI valida")
+    query = urlencode({"token": token})
+    return f"{parsed.scheme}://{parsed.netloc}/{action}?{query}"
 
 
 def _staff_msal_app():
@@ -1406,12 +1410,7 @@ def forgot_password(
         ))
         db.commit()
         if mail_configured():
-            # Deep link Flutter: la PWA /mensajes ha sido retirada.
-            # El cliente Flutter intercepta gestinem://auth/reset?reset=<token>.
-            reset_url = (
-                get_settings().messaging_app_redirect_uri.split("://auth/")[0]
-                + "://auth/reset?reset=" + token
-            )
+            reset_url = _app_deep_link("reset", token)
             background.add_task(send_password_reset, client.email, client.name, reset_url)
     else:
         db.commit()  # persist rate limit counts

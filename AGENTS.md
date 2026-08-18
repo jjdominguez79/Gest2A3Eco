@@ -87,8 +87,8 @@ repository. Temporary cloud storage is not the definitive archive.
 - Web Push/VAPID (`pywebpush`, `MESSAGING_VAPID_*`) eliminados. Notificaciones
   via Firebase Cloud Messaging (FCM) unicamente.
 - La aplicacion de escritorio ya no abre ninguna URL de mensajeria web.
-- Invitaciones y recuperacion de contrasena por email deshabilitadas temporalmente:
-  ver TODO(flutter-invites) y TODO(flutter-reset) en `messaging_api.py`.
+- Invitaciones y recuperacion de contrasena usan deep links del cliente Flutter
+  bajo `es.gestinem.app://auth/...`.
 - La migracion `004_remove_web_push.sql` elimina `msg_push_subscriptions` y
   `msg_client_push_subscriptions`. Aplicar en produccion despues de este despliegue.
 

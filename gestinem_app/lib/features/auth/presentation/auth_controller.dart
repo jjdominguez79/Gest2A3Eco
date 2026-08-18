@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/storage/session_storage.dart';
+import '../../../core/notifications/notifications_service.dart';
+import '../../../core/deep_links/deep_link_controller.dart';
 import '../data/auth_repository.dart';
 import '../domain/user_profile.dart';
 
@@ -66,6 +68,17 @@ class SessionController extends StateNotifier<AsyncValue<AuthSession?>> {
     });
   }
 
+  Future<void> acceptInvite(String token, String password) async {
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
+      final session =
+          await ref.read(authRepositoryProvider).acceptInvite(token, password);
+      await ref.read(sessionStorageProvider).write(session);
+      ref.read(deepLinkProvider.notifier).clear();
+      return session;
+    });
+  }
+
   Future<void> loginStaff() async {
     state = const AsyncLoading();
     state = await AsyncValue.guard(() async {
@@ -77,8 +90,19 @@ class SessionController extends StateNotifier<AsyncValue<AuthSession?>> {
 
   Future<void> logout() async {
     final session = state.valueOrNull;
+    if (session != null) {
+      try {
+        await ref
+            .read(notificationsServiceProvider)
+            .unregister(session, ref.read(apiClientProvider));
+      } on DioException {
+        // El dispositivo se reasignara al siguiente login si la red no responde.
+      }
+    }
     try {
-      if (session != null) await ref.read(authRepositoryProvider).logout(session.profile.type);
+      if (session != null) {
+        await ref.read(authRepositoryProvider).logout(session.profile.type);
+      }
     } on DioException {
       // El cierre local debe funcionar aunque la red no este disponible.
     }
