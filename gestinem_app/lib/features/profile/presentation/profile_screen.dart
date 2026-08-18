@@ -232,7 +232,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               FilledButton.tonalIcon(
                 onPressed: () => ref.read(sessionProvider.notifier).logout(),
                 icon: const Icon(Icons.logout),
-                label: const Text('Cerrar sesion'),
+                label: const Text('Cerrar sesión'),
               ),
             ],
           ),

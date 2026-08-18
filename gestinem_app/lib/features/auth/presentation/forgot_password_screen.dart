@@ -50,7 +50,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Recuperar contrasena')),
+      appBar: AppBar(title: const Text('Recuperar contraseña')),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 440),
@@ -88,7 +88,7 @@ class _SentCard extends StatelessWidget {
                   style: Theme.of(context).textTheme.headlineSmall),
               const SizedBox(height: 8),
               const Text(
-                'Si existe una cuenta con ese correo, recibiras un enlace para restablecer tu contrasena.',
+                'Si existe una cuenta con ese correo, recibirás un enlace para restablecer tu contraseña.',
                 textAlign: TextAlign.center,
               ),
             ],
@@ -119,18 +119,18 @@ class _FormCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                'Has olvidado tu contrasena?',
+                '¿Olvidaste tu contraseña?',
                 style: Theme.of(context).textTheme.headlineSmall,
               ),
               const SizedBox(height: 8),
               const Text(
-                'Introduce tu correo electronico y te enviaremos un enlace para restablecer tu contrasena.',
+                'Introduce tu correo electrónico y te enviaremos un enlace para restablecer tu contraseña.',
               ),
               const SizedBox(height: 20),
               TextField(
                 controller: email,
                 keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(labelText: 'Correo electronico'),
+                decoration: const InputDecoration(labelText: 'Correo electrónico'),
               ),
               if (error != null) ...[
                 const SizedBox(height: 8),

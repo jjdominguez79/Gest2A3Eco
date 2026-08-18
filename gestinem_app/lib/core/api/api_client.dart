@@ -51,5 +51,5 @@ String apiErrorMessage(Object error) {
       return 'No se puede conectar con Gestinem.';
     }
   }
-  return 'No se ha podido completar la operacion.';
+  return 'No se ha podido completar la operación.';
 }

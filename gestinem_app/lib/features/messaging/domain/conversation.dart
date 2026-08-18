@@ -115,6 +115,7 @@ class InternalThread {
     required this.channel,
     required this.title,
     required this.unreadCount,
+    this.counterpartAvatarUrl = '',
   });
 
   factory InternalThread.fromJson(Map<String, dynamic> json) => InternalThread(
@@ -123,6 +124,7 @@ class InternalThread {
     channel: json['channel'] as String? ?? '',
     title: json['title'] as String? ?? 'Chat interno',
     unreadCount: json['unread_count'] as int? ?? 0,
+    counterpartAvatarUrl: json['counterpart_avatar_url'] as String? ?? '',
   );
 
   final String id;
@@ -130,4 +132,5 @@ class InternalThread {
   final String channel;
   final String title;
   final int unreadCount;
+  final String counterpartAvatarUrl;
 }

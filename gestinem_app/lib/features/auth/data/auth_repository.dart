@@ -75,7 +75,7 @@ class AuthRepository {
     final uri = await callback.timeout(const Duration(minutes: 5));
     final code = uri.queryParameters['code'];
     if (code == null || code.isEmpty) {
-      throw StateError('Microsoft no devolvio un codigo de acceso.');
+      throw StateError('Microsoft no devolvió un código de acceso.');
     }
     return exchangeStaffCode(code);
   }
@@ -106,7 +106,7 @@ class AuthRepository {
   Future<UserProfile> currentProfile(AuthSession session) async {
     if (session.profile.type == UserType.client) {
       final response = await _dio.get<List<dynamic>>('/client/conversations');
-      if (response.statusCode != 200) throw StateError('Sesion no valida');
+      if (response.statusCode != 200) throw StateError('Sesión no válida');
       return session.profile;
     }
     final response = await _dio.get<Map<String, dynamic>>('/staff/me');

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/widgets/authenticated_avatar.dart';
 import '../domain/message.dart';
 
 class MessageBubble extends StatelessWidget {
@@ -12,6 +13,7 @@ class MessageBubble extends StatelessWidget {
     this.showAuthor = true,
     this.onReplyTap,
     this.onAttachmentTap,
+    this.onTap,
     this.onLongPress,
   });
 
@@ -22,18 +24,18 @@ class MessageBubble extends StatelessWidget {
   final bool showAuthor;
   final VoidCallback? onReplyTap;
   final void Function(Attachment attachment)? onAttachmentTap;
+  final VoidCallback? onTap;
   final VoidCallback? onLongPress;
 
   Widget _avatar() {
     if (message.authorAvatarUrl.isNotEmpty) {
-      return CircleAvatar(
+      return AuthenticatedAvatar(
         radius: 16,
-        backgroundImage: NetworkImage(
-          '$baseUrl${message.authorAvatarUrl}',
-          headers: authToken.isEmpty
-              ? const {}
-              : {'Authorization': 'Bearer $authToken'},
-        ),
+        baseUrl: baseUrl,
+        authToken: authToken,
+        imagePath: message.authorAvatarUrl,
+        fallbackText: _initials(message.authorName),
+        cacheVersion: message.authorId,
       );
     }
     final initials = message.authorName.isEmpty
@@ -48,6 +50,11 @@ class MessageBubble extends StatelessWidget {
       child: Text(initials.toUpperCase(), style: const TextStyle(fontSize: 12)),
     );
   }
+
+  String _initials(String value) => value.isEmpty
+      ? '?'
+      : value.split(' ').where((word) => word.isNotEmpty).take(2)
+          .map((word) => word[0]).join().toUpperCase();
 
   String _timeLabel(DateTime dt) {
     final now = DateTime.now();
@@ -80,6 +87,7 @@ class MessageBubble extends StatelessWidget {
           if (!mine) ...[_avatar(), const SizedBox(width: 6)],
           Flexible(
             child: GestureDetector(
+              onTap: onTap,
               onLongPress: onLongPress,
               child: Container(
                 key: Key('message-${message.id}'),

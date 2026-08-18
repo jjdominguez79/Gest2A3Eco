@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/websocket/realtime_service.dart';
 import '../../../core/storage/hidden_conversations_storage.dart';
+import '../../../core/widgets/authenticated_avatar.dart';
 import '../../auth/domain/user_profile.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../domain/conversation.dart';
@@ -151,7 +152,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('Ocultar conversaciones'),
-          content: const Text('Se ocultaran solo en este dispositivo. Volveran a aparecer cuando llegue un mensaje nuevo.'),
+          content: const Text('Se ocultarán solo en este dispositivo. Volverán a aparecer cuando llegue un mensaje nuevo.'),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
             FilledButton(
@@ -218,7 +219,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
                     controller: _search,
                     decoration: const InputDecoration(
                       prefixIcon: Icon(Icons.search),
-                      hintText: 'Buscar por codigo o nombre',
+                      hintText: 'Buscar por código o nombre',
                     ),
                     onChanged: (_) => setState(() {}),
                   ),
@@ -324,7 +325,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
             const VerticalDivider(width: 1),
             Expanded(
               child: _selected == null
-                  ? const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.forum_outlined, size: 58), SizedBox(height: 12), Text('Selecciona una conversacion')]))
+                  ? const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.forum_outlined, size: 58), SizedBox(height: 12), Text('Selecciona una conversación')]))
                   : ConversationView(conversationId: _selected!),
             ),
           ],
@@ -349,7 +350,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
           children: [
             Text('Gestinem', style: TextStyle(fontWeight: FontWeight.w700)),
             Text(
-              'Asesoria fiscal, contable y laboral',
+              'Asesoría fiscal, contable y laboral',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
@@ -456,25 +457,15 @@ class _ClientChannelSelector extends StatelessWidget {
                       Badge(
                         isLabelVisible: conversation.unreadCount > 0,
                         label: Text('${conversation.unreadCount}'),
-                        child: CircleAvatar(
+                        child: AuthenticatedAvatar(
                           radius: 22,
-                          backgroundColor: conversation.id == selectedId
-                              ? colors.primary : colors.secondaryContainer,
-                          foregroundColor: conversation.id == selectedId
-                              ? colors.onPrimary : colors.onSecondaryContainer,
-                          backgroundImage: conversation.channelAvatarUrl.isEmpty
-                              ? null
-                              : NetworkImage(
-                                  '$baseUrl${conversation.channelAvatarUrl}'
-                                  '?v=${conversation.updatedAt.millisecondsSinceEpoch}',
-                                  headers: {'Authorization': 'Bearer $authToken'},
-                                ),
-                          child: conversation.channelAvatarUrl.isEmpty
-                              ? Text(
-                                  conversation.displayChannelLabel,
-                                  style: const TextStyle(fontWeight: FontWeight.w800),
-                                )
-                              : null,
+                          baseUrl: baseUrl,
+                          authToken: authToken,
+                          imagePath: conversation.channelAvatarUrl,
+                          fallbackText: conversation.displayChannelLabel,
+                          cacheVersion: conversation.updatedAt
+                              .millisecondsSinceEpoch
+                              .toString(),
                         ),
                       ),
                       const SizedBox(height: 6),
@@ -631,7 +622,7 @@ class _AppDrawer extends StatelessWidget {
           if (profile.type == UserType.staff)
             ListTile(leading: const Icon(Icons.groups_outlined), title: const Text('Chats internos y grupos'), onTap: () => context.go('/groups')),
           if (profile.isAdmin)
-            ListTile(leading: const Icon(Icons.campaign_outlined), title: const Text('Campanas'), onTap: () => context.go('/campaigns')),
+            ListTile(leading: const Icon(Icons.campaign_outlined), title: const Text('Campañas'), onTap: () => context.go('/campaigns')),
           if (profile.isAdmin)
             ListTile(leading: const Icon(Icons.badge_outlined), title: const Text('Empleados'), onTap: () => context.go('/employees')),
           ListTile(leading: const Icon(Icons.person_outline), title: const Text('Perfil'), onTap: () => context.go('/profile')),
@@ -648,19 +639,14 @@ class _ProfileAvatar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final avatarUrl = profile.avatarUrl;
-    return CircleAvatar(
+    return AuthenticatedAvatar(
       radius: radius,
-      backgroundImage: avatarUrl.isEmpty
-          ? null
-          : NetworkImage(
-              '${ref.read(apiClientProvider).dio.options.baseUrl.replaceAll(RegExp(r'/api/v1/messaging/?$'), '')}'
-              '$avatarUrl?v=${avatarUrl.hashCode}',
-              headers: {
-                'Authorization':
-                    'Bearer ${ref.read(sessionProvider).valueOrNull?.token ?? ''}',
-              },
-            ),
-      child: avatarUrl.isEmpty ? Text(_initials(profile.name)) : null,
+      baseUrl: ref.read(apiClientProvider).dio.options.baseUrl
+          .replaceAll(RegExp(r'/api/v1/messaging/?$'), ''),
+      authToken: ref.read(sessionProvider).valueOrNull?.token ?? '',
+      imagePath: avatarUrl,
+      fallbackText: _initials(profile.name),
+      cacheVersion: avatarUrl.hashCode.toString(),
     );
   }
 }

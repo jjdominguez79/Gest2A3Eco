@@ -52,11 +52,11 @@ class _AcceptInviteScreenState extends ConsumerState<AcceptInviteScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Text('Crea tu contrasena',
+                      Text('Crea tu contraseña',
                           style: Theme.of(context).textTheme.headlineSmall),
                       const SizedBox(height: 8),
                       const Text(
-                        'Esta contrasena protege el acceso a tu canal seguro con Gestinem.',
+                        'Esta contraseña protege el acceso a tu canal seguro con Gestinem.',
                       ),
                       const SizedBox(height: 20),
                       TextFormField(
@@ -64,7 +64,7 @@ class _AcceptInviteScreenState extends ConsumerState<AcceptInviteScreen> {
                         controller: _password,
                         obscureText: _obscure,
                         decoration: InputDecoration(
-                          labelText: 'Contrasena',
+                          labelText: 'Contraseña',
                           suffixIcon: IconButton(
                             onPressed: () => setState(() => _obscure = !_obscure),
                             icon: Icon(_obscure
@@ -82,9 +82,9 @@ class _AcceptInviteScreenState extends ConsumerState<AcceptInviteScreen> {
                         controller: _confirm,
                         obscureText: _obscure,
                         decoration:
-                            const InputDecoration(labelText: 'Repite la contrasena'),
+                            const InputDecoration(labelText: 'Repite la contraseña'),
                         validator: (value) => value != _password.text
-                            ? 'Las contrasenas no coinciden'
+                            ? 'Las contraseñas no coinciden'
                             : null,
                       ),
                       if (error != null) ...[

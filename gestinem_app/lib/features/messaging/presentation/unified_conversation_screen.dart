@@ -184,7 +184,7 @@ class _UnifiedConversationScreenState
                     Icon(Icons.forum_outlined, size: 48, color: Colors.grey),
                     SizedBox(height: 12),
                     Text(
-                      'No hay mensajes todavia.\nEscribe para iniciar la conversacion.',
+                      'No hay mensajes todavía.\nEscribe para iniciar la conversación.',
                       textAlign: TextAlign.center,
                     ),
                   ]),
@@ -213,6 +213,7 @@ class _UnifiedConversationScreenState
                           ? null
                           : () => _scrollToMessage(messages, message.replyTo!.id),
                       onAttachmentTap: _download,
+                      onTap: message.deleted ? null : () => _messageActions(message),
                       onLongPress:
                           message.deleted ? null : () => _messageActions(message),
                     ),

@@ -31,16 +31,16 @@ Uint8List normalizarAvatar(Uint8List original) {
     decodificada = image.decodeImage(original);
   } on RangeError {
     throw const AvatarImageException(
-      'El archivo seleccionado no es una imagen valida.',
+      'El archivo seleccionado no es una imagen válida.',
     );
   } on FormatException {
     throw const AvatarImageException(
-      'El archivo seleccionado no es una imagen valida.',
+      'El archivo seleccionado no es una imagen válida.',
     );
   }
   if (decodificada == null) {
     throw const AvatarImageException(
-      'El archivo seleccionado no es una imagen valida.',
+      'El archivo seleccionado no es una imagen válida.',
     );
   }
 
