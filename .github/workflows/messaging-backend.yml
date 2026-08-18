@@ -27,4 +27,4 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r backend/requirements.txt pytest
-      - run: pytest tests/test_messaging_api.py tests/test_messaging_push.py tests/test_messaging_mail.py tests/test_messaging_flutter_api.py -q
+      - run: pytest tests/test_messaging_api.py tests/test_messaging_firebase.py tests/test_messaging_mail.py tests/test_messaging_flutter_api.py -q
