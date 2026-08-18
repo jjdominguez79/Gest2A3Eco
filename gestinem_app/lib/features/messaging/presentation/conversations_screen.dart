@@ -5,7 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/websocket/realtime_service.dart';
-import '../../../core/notifications/notifications_service.dart';
 import '../../../core/storage/hidden_conversations_storage.dart';
 import '../../auth/domain/user_profile.dart';
 import '../../auth/presentation/auth_controller.dart';
@@ -22,7 +21,8 @@ class ConversationsScreen extends ConsumerStatefulWidget {
   ConsumerState<ConversationsScreen> createState() => _ConversationsScreenState();
 }
 
-class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
+class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
+    with WidgetsBindingObserver {
   final _search = TextEditingController();
   RealtimeService? _realtime;
   StreamSubscription<Map<String, dynamic>>? _events;
@@ -33,10 +33,25 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _connectRealtime();
       unawaited(_loadHiddenGroups());
     });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refreshMessaging();
+  }
+
+  void _refreshMessaging([String? conversationId]) {
+    ref.invalidate(conversationsProvider);
+    ref.invalidate(unifiedConversationProvider);
+    ref.invalidate(unifiedMessagesProvider);
+    if (conversationId != null && conversationId.isNotEmpty) {
+      ref.invalidate(messagesProvider(conversationId));
+    }
   }
 
   Future<void> _loadHiddenGroups() async {
@@ -71,14 +86,10 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
     final session = ref.read(sessionProvider).valueOrNull;
     if (session == null) return;
     _realtime = ref.read(realtimeServiceProvider);
-    unawaited(ref.read(notificationsServiceProvider).initialize(session, ref.read(apiClientProvider)));
     _events = _realtime!.events.listen((event) {
       if (!mounted || event['type'] == 'ping') return;
-      ref.invalidate(conversationsProvider);
-      ref.invalidate(unifiedConversationProvider);
-      ref.invalidate(unifiedMessagesProvider);
       final id = event['conversation_id'] as String?;
-      if (id != null) ref.invalidate(messagesProvider(id));
+      _refreshMessaging(id);
       final threadId = event['thread_id'] as String?;
       if (threadId != null) {
         ref.invalidate(internalThreadsProvider);
@@ -90,6 +101,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _search.dispose();
     _events?.cancel();
     _realtime?.close();
@@ -185,7 +197,12 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
         title: const Text('Gestinem'),
         actions: [
           IconButton(onPressed: () => ref.invalidate(conversationsProvider), icon: const Icon(Icons.refresh)),
-          IconButton(onPressed: () => context.go('/profile'), icon: const Icon(Icons.account_circle_outlined)),
+          IconButton(
+            key: const Key('staff-profile-button'),
+            tooltip: 'Mi perfil',
+            onPressed: () => context.go('/profile'),
+            icon: _ProfileAvatar(profile: profile, radius: 17),
+          ),
         ],
       ),
       drawer: _AppDrawer(profile: profile),
@@ -345,7 +362,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen> {
           key: const Key('client-profile-button'),
           tooltip: 'Mi perfil',
           onPressed: () => context.go('/profile'),
-          icon: CircleAvatar(radius: 17, child: Text(_initials(profile.name))),
+          icon: _ProfileAvatar(profile: profile, radius: 17),
         ),
         const SizedBox(width: 8),
       ],
@@ -448,7 +465,8 @@ class _ClientChannelSelector extends StatelessWidget {
                           backgroundImage: conversation.channelAvatarUrl.isEmpty
                               ? null
                               : NetworkImage(
-                                  '$baseUrl${conversation.channelAvatarUrl}',
+                                  '$baseUrl${conversation.channelAvatarUrl}'
+                                  '?v=${conversation.updatedAt.millisecondsSinceEpoch}',
                                   headers: {'Authorization': 'Bearer $authToken'},
                                 ),
                           child: conversation.channelAvatarUrl.isEmpty
@@ -607,7 +625,7 @@ class _AppDrawer extends StatelessWidget {
           UserAccountsDrawerHeader(
             accountName: Text(profile.name),
             accountEmail: Text(profile.email),
-            currentAccountPicture: CircleAvatar(child: Text(profile.name.isEmpty ? '?' : profile.name[0])),
+            currentAccountPicture: _ProfileAvatar(profile: profile, radius: 32),
           ),
           ListTile(leading: const Icon(Icons.forum_outlined), title: const Text('Conversaciones'), onTap: () => context.go('/')),
           if (profile.type == UserType.staff)
@@ -619,4 +637,30 @@ class _AppDrawer extends StatelessWidget {
           ListTile(leading: const Icon(Icons.person_outline), title: const Text('Perfil'), onTap: () => context.go('/profile')),
         ]),
       );
+}
+
+class _ProfileAvatar extends ConsumerWidget {
+  const _ProfileAvatar({required this.profile, required this.radius});
+
+  final UserProfile profile;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final avatarUrl = profile.avatarUrl;
+    return CircleAvatar(
+      radius: radius,
+      backgroundImage: avatarUrl.isEmpty
+          ? null
+          : NetworkImage(
+              '${ref.read(apiClientProvider).dio.options.baseUrl.replaceAll(RegExp(r'/api/v1/messaging/?$'), '')}'
+              '$avatarUrl?v=${avatarUrl.hashCode}',
+              headers: {
+                'Authorization':
+                    'Bearer ${ref.read(sessionProvider).valueOrNull?.token ?? ''}',
+              },
+            ),
+      child: avatarUrl.isEmpty ? Text(_initials(profile.name)) : null,
+    );
+  }
 }
