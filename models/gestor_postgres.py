@@ -760,24 +760,41 @@ class GestorPostgres(GestorBase):
         # Dobles de prueba/diagnostico antiguos pueden no exponer esta consulta.
         if row is None or "tabla" not in row:
             return
-        if row is not None and row.get("tabla"):
-            return
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS mensajeria_adjuntos_entrada (
-              id TEXT PRIMARY KEY,mensaje_remoto_id TEXT NOT NULL,
-              conversacion_remota_id TEXT NOT NULL,codigo_empresa TEXT NOT NULL,
-              empresa_nombre TEXT,nombre_original TEXT NOT NULL,ruta_entrada TEXT NOT NULL,
-              hash_archivo TEXT NOT NULL,tamano INTEGER,mime_type TEXT,remitente TEXT,
-              estado TEXT NOT NULL DEFAULT 'pendiente_clasificar',error_detalle TEXT,
-              documento_id TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL
+        if row is None or not row.get("tabla"):
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS mensajeria_adjuntos_entrada (
+                  id TEXT PRIMARY KEY,mensaje_remoto_id TEXT NOT NULL,
+                  conversacion_remota_id TEXT NOT NULL,codigo_empresa TEXT NOT NULL,
+                  empresa_nombre TEXT,nombre_original TEXT NOT NULL,ruta_entrada TEXT NOT NULL,
+                  hash_archivo TEXT NOT NULL,tamano INTEGER,mime_type TEXT,remitente TEXT,
+                  estado TEXT NOT NULL DEFAULT 'pendiente_clasificar',error_detalle TEXT,
+                  documento_id TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
+                  aviso_mostrado BOOLEAN NOT NULL DEFAULT FALSE,
+                  revisado BOOLEAN NOT NULL DEFAULT FALSE,
+                  revisado_por TEXT,revisado_en TEXT,clasificacion TEXT
+                )
+                """
             )
-            """
-        )
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_msg_adjuntos_entrada_estado "
-            "ON mensajeria_adjuntos_entrada(estado,codigo_empresa,created_at)"
-        )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_msg_adjuntos_entrada_estado "
+                "ON mensajeria_adjuntos_entrada(estado,codigo_empresa,created_at)"
+            )
+        else:
+            # Tabla ya existe: aniadir columnas de trazabilidad de revision si faltan
+            for col, definition in [
+                ("aviso_mostrado", "BOOLEAN NOT NULL DEFAULT FALSE"),
+                ("revisado", "BOOLEAN NOT NULL DEFAULT FALSE"),
+                ("revisado_por", "TEXT"),
+                ("revisado_en", "TEXT"),
+                ("clasificacion", "TEXT"),
+            ]:
+                try:
+                    self.conn.execute(
+                        f"ALTER TABLE mensajeria_adjuntos_entrada ADD COLUMN IF NOT EXISTS {col} {definition}"
+                    )
+                except Exception:
+                    pass
         self.conn.commit()
 
     def _asegurar_esquema_plantillas_firma(self) -> None:
@@ -981,3 +998,84 @@ class GestorPostgres(GestorBase):
                             "RENAME TO cuotas_periodicas_generadas"
                         )
         self.conn.commit()
+
+    # ── Bandeja global de adjuntos de mensajeria ─────────────────────────────
+
+    def listar_adjuntos_mensajeria(self, filtro: dict | None = None) -> list[dict]:
+        """Devuelve adjuntos de mensajeria ordenados por fecha descendente."""
+        sql = (
+            "SELECT id,codigo_empresa,empresa_nombre,remitente,"
+            "nombre_original,estado,ruta_entrada,tamano,mime_type,"
+            "aviso_mostrado,revisado,revisado_por,revisado_en,"
+            "clasificacion,documento_id,created_at,updated_at "
+            "FROM mensajeria_adjuntos_entrada"
+        )
+        params: list = []
+        condiciones: list[str] = []
+        if filtro:
+            if filtro.get("codigo_empresa"):
+                condiciones.append("codigo_empresa = %s")
+                params.append(filtro["codigo_empresa"])
+            if filtro.get("solo_pendientes"):
+                condiciones.append("revisado = FALSE")
+            if filtro.get("estado"):
+                condiciones.append("estado = %s")
+                params.append(filtro["estado"])
+        if condiciones:
+            sql += " WHERE " + " AND ".join(condiciones)
+        sql += " ORDER BY created_at DESC LIMIT 500"
+        rows = self.conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def contar_adjuntos_mensajeria_pendientes(self, codigo_empresa: str | None = None) -> int:
+        """Cuenta adjuntos no revisados (pendiente_clasificar)."""
+        sql = "SELECT COUNT(*) FROM mensajeria_adjuntos_entrada WHERE revisado = FALSE"
+        params: list = []
+        if codigo_empresa:
+            sql += " AND codigo_empresa = %s"
+            params.append(codigo_empresa)
+        row = self.conn.execute(sql, params).fetchone()
+        return int(row[0]) if row else 0
+
+    def marcar_aviso_adjunto_mensajeria(self, adjunto_id: str) -> None:
+        """Registra que ya se mostro aviso de Windows para este adjunto."""
+        self.conn.execute(
+            "UPDATE mensajeria_adjuntos_entrada SET aviso_mostrado = TRUE,"
+            " updated_at = %s WHERE id = %s",
+            (self._now(), adjunto_id),
+        )
+        self.conn.commit()
+
+    def marcar_adjunto_mensajeria_revisado(
+        self,
+        adjunto_id: str,
+        revisado_por: str,
+        clasificacion: str | None = None,
+        documento_id: str | None = None,
+    ) -> None:
+        """Marca un adjunto como revisado y guarda quien lo reviso."""
+        self.conn.execute(
+            "UPDATE mensajeria_adjuntos_entrada SET revisado = TRUE,"
+            " revisado_por = %s, revisado_en = %s,"
+            " clasificacion = COALESCE(%s, clasificacion),"
+            " documento_id = COALESCE(%s, documento_id),"
+            " estado = CASE WHEN estado = 'pendiente_clasificar' THEN 'revisado' ELSE estado END,"
+            " updated_at = %s WHERE id = %s",
+            (revisado_por, self._now(), clasificacion, documento_id, self._now(), adjunto_id),
+        )
+        self.conn.commit()
+
+    def no_guardar_adjunto_mensajeria(self, adjunto_id: str, revisado_por: str) -> None:
+        """Registra la decision de no guardar un adjunto, conservando la trazabilidad."""
+        self.conn.execute(
+            "UPDATE mensajeria_adjuntos_entrada SET revisado = TRUE,"
+            " revisado_por = %s, revisado_en = %s,"
+            " estado = 'no_guardar', updated_at = %s WHERE id = %s",
+            (revisado_por, self._now(), self._now(), adjunto_id),
+        )
+        self.conn.commit()
+
+    @staticmethod
+    def _now() -> str:
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")

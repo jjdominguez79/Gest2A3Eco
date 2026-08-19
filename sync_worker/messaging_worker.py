@@ -102,6 +102,13 @@ class MessagingAttachmentWorker:
         response.raise_for_status()
         pending = response.json()
         LOG.info("Consulta de adjuntos completada: pendientes=%d", len(pending))
+        stale = [item for item in pending if item.get("stale")]
+        if stale:
+            LOG.warning(
+                "ALERTA: %d adjunto(s) llevan mas de 1 hora sin confirmar por el NAS: %s",
+                len(stale),
+                ", ".join(f"{item['id']} ({item.get('name', '?')})" for item in stale),
+            )
         downloaded = errors = 0
         for item in pending:
             try:

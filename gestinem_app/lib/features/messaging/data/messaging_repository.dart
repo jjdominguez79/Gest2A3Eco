@@ -124,6 +124,32 @@ class MessagingRepository {
     data: {'reason': ''},
   );
 
+  /// Descarga el contenido de un adjunto saliente (solo cliente).
+  /// Devuelve los bytes y el download-id para confirmar la descarga.
+  Future<(Uint8List bytes, String downloadId)> downloadWithId(
+    Attachment attachment,
+  ) async {
+    final response = await _api.dio.get<List<int>>(
+      '/client/attachments/${attachment.id}',
+      options: Options(responseType: ResponseType.bytes),
+    );
+    final bytes = Uint8List.fromList(response.data ?? const []);
+    final downloadId =
+        response.headers.value('x-download-id') ?? '';
+    return (bytes, downloadId);
+  }
+
+  /// Confirma que Flutter guardo correctamente el archivo descargado.
+  Future<void> confirmDownload(
+    String attachmentId,
+    String downloadId,
+  ) async {
+    await _api.dio.post<void>(
+      '/client/attachments/$attachmentId/confirm-download',
+      data: FormData.fromMap({'download_id': downloadId}),
+    );
+  }
+
   Future<Uint8List> download(UserProfile profile, Attachment attachment) {
     final path = profile.type == UserType.client
         ? '/client/attachments/${attachment.id}'

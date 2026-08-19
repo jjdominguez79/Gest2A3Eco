@@ -173,7 +173,9 @@ def test_reply_soft_delete_hard_delete_y_permisos(tmp_path, monkeypatch):
         assert actions == {"soft_delete", "hard_delete"}
 
 
-def test_hard_delete_elimina_adjunto_del_almacen(tmp_path, monkeypatch):
+def test_hard_delete_mensajes_con_adjuntos_rechazado(tmp_path, monkeypatch):
+    """Los mensajes con adjuntos no admiten borrado definitivo ordinario.
+    Usa 'Retirar documento' para adjuntos salientes."""
     client, factory, staff_headers, _auth, _client_id, conversation_id = _setup(tmp_path, monkeypatch)
     sent = client.post(
         f"/api/v1/messaging/staff/conversations/{conversation_id}/messages",
@@ -184,11 +186,14 @@ def test_hard_delete_elimina_adjunto_del_almacen(tmp_path, monkeypatch):
         attachment = db.scalar(select(MessagingAttachment).where(MessagingAttachment.message_id == sent["id"]))
         stored_path = tmp_path / "cloud" / attachment.storage_key
         assert stored_path.is_file()
-    assert client.request(
+    # El borrado definitivo de mensajes con adjuntos esta prohibido
+    resp = client.request(
         "DELETE", f"/api/v1/messaging/staff/admin/messages/{sent['id']}/hard",
         headers=staff_headers("admin"), json={"reason": "prueba"},
-    ).status_code == 204
-    assert not stored_path.exists()
+    )
+    assert resp.status_code == 409
+    # El archivo debe seguir existiendo tras el intento de borrado
+    assert stored_path.is_file()
 
 
 def test_grupos_miembros_campana_e_idempotencia(tmp_path, monkeypatch):

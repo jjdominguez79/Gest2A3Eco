@@ -4,6 +4,16 @@ class Attachment {
     required this.name,
     required this.contentType,
     required this.size,
+    this.direction = 'outgoing',
+    this.status = 'disponible',
+    this.available = false,
+    this.expiresAt,
+    this.localConfirmed = false,
+    this.withdrawnAt,
+    this.completedDownloadCount,
+    this.firstDownloadedAt,
+    this.lastDownloadedAt,
+    this.lastClientName,
   });
 
   factory Attachment.fromJson(Map<String, dynamic> json) => Attachment(
@@ -11,12 +21,51 @@ class Attachment {
         name: json['name'] as String? ?? 'adjunto',
         contentType: json['content_type'] as String? ?? 'application/octet-stream',
         size: json['size'] as int? ?? 0,
+        direction: json['direction'] as String? ?? 'outgoing',
+        status: json['status'] as String? ?? 'disponible',
+        available: json['available'] as bool? ?? false,
+        expiresAt: json['expires_at'] != null
+            ? DateTime.parse(json['expires_at'] as String).toLocal()
+            : null,
+        localConfirmed: json['local_confirmed'] as bool? ?? false,
+        withdrawnAt: json['withdrawn_at'] != null
+            ? DateTime.parse(json['withdrawn_at'] as String).toLocal()
+            : null,
+        completedDownloadCount: json['completed_download_count'] as int?,
+        firstDownloadedAt: json['first_downloaded_at'] != null
+            ? DateTime.parse(json['first_downloaded_at'] as String).toLocal()
+            : null,
+        lastDownloadedAt: json['last_downloaded_at'] != null
+            ? DateTime.parse(json['last_downloaded_at'] as String).toLocal()
+            : null,
+        lastClientName: json['last_client_name'] as String?,
       );
 
   final String id;
   final String name;
   final String contentType;
   final int size;
+  /// 'incoming' (cliente -> despacho) o 'outgoing' (despacho -> cliente)
+  final String direction;
+  /// 'disponible' | 'caducado' | 'retirado' | 'recibido_por_gestinem' | 'guardado_por_asesoria'
+  final String status;
+  /// Solo para cliente: true si el adjunto saliente aun puede descargarse
+  final bool available;
+  /// Fecha de caducidad (adjuntos salientes)
+  final DateTime? expiresAt;
+  /// Confirmado por el NAS (adjuntos entrantes)
+  final bool localConfirmed;
+  /// Cuando fue retirado (adjuntos salientes retirados)
+  final DateTime? withdrawnAt;
+  // Resumen de descargas (solo para personal, adjuntos salientes)
+  final int? completedDownloadCount;
+  final DateTime? firstDownloadedAt;
+  final DateTime? lastDownloadedAt;
+  final String? lastClientName;
+
+  bool get isIncoming => direction == 'incoming';
+  bool get isWithdrawn => withdrawnAt != null;
+  bool get isExpired => status == 'caducado';
 }
 
 class ReplyReference {
@@ -51,6 +100,7 @@ class Message {
     required this.body,
     required this.createdAt,
     required this.deleted,
+    this.hasAttachments = false,
     this.replyTo,
     this.attachments = const [],
   });
@@ -65,6 +115,7 @@ class Message {
         body: json['body'] as String? ?? '',
         createdAt: DateTime.parse(json['created_at'] as String).toLocal(),
         deleted: json['deleted'] as bool? ?? false,
+        hasAttachments: json['has_attachments'] as bool? ?? false,
         replyTo: json['reply_to'] is Map<String, dynamic>
             ? ReplyReference.fromJson(json['reply_to'] as Map<String, dynamic>)
             : null,
@@ -82,6 +133,9 @@ class Message {
   final String body;
   final DateTime createdAt;
   final bool deleted;
+  /// True si el mensaje tiene o tuvo adjuntos (incluso si esta eliminado logicamente).
+  /// Evita ofrecer la accion Eliminar en este tipo de mensajes.
+  final bool hasAttachments;
   final ReplyReference? replyTo;
   final List<Attachment> attachments;
 }
