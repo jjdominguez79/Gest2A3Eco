@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import smtplib
 import ssl
+import base64
 from email.message import EmailMessage
 from html import escape
 from urllib.parse import quote
@@ -14,6 +15,11 @@ from backend.api.config import get_settings
 def configured() -> bool:
     cfg = get_settings()
     return _graph_configured(cfg) or _smtp_configured(cfg)
+
+
+def default_sender() -> str:
+    cfg = get_settings()
+    return str(cfg.messaging_graph_from or cfg.messaging_smtp_from or "").strip()
 
 
 def _graph_configured(cfg) -> bool:
@@ -29,16 +35,38 @@ def _smtp_configured(cfg) -> bool:
     return bool(cfg.messaging_smtp_host and cfg.messaging_smtp_from)
 
 
-def send_mail(to: str, subject: str, html: str, *, sender: str = "") -> bool:
+def send_mail(
+    to: str | list[str], subject: str, html: str, *, sender: str = "",
+    cc: list[str] | None = None, bcc: list[str] | None = None,
+    attachments: list[dict] | None = None,
+) -> bool:
     cfg = get_settings()
     if _graph_configured(cfg):
-        return _send_mail_graph(cfg, to, subject, html, sender=sender)
+        return _send_mail_graph(
+            cfg, to, subject, html, sender=sender, cc=cc, bcc=bcc,
+            attachments=attachments,
+        )
     if not _smtp_configured(cfg):
         return False
-    return _send_mail_smtp(cfg, to, subject, html)
+    return _send_mail_smtp(
+        cfg, to, subject, html, cc=cc, bcc=bcc, attachments=attachments,
+    )
 
 
-def _send_mail_graph(cfg, to: str, subject: str, html: str, *, sender: str = "") -> bool:
+def _recipients(values: str | list[str] | None) -> list[dict]:
+    if isinstance(values, str):
+        values = [values]
+    return [
+        {"emailAddress": {"address": str(value).strip()}}
+        for value in (values or []) if str(value).strip()
+    ]
+
+
+def _send_mail_graph(
+    cfg, to: str | list[str], subject: str, html: str, *, sender: str = "",
+    cc: list[str] | None = None, bcc: list[str] | None = None,
+    attachments: list[dict] | None = None,
+) -> bool:
     token_response = requests.post(
         "https://login.microsoftonline.com/"
         f"{quote(cfg.messaging_graph_tenant_id, safe='')}/oauth2/v2.0/token",
@@ -67,7 +95,20 @@ def _send_mail_graph(cfg, to: str, subject: str, html: str, *, sender: str = "")
             "message": {
                 "subject": subject,
                 "body": {"contentType": "HTML", "content": html},
-                "toRecipients": [{"emailAddress": {"address": to}}],
+                "toRecipients": _recipients(to),
+                "ccRecipients": _recipients(cc),
+                "bccRecipients": _recipients(bcc),
+                "attachments": [
+                    {
+                        "@odata.type": "#microsoft.graph.fileAttachment",
+                        "name": item["name"],
+                        "contentType": item.get("content_type") or "application/octet-stream",
+                        "contentBytes": base64.b64encode(item["content"]).decode("ascii"),
+                        "isInline": bool(item.get("content_id")),
+                        **({"contentId": item["content_id"]} if item.get("content_id") else {}),
+                    }
+                    for item in (attachments or [])
+                ],
             },
             "saveToSentItems": True,
         },
@@ -90,19 +131,33 @@ def _graph_error(response, operation: str) -> str:
     return message or f"Error de {operation} de Microsoft Graph (HTTP {response.status_code})"
 
 
-def _send_mail_smtp(cfg, to: str, subject: str, html: str) -> bool:
+def _send_mail_smtp(
+    cfg, to: str | list[str], subject: str, html: str, *,
+    cc: list[str] | None = None, bcc: list[str] | None = None,
+    attachments: list[dict] | None = None,
+) -> bool:
+    to_values = [to] if isinstance(to, str) else list(to)
     message = EmailMessage()
     message["From"] = cfg.messaging_smtp_from
-    message["To"] = to
+    message["To"] = ", ".join(to_values)
+    if cc:
+        message["Cc"] = ", ".join(cc)
     message["Subject"] = subject
     message.set_content("Accede al portal seguro de Gestinem para consultar este aviso.")
     message.add_alternative(html, subtype="html")
+    for item in attachments or []:
+        content_type = str(item.get("content_type") or "application/octet-stream")
+        maintype, _, subtype = content_type.partition("/")
+        message.add_attachment(
+            item["content"], maintype=maintype or "application",
+            subtype=subtype or "octet-stream", filename=item["name"],
+        )
     with smtplib.SMTP(cfg.messaging_smtp_host, cfg.messaging_smtp_port, timeout=30) as smtp:
         if cfg.messaging_smtp_use_tls:
             smtp.starttls(context=ssl.create_default_context())
         if cfg.messaging_smtp_user:
             smtp.login(cfg.messaging_smtp_user, cfg.messaging_smtp_password)
-        smtp.send_message(message)
+        smtp.send_message(message, to_addrs=to_values + list(cc or []) + list(bcc or []))
     return True
 
 

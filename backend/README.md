@@ -105,7 +105,10 @@ revocable y tambien lo guarda en Credential Manager.
 - `MESSAGING_SMTP_*`: respaldo opcional si Graph no esta disponible.
 
 La aplicacion Azure necesita los permisos Graph correspondientes; `Mail.Send`
-de aplicacion es necesario para invitaciones, recuperaciones y avisos.
+de aplicacion es necesario para invitaciones, recuperaciones, avisos y facturas.
+El escritorio envia estas ultimas mediante `POST /api/v1/mail/send`, autenticado
+con su `WorkstationToken`. Las credenciales de Graph permanecen exclusivamente
+en el backend y nunca se configuran en cada puesto.
 
 ## Almacenamiento de adjuntos
 

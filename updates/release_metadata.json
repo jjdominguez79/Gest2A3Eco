@@ -1,6 +1,6 @@
 {
-  "version": "1.8.0",
-  "tag": "v1.8.0",
-  "changelog": "Renueva el modulo OCR con carga de documentos, facturas recibidas y emitidas externas, aprendizaje diferenciado y una pantalla de revision adaptable. Refuerza la validacion contable, bloquea la edicion despues de validar y separa los estados de OCR, SUENLACE, asiento y FACe. Distingue en Contabilidad las facturas emitidas procedentes de OCR y de Facturacion y permite devolver cada documento a su origen con trazabilidad. Retira la mensajeria web heredada y deja el backend preparado para que Flutter sea el unico cliente de mensajeria.",
+  "version": "1.8.1",
+  "tag": "v1.8.1",
+  "changelog": "Corrige la actualizacion de facturas compartidas entre puestos y permite recargar la lista desde PostgreSQL sin cerrar el modulo. Traslada el envio de facturas y sus adjuntos al backend autenticado para que las credenciales de Microsoft Graph no tengan que configurarse en cada equipo.",
   "force_update": false
 }

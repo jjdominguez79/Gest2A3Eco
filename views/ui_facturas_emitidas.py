@@ -2262,6 +2262,7 @@ class UIFacturasEmitidas(ttk.Frame):
         ttk.Button(top2, text="Compartir PDF", command=self._compartir_pdf).pack(side=tk.LEFT, padx=8)
         ttk.Button(top2, text="Generar FACe", command=self._generar_facturae).pack(side=tk.LEFT, padx=8)
         ttk.Button(top2, text="PDF seleccion", command=self._export_pdf_multiple).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top2, text="Actualizar", command=self._refresh_facturas).pack(side=tk.LEFT, padx=8)
         if not can_write:
             for btn in (
                 self.btn_fact_nueva,
@@ -2959,10 +2960,9 @@ class UIFacturasEmitidas(ttk.Frame):
         sender_mode = tk.StringVar(value="oficina")
         sender_frame = ttk.Frame(frm)
         sender_frame.grid(row=1, column=1, columnspan=2, sticky="w", pady=(8, 2))
-        ttk.Radiobutton(sender_frame, text="Oficina", variable=sender_mode, value="oficina").pack(side=tk.LEFT)
-        is_admin = bool(self.session and self.session.is_admin())
-        if is_admin:
-            ttk.Radiobutton(sender_frame, text="Mi cuenta", variable=sender_mode, value="personal").pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Label(
+            sender_frame, text="Oficina (envio seguro mediante el backend)",
+        ).pack(side=tk.LEFT)
 
         ttk.Label(frm, text="Destinatarios:").grid(row=2, column=0, sticky="ne", padx=(0, 8), pady=(8, 2))
         dest_frm = ttk.Frame(frm)

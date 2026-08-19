@@ -1038,9 +1038,9 @@ class FacturasEmitidasController:
 
         if canal == "email":
             from services.email_service import build_invoice_email_text
-            from services.graph_mail_service import GraphMailService
+            from services.backend_mail_service import BackendMailService
             from views.ui_comunicaciones import construir_cuerpo_html, construir_firma_oficina
-            from utils.utilidades import get_packaged_resource_path, load_app_config
+            from utils.utilidades import get_packaged_resource_path
             email_cliente = str(cliente.get("email") or "").strip()
             email_empresa = str(self._empresa_conf.get("email") or "").strip()
             tot = self._totales_factura(fac)
@@ -1055,11 +1055,9 @@ class FacturasEmitidasController:
                 return
 
             user = getattr(getattr(self._view, "session", None), "user", None)
-            # El valor devuelto por la vista no es una autorizacion: solo los
-            # administradores pueden utilizar su buzon personal.
-            send_from_personal = (
-                compose.get("sender_mode") == "personal" and self._is_admin()
-            )
+            # Las credenciales de correo pertenecen al backend. El puesto no
+            # puede autorizar de forma segura el uso de un buzon personal.
+            send_from_personal = False
             user_name = str(getattr(user, "nombre", "") or "").strip()
             if user_name.lower() == "administrador":
                 user_name = "Juan José Domínguez Barrero"
@@ -1071,14 +1069,13 @@ class FacturasEmitidasController:
             email_html_body = construir_cuerpo_html(compose["cuerpo"], signature, "")
             cc = self._split_email_addresses(compose.get("cc", ""))
             bcc = self._split_email_addresses(compose.get("bcc", ""))
-            shared_mailbox = str((load_app_config().get("microsoft_graph") or {}).get("shared_mailbox") or "Oficina@gestinem.es").strip()
-            sender = "me" if send_from_personal else shared_mailbox
+            sender = "Oficina@gestinem.es"
             logo_path = get_packaged_resource_path("logo.png")
             inline_attachments = ([{"path": str(logo_path), "content_id": "gestinem-logo"}]
                                   if "cid:gestinem-logo" in signature and logo_path.is_file() else [])
             try:
-                result = GraphMailService().send(
-                    sender=sender, to=compose["emails"], cc=cc, bcc=bcc,
+                result = BackendMailService().send(
+                    to=compose["emails"], cc=cc, bcc=bcc,
                     subject=compose["asunto"], body=email_html_body,
                     attachments=attachment_paths, inline_attachments=inline_attachments,
                 )
@@ -1087,9 +1084,9 @@ class FacturasEmitidasController:
                 self._view.show_error("Gest2A3Eco", f"No se pudo enviar el email:\n{exc}")
                 return
             self._registrar_envio_factura(
-                compose, result.sender or (shared_mailbox if sender == "me" else sender),
+                compose, result.sender or sender,
                 cc, attachment_paths, email_html_body, user,
-                estado="aceptado_graph", graph_message_id=result.message_id,
+                estado="aceptado_backend", graph_message_id=result.message_id,
                 internet_message_id=result.internet_message_id,
             )
             self._view.show_info("Gest2A3Eco", "Email enviado y registrado en Comunicaciones.")

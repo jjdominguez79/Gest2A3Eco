@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import base64
 
 from backend.api import messaging_mail
 
@@ -51,6 +52,31 @@ def test_send_mail_usa_graph_como_canal_prioritario(monkeypatch):
     assert calls[1][1]["json"]["message"]["toRecipients"] == [
         {"emailAddress": {"address": "ana@example.test"}}
     ]
+
+
+def test_send_mail_graph_incluye_copias_y_adjuntos(monkeypatch):
+    calls = []
+
+    def post(url, **kwargs):
+        calls.append((url, kwargs))
+        return _Response(200, {"access_token": "token"}) if url.endswith("/token") else _Response(202)
+
+    monkeypatch.setattr(messaging_mail, "get_settings", _settings)
+    monkeypatch.setattr(messaging_mail.requests, "post", post)
+
+    assert messaging_mail.send_mail(
+        ["cliente@example.test"], "Factura", "<p>Adjunta</p>",
+        cc=["copia@example.test"], bcc=["oculta@example.test"],
+        attachments=[{
+            "name": "factura.pdf", "content_type": "application/pdf",
+            "content": b"%PDF",
+        }],
+    )
+
+    message = calls[1][1]["json"]["message"]
+    assert message["ccRecipients"][0]["emailAddress"]["address"] == "copia@example.test"
+    assert message["bccRecipients"][0]["emailAddress"]["address"] == "oculta@example.test"
+    assert message["attachments"][0]["contentBytes"] == base64.b64encode(b"%PDF").decode("ascii")
 
 
 def test_send_mail_graph_informa_error_sin_mostrar_secretos(monkeypatch):
