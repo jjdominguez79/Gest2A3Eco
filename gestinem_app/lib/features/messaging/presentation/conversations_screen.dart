@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../core/websocket/realtime_service.dart';
+import '../../../core/api/api_client.dart';
 import '../../../core/storage/hidden_conversations_storage.dart';
 import '../../../core/widgets/authenticated_avatar.dart';
 import '../../auth/domain/user_profile.dart';
@@ -13,7 +13,6 @@ import '../domain/conversation.dart';
 import 'conversation_screen.dart';
 import 'messaging_providers.dart';
 
-final realtimeServiceProvider = Provider<RealtimeService>((ref) => RealtimeService());
 final hiddenConversationsStorageProvider = Provider<HiddenConversationsStorage>((ref) => HiddenConversationsStorage());
 class ConversationsScreen extends ConsumerStatefulWidget {
   const ConversationsScreen({super.key});
@@ -25,10 +24,9 @@ class ConversationsScreen extends ConsumerStatefulWidget {
 class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     with WidgetsBindingObserver {
   final _search = TextEditingController();
-  RealtimeService? _realtime;
-  StreamSubscription<Map<String, dynamic>>? _events;
   String _channel = 'todos';
   String? _selected;
+  bool _selectedInternal = false;
   Map<String, DateTime> _hiddenGroups = {};
 
   @override
@@ -36,7 +34,6 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _connectRealtime();
       unawaited(_loadHiddenGroups());
     });
   }
@@ -83,38 +80,34 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     }
   }
 
-  void _connectRealtime() {
-    final session = ref.read(sessionProvider).valueOrNull;
-    if (session == null) return;
-    _realtime = ref.read(realtimeServiceProvider);
-    _events = _realtime!.events.listen((event) {
-      if (!mounted || event['type'] == 'ping') return;
-      final id = event['conversation_id'] as String?;
-      _refreshMessaging(id);
-      final threadId = event['thread_id'] as String?;
-      if (threadId != null) {
-        ref.invalidate(internalThreadsProvider);
-        ref.invalidate(internalMessagesProvider(threadId));
-      }
-    });
-    unawaited(_realtime!.connect(session, ref.read(apiClientProvider)));
-  }
-
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _search.dispose();
-    _events?.cancel();
-    _realtime?.close();
     super.dispose();
   }
 
   void _navigateToConversation(String id) {
     final wide = MediaQuery.sizeOf(context).width >= 900;
     if (wide) {
-      setState(() => _selected = id);
+      setState(() {
+        _selected = id;
+        _selectedInternal = false;
+      });
     } else {
       context.go('/conversation/$id');
+    }
+  }
+
+  void _navigateToInternal(String id) {
+    final wide = MediaQuery.sizeOf(context).width >= 900;
+    if (wide) {
+      setState(() {
+        _selected = id;
+        _selectedInternal = true;
+      });
+    } else {
+      context.go('/internal/$id');
     }
   }
 
@@ -185,6 +178,52 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     }
   }
 
+  Future<void> _setClientAccess(ClientGroup group, bool active) async {
+    if (!active) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Desactivar acceso del cliente'),
+          content: Text(
+            '${group.displayName} dejará de poder iniciar sesión y se cerrarán sus sesiones activas. El historial no se borrará.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Desactivar'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+    try {
+      await ref
+          .read(messagingRepositoryProvider)
+          .setClientAccess(group.companyCode, active);
+      ref.invalidate(conversationsProvider);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              active ? 'Acceso del cliente activado' : 'Acceso del cliente desactivado',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(apiErrorMessage(error))),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final profile = ref.watch(sessionProvider).valueOrNull!.profile;
@@ -192,10 +231,39 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     if (profile.type == UserType.client) {
       return _buildClientScreen(profile, conversations);
     }
+    final internalThreads = ref.watch(internalThreadsProvider);
+    final channelOptions = profile.isAdmin
+        ? const ['todos', 'laboral', 'fiscal', 'private']
+        : profile.channels
+              .where((channel) => {'laboral', 'fiscal'}.contains(channel))
+              .toList(growable: false);
+    final effectiveChannel = channelOptions.contains(_channel)
+        ? _channel
+        : (channelOptions.isEmpty ? '' : channelOptions.first);
+    final quickThreads = profile.isAdmin
+        ? const <InternalThread>[]
+        : (internalThreads.valueOrNull ?? const <InternalThread>[])
+              .where(
+                (thread) =>
+                    (thread.kind == 'group' && thread.channel.isEmpty) ||
+                    thread.kind == 'direct',
+              )
+              .toList(growable: false);
+    final apiBaseUrl = ref
+        .read(apiClientProvider)
+        .dio
+        .options
+        .baseUrl
+        .replaceAll(RegExp(r'/api/v1/messaging/?$'), '');
+    final authToken = ref.read(sessionProvider).valueOrNull?.token ?? '';
     final wide = MediaQuery.sizeOf(context).width >= 900;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Gestinem'),
+        title: Text(
+          profile.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         actions: [
           IconButton(onPressed: () => ref.invalidate(conversationsProvider), icon: const Icon(Icons.refresh)),
           IconButton(
@@ -229,20 +297,47 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
                   child: ListView(
                     scrollDirection: Axis.horizontal,
                     padding: const EdgeInsets.symmetric(horizontal: 10),
-                    children: ['todos', 'laboral', 'fiscal', 'private'].map((channel) => Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 3),
-                      child: ChoiceChip(
-                        label: Text(switch (channel) {
-                          'todos' => 'Todos',
-                          'laboral' => 'Laboral',
-                          'fiscal' => 'Fiscal',
-                          'private' => 'Directo',
-                          _ => channel,
-                        }),
-                        selected: _channel == channel,
-                        onSelected: (_) => setState(() => _channel = channel),
-                      ),
-                    )).toList(),
+                    children: [
+                      for (final channel in channelOptions)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 3),
+                          child: ChoiceChip(
+                            label: Text(switch (channel) {
+                              'todos' => 'Todos',
+                              'laboral' => 'LA',
+                              'fiscal' => 'CF',
+                              'private' => 'Directo',
+                              _ => channel,
+                            }),
+                            selected:
+                                !_selectedInternal && effectiveChannel == channel,
+                            onSelected: (_) => setState(() {
+                              _channel = channel;
+                              _selectedInternal = false;
+                            }),
+                          ),
+                        ),
+                      for (final thread in quickThreads)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 3),
+                          child: ActionChip(
+                            avatar: thread.kind == 'direct'
+                                ? AuthenticatedAvatar(
+                                    radius: 12,
+                                    baseUrl: apiBaseUrl,
+                                    authToken: authToken,
+                                    imagePath: thread.counterpartAvatarUrl,
+                                    fallbackText: _initials(thread.title),
+                                    cacheVersion: thread.id,
+                                  )
+                                : const Icon(Icons.groups_outlined, size: 18),
+                            label: Text(
+                              thread.kind == 'direct' ? 'Administrador' : thread.title,
+                            ),
+                            onPressed: () => _navigateToInternal(thread.id),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
                 Expanded(
@@ -255,7 +350,9 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
                       // Para staff: agrupar por cliente
                       if (profile.type == UserType.staff) {
                         var filtered = items.where((item) {
-                          final channelMatches = _channel == 'todos' || item.kind == _channel;
+                          final channelMatches =
+                              effectiveChannel == 'todos' ||
+                              item.kind == effectiveChannel;
                           final searchMatches = query.isEmpty ||
                               item.companyCode.toLowerCase().contains(query) ||
                               item.companyName.toLowerCase().contains(query);
@@ -307,6 +404,9 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
                                   group: group,
                                   selected: group.conversations.any((c) => c.id == _selected),
                                   onTap: () => _selectChannel(context, group),
+                                  onAccessChanged: profile.isAdmin
+                                      ? (active) => _setClientAccess(group, active)
+                                      : null,
                                 ),
                               );
                             },
@@ -326,7 +426,10 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
             Expanded(
               child: _selected == null
                   ? const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.forum_outlined, size: 58), SizedBox(height: 12), Text('Selecciona una conversación')]))
-                  : ConversationView(conversationId: _selected!),
+                  : ConversationView(
+                      conversationId: _selected!,
+                      internal: _selectedInternal,
+                    ),
             ),
           ],
         ],
@@ -515,10 +618,16 @@ String _channelLabel(String kind) => switch (kind) {
     };
 
 class _ClientGroupTile extends StatelessWidget {
-  const _ClientGroupTile({required this.group, required this.selected, required this.onTap});
+  const _ClientGroupTile({
+    required this.group,
+    required this.selected,
+    required this.onTap,
+    this.onAccessChanged,
+  });
   final ClientGroup group;
   final bool selected;
   final VoidCallback onTap;
+  final ValueChanged<bool>? onAccessChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -552,9 +661,67 @@ class _ClientGroupTile extends StatelessWidget {
         ],
       ),
       isThreeLine: true,
-      trailing: group.totalUnread > 0
-          ? Badge(label: Text('${group.totalUnread}'))
-          : null,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _ClientAccessBadge(
+            status: group.clientAccessStatus,
+            onAccessChanged: onAccessChanged,
+          ),
+          if (group.totalUnread > 0) ...[
+            const SizedBox(width: 6),
+            Badge(label: Text('${group.totalUnread}')),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ClientAccessBadge extends StatelessWidget {
+  const _ClientAccessBadge({required this.status, this.onAccessChanged});
+
+  final String status;
+  final ValueChanged<bool>? onAccessChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color) = switch (status) {
+      'active' => ('Activo', Colors.green),
+      'pending' => ('Invitado', Colors.orange),
+      'disabled' => ('Desactivado', Colors.red),
+      'invitation_expired' => ('Invitación caducada', Colors.deepOrange),
+      _ => ('Sin invitar', Colors.grey),
+    };
+    final badge = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.45)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+    final canChange = onAccessChanged != null &&
+        {'active', 'pending', 'disabled', 'invitation_expired'}.contains(status);
+    if (!canChange) return badge;
+    return PopupMenuButton<bool>(
+      tooltip: 'Gestionar acceso del cliente',
+      onSelected: onAccessChanged,
+      itemBuilder: (_) => [
+        PopupMenuItem<bool>(
+          value: status == 'disabled',
+          child: Text(status == 'disabled' ? 'Activar acceso' : 'Desactivar acceso'),
+        ),
+      ],
+      child: badge,
     );
   }
 }

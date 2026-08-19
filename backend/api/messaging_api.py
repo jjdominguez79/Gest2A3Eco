@@ -146,6 +146,10 @@ class StaffSelfPatchIn(BaseModel):
     chat_alias: str | None = Field(default=None, max_length=160)
 
 
+class ClientAccessIn(BaseModel):
+    active: bool
+
+
 class MessageDeleteIn(BaseModel):
     reason: str = Field(default="", max_length=500)
 
@@ -235,6 +239,49 @@ def _channels_for_staff(db: Session, staff: MessagingStaff) -> set[str]:
     )))
 
 
+def _primary_admin(db: Session) -> MessagingStaff | None:
+    admins = db.scalars(select(MessagingStaff).where(
+        MessagingStaff.role == "admin",
+        MessagingStaff.active.is_(True),
+    ).order_by(MessagingStaff.name)).all()
+    configured = [
+        value.strip().lower()
+        for value in get_settings().messaging_staff_admin_emails.replace(";", ",").split(",")
+        if value.strip()
+    ]
+    by_email = {admin.email.strip().lower(): admin for admin in admins}
+    return next((by_email[email] for email in configured if email in by_email), None) or (
+        admins[0] if admins else None
+    )
+
+
+def _get_or_create_staff_direct_thread(
+    db: Session, admin: MessagingStaff, member: MessagingStaff,
+) -> MessagingStaffThread:
+    key = f"direct:{admin.external_id}:{member.external_id}"
+    thread = db.scalar(select(MessagingStaffThread).where(MessagingStaffThread.key == key))
+    if not thread:
+        thread = MessagingStaffThread(
+            key=key, kind="direct", admin_staff_external_id=admin.external_id,
+            member_staff_external_id=member.external_id,
+        )
+        db.add(thread)
+        db.commit()
+        db.refresh(thread)
+    return thread
+
+
+def _ensure_employee_admin_direct_thread(
+    db: Session, staff: MessagingStaff,
+) -> MessagingStaffThread | None:
+    if staff.role == "admin":
+        return None
+    admin = _primary_admin(db)
+    if not admin:
+        return None
+    return _get_or_create_staff_direct_thread(db, admin, staff)
+
+
 def _validated_staff_email(value: str) -> str:
     email = value.strip().lower()
     domain = get_settings().messaging_staff_allowed_domain.strip().lower()
@@ -309,10 +356,16 @@ def _can_access_conversation(
     db: Session, conv: MessagingConversation, staff: MessagingStaff,
 ) -> bool:
     org = db.get(MessagingOrganization, conv.organization_id)
-    if org and org.company_code.strip().upper() in TEST_COMPANY_CODES:
+    if not org:
+        return False
+    if org.company_code.strip().upper() in TEST_COMPANY_CODES:
         return bool(org.private_owner_external_id == staff.external_id)
     if conv.kind == "private":
-        return bool(org and org.private_owner_external_id == staff.external_id)
+        return bool(org.private_owner_external_id == staff.external_id)
+    if staff.role == "admin":
+        return True
+    if not org.active:
+        return False
     return conv.kind in _channels_for_staff(db, staff)
 
 
@@ -343,6 +396,9 @@ def _client(
     client = db.get(MessagingClient, session.client_id)
     if not client or not client.active:
         raise HTTPException(403, "Cuenta inactiva")
+    organization = db.get(MessagingOrganization, client.organization_id)
+    if not organization or not organization.active:
+        raise HTTPException(403, "Cuenta inactiva")
     return client
 
 
@@ -351,6 +407,37 @@ def _organization(db: Session, code: str) -> MessagingOrganization:
     if not item:
         raise HTTPException(404, "Empresa no encontrada")
     return item
+
+
+def _organization_access_state(db: Session, org: MessagingOrganization) -> dict:
+    clients = db.scalars(select(MessagingClient).where(
+        MessagingClient.organization_id == org.id,
+    )).all()
+    active_clients = [client for client in clients if client.active]
+    accepted = [client for client in active_clients if client.password_hash]
+    pending = False
+    if active_clients:
+        invitations = db.scalars(select(MessagingInvitation).where(
+            MessagingInvitation.client_id.in_([client.id for client in active_clients]),
+            MessagingInvitation.used_at.is_(None),
+            MessagingInvitation.revoked_at.is_(None),
+        )).all()
+        pending = any(not is_expired(invitation.expires_at) for invitation in invitations)
+    if not org.active or (clients and not active_clients):
+        status = "disabled"
+    elif accepted:
+        status = "active"
+    elif pending:
+        status = "pending"
+    elif clients:
+        status = "invitation_expired"
+    else:
+        status = "not_invited"
+    return {
+        "status": status,
+        "active": bool(org.active and accepted),
+        "client_count": len(clients),
+    }
 
 
 def _conversation_for_staff(db: Session, conversation_id: str, staff: MessagingStaff) -> MessagingConversation:
@@ -379,6 +466,7 @@ def _event(db: Session, conv: MessagingConversation, event_type: str) -> None:
 
 def _serialize_conversation(
     db: Session, conv: MessagingConversation, audience: str = "staff",
+    access: dict | None = None,
 ) -> dict:
     org = db.get(MessagingOrganization, conv.organization_id)
     last = db.scalar(
@@ -390,6 +478,7 @@ def _serialize_conversation(
         MessagingClient.active.is_(True),
         MessagingClient.password_hash != "",
     )) or 0)
+    access = access or _organization_access_state(db, org)
     channel_label = {"laboral": "LA", "fiscal": "CF"}.get(conv.kind, "")
     channel_avatar_url = ""
     if conv.kind == "private":
@@ -412,6 +501,9 @@ def _serialize_conversation(
         "kind": conv.kind, "channel_label": channel_label,
         "channel_avatar_url": channel_avatar_url, "state": conv.state,
         "active_client_count": active_client_count,
+        "client_access_status": access["status"],
+        "client_access_active": access["active"],
+        "organization_active": org.active,
         "assigned_staff_external_id": conv.assigned_staff_external_id,
         "updated_at": conv.updated_at.isoformat(),
         "last_message": _serialize_message(db, last) if last else None,
@@ -642,6 +734,7 @@ def put_organization(company_code: str, payload: OrganizationIn, db: Session = D
 @router.post("/internal/invitations", dependencies=[Depends(require_internal_key)])
 def create_invitation(payload: InviteIn, background: BackgroundTasks, db: Session = Depends(get_db)):
     org = _organization(db, payload.company_code)
+    org.active = True
     email = payload.email.strip().lower()
     client = db.scalar(select(MessagingClient).where(
         MessagingClient.email == email,
@@ -1008,6 +1101,7 @@ def list_staff_threads(
     staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
 ):
     _ensure_staff_group_threads(db)
+    _ensure_employee_admin_direct_thread(db, staff)
     rows = db.scalars(select(MessagingStaffThread).order_by(
         MessagingStaffThread.updated_at.desc(), MessagingStaffThread.kind,
     )).all()
@@ -1025,16 +1119,7 @@ def create_staff_direct_thread(
     member = db.get(MessagingStaff, member_external_id)
     if not member or not member.active or member.external_id == admin.external_id:
         raise HTTPException(404, "Empleado no disponible")
-    key = f"direct:{admin.external_id}:{member.external_id}"
-    thread = db.scalar(select(MessagingStaffThread).where(MessagingStaffThread.key == key))
-    if not thread:
-        thread = MessagingStaffThread(
-            key=key, kind="direct", admin_staff_external_id=admin.external_id,
-            member_staff_external_id=member.external_id,
-        )
-        db.add(thread)
-        db.commit()
-        db.refresh(thread)
+    thread = _get_or_create_staff_direct_thread(db, admin, member)
     return _serialize_staff_thread(db, thread, admin)
 
 
@@ -1070,11 +1155,59 @@ def mark_staff_thread_read(
     return {"ok": True}
 
 
+def _staff_thread_recipient_ids(
+    db: Session, thread: MessagingStaffThread,
+) -> set[str]:
+    if thread.kind == "direct":
+        candidates = {
+            thread.admin_staff_external_id, thread.member_staff_external_id,
+        }
+    elif thread.key.startswith("dynamic-group:"):
+        group_id = thread.key.split(":", 1)[1]
+        candidates = set(db.scalars(select(MessagingGroupMember.member_id).where(
+            MessagingGroupMember.group_id == group_id,
+            MessagingGroupMember.member_type == "staff",
+        )))
+    else:
+        candidates = set(db.scalars(select(MessagingStaffChannel.staff_external_id).where(
+            MessagingStaffChannel.channel == thread.channel,
+        )))
+        candidates.update(db.scalars(select(MessagingStaff.external_id).where(
+            MessagingStaff.role == "admin",
+            MessagingStaff.active.is_(True),
+        )))
+    if not candidates:
+        return set()
+    return set(db.scalars(select(MessagingStaff.external_id).where(
+        MessagingStaff.external_id.in_(candidates),
+        MessagingStaff.active.is_(True),
+    )))
+
+
 def _queue_internal_pushes(
     db: Session, background: BackgroundTasks, thread: MessagingStaffThread,
     sender: MessagingStaff,
 ) -> None:
-    """Web Push (VAPID) retirado. Los mensajes internos notifican solo por FCM."""
+    """Envia FCM solo a los miembros autorizados del chat interno."""
+    if not fcm_configured():
+        return
+    recipients = _staff_thread_recipient_ids(db, thread) - {sender.external_id}
+    if not recipients:
+        return
+    devices = db.scalars(select(MessagingAppDevice).where(
+        MessagingAppDevice.user_type == "staff",
+        MessagingAppDevice.user_id.in_(recipients),
+        MessagingAppDevice.active.is_(True),
+    )).all()
+    payload = {
+        "title": f"Nuevo mensaje de {sender.chat_alias.strip() or sender.name}",
+        "body": "Tienes un nuevo mensaje interno",
+        "event": "internal_message",
+        "conversation_id": "",
+        "thread_id": thread.id,
+    }
+    for device in devices:
+        background.add_task(send_fcm, device.push_token, payload)
 
 
 @router.post("/staff/internal/threads/{thread_id}/messages")
@@ -1116,11 +1249,7 @@ def post_staff_thread_message(
     db.commit()
     db.refresh(item)
     _queue_internal_pushes(db, background, thread, staff)
-    recipients = {
-        thread.admin_staff_external_id, thread.member_staff_external_id,
-    } if thread.kind == "direct" else set(db.scalars(select(MessagingStaff.external_id).where(
-        MessagingStaff.active.is_(True),
-    )))
+    recipients = _staff_thread_recipient_ids(db, thread)
     hub.publish(
         {"type": "message.created", "thread_id": thread.id, "message_id": item.id},
         staff_ids=recipients,
@@ -1307,13 +1436,61 @@ def staff_organizations(
     admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
 ):
     rows = db.scalars(select(MessagingOrganization).order_by(MessagingOrganization.name)).all()
-    return [{
-        "company_code": row.company_code, "name": row.name, "active": row.active,
-        "private_owner_external_id": row.private_owner_external_id,
-    } for row in rows if (
-        row.company_code.strip().upper() not in TEST_COMPANY_CODES
-        or row.private_owner_external_id == admin.external_id
-    )]
+    result = []
+    for row in rows:
+        if (
+            row.company_code.strip().upper() in TEST_COMPANY_CODES
+            and row.private_owner_external_id != admin.external_id
+        ):
+            continue
+        access = _organization_access_state(db, row)
+        result.append({
+            "company_code": row.company_code, "name": row.name,
+            "active": row.active,
+            "private_owner_external_id": row.private_owner_external_id,
+            "client_access_status": access["status"],
+            "client_access_active": access["active"],
+        })
+    return result
+
+
+@router.patch("/staff/admin/organizations/{company_code}/client-access")
+def set_client_access(
+    company_code: str, payload: ClientAccessIn,
+    admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
+):
+    org = _organization(db, company_code)
+    if (
+        org.company_code.strip().upper() in TEST_COMPANY_CODES
+        and org.private_owner_external_id != admin.external_id
+    ):
+        raise HTTPException(403, "Cliente de pruebas privado")
+    clients = db.scalars(select(MessagingClient).where(
+        MessagingClient.organization_id == org.id,
+    )).all()
+    if payload.active and not clients:
+        raise HTTPException(409, "El cliente todavia no ha sido invitado")
+    org.active = payload.active
+    for client in clients:
+        client.active = payload.active
+    if not payload.active and clients:
+        client_ids = [client.id for client in clients]
+        now = utcnow()
+        db.query(MessagingSession).filter(
+            MessagingSession.client_id.in_(client_ids),
+            MessagingSession.revoked_at.is_(None),
+        ).update({MessagingSession.revoked_at: now}, synchronize_session=False)
+        db.query(MessagingAppDevice).filter(
+            MessagingAppDevice.user_type == "client",
+            MessagingAppDevice.user_id.in_(client_ids),
+        ).update({MessagingAppDevice.active: False}, synchronize_session=False)
+        db.query(MessagingInvitation).filter(
+            MessagingInvitation.client_id.in_(client_ids),
+            MessagingInvitation.used_at.is_(None),
+            MessagingInvitation.revoked_at.is_(None),
+        ).update({MessagingInvitation.revoked_at: now}, synchronize_session=False)
+    db.commit()
+    return _organization_access_state(db, org)
 
 
 @router.put("/staff/admin/organizations/{company_code}")
@@ -1356,6 +1533,9 @@ def accept_invite(payload: AcceptInviteIn, response: Response, db: Session = Dep
     if not invitation or invitation.used_at or invitation.revoked_at or is_expired(invitation.expires_at):
         raise HTTPException(400, "Invitacion no valida o caducada")
     client = db.get(MessagingClient, invitation.client_id)
+    organization = db.get(MessagingOrganization, client.organization_id) if client else None
+    if not client or not client.active or not organization or not organization.active:
+        raise HTTPException(403, "Cuenta inactiva")
     client.password_hash = hash_password(payload.password)
     invitation.used_at = utcnow()
     token = _new_session(db, client)
@@ -1367,7 +1547,11 @@ def accept_invite(payload: AcceptInviteIn, response: Response, db: Session = Dep
 @router.post("/auth/login")
 def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)):
     client = db.scalar(select(MessagingClient).where(MessagingClient.email == payload.email.strip().lower()))
-    if not client or not client.active or not verify_password(payload.password, client.password_hash):
+    organization = db.get(MessagingOrganization, client.organization_id) if client else None
+    if (
+        not client or not client.active or not organization or not organization.active
+        or not verify_password(payload.password, client.password_hash)
+    ):
         raise HTTPException(401, "Credenciales no validas")
     token = _new_session(db, client); db.commit(); _set_cookie(response, token)
     return {"token": token, "client": {"id": client.id, "name": client.name, "email": client.email}}
@@ -1678,10 +1862,16 @@ def staff_conversations(
         )
     rows = db.scalars(stmt.order_by(MessagingConversation.updated_at.desc())).all()
     result = []
+    access_by_organization: dict[str, dict] = {}
     for row in rows:
         if not _can_access_conversation(db, row, staff):
             continue
-        item = _serialize_conversation(db, row)
+        access = access_by_organization.get(row.organization_id)
+        if access is None:
+            organization = db.get(MessagingOrganization, row.organization_id)
+            access = _organization_access_state(db, organization)
+            access_by_organization[row.organization_id] = access
+        item = _serialize_conversation(db, row, access=access)
         item["unread_count"] = _unread_count(db, row, "staff", staff.external_id)
         result.append(item)
     return result

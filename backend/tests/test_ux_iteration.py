@@ -472,3 +472,147 @@ class TestAdminDeleteMessages:
             assert admin.role == "admin"
             assert empleado.role == "empleado"
             assert admin.role != empleado.role
+
+
+# ---------------------------------------------------------------------------
+# Tests de permisos, acceso de clientes y avisos internos
+# ---------------------------------------------------------------------------
+
+class TestStaffAccessAndInternalNotifications:
+    def test_admin_ve_todos_y_empleado_solo_su_canal_activo(self, db_session):
+        from backend.api.messaging_api import _can_access_conversation
+        from backend.api.messaging_models import (
+            MessagingConversation, MessagingOrganization, MessagingStaff,
+            MessagingStaffChannel,
+        )
+
+        suffix = uuid.uuid4().hex[:8]
+        org = MessagingOrganization(
+            company_code=f"ACCESS{suffix}", name="Cliente", active=True,
+        )
+        admin = MessagingStaff(
+            external_id=f"admin-{suffix}", name="Admin",
+            email=f"admin-{suffix}@gestinem.es", role="admin", active=True,
+        )
+        employee = MessagingStaff(
+            external_id=f"employee-{suffix}", name="Empleado",
+            email=f"employee-{suffix}@gestinem.es", role="empleado", active=True,
+        )
+        db_session.add_all([org, admin, employee])
+        db_session.flush()
+        conv = MessagingConversation(organization_id=org.id, kind="fiscal")
+        db_session.add(conv)
+        db_session.flush()
+
+        assert _can_access_conversation(db_session, conv, admin)
+        assert not _can_access_conversation(db_session, conv, employee)
+
+        db_session.add(MessagingStaffChannel(
+            staff_external_id=employee.external_id, channel="fiscal",
+        ))
+        db_session.flush()
+        assert _can_access_conversation(db_session, conv, employee)
+
+        org.active = False
+        db_session.flush()
+        assert _can_access_conversation(db_session, conv, admin)
+        assert not _can_access_conversation(db_session, conv, employee)
+
+    def test_estado_de_invitacion_y_desactivacion(self, db_session):
+        from backend.api.messaging_api import (
+            ClientAccessIn, _organization_access_state, set_client_access,
+        )
+        from backend.api.messaging_models import (
+            MessagingClient, MessagingInvitation, MessagingOrganization,
+            MessagingStaff,
+        )
+        from backend.api.messaging_security import utcnow
+
+        suffix = uuid.uuid4().hex[:8]
+        org = MessagingOrganization(
+            company_code=f"CLIENT{suffix}", name="Cliente", active=True,
+        )
+        admin = MessagingStaff(
+            external_id=f"admin-client-{suffix}", name="Admin",
+            email=f"admin-client-{suffix}@gestinem.es", role="admin", active=True,
+        )
+        db_session.add_all([org, admin])
+        db_session.flush()
+        assert _organization_access_state(db_session, org)["status"] == "not_invited"
+
+        client = MessagingClient(
+            organization_id=org.id, name="Cliente",
+            email=f"client-{suffix}@example.test", active=True,
+        )
+        db_session.add(client)
+        db_session.flush()
+        db_session.add(MessagingInvitation(
+            client_id=client.id, token_hash=uuid.uuid4().hex,
+            expires_at=utcnow() + timedelta(days=1),
+        ))
+        db_session.flush()
+        assert _organization_access_state(db_session, org)["status"] == "pending"
+
+        client.password_hash = "hash"
+        db_session.flush()
+        assert _organization_access_state(db_session, org)["status"] == "active"
+
+        result = set_client_access(
+            org.company_code, ClientAccessIn(active=False), admin, db_session,
+        )
+        assert result["status"] == "disabled"
+        assert not client.active
+        assert not org.active
+
+    def test_push_interno_solo_se_dirige_a_miembros_autorizados(self, db_session):
+        from backend.api import messaging_api
+        from backend.api.messaging_models import (
+            MessagingAppDevice, MessagingStaff, MessagingStaffChannel,
+            MessagingStaffThread,
+        )
+
+        suffix = uuid.uuid4().hex[:8]
+        admin = MessagingStaff(
+            external_id=f"admin-push-{suffix}", name="Admin",
+            email=f"admin-push-{suffix}@gestinem.es", role="admin", active=True,
+        )
+        member = MessagingStaff(
+            external_id=f"member-push-{suffix}", name="Analia",
+            email=f"member-push-{suffix}@gestinem.es", role="empleado", active=True,
+        )
+        outsider = MessagingStaff(
+            external_id=f"outsider-push-{suffix}", name="Otro",
+            email=f"outsider-push-{suffix}@gestinem.es", role="empleado", active=True,
+        )
+        db_session.add_all([admin, member, outsider])
+        db_session.flush()
+        db_session.add(MessagingStaffChannel(
+            staff_external_id=member.external_id, channel="fiscal",
+        ))
+        thread = MessagingStaffThread(
+            key=f"group:fiscal:{suffix}", kind="group", channel="fiscal",
+        )
+        db_session.add(thread)
+        db_session.flush()
+        device = MessagingAppDevice(
+            user_type="staff", user_id=member.external_id, platform="android",
+            push_token=f"token-{suffix}-" + "x" * 20, active=True,
+        )
+        db_session.add(device)
+        db_session.flush()
+
+        recipients = messaging_api._staff_thread_recipient_ids(db_session, thread)
+        assert admin.external_id in recipients
+        assert member.external_id in recipients
+        assert outsider.external_id not in recipients
+
+        background = MagicMock()
+        with patch.object(messaging_api, "fcm_configured", return_value=True):
+            messaging_api._queue_internal_pushes(
+                db_session, background, thread, admin,
+            )
+        background.add_task.assert_called_once()
+        _, token, payload = background.add_task.call_args.args
+        assert token == device.push_token
+        assert payload["thread_id"] == thread.id
+        assert payload["event"] == "internal_message"

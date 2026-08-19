@@ -129,6 +129,7 @@ void main() {
             (ref) => FakeSessionController(ref, staffSession),
           ),
           conversationsProvider.overrideWith((ref) async => [row]),
+          internalThreadsProvider.overrideWith((ref) async => []),
           realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
           notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
         ],
@@ -139,6 +140,7 @@ void main() {
     await tester.pump();
 
     expect(find.byKey(const Key('conversation-list')), findsOneWidget);
+    expect(find.text('Gestor'), findsOneWidget);
     expect(find.text('Empresa Uno'), findsOneWidget);
     expect(find.textContaining('E00001'), findsOneWidget);
     expect(find.text('3'), findsOneWidget);
@@ -177,6 +179,7 @@ void main() {
             ),
           ),
           conversationsProvider.overrideWith((ref) async => []),
+          internalThreadsProvider.overrideWith((ref) async => []),
           realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
           notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
         ],
@@ -192,5 +195,79 @@ void main() {
     await tester.tap(find.byKey(const Key('drawer-conversations')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('drawer-conversations')), findsNothing);
+  });
+
+  testWidgets('empleado solo ve canales autorizados grupos y administrador', (
+    tester,
+  ) async {
+    const employeeProfile = UserProfile(
+      id: 'employee-1',
+      name: 'Analia',
+      email: 'analia@gestinem.es',
+      type: UserType.staff,
+      staffRole: StaffRole.empleado,
+      channels: ['fiscal'],
+    );
+    const employeeSession = AuthSession(
+      token: 'employee-token',
+      profile: employeeProfile,
+    );
+    final conversations = [
+      Conversation(
+        id: 'fiscal-1',
+        companyCode: 'E00001',
+        companyName: 'Cliente Fiscal',
+        kind: 'fiscal',
+        state: 'pendiente',
+        unreadCount: 0,
+        updatedAt: DateTime(2026, 8, 19),
+      ),
+    ];
+    const threads = [
+      InternalThread(
+        id: 'group-1',
+        kind: 'group',
+        channel: '',
+        title: 'Equipo nóminas',
+        unreadCount: 0,
+      ),
+      InternalThread(
+        id: 'direct-1',
+        kind: 'direct',
+        channel: '',
+        title: 'Juan José',
+        unreadCount: 0,
+      ),
+    ];
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith(
+            (ref) => FakeSessionController(ref, employeeSession),
+          ),
+          apiClientProvider.overrideWithValue(
+            ApiClient(
+              dio: Dio(BaseOptions(baseUrl: 'https://example.test')),
+              tokenProvider: () => employeeSession.token,
+            ),
+          ),
+          conversationsProvider.overrideWith((ref) async => conversations),
+          internalThreadsProvider.overrideWith((ref) async => threads),
+          realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
+          notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
+        ],
+        child: const MaterialApp(home: ConversationsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('CF'), findsWidgets);
+    expect(find.text('LA'), findsNothing);
+    expect(find.text('Todos'), findsNothing);
+    expect(find.text('Equipo nóminas'), findsOneWidget);
+    expect(find.text('Administrador'), findsOneWidget);
+    expect(find.text('Analia'), findsOneWidget);
+    expect(find.text('Cliente Fiscal'), findsOneWidget);
   });
 }
