@@ -13,11 +13,15 @@ class AttachmentCard extends StatelessWidget {
     required this.attachment,
     required this.isStaff,
     this.onDownload,
+    this.onShowHistory,
+    this.onWithdraw,
   });
 
   final Attachment attachment;
   final bool isStaff;
   final VoidCallback? onDownload;
+  final VoidCallback? onShowHistory;
+  final VoidCallback? onWithdraw;
 
   String _statusLabel() {
     switch (attachment.status) {
@@ -98,6 +102,12 @@ class AttachmentCard extends StatelessWidget {
                 ),
                 if (isStaff && !attachment.isIncoming && attachment.completedDownloadCount != null)
                   _StaffDownloadSummary(attachment: attachment),
+                if (attachment.isWithdrawn &&
+                    (attachment.withdrawalReason?.isNotEmpty ?? false))
+                  Text(
+                    'Motivo: ${attachment.withdrawalReason}',
+                    style: TextStyle(fontSize: 11, color: colors.error),
+                  ),
               ],
             ),
           ),
@@ -107,6 +117,24 @@ class AttachmentCard extends StatelessWidget {
               icon: const Icon(Icons.download_outlined, size: 20),
               tooltip: 'Descargar',
               onPressed: onDownload,
+            ),
+          if (isStaff && !attachment.isIncoming && onShowHistory != null)
+            IconButton(
+              key: Key('download-history-${attachment.id}'),
+              icon: const Icon(Icons.history, size: 20),
+              tooltip: 'Ver historial de descargas',
+              onPressed: onShowHistory,
+            ),
+          if (isStaff &&
+              !attachment.isIncoming &&
+              !attachment.isWithdrawn &&
+              onWithdraw != null)
+            IconButton(
+              key: Key('withdraw-${attachment.id}'),
+              icon: Icon(Icons.remove_circle_outline,
+                  size: 20, color: colors.error),
+              tooltip: 'Retirar documento',
+              onPressed: onWithdraw,
             ),
         ],
       ),
@@ -161,6 +189,8 @@ class MessageBubble extends StatelessWidget {
     this.isStaff = false,
     this.onReplyTap,
     this.onAttachmentTap,
+    this.onAttachmentHistory,
+    this.onAttachmentWithdraw,
     this.onTap,
     this.onLongPress,
   });
@@ -176,6 +206,8 @@ class MessageBubble extends StatelessWidget {
   /// Para cliente: se invoca al pulsar Descargar en un adjunto disponible.
   /// Para personal: no se invoca (las tarjetas son informativas).
   final void Function(Attachment attachment)? onAttachmentTap;
+  final void Function(Attachment attachment)? onAttachmentHistory;
+  final void Function(Attachment attachment)? onAttachmentWithdraw;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
 
@@ -330,6 +362,17 @@ class MessageBubble extends StatelessWidget {
                         isStaff: isStaff,
                         onDownload: (!isStaff && att.available)
                             ? () => onAttachmentTap?.call(att)
+                            : null,
+                        onShowHistory: isStaff &&
+                                !att.isIncoming &&
+                                onAttachmentHistory != null
+                            ? () => onAttachmentHistory?.call(att)
+                            : null,
+                        onWithdraw: isStaff &&
+                                !att.isIncoming &&
+                                !att.isWithdrawn &&
+                                onAttachmentWithdraw != null
+                            ? () => onAttachmentWithdraw?.call(att)
                             : null,
                       ),
                     Align(

@@ -2301,7 +2301,7 @@ def download_audit(attachment_id: str, staff: MessagingStaff = Depends(_staff), 
 
 
 class WithdrawIn(BaseModel):
-    reason: str = Field(default="", max_length=500)
+    reason: str = Field(min_length=1, max_length=500)
 
 
 @router.post("/staff/admin/attachments/{attachment_id}/withdraw")
@@ -2324,6 +2324,8 @@ def withdraw_attachment(
     if item.withdrawn_at:
         return {"ok": True, "already_withdrawn": True, "withdrawn_at": item.withdrawn_at.isoformat()}
     reason = payload.reason.strip()
+    if not reason:
+        raise HTTPException(422, "Debes indicar el motivo de la retirada")
     item.withdrawn_at = utcnow()
     item.withdrawn_by = admin.external_id
     item.withdrawal_reason = reason

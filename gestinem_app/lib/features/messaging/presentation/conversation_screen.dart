@@ -172,24 +172,162 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     try {
       final (bytes, downloadId) =
           await repository.downloadWithId(attachment);
-      await FilePicker.saveFile(
+      final savedPath = await FilePicker.saveFile(
         fileName: attachment.name,
         bytes: bytes,
         mimeType: attachment.contentType,
       );
-      // Confirmar que Flutter guardo el archivo correctamente
+      if (savedPath == null) return;
+      var confirmed = downloadId.isEmpty;
       if (downloadId.isNotEmpty) {
-        try {
-          await repository.confirmDownload(attachment.id, downloadId);
-        } catch (_) {
-          // La confirmacion es best-effort; la descarga ya esta guardada
+        for (var attempt = 0; attempt < 3 && !confirmed; attempt++) {
+          try {
+            await repository.confirmDownload(attachment.id, downloadId);
+            confirmed = true;
+          } catch (_) {
+            if (attempt < 2) {
+              await Future<void>.delayed(const Duration(milliseconds: 400));
+            }
+          }
         }
       }
+      if (!mounted) return;
+      ref.invalidate(messagesProvider(widget.conversationId));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(confirmed
+            ? 'Documento guardado y descarga registrada.'
+            : 'Documento guardado, pero no se pudo registrar la descarga.'),
+      ));
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
+      }
+    }
+  }
+
+  String _fmtAuditDate(DateTime value) =>
+      '${value.day.toString().padLeft(2, '0')}/'
+      '${value.month.toString().padLeft(2, '0')}/${value.year} '
+      '${value.hour.toString().padLeft(2, '0')}:'
+      '${value.minute.toString().padLeft(2, '0')}';
+
+  Future<void> _showAttachmentHistory(Attachment attachment) async {
+    try {
+      final rows = await ref
+          .read(messagingRepositoryProvider)
+          .attachmentDownloads(attachment.id);
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Descargas de ${attachment.name}'),
+          content: SizedBox(
+            width: 620,
+            child: rows.isEmpty
+                ? const Text('El cliente todavía no ha descargado el documento.')
+                : ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: rows.length,
+                    separatorBuilder: (_, _) => const Divider(),
+                    itemBuilder: (_, index) {
+                      final row = rows[index];
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(row.completedAt != null
+                            ? Icons.verified_outlined
+                            : Icons.downloading_outlined),
+                        title: Text(row.clientName.isEmpty
+                            ? 'Cliente'
+                            : row.clientName),
+                        subtitle: Text(
+                          'Iniciada: ${_fmtAuditDate(row.downloadedAt)}\n'
+                          'Completada: ${row.completedAt == null ? 'No confirmada' : _fmtAuditDate(row.completedAt!)}\n'
+                          'IP: ${row.ip.isEmpty ? 'No disponible' : row.ip}\n'
+                          'Dispositivo: ${row.userAgent.isEmpty ? 'No disponible' : row.userAgent}'
+                          '${row.sha256.isEmpty ? '' : '\nHuella SHA-256: ${row.sha256}'}',
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cerrar'),
+            ),
+          ],
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(apiErrorMessage(error))),
+        );
+      }
+    }
+  }
+
+  Future<void> _withdrawAttachment(Attachment attachment) async {
+    final reason = TextEditingController();
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Retirar documento'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('El cliente dejará de poder descargar ${attachment.name}.'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reason,
+              autofocus: true,
+              maxLength: 500,
+              decoration: const InputDecoration(
+                labelText: 'Motivo obligatorio',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (reason.text.trim().isNotEmpty) Navigator.pop(context, true);
+            },
+            child: const Text('Retirar'),
+          ),
+        ],
+      ),
+    );
+    if (accepted != true) {
+      reason.dispose();
+      return;
+    }
+    final value = reason.text.trim();
+    reason.dispose();
+    try {
+      await ref
+          .read(messagingRepositoryProvider)
+          .withdrawAttachment(attachment.id, value);
+      ref.invalidate(messagesProvider(widget.conversationId));
+      ref.invalidate(conversationsProvider);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Documento retirado.')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(apiErrorMessage(error))),
+        );
       }
     }
   }
@@ -378,6 +516,12 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                       ? null
                       : () => _scrollToMessage(messages, message.replyTo!.id),
                   onAttachmentTap: _download,
+                  onAttachmentHistory: profile.type == UserType.staff
+                      ? _showAttachmentHistory
+                      : null,
+                  onAttachmentWithdraw: profile.isAdmin
+                      ? _withdrawAttachment
+                      : null,
                   onTap: message.deleted
                       ? null
                       : () => _messageActions(message, mine),

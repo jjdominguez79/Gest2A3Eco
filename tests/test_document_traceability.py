@@ -445,6 +445,20 @@ class TestRetiradaDocumento:
         assert resp.json()["ok"] is True
         assert resp.json()["withdrawn_at"]
 
+    @pytest.mark.parametrize("reason", ["", "   "])
+    def test_retirada_exige_motivo_no_vacio(self, tmp_path, reason):
+        client, factory = _make_client(tmp_path)
+        seeds = _seed(factory)
+        att_id = self._send_outgoing(client, seeds)
+
+        resp = client.post(
+            f"/api/v1/messaging/staff/admin/attachments/{att_id}/withdraw",
+            headers=_auth_staff(seeds["staff_token"]),
+            json={"reason": reason},
+        )
+
+        assert resp.status_code == 422
+
     def test_cliente_no_descarga_adjunto_retirado(self, tmp_path):
         client, factory = _make_client(tmp_path)
         seeds = _seed(factory)

@@ -11,7 +11,10 @@ import os
 import subprocess
 import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox, ttk
+
+from services.gestion_documental_service import GestionDocumentalService
 
 _LABEL_ESTADO = {
     "pendiente_clasificar": "Pendiente",
@@ -28,9 +31,6 @@ _COL_ANCHO = {
     "estado": 90,
     "tamano": 70,
 }
-
-_AVISO_TITLE = "Gest2A3Eco \u2014 Documentos recibidos"
-
 
 def _fmt_tamano(bytes_: int | None) -> str:
     if not bytes_:
@@ -58,17 +58,19 @@ class UIAdjuntosMensajeria(ttk.Frame):
         parent,
         gestor,
         on_ir_gestion_documental=None,
+        on_count_changed=None,
         usuario_activo: str = "",
         codigo_empresa_filtro: str | None = None,
     ):
         super().__init__(parent)
         self._gestor = gestor
         self._on_ir_gestion = on_ir_gestion_documental
+        self._on_count_changed = on_count_changed
         self._usuario = usuario_activo
         self._filtro_empresa = codigo_empresa_filtro
         self._cache: list[dict] = []
         self._selected_id: str | None = None
-        self._aviso_ids: set[str] = set()
+        self._service = GestionDocumentalService(gestor)
         self._build_ui()
         self.recargar()
 
@@ -81,11 +83,20 @@ class UIAdjuntosMensajeria(ttk.Frame):
         # Toolbar
         bar = ttk.Frame(self)
         bar.grid(row=0, column=0, sticky="ew", padx=4, pady=(4, 0))
+        ttk.Label(bar, text="Mostrar").pack(side=tk.LEFT, padx=(2, 4))
+        self._estado_filtro = tk.StringVar(value="Pendientes")
+        estado = ttk.Combobox(
+            bar, textvariable=self._estado_filtro, state="readonly", width=13,
+            values=("Pendientes", "Todos"),
+        )
+        estado.pack(side=tk.LEFT, padx=(0, 8))
+        estado.bind("<<ComboboxSelected>>", lambda _event: self.recargar())
         ttk.Button(bar, text="Actualizar", command=self.recargar).pack(side=tk.LEFT, padx=2)
         ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4)
         ttk.Button(bar, text="Abrir archivo", command=self._abrir_archivo).pack(side=tk.LEFT, padx=2)
         ttk.Button(bar, text="Ir a Gestion documental", command=self._ir_gestion).pack(side=tk.LEFT, padx=2)
         ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4)
+        ttk.Button(bar, text="Clasificar", command=self._clasificar).pack(side=tk.LEFT, padx=2)
         ttk.Button(bar, text="Marcar revisado", command=self._marcar_revisado).pack(side=tk.LEFT, padx=2)
         ttk.Button(bar, text="No guardar", command=self._no_guardar).pack(side=tk.LEFT, padx=2)
         self._lbl_contador = ttk.Label(bar, text="")
@@ -109,19 +120,25 @@ class UIAdjuntosMensajeria(ttk.Frame):
     # ── Logica de refresco ────────────────────────────────────────────────────
 
     def recargar(self) -> None:
-        """Recarga la lista desde PostgreSQL y lanza avisos de Windows si procede."""
+        """Recarga la lista desde PostgreSQL."""
+        solo_pendientes = self._estado_filtro.get() == "Pendientes"
         def _bg():
             try:
-                filtro = {"codigo_empresa": self._filtro_empresa} if self._filtro_empresa else None
+                filtro = {
+                    "codigo_empresa": self._filtro_empresa,
+                    "solo_pendientes": solo_pendientes,
+                }
                 datos = self._gestor.listar_adjuntos_mensajeria(filtro)
-                pendientes = sum(1 for d in datos if not d.get("revisado"))
-                nuevos = [d for d in datos if not d.get("aviso_mostrado") and not d.get("revisado")]
-            except Exception:
-                datos, pendientes, nuevos = [], 0, []
-            self.after(0, lambda: self._actualizar_ui(datos, pendientes, nuevos))
+                pendientes = self._gestor.contar_adjuntos_mensajeria_pendientes(
+                    self._filtro_empresa,
+                )
+                error = None
+            except Exception as exc:
+                datos, pendientes, error = [], 0, exc
+            self.after(0, lambda: self._actualizar_ui(datos, pendientes, error))
         threading.Thread(target=_bg, daemon=True).start()
 
-    def _actualizar_ui(self, datos: list[dict], pendientes: int, nuevos: list[dict]) -> None:
+    def _actualizar_ui(self, datos: list[dict], pendientes: int, error=None) -> None:
         prev = self._selected_id
         self._cache = datos
         for item in self._tree.get_children():
@@ -143,28 +160,14 @@ class UIAdjuntosMensajeria(ttk.Frame):
             self._selected_id = None
         txt = f"Pendientes: {pendientes}" if pendientes else "Sin pendientes"
         self._lbl_contador.configure(text=txt)
-        self._lanzar_avisos(nuevos)
-
-    def _lanzar_avisos(self, nuevos: list[dict]) -> None:
-        """Muestra aviso de Windows una sola vez por adjunto nuevo."""
-        for d in nuevos:
-            aid = d["id"]
-            if aid in self._aviso_ids:
-                continue
-            self._aviso_ids.add(aid)
-            try:
-                from win10toast_click import ToastNotifier  # type: ignore
-                ToastNotifier().show_toast(
-                    _AVISO_TITLE,
-                    f"Nuevo adjunto de {d.get('remitente', 'cliente')}: {d.get('nombre_original', '')}",
-                    duration=6, threaded=True,
-                )
-            except Exception:
-                pass
-            try:
-                self._gestor.marcar_aviso_adjunto_mensajeria(aid)
-            except Exception:
-                pass
+        if self._on_count_changed:
+            self._on_count_changed(pendientes)
+        if error is not None:
+            messagebox.showerror(
+                "Documentos recibidos",
+                f"No se pudo actualizar la bandeja:\n{error}",
+                parent=self,
+            )
 
     # ── Seleccion ─────────────────────────────────────────────────────────────
 
@@ -210,6 +213,51 @@ class UIAdjuntosMensajeria(ttk.Frame):
                 f"Abre el modulo de Gestion documental para esta empresa.",
             )
 
+    def _clasificar(self) -> None:
+        item = self._item_seleccionado()
+        if not item:
+            messagebox.showinfo("Sin seleccion", "Selecciona un adjunto de la lista.")
+            return
+        if item.get("revisado"):
+            messagebox.showinfo("Ya procesado", "Este adjunto ya fue procesado.")
+            return
+        from views.ui_gestion_documental import _CategoryDialog
+
+        categorias = self._service.categorias()
+        dialog = _CategoryDialog(self, [row["nombre"] for row in categorias])
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        categoria = next(row for row in categorias if row["nombre"] == dialog.result)
+        empresas = [
+            row for row in self._gestor.listar_empresas()
+            if str(row.get("codigo") or "") == str(item.get("codigo_empresa") or "")
+        ]
+        ejercicio = max((int(row.get("ejercicio") or 0) for row in empresas), default=0)
+        if not ejercicio:
+            messagebox.showerror(
+                "Clasificar", "No se encontro un ejercicio para este cliente.", parent=self,
+            )
+            return
+        try:
+            documento_id = self._service.archivar_adjunto_mensajeria(
+                item, ejercicio=ejercicio, categoria_id=categoria["id"],
+                usuario=self._usuario or "sistema",
+            )
+            self._gestor.actualizar_adjunto_mensajeria_entrada(
+                item["id"], "archivado", documento_id=documento_id,
+            )
+            self._gestor.marcar_adjunto_mensajeria_revisado(
+                item["id"], revisado_por=self._usuario or "sistema",
+                clasificacion=categoria["nombre"], documento_id=documento_id,
+            )
+            self.recargar()
+            messagebox.showinfo(
+                "Clasificar", "Documento incorporado a Gestion documental.", parent=self,
+            )
+        except Exception as exc:
+            messagebox.showerror("Clasificar", str(exc), parent=self)
+
     def _marcar_revisado(self) -> None:
         item = self._item_seleccionado()
         if not item:
@@ -246,6 +294,17 @@ class UIAdjuntosMensajeria(ttk.Frame):
             self._gestor.no_guardar_adjunto_mensajeria(
                 item["id"], revisado_por=self._usuario or "sistema",
             )
+            ruta = Path(str(item.get("ruta_entrada") or ""))
+            if ruta.is_file():
+                try:
+                    ruta.unlink()
+                except OSError as exc:
+                    messagebox.showwarning(
+                        "No guardar",
+                        "La decision se ha registrado, pero no se pudo eliminar "
+                        f"la copia temporal:\n{exc}",
+                        parent=self,
+                    )
             self.recargar()
         except Exception as exc:
             messagebox.showerror("Error", f"No se pudo registrar la decision:\n{exc}")

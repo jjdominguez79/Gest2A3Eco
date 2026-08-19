@@ -91,6 +91,70 @@ class SecuredGestor:
         self.security.ensure_company_write(datos.get("codigo_empresa"))
         return self._base.registrar_documento_archivo(datos)
 
+    # ── Adjuntos recibidos por mensajeria ──────────────────────────────────
+
+    def listar_adjuntos_mensajeria(self, filtro: dict | None = None):
+        rows = self._base.listar_adjuntos_mensajeria(filtro)
+        if self.security.session.is_admin():
+            return rows
+        return [
+            row for row in rows
+            if self.security.can_read_company(str(row.get("codigo_empresa") or ""))
+        ]
+
+    def contar_adjuntos_mensajeria_pendientes(self, codigo_empresa: str | None = None) -> int:
+        if codigo_empresa:
+            self.security.ensure_company_read(codigo_empresa)
+        return sum(
+            1 for row in self.listar_adjuntos_mensajeria({
+                "codigo_empresa": codigo_empresa,
+                "solo_pendientes": True,
+            })
+        )
+
+    def get_adjunto_mensajeria(self, adjunto_id: str):
+        row = self._base.get_adjunto_mensajeria(adjunto_id)
+        if row:
+            self.security.ensure_company_read(str(row.get("codigo_empresa") or ""))
+        return row
+
+    def marcar_aviso_adjunto_mensajeria(self, adjunto_id: str) -> None:
+        row = self.get_adjunto_mensajeria(adjunto_id)
+        if row:
+            return self._base.marcar_aviso_adjunto_mensajeria(adjunto_id)
+
+    def marcar_adjunto_mensajeria_revisado(
+        self, adjunto_id: str, revisado_por: str,
+        clasificacion: str | None = None, documento_id: str | None = None,
+    ) -> None:
+        row = self.get_adjunto_mensajeria(adjunto_id)
+        if not row:
+            raise ValueError("Adjunto de mensajeria no encontrado.")
+        self.security.ensure_company_write(str(row.get("codigo_empresa") or ""))
+        return self._base.marcar_adjunto_mensajeria_revisado(
+            adjunto_id, revisado_por, clasificacion, documento_id,
+        )
+
+    def no_guardar_adjunto_mensajeria(self, adjunto_id: str, revisado_por: str) -> None:
+        row = self.get_adjunto_mensajeria(adjunto_id)
+        if not row:
+            raise ValueError("Adjunto de mensajeria no encontrado.")
+        self.security.ensure_company_write(str(row.get("codigo_empresa") or ""))
+        return self._base.no_guardar_adjunto_mensajeria(adjunto_id, revisado_por)
+
+    def actualizar_adjunto_mensajeria_entrada(
+        self, adjunto_id: str, estado: str, *, documento_id: str | None = None,
+        error_detalle: str = "",
+    ) -> None:
+        row = self.get_adjunto_mensajeria(adjunto_id)
+        if not row:
+            raise ValueError("Adjunto de mensajeria no encontrado.")
+        self.security.ensure_company_write(str(row.get("codigo_empresa") or ""))
+        return self._base.actualizar_adjunto_mensajeria_entrada(
+            adjunto_id, estado, documento_id=documento_id,
+            error_detalle=error_detalle,
+        )
+
     def registrar_decision_adjunto(self, datos: dict):
         return self._base.registrar_decision_adjunto(datos)
 

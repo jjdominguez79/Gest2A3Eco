@@ -15,7 +15,10 @@ from views.ui_firma_dialog import UIFirmaDialog
 
 
 class UIGestionDocumental(ttk.Frame):
-    def __init__(self, parent, gestor, codigo, ejercicio, nombre, session=None):
+    def __init__(
+        self, parent, gestor, codigo, ejercicio, nombre, session=None,
+        open_messaging_incoming=False,
+    ):
         super().__init__(parent, padding=12)
         self._gestor = gestor
         self._codigo = codigo
@@ -27,6 +30,8 @@ class UIGestionDocumental(ttk.Frame):
         self._categories = self._service.categorias()
         self._build()
         self._refresh()
+        if open_messaging_incoming:
+            self.after_idle(self._open_messaging_incoming)
 
     def _build(self):
         top = ttk.Frame(self)
@@ -165,6 +170,14 @@ class UIGestionDocumental(ttk.Frame):
                 )
                 self._gestor.actualizar_adjunto_mensajeria_entrada(
                     item["id"], "archivado", documento_id=document_id,
+                )
+                self._gestor.marcar_adjunto_mensajeria_revisado(
+                    item["id"],
+                    revisado_por=getattr(
+                        getattr(self._session, "user", None), "nombre", "",
+                    ) or "sistema",
+                    clasificacion=category["nombre"],
+                    documento_id=document_id,
                 )
                 tree.delete(item["id"])
                 current.pop(item["id"], None)

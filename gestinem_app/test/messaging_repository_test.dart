@@ -126,4 +126,50 @@ void main() {
     expect(adapter.lastRequest!.path, '/public/app-version');
     expect(adapter.lastRequest!.queryParameters, {'platform': 'windows'});
   });
+
+  test('consulta el historial detallado de descargas', () async {
+    final adapter = JsonAdapter([
+      {
+        'id': 'download-1',
+        'client_id': 'client-1',
+        'client_name': 'María',
+        'downloaded_at': '2026-08-19T08:00:00Z',
+        'completed_at': '2026-08-19T08:01:00Z',
+        'ip': '192.0.2.1',
+        'user_agent': 'Gestinem Android',
+        'sha256': 'abc123',
+        'success': true,
+      },
+    ]);
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+    )..httpClientAdapter = adapter;
+    final api = ApiClient(dio: dio, tokenProvider: () => testSession.token);
+
+    final rows = await MessagingRepository(api).attachmentDownloads('att-1');
+
+    expect(rows.single.clientName, 'María');
+    expect(rows.single.completedAt, isNotNull);
+    expect(adapter.lastRequest!.path, '/staff/attachments/att-1/downloads');
+  });
+
+  test('administrador retira un documento indicando motivo', () async {
+    final adapter = JsonAdapter({'ok': true});
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+    )..httpClientAdapter = adapter;
+    final api = ApiClient(dio: dio, tokenProvider: () => testSession.token);
+
+    await MessagingRepository(api).withdrawAttachment(
+      'att-1',
+      'Documento incorrecto',
+    );
+
+    expect(
+      adapter.lastRequest!.path,
+      '/staff/admin/attachments/att-1/withdraw',
+    );
+    expect(adapter.lastRequest!.method, 'POST');
+    expect(adapter.lastRequest!.data, {'reason': 'Documento incorrecto'});
+  });
 }

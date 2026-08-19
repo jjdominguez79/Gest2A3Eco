@@ -10,6 +10,9 @@ class Attachment {
     this.expiresAt,
     this.localConfirmed = false,
     this.withdrawnAt,
+    this.withdrawnBy,
+    this.withdrawalReason,
+    this.sha256,
     this.completedDownloadCount,
     this.firstDownloadedAt,
     this.lastDownloadedAt,
@@ -31,6 +34,9 @@ class Attachment {
         withdrawnAt: json['withdrawn_at'] != null
             ? DateTime.parse(json['withdrawn_at'] as String).toLocal()
             : null,
+        withdrawnBy: json['withdrawn_by'] as String?,
+        withdrawalReason: json['withdrawal_reason'] as String?,
+        sha256: json['sha256'] as String?,
         completedDownloadCount: json['completed_download_count'] as int?,
         firstDownloadedAt: json['first_downloaded_at'] != null
             ? DateTime.parse(json['first_downloaded_at'] as String).toLocal()
@@ -57,6 +63,9 @@ class Attachment {
   final bool localConfirmed;
   /// Cuando fue retirado (adjuntos salientes retirados)
   final DateTime? withdrawnAt;
+  final String? withdrawnBy;
+  final String? withdrawalReason;
+  final String? sha256;
   // Resumen de descargas (solo para personal, adjuntos salientes)
   final int? completedDownloadCount;
   final DateTime? firstDownloadedAt;
@@ -66,6 +75,45 @@ class Attachment {
   bool get isIncoming => direction == 'incoming';
   bool get isWithdrawn => withdrawnAt != null;
   bool get isExpired => status == 'caducado';
+}
+
+class AttachmentDownload {
+  const AttachmentDownload({
+    required this.id,
+    required this.clientId,
+    required this.clientName,
+    required this.downloadedAt,
+    required this.completedAt,
+    required this.ip,
+    required this.userAgent,
+    required this.sha256,
+    required this.success,
+  });
+
+  factory AttachmentDownload.fromJson(Map<String, dynamic> json) =>
+      AttachmentDownload(
+        id: json['id'] as String? ?? '',
+        clientId: json['client_id'] as String? ?? '',
+        clientName: json['client_name'] as String? ?? '',
+        downloadedAt: DateTime.parse(json['downloaded_at'] as String).toLocal(),
+        completedAt: json['completed_at'] == null
+            ? null
+            : DateTime.parse(json['completed_at'] as String).toLocal(),
+        ip: json['ip'] as String? ?? '',
+        userAgent: json['user_agent'] as String? ?? '',
+        sha256: json['sha256'] as String? ?? '',
+        success: json['success'] as bool? ?? false,
+      );
+
+  final String id;
+  final String clientId;
+  final String clientName;
+  final DateTime downloadedAt;
+  final DateTime? completedAt;
+  final String ip;
+  final String userAgent;
+  final String sha256;
+  final bool success;
 }
 
 class ReplyReference {

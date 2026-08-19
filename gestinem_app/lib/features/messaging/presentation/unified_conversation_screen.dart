@@ -110,18 +110,32 @@ class _UnifiedConversationScreenState
     final repository = ref.read(messagingRepositoryProvider);
     try {
       final (bytes, downloadId) = await repository.downloadWithId(attachment);
-      await FilePicker.saveFile(
+      final savedPath = await FilePicker.saveFile(
         fileName: attachment.name,
         bytes: bytes,
         mimeType: attachment.contentType,
       );
+      if (savedPath == null) return;
+      var confirmed = downloadId.isEmpty;
       if (downloadId.isNotEmpty) {
-        try {
-          await repository.confirmDownload(attachment.id, downloadId);
-        } catch (_) {
-          // Best-effort: la descarga ya esta guardada aunque falle la confirmacion
+        for (var attempt = 0; attempt < 3 && !confirmed; attempt++) {
+          try {
+            await repository.confirmDownload(attachment.id, downloadId);
+            confirmed = true;
+          } catch (_) {
+            if (attempt < 2) {
+              await Future<void>.delayed(const Duration(milliseconds: 400));
+            }
+          }
         }
       }
+      if (!mounted) return;
+      ref.invalidate(unifiedMessagesProvider);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(confirmed
+            ? 'Documento guardado y descarga registrada.'
+            : 'Documento guardado, pero no se pudo registrar la descarga.'),
+      ));
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

@@ -150,6 +150,24 @@ class MessagingRepository {
     );
   }
 
+  Future<List<AttachmentDownload>> attachmentDownloads(
+    String attachmentId,
+  ) async {
+    final response = await _api.dio.get<List<dynamic>>(
+      '/staff/attachments/$attachmentId/downloads',
+    );
+    return response.data!
+        .map((item) =>
+            AttachmentDownload.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
+  Future<void> withdrawAttachment(String attachmentId, String reason) =>
+      _api.dio.post<void>(
+        '/staff/admin/attachments/$attachmentId/withdraw',
+        data: {'reason': reason},
+      );
+
   Future<Uint8List> download(UserProfile profile, Attachment attachment) {
     final path = profile.type == UserType.client
         ? '/client/attachments/${attachment.id}'

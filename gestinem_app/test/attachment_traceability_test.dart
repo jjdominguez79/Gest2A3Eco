@@ -24,6 +24,7 @@ Attachment _att({
   DateTime? expiresAt,
   bool localConfirmed = false,
   DateTime? withdrawnAt,
+  String? withdrawalReason,
   int? completedDownloadCount,
   DateTime? lastDownloadedAt,
   String? lastClientName,
@@ -39,6 +40,7 @@ Attachment _att({
       expiresAt: expiresAt,
       localConfirmed: localConfirmed,
       withdrawnAt: withdrawnAt,
+      withdrawalReason: withdrawalReason,
       completedDownloadCount: completedDownloadCount,
       lastDownloadedAt: lastDownloadedAt,
       lastClientName: lastClientName,
@@ -81,6 +83,9 @@ void main() {
         'expires_at': '2026-09-18T12:00:00Z',
         'local_confirmed': false,
         'withdrawn_at': null,
+        'withdrawn_by': '',
+        'withdrawal_reason': '',
+        'sha256': 'abc123',
         'completed_download_count': 3,
         'first_downloaded_at': '2026-08-20T10:00:00Z',
         'last_downloaded_at': '2026-08-21T15:30:00Z',
@@ -94,6 +99,7 @@ void main() {
       expect(att.expiresAt, isNotNull);
       expect(att.localConfirmed, isFalse);
       expect(att.withdrawnAt, isNull);
+      expect(att.sha256, 'abc123');
       expect(att.completedDownloadCount, 3);
       expect(att.lastClientName, 'Maria Lopez');
     });
@@ -125,10 +131,31 @@ void main() {
         'status': 'retirado',
         'available': false,
         'withdrawn_at': '2026-08-19T08:00:00Z',
+        'withdrawn_by': 'admin-1',
+        'withdrawal_reason': 'Documento incorrecto',
       };
       final att = Attachment.fromJson(json);
       expect(att.isWithdrawn, isTrue);
       expect(att.available, isFalse);
+      expect(att.withdrawnBy, 'admin-1');
+      expect(att.withdrawalReason, 'Documento incorrecto');
+    });
+
+    test('parsea una descarga completada', () {
+      final row = AttachmentDownload.fromJson({
+        'id': 'download-1',
+        'client_id': 'client-1',
+        'client_name': 'María',
+        'downloaded_at': '2026-08-19T08:00:00Z',
+        'completed_at': '2026-08-19T08:01:00Z',
+        'ip': '192.0.2.1',
+        'user_agent': 'Gestinem Android',
+        'sha256': 'abc123',
+        'success': true,
+      });
+      expect(row.clientName, 'María');
+      expect(row.completedAt, isNotNull);
+      expect(row.success, isTrue);
     });
   });
 
@@ -300,6 +327,39 @@ void main() {
         ),
       ));
       expect(find.textContaining('Pendiente de descarga'), findsOneWidget);
+    });
+
+    testWidgets('permite abrir historial y retirar al administrador',
+        (tester) async {
+      var history = false;
+      var withdrawn = false;
+      await tester.pumpWidget(_wrap(
+        AttachmentCard(
+          attachment: _att(completedDownloadCount: 1),
+          isStaff: true,
+          onShowHistory: () => history = true,
+          onWithdraw: () => withdrawn = true,
+        ),
+      ));
+      await tester.tap(find.byKey(const Key('download-history-att-1')));
+      await tester.tap(find.byKey(const Key('withdraw-att-1')));
+      expect(history, isTrue);
+      expect(withdrawn, isTrue);
+    });
+
+    testWidgets('muestra el motivo de un documento retirado', (tester) async {
+      await tester.pumpWidget(_wrap(
+        AttachmentCard(
+          attachment: _att(
+            status: 'retirado',
+            available: false,
+            withdrawnAt: DateTime(2026, 8, 19),
+            withdrawalReason: 'Documento equivocado',
+          ),
+          isStaff: true,
+        ),
+      ));
+      expect(find.textContaining('Documento equivocado'), findsOneWidget);
     });
   });
 

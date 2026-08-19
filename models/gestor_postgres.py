@@ -789,12 +789,13 @@ class GestorPostgres(GestorBase):
                 ("revisado_en", "TEXT"),
                 ("clasificacion", "TEXT"),
             ]:
-                try:
-                    self.conn.execute(
-                        f"ALTER TABLE mensajeria_adjuntos_entrada ADD COLUMN IF NOT EXISTS {col} {definition}"
-                    )
-                except Exception:
-                    pass
+                self.conn.execute(
+                    f"ALTER TABLE mensajeria_adjuntos_entrada ADD COLUMN IF NOT EXISTS {col} {definition}"
+                )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_msg_adjuntos_entrada_revision "
+            "ON mensajeria_adjuntos_entrada(revisado,created_at DESC)"
+        )
         self.conn.commit()
 
     def _asegurar_esquema_plantillas_firma(self) -> None:
@@ -1045,6 +1046,14 @@ class GestorPostgres(GestorBase):
             (self._now(), adjunto_id),
         )
         self.conn.commit()
+
+    def get_adjunto_mensajeria(self, adjunto_id: str) -> dict | None:
+        """Devuelve un adjunto de la bandeja por su identificador."""
+        row = self.conn.execute(
+            "SELECT * FROM mensajeria_adjuntos_entrada WHERE id = %s",
+            (adjunto_id,),
+        ).fetchone()
+        return dict(row) if row else None
 
     def marcar_adjunto_mensajeria_revisado(
         self,

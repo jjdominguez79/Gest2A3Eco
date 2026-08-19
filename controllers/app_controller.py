@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 LOG = logging.getLogger(__name__)
 MAIL_NOTIFICATION_INTERVAL_MS = 30_000
+ATTACHMENT_NOTIFICATION_INTERVAL_MS = 30_000
 
 
 class AppController:
@@ -38,6 +39,11 @@ class AppController:
         self._mail_poll_stopped = False
         self._mail_toast = None
         self._mail_status_callback = None
+        self._attachment_poll_running = False
+        self._attachment_poll_scheduled = False
+        self._attachment_poll_stopped = False
+        self._attachment_toast = None
+        self._attachment_status_callback = None
         self._content.bind("<Destroy>", self._on_content_destroy, add="+")
 
     @property
@@ -52,9 +58,134 @@ class AppController:
         """Abre el listado de empresas, pantalla inicial de la aplicacion."""
         self._show(self.build_panel_general)
         self._schedule_mail_poll(1_500)
+        self._schedule_attachment_poll(2_000)
 
     def set_mail_status_callback(self, callback):
         self._mail_status_callback = callback
+
+    def set_attachment_status_callback(self, callback):
+        self._attachment_status_callback = callback
+
+    def _schedule_attachment_poll(self, delay_ms=ATTACHMENT_NOTIFICATION_INTERVAL_MS):
+        role = str(getattr(self._session.role, "value", self._session.role)).lower()
+        if (
+            self._attachment_poll_stopped
+            or self._attachment_poll_scheduled
+            or role not in {"admin", "empleado"}
+        ):
+            return
+        try:
+            self._content.after(delay_ms, self._start_attachment_poll)
+            self._attachment_poll_scheduled = True
+        except tk.TclError:
+            pass
+
+    def _start_attachment_poll(self):
+        self._attachment_poll_scheduled = False
+        if self._attachment_poll_stopped:
+            return
+        if self._attachment_poll_running:
+            self._schedule_attachment_poll()
+            return
+        self._attachment_poll_running = True
+
+        def worker():
+            try:
+                rows = self._gestor.listar_adjuntos_mensajeria({"solo_pendientes": True})
+                nuevos = [row for row in rows if not row.get("aviso_mostrado")]
+                error = None
+            except Exception as exc:
+                rows, nuevos, error = [], [], exc
+            try:
+                self._content.after(
+                    0, self._finish_attachment_poll, rows, nuevos, error,
+                )
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_attachment_poll(self, rows, nuevos, error):
+        self._attachment_poll_running = False
+        if self._attachment_poll_stopped:
+            return
+        if error is not None:
+            LOG.warning("No se pudieron comprobar adjuntos de mensajeria: %s", error)
+        else:
+            if self._attachment_status_callback is not None:
+                try:
+                    self._attachment_status_callback(len(rows))
+                except tk.TclError:
+                    pass
+            if nuevos:
+                self._show_attachment_toast(nuevos)
+        self._schedule_attachment_poll()
+
+    def _show_attachment_toast(self, rows: list[dict]):
+        try:
+            if self._attachment_toast is not None and self._attachment_toast.winfo_exists():
+                self._attachment_toast.destroy()
+            root = self._content.winfo_toplevel()
+            toast = tk.Toplevel(root)
+            self._attachment_toast = toast
+            toast.title("Documentos recibidos")
+            toast.attributes("-topmost", True)
+            toast.resizable(False, False)
+            toast.configure(bg="#fff4df")
+            frame = tk.Frame(
+                toast, bg="#fff4df", padx=16, pady=13,
+                highlightbackground="#d68910", highlightthickness=1,
+            )
+            frame.pack(fill="both", expand=True)
+            count = len(rows)
+            title = "Nuevo documento recibido" if count == 1 else f"{count} documentos nuevos"
+            tk.Label(
+                frame, text=title, bg="#fff4df", fg="#6e4300",
+                font=("Segoe UI", 11, "bold"), anchor="w",
+            ).pack(fill="x")
+            details = []
+            for row in rows[:3]:
+                details.append(
+                    f"{row.get('codigo_empresa') or 'Cliente'} · "
+                    f"{row.get('nombre_original') or 'Documento'}"
+                )
+            if count > 3:
+                details.append(f"Y {count - 3} mas...")
+            for row in rows:
+                try:
+                    self._gestor.marcar_aviso_adjunto_mensajeria(row["id"])
+                except Exception as exc:
+                    LOG.warning(
+                        "No se pudo marcar el aviso del adjunto %s: %s",
+                        row.get("id"), exc,
+                    )
+            tk.Label(
+                frame, text="\n".join(details), bg="#fff4df", fg="#4a3a20",
+                font=("Segoe UI", 9), justify="left", anchor="w", wraplength=390,
+            ).pack(fill="x", pady=(8, 10))
+            actions = tk.Frame(frame, bg="#fff4df")
+            actions.pack(fill="x")
+            tk.Button(actions, text="Cerrar", command=toast.destroy, relief="flat").pack(side="right")
+            tk.Button(
+                actions, text="Abrir bandeja",
+                command=lambda: self._open_attachments_from_toast(toast, rows),
+                bg="#d68910", fg="white", relief="flat", padx=10,
+            ).pack(side="right", padx=(0, 6))
+            toast.update_idletasks()
+            x = root.winfo_x() + root.winfo_width() - toast.winfo_width() - 24
+            y = root.winfo_y() + 72
+            toast.geometry(f"+{max(0, x)}+{max(0, y)}")
+            toast.after(20_000, lambda: toast.winfo_exists() and toast.destroy())
+            root.bell()
+        except tk.TclError:
+            pass
+
+    def _open_attachments_from_toast(self, toast, rows):
+        try:
+            toast.destroy()
+        except tk.TclError:
+            pass
+        self.open_adjuntos_mensajeria()
 
     def _schedule_mail_poll(self, delay_ms=MAIL_NOTIFICATION_INTERVAL_MS):
         role = str(getattr(self._session.role, "value", self._session.role)).lower()
@@ -194,10 +325,43 @@ class AppController:
     def _on_content_destroy(self, event):
         if event.widget is self._content:
             self._mail_poll_stopped = True
+            self._attachment_poll_stopped = True
 
     def open_buzon(self):
         """Abre el buzon global de comunicaciones bajo demanda."""
         self._show(self.build_comunicaciones_global)
+
+    def open_adjuntos_mensajeria(self):
+        """Abre la bandeja global de documentos recibidos por mensajeria."""
+        from views.ui_adjuntos_mensajeria import UIAdjuntosMensajeria
+
+        self._show(lambda parent: UIAdjuntosMensajeria(
+            parent,
+            self._gestor,
+            on_ir_gestion_documental=self._open_messaging_document_management,
+            on_count_changed=self._attachment_status_callback,
+            usuario_activo=str(getattr(self._session.user, "nombre", "") or ""),
+        ))
+
+    def _open_messaging_document_management(self, codigo_empresa: str):
+        empresas = self._empresa_service.listar_empresas_panel(include_inactive=True)
+        ejercicios = [
+            int(row.get("ultimo_ejercicio") or row.get("ejercicio") or 0)
+            for row in empresas
+            if str(row.get("codigo") or "") == str(codigo_empresa)
+        ]
+        ejercicio = max(ejercicios, default=0)
+        if not ejercicio:
+            messagebox.showerror(
+                "Gestion documental",
+                "No se encontro un ejercicio para este cliente.",
+                parent=self._content.winfo_toplevel(),
+            )
+            return
+        self._open_module_in_shell(
+            codigo_empresa, ejercicio, "gestion_documental",
+            open_messaging_incoming=True,
+        )
 
     def open_empresas(self):
         """Vuelve al listado general de empresas desde cualquier modulo."""
@@ -383,17 +547,24 @@ class AppController:
             return
         self._open_module_in_shell(codigo, ejercicio, module)
 
-    def _open_module_in_shell(self, codigo, ejercicio, modulo, nombre=None):
+    def _open_module_in_shell(
+        self, codigo, ejercicio, modulo, nombre=None, *, open_messaging_incoming=False,
+    ):
         """Muestra un modulo dentro del shell persistente."""
         shell = self._get_or_create_shell(codigo, ejercicio)
         empresa = self._gestor.get_empresa(codigo, ejercicio) or {}
         nombre = nombre or empresa.get("nombre") or codigo
 
         nav_key = modulo.split("::")[0] if "::" in modulo else modulo
-        content = self._build_module_content(shell.get_content_holder(), codigo, ejercicio, modulo, nombre)
+        content = self._build_module_content(
+            shell.get_content_holder(), codigo, ejercicio, modulo, nombre,
+            open_messaging_incoming=open_messaging_incoming,
+        )
         shell.show_module(content, nav_key=nav_key)
 
-    def _build_module_content(self, parent, codigo, ejercicio, modulo, nombre):
+    def _build_module_content(
+        self, parent, codigo, ejercicio, modulo, nombre, *, open_messaging_incoming=False,
+    ):
         """Construye y devuelve el widget del modulo sin empaquetarlo."""
         from views.ui_comunicaciones import UIComunicaciones
         from views.ui_gestion_documental import UIGestionDocumental
@@ -427,6 +598,7 @@ class AppController:
             return UIGestionDocumental(
                 parent, self._gestor, codigo, ejercicio, nombre,
                 session=self._session,
+                open_messaging_incoming=open_messaging_incoming,
             )
         if modulo == "contabilidad":
             return UIContabilidad(parent, self._gestor, codigo, ejercicio, nombre, session=self._session)

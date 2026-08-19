@@ -67,6 +67,7 @@ def _build_header(
     on_open_terceros=None,
     on_open_control_facturas=None,
     on_open_firmas=None,
+    on_open_adjuntos_mensajeria=None,
     on_open_notificaciones=None,
     on_open_tramites_dgt=None,
     on_logout=None,
@@ -167,6 +168,18 @@ def _build_header(
             text=f"Gestionados {int(counts.get('gestionado', 0))}"
         )
 
+    attachment_button = None
+
+    def _set_attachment_count(count):
+        if attachment_button is None:
+            return
+        count = int(count or 0)
+        attachment_button.configure(
+            text=f"Documentos recibidos ({count})",
+            bg="#d68910" if count else COLOR_PRIMARY_HOV,
+            activebackground="#b9770e" if count else "#1e5999",
+        )
+
     btn_row = tk.Frame(right, bg=COLOR_PRIMARY)
     btn_row.pack(anchor="e")
 
@@ -200,6 +213,10 @@ def _build_header(
         return button
 
     _hbtn("Buzon", on_cambiar_empresa)
+    if on_open_adjuntos_mensajeria:
+        attachment_button = _hbtn(
+            "Documentos recibidos (0)", on_open_adjuntos_mensajeria,
+        )
     if on_open_empresas:
         _hbtn("Empresas", on_open_empresas)
     if on_open_terceros:
@@ -243,6 +260,7 @@ def _build_header(
         tk.Frame(root, bg=COLOR_SEPARATOR, height=1).pack(side="top", fill="x")
 
     header.set_mail_counts = _set_mail_counts
+    header.set_attachment_count = _set_attachment_count
     return header
 
 
@@ -582,6 +600,7 @@ def main():
                 if controller.authorization.can_manage_firmas()
                 else None
             ),
+            on_open_adjuntos_mensajeria=controller.open_adjuntos_mensajeria,
             on_open_notificaciones=controller.open_notificaciones_global,
             on_open_tramites_dgt=(
                 controller.open_tramites_dgt
@@ -595,6 +614,7 @@ def main():
             word_tpl_dir=word_tpl_dir,
         )
         controller.set_mail_status_callback(header.set_mail_counts)
+        controller.set_attachment_status_callback(header.set_attachment_count)
         content.pack(side="top", fill="both", expand=True)
         ctx = _build_context_menu(controller)
 
