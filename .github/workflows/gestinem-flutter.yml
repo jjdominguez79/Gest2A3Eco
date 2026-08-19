@@ -2,6 +2,8 @@ name: Gestinem Flutter
 
 on:
   push:
+    branches:
+      - main
     paths:
       - "gestinem_app/**"
       - ".github/workflows/gestinem-flutter.yml"
