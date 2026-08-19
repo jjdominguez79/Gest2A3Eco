@@ -45,6 +45,23 @@ def _client(tmp_path: Path):
     return TestClient(app, base_url="https://mensajes.example.test")
 
 
+def test_public_app_version_exposes_release_information(tmp_path, monkeypatch):
+    monkeypatch.setenv("MESSAGING_LATEST_APP_VERSION", "0.1.1")
+    monkeypatch.setenv("MESSAGING_LATEST_APP_BUILD", "11")
+    monkeypatch.setenv("MESSAGING_MINIMUM_APP_BUILD", "7")
+    response = _client(tmp_path).get(
+        "/api/v1/messaging/public/app-version?platform=windows",
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "platform": "windows",
+        "latest_version": "0.1.1",
+        "latest_build": 11,
+        "minimum_build": 7,
+    }
+
+
 def test_avatar_aplica_orientacion_exif_de_fotos_moviles():
     source = Image.new("RGB", (120, 60), "#1c4f9c")
     for x in range(60):

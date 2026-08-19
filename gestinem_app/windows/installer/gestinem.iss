@@ -1,5 +1,5 @@
 #define MyAppName "Gestinem"
-#define MyAppVersion "0.1.1"
+#define MyAppVersion "0.1.1.11"
 #define MyAppPublisher "Gestinem"
 #define MyAppExeName "gestinem.exe"
 
@@ -28,14 +28,14 @@ RestartApplications=no
 Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "Crear un acceso directo en el escritorio"; GroupDescription: "Accesos directos:"; Flags: unchecked
+Name: "desktopicon"; Description: "Crear un acceso directo en el escritorio"; GroupDescription: "Accesos directos:"
 
 [Files]
 Source: "..\..\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Excludes: "*.lib,*.exp"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\Gestinem"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\Gestinem"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{group}\Gestinem"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"; IconIndex: 0
+Name: "{autodesktop}\Gestinem"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"; IconIndex: 0; Tasks: desktopicon
 
 [Registry]
 Root: HKCU; Subkey: "Software\Classes\es.gestinem.app"; ValueType: string; ValueName: ""; ValueData: "URL:Gestinem"; Flags: uninsdeletekey

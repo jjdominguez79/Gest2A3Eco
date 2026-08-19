@@ -92,6 +92,41 @@ class _GestinemAppState extends ConsumerState<GestinemApp> {
       ref.invalidate(internalThreadsProvider);
       ref.invalidate(internalMessagesProvider(threadId));
     }
+    _showWindowsNotification(event, conversationId, threadId);
+  }
+
+  void _showWindowsNotification(
+    Map<String, dynamic> event,
+    String? conversationId,
+    String? threadId,
+  ) {
+    if (event['type'] != 'message.created') return;
+    final session = ref.read(sessionProvider).valueOrNull;
+    if (session == null) return;
+    final authorType = event['author_type']?.toString() ?? '';
+    final authorId = event['author_id']?.toString() ?? '';
+    if (authorType == session.profile.type.name &&
+        authorId == session.profile.id) {
+      return;
+    }
+    final authorName = event['author_name']?.toString().trim() ?? '';
+    final preview = event['preview']?.toString().trim() ?? '';
+    final route = threadId != null && threadId.isNotEmpty
+        ? '/internal/$threadId'
+        : (conversationId != null && conversationId.isNotEmpty
+              ? '/conversation/$conversationId'
+              : '/');
+    unawaited(
+      ref
+          .read(notificationsServiceProvider)
+          .showDesktop(
+            title: authorName.isEmpty
+                ? 'Nuevo mensaje en Gestinem'
+                : 'Nuevo mensaje de $authorName',
+            body: preview.isEmpty ? 'Tienes un nuevo mensaje' : preview,
+            onClick: () => ref.read(routerProvider).go(route),
+          ),
+    );
   }
 
   @override

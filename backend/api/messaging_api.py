@@ -672,7 +672,14 @@ def _create_message(
     _event(db, conv, "message_created")
     db.commit()
     db.refresh(message)
-    _publish_conversation_event(db, conv, "message.created", message_id=message.id)
+    _publish_conversation_event(
+        db, conv, "message.created",
+        message_id=message.id,
+        author_type=actor_type,
+        author_id=actor_id,
+        author_name=actor_name,
+        preview=message.body[:160],
+    )
     return message
 
 
@@ -1251,7 +1258,15 @@ def post_staff_thread_message(
     _queue_internal_pushes(db, background, thread, staff)
     recipients = _staff_thread_recipient_ids(db, thread)
     hub.publish(
-        {"type": "message.created", "thread_id": thread.id, "message_id": item.id},
+        {
+            "type": "message.created",
+            "thread_id": thread.id,
+            "message_id": item.id,
+            "author_type": "staff",
+            "author_id": staff.external_id,
+            "author_name": staff.chat_alias.strip() or staff.name,
+            "preview": item.body[:160],
+        },
         staff_ids=recipients,
     )
     return _serialize_staff_thread_message(db, item)
@@ -1523,6 +1538,18 @@ def staff_create_invitation(
     ):
         raise HTTPException(403, "Cliente de pruebas privado")
     return create_invitation(payload, background, db)
+
+
+@router.get("/public/app-version")
+def public_app_version(platform: str = ""):
+    """Version publicada que los clientes Flutter pueden comparar con la instalada."""
+    settings = get_settings()
+    return {
+        "platform": platform.strip().lower(),
+        "latest_version": settings.messaging_latest_app_version,
+        "latest_build": settings.messaging_latest_app_build,
+        "minimum_build": settings.messaging_minimum_app_build,
+    }
 
 
 @router.post("/auth/accept-invite")
