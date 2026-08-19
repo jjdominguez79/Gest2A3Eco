@@ -510,6 +510,72 @@ def _serialize_conversation(
     }
 
 
+def _attachment_download_summary(db: Session, attachment_id: str) -> dict:
+    """Resumen de descargas completadas para personal (adjuntos salientes)."""
+    rows = db.scalars(
+        select(MessagingDownload).where(
+            MessagingDownload.attachment_id == attachment_id,
+            MessagingDownload.success.is_(True),
+            MessagingDownload.completed_at.is_not(None),
+        ).order_by(MessagingDownload.completed_at)
+    ).all()
+    if not rows:
+        return {"completed_download_count": 0, "first_downloaded_at": None,
+                "last_downloaded_at": None, "last_client_name": None}
+    last = rows[-1]
+    last_client = db.get(MessagingClient, last.client_id)
+    return {
+        "completed_download_count": len(rows),
+        "first_downloaded_at": rows[0].completed_at.isoformat(),
+        "last_downloaded_at": last.completed_at.isoformat(),
+        "last_client_name": last_client.name if last_client else None,
+    }
+
+
+def _serialize_attachment(db: Session, a: MessagingAttachment, audience: str) -> dict:
+    withdrawn = bool(a.withdrawn_at)
+    expired = bool(a.expires_at and is_expired(a.expires_at))
+
+    if a.direction == "incoming":
+        if a.local_confirmed_at:
+            status = "guardado_por_asesoria"
+        else:
+            status = "recibido_por_gestinem"
+    else:
+        if withdrawn:
+            status = "retirado"
+        elif expired or a.storage_deleted_at:
+            status = "caducado"
+        else:
+            status = "disponible"
+
+    base = {
+        "id": a.id, "name": a.name, "content_type": a.content_type,
+        "size": a.size, "direction": a.direction,
+        "expires_at": a.expires_at.isoformat() if a.expires_at else None,
+        "local_confirmed": bool(a.local_confirmed_at),
+        "status": status,
+        "withdrawn_at": a.withdrawn_at.isoformat() if a.withdrawn_at else None,
+    }
+    if audience == "staff":
+        base["withdrawn_by"] = a.withdrawn_by
+        base["withdrawal_reason"] = a.withdrawal_reason
+        base["sha256"] = a.sha256
+        if a.direction == "outgoing":
+            base.update(_attachment_download_summary(db, a.id))
+    elif audience == "client":
+        if a.direction == "incoming":
+            # El cliente subio el archivo: puede ver su propio sha256
+            base["sha256"] = a.sha256
+        base["available"] = (
+            a.direction == "outgoing"
+            and not withdrawn
+            and not expired
+            and not a.storage_deleted_at
+        )
+    return base
+
+
 def _serialize_message(db: Session, item: MessagingMessage, audience: str = "") -> dict:
     attachments = [] if item.deleted_at else list(db.scalars(select(MessagingAttachment).where(MessagingAttachment.message_id == item.id)))
     author_name = item.author_name
@@ -529,6 +595,9 @@ def _serialize_message(db: Session, item: MessagingMessage, audience: str = "") 
             "body_fragment": "Mensaje eliminado" if reply.deleted_at else reply.body[:180],
             "deleted": bool(reply.deleted_at),
         }
+    has_attachments = bool(db.scalar(
+        select(func.count(MessagingAttachment.id)).where(MessagingAttachment.message_id == item.id)
+    ))
     return {
         "id": item.id, "conversation_id": item.conversation_id,
         "author_type": item.author_type, "author_id": item.author_id,
@@ -537,14 +606,10 @@ def _serialize_message(db: Session, item: MessagingMessage, audience: str = "") 
         "deleted": bool(item.deleted_at),
         "deleted_at": item.deleted_at.isoformat() if item.deleted_at else None,
         "delete_reason": item.delete_reason if item.deleted_at and audience == "staff" else "",
+        "has_attachments": has_attachments,
         "reply_to": reply_data,
         "created_at": item.created_at.isoformat(),
-        "attachments": [{
-            "id": a.id, "name": a.name, "content_type": a.content_type,
-            "size": a.size, "sha256": a.sha256, "direction": a.direction,
-            "expires_at": a.expires_at.isoformat() if a.expires_at else None,
-            "local_confirmed": bool(a.local_confirmed_at),
-        } for a in attachments],
+        "attachments": [_serialize_attachment(db, a, audience) for a in attachments],
     }
 
 
@@ -2151,23 +2216,67 @@ def hmac_compare(left: str, right: str) -> bool:
 @router.get("/client/attachments/{attachment_id}")
 def client_download(attachment_id: str, request: Request, client: MessagingClient = Depends(_client), db: Session = Depends(get_db)):
     item = db.get(MessagingAttachment, attachment_id)
-    if not item or item.direction != "outgoing" or item.storage_deleted_at or is_expired(item.expires_at):
-        raise HTTPException(404, "Adjunto caducado o no disponible")
+    if not item or item.direction != "outgoing":
+        raise HTTPException(404, "Adjunto no disponible")
+    if item.withdrawn_at:
+        raise HTTPException(410, "Documento retirado por el despacho")
+    if item.storage_deleted_at or is_expired(item.expires_at):
+        raise HTTPException(410, "Adjunto caducado")
     message = db.get(MessagingMessage, item.message_id)
     if not message or message.deleted_at:
         raise HTTPException(404, "Adjunto no disponible")
     _conversation_for_client(db, message.conversation_id, client)
     content = MessagingStorage().get(item.storage_key)
     valid = hmac_compare(hashlib.sha256(content).hexdigest(), item.sha256)
-    db.add(MessagingDownload(
+    dl = MessagingDownload(
         attachment_id=item.id, client_id=client.id,
         ip=request.client.host if request.client else "",
         user_agent=request.headers.get("user-agent", "")[:500], sha256=item.sha256, success=valid,
-    ))
+    )
+    db.add(dl)
+    db.flush()
+    download_id = dl.id
     db.commit()
     if not valid:
         raise HTTPException(500, "La integridad del adjunto no es valida")
-    return Response(content, media_type=item.content_type, headers={"Content-Disposition": f'attachment; filename="{safe_name(item.name)}"'})
+    response = Response(content, media_type=item.content_type, headers={
+        "Content-Disposition": f'attachment; filename="{safe_name(item.name)}"',
+        "X-Download-Id": download_id,
+    })
+    return response
+
+
+@router.post("/client/attachments/{attachment_id}/confirm-download")
+def client_confirm_download(
+    attachment_id: str,
+    download_id: str = Form(...),
+    request: Request = None,
+    client: MessagingClient = Depends(_client),
+    db: Session = Depends(get_db),
+):
+    """El cliente confirma que Flutter guardo el archivo correctamente."""
+    item = db.get(MessagingAttachment, attachment_id)
+    if not item or item.direction != "outgoing":
+        raise HTTPException(404, "Adjunto no disponible")
+    message = db.get(MessagingMessage, item.message_id)
+    if not message:
+        raise HTTPException(404, "Adjunto no disponible")
+    conv = _conversation_for_client(db, message.conversation_id, client)
+    dl = db.get(MessagingDownload, download_id)
+    if not dl or dl.attachment_id != attachment_id or dl.client_id != client.id:
+        raise HTTPException(404, "Registro de descarga no encontrado")
+    if dl.completed_at:
+        return {"ok": True, "already_confirmed": True, "completed_at": dl.completed_at.isoformat()}
+    dl.completed_at = utcnow()
+    db.commit()
+    _publish_conversation_event(
+        db, conv, "attachment.download_completed",
+        attachment_id=attachment_id,
+        client_id=client.id,
+        client_name=client.name,
+        completed_at=dl.completed_at.isoformat(),
+    )
+    return {"ok": True, "already_confirmed": False, "completed_at": dl.completed_at.isoformat()}
 
 
 @router.get("/staff/attachments/{attachment_id}/downloads")
@@ -2181,11 +2290,50 @@ def download_audit(attachment_id: str, staff: MessagingStaff = Depends(_staff), 
     _conversation_for_staff(db, message.conversation_id, staff)
     rows = db.scalars(select(MessagingDownload).where(MessagingDownload.attachment_id == item.id).order_by(MessagingDownload.downloaded_at)).all()
     return [{
+        "id": row.id,
         "client_id": row.client_id,
         "client_name": (db.get(MessagingClient, row.client_id).name if db.get(MessagingClient, row.client_id) else ""),
-        "downloaded_at": row.downloaded_at.isoformat(), "ip": row.ip,
+        "downloaded_at": row.downloaded_at.isoformat(),
+        "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+        "ip": row.ip,
         "user_agent": row.user_agent, "sha256": row.sha256, "success": row.success,
     } for row in rows]
+
+
+class WithdrawIn(BaseModel):
+    reason: str = Field(default="", max_length=500)
+
+
+@router.post("/staff/admin/attachments/{attachment_id}/withdraw")
+def withdraw_attachment(
+    attachment_id: str,
+    payload: WithdrawIn,
+    admin: MessagingStaff = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """Retira un adjunto saliente: el mensaje permanece pero el cliente ya no puede descargarlo."""
+    item = db.get(MessagingAttachment, attachment_id)
+    if not item:
+        raise HTTPException(404, "Adjunto no encontrado")
+    if item.direction != "outgoing":
+        raise HTTPException(409, "Solo se pueden retirar adjuntos salientes")
+    message = db.get(MessagingMessage, item.message_id)
+    if not message:
+        raise HTTPException(404, "Mensaje no encontrado")
+    conv = _conversation_for_staff(db, message.conversation_id, admin)
+    if item.withdrawn_at:
+        return {"ok": True, "already_withdrawn": True, "withdrawn_at": item.withdrawn_at.isoformat()}
+    reason = payload.reason.strip()
+    item.withdrawn_at = utcnow()
+    item.withdrawn_by = admin.external_id
+    item.withdrawal_reason = reason
+    db.commit()
+    _publish_conversation_event(
+        db, conv, "attachment.withdrawn",
+        attachment_id=attachment_id,
+        withdrawn_by=admin.external_id,
+    )
+    return {"ok": True, "already_withdrawn": False, "withdrawn_at": item.withdrawn_at.isoformat()}
 
 
 @router.get("/staff/attachments/{attachment_id}/download")
@@ -2213,6 +2361,8 @@ def sync_pending_attachments(db: Session = Depends(get_db)):
         MessagingAttachment.direction == "incoming",
         MessagingAttachment.local_confirmed_at.is_(None),
     ).order_by(MessagingAttachment.created_at)).all()
+    now = utcnow()
+    stale_threshold = timedelta(hours=1)
     result = []
     for item in rows:
         message = db.get(MessagingMessage, item.message_id)
@@ -2220,12 +2370,18 @@ def sync_pending_attachments(db: Session = Depends(get_db)):
             continue
         conv = db.get(MessagingConversation, message.conversation_id)
         org = db.get(MessagingOrganization, conv.organization_id)
+        created = item.created_at
+        if created.tzinfo is None:
+            from datetime import timezone as _tz
+            created = created.replace(tzinfo=_tz.utc)
+        age = now - created
         result.append({
             "id": item.id, "message_id": message.id, "conversation_id": conv.id,
             "channel": conv.kind, "company_code": org.company_code,
             "company_name": org.name, "name": item.name, "size": item.size,
             "sha256": item.sha256, "content_type": item.content_type,
             "author_name": message.author_name, "created_at": item.created_at.isoformat(),
+            "stale": age > stale_threshold,
         })
     return result
 
@@ -2323,6 +2479,15 @@ def soft_delete_message(
         raise HTTPException(403, "No puedes eliminar este mensaje")
     if item.deleted_at:
         return _serialize_message(db, item, audience)
+    attachment_count = int(db.scalar(select(func.count(MessagingAttachment.id)).where(
+        MessagingAttachment.message_id == item.id,
+    )) or 0)
+    if attachment_count:
+        raise HTTPException(
+            409,
+            "Los mensajes con adjuntos no se pueden eliminar. "
+            "Usa 'Retirar documento' para adjuntos salientes.",
+        )
     reason = (payload.reason if payload else "").strip()
     item.deleted_at = utcnow()
     item.deleted_by = actor_id
@@ -2411,14 +2576,17 @@ def hard_delete_message(
     attachments = list(db.scalars(select(MessagingAttachment).where(
         MessagingAttachment.message_id == item.id,
     )))
+    if attachments:
+        raise HTTPException(
+            409,
+            "Los mensajes con adjuntos no admiten borrado definitivo ordinario. "
+            "Usa 'Retirar documento' para adjuntos salientes.",
+        )
     storage = MessagingStorage()
-    for attachment in attachments:
-        if attachment.storage_key and not attachment.storage_deleted_at:
-            storage.delete(attachment.storage_key)
     reason = (payload.reason if payload else "").strip()
     db.add(MessagingDeletionAudit(
         message_id=item.id, conversation_id=conv.id, actor_id=admin.external_id,
-        action="hard_delete", reason=reason, attachment_count=len(attachments),
+        action="hard_delete", reason=reason, attachment_count=0,
     ))
     db.delete(item)
     conv.updated_at = utcnow()

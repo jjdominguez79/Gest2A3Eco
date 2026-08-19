@@ -232,6 +232,10 @@ class MessagingAttachment(Base):
     claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     local_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     storage_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Retirada de documento (sustituye al borrado para mensajes con adjuntos salientes)
+    withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    withdrawn_by: Mapped[str] = mapped_column(String(64), default="")
+    withdrawal_reason: Mapped[str] = mapped_column(String(500), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -256,6 +260,8 @@ class MessagingDownload(Base):
     sha256: Mapped[str] = mapped_column(String(64))
     success: Mapped[bool] = mapped_column(Boolean, default=True)
     downloaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    # Confirmacion de guardado completo por Flutter (distingue iniciada de completada)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class MessagingEvent(Base):

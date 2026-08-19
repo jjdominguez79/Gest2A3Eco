@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/widgets/authenticated_avatar.dart';
+import '../../auth/domain/user_profile.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../domain/conversation.dart';
 import '../domain/message.dart';
@@ -165,17 +166,25 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     }
   }
 
+  /// Descarga un adjunto saliente (solo cliente) y confirma al backend.
   Future<void> _download(Attachment attachment) async {
+    final repository = ref.read(messagingRepositoryProvider);
     try {
-      final profile = ref.read(sessionProvider).valueOrNull!.profile;
-      final bytes = await ref
-          .read(messagingRepositoryProvider)
-          .download(profile, attachment);
+      final (bytes, downloadId) =
+          await repository.downloadWithId(attachment);
       await FilePicker.saveFile(
         fileName: attachment.name,
         bytes: bytes,
         mimeType: attachment.contentType,
       );
+      // Confirmar que Flutter guardo el archivo correctamente
+      if (downloadId.isNotEmpty) {
+        try {
+          await repository.confirmDownload(attachment.id, downloadId);
+        } catch (_) {
+          // La confirmacion es best-effort; la descarga ya esta guardada
+        }
+      }
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -187,6 +196,9 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
 
   Future<void> _messageActions(Message message, bool mine) async {
     final profile = ref.read(sessionProvider).valueOrNull!.profile;
+    // Los mensajes con adjuntos no pueden eliminarse
+    final canDelete =
+        (mine || profile.isAdmin) && !message.hasAttachments;
     final action = await showModalBottomSheet<String>(
       context: context,
       builder: (context) => SafeArea(
@@ -197,8 +209,9 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
               title: const Text('Responder'),
               onTap: () => Navigator.pop(context, 'reply'),
             ),
-            if (mine || profile.isAdmin)
+            if (canDelete)
               ListTile(
+                key: const Key('delete-message-option'),
                 leading: const Icon(Icons.delete_outline),
                 title: const Text('Eliminar mensaje'),
                 textColor: Theme.of(context).colorScheme.error,
@@ -353,6 +366,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                 return MessageBubble(
                   message: message,
                   mine: mine,
+                  isStaff: profile.type == UserType.staff,
                   baseUrl: ref
                       .read(apiClientProvider)
                       .dio

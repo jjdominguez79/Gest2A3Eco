@@ -105,16 +105,23 @@ class _UnifiedConversationScreenState
     }
   }
 
+  /// Descarga un adjunto saliente y confirma al backend tras guardar.
   Future<void> _download(Attachment attachment) async {
+    final repository = ref.read(messagingRepositoryProvider);
     try {
-      final profile = ref.read(sessionProvider).valueOrNull!.profile;
-      final bytes =
-          await ref.read(messagingRepositoryProvider).download(profile, attachment);
+      final (bytes, downloadId) = await repository.downloadWithId(attachment);
       await FilePicker.saveFile(
         fileName: attachment.name,
         bytes: bytes,
         mimeType: attachment.contentType,
       );
+      if (downloadId.isNotEmpty) {
+        try {
+          await repository.confirmDownload(attachment.id, downloadId);
+        } catch (_) {
+          // Best-effort: la descarga ya esta guardada aunque falle la confirmacion
+        }
+      }
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
