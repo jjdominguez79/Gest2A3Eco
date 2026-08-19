@@ -4,12 +4,15 @@ import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../api/api_client.dart';
 import '../../features/auth/domain/user_profile.dart';
+import 'desktop_notifications.dart';
 
-final notificationsServiceProvider =
-    Provider<NotificationsService>((ref) => NotificationsService());
+final notificationsServiceProvider = Provider<NotificationsService>(
+  (ref) => NotificationsService(),
+);
 
 class NotificationEvent {
   const NotificationEvent({
@@ -24,6 +27,7 @@ class NotificationEvent {
 }
 
 class NotificationsService {
+  final DesktopNotifications _desktop = DesktopNotifications();
   String? _owner;
   String? _deviceId;
   StreamSubscription<String>? _tokenRefresh;
@@ -33,6 +37,19 @@ class NotificationsService {
   Stream<NotificationEvent> get events => _events.stream;
 
   Future<void> initialize(AuthSession session, ApiClient api) async {
+    if (_desktop.supported) {
+      if (_owner == _ownerFor(session)) return;
+      try {
+        await _desktop.initialize();
+        _owner = _ownerFor(session);
+      } catch (error, stackTrace) {
+        debugPrint(
+          'No se pudieron activar las notificaciones de Windows: '
+          '$error\n$stackTrace',
+        );
+      }
+      return;
+    }
     if (!_supported || _owner == _ownerFor(session)) return;
     try {
       if (Firebase.apps.isEmpty) await Firebase.initializeApp();
@@ -49,7 +66,23 @@ class NotificationsService {
       );
     } catch (error, stackTrace) {
       // Firebase es opcional en desarrollo y no debe impedir usar REST/WebSocket.
-      debugPrint('No se pudieron activar las notificaciones: $error\n$stackTrace');
+      debugPrint(
+        'No se pudieron activar las notificaciones: $error\n$stackTrace',
+      );
+    }
+  }
+
+  Future<void> showDesktop({
+    required String title,
+    required String body,
+    required void Function() onClick,
+  }) async {
+    try {
+      await _desktop.show(title: title, body: body, onClick: onClick);
+    } catch (error, stackTrace) {
+      debugPrint(
+        'No se pudo mostrar la notificación de Windows: $error\n$stackTrace',
+      );
     }
   }
 
@@ -72,11 +105,13 @@ class NotificationsService {
     if (conversationId.isEmpty && (threadId == null || threadId.isEmpty)) {
       return;
     }
-    _events.add(NotificationEvent(
-      conversationId: conversationId,
-      threadId: threadId,
-      opened: opened,
-    ));
+    _events.add(
+      NotificationEvent(
+        conversationId: conversationId,
+        threadId: threadId,
+        opened: opened,
+      ),
+    );
   }
 
   Future<void> unregister(AuthSession session, ApiClient api) async {
@@ -97,13 +132,14 @@ class NotificationsService {
     ApiClient api,
     String token,
   ) async {
+    final packageInfo = await PackageInfo.fromPlatform();
     final response = await api.dio.put<Map<String, dynamic>>(
       '/${session.profile.type.name}/app-devices',
       data: {
         'platform': _platform,
         'push_token': token,
         'device_name': '',
-        'app_version': '0.1.0',
+        'app_version': '${packageInfo.version}+${packageInfo.buildNumber}',
       },
     );
     _deviceId = response.data?['id'] as String?;
@@ -112,7 +148,8 @@ class NotificationsService {
   String _ownerFor(AuthSession session) =>
       '${session.profile.type.name}:${session.profile.id}';
 
-  bool get _supported => kIsWeb ||
+  bool get _supported =>
+      kIsWeb ||
       defaultTargetPlatform == TargetPlatform.android ||
       defaultTargetPlatform == TargetPlatform.iOS ||
       defaultTargetPlatform == TargetPlatform.macOS;

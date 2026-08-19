@@ -12,6 +12,8 @@ import '../features/empleados/presentation/empleados_screen.dart';
 import '../features/groups/presentation/groups_screen.dart';
 import '../features/messaging/presentation/conversation_screen.dart';
 import '../features/messaging/presentation/conversations_screen.dart';
+import '../features/messaging/presentation/invite_client_screen.dart';
+import '../features/profile/presentation/about_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
 import '../core/deep_links/deep_link_controller.dart';
 
@@ -22,13 +24,16 @@ final routerProvider = Provider<GoRouter>((ref) {
     initialLocation: '/',
     redirect: (context, state) {
       final loggedIn = session.valueOrNull != null;
-      if (!loggedIn && deepLinkRoute != null &&
+      if (!loggedIn &&
+          deepLinkRoute != null &&
           state.uri.toString() != deepLinkRoute) {
         return deepLinkRoute;
       }
       if (session.isLoading) {
         if (deepLinkRoute != null) return null;
-        return {'/splash', '/auth/callback'}.contains(state.matchedLocation) ? null : '/splash';
+        return {'/splash', '/auth/callback'}.contains(state.matchedLocation)
+            ? null
+            : '/splash';
       }
       if (!loggedIn) {
         if (state.matchedLocation == '/login' ||
@@ -52,11 +57,13 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
       GoRoute(
         path: '/accept-invite',
-        builder: (_, state) => AcceptInviteScreen(
-          token: state.uri.queryParameters['token'] ?? '',
-        ),
+        builder: (_, state) =>
+            AcceptInviteScreen(token: state.uri.queryParameters['token'] ?? ''),
       ),
-      GoRoute(path: '/forgot-password', builder: (_, _) => const ForgotPasswordScreen()),
+      GoRoute(
+        path: '/forgot-password',
+        builder: (_, _) => const ForgotPasswordScreen(),
+      ),
       GoRoute(
         path: '/reset-password',
         builder: (_, state) => ResetPasswordScreen(
@@ -67,7 +74,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/', builder: (_, _) => const ConversationsScreen()),
       GoRoute(
         path: '/conversation/:id',
-        builder: (_, state) => ConversationScreen(conversationId: state.pathParameters['id']!),
+        builder: (_, state) =>
+            ConversationScreen(conversationId: state.pathParameters['id']!),
       ),
       GoRoute(
         path: '/internal/:id',
@@ -79,7 +87,12 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/groups', builder: (_, _) => const GroupsScreen()),
       GoRoute(path: '/campaigns', builder: (_, _) => const CampaignsScreen()),
       GoRoute(path: '/employees', builder: (_, _) => const EmpleadosScreen()),
+      GoRoute(
+        path: '/invite-client',
+        builder: (_, _) => const InviteClientScreen(),
+      ),
       GoRoute(path: '/profile', builder: (_, _) => const ProfileScreen()),
+      GoRoute(path: '/about', builder: (_, _) => const AboutScreen()),
     ],
   );
 });
@@ -88,7 +101,6 @@ class _SplashScreen extends StatelessWidget {
   const _SplashScreen();
 
   @override
-  Widget build(BuildContext context) => const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+  Widget build(BuildContext context) =>
+      const Scaffold(body: Center(child: CircularProgressIndicator()));
 }

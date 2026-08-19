@@ -87,6 +87,32 @@ class MessagingRepository {
         data: {'active': active},
       );
 
+  Future<Map<String, dynamic>> inviteClient({
+    required String companyCode,
+    required String name,
+    required String email,
+    bool sendEmail = true,
+  }) async {
+    final response = await _api.dio.post<Map<String, dynamic>>(
+      '/staff/admin/invitations',
+      data: {
+        'company_code': companyCode,
+        'name': name,
+        'email': email,
+        'send_email': sendEmail,
+      },
+    );
+    return response.data!;
+  }
+
+  Future<Map<String, dynamic>> latestAppVersion(String platform) async {
+    final response = await _api.dio.get<Map<String, dynamic>>(
+      '/public/app-version',
+      queryParameters: {'platform': platform},
+    );
+    return response.data!;
+  }
+
   Future<void> softDelete(UserProfile profile, String messageId) =>
       _api.dio.delete<void>(
         '/${_audience(profile)}/messages/$messageId',

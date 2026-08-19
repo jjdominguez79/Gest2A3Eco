@@ -13,12 +13,16 @@ import '../domain/conversation.dart';
 import 'conversation_screen.dart';
 import 'messaging_providers.dart';
 
-final hiddenConversationsStorageProvider = Provider<HiddenConversationsStorage>((ref) => HiddenConversationsStorage());
+final hiddenConversationsStorageProvider = Provider<HiddenConversationsStorage>(
+  (ref) => HiddenConversationsStorage(),
+);
+
 class ConversationsScreen extends ConsumerStatefulWidget {
   const ConversationsScreen({super.key});
 
   @override
-  ConsumerState<ConversationsScreen> createState() => _ConversationsScreenState();
+  ConsumerState<ConversationsScreen> createState() =>
+      _ConversationsScreenState();
 }
 
 class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
@@ -55,7 +59,9 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
   Future<void> _loadHiddenGroups() async {
     final profile = ref.read(sessionProvider).valueOrNull?.profile;
     if (profile == null || profile.type != UserType.staff) return;
-    final hidden = await ref.read(hiddenConversationsStorageProvider).read(profile.id);
+    final hidden = await ref
+        .read(hiddenConversationsStorageProvider)
+        .read(profile.id);
     if (mounted) setState(() => _hiddenGroups = hidden);
   }
 
@@ -69,11 +75,18 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
   Future<void> _hideGroup(ClientGroup group) async {
     final profile = ref.read(sessionProvider).valueOrNull!.profile;
     final updatedAt = group.updatedAt ?? DateTime.now();
-    await ref.read(hiddenConversationsStorageProvider).hide(profile.id, group.companyCode, updatedAt);
+    await ref
+        .read(hiddenConversationsStorageProvider)
+        .hide(profile.id, group.companyCode, updatedAt);
     if (mounted) {
       setState(() {
-        _hiddenGroups = {..._hiddenGroups, group.companyCode: updatedAt.toUtc()};
-        if (group.conversations.any((conversation) => conversation.id == _selected)) {
+        _hiddenGroups = {
+          ..._hiddenGroups,
+          group.companyCode: updatedAt.toUtc(),
+        };
+        if (group.conversations.any(
+          (conversation) => conversation.id == _selected,
+        )) {
           _selected = null;
         }
       });
@@ -119,42 +132,52 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     showModalBottomSheet(
       context: context,
       builder: (ctx) => SafeArea(
-        child: Wrap(children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text('Selecciona canal', style: Theme.of(ctx).textTheme.titleMedium),
-          ),
-          for (final conv in group.conversations)
-            ListTile(
-              leading: _ChannelChip(kind: conv.kind),
-              title: Text(_channelLabel(conv.kind)),
-              trailing: conv.unreadCount > 0
-                  ? Badge(label: Text('${conv.unreadCount}'))
-                  : null,
-              onTap: () {
-                Navigator.pop(ctx);
-                _navigateToConversation(conv.id);
-              },
+        child: Wrap(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                'Selecciona canal',
+                style: Theme.of(ctx).textTheme.titleMedium,
+              ),
             ),
-        ]),
+            for (final conv in group.conversations)
+              ListTile(
+                leading: _ChannelChip(kind: conv.kind),
+                title: Text(_channelLabel(conv.kind)),
+                trailing: conv.unreadCount > 0
+                    ? Badge(label: Text('${conv.unreadCount}'))
+                    : null,
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _navigateToConversation(conv.id);
+                },
+              ),
+          ],
+        ),
       ),
     );
   }
 
   Future<bool?> _confirmHide(BuildContext context) => showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Ocultar conversaciones'),
-          content: const Text('Se ocultarán solo en este dispositivo. Volverán a aparecer cuando llegue un mensaje nuevo.'),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Ocultar'),
-            ),
-          ],
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Ocultar conversaciones'),
+      content: const Text(
+        'Se ocultarán solo en este dispositivo. Volverán a aparecer cuando llegue un mensaje nuevo.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Cancelar'),
         ),
-      );
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Ocultar'),
+        ),
+      ],
+    ),
+  );
 
   Future<void> _toggleRead(ClientGroup group) async {
     final profile = ref.read(sessionProvider).valueOrNull!.profile;
@@ -172,7 +195,9 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No se pudo actualizar el estado de lectura')),
+          const SnackBar(
+            content: Text('No se pudo actualizar el estado de lectura'),
+          ),
         );
       }
     }
@@ -210,16 +235,18 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              active ? 'Acceso del cliente activado' : 'Acceso del cliente desactivado',
+              active
+                  ? 'Acceso del cliente activado'
+                  : 'Acceso del cliente desactivado',
             ),
           ),
         );
       }
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(apiErrorMessage(error))),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
       }
     }
   }
@@ -259,13 +286,19 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     final wide = MediaQuery.sizeOf(context).width >= 900;
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          profile.name,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
+        title: Text(profile.name, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
-          IconButton(onPressed: () => ref.invalidate(conversationsProvider), icon: const Icon(Icons.refresh)),
+          if (profile.isAdmin)
+            IconButton(
+              key: const Key('invite-client-button'),
+              tooltip: 'Invitar cliente',
+              onPressed: () => context.go('/invite-client'),
+              icon: const Icon(Icons.person_add_alt_1),
+            ),
+          IconButton(
+            onPressed: () => ref.invalidate(conversationsProvider),
+            icon: const Icon(Icons.refresh),
+          ),
           IconButton(
             key: const Key('staff-profile-button'),
             tooltip: 'Mi perfil',
@@ -310,7 +343,8 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
                               _ => channel,
                             }),
                             selected:
-                                !_selectedInternal && effectiveChannel == channel,
+                                !_selectedInternal &&
+                                effectiveChannel == channel,
                             onSelected: (_) => setState(() {
                               _channel = channel;
                               _selectedInternal = false;
@@ -332,7 +366,9 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
                                   )
                                 : const Icon(Icons.groups_outlined, size: 18),
                             label: Text(
-                              thread.kind == 'direct' ? 'Administrador' : thread.title,
+                              thread.kind == 'direct'
+                                  ? 'Administrador'
+                                  : thread.title,
                             ),
                             onPressed: () => _navigateToInternal(thread.id),
                           ),
@@ -342,8 +378,14 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
                 ),
                 Expanded(
                   child: conversations.when(
-                    loading: () => const Center(child: CircularProgressIndicator()),
-                    error: (error, _) => Center(child: Text('No se pudieron cargar las conversaciones.\n$error', textAlign: TextAlign.center)),
+                    loading: () =>
+                        const Center(child: CircularProgressIndicator()),
+                    error: (error, _) => Center(
+                      child: Text(
+                        'No se pudieron cargar las conversaciones.\n$error',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
                     data: (items) {
                       final query = _search.text.trim().toLowerCase();
 
@@ -353,20 +395,24 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
                           final channelMatches =
                               effectiveChannel == 'todos' ||
                               item.kind == effectiveChannel;
-                          final searchMatches = query.isEmpty ||
+                          final searchMatches =
+                              query.isEmpty ||
                               item.companyCode.toLowerCase().contains(query) ||
                               item.companyName.toLowerCase().contains(query);
                           return channelMatches && searchMatches;
                         }).toList();
 
-                        final groups = groupConversationsByClient(filtered)
-                            .where((group) => !_isHidden(group))
-                            .toList();
+                        final groups = groupConversationsByClient(
+                          filtered,
+                        ).where((group) => !_isHidden(group)).toList();
                         if (groups.isEmpty) {
-                          return const Center(child: Text('No hay conversaciones'));
+                          return const Center(
+                            child: Text('No hay conversaciones'),
+                          );
                         }
                         return RefreshIndicator(
-                          onRefresh: () async => ref.invalidate(conversationsProvider),
+                          onRefresh: () async =>
+                              ref.invalidate(conversationsProvider),
                           child: ListView.builder(
                             key: const Key('conversation-list'),
                             itemCount: groups.length,
@@ -376,9 +422,12 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
                                 key: Key('swipe-group-${group.companyCode}'),
                                 direction: DismissDirection.horizontal,
                                 confirmDismiss: (direction) async {
-                                  if (direction == DismissDirection.startToEnd) {
+                                  if (direction ==
+                                      DismissDirection.startToEnd) {
                                     if (!profile.isAdmin) return false;
-                                    final confirmed = await _confirmHide(context);
+                                    final confirmed = await _confirmHide(
+                                      context,
+                                    );
                                     if (confirmed == true) {
                                       await _hideGroup(group);
                                     }
@@ -391,21 +440,34 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
                                 background: Container(
                                   color: Colors.orange,
                                   alignment: Alignment.centerLeft,
-                                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                                  child: const Icon(Icons.visibility_off_outlined, color: Colors.white),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 20,
+                                  ),
+                                  child: const Icon(
+                                    Icons.visibility_off_outlined,
+                                    color: Colors.white,
+                                  ),
                                 ),
                                 secondaryBackground: Container(
                                   color: Colors.blue,
                                   alignment: Alignment.centerRight,
-                                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                                  child: const Icon(Icons.mark_chat_read_outlined, color: Colors.white),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 20,
+                                  ),
+                                  child: const Icon(
+                                    Icons.mark_chat_read_outlined,
+                                    color: Colors.white,
+                                  ),
                                 ),
                                 child: _ClientGroupTile(
                                   group: group,
-                                  selected: group.conversations.any((c) => c.id == _selected),
+                                  selected: group.conversations.any(
+                                    (c) => c.id == _selected,
+                                  ),
                                   onTap: () => _selectChannel(context, group),
                                   onAccessChanged: profile.isAdmin
-                                      ? (active) => _setClientAccess(group, active)
+                                      ? (active) =>
+                                            _setClientAccess(group, active)
                                       : null,
                                 ),
                               );
@@ -425,10 +487,20 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
             const VerticalDivider(width: 1),
             Expanded(
               child: _selected == null
-                  ? const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.forum_outlined, size: 58), SizedBox(height: 12), Text('Selecciona una conversación')]))
+                  ? const Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.forum_outlined, size: 58),
+                          SizedBox(height: 12),
+                          Text('Selecciona una conversación'),
+                        ],
+                      ),
+                    )
                   : ConversationView(
                       conversationId: _selected!,
                       internal: _selectedInternal,
+                      showInternalHeader: _selectedInternal,
                     ),
             ),
           ],
@@ -444,23 +516,31 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     appBar: AppBar(
       toolbarHeight: 72,
       titleSpacing: 16,
-      title: Row(children: [
-        Image.asset('assets/images/logo.png', height: 38, semanticLabel: 'Gestinem'),
-        const SizedBox(width: 12),
-        const Expanded(child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Gestinem', style: TextStyle(fontWeight: FontWeight.w700)),
-            Text(
-              'Asesoría fiscal, contable y laboral',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
+      title: Row(
+        children: [
+          Image.asset(
+            'assets/images/logo.png',
+            height: 38,
+            semanticLabel: 'Gestinem',
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Gestinem', style: TextStyle(fontWeight: FontWeight.w700)),
+                Text(
+                  'Asesoría fiscal, contable y laboral',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
+                ),
+              ],
             ),
-          ],
-        )),
-      ]),
+          ),
+        ],
+      ),
       actions: [
         IconButton(
           key: const Key('client-profile-button'),
@@ -473,42 +553,56 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     ),
     body: conversations.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (error, _) => Center(child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text('No se pudieron cargar los canales.'),
-          const SizedBox(height: 12),
-          FilledButton.icon(
-            onPressed: () => ref.invalidate(conversationsProvider),
-            icon: const Icon(Icons.refresh),
-            label: const Text('Reintentar'),
-          ),
-        ],
-      )),
+      error: (error, _) => Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('No se pudieron cargar los canales.'),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: () => ref.invalidate(conversationsProvider),
+              icon: const Icon(Icons.refresh),
+              label: const Text('Reintentar'),
+            ),
+          ],
+        ),
+      ),
       data: (items) {
         final channels = [...items]
-          ..sort((a, b) => _clientChannelOrder(a.kind).compareTo(_clientChannelOrder(b.kind)));
+          ..sort(
+            (a, b) => _clientChannelOrder(
+              a.kind,
+            ).compareTo(_clientChannelOrder(b.kind)),
+          );
         if (channels.isEmpty) {
           return const Center(child: Text('No hay canales disponibles.'));
         }
         final selected = channels.any((item) => item.id == _selected)
             ? channels.firstWhere((item) => item.id == _selected)
             : channels.first;
-        return Column(children: [
-          _ClientChannelSelector(
-            conversations: channels,
-            selectedId: selected.id,
-            baseUrl: ref.read(apiClientProvider).dio.options.baseUrl
-                .replaceAll(RegExp(r'/api/v1/messaging/?$'), ''),
-            authToken: ref.read(sessionProvider).valueOrNull?.token ?? '',
-            onSelected: (id) => setState(() => _selected = id),
-          ),
-          const Divider(height: 1),
-          Expanded(child: ConversationView(
-            key: ValueKey('client-conversation-${selected.id}'),
-            conversationId: selected.id,
-          )),
-        ]);
+        return Column(
+          children: [
+            _ClientChannelSelector(
+              conversations: channels,
+              selectedId: selected.id,
+              baseUrl: ref
+                  .read(apiClientProvider)
+                  .dio
+                  .options
+                  .baseUrl
+                  .replaceAll(RegExp(r'/api/v1/messaging/?$'), ''),
+              authToken: ref.read(sessionProvider).valueOrNull?.token ?? '',
+              onSelected: (id) => setState(() => _selected = id),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: ConversationView(
+                key: ValueKey('client-conversation-${selected.id}'),
+                conversationId: selected.id,
+              ),
+            ),
+          ],
+        );
       },
     ),
   );
@@ -538,53 +632,66 @@ class _ClientChannelSelector extends StatelessWidget {
         bottom: false,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
-          child: Row(children: [
-            for (final conversation in conversations)
-              Expanded(child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: InkWell(
-                  key: Key('client-channel-${conversation.kind}'),
-                  borderRadius: BorderRadius.circular(16),
-                  onTap: () => onSelected(conversation.id),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 9),
-                    decoration: BoxDecoration(
-                      color: conversation.id == selectedId
-                          ? colors.primaryContainer : colors.surfaceContainerLow,
+          child: Row(
+            children: [
+              for (final conversation in conversations)
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: InkWell(
+                      key: Key('client-channel-${conversation.kind}'),
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: conversation.id == selectedId
-                            ? colors.primary : colors.outlineVariant,
-                      ),
-                    ),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Badge(
-                        isLabelVisible: conversation.unreadCount > 0,
-                        label: Text('${conversation.unreadCount}'),
-                        child: AuthenticatedAvatar(
-                          radius: 22,
-                          baseUrl: baseUrl,
-                          authToken: authToken,
-                          imagePath: conversation.channelAvatarUrl,
-                          fallbackText: conversation.displayChannelLabel,
-                          cacheVersion: conversation.updatedAt
-                              .millisecondsSinceEpoch
-                              .toString(),
+                      onTap: () => onSelected(conversation.id),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 180),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 9,
+                        ),
+                        decoration: BoxDecoration(
+                          color: conversation.id == selectedId
+                              ? colors.primaryContainer
+                              : colors.surfaceContainerLow,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: conversation.id == selectedId
+                                ? colors.primary
+                                : colors.outlineVariant,
+                          ),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Badge(
+                              isLabelVisible: conversation.unreadCount > 0,
+                              label: Text('${conversation.unreadCount}'),
+                              child: AuthenticatedAvatar(
+                                radius: 22,
+                                baseUrl: baseUrl,
+                                authToken: authToken,
+                                imagePath: conversation.channelAvatarUrl,
+                                fallbackText: conversation.displayChannelLabel,
+                                cacheVersion: conversation
+                                    .updatedAt
+                                    .millisecondsSinceEpoch
+                                    .toString(),
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              _clientChannelName(conversation.kind),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.labelMedium,
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        _clientChannelName(conversation.kind),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.labelMedium,
-                      ),
-                    ]),
+                    ),
                   ),
                 ),
-              )),
-          ]),
+            ],
+          ),
         ),
       ),
     );
@@ -606,16 +713,19 @@ String _clientChannelName(String kind) => switch (kind) {
 };
 
 String _initials(String value) {
-  final words = value.trim().split(RegExp(r'\s+')).where((word) => word.isNotEmpty);
+  final words = value
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((word) => word.isNotEmpty);
   final initials = words.take(2).map((word) => word[0]).join().toUpperCase();
   return initials.isEmpty ? '?' : initials;
 }
 
 String _channelLabel(String kind) => switch (kind) {
-      'laboral' => 'Laboral',
-      'fiscal' => 'Contable / Fiscal',
-      _ => 'Directo',
-    };
+  'laboral' => 'Laboral',
+  'fiscal' => 'Contable / Fiscal',
+  _ => 'Directo',
+};
 
 class _ClientGroupTile extends StatelessWidget {
   const _ClientGroupTile({
@@ -633,13 +743,21 @@ class _ClientGroupTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final initials = group.displayName.isEmpty
         ? '?'
-        : group.displayName.split(' ').take(2).map((w) => w.isEmpty ? '' : w[0]).join();
+        : group.displayName
+              .split(' ')
+              .take(2)
+              .map((w) => w.isEmpty ? '' : w[0])
+              .join();
     return ListTile(
       key: Key('group-${group.companyCode}'),
       selected: selected,
       onTap: onTap,
       leading: CircleAvatar(child: Text(initials.toUpperCase())),
-      title: Text(group.displayName, maxLines: 1, overflow: TextOverflow.ellipsis),
+      title: Text(
+        group.displayName,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -651,13 +769,15 @@ class _ClientGroupTile extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-          Row(children: [
-            for (final conv in group.conversations)
-              Padding(
-                padding: const EdgeInsets.only(right: 4),
-                child: _ChannelChip(kind: conv.kind),
-              ),
-          ]),
+          Row(
+            children: [
+              for (final conv in group.conversations)
+                Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: _ChannelChip(kind: conv.kind),
+                ),
+            ],
+          ),
         ],
       ),
       isThreeLine: true,
@@ -709,8 +829,14 @@ class _ClientAccessBadge extends StatelessWidget {
         ),
       ),
     );
-    final canChange = onAccessChanged != null &&
-        {'active', 'pending', 'disabled', 'invitation_expired'}.contains(status);
+    final canChange =
+        onAccessChanged != null &&
+        {
+          'active',
+          'pending',
+          'disabled',
+          'invitation_expired',
+        }.contains(status);
     if (!canChange) return badge;
     return PopupMenuButton<bool>(
       tooltip: 'Gestionar acceso del cliente',
@@ -718,7 +844,9 @@ class _ClientAccessBadge extends StatelessWidget {
       itemBuilder: (_) => [
         PopupMenuItem<bool>(
           value: status == 'disabled',
-          child: Text(status == 'disabled' ? 'Activar acceso' : 'Desactivar acceso'),
+          child: Text(
+            status == 'disabled' ? 'Activar acceso' : 'Desactivar acceso',
+          ),
         ),
       ],
       child: badge,
@@ -735,7 +863,10 @@ class _ChannelChip extends StatelessWidget {
     if (kind == 'private') {
       return const CircleAvatar(
         radius: 10,
-        child: Text('AD', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold)),
+        child: Text(
+          'AD',
+          style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold),
+        ),
       );
     }
     return switch (kind) {
@@ -753,17 +884,17 @@ class _LabelChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(4),
-          border: Border.all(color: color.withValues(alpha: 0.4)),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w700),
-        ),
-      );
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.15),
+      borderRadius: BorderRadius.circular(4),
+      border: Border.all(color: color.withValues(alpha: 0.4)),
+    ),
+    child: Text(
+      label,
+      style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w700),
+    ),
+  );
 }
 
 class _AppDrawer extends StatelessWidget {
@@ -777,27 +908,57 @@ class _AppDrawer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Drawer(
-        child: ListView(children: [
-          UserAccountsDrawerHeader(
-            accountName: Text(profile.name),
-            accountEmail: Text(profile.email),
-            currentAccountPicture: _ProfileAvatar(profile: profile, radius: 32),
-          ),
+    child: ListView(
+      children: [
+        UserAccountsDrawerHeader(
+          accountName: Text(profile.name),
+          accountEmail: Text(profile.email),
+          currentAccountPicture: _ProfileAvatar(profile: profile, radius: 32),
+        ),
+        ListTile(
+          key: const Key('drawer-conversations'),
+          leading: const Icon(Icons.forum_outlined),
+          title: const Text('Conversaciones'),
+          onTap: () => _navigate(context, '/'),
+        ),
+        if (profile.type == UserType.staff)
           ListTile(
-            key: const Key('drawer-conversations'),
-            leading: const Icon(Icons.forum_outlined),
-            title: const Text('Conversaciones'),
-            onTap: () => _navigate(context, '/'),
+            leading: const Icon(Icons.groups_outlined),
+            title: const Text('Chats internos y grupos'),
+            onTap: () => _navigate(context, '/groups'),
           ),
-          if (profile.type == UserType.staff)
-            ListTile(leading: const Icon(Icons.groups_outlined), title: const Text('Chats internos y grupos'), onTap: () => _navigate(context, '/groups')),
-          if (profile.isAdmin)
-            ListTile(leading: const Icon(Icons.campaign_outlined), title: const Text('Campañas'), onTap: () => _navigate(context, '/campaigns')),
-          if (profile.isAdmin)
-            ListTile(leading: const Icon(Icons.badge_outlined), title: const Text('Empleados'), onTap: () => _navigate(context, '/employees')),
-          ListTile(leading: const Icon(Icons.person_outline), title: const Text('Perfil'), onTap: () => _navigate(context, '/profile')),
-        ]),
-      );
+        if (profile.isAdmin)
+          ListTile(
+            leading: const Icon(Icons.campaign_outlined),
+            title: const Text('Campañas'),
+            onTap: () => _navigate(context, '/campaigns'),
+          ),
+        if (profile.isAdmin)
+          ListTile(
+            leading: const Icon(Icons.badge_outlined),
+            title: const Text('Empleados'),
+            onTap: () => _navigate(context, '/employees'),
+          ),
+        if (profile.isAdmin)
+          ListTile(
+            key: const Key('drawer-invite-client'),
+            leading: const Icon(Icons.person_add_alt_1),
+            title: const Text('Invitar cliente'),
+            onTap: () => _navigate(context, '/invite-client'),
+          ),
+        ListTile(
+          leading: const Icon(Icons.person_outline),
+          title: const Text('Perfil'),
+          onTap: () => _navigate(context, '/profile'),
+        ),
+        ListTile(
+          leading: const Icon(Icons.info_outline),
+          title: const Text('Acerca de Gestinem'),
+          onTap: () => _navigate(context, '/about'),
+        ),
+      ],
+    ),
+  );
 }
 
 class _ProfileAvatar extends ConsumerWidget {
@@ -811,7 +972,11 @@ class _ProfileAvatar extends ConsumerWidget {
     final avatarUrl = profile.avatarUrl;
     return AuthenticatedAvatar(
       radius: radius,
-      baseUrl: ref.read(apiClientProvider).dio.options.baseUrl
+      baseUrl: ref
+          .read(apiClientProvider)
+          .dio
+          .options
+          .baseUrl
           .replaceAll(RegExp(r'/api/v1/messaging/?$'), ''),
       authToken: ref.read(sessionProvider).valueOrNull?.token ?? '',
       imagePath: avatarUrl,

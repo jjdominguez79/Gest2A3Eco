@@ -240,6 +240,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   title: const Text('Canales'),
                   subtitle: Text(profile.channels.join(', ')),
                 ),
+              ListTile(
+                leading: const Icon(Icons.info_outline),
+                title: const Text('Acerca de Gestinem'),
+                subtitle: const Text('Versión y actualizaciones'),
+                onTap: () => context.push('/about'),
+              ),
               const SizedBox(height: 20),
               FilledButton.tonalIcon(
                 onPressed: () => ref.read(sessionProvider.notifier).logout(),

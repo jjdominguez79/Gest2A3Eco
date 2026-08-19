@@ -47,6 +47,9 @@ class Settings:
     messaging_app_redirect_uri: str
     messaging_app_web_redirect_uri: str
     messaging_cors_origins: str
+    messaging_latest_app_version: str
+    messaging_latest_app_build: int
+    messaging_minimum_app_build: int
     azure_doc_intelligence_endpoint: str
     azure_doc_intelligence_key: str
     azure_doc_intelligence_model_id: str
@@ -120,6 +123,15 @@ def get_settings() -> Settings:
         ),
         messaging_app_web_redirect_uri=os.getenv("MESSAGING_APP_WEB_REDIRECT_URI", ""),
         messaging_cors_origins=os.getenv("MESSAGING_CORS_ORIGINS", ""),
+        messaging_latest_app_version=os.getenv(
+            "MESSAGING_LATEST_APP_VERSION", "0.1.1",
+        ).strip(),
+        messaging_latest_app_build=max(
+            1, int(os.getenv("MESSAGING_LATEST_APP_BUILD", "11")),
+        ),
+        messaging_minimum_app_build=max(
+            1, int(os.getenv("MESSAGING_MINIMUM_APP_BUILD", "1")),
+        ),
         azure_doc_intelligence_endpoint=os.getenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", ""),
         azure_doc_intelligence_key=os.getenv("AZURE_DOC_INTELLIGENCE_KEY", ""),
         azure_doc_intelligence_model_id=os.getenv("AZURE_DOC_INTELLIGENCE_MODEL_ID", "prebuilt-invoice"),
