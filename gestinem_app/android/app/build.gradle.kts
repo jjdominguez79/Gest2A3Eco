@@ -13,8 +13,29 @@ if (file("google-services.json").exists()) {
 
 val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
+val isReleaseBuild = gradle.startParameter.taskNames.any {
+    it.contains("release", ignoreCase = true)
+}
 if (keystorePropertiesFile.exists()) {
     keystorePropertiesFile.inputStream().use(keystoreProperties::load)
+}
+
+val requiredSigningProperties = listOf(
+    "storePassword",
+    "keyPassword",
+    "keyAlias",
+    "storeFile",
+)
+val missingSigningProperties = requiredSigningProperties.filter {
+    keystoreProperties.getProperty(it).isNullOrBlank()
+}
+
+if (isReleaseBuild && (!keystorePropertiesFile.exists() || missingSigningProperties.isNotEmpty())) {
+    throw GradleException(
+        "No se puede generar una version release sin la clave de carga. " +
+            "Copia android/key.properties.example como android/key.properties " +
+            "y completa todas sus propiedades.",
+    )
 }
 
 android {

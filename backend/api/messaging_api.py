@@ -830,8 +830,15 @@ def staff_app_exchange(payload: StaffAppCodeIn, db: Session = Depends(get_db)):
     return {
         "token": token,
         "staff": {
-            "id": staff.external_id, "name": staff.name, "email": staff.email,
-            "role": staff.role, "channels": sorted(_channels_for_staff(db, staff)),
+            "id": staff.external_id,
+            "name": staff.chat_alias.strip() or staff.name,
+            "email": staff.email,
+            "role": staff.role,
+            "avatar_url": (
+                f"/api/v1/messaging/staff/avatars/{staff.external_id}"
+                if staff.avatar_storage_key else ""
+            ),
+            "channels": sorted(_channels_for_staff(db, staff)),
         },
     }
 
@@ -856,7 +863,9 @@ def staff_auth_logout(
 @router.get("/staff/me")
 def staff_me(staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db)):
     return {
-        "id": staff.external_id, "name": staff.name, "email": staff.email,
+        "id": staff.external_id,
+        "name": staff.chat_alias.strip() or staff.name,
+        "email": staff.email,
         "role": staff.role, "chat_alias": staff.chat_alias,
         "avatar_configured": bool(staff.avatar_storage_key),
         "avatar_url": f"/api/v1/messaging/staff/avatars/{staff.external_id}" if staff.avatar_storage_key else "",

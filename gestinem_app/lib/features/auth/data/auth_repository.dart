@@ -104,12 +104,21 @@ class AuthRepository {
   }
 
   Future<UserProfile> currentProfile(AuthSession session) async {
+    final options = Options(
+      headers: {'Authorization': 'Bearer ${session.token}'},
+    );
     if (session.profile.type == UserType.client) {
-      final response = await _dio.get<List<dynamic>>('/client/conversations');
+      final response = await _dio.get<List<dynamic>>(
+        '/client/conversations',
+        options: options,
+      );
       if (response.statusCode != 200) throw StateError('Sesión no válida');
       return session.profile;
     }
-    final response = await _dio.get<Map<String, dynamic>>('/staff/me');
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/staff/me',
+      options: options,
+    );
     return UserProfile.fromJson(response.data!, UserType.staff);
   }
 

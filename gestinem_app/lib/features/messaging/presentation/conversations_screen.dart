@@ -385,7 +385,9 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
       data: (items) {
         final channels = [...items]
           ..sort((a, b) => _clientChannelOrder(a.kind).compareTo(_clientChannelOrder(b.kind)));
-        if (channels.isEmpty) return const Center(child: Text('No hay canales disponibles.'));
+        if (channels.isEmpty) {
+          return const Center(child: Text('No hay canales disponibles.'));
+        }
         final selected = channels.any((item) => item.id == _selected)
             ? channels.firstWhere((item) => item.id == _selected)
             : channels.first;
@@ -558,21 +560,12 @@ class _ClientGroupTile extends StatelessWidget {
 }
 
 class _ChannelChip extends StatelessWidget {
-  // ignore: unused_element_parameter
-  const _ChannelChip({required this.kind, this.adminAvatarUrl = '', this.baseUrl = ''});
+  const _ChannelChip({required this.kind});
   final String kind;
-  final String adminAvatarUrl;
-  final String baseUrl;
 
   @override
   Widget build(BuildContext context) {
     if (kind == 'private') {
-      if (adminAvatarUrl.isNotEmpty) {
-        return CircleAvatar(
-          radius: 10,
-          backgroundImage: NetworkImage('$baseUrl$adminAvatarUrl'),
-        );
-      }
       return const CircleAvatar(
         radius: 10,
         child: Text('AD', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold)),
@@ -610,6 +603,11 @@ class _AppDrawer extends StatelessWidget {
   const _AppDrawer({required this.profile});
   final UserProfile profile;
 
+  void _navigate(BuildContext context, String route) {
+    Navigator.of(context).pop();
+    context.go(route);
+  }
+
   @override
   Widget build(BuildContext context) => Drawer(
         child: ListView(children: [
@@ -618,14 +616,19 @@ class _AppDrawer extends StatelessWidget {
             accountEmail: Text(profile.email),
             currentAccountPicture: _ProfileAvatar(profile: profile, radius: 32),
           ),
-          ListTile(leading: const Icon(Icons.forum_outlined), title: const Text('Conversaciones'), onTap: () => context.go('/')),
+          ListTile(
+            key: const Key('drawer-conversations'),
+            leading: const Icon(Icons.forum_outlined),
+            title: const Text('Conversaciones'),
+            onTap: () => _navigate(context, '/'),
+          ),
           if (profile.type == UserType.staff)
-            ListTile(leading: const Icon(Icons.groups_outlined), title: const Text('Chats internos y grupos'), onTap: () => context.go('/groups')),
+            ListTile(leading: const Icon(Icons.groups_outlined), title: const Text('Chats internos y grupos'), onTap: () => _navigate(context, '/groups')),
           if (profile.isAdmin)
-            ListTile(leading: const Icon(Icons.campaign_outlined), title: const Text('Campañas'), onTap: () => context.go('/campaigns')),
+            ListTile(leading: const Icon(Icons.campaign_outlined), title: const Text('Campañas'), onTap: () => _navigate(context, '/campaigns')),
           if (profile.isAdmin)
-            ListTile(leading: const Icon(Icons.badge_outlined), title: const Text('Empleados'), onTap: () => context.go('/employees')),
-          ListTile(leading: const Icon(Icons.person_outline), title: const Text('Perfil'), onTap: () => context.go('/profile')),
+            ListTile(leading: const Icon(Icons.badge_outlined), title: const Text('Empleados'), onTap: () => _navigate(context, '/employees')),
+          ListTile(leading: const Icon(Icons.person_outline), title: const Text('Perfil'), onTap: () => _navigate(context, '/profile')),
         ]),
       );
 }
