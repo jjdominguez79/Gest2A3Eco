@@ -453,11 +453,13 @@ def test_chats_internos_privados_y_grupos_respetan_permisos(tmp_path):
     labor_threads = client.get(
         "/api/v1/messaging/staff/internal/threads", headers=auth("labor"),
     ).json()
-    assert [row["channel"] for row in labor_threads] == ["laboral"]
+    assert {row["channel"] for row in labor_threads} == {"", "laboral"}
+    assert any(row["kind"] == "direct" for row in labor_threads)
     fiscal_threads = client.get(
         "/api/v1/messaging/staff/internal/threads", headers=auth("fiscal"),
     ).json()
-    assert [row["channel"] for row in fiscal_threads] == ["fiscal"]
+    assert {row["channel"] for row in fiscal_threads} == {"", "fiscal"}
+    assert any(row["kind"] == "direct" for row in fiscal_threads)
 
     avatar = BytesIO()
     Image.new("RGB", (90, 90), "#145a86").save(avatar, format="PNG")

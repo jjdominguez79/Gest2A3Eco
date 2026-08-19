@@ -61,4 +61,21 @@ void main() {
     expect(rows, isEmpty);
     expect(adapter.lastRequest!.path, '/client/unified-messages');
   });
+
+  test('administrador puede desactivar el acceso de un cliente', () async {
+    final adapter = JsonAdapter({'status': 'disabled', 'active': false});
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+    )..httpClientAdapter = adapter;
+    final api = ApiClient(dio: dio, tokenProvider: () => testSession.token);
+
+    await MessagingRepository(api).setClientAccess('E00006', false);
+
+    expect(
+      adapter.lastRequest!.path,
+      '/staff/admin/organizations/E00006/client-access',
+    );
+    expect(adapter.lastRequest!.method, 'PATCH');
+    expect(adapter.lastRequest!.data, {'active': false});
+  });
 }

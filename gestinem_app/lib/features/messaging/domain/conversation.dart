@@ -18,6 +18,13 @@ class ClientGroup {
   final DateTime? updatedAt;
 
   String get displayName => companyName.isEmpty ? companyCode : companyName;
+  String get clientAccessStatus => conversations.isEmpty
+      ? 'not_invited'
+      : conversations.first.clientAccessStatus;
+  bool get clientAccessActive =>
+      conversations.any((conversation) => conversation.clientAccessActive);
+  bool get organizationActive =>
+      conversations.isEmpty ? true : conversations.first.organizationActive;
 }
 
 List<ClientGroup> groupConversationsByClient(List<Conversation> conversations) {
@@ -58,6 +65,9 @@ class Conversation {
     required this.kind,
     this.channelLabel = '',
     this.channelAvatarUrl = '',
+    this.clientAccessStatus = 'not_invited',
+    this.clientAccessActive = false,
+    this.organizationActive = true,
     required this.state,
     required this.unreadCount,
     required this.updatedAt,
@@ -71,6 +81,10 @@ class Conversation {
     kind: json['kind'] as String? ?? '',
     channelLabel: json['channel_label'] as String? ?? '',
     channelAvatarUrl: json['channel_avatar_url'] as String? ?? '',
+    clientAccessStatus:
+        json['client_access_status'] as String? ?? 'not_invited',
+    clientAccessActive: json['client_access_active'] as bool? ?? false,
+    organizationActive: json['organization_active'] as bool? ?? true,
     state: json['state'] as String? ?? 'pendiente',
     unreadCount: json['unread_count'] as int? ?? 0,
     updatedAt: DateTime.parse(json['updated_at'] as String).toLocal(),
@@ -85,6 +99,9 @@ class Conversation {
   final String kind;
   final String channelLabel;
   final String channelAvatarUrl;
+  final String clientAccessStatus;
+  final bool clientAccessActive;
+  final bool organizationActive;
   final String state;
   final int unreadCount;
   final DateTime updatedAt;

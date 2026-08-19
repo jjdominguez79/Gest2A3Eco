@@ -81,6 +81,12 @@ class MessagingRepository {
         data: {'state': state},
       );
 
+  Future<void> setClientAccess(String companyCode, bool active) =>
+      _api.dio.patch<void>(
+        '/staff/admin/organizations/$companyCode/client-access',
+        data: {'active': active},
+      );
+
   Future<void> softDelete(UserProfile profile, String messageId) =>
       _api.dio.delete<void>(
         '/${_audience(profile)}/messages/$messageId',
