@@ -6,6 +6,7 @@ from tkinter import messagebox, ttk
 
 from controllers.terceros_global_controller import TercerosGlobalController
 from services.maestro_contable_empresa_service import MaestroContableEmpresaService
+from services.terceros_empresa_fiscal_service import validate_tercero_empresa_rel
 from utils.validaciones import inferir_pais_desde_identificacion, normalizar_codigo_pais, normalizar_nif_cif
 
 _TIPOS_IDENTIFICACION = [
@@ -148,6 +149,10 @@ class UITercerosGlobales(tk.Frame):
         )
         self.lb_asignadas.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
+        ttk.Button(right, text="Config. FACE",
+                   command=self._open_fiscal_face_config).pack(
+            anchor="w", padx=12, pady=(4, 10))
+
     # ── Interfaz del controlador ──────────────────────────────────────────────
 
     def set_terceros(self, rows: list[dict]):
@@ -188,6 +193,13 @@ class UITercerosGlobales(tk.Frame):
         if not idx:
             return None, []
         return self._empresas_filtradas[idx[0]].get("codigo"), []
+
+    def get_selected_empresa_asignada(self) -> str | None:
+        idx = self.lb_asignadas.curselection()
+        if not idx:
+            return None
+        text = self.lb_asignadas.get(idx[0])
+        return text.split("  ", 1)[0].strip() if text else None
 
     def select_tercero(self, tid: str):
         tid_str = str(tid)
@@ -255,6 +267,151 @@ class UITercerosGlobales(tk.Frame):
             f"Sin coincidencia: {len(resultado['sin_coincidencia'])}\n"
             f"Ambiguas sin tocar: {len(resultado['ambiguas'])}",
         )
+
+    def _open_fiscal_face_config(self):
+        """Abre dialogo de configuracion Facturae/FACe para el tercero y empresa seleccionados."""
+        tid = self.get_selected_tercero_id()
+        codigo = self.get_selected_empresa_asignada()
+        if not tid or not codigo:
+            messagebox.showwarning(
+                "Gest2A3Eco",
+                "Selecciona un tercero y una empresa asignada.",
+                parent=self.winfo_toplevel(),
+            )
+            return
+        rel = validate_tercero_empresa_rel(
+            self._gestor.get_tercero_empresa(codigo, tid, 0) or {}
+        )
+        tercero = next(
+            (row for row in self._gestor.listar_terceros()
+             if str(row.get("id")) == tid),
+            None,
+        ) or {}
+
+        top = tk.Toplevel(self.winfo_toplevel())
+        top.title(
+            f"Configuracion FACE - {tercero.get('nombre', '')} ({tercero.get('nif', '')})"
+        )
+        top.resizable(False, False)
+        top.transient(self.winfo_toplevel())
+        top.grab_set()
+
+        frm = ttk.Frame(top, padding=12)
+        frm.pack(fill="both", expand=True)
+
+        vars_map = {
+            "facturae_es_administracion_publica": tk.BooleanVar(
+                value=bool(rel.get("facturae_es_administracion_publica"))
+            ),
+            "facturae_dir3_oficina_contable": tk.StringVar(
+                value=str(rel.get("facturae_dir3_oficina_contable") or "")
+            ),
+            "facturae_dir3_organo_gestor": tk.StringVar(
+                value=str(rel.get("facturae_dir3_organo_gestor") or "")
+            ),
+            "facturae_dir3_unidad_tramitadora": tk.StringVar(
+                value=str(rel.get("facturae_dir3_unidad_tramitadora") or "")
+            ),
+            "facturae_dir3_organo_proponente": tk.StringVar(
+                value=str(rel.get("facturae_dir3_organo_proponente") or "")
+            ),
+            "facturae_referencia_expediente": tk.StringVar(
+                value=str(rel.get("facturae_referencia_expediente") or "")
+            ),
+            "facturae_referencia_contrato": tk.StringVar(
+                value=str(rel.get("facturae_referencia_contrato") or "")
+            ),
+            "facturae_referencia_pedido": tk.StringVar(
+                value=str(rel.get("facturae_referencia_pedido") or "")
+            ),
+        }
+
+        face = ttk.LabelFrame(frm, text="Facturae / FACe", padding=10)
+        face.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        ttk.Checkbutton(
+            face, text="Es Administracion Publica",
+            variable=vars_map["facturae_es_administracion_publica"],
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Label(face, text="Oficina contable DIR3").grid(
+            row=1, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Entry(
+            face, textvariable=vars_map["facturae_dir3_oficina_contable"], width=24,
+        ).grid(row=1, column=1, sticky="w", pady=4)
+        ttk.Label(face, text="Organo gestor DIR3").grid(
+            row=2, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Entry(
+            face, textvariable=vars_map["facturae_dir3_organo_gestor"], width=24,
+        ).grid(row=2, column=1, sticky="w", pady=4)
+        ttk.Label(face, text="Unidad tramitadora DIR3").grid(
+            row=3, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Entry(
+            face, textvariable=vars_map["facturae_dir3_unidad_tramitadora"], width=24,
+        ).grid(row=3, column=1, sticky="w", pady=4)
+        ttk.Label(face, text="Organo proponente").grid(
+            row=4, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Entry(
+            face, textvariable=vars_map["facturae_dir3_organo_proponente"], width=24,
+        ).grid(row=4, column=1, sticky="w", pady=4)
+        ttk.Label(face, text="Referencia expediente").grid(
+            row=5, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Entry(
+            face, textvariable=vars_map["facturae_referencia_expediente"], width=30,
+        ).grid(row=5, column=1, sticky="w", pady=4)
+        ttk.Label(face, text="Referencia contrato").grid(
+            row=6, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Entry(
+            face, textvariable=vars_map["facturae_referencia_contrato"], width=30,
+        ).grid(row=6, column=1, sticky="w", pady=4)
+        ttk.Label(face, text="Referencia pedido").grid(
+            row=7, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Entry(
+            face, textvariable=vars_map["facturae_referencia_pedido"], width=30,
+        ).grid(row=7, column=1, sticky="w", pady=4)
+
+        def _ok():
+            payload = {
+                **rel,
+                "tercero_id": tid,
+                "codigo_empresa": codigo,
+                "ejercicio": 0,
+                "facturae_es_administracion_publica": bool(
+                    vars_map["facturae_es_administracion_publica"].get()
+                ),
+                "facturae_dir3_oficina_contable": vars_map[
+                    "facturae_dir3_oficina_contable"
+                ].get().strip(),
+                "facturae_dir3_organo_gestor": vars_map[
+                    "facturae_dir3_organo_gestor"
+                ].get().strip(),
+                "facturae_dir3_unidad_tramitadora": vars_map[
+                    "facturae_dir3_unidad_tramitadora"
+                ].get().strip(),
+                "facturae_dir3_organo_proponente": vars_map[
+                    "facturae_dir3_organo_proponente"
+                ].get().strip(),
+                "facturae_referencia_expediente": vars_map[
+                    "facturae_referencia_expediente"
+                ].get().strip(),
+                "facturae_referencia_contrato": vars_map[
+                    "facturae_referencia_contrato"
+                ].get().strip(),
+                "facturae_referencia_pedido": vars_map[
+                    "facturae_referencia_pedido"
+                ].get().strip(),
+            }
+            try:
+                self._gestor.upsert_tercero_empresa(payload)
+            except Exception as exc:
+                messagebox.showerror("Gest2A3Eco", str(exc), parent=top)
+                return
+            top.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        ttk.Button(btns, text="Guardar", command=_ok).pack(side=tk.LEFT)
+        ttk.Button(btns, text="Cancelar", command=top.destroy).pack(
+            side=tk.LEFT, padx=(6, 0))
+        top.wait_window()
 
     # ── Filtrado ─────────────────────────────────────────────────────────────
 
