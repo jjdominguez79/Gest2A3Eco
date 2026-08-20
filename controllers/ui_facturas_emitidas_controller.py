@@ -119,7 +119,15 @@ class FacturasEmitidasController:
         self._view.set_plantillas(pls)
 
     def refresh_facturas(self):
-        self._facturas_cache = self._listar_facturas_base()
+        try:
+            self._facturas_cache = self._listar_facturas_base()
+        except Exception:
+            _reconectar = getattr(self._gestor, "reconnect", None)
+            if callable(_reconectar):
+                _reconectar()
+                self._facturas_cache = self._listar_facturas_base()
+            else:
+                raise
         if self._allow_all_years:
             years = sorted({y for y in (self._year_from_factura(f) for f in self._facturas_cache) if y is not None})
             self._view.set_facturas_years(years)
@@ -127,6 +135,9 @@ class FacturasEmitidasController:
         self._view.set_facturas_series(series)
         self.apply_facturas_filter()
         self._view.set_detalle_lineas([])
+        emp = self._gestor.get_empresa(self._codigo, self._ejercicio)
+        if emp:
+            self._empresa_conf.update(emp)
 
     def apply_facturas_filter(self):
         self._view.clear_facturas()

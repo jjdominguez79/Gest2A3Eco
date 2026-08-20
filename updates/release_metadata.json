@@ -1,6 +1,6 @@
 {
-  "version": "1.8.1",
-  "tag": "v1.8.1",
-  "changelog": "Corrige la actualizacion de facturas compartidas entre puestos y permite recargar la lista desde PostgreSQL sin cerrar el modulo. Traslada el envio de facturas y sus adjuntos al backend autenticado para que las credenciales de Microsoft Graph no tengan que configurarse en cada equipo.",
+  "version": "1.8.2",
+  "tag": "v1.8.2",
+  "changelog": "Incorpora la trazabilidad documental de la mensajeria con avisos, bandeja global y acceso a la gestion documental. Registra las descargas y retiradas de archivos, aplica automaticamente el esquema necesario en el backend y mejora la recuperacion ante desconexiones de PostgreSQL al actualizar facturas.",
   "force_update": false
 }

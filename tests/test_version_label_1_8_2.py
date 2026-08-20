@@ -1,12 +1,12 @@
 """
-Tests de version y etiqueta de pantalla de acceso - v1.8.1.
+Tests de version y etiqueta de pantalla de acceso - v1.8.2.
 
 Cubre:
-1. APP_VERSION == "1.8.1".
+1. APP_VERSION == "1.8.2".
 2. APP_RELEASE_DATE existe en app_version.
 3. APP_RELEASE_DATE tiene formato ISO valido (YYYY-MM-DD).
 4. get_version_label() contiene la version y la fecha formateada en espanol.
-5. views/ui_auth.py no contiene "1.8.1" hardcodeado directamente.
+5. views/ui_auth.py no contiene "1.8.2" hardcodeado directamente.
 6. views/ui_auth.py usa get_version_label en lugar de APP_VERSION para la etiqueta de pie.
 """
 from __future__ import annotations
@@ -19,9 +19,9 @@ from pathlib import Path
 # 1. APP_VERSION
 # ===========================================================================
 
-def test_app_version_es_1_8_1():
+def test_app_version_es_1_8_2():
     from app_version import APP_VERSION
-    assert APP_VERSION == "1.8.1"
+    assert APP_VERSION == "1.8.2"
 
 
 # ===========================================================================
@@ -51,10 +51,10 @@ def test_app_release_date_formato_iso():
     assert 1 <= int(d) <= 31
 
 
-def test_app_release_date_es_1_8_1():
+def test_app_release_date_es_1_8_2():
     from app_version import APP_RELEASE_DATE
-    assert APP_RELEASE_DATE == "2026-08-19", (
-        f"La fecha de publicacion de v1.8.1 debe ser 2026-08-19, obtenido {APP_RELEASE_DATE!r}"
+    assert APP_RELEASE_DATE == "2026-08-20", (
+        f"La fecha de publicacion de v1.8.2 debe ser 2026-08-20, obtenido {APP_RELEASE_DATE!r}"
     )
 
 
@@ -83,7 +83,7 @@ def test_get_version_label_formato_completo():
     label = get_version_label()
     # Debe incluir "Gest2A3Eco", la version precedida de "v" y "Publicada"
     assert "Gest2A3Eco" in label
-    assert "v1.8.1" in label
+    assert "v1.8.2" in label
     assert "Publicada" in label
 
 
@@ -94,8 +94,8 @@ def test_get_version_label_formato_completo():
 def test_ui_auth_no_tiene_version_hardcodeada():
     ui_auth_path = Path(__file__).parent.parent / "views" / "ui_auth.py"
     contenido = ui_auth_path.read_text(encoding="utf-8")
-    assert "1.8.1" not in contenido, (
-        "views/ui_auth.py no debe contener la version '1.8.1' hardcodeada"
+    assert "1.8.2" not in contenido, (
+        "views/ui_auth.py no debe contener la version '1.8.2' hardcodeada"
     )
 
 

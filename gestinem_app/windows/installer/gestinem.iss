@@ -1,5 +1,5 @@
 #define MyAppName "Gestinem"
-#define MyAppVersion "0.1.1.11"
+#define MyAppVersion "0.1.3.13"
 #define MyAppPublisher "Gestinem"
 #define MyAppExeName "gestinem.exe"
 

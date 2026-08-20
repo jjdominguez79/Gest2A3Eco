@@ -71,6 +71,43 @@ def test_facturacion_oculta_emitidas_ocr_y_contabilidad_las_incluye():
     ]
 
 
+def test_refresh_facturas_reconecta_una_vez_y_actualiza_empresa():
+    llamadas = []
+
+    class GestorConTimeout:
+        def listar_facturas_emitidas(self, *_args):
+            llamadas.append("listar")
+            if llamadas.count("listar") == 1:
+                raise RuntimeError("conexion cerrada")
+            return []
+
+        def reconnect(self):
+            llamadas.append("reconnect")
+
+        def get_empresa(self, *_args):
+            return {"nombre": "Empresa actualizada"}
+
+    view = SimpleNamespace(
+        set_facturas_years=lambda _items: None,
+        set_facturas_series=lambda _items: None,
+        set_detalle_lineas=lambda _items: None,
+    )
+    controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
+    controller._gestor = GestorConTimeout()
+    controller._view = view
+    controller._codigo = "E00001"
+    controller._ejercicio = 2026
+    controller._allow_all_years = False
+    controller._incluir_origen_ocr = False
+    controller._empresa_conf = {"nombre": "Empresa anterior"}
+    controller.apply_facturas_filter = lambda: None
+
+    controller.refresh_facturas()
+
+    assert llamadas == ["listar", "reconnect", "listar"]
+    assert controller._empresa_conf["nombre"] == "Empresa actualizada"
+
+
 def test_copia_o_rectificativa_no_hereda_estados_suenlace_face_ni_ocr():
     factura = {
         "generada": True,
