@@ -8,6 +8,30 @@ from models.gestor_postgres import (
 )
 
 
+def test_reconnect_cierra_conexion_anterior_y_crea_otra(monkeypatch):
+    import psycopg
+
+    anterior = _ConexionFalsa()
+    nueva = _ConexionFalsa()
+    llamadas = []
+
+    def conectar(dsn, **kwargs):
+        llamadas.append((dsn, kwargs))
+        return nueva
+
+    monkeypatch.setattr(psycopg, "connect", conectar)
+    gestor = object.__new__(GestorPostgres)
+    gestor.dsn = "postgresql://gestinem"
+    gestor.conn = ConexionPostgres(anterior)
+
+    gestor.reconnect()
+
+    assert anterior.closed is True
+    assert isinstance(gestor.conn, ConexionPostgres)
+    assert gestor.conn._conexion is nueva
+    assert llamadas[0][0] == "postgresql://gestinem"
+
+
 def test_adaptar_sql_a_postgres_convierte_marcadores_e_ignore():
     sql = "INSERT OR IGNORE INTO tabla (id, nombre) VALUES (?, ?)"
     assert adaptar_sql_a_postgres(sql) == (

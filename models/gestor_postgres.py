@@ -308,6 +308,17 @@ class GestorPostgres(GestorBase):
         except Exception as exc:
             raise DatabasePostgresError(f"No se pudo abrir PostgreSQL: {exc}") from exc
 
+    def reconnect(self) -> None:
+        """Reconecta a PostgreSQL, por ejemplo tras un timeout de conexion inactiva."""
+        import psycopg
+        from psycopg.rows import dict_row
+        try:
+            self.conn.close()
+        except Exception:
+            pass
+        conexion = psycopg.connect(self.dsn, row_factory=dict_row)
+        self.conn = ConexionPostgres(conexion)
+
     def _inicializar_esquema_postgres(self) -> None:
         """Crea el esquema base en una base PostgreSQL vacia."""
         self.conn.executescript(SCHEMA + AUTH_SCHEMA)

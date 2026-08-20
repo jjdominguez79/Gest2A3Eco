@@ -2489,7 +2489,10 @@ class UIFacturasEmitidas(ttk.Frame):
         return 1.0 if base < 0 else -1.0
 
     def _refresh_facturas(self):
-        self.controller.refresh_facturas()
+        try:
+            self.controller.refresh_facturas()
+        except Exception as exc:
+            self.show_error("Gest2A3Eco", f"Error al actualizar facturas:\n{exc}")
 
     def _refresh_albaranes(self):
         self.controller.refresh_albaranes()
