@@ -886,6 +886,7 @@ def staff_auth_login(
         # MSAL agrega automaticamente openid/profile/offline_access.
         scopes=["email"],
         redirect_uri=_staff_redirect_uri(),
+        prompt="select_account",
     )
     state = str(flow.get("state") or "")
     if not state or not flow.get("auth_uri"):
