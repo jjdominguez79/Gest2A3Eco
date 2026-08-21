@@ -1,9 +1,10 @@
-FACTURAE_NS = "http://www.facturae.es/Facturae/2009/v3.2.2/Facturae"
+# Namespace y version verificados contra el XSD oficial publicado en
+# https://www.facturae.gob.es (Facturaev3_2_1.xml) y contra una factura real
+# aceptada por FACe (ver services/facturae/schemas/ y el skill facturae-xml).
+FACTURAE_NS = "http://www.facturae.es/Facturae/2014/v3.2.1/Facturae"
 DS_NS = "http://www.w3.org/2000/09/xmldsig#"
-XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
-SCHEMA_LOCATION = "http://www.facturae.es/Facturae/2009/v3.2.2/Facturae facturae_3_2_2.xsd"
 
-SCHEMA_VERSION = "3.2.2"
+SCHEMA_VERSION = "3.2.1"
 MODALITY_INDIVIDUAL = "I"
 INVOICE_ISSUER_TYPE = "EM"
 INVOICE_DOCUMENT_TYPE = "FC"

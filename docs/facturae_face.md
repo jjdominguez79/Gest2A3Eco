@@ -1,12 +1,28 @@
 # Facturae / FACe en Gest2A3Eco
 
-**Estado:** generacion y validacion de Facturae 3.2.2 implementadas.
+**Estado:** generacion y validacion de Facturae 3.2.1 implementadas, con
+validacion estricta contra el XSD oficial y tests de regresion contra una
+factura real aceptada por FACe.
 
-**Ultima revision contra el codigo:** 2026-08-15.
+**Ultima revision contra el codigo:** 2026-08-21.
 
-Gest2A3Eco genera un XML Facturae 3.2.2 desde una factura emitida existente. El
+> Ver tambien el skill `facturae-xml` (`.agents/skills/facturae-xml/README.md`):
+> documenta la plantilla validada (`tests/fixtures/facturae/A18.xml`) y las
+> reglas estructurales verificadas contra el XSD oficial que hay que
+> respetar al tocar este generador.
+
+Gest2A3Eco genera un XML Facturae 3.2.1 desde una factura emitida existente. El
 resultado esta preparado para validacion externa y firma posterior; la
 aplicacion no lo presenta automaticamente en FACe.
+
+**Correccion 2026-08-21:** el generador declaraba antes el namespace y la
+version 2009/v3.2.2 (incorrectos) y tenia varios elementos en el orden o con
+el nombre equivocado (`AdministrativeCentres` despues de `LegalEntity`,
+`IssueData` en vez de `InvoiceIssueData`, `InvoiceCurrencyCode` mal colocado
+en `Batch`, referencias de expediente/contrato/pedido a nivel de factura en
+vez de por linea). Se corrigio y valido contra el XSD oficial 3.2.1 y contra
+una factura real aceptada por FACe. Detalle completo en el skill
+`facturae-xml`.
 
 ## Flujo
 
@@ -59,9 +75,13 @@ El campo `pais` de empresa y tercero participa en la construccion de las partes.
 ## Implementacion
 
 - `services/facturae/facturae_models.py`: contrato del documento.
-- `services/facturae/facturae_builder.py`: mapeo y XML 3.2.2.
-- `services/facturae/facturae_validator.py`: reglas de validacion.
+- `services/facturae/facturae_builder.py`: mapeo y XML 3.2.1.
+- `services/facturae/facturae_validator.py`: reglas de validacion, incluida
+  validacion XSD estricta con `lxml` contra `services/facturae/schemas/`.
 - `services/facturae/facturae_exporter.py`: orquestacion y datos de persistencia.
+- `services/facturae/schemas/`: copia local del XSD oficial 3.2.1 (y su
+  dependencia `xmldsig-core-schema.xsd`), con procedencia documentada en su
+  propio `README.md`.
 
 Se generan `FileHeader`, `Parties`, `Invoices`, `TaxesOutputs`,
 `TaxesWithheld`, `InvoiceTotals`, `Items` y centros administrativos cuando
@@ -71,19 +91,25 @@ corresponde. Se contemplan multiples tipos de IVA, IRPF y datos rectificativos.
 
 - `sign_facturae_xml()` es un punto de extension y todavia no firma XAdES-EPES.
 - No hay envio automatico ni consulta de estado en FACe.
-- No se incluye el XSD oficial para validacion local completa.
+- El XSD oficial ya se incluye para validacion local completa
+  (`services/facturae/schemas/`), pero no esta necesariamente empaquetado en
+  el build de distribucion (`dist/`); revisar el empaquetado si se quiere
+  validacion estricta tambien en produccion empaquetada.
 - Los casos avanzados de facturas rectificativas deben validarse con ejemplos
   reales antes de su presentacion.
 
 Antes de una presentacion real, validar el XML con las herramientas oficiales o
-compatibles de Facturae 3.2.2 y firmarlo con un certificado admitido por FACe.
+compatibles de Facturae 3.2.1 y firmarlo con un certificado admitido por FACe.
 
 ## Pruebas
 
 ```powershell
 $env:PYTHONPATH = "."
-python -m pytest tests/test_facturae_service.py -q
+python -m pytest tests/test_facturae_service.py tests/test_facturae_golden_a18.py -q
 ```
 
 Los escenarios cubren factura simple, multiples IVAs, IRPF, DIR3 obligatorio,
 descuadre de totales, ausencia de lineas y persistencia de la ruta exportada.
+`test_facturae_golden_a18.py` anade la validacion contra el XSD oficial y la
+comparacion estructural con `tests/fixtures/facturae/A18.xml` (factura real
+aceptada por FACe).
