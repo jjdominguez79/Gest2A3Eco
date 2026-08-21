@@ -2,12 +2,43 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
+from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from services.facturae.facturae_codes import FACTURAE_NS, FACTURAE_STATUS_ERROR_VALIDACION
+from services.facturae.facturae_codes import (
+    FACTURAE_NS,
+    FACTURAE_STATUS_ERROR_VALIDACION,
+    SCHEMA_VERSION,
+)
 
 
 Q2 = Decimal("0.01")
+
+_SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "facturae_3_2_1.xsd"
+_xsd_schema_cache: object | None = None
+_XSD_UNAVAILABLE = object()
+
+
+def _load_xsd_schema():
+    """Carga (y cachea) el esquema oficial Facturae 3.2.1 con lxml.
+
+    Devuelve `_XSD_UNAVAILABLE` si lxml no esta instalado o el esquema no se
+    puede compilar, para degradar sin romper la generacion del XML.
+    """
+    global _xsd_schema_cache
+    if _xsd_schema_cache is not None:
+        return _xsd_schema_cache
+    try:
+        from lxml import etree as lxml_etree
+    except ImportError:
+        _xsd_schema_cache = _XSD_UNAVAILABLE
+        return _xsd_schema_cache
+    try:
+        schema_doc = lxml_etree.parse(str(_SCHEMA_PATH))
+        _xsd_schema_cache = lxml_etree.XMLSchema(schema_doc)
+    except Exception:
+        _xsd_schema_cache = _XSD_UNAVAILABLE
+    return _xsd_schema_cache
 
 
 def d2(value) -> Decimal:
@@ -106,7 +137,20 @@ def validate_facturae_xml_content(xml_content: str) -> list[str]:
     if not root.tag.endswith("Facturae"):
         errors.append("La raiz del XML no es Facturae.")
     if FACTURAE_NS not in root.tag:
-        errors.append("El namespace principal de Facturae no coincide con 3.2.2.")
+        errors.append(f"El namespace principal de Facturae no coincide con {SCHEMA_VERSION}.")
+    if errors:
+        return errors
+
+    schema = _load_xsd_schema()
+    if schema is not _XSD_UNAVAILABLE:
+        from lxml import etree as lxml_etree
+
+        try:
+            doc = lxml_etree.fromstring(xml_content.encode("utf-8"))
+        except lxml_etree.XMLSyntaxError as exc:
+            return [f"El XML Facturae generado no es valido: {exc}"]
+        if not schema.validate(doc):
+            errors.extend(f"XSD Facturae {SCHEMA_VERSION}: {e.message}" for e in schema.error_log)
     return errors
 
 

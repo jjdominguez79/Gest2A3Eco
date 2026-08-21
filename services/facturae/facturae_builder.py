@@ -15,12 +15,10 @@ from services.facturae.facturae_codes import (
     INVOICE_DOCUMENT_TYPE,
     INVOICE_ISSUER_TYPE,
     MODALITY_INDIVIDUAL,
-    SCHEMA_LOCATION,
     SCHEMA_VERSION,
     TAX_TYPE_IRPF,
     TAX_TYPE_VAT,
     UNIT_OF_MEASURE_UNITS,
-    XSI_NS,
 )
 from services.facturae.facturae_models import (
     FacturaeAdministrativeCentre,
@@ -41,7 +39,11 @@ def _tag(name: str) -> str:
 
 
 def _sub(parent: ET.Element, tag: str) -> ET.Element:
-    return ET.SubElement(parent, _tag(tag))
+    # El XSD oficial de Facturae 3.2.1 no declara elementFormDefault="qualified",
+    # por lo que los elementos locales van sin namespace (solo la raiz <fe:Facturae>
+    # se cualifica). Verificado con el XSD oficial y con una factura real aceptada
+    # por FACe: ver services/facturae/schemas/README.md.
+    return ET.SubElement(parent, tag)
 
 
 def q6(value: Decimal) -> Decimal:
@@ -247,11 +249,32 @@ def build_facturae_document(payload: dict) -> FacturaeDocument:
 
 
 def _append_party(parent: ET.Element, tag: str, party: FacturaeParty, administrative_centres: list[FacturaeAdministrativeCentre] | None = None) -> None:
+    # Orden verificado contra BusinessType en el XSD oficial 3.2.1:
+    # TaxIdentification, AdministrativeCentres, LegalEntity/Individual.
     node = _sub(parent, tag)
     tax_id = _sub(node, "TaxIdentification")
     _txt(tax_id, "PersonTypeCode", party.person_type)
     _txt(tax_id, "ResidenceTypeCode", party.residence_type)
     _txt(tax_id, "TaxIdentificationNumber", party.nif)
+
+    if administrative_centres:
+        centres = _sub(node, "AdministrativeCentres")
+        for centre in administrative_centres:
+            cnode = _sub(centres, "AdministrativeCentre")
+            _txt(cnode, "CentreCode", centre.centre_code[:10])
+            _txt(cnode, "RoleTypeCode", centre.role_type_code)
+            _txt(cnode, "Name", centre.name[:40])
+            addr = _sub(cnode, "AddressInSpain" if centre.pais == "ESP" else "OverseasAddress")
+            _txt(addr, "Address", centre.direccion)
+            if centre.pais == "ESP":
+                _txt(addr, "PostCode", centre.cp)
+                _txt(addr, "Town", centre.poblacion)
+                _txt(addr, "Province", centre.provincia)
+                _txt(addr, "CountryCode", centre.pais)
+            else:
+                _txt(addr, "PostCodeAndTown", f"{centre.cp} {centre.poblacion}".strip())
+                _txt(addr, "Province", centre.provincia)
+                _txt(addr, "CountryCode", centre.pais)
 
     legal = _sub(node, "LegalEntity" if party.person_type == "J" else "Individual")
     if party.person_type == "J":
@@ -280,25 +303,6 @@ def _append_party(parent: ET.Element, tag: str, party: FacturaeParty, administra
         if party.email:
             _txt(contact, "ElectronicMail", party.email[:60])
 
-    if administrative_centres:
-        centres = _sub(node, "AdministrativeCentres")
-        for centre in administrative_centres:
-            cnode = _sub(centres, "AdministrativeCentre")
-            _txt(cnode, "CentreCode", centre.centre_code[:10])
-            _txt(cnode, "RoleTypeCode", centre.role_type_code)
-            _txt(cnode, "Name", centre.name[:40])
-            addr = _sub(cnode, "AddressInSpain" if centre.pais == "ESP" else "OverseasAddress")
-            _txt(addr, "Address", centre.direccion)
-            if centre.pais == "ESP":
-                _txt(addr, "PostCode", centre.cp)
-                _txt(addr, "Town", centre.poblacion)
-                _txt(addr, "Province", centre.provincia)
-                _txt(addr, "CountryCode", centre.pais)
-            else:
-                _txt(addr, "PostCodeAndTown", f"{centre.cp} {centre.poblacion}".strip())
-                _txt(addr, "Province", centre.provincia)
-                _txt(addr, "CountryCode", centre.pais)
-
 
 def _append_taxes(parent: ET.Element, tag: str, taxes: list[FacturaeTaxBreakdown]) -> None:
     if not taxes and tag == "TaxesWithheld":
@@ -313,14 +317,19 @@ def _append_taxes(parent: ET.Element, tag: str, taxes: list[FacturaeTaxBreakdown
 
 
 def build_facturae_xml(document: FacturaeDocument) -> str:
-    ET.register_namespace("", FACTURAE_NS)
+    # Estructura de namespaces verificada contra el XSD oficial 3.2.1 y contra
+    # una factura real aceptada por FACe: solo la raiz se cualifica con el
+    # prefijo "fe"; el resto de elementos van sin namespace (elementFormDefault
+    # no cualificado en el XSD). No se declara xsi:schemaLocation porque la
+    # factura de referencia tampoco lo hace y no es necesario para validar.
+    ET.register_namespace("fe", FACTURAE_NS)
     ET.register_namespace("ds", DS_NS)
-    ET.register_namespace("xsi", XSI_NS)
 
-    root = ET.Element(
-        f"{{{FACTURAE_NS}}}Facturae",
-        {f"{{{XSI_NS}}}schemaLocation": SCHEMA_LOCATION},
-    )
+    root = ET.Element(f"{{{FACTURAE_NS}}}Facturae")
+    # xmlns:ds se declara igualmente sin usarse todavia: es el punto de
+    # extension reservado para la firma XAdES-EPES (sign_facturae_xml).
+    root.set("xmlns:ds", DS_NS)
+
     header = _sub(root, "FileHeader")
     _txt(header, "SchemaVersion", SCHEMA_VERSION)
     _txt(header, "Modality", MODALITY_INDIVIDUAL)
@@ -328,10 +337,10 @@ def build_facturae_xml(document: FacturaeDocument) -> str:
     batch = _sub(header, "Batch")
     _txt(batch, "BatchIdentifier", f"{document.invoice_series_code}{document.invoice_number}"[:20])
     _txt(batch, "InvoicesCount", "1")
-    _txt(batch, "InvoiceCurrencyCode", "EUR")
     _amount(batch, "TotalInvoicesAmount", document.invoice_total)
     _amount(batch, "TotalOutstandingAmount", document.total_outstanding_amount)
     _amount(batch, "TotalExecutableAmount", document.total_executable_amount)
+    _txt(batch, "InvoiceCurrencyCode", "EUR")
 
     parties = _sub(root, "Parties")
     _append_party(parties, "SellerParty", document.seller)
@@ -353,20 +362,15 @@ def build_facturae_xml(document: FacturaeDocument) -> str:
         _txt(corrective, "ReasonCode", document.corrective.reason_code)
         _txt(corrective, "ReasonDescription", document.corrective.reason_description)
 
-    issue = _sub(invoice, "IssueData")
+    # El elemento se llama InvoiceIssueData en el XSD (InvoiceIssueDataType),
+    # no IssueData.
+    issue = _sub(invoice, "InvoiceIssueData")
     _txt(issue, "IssueDate", document.issue_date)
     if document.operation_date:
         _txt(issue, "OperationDate", document.operation_date)
     _txt(issue, "InvoiceCurrencyCode", "EUR")
     _txt(issue, "TaxCurrencyCode", "EUR")
     _txt(issue, "LanguageName", "es")
-
-    if document.receiver_transaction_reference:
-        _txt(invoice, "ReceiverTransactionReference", document.receiver_transaction_reference)
-    if document.file_reference:
-        _txt(invoice, "FileReference", document.file_reference)
-    if document.receiver_contract_reference:
-        _txt(invoice, "ReceiverContractReference", document.receiver_contract_reference)
 
     _append_taxes(invoice, "TaxesOutputs", document.taxes_outputs)
     if document.taxes_withheld:
@@ -384,6 +388,16 @@ def build_facturae_xml(document: FacturaeDocument) -> str:
     items = _sub(invoice, "Items")
     for line in document.invoice_lines:
         line_node = _sub(items, "InvoiceLine")
+        # ReceiverContractReference/ReceiverTransactionReference/FileReference
+        # solo existen en InvoiceLineType (no en InvoiceType): el XSD no
+        # contempla un lugar a nivel de factura para expediente/contrato/
+        # pedido, asi que se repiten en cada linea. Orden verificado en el XSD.
+        if document.receiver_contract_reference:
+            _txt(line_node, "ReceiverContractReference", document.receiver_contract_reference)
+        if document.receiver_transaction_reference:
+            _txt(line_node, "ReceiverTransactionReference", document.receiver_transaction_reference)
+        if document.file_reference:
+            _txt(line_node, "FileReference", document.file_reference)
         _txt(line_node, "SequenceNumber", line.sequence_number)
         _txt(line_node, "ItemDescription", line.description)
         _txt(line_node, "Quantity", f"{line.quantity:.6f}")

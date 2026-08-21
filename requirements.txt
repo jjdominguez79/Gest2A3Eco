@@ -17,6 +17,8 @@ packaging
 cryptography
 psycopg[binary]
 keyring
+# Validacion XSD estricta de los XML Facturae generados (services/facturae).
+lxml
 # Notificaciones electronicas (Opcion A, conector por navegador):
 #   tras instalar, ejecutar tambien:  playwright install chromium
 playwright
