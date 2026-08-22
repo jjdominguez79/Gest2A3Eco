@@ -112,3 +112,23 @@ def test_invitacion_usa_remitente_personal_configurado(monkeypatch):
     monkeypatch.setattr(messaging_mail.requests, "post", post)
     assert messaging_mail.send_invitation("ana@example.test", "Ana", "https://example.test/invite")
     assert calls[1][0].endswith("/users/jjdominguez%40gestinem.es/sendMail")
+    html = calls[1][1]["json"]["message"]["body"]["content"]
+    assert 'href="https://example.test/invite"' in html
+    assert "https://example.test/invite" in html
+
+
+def test_invitacion_incluye_enlace_en_html_y_texto_plano(monkeypatch):
+    captured = {}
+
+    def fake_send_mail(to, subject, html, **kwargs):
+        captured.update(to=to, subject=subject, html=html, **kwargs)
+        return True
+
+    monkeypatch.setattr(messaging_mail, "get_settings", _settings)
+    monkeypatch.setattr(messaging_mail, "send_mail", fake_send_mail)
+    url = "https://mensajes.example.test/app-link/invite?token=abc%2B123"
+
+    assert messaging_mail.send_invitation("ana@example.test", "Ana", url)
+    assert url in captured["html"]
+    assert url in captured["text"]
+    assert captured["sender"] == "jjdominguez@gestinem.es"

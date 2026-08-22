@@ -39,6 +39,7 @@ def send_mail(
     to: str | list[str], subject: str, html: str, *, sender: str = "",
     cc: list[str] | None = None, bcc: list[str] | None = None,
     attachments: list[dict] | None = None,
+    text: str = "",
 ) -> bool:
     cfg = get_settings()
     if _graph_configured(cfg):
@@ -50,6 +51,7 @@ def send_mail(
         return False
     return _send_mail_smtp(
         cfg, to, subject, html, cc=cc, bcc=bcc, attachments=attachments,
+        text=text,
     )
 
 
@@ -135,6 +137,7 @@ def _send_mail_smtp(
     cfg, to: str | list[str], subject: str, html: str, *,
     cc: list[str] | None = None, bcc: list[str] | None = None,
     attachments: list[dict] | None = None,
+    text: str = "",
 ) -> bool:
     to_values = [to] if isinstance(to, str) else list(to)
     message = EmailMessage()
@@ -143,7 +146,9 @@ def _send_mail_smtp(
     if cc:
         message["Cc"] = ", ".join(cc)
     message["Subject"] = subject
-    message.set_content("Accede al portal seguro de Gestinem para consultar este aviso.")
+    message.set_content(
+        text or "Abre la aplicacion Gestinem para consultar este aviso seguro."
+    )
     message.add_alternative(html, subtype="html")
     for item in attachments or []:
         content_type = str(item.get("content_type") or "application/octet-stream")
@@ -167,8 +172,14 @@ def send_invitation(to: str, name: str, url: str) -> bool:
         to, "Invitacion a la mensajeria de Gestinem",
         f"<p>Hola {escape(name)},</p><p>Gestinem te invita a utilizar su canal seguro de mensajeria.</p>"
         f"<p><a href=\"{escape(url)}\">Activar mi cuenta</a></p>"
+        f"<p>Si el boton no funciona, abre este enlace:<br>{escape(url)}</p>"
         "<p>El enlace es personal y caduca en 72 horas.</p>",
         sender=cfg.messaging_graph_invitation_from,
+        text=(
+            f"Hola {name},\n\nGestinem te invita a utilizar su canal seguro de mensajeria.\n"
+            f"Activa tu cuenta desde este enlace:\n{url}\n\n"
+            "El enlace es personal y caduca en 72 horas."
+        ),
     )
 
 

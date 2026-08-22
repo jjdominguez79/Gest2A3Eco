@@ -193,6 +193,7 @@ class MessagingConversation(Base):
     kind: Mapped[str] = mapped_column(String(16))  # laboral | fiscal | private
     state: Mapped[str] = mapped_column(String(20), default="pendiente", index=True)
     assigned_staff_external_id: Mapped[str] = mapped_column(String(64), default="")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, index=True)
 

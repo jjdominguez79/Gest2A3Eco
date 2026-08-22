@@ -505,6 +505,7 @@ def _serialize_conversation(
         "client_access_active": access["active"],
         "organization_active": org.active,
         "assigned_staff_external_id": conv.assigned_staff_external_id,
+        "started_at": conv.started_at.isoformat() if conv.started_at else None,
         "updated_at": conv.updated_at.isoformat(),
         "last_message": _serialize_message(db, last) if last else None,
     }
@@ -733,6 +734,7 @@ def _create_message(
             expires_at=(utcnow() + timedelta(days=get_settings().messaging_attachment_days)) if outgoing else None,
         ))
     conv.state = "pendiente"
+    conv.started_at = conv.started_at or utcnow()
     conv.updated_at = utcnow()
     _event(db, conv, "message_created")
     db.commit()
@@ -823,13 +825,15 @@ def create_invitation(payload: InviteIn, background: BackgroundTasks, db: Sessio
         client_id=client.id, token_hash=hash_token(token), expires_at=invitation_expiry(),
     )
     db.add(invitation); db.commit()
-    url = _app_deep_link("invite", token)
+    app_url = _app_deep_link("invite", token)
+    url = _public_app_link("invite", token)
     email_queued = payload.send_email and mail_configured()
     if email_queued:
         background.add_task(send_invitation, client.email, client.name, url)
     return {
         "invitation_id": invitation.id,
         "url": url,
+        "app_url": app_url,
         "email_queued": email_queued,
         "expires_at": invitation.expires_at.isoformat(),
     }
@@ -842,6 +846,21 @@ def _app_deep_link(action: str, token: str) -> str:
         raise RuntimeError("MESSAGING_APP_REDIRECT_URI no es una URI valida")
     query = urlencode({"token": token})
     return f"{parsed.scheme}://{parsed.netloc}/{action}?{query}"
+
+
+def _public_app_link(action: str, token: str) -> str:
+    base_url = get_settings().messaging_public_base_url.strip().rstrip("/")
+    parsed = urlparse(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise RuntimeError("MESSAGING_PUBLIC_BASE_URL no es una URL publica valida")
+    query = urlencode({"token": token})
+    return f"{base_url}/api/v1/messaging/public/app-link/{action}?{query}"
+
+
+@router.get("/public/app-link/{action}")
+def public_app_link(action: Literal["invite", "reset"], token: str = Query(min_length=1)):
+    """Enlace HTTPS apto para correo que entrega el token a la app Flutter."""
+    return RedirectResponse(_app_deep_link(action, token), status_code=307)
 
 
 def _staff_msal_app():
@@ -1943,15 +1962,16 @@ def client_send_unified(
 
 @router.get("/staff/conversations")
 def staff_conversations(
-    active_only: bool = False,
+    active_only: bool = True,
     staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
 ):
     stmt = select(MessagingConversation)
     if active_only:
         stmt = stmt.where(
+            MessagingConversation.started_at.is_not(None) |
             select(MessagingMessage.id).where(
                 MessagingMessage.conversation_id == MessagingConversation.id,
-            ).exists()
+            ).exists(),
         )
     rows = db.scalars(stmt.order_by(MessagingConversation.updated_at.desc())).all()
     result = []
@@ -1964,10 +1984,59 @@ def staff_conversations(
             organization = db.get(MessagingOrganization, row.organization_id)
             access = _organization_access_state(db, organization)
             access_by_organization[row.organization_id] = access
+        if active_only and access["status"] not in {"active", "pending"}:
+            continue
         item = _serialize_conversation(db, row, access=access)
         item["unread_count"] = _unread_count(db, row, "staff", staff.external_id)
         result.append(item)
     return result
+
+
+@router.get("/staff/conversation-targets")
+def staff_conversation_targets(
+    staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
+):
+    """Canales de clientes invitados y accesibles para iniciar un chat."""
+    rows = db.scalars(
+        select(MessagingConversation).order_by(MessagingConversation.updated_at.desc())
+    ).all()
+    result = []
+    access_by_organization: dict[str, dict] = {}
+    for row in rows:
+        if not _can_access_conversation(db, row, staff):
+            continue
+        access = access_by_organization.get(row.organization_id)
+        if access is None:
+            organization = db.get(MessagingOrganization, row.organization_id)
+            access = _organization_access_state(db, organization)
+            access_by_organization[row.organization_id] = access
+        if access["status"] not in {"active", "pending"}:
+            continue
+        item = _serialize_conversation(db, row, access=access)
+        item["unread_count"] = _unread_count(db, row, "staff", staff.external_id)
+        result.append(item)
+    return result
+
+
+@router.post("/staff/conversations/{conversation_id}/start")
+def staff_start_conversation(
+    conversation_id: str,
+    staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
+):
+    """Marca un canal disponible como conversación iniciada por el personal."""
+    conv = _conversation_for_staff(db, conversation_id, staff)
+    organization = db.get(MessagingOrganization, conv.organization_id)
+    access = _organization_access_state(db, organization)
+    if access["status"] not in {"active", "pending"}:
+        raise HTTPException(409, "El cliente no esta invitado o tiene el acceso inactivo")
+    now = utcnow()
+    conv.started_at = conv.started_at or now
+    conv.updated_at = now
+    _event(db, conv, "conversation_started")
+    db.commit()
+    item = _serialize_conversation(db, conv, access=access)
+    item["unread_count"] = _unread_count(db, conv, "staff", staff.external_id)
+    return item
 
 
 @router.get("/{audience}/conversations/{conversation_id}/messages")

@@ -184,6 +184,7 @@ def test_invitacion_usa_deep_link_flutter_y_no_pwa():
     source = inspect.getsource(messaging_api.create_invitation)
     assert "background.add_task(send_invitation" in source
     assert '_app_deep_link("invite", token)' in source
+    assert '_public_app_link("invite", token)' in source
     assert "/mensajes?invite=" not in source
 
 

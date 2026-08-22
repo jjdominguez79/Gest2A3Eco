@@ -2,6 +2,7 @@ import os
 from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from PIL import Image
@@ -102,6 +103,90 @@ def _setup(tmp_path: Path, monkeypatch):
         ).json() if row["kind"] == "fiscal"
     )
     return client, factory, staff_headers, auth, accepted["client"]["id"], conversation["id"]
+
+
+def test_invitacion_https_entrega_deep_link_y_token_a_accept_invite(tmp_path, monkeypatch):
+    client, _factory = _api(tmp_path, monkeypatch)
+    internal = {"X-API-Key": "test-secret"}
+    assert client.put(
+        "/api/v1/messaging/internal/organizations/E10002", headers=internal,
+        json={"company_code": "E10002", "name": "Cliente Dos"},
+    ).status_code == 200
+    sent = []
+    monkeypatch.setattr(messaging_api, "mail_configured", lambda: True)
+    monkeypatch.setattr(
+        messaging_api, "send_invitation",
+        lambda email, name, url: sent.append((email, name, url)),
+    )
+
+    response = client.post(
+        "/api/v1/messaging/internal/invitations", headers=internal,
+        json={
+            "company_code": "E10002", "name": "Ana",
+            "email": "ana@example.test", "send_email": True,
+        },
+    )
+    assert response.status_code == 200
+    invitation = response.json()
+    assert invitation["url"].startswith(
+        "https://mensajes.example.test/api/v1/messaging/public/app-link/invite?token="
+    )
+    assert sent == [("ana@example.test", "Ana", invitation["url"])]
+
+    redirect = client.get(invitation["url"], follow_redirects=False)
+    assert redirect.status_code == 307
+    assert redirect.headers["location"] == invitation["app_url"]
+    token = parse_qs(urlparse(redirect.headers["location"]).query)["token"][0]
+    accepted = client.post(
+        "/api/v1/messaging/auth/accept-invite",
+        json={"token": token, "password": "contrasena-muy-segura"},
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["client"]["email"] == "ana@example.test"
+
+
+def test_bandeja_staff_separa_chats_de_clientes_disponibles(tmp_path, monkeypatch):
+    client, _factory, staff_headers, _auth, _client_id, fiscal_id = _setup(
+        tmp_path, monkeypatch,
+    )
+    admin = staff_headers("admin")
+    employee = staff_headers("employee")
+
+    assert client.get(
+        "/api/v1/messaging/staff/conversations", headers=admin,
+    ).json() == []
+    admin_targets = client.get(
+        "/api/v1/messaging/staff/conversation-targets", headers=admin,
+    ).json()
+    assert fiscal_id in {row["id"] for row in admin_targets}
+    employee_targets = client.get(
+        "/api/v1/messaging/staff/conversation-targets", headers=employee,
+    ).json()
+    assert {row["kind"] for row in employee_targets} == {"fiscal"}
+
+    started = client.post(
+        f"/api/v1/messaging/staff/conversations/{fiscal_id}/start",
+        headers=employee,
+    )
+    assert started.status_code == 200
+    assert started.json()["started_at"] is not None
+    inbox = client.get(
+        "/api/v1/messaging/staff/conversations", headers=employee,
+    ).json()
+    assert [row["id"] for row in inbox] == [fiscal_id]
+    assert inbox[0]["last_message"] is None
+    assert inbox[0]["unread_count"] == 0
+
+    assert client.patch(
+        "/api/v1/messaging/staff/admin/organizations/E10001/client-access",
+        headers=admin, json={"active": False},
+    ).status_code == 200
+    assert client.get(
+        "/api/v1/messaging/staff/conversations", headers=admin,
+    ).json() == []
+    assert client.get(
+        "/api/v1/messaging/staff/conversation-targets", headers=admin,
+    ).json() == []
 
 
 def test_cliente_recibe_etiquetas_para_sus_tres_canales(tmp_path, monkeypatch):

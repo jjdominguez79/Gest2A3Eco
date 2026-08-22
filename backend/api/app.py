@@ -79,7 +79,8 @@ def startup():
             "SELECT table_name, column_name FROM information_schema.columns "
             "WHERE table_schema=current_schema() "
             "AND table_name IN ('dgt_documentos', 'msg_staff', 'msg_messages', "
-            "'msg_staff_thread_messages', 'msg_attachments', 'msg_downloads')"
+            "'msg_staff_thread_messages', 'msg_attachments', 'msg_downloads', "
+            "'msg_conversations')"
         )).tuples())
         column_migrations = {
             ("dgt_documentos", "dataprius_json"): (
@@ -133,7 +134,10 @@ def startup():
                 "ALTER TABLE msg_downloads "
                 "ADD COLUMN completed_at TIMESTAMPTZ"
             ),
-	}
+            ("msg_conversations", "started_at"): (
+                "ALTER TABLE msg_conversations ADD COLUMN started_at TIMESTAMPTZ"
+            ),
+        }
         for column, ddl in column_migrations.items():
             if column not in existing_columns:
                 conn.execute(text(ddl))
@@ -141,7 +145,7 @@ def startup():
         existing_indexes = set(conn.execute(text(
             "SELECT indexname FROM pg_indexes WHERE schemaname=current_schema() "
 
-            "AND tablename IN ('msg_staff', 'msg_downloads')"
+            "AND tablename IN ('msg_staff', 'msg_downloads', 'msg_conversations')"
         )).scalars())
         index_migrations = {
             "ix_msg_staff_email": "CREATE INDEX ix_msg_staff_email ON msg_staff(email)",
@@ -154,6 +158,10 @@ def startup():
                 "CREATE INDEX idx_msg_downloads_completed "
                 "ON msg_downloads(attachment_id, completed_at)"
             ),
+            "ix_msg_conversations_started_at": (
+                "CREATE INDEX ix_msg_conversations_started_at "
+                "ON msg_conversations(started_at DESC)"
+            ),
         }
         for index_name, ddl in index_migrations.items():
             if index_name not in existing_indexes:
@@ -165,6 +173,13 @@ def startup():
             "WHERE session.staff_external_id=staff.external_id)"
         ))
         conn.execute(text("UPDATE msg_conversations SET kind='fiscal' WHERE kind='general'"))
+        conn.execute(text(
+            "UPDATE msg_conversations AS conversation SET started_at=COALESCE(("
+            "SELECT MIN(message.created_at) FROM msg_messages AS message "
+            "WHERE message.conversation_id=conversation.id), conversation.updated_at) "
+            "WHERE conversation.started_at IS NULL AND EXISTS (SELECT 1 FROM msg_messages AS message "
+            "WHERE message.conversation_id=conversation.id)"
+        ))
     with SessionLocal() as db:
         for org in db.scalars(select(messaging_models.MessagingOrganization)).all():
             existing = set(db.scalars(select(messaging_models.MessagingConversation.kind).where(

@@ -241,7 +241,12 @@ def test_cuenta_cliente_prueba_genera_enlace_sin_enviar_email(tmp_path, monkeypa
     )
     assert invitation.status_code == 200
     assert invitation.json()["email_queued"] is False
-    assert invitation.json()["url"].startswith("es.gestinem.app://auth/invite?token=")
+    assert invitation.json()["url"].startswith(
+        "https://mensajes.example.test/api/v1/messaging/public/app-link/invite?token="
+    )
+    assert invitation.json()["app_url"].startswith(
+        "es.gestinem.app://auth/invite?token="
+    )
     assert sent == []
 
     token = invitation.json()["url"].split("token=", 1)[1]
@@ -285,7 +290,7 @@ def test_empresa_pruebas_solo_es_visible_para_su_titular(tmp_path, monkeypatch):
     ).status_code == 200
 
     owner_conversations = client.get(
-        "/api/v1/messaging/staff/conversations", headers=owner,
+        "/api/v1/messaging/staff/conversations?active_only=false", headers=owner,
     ).json()
     assert {row["kind"] for row in owner_conversations} == {"laboral", "fiscal", "private"}
     assert client.get(
