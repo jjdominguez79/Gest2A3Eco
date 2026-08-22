@@ -866,6 +866,53 @@ def public_app_link(action: Literal["invite", "reset"], token: str = Query(min_l
     return RedirectResponse(_app_deep_link(action, token), status_code=307)
 
 
+@router.get("/public/auth-done")
+def public_auth_done(code: str = Query(min_length=1)):
+    """Página de cierre del flujo OAuth móvil. Abre el deep link y muestra mensaje al usuario."""
+    configured = get_settings().messaging_app_redirect_uri.strip()
+    parsed = urlparse(configured)
+    if not parsed.scheme or not parsed.netloc:
+        raise HTTPException(500, "MESSAGING_APP_REDIRECT_URI no configurada")
+    deep_link = f"{parsed.scheme}://{parsed.netloc}/auth?{urlencode({'code': code})}"
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Acceso completado · Gestinem</title>
+  <style>
+    *{{box-sizing:border-box;margin:0;padding:0}}
+    body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+         background:#f0f4ff;display:flex;align-items:center;justify-content:center;
+         min-height:100vh;padding:24px}}
+    .card{{background:#fff;border-radius:16px;padding:40px 32px;max-width:380px;
+           width:100%;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,.08)}}
+    .icon{{font-size:56px;margin-bottom:20px}}
+    h1{{font-size:22px;color:#1a1a2e;margin-bottom:12px}}
+    p{{font-size:15px;color:#555;line-height:1.6;margin-bottom:24px}}
+    a.btn{{display:inline-block;background:#1a56e8;color:#fff;text-decoration:none;
+           padding:14px 32px;border-radius:10px;font-size:16px;font-weight:600}}
+    .note{{font-size:13px;color:#888;margin-top:20px}}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">✅</div>
+    <h1>Acceso completado</h1>
+    <p>Ya puedes cerrar esta pestaña y volver a la aplicación Gestinem.</p>
+    <a class="btn" href="{deep_link}">Volver a Gestinem</a>
+    <p class="note">Si la aplicación no se abre automáticamente, pulsa el botón.</p>
+  </div>
+  <script>
+    // Intentar abrir la app automáticamente al cargar la página
+    setTimeout(function() {{ window.location.href = "{deep_link}"; }}, 400);
+  </script>
+</body>
+</html>"""
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(content=html)
+
+
 def _staff_msal_app():
     cfg = get_settings()
     if not (cfg.messaging_staff_tenant_id and cfg.messaging_staff_client_id and cfg.messaging_staff_client_secret):
@@ -982,11 +1029,17 @@ def staff_auth_callback(request: Request, db: Session = Depends(get_db)):
             expires_at=utcnow() + timedelta(minutes=2),
         ))
         db.commit()
-        redirect = web_redirect or get_settings().messaging_app_redirect_uri
-        separator = "&" if "?" in redirect else "?"
-        return RedirectResponse(
-            f"{redirect}{separator}{urlencode({'code': code})}", status_code=302,
-        )
+        if web_redirect:
+            # Flujo web: redirigir directamente al destino web configurado
+            separator = "&" if "?" in web_redirect else "?"
+            return RedirectResponse(
+                f"{web_redirect}{separator}{urlencode({'code': code})}", status_code=302,
+            )
+        # Flujo móvil: mostrar página de cierre que abre el deep link y muestra
+        # un mensaje claro al usuario antes de volver a la app.
+        base_url = get_settings().messaging_public_base_url.strip().rstrip("/")
+        done_url = f"{base_url}/api/v1/messaging/public/auth-done?{urlencode({'code': code})}"
+        return RedirectResponse(done_url, status_code=302)
     # El acceso web al despacho (/equipo/mensajes) ha sido retirado.
     # El flujo OAuth sin app=true ya no tiene destino valido.
     # Para iniciar sesion en la mensajeria, usa la aplicacion Flutter con app=true.
