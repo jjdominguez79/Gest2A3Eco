@@ -144,6 +144,69 @@ void main() {
     expect(find.text('Empresa Uno'), findsOneWidget);
     expect(find.textContaining('E00001'), findsOneWidget);
     expect(find.text('3'), findsOneWidget);
+    expect(find.text('15/08'), findsOneWidget);
+  });
+
+  testWidgets('staff abre Nuevo chat y busca clientes invitados', (
+    tester,
+  ) async {
+    const staffProfile = UserProfile(
+      id: 'staff-1',
+      name: 'Gestor',
+      email: 'gestor@gestinem.es',
+      type: UserType.staff,
+      staffRole: StaffRole.admin,
+    );
+    const staffSession = AuthSession(
+      token: 'staff-token',
+      profile: staffProfile,
+    );
+    final target = Conversation(
+      id: 'fiscal-1',
+      companyCode: 'E00006',
+      companyName: 'Cliente Invitado',
+      kind: 'fiscal',
+      clientAccessStatus: 'pending',
+      state: 'pendiente',
+      unreadCount: 0,
+      updatedAt: DateTime(2026, 8, 22),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith(
+            (ref) => FakeSessionController(ref, staffSession),
+          ),
+          apiClientProvider.overrideWithValue(
+            ApiClient(
+              dio: Dio(BaseOptions(baseUrl: 'https://example.test')),
+              tokenProvider: () => staffSession.token,
+            ),
+          ),
+          conversationsProvider.overrideWith((ref) async => []),
+          conversationTargetsProvider.overrideWith((ref) async => [target]),
+          internalThreadsProvider.overrideWith((ref) async => []),
+          realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
+          notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
+        ],
+        child: const MaterialApp(home: ConversationsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('new-chat-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('Nuevo chat'), findsOneWidget);
+    expect(find.text('Cliente Invitado'), findsOneWidget);
+    expect(find.byKey(const Key('new-chat-search')), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('new-chat-search')),
+      'cliente que no existe',
+    );
+    await tester.pump();
+    expect(find.text('No hay clientes invitados disponibles'), findsOneWidget);
   });
 
   testWidgets('Conversaciones cierra el menu aunque ya sea la ruta activa', (

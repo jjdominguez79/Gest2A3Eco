@@ -26,6 +26,11 @@ final conversationsProvider = FutureProvider.autoDispose<List<Conversation>>((
   return ref.watch(messagingRepositoryProvider).conversations(profile);
 });
 
+final conversationTargetsProvider =
+    FutureProvider.autoDispose<List<Conversation>>((ref) {
+      return ref.watch(messagingRepositoryProvider).conversationTargets();
+    });
+
 final messagesProvider = FutureProvider.autoDispose
     .family<List<Message>, String>((ref, id) async {
       final profile = ref.watch(sessionProvider).valueOrNull!.profile;

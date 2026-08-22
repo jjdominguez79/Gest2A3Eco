@@ -71,6 +71,7 @@ class Conversation {
     required this.state,
     required this.unreadCount,
     required this.updatedAt,
+    this.startedAt,
     this.lastMessage,
   });
 
@@ -88,6 +89,7 @@ class Conversation {
     state: json['state'] as String? ?? 'pendiente',
     unreadCount: json['unread_count'] as int? ?? 0,
     updatedAt: DateTime.parse(json['updated_at'] as String).toLocal(),
+    startedAt: DateTime.tryParse(json['started_at'] as String? ?? '')?.toLocal(),
     lastMessage: json['last_message'] is Map<String, dynamic>
         ? Message.fromJson(json['last_message'] as Map<String, dynamic>)
         : null,
@@ -105,6 +107,7 @@ class Conversation {
   final String state;
   final int unreadCount;
   final DateTime updatedAt;
+  final DateTime? startedAt;
   final Message? lastMessage;
 
   String get displayChannelLabel => channelLabel.isNotEmpty

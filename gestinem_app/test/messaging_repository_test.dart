@@ -82,7 +82,8 @@ void main() {
   test('administrador puede crear una invitacion de cliente', () async {
     final adapter = JsonAdapter({
       'invitation_id': 'invitation-1',
-      'url': 'es.gestinem.app://auth/accept-invite?token=test',
+      'url': 'https://example.test/public/app-link/invite?token=test',
+      'app_url': 'es.gestinem.app://auth/invite?token=test',
       'email_queued': true,
       'expires_at': '2026-08-20T10:00:00Z',
     });
@@ -106,6 +107,40 @@ void main() {
       'email': 'ana@example.test',
       'send_email': true,
     });
+  });
+
+  test('staff carga candidatos e inicia una conversacion', () async {
+    final payload = {
+      'id': 'conversation-1',
+      'company_code': 'E00001',
+      'company_name': 'Empresa Uno',
+      'kind': 'fiscal',
+      'state': 'pendiente',
+      'unread_count': 0,
+      'updated_at': '2026-08-22T10:00:00Z',
+      'started_at': null,
+      'last_message': null,
+    };
+    final adapter = JsonAdapter([payload]);
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+    )..httpClientAdapter = adapter;
+    final api = ApiClient(dio: dio, tokenProvider: () => testSession.token);
+    final repository = MessagingRepository(api);
+
+    final targets = await repository.conversationTargets();
+    expect(targets.single.companyCode, 'E00001');
+    expect(adapter.lastRequest!.path, '/staff/conversation-targets');
+
+    final startAdapter = JsonAdapter({...payload, 'started_at': '2026-08-22T10:00:00Z'});
+    dio.httpClientAdapter = startAdapter;
+    final started = await repository.startConversation('conversation-1');
+    expect(started.startedAt, isNotNull);
+    expect(
+      startAdapter.lastRequest!.path,
+      '/staff/conversations/conversation-1/start',
+    );
+    expect(startAdapter.lastRequest!.method, 'POST');
   });
 
   test('consulta la ultima version publicada para Windows', () async {

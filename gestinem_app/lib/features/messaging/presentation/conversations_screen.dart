@@ -159,6 +159,31 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     );
   }
 
+  Future<void> _showNewChat() async {
+    try {
+      final targets = await ref.read(conversationTargetsProvider.future);
+      if (!mounted) return;
+      final selected = await showModalBottomSheet<Conversation>(
+        context: context,
+        isScrollControlled: true,
+        builder: (_) => _NewChatSheet(conversations: targets),
+      );
+      if (selected == null || !mounted) return;
+      final started = await ref
+          .read(messagingRepositoryProvider)
+          .startConversation(selected.id);
+      ref.invalidate(conversationTargetsProvider);
+      ref.invalidate(conversationsProvider);
+      if (mounted) _navigateToConversation(started.id);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
+      }
+    }
+  }
+
   Future<bool?> _confirmHide(BuildContext context) => showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(
@@ -288,6 +313,12 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
       appBar: AppBar(
         title: Text(profile.name, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
+          IconButton(
+            key: const Key('new-chat-button'),
+            tooltip: 'Nuevo chat',
+            onPressed: _showNewChat,
+            icon: const Icon(Icons.chat_outlined),
+          ),
           if (profile.isAdmin)
             IconButton(
               key: const Key('invite-client-button'),
@@ -781,18 +812,142 @@ class _ClientGroupTile extends StatelessWidget {
         ],
       ),
       isThreeLine: true,
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
+      trailing: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          _ClientAccessBadge(
-            status: group.clientAccessStatus,
-            onAccessChanged: onAccessChanged,
+          Text(
+            _conversationTime(group.updatedAt),
+            style: Theme.of(context).textTheme.labelSmall,
           ),
-          if (group.totalUnread > 0) ...[
-            const SizedBox(width: 6),
-            Badge(label: Text('${group.totalUnread}')),
-          ],
+          const SizedBox(height: 4),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _ClientAccessBadge(
+                status: group.clientAccessStatus,
+                onAccessChanged: onAccessChanged,
+              ),
+              if (group.totalUnread > 0) ...[
+                const SizedBox(width: 6),
+                Badge(label: Text('${group.totalUnread}')),
+              ],
+            ],
+          ),
         ],
+      ),
+    );
+  }
+}
+
+String _conversationTime(DateTime? value) {
+  if (value == null) return '';
+  final now = DateTime.now();
+  if (value.year == now.year &&
+      value.month == now.month &&
+      value.day == now.day) {
+    return '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+  }
+  return '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}';
+}
+
+class _NewChatSheet extends StatefulWidget {
+  const _NewChatSheet({required this.conversations});
+
+  final List<Conversation> conversations;
+
+  @override
+  State<_NewChatSheet> createState() => _NewChatSheetState();
+}
+
+class _NewChatSheetState extends State<_NewChatSheet> {
+  final _search = TextEditingController();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final query = _search.text.trim().toLowerCase();
+    final groups = groupConversationsByClient(widget.conversations)
+        .where(
+          (group) =>
+              query.isEmpty ||
+              group.companyCode.toLowerCase().contains(query) ||
+              group.displayName.toLowerCase().contains(query),
+        )
+        .toList()
+      ..sort((a, b) => a.displayName.compareTo(b.displayName));
+    return SafeArea(
+      child: FractionallySizedBox(
+        heightFactor: 0.82,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 18, 16, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Nuevo chat',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: TextField(
+                key: const Key('new-chat-search'),
+                controller: _search,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.search),
+                  hintText: 'Buscar cliente',
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+            ),
+            Expanded(
+              child: groups.isEmpty
+                  ? const Center(
+                      child: Text('No hay clientes invitados disponibles'),
+                    )
+                  : ListView(
+                      key: const Key('new-chat-targets'),
+                      children: [
+                        for (final group in groups)
+                          ExpansionTile(
+                            key: Key('new-chat-group-${group.companyCode}'),
+                            leading: CircleAvatar(
+                              child: Text(_initials(group.displayName)),
+                            ),
+                            title: Text(group.displayName),
+                            subtitle: Text(group.companyCode),
+                            children: [
+                              for (final conversation in group.conversations)
+                                ListTile(
+                                  key: Key('new-chat-${conversation.id}'),
+                                  leading: _ChannelChip(kind: conversation.kind),
+                                  title: Text(_channelLabel(conversation.kind)),
+                                  onTap: () =>
+                                      Navigator.pop(context, conversation),
+                                ),
+                            ],
+                          ),
+                      ],
+                    ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -25,6 +25,22 @@ class MessagingRepository {
         .toList(growable: false);
   }
 
+  Future<List<Conversation>> conversationTargets() async {
+    final response = await _api.dio.get<List<dynamic>>(
+      '/staff/conversation-targets',
+    );
+    return response.data!
+        .map((item) => Conversation.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
+  Future<Conversation> startConversation(String conversationId) async {
+    final response = await _api.dio.post<Map<String, dynamic>>(
+      '/staff/conversations/$conversationId/start',
+    );
+    return Conversation.fromJson(response.data!);
+  }
+
   Future<List<Message>> messages(
     UserProfile profile,
     String conversationId,
