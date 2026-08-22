@@ -361,6 +361,9 @@ def _can_access_conversation(
     if org.company_code.strip().upper() in TEST_COMPANY_CODES:
         return bool(org.private_owner_external_id == staff.external_id)
     if conv.kind == "private":
+        # Si no hay propietario asignado, el admin puede acceder (cliente antiguo sin owner)
+        if org.private_owner_external_id is None:
+            return staff.role == "admin"
         return bool(org.private_owner_external_id == staff.external_id)
     if staff.role == "admin":
         return True
@@ -1622,6 +1625,10 @@ def staff_create_invitation(
         and org.private_owner_external_id != admin.external_id
     ):
         raise HTTPException(403, "Cliente de pruebas privado")
+    # Auto-asignar el admin como propietario del canal Directo si aún no está asignado
+    if org.private_owner_external_id is None:
+        org.private_owner_external_id = admin.external_id
+        db.commit()
     return create_invitation(payload, background, db)
 
 
