@@ -228,54 +228,6 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     }
   }
 
-  Future<void> _setClientAccess(ClientGroup group, bool active) async {
-    if (!active) {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Desactivar acceso del cliente'),
-          content: Text(
-            '${group.displayName} dejará de poder iniciar sesión y se cerrarán sus sesiones activas. El historial no se borrará.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancelar'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Desactivar'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true) return;
-    }
-    try {
-      await ref
-          .read(messagingRepositoryProvider)
-          .setClientAccess(group.companyCode, active);
-      ref.invalidate(conversationsProvider);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              active
-                  ? 'Acceso del cliente activado'
-                  : 'Acceso del cliente desactivado',
-            ),
-          ),
-        );
-      }
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final profile = ref.watch(sessionProvider).valueOrNull!.profile;
@@ -321,10 +273,10 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
           ),
           if (profile.isAdmin)
             IconButton(
-              key: const Key('invite-client-button'),
-              tooltip: 'Invitar cliente',
-              onPressed: () => context.go('/invite-client'),
-              icon: const Icon(Icons.person_add_alt_1),
+              key: const Key('clients-button'),
+              tooltip: 'Clientes',
+              onPressed: () => context.go('/clients'),
+              icon: const Icon(Icons.people_alt_outlined),
             ),
           IconButton(
             onPressed: () => ref.invalidate(conversationsProvider),
@@ -496,10 +448,6 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
                                     (c) => c.id == _selected,
                                   ),
                                   onTap: () => _selectChannel(context, group),
-                                  onAccessChanged: profile.isAdmin
-                                      ? (active) =>
-                                            _setClientAccess(group, active)
-                                      : null,
                                 ),
                               );
                             },
@@ -763,12 +711,10 @@ class _ClientGroupTile extends StatelessWidget {
     required this.group,
     required this.selected,
     required this.onTap,
-    this.onAccessChanged,
   });
   final ClientGroup group;
   final bool selected;
   final VoidCallback onTap;
-  final ValueChanged<bool>? onAccessChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -824,12 +770,7 @@ class _ClientGroupTile extends StatelessWidget {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _ClientAccessBadge(
-                status: group.clientAccessStatus,
-                onAccessChanged: onAccessChanged,
-              ),
               if (group.totalUnread > 0) ...[
-                const SizedBox(width: 6),
                 Badge(label: Text('${group.totalUnread}')),
               ],
             ],
@@ -863,6 +804,19 @@ class _NewChatSheet extends StatefulWidget {
 class _NewChatSheetState extends State<_NewChatSheet> {
   final _search = TextEditingController();
 
+  Conversation _defaultConversation(ClientGroup group) =>
+      group.conversations.firstWhere(
+        (conversation) => conversation.kind == 'private',
+        orElse: () => group.conversations.first,
+      );
+
+  List<Conversation> _orderedConversations(ClientGroup group) =>
+      [...group.conversations]..sort((a, b) {
+        if (a.kind == 'private') return -1;
+        if (b.kind == 'private') return 1;
+        return _channelLabel(a.kind).compareTo(_channelLabel(b.kind));
+      });
+
   @override
   void dispose() {
     _search.dispose();
@@ -872,15 +826,16 @@ class _NewChatSheetState extends State<_NewChatSheet> {
   @override
   Widget build(BuildContext context) {
     final query = _search.text.trim().toLowerCase();
-    final groups = groupConversationsByClient(widget.conversations)
-        .where(
-          (group) =>
-              query.isEmpty ||
-              group.companyCode.toLowerCase().contains(query) ||
-              group.displayName.toLowerCase().contains(query),
-        )
-        .toList()
-      ..sort((a, b) => a.displayName.compareTo(b.displayName));
+    final groups =
+        groupConversationsByClient(widget.conversations)
+            .where(
+              (group) =>
+                  query.isEmpty ||
+                  group.companyCode.toLowerCase().contains(query) ||
+                  group.displayName.toLowerCase().contains(query),
+            )
+            .toList()
+          ..sort((a, b) => a.displayName.compareTo(b.displayName));
     return SafeArea(
       child: FractionallySizedBox(
         heightFactor: 0.82,
@@ -925,23 +880,50 @@ class _NewChatSheetState extends State<_NewChatSheet> {
                       key: const Key('new-chat-targets'),
                       children: [
                         for (final group in groups)
-                          ExpansionTile(
+                          ListTile(
                             key: Key('new-chat-group-${group.companyCode}'),
                             leading: CircleAvatar(
                               child: Text(_initials(group.displayName)),
                             ),
                             title: Text(group.displayName),
-                            subtitle: Text(group.companyCode),
-                            children: [
-                              for (final conversation in group.conversations)
-                                ListTile(
-                                  key: Key('new-chat-${conversation.id}'),
-                                  leading: _ChannelChip(kind: conversation.kind),
-                                  title: Text(_channelLabel(conversation.kind)),
-                                  onTap: () =>
-                                      Navigator.pop(context, conversation),
-                                ),
-                            ],
+                            subtitle: Text(
+                              '${group.companyCode} · ${_channelLabel(_defaultConversation(group).kind)}',
+                            ),
+                            onTap: () => Navigator.pop(
+                              context,
+                              _defaultConversation(group),
+                            ),
+                            trailing: group.conversations.length > 1
+                                ? PopupMenuButton<Conversation>(
+                                    tooltip: 'Elegir otro canal',
+                                    onSelected: (conversation) =>
+                                        Navigator.pop(context, conversation),
+                                    itemBuilder: (_) => [
+                                      for (final conversation
+                                          in _orderedConversations(group))
+                                        PopupMenuItem(
+                                          key: Key(
+                                            'new-chat-${conversation.id}',
+                                          ),
+                                          value: conversation,
+                                          child: Row(
+                                            children: [
+                                              _ChannelChip(
+                                                kind: conversation.kind,
+                                              ),
+                                              const SizedBox(width: 10),
+                                              Text(
+                                                _channelLabel(
+                                                  conversation.kind,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                    ],
+                                    icon: const Icon(Icons.more_vert),
+                                  )
+                                : const Icon(Icons.chat_outlined),
                           ),
                       ],
                     ),
@@ -949,62 +931,6 @@ class _NewChatSheetState extends State<_NewChatSheet> {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _ClientAccessBadge extends StatelessWidget {
-  const _ClientAccessBadge({required this.status, this.onAccessChanged});
-
-  final String status;
-  final ValueChanged<bool>? onAccessChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final (label, color) = switch (status) {
-      'active' => ('Activo', Colors.green),
-      'pending' => ('Invitado', Colors.orange),
-      'disabled' => ('Desactivado', Colors.red),
-      'invitation_expired' => ('Invitación caducada', Colors.deepOrange),
-      _ => ('Sin invitar', Colors.grey),
-    };
-    final badge = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withValues(alpha: 0.45)),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: color,
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
-    final canChange =
-        onAccessChanged != null &&
-        {
-          'active',
-          'pending',
-          'disabled',
-          'invitation_expired',
-        }.contains(status);
-    if (!canChange) return badge;
-    return PopupMenuButton<bool>(
-      tooltip: 'Gestionar acceso del cliente',
-      onSelected: onAccessChanged,
-      itemBuilder: (_) => [
-        PopupMenuItem<bool>(
-          value: status == 'disabled',
-          child: Text(
-            status == 'disabled' ? 'Activar acceso' : 'Desactivar acceso',
-          ),
-        ),
-      ],
-      child: badge,
     );
   }
 }
@@ -1096,10 +1022,10 @@ class _AppDrawer extends StatelessWidget {
           ),
         if (profile.isAdmin)
           ListTile(
-            key: const Key('drawer-invite-client'),
-            leading: const Icon(Icons.person_add_alt_1),
-            title: const Text('Invitar cliente'),
-            onTap: () => _navigate(context, '/invite-client'),
+            key: const Key('drawer-clients'),
+            leading: const Icon(Icons.people_alt_outlined),
+            title: const Text('Clientes'),
+            onTap: () => _navigate(context, '/clients'),
           ),
         ListTile(
           leading: const Icon(Icons.person_outline),

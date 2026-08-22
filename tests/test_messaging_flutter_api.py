@@ -145,6 +145,121 @@ def test_invitacion_https_entrega_deep_link_y_token_a_accept_invite(tmp_path, mo
     assert accepted.json()["client"]["email"] == "ana@example.test"
 
 
+def test_invitacion_flutter_asigna_y_recupera_chat_directo(tmp_path, monkeypatch):
+    client, _factory = _api(tmp_path, monkeypatch)
+    internal = {"X-API-Key": "test-secret"}
+    for staff_id in ("admin-owner", "admin-other"):
+        assert client.put(
+            f"/api/v1/messaging/internal/staff/{staff_id}", headers=internal,
+            json={
+                "external_id": staff_id, "name": staff_id,
+                "email": f"{staff_id}@gestinem.es", "role": "admin",
+                "active": True, "channels": ["fiscal", "laboral"],
+            },
+        ).status_code == 200
+    device = client.post(
+        "/api/v1/messaging/internal/devices/direct-device", headers=internal,
+    ).json()
+
+    def staff_headers(staff_id):
+        return {
+            **internal, "X-Device-Id": "direct-device",
+            "X-Device-Token": device["device_token"], "X-Staff-Id": staff_id,
+        }
+
+    assert client.put(
+        "/api/v1/messaging/internal/organizations/E10003", headers=internal,
+        json={"company_code": "E10003", "name": "Cliente sin titular"},
+    ).status_code == 200
+    invited = client.post(
+        "/api/v1/messaging/staff/admin/invitations",
+        headers=staff_headers("admin-owner"),
+        json={
+            "company_code": "E10003", "name": "Ana Cliente",
+            "email": "ana-directo@example.test", "send_email": False,
+        },
+    )
+    assert invited.status_code == 200
+
+    organizations = client.get(
+        "/api/v1/messaging/staff/admin/organizations",
+        headers=staff_headers("admin-owner"),
+    ).json()
+    organization = next(
+        row for row in organizations if row["company_code"] == "E10003"
+    )
+    assert organization["private_owner_external_id"] == "admin-owner"
+    assert organization["client_access_status"] == "pending"
+    assert organization["contact_name"] == "Ana Cliente"
+    assert organization["contact_email"] == "ana-directo@example.test"
+    assert organization["invitation_expires_at"]
+
+    owner_targets = client.get(
+        "/api/v1/messaging/staff/conversation-targets",
+        headers=staff_headers("admin-owner"),
+    ).json()
+    assert any(
+        row["company_code"] == "E10003" and row["kind"] == "private"
+        for row in owner_targets
+    )
+    other_targets = client.get(
+        "/api/v1/messaging/staff/conversation-targets",
+        headers=staff_headers("admin-other"),
+    ).json()
+    assert not any(
+        row["company_code"] == "E10003" and row["kind"] == "private"
+        for row in other_targets
+    )
+
+
+def test_admin_reclama_directo_antiguo_sin_titular_al_abrirlo(tmp_path, monkeypatch):
+    client, _factory = _api(tmp_path, monkeypatch)
+    internal = {"X-API-Key": "test-secret"}
+    assert client.put(
+        "/api/v1/messaging/internal/staff/admin", headers=internal,
+        json={
+            "external_id": "admin", "name": "Administrador",
+            "email": "admin@gestinem.es", "role": "admin", "active": True,
+        },
+    ).status_code == 200
+    assert client.put(
+        "/api/v1/messaging/internal/organizations/E10004", headers=internal,
+        json={"company_code": "E10004", "name": "Cliente antiguo"},
+    ).status_code == 200
+    assert client.post(
+        "/api/v1/messaging/internal/invitations", headers=internal,
+        json={
+            "company_code": "E10004", "name": "Cliente Antiguo",
+            "email": "antiguo@example.test", "send_email": False,
+        },
+    ).status_code == 200
+    device = client.post(
+        "/api/v1/messaging/internal/devices/legacy-device", headers=internal,
+    ).json()
+    staff = {
+        **internal, "X-Device-Id": "legacy-device",
+        "X-Device-Token": device["device_token"], "X-Staff-Id": "admin",
+    }
+    targets = client.get(
+        "/api/v1/messaging/staff/conversation-targets", headers=staff,
+    ).json()
+    direct = next(
+        row for row in targets
+        if row["company_code"] == "E10004" and row["kind"] == "private"
+    )
+    assert client.post(
+        f"/api/v1/messaging/staff/conversations/{direct['id']}/start",
+        headers=staff,
+    ).status_code == 200
+    organization = next(
+        row for row in client.get(
+            "/api/v1/messaging/staff/admin/organizations", headers=staff,
+        ).json()
+        if row["company_code"] == "E10004"
+    )
+    assert organization["private_owner_external_id"] == "admin"
+
+
 def test_bandeja_staff_separa_chats_de_clientes_disponibles(tmp_path, monkeypatch):
     client, _factory, staff_headers, _auth, _client_id, fiscal_id = _setup(
         tmp_path, monkeypatch,
@@ -562,8 +677,10 @@ def test_login_staff_app_usa_codigo_un_solo_uso(tmp_path, monkeypatch):
         follow_redirects=False,
     )
     assert callback.status_code == 302
-    assert callback.headers["location"].startswith("es.gestinem.app://auth/callback?code=")
-    code = callback.headers["location"].split("code=", 1)[1]
+    assert callback.headers["location"].startswith(
+        "https://mensajes.example.test/api/v1/messaging/public/auth-done?code="
+    )
+    code = parse_qs(urlparse(callback.headers["location"]).query)["code"][0]
     exchanged = client.post(
         "/api/v1/messaging/staff-auth/mobile/exchange", json={"code": code},
     )

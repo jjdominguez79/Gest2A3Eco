@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../auth/domain/user_profile.dart';
+import '../domain/client_organization.dart';
 import '../domain/conversation.dart';
 import '../domain/message.dart';
 
@@ -39,6 +40,28 @@ class MessagingRepository {
       '/staff/conversations/$conversationId/start',
     );
     return Conversation.fromJson(response.data!);
+  }
+
+  Future<Conversation> startDirectConversation(String companyCode) async {
+    final targets = await conversationTargets();
+    final direct = targets.where(
+      (item) => item.companyCode == companyCode && item.kind == 'private',
+    );
+    if (direct.isEmpty) {
+      throw StateError('No tienes disponible el chat directo de este cliente');
+    }
+    return startConversation(direct.first.id);
+  }
+
+  Future<List<ClientOrganization>> clientOrganizations() async {
+    final response = await _api.dio.get<List<dynamic>>(
+      '/staff/admin/organizations',
+    );
+    return response.data!
+        .map(
+          (item) => ClientOrganization.fromJson(item as Map<String, dynamic>),
+        )
+        .toList(growable: false);
   }
 
   Future<List<Message>> messages(
@@ -159,16 +182,12 @@ class MessagingRepository {
       options: Options(responseType: ResponseType.bytes),
     );
     final bytes = Uint8List.fromList(response.data ?? const []);
-    final downloadId =
-        response.headers.value('x-download-id') ?? '';
+    final downloadId = response.headers.value('x-download-id') ?? '';
     return (bytes, downloadId);
   }
 
   /// Confirma que Flutter guardo correctamente el archivo descargado.
-  Future<void> confirmDownload(
-    String attachmentId,
-    String downloadId,
-  ) async {
+  Future<void> confirmDownload(String attachmentId, String downloadId) async {
     await _api.dio.post<void>(
       '/client/attachments/$attachmentId/confirm-download',
       data: FormData.fromMap({'download_id': downloadId}),
@@ -182,8 +201,9 @@ class MessagingRepository {
       '/staff/attachments/$attachmentId/downloads',
     );
     return response.data!
-        .map((item) =>
-            AttachmentDownload.fromJson(item as Map<String, dynamic>))
+        .map(
+          (item) => AttachmentDownload.fromJson(item as Map<String, dynamic>),
+        )
         .toList(growable: false);
   }
 

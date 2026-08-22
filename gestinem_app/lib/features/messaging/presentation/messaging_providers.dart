@@ -4,6 +4,7 @@ import '../../auth/presentation/auth_controller.dart';
 import '../../../core/websocket/realtime_service.dart';
 import '../../profile/data/profile_repository.dart';
 import '../data/messaging_repository.dart';
+import '../domain/client_organization.dart';
 import '../domain/conversation.dart';
 import '../domain/message.dart';
 
@@ -29,6 +30,11 @@ final conversationsProvider = FutureProvider.autoDispose<List<Conversation>>((
 final conversationTargetsProvider =
     FutureProvider.autoDispose<List<Conversation>>((ref) {
       return ref.watch(messagingRepositoryProvider).conversationTargets();
+    });
+
+final clientOrganizationsProvider =
+    FutureProvider.autoDispose<List<ClientOrganization>>((ref) {
+      return ref.watch(messagingRepositoryProvider).clientOrganizations();
     });
 
 final messagesProvider = FutureProvider.autoDispose

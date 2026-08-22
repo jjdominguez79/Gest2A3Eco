@@ -79,6 +79,36 @@ void main() {
     expect(adapter.lastRequest!.data, {'active': false});
   });
 
+  test('administrador carga el directorio completo de clientes', () async {
+    final adapter = JsonAdapter([
+      {
+        'company_code': 'E00006',
+        'name': 'Cliente Uno',
+        'active': true,
+        'client_access_status': 'pending',
+        'client_access_active': false,
+        'has_accepted_access': false,
+        'client_count': 1,
+        'private_owner_external_id': 'admin',
+        'contact_name': 'Ana Cliente',
+        'contact_email': 'ana@example.test',
+        'invitation_expires_at': '2026-08-30T10:00:00Z',
+      },
+    ]);
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+    )..httpClientAdapter = adapter;
+    final api = ApiClient(dio: dio, tokenProvider: () => testSession.token);
+
+    final rows = await MessagingRepository(api).clientOrganizations();
+
+    expect(rows.single.companyCode, 'E00006');
+    expect(rows.single.accessStatus, 'pending');
+    expect(rows.single.contactName, 'Ana Cliente');
+    expect(rows.single.invitationExpiresAt, isNotNull);
+    expect(adapter.lastRequest!.path, '/staff/admin/organizations');
+  });
+
   test('administrador puede crear una invitacion de cliente', () async {
     final adapter = JsonAdapter({
       'invitation_id': 'invitation-1',
@@ -132,7 +162,10 @@ void main() {
     expect(targets.single.companyCode, 'E00001');
     expect(adapter.lastRequest!.path, '/staff/conversation-targets');
 
-    final startAdapter = JsonAdapter({...payload, 'started_at': '2026-08-22T10:00:00Z'});
+    final startAdapter = JsonAdapter({
+      ...payload,
+      'started_at': '2026-08-22T10:00:00Z',
+    });
     dio.httpClientAdapter = startAdapter;
     final started = await repository.startConversation('conversation-1');
     expect(started.startedAt, isNotNull);
@@ -195,10 +228,9 @@ void main() {
     )..httpClientAdapter = adapter;
     final api = ApiClient(dio: dio, tokenProvider: () => testSession.token);
 
-    await MessagingRepository(api).withdrawAttachment(
-      'att-1',
-      'Documento incorrecto',
-    );
+    await MessagingRepository(
+      api,
+    ).withdrawAttachment('att-1', 'Documento incorrecto');
 
     expect(
       adapter.lastRequest!.path,

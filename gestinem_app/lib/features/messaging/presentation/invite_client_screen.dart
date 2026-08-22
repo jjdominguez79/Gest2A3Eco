@@ -9,7 +9,9 @@ import '../domain/conversation.dart';
 import 'messaging_providers.dart';
 
 class InviteClientScreen extends ConsumerStatefulWidget {
-  const InviteClientScreen({super.key});
+  const InviteClientScreen({super.key, this.companyCode = ''});
+
+  final String companyCode;
 
   @override
   ConsumerState<InviteClientScreen> createState() => _InviteClientScreenState();
@@ -23,6 +25,12 @@ class _InviteClientScreenState extends ConsumerState<InviteClientScreen> {
   Organization? _selectedOrg;
   bool _sendEmail = true;
   bool _sending = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _companyText = widget.companyCode;
+  }
 
   @override
   void dispose() {
@@ -53,9 +61,11 @@ class _InviteClientScreenState extends ConsumerState<InviteClientScreen> {
           );
       ref.invalidate(conversationsProvider);
       ref.invalidate(organizationsProvider);
+      ref.invalidate(conversationTargetsProvider);
+      ref.invalidate(clientOrganizationsProvider);
       if (!mounted) return;
       await _showResult(result);
-      if (mounted) context.go('/');
+      if (mounted) context.go('/clients/$_companyCode');
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -131,13 +141,11 @@ class _InviteClientScreenState extends ConsumerState<InviteClientScreen> {
         ),
       );
     }
-
     final orgsAsync = ref.watch(organizationsProvider);
-
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
-          onPressed: () => context.go('/'),
+          onPressed: () => context.go('/clients'),
           icon: const Icon(Icons.arrow_back),
         ),
         title: const Text('Invitar cliente'),
@@ -147,10 +155,16 @@ class _InviteClientScreenState extends ConsumerState<InviteClientScreen> {
         error: (e, _) => Center(child: Text('Error: ${apiErrorMessage(e)}')),
         data: (allOrgs) {
           // Solo mostrar organizaciones que se pueden invitar (no activas ni deshabilitadas)
-          final invitableOrgs = allOrgs
-              .where((o) => o.canInvite)
-              .toList()
-            ..sort((a, b) => a.displayName.compareTo(b.displayName));
+          final invitableOrgs =
+              allOrgs
+                  .where(
+                    (o) =>
+                        o.canInvite ||
+                        (widget.companyCode.isNotEmpty &&
+                            o.companyCode == widget.companyCode),
+                  )
+                  .toList()
+                ..sort((a, b) => a.displayName.compareTo(b.displayName));
 
           return Center(
             child: ConstrainedBox(
@@ -166,6 +180,7 @@ class _InviteClientScreenState extends ConsumerState<InviteClientScreen> {
                     ),
                     const SizedBox(height: 20),
                     Autocomplete<Organization>(
+                      initialValue: TextEditingValue(text: widget.companyCode),
                       displayStringForOption: (org) =>
                           '${org.companyCode} · ${org.displayName}',
                       optionsBuilder: (value) {
@@ -319,7 +334,10 @@ class _OptionsView extends StatelessWidget {
                       ),
                       if (org.hasExistingInvitation) ...[
                         const SizedBox(width: 8),
-                        _StatusChip(status: org.clientAccessStatus, small: true),
+                        _StatusChip(
+                          status: org.clientAccessStatus,
+                          small: true,
+                        ),
                       ],
                     ],
                   ),
@@ -351,10 +369,7 @@ class _StatusChip extends StatelessWidget {
     return Chip(
       label: Text(
         label,
-        style: TextStyle(
-          fontSize: small ? 11 : 12,
-          color: Colors.white,
-        ),
+        style: TextStyle(fontSize: small ? 11 : 12, color: Colors.white),
       ),
       backgroundColor: color,
       padding: small

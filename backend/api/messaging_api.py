@@ -361,10 +361,10 @@ def _can_access_conversation(
     if org.company_code.strip().upper() in TEST_COMPANY_CODES:
         return bool(org.private_owner_external_id == staff.external_id)
     if conv.kind == "private":
-        # Si no hay propietario asignado, el admin puede acceder (cliente antiguo sin owner)
-        if org.private_owner_external_id is None:
-            return staff.role == "admin"
-        return bool(org.private_owner_external_id == staff.external_id)
+        return bool(
+            org.private_owner_external_id == staff.external_id
+            or (not org.private_owner_external_id and staff.role == "admin")
+        )
     if staff.role == "admin":
         return True
     if not org.active:
@@ -419,6 +419,7 @@ def _organization_access_state(db: Session, org: MessagingOrganization) -> dict:
     active_clients = [client for client in clients if client.active]
     accepted = [client for client in active_clients if client.password_hash]
     pending = False
+    invitations = []
     if active_clients:
         invitations = db.scalars(select(MessagingInvitation).where(
             MessagingInvitation.client_id.in_([client.id for client in active_clients]),
@@ -436,10 +437,26 @@ def _organization_access_state(db: Session, org: MessagingOrganization) -> dict:
         status = "invitation_expired"
     else:
         status = "not_invited"
+    contact = next(iter(active_clients or clients), None)
+    pending_invitations = [
+        invitation for invitation in invitations
+        if not is_expired(invitation.expires_at)
+    ]
+    latest_invitation = max(
+        pending_invitations or invitations,
+        key=lambda invitation: invitation.created_at,
+        default=None,
+    )
     return {
         "status": status,
         "active": bool(org.active and accepted),
+        "has_accepted_access": any(client.password_hash for client in clients),
         "client_count": len(clients),
+        "contact_name": contact.name if contact else "",
+        "contact_email": contact.email if contact else "",
+        "invitation_expires_at": (
+            latest_invitation.expires_at.isoformat() if latest_invitation else None
+        ),
     }
 
 
@@ -1606,6 +1623,11 @@ def staff_organizations(
             "private_owner_external_id": row.private_owner_external_id,
             "client_access_status": access["status"],
             "client_access_active": access["active"],
+            "has_accepted_access": access["has_accepted_access"],
+            "client_count": access["client_count"],
+            "contact_name": access["contact_name"],
+            "contact_email": access["contact_email"],
+            "invitation_expires_at": access["invitation_expires_at"],
         })
     return result
 
@@ -1678,10 +1700,9 @@ def staff_create_invitation(
         and org.private_owner_external_id != admin.external_id
     ):
         raise HTTPException(403, "Cliente de pruebas privado")
-    # Auto-asignar el admin como propietario del canal Directo si aún no está asignado
-    if org.private_owner_external_id is None:
+    if not org.private_owner_external_id:
         org.private_owner_external_id = admin.external_id
-        db.commit()
+        db.add(org)
     return create_invitation(payload, background, db)
 
 
@@ -2086,6 +2107,13 @@ def staff_start_conversation(
     """Marca un canal disponible como conversación iniciada por el personal."""
     conv = _conversation_for_staff(db, conversation_id, staff)
     organization = db.get(MessagingOrganization, conv.organization_id)
+    if (
+        conv.kind == "private"
+        and not organization.private_owner_external_id
+        and staff.role == "admin"
+    ):
+        organization.private_owner_external_id = staff.external_id
+        db.add(organization)
     access = _organization_access_state(db, organization)
     if access["status"] not in {"active", "pending"}:
         raise HTTPException(409, "El cliente no esta invitado o tiene el acceso inactivo")

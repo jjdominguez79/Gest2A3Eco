@@ -12,6 +12,8 @@ import '../features/empleados/presentation/empleados_screen.dart';
 import '../features/groups/presentation/groups_screen.dart';
 import '../features/messaging/presentation/conversation_screen.dart';
 import '../features/messaging/presentation/conversations_screen.dart';
+import '../features/messaging/presentation/client_detail_screen.dart';
+import '../features/messaging/presentation/clients_screen.dart';
 import '../features/messaging/presentation/invite_client_screen.dart';
 import '../features/profile/presentation/about_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
@@ -87,9 +89,18 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/groups', builder: (_, _) => const GroupsScreen()),
       GoRoute(path: '/campaigns', builder: (_, _) => const CampaignsScreen()),
       GoRoute(path: '/employees', builder: (_, _) => const EmpleadosScreen()),
+      GoRoute(path: '/clients', builder: (_, _) => const ClientsScreen()),
+      GoRoute(
+        path: '/clients/:companyCode',
+        builder: (_, state) => ClientDetailScreen(
+          companyCode: state.pathParameters['companyCode']!,
+        ),
+      ),
       GoRoute(
         path: '/invite-client',
-        builder: (_, _) => const InviteClientScreen(),
+        builder: (_, state) => InviteClientScreen(
+          companyCode: state.uri.queryParameters['company'] ?? '',
+        ),
       ),
       GoRoute(path: '/profile', builder: (_, _) => const ProfileScreen()),
       GoRoute(path: '/about', builder: (_, _) => const AboutScreen()),

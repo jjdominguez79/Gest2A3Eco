@@ -209,6 +209,78 @@ void main() {
     expect(find.text('No hay clientes invitados disponibles'), findsOneWidget);
   });
 
+  testWidgets('Nuevo chat abre el canal directo por defecto', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    const staffProfile = UserProfile(
+      id: 'staff-1',
+      name: 'Gestor',
+      email: 'gestor@gestinem.es',
+      type: UserType.staff,
+      staffRole: StaffRole.admin,
+    );
+    const staffSession = AuthSession(
+      token: 'staff-token',
+      profile: staffProfile,
+    );
+    final targets = [
+      for (final kind in ['fiscal', 'laboral', 'private'])
+        Conversation(
+          id: kind,
+          companyCode: 'E00006',
+          companyName: 'Cliente Invitado',
+          kind: kind,
+          clientAccessStatus: 'pending',
+          state: 'pendiente',
+          unreadCount: 0,
+          updatedAt: DateTime(2026, 8, 22),
+        ),
+    ];
+    final adapter = JsonAdapter({
+      'id': 'private',
+      'company_code': 'E00006',
+      'company_name': 'Cliente Invitado',
+      'kind': 'private',
+      'client_access_status': 'pending',
+      'state': 'pendiente',
+      'unread_count': 0,
+      'updated_at': '2026-08-22T10:00:00Z',
+      'started_at': '2026-08-22T10:00:00Z',
+      'last_message': null,
+    });
+    final api = ApiClient(
+      dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
+        ..httpClientAdapter = adapter,
+      tokenProvider: () => staffSession.token,
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith(
+            (ref) => FakeSessionController(ref, staffSession),
+          ),
+          apiClientProvider.overrideWithValue(api),
+          conversationsProvider.overrideWith((ref) async => []),
+          conversationTargetsProvider.overrideWith((ref) async => targets),
+          messagesProvider.overrideWith((ref, id) async => []),
+          internalThreadsProvider.overrideWith((ref) async => []),
+          realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
+          notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
+        ],
+        child: const MaterialApp(home: ConversationsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('new-chat-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('new-chat-group-E00006')));
+    await tester.pumpAndSettle();
+
+    expect(adapter.lastRequest!.path, '/staff/conversations/private/start');
+  });
+
   testWidgets('Conversaciones cierra el menu aunque ya sea la ruta activa', (
     tester,
   ) async {
