@@ -873,7 +873,7 @@ def public_auth_done(code: str = Query(min_length=1)):
     parsed = urlparse(configured)
     if not parsed.scheme or not parsed.netloc:
         raise HTTPException(500, "MESSAGING_APP_REDIRECT_URI no configurada")
-    deep_link = f"{parsed.scheme}://{parsed.netloc}/auth?{urlencode({'code': code})}"
+    deep_link = f"{parsed.scheme}://{parsed.netloc}?{urlencode({'code': code})}"
     html = f"""<!DOCTYPE html>
 <html lang="es">
 <head>

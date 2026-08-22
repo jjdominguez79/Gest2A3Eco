@@ -124,10 +124,10 @@ def get_settings() -> Settings:
         messaging_app_web_redirect_uri=os.getenv("MESSAGING_APP_WEB_REDIRECT_URI", ""),
         messaging_cors_origins=os.getenv("MESSAGING_CORS_ORIGINS", ""),
         messaging_latest_app_version=os.getenv(
-            "MESSAGING_LATEST_APP_VERSION", "0.1.1",
+            "MESSAGING_LATEST_APP_VERSION", "0.1.3",
         ).strip(),
         messaging_latest_app_build=max(
-            1, int(os.getenv("MESSAGING_LATEST_APP_BUILD", "11")),
+            1, int(os.getenv("MESSAGING_LATEST_APP_BUILD", "13")),
         ),
         messaging_minimum_app_build=max(
             1, int(os.getenv("MESSAGING_MINIMUM_APP_BUILD", "1")),
