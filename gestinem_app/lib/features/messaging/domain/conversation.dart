@@ -128,6 +128,37 @@ class Conversation {
   };
 }
 
+class Organization {
+  const Organization({
+    required this.companyCode,
+    required this.name,
+    required this.clientAccessStatus,
+    required this.clientAccessActive,
+  });
+
+  factory Organization.fromJson(Map<String, dynamic> json) => Organization(
+    companyCode: json['company_code'] as String,
+    name: json['name'] as String? ?? '',
+    clientAccessStatus: json['client_access_status'] as String? ?? 'not_invited',
+    clientAccessActive: json['client_access_active'] as bool? ?? false,
+  );
+
+  final String companyCode;
+  final String name;
+  final String clientAccessStatus;
+  final bool clientAccessActive;
+
+  String get displayName => name.isEmpty ? companyCode : name;
+
+  /// Se puede invitar si no está activa ni deshabilitada.
+  bool get canInvite =>
+      clientAccessStatus != 'active' && clientAccessStatus != 'disabled';
+
+  /// Ya tiene una invitación enviada (pendiente o caducada) → "Reenviar".
+  bool get hasExistingInvitation =>
+      clientAccessStatus == 'pending' || clientAccessStatus == 'invitation_expired';
+}
+
 class InternalThread {
   const InternalThread({
     required this.id,

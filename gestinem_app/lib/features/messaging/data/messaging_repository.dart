@@ -121,6 +121,15 @@ class MessagingRepository {
     return response.data!;
   }
 
+  Future<List<Organization>> organizations() async {
+    final response = await _api.dio.get<List<dynamic>>(
+      '/staff/admin/organizations',
+    );
+    return response.data!
+        .map((item) => Organization.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
   Future<Map<String, dynamic>> latestAppVersion(String platform) async {
     final response = await _api.dio.get<Map<String, dynamic>>(
       '/public/app-version',

@@ -20,7 +20,7 @@ class _InviteClientScreenState extends ConsumerState<InviteClientScreen> {
   final _name = TextEditingController();
   final _email = TextEditingController();
   String _companyText = '';
-  String? _selectedCompanyCode;
+  Organization? _selectedOrg;
   bool _sendEmail = true;
   bool _sending = false;
 
@@ -32,10 +32,12 @@ class _InviteClientScreenState extends ConsumerState<InviteClientScreen> {
   }
 
   String get _companyCode {
-    final selected = _selectedCompanyCode;
-    if (selected != null && selected.isNotEmpty) return selected;
+    final selected = _selectedOrg;
+    if (selected != null) return selected.companyCode;
     return _companyText.trim().split(RegExp(r'\s+|·')).first.toUpperCase();
   }
+
+  bool get _isResend => _selectedOrg?.hasExistingInvitation ?? false;
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate() || _sending) return;
@@ -50,6 +52,7 @@ class _InviteClientScreenState extends ConsumerState<InviteClientScreen> {
             sendEmail: _sendEmail,
           );
       ref.invalidate(conversationsProvider);
+      ref.invalidate(organizationsProvider);
       if (!mounted) return;
       await _showResult(result);
       if (mounted) context.go('/');
@@ -71,7 +74,11 @@ class _InviteClientScreenState extends ConsumerState<InviteClientScreen> {
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(queued ? 'Invitación enviada' : 'Invitación creada'),
+        title: Text(
+          queued
+              ? (_isResend ? 'Invitación reenviada' : 'Invitación enviada')
+              : (_isResend ? 'Invitación regenerada' : 'Invitación creada'),
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -124,9 +131,9 @@ class _InviteClientScreenState extends ConsumerState<InviteClientScreen> {
         ),
       );
     }
-    final groups = groupConversationsByClient(
-      ref.watch(conversationsProvider).valueOrNull ?? const [],
-    );
+
+    final orgsAsync = ref.watch(organizationsProvider);
+
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -135,112 +142,226 @@ class _InviteClientScreenState extends ConsumerState<InviteClientScreen> {
         ),
         title: const Text('Invitar cliente'),
       ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 620),
-          child: Form(
-            key: _formKey,
-            child: ListView(
-              padding: const EdgeInsets.all(24),
-              children: [
-                Text(
-                  'Selecciona la empresa e indica la persona que utilizará Gestinem.',
-                  style: Theme.of(context).textTheme.bodyLarge,
-                ),
-                const SizedBox(height: 20),
-                Autocomplete<ClientGroup>(
-                  displayStringForOption: (group) =>
-                      '${group.companyCode} · ${group.displayName}',
-                  optionsBuilder: (value) {
-                    _companyText = value.text;
-                    final query = value.text.trim().toLowerCase();
-                    if (query.isEmpty) return groups.take(12);
-                    return groups.where(
-                      (group) =>
-                          group.companyCode.toLowerCase().contains(query) ||
-                          group.displayName.toLowerCase().contains(query),
-                    );
-                  },
-                  onSelected: (group) {
-                    _selectedCompanyCode = group.companyCode;
-                    _companyText = group.companyCode;
-                  },
-                  fieldViewBuilder:
-                      (context, controller, focusNode, onSubmit) =>
-                          TextFormField(
-                            key: const Key('invite-company'),
-                            controller: controller,
-                            focusNode: focusNode,
-                            onChanged: (value) {
-                              _companyText = value;
-                              _selectedCompanyCode = null;
-                            },
-                            decoration: const InputDecoration(
-                              labelText: 'Empresa',
-                              hintText: 'E00006 o nombre del cliente',
-                              prefixIcon: Icon(Icons.business_outlined),
-                            ),
-                            validator: (_) =>
-                                RegExp(r'^E\d{5}$').hasMatch(_companyCode)
-                                ? null
-                                : 'Selecciona una empresa válida',
+      body: orgsAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, _) => Center(child: Text('Error: ${apiErrorMessage(e)}')),
+        data: (allOrgs) {
+          // Solo mostrar organizaciones que se pueden invitar (no activas ni deshabilitadas)
+          final invitableOrgs = allOrgs
+              .where((o) => o.canInvite)
+              .toList()
+            ..sort((a, b) => a.displayName.compareTo(b.displayName));
+
+          return Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 620),
+              child: Form(
+                key: _formKey,
+                child: ListView(
+                  padding: const EdgeInsets.all(24),
+                  children: [
+                    Text(
+                      'Selecciona la empresa e indica la persona que utilizará Gestinem.',
+                      style: Theme.of(context).textTheme.bodyLarge,
+                    ),
+                    const SizedBox(height: 20),
+                    Autocomplete<Organization>(
+                      displayStringForOption: (org) =>
+                          '${org.companyCode} · ${org.displayName}',
+                      optionsBuilder: (value) {
+                        _companyText = value.text;
+                        final query = value.text.trim().toLowerCase();
+                        if (query.isEmpty) return invitableOrgs.take(12);
+                        return invitableOrgs.where(
+                          (org) =>
+                              org.companyCode.toLowerCase().contains(query) ||
+                              org.displayName.toLowerCase().contains(query),
+                        );
+                      },
+                      optionsViewBuilder: (context, onSelected, options) =>
+                          _OptionsView(
+                            options: options.toList(),
+                            onSelected: onSelected,
                           ),
+                      onSelected: (org) {
+                        setState(() => _selectedOrg = org);
+                        _companyText = org.companyCode;
+                      },
+                      fieldViewBuilder:
+                          (context, controller, focusNode, onSubmit) =>
+                              TextFormField(
+                                key: const Key('invite-company'),
+                                controller: controller,
+                                focusNode: focusNode,
+                                onChanged: (value) {
+                                  _companyText = value;
+                                  setState(() => _selectedOrg = null);
+                                },
+                                decoration: const InputDecoration(
+                                  labelText: 'Empresa',
+                                  hintText: 'E00006 o nombre del cliente',
+                                  prefixIcon: Icon(Icons.business_outlined),
+                                ),
+                                validator: (_) =>
+                                    RegExp(r'^E\d{5}$').hasMatch(_companyCode)
+                                    ? null
+                                    : 'Selecciona una empresa válida',
+                              ),
+                    ),
+                    // Chip de estado si la organización ya tiene una invitación previa
+                    if (_selectedOrg?.hasExistingInvitation ?? false) ...[
+                      const SizedBox(height: 8),
+                      _StatusChip(status: _selectedOrg!.clientAccessStatus),
+                    ],
+                    const SizedBox(height: 14),
+                    TextFormField(
+                      key: const Key('invite-name'),
+                      controller: _name,
+                      textCapitalization: TextCapitalization.words,
+                      decoration: const InputDecoration(
+                        labelText: 'Nombre de la persona',
+                        prefixIcon: Icon(Icons.person_outline),
+                      ),
+                      validator: (value) => (value ?? '').trim().isEmpty
+                          ? 'Indica el nombre de la persona'
+                          : null,
+                    ),
+                    const SizedBox(height: 14),
+                    TextFormField(
+                      key: const Key('invite-email'),
+                      controller: _email,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: const InputDecoration(
+                        labelText: 'Correo electrónico',
+                        prefixIcon: Icon(Icons.email_outlined),
+                      ),
+                      validator: (value) {
+                        final email = (value ?? '').trim();
+                        return email.contains('@') && email.contains('.')
+                            ? null
+                            : 'Indica un correo válido';
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    SwitchListTile(
+                      value: _sendEmail,
+                      onChanged: (value) => setState(() => _sendEmail = value),
+                      title: const Text('Enviar invitación por correo'),
+                      subtitle: const Text(
+                        'Siempre podrás copiar el enlace de invitación.',
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    FilledButton.icon(
+                      key: const Key('send-invitation'),
+                      onPressed: _sending ? null : _submit,
+                      icon: _sending
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Icon(
+                              _isResend
+                                  ? Icons.refresh
+                                  : Icons.person_add_alt_1,
+                            ),
+                      label: Text(
+                        _isResend ? 'Reenviar invitación' : 'Crear invitación',
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 14),
-                TextFormField(
-                  key: const Key('invite-name'),
-                  controller: _name,
-                  textCapitalization: TextCapitalization.words,
-                  decoration: const InputDecoration(
-                    labelText: 'Nombre de la persona',
-                    prefixIcon: Icon(Icons.person_outline),
-                  ),
-                  validator: (value) => (value ?? '').trim().isEmpty
-                      ? 'Indica el nombre de la persona'
-                      : null,
-                ),
-                const SizedBox(height: 14),
-                TextFormField(
-                  key: const Key('invite-email'),
-                  controller: _email,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(
-                    labelText: 'Correo electrónico',
-                    prefixIcon: Icon(Icons.email_outlined),
-                  ),
-                  validator: (value) {
-                    final email = (value ?? '').trim();
-                    return email.contains('@') && email.contains('.')
-                        ? null
-                        : 'Indica un correo válido';
-                  },
-                ),
-                const SizedBox(height: 8),
-                SwitchListTile(
-                  value: _sendEmail,
-                  onChanged: (value) => setState(() => _sendEmail = value),
-                  title: const Text('Enviar invitación por correo'),
-                  subtitle: const Text(
-                    'Siempre podrás copiar el enlace de invitación.',
-                  ),
-                ),
-                const SizedBox(height: 20),
-                FilledButton.icon(
-                  key: const Key('send-invitation'),
-                  onPressed: _sending ? null : _submit,
-                  icon: _sending
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.person_add_alt_1),
-                  label: const Text('Crear invitación'),
-                ),
-              ],
+              ),
             ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Vista personalizada del desplegable con chip de estado.
+class _OptionsView extends StatelessWidget {
+  const _OptionsView({required this.options, required this.onSelected});
+
+  final List<Organization> options;
+  final AutocompleteOnSelected<Organization> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.topLeft,
+      child: Material(
+        elevation: 4,
+        borderRadius: BorderRadius.circular(8),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 300),
+          child: ListView.builder(
+            padding: EdgeInsets.zero,
+            shrinkWrap: true,
+            itemCount: options.length,
+            itemBuilder: (context, index) {
+              final org = options[index];
+              return InkWell(
+                onTap: () => onSelected(org),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${org.companyCode} · ${org.displayName}',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (org.hasExistingInvitation) ...[
+                        const SizedBox(width: 8),
+                        _StatusChip(status: org.clientAccessStatus, small: true),
+                      ],
+                    ],
+                  ),
+                ),
+              );
+            },
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Chip visual que indica el estado de la invitación.
+class _StatusChip extends StatelessWidget {
+  const _StatusChip({required this.status, this.small = false});
+
+  final String status;
+  final bool small;
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color) = switch (status) {
+      'pending' => ('Invitación pendiente', Colors.amber.shade700),
+      'invitation_expired' => ('Invitación caducada', Colors.orange.shade700),
+      _ => ('', Colors.grey),
+    };
+    if (label.isEmpty) return const SizedBox.shrink();
+    return Chip(
+      label: Text(
+        label,
+        style: TextStyle(
+          fontSize: small ? 11 : 12,
+          color: Colors.white,
+        ),
+      ),
+      backgroundColor: color,
+      padding: small
+          ? const EdgeInsets.symmetric(horizontal: 4, vertical: 0)
+          : null,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      visualDensity: VisualDensity.compact,
     );
   }
 }

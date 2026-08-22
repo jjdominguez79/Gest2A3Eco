@@ -47,6 +47,13 @@ final internalMessagesProvider = FutureProvider.autoDispose
       return ref.watch(messagingRepositoryProvider).internalMessages(id);
     });
 
+/// Todas las organizaciones con su estado de acceso (solo admin).
+final organizationsProvider = FutureProvider.autoDispose<List<Organization>>((
+  ref,
+) {
+  return ref.watch(messagingRepositoryProvider).organizations();
+});
+
 /// Metadatos de conversacion unificada del cliente.
 final unifiedConversationProvider =
     FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
