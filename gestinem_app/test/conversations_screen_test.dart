@@ -401,7 +401,10 @@ void main() {
     expect(find.text('LA'), findsNothing);
     expect(find.text('Todos'), findsNothing);
     expect(find.text('Equipo nóminas'), findsOneWidget);
-    expect(find.text('Administrador'), findsOneWidget);
+    expect(find.text('CHATS INTERNOS Y CANALES'), findsOneWidget);
+    expect(find.byKey(const Key('internal-thread-group-1')), findsOneWidget);
+    expect(find.byKey(const Key('internal-thread-direct-1')), findsOneWidget);
+    expect(find.text('Juan José'), findsOneWidget);
     expect(find.text('Analia'), findsOneWidget);
     expect(find.text('Cliente Fiscal'), findsOneWidget);
   });

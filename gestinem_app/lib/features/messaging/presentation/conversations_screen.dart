@@ -244,15 +244,6 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     final effectiveChannel = channelOptions.contains(_channel)
         ? _channel
         : (channelOptions.isEmpty ? '' : channelOptions.first);
-    final quickThreads = profile.isAdmin
-        ? const <InternalThread>[]
-        : (internalThreads.valueOrNull ?? const <InternalThread>[])
-              .where(
-                (thread) =>
-                    (thread.kind == 'group' && thread.channel.isEmpty) ||
-                    thread.kind == 'direct',
-              )
-              .toList(growable: false);
     final apiBaseUrl = ref
         .read(apiClientProvider)
         .dio
@@ -334,31 +325,17 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
                             }),
                           ),
                         ),
-                      for (final thread in quickThreads)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 3),
-                          child: ActionChip(
-                            avatar: thread.kind == 'direct'
-                                ? AuthenticatedAvatar(
-                                    radius: 12,
-                                    baseUrl: apiBaseUrl,
-                                    authToken: authToken,
-                                    imagePath: thread.counterpartAvatarUrl,
-                                    fallbackText: _initials(thread.title),
-                                    cacheVersion: thread.id,
-                                  )
-                                : const Icon(Icons.groups_outlined, size: 18),
-                            label: Text(
-                              thread.kind == 'direct'
-                                  ? 'Administrador'
-                                  : thread.title,
-                            ),
-                            onPressed: () => _navigateToInternal(thread.id),
-                          ),
-                        ),
                     ],
                   ),
                 ),
+                if (profile.type == UserType.staff)
+                  _InternalThreadsShortcut(
+                    threads: internalThreads,
+                    selectedId: _selectedInternal ? _selected : null,
+                    baseUrl: apiBaseUrl,
+                    authToken: authToken,
+                    onSelected: _navigateToInternal,
+                  ),
                 Expanded(
                   child: conversations.when(
                     loading: () =>
@@ -583,6 +560,87 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
           ],
         );
       },
+    ),
+  );
+}
+
+class _InternalThreadsShortcut extends StatelessWidget {
+  const _InternalThreadsShortcut({
+    required this.threads,
+    required this.selectedId,
+    required this.baseUrl,
+    required this.authToken,
+    required this.onSelected,
+  });
+
+  final AsyncValue<List<InternalThread>> threads;
+  final String? selectedId;
+  final String baseUrl;
+  final String authToken;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: 78,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 2, 14, 0),
+          child: Text(
+            'CHATS INTERNOS Y CANALES',
+            style: Theme.of(
+              context,
+            ).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.w700),
+          ),
+        ),
+        Expanded(
+          child: threads.when(
+            loading: () => const Center(child: LinearProgressIndicator()),
+            error: (_, _) => const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              child: Text('No se pudieron cargar los chats internos'),
+            ),
+            data: (items) => items.isEmpty
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    child: Text('No hay chats internos disponibles'),
+                  )
+                : ListView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    children: [
+                      for (final thread in items)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 3),
+                          child: ActionChip(
+                            key: Key('internal-thread-${thread.id}'),
+                            backgroundColor: thread.id == selectedId
+                                ? Theme.of(context).colorScheme.primaryContainer
+                                : null,
+                            avatar: Badge(
+                              isLabelVisible: thread.unreadCount > 0,
+                              label: Text('${thread.unreadCount}'),
+                              child: thread.kind == 'direct'
+                                  ? AuthenticatedAvatar(
+                                      radius: 12,
+                                      baseUrl: baseUrl,
+                                      authToken: authToken,
+                                      imagePath: thread.counterpartAvatarUrl,
+                                      fallbackText: _initials(thread.title),
+                                      cacheVersion: thread.id,
+                                    )
+                                  : const Icon(Icons.groups_outlined, size: 18),
+                            ),
+                            label: Text(thread.title),
+                            onPressed: () => onSelected(thread.id),
+                          ),
+                        ),
+                    ],
+                  ),
+          ),
+        ),
+      ],
     ),
   );
 }
@@ -1005,7 +1063,7 @@ class _AppDrawer extends StatelessWidget {
         if (profile.type == UserType.staff)
           ListTile(
             leading: const Icon(Icons.groups_outlined),
-            title: const Text('Chats internos y grupos'),
+            title: const Text('Gestionar grupos internos'),
             onTap: () => _navigate(context, '/groups'),
           ),
         if (profile.isAdmin)

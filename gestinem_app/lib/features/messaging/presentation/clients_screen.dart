@@ -35,6 +35,12 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
     final organizations = ref.watch(clientOrganizationsProvider);
     return Scaffold(
       appBar: AppBar(
+        leading: IconButton(
+          key: const Key('clients-back-button'),
+          tooltip: 'Volver al inicio',
+          onPressed: () => context.go('/'),
+          icon: const Icon(Icons.arrow_back),
+        ),
         title: const Text('Clientes'),
         actions: [
           IconButton(

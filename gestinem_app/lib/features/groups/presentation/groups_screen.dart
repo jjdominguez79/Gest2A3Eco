@@ -14,9 +14,13 @@ import '../domain/group.dart';
 final groupsRepositoryProvider = Provider<GroupsRepository>(
   (ref) => GroupsRepository(ref.watch(apiClientProvider)),
 );
-final groupsProvider = FutureProvider.autoDispose<List<MessagingGroup>>(
-  (ref) => ref.watch(groupsRepositoryProvider).list(),
-);
+final groupsProvider = FutureProvider.autoDispose<List<MessagingGroup>>((
+  ref,
+) async {
+  // El backend convierte aquí los antiguos equipos fijos en grupos editables.
+  await ref.watch(internalThreadsProvider.future);
+  return ref.watch(groupsRepositoryProvider).list();
+});
 
 class GroupsScreen extends ConsumerWidget {
   const GroupsScreen({super.key});
@@ -45,7 +49,9 @@ class GroupsScreen extends ConsumerWidget {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
+                key: const Key('new-group-type'),
                 initialValue: type,
+                isExpanded: true,
                 items: const [
                   DropdownMenuItem(
                     value: 'staff_chat',
@@ -100,6 +106,7 @@ class GroupsScreen extends ConsumerWidget {
   ) async {
     final employees = await ref.read(empleadosProvider.future);
     if (!context.mounted) return;
+    final name = TextEditingController(text: group.name);
     final original = group.members
         .where((member) => member.memberType == 'staff')
         .map((member) => member.memberId)
@@ -119,6 +126,14 @@ class GroupsScreen extends ConsumerWidget {
             height: 430,
             child: ListView(
               children: [
+                TextField(
+                  key: const Key('group-name'),
+                  controller: name,
+                  decoration: const InputDecoration(
+                    labelText: 'Nombre del grupo',
+                  ),
+                ),
+                const SizedBox(height: 12),
                 const Text(
                   'Selecciona quién participará en este chat interno.',
                 ),
@@ -155,15 +170,20 @@ class GroupsScreen extends ConsumerWidget {
             FilledButton.icon(
               onPressed: () => Navigator.pop(dialogContext, true),
               icon: const Icon(Icons.save_outlined),
-              label: const Text('Guardar miembros'),
+              label: const Text('Guardar cambios'),
             ),
           ],
         ),
       ),
     );
-    if (save != true || !context.mounted) return;
+    final updatedName = name.text.trim();
+    name.dispose();
+    if (save != true || updatedName.isEmpty || !context.mounted) return;
     try {
       final repository = ref.read(groupsRepositoryProvider);
+      if (updatedName != group.name) {
+        await repository.update(group, updatedName);
+      }
       for (final id in selected.difference(original)) {
         await repository.addMember(group.id, 'staff', id);
       }
@@ -173,58 +193,10 @@ class GroupsScreen extends ConsumerWidget {
       ref.invalidate(groupsProvider);
       ref.invalidate(internalThreadsProvider);
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Miembros del grupo actualizados')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Grupo actualizado')));
       }
-    } catch (error) {
-      if (context.mounted) _showError(context, error);
-    }
-  }
-
-  Future<void> _chooseDirectEmployee(
-    BuildContext context,
-    WidgetRef ref,
-  ) async {
-    final profile = ref.read(sessionProvider).valueOrNull!.profile;
-    final employees = (await ref.read(
-      empleadosProvider.future,
-    )).where((item) => item.activo && item.id != profile.id).toList();
-    if (!context.mounted) return;
-    final selected = await showDialog<EmpleadoDespacho>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Abrir chat con un empleado'),
-        content: SizedBox(
-          width: 500,
-          height: 420,
-          child: ListView(
-            children: [
-              for (final employee in employees)
-                ListTile(
-                  leading: _employeeAvatar(ref, employee),
-                  title: Text(employee.nombreVisible),
-                  subtitle: Text(employee.email),
-                  onTap: () => Navigator.pop(dialogContext, employee),
-                ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancelar'),
-          ),
-        ],
-      ),
-    );
-    if (selected == null || !context.mounted) return;
-    try {
-      final threadId = await ref
-          .read(groupsRepositoryProvider)
-          .createDirect(selected.id);
-      ref.invalidate(internalThreadsProvider);
-      if (context.mounted) context.go('/internal/$threadId');
     } catch (error) {
       if (context.mounted) _showError(context, error);
     }
@@ -251,22 +223,14 @@ class GroupsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final profile = ref.watch(sessionProvider).valueOrNull!.profile;
     final groups = ref.watch(groupsProvider);
-    final threads = ref.watch(internalThreadsProvider);
-    final token = ref.read(sessionProvider).valueOrNull?.token ?? '';
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
           onPressed: () => context.go('/'),
           icon: const Icon(Icons.arrow_back),
         ),
-        title: const Text('Chats internos y grupos'),
+        title: const Text('Gestionar grupos internos'),
         actions: [
-          if (profile.isAdmin)
-            IconButton(
-              tooltip: 'Chat directo con un empleado',
-              onPressed: () => _chooseDirectEmployee(context, ref),
-              icon: const Icon(Icons.person_add_alt_1_outlined),
-            ),
           if (profile.isAdmin)
             IconButton(
               tooltip: 'Crear grupo',
@@ -280,48 +244,7 @@ class GroupsScreen extends ConsumerWidget {
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: Text(
-              'CONVERSACIONES INTERNAS',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-          ),
-          ...threads.when(
-            data: (items) => items
-                .map(
-                  (thread) => ListTile(
-                    leading: thread.kind == 'group'
-                        ? const CircleAvatar(child: Icon(Icons.groups))
-                        : AuthenticatedAvatar(
-                            baseUrl: _baseUrl(ref),
-                            authToken: token,
-                            imagePath: thread.counterpartAvatarUrl,
-                            fallbackText: _initials(thread.title),
-                            cacheVersion: thread.id,
-                          ),
-                    title: Text(thread.title),
-                    subtitle: Text(
-                      thread.kind == 'group'
-                          ? (thread.channel.isEmpty
-                                ? 'Grupo dinámico'
-                                : thread.channel)
-                          : 'Chat directo',
-                    ),
-                    trailing: thread.unreadCount > 0
-                        ? Badge(label: Text('${thread.unreadCount}'))
-                        : null,
-                    onTap: () => context.go('/internal/${thread.id}'),
-                  ),
-                )
-                .toList(),
-            loading: () => [const Center(child: CircularProgressIndicator())],
-            error: (_, _) => [
-              const ListTile(title: Text('No se pudieron cargar los chats')),
-            ],
-          ),
-          const Divider(),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 10, 16, 8),
-            child: Text(
-              'GRUPOS DINÁMICOS',
+              'GRUPOS INTERNOS',
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
           ),

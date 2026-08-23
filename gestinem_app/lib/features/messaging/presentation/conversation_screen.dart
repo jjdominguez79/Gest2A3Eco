@@ -32,7 +32,7 @@ class ConversationScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
-          onPressed: () => context.go(internal ? '/groups' : '/'),
+          onPressed: () => context.go('/'),
           icon: const Icon(Icons.arrow_back),
         ),
         title: internal
@@ -170,8 +170,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   Future<void> _download(Attachment attachment) async {
     final repository = ref.read(messagingRepositoryProvider);
     try {
-      final (bytes, downloadId) =
-          await repository.downloadWithId(attachment);
+      final (bytes, downloadId) = await repository.downloadWithId(attachment);
       final savedPath = await FilePicker.saveFile(
         fileName: attachment.name,
         bytes: bytes,
@@ -193,11 +192,15 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       }
       if (!mounted) return;
       ref.invalidate(messagesProvider(widget.conversationId));
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(confirmed
-            ? 'Documento guardado y descarga registrada.'
-            : 'Documento guardado, pero no se pudo registrar la descarga.'),
-      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            confirmed
+                ? 'Documento guardado y descarga registrada.'
+                : 'Documento guardado, pero no se pudo registrar la descarga.',
+          ),
+        ),
+      );
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -226,7 +229,9 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
           content: SizedBox(
             width: 620,
             child: rows.isEmpty
-                ? const Text('El cliente todavía no ha descargado el documento.')
+                ? const Text(
+                    'El cliente todavía no ha descargado el documento.',
+                  )
                 : ListView.separated(
                     shrinkWrap: true,
                     itemCount: rows.length,
@@ -235,12 +240,14 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                       final row = rows[index];
                       return ListTile(
                         contentPadding: EdgeInsets.zero,
-                        leading: Icon(row.completedAt != null
-                            ? Icons.verified_outlined
-                            : Icons.downloading_outlined),
-                        title: Text(row.clientName.isEmpty
-                            ? 'Cliente'
-                            : row.clientName),
+                        leading: Icon(
+                          row.completedAt != null
+                              ? Icons.verified_outlined
+                              : Icons.downloading_outlined,
+                        ),
+                        title: Text(
+                          row.clientName.isEmpty ? 'Cliente' : row.clientName,
+                        ),
                         subtitle: Text(
                           'Iniciada: ${_fmtAuditDate(row.downloadedAt)}\n'
                           'Completada: ${row.completedAt == null ? 'No confirmada' : _fmtAuditDate(row.completedAt!)}\n'
@@ -262,9 +269,9 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       );
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(apiErrorMessage(error))),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
       }
     }
   }
@@ -319,15 +326,15 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       ref.invalidate(messagesProvider(widget.conversationId));
       ref.invalidate(conversationsProvider);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Documento retirado.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Documento retirado.')));
       }
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(apiErrorMessage(error))),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
       }
     }
   }
@@ -335,8 +342,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   Future<void> _messageActions(Message message, bool mine) async {
     final profile = ref.read(sessionProvider).valueOrNull!.profile;
     // Los mensajes con adjuntos no pueden eliminarse
-    final canDelete =
-        (mine || profile.isAdmin) && !message.hasAttachments;
+    final canDelete = (mine || profile.isAdmin) && !message.hasAttachments;
     final action = await showModalBottomSheet<String>(
       context: context,
       builder: (context) => SafeArea(

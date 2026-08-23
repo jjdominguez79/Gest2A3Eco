@@ -76,6 +76,7 @@ void main() {
     expect(find.byKey(const Key('client-E00001')), findsOneWidget);
     expect(find.byKey(const Key('client-E00002')), findsOneWidget);
     expect(find.byKey(const Key('client-E00003')), findsOneWidget);
+    expect(find.byKey(const Key('clients-back-button')), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('clients-filter-pending')));
     await tester.pump();
