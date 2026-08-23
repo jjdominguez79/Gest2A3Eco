@@ -314,12 +314,49 @@ def _revoke_staff_access(db: Session, external_id: str) -> None:
 
 
 def _ensure_staff_group_threads(db: Session) -> None:
+    """Convierte los equipos fijos heredados en grupos internos configurables."""
     changed = False
     for channel in sorted(STAFF_CHANNELS):
-        key = f"group:{channel}"
-        if not db.scalar(select(MessagingStaffThread).where(MessagingStaffThread.key == key)):
-            db.add(MessagingStaffThread(key=key, kind="group", channel=channel))
-            changed = True
+        marker = f"legacy-channel:{channel}"
+        group = db.scalar(select(MessagingGroup).where(
+            MessagingGroup.group_type == "staff_chat",
+            MessagingGroup.description == marker,
+        ))
+        legacy_thread = db.scalar(select(MessagingStaffThread).where(
+            MessagingStaffThread.key == f"group:{channel}",
+        ))
+        if group:
+            if legacy_thread:
+                legacy_thread.key = f"dynamic-group:{group.id}"
+                legacy_thread.channel = ""
+                changed = True
+            continue
+
+        group = MessagingGroup(
+            name=("Equipo Laboral" if channel == "laboral" else "Equipo Contable / Fiscal"),
+            description=marker, group_type="staff_chat", created_by="system",
+        )
+        db.add(group)
+        db.flush()
+        member_ids = set(db.scalars(select(MessagingStaffChannel.staff_external_id).where(
+            MessagingStaffChannel.channel == channel,
+        )))
+        admin_ids = set(db.scalars(select(MessagingStaff.external_id).where(
+            MessagingStaff.role == "admin", MessagingStaff.active.is_(True),
+        )))
+        for member_id in sorted(member_ids | admin_ids):
+            db.add(MessagingGroupMember(
+                group_id=group.id, member_type="staff", member_id=member_id,
+                role="owner" if member_id in admin_ids else "member",
+            ))
+        if legacy_thread:
+            legacy_thread.key = f"dynamic-group:{group.id}"
+            legacy_thread.channel = ""
+        else:
+            db.add(MessagingStaffThread(
+                key=f"dynamic-group:{group.id}", kind="group", channel="",
+            ))
+        changed = True
     if changed:
         db.commit()
 
@@ -2774,6 +2811,7 @@ def _serialize_group(db: Session, group: MessagingGroup) -> dict:
 
 @router.get("/staff/groups")
 def list_groups(staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db)):
+    _ensure_staff_group_threads(db)
     rows = db.scalars(select(MessagingGroup).where(MessagingGroup.active.is_(True)).order_by(
         MessagingGroup.name,
     )).all()
@@ -2824,8 +2862,11 @@ def update_group(
         raise HTTPException(404, "Grupo no encontrado")
     if payload.group_type != group.group_type:
         raise HTTPException(409, "No se puede cambiar el tipo de un grupo existente")
+    description = payload.description.strip()
+    if group.description.startswith("legacy-channel:") and not description:
+        description = group.description
     group.name, group.description, group.active = (
-        payload.name.strip(), payload.description.strip(), payload.active,
+        payload.name.strip(), description, payload.active,
     )
     group.updated_at = utcnow()
     db.commit()

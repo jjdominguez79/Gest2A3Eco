@@ -190,14 +190,6 @@ def startup():
                     db.add(messaging_models.MessagingConversation(
                         organization_id=org.id, kind=channel,
                     ))
-        for channel in ("laboral", "fiscal"):
-            key = f"group:{channel}"
-            if not db.scalar(select(messaging_models.MessagingStaffThread).where(
-                messaging_models.MessagingStaffThread.key == key,
-            )):
-                db.add(messaging_models.MessagingStaffThread(
-                    key=key, kind="group", channel=channel,
-                ))
         db.commit()
     try:
         cleanup_expired_attachments()

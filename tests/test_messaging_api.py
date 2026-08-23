@@ -471,16 +471,18 @@ def test_chats_internos_privados_y_grupos_respetan_permisos(tmp_path):
     admin_threads = client.get(
         "/api/v1/messaging/staff/internal/threads", headers=auth("admin"),
     ).json()
-    assert {row["channel"] for row in admin_threads} == {"laboral", "fiscal"}
+    assert {row["title"] for row in admin_threads} == {"Equipo Laboral", "Equipo Contable / Fiscal"}
     labor_threads = client.get(
         "/api/v1/messaging/staff/internal/threads", headers=auth("labor"),
     ).json()
-    assert {row["channel"] for row in labor_threads} == {"", "laboral"}
+    assert "Equipo Laboral" in {row["title"] for row in labor_threads}
+    assert "Equipo Contable / Fiscal" not in {row["title"] for row in labor_threads}
     assert any(row["kind"] == "direct" for row in labor_threads)
     fiscal_threads = client.get(
         "/api/v1/messaging/staff/internal/threads", headers=auth("fiscal"),
     ).json()
-    assert {row["channel"] for row in fiscal_threads} == {"", "fiscal"}
+    assert "Equipo Contable / Fiscal" in {row["title"] for row in fiscal_threads}
+    assert "Equipo Laboral" not in {row["title"] for row in fiscal_threads}
     assert any(row["kind"] == "direct" for row in fiscal_threads)
 
     avatar = BytesIO()
@@ -503,7 +505,22 @@ def test_chats_internos_privados_y_grupos_respetan_permisos(tmp_path):
         headers=auth("fiscal"),
     ).status_code == 403
 
-    labor_group = next(row for row in admin_threads if row["channel"] == "laboral")
+    labor_group = next(row for row in admin_threads if row["title"] == "Equipo Laboral")
+    groups = client.get("/api/v1/messaging/staff/groups", headers=auth("admin")).json()
+    labor_config = next(row for row in groups if row["name"] == "Equipo Laboral")
+    renamed = client.patch(
+        f"/api/v1/messaging/staff/admin/groups/{labor_config['id']}",
+        headers=auth("admin"),
+        json={"name": "Equipo Personas", "group_type": "staff_chat"},
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "Equipo Personas"
+    assert any(
+        row["title"] == "Equipo Personas"
+        for row in client.get(
+            "/api/v1/messaging/staff/internal/threads", headers=auth("admin"),
+        ).json()
+    )
     sent_group = client.post(
         f"/api/v1/messaging/staff/internal/threads/{labor_group['id']}/messages",
         headers=auth("admin"),
