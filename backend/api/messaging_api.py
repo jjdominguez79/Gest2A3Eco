@@ -367,6 +367,9 @@ def _can_access_staff_thread(
     if thread.kind == "group":
         if thread.key.startswith("dynamic-group:"):
             group_id = thread.key.split(":", 1)[1]
+            group = db.get(MessagingGroup, group_id)
+            if not group or not group.active:
+                return False
             return staff.role == "admin" or bool(db.scalar(select(MessagingGroupMember.id).where(
                 MessagingGroupMember.group_id == group_id,
                 MessagingGroupMember.member_type == "staff",
@@ -2872,6 +2875,26 @@ def update_group(
     db.commit()
     hub.publish({"type": "group.updated", "group_id": group.id}, staff_ids={admin.external_id})
     return _serialize_group(db, group)
+
+
+@router.delete("/staff/admin/groups/{group_id}", status_code=204)
+def delete_group(
+    group_id: str, admin: MessagingStaff = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    group = db.get(MessagingGroup, group_id)
+    if not group or not group.active:
+        raise HTTPException(404, "Grupo no encontrado")
+    group.active = False
+    group.updated_at = utcnow()
+    db.commit()
+    hub.publish(
+        {"type": "group.updated", "group_id": group.id},
+        staff_ids=set(db.scalars(select(MessagingStaff.external_id).where(
+            MessagingStaff.active.is_(True),
+        ))),
+    )
+    return Response(status_code=204)
 
 
 @router.post("/staff/admin/groups/{group_id}/members", status_code=201)

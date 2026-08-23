@@ -50,4 +50,7 @@ class GroupsRepository {
 
   Future<void> removeMember(String groupId, String memberId) =>
       _api.dio.delete<void>('/staff/admin/groups/$groupId/members/$memberId');
+
+  Future<void> delete(String groupId) =>
+      _api.dio.delete<void>('/staff/admin/groups/$groupId');
 }

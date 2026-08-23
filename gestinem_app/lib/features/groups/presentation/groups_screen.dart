@@ -202,6 +202,49 @@ class GroupsScreen extends ConsumerWidget {
     }
   }
 
+  Future<void> _deleteGroup(
+    BuildContext context,
+    WidgetRef ref,
+    MessagingGroup group,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Eliminar grupo'),
+        content: Text(
+          '¿Quieres eliminar “${group.name}”? Dejará de aparecer y sus miembros ya no podrán acceder al chat.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const Key('confirm-delete-group'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await ref.read(groupsRepositoryProvider).delete(group.id);
+      ref.invalidate(groupsProvider);
+      ref.invalidate(internalThreadsProvider);
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Grupo eliminado')));
+      }
+    } catch (error) {
+      if (context.mounted) _showError(context, error);
+    }
+  }
+
   AuthenticatedAvatar _employeeAvatar(
     WidgetRef ref,
     EmpleadoDespacho employee,
@@ -262,8 +305,38 @@ class GroupsScreen extends ConsumerWidget {
                       '${group.type == 'staff_chat' ? 'Chat interno' : 'Lista para campañas'} · '
                       '${group.members.length} miembros',
                     ),
-                    trailing: profile.isAdmin && group.type == 'staff_chat'
-                        ? const Icon(Icons.manage_accounts_outlined)
+                    trailing: profile.isAdmin
+                        ? PopupMenuButton<String>(
+                            key: Key('group-actions-${group.id}'),
+                            tooltip: 'Acciones del grupo',
+                            onSelected: (action) {
+                              if (action == 'edit' &&
+                                  group.type == 'staff_chat') {
+                                _configureStaffGroup(context, ref, group);
+                              } else if (action == 'delete') {
+                                _deleteGroup(context, ref, group);
+                              }
+                            },
+                            itemBuilder: (_) => [
+                              if (group.type == 'staff_chat')
+                                const PopupMenuItem(
+                                  value: 'edit',
+                                  child: ListTile(
+                                    leading: Icon(
+                                      Icons.manage_accounts_outlined,
+                                    ),
+                                    title: Text('Editar'),
+                                  ),
+                                ),
+                              const PopupMenuItem(
+                                value: 'delete',
+                                child: ListTile(
+                                  leading: Icon(Icons.delete_outline),
+                                  title: Text('Eliminar'),
+                                ),
+                              ),
+                            ],
+                          )
                         : null,
                     onTap: profile.isAdmin && group.type == 'staff_chat'
                         ? () => _configureStaffGroup(context, ref, group)

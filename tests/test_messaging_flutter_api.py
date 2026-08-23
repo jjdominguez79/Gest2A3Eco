@@ -421,6 +421,22 @@ def test_grupos_miembros_campana_e_idempotencia(tmp_path, monkeypatch):
         "/api/v1/messaging/staff/groups", headers=staff_headers("employee"),
     ).json()
     assert [row["name"] for row in employee_groups] == ["Equipo especial"]
+    staff_threads = client.get(
+        "/api/v1/messaging/staff/internal/threads",
+        headers=staff_headers("employee"),
+    ).json()
+    staff_thread = next(row for row in staff_threads if row["title"] == "Equipo especial")
+    assert client.delete(
+        f"/api/v1/messaging/staff/admin/groups/{staff_group['id']}",
+        headers=admin,
+    ).status_code == 204
+    assert all(
+        row["id"] != staff_thread["id"]
+        for row in client.get(
+            "/api/v1/messaging/staff/internal/threads",
+            headers=staff_headers("employee"),
+        ).json()
+    )
 
     campaign = client.post(
         "/api/v1/messaging/staff/admin/campaigns", headers=admin,
