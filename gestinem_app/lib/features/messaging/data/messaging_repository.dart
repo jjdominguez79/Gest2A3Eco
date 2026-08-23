@@ -238,6 +238,9 @@ class MessagingRepository {
         .toList(growable: false);
   }
 
+  Future<void> markInternalRead(String threadId) =>
+      _api.dio.post<void>('/staff/internal/threads/$threadId/read');
+
   Future<Message> sendInternal(
     String threadId,
     String body, {

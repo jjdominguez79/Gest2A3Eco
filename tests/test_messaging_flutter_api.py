@@ -327,6 +327,7 @@ def test_cliente_recibe_etiquetas_para_sus_tres_canales(tmp_path, monkeypatch):
     }
     private = next(row for row in rows if row["kind"] == "private")
     assert private["channel_avatar_url"].endswith("/client/avatars/admin")
+    assert len(private["channel_avatar_version"]) == 12
     assert client.get(private["channel_avatar_url"], headers=auth).status_code == 200
 
 
@@ -420,7 +421,9 @@ def test_grupos_miembros_campana_e_idempotencia(tmp_path, monkeypatch):
     employee_groups = client.get(
         "/api/v1/messaging/staff/groups", headers=staff_headers("employee"),
     ).json()
-    assert [row["name"] for row in employee_groups] == ["Equipo especial"]
+    assert [row["name"] for row in employee_groups] == [
+        "Equipo Contable / Fiscal", "Equipo especial",
+    ]
     staff_threads = client.get(
         "/api/v1/messaging/staff/internal/threads",
         headers=staff_headers("employee"),

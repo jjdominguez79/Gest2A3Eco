@@ -76,6 +76,15 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   }
 
   @override
+  void didUpdateWidget(covariant ConversationView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.conversationId != widget.conversationId ||
+        oldWidget.internal != widget.internal) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _markRead());
+    }
+  }
+
+  @override
   void dispose() {
     _body.dispose();
     _scroll.dispose();
@@ -83,12 +92,23 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   }
 
   Future<void> _markRead() async {
-    if (widget.internal) return;
-    final profile = ref.read(sessionProvider).valueOrNull!.profile;
-    await ref
-        .read(messagingRepositoryProvider)
-        .markRead(profile, widget.conversationId);
-    ref.invalidate(conversationsProvider);
+    try {
+      final repository = ref.read(messagingRepositoryProvider);
+      if (widget.internal) {
+        await repository.markInternalRead(widget.conversationId);
+        ref.invalidate(internalThreadsProvider);
+      } else {
+        final profile = ref.read(sessionProvider).valueOrNull?.profile;
+        if (profile == null) return;
+        await repository.markRead(profile, widget.conversationId);
+        ref.invalidate(conversationsProvider);
+        ref.invalidate(unifiedConversationProvider);
+      }
+    } catch (error, stackTrace) {
+      debugPrint(
+        'No se pudo actualizar el estado de lectura: $error\n$stackTrace',
+      );
+    }
   }
 
   Future<void> _pickFiles() async {

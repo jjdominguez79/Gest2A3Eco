@@ -708,10 +708,13 @@ class _ClientChannelSelector extends StatelessWidget {
                                 authToken: authToken,
                                 imagePath: conversation.channelAvatarUrl,
                                 fallbackText: conversation.displayChannelLabel,
-                                cacheVersion: conversation
-                                    .updatedAt
-                                    .millisecondsSinceEpoch
-                                    .toString(),
+                                cacheVersion:
+                                    conversation.channelAvatarVersion.isNotEmpty
+                                    ? conversation.channelAvatarVersion
+                                    : conversation
+                                          .updatedAt
+                                          .millisecondsSinceEpoch
+                                          .toString(),
                               ),
                             ),
                             const SizedBox(height: 6),

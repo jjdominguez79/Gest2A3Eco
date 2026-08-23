@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,11 +8,15 @@ import 'package:gestinem/features/messaging/domain/conversation.dart';
 import 'package:gestinem/features/messaging/domain/message.dart';
 import 'package:gestinem/features/messaging/presentation/conversation_screen.dart';
 import 'package:gestinem/features/messaging/presentation/messaging_providers.dart';
+import 'package:gestinem/core/api/api_client.dart';
 
 import 'test_helpers.dart';
 
 void main() {
   testWidgets('conversacion renderiza historial y compositor', (tester) async {
+    final adapter = JsonAdapter(<String, dynamic>{});
+    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'))
+      ..httpClientAdapter = adapter;
     final message = Message(
       id: 'm1',
       conversationId: 't1',
@@ -27,6 +32,9 @@ void main() {
       ProviderScope(
         overrides: [
           sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+          apiClientProvider.overrideWithValue(
+            ApiClient(dio: dio, tokenProvider: () => testSession.token),
+          ),
           internalThreadsProvider.overrideWith(
             (ref) async => const [
               InternalThread(
@@ -59,11 +67,15 @@ void main() {
     expect(find.text('Buenos dias'), findsOneWidget);
     expect(find.byKey(const Key('message-composer')), findsOneWidget);
     expect(find.byKey(const Key('send-message')), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(adapter.lastRequest?.path, '/staff/internal/threads/t1/read');
   });
 
   testWidgets('volver desde un chat interno abre la lista de inicio', (
     tester,
   ) async {
+    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'))
+      ..httpClientAdapter = JsonAdapter(<String, dynamic>{});
     final router = GoRouter(
       initialLocation: '/internal/t1',
       routes: [
@@ -84,6 +96,9 @@ void main() {
       ProviderScope(
         overrides: [
           sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+          apiClientProvider.overrideWithValue(
+            ApiClient(dio: dio, tokenProvider: () => testSession.token),
+          ),
           internalThreadsProvider.overrideWith(
             (ref) async => const [
               InternalThread(

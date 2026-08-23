@@ -65,6 +65,7 @@ class Conversation {
     required this.kind,
     this.channelLabel = '',
     this.channelAvatarUrl = '',
+    this.channelAvatarVersion = '',
     this.clientAccessStatus = 'not_invited',
     this.clientAccessActive = false,
     this.organizationActive = true,
@@ -82,6 +83,7 @@ class Conversation {
     kind: json['kind'] as String? ?? '',
     channelLabel: json['channel_label'] as String? ?? '',
     channelAvatarUrl: json['channel_avatar_url'] as String? ?? '',
+    channelAvatarVersion: json['channel_avatar_version'] as String? ?? '',
     clientAccessStatus:
         json['client_access_status'] as String? ?? 'not_invited',
     clientAccessActive: json['client_access_active'] as bool? ?? false,
@@ -89,7 +91,9 @@ class Conversation {
     state: json['state'] as String? ?? 'pendiente',
     unreadCount: json['unread_count'] as int? ?? 0,
     updatedAt: DateTime.parse(json['updated_at'] as String).toLocal(),
-    startedAt: DateTime.tryParse(json['started_at'] as String? ?? '')?.toLocal(),
+    startedAt: DateTime.tryParse(
+      json['started_at'] as String? ?? '',
+    )?.toLocal(),
     lastMessage: json['last_message'] is Map<String, dynamic>
         ? Message.fromJson(json['last_message'] as Map<String, dynamic>)
         : null,
@@ -101,6 +105,7 @@ class Conversation {
   final String kind;
   final String channelLabel;
   final String channelAvatarUrl;
+  final String channelAvatarVersion;
   final String clientAccessStatus;
   final bool clientAccessActive;
   final bool organizationActive;
@@ -139,7 +144,8 @@ class Organization {
   factory Organization.fromJson(Map<String, dynamic> json) => Organization(
     companyCode: json['company_code'] as String,
     name: json['name'] as String? ?? '',
-    clientAccessStatus: json['client_access_status'] as String? ?? 'not_invited',
+    clientAccessStatus:
+        json['client_access_status'] as String? ?? 'not_invited',
     clientAccessActive: json['client_access_active'] as bool? ?? false,
   );
 
@@ -156,7 +162,8 @@ class Organization {
 
   /// Ya tiene una invitación enviada (pendiente o caducada) → "Reenviar".
   bool get hasExistingInvitation =>
-      clientAccessStatus == 'pending' || clientAccessStatus == 'invitation_expired';
+      clientAccessStatus == 'pending' ||
+      clientAccessStatus == 'invitation_expired';
 }
 
 class InternalThread {

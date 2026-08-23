@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -27,12 +29,22 @@ class NotificationEvent {
 }
 
 class NotificationsService {
+  static const _androidChannel = AndroidNotificationChannel(
+    'gestinem_messages',
+    'Mensajes',
+    description: 'Avisos de nuevos mensajes de Gestinem',
+    importance: Importance.high,
+  );
+
   final DesktopNotifications _desktop = DesktopNotifications();
+  final FlutterLocalNotificationsPlugin _local =
+      FlutterLocalNotificationsPlugin();
   String? _owner;
   String? _deviceId;
   StreamSubscription<String>? _tokenRefresh;
   final _events = StreamController<NotificationEvent>.broadcast();
   bool _messageListenersConfigured = false;
+  bool _localNotificationsConfigured = false;
 
   Stream<NotificationEvent> get events => _events.stream;
 
@@ -54,6 +66,7 @@ class NotificationsService {
     try {
       if (Firebase.apps.isEmpty) await Firebase.initializeApp();
       final messaging = FirebaseMessaging.instance;
+      await _configureLocalNotifications();
       await _configureMessageListeners(messaging);
       await messaging.requestPermission();
       final token = await messaging.getToken();
@@ -89,9 +102,10 @@ class NotificationsService {
   Future<void> _configureMessageListeners(FirebaseMessaging messaging) async {
     if (_messageListenersConfigured) return;
     _messageListenersConfigured = true;
-    FirebaseMessaging.onMessage.listen(
-      (message) => _emit(message, opened: false),
-    );
+    FirebaseMessaging.onMessage.listen((message) {
+      _emit(message, opened: false);
+      unawaited(_showForegroundNotification(message));
+    });
     FirebaseMessaging.onMessageOpenedApp.listen(
       (message) => _emit(message, opened: true),
     );
@@ -99,9 +113,86 @@ class NotificationsService {
     if (initial != null) _emit(initial, opened: true);
   }
 
+  Future<void> _configureLocalNotifications() async {
+    if (_localNotificationsConfigured ||
+        defaultTargetPlatform != TargetPlatform.android) {
+      return;
+    }
+    _localNotificationsConfigured = true;
+    await _local.initialize(
+      settings: const InitializationSettings(
+        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+      ),
+      onDidReceiveNotificationResponse: (response) {
+        final payload = response.payload;
+        if (payload == null || payload.isEmpty) return;
+        try {
+          final data = jsonDecode(payload) as Map<String, dynamic>;
+          _emitData(data, opened: true);
+        } catch (error, stackTrace) {
+          debugPrint('No se pudo abrir la notificacion: $error\n$stackTrace');
+        }
+      },
+    );
+    final android = _local
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    await android?.createNotificationChannel(_androidChannel);
+    await android?.requestNotificationsPermission();
+    final launch = await _local.getNotificationAppLaunchDetails();
+    final payload = launch?.notificationResponse?.payload;
+    if (launch?.didNotificationLaunchApp == true &&
+        payload != null &&
+        payload.isNotEmpty) {
+      try {
+        _emitData(jsonDecode(payload) as Map<String, dynamic>, opened: true);
+      } catch (error, stackTrace) {
+        debugPrint(
+          'No se pudo recuperar la notificacion inicial: '
+          '$error\n$stackTrace',
+        );
+      }
+    }
+  }
+
+  Future<void> _showForegroundNotification(RemoteMessage message) async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    final title =
+        message.notification?.title ??
+        message.data['title']?.toString() ??
+        'Nuevo mensaje de Gestinem';
+    final body =
+        message.notification?.body ??
+        message.data['body']?.toString() ??
+        'Tienes un nuevo mensaje';
+    await _local.show(
+      id:
+          message.messageId?.hashCode ??
+          DateTime.now().millisecondsSinceEpoch.remainder(1 << 31),
+      title: title,
+      body: body,
+      notificationDetails: NotificationDetails(
+        android: AndroidNotificationDetails(
+          _androidChannel.id,
+          _androidChannel.name,
+          channelDescription: _androidChannel.description,
+          importance: Importance.high,
+          priority: Priority.high,
+          icon: '@mipmap/ic_launcher',
+        ),
+      ),
+      payload: jsonEncode(message.data),
+    );
+  }
+
   void _emit(RemoteMessage message, {required bool opened}) {
-    final conversationId = message.data['conversation_id']?.toString() ?? '';
-    final threadId = message.data['thread_id']?.toString();
+    _emitData(message.data, opened: opened);
+  }
+
+  void _emitData(Map<String, dynamic> data, {required bool opened}) {
+    final conversationId = data['conversation_id']?.toString() ?? '';
+    final threadId = data['thread_id']?.toString();
     if (conversationId.isEmpty && (threadId == null || threadId.isEmpty)) {
       return;
     }

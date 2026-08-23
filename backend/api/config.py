@@ -127,7 +127,7 @@ def get_settings() -> Settings:
             "MESSAGING_LATEST_APP_VERSION", "0.1.3",
         ).strip(),
         messaging_latest_app_build=max(
-            1, int(os.getenv("MESSAGING_LATEST_APP_BUILD", "13")),
+            1, int(os.getenv("MESSAGING_LATEST_APP_BUILD", "15")),
         ),
         messaging_minimum_app_build=max(
             1, int(os.getenv("MESSAGING_MINIMUM_APP_BUILD", "1")),

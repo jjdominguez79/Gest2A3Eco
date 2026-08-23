@@ -8,12 +8,18 @@ import 'test_helpers.dart';
 
 void main() {
   testWidgets('login muestra acceso cliente y personal', (tester) async {
-    await tester.pumpWidget(ProviderScope(
-      overrides: [sessionProvider.overrideWith((ref) => FakeSessionController(ref, null))],
-      child: const MaterialApp(home: LoginScreen()),
-    ));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith(
+            (ref) => FakeSessionController(ref, null),
+          ),
+        ],
+        child: const MaterialApp(home: LoginScreen()),
+      ),
+    );
 
-    expect(find.text('Gestinem'), findsOneWidget);
+    expect(find.text('Gestinem Chat'), findsOneWidget);
     expect(find.byKey(const Key('login-email')), findsOneWidget);
     expect(find.byKey(const Key('login-password')), findsOneWidget);
     expect(find.byKey(const Key('client-login-button')), findsOneWidget);

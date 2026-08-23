@@ -541,6 +541,7 @@ def _serialize_conversation(
     access = access or _organization_access_state(db, org)
     channel_label = {"laboral": "LA", "fiscal": "CF"}.get(conv.kind, "")
     channel_avatar_url = ""
+    channel_avatar_version = ""
     if conv.kind == "private":
         owner_id = org.private_owner_external_id or conv.assigned_staff_external_id
         owner = db.get(MessagingStaff, owner_id) if owner_id else None
@@ -556,10 +557,14 @@ def _serialize_conversation(
             channel_avatar_url = (
                 f"/api/v1/messaging/{audience}/avatars/{owner.external_id}"
             )
+            channel_avatar_version = hashlib.sha256(
+                owner.avatar_storage_key.encode("utf-8")
+            ).hexdigest()[:12]
     return {
         "id": conv.id, "company_code": org.company_code, "company_name": org.name,
         "kind": conv.kind, "channel_label": channel_label,
-        "channel_avatar_url": channel_avatar_url, "state": conv.state,
+        "channel_avatar_url": channel_avatar_url,
+        "channel_avatar_version": channel_avatar_version, "state": conv.state,
         "active_client_count": active_client_count,
         "client_access_status": access["status"],
         "client_access_active": access["active"],
