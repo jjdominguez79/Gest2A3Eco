@@ -45,9 +45,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Image.asset('assets/images/logo.png', height: 72, semanticLabel: 'Gestinem'),
+                    Image.asset('assets/images/logo_new.png', height: 72, semanticLabel: 'Gestinem'),
                     const SizedBox(height: 12),
-                    Text('Gestinem', textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineMedium),
+                    Text('Gestinem Chat', textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineMedium),
                     const SizedBox(height: 6),
                     const Text('Mensajería segura con tu despacho', textAlign: TextAlign.center),
                     const SizedBox(height: 28),

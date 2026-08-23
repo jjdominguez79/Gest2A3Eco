@@ -71,7 +71,7 @@ class _AboutScreenState extends ConsumerState<AboutScreen> {
               children: [
                 Center(
                   child: Image.asset(
-                    'assets/images/logo.png',
+                    'assets/images/logo_new.png',
                     width: 82,
                     height: 82,
                   ),
@@ -97,7 +97,7 @@ class _AboutScreenState extends ConsumerState<AboutScreen> {
                       const Divider(height: 1),
                       ListTile(
                         leading: const Icon(Icons.info_outline),
-                        title: const Text('Versión instalada'),
+                        title: const Text('Versión Instalada'),
                         subtitle: Text(
                           '${information.package.version} '
                           '(compilación ${information.package.buildNumber})',
