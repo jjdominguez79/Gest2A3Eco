@@ -40,7 +40,9 @@ if (isReleaseBuild && (!keystorePropertiesFile.exists() || missingSigningPropert
 
 android {
     namespace = "es.gestinem.app"
-    compileSdk = flutter.compileSdkVersion
+    // flutter_secure_storage requiere actualmente compilar contra API 37.
+    // targetSdk se mantiene gestionado por Flutter para no cambiar el comportamiento runtime.
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -55,8 +57,6 @@ android {
 
     defaultConfig {
         applicationId = "es.gestinem.app"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
