@@ -9,15 +9,16 @@ ALLOW_NON_MAIN="${ALLOW_NON_MAIN:-0}"
 
 usage() {
   cat <<'EOF'
-Uso: ./tool/build_production.sh <android|apk|web|web-deploy|ios|macos|all>
+Uso: bash tool/build_production.sh <android|apk|web|web-deploy|windows|ios|macos|all>
 
 Ejemplos:
-  ./tool/build_production.sh android      # AAB para Google Play
-  ./tool/build_production.sh apk          # APK release para instalación manual
-  ./tool/build_production.sh web          # compila web sin publicar
-  ./tool/build_production.sh web-deploy   # compila y publica Firebase Hosting
-  ./tool/build_production.sh ios          # IPA para App Store/TestFlight (solo macOS)
-  ./tool/build_production.sh macos        # app macOS (solo macOS)
+  bash tool/build_production.sh android      # AAB para Google Play
+  bash tool/build_production.sh apk          # APK release para instalación manual
+  bash tool/build_production.sh web          # compila web sin publicar
+  bash tool/build_production.sh web-deploy   # compila y publica Firebase Hosting
+  bash tool/build_production.sh windows      # Windows + instalador si Inno Setup está disponible
+  bash tool/build_production.sh ios          # IPA para App Store/TestFlight (solo macOS)
+  bash tool/build_production.sh macos        # app macOS (solo macOS)
 
 Variables opcionales:
   API_BASE_URL=https://api.gestinem.es
@@ -35,7 +36,7 @@ command -v flutter >/dev/null || { echo "ERROR: Flutter no está instalado o no 
 branch="$(git branch --show-current 2>/dev/null || true)"
 if [[ "$branch" != "main" && "$ALLOW_NON_MAIN" != "1" ]]; then
   echo "ERROR: Estás en la rama '$branch'. Para producción usa main."
-  echo "Si sabes lo que haces: ALLOW_NON_MAIN=1 ./tool/build_production.sh $PLATFORM"
+  echo "Si sabes lo que haces: ALLOW_NON_MAIN=1 bash tool/build_production.sh $PLATFORM"
   exit 1
 fi
 if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
@@ -50,6 +51,9 @@ if [[ "$SKIP_CHECKS" != "1" ]]; then
 fi
 
 DEFINES=(--dart-define="API_BASE_URL=$API_BASE_URL" --dart-define="ENVIRONMENT=$ENVIRONMENT")
+UNAME="$(uname -s)"
+IS_WINDOWS=0
+case "$UNAME" in MINGW*|MSYS*|CYGWIN*) IS_WINDOWS=1 ;; esac
 
 check_android_signing() {
   [[ -f android/key.properties ]] || { echo "ERROR: falta android/key.properties."; exit 1; }
@@ -77,13 +81,24 @@ build_one() {
       firebase deploy --only hosting --project gest2a3eco
       echo "OK: web publicada en Firebase Hosting."
       ;;
+    windows)
+      [[ "$IS_WINDOWS" == "1" ]] || { echo "ERROR: Windows solo puede compilarse desde Windows."; exit 1; }
+      flutter build windows --release "${DEFINES[@]}"
+      ISCC='/c/Program Files (x86)/Inno Setup 6/ISCC.exe'
+      if [[ -f "$ISCC" ]]; then
+        "$ISCC" 'windows\installer\gestinem.iss'
+        echo "OK: instalador generado en ../dist_installer/"
+      else
+        echo "AVISO: build Windows creado, pero no se encontró Inno Setup 6."
+      fi
+      ;;
     ios)
-      [[ "$(uname -s)" == "Darwin" ]] || { echo "ERROR: iOS solo puede compilarse en macOS."; exit 1; }
+      [[ "$UNAME" == "Darwin" ]] || { echo "ERROR: iOS solo puede compilarse en macOS."; exit 1; }
       flutter build ipa --release "${DEFINES[@]}"
       echo "OK: revisa build/ios/ipa/"
       ;;
     macos)
-      [[ "$(uname -s)" == "Darwin" ]] || { echo "ERROR: macOS solo puede compilarse en macOS."; exit 1; }
+      [[ "$UNAME" == "Darwin" ]] || { echo "ERROR: macOS solo puede compilarse en macOS."; exit 1; }
       flutter build macos --release "${DEFINES[@]}"
       echo "OK: revisa build/macos/Build/Products/Release/"
       ;;
@@ -94,7 +109,8 @@ build_one() {
 if [[ "$PLATFORM" == "all" ]]; then
   build_one android
   build_one web
-  if [[ "$(uname -s)" == "Darwin" ]]; then
+  [[ "$IS_WINDOWS" == "1" ]] && build_one windows
+  if [[ "$UNAME" == "Darwin" ]]; then
     build_one ios
     build_one macos
   fi
