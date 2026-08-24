@@ -1,38 +1,18 @@
-# Despliegue piloto de Gestinem Flutter
+# Despliegue piloto de Gestinem Flutter — HISTÓRICO
 
-## Backend inmediato
+> Este documento se conserva únicamente como referencia del piloto inicial. No debe usarse para generar versiones actuales. Para producción consulta `docs/flutter_production_build.md` y `gestinem_app/README.md`.
 
-El piloto usa temporalmente:
+## Configuración que nació durante el piloto
+
+El backend adoptado y todavía vigente es:
 
 `https://gest2a3eco-production.up.railway.app`
 
-La URL se pasa a Flutter mediante `API_BASE_URL`; no se guarda ninguna clave en
-la aplicacion.
+El frontend web se publica en Firebase Hosting y usa `https://app.gestinem.es`.
 
-## Firebase en Railway
+En Railway se configuró Firebase Admin mediante `MESSAGING_FIREBASE_CREDENTIALS_JSON`; esas credenciales nunca deben guardarse en Git ni incluirse en Flutter. El fichero Android `google-services.json` permanece local en `gestinem_app/android/app/`.
 
-1. En Firebase, generar una cuenta de servicio para Firebase Admin.
-2. En Railway, crear la variable secreta
-   `MESSAGING_FIREBASE_CREDENTIALS_JSON` con el JSON completo en una sola linea.
-3. No guardar ese JSON en Git, en Flutter ni en configuracion de escritorio.
-4. Desplegar el backend y comprobar que el alta de un dispositivo devuelve
-   `fcm_configured: true`.
-
-El fichero Android `google-services.json` es configuracion del cliente y se
-ubica localmente en `gestinem_app/android/app/`; permanece excluido de Git.
-
-## Dominios del piloto
-
-- Frontend Flutter Web: `https://app.gestinem.es`, servido por Firebase Hosting.
-- Backend FastAPI: `https://gest2a3eco-production.up.railway.app`.
-
-La zona DNS de Raiola contiene:
-
-```text
-app.gestinem.es.  CNAME  gest2a3eco.web.app.
-```
-
-Railway debe mantener:
+La configuración de dominios del piloto estableció:
 
 ```text
 DGT_PUBLIC_BASE_URL=https://gest2a3eco-production.up.railway.app
@@ -40,28 +20,30 @@ MESSAGING_PUBLIC_BASE_URL=https://gest2a3eco-production.up.railway.app
 MESSAGING_APP_WEB_REDIRECT_URI=https://app.gestinem.es/auth/callback
 ```
 
-En Microsoft Entra, la URI de redireccion del backend sigue siendo:
+Y en Microsoft Entra:
 
 ```text
 https://gest2a3eco-production.up.railway.app/api/v1/messaging/staff-auth/callback
 ```
 
-Cuando exista `api.gestinem.es`, migrar conjuntamente las dos URL publicas de
-Railway, la URI de Microsoft Entra y `API_BASE_URL` de todos los clientes.
+Cuando exista un dominio API independiente como `api.gestinem.es`, la migración debe coordinar backend, redirecciones Microsoft, CORS y todos los clientes Flutter.
 
-## Compilaciones del piloto
+## Procedimiento antiguo retirado
 
-```powershell
-Set-Location gestinem_app
+Durante el piloto se generaban APK `debug` para dispositivos concretos. Ese procedimiento ya no es válido para distribución.
 
-flutter build apk --debug `
-  --dart-define=API_BASE_URL=https://gest2a3eco-production.up.railway.app `
-  --dart-define=ENVIRONMENT=production
+La producción Android actual usa un **AAB release firmado** y se genera mediante:
 
-flutter build windows --release `
-  --dart-define=API_BASE_URL=https://gest2a3eco-production.up.railway.app `
-  --dart-define=ENVIRONMENT=production
+```bash
+cd gestinem_app
+bash tool/build_production.sh android
 ```
 
-El APK `debug` solo sirve para el dispositivo piloto. La distribucion general
-requiere una clave de carga Android y un App Bundle `release` firmado.
+O en PowerShell:
+
+```powershell
+cd gestinem_app
+.\tool\build_production.ps1 android
+```
+
+No añadas nuevos procedimientos de build a este documento. Mantén la documentación operativa en `docs/flutter_production_build.md`.
