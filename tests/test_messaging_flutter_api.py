@@ -623,7 +623,7 @@ def test_dispositivo_fcm_mockeado_y_websocket(tmp_path, monkeypatch):
     delivered = []
     monkeypatch.setattr(
         messaging_api, "send_fcm",
-        lambda token, payload: delivered.append((token, payload)) or True,
+        lambda token, payload, platform=None: delivered.append((token, payload)) or messaging_api.FcmResult(success=True, permanent_failure=False),
     )
     registered = client.put(
         "/api/v1/messaging/client/app-devices", headers=auth,
