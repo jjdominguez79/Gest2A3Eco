@@ -1,7 +1,7 @@
 #define MyAppName "Gestinem"
 #define MyAppExeName "gestinem.exe"
 #define MyAppExePath "..\..\build\windows\x64\runner\Release\" + MyAppExeName
-#define MyAppVersion GetFileVersion(MyAppExePath)
+#define MyAppVersion GetVersionNumbersString(MyAppExePath)
 #define MyAppPublisher "Gestinem"
 
 [Setup]
