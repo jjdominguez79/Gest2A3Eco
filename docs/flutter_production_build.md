@@ -25,25 +25,16 @@ version: 0.1.3+15
 
 Para una nueva compilación de la misma versión funcional, incrementa el número posterior a `+`, por ejemplo `0.1.3+16`. Para una nueva versión funcional puedes usar, por ejemplo, `0.1.4+16`.
 
-Google Play exige que cada nuevo `versionCode` (el número después de `+`) sea superior al anterior.
-
-Después del cambio, haz commit y vuelve a comprobar que el árbol está limpio antes del build.
+Google Play exige que cada nuevo `versionCode` (el número después de `+`) sea superior al anterior. Después del cambio, haz commit y vuelve a comprobar que el árbol está limpio antes del build.
 
 ## 3. Qué hace la automatización
 
 Hay dos entradas equivalentes:
 
-- Bash: `tool/build_production.sh`
+- Bash/Warp: `tool/build_production.sh`
 - PowerShell: `tool/build_production.ps1`
 
-Por defecto:
-
-1. Comprueban la rama `main`.
-2. Comprueban que no haya cambios sin guardar.
-3. Ejecutan `flutter pub get`.
-4. Ejecutan `flutter analyze`.
-5. Ejecutan `flutter test`.
-6. Compilan con `ENVIRONMENT=production` y `API_BASE_URL=https://gest2a3eco-production.up.railway.app`.
+Por defecto comprueban `main`, comprueban que Git esté limpio, ejecutan `flutter pub get`, `flutter analyze` y `flutter test`, y compilan con `ENVIRONMENT=production` y `API_BASE_URL=https://gest2a3eco-production.up.railway.app`.
 
 No necesitas escribir la URL de Railway cada vez.
 
@@ -63,27 +54,21 @@ PowerShell:
 .\tool\build_production.ps1 android
 ```
 
-Sube a Google Play Console únicamente:
-
-`build/app/outputs/bundle/release/app-release.aab`
+Sube a Google Play Console únicamente `build/app/outputs/bundle/release/app-release.aab`.
 
 ## 5. Android — APK manual
-
-Bash/Warp:
 
 ```bash
 bash tool/build_production.sh apk
 ```
 
-PowerShell:
+O:
 
 ```powershell
 .\tool\build_production.ps1 apk
 ```
 
-Resultado: `build/app/outputs/flutter-apk/app-release.apk`.
-
-El APK es para instalación manual/pruebas; para Play Store usa AAB.
+Resultado: `build/app/outputs/flutter-apk/app-release.apk`. El APK es para instalación manual/pruebas; para Play Store usa AAB.
 
 ## 6. Web — comprobar sin publicar
 
@@ -111,13 +96,13 @@ firebase projects:list
 
 Debe aparecer el proyecto `gest2a3eco`. No ejecutes `firebase init`.
 
-Publicar desde Bash/Warp:
+Bash/Warp:
 
 ```bash
 bash tool/build_production.sh web-deploy
 ```
 
-Publicar desde PowerShell:
+PowerShell:
 
 ```powershell
 .\tool\build_production.ps1 web-deploy
@@ -127,35 +112,33 @@ Después comprueba `https://app.gestinem.es`.
 
 ## 8. Windows
 
-Debe hacerse desde Windows. El camino recomendado es PowerShell:
+Debe hacerse desde Windows. Puedes usar indistintamente Warp/Bash o PowerShell.
+
+Bash/Warp (Git Bash/MSYS):
+
+```bash
+bash tool/build_production.sh windows
+```
+
+PowerShell:
 
 ```powershell
 .\tool\build_production.ps1 windows
 ```
 
-Compila `build/windows/x64/runner/Release/` y, si Inno Setup 6 está instalado en la ruta estándar, genera automáticamente el instalador en `../dist_installer/`.
+Ambos compilan `build/windows/x64/runner/Release/` y buscan Inno Setup 6 en su ruta estándar. Si está disponible, generan automáticamente el instalador en `../dist_installer/`.
 
 El instalador obtiene la versión del propio `gestinem.exe`; no hay que editar manualmente `gestinem.iss` al cambiar la versión.
 
-Si solo necesitas compilar manualmente desde una terminal Bash de Windows:
-
-```bash
-flutter build windows --release --dart-define=API_BASE_URL=https://gest2a3eco-production.up.railway.app --dart-define=ENVIRONMENT=production
-```
-
 ## 9. iPhone/iPad
 
-Solo desde Mac.
-
-Primera configuración o si cambia la firma:
+Solo desde Mac. La primera vez, o si cambia la firma:
 
 ```bash
 open ios/Runner.xcworkspace
 ```
 
 En Xcode comprueba `Runner` > `Signing & Capabilities`, selecciona el Team correcto y verifica `es.gestinem.app`.
-
-Build:
 
 ```bash
 bash tool/build_production.sh ios
@@ -189,23 +172,21 @@ PowerShell:
 .\tool\build_production.ps1 all
 ```
 
-`all` no publica Firebase automáticamente: genera los artefactos. La publicación web debe hacerse explícitamente con `web-deploy`.
+`all` genera los artefactos compatibles con el sistema operativo actual pero no publica Firebase. La publicación web debe hacerse explícitamente con `web-deploy`.
 
 ## 12. Opciones avanzadas
 
-Cambiar temporalmente el backend en Bash:
+Cambiar temporalmente el backend:
 
 ```bash
 API_BASE_URL=https://api.gestinem.es bash tool/build_production.sh web
 ```
 
-En PowerShell:
-
 ```powershell
 .\tool\build_production.ps1 web -ApiBaseUrl https://api.gestinem.es
 ```
 
-Omitir analyze/test (solo para diagnóstico, no recomendado para una publicación real):
+Omitir analyze/test, solo para diagnóstico:
 
 ```bash
 SKIP_CHECKS=1 bash tool/build_production.sh web
