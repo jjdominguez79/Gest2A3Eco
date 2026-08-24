@@ -32,7 +32,7 @@ flutter analyze
 flutter test
 ```
 
-`API_BASE_URL` es la raíz del backend, sin `/api/v1/messaging`. En desarrollo, si no se define, puede usarse el valor local configurado por la aplicación.
+`API_BASE_URL` es la raíz del backend, sin `/api/v1/messaging`.
 
 ## Builds de producción automatizados
 
@@ -45,8 +45,10 @@ bash tool/build_production.sh android
 bash tool/build_production.sh apk
 bash tool/build_production.sh web
 bash tool/build_production.sh web-deploy
+bash tool/build_production.sh windows
 bash tool/build_production.sh ios
 bash tool/build_production.sh macos
+bash tool/build_production.sh all
 ```
 
 ### PowerShell
@@ -59,6 +61,7 @@ bash tool/build_production.sh macos
 .\tool\build_production.ps1 windows
 .\tool\build_production.ps1 ios
 .\tool\build_production.ps1 macos
+.\tool\build_production.ps1 all
 ```
 
 Los scripts bloquean por defecto un build si no estás en `main` o si existen cambios sin guardar. Consulta `../docs/flutter_production_build.md` para la guía paso a paso y las opciones avanzadas.
@@ -97,13 +100,15 @@ Compilar y publicar:
 bash tool/build_production.sh web-deploy
 ```
 
-En PowerShell pueden usarse los equivalentes de `build_production.ps1` o el script específico `tool/deploy_firebase.ps1`.
-
-No ejecutes `firebase init hosting`: `firebase.json` y `.firebaserc` ya están configurados.
+En PowerShell pueden usarse los equivalentes de `build_production.ps1` o el script específico `tool/deploy_firebase.ps1`. No ejecutes `firebase init hosting`: `firebase.json` y `.firebaserc` ya están configurados.
 
 ## Windows
 
-Desde Windows:
+Desde Windows, tanto Warp/Git Bash como PowerShell están soportados:
+
+```bash
+bash tool/build_production.sh windows
+```
 
 ```powershell
 .\tool\build_production.ps1 windows
