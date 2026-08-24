@@ -1,8 +1,10 @@
+import com.android.build.api.dsl.ApplicationExtension
 import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.application")
-    id("kotlin-android")
+    id("org.jetbrains.kotlin.android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
@@ -38,7 +40,7 @@ if (isReleaseBuild && (!keystorePropertiesFile.exists() || missingSigningPropert
     )
 }
 
-android {
+extensions.configure<ApplicationExtension>("android") {
     namespace = "es.gestinem.app"
     // flutter_secure_storage requiere actualmente compilar contra API 37.
     // targetSdk se mantiene gestionado por Flutter para no cambiar el comportamiento runtime.
@@ -49,10 +51,6 @@ android {
         isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17.toString()
     }
 
     defaultConfig {
@@ -78,6 +76,12 @@ android {
         release {
             signingConfig = signingConfigs.findByName("release")
         }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
     }
 }
 
