@@ -10,22 +10,49 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../api/api_client.dart';
 import '../../features/auth/domain/user_profile.dart';
+import '../../firebase_options.dart';
 import 'desktop_notifications.dart';
+
+// Clave publica VAPID para FCM Web. Se inyecta en el build con:
+//   --dart-define=FIREBASE_WEB_VAPID_KEY=<clave>
+const _kVapidKey = String.fromEnvironment('FIREBASE_WEB_VAPID_KEY');
 
 final notificationsServiceProvider = Provider<NotificationsService>(
   (ref) => NotificationsService(),
 );
+
+/// Estado del permiso de notificacion del dispositivo/navegador.
+enum NotificationPermissionState {
+  /// Permiso no solicitado todavia.
+  available,
+
+  /// Solicitud en curso.
+  pending,
+
+  /// Permiso concedido y token FCM registrado.
+  authorized,
+
+  /// El usuario ha denegado el permiso.
+  denied,
+
+  /// Firebase no esta configurado (valores PENDIENTE o VAPID ausente en Web).
+  configError,
+}
 
 class NotificationEvent {
   const NotificationEvent({
     required this.conversationId,
     required this.opened,
     this.threadId,
+    this.title,
+    this.body,
   });
 
   final String conversationId;
   final String? threadId;
   final bool opened;
+  final String? title;
+  final String? body;
 }
 
 class NotificationsService {
@@ -43,11 +70,29 @@ class NotificationsService {
   String? _deviceId;
   StreamSubscription<String>? _tokenRefresh;
   final _events = StreamController<NotificationEvent>.broadcast();
+
+  // Guardas para evitar inicializacion concurrente o duplicada.
+  bool _initializing = false;
   bool _messageListenersConfigured = false;
   bool _localNotificationsConfigured = false;
+  bool _fcmConfigured = false;
+
+  NotificationPermissionState _permissionState =
+      NotificationPermissionState.available;
 
   Stream<NotificationEvent> get events => _events.stream;
 
+  /// Estado actual del permiso de notificacion.
+  NotificationPermissionState get permissionState => _permissionState;
+
+  /// True si Firebase esta inicializado y el token FCM esta registrado.
+  bool get fcmConfigured => _fcmConfigured;
+
+  /// Inicializa el servicio para la sesion activa.
+  ///
+  /// En Android solicita permiso y registra el token de inmediato.
+  /// En Web NO abre el dialogo del navegador; usa [activateWebNotifications]
+  /// desde la UI para el consentimiento explicito.
   Future<void> initialize(AuthSession session, ApiClient api) async {
     if (_desktop.supported) {
       if (_owner == _ownerFor(session)) return;
@@ -62,26 +107,97 @@ class NotificationsService {
       }
       return;
     }
+
     if (!_supported || _owner == _ownerFor(session)) return;
+
+    // Proteccion contra inicializacion concurrente.
+    if (_initializing) return;
+    _initializing = true;
+
     try {
-      if (Firebase.apps.isEmpty) await Firebase.initializeApp();
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform,
+        );
+      }
       final messaging = FirebaseMessaging.instance;
-      await _configureLocalNotifications();
       await _configureMessageListeners(messaging);
-      await messaging.requestPermission();
-      final token = await messaging.getToken();
-      if (token == null) return;
-      await _register(session, api, token);
+
+      if (kIsWeb) {
+        // En Web: comprobar si el permiso ya estaba concedido y registrar token.
+        // No llamamos a requestPermission() aqui; eso lo hace el usuario
+        // explicitamente desde WebNotificationPermissionBanner.
+        final settings = await messaging.getNotificationSettings();
+        if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+          await _registerWebToken(session, api, messaging);
+          _permissionState = NotificationPermissionState.authorized;
+          _fcmConfigured = true;
+        }
+      } else {
+        // Android / iOS / macOS: flujo habitual.
+        await _configureLocalNotifications();
+        await messaging.requestPermission();
+        final token = await messaging.getToken();
+        if (token != null) {
+          await _register(session, api, token);
+          _permissionState = NotificationPermissionState.authorized;
+          _fcmConfigured = true;
+        }
+      }
+
       _owner = _ownerFor(session);
       await _tokenRefresh?.cancel();
       _tokenRefresh = messaging.onTokenRefresh.listen(
         (refreshed) => unawaited(_register(session, api, refreshed)),
       );
     } catch (error, stackTrace) {
-      // Firebase es opcional en desarrollo y no debe impedir usar REST/WebSocket.
+      // Firebase es opcional en desarrollo.
       debugPrint(
         'No se pudieron activar las notificaciones: $error\n$stackTrace',
       );
+    } finally {
+      _initializing = false;
+    }
+  }
+
+  /// Solicita el permiso del navegador y registra el token FCM.
+  ///
+  /// Solo para Web. Devuelve [true] si el permiso fue concedido.
+  /// Debe llamarse desde un gesto explicito del usuario.
+  Future<bool> activateWebNotifications(
+    AuthSession session,
+    ApiClient api,
+  ) async {
+    _permissionState = NotificationPermissionState.pending;
+    try {
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform,
+        );
+      }
+      final messaging = FirebaseMessaging.instance;
+      await _configureMessageListeners(messaging);
+
+      final settings = await messaging.requestPermission();
+      if (settings.authorizationStatus != AuthorizationStatus.authorized) {
+        _permissionState = NotificationPermissionState.denied;
+        return false;
+      }
+      await _registerWebToken(session, api, messaging);
+      _owner = _ownerFor(session);
+      await _tokenRefresh?.cancel();
+      _tokenRefresh = messaging.onTokenRefresh.listen(
+        (refreshed) => unawaited(_register(session, api, refreshed)),
+      );
+      _permissionState = NotificationPermissionState.authorized;
+      _fcmConfigured = true;
+      return true;
+    } catch (error, stackTrace) {
+      debugPrint(
+        'No se pudo activar la notificacion web: $error\n$stackTrace',
+      );
+      _permissionState = NotificationPermissionState.configError;
+      return false;
     }
   }
 
@@ -94,7 +210,7 @@ class NotificationsService {
       await _desktop.show(title: title, body: body, onClick: onClick);
     } catch (error, stackTrace) {
       debugPrint(
-        'No se pudo mostrar la notificación de Windows: $error\n$stackTrace',
+        'No se pudo mostrar la notificacion de Windows: $error\n$stackTrace',
       );
     }
   }
@@ -102,7 +218,11 @@ class NotificationsService {
   Future<void> _configureMessageListeners(FirebaseMessaging messaging) async {
     if (_messageListenersConfigured) return;
     _messageListenersConfigured = true;
+
     FirebaseMessaging.onMessage.listen((message) {
+      // En Web la aplicacion esta visible: el WebSocket ya entrega el mensaje.
+      // Suprimimos el evento FCM de primer plano para evitar duplicados.
+      if (kIsWeb) return;
       _emit(message, opened: false);
       unawaited(_showForegroundNotification(message));
     });
@@ -186,11 +306,28 @@ class NotificationsService {
     );
   }
 
-  void _emit(RemoteMessage message, {required bool opened}) {
-    _emitData(message.data, opened: opened);
+  Future<void> _registerWebToken(
+    AuthSession session,
+    ApiClient api,
+    FirebaseMessaging messaging,
+  ) async {
+    final vapidKey = _kVapidKey.isNotEmpty ? _kVapidKey : null;
+    final token = await messaging.getToken(vapidKey: vapidKey);
+    if (token != null) await _register(session, api, token);
   }
 
-  void _emitData(Map<String, dynamic> data, {required bool opened}) {
+  void _emit(RemoteMessage message, {required bool opened}) {
+    _emitData(message.data, opened: opened,
+        title: message.notification?.title,
+        body: message.notification?.body);
+  }
+
+  void _emitData(
+    Map<String, dynamic> data, {
+    required bool opened,
+    String? title,
+    String? body,
+  }) {
     final conversationId = data['conversation_id']?.toString() ?? '';
     final threadId = data['thread_id']?.toString();
     if (conversationId.isEmpty && (threadId == null || threadId.isEmpty)) {
@@ -201,6 +338,8 @@ class NotificationsService {
         conversationId: conversationId,
         threadId: threadId,
         opened: opened,
+        title: title ?? data['title']?.toString(),
+        body: body ?? data['body']?.toString(),
       ),
     );
   }
@@ -216,6 +355,8 @@ class NotificationsService {
     _tokenRefresh = null;
     _owner = null;
     _deviceId = null;
+    _fcmConfigured = false;
+    _permissionState = NotificationPermissionState.available;
   }
 
   Future<void> _register(
