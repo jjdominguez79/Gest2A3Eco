@@ -612,7 +612,10 @@ class TestStaffAccessAndInternalNotifications:
                 db_session, background, thread, admin,
             )
         background.add_task.assert_called_once()
-        _, token, payload = background.add_task.call_args.args
+        args = background.add_task.call_args.args
+        # args: (fn, push_token, payload, platform, device_id)
+        _, token, payload, platform, _ = args
         assert token == device.push_token
+        assert platform == device.platform
         assert payload["thread_id"] == thread.id
         assert payload["event"] == "internal_message"

@@ -35,7 +35,6 @@ migrate_working_dir/
 # Firebase local (never commit credentials/configuration from a real project)
 android/app/google-services.json
 ios/Runner/GoogleService-Info.plist
-lib/firebase_options.dart
 /coverage/
 
 # Symbolication related

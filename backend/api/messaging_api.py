@@ -40,7 +40,7 @@ from backend.api.messaging_security import (
     is_expired, utcnow, verify_password,
 )
 from backend.api.messaging_storage import MessagingStorage, safe_name
-from backend.api.messaging_firebase import configured as fcm_configured, send_fcm
+from backend.api.messaging_firebase import configured as fcm_configured, send_fcm, FcmResult
 from backend.api.messaging_realtime import hub
 from backend.api.security import require_internal_key, require_workstation_or_internal
 
@@ -63,6 +63,19 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def _send_push_and_handle(
+    push_token: str, payload: dict, platform: str, device_id: str,
+) -> None:
+    """Tarea de fondo: envia FCM y desactiva el dispositivo si el error es permanente."""
+    result: FcmResult = send_fcm(push_token, payload=payload, platform=platform)
+    if not result.success and result.permanent_failure:
+        with SessionLocal() as db:
+            device = db.get(MessagingAppDevice, device_id)
+            if device:
+                device.active = False
+                db.commit()
 
 
 class OrganizationIn(BaseModel):
@@ -745,7 +758,10 @@ def _queue_app_pushes(
             and (now - device.last_seen_at).total_seconds() < 75
         )
         if not viewing:
-            background.add_task(send_fcm, device.push_token, payload)
+            background.add_task(
+                _send_push_and_handle,
+                device.push_token, payload, device.platform, device.id,
+            )
 
 
 def _publish_conversation_event(db: Session, conv: MessagingConversation, event_type: str, **extra) -> None:
@@ -1417,7 +1433,10 @@ def _queue_internal_pushes(
         "thread_id": thread.id,
     }
     for device in devices:
-        background.add_task(send_fcm, device.push_token, payload)
+        background.add_task(
+            _send_push_and_handle,
+            device.push_token, payload, device.platform, device.id,
+        )
 
 
 @router.post("/staff/internal/threads/{thread_id}/messages")
