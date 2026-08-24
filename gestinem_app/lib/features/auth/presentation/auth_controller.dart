@@ -5,6 +5,7 @@ import '../../../core/api/api_client.dart';
 import '../../../core/storage/session_storage.dart';
 import '../../../core/notifications/notifications_service.dart';
 import '../../../core/deep_links/deep_link_controller.dart';
+import '../../../core/web/initial_auth_code.dart';
 import '../data/auth_repository.dart';
 import '../domain/user_profile.dart';
 
@@ -14,10 +15,26 @@ final sessionStorageProvider = Provider<SessionStorage>(
 
 final sessionProvider =
     StateNotifierProvider<SessionController, AsyncValue<AuthSession?>>((ref) {
-      final controller = SessionController(ref);
+      final controller = SessionController(
+        ref,
+        initialStaffAuthCode:
+            leerCodigoStaffInicial() ?? codigoStaffInicial(Uri.base),
+      );
       controller.restore();
       return controller;
     });
+
+String? codigoStaffInicial(Uri uri) {
+  final directo = uri.queryParameters['code'];
+  if (directo != null && directo.isNotEmpty) return directo;
+
+  final fragmento = uri.fragment;
+  final inicioQuery = fragmento.indexOf('?');
+  if (inicioQuery < 0) return null;
+  return Uri.tryParse(
+    fragmento.substring(inicioQuery),
+  )?.queryParameters['code'];
+}
 
 final apiClientProvider = Provider<ApiClient>((ref) {
   return ApiClient(
@@ -31,9 +48,12 @@ final authRepositoryProvider = Provider<AuthRepository>((ref) {
 });
 
 class SessionController extends StateNotifier<AsyncValue<AuthSession?>> {
-  SessionController(this.ref) : super(const AsyncLoading());
+  SessionController(this.ref, {String? initialStaffAuthCode})
+    : _initialStaffAuthCode = initialStaffAuthCode,
+      super(const AsyncLoading());
 
   final Ref ref;
+  String? _initialStaffAuthCode;
 
   Future<AuthSession> _refreshSession(AuthSession saved) async {
     final refreshed = AuthSession(
@@ -46,6 +66,22 @@ class SessionController extends StateNotifier<AsyncValue<AuthSession?>> {
   }
 
   Future<void> restore() async {
+    final initialStaffAuthCode = _initialStaffAuthCode;
+    _initialStaffAuthCode = null;
+    if (initialStaffAuthCode != null && initialStaffAuthCode.isNotEmpty) {
+      try {
+        final exchanged = await ref
+            .read(authRepositoryProvider)
+            .exchangeStaffCode(initialStaffAuthCode);
+        await ref.read(sessionStorageProvider).write(exchanged);
+        state = AsyncData(exchanged);
+      } catch (error, stackTrace) {
+        await ref.read(sessionStorageProvider).clear();
+        state = AsyncError(error, stackTrace);
+      }
+      return;
+    }
+
     final saved = await ref.read(sessionStorageProvider).read();
     if (saved == null) {
       try {
@@ -104,6 +140,17 @@ class SessionController extends StateNotifier<AsyncValue<AuthSession?>> {
     state = const AsyncLoading();
     state = await AsyncValue.guard(() async {
       final session = await ref.read(authRepositoryProvider).loginStaff();
+      await ref.read(sessionStorageProvider).write(session);
+      return session;
+    });
+  }
+
+  Future<void> completeStaffCallback(String code) async {
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
+      final session = await ref
+          .read(authRepositoryProvider)
+          .exchangeStaffCode(code);
       await ref.read(sessionStorageProvider).write(session);
       return session;
     });

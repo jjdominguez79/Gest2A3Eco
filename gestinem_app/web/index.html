@@ -18,21 +18,36 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="Mensajeria segura y servicios internos de Gestinem.">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="gestinem">
+  <meta name="apple-mobile-web-app-title" content="Gestinem">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>gestinem</title>
+  <title>Gestinem</title>
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
+  <script>
+    // GoRouter usa rutas hash en web. Conservamos el codigo del callback en
+    // esa ruta antes de iniciar Flutter para que el router pueda canjearlo.
+    const initialUrl = new URL(window.location.href);
+    if (initialUrl.pathname === '/auth/callback') {
+      const code = initialUrl.searchParams.get('code');
+      if (code) {
+        window.history.replaceState(
+          null,
+          '',
+          '/#/auth/callback?code=' + encodeURIComponent(code),
+        );
+      }
+    }
+  </script>
   <!--
     You can customize the "flutter_bootstrap.js" script.
     This is useful to provide a custom configuration to the Flutter loader

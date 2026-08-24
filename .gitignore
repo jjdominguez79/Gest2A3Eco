@@ -96,3 +96,6 @@ dist_installer/
 *.msi
 *.zip
 *.7z
+
+gestinem_app/.firebase/
+gestinem_site/

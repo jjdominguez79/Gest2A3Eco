@@ -6,6 +6,14 @@ import 'package:gestinem/features/auth/domain/user_profile.dart';
 import 'test_helpers.dart';
 
 void main() {
+  test('el retorno web elimina query y fragmento de la ruta actual', () {
+    final redirect = construirRetornoWeb(
+      Uri.parse('https://app.gestinem.es/#/login'),
+    );
+
+    expect(redirect, 'https://app.gestinem.es/auth/callback');
+  });
+
   test('restaura el perfil staff con token y avatar persistido', () async {
     final adapter = JsonAdapter({
       'id': 'staff-1',

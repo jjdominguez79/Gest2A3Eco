@@ -21,24 +21,33 @@ la aplicacion.
 El fichero Android `google-services.json` es configuracion del cliente y se
 ubica localmente en `gestinem_app/android/app/`; permanece excluido de Git.
 
-## Dominio app.gestinem.es
+## Dominios del piloto
 
-1. En Railway, abrir el servicio FastAPI y elegir **Settings > Networking >
-   Public Networking > Custom Domain**.
-2. Introducir `app.gestinem.es` y seleccionar el mismo puerto del dominio
-   `gest2a3eco-production.up.railway.app`.
-3. Railway mostrara un destino CNAME y un registro TXT de verificacion.
-4. En la zona DNS de Raiola, crear ambos registros exactamente como los entrega
-   Railway. En RaiolaCP, los nombres completos de registro terminan en punto.
-5. Esperar a que Railway marque el dominio como verificado y emita el certificado.
-6. Actualizar en Railway:
-   - `DGT_PUBLIC_BASE_URL=https://app.gestinem.es`
-   - `MESSAGING_PUBLIC_BASE_URL=https://app.gestinem.es`
-7. En Microsoft Entra, anadir como URI de redireccion web:
-   `https://app.gestinem.es/api/v1/messaging/staff-auth/callback`.
-8. Mantener temporalmente tambien la URI de Railway hasta que todos los clientes
-   Flutter se hayan actualizado.
-9. Recompilar Flutter con `API_BASE_URL=https://app.gestinem.es`.
+- Frontend Flutter Web: `https://app.gestinem.es`, servido por Firebase Hosting.
+- Backend FastAPI: `https://gest2a3eco-production.up.railway.app`.
+
+La zona DNS de Raiola contiene:
+
+```text
+app.gestinem.es.  CNAME  gest2a3eco.web.app.
+```
+
+Railway debe mantener:
+
+```text
+DGT_PUBLIC_BASE_URL=https://gest2a3eco-production.up.railway.app
+MESSAGING_PUBLIC_BASE_URL=https://gest2a3eco-production.up.railway.app
+MESSAGING_APP_WEB_REDIRECT_URI=https://app.gestinem.es/auth/callback
+```
+
+En Microsoft Entra, la URI de redireccion del backend sigue siendo:
+
+```text
+https://gest2a3eco-production.up.railway.app/api/v1/messaging/staff-auth/callback
+```
+
+Cuando exista `api.gestinem.es`, migrar conjuntamente las dos URL publicas de
+Railway, la URI de Microsoft Entra y `API_BASE_URL` de todos los clientes.
 
 ## Compilaciones del piloto
 

@@ -9,6 +9,9 @@ import '../../../core/config/app_config.dart';
 import '../../../core/deep_links/external_auth_handoff.dart';
 import '../domain/user_profile.dart';
 
+String construirRetornoWeb(Uri base) =>
+    base.resolve('/auth/callback').toString();
+
 class AuthRepository {
   AuthRepository(this._dio, {AppLinks? appLinks})
     : _appLinks = appLinks ?? AppLinks();
@@ -53,7 +56,7 @@ class AuthRepository {
       );
       final redirect = configuredRedirect.isNotEmpty
           ? configuredRedirect
-          : Uri.base.replace(path: '/auth/callback', query: '').toString();
+          : construirRetornoWeb(Uri.base);
       final loginUrl = Uri.parse(
         '${appConfig.apiBaseUrl}/staff-auth/login',
       ).replace(queryParameters: {'app': 'true', 'web_redirect': redirect});

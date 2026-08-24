@@ -23,7 +23,6 @@ final routerProvider = Provider<GoRouter>((ref) {
   final session = ref.watch(sessionProvider);
   final deepLinkRoute = routeForDeepLink(ref.watch(deepLinkProvider));
   return GoRouter(
-    initialLocation: '/',
     redirect: (context, state) {
       final loggedIn = session.valueOrNull != null;
       if (!loggedIn &&
@@ -38,6 +37,9 @@ final routerProvider = Provider<GoRouter>((ref) {
             : '/splash';
       }
       if (!loggedIn) {
+        if (state.matchedLocation == '/auth/callback') {
+          return session.hasError ? '/login' : null;
+        }
         if (state.matchedLocation == '/login' ||
             state.matchedLocation == '/accept-invite' ||
             state.matchedLocation == '/forgot-password' ||
@@ -72,7 +74,12 @@ final routerProvider = Provider<GoRouter>((ref) {
           token: state.uri.queryParameters['token'] ?? '',
         ),
       ),
-      GoRoute(path: '/auth/callback', builder: (_, _) => const _SplashScreen()),
+      GoRoute(
+        path: '/auth/callback',
+        builder: (_, state) => _StaffAuthCallbackScreen(
+          code: state.uri.queryParameters['code'] ?? '',
+        ),
+      ),
       GoRoute(path: '/', builder: (_, _) => const ConversationsScreen()),
       GoRoute(
         path: '/conversation/:id',
@@ -114,4 +121,38 @@ class _SplashScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) =>
       const Scaffold(body: Center(child: CircularProgressIndicator()));
+}
+
+class _StaffAuthCallbackScreen extends ConsumerStatefulWidget {
+  const _StaffAuthCallbackScreen({required this.code});
+
+  final String code;
+
+  @override
+  ConsumerState<_StaffAuthCallbackScreen> createState() =>
+      _StaffAuthCallbackScreenState();
+}
+
+class _StaffAuthCallbackScreenState
+    extends ConsumerState<_StaffAuthCallbackScreen> {
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_completeCallback);
+  }
+
+  Future<void> _completeCallback() async {
+    while (mounted && ref.read(sessionProvider).isLoading) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    if (!mounted) return;
+    if (widget.code.isEmpty) {
+      context.go('/login');
+      return;
+    }
+    await ref.read(sessionProvider.notifier).completeStaffCallback(widget.code);
+  }
+
+  @override
+  Widget build(BuildContext context) => const _SplashScreen();
 }

@@ -84,8 +84,9 @@ Para el piloto actual en Railway, usar como `API_BASE_URL`:
 
 `https://gest2a3eco-production.up.railway.app`
 
-Cuando `app.gestinem.es` este verificado en Railway, recompilar los clientes con
-esa URL. Consultar `../docs/flutter_pilot_deployment.md`.
+`app.gestinem.es` pertenece al frontend Flutter Web en Firebase Hosting. El
+backend mantiene la URL de Railway hasta disponer de un dominio API separado,
+por ejemplo `api.gestinem.es`. Consultar `../docs/flutter_pilot_deployment.md`.
 
 En Windows, despues del build, generar el instalador interno con Inno Setup 6:
 
