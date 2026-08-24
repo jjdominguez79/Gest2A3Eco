@@ -14,6 +14,17 @@ Push-Location $appDirectory
 try {
     if (-not (Get-Command flutter -ErrorAction SilentlyContinue)) { throw 'Flutter no está instalado o no está en PATH.' }
 
+    # Compatible con Windows PowerShell 5.1 y PowerShell 7+.
+    $runningOnWindows = ($env:OS -eq 'Windows_NT')
+    $runningOnMacOS = $false
+    if ($PSVersionTable.PSVersion.Major -ge 6) {
+        if (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) { $runningOnWindows = [bool]$IsWindows }
+        if (Get-Variable -Name IsMacOS -ErrorAction SilentlyContinue) { $runningOnMacOS = [bool]$IsMacOS }
+    }
+    if (-not $runningOnWindows) {
+        try { $runningOnMacOS = ((uname -s) -eq 'Darwin') } catch { $runningOnMacOS = $false }
+    }
+
     $branch = (git branch --show-current).Trim()
     if ($branch -ne 'main' -and -not $AllowNonMain) {
         throw "Estás en la rama '$branch'. Para producción usa main. Usa -AllowNonMain solo si sabes lo que haces."
@@ -62,7 +73,7 @@ try {
                 if ($LASTEXITCODE -ne 0) { throw 'Falló Firebase Hosting.' }
             }
             'windows' {
-                if (-not $IsWindows) { throw 'Windows solo puede compilarse desde Windows.' }
+                if (-not $runningOnWindows) { throw 'Windows solo puede compilarse desde Windows.' }
                 & flutter build windows --release @defines
                 if ($LASTEXITCODE -ne 0) { throw 'Falló Flutter Windows.' }
                 $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
@@ -75,12 +86,12 @@ try {
                 }
             }
             'ios' {
-                if (-not $IsMacOS) { throw 'iOS solo puede compilarse desde macOS.' }
+                if (-not $runningOnMacOS) { throw 'iOS solo puede compilarse desde macOS.' }
                 & flutter build ipa --release @defines
                 if ($LASTEXITCODE -ne 0) { throw 'Falló el IPA iOS.' }
             }
             'macos' {
-                if (-not $IsMacOS) { throw 'macOS solo puede compilarse desde macOS.' }
+                if (-not $runningOnMacOS) { throw 'macOS solo puede compilarse desde macOS.' }
                 & flutter build macos --release @defines
                 if ($LASTEXITCODE -ne 0) { throw 'Falló Flutter macOS.' }
             }
@@ -89,8 +100,8 @@ try {
 
     if ($Platform -eq 'all') {
         Build-One 'android'; Build-One 'web'
-        if ($IsWindows) { Build-One 'windows' }
-        if ($IsMacOS) { Build-One 'ios'; Build-One 'macos' }
+        if ($runningOnWindows) { Build-One 'windows' }
+        if ($runningOnMacOS) { Build-One 'ios'; Build-One 'macos' }
     } else { Build-One $Platform }
 }
 finally { Pop-Location }
