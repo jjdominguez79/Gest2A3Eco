@@ -11,9 +11,6 @@ from backend.api.config import get_settings
 LOG = logging.getLogger(__name__)
 _APP = None
 
-# URL base de la aplicacion web para los enlaces de notificacion.
-_WEB_APP_URL = 'https://app.gestinem.es'
-
 
 class FcmResult(NamedTuple):
     success: bool
@@ -86,14 +83,15 @@ def send_fcm(push_token: str, payload: dict, *, platform: str = 'android') -> Fc
 
         webpush = None
         if platform == 'web':
+            web_app_url = get_settings().messaging_app_web_url
             conversation_id = data.get('conversation_id', '')
             thread_id = data.get('thread_id', '')
             if conversation_id:
-                link = f'{_WEB_APP_URL}/#/conversation/{conversation_id}'
+                link = f'{web_app_url}/#/conversation/{conversation_id}'
             elif thread_id:
-                link = f'{_WEB_APP_URL}/#/internal/{thread_id}'
+                link = f'{web_app_url}/#/internal/{thread_id}'
             else:
-                link = f'{_WEB_APP_URL}/'
+                link = f'{web_app_url}/'
             webpush = messaging.WebpushConfig(
                 notification=messaging.WebpushNotification(
                     title=title,

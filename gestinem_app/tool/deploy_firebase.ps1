@@ -73,7 +73,7 @@ try {
         -replace 'PENDIENTE_FIREBASE_MESSAGING_SENDER_ID',  $FirebaseMessagingSenderId `
         -replace 'PENDIENTE_FIREBASE_APP_ID',               $FirebaseAppId
 
-    if ($swPatched -match 'PENDIENTE') {
+    if ($swPatched -match 'PENDIENTE_FIREBASE_') {
         throw "El service worker sigue teniendo valores PENDIENTE tras la sustitucion. Revisa el script."
     }
 
@@ -104,7 +104,7 @@ try {
 
     # Verificar que el build no contiene PENDIENTE en el service worker.
     $builtSw = Get-Content "build/web/firebase-messaging-sw.js" -Raw
-    if ($builtSw -match 'PENDIENTE') {
+    if ($builtSw -match 'PENDIENTE_FIREBASE_') {
         throw "El service worker compilado sigue conteniendo valores PENDIENTE."
     }
 

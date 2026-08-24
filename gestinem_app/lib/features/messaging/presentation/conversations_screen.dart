@@ -12,6 +12,7 @@ import '../../auth/presentation/auth_controller.dart';
 import '../domain/conversation.dart';
 import 'conversation_screen.dart';
 import 'messaging_providers.dart';
+import '../../../core/notifications/web_permission_banner.dart';
 
 final hiddenConversationsStorageProvider = Provider<HiddenConversationsStorage>(
   (ref) => HiddenConversationsStorage(),
@@ -282,6 +283,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
         ],
       ),
       drawer: _AppDrawer(profile: profile),
+      bottomNavigationBar: const WebNotificationPermissionBanner(),
       body: Row(
         children: [
           SizedBox(
@@ -507,6 +509,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
         const SizedBox(width: 8),
       ],
     ),
+    bottomNavigationBar: const WebNotificationPermissionBanner(),
     body: conversations.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (error, _) => Center(

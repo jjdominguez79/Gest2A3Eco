@@ -23,6 +23,15 @@
         ]
       },
       {
+        "source": "/firebase-messaging-sw.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
+        ]
+      },
+      {
         "source": "/auth/callback",
         "headers": [
           {
@@ -59,5 +68,17 @@
         ]
       }
     ]
+  },
+  "flutter": {
+    "platforms": {
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "gest2a3eco",
+          "configurations": {
+            "web": "1:268163516548:web:3045f4ccec08b0eafddad1"
+          }
+        }
+      }
+    }
   }
 }

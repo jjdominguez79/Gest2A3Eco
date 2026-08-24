@@ -88,6 +88,17 @@ class NotificationsService {
   /// True si Firebase esta inicializado y el token FCM esta registrado.
   bool get fcmConfigured => _fcmConfigured;
 
+  Future<void> _ensureFirebaseInitialized() async {
+    if (Firebase.apps.isNotEmpty) return;
+
+    if (kIsWeb) {
+      await Firebase.initializeApp(options: DefaultFirebaseOptions.web);
+    } else {
+      // Android utiliza android/app/google-services.json.
+      await Firebase.initializeApp();
+    }
+  }
+
   /// Inicializa el servicio para la sesion activa.
   ///
   /// En Android solicita permiso y registra el token de inmediato.
@@ -116,9 +127,7 @@ class NotificationsService {
 
     try {
       if (Firebase.apps.isEmpty) {
-        await Firebase.initializeApp(
-          options: DefaultFirebaseOptions.currentPlatform,
-        );
+        await _ensureFirebaseInitialized();
       }
       final messaging = FirebaseMessaging.instance;
       await _configureMessageListeners(messaging);
@@ -171,9 +180,7 @@ class NotificationsService {
     _permissionState = NotificationPermissionState.pending;
     try {
       if (Firebase.apps.isEmpty) {
-        await Firebase.initializeApp(
-          options: DefaultFirebaseOptions.currentPlatform,
-        );
+        await _ensureFirebaseInitialized();
       }
       final messaging = FirebaseMessaging.instance;
       await _configureMessageListeners(messaging);
@@ -193,9 +200,7 @@ class NotificationsService {
       _fcmConfigured = true;
       return true;
     } catch (error, stackTrace) {
-      debugPrint(
-        'No se pudo activar la notificacion web: $error\n$stackTrace',
-      );
+      debugPrint('No se pudo activar la notificacion web: $error\n$stackTrace');
       _permissionState = NotificationPermissionState.configError;
       return false;
     }
@@ -317,9 +322,12 @@ class NotificationsService {
   }
 
   void _emit(RemoteMessage message, {required bool opened}) {
-    _emitData(message.data, opened: opened,
-        title: message.notification?.title,
-        body: message.notification?.body);
+    _emitData(
+      message.data,
+      opened: opened,
+      title: message.notification?.title,
+      body: message.notification?.body,
+    );
   }
 
   void _emitData(

@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/foundation.dart';
 
 import '../core/notifications/notifications_service.dart';
+import '../core/notifications/web_permission_state.dart';
 import '../core/websocket/realtime_service.dart';
 import '../features/auth/domain/user_profile.dart';
 import '../features/auth/presentation/auth_controller.dart';
@@ -137,16 +139,25 @@ class _GestinemAppState extends ConsumerState<GestinemApp> {
     super.dispose();
   }
 
+  Future<void> _initializeNotifications(AuthSession session) async {
+    final service = ref.read(notificationsServiceProvider);
+    final api = ref.read(apiClientProvider);
+
+    await service.initialize(session, api);
+
+    if (!mounted || !kIsWeb) return;
+
+    if (service.permissionState == NotificationPermissionState.authorized) {
+      ref.read(webNotifPermissionProvider.notifier).markGranted();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = ref.watch(sessionProvider).valueOrNull;
     if (session != null) {
       _ensureRealtime(session);
-      unawaited(
-        ref
-            .read(notificationsServiceProvider)
-            .initialize(session, ref.read(apiClientProvider)),
-      );
+      unawaited(_initializeNotifications(session));
     } else {
       _stopRealtime();
     }

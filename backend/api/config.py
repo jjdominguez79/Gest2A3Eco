@@ -46,6 +46,7 @@ class Settings:
     messaging_firebase_credentials_json: str
     messaging_app_redirect_uri: str
     messaging_app_web_redirect_uri: str
+    messaging_app_web_url: str
     messaging_cors_origins: str
     messaging_latest_app_version: str
     messaging_latest_app_build: int
@@ -122,6 +123,7 @@ def get_settings() -> Settings:
             "MESSAGING_APP_REDIRECT_URI", "es.gestinem.app://auth/callback",
         ),
         messaging_app_web_redirect_uri=os.getenv("MESSAGING_APP_WEB_REDIRECT_URI", ""),
+        messaging_app_web_url=os.getenv("MESSAGING_APP_WEB_URL", "https://app.gestinem.es").rstrip("/"),
         messaging_cors_origins=os.getenv("MESSAGING_CORS_ORIGINS", ""),
         messaging_latest_app_version=os.getenv(
             "MESSAGING_LATEST_APP_VERSION", "0.1.3",
