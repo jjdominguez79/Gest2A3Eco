@@ -24,6 +24,10 @@ a = Analysis(
         (str(python_root / 'Lib' / 'tkinter'), 'tkinter'),
         (str(python_tcl / 'tcl8.6'), '_tcl_data'),
         (str(python_tcl / 'tk8.6'), '_tk_data'),
+        # XSD oficial de Facturae 3.2.1 usado por
+        # services/facturae/facturae_validator.py para validar cada XML
+        # generado. PyInstaller no incluye ficheros no-Python automaticamente.
+        ('services/facturae/schemas', 'services/facturae/schemas'),
     ] + collect_data_files('tkinterdnd2'),
     hiddenimports=[
         'keyring',
