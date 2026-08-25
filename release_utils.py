@@ -40,7 +40,11 @@ def compare_versions(current: str, target: str) -> int:
 
 
 def _read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
+    # Windows PowerShell 5 escribe un BOM con ``Set-Content -Encoding UTF8``.
+    # ``utf-8-sig`` acepta ambos formatos y evita que el BOM pase a formar
+    # parte del changelog (y termine fallando al imprimirlo en una consola
+    # configurada con una pagina de codigos de Windows).
+    return path.read_text(encoding="utf-8-sig")
 
 
 def _write_text(path: Path, content: str) -> None:

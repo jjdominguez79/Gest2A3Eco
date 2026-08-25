@@ -1,6 +1,6 @@
 {
-  "version": "1.8.2",
-  "tag": "v1.8.2",
-  "changelog": "Incorpora la trazabilidad documental de la mensajeria con avisos, bandeja global y acceso a la gestion documental. Registra las descargas y retiradas de archivos, aplica automaticamente el esquema necesario en el backend y mejora la recuperacion ante desconexiones de PostgreSQL al actualizar facturas.",
-  "force_update": false
+  "version": "1.8.4",
+  "tag": "v1.8.4",
+  "changelog": "Se ha corregido el error que generaba la generación de ficheros FACe. Se ha añadido la actualización de la tabla de facturas en tiempo real.",
+  "force_update": true
 }

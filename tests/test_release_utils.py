@@ -1,4 +1,5 @@
 import json
+import sys
 
 import pytest
 
@@ -9,6 +10,7 @@ from release_utils import (
     build_version_manifest,
     compare_versions,
     is_valid_semver,
+    main,
     read_app_version,
     read_setup_version,
     update_app_version_file,
@@ -37,6 +39,12 @@ def test_compare_versions_orders_semver() -> None:
 def test_read_app_version(tmp_path) -> None:
     path = tmp_path / "app_version.py"
     path.write_text('APP_VERSION = "1.2.1"\nUPDATE_CHECK_URL = "x"\n', encoding="utf-8")
+    assert read_app_version(path) == "1.2.1"
+
+
+def test_read_app_version_accepts_utf8_bom(tmp_path) -> None:
+    path = tmp_path / "app_version.py"
+    path.write_text('APP_VERSION = "1.2.1"\n', encoding="utf-8-sig")
     assert read_app_version(path) == "1.2.1"
 
 
@@ -106,6 +114,30 @@ def test_build_release_metadata() -> None:
         "changelog": "Linea 1\nLinea 2",
         "force_update": True,
     }
+
+
+def test_write_release_metadata_strips_bom_from_changelog_file(tmp_path, monkeypatch) -> None:
+    changelog_file = tmp_path / "changelog.txt"
+    output_file = tmp_path / "release_metadata.json"
+    changelog_file.write_text("Cambios con acentos: generación\n", encoding="utf-8-sig")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "release_utils",
+            "write-release-metadata",
+            "--version",
+            "1.2.2",
+            "--output",
+            str(output_file),
+            "--changelog-file",
+            str(changelog_file),
+        ],
+    )
+
+    assert main() == 0
+    payload = json.loads(output_file.read_text(encoding="utf-8"))
+    assert payload["changelog"] == "Cambios con acentos: generación"
 
 
 def test_validate_release_state(tmp_path) -> None:
