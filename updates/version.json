@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.8.2",
-  "minimum_required_version": "1.5.1",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.2/Setup_Gest2A3Eco_1.8.2.exe",
-  "changelog": "Incorpora la trazabilidad documental de la mensajeria con avisos, bandeja global y acceso a la gestion documental. Registra las descargas y retiradas de archivos, aplica automaticamente el esquema necesario en el backend y mejora la recuperacion ante desconexiones de PostgreSQL al actualizar facturas.",
-  "force_update": false
+  "latest_version": "1.8.4",
+  "minimum_required_version": "1.8.4",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.4/Setup_Gest2A3Eco_1.8.4.exe",
+  "changelog": "Se ha corregido el error que generaba la generaci�n de ficheros FACe. Se ha a�adido la actualizaci�n de la tabla de facturas en tiempo real.",
+  "force_update": true
 }
