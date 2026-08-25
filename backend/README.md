@@ -120,6 +120,39 @@ backend elimina la copia temporal.
 El disco local configurado por `MESSAGING_STORAGE_DIR` es valido para desarrollo,
 pero no es el archivo definitivo de produccion.
 
+## Limpieza de mensajeria de prueba
+
+Las organizaciones de prueba se identifican con `msg_organizations.is_test`.
+Las historicas `E0000` y `E00000` se marcan automaticamente al aplicar la
+migracion `008_test_data_cleanup.sql` o al arrancar una version actualizada.
+El campo tambien puede establecerse mediante el alta/actualizacion administrativa
+de organizaciones; nunca debe marcarse una empresa real.
+
+La herramienta siempre funciona primero como previsualizacion y solo considera
+organizaciones que tengan dicha marca:
+
+```powershell
+python -m backend.tools.limpiar_mensajeria --antes-de 2026-08-01
+python -m backend.tools.limpiar_mensajeria --organizacion E00000 --reset-test
+```
+
+La salida incluye cantidades y un codigo ligado al contenido exacto del plan.
+Para ejecutar se repite el mismo comando añadiendo el codigo, el responsable y
+el motivo:
+
+```powershell
+python -m backend.tools.limpiar_mensajeria --organizacion E00000 --reset-test `
+  --confirmar LIMPIAR-XXXXXXXXXXXX --actor "Nombre administrador" `
+  --motivo "Fin de pruebas Flutter"
+```
+
+`--antes-de` conserva organizaciones, clientes, conversaciones y mensajes
+posteriores a la fecha; las fechas sin zona horaria se interpretan como UTC.
+`--reset-test` elimina por completo las organizaciones
+de prueba seleccionadas. La operacion queda registrada en `msg_cleanup_audit`.
+Los blobs se eliminan despues de confirmar la transaccion PostgreSQL; cualquier
+fallo queda guardado en esa auditoria para su recuperacion manual.
+
 ## Mensajeria movil y tiempo real
 
 La ampliacion aditiva `backend/migrations/002_flutter_messaging.sql` incorpora

@@ -80,7 +80,8 @@ def startup():
             "WHERE table_schema=current_schema() "
             "AND table_name IN ('dgt_documentos', 'msg_staff', 'msg_messages', "
             "'msg_staff_thread_messages', 'msg_attachments', 'msg_downloads', "
-            "'msg_conversations', 'msg_websocket_tickets')"
+            "'msg_conversations', 'msg_websocket_tickets', 'msg_organizations', "
+            "'msg_cleanup_audit')"
         )).tuples())
         column_migrations = {
             ("dgt_documentos", "dataprius_json"): (
@@ -145,6 +146,14 @@ def startup():
             ("msg_conversations", "started_at"): (
                 "ALTER TABLE msg_conversations ADD COLUMN started_at TIMESTAMPTZ"
             ),
+            ("msg_organizations", "is_test"): (
+                "ALTER TABLE msg_organizations "
+                "ADD COLUMN is_test BOOLEAN NOT NULL DEFAULT FALSE"
+            ),
+            ("msg_cleanup_audit", "storage_keys_json"): (
+                "ALTER TABLE msg_cleanup_audit "
+                "ADD COLUMN storage_keys_json TEXT NOT NULL DEFAULT '[]'"
+            ),
         }
         for column, ddl in column_migrations.items():
             if column not in existing_columns:
@@ -162,7 +171,8 @@ def startup():
             "SELECT indexname FROM pg_indexes WHERE schemaname=current_schema() "
 
             "AND tablename IN ('msg_staff', 'msg_downloads', 'msg_conversations', "
-            "'msg_attachments', 'msg_websocket_tickets', 'msg_staff_presence_connections')"
+            "'msg_attachments', 'msg_websocket_tickets', 'msg_staff_presence_connections', "
+            "'msg_organizations')"
         )).scalars())
         index_migrations = {
             "ix_msg_staff_email": "CREATE INDEX ix_msg_staff_email ON msg_staff(email)",
@@ -187,6 +197,10 @@ def startup():
                 "CREATE INDEX ix_msg_websocket_tickets_staff_session_id "
                 "ON msg_websocket_tickets(staff_session_id)"
             ),
+            "ix_msg_organizations_is_test": (
+                "CREATE INDEX ix_msg_organizations_is_test "
+                "ON msg_organizations(is_test)"
+            ),
         }
         for index_name, ddl in index_migrations.items():
             if index_name not in existing_indexes:
@@ -198,6 +212,10 @@ def startup():
             "WHERE session.staff_external_id=staff.external_id)"
         ))
         conn.execute(text("UPDATE msg_conversations SET kind='fiscal' WHERE kind='general'"))
+        conn.execute(text(
+            "UPDATE msg_organizations SET is_test=TRUE "
+            "WHERE UPPER(TRIM(company_code)) IN ('E0000', 'E00000')"
+        ))
         conn.execute(text(
             "UPDATE msg_conversations AS conversation SET started_at=COALESCE(("
             "SELECT MIN(message.created_at) FROM msg_messages AS message "
