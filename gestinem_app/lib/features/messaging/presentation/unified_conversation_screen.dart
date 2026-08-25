@@ -26,6 +26,7 @@ class _UnifiedConversationScreenState
   List<PlatformFile> _files = [];
   Message? _replyingTo;
   bool _sending = false;
+  String? _lastMessageMarkedRead;
 
   @override
   void initState() {
@@ -45,6 +46,14 @@ class _UnifiedConversationScreenState
       await ref.read(messagingRepositoryProvider).markAllRead();
       ref.invalidate(unifiedConversationProvider);
     } catch (_) {}
+  }
+
+  void _markReadWhenMessagesArrive(List<Message> messages) {
+    if (messages.isEmpty) return;
+    final lastMessageId = messages.last.id;
+    if (_lastMessageMarkedRead == lastMessageId) return;
+    _lastMessageMarkedRead = lastMessageId;
+    unawaited(_markRead());
   }
 
   Future<void> _pickFiles() async {
@@ -165,6 +174,7 @@ class _UnifiedConversationScreenState
   @override
   Widget build(BuildContext context) {
     final asyncMessages = ref.watch(unifiedMessagesProvider);
+    asyncMessages.whenData(_markReadWhenMessagesArrive);
     final baseUrl = appConfig.apiBaseUrl.replaceAll('/api/v1/messaging', '');
 
     return Scaffold(

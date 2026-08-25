@@ -292,13 +292,19 @@ class MessageBubble extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: align,
                   children: [
-                    if (!mine && showAuthor)
+                    if (showAuthor)
                       Text(
-                        message.authorName,
+                        mine
+                            ? 'T\u00fa'
+                            : (message.authorName.trim().isEmpty
+                                ? 'Emisor desconocido'
+                                : message.authorName),
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
-                          color: colors.primary,
+                          color: mine
+                              ? colors.onPrimaryContainer
+                              : colors.primary,
                         ),
                       ),
                     if (message.replyTo != null) ...[

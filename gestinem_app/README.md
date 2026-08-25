@@ -1,6 +1,6 @@
 # Gestinem
 
-Aplicación Flutter multiplataforma de Gestinem. La versión actual se define exclusivamente en `pubspec.yaml` (actualmente `0.1.3+15`); no dupliques manualmente la versión en otros ficheros.
+Aplicación Flutter multiplataforma de Gestinem. La versión actual se define exclusivamente en `pubspec.yaml` (actualmente `0.1.3+16`); no dupliques manualmente la versión en otros ficheros.
 
 ## Estado de producción
 

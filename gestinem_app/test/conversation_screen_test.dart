@@ -13,6 +13,22 @@ import 'package:gestinem/core/api/api_client.dart';
 import 'test_helpers.dart';
 
 void main() {
+  test('solo considera propio un mensaje del mismo tipo y usuario', () {
+    final sameTypeOtherUser = Message(
+      id: 'm-other', conversationId: 't1', authorType: 'client',
+      authorId: 'client-2', authorName: 'Otra persona', authorAvatarUrl: '',
+      body: 'Mensaje ajeno', createdAt: DateTime(2026, 8, 15), deleted: false,
+    );
+    final own = Message(
+      id: 'm-own', conversationId: 't1', authorType: 'client',
+      authorId: testProfile.id, authorName: testProfile.name, authorAvatarUrl: '',
+      body: 'Mensaje propio', createdAt: DateTime(2026, 8, 15), deleted: false,
+    );
+
+    expect(messageBelongsToProfile(sameTypeOtherUser, testProfile), isFalse);
+    expect(messageBelongsToProfile(own, testProfile), isTrue);
+  });
+
   testWidgets('conversacion renderiza historial y compositor', (tester) async {
     final adapter = JsonAdapter(<String, dynamic>{});
     final dio = Dio(BaseOptions(baseUrl: 'https://example.test'))

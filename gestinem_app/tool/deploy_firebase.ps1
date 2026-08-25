@@ -17,6 +17,33 @@ param(
 
 $ErrorActionPreference = "Stop"
 $appDirectory = Split-Path -Parent $PSScriptRoot
+$optionsFile = Join-Path $appDirectory "lib/firebase_options.dart"
+
+# La configuracion Firebase Web no contiene secretos y ya forma parte del
+# codigo generado por FlutterFire. Reutilizarla evita exigir siete variables
+# de entorno duplicadas y que ambas configuraciones terminen divergiendo.
+function Get-FirebaseWebOption([string]$name) {
+    if (-not (Test-Path -LiteralPath $optionsFile)) {
+        return ""
+    }
+    $content = Get-Content $optionsFile -Raw
+    $webBlock = ($content -split 'static const FirebaseOptions android')[0]
+    $match = [regex]::Match(
+        $webBlock,
+        ("(?m)^\s*" + [regex]::Escape($name) + "\s*:\s*'([^']+)'\s*,")
+    )
+    if ($match.Success) {
+        return $match.Groups[1].Value
+    }
+    return ""
+}
+
+if (-not $FirebaseApiKey)            { $FirebaseApiKey = Get-FirebaseWebOption "apiKey" }
+if (-not $FirebaseAuthDomain)        { $FirebaseAuthDomain = Get-FirebaseWebOption "authDomain" }
+if (-not $FirebaseProjectId)         { $FirebaseProjectId = Get-FirebaseWebOption "projectId" }
+if (-not $FirebaseStorageBucket)     { $FirebaseStorageBucket = Get-FirebaseWebOption "storageBucket" }
+if (-not $FirebaseMessagingSenderId) { $FirebaseMessagingSenderId = Get-FirebaseWebOption "messagingSenderId" }
+if (-not $FirebaseAppId)             { $FirebaseAppId = Get-FirebaseWebOption "appId" }
 
 # ---------------------------------------------------------------------------
 # Validaciones previas al build
@@ -28,7 +55,14 @@ function Assert-NotEmpty([string]$value, [string]$name) {
     }
 }
 
-Assert-NotEmpty $VapidKey            "VapidKey / FIREBASE_WEB_VAPID_KEY"
+if (-not $VapidKey -or $VapidKey.Trim() -eq '') {
+    throw (
+        "Falta la clave publica VAPID de Firebase Cloud Messaging para Web. " +
+        "Copiala desde Firebase Console > Configuracion del proyecto > " +
+        "Cloud Messaging > Certificados de Web Push y ejecuta: " +
+        ".\tool\deploy_firebase.ps1 -VapidKey '<CLAVE_PUBLICA>'"
+    )
+}
 Assert-NotEmpty $FirebaseApiKey            "FirebaseApiKey / FIREBASE_WEB_API_KEY"
 Assert-NotEmpty $FirebaseAuthDomain        "FirebaseAuthDomain / FIREBASE_WEB_AUTH_DOMAIN"
 Assert-NotEmpty $FirebaseProjectId         "FirebaseProjectId / FIREBASE_WEB_PROJECT_ID"
@@ -37,7 +71,6 @@ Assert-NotEmpty $FirebaseMessagingSenderId "FirebaseMessagingSenderId / FIREBASE
 Assert-NotEmpty $FirebaseAppId             "FirebaseAppId / FIREBASE_WEB_APP_ID"
 
 # Comprobar que firebase_options.dart no tiene valores PENDIENTE en la seccion web.
-$optionsFile = Join-Path $appDirectory "lib/firebase_options.dart"
 if (Test-Path -LiteralPath $optionsFile) {
     $optionsContent = Get-Content $optionsFile -Raw
     # Buscamos PENDIENTE en las lineas que pertenecen al bloque web (antes de android).

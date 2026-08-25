@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -68,6 +70,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   List<PlatformFile> _files = [];
   Message? _replyingTo;
   bool _sending = false;
+  String? _lastMessageMarkedRead;
 
   @override
   void initState() {
@@ -80,6 +83,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.conversationId != widget.conversationId ||
         oldWidget.internal != widget.internal) {
+      _lastMessageMarkedRead = null;
       WidgetsBinding.instance.addPostFrameCallback((_) => _markRead());
     }
   }
@@ -109,6 +113,14 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
         'No se pudo actualizar el estado de lectura: $error\n$stackTrace',
       );
     }
+  }
+
+  void _markReadWhenMessagesArrive(List<Message> messages) {
+    if (messages.isEmpty) return;
+    final lastMessageId = messages.last.id;
+    if (_lastMessageMarkedRead == lastMessageId) return;
+    _lastMessageMarkedRead = lastMessageId;
+    unawaited(_markRead());
   }
 
   Future<void> _pickFiles() async {
@@ -428,6 +440,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     final asyncMessages = widget.internal
         ? ref.watch(internalMessagesProvider(widget.conversationId))
         : ref.watch(messagesProvider(widget.conversationId));
+    asyncMessages.whenData(_markReadWhenMessagesArrive);
     final conversations = widget.internal
         ? null
         : ref.watch(conversationsProvider).valueOrNull;
@@ -526,9 +539,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                 itemCount: messages.length,
               itemBuilder: (context, index) {
                 final message = messages[index];
-                final mine =
-                    message.authorId == profile.id ||
-                    message.authorType == profile.type.name;
+                final mine = messageBelongsToProfile(message, profile);
                 return MessageBubble(
                   message: message,
                   mine: mine,
@@ -641,6 +652,9 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     );
   }
 }
+
+bool messageBelongsToProfile(Message message, UserProfile profile) =>
+    message.authorType == profile.type.name && message.authorId == profile.id;
 
 InternalThread? _findThread(List<InternalThread>? threads, String id) {
   if (threads == null) return null;
