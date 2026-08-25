@@ -15,6 +15,12 @@ import '../features/messaging/presentation/conversations_screen.dart';
 import '../features/messaging/presentation/client_detail_screen.dart';
 import '../features/messaging/presentation/clients_screen.dart';
 import '../features/messaging/presentation/invite_client_screen.dart';
+import '../features/invoicing/presentation/customer_form_screen.dart';
+import '../features/invoicing/presentation/customer_list_screen.dart';
+import '../features/invoicing/presentation/invoice_detail_screen.dart';
+import '../features/invoicing/presentation/invoice_form_screen.dart';
+import '../features/invoicing/presentation/invoicing_screen.dart';
+import '../features/invoicing/presentation/issue_confirmation_screen.dart';
 import '../features/profile/presentation/about_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
 import '../features/company_profile/presentation/company_profile_screen.dart';
@@ -132,6 +138,39 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(path: '/profile', builder: (_, _) => const ProfileScreen()),
       GoRoute(path: '/about', builder: (_, _) => const AboutScreen()),
+      // Invoicing
+      GoRoute(
+        path: '/invoicing',
+        builder: (_, _) => const InvoicingScreen(),
+      ),
+      GoRoute(
+        path: '/invoicing/drafts/new',
+        builder: (_, _) => const InvoiceFormScreen(),
+      ),
+      GoRoute(
+        path: '/invoicing/drafts/:id',
+        builder: (_, state) =>
+            InvoiceFormScreen(draftId: state.pathParameters['id']!),
+      ),
+      GoRoute(
+        path: '/invoicing/drafts/:id/issue',
+        builder: (_, state) => IssueConfirmationScreen(
+          draftId: state.pathParameters['id']!,
+        ),
+      ),
+      GoRoute(
+        path: '/invoicing/invoices/:id',
+        builder: (_, state) =>
+            InvoiceDetailScreen(invoiceId: state.pathParameters['id']!),
+      ),
+      GoRoute(
+        path: '/invoicing/customers',
+        builder: (_, _) => const CustomerListScreen(),
+      ),
+      GoRoute(
+        path: '/invoicing/customers/new',
+        builder: (_, _) => const CustomerFormScreen(),
+      ),
     ],
   );
 });

@@ -313,6 +313,12 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
       ),
       actions: [
         IconButton(
+          key: const Key('client-invoicing-button'),
+          tooltip: 'Facturacion',
+          onPressed: () => context.push('/invoicing'),
+          icon: const Icon(Icons.receipt_long_outlined),
+        ),
+        IconButton(
           key: const Key('client-profile-button'),
           tooltip: 'Mi perfil',
           onPressed: () => context.go('/profile'),
