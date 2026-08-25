@@ -46,8 +46,12 @@ from backend.api.storage import (
 from backend.api.integrations import DatapriusBackend, ProviderError, SignRequestBackend
 from backend.api.validation import validar_parte
 from backend.api import messaging_models  # noqa: F401 - registra tablas SQLAlchemy
+from backend.api import client_models  # noqa: F401 - registra tablas area cliente
 from backend.api.messaging_api import cleanup_expired_attachments, router as messaging_router
 from backend.api.mail_api import router as mail_router
+from backend.api.client_profile_api import router as client_profile_router
+from backend.api.client_documents_api import router as client_documents_router
+from backend.api.client_invoices_api import router as client_invoices_router
 
 app = FastAPI(title="Gestinem Integraciones API", version="1.1.0")
 
@@ -69,6 +73,9 @@ templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
 app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
 app.include_router(messaging_router)
 app.include_router(mail_router)
+app.include_router(client_profile_router)
+app.include_router(client_documents_router)
+app.include_router(client_invoices_router)
 
 
 @app.on_event("startup")

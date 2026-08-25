@@ -26,6 +26,19 @@ class MessagingOrganization(Base):
     private_owner_external_id: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    # Perfil empresarial (sincronizado desde el escritorio)
+    tax_id: Mapped[str] = mapped_column(String(20), default="")
+    legal_name: Mapped[str] = mapped_column(String(200), default="")
+    address: Mapped[str] = mapped_column(String(300), default="")
+    postal_code: Mapped[str] = mapped_column(String(10), default="")
+    city: Mapped[str] = mapped_column(String(100), default="")
+    province: Mapped[str] = mapped_column(String(100), default="")
+    country: Mapped[str] = mapped_column(String(60), default="ES")
+    phone: Mapped[str] = mapped_column(String(30), default="")
+    email: Mapped[str] = mapped_column(String(254), default="")
+    profile_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    client_invoicing_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    client_documents_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class MessagingStaff(Base):

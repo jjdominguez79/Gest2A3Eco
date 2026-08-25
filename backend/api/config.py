@@ -56,6 +56,12 @@ class Settings:
     azure_doc_intelligence_model_id: str
     azure_ocr_training_connection_string: str
     azure_ocr_training_container: str
+    # Area documental del cliente - almacenamiento permanente
+    client_documents_azure_connection_string: str
+    client_documents_azure_container: str
+    client_documents_storage_dir: str
+    # Facturacion online
+    client_invoicing_enabled: bool
 
 
 def get_settings() -> Settings:
@@ -139,4 +145,17 @@ def get_settings() -> Settings:
         azure_doc_intelligence_model_id=os.getenv("AZURE_DOC_INTELLIGENCE_MODEL_ID", "prebuilt-invoice"),
         azure_ocr_training_connection_string=os.getenv("AZURE_OCR_TRAINING_CONNECTION_STRING", ""),
         azure_ocr_training_container=os.getenv("AZURE_OCR_TRAINING_CONTAINER", "facturas-entrenamiento"),
+        client_documents_azure_connection_string=os.getenv(
+            "CLIENT_DOCUMENTS_AZURE_CONNECTION_STRING",
+            os.getenv("MESSAGING_AZURE_CONNECTION_STRING", ""),
+        ),
+        client_documents_azure_container=os.getenv(
+            "CLIENT_DOCUMENTS_AZURE_CONTAINER", "documentos-cliente",
+        ),
+        client_documents_storage_dir=os.getenv(
+            "CLIENT_DOCUMENTS_STORAGE_DIR", "./client_documents_storage",
+        ),
+        client_invoicing_enabled=os.getenv(
+            "CLIENT_INVOICING_ENABLED", "false",
+        ).strip().lower() in {"1", "true", "yes", "si"},
     )
