@@ -1051,6 +1051,18 @@ class _AppDrawer extends StatelessWidget {
             title: const Text('Clientes'),
             onTap: () => _navigate(context, '/clients'),
           ),
+        if (profile.type == UserType.client) ...[
+          ListTile(
+            leading: const Icon(Icons.business_outlined),
+            title: const Text('Mi empresa'),
+            onTap: () => _navigate(context, '/company-profile'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.folder_outlined),
+            title: const Text('Mis documentos'),
+            onTap: () => _navigate(context, '/documents'),
+          ),
+        ],
         ListTile(
           leading: const Icon(Icons.person_outline),
           title: const Text('Perfil'),

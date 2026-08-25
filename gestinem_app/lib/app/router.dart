@@ -17,6 +17,9 @@ import '../features/messaging/presentation/clients_screen.dart';
 import '../features/messaging/presentation/invite_client_screen.dart';
 import '../features/profile/presentation/about_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
+import '../features/company_profile/presentation/company_profile_screen.dart';
+import '../features/documents/presentation/documents_screen.dart';
+import '../features/documents/presentation/document_detail_screen.dart';
 import '../core/deep_links/deep_link_controller.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
@@ -111,6 +114,20 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/invite-client',
         builder: (_, state) => InviteClientScreen(
           companyCode: state.uri.queryParameters['company'] ?? '',
+        ),
+      ),
+      GoRoute(
+        path: '/company-profile',
+        builder: (_, _) => const CompanyProfileScreen(),
+      ),
+      GoRoute(
+        path: '/documents',
+        builder: (_, _) => const DocumentsScreen(),
+      ),
+      GoRoute(
+        path: '/documents/:id',
+        builder: (_, state) => DocumentDetailScreen(
+          documentId: state.pathParameters['id']!,
         ),
       ),
       GoRoute(path: '/profile', builder: (_, _) => const ProfileScreen()),

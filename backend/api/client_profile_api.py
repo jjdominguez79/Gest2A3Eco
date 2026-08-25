@@ -1,14 +1,15 @@
-"""API de perfil empresarial del cliente (solo lectura)."""
+"""API de perfil empresarial del cliente (solo lectura) y sincronizacion interna."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.api.database import SessionLocal
 from backend.api.messaging_models import MessagingClient, MessagingOrganization, MessagingSession
-from backend.api.messaging_security import hash_token, is_expired
+from backend.api.messaging_security import hash_token, is_expired, utcnow
+from backend.api.security import require_workstation_or_internal
 
 router = APIRouter(prefix="/api/v1/messaging/client", tags=["client-profile"])
 
@@ -21,9 +22,8 @@ def _db():
         db.close()
 
 
-def _authenticated_client(request, db: Session) -> MessagingClient:
+def _authenticated_client(request: Request, db: Session) -> MessagingClient:
     """Extrae el cliente autenticado de la sesion."""
-    from fastapi import Request
     token = ""
     auth = request.headers.get("authorization", "")
     if auth.startswith("Bearer "):
@@ -48,15 +48,13 @@ def _authenticated_client(request, db: Session) -> MessagingClient:
 
 
 @router.get("/company-profile")
-def get_company_profile(request, db: Session = Depends(_db)):
+def get_company_profile(request: Request, db: Session = Depends(_db)):
     """Devuelve la ficha empresarial de la organizacion del cliente."""
-    from fastapi import Request
     client = _authenticated_client(request, db)
     org = db.get(MessagingOrganization, client.organization_id)
     if not org or not org.active:
         raise HTTPException(status_code=404, detail="Organizacion no encontrada")
 
-    # Campos visibles de solo lectura
     profile = {
         "company_code": org.company_code,
         "name": org.name,
@@ -74,5 +72,52 @@ def get_company_profile(request, db: Session = Depends(_db)):
             org.profile_synced_at.isoformat() if org.profile_synced_at else None
         ),
     }
-    # Omitir campos vacios
     return {k: v for k, v in profile.items() if v not in ("", None)}
+
+
+@router.put("/internal/sync-profile")
+def sync_company_profile(
+    payload: dict = Body(...),
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    """Sincroniza perfil empresarial desde el escritorio.
+
+    Recibe company_code y campos de perfil. Actualiza msg_organizations.
+    No sincroniza cuentas bancarias, series, subcuentas ni config contable.
+    """
+    company_code = payload.get("company_code", "").strip()
+    if not company_code:
+        raise HTTPException(status_code=400, detail="company_code es obligatorio")
+
+    org = db.scalar(
+        select(MessagingOrganization).where(
+            MessagingOrganization.company_code == company_code,
+        )
+    )
+    if not org:
+        raise HTTPException(status_code=404, detail="Organizacion no encontrada")
+
+    # Campos sincronizables
+    _SYNC_FIELDS = (
+        "tax_id", "legal_name", "address", "postal_code",
+        "city", "province", "country", "phone", "email",
+    )
+    changed = False
+    for field in _SYNC_FIELDS:
+        if field in payload:
+            value = str(payload[field]).strip()
+            if getattr(org, field) != value:
+                setattr(org, field, value)
+                changed = True
+
+    if "name" in payload and payload["name"].strip():
+        name = payload["name"].strip()
+        if org.name != name:
+            org.name = name
+            changed = True
+
+    org.profile_synced_at = utcnow()
+    db.commit()
+
+    return {"status": "ok", "changed": changed, "company_code": company_code}
