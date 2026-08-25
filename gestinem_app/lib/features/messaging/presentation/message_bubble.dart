@@ -15,6 +15,7 @@ class AttachmentCard extends StatelessWidget {
     this.onDownload,
     this.onShowHistory,
     this.onWithdraw,
+    this.staffCanDownload = false,
   });
 
   final Attachment attachment;
@@ -22,6 +23,7 @@ class AttachmentCard extends StatelessWidget {
   final VoidCallback? onDownload;
   final VoidCallback? onShowHistory;
   final VoidCallback? onWithdraw;
+  final bool staffCanDownload;
 
   String _statusLabel() {
     switch (attachment.status) {
@@ -46,7 +48,9 @@ class AttachmentCard extends StatelessWidget {
       '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
 
   String _fmtSize(int bytes) {
-    if (bytes >= 1048576) return '${(bytes / 1048576).toStringAsFixed(1)}\u00a0MB';
+    if (bytes >= 1048576) {
+      return '${(bytes / 1048576).toStringAsFixed(1)}\u00a0MB';
+    }
     if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(1)}\u00a0KB';
     return '$bytes\u00a0B';
   }
@@ -55,7 +59,9 @@ class AttachmentCard extends StatelessWidget {
     if (attachment.isWithdrawn) return Icons.remove_circle_outline;
     if (attachment.isExpired) return Icons.schedule;
     if (attachment.isIncoming) {
-      return attachment.localConfirmed ? Icons.check_circle_outline : Icons.cloud_done_outlined;
+      return attachment.localConfirmed
+          ? Icons.check_circle_outline
+          : Icons.cloud_done_outlined;
     }
     return Icons.description_outlined;
   }
@@ -63,7 +69,8 @@ class AttachmentCard extends StatelessWidget {
   Color _iconColor(ColorScheme colors) {
     if (attachment.isWithdrawn) return colors.error;
     if (attachment.isExpired) return colors.outline;
-    if (attachment.localConfirmed || attachment.status == 'guardado_por_asesoria') {
+    if (attachment.localConfirmed ||
+        attachment.status == 'guardado_por_asesoria') {
       return colors.primary;
     }
     return colors.secondary;
@@ -72,7 +79,7 @@ class AttachmentCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final canDownload = !isStaff && attachment.available;
+    final canDownload = attachment.available && (!isStaff || staffCanDownload);
 
     return Container(
       key: Key('attachment-card-${attachment.id}'),
@@ -94,13 +101,21 @@ class AttachmentCard extends StatelessWidget {
                 Text(
                   attachment.name,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
                 Text(
                   '${_fmtSize(attachment.size)} \u00b7 ${_statusLabel()}',
-                  style: TextStyle(fontSize: 11, color: colors.onSurfaceVariant),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: colors.onSurfaceVariant,
+                  ),
                 ),
-                if (isStaff && !attachment.isIncoming && attachment.completedDownloadCount != null)
+                if (isStaff &&
+                    !attachment.isIncoming &&
+                    attachment.completedDownloadCount != null)
                   _StaffDownloadSummary(attachment: attachment),
                 if (attachment.isWithdrawn &&
                     (attachment.withdrawalReason?.isNotEmpty ?? false))
@@ -131,8 +146,11 @@ class AttachmentCard extends StatelessWidget {
               onWithdraw != null)
             IconButton(
               key: Key('withdraw-${attachment.id}'),
-              icon: Icon(Icons.remove_circle_outline,
-                  size: 20, color: colors.error),
+              icon: Icon(
+                Icons.remove_circle_outline,
+                size: 20,
+                color: colors.error,
+              ),
               tooltip: 'Retirar documento',
               onPressed: onWithdraw,
             ),
@@ -187,6 +205,7 @@ class MessageBubble extends StatelessWidget {
     this.authToken = '',
     this.showAuthor = true,
     this.isStaff = false,
+    this.allowStaffAttachmentDownload = false,
     this.onReplyTap,
     this.onAttachmentTap,
     this.onAttachmentHistory,
@@ -200,9 +219,12 @@ class MessageBubble extends StatelessWidget {
   final String baseUrl;
   final String authToken;
   final bool showAuthor;
+
   /// True cuando el visor es personal del despacho (no cliente)
   final bool isStaff;
+  final bool allowStaffAttachmentDownload;
   final VoidCallback? onReplyTap;
+
   /// Para cliente: se invoca al pulsar Descargar en un adjunto disponible.
   /// Para personal: no se invoca (las tarjetas son informativas).
   final void Function(Attachment attachment)? onAttachmentTap;
@@ -225,10 +247,10 @@ class MessageBubble extends StatelessWidget {
     final initials = message.authorName.isEmpty
         ? '?'
         : message.authorName
-            .split(' ')
-            .take(2)
-            .map((w) => w.isEmpty ? '' : w[0])
-            .join();
+              .split(' ')
+              .take(2)
+              .map((w) => w.isEmpty ? '' : w[0])
+              .join();
     return CircleAvatar(
       radius: 16,
       child: Text(initials.toUpperCase(), style: const TextStyle(fontSize: 12)),
@@ -237,8 +259,13 @@ class MessageBubble extends StatelessWidget {
 
   String _initials(String value) => value.isEmpty
       ? '?'
-      : value.split(' ').where((word) => word.isNotEmpty).take(2)
-          .map((word) => word[0]).join().toUpperCase();
+      : value
+            .split(' ')
+            .where((word) => word.isNotEmpty)
+            .take(2)
+            .map((word) => word[0])
+            .join()
+            .toUpperCase();
 
   String _timeLabel(DateTime dt) {
     final now = DateTime.now();
@@ -253,7 +280,9 @@ class MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final bubbleColor = mine ? colors.primaryContainer : colors.surfaceContainerLow;
+    final bubbleColor = mine
+        ? colors.primaryContainer
+        : colors.surfaceContainerLow;
     final align = mine ? CrossAxisAlignment.end : CrossAxisAlignment.start;
 
     return Padding(
@@ -265,8 +294,9 @@ class MessageBubble extends StatelessWidget {
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
-        mainAxisAlignment:
-            mine ? MainAxisAlignment.end : MainAxisAlignment.start,
+        mainAxisAlignment: mine
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
         children: [
           if (!mine) ...[_avatar(), const SizedBox(width: 6)],
           Flexible(
@@ -297,8 +327,8 @@ class MessageBubble extends StatelessWidget {
                         mine
                             ? 'T\u00fa'
                             : (message.authorName.trim().isEmpty
-                                ? 'Emisor desconocido'
-                                : message.authorName),
+                                  ? 'Emisor desconocido'
+                                  : message.authorName),
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
@@ -316,14 +346,18 @@ class MessageBubble extends StatelessWidget {
                           width: double.infinity,
                           padding: const EdgeInsets.all(6),
                           decoration: BoxDecoration(
-                            color: colors.surfaceContainerHighest
-                                .withValues(alpha: .6),
+                            color: colors.surfaceContainerHighest.withValues(
+                              alpha: .6,
+                            ),
                             border: Border(
                               left: BorderSide(
-                                  color: colors.secondary, width: 3),
+                                color: colors.secondary,
+                                width: 3,
+                              ),
                             ),
-                            borderRadius:
-                                const BorderRadius.all(Radius.circular(4)),
+                            borderRadius: const BorderRadius.all(
+                              Radius.circular(4),
+                            ),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -331,8 +365,9 @@ class MessageBubble extends StatelessWidget {
                               Text(
                                 message.replyTo!.authorName,
                                 style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 11),
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 11,
+                                ),
                               ),
                               Text(
                                 message.replyTo!.bodyFragment,
@@ -356,7 +391,9 @@ class MessageBubble extends StatelessWidget {
                           Text(
                             'Mensaje eliminado',
                             style: TextStyle(
-                                fontStyle: FontStyle.italic, fontSize: 13),
+                              fontStyle: FontStyle.italic,
+                              fontSize: 13,
+                            ),
                           ),
                         ],
                       )
@@ -366,15 +403,20 @@ class MessageBubble extends StatelessWidget {
                       AttachmentCard(
                         attachment: att,
                         isStaff: isStaff,
-                        onDownload: (!isStaff && att.available)
+                        staffCanDownload: allowStaffAttachmentDownload,
+                        onDownload:
+                            (att.available &&
+                                (!isStaff || allowStaffAttachmentDownload))
                             ? () => onAttachmentTap?.call(att)
                             : null,
-                        onShowHistory: isStaff &&
+                        onShowHistory:
+                            isStaff &&
                                 !att.isIncoming &&
                                 onAttachmentHistory != null
                             ? () => onAttachmentHistory?.call(att)
                             : null,
-                        onWithdraw: isStaff &&
+                        onWithdraw:
+                            isStaff &&
                                 !att.isIncoming &&
                                 !att.isWithdrawn &&
                                 onAttachmentWithdraw != null
@@ -388,8 +430,8 @@ class MessageBubble extends StatelessWidget {
                       child: Text(
                         _timeLabel(message.createdAt),
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              color: colors.onSurface.withValues(alpha: .55),
-                            ),
+                          color: colors.onSurface.withValues(alpha: .55),
+                        ),
                       ),
                     ),
                   ],

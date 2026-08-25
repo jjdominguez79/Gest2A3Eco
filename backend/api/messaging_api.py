@@ -29,7 +29,7 @@ from backend.api.messaging_models import (
     MessagingPasswordReset, MessagingPresence, MessagingRead, MessagingSession, MessagingStaff,
     MessagingStaffAuthFlow, MessagingStaffChannel, MessagingStaffSession,
     MessagingStaffAppCode, MessagingStaffThread, MessagingStaffThreadMessage,
-    MessagingStaffThreadRead, MessagingWebSocketTicket,
+    MessagingStaffPresenceConnection, MessagingStaffThreadRead, MessagingWebSocketTicket,
 )
 from backend.api.messaging_mail import (
     configured as mail_configured, send_invitation, send_message_notice,
@@ -239,6 +239,19 @@ def _staff_from_request(db: Session, request: Request) -> MessagingStaff:
     return staff
 
 
+def _staff_session_from_request(db: Session, request: Request) -> MessagingStaffSession | None:
+    token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    token = token or request.cookies.get("msg_staff_session", "")
+    if not token:
+        return None
+    item = db.scalar(select(MessagingStaffSession).where(
+        MessagingStaffSession.token_hash == hash_token(token),
+    ))
+    if not item or item.revoked_at or is_expired(item.expires_at):
+        return None
+    return item
+
+
 def _staff(
     request: Request,
     db: Session = Depends(get_db),
@@ -323,7 +336,28 @@ def _revoke_staff_access(db: Session, external_id: str) -> None:
         MessagingStaffSession.staff_external_id == external_id,
         MessagingStaffSession.revoked_at.is_(None),
     ).update({MessagingStaffSession.revoked_at: now}, synchronize_session=False)
+    db.query(MessagingStaffPresenceConnection).filter(
+        MessagingStaffPresenceConnection.staff_external_id == external_id,
+    ).delete(synchronize_session=False)
     # Web Push/VAPID retirado: ya no hay suscripciones que desactivar aqui.
+
+
+def _staff_online(db: Session, external_id: str) -> bool:
+    now = utcnow()
+    return bool(db.scalar(
+        select(MessagingStaffPresenceConnection.id)
+        .join(
+            MessagingStaffSession,
+            MessagingStaffSession.id == MessagingStaffPresenceConnection.staff_session_id,
+        )
+        .where(
+            MessagingStaffPresenceConnection.staff_external_id == external_id,
+            MessagingStaffPresenceConnection.connected_until > now,
+            MessagingStaffSession.revoked_at.is_(None),
+            MessagingStaffSession.expires_at > now,
+        )
+        .limit(1)
+    ))
 
 
 def _ensure_staff_group_threads(db: Session) -> None:
@@ -652,6 +686,8 @@ def _serialize_attachment(db: Session, a: MessagingAttachment, audience: str) ->
             and not expired
             and not a.storage_deleted_at
         )
+    elif audience == "internal":
+        base["available"] = not expired and not a.storage_deleted_at
     return base
 
 
@@ -1174,6 +1210,9 @@ def staff_auth_logout(
         ))
         if item:
             item.revoked_at = utcnow()
+            db.query(MessagingStaffPresenceConnection).filter(
+                MessagingStaffPresenceConnection.staff_session_id == item.id,
+            ).delete(synchronize_session=False)
             db.commit()
     response.delete_cookie("msg_staff_session")
     return {"ok": True}
@@ -1236,6 +1275,11 @@ def upload_own_avatar(
 def _serialize_staff_thread_message(db: Session, item: MessagingStaffThreadMessage) -> dict:
     author = db.get(MessagingStaff, item.author_staff_external_id)
     reply = db.get(MessagingStaffThreadMessage, item.reply_to_message_id) if item.reply_to_message_id else None
+    attachments = [] if item.deleted_at else list(db.scalars(
+        select(MessagingAttachment).where(
+            MessagingAttachment.internal_message_id == item.id,
+        )
+    ))
     return {
         "id": item.id, "thread_id": item.thread_id,
         "author_id": item.author_staff_external_id,
@@ -1247,6 +1291,10 @@ def _serialize_staff_thread_message(db: Session, item: MessagingStaffThreadMessa
         "body": "" if item.deleted_at else item.body,
         "deleted": bool(item.deleted_at),
         "deleted_at": item.deleted_at.isoformat() if item.deleted_at else None,
+        "has_attachments": bool(db.scalar(select(func.count(MessagingAttachment.id)).where(
+            MessagingAttachment.internal_message_id == item.id,
+        ))),
+        "attachments": [_serialize_attachment(db, attachment, "internal") for attachment in attachments],
         "reply_to": ({
             "id": reply.id, "author_name": reply.author_name,
             "body_fragment": "Mensaje eliminado" if reply.deleted_at else reply.body[:180],
@@ -1316,6 +1364,7 @@ def _serialize_staff_thread(
             f"/api/v1/messaging/staff/avatars/{counterpart.external_id}"
             if counterpart and counterpart.avatar_storage_key else ""
         ),
+        "counterpart_online": _staff_online(db, counterpart.external_id) if counterpart else False,
         "unread_count": _staff_thread_unread(db, thread, staff),
         "updated_at": thread.updated_at.isoformat(),
         "last_message": _serialize_staff_thread_message(db, last) if last else None,
@@ -1359,6 +1408,32 @@ def staff_thread_messages(
         MessagingStaffThreadMessage.thread_id == thread.id,
     ).order_by(MessagingStaffThreadMessage.created_at).limit(500)).all()
     return [_serialize_staff_thread_message(db, row) for row in rows]
+
+
+@router.get("/staff/internal/attachments/{attachment_id}")
+def download_internal_attachment(
+    attachment_id: str, staff: MessagingStaff = Depends(_staff),
+    db: Session = Depends(get_db),
+):
+    attachment = db.get(MessagingAttachment, attachment_id)
+    if not attachment or not attachment.internal_message_id:
+        raise HTTPException(404, "Adjunto interno no encontrado")
+    message = db.get(MessagingStaffThreadMessage, attachment.internal_message_id)
+    if not message or message.deleted_at:
+        raise HTTPException(404, "Adjunto interno no encontrado")
+    _staff_thread(db, message.thread_id, staff)
+    if attachment.storage_deleted_at or not attachment.storage_key or (
+        attachment.expires_at and is_expired(attachment.expires_at)
+    ):
+        raise HTTPException(410, "El adjunto ha caducado")
+    content = MessagingStorage().get(attachment.storage_key)
+    if hashlib.sha256(content).hexdigest() != attachment.sha256:
+        raise HTTPException(500, "La integridad del adjunto no es valida")
+    return Response(
+        content,
+        media_type=attachment.content_type,
+        headers={"Content-Disposition": f'attachment; filename="{safe_name(attachment.name)}"'},
+    )
 
 
 @router.post("/staff/internal/threads/{thread_id}/read")
@@ -1442,13 +1517,14 @@ def _queue_internal_pushes(
 @router.post("/staff/internal/threads/{thread_id}/messages")
 def post_staff_thread_message(
     thread_id: str, background: BackgroundTasks,
-    body: str = Form(...), idempotency_key: str = Form(default=""),
+    body: str = Form(default=""), idempotency_key: str = Form(default=""),
     reply_to_message_id: str = Form(default=""),
+    files: list[UploadFile] = File(default=[]),
     staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
 ):
     thread = _staff_thread(db, thread_id, staff)
     text_body = body.strip()
-    if not text_body:
+    if not text_body and not files:
         raise HTTPException(422, "El mensaje esta vacio")
     if len(text_body) > 10000:
         raise HTTPException(422, "El mensaje es demasiado largo")
@@ -1472,6 +1548,24 @@ def post_staff_thread_message(
     )
     thread.updated_at = utcnow()
     db.add(item)
+    db.flush()
+    storage = MessagingStorage() if files else None
+    for upload in files:
+        content = upload.file.read(MAX_ATTACHMENT + 1)
+        if len(content) > MAX_ATTACHMENT:
+            raise HTTPException(413, "El adjunto supera 50 MB")
+        name = safe_name(upload.filename or "adjunto")
+        suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if suffix not in ALLOWED_SUFFIXES:
+            raise HTTPException(415, f"Formato no permitido: {suffix or '(sin extension)'}")
+        storage_key = storage.put(content, name)
+        db.add(MessagingAttachment(
+            message_id=None, internal_message_id=item.id, name=name,
+            content_type=upload.content_type or mimetypes.guess_type(name)[0] or "application/octet-stream",
+            size=len(content), sha256=hashlib.sha256(content).hexdigest(),
+            storage_key=storage_key, direction="internal",
+            expires_at=utcnow() + timedelta(days=get_settings().messaging_attachment_days),
+        ))
     db.add(MessagingEvent(
         organization_id="", conversation_id=thread.id, event_type="internal_message",
     ))
@@ -1503,7 +1597,7 @@ def staff_directory(
     ).order_by(MessagingStaff.name)).all()
     return [{
         "id": row.external_id, "name": row.name, "email": row.email,
-        "role": row.role, "active": row.active,
+        "role": row.role, "active": row.active, "online": _staff_online(db, row.external_id),
         "linked": bool(row.entra_oid),
         "chat_alias": row.chat_alias,
         "avatar_configured": bool(row.avatar_storage_key),
@@ -2748,6 +2842,9 @@ def soft_delete_internal_message(
         db.add(MessagingDeletionAudit(
             message_id=item.id, conversation_id=thread.id,
             actor_id=staff.external_id, action="soft_delete", reason=reason,
+            attachment_count=int(db.scalar(select(func.count(MessagingAttachment.id)).where(
+                MessagingAttachment.internal_message_id == item.id,
+            )) or 0),
         ))
         db.add(MessagingEvent(
             organization_id="", conversation_id=thread.id,
@@ -2772,9 +2869,17 @@ def hard_delete_internal_message(
     if not item:
         raise HTTPException(404, "Mensaje interno no encontrado")
     thread = _staff_thread(db, item.thread_id, admin)
+    attachments = list(db.scalars(select(MessagingAttachment).where(
+        MessagingAttachment.internal_message_id == item.id,
+    )))
+    storage = MessagingStorage()
+    for attachment in attachments:
+        if attachment.storage_key:
+            storage.delete(attachment.storage_key)
     db.add(MessagingDeletionAudit(
         message_id=item.id, conversation_id=thread.id, actor_id=admin.external_id,
         action="hard_delete", reason=(payload.reason if payload else "").strip(),
+        attachment_count=len(attachments),
     ))
     db.delete(item)
     thread.updated_at = utcnow()
@@ -3226,9 +3331,13 @@ def create_websocket_ticket(
 ):
     actor = _resolve_actor(audience, request, db)
     actor_id = actor.id if audience == "client" else actor.external_id
+    staff_session = _staff_session_from_request(db, request) if audience == "staff" else None
+    if audience == "staff" and not staff_session:
+        raise HTTPException(401, "La presencia requiere una sesion del despacho")
     token = new_token()
     db.add(MessagingWebSocketTicket(
         user_type=audience, user_id=actor_id, token_hash=hash_token(token),
+        staff_session_id=staff_session.id if staff_session else None,
         expires_at=utcnow() + timedelta(seconds=60),
     ))
     db.commit()
@@ -3240,6 +3349,8 @@ async def messaging_websocket(websocket: WebSocket, audience: str, ticket: str =
     if audience not in {"client", "staff"} or not ticket:
         await websocket.close(code=4401)
         return
+    presence_id = ""
+    presence_staff_id = ""
     with SessionLocal() as db:
         ws_ticket = db.scalar(select(MessagingWebSocketTicket).where(
             MessagingWebSocketTicket.token_hash == hash_token(ticket),
@@ -3259,15 +3370,28 @@ async def messaging_websocket(websocket: WebSocket, audience: str, ticket: str =
             )
         else:
             actor = db.get(MessagingStaff, ws_ticket.user_id)
-            if not actor or not actor.active:
+            staff_session = db.get(MessagingStaffSession, ws_ticket.staff_session_id)
+            if (not actor or not actor.active or not staff_session
+                    or staff_session.revoked_at or is_expired(staff_session.expires_at)):
                 await websocket.close(code=4401)
                 return
+            presence_id = ws_ticket.id
+            presence_staff_id = actor.external_id
+            db.add(MessagingStaffPresenceConnection(
+                id=presence_id, staff_external_id=actor.external_id,
+                staff_session_id=staff_session.id,
+                connected_until=utcnow() + timedelta(seconds=35),
+            ))
             subscription = hub.subscribe(
                 audience="staff", actor_id=actor.external_id,
                 channels=_channels_for_staff(db, actor),
             )
         db.commit()
     await websocket.accept()
+    if presence_staff_id:
+        hub.publish(
+            {"type": "presence.updated", "staff_id": presence_staff_id, "online": True},
+        )
     try:
         await websocket.send_json({"type": "connected"})
         while True:
@@ -3275,11 +3399,31 @@ async def messaging_websocket(websocket: WebSocket, audience: str, ticket: str =
                 event = await asyncio.wait_for(subscription.queue.get(), timeout=25)
                 await websocket.send_json(event)
             except asyncio.TimeoutError:
+                if presence_id:
+                    with SessionLocal() as presence_db:
+                        presence = presence_db.get(MessagingStaffPresenceConnection, presence_id)
+                        session = presence_db.get(
+                            MessagingStaffSession, presence.staff_session_id,
+                        ) if presence else None
+                        if not presence or not session or session.revoked_at or is_expired(session.expires_at):
+                            await websocket.close(code=4401)
+                            break
+                        presence.connected_until = utcnow() + timedelta(seconds=35)
+                        presence_db.commit()
                 await websocket.send_json({"type": "ping"})
     except WebSocketDisconnect:
         pass
     finally:
         hub.unsubscribe(subscription)
+        if presence_id:
+            with SessionLocal() as presence_db:
+                presence = presence_db.get(MessagingStaffPresenceConnection, presence_id)
+                if presence:
+                    presence_db.delete(presence)
+                    presence_db.commit()
+            hub.publish(
+                {"type": "presence.updated", "staff_id": presence_staff_id, "online": False},
+            )
 
 
 @router.get("/{audience}/events")
@@ -3333,7 +3477,7 @@ def cleanup_expired_attachments() -> int:
     removed = 0
     with SessionLocal() as db:
         rows = db.scalars(select(MessagingAttachment).where(
-            MessagingAttachment.direction == "outgoing",
+            MessagingAttachment.direction.in_(("outgoing", "internal")),
             MessagingAttachment.storage_deleted_at.is_(None),
             MessagingAttachment.expires_at.is_not(None),
             MessagingAttachment.expires_at <= utcnow(),
@@ -3349,6 +3493,8 @@ def cleanup_expired_attachments() -> int:
                 storage.delete(item.storage_key)
             except Exception:
                 continue
-            item.storage_key = ""; item.storage_deleted_at = utcnow(); removed += 1
+            # Conservamos la clave como metadato unico; el blob ya no existe y
+            # storage_deleted_at impide cualquier intento posterior de lectura.
+            item.storage_deleted_at = utcnow(); removed += 1
         db.commit()
     return removed

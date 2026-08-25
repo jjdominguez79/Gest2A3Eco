@@ -53,6 +53,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     ref.invalidate(conversationsProvider);
     ref.invalidate(unifiedConversationProvider);
     ref.invalidate(unifiedMessagesProvider);
+    ref.invalidate(internalThreadsProvider);
     if (conversationId != null && conversationId.isNotEmpty) {
       ref.invalidate(messagesProvider(conversationId));
     }
@@ -636,7 +637,35 @@ class _InternalThreadsShortcut extends StatelessWidget {
                                     )
                                   : const Icon(Icons.groups_outlined, size: 18),
                             ),
-                            label: Text(thread.title),
+                            label: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(thread.title),
+                                if (thread.kind == 'direct') ...[
+                                  const SizedBox(width: 6),
+                                  Tooltip(
+                                    message: thread.counterpartOnline
+                                        ? 'Activo'
+                                        : 'Inactivo',
+                                    child: Container(
+                                      key: Key(
+                                        'presence-${thread.id}-${thread.counterpartOnline ? 'online' : 'offline'}',
+                                      ),
+                                      width: 8,
+                                      height: 8,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: thread.counterpartOnline
+                                            ? Colors.green
+                                            : Theme.of(
+                                                context,
+                                              ).colorScheme.outline,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
                             onPressed: () => onSelected(thread.id),
                           ),
                         ),
@@ -1136,7 +1165,7 @@ class _AppDrawer extends StatelessWidget {
           title: const Text('Conversaciones'),
           onTap: () => _navigate(context, '/'),
         ),
-        if (profile.type == UserType.staff)
+        if (profile.isAdmin)
           ListTile(
             leading: const Icon(Icons.groups_outlined),
             title: const Text('Gestionar grupos internos'),

@@ -54,6 +54,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           state.matchedLocation == '/reset-password') {
         return '/';
       }
+      final profile = session.valueOrNull?.profile;
+      if (state.matchedLocation == '/groups' && profile?.isAdmin != true) {
+        return '/';
+      }
       return null;
     },
     routes: [

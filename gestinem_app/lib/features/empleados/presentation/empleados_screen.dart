@@ -205,7 +205,9 @@ class EmpleadosScreen extends ConsumerWidget {
     } catch (error) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No se pudo abrir el selector de imagen.')),
+          const SnackBar(
+            content: Text('No se pudo abrir el selector de imagen.'),
+          ),
         );
       }
       return;
@@ -333,7 +335,8 @@ class EmpleadosScreen extends ConsumerWidget {
                 '${empleado.email}\n'
                 '${empleado.rol == 'admin' ? 'Administrador' : 'Empleado'} · '
                 '${empleado.canales.isEmpty ? 'Sin canales' : empleado.canales.join(', ')} · '
-                '${empleado.vinculado ? 'Microsoft vinculado' : 'Pendiente de primer acceso'}',
+                '${empleado.vinculado ? 'Microsoft vinculado' : 'Pendiente de primer acceso'} · '
+                '${empleado.online ? 'Activo' : 'Inactivo'}',
               ),
               isThreeLine: true,
               enabled: empleado.activo,

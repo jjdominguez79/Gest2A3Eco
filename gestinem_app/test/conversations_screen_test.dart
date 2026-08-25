@@ -475,7 +475,12 @@ void main() {
     expect(find.byKey(const Key('internal-thread-group-1')), findsOneWidget);
     expect(find.byKey(const Key('internal-thread-direct-1')), findsOneWidget);
     expect(find.text('Juan José'), findsOneWidget);
+    expect(find.byKey(const Key('presence-direct-1-offline')), findsOneWidget);
     expect(find.text('Analia'), findsOneWidget);
     expect(find.text('Cliente Fiscal'), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    expect(find.text('Gestionar grupos internos'), findsNothing);
   });
 }

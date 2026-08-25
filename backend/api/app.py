@@ -80,7 +80,7 @@ def startup():
             "WHERE table_schema=current_schema() "
             "AND table_name IN ('dgt_documentos', 'msg_staff', 'msg_messages', "
             "'msg_staff_thread_messages', 'msg_attachments', 'msg_downloads', "
-            "'msg_conversations')"
+            "'msg_conversations', 'msg_websocket_tickets')"
         )).tuples())
         column_migrations = {
             ("dgt_documentos", "dataprius_json"): (
@@ -130,6 +130,14 @@ def startup():
                 "ALTER TABLE msg_attachments "
                 "ADD COLUMN withdrawal_reason VARCHAR(500) NOT NULL DEFAULT ''"
             ),
+            ("msg_attachments", "internal_message_id"): (
+                "ALTER TABLE msg_attachments ADD COLUMN internal_message_id VARCHAR(36) "
+                "REFERENCES msg_staff_thread_messages(id) ON DELETE CASCADE"
+            ),
+            ("msg_websocket_tickets", "staff_session_id"): (
+                "ALTER TABLE msg_websocket_tickets ADD COLUMN staff_session_id VARCHAR(36) "
+                "REFERENCES msg_staff_sessions(id) ON DELETE CASCADE"
+            ),
             ("msg_downloads", "completed_at"): (
                 "ALTER TABLE msg_downloads "
                 "ADD COLUMN completed_at TIMESTAMPTZ"
@@ -141,11 +149,20 @@ def startup():
         for column, ddl in column_migrations.items():
             if column not in existing_columns:
                 conn.execute(text(ddl))
+        conn.execute(text("ALTER TABLE msg_attachments ALTER COLUMN message_id DROP NOT NULL"))
+        conn.execute(text(
+            "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint "
+            "WHERE conname='ck_msg_attachments_single_parent') THEN "
+            "ALTER TABLE msg_attachments ADD CONSTRAINT ck_msg_attachments_single_parent "
+            "CHECK ((message_id IS NOT NULL AND internal_message_id IS NULL) OR "
+            "(message_id IS NULL AND internal_message_id IS NOT NULL)); END IF; END $$"
+        ))
 
         existing_indexes = set(conn.execute(text(
             "SELECT indexname FROM pg_indexes WHERE schemaname=current_schema() "
 
-            "AND tablename IN ('msg_staff', 'msg_downloads', 'msg_conversations')"
+            "AND tablename IN ('msg_staff', 'msg_downloads', 'msg_conversations', "
+            "'msg_attachments', 'msg_websocket_tickets', 'msg_staff_presence_connections')"
         )).scalars())
         index_migrations = {
             "ix_msg_staff_email": "CREATE INDEX ix_msg_staff_email ON msg_staff(email)",
@@ -161,6 +178,14 @@ def startup():
             "ix_msg_conversations_started_at": (
                 "CREATE INDEX ix_msg_conversations_started_at "
                 "ON msg_conversations(started_at DESC)"
+            ),
+            "ix_msg_attachments_internal_message_id": (
+                "CREATE INDEX ix_msg_attachments_internal_message_id "
+                "ON msg_attachments(internal_message_id)"
+            ),
+            "ix_msg_websocket_tickets_staff_session_id": (
+                "CREATE INDEX ix_msg_websocket_tickets_staff_session_id "
+                "ON msg_websocket_tickets(staff_session_id)"
             ),
         }
         for index_name, ddl in index_migrations.items():

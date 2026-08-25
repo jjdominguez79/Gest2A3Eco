@@ -124,26 +124,23 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   }
 
   Future<void> _pickFiles() async {
-    final result = await FilePicker.pickFiles(
-      allowedExtensions: [
-        'pdf',
-        'png',
-        'jpg',
-        'jpeg',
-        'gif',
-        'tif',
-        'tiff',
-        'txt',
-        'xml',
-        'csv',
-        'xls',
-        'xlsx',
-        'doc',
-        'docx',
-        'zip',
-      ],
-      type: FileType.custom,
-    );
+    const extensions = [
+      'pdf', 'png', 'jpg', 'jpeg', 'gif', 'tif', 'tiff', 'txt', 'xml',
+      'csv', 'xls', 'xlsx', 'doc', 'docx', 'zip',
+    ];
+    final List<PlatformFile> result;
+    if (widget.internal) {
+      result = await FilePicker.pickFiles(
+        allowedExtensions: extensions,
+        type: FileType.custom,
+      );
+    } else {
+      final file = await FilePicker.pickFile(
+        allowedExtensions: extensions,
+        type: FileType.custom,
+      );
+      result = [?file];
+    }
     if (result.isNotEmpty) setState(() => _files = result);
   }
 
@@ -156,6 +153,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
         await repository.sendInternal(
           widget.conversationId,
           _body.text,
+          _files,
           replyToMessageId: _replyingTo?.id,
         );
         ref.invalidate(internalMessagesProvider(widget.conversationId));
@@ -202,6 +200,21 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   Future<void> _download(Attachment attachment) async {
     final repository = ref.read(messagingRepositoryProvider);
     try {
+      if (widget.internal) {
+        final bytes = await repository.downloadInternalAttachment(
+          attachment.id,
+        );
+        final savedPath = await FilePicker.saveFile(
+          fileName: attachment.name,
+          bytes: bytes,
+          mimeType: attachment.contentType,
+        );
+        if (!mounted || savedPath == null) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Archivo guardado.')));
+        return;
+      }
       final (bytes, downloadId) = await repository.downloadWithId(attachment);
       final savedPath = await FilePicker.saveFile(
         fileName: attachment.name,
@@ -374,7 +387,9 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   Future<void> _messageActions(Message message, bool mine) async {
     final profile = ref.read(sessionProvider).valueOrNull!.profile;
     // Los mensajes con adjuntos no pueden eliminarse
-    final canDelete = (mine || profile.isAdmin) && !message.hasAttachments;
+    final canDelete =
+        (mine || profile.isAdmin) &&
+        (widget.internal || !message.hasAttachments);
     final action = await showModalBottomSheet<String>(
       context: context,
       builder: (context) => SafeArea(
@@ -537,40 +552,42 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                 controller: _scroll,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 itemCount: messages.length,
-              itemBuilder: (context, index) {
-                final message = messages[index];
-                final mine = messageBelongsToProfile(message, profile);
-                return MessageBubble(
-                  message: message,
-                  mine: mine,
-                  isStaff: profile.type == UserType.staff,
-                  baseUrl: ref
-                      .read(apiClientProvider)
-                      .dio
-                      .options
-                      .baseUrl
-                      .replaceAll(RegExp(r'/api/v1/messaging/?$'), ''),
-                  authToken: ref.read(sessionProvider).valueOrNull?.token ?? '',
-                  onReplyTap: message.replyTo == null
-                      ? null
-                      : () => _scrollToMessage(messages, message.replyTo!.id),
-                  onAttachmentTap: _download,
-                  onAttachmentHistory: profile.type == UserType.staff
-                      ? _showAttachmentHistory
-                      : null,
-                  onAttachmentWithdraw: profile.isAdmin
-                      ? _withdrawAttachment
-                      : null,
-                  onTap: message.deleted
-                      ? null
-                      : () => _messageActions(message, mine),
-                  onLongPress: message.deleted
-                      ? null
-                      : () => _messageActions(message, mine),
-                );
-              },
+                itemBuilder: (context, index) {
+                  final message = messages[index];
+                  final mine = messageBelongsToProfile(message, profile);
+                  return MessageBubble(
+                    message: message,
+                    mine: mine,
+                    isStaff: profile.type == UserType.staff,
+                    baseUrl: ref
+                        .read(apiClientProvider)
+                        .dio
+                        .options
+                        .baseUrl
+                        .replaceAll(RegExp(r'/api/v1/messaging/?$'), ''),
+                    authToken:
+                        ref.read(sessionProvider).valueOrNull?.token ?? '',
+                    onReplyTap: message.replyTo == null
+                        ? null
+                        : () => _scrollToMessage(messages, message.replyTo!.id),
+                    onAttachmentTap: _download,
+                    allowStaffAttachmentDownload: widget.internal,
+                    onAttachmentHistory: profile.type == UserType.staff
+                        ? _showAttachmentHistory
+                        : null,
+                    onAttachmentWithdraw: profile.isAdmin
+                        ? _withdrawAttachment
+                        : null,
+                    onTap: message.deleted
+                        ? null
+                        : () => _messageActions(message, mine),
+                    onLongPress: message.deleted
+                        ? null
+                        : () => _messageActions(message, mine),
+                  );
+                },
+              ),
             ),
-          ),
           ),
         ),
         if (_replyingTo != null)
@@ -615,11 +632,11 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  if (!widget.internal)
-                    IconButton(
-                      onPressed: _sending ? null : _pickFiles,
-                      icon: const Icon(Icons.attach_file),
-                    ),
+                  IconButton(
+                    key: const Key('attach-files'),
+                    onPressed: _sending ? null : _pickFiles,
+                    icon: const Icon(Icons.attach_file),
+                  ),
                   Expanded(
                     child: TextField(
                       key: const Key('message-composer'),
@@ -723,6 +740,15 @@ class _InternalThreadIdentity extends ConsumerWidget {
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
+              if (current?.kind == 'direct')
+                Text(
+                  current!.counterpartOnline ? 'Activo' : 'Inactivo',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: current.counterpartOnline
+                        ? Colors.green.shade700
+                        : Theme.of(context).colorScheme.outline,
+                  ),
+                ),
             ],
           ),
         ),

@@ -28,7 +28,10 @@ from backend.api.messaging_models import (
     MessagingCampaignRecipient,
     MessagingDeletionAudit,
     MessagingMessage,
+    MessagingStaffPresenceConnection,
+    MessagingStaffSession,
 )
+from backend.api.messaging_security import utcnow
 
 
 def _api(tmp_path: Path, monkeypatch):
@@ -103,6 +106,111 @@ def _setup(tmp_path: Path, monkeypatch):
         ).json() if row["kind"] == "fiscal"
     )
     return client, factory, staff_headers, auth, accepted["client"]["id"], conversation["id"]
+
+
+def test_adjuntos_en_chat_interno_son_multiples_privados_y_borrables(tmp_path, monkeypatch):
+    client, factory, staff_headers, _auth, _client_id, _conversation_id = _setup(
+        tmp_path, monkeypatch,
+    )
+    employee_threads = client.get(
+        "/api/v1/messaging/staff/internal/threads", headers=staff_headers("employee"),
+    ).json()
+    direct = next(row for row in employee_threads if row["kind"] == "direct")
+
+    sent = client.post(
+        f"/api/v1/messaging/staff/internal/threads/{direct['id']}/messages",
+        headers=staff_headers("employee"),
+        data={"idempotency_key": "internal-files-1"},
+        files=[
+            ("files", ("informe.pdf", b"%PDF-interno", "application/pdf")),
+            ("files", ("datos.csv", b"a,b\n1,2", "text/csv")),
+        ],
+    )
+    assert sent.status_code == 200
+    payload = sent.json()
+    assert payload["body"] == ""
+    assert payload["has_attachments"] is True
+    assert [row["name"] for row in payload["attachments"]] == ["informe.pdf", "datos.csv"]
+    assert all(row["available"] for row in payload["attachments"])
+
+    attachment_id = payload["attachments"][0]["id"]
+    downloaded = client.get(
+        f"/api/v1/messaging/staff/internal/attachments/{attachment_id}",
+        headers=staff_headers("admin"),
+    )
+    assert downloaded.status_code == 200
+    assert downloaded.content == b"%PDF-interno"
+
+    internal = {"X-API-Key": "test-secret"}
+    assert client.put(
+        "/api/v1/messaging/internal/staff/outsider", headers=internal,
+        json={
+            "external_id": "outsider", "name": "Fuera", "email": "fuera@gestinem.es",
+            "role": "empleado", "active": True, "channels": [],
+        },
+    ).status_code == 200
+    assert client.get(
+        f"/api/v1/messaging/staff/internal/attachments/{attachment_id}",
+        headers=staff_headers("outsider"),
+    ).status_code == 403
+
+    with factory() as db:
+        attachment = db.get(MessagingAttachment, attachment_id)
+        stored_path = tmp_path / "cloud" / attachment.storage_key
+        assert stored_path.exists()
+    deleted = client.request(
+        "DELETE",
+        f"/api/v1/messaging/staff/admin/internal/messages/{payload['id']}/hard",
+        headers=staff_headers("admin"),
+        json={"reason": "Prueba de limpieza"},
+    )
+    assert deleted.status_code == 204
+    assert not stored_path.exists()
+
+
+def test_presencia_staff_exige_conexion_viva_y_sesion_valida(tmp_path, monkeypatch):
+    client, factory, staff_headers, _auth, _client_id, _conversation_id = _setup(
+        tmp_path, monkeypatch,
+    )
+    now = utcnow()
+    with factory() as db:
+        first = MessagingStaffSession(
+            staff_external_id="employee", token_hash="presence-session-1",
+            expires_at=now + timedelta(days=1),
+        )
+        second = MessagingStaffSession(
+            staff_external_id="employee", token_hash="presence-session-2",
+            expires_at=now + timedelta(days=1),
+        )
+        db.add_all([first, second])
+        db.flush()
+        db.add_all([
+            MessagingStaffPresenceConnection(
+                staff_external_id="employee", staff_session_id=first.id,
+                connected_until=now - timedelta(seconds=1),
+            ),
+            MessagingStaffPresenceConnection(
+                staff_external_id="employee", staff_session_id=second.id,
+                connected_until=now + timedelta(seconds=35),
+            ),
+        ])
+        db.commit()
+
+    directory = client.get(
+        "/api/v1/messaging/staff/admin/directory", headers=staff_headers("admin"),
+    ).json()
+    assert next(row for row in directory if row["id"] == "employee")["online"] is True
+
+    with factory() as db:
+        second = db.scalar(select(MessagingStaffSession).where(
+            MessagingStaffSession.token_hash == "presence-session-2",
+        ))
+        second.revoked_at = utcnow()
+        db.commit()
+    directory = client.get(
+        "/api/v1/messaging/staff/admin/directory", headers=staff_headers("admin"),
+    ).json()
+    assert next(row for row in directory if row["id"] == "employee")["online"] is False
 
 
 def test_invitacion_https_entrega_deep_link_y_token_a_accept_invite(tmp_path, monkeypatch):

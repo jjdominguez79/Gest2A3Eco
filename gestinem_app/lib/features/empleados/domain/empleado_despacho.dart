@@ -9,6 +9,7 @@ class EmpleadoDespacho {
     required this.aliasChat,
     required this.avatarConfigurado,
     required this.canales,
+    this.online = false,
   });
 
   factory EmpleadoDespacho.fromJson(Map<String, dynamic> json) =>
@@ -24,6 +25,7 @@ class EmpleadoDespacho {
         canales: (json['channels'] as List<dynamic>? ?? const [])
             .map((item) => item.toString())
             .toSet(),
+        online: json['online'] as bool? ?? false,
       );
 
   final String id;
@@ -35,6 +37,7 @@ class EmpleadoDespacho {
   final String aliasChat;
   final bool avatarConfigurado;
   final Set<String> canales;
+  final bool online;
 
   String get nombreVisible => aliasChat.trim().isEmpty ? nombre : aliasChat;
   String get avatarUrl => '/api/v1/messaging/staff/avatars/$id';

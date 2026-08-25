@@ -1,9 +1,36 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gestinem/core/api/api_client.dart';
 import 'package:gestinem/features/messaging/data/messaging_repository.dart';
 
 import 'test_helpers.dart';
+
+final class _TestPlatformFile extends PlatformFile {
+  _TestPlatformFile(this.name, List<int> bytes)
+    : _bytes = Uint8List.fromList(bytes);
+
+  @override
+  final String name;
+  final Uint8List _bytes;
+
+  @override
+  Uri get uri => Uri.dataFromBytes(_bytes);
+
+  @override
+  Future<int> length() async => _bytes.length;
+
+  @override
+  Future<Uint8List> readAsBytes() async => _bytes;
+
+  @override
+  Stream<Uint8List> readAsByteStream() => Stream.value(_bytes);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 void main() {
   test('repository carga conversaciones cliente con token Bearer', () async {
@@ -238,5 +265,54 @@ void main() {
     );
     expect(adapter.lastRequest!.method, 'POST');
     expect(adapter.lastRequest!.data, {'reason': 'Documento incorrecto'});
+  });
+
+  test('chat interno envia varios archivos multipart', () async {
+    final adapter = JsonAdapter({
+      'id': 'message-1',
+      'conversation_id': 'thread-1',
+      'author_type': 'staff',
+      'author_id': 'staff-1',
+      'author_name': 'Ana',
+      'body': '',
+      'deleted': false,
+      'created_at': '2026-08-25T10:00:00Z',
+      'has_attachments': true,
+      'attachments': <Object>[],
+    });
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+    )..httpClientAdapter = adapter;
+
+    await MessagingRepository(
+      ApiClient(dio: dio, tokenProvider: () => 'token'),
+    ).sendInternal('thread-1', '', [
+      _TestPlatformFile('uno.pdf', [1, 2, 3]),
+      _TestPlatformFile('dos.csv', [4, 5]),
+    ]);
+
+    expect(
+      adapter.lastRequest!.path,
+      '/staff/internal/threads/thread-1/messages',
+    );
+    final form = adapter.lastRequest!.data as FormData;
+    expect(form.files.where((field) => field.key == 'files'), hasLength(2));
+  });
+
+  test('descarga interna usa endpoint protegido de staff', () async {
+    final adapter = JsonAdapter(<String, dynamic>{});
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+    )..httpClientAdapter = adapter;
+
+    await MessagingRepository(
+      ApiClient(dio: dio, tokenProvider: () => 'token'),
+    ).downloadInternalAttachment('attachment-1');
+
+    expect(
+      adapter.lastRequest!.path,
+      '/staff/internal/attachments/attachment-1',
+    );
+    expect(adapter.lastRequest!.responseType, ResponseType.bytes);
   });
 }

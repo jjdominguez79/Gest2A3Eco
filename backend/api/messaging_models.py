@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.api.database import Base
@@ -220,8 +220,20 @@ class MessagingMessage(Base):
 
 class MessagingAttachment(Base):
     __tablename__ = "msg_attachments"
+    __table_args__ = (
+        CheckConstraint(
+            "(message_id IS NOT NULL AND internal_message_id IS NULL) OR "
+            "(message_id IS NULL AND internal_message_id IS NOT NULL)",
+            name="ck_msg_attachments_single_parent",
+        ),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    message_id: Mapped[str] = mapped_column(ForeignKey("msg_messages.id", ondelete="CASCADE"), index=True)
+    message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("msg_messages.id", ondelete="CASCADE"), index=True,
+    )
+    internal_message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("msg_staff_thread_messages.id", ondelete="CASCADE"), index=True,
+    )
     name: Mapped[str] = mapped_column(String(255))
     content_type: Mapped[str] = mapped_column(String(120), default="application/octet-stream")
     size: Mapped[int] = mapped_column(Integer)
@@ -367,7 +379,25 @@ class MessagingWebSocketTicket(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     user_type: Mapped[str] = mapped_column(String(16), index=True)
     user_id: Mapped[str] = mapped_column(String(64), index=True)
+    staff_session_id: Mapped[str | None] = mapped_column(
+        ForeignKey("msg_staff_sessions.id", ondelete="CASCADE"), index=True,
+    )
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MessagingStaffPresenceConnection(Base):
+    __tablename__ = "msg_staff_presence_connections"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    staff_external_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_staff.external_id", ondelete="CASCADE"), index=True,
+    )
+    staff_session_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_staff_sessions.id", ondelete="CASCADE"), index=True,
+    )
+    connected_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow,
+    )

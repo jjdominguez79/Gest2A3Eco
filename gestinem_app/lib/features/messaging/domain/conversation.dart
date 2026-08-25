@@ -174,6 +174,7 @@ class InternalThread {
     required this.title,
     required this.unreadCount,
     this.counterpartAvatarUrl = '',
+    this.counterpartOnline = false,
   });
 
   factory InternalThread.fromJson(Map<String, dynamic> json) => InternalThread(
@@ -183,6 +184,7 @@ class InternalThread {
     title: json['title'] as String? ?? 'Chat interno',
     unreadCount: json['unread_count'] as int? ?? 0,
     counterpartAvatarUrl: json['counterpart_avatar_url'] as String? ?? '',
+    counterpartOnline: json['counterpart_online'] as bool? ?? false,
   );
 
   final String id;
@@ -191,4 +193,5 @@ class InternalThread {
   final String title;
   final int unreadCount;
   final String counterpartAvatarUrl;
+  final bool counterpartOnline;
 }

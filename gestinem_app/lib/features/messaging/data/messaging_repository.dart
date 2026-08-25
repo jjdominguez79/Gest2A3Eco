@@ -243,12 +243,20 @@ class MessagingRepository {
 
   Future<Message> sendInternal(
     String threadId,
-    String body, {
+    String body,
+    List<PlatformFile> files, {
     String? replyToMessageId,
   }) async {
+    final uploads = <MultipartFile>[];
+    for (final file in files) {
+      uploads.add(
+        MultipartFile.fromBytes(await file.readAsBytes(), filename: file.name),
+      );
+    }
     final fields = <String, dynamic>{
       'body': body,
       'idempotency_key': DateTime.now().microsecondsSinceEpoch.toString(),
+      'files': uploads,
     };
     if (replyToMessageId != null) {
       fields['reply_to_message_id'] = replyToMessageId;
@@ -259,6 +267,9 @@ class MessagingRepository {
     );
     return Message.fromJson(response.data!);
   }
+
+  Future<Uint8List> downloadInternalAttachment(String attachmentId) =>
+      _api.download('/staff/internal/attachments/$attachmentId');
 
   /// Vista unificada del cliente: metadatos de todas las conversaciones.
   Future<Map<String, dynamic>> unifiedConversation() async {
