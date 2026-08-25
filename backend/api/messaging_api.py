@@ -83,6 +83,7 @@ class OrganizationIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     private_owner_external_id: str | None = None
     active: bool = True
+    is_test: bool | None = None
 
 
 class StaffIn(BaseModel):
@@ -991,6 +992,10 @@ def put_organization(company_code: str, payload: OrganizationIn, db: Session = D
         ])
     item.name = payload.name
     item.active = payload.active
+    if company_code.strip().upper() in TEST_COMPANY_CODES:
+        item.is_test = True
+    elif payload.is_test is not None:
+        item.is_test = payload.is_test
     if payload.private_owner_external_id is not None:
         item.private_owner_external_id = payload.private_owner_external_id
     db.commit()
@@ -1909,6 +1914,7 @@ def staff_organizations(
         result.append({
             "company_code": row.company_code, "name": row.name,
             "active": row.active,
+            "is_test": row.is_test,
             "private_owner_external_id": row.private_owner_external_id,
             "client_access_status": access["status"],
             "client_access_active": access["active"],

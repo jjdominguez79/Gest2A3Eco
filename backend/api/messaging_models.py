@@ -23,6 +23,7 @@ class MessagingOrganization(Base):
     company_code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(200))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_test: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     private_owner_external_id: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -402,6 +403,20 @@ class MessagingWebSocketTicket(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MessagingCleanupAudit(Base):
+    __tablename__ = "msg_cleanup_audit"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    actor: Mapped[str] = mapped_column(String(160))
+    reason: Mapped[str] = mapped_column(String(500))
+    scope: Mapped[str] = mapped_column(String(32))  # messages_before | reset_test
+    filters_json: Mapped[str] = mapped_column(Text, default="{}")
+    counts_json: Mapped[str] = mapped_column(Text, default="{}")
+    confirmation_code: Mapped[str] = mapped_column(String(32), index=True)
+    storage_keys_json: Mapped[str] = mapped_column(Text, default="[]")
+    failed_storage_keys_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
 class MessagingStaffPresenceConnection(Base):
