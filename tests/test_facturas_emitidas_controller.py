@@ -108,6 +108,79 @@ def test_refresh_facturas_reconecta_una_vez_y_actualiza_empresa():
     assert controller._empresa_conf["nombre"] == "Empresa actualizada"
 
 
+def test_cargar_facturas_frescas_usa_lector_independiente_y_reconecta():
+    llamadas = []
+
+    class Lector:
+        def listar_facturas_emitidas(self, *_args):
+            llamadas.append("listar")
+            if llamadas.count("listar") == 1:
+                raise RuntimeError("conexion cerrada")
+            return [{"id": "fac-remota"}]
+
+        def reconnect(self):
+            llamadas.append("reconnect")
+
+    lector = Lector()
+    gestor = SimpleNamespace(crear_sesion_lectura=lambda: lector)
+    controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
+    controller._gestor = gestor
+    controller._gestor_lectura_facturas = None
+    controller._codigo = "E00001"
+    controller._ejercicio = 2026
+    controller._allow_all_years = False
+    controller._incluir_origen_ocr = False
+
+    facturas = controller.cargar_facturas_frescas()
+
+    assert facturas == [{"id": "fac-remota"}]
+    assert llamadas == ["listar", "reconnect", "listar"]
+
+
+def test_aplicar_facturas_no_repinta_si_no_hay_cambios():
+    controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
+    controller._facturas_cache = [{"id": "fac-1", "updated_at": "ahora"}]
+    controller._view = SimpleNamespace()
+    controller.apply_facturas_filter = lambda: (_ for _ in ()).throw(
+        AssertionError("no debe repintar"),
+    )
+
+    cambio = controller.aplicar_facturas(
+        [{"id": "fac-1", "updated_at": "ahora"}],
+        solo_si_cambia=True,
+        preservar_estado=True,
+    )
+
+    assert cambio is False
+
+
+def test_aplicar_facturas_preserva_estado_y_recalcula_detalle():
+    llamadas = []
+    view = SimpleNamespace(
+        capturar_estado_facturas=lambda: {"seleccion": ["fac-1"]},
+        restaurar_estado_facturas=lambda estado: llamadas.append(("restaurar", estado)),
+        set_facturas_series=lambda series: llamadas.append(("series", series)),
+        set_detalle_lineas=lambda lineas, simbolo="": llamadas.append(("detalle", lineas, simbolo)),
+        get_selected_ids=lambda: ["fac-1"],
+    )
+    controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
+    controller._facturas_cache = []
+    controller._view = view
+    controller._allow_all_years = False
+    controller.apply_facturas_filter = lambda: llamadas.append(("repintar",))
+
+    cambio = controller.aplicar_facturas(
+        [{"id": "fac-1", "serie": "A", "lineas": [{"base": 10}]}],
+        solo_si_cambia=True,
+        preservar_estado=True,
+    )
+
+    assert cambio is True
+    assert ("repintar",) in llamadas
+    assert ("restaurar", {"seleccion": ["fac-1"]}) in llamadas
+    assert ("detalle", [{"base": 10}], "") in llamadas
+
+
 def test_copia_o_rectificativa_no_hereda_estados_suenlace_face_ni_ocr():
     factura = {
         "generada": True,

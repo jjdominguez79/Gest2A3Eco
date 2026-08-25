@@ -1,7 +1,9 @@
 
 import calendar
+import logging
 import os
 import sys
+import threading
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
@@ -59,6 +61,9 @@ from services.terceros_empresa_fiscal_service import (
     TIPO_IVA_TOOLTIPS,
     get_proveedor_deduction_mode,
 )
+
+LOG = logging.getLogger(__name__)
+FACTURAS_AUTO_REFRESH_MS = 5_000
 
 IVA_OPCIONES = [21, 10, 4, 0]
 IRPF_RET_OPCIONES = [1, 7, 15, 19]
@@ -2163,6 +2168,10 @@ class UIFacturasEmitidas(ttk.Frame):
         self.allow_all_years = bool(allow_all_years)
         self.session = session
         self._marked_factura_ids = set()
+        self._facturas_refresh_after_id = None
+        self._facturas_refresh_running = False
+        self._facturas_refresh_manual_pending = False
+        self._destroying = False
         monedas = load_monedas()
         self._default_moneda_simbolo = str(monedas[0].get("simbolo")) if monedas else ""
         base = {
@@ -2194,7 +2203,9 @@ class UIFacturasEmitidas(ttk.Frame):
         )
         self._sort_state = {}
         self._sort_albaranes_state = {}
+        self.bind("<Destroy>", self._on_destroy_facturas, add="+")
         self._build()
+        self._programar_actualizacion_facturas()
 
     # ------------------- UI -------------------
     def _build(self):
@@ -2262,7 +2273,10 @@ class UIFacturasEmitidas(ttk.Frame):
         ttk.Button(top2, text="Compartir PDF", command=self._compartir_pdf).pack(side=tk.LEFT, padx=8)
         ttk.Button(top2, text="Generar FACe", command=self._generar_facturae).pack(side=tk.LEFT, padx=8)
         ttk.Button(top2, text="PDF seleccion", command=self._export_pdf_multiple).pack(side=tk.LEFT, padx=8)
-        ttk.Button(top2, text="Actualizar", command=self._refresh_facturas).pack(side=tk.LEFT, padx=8)
+        ttk.Button(
+            top2, text="Actualizar",
+            command=lambda: self._iniciar_actualizacion_facturas(manual=True),
+        ).pack(side=tk.LEFT, padx=8)
         if not can_write:
             for btn in (
                 self.btn_fact_nueva,
@@ -2494,6 +2508,106 @@ class UIFacturasEmitidas(ttk.Frame):
         except Exception as exc:
             self.show_error("Gest2A3Eco", f"Error al actualizar facturas:\n{exc}")
 
+    def _programar_actualizacion_facturas(self, delay_ms=FACTURAS_AUTO_REFRESH_MS):
+        if self._destroying or self._facturas_refresh_after_id is not None:
+            return
+        self._facturas_refresh_after_id = self.after(
+            delay_ms, self._iniciar_actualizacion_facturas,
+        )
+
+    def _iniciar_actualizacion_facturas(self, manual=False):
+        if self._facturas_refresh_after_id is not None:
+            try:
+                self.after_cancel(self._facturas_refresh_after_id)
+            except tk.TclError:
+                pass
+            self._facturas_refresh_after_id = None
+        if self._destroying:
+            return
+        if self._facturas_refresh_running:
+            if manual:
+                self._facturas_refresh_manual_pending = True
+            return
+        if not manual:
+            try:
+                if self.grab_current() is not None:
+                    self._programar_actualizacion_facturas()
+                    return
+            except tk.TclError:
+                return
+
+        self._facturas_refresh_running = True
+
+        def worker():
+            try:
+                facturas = self.controller.cargar_facturas_frescas()
+                error = None
+            except Exception as exc:
+                facturas = None
+                error = exc
+            try:
+                self.after(
+                    0, self._finalizar_actualizacion_facturas,
+                    facturas, error, bool(manual),
+                )
+            except (RuntimeError, tk.TclError):
+                self.controller.cerrar_lector_facturas()
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finalizar_actualizacion_facturas(self, facturas, error, manual=False):
+        self._facturas_refresh_running = False
+        if self._destroying:
+            self.controller.cerrar_lector_facturas()
+            return
+        if error is None:
+            try:
+                self.controller.aplicar_facturas(
+                    facturas,
+                    solo_si_cambia=True,
+                    preservar_estado=True,
+                )
+            except Exception as exc:
+                error = exc
+                if manual:
+                    self.show_error(
+                        "Gest2A3Eco",
+                        f"Error al actualizar facturas:\n{error}",
+                    )
+                else:
+                    LOG.warning(
+                        "No se pudieron aplicar las facturas actualizadas: %s",
+                        error,
+                    )
+        elif manual:
+            self.show_error(
+                "Gest2A3Eco", f"Error al actualizar facturas:\n{error}",
+            )
+        else:
+            LOG.warning(
+                "No se pudieron actualizar las facturas en segundo plano: %s",
+                error,
+            )
+
+        if self._facturas_refresh_manual_pending:
+            self._facturas_refresh_manual_pending = False
+            self._iniciar_actualizacion_facturas(manual=True)
+        else:
+            self._programar_actualizacion_facturas()
+
+    def _on_destroy_facturas(self, event):
+        if event.widget is not self:
+            return
+        self._destroying = True
+        if self._facturas_refresh_after_id is not None:
+            try:
+                self.after_cancel(self._facturas_refresh_after_id)
+            except tk.TclError:
+                pass
+            self._facturas_refresh_after_id = None
+        if not self._facturas_refresh_running:
+            self.controller.cerrar_lector_facturas()
+
     def _refresh_albaranes(self):
         self.controller.refresh_albaranes()
 
@@ -2693,6 +2807,33 @@ class UIFacturasEmitidas(ttk.Frame):
             return sel
         focus = self.tv.focus()
         return [focus] if focus else []
+
+    def capturar_estado_facturas(self):
+        yview = self.tv.yview()
+        return {
+            "seleccion": list(self.tv.selection()),
+            "foco": self.tv.focus(),
+            "yview": yview[0] if yview else 0.0,
+        }
+
+    def restaurar_estado_facturas(self, estado):
+        existentes = {str(iid) for iid in self.tv.get_children()}
+        seleccion = [
+            str(iid) for iid in estado.get("seleccion", [])
+            if str(iid) in existentes
+        ]
+        if seleccion:
+            self.tv.selection_set(seleccion)
+        foco = str(estado.get("foco") or "")
+        if foco in existentes:
+            self.tv.focus(foco)
+        elif seleccion:
+            self.tv.focus(seleccion[0])
+        try:
+            self.tv.yview_moveto(float(estado.get("yview") or 0.0))
+        except (TypeError, ValueError, tk.TclError):
+            pass
+        self._marked_factura_ids.intersection_update(existentes)
 
     def get_marked_ids(self):
         return [iid for iid in self.tv.get_children() if str(iid) in self._marked_factura_ids]

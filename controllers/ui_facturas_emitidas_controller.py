@@ -39,6 +39,7 @@ class FacturasEmitidasController:
         self._allow_all_years = bool(allow_all_years)
         self._incluir_origen_ocr = bool(incluir_origen_ocr)
         self._facturas_cache = []
+        self._gestor_lectura_facturas = None
         self._facturae_exporter = FacturaeExporter()
 
     @contextmanager
@@ -120,24 +121,76 @@ class FacturasEmitidasController:
 
     def refresh_facturas(self):
         try:
-            self._facturas_cache = self._listar_facturas_base()
+            facturas = self._listar_facturas_base()
         except Exception:
             _reconectar = getattr(self._gestor, "reconnect", None)
             if callable(_reconectar):
                 _reconectar()
-                self._facturas_cache = self._listar_facturas_base()
+                facturas = self._listar_facturas_base()
             else:
                 raise
+        self.aplicar_facturas(facturas)
+        emp = self._gestor.get_empresa(self._codigo, self._ejercicio)
+        if emp:
+            self._empresa_conf.update(emp)
+
+    def cargar_facturas_frescas(self):
+        """Lee facturas desde una conexion independiente y reciente."""
+        gestor = self._obtener_gestor_lectura_facturas()
+        try:
+            return self._listar_facturas_base(gestor)
+        except Exception:
+            _reconectar = getattr(gestor, "reconnect", None)
+            if not callable(_reconectar):
+                raise
+            _reconectar()
+            return self._listar_facturas_base(gestor)
+
+    def aplicar_facturas(
+        self, facturas, *, solo_si_cambia: bool = False,
+        preservar_estado: bool = False,
+    ) -> bool:
+        """Actualiza cache y vista; devuelve si fue necesario repintar."""
+        facturas = list(facturas or [])
+        if solo_si_cambia and facturas == self._facturas_cache:
+            return False
+        estado = None
+        capturar = getattr(self._view, "capturar_estado_facturas", None)
+        if preservar_estado and callable(capturar):
+            estado = capturar()
+        self._facturas_cache = facturas
         if self._allow_all_years:
             years = sorted({y for y in (self._year_from_factura(f) for f in self._facturas_cache) if y is not None})
             self._view.set_facturas_years(years)
         series = [str(f.get("serie") or "").strip() for f in self._facturas_cache if f.get("serie")]
         self._view.set_facturas_series(series)
         self.apply_facturas_filter()
-        self._view.set_detalle_lineas([])
-        emp = self._gestor.get_empresa(self._codigo, self._ejercicio)
-        if emp:
-            self._empresa_conf.update(emp)
+        restaurar = getattr(self._view, "restaurar_estado_facturas", None)
+        if estado is not None and callable(restaurar):
+            restaurar(estado)
+            self.factura_seleccionada()
+        else:
+            self._view.set_detalle_lineas([])
+        return True
+
+    def _obtener_gestor_lectura_facturas(self):
+        if getattr(self, "_gestor_lectura_facturas", None) is None:
+            crear = getattr(self._gestor, "crear_sesion_lectura", None)
+            self._gestor_lectura_facturas = crear() if callable(crear) else self._gestor
+        return self._gestor_lectura_facturas
+
+    def cerrar_lector_facturas(self):
+        gestor = getattr(self, "_gestor_lectura_facturas", None)
+        self._gestor_lectura_facturas = None
+        if gestor is None or gestor is self._gestor:
+            return
+        cerrar = getattr(gestor, "cerrar", None)
+        if callable(cerrar):
+            cerrar()
+            return
+        conn = getattr(gestor, "conn", None)
+        if conn is not None:
+            conn.close()
 
     def apply_facturas_filter(self):
         self._view.clear_facturas()
@@ -1391,11 +1444,12 @@ class FacturasEmitidasController:
                 return f
         return None
 
-    def _listar_facturas_base(self):
+    def _listar_facturas_base(self, gestor=None):
+        gestor = gestor or self._gestor
         if self._allow_all_years:
-            facturas = self._gestor.listar_facturas_emitidas_global(self._codigo, None)
+            facturas = gestor.listar_facturas_emitidas_global(self._codigo, None)
         else:
-            facturas = self._gestor.listar_facturas_emitidas(
+            facturas = gestor.listar_facturas_emitidas(
                 self._codigo, self._ejercicio,
             )
         if self._incluir_origen_ocr:

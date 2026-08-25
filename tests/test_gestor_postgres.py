@@ -32,6 +32,56 @@ def test_reconnect_cierra_conexion_anterior_y_crea_otra(monkeypatch):
     assert llamadas[0][0] == "postgresql://gestinem"
 
 
+def test_crear_sesion_lectura_es_independiente_autocommit_y_sin_migraciones(monkeypatch):
+    import psycopg
+
+    principal = _ConexionFalsa()
+    lectura = _ConexionFalsa()
+    llamadas = []
+
+    def conectar(dsn, **kwargs):
+        llamadas.append((dsn, kwargs))
+        return lectura
+
+    monkeypatch.setattr(psycopg, "connect", conectar)
+    gestor = object.__new__(GestorPostgres)
+    gestor.dsn = "postgresql://gestinem"
+    gestor.data_source = "PostgreSQL"
+    gestor.conn = ConexionPostgres(principal)
+
+    lector = gestor.crear_sesion_lectura()
+
+    assert lector is not gestor
+    assert lector.conn._conexion is lectura
+    assert gestor.conn._conexion is principal
+    assert llamadas[0][1]["autocommit"] is True
+    assert "default_transaction_read_only=on" in llamadas[0][1]["options"]
+    lector.cerrar()
+    assert lectura.closed is True
+
+
+def test_reconnect_mantiene_autocommit_en_sesion_lectura(monkeypatch):
+    import psycopg
+
+    anterior = _ConexionFalsa()
+    nueva = _ConexionFalsa()
+    kwargs_recibidos = []
+    monkeypatch.setattr(
+        psycopg, "connect",
+        lambda _dsn, **kwargs: (kwargs_recibidos.append(kwargs) or nueva),
+    )
+    lector = object.__new__(GestorPostgres)
+    lector.dsn = "postgresql://gestinem"
+    lector._solo_lectura = True
+    lector.conn = ConexionPostgres(anterior)
+
+    lector.reconnect()
+
+    assert kwargs_recibidos[0]["autocommit"] is True
+    assert "default_transaction_read_only=on" in kwargs_recibidos[0]["options"]
+    assert anterior.closed is True
+
+
 def test_adaptar_sql_a_postgres_convierte_marcadores_e_ignore():
     sql = "INSERT OR IGNORE INTO tabla (id, nombre) VALUES (?, ?)"
     assert adaptar_sql_a_postgres(sql) == (

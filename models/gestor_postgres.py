@@ -316,8 +316,46 @@ class GestorPostgres(GestorBase):
             self.conn.close()
         except Exception:
             pass
-        conexion = psycopg.connect(self.dsn, row_factory=dict_row)
+        solo_lectura = bool(getattr(self, "_solo_lectura", False))
+        opciones = {
+            "row_factory": dict_row,
+            "autocommit": solo_lectura,
+        }
+        if solo_lectura:
+            opciones["options"] = "-c default_transaction_read_only=on"
+        conexion = psycopg.connect(self.dsn, **opciones)
         self.conn = ConexionPostgres(conexion)
+
+    def crear_sesion_lectura(self) -> "GestorPostgres":
+        """Crea un gestor ligero con conexion independiente en autocommit.
+
+        No aplica migraciones ni comparte transacciones con la conexion
+        operativa. Se usa en refrescos de interfaz que deben observar siempre
+        los ultimos cambios confirmados por otros puestos.
+        """
+        import psycopg
+        from psycopg.rows import dict_row
+
+        lector = object.__new__(GestorPostgres)
+        lector.dsn = self.dsn
+        lector.data_source = self.data_source
+        lector._solo_lectura = True
+        if hasattr(self, "security"):
+            lector.security = self.security
+        conexion = psycopg.connect(
+            self.dsn,
+            row_factory=dict_row,
+            autocommit=True,
+            options="-c default_transaction_read_only=on",
+        )
+        lector.conn = ConexionPostgres(conexion)
+        return lector
+
+    def cerrar(self) -> None:
+        """Cierra la conexion del gestor de forma idempotente."""
+        conn = getattr(self, "conn", None)
+        if conn is not None:
+            conn.close()
 
     def _inicializar_esquema_postgres(self) -> None:
         """Crea el esquema base en una base PostgreSQL vacia."""
