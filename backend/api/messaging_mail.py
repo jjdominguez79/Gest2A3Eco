@@ -35,6 +35,36 @@ def _smtp_configured(cfg) -> bool:
     return bool(cfg.messaging_smtp_host and cfg.messaging_smtp_from)
 
 
+def _graph_access_token(cfg) -> str:
+    """Obtiene un token de aplicacion; las credenciales nunca salen del backend."""
+    token_response = requests.post(
+        "https://login.microsoftonline.com/"
+        f"{quote(cfg.messaging_graph_tenant_id, safe='')}/oauth2/v2.0/token",
+        data={
+            "client_id": cfg.messaging_graph_client_id,
+            "client_secret": cfg.messaging_graph_client_secret,
+            "scope": "https://graph.microsoft.com/.default",
+            "grant_type": "client_credentials",
+        },
+        timeout=30,
+    )
+    if token_response.status_code != 200:
+        raise RuntimeError(_graph_error(token_response, "autenticacion"))
+    access_token = str(token_response.json().get("access_token") or "")
+    if not access_token:
+        raise RuntimeError("Microsoft Graph no devolvio un token de acceso")
+    return access_token
+
+
+def graph_headers(cfg) -> dict[str, str]:
+    if not _graph_configured(cfg):
+        raise RuntimeError("Microsoft Graph no esta configurado en el backend")
+    return {
+        "Authorization": f"Bearer {_graph_access_token(cfg)}",
+        "Prefer": 'IdType="ImmutableId"',
+    }
+
+
 def send_mail(
     to: str | list[str], subject: str, html: str, *, sender: str = "",
     cc: list[str] | None = None, bcc: list[str] | None = None,
@@ -69,22 +99,7 @@ def _send_mail_graph(
     cc: list[str] | None = None, bcc: list[str] | None = None,
     attachments: list[dict] | None = None,
 ) -> bool:
-    token_response = requests.post(
-        "https://login.microsoftonline.com/"
-        f"{quote(cfg.messaging_graph_tenant_id, safe='')}/oauth2/v2.0/token",
-        data={
-            "client_id": cfg.messaging_graph_client_id,
-            "client_secret": cfg.messaging_graph_client_secret,
-            "scope": "https://graph.microsoft.com/.default",
-            "grant_type": "client_credentials",
-        },
-        timeout=30,
-    )
-    if token_response.status_code != 200:
-        raise RuntimeError(_graph_error(token_response, "autenticacion"))
-    access_token = str(token_response.json().get("access_token") or "")
-    if not access_token:
-        raise RuntimeError("Microsoft Graph no devolvio un token de acceso")
+    access_token = _graph_access_token(cfg)
 
     sent = requests.post(
         "https://graph.microsoft.com/v1.0/users/"

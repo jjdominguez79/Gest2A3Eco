@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -303,8 +304,8 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
                 ),
                 SizedBox(
                   height: 46,
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
+                  child: _HorizontalScrollArea(
+                    key: const Key('channel-filter-horizontal-scroll'),
                     padding: const EdgeInsets.symmetric(horizontal: 10),
                     children: [
                       for (final channel in channelOptions)
@@ -609,8 +610,8 @@ class _InternalThreadsShortcut extends StatelessWidget {
                     padding: EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                     child: Text('No hay chats internos disponibles'),
                   )
-                : ListView(
-                    scrollDirection: Axis.horizontal,
+                : _HorizontalScrollArea(
+                    key: const Key('internal-threads-horizontal-scroll'),
                     padding: const EdgeInsets.symmetric(horizontal: 10),
                     children: [
                       for (final thread in items)
@@ -644,6 +645,75 @@ class _InternalThreadsShortcut extends StatelessWidget {
           ),
         ),
       ],
+    ),
+  );
+}
+
+/// Carrusel horizontal usable en web con rueda vertical, arrastre de raton y
+/// una barra interactiva. Flutter no traslada por defecto la rueda vertical a
+/// un ListView horizontal, que era lo que dejaba inaccesibles los chats.
+class _HorizontalScrollArea extends StatefulWidget {
+  const _HorizontalScrollArea({
+    super.key,
+    required this.children,
+    this.padding,
+  });
+
+  final List<Widget> children;
+  final EdgeInsetsGeometry? padding;
+
+  @override
+  State<_HorizontalScrollArea> createState() => _HorizontalScrollAreaState();
+}
+
+class _HorizontalScrollAreaState extends State<_HorizontalScrollArea> {
+  final ScrollController _controller = ScrollController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent || !_controller.hasClients) return;
+    final delta = event.scrollDelta.dx != 0
+        ? event.scrollDelta.dx
+        : event.scrollDelta.dy;
+    final position = _controller.position;
+    _controller.jumpTo(
+      (_controller.offset + delta).clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Listener(
+    onPointerSignal: _onPointerSignal,
+    child: ScrollConfiguration(
+      behavior: ScrollConfiguration.of(context).copyWith(
+        dragDevices: const {
+          PointerDeviceKind.touch,
+          PointerDeviceKind.mouse,
+          PointerDeviceKind.stylus,
+          PointerDeviceKind.invertedStylus,
+          PointerDeviceKind.trackpad,
+        },
+      ),
+      child: Scrollbar(
+        key: Key('${widget.key}-scrollbar'),
+        controller: _controller,
+        thumbVisibility: true,
+        interactive: true,
+        child: ListView(
+          controller: _controller,
+          scrollDirection: Axis.horizontal,
+          padding: widget.padding,
+          children: widget.children,
+        ),
+      ),
     ),
   );
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -25,6 +26,75 @@ class _FakeNotifications extends NotificationsService {
 }
 
 void main() {
+  testWidgets('rueda vertical desplaza los chats internos hacia la derecha', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    const profile = UserProfile(
+      id: 'staff-1',
+      name: 'Empleada',
+      email: 'empleada@gestinem.es',
+      type: UserType.staff,
+      staffRole: StaffRole.empleado,
+    );
+    const session = AuthSession(token: 'staff-token', profile: profile);
+    final threads = [
+      for (var index = 0; index < 12; index++)
+        InternalThread(
+          id: 'thread-$index',
+          kind: 'group',
+          channel: '',
+          title: 'Chat interno largo $index',
+          unreadCount: 0,
+        ),
+    ];
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith(
+            (ref) => FakeSessionController(ref, session),
+          ),
+          apiClientProvider.overrideWithValue(
+            ApiClient(
+              dio: Dio(BaseOptions(baseUrl: 'https://example.test')),
+              tokenProvider: () => session.token,
+            ),
+          ),
+          conversationsProvider.overrideWith((ref) async => []),
+          internalThreadsProvider.overrideWith((ref) async => threads),
+          realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
+          notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
+        ],
+        child: const MaterialApp(home: ConversationsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final scroller = find.byKey(
+      const Key('internal-threads-horizontal-scroll'),
+    );
+    expect(scroller, findsOneWidget);
+    expect(
+      find.byKey(const Key('internal-thread-thread-11')).hitTestable(),
+      findsNothing,
+    );
+
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: tester.getCenter(scroller),
+        scrollDelta: const Offset(0, 5000),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.byKey(const Key('internal-thread-thread-11')).hitTestable(),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('cliente ve canales separados sin buscador ni menu', (
     tester,
   ) async {

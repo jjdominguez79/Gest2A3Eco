@@ -46,6 +46,23 @@ class SessionStub:
         return self._admin
 
 
+def test_empleado_carga_buzon_sin_pedir_listado_administrativo_de_usuarios():
+    class GestorEmpleado(GestorStub):
+        def listar_usuarios(self):
+            raise AssertionError("un empleado no debe consultar todos los usuarios")
+
+    view = object.__new__(UIComunicacionesGlobal)
+    view._gestor = GestorEmpleado()
+    view._session = SessionStub(admin=False)
+
+    data = UIComunicacionesGlobal._collect_refresh_data(view)
+
+    assert data["mine"] == [{"id": "mine"}]
+    assert data["users"] == [{
+        "id": 7, "nombre": "", "username": "", "activo": True,
+    }]
+
+
 def view_stub(admin=True):
     view = object.__new__(UIComunicacionesGlobal)
     view._gestor = GestorStub()

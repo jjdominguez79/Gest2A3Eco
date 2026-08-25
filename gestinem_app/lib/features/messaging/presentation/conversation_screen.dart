@@ -517,11 +517,13 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
           child: asyncMessages.when(
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (error, _) => Center(child: Text(apiErrorMessage(error))),
-            data: (messages) => ListView.builder(
-              key: const Key('message-list'),
+            data: (messages) => Scrollbar(
               controller: _scroll,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              itemCount: messages.length,
+              child: ListView.builder(
+                key: const Key('message-list'),
+                controller: _scroll,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                itemCount: messages.length,
               itemBuilder: (context, index) {
                 final message = messages[index];
                 final mine =
@@ -557,6 +559,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                 );
               },
             ),
+          ),
           ),
         ),
         if (_replyingTo != null)

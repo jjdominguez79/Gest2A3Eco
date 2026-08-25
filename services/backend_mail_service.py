@@ -78,3 +78,69 @@ class BackendMailService:
         finally:
             for handle in opened:
                 handle.close()
+
+    def list_attachments(self, *, mailbox: str, message_id: str) -> list[dict]:
+        self._ensure_configured()
+        response = self.http.get(
+            f"{self.base_url}/api/v1/mail/attachments",
+            headers={"X-API-Key": self.token},
+            params={"mailbox": mailbox, "message_id": message_id}, timeout=60,
+        )
+        return self._json_response(response)
+
+    def download_attachment(
+        self, *, mailbox: str, message_id: str, attachment_id: str,
+    ) -> dict:
+        self._ensure_configured()
+        response = self.http.get(
+            f"{self.base_url}/api/v1/mail/attachment",
+            headers={"X-API-Key": self.token}, params={
+                "mailbox": mailbox, "message_id": message_id,
+                "attachment_id": attachment_id,
+            }, timeout=120,
+        )
+        return self._json_response(response)
+
+    def reply(
+        self, *, mailbox: str, message_id: str, body: str,
+        attachments: list[str] | None = None,
+    ) -> BackendMailResult:
+        self._ensure_configured()
+        opened = []
+        try:
+            files = []
+            for raw in attachments or []:
+                path = Path(raw)
+                handle = path.open("rb")
+                opened.append(handle)
+                files.append(("files", (path.name, handle)))
+            response = self.http.post(
+                f"{self.base_url}/api/v1/mail/reply",
+                headers={"X-API-Key": self.token},
+                data={"mailbox": mailbox, "message_id": message_id, "html": body},
+                files=files, timeout=120,
+            )
+            payload = self._json_response(response)
+            return BackendMailResult(
+                sender=str(payload.get("sender") or mailbox),
+                message_id=str(payload.get("message_id") or ""),
+            )
+        finally:
+            for handle in opened:
+                handle.close()
+
+    def _ensure_configured(self) -> None:
+        if not self.configured:
+            raise ValueError(
+                "El backend no esta disponible: revisa la URL de integraciones y "
+                "el token de este puesto."
+            )
+
+    def _json_response(self, response):
+        if response.status_code >= 400:
+            try:
+                detail = response.json().get("detail")
+            except Exception:
+                detail = ""
+            raise RuntimeError(detail or f"Error del backend (HTTP {response.status_code})")
+        return response.json()

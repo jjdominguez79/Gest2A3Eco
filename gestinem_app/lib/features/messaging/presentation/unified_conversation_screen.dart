@@ -211,12 +211,14 @@ class _UnifiedConversationScreenState
                   ]),
                 );
               }
-              return ListView.builder(
-                key: const Key('unified-message-list'),
+              return Scrollbar(
                 controller: _scroll,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                itemCount: messages.length,
-                itemBuilder: (context, index) {
+                child: ListView.builder(
+                  key: const Key('unified-message-list'),
+                  controller: _scroll,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  itemCount: messages.length,
+                  itemBuilder: (context, index) {
                   final message = messages[index];
                   final profile = ref.read(sessionProvider).valueOrNull!.profile;
                   final mine = message.authorType == 'client' &&
@@ -240,6 +242,7 @@ class _UnifiedConversationScreenState
                     ),
                   ]);
                 },
+              ),
               );
             },
           ),

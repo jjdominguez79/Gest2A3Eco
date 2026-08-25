@@ -10,6 +10,7 @@ from html.parser import HTMLParser
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from services.graph_mail_service import GraphMailService
+from services.backend_mail_service import BackendMailService
 from services.documentos_correo_service import DocumentosCorreoService
 from utils.utilidades import (
     load_app_config,
@@ -293,7 +294,11 @@ class UIComunicaciones(ttk.Frame):
         top = ttk.Frame(self)
         top.pack(fill="x", pady=(0, 10))
         ttk.Label(top, text="Comunicaciones", font=("Segoe UI", 16, "bold")).pack(side="left")
-        ttk.Button(top, text="Configurar Microsoft 365", command=self._configure).pack(side="right")
+        if self._session and self._session.is_admin():
+            ttk.Button(
+                top, text="Configurar cuenta personal Microsoft 365",
+                command=self._configure,
+            ).pack(side="right")
         ttk.Button(top, text="Configurar firma", command=self._configure_signature).pack(side="right", padx=6)
         ttk.Button(top, text="Nuevo correo", command=self._compose).pack(side="right", padx=6)
         ttk.Button(top, text="Ver conversacion", command=self._detail).pack(side="right", padx=6)
@@ -891,14 +896,20 @@ class ComposeMailDialog(tk.Toplevel):
             [{"path": str(logo_path), "content_id": "gestinem-logo"}]
             if "cid:gestinem-logo" in signature and logo_path.is_file() else []
         )
-        service = GraphMailService()
+        service = GraphMailService() if sender == "me" else BackendMailService()
         try:
-            result = service.send(
-                sender=sender, to=to, cc=cc, subject=subject,
-                body=body_html,
-                attachments=self._attachments,
-                inline_attachments=inline_attachments,
-            )
+            if sender == "me":
+                result = service.send(
+                    sender=sender, to=to, cc=cc, subject=subject,
+                    body=body_html, attachments=self._attachments,
+                    inline_attachments=inline_attachments,
+                )
+            else:
+                result = service.send(
+                    to=to, cc=cc, subject=subject, body=body_html,
+                    attachments=self._attachments,
+                    inline_attachments=inline_attachments,
+                )
         except Exception as exc:
             self._gestor.registrar_envio_comunicacion({
                 "codigo_empresa": self._codigo, "asunto": subject,
@@ -1017,8 +1028,8 @@ class ReplyMailDialog(tk.Toplevel):
         )
         body_html = construir_cuerpo_html(plain, signature, "")
         try:
-            service = GraphMailService()
             if send_personal:
+                service = GraphMailService()
                 subject = self._message.get("asunto") or ""
                 if not subject.lower().startswith("re:"):
                     subject = f"Re: {subject}"
@@ -1028,6 +1039,7 @@ class ReplyMailDialog(tk.Toplevel):
                 )
                 sent_mailbox = result.sender
             else:
+                service = BackendMailService()
                 result = service.reply(
                     mailbox=mailbox, message_id=graph_id, body=body_html,
                     attachments=self._attachments,

@@ -633,9 +633,17 @@ class UIComunicacionesGlobal(ttk.Frame):
         self._start_auto_refresh()
 
     def _collect_refresh_data(self) -> dict:
+        # listar_usuarios es administracion y esta correctamente denegado a un
+        # empleado. Pedirlo incondicionalmente abortaba toda la carga del buzon.
+        users = self._gestor.listar_usuarios() if self._session.is_admin() else [{
+            "id": self._session.user.id,
+            "nombre": getattr(self._session.user, "nombre", ""),
+            "username": getattr(self._session.user, "username", ""),
+            "activo": True,
+        }]
         data = {
             "companies": self._gestor.listar_empresas(),
-            "users": self._gestor.listar_usuarios(),
+            "users": users,
             "pending": self._gestor.listar_comunicaciones_sin_asignar(),
             "mine": self._gestor.listar_buzon_responsable(self._session.user.id),
             "mine_pending": self._gestor.listar_pendientes_responsable(

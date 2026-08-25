@@ -10,7 +10,7 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from services.graph_mail_service import GraphMailService
+from services.backend_mail_service import BackendMailService
 from services.ocr.ocr_service import OcrService
 from utils.utilidades import get_default_received_documents_dir
 
@@ -40,9 +40,11 @@ class ImportSummary:
 
 
 class DocumentosCorreoService:
-    def __init__(self, gestor, graph: GraphMailService | None = None):
+    def __init__(self, gestor, graph=None):
         self._gestor = gestor
-        self._graph = graph or GraphMailService()
+        # La lectura de Microsoft 365 se hace en el backend con el token del
+        # puesto. El escritorio no necesita tenant/client ID ni secretos Graph.
+        self._graph = graph or BackendMailService()
 
     def listar_adjuntos(self, *, mailbox: str, graph_message_id: str) -> list[dict]:
         return self._graph.list_attachments(
