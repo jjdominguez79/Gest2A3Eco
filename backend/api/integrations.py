@@ -155,14 +155,25 @@ class DatapriusBackend:
             headers["Authorization"] = f"Bearer {self._token(True)}"
             response = self.http.request(method, f"{self.base_url}{path}", headers=headers, timeout=60, **kwargs)
         if response.status_code >= 400:
+            payload = {}
             try:
-                detalle = response.json().get("message") or response.json().get("detail")
+                payload = response.json()
+                error = payload.get("error") or {}
+                detalle = (
+                    payload.get("message")
+                    or payload.get("detail")
+                    or error.get("error_message")
+                    or error.get("message")
+                )
             except Exception:
                 detalle = response.text[:300]
             suffix = f": {detalle}" if detalle else "."
-            raise ProviderError(
+            exc = ProviderError(
                 f"Dataprius rechazo {method.upper()} {path} ({response.status_code}){suffix}"
             )
+            exc.status_code = response.status_code
+            exc.error_code = str((payload.get("error") or {}).get("error_code") or "")
+            raise exc
         return response.json() if response.content else {}
 
     def _archivo_existente(self, folder_id, nombre: str) -> dict:
@@ -187,7 +198,15 @@ class DatapriusBackend:
         ruta_final = str(ruta or "").strip().strip("/")
         if self.base_path and not ruta_final.upper().startswith(self.base_path.upper()):
             ruta_final = f"{self.base_path}/{ruta_final}" if ruta_final else self.base_path
-        data = self._request("POST", "/folders/getpath", json={"Path": ruta_final})
+        try:
+            data = self._request("POST", "/folders/getpath", json={"Path": ruta_final})
+        except ProviderError as exc:
+            if (
+                getattr(exc, "status_code", None) not in {400, 404}
+                or getattr(exc, "error_code", "").upper() != "PATH_NOT_EXISTS"
+            ):
+                raise
+            data = {}
         items = data.get("data") or []
         if not items:
             data = self._request("POST", "/folders/createpath", json={"Path": ruta_final})

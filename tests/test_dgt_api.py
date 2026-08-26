@@ -13,7 +13,7 @@ os.environ.setdefault(
 
 from backend.api import app as app_module
 from backend.api.database import Base, build_engine
-from backend.api.integrations import DatapriusBackend
+from backend.api.integrations import DatapriusBackend, ProviderError
 from backend.api.models import Parte
 
 
@@ -351,6 +351,74 @@ def test_dataprius_reutiliza_archivo_existente_sin_duplicarlo():
         "/folders/getpath",
         "/folders/files/123",
     ]
+
+
+def test_dataprius_crea_ruta_cuando_getpath_indica_que_no_existe():
+    backend = object.__new__(DatapriusBackend)
+    backend.base_path = "FOLDERS/Gest2A3Eco/Tramites DGT"
+    llamadas = []
+
+    def request(method, path, **kwargs):
+        llamadas.append((method, path, kwargs))
+        if path == "/folders/getpath":
+            exc = ProviderError("Path does not exists.")
+            exc.status_code = 400
+            exc.error_code = "PATH_NOT_EXISTS"
+            raise exc
+        if path == "/folders/createpath":
+            return {"data": [{"ID": 123}]}
+        if path == "/folders/files/123":
+            return {"data": []}
+        if path == "/files/upload":
+            return {"data": {"ID": 456, "Folder": 123, "Name": "contrato.pdf"}}
+        raise AssertionError(path)
+
+    backend._request = request
+    resultado = backend.subir(
+        "expedientes/DGT-2026-0001/Generados",
+        "contrato.pdf",
+        b"%PDF",
+    )
+
+    assert resultado["id"] == 456
+    assert [path for _method, path, _kwargs in llamadas] == [
+        "/folders/getpath",
+        "/folders/createpath",
+        "/folders/files/123",
+        "/files/upload",
+    ]
+
+
+def test_dataprius_conserva_codigo_y_detalle_de_error_anidado():
+    class Response:
+        status_code = 400
+        content = b"{}"
+        text = ""
+
+        @staticmethod
+        def json():
+            return {
+                "error": {
+                    "error_code": "PATH_NOT_EXISTS",
+                    "error_message": "Path does not exists.",
+                }
+            }
+
+    class Session:
+        @staticmethod
+        def request(*_args, **_kwargs):
+            return Response()
+
+    backend = object.__new__(DatapriusBackend)
+    backend.base_url = "https://dataprius.example.test"
+    backend.http = Session()
+    backend._token = lambda renovar=False: "token"
+
+    with pytest.raises(ProviderError, match="Path does not exists") as captured:
+        backend._request("POST", "/folders/getpath", json={"Path": "FOLDERS/test"})
+
+    assert captured.value.status_code == 400
+    assert captured.value.error_code == "PATH_NOT_EXISTS"
 
 
 def test_edicion_interna_guarda_partes_vehiculo_y_operacion(tmp_path, monkeypatch):
