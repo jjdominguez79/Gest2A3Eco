@@ -7,6 +7,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:dio/dio.dart';
 
 import '../api/api_client.dart';
 import '../../features/auth/domain/user_profile.dart';
@@ -16,6 +17,95 @@ import 'desktop_notifications.dart';
 // Clave publica VAPID para FCM Web. Se inyecta en el build con:
 //   --dart-define=FIREBASE_WEB_VAPID_KEY=<clave>
 const _kVapidKey = String.fromEnvironment('FIREBASE_WEB_VAPID_KEY');
+
+const _androidChannel = AndroidNotificationChannel(
+  'gestinem_messages',
+  'Mensajes',
+  description: 'Avisos de nuevos mensajes de Gestinem',
+  importance: Importance.high,
+);
+
+String notificationTargetType(Map<String, dynamic> data) {
+  final explicit = data['target_type']?.toString() ?? '';
+  if (explicit.isNotEmpty) return explicit;
+  return (data['thread_id']?.toString() ?? '').isNotEmpty
+      ? 'internal_thread'
+      : 'conversation';
+}
+
+String notificationTargetId(Map<String, dynamic> data) {
+  final explicit = data['target_id']?.toString() ?? '';
+  if (explicit.isNotEmpty) return explicit;
+  return notificationTargetType(data) == 'internal_thread'
+      ? data['thread_id']?.toString() ?? ''
+      : data['conversation_id']?.toString() ?? '';
+}
+
+@visibleForTesting
+int notificationIdForTarget(String targetType, String targetId) {
+  var hash = 0x811c9dc5;
+  for (final unit in '$targetType:$targetId'.codeUnits) {
+    hash ^= unit;
+    hash = (hash * 0x01000193) & 0x7fffffff;
+  }
+  return hash;
+}
+
+Future<void> _showAndroidMessage(
+  RemoteMessage message, {
+  FlutterLocalNotificationsPlugin? configuredPlugin,
+}) async {
+  final data = message.data;
+  final targetId = notificationTargetId(data);
+  if (targetId.isEmpty) return;
+  final plugin = configuredPlugin ?? FlutterLocalNotificationsPlugin();
+  if (configuredPlugin == null) {
+    await plugin.initialize(
+      settings: const InitializationSettings(
+        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+      ),
+    );
+  }
+  final android = plugin
+      .resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin
+      >();
+  await android?.createNotificationChannel(_androidChannel);
+  await plugin.show(
+    id: notificationIdForTarget(notificationTargetType(data), targetId),
+    title:
+        data['title']?.toString() ??
+        message.notification?.title ??
+        'Nuevo mensaje de Gestinem',
+    body:
+        data['body']?.toString() ??
+        message.notification?.body ??
+        'Tienes un nuevo mensaje',
+    notificationDetails: const NotificationDetails(
+      android: AndroidNotificationDetails(
+        'gestinem_messages',
+        'Mensajes',
+        channelDescription: 'Avisos de nuevos mensajes de Gestinem',
+        importance: Importance.high,
+        priority: Priority.high,
+        icon: '@mipmap/ic_launcher',
+      ),
+    ),
+    payload: jsonEncode(data),
+  );
+}
+
+@pragma('vm:entry-point')
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  if (Firebase.apps.isEmpty) await Firebase.initializeApp();
+  await _showAndroidMessage(message);
+}
+
+void configureFirebaseBackgroundMessaging() {
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  }
+}
 
 final notificationsServiceProvider = Provider<NotificationsService>(
   (ref) => NotificationsService(),
@@ -56,18 +146,14 @@ class NotificationEvent {
 }
 
 class NotificationsService {
-  static const _androidChannel = AndroidNotificationChannel(
-    'gestinem_messages',
-    'Mensajes',
-    description: 'Avisos de nuevos mensajes de Gestinem',
-    importance: Importance.high,
-  );
-
   final DesktopNotifications _desktop = DesktopNotifications();
   final FlutterLocalNotificationsPlugin _local =
       FlutterLocalNotificationsPlugin();
   String? _owner;
   String? _deviceId;
+  AuthSession? _session;
+  ApiClient? _api;
+  NotificationEvent? _pendingOpenedEvent;
   StreamSubscription<String>? _tokenRefresh;
   final _events = StreamController<NotificationEvent>.broadcast();
 
@@ -81,6 +167,12 @@ class NotificationsService {
       NotificationPermissionState.available;
 
   Stream<NotificationEvent> get events => _events.stream;
+
+  NotificationEvent? takePendingOpenedEvent() {
+    final event = _pendingOpenedEvent;
+    _pendingOpenedEvent = null;
+    return event;
+  }
 
   /// Estado actual del permiso de notificacion.
   NotificationPermissionState get permissionState => _permissionState;
@@ -105,6 +197,8 @@ class NotificationsService {
   /// En Web NO abre el dialogo del navegador; usa [activateWebNotifications]
   /// desde la UI para el consentimiento explicito.
   Future<void> initialize(AuthSession session, ApiClient api) async {
+    _session = session;
+    _api = api;
     if (_desktop.supported) {
       if (_owner == _ownerFor(session)) return;
       try {
@@ -283,32 +377,30 @@ class NotificationsService {
 
   Future<void> _showForegroundNotification(RemoteMessage message) async {
     if (defaultTargetPlatform != TargetPlatform.android) return;
-    final title =
-        message.notification?.title ??
-        message.data['title']?.toString() ??
-        'Nuevo mensaje de Gestinem';
-    final body =
-        message.notification?.body ??
-        message.data['body']?.toString() ??
-        'Tienes un nuevo mensaje';
-    await _local.show(
-      id:
-          message.messageId?.hashCode ??
-          DateTime.now().millisecondsSinceEpoch.remainder(1 << 31),
-      title: title,
-      body: body,
-      notificationDetails: NotificationDetails(
-        android: AndroidNotificationDetails(
-          _androidChannel.id,
-          _androidChannel.name,
-          channelDescription: _androidChannel.description,
-          importance: Importance.high,
-          priority: Priority.high,
-          icon: '@mipmap/ic_launcher',
-        ),
-      ),
-      payload: jsonEncode(message.data),
-    );
+    if (!await _isStillUnread(message.data)) return;
+    await _showAndroidMessage(message, configuredPlugin: _local);
+  }
+
+  Future<bool> _isStillUnread(Map<String, dynamic> data) async {
+    final session = _session;
+    final api = _api;
+    if (session == null || api == null) return true;
+    final targetType = notificationTargetType(data);
+    final targetId = notificationTargetId(data);
+    try {
+      final path = targetType == 'internal_thread'
+          ? '/staff/internal/threads'
+          : '/${session.profile.type.name}/conversations';
+      final response = await api.dio.get<List<dynamic>>(path);
+      final item = response.data?.cast<Map<String, dynamic>>().where(
+        (row) => row['id']?.toString() == targetId,
+      );
+      return item != null &&
+          item.isNotEmpty &&
+          (item.first['unread_count'] as num? ?? 0) > 0;
+    } catch (_) {
+      return true;
+    }
   }
 
   Future<void> _registerWebToken(
@@ -336,20 +428,47 @@ class NotificationsService {
     String? title,
     String? body,
   }) {
-    final conversationId = data['conversation_id']?.toString() ?? '';
-    final threadId = data['thread_id']?.toString();
+    final targetType = notificationTargetType(data);
+    final targetId = notificationTargetId(data);
+    final conversationId = targetType == 'conversation' ? targetId : '';
+    final threadId = targetType == 'internal_thread' ? targetId : null;
     if (conversationId.isEmpty && (threadId == null || threadId.isEmpty)) {
       return;
     }
-    _events.add(
-      NotificationEvent(
-        conversationId: conversationId,
-        threadId: threadId,
-        opened: opened,
-        title: title ?? data['title']?.toString(),
-        body: body ?? data['body']?.toString(),
-      ),
+    final event = NotificationEvent(
+      conversationId: conversationId,
+      threadId: threadId,
+      opened: opened,
+      title: title ?? data['title']?.toString(),
+      body: body ?? data['body']?.toString(),
     );
+    if (opened) _pendingOpenedEvent = event;
+    _events.add(event);
+  }
+
+  Future<void> setActiveTarget(String targetType, String targetId) async {
+    final session = _session;
+    final api = _api;
+    final deviceId = _deviceId;
+    if (session == null || api == null || deviceId == null) return;
+    await api.dio.patch<void>(
+      '/${session.profile.type.name}/app-devices/$deviceId/presence',
+      data: FormData.fromMap({
+        'target_type': targetType,
+        'target_id': targetId,
+      }),
+    );
+  }
+
+  Future<void> clearActiveTarget() => setActiveTarget('', '');
+
+  Future<void> cancelTarget(String targetType, String targetId) async {
+    if (defaultTargetPlatform != TargetPlatform.android ||
+        targetId.isEmpty ||
+        !_localNotificationsConfigured) {
+      return;
+    }
+    await _local.cancel(id: notificationIdForTarget(targetType, targetId));
   }
 
   Future<void> unregister(AuthSession session, ApiClient api) async {
@@ -363,6 +482,9 @@ class NotificationsService {
     _tokenRefresh = null;
     _owner = null;
     _deviceId = null;
+    _session = null;
+    _api = null;
+    _pendingOpenedEvent = null;
     _fcmConfigured = false;
     _permissionState = NotificationPermissionState.available;
   }

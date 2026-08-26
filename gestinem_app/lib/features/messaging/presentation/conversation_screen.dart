@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
+import '../../../core/notifications/notifications_service.dart';
 import '../../../core/widgets/authenticated_avatar.dart';
 import '../../auth/domain/user_profile.dart';
 import '../../auth/presentation/auth_controller.dart';
@@ -71,11 +72,17 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   Message? _replyingTo;
   bool _sending = false;
   String? _lastMessageMarkedRead;
+  Timer? _presenceTimer;
+  late final NotificationsService _notificationsService;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _markRead());
+    _notificationsService = ref.read(notificationsServiceProvider);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _activateConversation();
+      _markRead();
+    });
   }
 
   @override
@@ -84,15 +91,31 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     if (oldWidget.conversationId != widget.conversationId ||
         oldWidget.internal != widget.internal) {
       _lastMessageMarkedRead = null;
-      WidgetsBinding.instance.addPostFrameCallback((_) => _markRead());
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _activateConversation();
+        _markRead();
+      });
     }
   }
 
   @override
   void dispose() {
+    _presenceTimer?.cancel();
+    unawaited(_notificationsService.clearActiveTarget());
     _body.dispose();
     _scroll.dispose();
     super.dispose();
+  }
+
+  void _activateConversation() {
+    _presenceTimer?.cancel();
+    final service = _notificationsService;
+    final type = widget.internal ? 'internal_thread' : 'conversation';
+    unawaited(service.setActiveTarget(type, widget.conversationId));
+    _presenceTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => unawaited(service.setActiveTarget(type, widget.conversationId)),
+    );
   }
 
   Future<void> _markRead() async {
@@ -100,11 +123,19 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       final repository = ref.read(messagingRepositoryProvider);
       if (widget.internal) {
         await repository.markInternalRead(widget.conversationId);
+        await _notificationsService.cancelTarget(
+          'internal_thread',
+          widget.conversationId,
+        );
         ref.invalidate(internalThreadsProvider);
       } else {
         final profile = ref.read(sessionProvider).valueOrNull?.profile;
         if (profile == null) return;
         await repository.markRead(profile, widget.conversationId);
+        await _notificationsService.cancelTarget(
+          'conversation',
+          widget.conversationId,
+        );
         ref.invalidate(conversationsProvider);
         ref.invalidate(unifiedConversationProvider);
       }
@@ -125,8 +156,21 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
 
   Future<void> _pickFiles() async {
     const extensions = [
-      'pdf', 'png', 'jpg', 'jpeg', 'gif', 'tif', 'tiff', 'txt', 'xml',
-      'csv', 'xls', 'xlsx', 'doc', 'docx', 'zip',
+      'pdf',
+      'png',
+      'jpg',
+      'jpeg',
+      'gif',
+      'tif',
+      'tiff',
+      'txt',
+      'xml',
+      'csv',
+      'xls',
+      'xlsx',
+      'doc',
+      'docx',
+      'zip',
     ];
     final List<PlatformFile> result;
     if (widget.internal) {

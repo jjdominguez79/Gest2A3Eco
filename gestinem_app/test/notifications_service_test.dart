@@ -51,10 +51,7 @@ void main() {
     });
 
     test('NotificationEvent sin threadId tiene threadId null', () {
-      const event = NotificationEvent(
-        conversationId: 'conv-123',
-        opened: true,
-      );
+      const event = NotificationEvent(conversationId: 'conv-123', opened: true);
 
       expect(event.threadId, isNull);
       expect(event.title, isNull);
@@ -62,13 +59,16 @@ void main() {
     });
 
     test('permissionState tiene todos los estados esperados', () {
-      expect(NotificationPermissionState.values, containsAll([
-        NotificationPermissionState.available,
-        NotificationPermissionState.pending,
-        NotificationPermissionState.authorized,
-        NotificationPermissionState.denied,
-        NotificationPermissionState.configError,
-      ]));
+      expect(
+        NotificationPermissionState.values,
+        containsAll([
+          NotificationPermissionState.available,
+          NotificationPermissionState.pending,
+          NotificationPermissionState.authorized,
+          NotificationPermissionState.denied,
+          NotificationPermissionState.configError,
+        ]),
+      );
     });
 
     test('plataforma web se detecta con kIsWeb', () {
@@ -77,21 +77,33 @@ void main() {
       // Solo verificamos que la constante es accesible.
       expect(kIsWeb, isA<bool>());
     });
+
+    test('una conversacion conserva un unico identificador de aviso', () {
+      final first = notificationIdForTarget('conversation', 'conv-123');
+      final second = notificationIdForTarget('conversation', 'conv-123');
+      final other = notificationIdForTarget('conversation', 'conv-456');
+
+      expect(first, second);
+      expect(first, isNot(other));
+    });
+
+    test('payload antiguo resuelve el destino exacto', () {
+      expect(notificationTargetId({'conversation_id': 'conv-123'}), 'conv-123');
+      expect(
+        notificationTargetType({'thread_id': 'thread-456'}),
+        'internal_thread',
+      );
+      expect(notificationTargetId({'thread_id': 'thread-456'}), 'thread-456');
+    });
   });
 
   group('NotificationPermissionState', () {
     test('authorized indica FCM activo', () {
-      expect(
-        NotificationPermissionState.authorized.name,
-        'authorized',
-      );
+      expect(NotificationPermissionState.authorized.name, 'authorized');
     });
 
     test('configError indica falta de VAPID key', () {
-      expect(
-        NotificationPermissionState.configError.name,
-        'configError',
-      );
+      expect(NotificationPermissionState.configError.name, 'configError');
     });
   });
 }

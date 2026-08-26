@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/gestures.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -26,7 +25,7 @@ class _FakeNotifications extends NotificationsService {
 }
 
 void main() {
-  testWidgets('rueda vertical desplaza los chats internos hacia la derecha', (
+  testWidgets('bandeja muestra grupos empleados y clientes en vertical', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1200, 800));
@@ -40,7 +39,7 @@ void main() {
     );
     const session = AuthSession(token: 'staff-token', profile: profile);
     final threads = [
-      for (var index = 0; index < 12; index++)
+      for (var index = 0; index < 2; index++)
         InternalThread(
           id: 'thread-$index',
           kind: 'group',
@@ -72,27 +71,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final scroller = find.byKey(
-      const Key('internal-threads-horizontal-scroll'),
-    );
-    expect(scroller, findsOneWidget);
-    expect(
-      find.byKey(const Key('internal-thread-thread-11')).hitTestable(),
-      findsNothing,
-    );
-
-    await tester.sendEventToBinding(
-      PointerScrollEvent(
-        position: tester.getCenter(scroller),
-        scrollDelta: const Offset(0, 5000),
-      ),
-    );
-    await tester.pump();
-
-    expect(
-      find.byKey(const Key('internal-thread-thread-11')).hitTestable(),
-      findsOneWidget,
-    );
+    expect(find.byKey(const Key('inbox-section-groups')), findsOneWidget);
+    expect(find.byKey(const Key('inbox-section-employees')), findsOneWidget);
+    expect(find.byKey(const Key('inbox-section-clients')), findsOneWidget);
   });
 
   testWidgets('cliente ve canales separados sin buscador ni menu', (
@@ -170,7 +151,9 @@ void main() {
     );
   });
 
-  testWidgets('staff ve lista agrupada por cliente', (tester) async {
+  testWidgets('staff ve una fila por cada canal del mismo cliente', (
+    tester,
+  ) async {
     const staffProfile = UserProfile(
       id: 'staff-1',
       name: 'Gestor',
@@ -183,22 +166,30 @@ void main() {
       profile: staffProfile,
     );
 
-    final row = Conversation(
-      id: 'c1',
-      companyCode: 'E00001',
-      companyName: 'Empresa Uno',
-      kind: 'fiscal',
-      state: 'pendiente',
-      unreadCount: 3,
-      updatedAt: DateTime(2026, 8, 15),
-    );
+    final rows = [
+      for (final channel in const [
+        ('fiscal', 'CF'),
+        ('laboral', 'LA'),
+        ('private', 'Directo'),
+      ])
+        Conversation(
+          id: 'c-${channel.$1}',
+          companyCode: 'E00001',
+          companyName: 'Empresa Uno',
+          kind: channel.$1,
+          channelLabel: channel.$2,
+          state: 'pendiente',
+          unreadCount: channel.$1 == 'fiscal' ? 3 : 0,
+          updatedAt: DateTime(2026, 8, 15),
+        ),
+    ];
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           sessionProvider.overrideWith(
             (ref) => FakeSessionController(ref, staffSession),
           ),
-          conversationsProvider.overrideWith((ref) async => [row]),
+          conversationsProvider.overrideWith((ref) async => rows),
           internalThreadsProvider.overrideWith((ref) async => []),
           realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
           notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
@@ -211,10 +202,15 @@ void main() {
 
     expect(find.byKey(const Key('conversation-list')), findsOneWidget);
     expect(find.text('Gestor'), findsOneWidget);
-    expect(find.text('Empresa Uno'), findsOneWidget);
-    expect(find.textContaining('E00001'), findsOneWidget);
+    expect(find.text('Empresa Uno'), findsNWidgets(3));
+    expect(find.text('CF'), findsOneWidget);
+    expect(find.text('LA'), findsOneWidget);
+    expect(find.text('Directo'), findsOneWidget);
+    expect(find.byKey(const Key('conversation-c-fiscal')), findsOneWidget);
+    expect(find.byKey(const Key('conversation-c-laboral')), findsOneWidget);
+    expect(find.byKey(const Key('conversation-c-private')), findsOneWidget);
     expect(find.text('3'), findsOneWidget);
-    expect(find.text('15/08'), findsOneWidget);
+    expect(find.text('15/08'), findsNWidgets(3));
   });
 
   testWidgets('staff abre Nuevo chat y busca clientes invitados', (
@@ -471,11 +467,12 @@ void main() {
     expect(find.text('LA'), findsNothing);
     expect(find.text('Todos'), findsNothing);
     expect(find.text('Equipo nóminas'), findsOneWidget);
-    expect(find.text('CHATS INTERNOS Y CANALES'), findsOneWidget);
+    expect(find.text('Grupos'), findsOneWidget);
+    expect(find.text('Empleados'), findsOneWidget);
+    expect(find.text('Clientes'), findsOneWidget);
     expect(find.byKey(const Key('internal-thread-group-1')), findsOneWidget);
     expect(find.byKey(const Key('internal-thread-direct-1')), findsOneWidget);
     expect(find.text('Juan José'), findsOneWidget);
-    expect(find.byKey(const Key('presence-direct-1-offline')), findsOneWidget);
     expect(find.text('Analia'), findsOneWidget);
     expect(find.text('Cliente Fiscal'), findsOneWidget);
 

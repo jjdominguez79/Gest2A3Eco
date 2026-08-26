@@ -229,6 +229,13 @@ class MessagingRepository {
         .toList(growable: false);
   }
 
+  Future<InternalThread> startEmployeeChat(String employeeId) async {
+    final response = await _api.dio.post<Map<String, dynamic>>(
+      '/staff/internal/direct/$employeeId',
+    );
+    return InternalThread.fromJson(response.data!);
+  }
+
   Future<List<Message>> internalMessages(String threadId) async {
     final response = await _api.dio.get<List<dynamic>>(
       '/staff/internal/threads/$threadId/messages',

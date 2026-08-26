@@ -173,8 +173,11 @@ class InternalThread {
     required this.channel,
     required this.title,
     required this.unreadCount,
+    this.updatedAt,
     this.counterpartAvatarUrl = '',
+    this.counterpartId = '',
     this.counterpartOnline = false,
+    this.lastMessage,
   });
 
   factory InternalThread.fromJson(Map<String, dynamic> json) => InternalThread(
@@ -183,8 +186,13 @@ class InternalThread {
     channel: json['channel'] as String? ?? '',
     title: json['title'] as String? ?? 'Chat interno',
     unreadCount: json['unread_count'] as int? ?? 0,
+    updatedAt: DateTime.parse(json['updated_at'] as String).toLocal(),
     counterpartAvatarUrl: json['counterpart_avatar_url'] as String? ?? '',
+    counterpartId: json['counterpart_id'] as String? ?? '',
     counterpartOnline: json['counterpart_online'] as bool? ?? false,
+    lastMessage: json['last_message'] is Map<String, dynamic>
+        ? Message.fromJson(json['last_message'] as Map<String, dynamic>)
+        : null,
   );
 
   final String id;
@@ -192,6 +200,9 @@ class InternalThread {
   final String channel;
   final String title;
   final int unreadCount;
+  final DateTime? updatedAt;
   final String counterpartAvatarUrl;
+  final String counterpartId;
   final bool counterpartOnline;
+  final Message? lastMessage;
 }

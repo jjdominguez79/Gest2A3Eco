@@ -26,6 +26,7 @@ class _GestinemAppState extends ConsumerState<GestinemApp> {
   RealtimeService? _realtime;
   String? _realtimeOwner;
   Timer? _presenceRefresh;
+  String? _lastOpenedNotification;
 
   @override
   void initState() {
@@ -44,6 +45,14 @@ class _GestinemAppState extends ConsumerState<GestinemApp> {
       ref.invalidate(messagesProvider(event.conversationId));
     }
     final threadId = event.threadId;
+    if (event.opened) {
+      final target = threadId != null && threadId.isNotEmpty
+          ? 'internal:$threadId'
+          : 'conversation:${event.conversationId}';
+      if (_lastOpenedNotification == target) return;
+      if (ref.read(sessionProvider).valueOrNull == null) return;
+      _lastOpenedNotification = target;
+    }
     if (threadId != null && threadId.isNotEmpty) {
       ref.invalidate(internalThreadsProvider);
       ref.invalidate(internalMessagesProvider(threadId));
@@ -51,6 +60,13 @@ class _GestinemAppState extends ConsumerState<GestinemApp> {
     } else if (event.opened && event.conversationId.isNotEmpty) {
       ref.read(routerProvider).go('/conversation/${event.conversationId}');
     }
+  }
+
+  void _consumePendingNotification() {
+    final event = ref
+        .read(notificationsServiceProvider)
+        .takePendingOpenedEvent();
+    if (event != null) _handleNotification(event);
   }
 
   void _ensureRealtime(AuthSession session) {
@@ -173,6 +189,9 @@ class _GestinemAppState extends ConsumerState<GestinemApp> {
     if (session != null) {
       _ensureRealtime(session);
       unawaited(_initializeNotifications(session));
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _consumePendingNotification(),
+      );
     } else {
       _stopRealtime();
     }

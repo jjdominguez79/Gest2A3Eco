@@ -1,12 +1,11 @@
 import 'dart:async';
 
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
-import '../../../core/storage/hidden_conversations_storage.dart';
+import '../../../core/notifications/notifications_service.dart';
 import '../../../core/widgets/authenticated_avatar.dart';
 import '../../auth/domain/user_profile.dart';
 import '../../auth/presentation/auth_controller.dart';
@@ -14,10 +13,6 @@ import '../domain/conversation.dart';
 import 'conversation_screen.dart';
 import 'messaging_providers.dart';
 import '../../../core/notifications/web_permission_banner.dart';
-
-final hiddenConversationsStorageProvider = Provider<HiddenConversationsStorage>(
-  (ref) => HiddenConversationsStorage(),
-);
 
 class ConversationsScreen extends ConsumerStatefulWidget {
   const ConversationsScreen({super.key});
@@ -30,23 +25,44 @@ class ConversationsScreen extends ConsumerStatefulWidget {
 class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     with WidgetsBindingObserver {
   final _search = TextEditingController();
-  String _channel = 'todos';
   String? _selected;
   bool _selectedInternal = false;
-  Map<String, DateTime> _hiddenGroups = {};
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_loadHiddenGroups());
-    });
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => unawaited(_clearReadNotifications()),
+    );
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _refreshMessaging();
+    if (state == AppLifecycleState.resumed) {
+      _refreshMessaging();
+      unawaited(_clearReadNotifications());
+    }
+  }
+
+  Future<void> _clearReadNotifications() async {
+    try {
+      final service = ref.read(notificationsServiceProvider);
+      final profile = ref.read(sessionProvider).valueOrNull?.profile;
+      if (profile == null) return;
+      final conversations = await ref.read(conversationsProvider.future);
+      for (final item in conversations.where((item) => item.unreadCount == 0)) {
+        await service.cancelTarget('conversation', item.id);
+      }
+      if (profile.type == UserType.staff) {
+        final threads = await ref.read(internalThreadsProvider.future);
+        for (final item in threads.where((item) => item.unreadCount == 0)) {
+          await service.cancelTarget('internal_thread', item.id);
+        }
+      }
+    } catch (_) {
+      // La limpieza es oportunista; la bandeja sigue funcionando sin red.
+    }
   }
 
   void _refreshMessaging([String? conversationId]) {
@@ -56,43 +72,6 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     ref.invalidate(internalThreadsProvider);
     if (conversationId != null && conversationId.isNotEmpty) {
       ref.invalidate(messagesProvider(conversationId));
-    }
-  }
-
-  Future<void> _loadHiddenGroups() async {
-    final profile = ref.read(sessionProvider).valueOrNull?.profile;
-    if (profile == null || profile.type != UserType.staff) return;
-    final hidden = await ref
-        .read(hiddenConversationsStorageProvider)
-        .read(profile.id);
-    if (mounted) setState(() => _hiddenGroups = hidden);
-  }
-
-  bool _isHidden(ClientGroup group) {
-    final hiddenAt = _hiddenGroups[group.companyCode];
-    if (hiddenAt == null) return false;
-    final updatedAt = group.updatedAt;
-    return updatedAt == null || !updatedAt.toUtc().isAfter(hiddenAt);
-  }
-
-  Future<void> _hideGroup(ClientGroup group) async {
-    final profile = ref.read(sessionProvider).valueOrNull!.profile;
-    final updatedAt = group.updatedAt ?? DateTime.now();
-    await ref
-        .read(hiddenConversationsStorageProvider)
-        .hide(profile.id, group.companyCode, updatedAt);
-    if (mounted) {
-      setState(() {
-        _hiddenGroups = {
-          ..._hiddenGroups,
-          group.companyCode: updatedAt.toUtc(),
-        };
-        if (group.conversations.any(
-          (conversation) => conversation.id == _selected,
-        )) {
-          _selected = null;
-        }
-      });
     }
   }
 
@@ -127,41 +106,6 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     }
   }
 
-  void _selectChannel(BuildContext context, ClientGroup group) {
-    if (group.conversations.length == 1) {
-      _navigateToConversation(group.conversations.first.id);
-      return;
-    }
-    showModalBottomSheet(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: Wrap(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                'Selecciona canal',
-                style: Theme.of(ctx).textTheme.titleMedium,
-              ),
-            ),
-            for (final conv in group.conversations)
-              ListTile(
-                leading: _ChannelChip(kind: conv.kind),
-                title: Text(_channelLabel(conv.kind)),
-                trailing: conv.unreadCount > 0
-                    ? Badge(label: Text('${conv.unreadCount}'))
-                    : null,
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _navigateToConversation(conv.id);
-                },
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Future<void> _showNewChat() async {
     try {
       final targets = await ref.read(conversationTargetsProvider.future);
@@ -187,37 +131,15 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     }
   }
 
-  Future<bool?> _confirmHide(BuildContext context) => showDialog<bool>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: const Text('Ocultar conversaciones'),
-      content: const Text(
-        'Se ocultarán solo en este dispositivo. Volverán a aparecer cuando llegue un mensaje nuevo.',
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx, false),
-          child: const Text('Cancelar'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(ctx, true),
-          child: const Text('Ocultar'),
-        ),
-      ],
-    ),
-  );
-
-  Future<void> _toggleRead(ClientGroup group) async {
+  Future<void> _toggleRead(Conversation conversation) async {
     final profile = ref.read(sessionProvider).valueOrNull!.profile;
     final repo = ref.read(messagingRepositoryProvider);
-    final hasUnread = group.totalUnread > 0;
+    final hasUnread = conversation.unreadCount > 0;
     try {
-      for (final conv in group.conversations) {
-        if (hasUnread) {
-          await repo.markRead(profile, conv.id);
-        } else {
-          await repo.markUnread(profile, conv.id);
-        }
+      if (hasUnread) {
+        await repo.markRead(profile, conversation.id);
+      } else {
+        await repo.markUnread(profile, conversation.id);
       }
       ref.invalidate(conversationsProvider);
     } catch (e) {
@@ -239,14 +161,6 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
       return _buildClientScreen(profile, conversations);
     }
     final internalThreads = ref.watch(internalThreadsProvider);
-    final channelOptions = profile.isAdmin
-        ? const ['todos', 'laboral', 'fiscal', 'private']
-        : profile.channels
-              .where((channel) => {'laboral', 'fiscal'}.contains(channel))
-              .toList(growable: false);
-    final effectiveChannel = channelOptions.contains(_channel)
-        ? _channel
-        : (channelOptions.isEmpty ? '' : channelOptions.first);
     final apiBaseUrl = ref
         .read(apiClientProvider)
         .dio
@@ -303,43 +217,6 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
                     onChanged: (_) => setState(() {}),
                   ),
                 ),
-                SizedBox(
-                  height: 46,
-                  child: _HorizontalScrollArea(
-                    key: const Key('channel-filter-horizontal-scroll'),
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    children: [
-                      for (final channel in channelOptions)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 3),
-                          child: ChoiceChip(
-                            label: Text(switch (channel) {
-                              'todos' => 'Todos',
-                              'laboral' => 'LA',
-                              'fiscal' => 'CF',
-                              'private' => 'Directo',
-                              _ => channel,
-                            }),
-                            selected:
-                                !_selectedInternal &&
-                                effectiveChannel == channel,
-                            onSelected: (_) => setState(() {
-                              _channel = channel;
-                              _selectedInternal = false;
-                            }),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                if (profile.type == UserType.staff)
-                  _InternalThreadsShortcut(
-                    threads: internalThreads,
-                    selectedId: _selectedInternal ? _selected : null,
-                    baseUrl: apiBaseUrl,
-                    authToken: authToken,
-                    onSelected: _navigateToInternal,
-                  ),
                 Expanded(
                   child: conversations.when(
                     loading: () =>
@@ -353,86 +230,19 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
                     data: (items) {
                       final query = _search.text.trim().toLowerCase();
 
-                      // Para staff: agrupar por cliente
                       if (profile.type == UserType.staff) {
-                        var filtered = items.where((item) {
-                          final channelMatches =
-                              effectiveChannel == 'todos' ||
-                              item.kind == effectiveChannel;
-                          final searchMatches =
-                              query.isEmpty ||
-                              item.companyCode.toLowerCase().contains(query) ||
-                              item.companyName.toLowerCase().contains(query);
-                          return channelMatches && searchMatches;
-                        }).toList();
-
-                        final groups = groupConversationsByClient(
-                          filtered,
-                        ).where((group) => !_isHidden(group)).toList();
-                        if (groups.isEmpty) {
-                          return const Center(
-                            child: Text('No hay conversaciones'),
-                          );
-                        }
-                        return RefreshIndicator(
-                          onRefresh: () async =>
-                              ref.invalidate(conversationsProvider),
-                          child: ListView.builder(
-                            key: const Key('conversation-list'),
-                            itemCount: groups.length,
-                            itemBuilder: (context, index) {
-                              final group = groups[index];
-                              return Dismissible(
-                                key: Key('swipe-group-${group.companyCode}'),
-                                direction: DismissDirection.horizontal,
-                                confirmDismiss: (direction) async {
-                                  if (direction ==
-                                      DismissDirection.startToEnd) {
-                                    if (!profile.isAdmin) return false;
-                                    final confirmed = await _confirmHide(
-                                      context,
-                                    );
-                                    if (confirmed == true) {
-                                      await _hideGroup(group);
-                                    }
-                                    return false;
-                                  } else {
-                                    await _toggleRead(group);
-                                    return false;
-                                  }
-                                },
-                                background: Container(
-                                  color: Colors.orange,
-                                  alignment: Alignment.centerLeft,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 20,
-                                  ),
-                                  child: const Icon(
-                                    Icons.visibility_off_outlined,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                                secondaryBackground: Container(
-                                  color: Colors.blue,
-                                  alignment: Alignment.centerRight,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 20,
-                                  ),
-                                  child: const Icon(
-                                    Icons.mark_chat_read_outlined,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                                child: _ClientGroupTile(
-                                  group: group,
-                                  selected: group.conversations.any(
-                                    (c) => c.id == _selected,
-                                  ),
-                                  onTap: () => _selectChannel(context, group),
-                                ),
-                              );
-                            },
-                          ),
+                        return _StaffInbox(
+                          query: query,
+                          conversations: items,
+                          threads: internalThreads,
+                          selectedId: _selected,
+                          selectedInternal: _selectedInternal,
+                          baseUrl: apiBaseUrl,
+                          authToken: authToken,
+                          onConversation: _navigateToConversation,
+                          onInternal: _navigateToInternal,
+                          onToggleRead: _toggleRead,
+                          onRefresh: () async => _refreshMessaging(),
                         );
                       }
 
@@ -569,181 +379,307 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
   );
 }
 
-class _InternalThreadsShortcut extends StatelessWidget {
-  const _InternalThreadsShortcut({
+class _StaffInbox extends StatelessWidget {
+  const _StaffInbox({
+    required this.query,
+    required this.conversations,
     required this.threads,
     required this.selectedId,
+    required this.selectedInternal,
     required this.baseUrl,
     required this.authToken,
-    required this.onSelected,
+    required this.onConversation,
+    required this.onInternal,
+    required this.onToggleRead,
+    required this.onRefresh,
   });
 
+  final String query;
+  final List<Conversation> conversations;
   final AsyncValue<List<InternalThread>> threads;
   final String? selectedId;
+  final bool selectedInternal;
   final String baseUrl;
   final String authToken;
-  final ValueChanged<String> onSelected;
+  final ValueChanged<String> onConversation;
+  final ValueChanged<String> onInternal;
+  final ValueChanged<Conversation> onToggleRead;
+  final Future<void> Function() onRefresh;
+
+  bool _matches(String value) =>
+      query.isEmpty || value.toLowerCase().contains(query);
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-    height: 78,
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(14, 2, 14, 0),
-          child: Text(
-            'CHATS INTERNOS Y CANALES',
-            style: Theme.of(
-              context,
-            ).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.w700),
-          ),
+  Widget build(BuildContext context) => threads.when(
+    loading: () => const Center(child: CircularProgressIndicator()),
+    error: (error, _) => Center(
+      child: Text(
+        'No se pudieron cargar los chats internos.\n$error',
+        textAlign: TextAlign.center,
+      ),
+    ),
+    data: (threadItems) {
+      final groups =
+          threadItems
+              .where((item) => item.kind != 'direct' && _matches(item.title))
+              .toList()
+            ..sort(_compareThreads);
+      final directThreads =
+          threadItems
+              .where((item) => item.kind == 'direct' && _matches(item.title))
+              .toList()
+            ..sort(_compareThreads);
+      final clients = conversations.where((item) {
+        return _matches(item.companyCode) || _matches(item.companyName);
+      }).toList()..sort(_compareConversations);
+
+      final children = <Widget>[
+        const _InboxSectionHeader(
+          key: Key('inbox-section-groups'),
+          title: 'Grupos',
+          icon: Icons.groups_outlined,
         ),
-        Expanded(
-          child: threads.when(
-            loading: () => const Center(child: LinearProgressIndicator()),
-            error: (_, _) => const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              child: Text('No se pudieron cargar los chats internos'),
+        if (groups.isEmpty)
+          const _EmptySection('No hay grupos')
+        else
+          for (final thread in groups)
+            _InternalThreadTile(
+              thread: thread,
+              selected: selectedInternal && selectedId == thread.id,
+              baseUrl: baseUrl,
+              authToken: authToken,
+              onTap: () => onInternal(thread.id),
             ),
-            data: (items) => items.isEmpty
-                ? const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                    child: Text('No hay chats internos disponibles'),
-                  )
-                : _HorizontalScrollArea(
-                    key: const Key('internal-threads-horizontal-scroll'),
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    children: [
-                      for (final thread in items)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 3),
-                          child: ActionChip(
-                            key: Key('internal-thread-${thread.id}'),
-                            backgroundColor: thread.id == selectedId
-                                ? Theme.of(context).colorScheme.primaryContainer
-                                : null,
-                            avatar: Badge(
-                              isLabelVisible: thread.unreadCount > 0,
-                              label: Text('${thread.unreadCount}'),
-                              child: thread.kind == 'direct'
-                                  ? AuthenticatedAvatar(
-                                      radius: 12,
-                                      baseUrl: baseUrl,
-                                      authToken: authToken,
-                                      imagePath: thread.counterpartAvatarUrl,
-                                      fallbackText: _initials(thread.title),
-                                      cacheVersion: thread.id,
-                                    )
-                                  : const Icon(Icons.groups_outlined, size: 18),
-                            ),
-                            label: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(thread.title),
-                                if (thread.kind == 'direct') ...[
-                                  const SizedBox(width: 6),
-                                  Tooltip(
-                                    message: thread.counterpartOnline
-                                        ? 'Activo'
-                                        : 'Inactivo',
-                                    child: Container(
-                                      key: Key(
-                                        'presence-${thread.id}-${thread.counterpartOnline ? 'online' : 'offline'}',
-                                      ),
-                                      width: 8,
-                                      height: 8,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        color: thread.counterpartOnline
-                                            ? Colors.green
-                                            : Theme.of(
-                                                context,
-                                              ).colorScheme.outline,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                            onPressed: () => onSelected(thread.id),
-                          ),
-                        ),
-                    ],
-                  ),
-          ),
+        const _InboxSectionHeader(
+          key: Key('inbox-section-employees'),
+          title: 'Empleados',
+          icon: Icons.badge_outlined,
         ),
-      ],
+      ];
+
+      if (directThreads.isNotEmpty) {
+        children.addAll([
+          for (final thread in directThreads)
+            _InternalThreadTile(
+              thread: thread,
+              selected: selectedInternal && selectedId == thread.id,
+              baseUrl: baseUrl,
+              authToken: authToken,
+              onTap: () => onInternal(thread.id),
+            ),
+        ]);
+      } else {
+        children.add(const _EmptySection('No hay empleados disponibles'));
+      }
+
+      children.add(
+        const _InboxSectionHeader(
+          key: Key('inbox-section-clients'),
+          title: 'Clientes',
+          icon: Icons.business_outlined,
+        ),
+      );
+      if (clients.isEmpty) {
+        children.add(const _EmptySection('No hay conversaciones de clientes'));
+      } else {
+        children.addAll([
+          for (final conversation in clients)
+            Dismissible(
+              key: Key('swipe-conversation-${conversation.id}'),
+              direction: DismissDirection.endToStart,
+              confirmDismiss: (_) async {
+                onToggleRead(conversation);
+                return false;
+              },
+              background: Container(
+                color: Colors.blue,
+                alignment: Alignment.centerRight,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: const Icon(
+                  Icons.mark_chat_read_outlined,
+                  color: Colors.white,
+                ),
+              ),
+              child: _ClientConversationTile(
+                conversation: conversation,
+                selected: !selectedInternal && selectedId == conversation.id,
+                onTap: () => onConversation(conversation.id),
+              ),
+            ),
+        ]);
+      }
+      return RefreshIndicator(
+        onRefresh: onRefresh,
+        child: ListView(
+          key: const Key('conversation-list'),
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: children,
+        ),
+      );
+    },
+  );
+}
+
+int _compareThreads(InternalThread a, InternalThread b) {
+  final unread = (b.unreadCount > 0 ? 1 : 0) - (a.unreadCount > 0 ? 1 : 0);
+  return unread != 0
+      ? unread
+      : (b.updatedAt ?? DateTime(0)).compareTo(a.updatedAt ?? DateTime(0));
+}
+
+int _compareConversations(Conversation a, Conversation b) {
+  final unread = (b.unreadCount > 0 ? 1 : 0) - (a.unreadCount > 0 ? 1 : 0);
+  return unread != 0 ? unread : b.updatedAt.compareTo(a.updatedAt);
+}
+
+class _InboxSectionHeader extends StatelessWidget {
+  const _InboxSectionHeader({
+    super.key,
+    required this.title,
+    required this.icon,
+  });
+  final String title;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+    color: Theme.of(context).colorScheme.surfaceContainerLow,
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+      child: Row(
+        children: [
+          Icon(icon, size: 18),
+          const SizedBox(width: 8),
+          Text(title, style: Theme.of(context).textTheme.titleSmall),
+        ],
+      ),
     ),
   );
 }
 
-/// Carrusel horizontal usable en web con rueda vertical, arrastre de raton y
-/// una barra interactiva. Flutter no traslada por defecto la rueda vertical a
-/// un ListView horizontal, que era lo que dejaba inaccesibles los chats.
-class _HorizontalScrollArea extends StatefulWidget {
-  const _HorizontalScrollArea({
-    super.key,
-    required this.children,
-    this.padding,
-  });
-
-  final List<Widget> children;
-  final EdgeInsetsGeometry? padding;
+class _EmptySection extends StatelessWidget {
+  const _EmptySection(this.label);
+  final String label;
 
   @override
-  State<_HorizontalScrollArea> createState() => _HorizontalScrollAreaState();
-}
-
-class _HorizontalScrollAreaState extends State<_HorizontalScrollArea> {
-  final ScrollController _controller = ScrollController();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _onPointerSignal(PointerSignalEvent event) {
-    if (event is! PointerScrollEvent || !_controller.hasClients) return;
-    final delta = event.scrollDelta.dx != 0
-        ? event.scrollDelta.dx
-        : event.scrollDelta.dy;
-    final position = _controller.position;
-    _controller.jumpTo(
-      (_controller.offset + delta).clamp(
-        position.minScrollExtent,
-        position.maxScrollExtent,
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) => Listener(
-    onPointerSignal: _onPointerSignal,
-    child: ScrollConfiguration(
-      behavior: ScrollConfiguration.of(context).copyWith(
-        dragDevices: const {
-          PointerDeviceKind.touch,
-          PointerDeviceKind.mouse,
-          PointerDeviceKind.stylus,
-          PointerDeviceKind.invertedStylus,
-          PointerDeviceKind.trackpad,
-        },
-      ),
-      child: Scrollbar(
-        key: Key('${widget.key}-scrollbar'),
-        controller: _controller,
-        thumbVisibility: true,
-        interactive: true,
-        child: ListView(
-          controller: _controller,
-          scrollDirection: Axis.horizontal,
-          padding: widget.padding,
-          children: widget.children,
-        ),
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    child: Text(
+      label,
+      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
       ),
     ),
+  );
+}
+
+class _InternalThreadTile extends StatelessWidget {
+  const _InternalThreadTile({
+    required this.thread,
+    required this.selected,
+    required this.baseUrl,
+    required this.authToken,
+    required this.onTap,
+  });
+  final InternalThread thread;
+  final bool selected;
+  final String baseUrl;
+  final String authToken;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+    key: Key('internal-thread-${thread.id}'),
+    selected: selected,
+    onTap: onTap,
+    leading: AuthenticatedAvatar(
+      radius: 22,
+      baseUrl: baseUrl,
+      authToken: authToken,
+      imagePath: thread.counterpartAvatarUrl,
+      fallbackText: _initials(thread.title),
+      cacheVersion: thread.id,
+    ),
+    title: Text(thread.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+    subtitle: Text(
+      thread.lastMessage?.deleted == true
+          ? 'Mensaje eliminado'
+          : thread.lastMessage?.body ?? 'Sin mensajes',
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    ),
+    trailing: _InboxTrailing(
+      updatedAt: thread.updatedAt,
+      unreadCount: thread.unreadCount,
+    ),
+  );
+}
+
+class _ClientConversationTile extends StatelessWidget {
+  const _ClientConversationTile({
+    required this.conversation,
+    required this.selected,
+    required this.onTap,
+  });
+  final Conversation conversation;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+    key: Key('conversation-${conversation.id}'),
+    selected: selected,
+    onTap: onTap,
+    leading: CircleAvatar(child: Text(_initials(conversation.title))),
+    title: Text(
+      conversation.title,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    ),
+    subtitle: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          conversation.displayChannelLabel,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: Theme.of(context).colorScheme.primary,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        Text(
+          conversation.lastMessage?.deleted == true
+              ? 'Mensaje eliminado'
+              : conversation.lastMessage?.body ?? 'Sin mensajes',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
+    ),
+    isThreeLine: true,
+    trailing: _InboxTrailing(
+      updatedAt: conversation.updatedAt,
+      unreadCount: conversation.unreadCount,
+    ),
+  );
+}
+
+class _InboxTrailing extends StatelessWidget {
+  const _InboxTrailing({required this.updatedAt, required this.unreadCount});
+  final DateTime? updatedAt;
+  final int unreadCount;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    mainAxisAlignment: MainAxisAlignment.center,
+    crossAxisAlignment: CrossAxisAlignment.end,
+    children: [
+      Text(
+        _conversationTime(updatedAt),
+        style: Theme.of(context).textTheme.labelSmall,
+      ),
+      const SizedBox(height: 4),
+      if (unreadCount > 0) Badge(label: Text('$unreadCount')),
+    ],
   );
 }
 
@@ -868,81 +804,6 @@ String _channelLabel(String kind) => switch (kind) {
   'fiscal' => 'Contable / Fiscal',
   _ => 'Directo',
 };
-
-class _ClientGroupTile extends StatelessWidget {
-  const _ClientGroupTile({
-    required this.group,
-    required this.selected,
-    required this.onTap,
-  });
-  final ClientGroup group;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final initials = group.displayName.isEmpty
-        ? '?'
-        : group.displayName
-              .split(' ')
-              .take(2)
-              .map((w) => w.isEmpty ? '' : w[0])
-              .join();
-    return ListTile(
-      key: Key('group-${group.companyCode}'),
-      selected: selected,
-      onTap: onTap,
-      leading: CircleAvatar(child: Text(initials.toUpperCase())),
-      title: Text(
-        group.displayName,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(group.companyCode),
-          Text(
-            group.lastMessage?.deleted == true
-                ? 'Mensaje eliminado'
-                : group.lastMessage?.body ?? 'Sin mensajes',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          Row(
-            children: [
-              for (final conv in group.conversations)
-                Padding(
-                  padding: const EdgeInsets.only(right: 4),
-                  child: _ChannelChip(kind: conv.kind),
-                ),
-            ],
-          ),
-        ],
-      ),
-      isThreeLine: true,
-      trailing: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Text(
-            _conversationTime(group.updatedAt),
-            style: Theme.of(context).textTheme.labelSmall,
-          ),
-          const SizedBox(height: 4),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (group.totalUnread > 0) ...[
-                Badge(label: Text('${group.totalUnread}')),
-              ],
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 String _conversationTime(DateTime? value) {
   if (value == null) return '';
