@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.8.4",
-  "minimum_required_version": "1.8.4",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.4/Setup_Gest2A3Eco_1.8.4.exe",
-  "changelog": "Se ha corregido el error que generaba la generaci�n de ficheros FACe. Se ha a�adido la actualizaci�n de la tabla de facturas en tiempo real.",
+  "latest_version": "1.8.5",
+  "minimum_required_version": "1.8.5",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.5/Setup_Gest2A3Eco_1.8.5.exe",
+  "changelog": "Se modifica el codigo para que se coga automaticamente la fecha de publicaci�n de la versi�n.",
   "force_update": true
 }
