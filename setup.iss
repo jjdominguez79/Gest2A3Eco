@@ -14,7 +14,7 @@
 ; =============================================================================
 
 #define MyAppName      "Gest2A3Eco"
-#define MyAppVersion   "1.8.4"
+#define MyAppVersion   "1.8.5"
 #define MyAppPublisher "Asesoria Gestinem S.L."
 #define MyAppURL       "https://www.gestinem.es"
 #define MyAppExeName   "Gest2A3Eco.exe"

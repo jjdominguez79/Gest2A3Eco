@@ -1,6 +1,6 @@
 {
-  "version": "1.8.4",
-  "tag": "v1.8.4",
-  "changelog": "Se ha corregido el error que generaba la generación de ficheros FACe. Se ha añadido la actualización de la tabla de facturas en tiempo real.",
+  "version": "1.8.5",
+  "tag": "v1.8.5",
+  "changelog": "Se modifica el codigo para que se coga automaticamente la fecha de publicación de la versión.",
   "force_update": true
 }
