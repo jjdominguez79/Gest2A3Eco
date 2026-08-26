@@ -1155,52 +1155,61 @@ class FacturasEmitidasController:
             )
             self._view.show_info("Gest2A3Eco", "Email enviado y registrado en Comunicaciones.")
 
-        elif canal == "mensajeria":
-            from services.mensajeria_service import MensajeriaRemoteClient
+        elif canal == "publicar":
+            if not self._publicar_en_area_cliente(fac, pdf_path):
+                return
 
-            empresa_cliente = self._gestor.buscar_empresa_por_nif(cliente.get("nif"))
-            if not empresa_cliente:
-                self._view.show_warning(
-                    "Gest2A3Eco",
-                    "El destinatario de la factura no coincide por NIF con ningún cliente "
-                    "de Gest2A3Eco. No se ha enviado para evitar usar un chat incorrecto.",
-                )
-                return
-            codigo_cliente = str(empresa_cliente.get("codigo") or "").strip()
-            nombre_cliente = str(empresa_cliente.get("nombre") or codigo_cliente).strip()
-            user = getattr(getattr(self._view, "session", None), "user", None)
-            if not user:
-                self._view.show_error("Gest2A3Eco", "No se pudo identificar al usuario que realiza el envío.")
-                return
-            client = MensajeriaRemoteClient(user_id=user.id, user_name=user.nombre)
-            if not client.configured:
-                self._view.show_warning(
-                    "Gest2A3Eco", "La mensajería no está configurada en este equipo.",
-                )
-                return
-            try:
-                role = "admin" if self._is_admin() else "empleado"
-                client.sync_staff(role=role, channels=None if role == "admin" else ["fiscal"])
-                client.sync_organization(code=codigo_cliente, name=nombre_cliente)
-                conversation = client.company_conversation(codigo_cliente, "fiscal")
-                if not conversation:
-                    raise ValueError("No existe el canal Contable / Fiscal del cliente.")
-                if int(conversation.get("active_client_count") or 0) < 1:
-                    self._view.show_warning(
-                        "Gest2A3Eco",
-                        "Este cliente todavía no tiene ningún usuario activo en la mensajería. "
-                        "Envíale primero una invitación.",
-                    )
-                    return
-                body = f"Le enviamos la factura {numero}." if numero else "Le enviamos una factura."
-                client.send_message(conversation["id"], body, attachment_paths)
-            except Exception as exc:
-                self._view.show_error("Gest2A3Eco", f"No se pudo enviar por mensajería:\n{exc}")
-                return
-            self._view.show_info(
-                "Gest2A3Eco",
-                f"Factura enviada al canal Contable / Fiscal de {nombre_cliente}.",
+        elif canal == "email_y_publicar":
+            # Primero email (reutilizar la rama email)
+            from services.email_service import build_invoice_email_text
+            from services.backend_mail_service import BackendMailService
+            from views.ui_comunicaciones import construir_cuerpo_html, construir_firma_oficina
+            from utils.utilidades import get_packaged_resource_path
+            email_cliente = str(cliente.get("email") or "").strip()
+            email_empresa = str(self._empresa_conf.get("email") or "").strip()
+            tot = self._totales_factura(fac)
+            cuerpo = build_invoice_email_text(fac, cliente, tot)
+
+            compose = self._view.ask_email_compose(
+                email_cliente, asunto, cuerpo, pdf_path,
+                email_empresa=email_empresa,
+                attachment_paths=attachment_paths,
             )
+            if not compose:
+                return
+
+            user = getattr(getattr(self._view, "session", None), "user", None)
+            user_name = str(getattr(user, "nombre", "") or "").strip()
+            if user_name.lower() == "administrador":
+                user_name = "Juan José Domínguez Barrero"
+            signature = construir_firma_oficina("", "Asesoria Gestinem SL")
+            email_html_body = construir_cuerpo_html(compose["cuerpo"], signature, "")
+            cc = self._split_email_addresses(compose.get("cc", ""))
+            bcc = self._split_email_addresses(compose.get("bcc", ""))
+            sender = "Oficina@gestinem.es"
+            logo_path = get_packaged_resource_path("logo.png")
+            inline_attachments = ([{"path": str(logo_path), "content_id": "gestinem-logo"}]
+                                  if "cid:gestinem-logo" in signature and logo_path.is_file() else [])
+            try:
+                result = BackendMailService().send(
+                    to=compose["emails"], cc=cc, bcc=bcc,
+                    subject=compose["asunto"], body=email_html_body,
+                    attachments=attachment_paths, inline_attachments=inline_attachments,
+                )
+            except Exception as exc:
+                self._registrar_envio_factura(compose, sender, cc, attachment_paths, email_html_body, user, estado="error", error=str(exc))
+                self._view.show_error("Gest2A3Eco", f"No se pudo enviar el email:\n{exc}")
+                return
+            self._registrar_envio_factura(
+                compose, result.sender or sender,
+                cc, attachment_paths, email_html_body, user,
+                estado="aceptado_backend", graph_message_id=result.message_id,
+                internet_message_id=result.internet_message_id,
+            )
+            self._view.show_info("Gest2A3Eco", "Email enviado.")
+
+            # Despues publicar. El email ya enviado no se revierte si falla.
+            self._publicar_en_area_cliente(fac, pdf_path)
 
         if self._view.ask_yes_no("Gest2A3Eco", "¿Marcar factura como enviada?"):
             if not self._ensure_write("Necesitas permiso de escritura para marcar la factura como enviada."):
@@ -1236,6 +1245,57 @@ class FacturasEmitidasController:
             "adjuntos": adjuntos,
             "mailbox": remitente,
         })
+
+    def _publicar_en_area_cliente(self, fac, pdf_path):
+        """Sube el PDF al area documental del cliente via multipart."""
+        from services.backend_client_service import BackendClientService
+
+        nif = str(fac.get("nif") or "").strip()
+        if not nif:
+            self._view.show_warning(
+                "Gest2A3Eco", "La factura no tiene NIF de cliente asignado.",
+            )
+            return False
+
+        source_id = str(fac.get("id") or "").strip()
+        if not source_id:
+            self._view.show_error(
+                "Gest2A3Eco", "La factura no tiene un identificador valido.",
+            )
+            return False
+
+        serie = str(fac.get("serie") or "")
+        numero = str(fac.get("numero") or "")
+        display = f"Factura {serie}{numero}".strip()
+        ejercicio = fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio
+        total = fac.get("total")
+        if total is None:
+            tot = self._totales_factura(fac)
+            total = tot.get("total", 0)
+
+        try:
+            svc = BackendClientService()
+            result = svc.publish_document(
+                source_type="factura_emitida",
+                source_id=source_id,
+                source_version=1,
+                display_name=display,
+                pdf_path=pdf_path,
+                customer_tax_id=nif,
+                fiscal_year=ejercicio,
+                amount=total,
+                document_date=fac.get("fecha_expedicion"),
+            )
+            self._view.show_info(
+                "Gest2A3Eco",
+                f"Factura publicada en el area del cliente.\n(ID: {result.get('document_id', '')})",
+            )
+            return True
+        except Exception as exc:
+            self._view.show_error(
+                "Gest2A3Eco", f"No se pudo publicar en el area del cliente:\n{exc}",
+            )
+            return False
 
     def generar_suenlace(self):
         if not self._ensure_write():

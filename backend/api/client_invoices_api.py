@@ -41,6 +41,7 @@ from backend.api.client_models import (
     ClientInvoiceProcessingQueue,
     ClientInvoiceSeries,
 )
+from backend.api.client_storage import ClientDocumentStorage
 from backend.api.client_validation import normalize_tax_id, validate_tax_id
 from backend.api.database import SessionLocal
 from backend.api.messaging_models import (
@@ -55,6 +56,15 @@ router = APIRouter(
     prefix="/api/v1/messaging/client/invoicing",
     tags=["client-invoicing"],
 )
+
+_storage: ClientDocumentStorage | None = None
+
+
+def _get_storage() -> ClientDocumentStorage:
+    global _storage
+    if _storage is None:
+        _storage = ClientDocumentStorage()
+    return _storage
 
 
 def _db():
@@ -626,9 +636,10 @@ def worker_claim(
 
     inv = db.get(ClientInvoice, item.invoice_id)
     if inv:
+        old_status = inv.status
         inv.status = "claimed"
         create_invoice_event(
-            db, inv.id, "claimed", inv.status, "claimed",
+            db, inv.id, "claimed", old_status, "claimed",
             actor_type="worker", actor_id=worker_id,
         )
 
@@ -660,10 +671,35 @@ def worker_get_payload(
         result["organization"] = {
             "company_code": org.company_code,
             "name": org.name,
-            "legal_name": org.legal_name,
-            "tax_id": org.tax_id,
+            "legal_name": org.legal_name or org.name,
+            "tax_id": org.tax_id or "",
+            "address": org.address or "",
+            "postal_code": org.postal_code or "",
+            "city": org.city or "",
+            "province": org.province or "",
+            "country": org.country or "ES",
+            "phone": org.phone or "",
+            "email": org.email or "",
         }
     result["issued_snapshot"] = inv.issued_snapshot
+
+    # Push tokens del cliente emisor para FCM
+    push_tokens = []
+    if inv.created_by_client_id:
+        from backend.api.messaging_models import MessagingAppDevice
+        devices = db.scalars(
+            select(MessagingAppDevice).where(
+                MessagingAppDevice.user_type == "client",
+                MessagingAppDevice.user_id == inv.created_by_client_id,
+                MessagingAppDevice.active.is_(True),
+            )
+        ).all()
+        push_tokens = [
+            {"token": d.push_token, "platform": d.platform}
+            for d in devices if d.push_token
+        ]
+    result["push_tokens"] = push_tokens
+
     return result
 
 
@@ -696,40 +732,80 @@ async def worker_upload_pdf(
     db: Session = Depends(_db),
     _auth: str = Depends(require_workstation_or_internal),
 ):
-    """Sube el PDF renderizado por el worker."""
+    """Sube el PDF renderizado por el worker a Azure y marca rendered."""
+    import hashlib
+
     inv = db.get(ClientInvoice, invoice_id)
     if not inv:
         raise HTTPException(status_code=404)
 
-    content = await file.read()
+    max_pdf_bytes = 50 * 1024 * 1024
+    content = await file.read(max_pdf_bytes + 1)
     if not content:
         raise HTTPException(status_code=400, detail="Archivo vacio")
+    if len(content) > max_pdf_bytes:
+        raise HTTPException(status_code=413, detail="Archivo demasiado grande")
 
     # Verificar SHA-256
-    import hashlib
     actual_sha = hashlib.sha256(content).hexdigest()
     if actual_sha != sha256:
         raise HTTPException(status_code=400, detail="SHA-256 no coincide")
 
-    # Actualizar cola
     queue_item = db.scalar(
         select(ClientInvoiceProcessingQueue).where(
             ClientInvoiceProcessingQueue.invoice_id == invoice_id,
         )
     )
-    if queue_item:
-        queue_item.pdf_sha256 = sha256
-        queue_item.queue_status = "rendered"
-        queue_item.updated_at = utcnow()
+    if (
+        queue_item
+        and queue_item.pdf_sha256 == sha256
+        and queue_item.pdf_blob_key
+    ):
+        return {
+            "status": "ok",
+            "sha256": sha256,
+            "blob_key": queue_item.pdf_blob_key,
+            "file_size": queue_item.pdf_file_size,
+        }
 
-    old_status = inv.status
-    inv.status = "rendered"
-    create_invoice_event(
-        db, inv.id, "rendered", old_status, "rendered",
-        actor_type="worker",
+    # Subir a storage permanente ANTES de marcar rendered
+    storage = _get_storage()
+    display = f"{inv.series_code}-{str(inv.invoice_number or 0).zfill(6)}.pdf"
+    blob_key = storage.put(
+        content, display, organization_id=inv.organization_id,
     )
-    db.commit()
-    return {"status": "ok", "sha256": actual_sha}
+
+    try:
+        # Actualizar cola con blob_key, tamanio y SHA-256
+        if queue_item:
+            queue_item.pdf_sha256 = sha256
+            queue_item.pdf_blob_key = blob_key
+            queue_item.pdf_file_size = len(content)
+            queue_item.queue_status = "rendered"
+            queue_item.updated_at = utcnow()
+
+        old_status = inv.status
+        inv.status = "rendered"
+        create_invoice_event(
+            db, inv.id, "rendered", old_status, "rendered",
+            actor_type="worker",
+        )
+        db.commit()
+    except Exception:
+        # Si falla la transaccion, eliminar el blob huerfano
+        try:
+            storage.delete(blob_key)
+        except Exception:
+            pass
+        db.rollback()
+        raise
+
+    return {
+        "status": "ok",
+        "sha256": actual_sha,
+        "blob_key": blob_key,
+        "file_size": len(content),
+    }
 
 
 @router.post("/worker/invoice/{invoice_id}/error")
@@ -767,6 +843,100 @@ def worker_report_error(
     )
     db.commit()
     return {"status": "ok", "retryable": queue_item.retry_count < queue_item.max_retries if queue_item else False}
+
+
+@router.post("/worker/invoice/{invoice_id}/publish-document")
+def worker_publish_document(
+    invoice_id: str,
+    payload: dict = Body(...),
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    """Crea el ClientDocument a partir del PDF ya almacenado en blob."""
+    from backend.api.client_models import ClientDocument
+
+    inv = db.get(ClientInvoice, invoice_id)
+    if not inv:
+        raise HTTPException(status_code=404)
+
+    queue_item = db.scalar(
+        select(ClientInvoiceProcessingQueue).where(
+            ClientInvoiceProcessingQueue.invoice_id == invoice_id,
+        )
+    )
+    if not queue_item or not queue_item.pdf_blob_key:
+        raise HTTPException(status_code=400, detail="PDF no almacenado todavia")
+
+    # Idempotente: si ya hay document_id, devolver
+    if inv.document_id:
+        return {"status": "ok", "document_id": inv.document_id}
+
+    display = f"{inv.series_code}-{str(inv.invoice_number or 0).zfill(6)}.pdf"
+    doc = ClientDocument(
+        organization_id=inv.organization_id,
+        document_type="factura_emitida_online",
+        source_system="client_invoice",
+        source_id=inv.id,
+        source_version=1,
+        display_name=display,
+        description=payload.get("description", ""),
+        document_date=inv.invoice_date,
+        fiscal_year=inv.fiscal_year,
+        amount=inv.total,
+        currency=inv.currency,
+        file_name=display,
+        content_type="application/pdf",
+        file_size=queue_item.pdf_file_size,
+        sha256=queue_item.pdf_sha256,
+        blob_key=queue_item.pdf_blob_key,
+        status="published",
+    )
+    db.add(doc)
+    db.flush()
+
+    inv.document_id = doc.id
+    db.commit()
+    return {"status": "ok", "document_id": doc.id}
+
+
+@router.post("/worker/invoice/{invoice_id}/emailed")
+def worker_mark_emailed(
+    invoice_id: str,
+    payload: dict | None = Body(default=None),
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    """Marca la factura como emailed tras envio real por Graph."""
+    inv = db.get(ClientInvoice, invoice_id)
+    if not inv:
+        raise HTTPException(status_code=404)
+
+    queue_item = db.scalar(
+        select(ClientInvoiceProcessingQueue).where(
+            ClientInvoiceProcessingQueue.invoice_id == invoice_id,
+        )
+    )
+    if inv.status == "emailed" and (
+        queue_item is None or queue_item.queue_status == "completed"
+    ):
+        return {"status": "ok"}
+
+    payload = payload or {}
+
+    old_status = inv.status
+    inv.status = "emailed"
+    create_invoice_event(
+        db, inv.id, "emailed", old_status, "emailed",
+        actor_type="worker",
+        detail=payload.get("message_id", ""),
+    )
+
+    if queue_item:
+        queue_item.queue_status = "completed"
+        queue_item.updated_at = utcnow()
+
+    db.commit()
+    return {"status": "ok"}
 
 
 @router.post("/worker/customer-sync")

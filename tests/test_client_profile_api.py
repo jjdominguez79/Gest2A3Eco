@@ -195,6 +195,7 @@ class TestSyncProfile:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok"
+        assert data["organization_id"] == "org-1"
         assert org.tax_id == "B99999999"
         assert org.city == "Barcelona"
 

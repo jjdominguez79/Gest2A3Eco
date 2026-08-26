@@ -430,6 +430,7 @@ class AppController:
         shell = self._get_or_create_shell(codigo, ejercicio)
         shell.show_dashboard()
         self._content.after(400, lambda: self._avisar_cuotas_pendientes(codigo, ejercicio))
+        self._content.after(800, lambda: self._sync_client_platform(codigo, ejercicio))
 
     def _avisar_cuotas_pendientes(self, codigo, ejercicio):
         """Comprueba cuotas pendientes de generar para la empresa y muestra aviso si las hay."""
@@ -455,6 +456,79 @@ class AppController:
                                 parent=self._content.winfo_toplevel())
         except Exception:
             pass
+
+    def _sync_client_platform(self, codigo, ejercicio):
+        """Sincroniza perfil y clientes con la plataforma online en background."""
+        def _run():
+            reader = None
+            try:
+                from services.backend_client_service import BackendClientService
+                svc = BackendClientService()
+                if not svc.configured:
+                    return
+
+                reader = self._gestor.crear_sesion_lectura()
+                empresa = reader.get_empresa(codigo, ejercicio) or {}
+                if not empresa:
+                    return
+
+                # Sync perfil empresarial
+                profile_result = svc.sync_company_profile(
+                    company_code=codigo,
+                    profile={
+                        "name": empresa.get("nombre", ""),
+                        "tax_id": empresa.get("cif", ""),
+                        "legal_name": empresa.get("nombre", ""),
+                        "address": empresa.get("direccion", ""),
+                        "postal_code": empresa.get("cp", ""),
+                        "city": empresa.get("poblacion", ""),
+                        "province": empresa.get("provincia", ""),
+                        "country": empresa.get("pais", "ES"),
+                        "phone": empresa.get("telefono", ""),
+                        "email": empresa.get("email", ""),
+                    },
+                )
+
+                # Sync clientes/deudores
+                org_id = str(profile_result.get("organization_id") or "")
+                if not org_id:
+                    return
+
+                terceros = reader.listar_terceros_por_empresa(codigo, ejercicio)
+                customers = []
+                for t in terceros:
+                    nif = str(t.get("nif") or "").strip()
+                    if not nif:
+                        continue
+                    customers.append({
+                        "tax_id": nif,
+                        "legal_name": t.get("nombre") or t.get("nombre_legal") or "",
+                        "address": t.get("direccion", ""),
+                        "postal_code": t.get("cp", ""),
+                        "city": t.get("poblacion", ""),
+                        "province": t.get("provincia", ""),
+                        "country": t.get("pais", "ES"),
+                        "email": t.get("email", ""),
+                        "phone": t.get("telefono", ""),
+                        "desktop_tercero_id": t.get("id"),
+                        "desktop_subcuenta": t.get("subcuenta_cliente", ""),
+                    })
+                if customers:
+                    svc.sync_customers(
+                        organization_id=org_id, customers=customers,
+                    )
+
+                LOG.info("Sync plataforma cliente completada para %s", codigo)
+            except Exception:
+                LOG.debug("Sync plataforma cliente fallida para %s", codigo, exc_info=True)
+            finally:
+                if reader is not None:
+                    try:
+                        reader.conn.close()
+                    except Exception:
+                        pass
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def open_company_module(self, codigo, ejercicio, modulo="dashboard", nombre=None):
         try:

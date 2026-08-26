@@ -490,8 +490,7 @@ class TercerosGlobalDialog(tk.Toplevel):
         ttk.Label(
             frame,
             text=(
-                "Mensajería la enviará al canal Contable / Fiscal del cliente.\n"
-                "Correo electrónico mantiene el envío habitual."
+                "Elige cómo compartir la factura con el cliente."
             ),
             justify="left",
         ).pack(anchor="w", pady=(0, 14))
@@ -503,12 +502,16 @@ class TercerosGlobalDialog(tk.Toplevel):
         buttons = ttk.Frame(frame)
         buttons.pack(fill="x")
         ttk.Button(
-            buttons, text="Mensajería interna",
-            command=lambda: choose("mensajeria"), style="Primary.TButton",
+            buttons, text="Enviar por email y publicar",
+            command=lambda: choose("email_y_publicar"), style="Primary.TButton",
         ).pack(side="left")
         ttk.Button(
-            buttons, text="Correo electrónico", command=lambda: choose("email"),
+            buttons, text="Solo email", command=lambda: choose("email"),
         ).pack(side="left", padx=8)
+        ttk.Button(
+            buttons, text="Publicar en área cliente",
+            command=lambda: choose("publicar"),
+        ).pack(side="left", padx=4)
         ttk.Button(buttons, text="Cancelar", command=dlg.destroy).pack(side="right")
         dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
         dlg.grab_set()
@@ -3006,8 +3009,9 @@ class UIFacturasEmitidas(ttk.Frame):
 
         btns = ttk.Frame(frm)
         btns.pack(fill="x")
-        ttk.Button(btns, text="Email", style="Primary.TButton", command=lambda: _set("email")).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btns, text="Mensajería Gestinem", style="Primary.TButton", command=lambda: _set("mensajeria")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="Enviar por email y publicar", style="Primary.TButton", command=lambda: _set("email_y_publicar")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="Solo email", command=lambda: _set("email")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text="Publicar en area cliente", command=lambda: _set("publicar")).pack(side=tk.LEFT, padx=4)
         ttk.Button(btns, text="Cancelar", command=dlg.destroy).pack(side=tk.LEFT, padx=4)
 
         dlg.update_idletasks()

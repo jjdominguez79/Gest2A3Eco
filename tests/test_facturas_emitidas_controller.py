@@ -222,61 +222,55 @@ def test_resuelve_facturas_y_albaranes_en_subcarpetas_distintas(monkeypatch, tmp
     assert albaran == str(tmp_path / "albaranes" / "albaran_template.docx")
 
 
-def test_compartir_factura_por_mensajeria_usa_cliente_por_nif(monkeypatch, tmp_path):
+def test_compartir_factura_publicar_area_cliente(monkeypatch, tmp_path):
+    """Verifica que el canal 'publicar' sube el PDF al area documental."""
     sent = []
+    published = []
 
-    class RemoteStub:
+    class BackendClientStub:
         configured = True
-
         def __init__(self, **kwargs):
-            sent.append(("user", kwargs))
+            pass
+        def publish_document(self, **kwargs):
+            published.append(kwargs)
+            return {"document_id": "doc-test-1"}
 
-        def sync_staff(self, **kwargs):
-            sent.append(("staff", kwargs))
-
-        def sync_organization(self, **kwargs):
-            sent.append(("organization", kwargs))
-
-        def company_conversation(self, code, kind):
-            sent.append(("conversation", code, kind))
-            return {"id": "conv-fiscal", "active_client_count": 1}
-
-        def send_message(self, conversation_id, body, paths):
-            sent.append(("message", conversation_id, body, paths))
-
-    monkeypatch.setattr("services.mensajeria_service.MensajeriaRemoteClient", RemoteStub)
+    monkeypatch.setattr(
+        "services.backend_client_service.BackendClientService",
+        BackendClientStub,
+    )
     pdf = tmp_path / "factura.pdf"
     pdf.write_bytes(b"%PDF")
     view = SimpleNamespace(
         session=SimpleNamespace(user=SimpleNamespace(id=7, nombre="Administrador")),
-        get_selected_ids=lambda: ["fac-1"], ask_share_channel=lambda: "mensajeria",
+        get_selected_ids=lambda: ["fac-1"], ask_share_channel=lambda: "publicar",
         ask_yes_no=lambda *_args: False, show_info=lambda *args: sent.append(("info", args)),
         show_warning=lambda *args: sent.append(("warning", args)),
         show_error=lambda *args: sent.append(("error", args)),
     )
-    gestor = SimpleNamespace(
-        buscar_empresa_por_nif=lambda nif: {
-            "codigo": "E00042", "nombre": "Cliente Mensajeria",
-        } if nif == "B12345678" else None,
-    )
     controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
     controller._view = view
-    controller._gestor = gestor
+    controller._gestor = SimpleNamespace()
     controller._codigo = "E00001"
     controller._ejercicio = 2026
-    controller._get_factura_by_id = lambda _id: {"id": _id, "numero": "F-42"}
+    controller._get_factura_by_id = lambda _id: {
+        "id": _id, "numero": "F-42", "serie": "A", "nif": "B12345678",
+        "ejercicio": 2026, "total": 605.0, "fecha_expedicion": "2026-06-15",
+    }
     controller._ensure_write = lambda *_args: True
     controller._resolve_app_pdf = lambda _fac: str(pdf)
     controller._albaranes_de_factura = lambda _fac: []
     controller._cliente_factura = lambda _fac: {"nif": "B12345678"}
     controller._is_admin = lambda: True
+    controller._totales_factura = lambda _fac: {"total": 605.0}
 
     controller.compartir_pdf()
 
-    message = next(row for row in sent if row[0] == "message")
-    assert message[1] == "conv-fiscal"
-    assert message[2] == "Le enviamos la factura F-42."
-    assert message[3] == [str(pdf)]
+    assert len(published) == 1
+    assert published[0]["customer_tax_id"] == "B12345678"
+    assert published[0]["source_type"] == "factura_emitida"
+    info = next(row for row in sent if row[0] == "info")
+    assert "publicada" in info[1][1].lower()
 
 
 def test_compartir_factura_email_muestra_factura_y_albaran_en_adjuntos(monkeypatch, tmp_path):

@@ -330,6 +330,7 @@ class ClientInvoiceProcessingQueue(Base):
     # Resultado
     pdf_blob_key: Mapped[str] = mapped_column(String(500), default="")
     pdf_sha256: Mapped[str] = mapped_column(String(64), default="")
+    pdf_file_size: Mapped[int] = mapped_column(Integer, default=0)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow,

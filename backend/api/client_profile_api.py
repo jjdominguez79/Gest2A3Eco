@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.api.database import SessionLocal
+from backend.api.client_validation import normalize_tax_id
 from backend.api.messaging_models import MessagingClient, MessagingOrganization, MessagingSession
 from backend.api.messaging_security import hash_token, is_expired, utcnow
 from backend.api.security import require_workstation_or_internal
@@ -107,6 +108,8 @@ def sync_company_profile(
     for field in _SYNC_FIELDS:
         if field in payload:
             value = str(payload[field]).strip()
+            if field == "tax_id":
+                value = normalize_tax_id(value)
             if getattr(org, field) != value:
                 setattr(org, field, value)
                 changed = True
@@ -120,4 +123,9 @@ def sync_company_profile(
     org.profile_synced_at = utcnow()
     db.commit()
 
-    return {"status": "ok", "changed": changed, "company_code": company_code}
+    return {
+        "status": "ok",
+        "changed": changed,
+        "company_code": company_code,
+        "organization_id": org.id,
+    }

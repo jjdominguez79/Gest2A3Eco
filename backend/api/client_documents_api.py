@@ -35,6 +35,7 @@ from backend.api.messaging_security import hash_token, is_expired, utcnow
 from backend.api.security import require_workstation_or_internal
 
 router = APIRouter(prefix="/api/v1/messaging/client/documents", tags=["client-documents"])
+MAX_CLIENT_DOCUMENT_BYTES = 50 * 1024 * 1024
 
 _storage: ClientDocumentStorage | None = None
 
@@ -107,7 +108,7 @@ def _doc_to_dict(doc: ClientDocument, is_read: bool = False) -> dict:
 @router.post("/internal/publish")
 async def publish_document(
     file: UploadFile = File(...),
-    organization_id: str = Form(...),
+    organization_id: str = Form(""),
     document_type: str = Form(...),
     source_system: str = Form(...),
     source_id: str = Form(...),
@@ -118,11 +119,26 @@ async def publish_document(
     fiscal_year: int = Form(0),
     amount: str = Form(""),
     currency: str = Form("EUR"),
+    customer_tax_id: str = Form(""),
     db: Session = Depends(_db),
     _auth: str = Depends(require_workstation_or_internal),
 ):
     """Publica un documento en el area del cliente. Idempotente por source."""
-    # Verificar organizacion
+    # Resolver organizacion por ID o por NIF del cliente
+    if not organization_id and customer_tax_id:
+        from backend.api.client_publication_service import find_organization_by_tax_id
+        org = find_organization_by_tax_id(db, customer_tax_id)
+        if org:
+            organization_id = org.id
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No se encontro organizacion para NIF {customer_tax_id}",
+            )
+
+    if not organization_id:
+        raise HTTPException(status_code=400, detail="organization_id o customer_tax_id requerido")
+
     org = db.get(MessagingOrganization, organization_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organizacion no encontrada")
@@ -140,9 +156,11 @@ async def publish_document(
         return _doc_to_dict(existing)
 
     # Leer y almacenar archivo
-    content = await file.read()
+    content = await file.read(MAX_CLIENT_DOCUMENT_BYTES + 1)
     if not content:
         raise HTTPException(status_code=400, detail="Archivo vacio")
+    if len(content) > MAX_CLIENT_DOCUMENT_BYTES:
+        raise HTTPException(status_code=413, detail="Archivo demasiado grande")
 
     storage = _get_storage()
     sha256 = storage.compute_sha256(content)
@@ -187,7 +205,15 @@ async def publish_document(
         published_at=utcnow(),
     )
     db.add(doc)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        try:
+            storage.delete(blob_key)
+        except Exception:
+            pass
+        raise
     db.refresh(doc)
     return _doc_to_dict(doc)
 
@@ -205,9 +231,11 @@ async def replace_document(
     if not old_doc:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
 
-    content = await file.read()
+    content = await file.read(MAX_CLIENT_DOCUMENT_BYTES + 1)
     if not content:
         raise HTTPException(status_code=400, detail="Archivo vacio")
+    if len(content) > MAX_CLIENT_DOCUMENT_BYTES:
+        raise HTTPException(status_code=413, detail="Archivo demasiado grande")
 
     storage = _get_storage()
     sha256 = storage.compute_sha256(content)
@@ -235,12 +263,19 @@ async def replace_document(
         published_at=utcnow(),
     )
     db.add(new_doc)
-    db.flush()
-
-    old_doc.status = "replaced"
-    old_doc.replaced_by_id = new_doc.id
-    old_doc.updated_at = utcnow()
-    db.commit()
+    try:
+        db.flush()
+        old_doc.status = "replaced"
+        old_doc.replaced_by_id = new_doc.id
+        old_doc.updated_at = utcnow()
+        db.commit()
+    except Exception:
+        db.rollback()
+        try:
+            storage.delete(blob_key)
+        except Exception:
+            pass
+        raise
     db.refresh(new_doc)
     return _doc_to_dict(new_doc)
 

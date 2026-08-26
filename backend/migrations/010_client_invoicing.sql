@@ -141,10 +141,14 @@ CREATE TABLE IF NOT EXISTS client_invoice_processing_queue (
     lease_expires_at TIMESTAMPTZ,
     pdf_blob_key VARCHAR(500) NOT NULL DEFAULT '',
     pdf_sha256 VARCHAR(64) NOT NULL DEFAULT '',
+    pdf_file_size INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT uq_client_inv_queue_invoice UNIQUE (invoice_id)
 );
+
+ALTER TABLE client_invoice_processing_queue
+    ADD COLUMN IF NOT EXISTS pdf_file_size INTEGER NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS ix_client_inv_queue_status
     ON client_invoice_processing_queue(queue_status);

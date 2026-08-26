@@ -13,6 +13,7 @@ import '../domain/conversation.dart';
 import 'conversation_screen.dart';
 import 'messaging_providers.dart';
 import '../../../core/notifications/web_permission_banner.dart';
+import '../../invoicing/presentation/invoicing_providers.dart';
 
 class ConversationsScreen extends ConsumerStatefulWidget {
   const ConversationsScreen({super.key});
@@ -312,12 +313,16 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
         ],
       ),
       actions: [
-        IconButton(
-          key: const Key('client-invoicing-button'),
-          tooltip: 'Facturacion',
-          onPressed: () => context.push('/invoicing'),
-          icon: const Icon(Icons.receipt_long_outlined),
-        ),
+        if (ref.watch(invoicingConfigProvider).whenOrNull(
+              data: (c) => c['enabled'] == true,
+            ) ==
+            true)
+          IconButton(
+            key: const Key('client-invoicing-button'),
+            tooltip: 'Facturacion',
+            onPressed: () => context.push('/invoicing'),
+            icon: const Icon(Icons.receipt_long_outlined),
+          ),
         IconButton(
           key: const Key('client-profile-button'),
           tooltip: 'Mi perfil',

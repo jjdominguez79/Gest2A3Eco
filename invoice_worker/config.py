@@ -16,6 +16,10 @@ class WorkerConfig:
     pdf_output_dir: str
     # Token se obtiene de Windows Credential Manager en produccion
     api_token: str
+    # DSN del PostgreSQL compartido del escritorio
+    desktop_dsn: str
+    # Mailbox para Graph
+    graph_sender_mailbox: str
 
     @staticmethod
     def from_env() -> WorkerConfig:
@@ -36,4 +40,8 @@ class WorkerConfig:
                 "INVOICE_WORKER_PDF_DIR", "./pdfs_generados",
             ),
             api_token=os.getenv("INVOICE_WORKER_API_TOKEN", ""),
+            desktop_dsn=os.getenv("INVOICE_WORKER_DESKTOP_DSN", ""),
+            graph_sender_mailbox=os.getenv(
+                "INVOICE_WORKER_GRAPH_SENDER", "Oficina@gestinem.es",
+            ),
         )
