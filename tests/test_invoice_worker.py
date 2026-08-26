@@ -1,16 +1,15 @@
 """Tests del invoice worker con adaptadores simulados.
 
-Verifica el flujo completo: claim → import → PDF → upload → publish → email → FCM.
+Verifica el flujo completo: claim -> import -> PDF -> upload -> publish -> email -> FCM.
 Cada paso es idempotente; las caidas no duplican datos.
+El worker delega el envio de email y FCM al backend.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 import responses
@@ -19,7 +18,7 @@ os.environ.setdefault("INVOICE_WORKER_API_TOKEN", "test-token")
 os.environ.setdefault("INVOICE_WORKER_DESKTOP_DSN", "")
 
 from invoice_worker.config import WorkerConfig
-from invoice_worker.worker import InvoiceWorker, RealEmailSender
+from invoice_worker.worker import InvoiceWorker
 
 
 # ---------------------------------------------------------------------------
@@ -103,38 +102,6 @@ class MockRenderer:
         return pdf_path
 
 
-class MockEmailSender:
-    """Simula envio de email."""
-
-    def __init__(self):
-        self.sent: list[dict] = []
-
-    def send(self, *, sender, to, subject, body, attachments=None):
-        self.sent.append({
-            "sender": sender,
-            "to": to,
-            "subject": subject,
-            "body": body,
-            "attachments_count": len(attachments or []),
-        })
-        return {"message_id": f"mock-msg-{len(self.sent)}"}
-
-
-class MockFcmSender:
-    """Simula envio FCM."""
-
-    def __init__(self):
-        self.sent: list[dict] = []
-
-    def send(self, push_token, payload, *, platform="android"):
-        self.sent.append({
-            "token": push_token,
-            "payload": payload,
-            "platform": platform,
-        })
-        return True
-
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -204,16 +171,21 @@ def _make_config(tmp_path: Path) -> WorkerConfig:
     pdf_dir = tmp_path / "pdfs"
     pdf_dir.mkdir()
 
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
     return WorkerConfig(
         api_base_url="http://test-api/api/v1/messaging/client/invoicing",
         worker_id="test-worker-1",
         lease_minutes=10,
         poll_interval_seconds=5,
+        max_retries=5,
         word_template_dir=str(template_dir),
         pdf_output_dir=str(pdf_dir),
+        log_dir=str(log_dir),
         api_token="test-token",
         desktop_dsn="",
-        graph_sender_mailbox="test@gestinem.es",
+        sender_mailbox="test@gestinem.es",
     )
 
 
@@ -374,140 +346,77 @@ class TestRenderPdf:
         assert len(renderer.calls) == 1  # solo renderizo una vez
 
 
-class TestSendEmail:
-    @responses.activate
-    def test_sends_email_with_attachment(self, tmp_path):
-        config = _make_config(tmp_path)
-        email_sender = MockEmailSender()
-        worker = InvoiceWorker(config, email_sender=email_sender)
-
-        # Crear PDF dummy
-        pdf_path = tmp_path / "pdfs" / "WEB-000001.pdf"
-        pdf_path.parent.mkdir(parents=True, exist_ok=True)
-        pdf_path.write_bytes(b"%PDF-1.4 test")
-
-        # Mock del endpoint mark_emailed
-        responses.add(
-            responses.POST,
-            f"{config.api_base_url}/worker/invoice/inv-001/emailed",
-            json={"status": "ok"},
-        )
-
-        worker._send_email("inv-001", SAMPLE_PAYLOAD, pdf_path)
-
-        assert len(email_sender.sent) == 1
-        msg = email_sender.sent[0]
-        assert msg["to"] == "cliente@test.com"
-        assert "WEB-000001" in msg["subject"]
-        assert msg["attachments_count"] == 1
+class TestRequestEmail:
+    """El worker delega el envio de email al backend."""
 
     @responses.activate
-    def test_no_recipient_still_marks_emailed(self, tmp_path):
+    def test_requests_email_via_backend(self, tmp_path):
         config = _make_config(tmp_path)
-        email_sender = MockEmailSender()
-        worker = InvoiceWorker(config, email_sender=email_sender)
-
-        payload = {
-            **SAMPLE_PAYLOAD,
-            "invoice": {**SAMPLE_PAYLOAD["invoice"], "recipient_email": ""},
-        }
+        worker = InvoiceWorker(config)
+        base = config.api_base_url
 
         responses.add(
             responses.POST,
-            f"{config.api_base_url}/worker/invoice/inv-002/emailed",
-            json={"status": "ok"},
+            f"{base}/worker/invoice/inv-001/send-email",
+            json={"status": "ok", "message_id": "msg-123"},
         )
 
-        pdf_path = tmp_path / "dummy.pdf"
-        pdf_path.write_bytes(b"%PDF")
-        worker._send_email("inv-002", payload, pdf_path)
+        worker._request_email("inv-001", SAMPLE_PAYLOAD)
 
-        # No se envio email pero si se marco
-        assert len(email_sender.sent) == 0
-        assert len(responses.calls) == 1  # mark_emailed llamado
+        assert len(responses.calls) == 1
+        body = json.loads(responses.calls[0].request.body)
+        assert body["recipient_email"] == "cliente@test.com"
+        assert body["sender_mailbox"] == "test@gestinem.es"
 
     @responses.activate
-    def test_send_failure_does_not_mark_emailed(self, tmp_path):
+    def test_already_sent_is_handled(self, tmp_path):
         config = _make_config(tmp_path)
+        worker = InvoiceWorker(config)
+        base = config.api_base_url
 
-        class FailingEmailSender:
-            def send(self, **_kwargs):
-                raise ConnectionError("Graph no disponible")
-
-        worker = InvoiceWorker(config, email_sender=FailingEmailSender())
-        pdf_path = tmp_path / "dummy.pdf"
-        pdf_path.write_bytes(b"%PDF")
-
-        with pytest.raises(ConnectionError, match="Graph no disponible"):
-            worker._send_email("inv-fail", SAMPLE_PAYLOAD, pdf_path)
-
-        assert not responses.calls
-
-    def test_real_adapter_converts_graph_arguments(self, monkeypatch, tmp_path):
-        pdf_path = tmp_path / "factura.pdf"
-        pdf_path.write_bytes(b"%PDF")
-        captured = {}
-
-        class GraphStub:
-            def send(self, **kwargs):
-                captured.update(kwargs)
-                return type("Result", (), {"internet_message_id": "msg-1"})()
-
-        monkeypatch.setattr(
-            "services.graph_mail_service.GraphMailService",
-            lambda: GraphStub(),
-        )
-        sender = RealEmailSender()
-
-        result = sender.send(
-            sender="oficina@example.test",
-            to="cliente@example.test",
-            subject="Factura",
-            body="Adjuntamos factura",
-            attachments=[{"path": str(pdf_path), "content": b"ignored"}],
+        responses.add(
+            responses.POST,
+            f"{base}/worker/invoice/inv-001/send-email",
+            json={"status": "ok", "already_sent": True},
         )
 
-        assert captured["to"] == ["cliente@example.test"]
-        assert captured["attachments"] == [str(pdf_path)]
-        assert result == {"message_id": "msg-1"}
+        worker._request_email("inv-001", SAMPLE_PAYLOAD)
+        assert len(responses.calls) == 1
 
 
-class TestSendFcm:
-    def test_sends_to_all_tokens(self, tmp_path):
+class TestRequestFcm:
+    """El worker delega FCM al backend (best-effort)."""
+
+    @responses.activate
+    def test_requests_fcm_via_backend(self, tmp_path):
         config = _make_config(tmp_path)
-        fcm = MockFcmSender()
-        worker = InvoiceWorker(config, fcm_sender=fcm)
+        worker = InvoiceWorker(config)
+        base = config.api_base_url
 
-        worker._send_fcm("inv-001", SAMPLE_PAYLOAD)
+        responses.add(
+            responses.POST,
+            f"{base}/worker/invoice/inv-001/send-fcm",
+            json={"status": "ok", "sent": 2, "errors": 0},
+        )
 
-        assert len(fcm.sent) == 2
-        assert fcm.sent[0]["token"] == "fcm-token-1"
-        assert fcm.sent[0]["platform"] == "android"
-        assert fcm.sent[1]["token"] == "fcm-token-2"
-        assert fcm.sent[1]["platform"] == "web"
-        assert fcm.sent[0]["payload"]["type"] == "invoice_processed"
+        worker._request_fcm("inv-001")
+        assert len(responses.calls) == 1
 
-    def test_no_tokens_no_error(self, tmp_path):
-        config = _make_config(tmp_path)
-        fcm = MockFcmSender()
-        worker = InvoiceWorker(config, fcm_sender=fcm)
-
-        payload = {**SAMPLE_PAYLOAD, "push_tokens": []}
-        worker._send_fcm("inv-no-tokens", payload)
-
-        assert len(fcm.sent) == 0
-
+    @responses.activate
     def test_fcm_error_does_not_propagate(self, tmp_path):
         """FCM es best-effort; los errores no bloquean el flujo."""
         config = _make_config(tmp_path)
+        worker = InvoiceWorker(config)
+        base = config.api_base_url
 
-        class FailingFcm:
-            def send(self, token, payload, *, platform="android"):
-                raise ConnectionError("FCM down")
+        responses.add(
+            responses.POST,
+            f"{base}/worker/invoice/inv-001/send-fcm",
+            status=500,
+        )
 
-        worker = InvoiceWorker(config, fcm_sender=FailingFcm())
         # No debe lanzar excepcion
-        worker._send_fcm("inv-fail", SAMPLE_PAYLOAD)
+        worker._request_fcm("inv-001")
 
 
 class TestFullProcess:
@@ -518,20 +427,19 @@ class TestFullProcess:
         config = _make_config(tmp_path)
         gestor = MockGestor()
         renderer = MockRenderer()
-        email_sender = MockEmailSender()
-        fcm_sender = MockFcmSender()
 
         worker = InvoiceWorker(
             config,
             gestor=gestor,
             renderer=renderer,
-            email_sender=email_sender,
-            fcm_sender=fcm_sender,
         )
 
         base = config.api_base_url
 
         # Mock all API calls
+        responses.add(responses.GET, f"{base}/worker/invoice/inv-full/status",
+                      json={"invoice_status": "claimed", "pdf_uploaded": False,
+                            "document_published": False})
         responses.add(responses.GET, f"{base}/worker/invoice/inv-full/payload",
                       json=SAMPLE_PAYLOAD)
         responses.add(responses.POST, f"{base}/worker/invoice/inv-full/import-confirmed",
@@ -540,24 +448,59 @@ class TestFullProcess:
                       json={"status": "ok"})
         responses.add(responses.POST, f"{base}/worker/invoice/inv-full/publish-document",
                       json={"document_id": "doc-123"})
-        responses.add(responses.POST, f"{base}/worker/invoice/inv-full/emailed",
-                      json={"status": "ok"})
+        responses.add(responses.POST, f"{base}/worker/invoice/inv-full/send-email",
+                      json={"status": "ok", "message_id": "msg-1"})
+        responses.add(responses.POST, f"{base}/worker/invoice/inv-full/send-fcm",
+                      json={"status": "ok", "sent": 2, "errors": 0})
 
         worker._process({"invoice_id": "inv-full"})
 
         # Verify each step executed
         assert len(gestor.facturas) == 1  # import
         assert len(renderer.calls) == 1   # PDF
-        assert len(email_sender.sent) == 1  # email
-        assert len(fcm_sender.sent) == 2  # FCM (2 tokens)
 
-        # Verify API calls made in correct order
+        # Verify API calls made
         api_paths = [c.request.path_url for c in responses.calls]
-        assert "/payload" in api_paths[0]
-        assert "/import-confirmed" in api_paths[1]
-        assert "/pdf" in api_paths[2]
-        assert "/publish-document" in api_paths[3]
-        assert "/emailed" in api_paths[4]
+        assert any("/status" in p for p in api_paths)
+        assert any("/payload" in p for p in api_paths)
+        assert any("/import-confirmed" in p for p in api_paths)
+        assert any("/pdf" in p for p in api_paths)
+        assert any("/publish-document" in p for p in api_paths)
+        assert any("/send-email" in p for p in api_paths)
+        assert any("/send-fcm" in p for p in api_paths)
+
+    @responses.activate
+    def test_recovery_skips_completed_steps(self, tmp_path):
+        """Si el worker se recupera, no repite pasos completados."""
+        config = _make_config(tmp_path)
+        gestor = MockGestor()
+        renderer = MockRenderer()
+
+        worker = InvoiceWorker(config, gestor=gestor, renderer=renderer)
+        base = config.api_base_url
+
+        # Status indica que PDF ya esta subido y documento publicado
+        responses.add(responses.GET, f"{base}/worker/invoice/inv-rec/status",
+                      json={"invoice_status": "rendered", "pdf_uploaded": True,
+                            "document_published": True})
+        responses.add(responses.GET, f"{base}/worker/invoice/inv-rec/payload",
+                      json=SAMPLE_PAYLOAD)
+        # Solo necesita email y FCM
+        responses.add(responses.POST, f"{base}/worker/invoice/inv-rec/send-email",
+                      json={"status": "ok", "message_id": "msg-1"})
+        responses.add(responses.POST, f"{base}/worker/invoice/inv-rec/send-fcm",
+                      json={"status": "ok", "sent": 1})
+
+        worker._process({"invoice_id": "inv-rec"})
+
+        # No debe haber importado ni renderizado (ya estaba hecho)
+        assert len(gestor.facturas) == 0
+        assert len(renderer.calls) == 0
+
+        # Pero si pidio email y FCM
+        api_paths = [c.request.path_url for c in responses.calls]
+        assert any("/send-email" in p for p in api_paths)
+        assert any("/send-fcm" in p for p in api_paths)
 
     @responses.activate
     def test_error_reported_on_failure(self, tmp_path):
@@ -567,6 +510,9 @@ class TestFullProcess:
 
         base = config.api_base_url
 
+        # Status
+        responses.add(responses.GET, f"{base}/worker/invoice/inv-err/status",
+                      json={})
         # Payload con empresa que no existe -> error en _import_to_desktop
         bad_payload = {
             **SAMPLE_PAYLOAD,
@@ -610,3 +556,38 @@ class TestClaim:
         )
         result = worker._claim()
         assert result is None
+
+
+class TestGracefulShutdown:
+    def test_stop_sets_running_false(self, tmp_path):
+        config = _make_config(tmp_path)
+        worker = InvoiceWorker(config)
+
+        assert worker._running is True
+        worker.stop(signum=15)
+        assert worker._running is False
+
+    def test_sleep_respects_stop(self, tmp_path):
+        config = _make_config(tmp_path)
+        worker = InvoiceWorker(config)
+
+        import time
+        worker._running = False
+        start = time.monotonic()
+        worker._sleep(10)  # Deberia salir inmediatamente
+        elapsed = time.monotonic() - start
+        assert elapsed < 2  # Mucho menos de 10s
+
+
+class TestBackoff:
+    @responses.activate
+    def test_consecutive_errors_increase_backoff(self, tmp_path):
+        config = _make_config(tmp_path)
+        worker = InvoiceWorker(config)
+
+        # Simular errores consecutivos
+        assert worker._consecutive_errors == 0
+        worker._consecutive_errors = 3
+        # Backoff seria poll_interval * 2^3 = 5 * 8 = 40
+        expected = min(5 * (2 ** 3), 300)
+        assert expected == 40

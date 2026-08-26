@@ -661,7 +661,21 @@ def worker_get_payload(
     customer = db.get(ClientInvoiceCustomer, inv.customer_id)
     org = db.get(MessagingOrganization, inv.organization_id)
 
-    result = _invoice_to_dict(inv, list(lines))
+    result = {
+        "invoice": _invoice_to_dict(inv),
+        "lines": [
+            {
+                "description": l.description,
+                "quantity": str(l.quantity),
+                "unit_price": str(l.unit_price),
+                "discount_percent": str(l.discount_percent),
+                "vat_rate": str(l.vat_rate),
+                "line_total": str(l.line_total),
+                "vat_amount": str(l.vat_amount),
+            }
+            for l in sorted(lines, key=lambda x: x.line_number)
+        ],
+    }
     if customer:
         result["customer"] = _customer_to_dict(customer)
     if org:
