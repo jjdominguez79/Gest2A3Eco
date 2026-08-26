@@ -8,10 +8,17 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 
 SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 APP_VERSION_RE = re.compile(
     r'^(?P<prefix>\s*APP_VERSION\s*=\s*")(?P<version>\d+\.\d+\.\d+)(?P<suffix>".*)$',
+    re.MULTILINE,
+)
+APP_RELEASE_DATE_RE = re.compile(
+    r'^(?P<prefix>\s*APP_RELEASE_DATE\s*=\s*")(?P<date>\d{4}-\d{2}-\d{2})(?P<suffix>".*)$',
     re.MULTILINE,
 )
 SETUP_VERSION_RE = re.compile(
@@ -71,6 +78,15 @@ def update_app_version_text(content: str, version: str) -> str:
         raise ValueError("No se encontro APP_VERSION en el contenido.")
     return APP_VERSION_RE.sub(rf"\g<prefix>{version}\g<suffix>", content, count=1)
 
+def update_app_release_date_text(content: str, release_date: str) -> str:
+    if not APP_RELEASE_DATE_RE.search(content):
+        raise ValueError("No se encontro APP_RELEASE_DATE en el contenido.")
+
+    return APP_RELEASE_DATE_RE.sub(
+        rf"\g<prefix>{release_date}\g<suffix>",
+        content,
+        count=1,
+    )
 
 def update_setup_version_text(content: str, version: str) -> str:
     parse_semver(version)
@@ -80,8 +96,20 @@ def update_setup_version_text(content: str, version: str) -> str:
 
 
 def update_app_version_file(path: Path, version: str) -> None:
-    _write_text(path, update_app_version_text(_read_text(path), version))
+    content = _read_text(path)
 
+    content = update_app_version_text(content, version)
+
+    release_date = datetime.now(
+        ZoneInfo("Europe/Madrid")
+    ).strftime("%Y-%m-%d")
+
+    content = update_app_release_date_text(
+        content,
+        release_date,
+    )
+
+    _write_text(path, content)
 
 def update_setup_version_file(path: Path, version: str) -> None:
     _write_text(path, update_setup_version_text(_read_text(path), version))
