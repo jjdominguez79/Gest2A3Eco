@@ -936,6 +936,212 @@ def worker_mark_emailed(
     return {"status": "ok"}
 
 
+@router.post("/worker/invoice/{invoice_id}/send-email")
+def worker_send_email(
+    invoice_id: str,
+    payload: dict = Body(...),
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    """Envia email con la factura via Graph. Idempotente por estado."""
+    inv = db.get(ClientInvoice, invoice_id)
+    if not inv:
+        raise HTTPException(status_code=404)
+
+    # Idempotente: si ya esta marcado como emailed, no reenviar
+    if inv.status == "emailed":
+        return {"status": "ok", "already_sent": True}
+
+    queue_item = db.scalar(
+        select(ClientInvoiceProcessingQueue).where(
+            ClientInvoiceProcessingQueue.invoice_id == invoice_id,
+        )
+    )
+    if not queue_item or not queue_item.pdf_blob_key:
+        raise HTTPException(status_code=400, detail="PDF no disponible todavia")
+
+    recipient = payload.get("recipient_email", "") or inv.recipient_email or ""
+    if not recipient:
+        # Sin destinatario: marcar como completado sin envio
+        old_status = inv.status
+        inv.status = "emailed"
+        create_invoice_event(
+            db, inv.id, "emailed", old_status, "emailed",
+            actor_type="worker", detail="sin_destinatario",
+        )
+        if queue_item:
+            queue_item.queue_status = "completed"
+            queue_item.updated_at = utcnow()
+        db.commit()
+        return {"status": "ok", "skipped": True, "reason": "sin_destinatario"}
+
+    # Descargar PDF del blob storage
+    storage = _get_storage()
+    try:
+        pdf_content = storage.get(queue_item.pdf_blob_key)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Error descargando PDF")
+
+    # Construir datos del email
+    org = db.get(MessagingOrganization, inv.organization_id)
+    org_name = org.name if org else ""
+    series = inv.series_code or "WEB"
+    number = inv.invoice_number or 0
+    display = f"{series}-{number:06d}"
+
+    subject = f"Factura {display} - {org_name}"
+    body_text = (
+        f"Estimado cliente,\n\n"
+        f"Adjuntamos la factura {display}.\n\n"
+        f"Un saludo,\n{org_name}"
+    )
+
+    # Enviar via Graph
+    try:
+        from backend.api.config import get_settings
+        settings = get_settings()
+        sender_mailbox = (
+            payload.get("sender_mailbox", "") or settings.messaging_graph_from
+        )
+        if not sender_mailbox:
+            raise HTTPException(
+                status_code=500, detail="Buzon remitente no configurado",
+            )
+
+        from services.graph_mail_service import GraphMailService
+        import tempfile
+        import os
+
+        # Escribir PDF temporal para Graph
+        tmp_dir = tempfile.mkdtemp()
+        tmp_pdf = os.path.join(tmp_dir, f"{display}.pdf")
+        with open(tmp_pdf, "wb") as f:
+            f.write(pdf_content)
+
+        try:
+            mail_service = GraphMailService()
+            result = mail_service.send(
+                sender=sender_mailbox,
+                to=[recipient],
+                subject=subject,
+                body=body_text,
+                attachments=[tmp_pdf],
+            )
+            message_id = getattr(result, "internet_message_id", "") or ""
+        finally:
+            try:
+                os.unlink(tmp_pdf)
+                os.rmdir(tmp_dir)
+            except OSError:
+                pass
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error enviando email: {exc}")
+
+    # Marcar como emailed
+    old_status = inv.status
+    inv.status = "emailed"
+    create_invoice_event(
+        db, inv.id, "emailed", old_status, "emailed",
+        actor_type="worker", detail=message_id,
+    )
+    if queue_item:
+        queue_item.queue_status = "completed"
+        queue_item.updated_at = utcnow()
+    db.commit()
+
+    return {"status": "ok", "message_id": message_id}
+
+
+@router.post("/worker/invoice/{invoice_id}/send-fcm")
+def worker_send_fcm(
+    invoice_id: str,
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    """Envia notificacion FCM al emisor. Best-effort, no bloquea."""
+    inv = db.get(ClientInvoice, invoice_id)
+    if not inv:
+        raise HTTPException(status_code=404)
+
+    # Obtener tokens push del cliente emisor
+    push_tokens = []
+    if inv.created_by_client_id:
+        from backend.api.messaging_models import MessagingAppDevice
+        devices = db.scalars(
+            select(MessagingAppDevice).where(
+                MessagingAppDevice.user_type == "client",
+                MessagingAppDevice.user_id == inv.created_by_client_id,
+                MessagingAppDevice.active.is_(True),
+            )
+        ).all()
+        push_tokens = [
+            {"token": d.push_token, "platform": d.platform}
+            for d in devices if d.push_token
+        ]
+
+    if not push_tokens:
+        return {"status": "ok", "sent": 0, "reason": "sin_tokens"}
+
+    series = inv.series_code or "WEB"
+    number = inv.invoice_number or 0
+    fcm_payload = {
+        "title": "Factura procesada",
+        "body": f"Tu factura {series}-{number:06d} ha sido procesada.",
+        "invoice_id": invoice_id,
+        "type": "invoice_processed",
+    }
+
+    sent = 0
+    errors = 0
+    try:
+        from backend.api.messaging_firebase import send_fcm
+        for token_info in push_tokens:
+            token = token_info.get("token", "")
+            platform = token_info.get("platform", "android")
+            if not token:
+                continue
+            try:
+                send_fcm(token, fcm_payload, platform=platform)
+                sent += 1
+            except Exception:
+                errors += 1
+    except Exception:
+        pass  # FCM es best-effort
+
+    return {"status": "ok", "sent": sent, "errors": errors}
+
+
+@router.get("/worker/invoice/{invoice_id}/status")
+def worker_get_status(
+    invoice_id: str,
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    """Consulta el estado de procesamiento de una factura."""
+    inv = db.get(ClientInvoice, invoice_id)
+    if not inv:
+        raise HTTPException(status_code=404)
+
+    queue_item = db.scalar(
+        select(ClientInvoiceProcessingQueue).where(
+            ClientInvoiceProcessingQueue.invoice_id == invoice_id,
+        )
+    )
+
+    return {
+        "invoice_id": invoice_id,
+        "invoice_status": inv.status,
+        "queue_status": queue_item.queue_status if queue_item else None,
+        "pdf_uploaded": bool(queue_item and queue_item.pdf_blob_key),
+        "document_published": bool(inv.document_id),
+        "retry_count": queue_item.retry_count if queue_item else 0,
+        "max_retries": queue_item.max_retries if queue_item else 0,
+    }
+
+
 @router.post("/worker/customer-sync")
 def worker_sync_customers(
     payload: dict = Body(...),
