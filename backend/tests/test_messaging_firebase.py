@@ -116,6 +116,11 @@ class TestSendFcm:
                 mod.send_fcm('token-and', {'title': 'T', 'body': 'B'}, platform='android')
 
         fake_messaging.WebpushConfig.assert_not_called()
+        message_kwargs = fake_messaging.Message.call_args.kwargs
+        assert message_kwargs['notification'] is None
+        assert message_kwargs['data']['title'] == 'T'
+        assert message_kwargs['data']['body'] == 'B'
+        fake_messaging.AndroidConfig.assert_called_once()
 
     def test_enlace_chat_interno_usa_ruta_internal(self):
         mod = self._module()
@@ -301,7 +306,9 @@ class TestRegistroDispositivoWeb:
 
         background = MagicMock()
         with patch.object(messaging_api, "fcm_configured", return_value=True):
-            messaging_api._queue_internal_pushes(db, background, thread, admin)
+            messaging_api._queue_internal_pushes(
+                db, background, thread, admin, "message-web-1",
+            )
 
         background.add_task.assert_called_once()
         args = background.add_task.call_args.args
@@ -309,6 +316,9 @@ class TestRegistroDispositivoWeb:
         assert args[1] == device.push_token    # push_token
         assert args[3] == device.platform       # platform = 'web'
         assert args[2].get('thread_id') == thread.id
+        assert args[2].get('target_type') == 'internal_thread'
+        assert args[2].get('target_id') == thread.id
+        assert args[2].get('message_id') == 'message-web-1'
 
     def test_push_interno_android_sin_webpush(self, db):
         """Android no debe recibir WebpushConfig: verificamos que el platform se pasa."""
@@ -351,6 +361,48 @@ class TestRegistroDispositivoWeb:
         args = background.add_task.call_args.args
         # platform debe ser 'android', no 'web'
         assert args[3] == 'android'
+
+    def test_no_envia_push_al_chat_interno_visible(self, db):
+        from backend.api import messaging_api
+        from backend.api.messaging_models import (
+            MessagingAppDevice, MessagingStaff, MessagingStaffChannel,
+            MessagingStaffThread,
+        )
+
+        suffix = uuid.uuid4().hex[:8]
+        admin = MessagingStaff(
+            external_id=f"admin-visible-{suffix}", name="Admin",
+            email=f"admin-visible-{suffix}@gestinem.es", role="admin", active=True,
+        )
+        member = MessagingStaff(
+            external_id=f"member-visible-{suffix}", name="Luz",
+            email=f"member-visible-{suffix}@gestinem.es", role="empleado", active=True,
+        )
+        db.add_all([admin, member])
+        db.flush()
+        db.add(MessagingStaffChannel(
+            staff_external_id=member.external_id, channel="fiscal",
+        ))
+        thread = MessagingStaffThread(
+            key=f"group:visible:{suffix}", kind="group", channel="fiscal",
+        )
+        db.add(thread)
+        db.flush()
+        device = MessagingAppDevice(
+            user_type="staff", user_id=member.external_id, platform="android",
+            push_token=f"visible-token-{suffix}", active=True,
+            active_target_type="internal_thread", active_target_id=thread.id,
+            last_seen_at=messaging_api.utcnow(),
+        )
+        db.add(device)
+        db.flush()
+
+        background = MagicMock()
+        with patch.object(messaging_api, "fcm_configured", return_value=True):
+            messaging_api._queue_internal_pushes(db, background, thread, admin)
+
+        queued_tokens = [call.args[1] for call in background.add_task.call_args_list]
+        assert device.push_token not in queued_tokens
 
     def test_desactivacion_solo_en_error_permanente(self, db):
         from backend.api.messaging_models import MessagingAppDevice

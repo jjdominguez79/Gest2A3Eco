@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import timedelta
 from pathlib import Path
 from typing import NamedTuple
 
@@ -101,12 +102,29 @@ def send_fcm(push_token: str, payload: dict, *, platform: str = 'android') -> Fc
                 fcm_options=messaging.WebpushFCMOptions(link=link),
             )
 
+        notification = messaging.Notification(title=title, body=body)
+        android = None
+        if platform == 'android':
+            # Android usa una notificacion local controlada por Flutter. Asi
+            # cada chat tiene un unico ID, se puede cancelar al leer y el tap
+            # conserva siempre el destino exacto.
+            data['title'] = title
+            data['body'] = body
+            target_id = data.get('target_id') or data.get('conversation_id') or data.get('thread_id')
+            android = messaging.AndroidConfig(
+                priority='high',
+                ttl=timedelta(hours=24),
+                collapse_key=f'chat:{target_id}' if target_id else 'gestinem:messages',
+            )
+            notification = None
+
         messaging.send(
             messaging.Message(
                 token=push_token,
-                notification=messaging.Notification(title=title, body=body),
+                notification=notification,
                 data=data,
                 webpush=webpush,
+                android=android,
             ),
             app=app,
         )

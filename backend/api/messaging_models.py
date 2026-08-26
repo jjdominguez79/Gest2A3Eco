@@ -347,6 +347,8 @@ class MessagingAppDevice(Base):
     app_version: Mapped[str] = mapped_column(String(40), default="")
     active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     active_conversation_id: Mapped[str] = mapped_column(String(36), default="", index=True)
+    active_target_type: Mapped[str] = mapped_column(String(24), default="", index=True)
+    active_target_id: Mapped[str] = mapped_column(String(36), default="", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

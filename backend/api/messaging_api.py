@@ -301,6 +301,12 @@ def _ensure_employee_admin_direct_thread(
     db: Session, staff: MessagingStaff,
 ) -> MessagingStaffThread | None:
     if staff.role == "admin":
+        members = db.scalars(select(MessagingStaff).where(
+            MessagingStaff.active.is_(True),
+            MessagingStaff.external_id != staff.external_id,
+        )).all()
+        for member in members:
+            _get_or_create_staff_direct_thread(db, staff, member)
         return None
     admin = _primary_admin(db)
     if not admin:
@@ -757,7 +763,7 @@ def _queue_client_pushes(
 
 def _queue_app_pushes(
     db: Session, background: BackgroundTasks, conv: MessagingConversation,
-    recipient_type: str,
+    recipient_type: str, message_id: str = "",
 ) -> None:
     if not fcm_configured():
         return
@@ -787,10 +793,19 @@ def _queue_app_pushes(
         "body": "Tienes un nuevo mensaje",
         "event": "message.created",
         "conversation_id": conv.id,
+        "target_type": "conversation",
+        "target_id": conv.id,
+        "message_id": message_id,
     }
     for device in devices:
         viewing = (
-            device.active_conversation_id == conv.id
+            (
+                device.active_conversation_id == conv.id
+                or (
+                    device.active_target_type == "conversation"
+                    and device.active_target_id == conv.id
+                )
+            )
             and (now - device.last_seen_at).total_seconds() < 75
         )
         if not viewing:
@@ -1487,7 +1502,7 @@ def _staff_thread_recipient_ids(
 
 def _queue_internal_pushes(
     db: Session, background: BackgroundTasks, thread: MessagingStaffThread,
-    sender: MessagingStaff,
+    sender: MessagingStaff, message_id: str = "",
 ) -> None:
     """Envia FCM solo a los miembros autorizados del chat interno."""
     if not fcm_configured():
@@ -1506,12 +1521,21 @@ def _queue_internal_pushes(
         "event": "internal_message",
         "conversation_id": "",
         "thread_id": thread.id,
+        "target_type": "internal_thread",
+        "target_id": thread.id,
+        "message_id": message_id,
     }
     for device in devices:
-        background.add_task(
-            _send_push_and_handle,
-            device.push_token, payload, device.platform, device.id,
+        viewing = (
+            device.active_target_type == "internal_thread"
+            and device.active_target_id == thread.id
+            and (utcnow() - device.last_seen_at).total_seconds() < 75
         )
+        if not viewing:
+            background.add_task(
+                _send_push_and_handle,
+                device.push_token, payload, device.platform, device.id,
+            )
 
 
 @router.post("/staff/internal/threads/{thread_id}/messages")
@@ -1571,7 +1595,7 @@ def post_staff_thread_message(
     ))
     db.commit()
     db.refresh(item)
-    _queue_internal_pushes(db, background, thread, staff)
+    _queue_internal_pushes(db, background, thread, staff, item.id)
     recipients = _staff_thread_recipient_ids(db, thread)
     hub.publish(
         {
@@ -2191,7 +2215,7 @@ def client_send_unified(
         reply_to_message_id=reply_id,
     )
     _queue_staff_pushes(db, background, target_conv)
-    _queue_app_pushes(db, background, target_conv, "staff")
+    _queue_app_pushes(db, background, target_conv, "staff", item.id)
 
     if mail_configured():
         pass  # notificacion de email manejada en post_message
@@ -2418,10 +2442,10 @@ def post_message(
     )
     if audience == "client":
         _queue_staff_pushes(db, background, conv)
-        _queue_app_pushes(db, background, conv, "staff")
+        _queue_app_pushes(db, background, conv, "staff", item.id)
     if audience == "staff":
         _queue_client_pushes(db, background, conv)
-        _queue_app_pushes(db, background, conv, "client")
+        _queue_app_pushes(db, background, conv, "client", item.id)
     if audience == "staff" and mail_configured():
         clients = db.scalars(select(MessagingClient).where(
             MessagingClient.organization_id == conv.organization_id,
@@ -3292,19 +3316,33 @@ def register_app_device(
 @router.patch("/{audience}/app-devices/{device_id}/presence")
 def app_device_presence(
     audience: str, device_id: str, request: Request,
-    conversation_id: str = Form(default=""), db: Session = Depends(get_db),
+    conversation_id: str = Form(default=""),
+    target_type: str = Form(default=""), target_id: str = Form(default=""),
+    db: Session = Depends(get_db),
 ):
     actor = _resolve_actor(audience, request, db)
     actor_id = actor.id if audience == "client" else actor.external_id
     item = db.get(MessagingAppDevice, device_id)
     if not item or item.user_type != audience or item.user_id != actor_id:
         raise HTTPException(404, "Dispositivo no encontrado")
-    if conversation_id:
+    resolved_type = target_type.strip()
+    resolved_id = target_id.strip()
+    if not resolved_type and conversation_id:
+        resolved_type, resolved_id = "conversation", conversation_id
+    if resolved_type not in {"", "conversation", "internal_thread"}:
+        raise HTTPException(422, "Tipo de destino activo no valido")
+    if resolved_type == "conversation" and resolved_id:
         if audience == "client":
-            _conversation_for_client(db, conversation_id, actor)
+            _conversation_for_client(db, resolved_id, actor)
         else:
-            _conversation_for_staff(db, conversation_id, actor)
-    item.active_conversation_id = conversation_id
+            _conversation_for_staff(db, resolved_id, actor)
+    elif resolved_type == "internal_thread" and resolved_id:
+        if audience != "staff":
+            raise HTTPException(403, "Destino interno no permitido")
+        _staff_thread(db, resolved_id, actor)
+    item.active_target_type = resolved_type if resolved_id else ""
+    item.active_target_id = resolved_id
+    item.active_conversation_id = resolved_id if resolved_type == "conversation" else ""
     item.last_seen_at = utcnow()
     db.commit()
     return {"ok": True}
@@ -3321,6 +3359,8 @@ def unregister_app_device(
         raise HTTPException(404, "Dispositivo no encontrado")
     item.active = False
     item.active_conversation_id = ""
+    item.active_target_type = ""
+    item.active_target_id = ""
     db.commit()
     return Response(status_code=204)
 
