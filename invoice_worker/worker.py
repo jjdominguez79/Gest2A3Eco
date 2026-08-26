@@ -7,11 +7,13 @@ Flujo por factura:
 4. Generar PDF con Word COM
 5. Subir PDF y SHA-256
 6. Publicar en area documental
-7. Enviar email via Graph
-8. Enviar FCM al emisor
+7. Solicitar envio de email al backend (el backend usa Graph)
+8. Solicitar envio de FCM al backend (best-effort)
 9. Confirmar cada transicion de estado
 
 Cada paso es idempotente. Las caidas no duplican datos.
+El worker NO usa Graph ni Firebase directamente. Los secretos de
+proveedores permanecen en el backend.
 """
 
 from __future__ import annotations
@@ -19,6 +21,8 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import signal
+import sys
 import time
 from datetime import datetime
 from decimal import Decimal
@@ -30,6 +34,9 @@ import requests
 from invoice_worker.config import WorkerConfig
 
 logger = logging.getLogger(__name__)
+
+# Backoff maximo entre reintentos (5 minutos)
+_MAX_BACKOFF_SECONDS = 300
 
 
 # ---------------------------------------------------------------------------
@@ -56,21 +63,6 @@ class PdfRenderer(Protocol):
         self, empresa_conf: dict, fac: dict, cliente: dict,
         totales: dict, template_path: str, pdf_path: str,
     ) -> str: ...
-
-
-class EmailSender(Protocol):
-    """Interfaz para envio de email."""
-
-    def send(
-        self, *, sender: str, to: str, subject: str, body: str,
-        attachments: list | None = None,
-    ) -> dict: ...
-
-
-class FcmSender(Protocol):
-    """Interfaz para notificacion push."""
-
-    def send(self, push_token: str, payload: dict, *, platform: str) -> bool: ...
 
 
 # ---------------------------------------------------------------------------
@@ -106,36 +98,6 @@ class RealPdfRenderer:
         return result_pdf
 
 
-class RealEmailSender:
-    """Envia email via Microsoft Graph."""
-
-    def __init__(self) -> None:
-        from services.graph_mail_service import GraphMailService
-        self._service = GraphMailService()
-
-    def send(
-        self, *, sender: str, to: str, subject: str, body: str,
-        attachments: list | None = None,
-    ) -> dict:
-        result = self._service.send(
-            sender=sender,
-            to=[to],
-            subject=subject,
-            body=body,
-            attachments=[str(item["path"]) for item in attachments or []],
-        )
-        return {"message_id": result.internet_message_id}
-
-
-class RealFcmSender:
-    """Envia notificacion push FCM via firebase_admin."""
-
-    def send(self, push_token: str, payload: dict, *, platform: str = "android") -> bool:
-        from backend.api.messaging_firebase import send_fcm
-        result = send_fcm(push_token, payload, platform=platform)
-        return result.success
-
-
 # ---------------------------------------------------------------------------
 # Worker principal
 # ---------------------------------------------------------------------------
@@ -147,8 +109,6 @@ class InvoiceWorker:
         *,
         gestor: DesktopGestor | None = None,
         renderer: PdfRenderer | None = None,
-        email_sender: EmailSender | None = None,
-        fcm_sender: FcmSender | None = None,
     ) -> None:
         self.config = config
         self._session = requests.Session()
@@ -157,15 +117,17 @@ class InvoiceWorker:
         # Adaptadores inyectables (produccion usa los reales)
         self._gestor = gestor
         self._renderer = renderer
-        self._email_sender = email_sender
-        self._fcm_sender = fcm_sender
+
+        # Control de parada
+        self._running = True
+        self._consecutive_errors = 0
 
     def _ensure_gestor(self) -> DesktopGestor:
         if self._gestor is None:
             if not self.config.desktop_dsn:
                 raise RuntimeError(
-                    "INVOICE_WORKER_DESKTOP_DSN no configurado; "
-                    "no se puede importar al escritorio"
+                    "DSN de PostgreSQL no configurado; "
+                    "ejecuta la configuracion de credenciales"
                 )
             self._gestor = RealDesktopGestor(self.config.desktop_dsn)
         return self._gestor
@@ -175,32 +137,72 @@ class InvoiceWorker:
             self._renderer = RealPdfRenderer()
         return self._renderer
 
-    def _ensure_email_sender(self) -> EmailSender:
-        if self._email_sender is None:
-            self._email_sender = RealEmailSender()
-        return self._email_sender
+    # ------------------------------------------------------------------
+    # Ciclo de vida
+    # ------------------------------------------------------------------
 
-    def _ensure_fcm_sender(self) -> FcmSender:
-        if self._fcm_sender is None:
-            self._fcm_sender = RealFcmSender()
-        return self._fcm_sender
+    def stop(self, signum: int | None = None, frame=None) -> None:
+        """Apagado controlado: el bucle terminara tras el paso actual."""
+        logger.info(
+            "Senal de parada recibida (signal=%s), finalizando...",
+            signum,
+        )
+        self._running = False
 
     def run_forever(self) -> None:
-        """Bucle principal del worker."""
-        logger.info("Worker %s iniciado", self.config.worker_id)
-        while True:
+        """Bucle principal del worker con backoff y apagado controlado."""
+        logger.info(
+            "Worker %s iniciado (poll=%ds, lease=%dm, max_retries=%d)",
+            self.config.worker_id,
+            self.config.poll_interval_seconds,
+            self.config.lease_minutes,
+            self.config.max_retries,
+        )
+
+        # Registrar signals para apagado controlado
+        signal.signal(signal.SIGTERM, self.stop)
+        signal.signal(signal.SIGINT, self.stop)
+        if sys.platform == "win32":
+            try:
+                signal.signal(signal.SIGBREAK, self.stop)  # type: ignore[attr-defined]
+            except (AttributeError, OSError):
+                pass
+
+        while self._running:
             try:
                 claimed = self._claim()
                 if claimed:
                     self._process(claimed)
+                    self._consecutive_errors = 0
                 else:
-                    time.sleep(self.config.poll_interval_seconds)
+                    self._sleep(self.config.poll_interval_seconds)
             except KeyboardInterrupt:
                 logger.info("Worker detenido por usuario")
                 break
             except Exception:
+                self._consecutive_errors += 1
                 logger.exception("Error en bucle principal")
-                time.sleep(self.config.poll_interval_seconds)
+                backoff = min(
+                    self.config.poll_interval_seconds * (2 ** self._consecutive_errors),
+                    _MAX_BACKOFF_SECONDS,
+                )
+                logger.info(
+                    "Esperando %ds antes de reintentar (errores consecutivos: %d)",
+                    backoff, self._consecutive_errors,
+                )
+                self._sleep(backoff)
+
+        logger.info("Worker %s detenido", self.config.worker_id)
+
+    def _sleep(self, seconds: float) -> None:
+        """Sleep que respeta la senal de parada."""
+        end = time.monotonic() + seconds
+        while self._running and time.monotonic() < end:
+            time.sleep(min(1.0, end - time.monotonic()))
+
+    # ------------------------------------------------------------------
+    # Reclamo y procesamiento
+    # ------------------------------------------------------------------
 
     def _claim(self) -> dict | None:
         """Reclama la siguiente factura pendiente."""
@@ -222,33 +224,61 @@ class InvoiceWorker:
         """Procesa una factura reclamada."""
         invoice_id = claim["invoice_id"]
         try:
+            # Consultar estado actual (recuperacion tras caida)
+            status = self._get_status(invoice_id)
+
             # 1. Descargar payload
             payload = self._get_payload(invoice_id)
 
             # 2. Importar al escritorio (idempotente)
-            self._import_to_desktop(invoice_id, payload)
-            self._confirm_import(invoice_id)
+            if status.get("invoice_status") not in (
+                "imported", "rendered", "emailed",
+            ):
+                self._import_to_desktop(invoice_id, payload)
+                self._confirm_import(invoice_id)
+            else:
+                logger.info("Importacion ya completada para %s", invoice_id)
 
             # 3. Generar PDF con Word
-            pdf_path = self._render_pdf(invoice_id, payload)
-
-            # 4. Subir PDF al backend (Azure)
-            self._upload_pdf(invoice_id, pdf_path)
+            if not status.get("pdf_uploaded"):
+                pdf_path = self._render_pdf(invoice_id, payload)
+                # 4. Subir PDF al backend (Azure)
+                self._upload_pdf(invoice_id, pdf_path)
+            else:
+                logger.info("PDF ya subido para %s", invoice_id)
 
             # 5. Publicar en area documental (idempotente)
-            self._publish_document(invoice_id, payload)
+            if not status.get("document_published"):
+                self._publish_document(invoice_id, payload)
+            else:
+                logger.info("Documento ya publicado para %s", invoice_id)
 
-            # 6. Enviar email (unico)
-            self._send_email(invoice_id, payload, pdf_path)
+            # 6. Solicitar envio de email al backend
+            if status.get("invoice_status") != "emailed":
+                self._request_email(invoice_id, payload)
+            else:
+                logger.info("Email ya enviado para %s", invoice_id)
 
-            # 7. Notificacion FCM (best-effort)
-            self._send_fcm(invoice_id, payload)
+            # 7. Solicitar FCM al backend (best-effort)
+            self._request_fcm(invoice_id)
 
             logger.info("Factura %s procesada con exito", invoice_id)
 
         except Exception as e:
             logger.exception("Error procesando factura %s", invoice_id)
             self._report_error(invoice_id, str(e))
+
+    def _get_status(self, invoice_id: str) -> dict:
+        """Consulta el estado actual de procesamiento."""
+        try:
+            resp = self._session.get(
+                f"{self.config.api_base_url}/worker/invoice/{invoice_id}/status",
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            logger.warning("No se pudo consultar estado de %s", invoice_id)
+            return {}
 
     def _get_payload(self, invoice_id: str) -> dict:
         resp = self._session.get(
@@ -402,7 +432,6 @@ class InvoiceWorker:
         self, gestor: DesktopGestor, codigo: str, nif: str, digitos: int,
     ) -> str:
         """Busca subcuenta 430 existente para el NIF o asigna la siguiente."""
-        # Buscar por NIF en subcuentas existentes
         existing = gestor.listar_maestro_subcuentas_empresa(
             codigo, tipo="cliente", activo=True,
         )
@@ -524,7 +553,6 @@ class InvoiceWorker:
         template_dir = Path(self.config.word_template_dir)
         template_path = template_dir / "factura_emitida.docx"
         if not template_path.exists():
-            # Buscar cualquier .docx en el directorio
             docx_files = list(template_dir.glob("*.docx"))
             if docx_files:
                 template_path = docx_files[0]
@@ -578,93 +606,51 @@ class InvoiceWorker:
         logger.info("Documento publicado: %s", doc_id)
 
     # ------------------------------------------------------------------
-    # Paso 6: Envio de email (unico, idempotente por estado)
+    # Paso 6: Email (delegado al backend)
     # ------------------------------------------------------------------
 
-    def _send_email(self, invoice_id: str, payload: dict, pdf_path: Path) -> None:
-        """Envia email con la factura PDF adjunta via Graph."""
+    def _request_email(self, invoice_id: str, payload: dict) -> None:
+        """Solicita al backend el envio del email con el PDF adjunto."""
         invoice = payload.get("invoice", {})
         recipient = invoice.get("recipient_email", "")
-        if not recipient:
-            logger.info("Sin email destinatario, omitiendo envio para %s", invoice_id)
-            # Marcar como emailed igualmente para completar el flujo
-            self._mark_emailed(invoice_id, "")
-            return
 
-        series = invoice.get("series_code", "WEB")
-        number = invoice.get("invoice_number", 0)
-        org_name = payload.get("organization", {}).get("name", "")
-
-        subject = f"Factura {series}-{number:06d} - {org_name}"
-        body = (
-            f"Estimado cliente,\n\n"
-            f"Adjuntamos la factura {series}-{number:06d}.\n\n"
-            f"Un saludo,\n{org_name}"
-        )
-
-        pdf_content = pdf_path.read_bytes()
-        attachments = [{
-            "path": str(pdf_path),
-            "name": pdf_path.name,
-            "content": pdf_content,
-        }]
-
-        try:
-            sender = self._ensure_email_sender()
-            result = sender.send(
-                sender=self.config.graph_sender_mailbox,
-                to=recipient,
-                subject=subject,
-                body=body,
-                attachments=attachments,
-            )
-        except Exception:
-            logger.exception("Error enviando email a %s", recipient)
-            raise
-
-        message_id = result.get("message_id", "")
-        logger.info("Email enviado a %s (msg %s)", recipient, message_id)
-
-        self._mark_emailed(invoice_id, message_id)
-
-    def _mark_emailed(self, invoice_id: str, message_id: str) -> None:
         resp = self._session.post(
-            f"{self.config.api_base_url}/worker/invoice/{invoice_id}/emailed",
-            json={"message_id": message_id},
+            f"{self.config.api_base_url}/worker/invoice/{invoice_id}/send-email",
+            json={
+                "recipient_email": recipient,
+                "sender_mailbox": self.config.sender_mailbox,
+            },
         )
         resp.raise_for_status()
+        result = resp.json()
+        if result.get("already_sent"):
+            logger.info("Email ya enviado para %s", invoice_id)
+        elif result.get("skipped"):
+            logger.info("Email omitido para %s: %s", invoice_id, result.get("reason"))
+        else:
+            logger.info(
+                "Email enviado para %s (msg_id: %s)",
+                invoice_id, result.get("message_id", ""),
+            )
 
     # ------------------------------------------------------------------
-    # Paso 7: FCM (best-effort, no bloquea el flujo)
+    # Paso 7: FCM (delegado al backend, best-effort)
     # ------------------------------------------------------------------
 
-    def _send_fcm(self, invoice_id: str, payload: dict) -> None:
-        """Envia notificacion push al cliente emisor."""
-        push_tokens = payload.get("push_tokens", [])
-        if not push_tokens:
-            logger.info("Sin tokens FCM para %s", invoice_id)
-            return
-
-        invoice = payload.get("invoice", {})
-        series = invoice.get("series_code", "WEB")
-        number = invoice.get("invoice_number", 0)
-
-        fcm_payload = {
-            "title": "Factura procesada",
-            "body": f"Tu factura {series}-{number:06d} ha sido procesada.",
-            "invoice_id": invoice_id,
-            "type": "invoice_processed",
-        }
-
+    def _request_fcm(self, invoice_id: str) -> None:
+        """Solicita al backend el envio de notificacion push."""
         try:
-            fcm = self._ensure_fcm_sender()
-            for token_info in push_tokens:
-                token = token_info if isinstance(token_info, str) else token_info.get("token", "")
-                platform = "web" if isinstance(token_info, dict) and token_info.get("platform") == "web" else "android"
-                if token:
-                    fcm.send(token, fcm_payload, platform=platform)
+            resp = self._session.post(
+                f"{self.config.api_base_url}/worker/invoice/{invoice_id}/send-fcm",
+            )
+            resp.raise_for_status()
+            result = resp.json()
+            logger.info(
+                "FCM para %s: enviados=%s errores=%s",
+                invoice_id, result.get("sent", 0), result.get("errors", 0),
+            )
         except Exception:
-            logger.exception("Error enviando FCM para %s (no bloqueante)", invoice_id)
+            logger.exception("Error solicitando FCM para %s (no bloqueante)", invoice_id)
 
     # ------------------------------------------------------------------
     # Error reporting
