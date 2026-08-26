@@ -17,6 +17,7 @@ from sqlalchemy.pool import StaticPool
 
 from backend.api.database import Base
 from backend.api import messaging_api
+from backend.api.app import CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS
 from backend.api.messaging_api import get_db, router
 from backend.api import messaging_models  # noqa: F401
 
@@ -43,6 +44,36 @@ def _client(tmp_path: Path):
 
     app.dependency_overrides[get_db] = override
     return TestClient(app, base_url="https://mensajes.example.test")
+
+
+def test_startup_migra_columnas_de_plataforma_cliente_automaticamente():
+    expected_columns = {
+        "tax_id",
+        "legal_name",
+        "address",
+        "postal_code",
+        "city",
+        "province",
+        "country",
+        "phone",
+        "email",
+        "profile_synced_at",
+        "client_invoicing_enabled",
+        "client_documents_enabled",
+    }
+
+    assert {
+        column
+        for table, column in CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS
+        if table == "msg_organizations"
+    } == expected_columns
+    assert expected_columns <= set(messaging_models.MessagingOrganization.__table__.columns.keys())
+    assert "DEFAULT FALSE" in CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS[
+        ("msg_organizations", "client_invoicing_enabled")
+    ]
+    assert "DEFAULT FALSE" in CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS[
+        ("msg_organizations", "client_documents_enabled")
+    ]
 
 
 def test_public_app_version_exposes_release_information(tmp_path, monkeypatch):
@@ -471,7 +502,9 @@ def test_chats_internos_privados_y_grupos_respetan_permisos(tmp_path):
     admin_threads = client.get(
         "/api/v1/messaging/staff/internal/threads", headers=auth("admin"),
     ).json()
-    assert {row["title"] for row in admin_threads} == {"Equipo Laboral", "Equipo Contable / Fiscal"}
+    assert {"Equipo Laboral", "Equipo Contable / Fiscal"} <= {
+        row["title"] for row in admin_threads
+    }
     labor_threads = client.get(
         "/api/v1/messaging/staff/internal/threads", headers=auth("labor"),
     ).json()

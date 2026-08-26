@@ -78,6 +78,57 @@ app.include_router(client_documents_router)
 app.include_router(client_invoices_router)
 
 
+CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS = {
+    ("msg_organizations", "tax_id"): (
+        "ALTER TABLE msg_organizations "
+        "ADD COLUMN tax_id VARCHAR(20) NOT NULL DEFAULT ''"
+    ),
+    ("msg_organizations", "legal_name"): (
+        "ALTER TABLE msg_organizations "
+        "ADD COLUMN legal_name VARCHAR(200) NOT NULL DEFAULT ''"
+    ),
+    ("msg_organizations", "address"): (
+        "ALTER TABLE msg_organizations "
+        "ADD COLUMN address VARCHAR(300) NOT NULL DEFAULT ''"
+    ),
+    ("msg_organizations", "postal_code"): (
+        "ALTER TABLE msg_organizations "
+        "ADD COLUMN postal_code VARCHAR(10) NOT NULL DEFAULT ''"
+    ),
+    ("msg_organizations", "city"): (
+        "ALTER TABLE msg_organizations "
+        "ADD COLUMN city VARCHAR(100) NOT NULL DEFAULT ''"
+    ),
+    ("msg_organizations", "province"): (
+        "ALTER TABLE msg_organizations "
+        "ADD COLUMN province VARCHAR(100) NOT NULL DEFAULT ''"
+    ),
+    ("msg_organizations", "country"): (
+        "ALTER TABLE msg_organizations "
+        "ADD COLUMN country VARCHAR(60) NOT NULL DEFAULT 'ES'"
+    ),
+    ("msg_organizations", "phone"): (
+        "ALTER TABLE msg_organizations "
+        "ADD COLUMN phone VARCHAR(30) NOT NULL DEFAULT ''"
+    ),
+    ("msg_organizations", "email"): (
+        "ALTER TABLE msg_organizations "
+        "ADD COLUMN email VARCHAR(254) NOT NULL DEFAULT ''"
+    ),
+    ("msg_organizations", "profile_synced_at"): (
+        "ALTER TABLE msg_organizations ADD COLUMN profile_synced_at TIMESTAMPTZ"
+    ),
+    ("msg_organizations", "client_invoicing_enabled"): (
+        "ALTER TABLE msg_organizations "
+        "ADD COLUMN client_invoicing_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+    ),
+    ("msg_organizations", "client_documents_enabled"): (
+        "ALTER TABLE msg_organizations "
+        "ADD COLUMN client_documents_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+    ),
+}
+
+
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(engine)
@@ -85,7 +136,8 @@ def startup():
         existing_columns = set(conn.execute(text(
             "SELECT table_name, column_name FROM information_schema.columns "
             "WHERE table_schema=current_schema() "
-            "AND table_name IN ('dgt_documentos', 'msg_staff', 'msg_messages', "
+            "AND table_name IN ('dgt_documentos', 'msg_organizations', "
+            "'msg_staff', 'msg_messages', "
             "'msg_staff_thread_messages', 'msg_attachments', 'msg_downloads', "
             "'msg_conversations', 'msg_websocket_tickets')"
         )).tuples())
@@ -94,6 +146,7 @@ def startup():
                 "ALTER TABLE dgt_documentos "
                 "ADD COLUMN dataprius_json JSONB NOT NULL DEFAULT '{}'"
             ),
+            **CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS,
             ("msg_staff", "email"): (
                 "ALTER TABLE msg_staff ADD COLUMN email VARCHAR(254) NOT NULL DEFAULT ''"
             ),
