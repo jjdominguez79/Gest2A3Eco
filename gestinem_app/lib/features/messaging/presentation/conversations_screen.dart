@@ -15,6 +15,7 @@ import 'conversation_screen.dart';
 import 'messaging_providers.dart';
 import '../../../core/notifications/web_permission_banner.dart';
 import '../../invoicing/presentation/invoicing_providers.dart';
+import '../../platform/features_provider.dart';
 
 class ConversationsScreen extends ConsumerStatefulWidget {
   const ConversationsScreen({super.key});
@@ -1035,7 +1036,7 @@ class _LabelChip extends StatelessWidget {
   );
 }
 
-class _AppDrawer extends StatelessWidget {
+class _AppDrawer extends ConsumerWidget {
   const _AppDrawer({required this.profile});
   final UserProfile profile;
 
@@ -1045,70 +1046,84 @@ class _AppDrawer extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => Drawer(
-    child: ListView(
-      children: [
-        UserAccountsDrawerHeader(
-          accountName: Text(profile.name),
-          accountEmail: Text(profile.email),
-          currentAccountPicture: _ProfileAvatar(profile: profile, radius: 32),
-        ),
-        ListTile(
-          key: const Key('drawer-conversations'),
-          leading: const Icon(Icons.forum_outlined),
-          title: const Text('Conversaciones'),
-          onTap: () => _navigate(context, '/'),
-        ),
-        if (profile.isAdmin)
-          ListTile(
-            leading: const Icon(Icons.groups_outlined),
-            title: const Text('Gestionar grupos internos'),
-            onTap: () => _navigate(context, '/groups'),
-          ),
-        if (profile.isAdmin)
-          ListTile(
-            leading: const Icon(Icons.campaign_outlined),
-            title: const Text('Campañas'),
-            onTap: () => _navigate(context, '/campaigns'),
-          ),
-        if (profile.isAdmin)
-          ListTile(
-            leading: const Icon(Icons.badge_outlined),
-            title: const Text('Empleados'),
-            onTap: () => _navigate(context, '/employees'),
-          ),
-        if (profile.isAdmin)
-          ListTile(
-            key: const Key('drawer-clients'),
-            leading: const Icon(Icons.people_alt_outlined),
-            title: const Text('Clientes'),
-            onTap: () => _navigate(context, '/clients'),
-          ),
-        if (profile.type == UserType.client) ...[
-          ListTile(
-            leading: const Icon(Icons.business_outlined),
-            title: const Text('Mi empresa'),
-            onTap: () => _navigate(context, '/company-profile'),
+  Widget build(BuildContext context, WidgetRef ref) {
+    final featuresAsync = profile.type == UserType.client
+        ? ref.watch(platformFeaturesProvider)
+        : null;
+    final features = featuresAsync?.valueOrNull ?? const PlatformFeatures();
+
+    return Drawer(
+      child: ListView(
+        children: [
+          UserAccountsDrawerHeader(
+            accountName: Text(profile.name),
+            accountEmail: Text(profile.email),
+            currentAccountPicture: _ProfileAvatar(profile: profile, radius: 32),
           ),
           ListTile(
-            leading: const Icon(Icons.folder_outlined),
-            title: const Text('Mis documentos'),
-            onTap: () => _navigate(context, '/documents'),
+            key: const Key('drawer-conversations'),
+            leading: const Icon(Icons.forum_outlined),
+            title: const Text('Conversaciones'),
+            onTap: () => _navigate(context, '/'),
+          ),
+          if (profile.isAdmin)
+            ListTile(
+              leading: const Icon(Icons.groups_outlined),
+              title: const Text('Gestionar grupos internos'),
+              onTap: () => _navigate(context, '/groups'),
+            ),
+          if (profile.isAdmin)
+            ListTile(
+              leading: const Icon(Icons.campaign_outlined),
+              title: const Text('Campa\u00f1as'),
+              onTap: () => _navigate(context, '/campaigns'),
+            ),
+          if (profile.isAdmin)
+            ListTile(
+              leading: const Icon(Icons.badge_outlined),
+              title: const Text('Empleados'),
+              onTap: () => _navigate(context, '/employees'),
+            ),
+          if (profile.isAdmin)
+            ListTile(
+              key: const Key('drawer-clients'),
+              leading: const Icon(Icons.people_alt_outlined),
+              title: const Text('Clientes'),
+              onTap: () => _navigate(context, '/clients'),
+            ),
+          if (profile.type == UserType.client) ...[
+            ListTile(
+              leading: const Icon(Icons.business_outlined),
+              title: const Text('Mi empresa'),
+              onTap: () => _navigate(context, '/company-profile'),
+            ),
+            if (features.documents)
+              ListTile(
+                leading: const Icon(Icons.folder_outlined),
+                title: const Text('Mis documentos'),
+                onTap: () => _navigate(context, '/documents'),
+              ),
+            if (features.invoicing)
+              ListTile(
+                leading: const Icon(Icons.receipt_long_outlined),
+                title: const Text('Facturacion'),
+                onTap: () => _navigate(context, '/invoicing'),
+              ),
+          ],
+          ListTile(
+            leading: const Icon(Icons.person_outline),
+            title: const Text('Perfil'),
+            onTap: () => _navigate(context, '/profile'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.info_outline),
+            title: const Text('Acerca de Gestinem'),
+            onTap: () => _navigate(context, '/about'),
           ),
         ],
-        ListTile(
-          leading: const Icon(Icons.person_outline),
-          title: const Text('Perfil'),
-          onTap: () => _navigate(context, '/profile'),
-        ),
-        ListTile(
-          leading: const Icon(Icons.info_outline),
-          title: const Text('Acerca de Gestinem'),
-          onTap: () => _navigate(context, '/about'),
-        ),
-      ],
-    ),
-  );
+      ),
+    );
+  }
 }
 
 class _ProfileAvatar extends ConsumerWidget {

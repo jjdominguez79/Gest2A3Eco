@@ -31,6 +31,7 @@ from backend.api.messaging_models import (
     MessagingOrganization,
     MessagingSession,
 )
+from backend.api.feature_flags import require_documents_enabled
 from backend.api.messaging_security import hash_token, is_expired, utcnow
 from backend.api.security import require_workstation_or_internal
 
@@ -317,6 +318,7 @@ def list_documents(
 ):
     """Lista documentos del area del cliente, paginados y filtrables."""
     client = _authenticated_client(request, db)
+    require_documents_enabled(db, client.organization_id)
 
     query = select(ClientDocument).where(
         ClientDocument.organization_id == client.organization_id,
@@ -360,6 +362,7 @@ def get_document(
 ):
     """Detalle de un documento."""
     client = _authenticated_client(request, db)
+    require_documents_enabled(db, client.organization_id)
     doc = db.get(ClientDocument, document_id)
     if not doc or doc.organization_id != client.organization_id:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
@@ -382,6 +385,7 @@ def download_document(
 ):
     """Descarga el archivo de un documento. Registra la lectura."""
     client = _authenticated_client(request, db)
+    require_documents_enabled(db, client.organization_id)
     doc = db.get(ClientDocument, document_id)
     if not doc or doc.organization_id != client.organization_id:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
@@ -426,6 +430,7 @@ def mark_as_read(
 ):
     """Marca un documento como leido por el cliente."""
     client = _authenticated_client(request, db)
+    require_documents_enabled(db, client.organization_id)
     doc = db.get(ClientDocument, document_id)
     if not doc or doc.organization_id != client.organization_id:
         raise HTTPException(status_code=404, detail="Documento no encontrado")

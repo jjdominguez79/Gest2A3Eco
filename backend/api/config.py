@@ -60,6 +60,8 @@ class Settings:
     client_documents_azure_connection_string: str
     client_documents_azure_container: str
     client_documents_storage_dir: str
+    # Area documental del cliente - flag global
+    client_documents_enabled: bool
     # Facturacion online
     client_invoicing_enabled: bool
 
@@ -155,6 +157,9 @@ def get_settings() -> Settings:
         client_documents_storage_dir=os.getenv(
             "CLIENT_DOCUMENTS_STORAGE_DIR", "./client_documents_storage",
         ),
+        client_documents_enabled=os.getenv(
+            "CLIENT_DOCUMENTS_ENABLED", "false",
+        ).strip().lower() in {"1", "true", "yes", "si"},
         client_invoicing_enabled=os.getenv(
             "CLIENT_INVOICING_ENABLED", "false",
         ).strip().lower() in {"1", "true", "yes", "si"},

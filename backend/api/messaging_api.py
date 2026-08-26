@@ -163,6 +163,11 @@ class ClientAccessIn(BaseModel):
     active: bool
 
 
+class ClientFeaturesIn(BaseModel):
+    client_documents_enabled: bool | None = None
+    client_invoicing_enabled: bool | None = None
+
+
 class MessageDeleteIn(BaseModel):
     reason: str = Field(default="", max_length=500)
 
@@ -1901,6 +1906,76 @@ def set_client_access(
         ).update({MessagingInvitation.revoked_at: now}, synchronize_session=False)
     db.commit()
     return _organization_access_state(db, org)
+
+
+@router.get("/staff/admin/organizations/{company_code}/features")
+def get_organization_features(
+    company_code: str,
+    admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
+):
+    """Consulta el estado de los feature flags de una organizacion."""
+    org = _organization(db, company_code)
+    from backend.api.feature_flags import is_documents_enabled, is_invoicing_enabled
+    return {
+        "company_code": org.company_code,
+        "organization_id": org.id,
+        "client_documents_enabled": bool(org.client_documents_enabled),
+        "client_invoicing_enabled": bool(org.client_invoicing_enabled),
+        "effective_documents": is_documents_enabled(org),
+        "effective_invoicing": is_invoicing_enabled(org),
+    }
+
+
+@router.patch("/staff/admin/organizations/{company_code}/features")
+def set_organization_features(
+    company_code: str, payload: ClientFeaturesIn,
+    admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
+):
+    """Modifica feature flags de una organizacion con auditoria."""
+    org = _organization(db, company_code)
+    from backend.api.client_models import ClientFeatureFlagAudit
+
+    changes = []
+    if payload.client_documents_enabled is not None:
+        old_val = bool(org.client_documents_enabled)
+        new_val = payload.client_documents_enabled
+        if old_val != new_val:
+            org.client_documents_enabled = new_val
+            changes.append(ClientFeatureFlagAudit(
+                organization_id=org.id,
+                flag_name="client_documents_enabled",
+                old_value=old_val,
+                new_value=new_val,
+                changed_by=admin.email or admin.name,
+            ))
+
+    if payload.client_invoicing_enabled is not None:
+        old_val = bool(org.client_invoicing_enabled)
+        new_val = payload.client_invoicing_enabled
+        if old_val != new_val:
+            org.client_invoicing_enabled = new_val
+            changes.append(ClientFeatureFlagAudit(
+                organization_id=org.id,
+                flag_name="client_invoicing_enabled",
+                old_value=old_val,
+                new_value=new_val,
+                changed_by=admin.email or admin.name,
+            ))
+
+    for audit in changes:
+        db.add(audit)
+    db.commit()
+
+    from backend.api.feature_flags import is_documents_enabled, is_invoicing_enabled
+    return {
+        "company_code": org.company_code,
+        "organization_id": org.id,
+        "client_documents_enabled": bool(org.client_documents_enabled),
+        "client_invoicing_enabled": bool(org.client_invoicing_enabled),
+        "effective_documents": is_documents_enabled(org),
+        "effective_invoicing": is_invoicing_enabled(org),
+        "changes": len(changes),
+    }
 
 
 @router.put("/staff/admin/organizations/{company_code}")

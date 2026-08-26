@@ -3,9 +3,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
+import '../../platform/features_provider.dart';
 import '../domain/client_organization.dart';
 import 'clients_screen.dart';
 import 'messaging_providers.dart';
+
+/// Provider para las feature flags de una organizacion concreta (vista admin).
+final orgFeaturesProvider = FutureProvider.autoDispose
+    .family<PlatformFeatures, String>((ref, companyCode) async {
+  final repo = ref.watch(messagingRepositoryProvider);
+  final json = await repo.getOrganizationFeatures(companyCode);
+  return PlatformFeatures(
+    documents: json['client_documents_enabled'] as bool? ?? false,
+    invoicing: json['client_invoicing_enabled'] as bool? ?? false,
+  );
+});
 
 class ClientDetailScreen extends ConsumerStatefulWidget {
   const ClientDetailScreen({super.key, required this.companyCode});
@@ -18,6 +30,7 @@ class ClientDetailScreen extends ConsumerStatefulWidget {
 
 class _ClientDetailScreenState extends ConsumerState<ClientDetailScreen> {
   bool _working = false;
+  bool _featuresBusy = false;
 
   Future<void> _setAccess(ClientOrganization client, bool active) async {
     final destructive = !active;
@@ -65,6 +78,52 @@ class _ClientDetailScreenState extends ConsumerState<ClientDetailScreen> {
     ref.invalidate(conversationsProvider);
     if (mounted) context.go('/conversation/${conversation.id}');
   });
+
+  Future<void> _toggleFeature(
+    String companyCode,
+    String flag,
+    bool value, {
+    bool confirm = false,
+  }) async {
+    if (_featuresBusy) return;
+    if (confirm) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Activar facturacion'),
+          content: const Text(
+            'Esto habilitara el modulo de facturacion para este cliente. '
+            'Asegurate de que la configuracion fiscal esta completa.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Activar'),
+            ),
+          ],
+        ),
+      );
+      if (ok != true) return;
+    }
+    setState(() => _featuresBusy = true);
+    try {
+      await ref
+          .read(messagingRepositoryProvider)
+          .setOrganizationFeatures(companyCode, {flag: value});
+      ref.invalidate(orgFeaturesProvider(companyCode));
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
+      }
+    } finally {
+      if (mounted) setState(() => _featuresBusy = false);
+    }
+  }
 
   Future<void> _run(Future<void> Function() operation) async {
     if (_working) return;
@@ -156,6 +215,18 @@ class _ClientDetailScreenState extends ConsumerState<ClientDetailScreen> {
                   ],
                 ),
               ),
+              const SizedBox(height: 12),
+              _FeaturesCard(
+                companyCode: client.companyCode,
+                busy: _featuresBusy,
+                onToggle: (flag, value, {confirm = false}) =>
+                    _toggleFeature(
+                      client.companyCode,
+                      flag,
+                      value,
+                      confirm: confirm,
+                    ),
+              ),
               const SizedBox(height: 20),
               if ({'active', 'pending'}.contains(client.accessStatus))
                 FilledButton.icon(
@@ -222,3 +293,65 @@ class _ClientDetailScreenState extends ConsumerState<ClientDetailScreen> {
 String _formatDate(DateTime value) =>
     '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year} '
     '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+
+class _FeaturesCard extends ConsumerWidget {
+  const _FeaturesCard({
+    required this.companyCode,
+    required this.busy,
+    required this.onToggle,
+  });
+
+  final String companyCode;
+  final bool busy;
+  final void Function(String flag, bool value, {bool confirm}) onToggle;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final featuresAsync = ref.watch(orgFeaturesProvider(companyCode));
+
+    return Card(
+      child: Column(
+        children: [
+          const ListTile(
+            leading: Icon(Icons.toggle_on_outlined),
+            title: Text('Funciones habilitadas'),
+          ),
+          featuresAsync.when(
+            loading: () => const Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(child: CircularProgressIndicator()),
+            ),
+            error: (error, _) => Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('Error al cargar funciones: $error'),
+            ),
+            data: (features) => Column(
+              children: [
+                SwitchListTile(
+                  secondary: const Icon(Icons.folder_outlined),
+                  title: const Text('Area documental'),
+                  value: features.documents,
+                  onChanged: busy
+                      ? null
+                      : (v) => onToggle('client_documents_enabled', v),
+                ),
+                SwitchListTile(
+                  secondary: const Icon(Icons.receipt_long_outlined),
+                  title: const Text('Facturacion'),
+                  value: features.invoicing,
+                  onChanged: busy
+                      ? null
+                      : (v) => onToggle(
+                            'client_invoicing_enabled',
+                            v,
+                            confirm: v,
+                          ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

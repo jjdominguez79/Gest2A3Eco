@@ -76,6 +76,22 @@ def get_company_profile(request: Request, db: Session = Depends(_db)):
     return {k: v for k, v in profile.items() if v not in ("", None)}
 
 
+@router.get("/features")
+def get_client_features(request: Request, db: Session = Depends(_db)):
+    """Devuelve las funciones activas para el cliente autenticado."""
+    client = _authenticated_client(request, db)
+    org = db.get(MessagingOrganization, client.organization_id)
+    if not org or not org.active:
+        raise HTTPException(status_code=404, detail="Organizacion no encontrada")
+
+    from backend.api.feature_flags import is_documents_enabled, is_invoicing_enabled
+    return {
+        "company_profile": True,
+        "documents": is_documents_enabled(org),
+        "invoicing": is_invoicing_enabled(org),
+    }
+
+
 @router.put("/internal/sync-profile")
 def sync_company_profile(
     payload: dict = Body(...),

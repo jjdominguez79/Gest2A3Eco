@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../domain/client_document.dart';
+import '../../platform/features_provider.dart';
 import 'documents_providers.dart';
 
 /// Pantalla de listado de documentos del area del cliente.
@@ -11,6 +12,17 @@ class DocumentsScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final featuresAsync = ref.watch(platformFeaturesProvider);
+    final features = featuresAsync.valueOrNull;
+    if (features != null && !features.documents) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Mis documentos')),
+        body: const Center(
+          child: Text('El area documental no esta habilitada.'),
+        ),
+      );
+    }
+
     final docsAsync = ref.watch(documentsProvider);
     final fiscalYear = ref.watch(documentsFiscalYearProvider);
     final currentYear = DateTime.now().year;

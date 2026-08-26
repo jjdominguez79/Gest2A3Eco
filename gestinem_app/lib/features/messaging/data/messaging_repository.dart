@@ -213,6 +213,26 @@ class MessagingRepository {
         data: {'reason': reason},
       );
 
+  Future<Map<String, dynamic>> getOrganizationFeatures(
+    String companyCode,
+  ) async {
+    final resp = await _api.dio.get(
+      '/staff/admin/organizations/$companyCode/features',
+    );
+    return resp.data as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> setOrganizationFeatures(
+    String companyCode,
+    Map<String, dynamic> flags,
+  ) async {
+    final resp = await _api.dio.patch(
+      '/staff/admin/organizations/$companyCode/features',
+      data: flags,
+    );
+    return resp.data as Map<String, dynamic>;
+  }
+
   Future<Uint8List> download(UserProfile profile, Attachment attachment) {
     final path = profile.type == UserType.client
         ? '/client/attachments/${attachment.id}'

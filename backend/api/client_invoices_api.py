@@ -43,6 +43,10 @@ from backend.api.client_models import (
 )
 from backend.api.client_storage import ClientDocumentStorage
 from backend.api.client_validation import normalize_tax_id, validate_tax_id
+from backend.api.feature_flags import (
+    is_invoicing_enabled,
+    require_invoicing_enabled as _require_invoicing_enabled,
+)
 from backend.api.database import SessionLocal
 from backend.api.messaging_models import (
     MessagingClient,
@@ -97,15 +101,6 @@ def _authenticated_client(request: Request, db: Session) -> MessagingClient:
     if not client or not client.active:
         raise HTTPException(status_code=403, detail="Cliente inactivo")
     return client
-
-
-def _require_invoicing_enabled(db: Session, org_id: str) -> MessagingOrganization:
-    org = db.get(MessagingOrganization, org_id)
-    if not org or not org.active:
-        raise HTTPException(status_code=404, detail="Organizacion no encontrada")
-    if not org.client_invoicing_enabled:
-        raise HTTPException(status_code=403, detail="Facturacion online no habilitada")
-    return org
 
 
 def _invoice_to_dict(inv: ClientInvoice, lines: list[ClientInvoiceLine] | None = None) -> dict:
@@ -184,7 +179,7 @@ def get_invoicing_config(request: Request, db: Session = Depends(_db)):
     ).all()
 
     return {
-        "enabled": org.client_invoicing_enabled,
+        "enabled": is_invoicing_enabled(org),
         "fiscal_year": current_year,
         "series": [
             {
@@ -558,6 +553,7 @@ def list_invoices(
     db: Session = Depends(_db),
 ):
     client = _authenticated_client(request, db)
+    _require_invoicing_enabled(db, client.organization_id)
 
     query = select(ClientInvoice).where(
         ClientInvoice.organization_id == client.organization_id,
@@ -583,6 +579,7 @@ def list_invoices(
 @router.get("/invoices/{invoice_id}")
 def get_invoice(invoice_id: str, request: Request, db: Session = Depends(_db)):
     client = _authenticated_client(request, db)
+    _require_invoicing_enabled(db, client.organization_id)
     inv = db.get(ClientInvoice, invoice_id)
     if not inv or inv.organization_id != client.organization_id:
         raise HTTPException(status_code=404)

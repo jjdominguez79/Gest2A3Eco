@@ -280,6 +280,17 @@ def startup():
             "WHERE conversation.started_at IS NULL AND EXISTS (SELECT 1 FROM msg_messages AS message "
             "WHERE message.conversation_id=conversation.id)"
         ))
+    # Migrar tabla de auditoria de feature flags (012)
+    _mig_012 = Path(__file__).resolve().parent.parent / "migrations" / "012_feature_flag_audit.sql"
+    if _mig_012.exists():
+        with engine.begin() as conn:
+            _existing_tables = set(conn.execute(text(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema=current_schema()"
+            )).scalars())
+            if "client_feature_flag_audit" not in _existing_tables:
+                conn.execute(text(_mig_012.read_text(encoding="utf-8")))
+
     with SessionLocal() as db:
         for org in db.scalars(select(messaging_models.MessagingOrganization)).all():
             existing = set(db.scalars(select(messaging_models.MessagingConversation.kind).where(

@@ -384,3 +384,23 @@ class DesktopPublicationQueue(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow,
     )
+
+
+# ==========================================================================
+# AUDITORIA DE FEATURE FLAGS
+# ==========================================================================
+
+class ClientFeatureFlagAudit(Base):
+    """Registro inmutable de cambios en feature flags por organizacion."""
+
+    __tablename__ = "client_feature_flag_audit"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    flag_name: Mapped[str] = mapped_column(String(60), nullable=False)
+    old_value: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    new_value: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    changed_by: Mapped[str] = mapped_column(String(254), nullable=False, default="")
+    changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow,
+    )
