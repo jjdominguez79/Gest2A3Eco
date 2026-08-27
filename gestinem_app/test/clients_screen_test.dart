@@ -9,6 +9,7 @@ import 'package:gestinem/features/messaging/domain/client_organization.dart';
 import 'package:gestinem/features/messaging/presentation/client_detail_screen.dart';
 import 'package:gestinem/features/messaging/presentation/clients_screen.dart';
 import 'package:gestinem/features/messaging/presentation/messaging_providers.dart';
+import 'package:gestinem/features/platform/features_provider.dart';
 
 import 'test_helpers.dart';
 
@@ -88,6 +89,8 @@ void main() {
   testWidgets('Ficha pendiente muestra contacto, chat y retirada', (
     tester,
   ) async {
+    await tester.binding.setSurfaceSize(const Size(800, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final expiresAt = DateTime(2026, 8, 30, 12);
     final row = ClientOrganization(
       companyCode: 'E00002',
@@ -114,6 +117,9 @@ void main() {
           ),
           apiClientProvider.overrideWithValue(api),
           clientOrganizationsProvider.overrideWith((ref) async => [row]),
+          orgFeaturesProvider('E00002').overrideWith(
+            (ref) async => const PlatformFeatures(),
+          ),
         ],
         child: const MaterialApp(
           home: ClientDetailScreen(companyCode: 'E00002'),

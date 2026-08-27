@@ -1,6 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/api/api_client.dart';
 import '../auth/presentation/auth_controller.dart';
 
 /// Estado de las funciones disponibles para el cliente.
