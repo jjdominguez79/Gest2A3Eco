@@ -283,7 +283,9 @@ def _primary_admin(db: Session) -> MessagingStaff | None:
 
 def _get_or_create_staff_direct_thread(
     db: Session, admin: MessagingStaff, member: MessagingStaff,
-) -> MessagingStaffThread:
+) -> MessagingStaffThread | None:
+    if admin.external_id == member.external_id:
+        return None
     key = f"direct:{admin.external_id}:{member.external_id}"
     thread = db.scalar(select(MessagingStaffThread).where(MessagingStaffThread.key == key))
     if not thread:
@@ -1397,7 +1399,12 @@ def list_staff_threads(
     )).all()
     return [
         _serialize_staff_thread(db, row, staff)
-        for row in rows if _can_access_staff_thread(db, row, staff)
+        for row in rows
+        if _can_access_staff_thread(db, row, staff)
+        and not (
+            row.kind == "direct"
+            and row.admin_staff_external_id == row.member_staff_external_id
+        )
     ]
 
 

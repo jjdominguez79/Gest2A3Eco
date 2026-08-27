@@ -560,4 +560,69 @@ void main() {
     );
     expect(find.text('Roberto'), findsOneWidget);
   });
+
+  testWidgets('exclusion del usuario actual es case-insensitive', (
+    tester,
+  ) async {
+    const adminProfile = UserProfile(
+      id: 'AbC-123-DeF',
+      name: 'Admin',
+      email: 'admin@gestinem.es',
+      type: UserType.staff,
+      staffRole: StaffRole.admin,
+    );
+    const adminSession = AuthSession(
+      token: 'admin-token',
+      profile: adminProfile,
+    );
+    const threads = [
+      InternalThread(
+        id: 'direct-self-case',
+        kind: 'direct',
+        channel: '',
+        title: 'Admin',
+        unreadCount: 0,
+        counterpartId: 'abc-123-def',
+      ),
+      InternalThread(
+        id: 'direct-other-case',
+        kind: 'direct',
+        channel: '',
+        title: 'Empleada',
+        unreadCount: 0,
+        counterpartId: 'other-id',
+      ),
+    ];
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith(
+            (ref) => FakeSessionController(ref, adminSession),
+          ),
+          apiClientProvider.overrideWithValue(
+            ApiClient(
+              dio: Dio(BaseOptions(baseUrl: 'https://example.test')),
+              tokenProvider: () => adminSession.token,
+            ),
+          ),
+          conversationsProvider.overrideWith((ref) async => []),
+          internalThreadsProvider.overrideWith((ref) async => threads),
+          realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
+          notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
+        ],
+        child: const MaterialApp(home: ConversationsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('internal-thread-direct-self-case')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const Key('internal-thread-direct-other-case')),
+      findsOneWidget,
+    );
+  });
 }

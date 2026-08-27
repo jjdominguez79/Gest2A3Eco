@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -200,7 +201,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
         ],
       ),
       drawer: _AppDrawer(profile: profile),
-      bottomNavigationBar: const WebNotificationPermissionBanner(),
+      bottomNavigationBar: kIsWeb ? const WebNotificationPermissionBanner() : null,
       body: Row(
         children: [
           SizedBox(
@@ -333,7 +334,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
         const SizedBox(width: 8),
       ],
     ),
-    bottomNavigationBar: const WebNotificationPermissionBanner(),
+    bottomNavigationBar: kIsWeb ? const WebNotificationPermissionBanner() : null,
     body: conversations.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (error, _) => Center(
@@ -433,6 +434,7 @@ class _StaffInbox extends StatelessWidget {
       ),
     ),
     data: (threadItems) {
+      final normalizedUserId = currentUserId.trim().toLowerCase();
       final groups =
           threadItems
               .where((item) => item.kind != 'direct' && _matches(item.title))
@@ -442,10 +444,22 @@ class _StaffInbox extends StatelessWidget {
           threadItems
               .where((item) =>
                   item.kind == 'direct' &&
-                  item.counterpartId != currentUserId &&
+                  item.counterpartId.trim().toLowerCase() != normalizedUserId &&
                   _matches(item.title))
               .toList()
             ..sort(_compareThreads);
+      assert(() {
+        for (final t in threadItems.where((i) => i.kind == 'direct')) {
+          debugPrint(
+            '[Empleados] thread=${t.id} '
+            'counterpartId="${t.counterpartId}" '
+            'title="${t.title}" '
+            'currentUserId="$currentUserId" '
+            'match=${t.counterpartId.trim().toLowerCase() == normalizedUserId}',
+          );
+        }
+        return true;
+      }());
       final clients = conversations.where((item) {
         return _matches(item.companyCode) || _matches(item.companyName);
       }).toList()..sort(_compareConversations);

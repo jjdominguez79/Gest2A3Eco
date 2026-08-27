@@ -619,3 +619,34 @@ class TestStaffAccessAndInternalNotifications:
         assert platform == device.platform
         assert payload["thread_id"] == thread.id
         assert payload["event"] == "internal_message"
+
+    def test_direct_thread_self_is_rejected(self, db_session):
+        """_get_or_create_staff_direct_thread returns None for self-threads."""
+        from backend.api import messaging_api
+        from backend.api.messaging_models import MessagingStaff
+
+        suffix = uuid.uuid4().hex[:8]
+        admin = MessagingStaff(
+            external_id=f"admin-self-{suffix}", name="Admin",
+            email=f"admin-self-{suffix}@gestinem.es", role="admin", active=True,
+        )
+        other = MessagingStaff(
+            external_id=f"other-self-{suffix}", name="Otro",
+            email=f"other-self-{suffix}@gestinem.es", role="empleado", active=True,
+        )
+        db_session.add_all([admin, other])
+        db_session.flush()
+
+        # Self-thread must return None
+        result = messaging_api._get_or_create_staff_direct_thread(
+            db_session, admin, admin,
+        )
+        assert result is None
+
+        # Normal thread works
+        result = messaging_api._get_or_create_staff_direct_thread(
+            db_session, admin, other,
+        )
+        assert result is not None
+        assert result.admin_staff_external_id == admin.external_id
+        assert result.member_staff_external_id == other.external_id
