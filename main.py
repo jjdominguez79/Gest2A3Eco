@@ -565,6 +565,13 @@ def main():
         ctx.add_command(label="Cerrar", command=root.destroy)
         return ctx
 
+    def _on_workstation_admin():
+        if not state["session"] or not state["session"].is_admin():
+            messagebox.showerror("Gest2A3Eco", "Solo el administrador puede gestionar puestos de trabajo.", parent=root)
+            return
+        from views.ui_workstation_admin import WorkstationAdminDialog
+        WorkstationAdminDialog(root, state["session"])
+
     def _show_config_menu():
         if not state["session"] or not state["session"].is_admin():
             messagebox.showerror("Gest2A3Eco", "Solo el administrador puede modificar la configuracion global.", parent=root)
@@ -573,6 +580,10 @@ def main():
         menu.add_command(label="Configurar PostgreSQL", command=_on_config_postgres)
         menu.add_command(label="Seleccionar plantillas Word", command=_on_cambiar_plantillas_word)
         menu.add_command(label="Configurar monedas y clave desmarcar", command=_on_config_monedas)
+        menu.add_separator()
+        admin_menu = tk.Menu(menu, tearoff=0)
+        admin_menu.add_command(label="Puestos de trabajo", command=_on_workstation_admin)
+        menu.add_cascade(label="Administracion", menu=admin_menu)
         try:
             x = root.winfo_rootx() + root.winfo_width() - 220
             y = root.winfo_rooty() + 110

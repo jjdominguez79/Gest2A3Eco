@@ -18,6 +18,7 @@ from backend.api.database import Base, SessionLocal, engine
 from backend.api.config import get_settings
 from backend.api.models import (
     Comunicacion,
+    DesktopAdminSession,
     Documento,
     DocumentoGenerado,
     Enlace,
@@ -29,7 +30,18 @@ from backend.api.models import (
     Workstation,
 )
 from backend.api.schemas import DocumentoGeneradoCreate, ExpedienteCreate, ExpedientePatch, PartePatch, SubsanacionCreate
-from backend.api.security import new_workstation_token, require_internal_key, require_workstation_or_internal, utcnow
+from backend.api.security import (
+    DESKTOP_ADMIN_SESSION_TTL,
+    _extract_admin_bearer,
+    _scrypt_verify,
+    hash_token,
+    new_admin_session_token,
+    new_workstation_token,
+    require_internal_key,
+    require_workstation_or_internal,
+    utcnow,
+    verify_desktop_admin_session,
+)
 from backend.api.service import (
     cargar_expediente,
     crear_enlace,
@@ -294,6 +306,12 @@ def get_db():
 
 internal = Depends(require_internal_key)
 workstation_or_internal = Depends(require_workstation_or_internal)
+
+
+def require_desktop_admin(request: Request, db: Session = Depends(get_db)) -> str:
+    """Valida sesion de admin del escritorio. Usa el DB session inyectado."""
+    token = _extract_admin_bearer(request)
+    return verify_desktop_admin_session(token, db)
 
 
 def asegurar_expediente_editable(item: Expediente) -> None:
@@ -1103,7 +1121,6 @@ def admin_crear_workstation(body: dict, db: Session = Depends(get_db)):
     Crea un nuevo puesto y devuelve el token plano (solo una vez).
     Body JSON: {"name": "PC-OFICINA-1"}
     """
-    from backend.api.security import hash_token
     name = str(body.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "El campo 'name' es obligatorio")
@@ -1156,3 +1173,189 @@ def admin_actualizar_workstation(workstation_id: str, body: dict, db: Session = 
         "active": ws.active,
         "last_seen_at": ws.last_seen_at.isoformat() if ws.last_seen_at else None,
     }
+
+
+# ── Autenticacion admin del escritorio ─────────────────────────────────────
+
+def _registrar_evento_workstation(
+    db: Session, tipo: str, admin_username: str, datos: dict | None = None,
+) -> None:
+    """Registra un evento administrativo de workstation en dgt_eventos."""
+    db.add(Evento(
+        tipo=f"workstation.{tipo}",
+        actor=admin_username,
+        datos=datos or {},
+    ))
+
+
+def _ws_to_dict(ws: Workstation) -> dict:
+    return {
+        "id": ws.id,
+        "name": ws.name,
+        "active": ws.active,
+        "created_at": ws.created_at.isoformat(),
+        "last_seen_at": ws.last_seen_at.isoformat() if ws.last_seen_at else None,
+    }
+
+
+@app.post("/api/v1/desktop/auth/login")
+def desktop_admin_login(body: dict, db: Session = Depends(get_db)):
+    """
+    Autentica un administrador del escritorio y devuelve una sesion temporal.
+
+    Body JSON: {"username": "admin", "password": "..."}
+    Verifica contra la tabla 'usuarios' (compartida con el escritorio).
+    Solo permite acceso a usuarios con rol='admin' y activo=1.
+    """
+    username = str(body.get("username") or "").strip()
+    password = str(body.get("password") or "")
+    if not username or not password:
+        raise HTTPException(400, "Usuario y contrasena obligatorios")
+
+    row = db.execute(
+        text("SELECT id, password_hash, rol, activo FROM usuarios WHERE LOWER(username) = LOWER(:u)"),
+        {"u": username},
+    ).mappings().first()
+
+    if not row:
+        raise HTTPException(401, "Credenciales incorrectas")
+    if not row["activo"]:
+        raise HTTPException(403, "Usuario inactivo")
+    if row["rol"] != "admin":
+        raise HTTPException(403, "Solo los administradores pueden gestionar puestos de trabajo")
+    if not _scrypt_verify(password, str(row["password_hash"])):
+        raise HTTPException(401, "Credenciales incorrectas")
+
+    token = new_admin_session_token()
+    now = utcnow()
+    session = DesktopAdminSession(
+        token_hash=hash_token(token),
+        username=username,
+        created_at=now,
+        expires_at=now + DESKTOP_ADMIN_SESSION_TTL,
+    )
+    db.add(session)
+    db.commit()
+
+    _registrar_evento_workstation(db, "admin_login", username)
+    db.commit()
+
+    return {
+        "session_token": token,
+        "username": username,
+        "expires_at": session.expires_at.isoformat(),
+    }
+
+
+# ── Gestion de puestos desde escritorio (protegido por sesion admin) ───────
+
+@app.get("/api/v1/desktop/admin/workstations")
+def desktop_listar_workstations(
+    admin_user: str = Depends(require_desktop_admin),
+    db: Session = Depends(get_db),
+):
+    """Lista todos los puestos (solo administradores del escritorio)."""
+    workstations = db.scalars(select(Workstation).order_by(Workstation.created_at)).all()
+    return [_ws_to_dict(ws) for ws in workstations]
+
+
+@app.post("/api/v1/desktop/admin/workstations", status_code=201)
+def desktop_crear_workstation(
+    body: dict,
+    admin_user: str = Depends(require_desktop_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Crea un nuevo puesto y devuelve el token plano (solo una vez).
+    Body JSON: {"name": "PC-OFICINA-1"}
+    """
+    name = str(body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "El campo 'name' es obligatorio")
+    existing = db.scalar(select(Workstation).where(Workstation.name == name))
+    if existing:
+        raise HTTPException(409, f"Ya existe un puesto con nombre '{name}'")
+    token = new_workstation_token()
+    ws = Workstation(name=name, token_hash=hash_token(token))
+    db.add(ws)
+    _registrar_evento_workstation(db, "created", admin_user, {"workstation_name": name})
+    db.commit()
+    db.refresh(ws)
+    return {
+        "id": ws.id,
+        "name": ws.name,
+        "token": token,
+        "active": ws.active,
+        "created_at": ws.created_at.isoformat(),
+    }
+
+
+@app.patch("/api/v1/desktop/admin/workstations/{workstation_id}")
+def desktop_actualizar_workstation(
+    workstation_id: str,
+    body: dict,
+    admin_user: str = Depends(require_desktop_admin),
+    db: Session = Depends(get_db),
+):
+    """Activa o desactiva un puesto. Body JSON: {"active": true/false}"""
+    ws = db.get(Workstation, workstation_id)
+    if not ws:
+        raise HTTPException(404, "Puesto no encontrado")
+    if "active" in body:
+        old_active = ws.active
+        ws.active = bool(body["active"])
+        if old_active != ws.active:
+            accion = "activated" if ws.active else "deactivated"
+            _registrar_evento_workstation(db, accion, admin_user, {"workstation_name": ws.name})
+    db.commit()
+    return _ws_to_dict(ws)
+
+
+@app.post("/api/v1/desktop/admin/workstations/{workstation_id}/regenerate-token")
+def desktop_regenerar_token(
+    workstation_id: str,
+    admin_user: str = Depends(require_desktop_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Regenera el token de un puesto. El token anterior queda invalidado
+    inmediatamente. Devuelve el nuevo token plano UNA SOLA VEZ.
+    """
+    ws = db.get(Workstation, workstation_id)
+    if not ws:
+        raise HTTPException(404, "Puesto no encontrado")
+    token = new_workstation_token()
+    ws.token_hash = hash_token(token)
+    _registrar_evento_workstation(db, "token_regenerated", admin_user, {"workstation_name": ws.name})
+    db.commit()
+    return {
+        "id": ws.id,
+        "name": ws.name,
+        "token": token,
+        "active": ws.active,
+    }
+
+
+@app.post("/api/v1/desktop/admin/workstations/verify-token")
+def desktop_verificar_token(
+    body: dict,
+    admin_user: str = Depends(require_desktop_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Verifica si un workstation_token es valido y activo.
+    Body JSON: {"workstation_token": "g2a3_wks_..."}
+    No devuelve el token, solo el estado.
+    """
+    token = str(body.get("workstation_token") or "")
+    if not token or not token.startswith("g2a3_wks_"):
+        return {"valid": False, "status": "invalid_format"}
+    t_hash = hash_token(token)
+    ws = db.scalar(
+        select(Workstation).where(Workstation.token_hash == t_hash)
+    )
+    if not ws:
+        return {"valid": False, "status": "not_found"}
+    if not ws.active:
+        return {"valid": False, "status": "deactivated", "name": ws.name}
+    return {"valid": True, "status": "active", "name": ws.name}
