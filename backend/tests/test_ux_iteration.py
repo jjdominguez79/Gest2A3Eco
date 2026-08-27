@@ -650,3 +650,118 @@ class TestStaffAccessAndInternalNotifications:
         assert result is not None
         assert result.admin_staff_external_id == admin.external_id
         assert result.member_staff_external_id == other.external_id
+
+    def test_legacy_duplicate_staff_detected_as_same_person(self, db_session):
+        """Two staff records with different external_id but same email are the
+        same person — _is_same_person must return True and self-thread must be
+        prevented."""
+        from backend.api import messaging_api
+        from backend.api.messaging_models import MessagingStaff
+
+        suffix = uuid.uuid4().hex[:8]
+        legacy = MessagingStaff(
+            external_id="1", name="Juan José", email=f"jj-{suffix}@gestinem.es",
+            role="admin", active=True,
+        )
+        current = MessagingStaff(
+            external_id=str(uuid.uuid4()), name="Juan José", email=f"jj-{suffix}@gestinem.es",
+            role="admin", active=True,
+        )
+        db_session.add_all([legacy, current])
+        db_session.flush()
+
+        # Same person despite different external_id
+        assert messaging_api._is_same_person(legacy, current)
+        assert messaging_api._is_same_person(current, legacy)
+
+        # Thread between them must be rejected
+        result = messaging_api._get_or_create_staff_direct_thread(
+            db_session, current, legacy,
+        )
+        assert result is None
+
+    def test_counterpart_id_is_always_external_id(self, db_session):
+        """counterpart_id in serialized thread must be a valid external_id,
+        never an internal integer-like PK."""
+        from backend.api import messaging_api
+        from backend.api.messaging_models import MessagingStaff, MessagingStaffThread
+
+        suffix = uuid.uuid4().hex[:8]
+        admin = MessagingStaff(
+            external_id=str(uuid.uuid4()), name="Admin",
+            email=f"admin-cp-{suffix}@gestinem.es", role="admin", active=True,
+        )
+        employee = MessagingStaff(
+            external_id=str(uuid.uuid4()), name="Empleado",
+            email=f"emp-cp-{suffix}@gestinem.es", role="empleado", active=True,
+        )
+        db_session.add_all([admin, employee])
+        db_session.flush()
+
+        thread = messaging_api._get_or_create_staff_direct_thread(
+            db_session, admin, employee,
+        )
+        assert thread is not None
+
+        serialized = messaging_api._serialize_staff_thread(db_session, thread, admin)
+        assert serialized["counterpart_id"] == employee.external_id
+        # Must be a valid UUID, not a numeric string
+        uuid.UUID(serialized["counterpart_id"])
+
+        # From the employee's perspective, counterpart is the admin
+        serialized2 = messaging_api._serialize_staff_thread(db_session, thread, employee)
+        assert serialized2["counterpart_id"] == admin.external_id
+        uuid.UUID(serialized2["counterpart_id"])
+
+    def test_list_threads_excludes_legacy_self_thread(self, db_session):
+        """A thread created between a legacy record (external_id='1') and the
+        current UUID record of the same person must not appear in the list."""
+        from backend.api.messaging_models import MessagingStaff, MessagingStaffThread
+        from backend.api import messaging_api
+
+        suffix = uuid.uuid4().hex[:8]
+        email = f"legacy-{suffix}@gestinem.es"
+        current = MessagingStaff(
+            external_id=str(uuid.uuid4()), name="Admin",
+            email=email, role="admin", active=True,
+        )
+        legacy = MessagingStaff(
+            external_id=f"legacy-{suffix}", name="Admin",
+            email=email, role="admin", active=True,
+        )
+        other = MessagingStaff(
+            external_id=str(uuid.uuid4()), name="Otro",
+            email=f"other-{suffix}@gestinem.es", role="empleado", active=True,
+        )
+        db_session.add_all([current, legacy, other])
+        db_session.flush()
+
+        # Manually create the legacy self-thread (simulating pre-fix data)
+        self_thread = MessagingStaffThread(
+            key=f"direct:{current.external_id}:{legacy.external_id}",
+            kind="direct",
+            admin_staff_external_id=current.external_id,
+            member_staff_external_id=legacy.external_id,
+        )
+        normal_thread = MessagingStaffThread(
+            key=f"direct:{current.external_id}:{other.external_id}",
+            kind="direct",
+            admin_staff_external_id=current.external_id,
+            member_staff_external_id=other.external_id,
+        )
+        db_session.add_all([self_thread, normal_thread])
+        db_session.flush()
+
+        # Serialize and filter like list_staff_threads does
+        threads = []
+        for row in [self_thread, normal_thread]:
+            if row.kind == "direct":
+                admin_rec = db_session.get(MessagingStaff, row.admin_staff_external_id)
+                member_rec = db_session.get(MessagingStaff, row.member_staff_external_id)
+                if admin_rec and member_rec and messaging_api._is_same_person(admin_rec, member_rec):
+                    continue
+            threads.append(messaging_api._serialize_staff_thread(db_session, row, current))
+
+        # Only the normal thread should survive
+        assert len(threads) == 1
+        assert threads[0]["counterpart_id"] == other.external_id

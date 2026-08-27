@@ -281,10 +281,24 @@ def _primary_admin(db: Session) -> MessagingStaff | None:
     )
 
 
+def _is_same_person(a: MessagingStaff, b: MessagingStaff) -> bool:
+    """Detect whether two MessagingStaff records represent the same person.
+
+    Compares by external_id first; falls back to email so that legacy records
+    created with numeric IDs (e.g. ``"1"``) are recognised as duplicates of
+    the newer UUID-based record for the same user.
+    """
+    if a.external_id == b.external_id:
+        return True
+    if a.email and b.email and a.email.strip().lower() == b.email.strip().lower():
+        return True
+    return False
+
+
 def _get_or_create_staff_direct_thread(
     db: Session, admin: MessagingStaff, member: MessagingStaff,
 ) -> MessagingStaffThread | None:
-    if admin.external_id == member.external_id:
+    if _is_same_person(admin, member):
         return None
     key = f"direct:{admin.external_id}:{member.external_id}"
     thread = db.scalar(select(MessagingStaffThread).where(MessagingStaffThread.key == key))
@@ -1397,15 +1411,17 @@ def list_staff_threads(
     rows = db.scalars(select(MessagingStaffThread).order_by(
         MessagingStaffThread.updated_at.desc(), MessagingStaffThread.kind,
     )).all()
-    return [
-        _serialize_staff_thread(db, row, staff)
-        for row in rows
-        if _can_access_staff_thread(db, row, staff)
-        and not (
-            row.kind == "direct"
-            and row.admin_staff_external_id == row.member_staff_external_id
-        )
-    ]
+    result = []
+    for row in rows:
+        if not _can_access_staff_thread(db, row, staff):
+            continue
+        if row.kind == "direct":
+            admin_rec = db.get(MessagingStaff, row.admin_staff_external_id)
+            member_rec = db.get(MessagingStaff, row.member_staff_external_id)
+            if admin_rec and member_rec and _is_same_person(admin_rec, member_rec):
+                continue
+        result.append(_serialize_staff_thread(db, row, staff))
+    return result
 
 
 @router.post("/staff/internal/direct/{member_external_id}", status_code=201)
