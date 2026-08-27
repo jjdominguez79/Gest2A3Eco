@@ -229,7 +229,7 @@ def _normalize_config(data: dict) -> dict:
     out.setdefault("a3_base_path", "")
     out.setdefault("postgres_dsn", "")
 
-    out.setdefault("documentos_output_dir", "")
+    out.pop("documentos_output_dir", None)
     out.setdefault("dgt_api_url", "")
     out.setdefault("integrations_api_url", "")
     # Sincronizacion legacy dgt_api_url <-> integrations_api_url; si ambos estan
@@ -266,13 +266,6 @@ def _normalize_config(data: dict) -> dict:
                 "Clave de configuracion obsoleta '%s' ignorada. "
                 "Las credenciales de Dataprius y SignRequest residen ahora en el backend.", _clave
             )
-
-    if not str(out.get("documentos_output_dir") or "").strip():
-        repository = Path(
-            os.getenv("GEST2A3ECO_DOCUMENT_REPOSITORY_DIR")
-            or r"\\GestinemMain\Doc_Compartidos\Gest2A3Eco"
-        )
-        out["documentos_output_dir"] = str(repository / "Empresas")
 
     monedas = out.get("monedas")
     if not isinstance(monedas, list) or not monedas:
