@@ -118,6 +118,9 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
                       ref.invalidate(clientOrganizationsProvider),
                   child: ListView.separated(
                     key: const Key('clients-list'),
+                    padding: EdgeInsets.only(
+                      bottom: MediaQuery.viewPaddingOf(context).bottom,
+                    ),
                     itemCount: filtered.length,
                     separatorBuilder: (_, _) => const Divider(height: 1),
                     itemBuilder: (context, index) {

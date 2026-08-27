@@ -438,6 +438,7 @@ void main() {
         channel: '',
         title: 'Juan José',
         unreadCount: 0,
+        counterpartId: 'admin-1',
       ),
     ];
 
@@ -479,5 +480,84 @@ void main() {
     await tester.tap(find.byIcon(Icons.menu));
     await tester.pumpAndSettle();
     expect(find.text('Gestionar grupos internos'), findsNothing);
+  });
+
+  testWidgets('usuario actual no aparece en la seccion Empleados', (
+    tester,
+  ) async {
+    const adminProfile = UserProfile(
+      id: 'admin-1',
+      name: 'Juan José Domínguez',
+      email: 'juanjose@gestinem.es',
+      type: UserType.staff,
+      staffRole: StaffRole.admin,
+    );
+    const adminSession = AuthSession(
+      token: 'admin-token',
+      profile: adminProfile,
+    );
+    const threads = [
+      InternalThread(
+        id: 'direct-self',
+        kind: 'direct',
+        channel: '',
+        title: 'Juan José Domínguez',
+        unreadCount: 0,
+        counterpartId: 'admin-1',
+      ),
+      InternalThread(
+        id: 'direct-other',
+        kind: 'direct',
+        channel: '',
+        title: 'Analia',
+        unreadCount: 0,
+        counterpartId: 'employee-2',
+      ),
+      InternalThread(
+        id: 'direct-admin2',
+        kind: 'direct',
+        channel: '',
+        title: 'Roberto',
+        unreadCount: 0,
+        counterpartId: 'admin-3',
+      ),
+    ];
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith(
+            (ref) => FakeSessionController(ref, adminSession),
+          ),
+          apiClientProvider.overrideWithValue(
+            ApiClient(
+              dio: Dio(BaseOptions(baseUrl: 'https://example.test')),
+              tokenProvider: () => adminSession.token,
+            ),
+          ),
+          conversationsProvider.overrideWith((ref) async => []),
+          internalThreadsProvider.overrideWith((ref) async => threads),
+          realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
+          notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
+        ],
+        child: const MaterialApp(home: ConversationsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // El thread consigo mismo no debe aparecer
+    expect(find.byKey(const Key('internal-thread-direct-self')), findsNothing);
+    // Otros empleados sí aparecen
+    expect(
+      find.byKey(const Key('internal-thread-direct-other')),
+      findsOneWidget,
+    );
+    expect(find.text('Analia'), findsOneWidget);
+    // Otro administrador también aparece
+    expect(
+      find.byKey(const Key('internal-thread-direct-admin2')),
+      findsOneWidget,
+    );
+    expect(find.text('Roberto'), findsOneWidget);
   });
 }

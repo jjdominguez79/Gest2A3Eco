@@ -236,6 +236,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
                           query: query,
                           conversations: items,
                           threads: internalThreads,
+                          currentUserId: profile.id,
                           selectedId: _selected,
                           selectedInternal: _selectedInternal,
                           baseUrl: apiBaseUrl,
@@ -395,6 +396,7 @@ class _StaffInbox extends StatelessWidget {
     required this.query,
     required this.conversations,
     required this.threads,
+    required this.currentUserId,
     required this.selectedId,
     required this.selectedInternal,
     required this.baseUrl,
@@ -408,6 +410,7 @@ class _StaffInbox extends StatelessWidget {
   final String query;
   final List<Conversation> conversations;
   final AsyncValue<List<InternalThread>> threads;
+  final String currentUserId;
   final String? selectedId;
   final bool selectedInternal;
   final String baseUrl;
@@ -437,7 +440,10 @@ class _StaffInbox extends StatelessWidget {
             ..sort(_compareThreads);
       final directThreads =
           threadItems
-              .where((item) => item.kind == 'direct' && _matches(item.title))
+              .where((item) =>
+                  item.kind == 'direct' &&
+                  item.counterpartId != currentUserId &&
+                  _matches(item.title))
               .toList()
             ..sort(_compareThreads);
       final clients = conversations.where((item) {
@@ -519,11 +525,13 @@ class _StaffInbox extends StatelessWidget {
             ),
         ]);
       }
+      final bottomPadding = MediaQuery.viewPaddingOf(context).bottom;
       return RefreshIndicator(
         onRefresh: onRefresh,
         child: ListView(
           key: const Key('conversation-list'),
           physics: const AlwaysScrollableScrollPhysics(),
+          padding: EdgeInsets.only(bottom: bottomPadding),
           children: children,
         ),
       );
