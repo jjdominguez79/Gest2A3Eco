@@ -139,18 +139,36 @@ CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS = {
     ),
 }
 
+STARTUP_COLUMN_TABLES = frozenset({
+    "dgt_documentos",
+    "msg_organizations",
+    "msg_staff",
+    "msg_messages",
+    "msg_staff_thread_messages",
+    "msg_attachments",
+    "msg_downloads",
+    "msg_conversations",
+    "msg_websocket_tickets",
+    "msg_staff_app_codes",
+})
+
+STAFF_APP_CODE_PURPOSE_DDL = (
+    "ALTER TABLE msg_staff_app_codes "
+    "ADD COLUMN IF NOT EXISTS purpose VARCHAR(32) NOT NULL DEFAULT 'mobile'"
+)
+
 
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(engine)
     with engine.begin() as conn:
+        startup_tables_sql = ", ".join(
+            f"'{table}'" for table in sorted(STARTUP_COLUMN_TABLES)
+        )
         existing_columns = set(conn.execute(text(
             "SELECT table_name, column_name FROM information_schema.columns "
             "WHERE table_schema=current_schema() "
-            "AND table_name IN ('dgt_documentos', 'msg_organizations', "
-            "'msg_staff', 'msg_messages', "
-            "'msg_staff_thread_messages', 'msg_attachments', 'msg_downloads', "
-            "'msg_conversations', 'msg_websocket_tickets')"
+            f"AND table_name IN ({startup_tables_sql})"
         )).tuples())
         column_migrations = {
             ("dgt_documentos", "dataprius_json"): (
@@ -217,8 +235,7 @@ def startup():
                 "ALTER TABLE msg_conversations ADD COLUMN started_at TIMESTAMPTZ"
             ),
             ("msg_staff_app_codes", "purpose"): (
-                "ALTER TABLE msg_staff_app_codes "
-                "ADD COLUMN purpose VARCHAR(32) NOT NULL DEFAULT 'mobile'"
+                STAFF_APP_CODE_PURPOSE_DDL
             ),
         }
         for column, ddl in column_migrations.items():

@@ -17,7 +17,11 @@ from sqlalchemy.pool import StaticPool
 
 from backend.api.database import Base
 from backend.api import messaging_api
-from backend.api.app import CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS
+from backend.api.app import (
+    CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS,
+    STAFF_APP_CODE_PURPOSE_DDL,
+    STARTUP_COLUMN_TABLES,
+)
 from backend.api.messaging_api import get_db, router
 from backend.api import messaging_models  # noqa: F401
 
@@ -74,6 +78,11 @@ def test_startup_migra_columnas_de_plataforma_cliente_automaticamente():
     assert "DEFAULT FALSE" in CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS[
         ("msg_organizations", "client_documents_enabled")
     ]
+
+
+def test_startup_migra_purpose_de_staff_app_codes_de_forma_idempotente():
+    assert "msg_staff_app_codes" in STARTUP_COLUMN_TABLES
+    assert "ADD COLUMN IF NOT EXISTS purpose" in STAFF_APP_CODE_PURPOSE_DDL
 
 
 def test_public_app_version_exposes_release_information(tmp_path, monkeypatch):
