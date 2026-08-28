@@ -237,6 +237,7 @@ curl -X PATCH \
 | Estado factura | `SELECT id, status FROM client_invoices WHERE organization_id = '...' ORDER BY created_at DESC;` |
 | Cola de procesamiento | `SELECT * FROM client_invoice_processing_queue WHERE queue_status != 'completed';` |
 | Log de notificaciones | `SELECT * FROM client_invoice_notification_log ORDER BY created_at DESC;` |
+| Entregas inciertas | `GET /api/v1/messaging/client/invoicing/worker/notification-health` con la clave interna |
 
 ---
 
@@ -282,6 +283,26 @@ SELECT push_token, platform, active, updated_at
 FROM msg_app_devices
 WHERE user_type = 'client' AND active = false
 ORDER BY updated_at DESC;
+```
+
+### Notificaciones en estado incierto
+
+El endpoint interno y no mutante siguiente muestra entregas `sending` o
+`unknown` con mas de 30 minutos:
+
+```bash
+curl -s -H "X-API-Key: $DGT_INTERNAL_API_KEY" \
+  https://BACKEND_URL/api/v1/messaging/client/invoicing/worker/notification-health
+```
+
+No se reintentan automaticamente para evitar duplicados. Antes de permitir un
+reintento manual hay que comprobar en Graph/Firebase si el proveedor acepto la
+entrega. Solo cuando se confirme que no fue enviada se cambia su estado:
+
+```sql
+UPDATE client_invoice_notification_log
+SET status = 'failed', detail = 'reintento manual autorizado', updated_at = NOW()
+WHERE id = 123 AND status IN ('sending', 'unknown');
 ```
 
 ### Features no visibles en la app

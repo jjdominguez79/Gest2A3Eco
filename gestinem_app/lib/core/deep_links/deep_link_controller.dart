@@ -4,17 +4,14 @@ import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-final deepLinkProvider =
-    StateNotifierProvider<DeepLinkController, Uri?>((ref) {
-  final controller = DeepLinkController();
-  ref.onDispose(controller.dispose);
-  return controller;
+final deepLinkProvider = StateNotifierProvider<DeepLinkController, Uri?>((ref) {
+  return DeepLinkController();
 });
 
 class DeepLinkController extends StateNotifier<Uri?> {
   DeepLinkController({AppLinks? appLinks})
-      : _appLinks = appLinks ?? AppLinks(),
-        super(null) {
+    : _appLinks = appLinks ?? AppLinks(),
+      super(null) {
     unawaited(_start());
   }
 
@@ -27,7 +24,8 @@ class DeepLinkController extends StateNotifier<Uri?> {
       _accept(initial);
       _subscription = _appLinks.uriLinkStream.listen(
         _accept,
-        onError: (Object error) => debugPrint('Deep link no disponible: $error'),
+        onError: (Object error) =>
+            debugPrint('Deep link no disponible: $error'),
       );
     } catch (error) {
       debugPrint('Deep link no disponible: $error');
@@ -52,7 +50,8 @@ String? routeForDeepLink(Uri? uri) {
     return null;
   }
   final action = uri.pathSegments.isEmpty ? null : uri.pathSegments.first;
-  final token = uri.queryParameters['token'] ??
+  final token =
+      uri.queryParameters['token'] ??
       uri.queryParameters['invite'] ??
       uri.queryParameters['reset'];
   if (token == null || token.isEmpty) return null;

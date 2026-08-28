@@ -10,6 +10,10 @@ on:
       - "tests/test_dgt_postgres_migration.py"
       - "tests/test_mail_api.py"
       - "tests/test_messaging*.py"
+      - "tests/test_client*.py"
+      - "tests/test_feature_flags.py"
+      - "tests/test_worker_endpoints.py"
+      - "tests/test_notification_concurrency_pg.py"
       - ".github/workflows/backend-tests.yml"
   pull_request:
     paths:
@@ -18,14 +22,35 @@ on:
       - "tests/test_dgt_postgres_migration.py"
       - "tests/test_mail_api.py"
       - "tests/test_messaging*.py"
+      - "tests/test_client*.py"
+      - "tests/test_feature_flags.py"
+      - "tests/test_worker_endpoints.py"
+      - "tests/test_notification_concurrency_pg.py"
       - ".github/workflows/backend-tests.yml"
 
 jobs:
   tests:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gestinem_test
+          POSTGRES_PASSWORD: gestinem_test
+          POSTGRES_DB: gestinem_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gestinem_test -d gestinem_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       PYTHONPATH: .
-      DGT_DATABASE_URL: postgresql+psycopg://unused:unused@localhost:5432/unused
+      DGT_DATABASE_URL: postgresql+psycopg://gestinem_test:gestinem_test@localhost:5432/gestinem_test
+      TEST_POSTGRES_URL: postgresql+psycopg://gestinem_test:gestinem_test@localhost:5432/gestinem_test
+      DGT_INTERNAL_API_KEY: test-pg-concurrent
+      MESSAGING_GRAPH_FROM: noreply@test.es
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -42,4 +67,11 @@ jobs:
           tests/test_messaging_firebase.py
           tests/test_messaging_mail.py
           tests/test_messaging_flutter_api.py
+          tests/test_client_validation.py
+          tests/test_client_profile_api.py
+          tests/test_client_documents_api.py
+          tests/test_client_invoices_api.py
+          tests/test_feature_flags.py
+          tests/test_worker_endpoints.py
+          tests/test_notification_concurrency_pg.py
           -q

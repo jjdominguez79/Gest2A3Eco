@@ -4,6 +4,8 @@ import os
 import hashlib
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 os.environ.setdefault(
     "DGT_DATABASE_URL",
     "postgresql+psycopg://gest2a3eco_test:gest2a3eco_test@localhost:5432/gest2a3eco_test",
@@ -32,6 +34,12 @@ from backend.api.messaging_security import hash_token
 from backend.api import client_models  # noqa: F401
 from backend.api import messaging_models  # noqa: F401
 from backend.api.security import require_workstation_or_internal
+
+
+@pytest.fixture(autouse=True)
+def _enable_invoicing_feature(monkeypatch):
+    """Cada test de esta API necesita el flag global efectivo activado."""
+    monkeypatch.setenv("CLIENT_INVOICING_ENABLED", "true")
 
 
 def _setup(tmp_path=None):

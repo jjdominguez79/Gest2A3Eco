@@ -10,6 +10,8 @@ Cubre:
 
 import os
 
+import pytest
+
 os.environ.setdefault(
     "DGT_DATABASE_URL",
     "postgresql+psycopg://gest2a3eco_test:gest2a3eco_test@localhost:5432/gest2a3eco_test",
@@ -33,6 +35,19 @@ from backend.api.feature_flags import (
     require_documents_enabled,
     require_invoicing_enabled,
 )
+
+
+@pytest.fixture(autouse=True)
+def _restore_global_feature_flags():
+    """Evita que los cambios directos de entorno contaminen otras pruebas."""
+    names = ("CLIENT_DOCUMENTS_ENABLED", "CLIENT_INVOICING_ENABLED")
+    original = {name: os.environ.get(name) for name in names}
+    yield
+    for name, value in original.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
 
 
 def _setup():

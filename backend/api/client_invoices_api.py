@@ -25,7 +25,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import Response
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 _log = logging.getLogger(__name__)
@@ -59,8 +59,9 @@ from backend.api.messaging_models import (
     MessagingOrganization,
     MessagingSession,
 )
+from backend.api import messaging_firebase, messaging_mail
 from backend.api.messaging_security import hash_token, is_expired, utcnow
-from backend.api.security import require_workstation_or_internal
+from backend.api.security import require_internal_key, require_workstation_or_internal
 
 router = APIRouter(
     prefix="/api/v1/messaging/client/invoicing",
@@ -73,10 +74,10 @@ def _acquire_notification_lock(
     invoice_id: str,
     notification_type: str,
     recipient: str,
-) -> tuple[bool, str]:
+) -> tuple[bool, str, str]:
     """Intenta adquirir el lock de entrega de forma atomica.
 
-    Devuelve ``(acquired, current_status)``.
+    Devuelve ``(acquired, current_status, claim_token)``.
     - Si ``acquired`` es True el proceso actual es dueno del envio; el
       ``claim_token`` ya esta escrito y el estado es ``'sending'``.
     - Si ``acquired`` es False otro proceso tiene el lock (o ya envio);
@@ -120,7 +121,7 @@ def _acquire_notification_lock(
 
         if row is not None:
             # La fila fue insertada o actualizada: este proceso es el dueno.
-            return True, "sending"
+            return True, "sending", token
 
         # Otra fila existe con estado distinto de 'failed' (enviando o ya enviado).
         current = db.scalar(
@@ -130,7 +131,7 @@ def _acquire_notification_lock(
                 ClientInvoiceNotificationLog.recipient == recipient[:500],
             )
         )
-        return False, current.status if current else "unknown"
+        return False, current.status if current else "unknown", ""
 
     else:
         # Fallback no atomico para SQLite (desarrollo/tests).
@@ -153,7 +154,7 @@ def _acquire_notification_lock(
                 attempt_count=1,
             ))
             db.flush()
-            return True, "sending"
+            return True, "sending", token
         if existing.status == "failed":
             existing.status = "sending"
             existing.claim_token = token
@@ -161,8 +162,8 @@ def _acquire_notification_lock(
             existing.attempt_count += 1
             existing.updated_at = now
             db.flush()
-            return True, "sending"
-        return False, existing.status
+            return True, "sending", token
+        return False, existing.status, ""
 
 
 def _complete_notification_lock(
@@ -173,29 +174,23 @@ def _complete_notification_lock(
     *,
     status: str,
     detail: str = "",
-    claim_token: str = "",
+    claim_token: str,
 ) -> bool:
-    """Actualiza el estado final del log filtrando por ``claim_token``.
-
-    Devuelve True si la fila fue encontrada y actualizada.
-    Si ``claim_token`` esta vacio se omite el filtro (SQLite / fallback).
-    """
-    where = [
-        ClientInvoiceNotificationLog.invoice_id == invoice_id,
-        ClientInvoiceNotificationLog.notification_type == notification_type,
-        ClientInvoiceNotificationLog.recipient == recipient[:500],
-        ClientInvoiceNotificationLog.status == "sending",
-    ]
-    if claim_token:
-        where.append(ClientInvoiceNotificationLog.claim_token == claim_token)
-
-    log = db.scalar(select(ClientInvoiceNotificationLog).where(*where))
-    if log is None:
+    """Finaliza una entrega mediante un unico UPDATE condicionado por propiedad."""
+    if not claim_token:
         return False
-    log.status = status
-    log.detail = detail
-    log.updated_at = utcnow()
-    return True
+    result = db.execute(
+        update(ClientInvoiceNotificationLog)
+        .where(
+            ClientInvoiceNotificationLog.invoice_id == invoice_id,
+            ClientInvoiceNotificationLog.notification_type == notification_type,
+            ClientInvoiceNotificationLog.recipient == recipient[:500],
+            ClientInvoiceNotificationLog.status == "sending",
+            ClientInvoiceNotificationLog.claim_token == claim_token,
+        )
+        .values(status=status, detail=detail, updated_at=utcnow())
+    )
+    return result.rowcount == 1
 
 _storage: ClientDocumentStorage | None = None
 
@@ -1089,7 +1084,7 @@ def worker_mark_emailed(
 @router.post("/worker/invoice/{invoice_id}/send-email")
 def worker_send_email(
     invoice_id: str,
-    payload: dict = Body(...),
+    payload: dict | None = Body(default=None),
     db: Session = Depends(_db),
     _auth: str = Depends(require_workstation_or_internal),
 ):
@@ -1141,7 +1136,9 @@ def worker_send_email(
         return {"status": "ok", "skipped": True, "reason": "sin_destinatario"}
 
     # Adquisicion atomica: commit ANTES de llamar al proveedor.
-    acquired, current_status = _acquire_notification_lock(db, invoice_id, "email", recipient)
+    acquired, current_status, claim_token = _acquire_notification_lock(
+        db, invoice_id, "email", recipient,
+    )
     try:
         db.commit()
     except Exception as exc:
@@ -1153,16 +1150,6 @@ def worker_send_email(
             return {"status": "ok", "already_sent": True}
         return {"status": "ok", "in_progress": True}
 
-    # Recuperar el claim_token para filtrar el UPDATE final.
-    _lock_row = db.scalar(
-        select(ClientInvoiceNotificationLog).where(
-            ClientInvoiceNotificationLog.invoice_id == invoice_id,
-            ClientInvoiceNotificationLog.notification_type == "email",
-            ClientInvoiceNotificationLog.recipient == recipient[:500],
-        )
-    )
-    _claim_token = _lock_row.claim_token if _lock_row else ""
-
     # Descargar PDF del blob storage
     storage = _get_storage()
     try:
@@ -1170,7 +1157,7 @@ def worker_send_email(
     except Exception:
         _complete_notification_lock(db, invoice_id, "email", recipient,
                                     status="failed", detail="error_descargando_pdf",
-                                    claim_token=_claim_token)
+                                    claim_token=claim_token)
         db.commit()
         raise HTTPException(status_code=500, detail="Error descargando PDF")
 
@@ -1190,13 +1177,12 @@ def worker_send_email(
 
     # Enviar via messaging_mail (backend)
     from backend.api.config import get_settings
-    from backend.api.messaging_mail import send_mail
     settings = get_settings()
     sender_mailbox = settings.messaging_graph_from
     if not sender_mailbox:
         _complete_notification_lock(db, invoice_id, "email", recipient,
                                     status="failed", detail="buzon_no_configurado",
-                                    claim_token=_claim_token)
+                                    claim_token=claim_token)
         db.commit()
         raise HTTPException(
             status_code=500, detail="Buzon remitente no configurado en backend",
@@ -1208,7 +1194,7 @@ def worker_send_email(
         f"<p>Un saludo,<br>{org_name}</p>"
     )
     try:
-        sent_ok = send_mail(
+        sent_ok = messaging_mail.send_mail(
             recipient,
             subject,
             html_body,
@@ -1223,22 +1209,30 @@ def worker_send_email(
     except Exception as exc:
         _complete_notification_lock(db, invoice_id, "email", recipient,
                                     status="failed", detail=str(exc),
-                                    claim_token=_claim_token)
+                                    claim_token=claim_token)
         db.commit()
         raise HTTPException(status_code=502, detail=f"Error enviando email: {exc}")
 
     if not sent_ok:
         _complete_notification_lock(db, invoice_id, "email", recipient,
                                     status="failed", detail="send_mail returned False",
-                                    claim_token=_claim_token)
+                                    claim_token=claim_token)
         db.commit()
         raise HTTPException(status_code=502, detail="Error enviando email via Graph")
 
     message_id = ""  # messaging_mail no expone message_id
 
     # Confirmar envio y actualizar factura. Si el commit falla → 'unknown'.
-    _complete_notification_lock(db, invoice_id, "email", recipient,
-                                status="sent", claim_token=_claim_token)
+    completed = _complete_notification_lock(
+        db, invoice_id, "email", recipient,
+        status="sent", claim_token=claim_token,
+    )
+    if not completed:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="La entrega perdio la propiedad antes de confirmar el envio",
+        )
     old_status = inv.status
     inv.status = "emailed"
     create_invoice_event(
@@ -1257,7 +1251,7 @@ def worker_send_email(
         # Estado incierto: email enviado pero no persiste como 'sent'.
         _complete_notification_lock(db, invoice_id, "email", recipient,
                                     status="unknown", detail=str(exc),
-                                    claim_token="")  # sin filtro de token tras rollback
+                                    claim_token=claim_token)
         try:
             db.commit()
         except Exception:
@@ -1306,8 +1300,6 @@ def worker_send_fcm(
         "type": "invoice_processed",
     }
 
-    from backend.api.messaging_firebase import send_fcm, FcmResult
-
     sent = 0
     errors = 0
     for token_info in push_tokens:
@@ -1317,7 +1309,9 @@ def worker_send_fcm(
             continue
 
         # Adquisicion atomica: commit ANTES de llamar a Firebase.
-        acquired, current_status = _acquire_notification_lock(db, invoice_id, "fcm", token)
+        acquired, current_status, claim_token = _acquire_notification_lock(
+            db, invoice_id, "fcm", token,
+        )
         try:
             db.commit()
         except Exception:
@@ -1330,39 +1324,41 @@ def worker_send_fcm(
                 sent += 1
             continue  # otro proceso tiene el lock o ya envio
 
-        # Recuperar claim_token para el UPDATE final.
-        _fcm_row = db.scalar(
-            select(ClientInvoiceNotificationLog).where(
-                ClientInvoiceNotificationLog.invoice_id == invoice_id,
-                ClientInvoiceNotificationLog.notification_type == "fcm",
-                ClientInvoiceNotificationLog.recipient == token[:500],
+        try:
+            result: messaging_firebase.FcmResult = messaging_firebase.send_fcm(
+                token, fcm_payload, platform=platform,
             )
-        )
-        _fcm_claim = _fcm_row.claim_token if _fcm_row else ""
-
-        result: FcmResult = send_fcm(token, fcm_payload, platform=platform)
+        except Exception as exc:
+            _complete_notification_lock(
+                db, invoice_id, "fcm", token,
+                status="failed", detail=str(exc), claim_token=claim_token,
+            )
+            db.commit()
+            errors += 1
+            continue
 
         notif_status = "sent" if result.success else "failed"
         detail = "permanent" if result.permanent_failure else ""
 
-        _complete_notification_lock(db, invoice_id, "fcm", token,
-                                    status=notif_status, detail=detail,
-                                    claim_token=_fcm_claim)
-
-        if result.success:
-            sent += 1
-        else:
+        completed = _complete_notification_lock(
+            db, invoice_id, "fcm", token,
+            status=notif_status, detail=detail, claim_token=claim_token,
+        )
+        if not completed:
+            db.rollback()
             errors += 1
-            if result.permanent_failure:
-                from backend.api.messaging_models import MessagingAppDevice
-                device = db.scalar(
-                    select(MessagingAppDevice).where(
-                        MessagingAppDevice.push_token == token,
-                        MessagingAppDevice.active.is_(True),
-                    )
+            continue
+
+        if not result.success and result.permanent_failure:
+            from backend.api.messaging_models import MessagingAppDevice
+            device = db.scalar(
+                select(MessagingAppDevice).where(
+                    MessagingAppDevice.push_token == token,
+                    MessagingAppDevice.active.is_(True),
                 )
-                if device:
-                    device.active = False
+            )
+            if device:
+                device.active = False
 
         try:
             db.commit()
@@ -1370,11 +1366,19 @@ def worker_send_fcm(
             db.rollback()
             _log.error("Error committing FCM result for token %s: %s", token[:20], exc)
             _complete_notification_lock(db, invoice_id, "fcm", token,
-                                        status="unknown", detail=str(exc), claim_token="")
+                                        status="unknown", detail=str(exc),
+                                        claim_token=claim_token)
             try:
                 db.commit()
             except Exception:
                 pass
+            errors += 1
+            continue
+
+        if result.success:
+            sent += 1
+        else:
+            errors += 1
 
     return {"status": "ok", "sent": sent, "errors": errors}
 
@@ -1382,7 +1386,7 @@ def worker_send_fcm(
 @router.get("/worker/notification-health")
 def worker_notification_health(
     db: Session = Depends(_db),
-    _auth: str = Depends(require_workstation_or_internal),
+    _auth: str = Depends(require_internal_key),
 ):
     """Lista registros de notificacion en estado 'sending' o 'unknown' con mas de 30 min.
 

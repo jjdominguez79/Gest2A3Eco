@@ -36,6 +36,7 @@ def pg_engine():
 
     os.environ.setdefault("DGT_INTERNAL_API_KEY", "test-pg-concurrent")
     os.environ.setdefault("DGT_DATABASE_URL", TEST_POSTGRES_URL)
+    os.environ.setdefault("MESSAGING_GRAPH_FROM", "noreply@test.es")
 
     engine = create_engine(TEST_POSTGRES_URL, pool_size=5, max_overflow=10)
     Base.metadata.create_all(engine)
@@ -157,35 +158,57 @@ class TestEmailConcurrencyPostgres:
         invoice_id = pg_org_invoice["invoice"].id
 
         client = _make_app(pg_factory)
-        barrier = threading.Barrier(2)
         results = []
+        thread_errors = []
+        provider_entered = threading.Event()
+        release_provider = threading.Event()
+        mock_send = MagicMock()
+
+        def provider(*args, **kwargs):
+            provider_entered.set()
+            assert release_provider.wait(5)
+            return True
+
+        mock_send.side_effect = provider
 
         def send():
-            barrier.wait()  # Sincronizar inicio
-            with patch("backend.api.client_invoices_api.send_mail", return_value=True):
-                with patch("backend.api.client_invoices_api._get_storage") as mock_storage:
-                    mock_storage.return_value.get.return_value = b"pdf-content"
-                    resp = client.post(
-                        f"/api/v1/messaging/client/invoicing/worker/invoice/{invoice_id}/send-email",
-                        headers={"X-Internal-Key": "test-pg-concurrent"},
-                    )
-            results.append(resp.status_code)
+            try:
+                resp = client.post(
+                    f"/api/v1/messaging/client/invoicing/worker/invoice/{invoice_id}/send-email",
+                    headers={"X-Internal-Key": "test-pg-concurrent"},
+                    json={},
+                )
+                results.append((resp.status_code, resp.json()))
+            except Exception as exc:  # pragma: no cover - se informa abajo
+                thread_errors.append(exc)
 
-        threads = [threading.Thread(target=send) for _ in range(2)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        with patch("backend.api.messaging_mail.send_mail", mock_send):
+            with patch("backend.api.client_invoices_api._get_storage") as storage:
+                storage.return_value.get.return_value = b"pdf-content"
+                first = threading.Thread(target=send)
+                first.start()
+                assert provider_entered.wait(5), "La primera peticion no llego al proveedor"
+                second = threading.Thread(target=send)
+                second.start()
+                second.join(5)
+                release_provider.set()
+                first.join(5)
 
-        # Ambas deben responder 200 (una envia, la otra detecta in_progress/already_sent)
-        assert all(s == 200 for s in results), f"Respuestas: {results}"
+        assert not thread_errors
+        assert len(results) == 2
+        assert all(status == 200 for status, _ in results)
+        assert mock_send.call_count == 1
+        assert sum(bool(body.get("in_progress") or body.get("already_sent"))
+                   for _, body in results) == 1
 
-    def test_send_mail_called_exactly_once(self, pg_factory, pg_org_invoice):
-        """send_mail se llama exactamente una vez aunque dos hilos compitan."""
+    def test_completion_requires_owner_token(self, pg_factory, pg_org_invoice):
+        """La finalizacion rechaza un token que no sea el propietario."""
         invoice_id = pg_org_invoice["invoice"].id
-
-        # Reiniciar estado: eliminar cualquier log previo
         from backend.api.client_models import ClientInvoiceNotificationLog
+        from backend.api.client_invoices_api import (
+            _acquire_notification_lock,
+            _complete_notification_lock,
+        )
         from sqlalchemy import delete as sa_delete
         with pg_factory() as db:
             db.execute(
@@ -194,38 +217,20 @@ class TestEmailConcurrencyPostgres:
                 )
             )
             db.commit()
-
-        # Tambien resetear status de la factura
-        from backend.api.client_models import ClientInvoice
-        with pg_factory() as db:
-            inv = db.get(ClientInvoice, invoice_id)
-            inv.status = "rendered"
+            acquired, status, token = _acquire_notification_lock(
+                db, invoice_id, "email", "dest@example.com",
+            )
             db.commit()
-
-        client = _make_app(pg_factory)
-        barrier = threading.Barrier(2)
-        mock_send = MagicMock(return_value=True)
-
-        def send():
-            barrier.wait()
-            with patch("backend.api.client_invoices_api.send_mail", mock_send):
-                with patch("backend.api.client_invoices_api._get_storage") as ms:
-                    ms.return_value.get.return_value = b"pdf-bytes"
-                    client.post(
-                        f"/api/v1/messaging/client/invoicing/worker/invoice/{invoice_id}/send-email",
-                        headers={"X-Internal-Key": "test-pg-concurrent"},
-                    )
-
-        threads = [threading.Thread(target=send) for _ in range(2)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-        # send_mail debe haberse llamado exactamente una vez
-        assert mock_send.call_count == 1, (
-            f"send_mail se llamo {mock_send.call_count} veces (esperado: 1)"
-        )
+            assert acquired is True and status == "sending" and token
+            assert _complete_notification_lock(
+                db, invoice_id, "email", "dest@example.com",
+                status="sent", claim_token="token-incorrecto",
+            ) is False
+            assert _complete_notification_lock(
+                db, invoice_id, "email", "dest@example.com",
+                status="sent", claim_token=token,
+            ) is True
+            db.commit()
 
     def test_second_acquire_after_sent_returns_already_sent(self, pg_factory, pg_org_invoice):
         """Un segundo intento de envio con status=sent devuelve already_sent."""
@@ -250,7 +255,7 @@ class TestEmailConcurrencyPostgres:
         client = _make_app(pg_factory)
 
         # Primer envio exitoso
-        with patch("backend.api.client_invoices_api.send_mail", return_value=True):
+        with patch("backend.api.messaging_mail.send_mail", return_value=True):
             with patch("backend.api.client_invoices_api._get_storage") as ms:
                 ms.return_value.get.return_value = b"pdf"
                 resp1 = client.post(
@@ -261,7 +266,7 @@ class TestEmailConcurrencyPostgres:
 
         # Segundo intento: debe devolver already_sent sin llamar a send_mail
         mock_send = MagicMock(return_value=True)
-        with patch("backend.api.client_invoices_api.send_mail", mock_send):
+        with patch("backend.api.messaging_mail.send_mail", mock_send):
             with patch("backend.api.client_invoices_api._get_storage") as ms:
                 ms.return_value.get.return_value = b"pdf"
                 resp2 = client.post(
@@ -300,7 +305,7 @@ class TestEmailConcurrencyPostgres:
 
         client = _make_app(pg_factory)
         mock_send = MagicMock(return_value=True)
-        with patch("backend.api.client_invoices_api.send_mail", mock_send):
+        with patch("backend.api.messaging_mail.send_mail", mock_send):
             with patch("backend.api.client_invoices_api._get_storage") as ms:
                 ms.return_value.get.return_value = b"pdf"
                 resp = client.post(
@@ -334,7 +339,7 @@ class TestEmailConcurrencyPostgres:
 
         client = _make_app(pg_factory)
         mock_send = MagicMock(return_value=True)
-        with patch("backend.api.client_invoices_api.send_mail", mock_send):
+        with patch("backend.api.messaging_mail.send_mail", mock_send):
             with patch("backend.api.client_invoices_api._get_storage") as ms:
                 ms.return_value.get.return_value = b"pdf"
                 resp = client.post(
@@ -374,7 +379,7 @@ class TestEmailConcurrencyPostgres:
 
         client = _make_app(pg_factory)
         mock_send = MagicMock(return_value=True)
-        with patch("backend.api.client_invoices_api.send_mail", mock_send):
+        with patch("backend.api.messaging_mail.send_mail", mock_send):
             with patch("backend.api.client_invoices_api._get_storage") as ms:
                 ms.return_value.get.return_value = b"pdf"
                 resp = client.post(
@@ -424,26 +429,43 @@ class TestFcmConcurrencyPostgres:
         from backend.api.messaging_firebase import FcmResult
 
         client = _make_app(pg_factory)
-        barrier = threading.Barrier(2)
-        mock_fcm = MagicMock(return_value=FcmResult(success=True, permanent_failure=False))
+        provider_entered = threading.Event()
+        release_provider = threading.Event()
+        thread_errors = []
+        responses = []
+        mock_fcm = MagicMock()
+
+        def provider(*args, **kwargs):
+            provider_entered.set()
+            assert release_provider.wait(5)
+            return FcmResult(success=True, permanent_failure=False)
+
+        mock_fcm.side_effect = provider
 
         def send_fcm():
-            barrier.wait()
-            with patch("backend.api.client_invoices_api.send_fcm", mock_fcm):
-                client.post(
+            try:
+                response = client.post(
                     f"/api/v1/messaging/client/invoicing/worker/invoice/{invoice_id}/send-fcm",
                     headers={"X-Internal-Key": "test-pg-concurrent"},
                 )
+                responses.append(response.status_code)
+            except Exception as exc:  # pragma: no cover - se informa abajo
+                thread_errors.append(exc)
 
-        threads = [threading.Thread(target=send_fcm) for _ in range(2)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        with patch("backend.api.messaging_firebase.send_fcm", mock_fcm):
+            first = threading.Thread(target=send_fcm)
+            first.start()
+            assert provider_entered.wait(5), "La primera peticion FCM no llego al proveedor"
+            second = threading.Thread(target=send_fcm)
+            second.start()
+            second.join(5)
+            release_provider.set()
+            first.join(5)
 
-        assert mock_fcm.call_count == 1, (
-            f"send_fcm se llamo {mock_fcm.call_count} veces (esperado: 1)"
-        )
+        assert not thread_errors
+        assert len(responses) == 2
+        assert all(status == 200 for status in responses)
+        assert mock_fcm.call_count == 1
 
         # Cleanup
         with pg_factory() as db:

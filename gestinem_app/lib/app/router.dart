@@ -29,14 +29,34 @@ import '../features/documents/presentation/documents_screen.dart';
 import '../features/documents/presentation/document_detail_screen.dart';
 import '../core/deep_links/deep_link_controller.dart';
 
+class _RouterRefreshNotifier extends ChangeNotifier {
+  void refresh() => notifyListeners();
+}
+
+bool _isProtectedClientRoute(String location) {
+  final uri = Uri.tryParse(location);
+  if (uri == null || uri.hasScheme || uri.host.isNotEmpty) return false;
+  final path = uri.path;
+  return path == '/documents' ||
+      path.startsWith('/documents/') ||
+      path == '/invoicing' ||
+      path.startsWith('/invoicing/');
+}
+
 final routerProvider = Provider<GoRouter>((ref) {
   final session = ref.watch(sessionProvider);
   final deepLinkRoute = routeForDeepLink(ref.watch(deepLinkProvider));
-  // Observar features para que el router se reconstruya cuando cambien
-  final featuresAsync = ref.watch(platformFeaturesProvider);
+  final refreshNotifier = _RouterRefreshNotifier();
+  ref.onDispose(refreshNotifier.dispose);
+  ref.listen<AsyncValue<PlatformFeatures>>(
+    platformFeaturesProvider,
+    (previous, next) => refreshNotifier.refresh(),
+  );
 
   return GoRouter(
+    refreshListenable: refreshNotifier,
     redirect: (context, state) {
+      final featuresAsync = ref.read(platformFeaturesProvider);
       final loggedIn = session.valueOrNull != null;
       if (!loggedIn &&
           deepLinkRoute != null &&
@@ -61,6 +81,24 @@ final routerProvider = Provider<GoRouter>((ref) {
         }
         return '/login';
       }
+      // Resolver ruta pendiente almacenada en ?next= cuando features cargan.
+      if (state.matchedLocation == '/splash' &&
+          state.uri.queryParameters.containsKey('next')) {
+        final next = state.uri.queryParameters['next']!;
+        if (featuresAsync.isLoading) return null; // mantener splash
+        if (featuresAsync.hasError) return '/';
+        if (!_isProtectedClientRoute(next)) return '/';
+        final features = featuresAsync.value!;
+        final nextPath = Uri.parse(next).path;
+        if (nextPath.startsWith('/documents') && !features.documents) {
+          return '/';
+        }
+        if (nextPath.startsWith('/invoicing') && !features.invoicing) {
+          return '/';
+        }
+        return next;
+      }
+
       if (state.matchedLocation == '/login' ||
           state.matchedLocation == '/splash' ||
           state.matchedLocation == '/accept-invite' ||
@@ -71,34 +109,25 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (state.matchedLocation == '/groups' && profile?.isAdmin != true) {
         return '/';
       }
-      // Resolver ruta pendiente almacenada en ?next= cuando features cargan.
-      if (state.matchedLocation == '/splash' &&
-          state.uri.queryParameters.containsKey('next')) {
-        final next = state.uri.queryParameters['next']!;
-        if (featuresAsync.isLoading) return null; // mantener splash
-        if (featuresAsync.hasError) return '/';
-        final features = featuresAsync.value!;
-        if (next.startsWith('/documents') && !features.documents) return '/';
-        if (next.startsWith('/invoicing') && !features.invoicing) return '/';
-        return next;
-      }
 
       // Proteger rutas de documentos e invoicing con observacion reactiva.
       if (state.matchedLocation.startsWith('/documents') ||
           state.matchedLocation.startsWith('/invoicing')) {
         // Mientras cargan: mostrar splash preservando la ruta destino.
         if (featuresAsync.isLoading) {
-          final encoded = Uri.encodeComponent(state.matchedLocation);
+          final encoded = Uri.encodeComponent(state.uri.toString());
           return '/splash?next=$encoded';
         }
         // Si error: redirigir a inicio (conservador).
         if (featuresAsync.hasError) return '/';
 
         final features = featuresAsync.value!;
-        if (state.matchedLocation.startsWith('/documents') && !features.documents) {
+        if (state.matchedLocation.startsWith('/documents') &&
+            !features.documents) {
           return '/';
         }
-        if (state.matchedLocation.startsWith('/invoicing') && !features.invoicing) {
+        if (state.matchedLocation.startsWith('/invoicing') &&
+            !features.invoicing) {
           return '/';
         }
       }
@@ -161,23 +190,16 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/company-profile',
         builder: (_, _) => const CompanyProfileScreen(),
       ),
-      GoRoute(
-        path: '/documents',
-        builder: (_, _) => const DocumentsScreen(),
-      ),
+      GoRoute(path: '/documents', builder: (_, _) => const DocumentsScreen()),
       GoRoute(
         path: '/documents/:id',
-        builder: (_, state) => DocumentDetailScreen(
-          documentId: state.pathParameters['id']!,
-        ),
+        builder: (_, state) =>
+            DocumentDetailScreen(documentId: state.pathParameters['id']!),
       ),
       GoRoute(path: '/profile', builder: (_, _) => const ProfileScreen()),
       GoRoute(path: '/about', builder: (_, _) => const AboutScreen()),
       // Invoicing
-      GoRoute(
-        path: '/invoicing',
-        builder: (_, _) => const InvoicingScreen(),
-      ),
+      GoRoute(path: '/invoicing', builder: (_, _) => const InvoicingScreen()),
       GoRoute(
         path: '/invoicing/drafts/new',
         builder: (_, _) => const InvoiceFormScreen(),
@@ -189,9 +211,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/invoicing/drafts/:id/issue',
-        builder: (_, state) => IssueConfirmationScreen(
-          draftId: state.pathParameters['id']!,
-        ),
+        builder: (_, state) =>
+            IssueConfirmationScreen(draftId: state.pathParameters['id']!),
       ),
       GoRoute(
         path: '/invoicing/invoices/:id',
