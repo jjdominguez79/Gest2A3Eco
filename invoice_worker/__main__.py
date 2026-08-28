@@ -9,6 +9,7 @@ Incluye:
 
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import sys
@@ -135,7 +136,123 @@ def _preflight_checks(config: WorkerConfig) -> list[str]:
     return warnings
 
 
+def _dry_run(config: WorkerConfig) -> None:
+    """Comprueba configuracion, credenciales, Word, plantilla, PostgreSQL
+    y backend sin procesar ninguna factura. Sale con codigo 0 si todo OK,
+    1 si hay errores criticos."""
+    errors = []
+    warnings_list = []
+
+    print("=== DRY-RUN: Comprobacion de configuracion del worker ===\n")
+
+    # 1. Token API
+    if config.api_token:
+        print("[OK] Token API configurado")
+    else:
+        errors.append("Token API no configurado (Credential Manager: Gest2A3Eco/WorkstationToken)")
+
+    # 2. DSN PostgreSQL
+    if config.desktop_dsn:
+        print("[OK] DSN PostgreSQL configurado")
+        try:
+            import psycopg
+            with psycopg.connect(config.desktop_dsn, connect_timeout=5) as conn:
+                conn.execute("SELECT 1")
+            print("[OK] Conexion PostgreSQL establecida")
+        except Exception as exc:
+            errors.append(f"Error conectando a PostgreSQL: {exc}")
+    else:
+        errors.append("DSN PostgreSQL no configurado (Credential Manager: Gest2A3Eco/PostgreSQL)")
+
+    # 3. Word COM (solo Windows)
+    if sys.platform == "win32":
+        try:
+            import comtypes.client
+            word = comtypes.client.CreateObject("Word.Application")
+            word.Quit()
+            print("[OK] Microsoft Word COM disponible")
+        except Exception as exc:
+            errors.append(f"Microsoft Word COM no disponible: {exc}")
+    else:
+        warnings_list.append("Comprobacion de Word COM omitida (no es Windows)")
+
+    # 4. Plantilla Word
+    template_dir = Path(config.word_template_dir)
+    if not template_dir.exists():
+        errors.append(f"Directorio de plantillas no existe: {template_dir}")
+    else:
+        docx_files = list(template_dir.glob("*.docx"))
+        if docx_files:
+            print(f"[OK] Plantilla Word encontrada: {docx_files[0].name}")
+        else:
+            errors.append(f"No se encontraron plantillas .docx en {template_dir}")
+
+    # 5. Conectividad backend (/health)
+    try:
+        import requests
+        base = config.api_base_url.rsplit("/api/", 1)[0]
+        resp = requests.get(f"{base}/health", timeout=10)
+        if resp.status_code == 200:
+            print(f"[OK] Backend responde en {base}/health")
+        else:
+            errors.append(f"Backend /health devolvio HTTP {resp.status_code}")
+    except Exception as exc:
+        errors.append(f"No se pudo conectar al backend: {exc}")
+
+    # 6. Autenticacion con el backend (endpoint no mutante)
+    if config.api_token:
+        try:
+            import requests
+            resp = requests.get(
+                f"{config.api_base_url}/worker/invoice/dry-run-check/status",
+                headers={"x-api-key": config.api_token},
+                timeout=10,
+            )
+            # 404 es esperado (ID no existe), 401/403 indica problema de auth
+            if resp.status_code in (200, 404):
+                print("[OK] Autenticacion con el backend correcta")
+            elif resp.status_code in (401, 403):
+                errors.append(f"Token API rechazado por el backend (HTTP {resp.status_code})")
+            else:
+                warnings_list.append(f"Backend respondio HTTP {resp.status_code} en endpoint de diagnostico")
+        except Exception as exc:
+            warnings_list.append(f"No se pudo verificar autenticacion: {exc}")
+
+    # Resumen
+    print()
+    if warnings_list:
+        for w in warnings_list:
+            print(f"[AVISO] {w}")
+    if errors:
+        print()
+        for e in errors:
+            print(f"[ERROR] {e}")
+        print(f"\nDry-run FALLIDO: {len(errors)} error(es) critico(s).")
+        sys.exit(1)
+    else:
+        print("Dry-run EXITOSO: el worker esta listo para procesar facturas.")
+        sys.exit(0)
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Worker de facturacion online")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Verificar configuracion sin procesar facturas y salir",
+    )
+    args = parser.parse_args()
+
+    # Cargar configuracion (con credential store si esta disponible)
+    try:
+        config = WorkerConfig.from_credential_store()
+    except Exception:
+        config = WorkerConfig.from_env()
+
+    if args.dry_run:
+        _dry_run(config)
+        return  # _dry_run llama sys.exit(), pero por si acaso
+
     # Bloqueo de instancia unica
     lock = _acquire_instance_lock()
     if lock is None:
@@ -143,12 +260,6 @@ def main() -> None:
             "Ya existe una instancia del worker en ejecucion. "
             "Cierra la otra instancia o elimina el bloqueo."
         )
-
-    # Cargar configuracion (con credential store si esta disponible)
-    try:
-        config = WorkerConfig.from_credential_store()
-    except Exception:
-        config = WorkerConfig.from_env()
 
     # Logging con rotacion
     _setup_logging(config.log_dir)
