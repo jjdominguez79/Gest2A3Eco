@@ -9,6 +9,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
+import logging
+
 from fastapi import (
     APIRouter,
     Body,
@@ -24,6 +26,8 @@ from fastapi import (
 from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+
+_log = logging.getLogger(__name__)
 
 from backend.api.client_invoice_service import (
     assign_invoice_number,
@@ -61,6 +65,39 @@ router = APIRouter(
     prefix="/api/v1/messaging/client/invoicing",
     tags=["client-invoicing"],
 )
+
+
+def _update_notif_status(
+    db: Session,
+    invoice_id: str,
+    notif_type: str,
+    recipient: str,
+    status: str,
+    detail: str,
+) -> None:
+    """Actualiza el estado del log de notificacion sin propagar excepciones."""
+    try:
+        log = db.scalar(
+            select(ClientInvoiceNotificationLog).where(
+                ClientInvoiceNotificationLog.invoice_id == invoice_id,
+                ClientInvoiceNotificationLog.notification_type == notif_type,
+                ClientInvoiceNotificationLog.recipient == recipient[:500],
+            )
+        )
+        if log:
+            log.status = status
+            log.detail = detail
+            log.updated_at = utcnow()
+        db.commit()
+    except Exception as exc:
+        _log.error(
+            "Error actualizando notification_log %s/%s/%s -> %s: %s",
+            invoice_id, notif_type, recipient, status, exc,
+        )
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
 _storage: ClientDocumentStorage | None = None
 
@@ -975,7 +1012,7 @@ def worker_send_email(
     if not queue_item or not queue_item.pdf_blob_key:
         raise HTTPException(status_code=400, detail="PDF no disponible todavia")
 
-    recipient = payload.get("recipient_email", "") or inv.recipient_email or ""
+    recipient = inv.recipient_email or ""
     if not recipient:
         # Sin destinatario: no cambiar status de factura a emailed; solo completar cola
         old_status = inv.status
@@ -1005,31 +1042,80 @@ def worker_send_email(
         db.commit()
         return {"status": "ok", "skipped": True, "reason": "sin_destinatario"}
 
-    # Idempotencia via notification_log: si ya se envio, no reenviar
-    existing_log = db.scalar(
-        select(ClientInvoiceNotificationLog).where(
-            ClientInvoiceNotificationLog.invoice_id == invoice_id,
-            ClientInvoiceNotificationLog.notification_type == "email",
-            ClientInvoiceNotificationLog.recipient == recipient,
-        )
-    )
-    if existing_log and existing_log.status == "sent":
-        return {"status": "ok", "already_sent": True}
+    # Adquisicion atomica del lock de envio via INSERT ON CONFLICT
+    try:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        _use_pg = True
+    except ImportError:
+        _use_pg = False
 
-    # Upsert a 'sending'
-    if existing_log:
-        existing_log.status = "sending"
-        existing_log.attempt_count += 1
-        existing_log.updated_at = utcnow()
-    else:
-        notif_log = ClientInvoiceNotificationLog(
+    if _use_pg:
+        stmt = pg_insert(ClientInvoiceNotificationLog).values(
             invoice_id=invoice_id,
             notification_type="email",
             recipient=recipient[:500],
             status="sending",
+            detail="",
+            attempt_count=1,
         )
-        db.add(notif_log)
-    db.flush()
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["invoice_id", "notification_type", "recipient"],
+            set_=dict(
+                status=stmt.excluded.status,
+                attempt_count=ClientInvoiceNotificationLog.attempt_count + 1,
+                updated_at=utcnow(),
+            ),
+            where=ClientInvoiceNotificationLog.status == "failed",
+        )
+        db.execute(stmt)
+        db.flush()
+
+        current_log = db.scalar(
+            select(ClientInvoiceNotificationLog).where(
+                ClientInvoiceNotificationLog.invoice_id == invoice_id,
+                ClientInvoiceNotificationLog.notification_type == "email",
+                ClientInvoiceNotificationLog.recipient == recipient[:500],
+            )
+        )
+        if current_log is None or current_log.status not in ("sending",):
+            if current_log and current_log.status == "sent":
+                db.rollback()
+                return {"status": "ok", "already_sent": True}
+            if current_log and current_log.status in ("sending", "unknown"):
+                db.rollback()
+                return {"status": "ok", "in_progress": True}
+            db.rollback()
+            return {"status": "ok", "skipped": True}
+        try:
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            raise HTTPException(status_code=503, detail="Error al adquirir bloqueo de entrega")
+    else:
+        # Fallback para SQLite (tests): logica original no atomica
+        existing_log = db.scalar(
+            select(ClientInvoiceNotificationLog).where(
+                ClientInvoiceNotificationLog.invoice_id == invoice_id,
+                ClientInvoiceNotificationLog.notification_type == "email",
+                ClientInvoiceNotificationLog.recipient == recipient[:500],
+            )
+        )
+        if existing_log and existing_log.status == "sent":
+            return {"status": "ok", "already_sent": True}
+        if existing_log and existing_log.status in ("sending", "unknown"):
+            return {"status": "ok", "in_progress": True}
+        if existing_log:
+            existing_log.status = "sending"
+            existing_log.attempt_count += 1
+            existing_log.updated_at = utcnow()
+        else:
+            db.add(ClientInvoiceNotificationLog(
+                invoice_id=invoice_id,
+                notification_type="email",
+                recipient=recipient[:500],
+                status="sending",
+            ))
+        db.flush()
 
     # Descargar PDF del blob storage
     storage = _get_storage()
@@ -1067,47 +1153,42 @@ def worker_send_email(
         f"<p>Adjuntamos la factura {display}.</p>"
         f"<p>Un saludo,<br>{org_name}</p>"
     )
-    sent_ok = send_mail(
-        recipient,
-        subject,
-        html_body,
-        sender=sender_mailbox,
-        attachments=[{
-            "name": f"{display}.pdf",
-            "content": pdf_content,
-            "content_type": "application/pdf",
-        }],
-        text=body_text,
-    )
-    if not sent_ok:
-        # Marcar log como fallido
-        failed_log = db.scalar(
-            select(ClientInvoiceNotificationLog).where(
-                ClientInvoiceNotificationLog.invoice_id == invoice_id,
-                ClientInvoiceNotificationLog.notification_type == "email",
-                ClientInvoiceNotificationLog.recipient == recipient,
-            )
+    try:
+        sent_ok = send_mail(
+            recipient,
+            subject,
+            html_body,
+            sender=sender_mailbox,
+            attachments=[{
+                "name": f"{display}.pdf",
+                "content": pdf_content,
+                "content_type": "application/pdf",
+            }],
+            text=body_text,
         )
-        if failed_log:
-            failed_log.status = "failed"
-            failed_log.updated_at = utcnow()
-        db.commit()
+    except Exception as exc:
+        # Proveedor rechazo o error de red
+        _update_notif_status(db, invoice_id, "email", recipient, "failed", str(exc))
+        raise HTTPException(status_code=502, detail=f"Error enviando email: {exc}")
+
+    if not sent_ok:
+        _update_notif_status(db, invoice_id, "email", recipient, "failed", "send_mail returned False")
         raise HTTPException(status_code=502, detail="Error enviando email via Graph")
+
     message_id = ""  # messaging_mail no expone message_id
 
-    # Marcar log como sent
+    # Marcar log como sent y factura como emailed
     sent_log = db.scalar(
         select(ClientInvoiceNotificationLog).where(
             ClientInvoiceNotificationLog.invoice_id == invoice_id,
             ClientInvoiceNotificationLog.notification_type == "email",
-            ClientInvoiceNotificationLog.recipient == recipient,
+            ClientInvoiceNotificationLog.recipient == recipient[:500],
         )
     )
     if sent_log:
         sent_log.status = "sent"
         sent_log.updated_at = utcnow()
 
-    # Marcar como emailed
     old_status = inv.status
     inv.status = "emailed"
     create_invoice_event(
@@ -1117,7 +1198,15 @@ def worker_send_email(
     if queue_item:
         queue_item.queue_status = "completed"
         queue_item.updated_at = utcnow()
-    db.commit()
+
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        _log.error("Error committing sent status for invoice %s: %s", invoice_id, exc)
+        # Estado incierto: intentar marcar como unknown
+        _update_notif_status(db, invoice_id, "email", recipient, "unknown", str(exc))
+        raise HTTPException(status_code=503, detail="Email enviado pero error guardando estado")
 
     return {"status": "ok", "message_id": message_id}
 
@@ -1163,6 +1252,12 @@ def worker_send_fcm(
 
     from backend.api.messaging_firebase import send_fcm, FcmResult
 
+    try:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        _use_pg_fcm = True
+    except ImportError:
+        _use_pg_fcm = False
+
     sent = 0
     errors = 0
     for token_info in push_tokens:
@@ -1171,33 +1266,83 @@ def worker_send_fcm(
         if not token:
             continue
 
-        # Idempotencia: saltar si ya hay registro sent
-        existing_log = db.scalar(
+        # Adquisicion atomica del lock de envio FCM
+        if _use_pg_fcm:
+            fcm_stmt = pg_insert(ClientInvoiceNotificationLog).values(
+                invoice_id=invoice_id,
+                notification_type="fcm",
+                recipient=token[:500],
+                status="sending",
+                detail="",
+                attempt_count=1,
+            )
+            fcm_stmt = fcm_stmt.on_conflict_do_update(
+                index_elements=["invoice_id", "notification_type", "recipient"],
+                set_=dict(
+                    status=fcm_stmt.excluded.status,
+                    attempt_count=ClientInvoiceNotificationLog.attempt_count + 1,
+                    updated_at=utcnow(),
+                ),
+                where=ClientInvoiceNotificationLog.status == "failed",
+            )
+            db.execute(fcm_stmt)
+            db.flush()
+
+            current = db.scalar(
+                select(ClientInvoiceNotificationLog).where(
+                    ClientInvoiceNotificationLog.invoice_id == invoice_id,
+                    ClientInvoiceNotificationLog.notification_type == "fcm",
+                    ClientInvoiceNotificationLog.recipient == token[:500],
+                )
+            )
+            if current and current.status != "sending":
+                if current.status == "sent":
+                    sent += 1
+                continue  # otro proceso tiene o ya envio
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+                errors += 1
+                continue
+        else:
+            # Fallback no atomico para SQLite (tests)
+            existing_log = db.scalar(
+                select(ClientInvoiceNotificationLog).where(
+                    ClientInvoiceNotificationLog.invoice_id == invoice_id,
+                    ClientInvoiceNotificationLog.notification_type == "fcm",
+                    ClientInvoiceNotificationLog.recipient == token[:500],
+                )
+            )
+            if existing_log and existing_log.status == "sent":
+                sent += 1
+                continue
+
+        result: FcmResult = send_fcm(token, fcm_payload, platform=platform)
+
+        # Registrar resultado
+        notif_status = "sent" if result.success else "failed"
+        detail = "permanent" if result.permanent_failure else ""
+
+        existing_log_after = db.scalar(
             select(ClientInvoiceNotificationLog).where(
                 ClientInvoiceNotificationLog.invoice_id == invoice_id,
                 ClientInvoiceNotificationLog.notification_type == "fcm",
                 ClientInvoiceNotificationLog.recipient == token[:500],
             )
         )
-        if existing_log and existing_log.status == "sent":
-            sent += 1
-            continue
-
-        result: FcmResult = send_fcm(token, fcm_payload, platform=platform)
-
-        # Registrar resultado
-        notif_status = "sent" if result.success else "failed"
-        if existing_log:
-            existing_log.status = notif_status
-            existing_log.attempt_count += 1
-            existing_log.updated_at = utcnow()
+        if existing_log_after:
+            existing_log_after.status = notif_status
+            existing_log_after.detail = detail
+            existing_log_after.attempt_count = (existing_log_after.attempt_count or 0) + (0 if _use_pg_fcm else 1)
+            existing_log_after.updated_at = utcnow()
         else:
             db.add(ClientInvoiceNotificationLog(
                 invoice_id=invoice_id,
                 notification_type="fcm",
                 recipient=token[:500],
                 status=notif_status,
-                detail="permanent" if result.permanent_failure else "",
+                detail=detail,
             ))
 
         if result.success:
@@ -1216,10 +1361,12 @@ def worker_send_fcm(
                 if device:
                     device.active = False
 
-    try:
-        db.commit()
-    except Exception:
-        db.rollback()
+        try:
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            _log.error("Error committing FCM result for token %s: %s", token[:20], exc)
+            _update_notif_status(db, invoice_id, "fcm", token, "unknown", str(exc))
 
     return {"status": "ok", "sent": sent, "errors": errors}
 
