@@ -38,6 +38,7 @@ from backend.api.client_models import (
     ClientInvoiceCustomer,
     ClientInvoiceEvent,
     ClientInvoiceLine,
+    ClientInvoiceNotificationLog,
     ClientInvoiceProcessingQueue,
     ClientInvoiceSeries,
 )
@@ -976,18 +977,59 @@ def worker_send_email(
 
     recipient = payload.get("recipient_email", "") or inv.recipient_email or ""
     if not recipient:
-        # Sin destinatario: marcar como completado sin envio
+        # Sin destinatario: no cambiar status de factura a emailed; solo completar cola
         old_status = inv.status
-        inv.status = "emailed"
         create_invoice_event(
-            db, inv.id, "emailed", old_status, "emailed",
+            db, inv.id, "email_skipped", old_status, old_status,
             actor_type="worker", detail="sin_destinatario",
         )
         if queue_item:
             queue_item.queue_status = "completed"
             queue_item.updated_at = utcnow()
+        # Registrar en notification_log con status=skipped
+        existing_skip = db.scalar(
+            select(ClientInvoiceNotificationLog).where(
+                ClientInvoiceNotificationLog.invoice_id == invoice_id,
+                ClientInvoiceNotificationLog.notification_type == "email",
+                ClientInvoiceNotificationLog.recipient == "",
+            )
+        )
+        if not existing_skip:
+            db.add(ClientInvoiceNotificationLog(
+                invoice_id=invoice_id,
+                notification_type="email",
+                recipient="",
+                status="skipped",
+                detail="sin_destinatario",
+            ))
         db.commit()
         return {"status": "ok", "skipped": True, "reason": "sin_destinatario"}
+
+    # Idempotencia via notification_log: si ya se envio, no reenviar
+    existing_log = db.scalar(
+        select(ClientInvoiceNotificationLog).where(
+            ClientInvoiceNotificationLog.invoice_id == invoice_id,
+            ClientInvoiceNotificationLog.notification_type == "email",
+            ClientInvoiceNotificationLog.recipient == recipient,
+        )
+    )
+    if existing_log and existing_log.status == "sent":
+        return {"status": "ok", "already_sent": True}
+
+    # Upsert a 'sending'
+    if existing_log:
+        existing_log.status = "sending"
+        existing_log.attempt_count += 1
+        existing_log.updated_at = utcnow()
+    else:
+        notif_log = ClientInvoiceNotificationLog(
+            invoice_id=invoice_id,
+            notification_type="email",
+            recipient=recipient[:500],
+            status="sending",
+        )
+        db.add(notif_log)
+    db.flush()
 
     # Descargar PDF del blob storage
     storage = _get_storage()
@@ -1038,8 +1080,32 @@ def worker_send_email(
         text=body_text,
     )
     if not sent_ok:
+        # Marcar log como fallido
+        failed_log = db.scalar(
+            select(ClientInvoiceNotificationLog).where(
+                ClientInvoiceNotificationLog.invoice_id == invoice_id,
+                ClientInvoiceNotificationLog.notification_type == "email",
+                ClientInvoiceNotificationLog.recipient == recipient,
+            )
+        )
+        if failed_log:
+            failed_log.status = "failed"
+            failed_log.updated_at = utcnow()
+        db.commit()
         raise HTTPException(status_code=502, detail="Error enviando email via Graph")
     message_id = ""  # messaging_mail no expone message_id
+
+    # Marcar log como sent
+    sent_log = db.scalar(
+        select(ClientInvoiceNotificationLog).where(
+            ClientInvoiceNotificationLog.invoice_id == invoice_id,
+            ClientInvoiceNotificationLog.notification_type == "email",
+            ClientInvoiceNotificationLog.recipient == recipient,
+        )
+    )
+    if sent_log:
+        sent_log.status = "sent"
+        sent_log.updated_at = utcnow()
 
     # Marcar como emailed
     old_status = inv.status
@@ -1095,22 +1161,65 @@ def worker_send_fcm(
         "type": "invoice_processed",
     }
 
+    from backend.api.messaging_firebase import send_fcm, FcmResult
+
     sent = 0
     errors = 0
+    for token_info in push_tokens:
+        token = token_info.get("token", "")
+        platform = token_info.get("platform", "android")
+        if not token:
+            continue
+
+        # Idempotencia: saltar si ya hay registro sent
+        existing_log = db.scalar(
+            select(ClientInvoiceNotificationLog).where(
+                ClientInvoiceNotificationLog.invoice_id == invoice_id,
+                ClientInvoiceNotificationLog.notification_type == "fcm",
+                ClientInvoiceNotificationLog.recipient == token[:500],
+            )
+        )
+        if existing_log and existing_log.status == "sent":
+            sent += 1
+            continue
+
+        result: FcmResult = send_fcm(token, fcm_payload, platform=platform)
+
+        # Registrar resultado
+        notif_status = "sent" if result.success else "failed"
+        if existing_log:
+            existing_log.status = notif_status
+            existing_log.attempt_count += 1
+            existing_log.updated_at = utcnow()
+        else:
+            db.add(ClientInvoiceNotificationLog(
+                invoice_id=invoice_id,
+                notification_type="fcm",
+                recipient=token[:500],
+                status=notif_status,
+                detail="permanent" if result.permanent_failure else "",
+            ))
+
+        if result.success:
+            sent += 1
+        else:
+            errors += 1
+            if result.permanent_failure:
+                # Desactivar el dispositivo
+                from backend.api.messaging_models import MessagingAppDevice
+                device = db.scalar(
+                    select(MessagingAppDevice).where(
+                        MessagingAppDevice.push_token == token,
+                        MessagingAppDevice.active.is_(True),
+                    )
+                )
+                if device:
+                    device.active = False
+
     try:
-        from backend.api.messaging_firebase import send_fcm
-        for token_info in push_tokens:
-            token = token_info.get("token", "")
-            platform = token_info.get("platform", "android")
-            if not token:
-                continue
-            try:
-                send_fcm(token, fcm_payload, platform=platform)
-                sent += 1
-            except Exception:
-                errors += 1
+        db.commit()
     except Exception:
-        pass  # FCM es best-effort
+        db.rollback()
 
     return {"status": "ok", "sent": sent, "errors": errors}
 

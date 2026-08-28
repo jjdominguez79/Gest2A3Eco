@@ -404,3 +404,33 @@ class ClientFeatureFlagAudit(Base):
     changed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow,
     )
+
+
+# ==========================================================================
+# REGISTRO DE NOTIFICACIONES (idempotencia de email y FCM)
+# ==========================================================================
+
+class ClientInvoiceNotificationLog(Base):
+    """Registro idempotente de intentos de entrega de notificaciones."""
+    __tablename__ = "client_invoice_notification_log"
+    __table_args__ = (
+        UniqueConstraint(
+            "invoice_id", "notification_type", "recipient",
+            name="uq_notif_log",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    invoice_id: Mapped[str] = mapped_column(
+        ForeignKey("client_invoices.id", ondelete="CASCADE"), index=True,
+    )
+    notification_type: Mapped[str] = mapped_column(String(10))  # email | fcm
+    recipient: Mapped[str] = mapped_column(String(500), default="")
+    # pending | sending | sent | skipped | failed
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    detail: Mapped[str] = mapped_column(Text, default="")
+    attempt_count: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow,
+    )
