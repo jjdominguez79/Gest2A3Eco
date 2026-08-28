@@ -32,6 +32,9 @@ import '../core/deep_links/deep_link_controller.dart';
 final routerProvider = Provider<GoRouter>((ref) {
   final session = ref.watch(sessionProvider);
   final deepLinkRoute = routeForDeepLink(ref.watch(deepLinkProvider));
+  // Observar features para que el router se reconstruya cuando cambien
+  final featuresAsync = ref.watch(platformFeaturesProvider);
+
   return GoRouter(
     redirect: (context, state) {
       final loggedIn = session.valueOrNull != null;
@@ -68,19 +71,21 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (state.matchedLocation == '/groups' && profile?.isAdmin != true) {
         return '/';
       }
-      // Proteger rutas de documentos e invoicing directamente
+      // Proteger rutas de documentos e invoicing con observacion reactiva
       if (state.matchedLocation.startsWith('/documents') ||
           state.matchedLocation.startsWith('/invoicing')) {
-        final features = ref.read(platformFeaturesProvider);
-        final isDocuments = state.matchedLocation.startsWith('/documents');
-        final isInvoicing = state.matchedLocation.startsWith('/invoicing');
+        // Mientras cargan: mostrar splash
+        if (featuresAsync.isLoading) return '/splash';
+        // Si error: redirigir a inicio (conservador)
+        if (featuresAsync.hasError) return '/';
 
-        // Si los features aun cargan, dejar pasar (se evaluara de nuevo)
-        if (!features.hasValue) return null;
-
-        final feat = features.value!;
-        if (isDocuments && !feat.documents) return '/';
-        if (isInvoicing && !feat.invoicing) return '/';
+        final features = featuresAsync.value!;
+        if (state.matchedLocation.startsWith('/documents') && !features.documents) {
+          return '/';
+        }
+        if (state.matchedLocation.startsWith('/invoicing') && !features.invoicing) {
+          return '/';
+        }
       }
       return null;
     },
