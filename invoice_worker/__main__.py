@@ -218,6 +218,27 @@ def _dry_run(config: WorkerConfig) -> None:
         except Exception as exc:
             warnings_list.append(f"No se pudo verificar autenticacion: {exc}")
 
+    # 7. Azure (via endpoint de diagnostico del backend)
+    if config.api_token:
+        try:
+            import requests
+            base_storage = config.api_base_url.replace("/invoicing", "")
+            resp = requests.get(
+                f"{base_storage}/documents/internal/storage-health",
+                headers={"x-api-key": config.api_token},
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("ok"):
+                    print(f"[OK] Almacenamiento: {data.get('backend')} ({data.get('container', data.get('path', ''))})")
+                else:
+                    errors.append(f"Almacenamiento no disponible: {data.get('error', 'desconocido')}")
+            else:
+                warnings_list.append(f"Endpoint /storage-health respondio HTTP {resp.status_code}")
+        except Exception as exc:
+            warnings_list.append(f"No se pudo verificar almacenamiento Azure: {exc}")
+
     # Resumen
     print()
     if warnings_list:

@@ -42,15 +42,10 @@ class ClientDocumentStorage:
             except ResourceExistsError:
                 pass
         elif not allow_local_fallback:
-            # En produccion, Azure es obligatorio cuando los features estan activos
-            production_active = cfg.client_documents_enabled or cfg.client_invoicing_enabled
-            if production_active:
-                raise RuntimeError(
-                    "CLIENT_DOCUMENTS_AZURE_CONNECTION_STRING es obligatorio "
-                    "cuando CLIENT_DOCUMENTS_ENABLED o CLIENT_INVOICING_ENABLED "
-                    "son true. Para desarrollo/tests usa "
-                    "CLIENT_DOCUMENTS_ALLOW_LOCAL_STORAGE=true."
-                )
+            raise RuntimeError(
+                "CLIENT_DOCUMENTS_AZURE_CONNECTION_STRING es obligatorio. "
+                "Para desarrollo o tests, establece CLIENT_DOCUMENTS_ALLOW_LOCAL_STORAGE=true."
+            )
 
     def put(self, content: bytes, filename: str, *, organization_id: str = "") -> str:
         """Sube contenido y devuelve la clave del blob."""

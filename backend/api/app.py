@@ -302,6 +302,28 @@ def startup():
                         organization_id=org.id, kind=channel,
                     ))
         db.commit()
+    # Validar Azure cuando algun flag global de cliente esta activo
+    cfg = get_settings()
+    if cfg.client_documents_enabled or cfg.client_invoicing_enabled:
+        if not cfg.client_documents_azure_connection_string:
+            raise RuntimeError(
+                "CLIENT_DOCUMENTS_AZURE_CONNECTION_STRING es obligatorio "
+                "cuando CLIENT_DOCUMENTS_ENABLED o CLIENT_INVOICING_ENABLED son true. "
+                "Para desarrollo/tests usa CLIENT_DOCUMENTS_ALLOW_LOCAL_STORAGE=true "
+                "y desactiva los flags globales."
+            )
+        # Verificar que el contenedor es accesible
+        try:
+            from azure.storage.blob import BlobServiceClient
+            svc = BlobServiceClient.from_connection_string(cfg.client_documents_azure_connection_string)
+            container = svc.get_container_client(cfg.client_documents_azure_container)
+            container.get_container_properties()  # lanza si no existe o sin permisos
+        except Exception as exc:
+            raise RuntimeError(
+                f"Azure Blob no accesible (contenedor '{cfg.client_documents_azure_container}'): {exc}. "
+                "Verifica CLIENT_DOCUMENTS_AZURE_CONNECTION_STRING y los permisos del contenedor."
+            ) from exc
+
     try:
         cleanup_expired_attachments()
     except Exception:

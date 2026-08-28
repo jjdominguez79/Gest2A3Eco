@@ -106,6 +106,33 @@ def _doc_to_dict(doc: ClientDocument, is_read: bool = False) -> dict:
 # ===== ENDPOINTS INTERNOS (workstation / API key) =====
 
 
+@router.get("/internal/storage-health", dependencies=[Depends(require_workstation_or_internal)])
+def storage_health():
+    """Diagnostico no mutante del almacenamiento Azure. Para dry-run del worker."""
+    from backend.api.config import get_settings
+    cfg = get_settings()
+    if not cfg.client_documents_azure_connection_string:
+        if cfg.client_documents_allow_local_storage:
+            import os
+            local_dir = cfg.client_documents_storage_dir
+            return {"backend": "local", "ok": True, "path": local_dir}
+        return {"backend": "none", "ok": False, "error": "Sin conexion Azure configurada"}
+
+    try:
+        from azure.storage.blob import BlobServiceClient
+        svc = BlobServiceClient.from_connection_string(cfg.client_documents_azure_connection_string)
+        container = svc.get_container_client(cfg.client_documents_azure_container)
+        props = container.get_container_properties()
+        return {
+            "backend": "azure",
+            "ok": True,
+            "container": cfg.client_documents_azure_container,
+            "last_modified": str(props.get("last_modified", "")),
+        }
+    except Exception as exc:
+        return {"backend": "azure", "ok": False, "error": str(exc)}
+
+
 @router.post("/internal/publish")
 async def publish_document(
     file: UploadFile = File(...),
