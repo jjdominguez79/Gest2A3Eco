@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/auth/presentation/auth_controller.dart';
+import '../features/platform/features_provider.dart';
 import '../features/auth/presentation/accept_invite_screen.dart';
 import '../features/auth/presentation/forgot_password_screen.dart';
 import '../features/auth/presentation/login_screen.dart';
@@ -66,6 +67,20 @@ final routerProvider = Provider<GoRouter>((ref) {
       final profile = session.valueOrNull?.profile;
       if (state.matchedLocation == '/groups' && profile?.isAdmin != true) {
         return '/';
+      }
+      // Proteger rutas de documentos e invoicing directamente
+      if (state.matchedLocation.startsWith('/documents') ||
+          state.matchedLocation.startsWith('/invoicing')) {
+        final features = ref.read(platformFeaturesProvider);
+        final isDocuments = state.matchedLocation.startsWith('/documents');
+        final isInvoicing = state.matchedLocation.startsWith('/invoicing');
+
+        // Si los features aun cargan, dejar pasar (se evaluara de nuevo)
+        if (!features.hasValue) return null;
+
+        final feat = features.value!;
+        if (isDocuments && !feat.documents) return '/';
+        if (isInvoicing && !feat.invoicing) return '/';
       }
       return null;
     },
