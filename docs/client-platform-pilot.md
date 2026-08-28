@@ -22,8 +22,14 @@
 ### Puesto Windows (worker)
 - Windows 10/11 con Microsoft Word instalado (COM automation)
 - Python 3.12+ con dependencias del worker
-- Acceso de red al backend y a la base de datos local SQLite
+- Acceso de red al backend y a la base de datos PostgreSQL local
 - Plantilla Word en `plantillas_word/factura_emitida.docx`
+
+> **Importante:** Word COM y el Windows Credential Manager requieren el
+> perfil interactivo del usuario. La tarea programada debe ejecutarse con
+> el usuario logueado (opcion "Ejecutar solo cuando el usuario haya iniciado
+> sesion"). NO usar "Ejecutar independientemente de si el usuario ha iniciado
+> sesion" (S4U), ya que impide el acceso a COM y a las credenciales del usuario.
 
 ---
 
@@ -32,7 +38,7 @@
 ```
 Flutter app  -->  Backend API (Railway)  <--  Worker (Windows)
                        |                         |
-                  Azure Blob               Word COM + SQLite
+                  Azure Blob              Word COM + PostgreSQL
                   Graph Mail
                   Firebase FCM
 ```
@@ -74,20 +80,44 @@ Delega email y FCM al backend via endpoints REST.
 | Variable | Default | Descripcion |
 |----------|---------|-------------|
 | `CLIENT_DOCUMENTS_AZURE_CONTAINER` | `documentos-cliente` | Contenedor Azure |
-| `CLIENT_DOCUMENTS_STORAGE_DIR` | `./client_documents_storage` | Fallback local |
+| `CLIENT_DOCUMENTS_STORAGE_DIR` | `./client_documents_storage` | Solo para desarrollo/tests |
+| `CLIENT_DOCUMENTS_ALLOW_LOCAL_STORAGE` | `false` | Permite fallback a disco (solo desarrollo/tests) |
 | `MESSAGING_FIREBASE_CREDENTIALS` | - | Ruta a JSON Firebase |
 | `MESSAGING_FIREBASE_CREDENTIALS_JSON` | - | JSON Firebase inline |
 | `MESSAGING_SMTP_HOST` | - | Fallback SMTP si Graph no disponible |
 
+> **Produccion:** `CLIENT_DOCUMENTS_AZURE_CONNECTION_STRING` es obligatorio
+> cuando `CLIENT_DOCUMENTS_ENABLED` o `CLIENT_INVOICING_ENABLED` son `true`.
+> El backend arranca con error si falta Azure y el flag esta activo.
+
 ---
 
-## 4. Variables de entorno - Worker
+## 4. Configuracion del worker Windows
+
+### Secretos - Credential Manager (obligatorio en produccion)
+
+Los secretos del worker se almacenan SIEMPRE en Windows Credential Manager.
+Las variables de entorno solo se usan como fallback en desarrollo/tests.
+
+```powershell
+# Almacenar token API en Credential Manager
+# Nombre: Gest2A3Eco/WorkstationToken
+cmdkey /generic:"Gest2A3Eco/WorkstationToken" /user:"worker" /pass:"token-del-backend"
+
+# Almacenar credenciales PostgreSQL en Credential Manager
+# Nombre: Gest2A3Eco/PostgreSQL
+cmdkey /generic:"Gest2A3Eco/PostgreSQL" /user:"gest2a3eco" /pass:"contrasena-postgres"
+```
+
+**No usar variables de entorno persistentes en produccion** para los secretos.
+`INVOICE_WORKER_API_TOKEN` y `INVOICE_WORKER_DESKTOP_DSN` son exclusivamente
+para desarrollo y tests.
+
+### Variables de entorno del worker (no secretas)
 
 | Variable | Default | Descripcion |
 |----------|---------|-------------|
 | `INVOICE_WORKER_API_URL` | `https://tramites.gestinem.es/api/v1/messaging/client/invoicing` | Endpoint del backend |
-| `INVOICE_WORKER_API_TOKEN` | - | Token API (o Credential Manager) |
-| `INVOICE_WORKER_DESKTOP_DSN` | - | DSN PostgreSQL escritorio |
 | `INVOICE_WORKER_ID` | `worker-{pid}` | Identificador del worker |
 | `INVOICE_WORKER_LEASE_MINUTES` | `10` | Duracion del lease |
 | `INVOICE_WORKER_POLL_SECONDS` | `30` | Intervalo de sondeo |
@@ -95,45 +125,76 @@ Delega email y FCM al backend via endpoints REST.
 | `INVOICE_WORKER_TEMPLATE_DIR` | `./plantillas_word` | Directorio de plantillas |
 | `INVOICE_WORKER_PDF_DIR` | `./pdfs_generados` | Directorio de salida PDF |
 | `INVOICE_WORKER_LOG_DIR` | `./logs` | Directorio de logs |
-| `INVOICE_WORKER_GRAPH_SENDER` | `Oficina@gestinem.es` | Buzon remitente |
+| `INVOICE_WORKER_PG_HOST` | `localhost` | Host PostgreSQL |
+| `INVOICE_WORKER_PG_PORT` | `5432` | Puerto PostgreSQL |
+| `INVOICE_WORKER_PG_DB` | `gest2a3eco` | Base de datos PostgreSQL |
 
 ---
 
-## 5. Procedimiento de activacion
+## 5. Migraciones de base de datos
 
-### Paso 1: Verificar backend
+Las migraciones se aplican en orden. El backend las aplica automaticamente
+al arrancar si estan configuradas, o se pueden aplicar manualmente:
+
+| Migracion | Descripcion |
+|-----------|-------------|
+| 008_client_platform_foundation.sql | Tablas base de la plataforma cliente |
+| 009_client_documents.sql | Documentos del cliente |
+| 010_client_invoicing.sql | Facturacion online |
+| 011_messaging_notification_targets.sql | Destinos de notificacion |
+| 012_feature_flag_audit.sql | Auditoria de feature flags |
+| 013_notification_log.sql | Registro idempotente de notificaciones (email/FCM) |
 
 ```bash
-# Comprobar que el backend responde
-curl -s https://BACKEND_URL/api/v1/messaging/public/app-version?platform=windows
+# Aplicar manualmente si es necesario
+psql $DATABASE_URL < backend/migrations/013_notification_log.sql
+```
 
-# Comprobar conexion a Azure Blob
+---
+
+## 6. Procedimiento de activacion
+
+### Paso 1: Verificar backend (diagnostico, no mutante)
+
+```bash
+# Comprobar que el backend responde (no mutante)
+curl -s https://BACKEND_URL/health
+
+# Comprobar autenticacion (GET es no mutante; 404 esperado, 401/403 indica problema)
 curl -s -H "X-API-Key: $API_KEY" \
-  https://BACKEND_URL/api/v1/messaging/client/invoicing/worker/claim \
-  -d '{"worker_id":"health-check"}'
+  https://BACKEND_URL/api/v1/messaging/client/invoicing/worker/invoice/test/status
 ```
 
 ### Paso 2: Configurar credenciales del worker (Windows)
 
 ```powershell
-# Opcion A: Variables de entorno
-$env:INVOICE_WORKER_API_TOKEN = "token-del-backend"
-$env:INVOICE_WORKER_DESKTOP_DSN = "postgresql://user:pass@localhost/gest2a3eco"
-
-# Opcion B: Credential Manager (recomendado)
-# El worker lee automaticamente de Windows Credential Manager:
-#   - Gest2A3Eco_InvoiceWorkerApiToken
-#   - Gest2A3Eco_InvoiceWorkerDesktopDSN
+# Almacenar en Credential Manager (obligatorio en produccion)
+cmdkey /generic:"Gest2A3Eco/WorkstationToken" /user:"worker" /pass:"TOKEN"
+cmdkey /generic:"Gest2A3Eco/PostgreSQL" /user:"gest2a3eco" /pass:"PASS"
 ```
 
-### Paso 3: Instalar y probar worker
+### Paso 3: Instalar y verificar worker
 
 ```powershell
 cd invoice_worker
 pip install -r requirements.txt
-python -m invoice_worker --dry-run   # verificar configuracion sin procesar
-python -m invoice_worker             # ejecutar
+
+# Verificar configuracion sin procesar ninguna factura (no mutante)
+python -m invoice_worker --dry-run
+
+# Si el dry-run es exitoso, ejecutar el worker
+python -m invoice_worker
 ```
+
+El dry-run comprueba (sin modificar datos):
+1. Token API (Credential Manager: `Gest2A3Eco/WorkstationToken`)
+2. DSN PostgreSQL + conexion real (Credential Manager: `Gest2A3Eco/PostgreSQL`)
+3. Microsoft Word COM disponible
+4. Plantilla `.docx` en el directorio configurado
+5. Conectividad al backend (`/health`)
+6. Autenticacion con el backend (GET `/status` con ID ficticio)
+
+Sale con codigo 0 si todo OK, 1 si hay errores criticos.
 
 ### Paso 4: Activar flags por organizacion
 
@@ -164,7 +225,7 @@ curl -X PATCH \
 
 ---
 
-## 6. Verificacion post-activacion
+## 7. Verificacion post-activacion
 
 | Comprobacion | Comando / accion |
 |-------------|------------------|
@@ -175,10 +236,11 @@ curl -X PATCH \
 | Auditoria de flags | `SELECT * FROM client_feature_flag_audit ORDER BY changed_at DESC;` |
 | Estado factura | `SELECT id, status FROM client_invoices WHERE organization_id = '...' ORDER BY created_at DESC;` |
 | Cola de procesamiento | `SELECT * FROM client_invoice_processing_queue WHERE queue_status != 'completed';` |
+| Log de notificaciones | `SELECT * FROM client_invoice_notification_log ORDER BY created_at DESC;` |
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 ### Factura atascada en `issued_pending_processing`
 
@@ -194,20 +256,37 @@ curl -X PATCH \
 
 ### Worker no arranca
 
-- Verificar que Word esta instalado: `python -c "import win32com.client; w=win32com.client.Dispatch('Word.Application'); w.Quit()"`
-- Verificar credenciales: `python -c "from utils.credential_store import get_all; print(get_all())"`
-- Verificar conectividad: `curl https://BACKEND_URL/api/v1/messaging/public/app-version`
+- Ejecutar dry-run para diagnostico: `python -m invoice_worker --dry-run`
+- Verificar que Word esta instalado: `python -c "import comtypes.client; w=comtypes.client.CreateObject('Word.Application'); w.Quit()"`
+- Verificar credenciales en Credential Manager: `cmdkey /list | findstr Gest2A3Eco`
+- Verificar conectividad: `curl https://BACKEND_URL/health`
+- Si el worker se ejecuta como tarea programada, asegurarse de que esta
+  configurada para ejecutarse "solo cuando el usuario haya iniciado sesion"
+  (no con S4U). Word COM y Credential Manager requieren perfil interactivo.
 
 ### Email no enviado (status `rendered` pero no `emailed`)
 
-1. Verificar `MESSAGING_GRAPH_FROM` configurado
+1. Verificar `MESSAGING_GRAPH_FROM` configurado en Railway
 2. Verificar permisos Graph (`Mail.Send` application permission)
 3. Revisar logs del backend para errores 502 en `/send-email`
-4. Si no hay destinatario, se marca `emailed` con razon `sin_destinatario` (correcto)
+4. Revisar `client_invoice_notification_log` para ver el historial de intentos
+5. Si no hay destinatario, se genera evento `email_skipped` y el status
+   de la factura permanece en `rendered` (correcto, no es un error)
+
+### Token FCM invalido
+
+El backend desactiva automaticamente el dispositivo cuando FCM devuelve un
+fallo permanente. Verificar en `msg_app_devices`:
+```sql
+SELECT push_token, platform, active, updated_at
+FROM msg_app_devices
+WHERE user_type = 'client' AND active = false
+ORDER BY updated_at DESC;
+```
 
 ### Features no visibles en la app
 
-1. Verificar flag global: `echo $CLIENT_DOCUMENTS_ENABLED` (debe ser `true`)
+1. Verificar flag global: en Railway, `CLIENT_DOCUMENTS_ENABLED` debe ser `true`
 2. Verificar flag de org:
    ```sql
    SELECT company_code, client_documents_enabled, client_invoicing_enabled
@@ -218,7 +297,7 @@ curl -X PATCH \
 
 ---
 
-## 8. Rollback
+## 9. Rollback
 
 ### Desactivar sin perder datos
 
