@@ -61,35 +61,39 @@ class WorkerConfig:
 
     @staticmethod
     def from_credential_store() -> WorkerConfig:
-        """Carga la configuracion no secreta del entorno y los secretos
-        de Windows Credential Manager."""
+        """Carga config no secreta del entorno. Los secretos vienen SIEMPRE
+        de Windows Credential Manager (Gest2A3Eco/WorkstationToken y
+        Gest2A3Eco/PostgreSQL). Las variables INVOICE_WORKER_API_TOKEN y
+        INVOICE_WORKER_DESKTOP_DSN solo se usan como fallback en desarrollo."""
         base = WorkerConfig.from_env()
 
-        api_token = base.api_token
-        desktop_dsn = base.desktop_dsn
+        # Intentar Credential Manager primero (tiene prioridad en produccion)
+        api_token = ""
+        try:
+            from utils.credential_store import get_workstation_token
+            api_token = get_workstation_token() or ""
+        except Exception:
+            pass
 
+        # Fallback a variable de entorno SOLO si no hay token en Credential Manager
         if not api_token:
-            try:
-                from utils.credential_store import get_workstation_token
-                api_token = get_workstation_token() or ""
-            except Exception:
-                pass
+            api_token = base.api_token  # puede ser "" si no esta definida
 
+        desktop_dsn = ""
+        try:
+            from utils.credential_store import build_dsn_from_store
+            host = os.getenv("INVOICE_WORKER_PG_HOST", "localhost")
+            port = os.getenv("INVOICE_WORKER_PG_PORT", "5432")
+            database = os.getenv("INVOICE_WORKER_PG_DB", "gest2a3eco")
+            user_hint = os.getenv("INVOICE_WORKER_PG_USER", "")
+            dsn = build_dsn_from_store(host, port, database, user_hint)
+            desktop_dsn = dsn or ""
+        except Exception:
+            pass
+
+        # Fallback a variable de entorno SOLO si no hay DSN en Credential Manager
         if not desktop_dsn:
-            try:
-                from utils.credential_store import (
-                    build_dsn_from_store,
-                    get_postgres_credentials,
-                )
-                creds = get_postgres_credentials()
-                if creds:
-                    host = os.getenv("INVOICE_WORKER_PG_HOST", "localhost")
-                    port = os.getenv("INVOICE_WORKER_PG_PORT", "5432")
-                    database = os.getenv("INVOICE_WORKER_PG_DB", "gest2a3eco")
-                    dsn = build_dsn_from_store(host, port, database, creds[0])
-                    desktop_dsn = dsn or ""
-            except Exception:
-                pass
+            desktop_dsn = base.desktop_dsn  # puede ser "" si no esta definida
 
         return WorkerConfig(
             api_base_url=base.api_base_url,
