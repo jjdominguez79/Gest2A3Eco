@@ -61,13 +61,21 @@ class WorkerConfig:
 
     @staticmethod
     def from_credential_store() -> WorkerConfig:
-        """Carga config no secreta del entorno. Los secretos vienen SIEMPRE
-        de Windows Credential Manager (Gest2A3Eco/WorkstationToken y
-        Gest2A3Eco/PostgreSQL). Las variables INVOICE_WORKER_API_TOKEN y
-        INVOICE_WORKER_DESKTOP_DSN solo se usan como fallback en desarrollo."""
-        base = WorkerConfig.from_env()
+        """Carga configuracion. Los secretos vienen del Credential Manager por defecto.
 
-        # Intentar Credential Manager primero (tiene prioridad en produccion)
+        En produccion, los secretos DEBEN estar en Windows Credential Manager:
+        - Token API: Gest2A3Eco/WorkstationToken
+        - PostgreSQL: Gest2A3Eco/PostgreSQL
+
+        Para tests o desarrollo, define INVOICE_WORKER_ALLOW_ENV_SECRETS=true
+        para permitir secretos via variables de entorno como fallback.
+        """
+        base = WorkerConfig.from_env()
+        allow_env_secrets = os.getenv(
+            "INVOICE_WORKER_ALLOW_ENV_SECRETS", "false"
+        ).strip().lower() in {"1", "true", "yes", "si"}
+
+        # Intentar Credential Manager (prioridad absoluta)
         api_token = ""
         try:
             from utils.credential_store import get_workstation_token
@@ -75,9 +83,9 @@ class WorkerConfig:
         except Exception:
             pass
 
-        # Fallback a variable de entorno SOLO si no hay token en Credential Manager
-        if not api_token:
-            api_token = base.api_token  # puede ser "" si no esta definida
+        # Solo usar env si Credential Manager no tiene valor Y esta permitido
+        if not api_token and allow_env_secrets:
+            api_token = base.api_token  # base.api_token viene de INVOICE_WORKER_API_TOKEN
 
         desktop_dsn = ""
         try:
@@ -91,9 +99,9 @@ class WorkerConfig:
         except Exception:
             pass
 
-        # Fallback a variable de entorno SOLO si no hay DSN en Credential Manager
-        if not desktop_dsn:
-            desktop_dsn = base.desktop_dsn  # puede ser "" si no esta definida
+        # Solo usar env si Credential Manager no tiene valor Y esta permitido
+        if not desktop_dsn and allow_env_secrets:
+            desktop_dsn = base.desktop_dsn  # viene de INVOICE_WORKER_DESKTOP_DSN
 
         return WorkerConfig(
             api_base_url=base.api_base_url,

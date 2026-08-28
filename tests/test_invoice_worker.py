@@ -16,6 +16,8 @@ import responses
 
 os.environ.setdefault("INVOICE_WORKER_API_TOKEN", "test-token")
 os.environ.setdefault("INVOICE_WORKER_DESKTOP_DSN", "")
+# Permitir secretos via entorno en tests (sin Credential Manager real)
+os.environ.setdefault("INVOICE_WORKER_ALLOW_ENV_SECRETS", "true")
 
 from invoice_worker.config import WorkerConfig
 from invoice_worker.worker import InvoiceWorker
