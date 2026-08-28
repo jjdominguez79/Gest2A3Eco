@@ -1010,49 +1010,36 @@ def worker_send_email(
         f"Un saludo,\n{org_name}"
     )
 
-    # Enviar via Graph
-    try:
-        from backend.api.config import get_settings
-        settings = get_settings()
-        sender_mailbox = (
-            payload.get("sender_mailbox", "") or settings.messaging_graph_from
+    # Enviar via messaging_mail (backend)
+    from backend.api.config import get_settings
+    from backend.api.messaging_mail import send_mail
+    settings = get_settings()
+    sender_mailbox = settings.messaging_graph_from
+    if not sender_mailbox:
+        raise HTTPException(
+            status_code=500, detail="Buzon remitente no configurado en backend",
         )
-        if not sender_mailbox:
-            raise HTTPException(
-                status_code=500, detail="Buzon remitente no configurado",
-            )
 
-        from services.graph_mail_service import GraphMailService
-        import tempfile
-        import os
-
-        # Escribir PDF temporal para Graph
-        tmp_dir = tempfile.mkdtemp()
-        tmp_pdf = os.path.join(tmp_dir, f"{display}.pdf")
-        with open(tmp_pdf, "wb") as f:
-            f.write(pdf_content)
-
-        try:
-            mail_service = GraphMailService()
-            result = mail_service.send(
-                sender=sender_mailbox,
-                to=[recipient],
-                subject=subject,
-                body=body_text,
-                attachments=[tmp_pdf],
-            )
-            message_id = getattr(result, "internet_message_id", "") or ""
-        finally:
-            try:
-                os.unlink(tmp_pdf)
-                os.rmdir(tmp_dir)
-            except OSError:
-                pass
-
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Error enviando email: {exc}")
+    html_body = (
+        f"<p>Estimado cliente,</p>"
+        f"<p>Adjuntamos la factura {display}.</p>"
+        f"<p>Un saludo,<br>{org_name}</p>"
+    )
+    sent_ok = send_mail(
+        recipient,
+        subject,
+        html_body,
+        sender=sender_mailbox,
+        attachments=[{
+            "name": f"{display}.pdf",
+            "content": pdf_content,
+            "content_type": "application/pdf",
+        }],
+        text=body_text,
+    )
+    if not sent_ok:
+        raise HTTPException(status_code=502, detail="Error enviando email via Graph")
+    message_id = ""  # messaging_mail no expone message_id
 
     # Marcar como emailed
     old_status = inv.status
