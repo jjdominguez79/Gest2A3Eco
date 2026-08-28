@@ -21,23 +21,36 @@ def _safe_name(value: str) -> str:
 class ClientDocumentStorage:
     """Blob privado permanente para documentos del area del cliente."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, allow_local_fallback: bool | None = None) -> None:
         cfg = get_settings()
         self._conn_str = cfg.client_documents_azure_connection_string
         self._container_name = cfg.client_documents_azure_container
         self._local_dir = cfg.client_documents_storage_dir
         self._container = None
 
+        # allow_local_fallback: None -> tomar del config; True/False -> forzar
+        if allow_local_fallback is None:
+            allow_local_fallback = cfg.client_documents_allow_local_storage
+
         if self._conn_str:
             from azure.core.exceptions import ResourceExistsError
             from azure.storage.blob import BlobServiceClient
-
             service = BlobServiceClient.from_connection_string(self._conn_str)
             self._container = service.get_container_client(self._container_name)
             try:
                 self._container.create_container()
             except ResourceExistsError:
                 pass
+        elif not allow_local_fallback:
+            # En produccion, Azure es obligatorio cuando los features estan activos
+            production_active = cfg.client_documents_enabled or cfg.client_invoicing_enabled
+            if production_active:
+                raise RuntimeError(
+                    "CLIENT_DOCUMENTS_AZURE_CONNECTION_STRING es obligatorio "
+                    "cuando CLIENT_DOCUMENTS_ENABLED o CLIENT_INVOICING_ENABLED "
+                    "son true. Para desarrollo/tests usa "
+                    "CLIENT_DOCUMENTS_ALLOW_LOCAL_STORAGE=true."
+                )
 
     def put(self, content: bytes, filename: str, *, organization_id: str = "") -> str:
         """Sube contenido y devuelve la clave del blob."""

@@ -64,6 +64,8 @@ class Settings:
     client_documents_enabled: bool
     # Facturacion online
     client_invoicing_enabled: bool
+    # Permitir almacenamiento local como fallback (solo para tests/desarrollo)
+    client_documents_allow_local_storage: bool
 
 
 def get_settings() -> Settings:
@@ -162,5 +164,8 @@ def get_settings() -> Settings:
         ).strip().lower() in {"1", "true", "yes", "si"},
         client_invoicing_enabled=os.getenv(
             "CLIENT_INVOICING_ENABLED", "false",
+        ).strip().lower() in {"1", "true", "yes", "si"},
+        client_documents_allow_local_storage=os.getenv(
+            "CLIENT_DOCUMENTS_ALLOW_LOCAL_STORAGE", "false",
         ).strip().lower() in {"1", "true", "yes", "si"},
     )
