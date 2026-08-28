@@ -289,15 +289,52 @@ def _primary_admin(db: Session) -> MessagingStaff | None:
 def _is_same_person(a: MessagingStaff, b: MessagingStaff) -> bool:
     """Detect whether two MessagingStaff records represent the same person.
 
-    Compares by external_id first; falls back to email so that legacy records
-    created with numeric IDs (e.g. ``"1"``) are recognised as duplicates of
-    the newer UUID-based record for the same user.
+    Compares the persisted identity keys (external_id and Entra OID) in both
+    directions, then falls back to a normalized corporate email. Unlinked
+    legacy records are handled as historical-only by
+    ``_has_operational_staff_identity`` because they carry no stable identity
+    with which to compare them safely.
     """
-    if a.external_id == b.external_id:
+    identifiers_a = {
+        value.strip().lower()
+        for value in (a.external_id, a.entra_oid)
+        if value and value.strip()
+    }
+    identifiers_b = {
+        value.strip().lower()
+        for value in (b.external_id, b.entra_oid)
+        if value and value.strip()
+    }
+    if identifiers_a & identifiers_b:
         return True
-    if a.email and b.email and a.email.strip().lower() == b.email.strip().lower():
+    email_a = a.email.strip().lower() if a.email else ""
+    email_b = b.email.strip().lower() if b.email else ""
+    if email_a and email_b and email_a == email_b:
         return True
     return False
+
+
+def _has_operational_staff_identity(staff: MessagingStaff) -> bool:
+    """Return whether a staff record belongs in current operational lists.
+
+    Old desktop synchronization records used local numeric identifiers and did
+    not carry either a corporate email or an Entra identity.  They remain valid
+    historical references, but cannot safely identify a selectable person.
+    """
+    return bool(
+        (staff.email and staff.email.strip())
+        or (staff.entra_oid and staff.entra_oid.strip())
+    )
+
+
+def _is_available_staff_counterpart(
+    current: MessagingStaff, candidate: MessagingStaff,
+) -> bool:
+    return bool(
+        candidate.active
+        and _has_operational_staff_identity(candidate)
+        and not _is_same_person(current, candidate)
+    )
 
 
 def _get_or_create_staff_direct_thread(
@@ -327,6 +364,8 @@ def _ensure_employee_admin_direct_thread(
             MessagingStaff.external_id != staff.external_id,
         )).all()
         for member in members:
+            if not _is_available_staff_counterpart(staff, member):
+                continue
             _get_or_create_staff_direct_thread(db, staff, member)
         return None
     admin = _primary_admin(db)
@@ -1428,6 +1467,7 @@ def _serialize_staff_thread(
             if counterpart and counterpart.avatar_storage_key else ""
         ),
         "counterpart_online": _staff_online(db, counterpart.external_id) if counterpart else False,
+        "counterpart_active": bool(counterpart and counterpart.active),
         "unread_count": _staff_thread_unread(db, thread, staff),
         "updated_at": thread.updated_at.isoformat(),
         "last_message": _serialize_staff_thread_message(db, last) if last else None,
@@ -1438,6 +1478,13 @@ def _serialize_staff_thread(
 def list_staff_threads(
     staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
 ):
+    """Return accessible groups and the current operational staff directory.
+
+    Direct threads are the existing, minimally disruptive representation used
+    by Flutter for selectable employees. Historical direct threads remain in
+    the database but are omitted when their counterpart is inactive, unlinked,
+    or represents the authenticated person.
+    """
     _ensure_staff_group_threads(db)
     _ensure_employee_admin_direct_thread(db, staff)
     rows = db.scalars(select(MessagingStaffThread).order_by(
@@ -1448,9 +1495,11 @@ def list_staff_threads(
         if not _can_access_staff_thread(db, row, staff):
             continue
         if row.kind == "direct":
-            admin_rec = db.get(MessagingStaff, row.admin_staff_external_id)
-            member_rec = db.get(MessagingStaff, row.member_staff_external_id)
-            if admin_rec and member_rec and _is_same_person(admin_rec, member_rec):
+            counterpart = _staff_thread_counterpart(db, row, staff)
+            if (
+                not counterpart
+                or not _is_available_staff_counterpart(staff, counterpart)
+            ):
                 continue
         result.append(_serialize_staff_thread(db, row, staff))
     return result
@@ -1462,7 +1511,10 @@ def create_staff_direct_thread(
     db: Session = Depends(get_db),
 ):
     member = db.get(MessagingStaff, member_external_id)
-    if not member or not member.active or member.external_id == admin.external_id:
+    if (
+        not member
+        or not _is_available_staff_counterpart(admin, member)
+    ):
         raise HTTPException(404, "Empleado no disponible")
     thread = _get_or_create_staff_direct_thread(db, admin, member)
     return _serialize_staff_thread(db, thread, admin)

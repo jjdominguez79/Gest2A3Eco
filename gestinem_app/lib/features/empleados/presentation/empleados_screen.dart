@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../auth/presentation/auth_controller.dart';
+import '../../messaging/presentation/messaging_providers.dart';
 import '../data/empleados_repository.dart';
 import '../domain/empleado_despacho.dart';
 
@@ -188,7 +189,10 @@ class EmpleadosScreen extends ConsumerWidget {
     nombre.dispose();
     email.dispose();
     alias.dispose();
-    if (guardado == true) ref.invalidate(empleadosProvider);
+    if (guardado == true) {
+      ref.invalidate(empleadosProvider);
+      ref.invalidate(internalThreadsProvider);
+    }
   }
 
   Future<void> _subirAvatar(

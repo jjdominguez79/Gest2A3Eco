@@ -521,6 +521,15 @@ void main() {
         unreadCount: 0,
         counterpartId: 'admin-3',
       ),
+      InternalThread(
+        id: 'direct-inactive',
+        kind: 'direct',
+        channel: '',
+        title: 'Empleado inactivo',
+        unreadCount: 0,
+        counterpartId: 'employee-4',
+        counterpartActive: false,
+      ),
     ];
 
     await tester.pumpWidget(
@@ -559,6 +568,10 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Roberto'), findsOneWidget);
+    expect(
+      find.byKey(const Key('internal-thread-direct-inactive')),
+      findsNothing,
+    );
   });
 
   testWidgets('exclusion del usuario actual es case-insensitive', (

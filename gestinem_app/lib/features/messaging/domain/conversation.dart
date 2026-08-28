@@ -176,6 +176,7 @@ class InternalThread {
     this.updatedAt,
     this.counterpartAvatarUrl = '',
     this.counterpartId = '',
+    this.counterpartActive = true,
     this.counterpartOnline = false,
     this.lastMessage,
   });
@@ -189,6 +190,7 @@ class InternalThread {
     updatedAt: DateTime.parse(json['updated_at'] as String).toLocal(),
     counterpartAvatarUrl: json['counterpart_avatar_url'] as String? ?? '',
     counterpartId: json['counterpart_id'] as String? ?? '',
+    counterpartActive: json['counterpart_active'] as bool? ?? true,
     counterpartOnline: json['counterpart_online'] as bool? ?? false,
     lastMessage: json['last_message'] is Map<String, dynamic>
         ? Message.fromJson(json['last_message'] as Map<String, dynamic>)
@@ -203,6 +205,7 @@ class InternalThread {
   final DateTime? updatedAt;
   final String counterpartAvatarUrl;
   final String counterpartId;
+  final bool counterpartActive;
   final bool counterpartOnline;
   final Message? lastMessage;
 }

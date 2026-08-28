@@ -680,6 +680,93 @@ class TestStaffAccessAndInternalNotifications:
         )
         assert result is None
 
+    def test_operational_staff_visibility_rule(self, db_session):
+        """Only active, identified staff other than the current person qualify."""
+        from backend.api import messaging_api
+        from backend.api.messaging_models import MessagingStaff
+
+        suffix = uuid.uuid4().hex[:8]
+        current = MessagingStaff(
+            external_id=str(uuid.uuid4()), name="Admin actual",
+            email=f"current-{suffix}@gestinem.es", entra_oid=str(uuid.uuid4()),
+            role="admin", active=True,
+        )
+        active_employee = MessagingStaff(
+            external_id=str(uuid.uuid4()), name="Empleada activa",
+            email=f"employee-{suffix}@gestinem.es", role="empleado", active=True,
+        )
+        active_admin = MessagingStaff(
+            external_id=str(uuid.uuid4()), name="Otro admin",
+            email=f"admin-{suffix}@gestinem.es", role="admin", active=True,
+        )
+        inactive = MessagingStaff(
+            external_id=str(uuid.uuid4()), name="Empleado inactivo",
+            email=f"inactive-{suffix}@gestinem.es", role="empleado", active=False,
+        )
+        same_email_legacy = MessagingStaff(
+            external_id=f"legacy-email-{suffix}", name="Admin anterior",
+            email=current.email.upper(), role="admin", active=True,
+        )
+        unlinked_legacy = MessagingStaff(
+            external_id=f"legacy-{suffix}", name="Registro historico",
+            email="", entra_oid="", role="empleado", active=True,
+        )
+        db_session.add_all([
+            current, active_employee, active_admin, inactive,
+            same_email_legacy, unlinked_legacy,
+        ])
+        db_session.flush()
+
+        assert not messaging_api._is_available_staff_counterpart(current, current)
+        assert messaging_api._is_available_staff_counterpart(current, active_employee)
+        assert messaging_api._is_available_staff_counterpart(current, active_admin)
+        assert not messaging_api._is_available_staff_counterpart(current, inactive)
+        assert not messaging_api._is_available_staff_counterpart(
+            current, same_email_legacy,
+        )
+        assert not messaging_api._is_available_staff_counterpart(
+            current, unlinked_legacy,
+        )
+
+    def test_inactive_staff_thread_hidden_without_deleting_history(self, db_session):
+        from backend.api import messaging_api
+        from backend.api.messaging_models import (
+            MessagingStaff, MessagingStaffThread, MessagingStaffThreadMessage,
+        )
+
+        suffix = uuid.uuid4().hex[:8]
+        current = MessagingStaff(
+            external_id=str(uuid.uuid4()), name="Admin",
+            email=f"admin-history-{suffix}@gestinem.es", role="admin", active=True,
+        )
+        inactive = MessagingStaff(
+            external_id=str(uuid.uuid4()), name="Inactivo",
+            email=f"inactive-history-{suffix}@gestinem.es",
+            role="empleado", active=False,
+        )
+        db_session.add_all([current, inactive])
+        db_session.flush()
+        thread = MessagingStaffThread(
+            key=f"direct:{current.external_id}:{inactive.external_id}",
+            kind="direct", admin_staff_external_id=current.external_id,
+            member_staff_external_id=inactive.external_id,
+        )
+        db_session.add(thread)
+        db_session.flush()
+        message = MessagingStaffThreadMessage(
+            thread_id=thread.id, author_staff_external_id=current.external_id,
+            author_name=current.name, body="Mensaje historico",
+            idempotency_key=f"history-{suffix}",
+        )
+        db_session.add(message)
+        db_session.flush()
+
+        result = messaging_api.list_staff_threads(staff=current, db=db_session)
+
+        assert thread.id not in {item["id"] for item in result}
+        assert db_session.get(MessagingStaffThread, thread.id) is thread
+        assert db_session.get(MessagingStaffThreadMessage, message.id) is message
+
     def test_counterpart_id_is_always_external_id(self, db_session):
         """counterpart_id in serialized thread must be a valid external_id,
         never an internal integer-like PK."""
@@ -720,14 +807,14 @@ class TestStaffAccessAndInternalNotifications:
         from backend.api import messaging_api
 
         suffix = uuid.uuid4().hex[:8]
-        email = f"legacy-{suffix}@gestinem.es"
         current = MessagingStaff(
             external_id=str(uuid.uuid4()), name="Admin",
-            email=email, role="admin", active=True,
+            email=f"current-{suffix}@gestinem.es", entra_oid=str(uuid.uuid4()),
+            role="admin", active=True,
         )
         legacy = MessagingStaff(
-            external_id=f"legacy-{suffix}", name="Admin",
-            email=email, role="admin", active=True,
+            external_id="1", name="Registro legacy de Admin",
+            email="", entra_oid="", role="admin", active=True,
         )
         other = MessagingStaff(
             external_id=str(uuid.uuid4()), name="Otro",
@@ -752,16 +839,14 @@ class TestStaffAccessAndInternalNotifications:
         db_session.add_all([self_thread, normal_thread])
         db_session.flush()
 
-        # Serialize and filter like list_staff_threads does
-        threads = []
-        for row in [self_thread, normal_thread]:
-            if row.kind == "direct":
-                admin_rec = db_session.get(MessagingStaff, row.admin_staff_external_id)
-                member_rec = db_session.get(MessagingStaff, row.member_staff_external_id)
-                if admin_rec and member_rec and messaging_api._is_same_person(admin_rec, member_rec):
-                    continue
-            threads.append(messaging_api._serialize_staff_thread(db_session, row, current))
+        threads = [
+            item for item in messaging_api.list_staff_threads(
+                staff=current, db=db_session,
+            )
+            if item["kind"] == "direct"
+        ]
 
-        # Only the normal thread should survive
-        assert len(threads) == 1
-        assert threads[0]["counterpart_id"] == other.external_id
+        counterpart_ids = {item["counterpart_id"] for item in threads}
+        assert legacy.external_id not in counterpart_ids
+        assert other.external_id in counterpart_ids
+        assert db_session.get(MessagingStaffThread, self_thread.id) is self_thread

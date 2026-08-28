@@ -190,7 +190,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
               icon: const Icon(Icons.people_alt_outlined),
             ),
           IconButton(
-            onPressed: () => ref.invalidate(conversationsProvider),
+            onPressed: _refreshMessaging,
             icon: const Icon(Icons.refresh),
           ),
           IconButton(
@@ -443,24 +443,16 @@ class _StaffInbox extends StatelessWidget {
             ..sort(_compareThreads);
       final directThreads =
           threadItems
-              .where((item) =>
-                  item.kind == 'direct' &&
-                  item.counterpartId.trim().toLowerCase() != normalizedUserId &&
-                  _matches(item.title))
+              .where(
+                (item) =>
+                    item.kind == 'direct' &&
+                    item.counterpartActive &&
+                    item.counterpartId.trim().toLowerCase() !=
+                        normalizedUserId &&
+                    _matches(item.title),
+              )
               .toList()
             ..sort(_compareThreads);
-      assert(() {
-        for (final t in threadItems.where((i) => i.kind == 'direct')) {
-          debugPrint(
-            '[Empleados] thread=${t.id} '
-            'counterpartId="${t.counterpartId}" '
-            'title="${t.title}" '
-            'currentUserId="$currentUserId" '
-            'match=${t.counterpartId.trim().toLowerCase() == normalizedUserId}',
-          );
-        }
-        return true;
-      }());
       final clients = conversations.where((item) {
         return _matches(item.companyCode) || _matches(item.companyName);
       }).toList()..sort(_compareConversations);

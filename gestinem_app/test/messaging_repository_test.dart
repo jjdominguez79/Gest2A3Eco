@@ -299,6 +299,31 @@ void main() {
     expect(form.files.where((field) => field.key == 'files'), hasLength(2));
   });
 
+  test('chat interno modela si la contraparte sigue activa', () async {
+    final adapter = JsonAdapter([
+      {
+        'id': 'thread-inactive',
+        'kind': 'direct',
+        'channel': '',
+        'title': 'Empleado inactivo',
+        'unread_count': 0,
+        'updated_at': '2026-08-28T10:00:00Z',
+        'counterpart_id': 'employee-inactive',
+        'counterpart_active': false,
+      },
+    ]);
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+    )..httpClientAdapter = adapter;
+
+    final threads = await MessagingRepository(
+      ApiClient(dio: dio, tokenProvider: () => 'token'),
+    ).internalThreads();
+
+    expect(adapter.lastRequest!.path, '/staff/internal/threads');
+    expect(threads.single.counterpartActive, isFalse);
+  });
+
   test('descarga interna usa endpoint protegido de staff', () async {
     final adapter = JsonAdapter(<String, dynamic>{});
     final dio = Dio(
