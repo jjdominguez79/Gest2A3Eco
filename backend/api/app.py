@@ -33,7 +33,6 @@ from backend.api.schemas import DocumentoGeneradoCreate, ExpedienteCreate, Exped
 from backend.api.security import (
     DESKTOP_ADMIN_SESSION_TTL,
     _extract_admin_bearer,
-    _scrypt_verify,
     hash_token,
     new_admin_session_token,
     new_workstation_token,
@@ -216,6 +215,10 @@ def startup():
             ),
             ("msg_conversations", "started_at"): (
                 "ALTER TABLE msg_conversations ADD COLUMN started_at TIMESTAMPTZ"
+            ),
+            ("msg_staff_app_codes", "purpose"): (
+                "ALTER TABLE msg_staff_app_codes "
+                "ADD COLUMN purpose VARCHAR(32) NOT NULL DEFAULT 'mobile'"
             ),
         }
         for column, ddl in column_migrations.items():
@@ -1198,51 +1201,93 @@ def _ws_to_dict(ws: Workstation) -> dict:
     }
 
 
-@app.post("/api/v1/desktop/auth/login")
-def desktop_admin_login(body: dict, db: Session = Depends(get_db)):
+@app.get("/api/v1/desktop/auth/login")
+def desktop_auth_login(port: int = Query(...), db: Session = Depends(get_db)):
     """
-    Autentica un administrador del escritorio y devuelve una sesion temporal.
+    Inicia autenticacion Microsoft Entra para administrador de escritorio.
 
-    Body JSON: {"username": "admin", "password": "..."}
-    Verifica contra la tabla 'usuarios' (compartida con el escritorio).
-    Solo permite acceso a usuarios con rol='admin' y activo=1.
+    El escritorio pasa el puerto de su servidor HTTP efimero en 127.0.0.1.
+    Se reutiliza la infraestructura MSAL de staff-auth del backend.
     """
-    username = str(body.get("username") or "").strip()
-    password = str(body.get("password") or "")
-    if not username or not password:
-        raise HTTPException(400, "Usuario y contrasena obligatorios")
+    if port < 1024 or port > 65535:
+        raise HTTPException(422, "Puerto fuera de rango valido (1024-65535)")
 
-    row = db.execute(
-        text("SELECT id, password_hash, rol, activo FROM usuarios WHERE LOWER(username) = LOWER(:u)"),
-        {"u": username},
-    ).mappings().first()
+    from backend.api.messaging_api import _staff_msal_app, _staff_redirect_uri
+    from backend.api.messaging_models import MessagingStaffAuthFlow
+    from backend.api.messaging_security import utcnow as _msg_utcnow, hash_token as _msg_hash, new_token as _msg_new_token
+    import json as _json
 
-    if not row:
-        raise HTTPException(401, "Credenciales incorrectas")
-    if not row["activo"]:
-        raise HTTPException(403, "Usuario inactivo")
-    if row["rol"] != "admin":
+    flow = _staff_msal_app().initiate_auth_code_flow(
+        scopes=["email"],
+        redirect_uri=_staff_redirect_uri(),
+        prompt="select_account",
+    )
+    state = str(flow.get("state") or "")
+    if not state or not flow.get("auth_uri"):
+        raise HTTPException(502, "Microsoft no pudo iniciar el acceso")
+
+    from datetime import timedelta
+    db.add(MessagingStaffAuthFlow(
+        state=state,
+        flow_json=_json.dumps({"msal": flow, "mobile": False, "desktop_port": port}),
+        expires_at=_msg_utcnow() + timedelta(minutes=10),
+    ))
+    db.commit()
+
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(str(flow["auth_uri"]), status_code=302)
+
+
+@app.post("/api/v1/desktop/auth/exchange")
+def desktop_auth_exchange(body: dict, db: Session = Depends(get_db)):
+    """
+    Intercambia un codigo temporal desktop_admin por una DesktopAdminSession.
+
+    Body JSON: {"code": "..."}
+    Solo acepta codigos con purpose=desktop_admin.
+    Verifica que el staff tiene role=admin.
+    """
+    code = str(body.get("code") or "").strip()
+    if not code:
+        raise HTTPException(400, "Codigo obligatorio")
+
+    from backend.api.messaging_models import MessagingStaffAppCode, MessagingStaff
+    from backend.api.messaging_security import hash_token as _msg_hash, is_expired, utcnow as _msg_utcnow
+
+    item = db.scalar(select(MessagingStaffAppCode).where(
+        MessagingStaffAppCode.code_hash == _msg_hash(code),
+    ))
+    if not item or item.used_at or is_expired(item.expires_at):
+        raise HTTPException(400, "Codigo de acceso no valido o caducado")
+    if getattr(item, "purpose", "mobile") != "desktop_admin":
+        raise HTTPException(400, "Codigo de acceso no valido o caducado")
+
+    staff = db.get(MessagingStaff, item.staff_external_id)
+    if not staff or not staff.active:
+        raise HTTPException(403, "Usuario del despacho no autorizado")
+    if staff.role != "admin":
         raise HTTPException(403, "Solo los administradores pueden gestionar puestos de trabajo")
-    if not _scrypt_verify(password, str(row["password_hash"])):
-        raise HTTPException(401, "Credenciales incorrectas")
+
+    item.used_at = _msg_utcnow()
 
     token = new_admin_session_token()
     now = utcnow()
     session = DesktopAdminSession(
         token_hash=hash_token(token),
-        username=username,
+        username=staff.email,
         created_at=now,
         expires_at=now + DESKTOP_ADMIN_SESSION_TTL,
     )
     db.add(session)
     db.commit()
 
-    _registrar_evento_workstation(db, "admin_login", username)
+    _registrar_evento_workstation(db, "admin_login", staff.email, {"method": "microsoft_entra"})
     db.commit()
 
     return {
         "session_token": token,
-        "username": username,
+        "username": staff.name,
+        "email": staff.email,
         "expires_at": session.expires_at.isoformat(),
     }
 

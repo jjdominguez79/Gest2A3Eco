@@ -384,6 +384,7 @@ class MessagingStaffAppCode(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     staff_external_id: Mapped[str] = mapped_column(ForeignKey("msg_staff.external_id", ondelete="CASCADE"), index=True)
     code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    purpose: Mapped[str] = mapped_column(String(32), default="mobile")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

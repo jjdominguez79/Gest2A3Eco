@@ -1167,10 +1167,35 @@ def staff_auth_callback(request: Request, db: Session = Depends(get_db)):
         if email in admin_emails:
             staff.role = "admin"
     db.add(staff)
+
+    # ── Flujo desktop admin (branch aislado) ────────────────────────────
+    desktop_port = int(stored_flow.get("desktop_port") or 0) if "msal" in stored_flow else 0
+    if desktop_port:
+        if staff.role != "admin":
+            from fastapi.responses import HTMLResponse as _HTML
+            return _HTML(
+                "<html><body><h2>Acceso denegado</h2>"
+                "<p>Solo los administradores pueden gestionar puestos de trabajo.</p>"
+                "</body></html>",
+                status_code=403,
+            )
+        code = new_token()
+        db.add(MessagingStaffAppCode(
+            staff_external_id=staff.external_id, code_hash=hash_token(code),
+            purpose="desktop_admin",
+            expires_at=utcnow() + timedelta(minutes=2),
+        ))
+        db.commit()
+        return RedirectResponse(
+            f"http://127.0.0.1:{desktop_port}/auth-callback?{urlencode({'code': code})}",
+            status_code=302,
+        )
+
     if mobile:
         code = new_token()
         db.add(MessagingStaffAppCode(
             staff_external_id=staff.external_id, code_hash=hash_token(code),
+            purpose="mobile",
             expires_at=utcnow() + timedelta(minutes=2),
         ))
         db.commit()
@@ -1202,6 +1227,8 @@ def staff_app_exchange(payload: StaffAppCodeIn, db: Session = Depends(get_db)):
         MessagingStaffAppCode.code_hash == hash_token(payload.code),
     ))
     if not item or item.used_at or is_expired(item.expires_at):
+        raise HTTPException(400, "Codigo de acceso no valido o caducado")
+    if getattr(item, "purpose", "mobile") != "mobile":
         raise HTTPException(400, "Codigo de acceso no valido o caducado")
     staff = db.get(MessagingStaff, item.staff_external_id)
     if not staff or not staff.active:

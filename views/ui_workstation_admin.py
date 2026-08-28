@@ -221,7 +221,7 @@ class WorkstationAdminDialog(tk.Toplevel):
             self._btn_activate.configure(state="disabled")
 
     def _ensure_admin_login(self) -> bool:
-        """Asegura que el admin esta autenticado en el backend."""
+        """Asegura que el admin esta autenticado en el backend via Microsoft."""
         if self._admin_logged_in:
             return True
 
@@ -234,28 +234,56 @@ class WorkstationAdminDialog(tk.Toplevel):
             )
             return False
 
-        dialog = _AdminLoginDialog(self, self._session.user.username)
-        self.wait_window(dialog)
-        if not dialog.result:
+        confirm = messagebox.askyesno(
+            "Gestinem Suite",
+            "Para administrar los puestos debes identificarte como administrador.\n\n"
+            "Se abrira el navegador para iniciar sesion con tu cuenta Microsoft corporativa.\n\n"
+            "Continuar?",
+            parent=self,
+        )
+        if not confirm:
             return False
 
-        try:
-            self._service.login(dialog.result["username"], dialog.result["password"])
-            self._admin_logged_in = True
-            return True
-        except Exception as exc:
-            detail = ""
+        self._info_label.configure(text="Esperando autenticacion Microsoft...")
+
+        result_holder = {}
+        error_holder = {}
+        done_event = threading.Event()
+
+        def _do_login():
             try:
-                import json
-                detail = json.loads(str(getattr(exc, "response", None) and exc.response.text or "{}")).get("detail", "")
-            except Exception:
-                detail = str(exc)
-            messagebox.showerror(
-                "Gestinem Suite",
-                f"Error de autenticacion:\n{detail}",
-                parent=self,
-            )
-            return False
+                data = self._service.login_microsoft()
+                result_holder["data"] = data
+            except Exception as exc:
+                detail = ""
+                try:
+                    import json as _json
+                    resp = getattr(exc, "response", None)
+                    if resp is not None:
+                        detail = _json.loads(resp.text).get("detail", "")
+                except Exception:
+                    pass
+                error_holder["detail"] = detail or str(exc)
+            finally:
+                done_event.set()
+                self.after(0, _on_login_done)
+
+        def _on_login_done():
+            if result_holder.get("data"):
+                self._admin_logged_in = True
+                name = result_holder["data"].get("username", "")
+                self._info_label.configure(text=f"Admin: {name}")
+            elif error_holder.get("detail"):
+                self._info_label.configure(text="")
+                messagebox.showerror(
+                    "Gestinem Suite",
+                    f"Error de autenticacion:\n{error_holder['detail']}",
+                    parent=self,
+                )
+
+        threading.Thread(target=_do_login, daemon=True).start()
+        done_event.wait(timeout=320)
+        return self._admin_logged_in
 
     def _on_activate_current(self):
         if not self._ensure_admin_login():
@@ -441,69 +469,3 @@ class WorkstationAdminDialog(tk.Toplevel):
         self._load_workstations()
 
 
-class _AdminLoginDialog(tk.Toplevel):
-    """Dialogo de login admin para autenticarse en el backend."""
-
-    def __init__(self, parent, default_username: str = ""):
-        super().__init__(parent)
-        self.title("Autenticacion de administrador")
-        self.geometry("380x200")
-        self.resizable(False, False)
-        self.transient(parent)
-        self.grab_set()
-        self.result: dict | None = None
-
-        self.configure(bg=COLOR_BG)
-
-        tk.Label(
-            self, text="Introduce tus credenciales de administrador",
-            bg=COLOR_BG, fg="#222222",
-            font=("Segoe UI", 10),
-        ).pack(pady=(16, 12))
-
-        form = tk.Frame(self, bg=COLOR_BG)
-        form.pack(padx=24)
-
-        tk.Label(form, text="Usuario:", bg=COLOR_BG, font=("Segoe UI", 10)).grid(
-            row=0, column=0, sticky="e", padx=(0, 8), pady=4,
-        )
-        self._username = ttk.Entry(form, width=28)
-        self._username.grid(row=0, column=1, pady=4)
-        self._username.insert(0, default_username)
-
-        tk.Label(form, text="Contrasena:", bg=COLOR_BG, font=("Segoe UI", 10)).grid(
-            row=1, column=0, sticky="e", padx=(0, 8), pady=4,
-        )
-        self._password = ttk.Entry(form, width=28, show="*")
-        self._password.grid(row=1, column=1, pady=4)
-
-        btn_frame = tk.Frame(self, bg=COLOR_BG)
-        btn_frame.pack(pady=(16, 0))
-
-        tk.Button(
-            btn_frame, text="Aceptar",
-            bg=COLOR_PRIMARY, fg=COLOR_WHITE,
-            font=("Segoe UI", 9, "bold"),
-            relief="flat", padx=16, pady=4, cursor="hand2",
-            command=self._on_ok,
-        ).pack(side="left", padx=(0, 8))
-
-        tk.Button(
-            btn_frame, text="Cancelar",
-            bg="#e0e0e0", fg="#333333",
-            font=("Segoe UI", 9),
-            relief="flat", padx=16, pady=4, cursor="hand2",
-            command=self.destroy,
-        ).pack(side="left")
-
-        self._password.bind("<Return>", lambda _: self._on_ok())
-        self._password.focus_set()
-
-    def _on_ok(self):
-        username = self._username.get().strip()
-        password = self._password.get()
-        if not username or not password:
-            messagebox.showwarning("Gestinem Suite", "Introduce usuario y contrasena.", parent=self)
-            return
-        self.result = {"username": username, "password": password}
-        self.destroy()

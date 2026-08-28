@@ -52,17 +52,26 @@ class WorkstationAdminService:
     def _admin_headers(self) -> dict:
         return {"Authorization": f"Bearer {self._session_token or ''}"}
 
-    # ── Autenticacion admin ──────────────────────────────────────────────
+    # ── Autenticacion admin (Microsoft Entra) ──────────────────────────
 
-    def login(self, username: str, password: str) -> dict:
+    def login_microsoft(self) -> dict:
         """
-        Autentica al administrador en el backend.
+        Autentica al administrador via Microsoft Entra.
+
+        Abre el navegador predeterminado, espera el callback OAuth,
+        intercambia el codigo por una sesion administrativa.
         Almacena el token de sesion internamente (solo en memoria).
-        Devuelve {"session_token": ..., "username": ..., "expires_at": ...}.
-        Lanza requests.HTTPError si falla.
+        Devuelve {"session_token": ..., "username": ..., "email": ..., "expires_at": ...}.
+        Lanza Exception si falla.
         """
-        url = f"{self.base_url}/api/v1/desktop/auth/login"
-        resp = self._http.post(url, json={"username": username, "password": password}, timeout=15)
+        from services.desktop_oauth import run_oauth_flow
+
+        result = run_oauth_flow(self.base_url)
+        if not result.success:
+            raise RuntimeError(result.error or "Autenticacion cancelada")
+
+        url = f"{self.base_url}/api/v1/desktop/auth/exchange"
+        resp = self._http.post(url, json={"code": result.code}, timeout=15)
         resp.raise_for_status()
         data = resp.json()
         self._session_token = data.get("session_token")
