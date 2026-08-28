@@ -1,7 +1,35 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
+from pathlib import Path
+
+
+FLUTTER_PUBSPEC_PATH = (
+    Path(__file__).resolve().parents[2] / "gestinem_app" / "pubspec.yaml"
+)
+_FLUTTER_VERSION_PATTERN = re.compile(
+    r"^\s*version:\s*([^\s+#]+)\+(\d+)\s*(?:#.*)?$",
+)
+
+
+def _flutter_release_version() -> tuple[str, int]:
+    try:
+        contents = FLUTTER_PUBSPEC_PATH.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(
+            f"No se puede leer la version Flutter en {FLUTTER_PUBSPEC_PATH}."
+        ) from exc
+
+    for line in contents.splitlines():
+        match = _FLUTTER_VERSION_PATTERN.match(line)
+        if match:
+            return match.group(1), max(1, int(match.group(2)))
+
+    raise RuntimeError(
+        f"La version Flutter de {FLUTTER_PUBSPEC_PATH} no tiene formato X.Y.Z+BUILD."
+    )
 
 
 @dataclass(frozen=True)
@@ -75,6 +103,8 @@ def get_settings() -> Settings:
             "DGT_DATABASE_URL es obligatorio y debe apuntar a PostgreSQL."
         )
 
+    flutter_version, flutter_build = _flutter_release_version()
+
     return Settings(
         database_url=database_url,
         internal_api_key=os.getenv("DGT_INTERNAL_API_KEY", ""),
@@ -136,10 +166,10 @@ def get_settings() -> Settings:
         messaging_app_web_url=os.getenv("MESSAGING_APP_WEB_URL", "https://app.gestinem.es").rstrip("/"),
         messaging_cors_origins=os.getenv("MESSAGING_CORS_ORIGINS", ""),
         messaging_latest_app_version=os.getenv(
-            "MESSAGING_LATEST_APP_VERSION", "0.1.3",
+            "MESSAGING_LATEST_APP_VERSION", flutter_version,
         ).strip(),
         messaging_latest_app_build=max(
-            1, int(os.getenv("MESSAGING_LATEST_APP_BUILD", "15")),
+            1, int(os.getenv("MESSAGING_LATEST_APP_BUILD", str(flutter_build))),
         ),
         messaging_minimum_app_build=max(
             1, int(os.getenv("MESSAGING_MINIMUM_APP_BUILD", "1")),
