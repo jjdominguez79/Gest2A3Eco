@@ -1,6 +1,6 @@
 {
-  "version": "1.8.5",
-  "tag": "v1.8.5",
-  "changelog": "Se modifica el codigo para que se coga automaticamente la fecha de publicación de la versión.",
+  "version": "1.8.6",
+  "tag": "v1.8.6",
+  "changelog": "Se añade la opcion de activar equipos desde la sesion del administrador.",
   "force_update": true
 }
