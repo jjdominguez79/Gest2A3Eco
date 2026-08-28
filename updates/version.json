@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.8.5",
-  "minimum_required_version": "1.8.5",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.5/Setup_Gest2A3Eco_1.8.5.exe",
-  "changelog": "Se modifica el codigo para que se coga automaticamente la fecha de publicaci�n de la versi�n.",
+  "latest_version": "1.8.6",
+  "minimum_required_version": "1.8.6",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.6/Setup_Gest2A3Eco_1.8.6.exe",
+  "changelog": "Se a�ade la opcion de activar equipos desde la sesion del administrador.",
   "force_update": true
 }
