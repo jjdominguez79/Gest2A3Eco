@@ -144,6 +144,9 @@ async def publish_document(
     if not org:
         raise HTTPException(status_code=404, detail="Organizacion no encontrada")
 
+    # Verificar que el area documental esta habilitada para esta organizacion
+    require_documents_enabled(db, organization_id)
+
     # Idempotencia: comprobar si ya existe
     existing = db.scalar(
         select(ClientDocument).where(
