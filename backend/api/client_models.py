@@ -426,10 +426,13 @@ class ClientInvoiceNotificationLog(Base):
     )
     notification_type: Mapped[str] = mapped_column(String(10))  # email | fcm
     recipient: Mapped[str] = mapped_column(String(500), default="")
-    # pending | sending | sent | skipped | failed
+    # pending | sending | sent | skipped | failed | unknown
     status: Mapped[str] = mapped_column(String(20), default="pending")
     detail: Mapped[str] = mapped_column(Text, default="")
     attempt_count: Mapped[int] = mapped_column(Integer, default=1)
+    # Ownership token written atomically during acquisition (hex-16)
+    claim_token: Mapped[str] = mapped_column(String(64), default="")
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow,

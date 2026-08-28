@@ -71,12 +71,27 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (state.matchedLocation == '/groups' && profile?.isAdmin != true) {
         return '/';
       }
-      // Proteger rutas de documentos e invoicing con observacion reactiva
+      // Resolver ruta pendiente almacenada en ?next= cuando features cargan.
+      if (state.matchedLocation == '/splash' &&
+          state.uri.queryParameters.containsKey('next')) {
+        final next = state.uri.queryParameters['next']!;
+        if (featuresAsync.isLoading) return null; // mantener splash
+        if (featuresAsync.hasError) return '/';
+        final features = featuresAsync.value!;
+        if (next.startsWith('/documents') && !features.documents) return '/';
+        if (next.startsWith('/invoicing') && !features.invoicing) return '/';
+        return next;
+      }
+
+      // Proteger rutas de documentos e invoicing con observacion reactiva.
       if (state.matchedLocation.startsWith('/documents') ||
           state.matchedLocation.startsWith('/invoicing')) {
-        // Mientras cargan: mostrar splash
-        if (featuresAsync.isLoading) return '/splash';
-        // Si error: redirigir a inicio (conservador)
+        // Mientras cargan: mostrar splash preservando la ruta destino.
+        if (featuresAsync.isLoading) {
+          final encoded = Uri.encodeComponent(state.matchedLocation);
+          return '/splash?next=$encoded';
+        }
+        // Si error: redirigir a inicio (conservador).
         if (featuresAsync.hasError) return '/';
 
         final features = featuresAsync.value!;

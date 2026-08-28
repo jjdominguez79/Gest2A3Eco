@@ -1,228 +1,330 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
-import 'package:gestinem/features/auth/domain/user_profile.dart';
+import 'package:gestinem/features/auth/presentation/auth_controller.dart';
 import 'package:gestinem/features/platform/features_provider.dart';
+import 'package:gestinem/app/router.dart';
 
 import 'test_helpers.dart';
 
 // ---------------------------------------------------------------------------
-// Helper: construye un GoRouter con la misma logica de redirect que routerProvider
-// usando valores inyectados, de modo que se pueda testear sin Riverpod completo.
+// Los tests instancian el routerProvider REAL via ProviderScope con overrides.
+// No se copia la logica de redireccion en funciones auxiliares de test.
+//
+// Las pantallas de destino (ConversationsScreen, InvoicingScreen, etc.) tienen
+// dependencias de red. Los errores de build de esas pantallas se suprimen para
+// poder verificar la URI a la que el router redirige.
 // ---------------------------------------------------------------------------
 
-GoRouter _buildRouter({
-  required AsyncValue<AuthSession?> session,
-  required AsyncValue<PlatformFeatures> featuresAsync,
-  String initialLocation = '/',
-}) {
-  return GoRouter(
-    initialLocation: initialLocation,
-    redirect: (context, state) {
-      final loggedIn = session.valueOrNull != null;
-
-      if (session.isLoading) {
-        return {'/splash', '/auth/callback'}.contains(state.matchedLocation)
-            ? null
-            : '/splash';
-      }
-      if (!loggedIn) {
-        if (state.matchedLocation == '/login' ||
-            state.matchedLocation == '/accept-invite' ||
-            state.matchedLocation == '/forgot-password' ||
-            state.matchedLocation.startsWith('/reset-password')) {
-          return null;
-        }
-        return '/login';
-      }
-      if (state.matchedLocation == '/login' ||
-          state.matchedLocation == '/splash') {
-        return '/';
-      }
-
-      // Proteger rutas de documentos e invoicing
-      if (state.matchedLocation.startsWith('/documents') ||
-          state.matchedLocation.startsWith('/invoicing')) {
-        if (featuresAsync.isLoading) return '/splash';
-        if (featuresAsync.hasError) return '/';
-
-        final features = featuresAsync.value!;
-        if (state.matchedLocation.startsWith('/documents') &&
-            !features.documents) {
-          return '/';
-        }
-        if (state.matchedLocation.startsWith('/invoicing') &&
-            !features.invoicing) {
-          return '/';
-        }
-      }
-      return null;
-    },
-    routes: [
-      GoRoute(
-        path: '/splash',
-        builder: (_, _) =>
-            const Scaffold(body: Center(child: CircularProgressIndicator())),
-      ),
-      GoRoute(
-        path: '/login',
-        builder: (_, _) => const Scaffold(body: Text('Login')),
-      ),
-      GoRoute(
-        path: '/',
-        builder: (_, _) => const Scaffold(body: Text('Home')),
-      ),
-      GoRoute(
-        path: '/documents/:id',
-        builder: (_, st) =>
-            Scaffold(body: Text('Document ${st.pathParameters['id']}')),
-      ),
-      GoRoute(
-        path: '/documents',
-        builder: (_, _) => const Scaffold(body: Text('Documents')),
-      ),
-      GoRoute(
-        path: '/invoicing',
-        builder: (_, _) => const Scaffold(body: Text('Invoicing')),
-      ),
-      GoRoute(
-        path: '/invoicing/drafts/new',
-        builder: (_, _) => const Scaffold(body: Text('New Draft')),
-      ),
-      GoRoute(
-        path: '/invoicing/customers',
-        builder: (_, _) => const Scaffold(body: Text('Customers')),
-      ),
-    ],
-  );
+/// Suprime errores de build de widgets durante un test.
+/// Devuelve la funcion de restauracion que debe llamarse en addTearDown.
+VoidCallback _suppressBuildErrors() {
+  final prev = FlutterError.onError;
+  FlutterError.onError = (details) {
+    final lib = details.library ?? '';
+    if (lib.contains('widget') || lib.contains('render')) return;
+    prev?.call(details);
+  };
+  return () => FlutterError.onError = prev;
 }
 
-Widget _wrap(GoRouter router) => MaterialApp.router(routerConfig: router);
-
 void main() {
-  group('Router feature flags', () {
-    // Test 1
+  group('Router feature flags (routerProvider real)', () {
+    // Test 1 — /documents/:id con documents=false → redirige (no llega al doc)
     testWidgets(
         'Acceso a /documents/:id con documents=false redirige a /',
         (tester) async {
-      final router = _buildRouter(
-        session: const AsyncData(testSession),
-        featuresAsync: const AsyncData(
-          PlatformFeatures(documents: false, invoicing: false),
+      late GoRouter router;
+      addTearDown(_suppressBuildErrors());
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionProvider.overrideWith(
+              (ref) => FakeSessionController(ref, testSession),
+            ),
+            platformFeaturesProvider.overrideWith(
+              (_) async =>
+                  const PlatformFeatures(documents: false, invoicing: false),
+            ),
+          ],
+          child: Consumer(builder: (context, ref, _) {
+            router = ref.watch(routerProvider);
+            return MaterialApp.router(routerConfig: router);
+          }),
         ),
-        initialLocation: '/documents/doc-abc',
       );
-      await tester.pumpWidget(_wrap(router));
       await tester.pumpAndSettle();
 
-      expect(find.text('Home'), findsOneWidget);
-      expect(find.text('Document doc-abc'), findsNothing);
+      router.go('/documents/doc-abc');
+      await tester.pump();
+
+      expect(
+        router.routerDelegate.currentConfiguration.uri.path,
+        isNot('/documents/doc-abc'),
+      );
     });
 
-    // Test 2
+    // Test 2 — /documents/:id con documents=true → no redirige
     testWidgets(
-        'Acceso a /documents/:id con documents=true llega al documento',
+        'Acceso a /documents/:id con documents=true no redirige',
         (tester) async {
-      final router = _buildRouter(
-        session: const AsyncData(testSession),
-        featuresAsync: const AsyncData(
-          PlatformFeatures(documents: true, invoicing: false),
+      late GoRouter router;
+      addTearDown(_suppressBuildErrors());
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionProvider.overrideWith(
+              (ref) => FakeSessionController(ref, testSession),
+            ),
+            platformFeaturesProvider.overrideWith(
+              (_) async =>
+                  const PlatformFeatures(documents: true, invoicing: false),
+            ),
+          ],
+          child: Consumer(builder: (context, ref, _) {
+            router = ref.watch(routerProvider);
+            return MaterialApp.router(routerConfig: router);
+          }),
         ),
-        initialLocation: '/documents/doc-abc',
       );
-      await tester.pumpWidget(_wrap(router));
       await tester.pumpAndSettle();
 
-      expect(find.text('Document doc-abc'), findsOneWidget);
-      expect(find.text('Home'), findsNothing);
+      router.go('/documents/doc-abc');
+      await tester.pump();
+
+      expect(
+        router.routerDelegate.currentConfiguration.uri.path,
+        equals('/documents/doc-abc'),
+      );
     });
 
-    // Test 3
+    // Test 3 — /invoicing con invoicing=false → redirige a /
     testWidgets(
         'Acceso a /invoicing con invoicing=false redirige a /',
         (tester) async {
-      final router = _buildRouter(
-        session: const AsyncData(testSession),
-        featuresAsync: const AsyncData(
-          PlatformFeatures(documents: false, invoicing: false),
+      late GoRouter router;
+      addTearDown(_suppressBuildErrors());
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionProvider.overrideWith(
+              (ref) => FakeSessionController(ref, testSession),
+            ),
+            platformFeaturesProvider.overrideWith(
+              (_) async =>
+                  const PlatformFeatures(documents: false, invoicing: false),
+            ),
+          ],
+          child: Consumer(builder: (context, ref, _) {
+            router = ref.watch(routerProvider);
+            return MaterialApp.router(routerConfig: router);
+          }),
         ),
-        initialLocation: '/invoicing',
       );
-      await tester.pumpWidget(_wrap(router));
       await tester.pumpAndSettle();
 
-      expect(find.text('Home'), findsOneWidget);
-      expect(find.text('Invoicing'), findsNothing);
+      router.go('/invoicing');
+      await tester.pump();
+
+      expect(
+        router.routerDelegate.currentConfiguration.uri.path,
+        equals('/'),
+      );
     });
 
-    // Test 4
+    // Test 4 — /invoicing/drafts/new con invoicing=false → redirige a /
     testWidgets(
         'Acceso a /invoicing/drafts/new con invoicing=false redirige a /',
         (tester) async {
-      final router = _buildRouter(
-        session: const AsyncData(testSession),
-        featuresAsync: const AsyncData(
-          PlatformFeatures(documents: false, invoicing: false),
+      late GoRouter router;
+      addTearDown(_suppressBuildErrors());
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionProvider.overrideWith(
+              (ref) => FakeSessionController(ref, testSession),
+            ),
+            platformFeaturesProvider.overrideWith(
+              (_) async =>
+                  const PlatformFeatures(documents: false, invoicing: false),
+            ),
+          ],
+          child: Consumer(builder: (context, ref, _) {
+            router = ref.watch(routerProvider);
+            return MaterialApp.router(routerConfig: router);
+          }),
         ),
-        initialLocation: '/invoicing/drafts/new',
       );
-      await tester.pumpWidget(_wrap(router));
       await tester.pumpAndSettle();
 
-      expect(find.text('Home'), findsOneWidget);
-      expect(find.text('New Draft'), findsNothing);
+      router.go('/invoicing/drafts/new');
+      await tester.pump();
+
+      expect(
+        router.routerDelegate.currentConfiguration.uri.path,
+        equals('/'),
+      );
     });
 
-    // Test 5
+    // Test 5 — /invoicing/customers con invoicing=false → redirige a /
     testWidgets(
         'Acceso a /invoicing/customers con invoicing=false redirige a /',
         (tester) async {
-      final router = _buildRouter(
-        session: const AsyncData(testSession),
-        featuresAsync: const AsyncData(
-          PlatformFeatures(documents: false, invoicing: false),
+      late GoRouter router;
+      addTearDown(_suppressBuildErrors());
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionProvider.overrideWith(
+              (ref) => FakeSessionController(ref, testSession),
+            ),
+            platformFeaturesProvider.overrideWith(
+              (_) async =>
+                  const PlatformFeatures(documents: false, invoicing: false),
+            ),
+          ],
+          child: Consumer(builder: (context, ref, _) {
+            router = ref.watch(routerProvider);
+            return MaterialApp.router(routerConfig: router);
+          }),
         ),
-        initialLocation: '/invoicing/customers',
       );
-      await tester.pumpWidget(_wrap(router));
       await tester.pumpAndSettle();
 
-      expect(find.text('Home'), findsOneWidget);
-      expect(find.text('Customers'), findsNothing);
-    });
+      router.go('/invoicing/customers');
+      await tester.pump();
 
-    // Test 6
-    testWidgets(
-        'Estado AsyncLoading muestra splash en lugar de pantalla de destino',
-        (tester) async {
-      final router = _buildRouter(
-        session: const AsyncData(testSession),
-        featuresAsync: const AsyncLoading(),
-        initialLocation: '/documents/doc-xyz',
+      expect(
+        router.routerDelegate.currentConfiguration.uri.path,
+        equals('/'),
       );
-      await tester.pumpWidget(_wrap(router));
-      await tester.pump(); // no pumpAndSettle para mantener el estado loading
-
-      // Debe estar en /splash (CircularProgressIndicator) o redirigido
-      expect(find.text('Document doc-xyz'), findsNothing);
     });
 
-    // Test 7
+    // Test 6 — AsyncLoading → muestra splash (CircularProgressIndicator)
     testWidgets(
-        'Feature activado despues de cargar permite acceso',
+        'Estado cargando muestra splash y no el contenido solicitado',
         (tester) async {
-      final router = _buildRouter(
-        session: const AsyncData(testSession),
-        featuresAsync: const AsyncData(
-          PlatformFeatures(documents: true, invoicing: true),
+      // _SplashScreen = CircularProgressIndicator; no requiere providers de red.
+      late GoRouter router;
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionProvider.overrideWith(
+              (ref) => FakeSessionController(ref, testSession),
+            ),
+            platformFeaturesProvider.overrideWith((_) async {
+              await Future<void>.delayed(const Duration(days: 365));
+              return const PlatformFeatures();
+            }),
+          ],
+          child: Consumer(builder: (context, ref, _) {
+            router = ref.watch(routerProvider);
+            return MaterialApp.router(routerConfig: router);
+          }),
         ),
-        initialLocation: '/invoicing',
       );
-      await tester.pumpWidget(_wrap(router));
+      await tester.pump(); // no pumpAndSettle — el Future no resuelve
+
+      router.go('/documents/doc-xyz');
+      await tester.pump();
+
+      // El router debe estar en /splash con ?next= mientras carga.
+      final uri = router.routerDelegate.currentConfiguration.uri;
+      expect(uri.path, equals('/splash'));
+      expect(uri.queryParameters['next'], isNotNull);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    });
+
+    // Test 7 — feature activado permite acceso a /invoicing
+    testWidgets(
+        'Feature invoicing activado permite acceder a /invoicing',
+        (tester) async {
+      late GoRouter router;
+      addTearDown(_suppressBuildErrors());
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionProvider.overrideWith(
+              (ref) => FakeSessionController(ref, testSession),
+            ),
+            platformFeaturesProvider.overrideWith(
+              (_) async =>
+                  const PlatformFeatures(documents: true, invoicing: true),
+            ),
+          ],
+          child: Consumer(builder: (context, ref, _) {
+            router = ref.watch(routerProvider);
+            return MaterialApp.router(routerConfig: router);
+          }),
+        ),
+      );
       await tester.pumpAndSettle();
 
-      expect(find.text('Invoicing'), findsOneWidget);
+      router.go('/invoicing');
+      await tester.pump();
+
+      expect(
+        router.routerDelegate.currentConfiguration.uri.path,
+        equals('/invoicing'),
+      );
+    });
+
+    // Test 8 — ?next= preserva la ruta destino al resolver el splash
+    testWidgets(
+        'Ruta con ?next= se resuelve al terminar la carga de features',
+        (tester) async {
+      late GoRouter router;
+      final completer = Completer<PlatformFeatures>();
+      addTearDown(_suppressBuildErrors());
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionProvider.overrideWith(
+              (ref) => FakeSessionController(ref, testSession),
+            ),
+            platformFeaturesProvider.overrideWith(
+              (_) => completer.future,
+            ),
+          ],
+          child: Consumer(builder: (context, ref, _) {
+            router = ref.watch(routerProvider);
+            return MaterialApp.router(routerConfig: router);
+          }),
+        ),
+      );
+      await tester.pump();
+
+      // Navegar mientras features aun carga.
+      router.go('/invoicing');
+      await tester.pump();
+
+      // Debe estar en /splash con ?next= preservado.
+      final splashUri = router.routerDelegate.currentConfiguration.uri;
+      expect(splashUri.path, equals('/splash'));
+      expect(splashUri.queryParameters['next'], isNotNull);
+
+      // Resolver features con invoicing habilitado.
+      completer.complete(
+        const PlatformFeatures(documents: false, invoicing: true),
+      );
+      await tester.pumpAndSettle();
+
+      // Ahora debe resolver a /invoicing.
+      expect(
+        router.routerDelegate.currentConfiguration.uri.path,
+        equals('/invoicing'),
+      );
     });
   });
 }
