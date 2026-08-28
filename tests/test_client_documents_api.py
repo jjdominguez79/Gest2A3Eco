@@ -11,6 +11,9 @@ os.environ.setdefault(
     "DGT_DATABASE_URL",
     "postgresql+psycopg://test:test@localhost:5432/test",
 )
+# Para tests: habilitar area documental globalmente
+os.environ.setdefault("CLIENT_DOCUMENTS_ENABLED", "true")
+os.environ.setdefault("CLIENT_DOCUMENTS_ALLOW_LOCAL_STORAGE", "true")
 
 import pytest
 from starlette.testclient import TestClient
@@ -353,3 +356,97 @@ class TestWithdrawDocument:
         assert resp.status_code == 200
         assert doc.status == "withdrawn"
         assert doc.withdrawal_reason == "Factura erronea"
+
+
+# ---------- tests feature flag publicacion ----------
+
+class TestPublishDocumentFeatureFlag:
+    """Publicacion bloqueada si area documental no esta habilitada."""
+
+    def test_publish_returns_403_when_documents_disabled(self):
+        """POST /internal/publish devuelve 403 si documents flag es false."""
+        # Org con client_documents_enabled=False
+        db = _InMemoryDb()
+        db._org = _FakeOrg(client_documents_enabled=False)
+
+        storage = _FakeStorage()
+        app = _build_app(db, storage=storage, override_internal_auth=True)
+        client = TestClient(app)
+
+        # Parchear get_settings para que client_documents_enabled sea True globalmente
+        # (el flag efectivo requiere ambos: global Y org)
+        from unittest.mock import patch, MagicMock
+        fake_settings = MagicMock()
+        fake_settings.client_documents_enabled = True
+        fake_settings.client_documents_allow_local_storage = True
+        fake_settings.client_documents_azure_connection_string = ""
+        fake_settings.client_invoicing_enabled = False
+
+        with patch("backend.api.feature_flags.get_settings", return_value=fake_settings):
+            resp = client.post(
+                "/api/v1/messaging/client/documents/internal/publish",
+                data={
+                    "organization_id": "org-1",
+                    "document_type": "factura",
+                    "source_system": "desktop_invoice",
+                    "source_id": "FAC-002",
+                    "source_version": "1",
+                    "display_name": "Factura 002",
+                    "fiscal_year": "2026",
+                },
+                files={"file": ("factura.pdf", b"contenido pdf", "application/pdf")},
+                headers={"x-api-key": "test-key"},
+            )
+        assert resp.status_code == 403
+        assert "no habilitada" in resp.json()["detail"].lower()
+
+
+# ---------- test almacenamiento obligatorio en produccion ----------
+
+class TestStorageProductionEnforcement:
+    """ClientDocumentStorage lanza RuntimeError sin Azure en produccion."""
+
+    def test_storage_raises_without_azure_in_production(self, monkeypatch):
+        """Sin Azure y con features activos, ClientDocumentStorage lanza RuntimeError."""
+        from backend.api.client_storage import ClientDocumentStorage
+
+        # Simular settings: features activos, sin Azure, sin allow_local
+        from unittest.mock import MagicMock
+        fake_cfg = MagicMock()
+        fake_cfg.client_documents_azure_connection_string = ""
+        fake_cfg.client_documents_azure_container = "documentos-cliente"
+        fake_cfg.client_documents_storage_dir = "./tmp_storage"
+        fake_cfg.client_documents_allow_local_storage = False
+        fake_cfg.client_documents_enabled = True
+        fake_cfg.client_invoicing_enabled = False
+
+        monkeypatch.setattr(
+            "backend.api.client_storage.get_settings",
+            lambda: fake_cfg,
+        )
+
+        import pytest
+        with pytest.raises(RuntimeError, match="CLIENT_DOCUMENTS_AZURE_CONNECTION_STRING"):
+            ClientDocumentStorage()
+
+    def test_storage_ok_with_allow_local_storage(self, monkeypatch):
+        """Con allow_local_fallback=True no lanza error aunque no haya Azure."""
+        from backend.api.client_storage import ClientDocumentStorage
+
+        from unittest.mock import MagicMock
+        fake_cfg = MagicMock()
+        fake_cfg.client_documents_azure_connection_string = ""
+        fake_cfg.client_documents_azure_container = "documentos-cliente"
+        fake_cfg.client_documents_storage_dir = "./tmp_storage_test"
+        fake_cfg.client_documents_allow_local_storage = False
+        fake_cfg.client_documents_enabled = True
+        fake_cfg.client_invoicing_enabled = False
+
+        monkeypatch.setattr(
+            "backend.api.client_storage.get_settings",
+            lambda: fake_cfg,
+        )
+
+        # Forzar allow_local_fallback=True en el constructor
+        storage = ClientDocumentStorage(allow_local_fallback=True)
+        assert storage._container is None  # no Azure, usa disco local

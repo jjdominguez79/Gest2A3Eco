@@ -32,6 +32,7 @@ from backend.api.client_invoices_api import _db, router, utcnow
 from backend.api.client_models import (
     ClientInvoice,
     ClientInvoiceCustomer,
+    ClientInvoiceNotificationLog,
     ClientInvoiceProcessingQueue,
 )
 from backend.api.messaging_models import (
@@ -319,32 +320,36 @@ class TestWorkerSendFcm:
         assert resp.json()["reason"] == "sin_tokens"
 
     def test_con_token(self):
+        """FCM exitoso con un token cuenta como sent=1."""
+        from backend.api.messaging_firebase import FcmResult
         http, factory, inv_id, _, client_id = _setup()
         with factory() as db:
             db.add(MessagingAppDevice(
                 user_type="client", user_id=client_id,
-                platform="android", push_token="fcm-test", active=True,
+                platform="android", push_token="fcm-test-ok", active=True,
             ))
             db.commit()
-        mock_mod = MagicMock()
-        mock_mod.send_fcm = MagicMock()
-        with patch.dict("sys.modules", {"backend.api.messaging_firebase": mock_mod}):
-            resp = http.post(f"{PREFIX}/worker/invoice/{inv_id}/send-fcm")
+        mock_fcm = MagicMock(return_value=FcmResult(success=True, permanent_failure=False))
+        with patch("backend.api.messaging_firebase.send_fcm", mock_fcm):
+            with patch("backend.api.messaging_firebase.FcmResult", FcmResult):
+                resp = http.post(f"{PREFIX}/worker/invoice/{inv_id}/send-fcm")
         assert resp.status_code == 200
         assert resp.json()["sent"] == 1
 
     def test_fcm_error_no_falla(self):
+        """FCM con fallo transitorio incrementa errors pero no lanza excepcion."""
+        from backend.api.messaging_firebase import FcmResult
         http, factory, inv_id, _, client_id = _setup()
         with factory() as db:
             db.add(MessagingAppDevice(
                 user_type="client", user_id=client_id,
-                platform="ios", push_token="bad", active=True,
+                platform="ios", push_token="bad-transitorio", active=True,
             ))
             db.commit()
-        mock_mod = MagicMock()
-        mock_mod.send_fcm = MagicMock(side_effect=RuntimeError("FCM down"))
-        with patch.dict("sys.modules", {"backend.api.messaging_firebase": mock_mod}):
-            resp = http.post(f"{PREFIX}/worker/invoice/{inv_id}/send-fcm")
+        mock_fcm = MagicMock(return_value=FcmResult(success=False, permanent_failure=False))
+        with patch("backend.api.messaging_firebase.send_fcm", mock_fcm):
+            with patch("backend.api.messaging_firebase.FcmResult", FcmResult):
+                resp = http.post(f"{PREFIX}/worker/invoice/{inv_id}/send-fcm")
         assert resp.status_code == 200
         assert resp.json()["errors"] == 1
 
@@ -366,3 +371,169 @@ class TestWorkerStatus:
         http, *_ = _setup()
         resp = http.get(f"{PREFIX}/worker/invoice/noexiste/status")
         assert resp.status_code == 404
+
+
+# -- Idempotencia email via notification_log --
+
+class TestEmailIdempotency:
+    """Idempotencia de envio de email via notification_log."""
+
+    def test_second_send_returns_already_sent_via_log(self):
+        """Si ya hay registro sent en notification_log, devuelve already_sent=True."""
+        from backend.api.client_models import ClientInvoiceNotificationLog
+
+        http, factory, inv_id, *_ = _setup()
+        with factory() as db:
+            q = db.scalars(select(ClientInvoiceProcessingQueue)).one()
+            q.pdf_blob_key = "blob/f.pdf"
+            db.commit()
+
+        # Pre-insertar registro sent en notification_log
+        with factory() as db:
+            db.add(ClientInvoiceNotificationLog(
+                invoice_id=inv_id,
+                notification_type="email",
+                recipient="dest@example.com",
+                status="sent",
+            ))
+            db.commit()
+
+        # El invoke de send-email debe devolver already_sent=True sin enviar nada
+        resp = http.post(f"{PREFIX}/worker/invoice/{inv_id}/send-email", json={})
+        assert resp.status_code == 200
+        assert resp.json()["already_sent"] is True
+
+        # El status de la factura no debe haber cambiado a emailed por este path
+        with factory() as db:
+            inv = db.get(ClientInvoice, inv_id)
+            # El status no es emailed porque no se proceso (ya estaba en el log)
+            assert inv.status != "emailed" or resp.json()["already_sent"] is True
+
+    def test_no_recipient_uses_skipped_event(self):
+        """Factura sin destinatario: evento email_skipped, status NO pasa a emailed."""
+        from backend.api.client_models import ClientInvoiceNotificationLog
+
+        http, factory, inv_id, *_ = _setup()
+        with factory() as db:
+            inv = db.get(ClientInvoice, inv_id)
+            inv.recipient_email = ""
+            q = db.scalars(select(ClientInvoiceProcessingQueue)).one()
+            q.pdf_blob_key = "blob/f.pdf"
+            db.commit()
+
+        resp = http.post(f"{PREFIX}/worker/invoice/{inv_id}/send-email", json={})
+        assert resp.status_code == 200
+        assert resp.json()["skipped"] is True
+        assert resp.json()["reason"] == "sin_destinatario"
+
+        with factory() as db:
+            # Status de la factura NO debe ser emailed
+            inv = db.get(ClientInvoice, inv_id)
+            assert inv.status != "emailed"
+
+            # Cola completada
+            q = db.scalars(select(ClientInvoiceProcessingQueue)).one()
+            assert q.queue_status == "completed"
+
+            # Registro en notification_log con status=skipped
+            from backend.api.client_models import ClientInvoiceNotificationLog as NL
+            log = db.scalar(
+                select(NL).where(
+                    NL.invoice_id == inv_id,
+                    NL.notification_type == "email",
+                )
+            )
+            assert log is not None
+            assert log.status == "skipped"
+
+
+# -- FCM con FcmResult --
+
+class TestFcmResult:
+    """Tests del bucle FCM con FcmResult correcto."""
+
+    def _setup_with_device(self, push_token="fcm-token-123", platform="android"):
+        http, factory, inv_id, _, client_id = _setup()
+        with factory() as db:
+            db.add(MessagingAppDevice(
+                user_type="client", user_id=client_id,
+                platform=platform, push_token=push_token, active=True,
+            ))
+            db.commit()
+        return http, factory, inv_id, client_id
+
+    def test_fcm_success_logs_sent(self):
+        """FCM exitoso registra status=sent en notification_log."""
+        from backend.api.client_models import ClientInvoiceNotificationLog
+        from backend.api.messaging_firebase import FcmResult
+
+        http, factory, inv_id, _ = self._setup_with_device()
+
+        mock_fcm = MagicMock(return_value=FcmResult(success=True, permanent_failure=False))
+        with patch("backend.api.messaging_firebase.send_fcm", mock_fcm):
+            with patch("backend.api.messaging_firebase.FcmResult", FcmResult):
+                resp = http.post(f"{PREFIX}/worker/invoice/{inv_id}/send-fcm")
+
+        assert resp.status_code == 200
+        assert resp.json()["sent"] == 1
+        assert resp.json()["errors"] == 0
+
+        with factory() as db:
+            from backend.api.client_models import ClientInvoiceNotificationLog as NL
+            log = db.scalar(
+                select(NL).where(
+                    NL.invoice_id == inv_id,
+                    NL.notification_type == "fcm",
+                )
+            )
+            assert log is not None
+            assert log.status == "sent"
+
+    def test_fcm_permanent_failure_deactivates_device(self):
+        """Fallo permanente FCM desactiva el dispositivo."""
+        from backend.api.messaging_firebase import FcmResult
+
+        http, factory, inv_id, _ = self._setup_with_device(push_token="bad-token")
+
+        mock_fcm = MagicMock(return_value=FcmResult(success=False, permanent_failure=True))
+        with patch("backend.api.messaging_firebase.send_fcm", mock_fcm):
+            with patch("backend.api.messaging_firebase.FcmResult", FcmResult):
+                resp = http.post(f"{PREFIX}/worker/invoice/{inv_id}/send-fcm")
+
+        assert resp.status_code == 200
+        assert resp.json()["errors"] == 1
+
+        with factory() as db:
+            device = db.scalar(
+                select(MessagingAppDevice).where(
+                    MessagingAppDevice.push_token == "bad-token",
+                )
+            )
+            assert device is not None
+            assert device.active is False
+
+    def test_fcm_duplicate_not_sent_twice(self):
+        """Token con registro sent en notification_log no llama send_fcm de nuevo."""
+        from backend.api.client_models import ClientInvoiceNotificationLog
+        from backend.api.messaging_firebase import FcmResult
+
+        http, factory, inv_id, _ = self._setup_with_device(push_token="already-sent-token")
+
+        with factory() as db:
+            db.add(ClientInvoiceNotificationLog(
+                invoice_id=inv_id,
+                notification_type="fcm",
+                recipient="already-sent-token",
+                status="sent",
+            ))
+            db.commit()
+
+        mock_fcm = MagicMock(return_value=FcmResult(success=True, permanent_failure=False))
+        with patch("backend.api.messaging_firebase.send_fcm", mock_fcm):
+            with patch("backend.api.messaging_firebase.FcmResult", FcmResult):
+                resp = http.post(f"{PREFIX}/worker/invoice/{inv_id}/send-fcm")
+
+        assert resp.status_code == 200
+        # El token ya estaba como sent, se cuenta como enviado pero sin llamar send_fcm
+        assert resp.json()["sent"] == 1
+        mock_fcm.assert_not_called()
