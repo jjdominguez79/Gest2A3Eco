@@ -96,12 +96,82 @@ try {
 Write-Host ""
 $registerTask = Read-Host "Registrar como tarea programada de Windows? (s/N)"
 if ($registerTask -eq "s" -or $registerTask -eq "S") {
+
+    # Verificaciones obligatorias antes de registrar la tarea
+    Write-Host "`nVerificando requisitos obligatorios..." -ForegroundColor Cyan
+
+    # Token API
+    $tokenOk = & $PythonExe -c @"
+try:
+    from utils.credential_store import get_workstation_token
+    t = get_workstation_token()
+    print('ok' if t else 'missing')
+except Exception as e:
+    print(f'error: {e}')
+"@ 2>&1
+    if ($tokenOk -ne 'ok') {
+        Write-Host "ERROR: Token API no encontrado en Credential Manager (Gest2A3Eco/WorkstationToken)" -ForegroundColor Red
+        Write-Host "Almacena el token primero con: python -c ``from utils.credential_store import store_workstation_token; store_workstation_token('TOKEN')``" -ForegroundColor Yellow
+        exit 1
+    }
+    Write-Host "  [OK] Token API" -ForegroundColor Green
+
+    # PostgreSQL
+    $pgOk = & $PythonExe -c @"
+try:
+    from utils.credential_store import get_postgres_credentials
+    c = get_postgres_credentials()
+    print('ok' if c else 'missing')
+except Exception as e:
+    print(f'error: {e}')
+"@ 2>&1
+    if ($pgOk -ne 'ok') {
+        Write-Host "ERROR: Credenciales PostgreSQL no encontradas en Credential Manager (Gest2A3Eco/PostgreSQL)" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "  [OK] PostgreSQL Credential Manager" -ForegroundColor Green
+
+    # Word COM
+    try {
+        $word = New-Object -ComObject Word.Application -ErrorAction Stop
+        $word.Quit()
+        [System.Runtime.Interopservices.Marshal]::ReleaseComObject($word) | Out-Null
+        Write-Host "  [OK] Microsoft Word COM" -ForegroundColor Green
+    } catch {
+        Write-Host "ERROR: Microsoft Word no encontrado o COM no disponible. El worker requiere Word." -ForegroundColor Red
+        exit 1
+    }
+
+    # Plantilla Word
+    $templatePath = Join-Path $WorkerDir "plantillas_word\factura_emitida.docx"
+    if (-not (Test-Path $templatePath)) {
+        Write-Host "ERROR: Plantilla Word no encontrada: $templatePath" -ForegroundColor Red
+        Write-Host "Copia la plantilla de factura antes de continuar." -ForegroundColor Yellow
+        exit 1
+    }
+    Write-Host "  [OK] Plantilla Word" -ForegroundColor Green
+
+    # Dry-run
+    Write-Host "`nEjecutando dry-run..." -ForegroundColor Cyan
+    Push-Location $WorkerDir
+    & $PythonExe -m invoice_worker --dry-run
+    $dryRunExit = $LASTEXITCODE
+    Pop-Location
+    if ($dryRunExit -ne 0) {
+        Write-Host "ERROR: El dry-run fallo. Corrige los problemas antes de instalar la tarea." -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "  [OK] Dry-run exitoso" -ForegroundColor Green
+
+    # Registrar tarea con usuario interactivo y AtLogOn
+    Write-Host "`nRegistrando tarea programada..." -ForegroundColor Cyan
     $action = New-ScheduledTaskAction `
         -Execute $PythonExe `
         -Argument "-m invoice_worker" `
         -WorkingDirectory $WorkerDir
 
-    $trigger = New-ScheduledTaskTrigger -AtStartup
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+
     $settings = New-ScheduledTaskSettingsSet `
         -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries `
@@ -109,9 +179,10 @@ if ($registerTask -eq "s" -or $registerTask -eq "S") {
         -RestartInterval (New-TimeSpan -Minutes 5) `
         -ExecutionTimeLimit (New-TimeSpan -Days 365)
 
+    # Interactive: el usuario debe estar conectado (no S4U)
     $principal = New-ScheduledTaskPrincipal `
         -UserId $env:USERNAME `
-        -LogonType S4U `
+        -LogonType Interactive `
         -RunLevel Limited
 
     Register-ScheduledTask `
@@ -120,11 +191,11 @@ if ($registerTask -eq "s" -or $registerTask -eq "S") {
         -Trigger $trigger `
         -Settings $settings `
         -Principal $principal `
-        -Description "Worker de facturacion online Gest2A3Eco" `
+        -Description "Worker de facturacion online Gest2A3Eco (requiere sesion interactiva para Word COM y Credential Manager)" `
         -Force
 
-    Write-Host "Tarea programada '$TaskName' registrada." -ForegroundColor Green
-    Write-Host "Inicio automatico al arrancar el sistema." -ForegroundColor Green
+    Write-Host "Tarea '$TaskName' registrada con LogonType=Interactive y trigger AtLogOn." -ForegroundColor Green
+    Write-Host "El worker arrancara automaticamente al iniciar sesion el usuario $env:USERNAME." -ForegroundColor Green
 }
 
 Write-Host ""
