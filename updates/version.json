@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.8.6",
+  "latest_version": "1.8.7",
   "minimum_required_version": "1.8.6",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.6/Setup_Gest2A3Eco_1.8.6.exe",
-  "changelog": "Se a�ade la opcion de activar equipos desde la sesion del administrador.",
-  "force_update": true
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.7/Setup_Gest2A3Eco_1.8.7.exe",
+  "changelog": "Area documental y consulta de facturas emitidas para clientes.\nPublicacion automatica de facturas desde la aplicacion de escritorio.\nAjuste del espacio seguro inferior en la ficha de cliente.",
+  "force_update": false
 }
