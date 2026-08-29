@@ -1,6 +1,6 @@
 {
-  "version": "1.8.6",
-  "tag": "v1.8.6",
-  "changelog": "Se añade la opcion de activar equipos desde la sesion del administrador.",
-  "force_update": true
+  "version": "1.8.7",
+  "tag": "v1.8.7",
+  "changelog": "Area documental y consulta de facturas emitidas para clientes.\nPublicacion automatica de facturas desde la aplicacion de escritorio.\nAjuste del espacio seguro inferior en la ficha de cliente.",
+  "force_update": false
 }
