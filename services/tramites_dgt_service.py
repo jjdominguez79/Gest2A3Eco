@@ -16,6 +16,7 @@ from xml.sax.saxutils import escape as xml_escape
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from services.tramites_dgt_repository import DgtRepository
+from services.tramites_dgt_documentos import MIME_POR_EXTENSION_DGT
 from utils.utilidades import get_app_data_dir, get_word_templates_subdir
 from utils.validaciones import normalizar_nif_cif, validar_nif_cif_nie
 
@@ -278,20 +279,25 @@ class TramitesDgtService:
         rol = str(rol or "").strip().lower()
         if rol not in ROLES_PARTE | {"gestor"}:
             raise ValueError("Rol DGT no valido.")
-        expediente = self._repo.get_expediente(expediente_id)
-        if not expediente:
-            raise ValueError("Expediente DGT no encontrado.")
         path = Path(file_path).expanduser()
         if not path.exists() or not path.is_file():
             raise FileNotFoundError(f"No existe el documento adjunto: {path}")
+        if path.suffix.lower() not in MIME_POR_EXTENSION_DGT:
+            raise ValueError("Solo se admiten archivos PDF, JPG, JPEG y PNG.")
+        tipo = str(tipo or "").strip() or "documentacion"
+        if len(tipo) > 64:
+            raise ValueError("El tipo de documento no puede superar 64 caracteres.")
+        expediente = self._repo.get_expediente(expediente_id)
+        if not expediente:
+            raise ValueError("Expediente DGT no encontrado.")
         upload_remote = getattr(self._repo, "upload_documento", None)
         if callable(upload_remote):
-            return upload_remote(expediente_id, rol, str(tipo or "documentacion"), str(path))
+            return upload_remote(expediente_id, rol, tipo, str(path))
         digest = self._hash_file(path)
         item = {
             "id": str(uuid.uuid4()),
             "rol": rol,
-            "tipo": str(tipo or "").strip() or "documentacion",
+            "tipo": tipo,
             "descripcion": str(descripcion or "").strip(),
             "nombre_archivo": path.name,
             "ruta": str(path.resolve()),
@@ -301,6 +307,8 @@ class TramitesDgtService:
         documentos = list(expediente.get("documentos") or [])
         documentos.append(item)
         expediente["documentos"] = documentos
+        if tipo == "modelo_620":
+            expediente["modelo_620_presentado"] = True
         if expediente.get("estado") == "validado":
             expediente["estado"] = "revision"
             expediente["validado_por"] = None

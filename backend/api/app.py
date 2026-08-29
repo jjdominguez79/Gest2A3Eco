@@ -921,8 +921,12 @@ async def post_documento_interno(
 ):
     item = cargar_expediente(db, expediente_id)
     asegurar_expediente_editable(item)
-    if tipo not in {"factura", "modelo_620", "documentacion"}:
-        raise HTTPException(422, "Tipo de documento no valido")
+    rol = str(rol or "").strip().lower()
+    if rol not in {"gestor", "comprador", "vendedor"}:
+        raise HTTPException(422, "Rol de documento no valido")
+    tipo = str(tipo or "").strip()
+    if not tipo or len(tipo) > 64:
+        raise HTTPException(422, "El tipo de documento es obligatorio y admite hasta 64 caracteres")
     doc = await _guardar_documento_aportado(
         file=file,
         expediente=item,
@@ -931,6 +935,11 @@ async def post_documento_interno(
         tipo=tipo,
     )
     db.add(doc)
+    if tipo == "modelo_620":
+        item.operacion.datos = {
+            **(item.operacion.datos or {}),
+            "modelo_620_presentado": True,
+        }
     registrar_evento(
         db, item.id, "documento_subido_internamente", "gest2a3eco",
         {

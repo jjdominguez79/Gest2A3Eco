@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Protocol
 
 import requests
+
+from services.tramites_dgt_documentos import mime_documento_dgt
 
 
 class DgtRepository(Protocol):
@@ -226,12 +229,15 @@ class ApiDgtRepository:
         return self._request("DELETE", f"/api/v1/documentos-generados/{documento_id}")
 
     def upload_documento(self, expediente_id: str, rol: str, tipo: str, file_path: str) -> dict:
+        path = Path(file_path)
+        filename = path.name
+        mime_type = mime_documento_dgt(str(path))
         with open(file_path, "rb") as fh:
             return self._request(
                 "POST",
                 f"/api/v1/expedientes/{expediente_id}/documentos",
                 data={"rol": rol, "tipo": tipo},
-                files={"file": (file_path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1], fh)},
+                files={"file": (filename, fh, mime_type)},
             )
 
     def download_documento(self, documento_id: str, target_path: str) -> str:
