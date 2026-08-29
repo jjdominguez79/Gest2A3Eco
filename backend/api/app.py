@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import delete, select, text, update
@@ -78,6 +78,28 @@ if _cors_origins:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+
+@app.middleware("http")
+async def block_messaging_writes_during_cleanup(request: Request, call_next):
+    """Impide escrituras mientras la purga global tiene el bloqueo de mantenimiento."""
+    if (
+        request.url.path.startswith("/api/v1/messaging")
+        and request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+    ):
+        try:
+            with SessionLocal() as db:
+                policy = db.get(messaging_models.MessagingCleanupPolicy, "pre_release")
+                maintenance = bool(policy and policy.maintenance_started_at)
+        except Exception:
+            maintenance = False
+        if maintenance:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Mensajeria temporalmente en mantenimiento"},
+                headers={"Retry-After": "60"},
+            )
+    return await call_next(request)
 
 WEB_DIR = Path(__file__).with_name("web")
 templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))

@@ -79,6 +79,7 @@ class Settings:
     messaging_latest_app_version: str
     messaging_latest_app_build: int
     messaging_minimum_app_build: int
+    messaging_pre_release_cleanup_enabled: bool
     azure_doc_intelligence_endpoint: str
     azure_doc_intelligence_key: str
     azure_doc_intelligence_model_id: str
@@ -174,6 +175,9 @@ def get_settings() -> Settings:
         messaging_minimum_app_build=max(
             1, int(os.getenv("MESSAGING_MINIMUM_APP_BUILD", "1")),
         ),
+        messaging_pre_release_cleanup_enabled=os.getenv(
+            "MESSAGING_PRE_RELEASE_CLEANUP_ENABLED", "false",
+        ).strip().lower() in {"1", "true", "yes", "si"},
         azure_doc_intelligence_endpoint=os.getenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", ""),
         azure_doc_intelligence_key=os.getenv("AZURE_DOC_INTELLIGENCE_KEY", ""),
         azure_doc_intelligence_model_id=os.getenv("AZURE_DOC_INTELLIGENCE_MODEL_ID", "prebuilt-invoice"),

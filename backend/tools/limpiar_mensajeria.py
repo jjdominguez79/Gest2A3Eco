@@ -5,7 +5,14 @@ from datetime import datetime, timezone
 import json
 
 from backend.api.database import SessionLocal
-from backend.api.messaging_cleanup import build_cleanup_plan, execute_cleanup_plan
+from backend.api.messaging_cleanup import (
+    CLOSE_CONFIRMATION,
+    RECOVER_CONFIRMATION,
+    build_cleanup_plan,
+    close_pre_release_cleanup,
+    execute_cleanup_plan,
+    recover_cleanup_maintenance,
+)
 
 
 def _cutoff(value: str) -> datetime:
@@ -23,8 +30,8 @@ def _cutoff(value: str) -> datetime:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Previsualiza y elimina exclusivamente mensajeria de organizaciones "
-            "marcadas como prueba. Sin --confirmar nunca modifica datos."
+            "Previsualiza limpiezas de mensajeria de prueba o la purga global "
+            "previa a Play Store. Sin --confirmar nunca modifica datos."
         ),
     )
     parser.add_argument(
@@ -43,6 +50,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--reset-test", action="store_true",
         help="Elimina completamente las organizaciones de prueba seleccionadas.",
     )
+    scope.add_argument(
+        "--prepublicacion-antes-de", type=_cutoff, metavar="FECHA_ISO",
+        help=(
+            "Purga global de mensajes de clientes y chats internos anteriores "
+            "a la fecha, conservando cuentas y conversaciones."
+        ),
+    )
+    scope.add_argument(
+        "--cerrar-prepublicacion", action="store_true",
+        help="Bloquea definitivamente la purga global tras publicar Flutter.",
+    )
+    scope.add_argument(
+        "--recuperar-mantenimiento", action="store_true",
+        help="Retira un bloqueo de mantenimiento dejado por una interrupcion.",
+    )
     parser.add_argument(
         "--confirmar", metavar="CODIGO",
         help="Ejecuta el plan si coincide con el codigo de la previsualizacion.",
@@ -56,11 +78,34 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     with SessionLocal() as db:
         try:
+            if args.cerrar_prepublicacion:
+                if not args.confirmar:
+                    print("PREVISUALIZACION: el cierre global sera permanente.")
+                    print(f"Para cerrar, repite con --confirmar {CLOSE_CONFIRMATION}")
+                    return 0
+                audit_id = close_pre_release_cleanup(
+                    db, confirmation=args.confirmar, actor=args.actor or "",
+                    reason=args.motivo or "",
+                )
+                print(f"Purga global cerrada definitivamente. Auditoria: {audit_id}")
+                return 0
+            if args.recuperar_mantenimiento:
+                if not args.confirmar:
+                    print("PREVISUALIZACION: se retirara el bloqueo de mantenimiento.")
+                    print(f"Para recuperar, repite con --confirmar {RECOVER_CONFIRMATION}")
+                    return 0
+                audit_id = recover_cleanup_maintenance(
+                    db, confirmation=args.confirmar, actor=args.actor or "",
+                    reason=args.motivo or "",
+                )
+                print(f"Mantenimiento recuperado. Auditoria: {audit_id}")
+                return 0
             plan = build_cleanup_plan(
                 db,
                 organization_refs=args.organizacion,
-                cutoff=args.antes_de,
+                cutoff=args.prepublicacion_antes_de or args.antes_de,
                 reset_test=args.reset_test,
+                pre_release=args.prepublicacion_antes_de is not None,
             )
             print(json.dumps(plan.public_dict(), indent=2, ensure_ascii=False))
             if not args.confirmar:

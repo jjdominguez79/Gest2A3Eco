@@ -410,13 +410,25 @@ class MessagingCleanupAudit(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     actor: Mapped[str] = mapped_column(String(160))
     reason: Mapped[str] = mapped_column(String(500))
-    scope: Mapped[str] = mapped_column(String(32))  # messages_before | reset_test
+    scope: Mapped[str] = mapped_column(String(32))
     filters_json: Mapped[str] = mapped_column(Text, default="{}")
     counts_json: Mapped[str] = mapped_column(Text, default="{}")
     confirmation_code: Mapped[str] = mapped_column(String(32), index=True)
     storage_keys_json: Mapped[str] = mapped_column(Text, default="[]")
     failed_storage_keys_json: Mapped[str] = mapped_column(Text, default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class MessagingCleanupPolicy(Base):
+    __tablename__ = "msg_cleanup_policy"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default="pre_release")
+    publication_locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    publication_locked_by: Mapped[str] = mapped_column(String(160), default="")
+    maintenance_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    maintenance_actor: Mapped[str] = mapped_column(String(160), default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow,
+    )
 
 
 class MessagingStaffPresenceConnection(Base):

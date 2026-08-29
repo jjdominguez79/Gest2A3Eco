@@ -7,6 +7,8 @@ import os
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
+from starlette.requests import Request
+from starlette.responses import Response
 
 os.environ.setdefault(
     "DGT_DATABASE_URL",
@@ -14,11 +16,19 @@ os.environ.setdefault(
 )
 
 from backend.api.database import Base
-from backend.api.messaging_cleanup import build_cleanup_plan, execute_cleanup_plan
+from backend.api.messaging_cleanup import (
+    CLOSE_CONFIRMATION,
+    RECOVER_CONFIRMATION,
+    build_cleanup_plan,
+    close_pre_release_cleanup,
+    execute_cleanup_plan,
+    recover_cleanup_maintenance,
+)
 from backend.api.messaging_models import (
     MessagingAppDevice,
     MessagingAttachment,
     MessagingCleanupAudit,
+    MessagingCleanupPolicy,
     MessagingClient,
     MessagingConversation,
     MessagingDeletionAudit,
@@ -27,6 +37,10 @@ from backend.api.messaging_models import (
     MessagingMessage,
     MessagingOrganization,
     MessagingRead,
+    MessagingStaff,
+    MessagingStaffThread,
+    MessagingStaffThreadMessage,
+    MessagingStaffThreadRead,
 )
 
 
@@ -259,3 +273,192 @@ def test_fallo_de_storage_no_revierte_bd_y_queda_en_auditoria(db):
     assert result.failed_storage_keys == ("failed/fallo.pdf",)
     audit = db.get(MessagingCleanupAudit, result.audit_id)
     assert json.loads(audit.failed_storage_keys_json) == ["failed/fallo.pdf"]
+
+
+def test_purga_prepublicacion_incluye_empresas_reales_y_chats_internos(
+    db, monkeypatch,
+):
+    monkeypatch.setenv("MESSAGING_PRE_RELEASE_CLEANUP_ENABLED", "true")
+    now = datetime.now(timezone.utc)
+    real_org, real_client, conversation = _organization(db, "REAL10", is_test=False)
+    old_external = _message(db, conversation.id, "external-old", now - timedelta(days=5))
+    recent_external = _message(db, conversation.id, "external-recent", now)
+    staff = MessagingStaff(external_id="staff-1", name="Empleado", role="admin")
+    thread = MessagingStaffThread(key="direct:test", kind="direct")
+    db.add_all([staff, thread])
+    db.flush()
+    old_internal = MessagingStaffThreadMessage(
+        thread_id=thread.id,
+        author_staff_external_id=staff.external_id,
+        author_name=staff.name,
+        body="internal-old",
+        idempotency_key="internal-old",
+        created_at=now - timedelta(days=4),
+    )
+    recent_internal = MessagingStaffThreadMessage(
+        thread_id=thread.id,
+        author_staff_external_id=staff.external_id,
+        author_name=staff.name,
+        body="internal-recent",
+        idempotency_key="internal-recent",
+        created_at=now,
+    )
+    db.add_all([old_internal, recent_internal])
+    db.flush()
+    attachment = MessagingAttachment(
+        internal_message_id=old_internal.id,
+        name="interno.pdf",
+        content_type="application/pdf",
+        size=9,
+        sha256="c" * 64,
+        storage_key="internal/interno.pdf",
+        direction="internal",
+    )
+    db.add_all([
+        attachment,
+        MessagingRead(
+            conversation_id=conversation.id,
+            actor_type="client",
+            actor_id=real_client.id,
+            last_message_id=old_external.id,
+        ),
+        MessagingStaffThreadRead(
+            thread_id=thread.id,
+            staff_external_id=staff.external_id,
+            last_message_id=old_internal.id,
+        ),
+    ])
+    db.commit()
+
+    plan = build_cleanup_plan(
+        db, cutoff=now - timedelta(days=1), pre_release=True,
+    )
+    assert plan.company_codes == ("REAL10",)
+    assert plan.message_ids == (old_external.id,)
+    assert plan.internal_message_ids == (old_internal.id,)
+    assert plan.counts["internal_messages_to_delete"] == 1
+
+    storage = FakeStorage()
+    result = execute_cleanup_plan(
+        db, plan, confirmation_code=plan.confirmation_code,
+        actor="Admin", reason="Limpieza previa a Play Store", storage=storage,
+    )
+
+    assert db.get(MessagingMessage, old_external.id) is None
+    assert db.get(MessagingMessage, recent_external.id) is not None
+    assert db.get(MessagingStaffThreadMessage, old_internal.id) is None
+    assert db.get(MessagingStaffThreadMessage, recent_internal.id) is not None
+    assert db.get(MessagingOrganization, real_org.id) is not None
+    assert db.get(MessagingStaffThread, thread.id) is not None
+    assert storage.deleted == ["internal/interno.pdf"]
+    assert db.get(MessagingCleanupPolicy, "pre_release").maintenance_started_at is None
+    assert db.get(MessagingCleanupAudit, result.audit_id).scope == "pre_release_global"
+
+
+def test_purga_global_exige_variable_de_entorno(db, monkeypatch):
+    monkeypatch.delenv("MESSAGING_PRE_RELEASE_CLEANUP_ENABLED", raising=False)
+    now = datetime.now(timezone.utc)
+    _organization(db, "REAL11", is_test=False)
+    db.commit()
+    plan = build_cleanup_plan(db, cutoff=now, pre_release=True)
+
+    with pytest.raises(ValueError, match="MESSAGING_PRE_RELEASE_CLEANUP_ENABLED"):
+        execute_cleanup_plan(
+            db, plan, confirmation_code=plan.confirmation_code,
+            actor="Admin", reason="Prueba", storage=FakeStorage(),
+        )
+
+
+def test_purga_global_recalcula_tras_bloquear_escrituras(db, monkeypatch):
+    monkeypatch.setenv("MESSAGING_PRE_RELEASE_CLEANUP_ENABLED", "true")
+    now = datetime.now(timezone.utc)
+    _, _, conversation = _organization(db, "REAL12", is_test=False)
+    first = _message(db, conversation.id, "first", now - timedelta(days=3))
+    db.commit()
+    plan = build_cleanup_plan(db, cutoff=now, pre_release=True)
+    second = _message(db, conversation.id, "second", now - timedelta(days=2))
+    db.commit()
+
+    with pytest.raises(ValueError, match="contenido cambio"):
+        execute_cleanup_plan(
+            db, plan, confirmation_code=plan.confirmation_code,
+            actor="Admin", reason="Prueba", storage=FakeStorage(),
+        )
+
+    assert db.get(MessagingMessage, first.id) is not None
+    assert db.get(MessagingMessage, second.id) is not None
+    policy = db.get(MessagingCleanupPolicy, "pre_release")
+    assert policy.maintenance_started_at is None
+
+
+def test_cierre_prepublicacion_es_permanente_y_recuperacion_es_auditada(
+    db, monkeypatch,
+):
+    monkeypatch.setenv("MESSAGING_PRE_RELEASE_CLEANUP_ENABLED", "true")
+    audit_id = close_pre_release_cleanup(
+        db, confirmation=CLOSE_CONFIRMATION,
+        actor="Admin", reason="Aplicacion publicada en Play Store",
+    )
+    assert db.get(MessagingCleanupAudit, audit_id).scope == "close_pre_release"
+    policy = db.get(MessagingCleanupPolicy, "pre_release")
+    assert policy.publication_locked_at is not None
+
+    plan = build_cleanup_plan(
+        db, cutoff=datetime.now(timezone.utc), pre_release=True,
+    )
+    with pytest.raises(ValueError, match="cerrada definitivamente"):
+        execute_cleanup_plan(
+            db, plan, confirmation_code=plan.confirmation_code,
+            actor="Admin", reason="No permitido", storage=FakeStorage(),
+        )
+
+    policy.maintenance_started_at = datetime.now(timezone.utc)
+    policy.maintenance_actor = "Proceso interrumpido"
+    db.commit()
+    recovery_id = recover_cleanup_maintenance(
+        db, confirmation=RECOVER_CONFIRMATION,
+        actor="Admin", reason="Recuperacion tras interrupcion",
+    )
+    assert db.get(MessagingCleanupPolicy, "pre_release").maintenance_started_at is None
+    assert db.get(MessagingCleanupAudit, recovery_id).scope == "recover_maintenance"
+
+
+@pytest.mark.asyncio
+async def test_middleware_bloquea_escrituras_durante_mantenimiento(db, monkeypatch):
+    from backend.api import app as app_module
+
+    policy = MessagingCleanupPolicy(
+        id="pre_release",
+        maintenance_started_at=datetime.now(timezone.utc),
+        maintenance_actor="Admin",
+    )
+    db.add(policy)
+    db.commit()
+    monkeypatch.setattr(app_module, "SessionLocal", lambda: db)
+    request = Request({
+        "type": "http",
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "https",
+        "path": "/api/v1/messaging/client/messages",
+        "raw_path": b"/api/v1/messaging/client/messages",
+        "query_string": b"",
+        "headers": [],
+        "client": ("127.0.0.1", 1234),
+        "server": ("testserver", 443),
+        "root_path": "",
+    })
+    called = False
+
+    async def call_next(_request):
+        nonlocal called
+        called = True
+        return Response(status_code=204)
+
+    response = await app_module.block_messaging_writes_during_cleanup(
+        request, call_next,
+    )
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "60"
+    assert called is False

@@ -102,6 +102,8 @@ revocable y tambien lo guarda en Credential Manager.
 - `MESSAGING_APP_REDIRECT_URI`: deep link del cliente movil; por defecto
   `es.gestinem.app://auth/callback`.
 - `MESSAGING_SYNC_TOKEN`: secreto exclusivo del worker Synology.
+- `MESSAGING_PRE_RELEASE_CLEANUP_ENABLED`: habilita excepcionalmente la purga
+  global previa a la publicacion; `false` por defecto.
 - `MESSAGING_SMTP_*`: respaldo opcional si Graph no esta disponible.
 
 La aplicacion Azure necesita los permisos Graph correspondientes; `Mail.Send`
@@ -152,6 +154,48 @@ posteriores a la fecha; las fechas sin zona horaria se interpretan como UTC.
 de prueba seleccionadas. La operacion queda registrada en `msg_cleanup_audit`.
 Los blobs se eliminan despues de confirmar la transaccion PostgreSQL; cualquier
 fallo queda guardado en esa auditoria para su recuperacion manual.
+
+### Purga global antes de publicar Flutter
+
+Mientras la aplicacion no se haya publicado puede habilitarse temporalmente:
+
+```text
+MESSAGING_PRE_RELEASE_CLEANUP_ENABLED=true
+```
+
+La purga global no depende de `is_test`: elimina los mensajes anteriores al
+corte de todas las empresas y los chats internos de empleados, pero conserva
+empresas, clientes, empleados, sesiones, dispositivos, conversaciones e hilos.
+Primero se previsualiza:
+
+```powershell
+python -m backend.tools.limpiar_mensajeria `
+  --prepublicacion-antes-de "2026-08-30T00:00:00+02:00"
+```
+
+Despues se repite el mismo comando con `--confirmar`, `--actor` y `--motivo`.
+Durante la ejecucion el backend rechaza temporalmente las escrituras de
+mensajeria con HTTP 503. Si el proceso se interrumpe de forma abrupta, el
+bloqueo se puede retirar de forma auditada:
+
+```powershell
+python -m backend.tools.limpiar_mensajeria --recuperar-mantenimiento
+```
+
+Al publicar Flutter se cierra para siempre el modo global desde la herramienta:
+
+```powershell
+python -m backend.tools.limpiar_mensajeria --cerrar-prepublicacion
+```
+
+Ambas operaciones muestran primero la frase exacta de confirmacion. El cierre
+queda almacenado en PostgreSQL y prevalece aunque la variable de entorno vuelva
+a activarse accidentalmente. Despues del cierre debe retirarse tambien
+`MESSAGING_PRE_RELEASE_CLEANUP_ENABLED` del entorno.
+
+La herramienta elimina los blobs temporales del backend. No borra copias que el
+worker ya haya archivado en el repositorio documental compartido; esas copias
+requieren un procedimiento separado para evitar afectar documentos reales.
 
 ## Mensajeria movil y tiempo real
 
