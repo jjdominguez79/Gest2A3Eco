@@ -56,6 +56,7 @@ def pg_org_invoice(pg_factory):
     from backend.api.client_models import (
         ClientInvoice,
         ClientInvoiceCustomer,
+        ClientInvoiceNotificationLog,
         ClientInvoiceProcessingQueue,
     )
     from backend.api.messaging_models import (
@@ -126,6 +127,9 @@ def pg_org_invoice(pg_factory):
         yield {"org": org, "client": client, "invoice": inv, "queue": queue_item}
 
         # Limpieza
+        db.query(ClientInvoiceNotificationLog).filter(
+            ClientInvoiceNotificationLog.invoice_id == inv.id,
+        ).delete(synchronize_session=False)
         db.delete(queue_item)
         db.delete(inv)
         db.delete(customer)
