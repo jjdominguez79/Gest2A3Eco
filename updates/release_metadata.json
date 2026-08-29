@@ -1,6 +1,6 @@
 {
-  "version": "1.8.7",
-  "tag": "v1.8.7",
-  "changelog": "Area documental y consulta de facturas emitidas para clientes.\nPublicacion automatica de facturas desde la aplicacion de escritorio.\nAjuste del espacio seguro inferior en la ficha de cliente.",
+  "version": "1.8.8",
+  "tag": "v1.8.8",
+  "changelog": "Las facturas emitidas se publican en el area documental de la empresa emisora.\nCorregida la confusion entre el NIF del emisor y el del destinatario.",
   "force_update": false
 }
