@@ -195,13 +195,37 @@ async def publish_document(
     fiscal_year: int = Form(0),
     amount: str = Form(""),
     currency: str = Form("EUR"),
+    company_code: str = Form(""),
     customer_tax_id: str = Form(""),
     expected_sha256: str = Form(""),
     db: Session = Depends(_db),
     _auth: str = Depends(require_workstation_or_internal),
 ):
     """Publica un documento en el area del cliente. Idempotente por source."""
-    # Resolver organizacion por ID o por NIF del cliente
+    # La empresa emisora determina el area documental. El NIF recibido en
+    # customer_tax_id pertenece al destinatario de la factura y solo se
+    # conserva como compatibilidad para publicadores antiguos.
+    normalized_company_code = company_code.strip().upper()
+    if not organization_id and normalized_company_code:
+        org = db.scalar(
+            select(MessagingOrganization).where(
+                func.upper(MessagingOrganization.company_code)
+                == normalized_company_code,
+                MessagingOrganization.active.is_(True),
+            )
+        )
+        if org:
+            organization_id = org.id
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "No se encontro organizacion para la empresa "
+                    f"{normalized_company_code}"
+                ),
+            )
+
+    # Compatibilidad con certificados y versiones de escritorio anteriores.
     if not organization_id and customer_tax_id:
         from backend.api.client_publication_service import find_organization_by_tax_id
         org = find_organization_by_tax_id(db, customer_tax_id)
@@ -214,7 +238,12 @@ async def publish_document(
             )
 
     if not organization_id:
-        raise HTTPException(status_code=400, detail="organization_id o customer_tax_id requerido")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "organization_id, company_code o customer_tax_id requerido"
+            ),
+        )
 
     org = db.get(MessagingOrganization, organization_id)
     if not org:

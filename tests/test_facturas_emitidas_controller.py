@@ -277,6 +277,7 @@ def test_compartir_factura_publicar_area_cliente(monkeypatch, tmp_path):
     controller.compartir_pdf()
 
     assert len(published) == 1
+    assert published[0]["company_code"] == "E00001"
     assert published[0]["customer_tax_id"] == "B12345678"
     assert published[0]["source_type"] == "factura"
     info = next(row for row in sent if row[0] == "info")

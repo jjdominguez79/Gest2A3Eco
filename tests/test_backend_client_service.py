@@ -32,12 +32,14 @@ def test_publish_document_uses_workstation_api_key(monkeypatch, tmp_path):
         source_id="fac-1",
         display_name="Factura A1",
         pdf_path=str(pdf),
+        company_code="E00006",
         customer_tax_id="B12345678",
     )
 
     assert result == {"document_id": "doc-1"}
     request = session.post.call_args
     assert request.kwargs["headers"] == {"X-API-Key": "g2a3_wks_test"}
+    assert request.kwargs["data"]["company_code"] == "E00006"
     assert request.kwargs["data"]["customer_tax_id"] == "B12345678"
     response.raise_for_status.assert_called_once_with()
 

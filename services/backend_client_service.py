@@ -50,6 +50,7 @@ class BackendClientService:
         source_version: int = 1,
         display_name: str,
         pdf_path: str,
+        company_code: str = "",
         customer_tax_id: str = "",
         fiscal_year: int = 0,
         amount: float | None = None,
@@ -71,6 +72,7 @@ class BackendClientService:
             "source_version": str(source_version),
             "document_type": source_type,
             "display_name": display_name,
+            "company_code": company_code,
             "customer_tax_id": customer_tax_id,
             "fiscal_year": str(fiscal_year),
         }
@@ -83,11 +85,9 @@ class BackendClientService:
         if description:
             fields["description"] = description
 
-        # Necesitamos el organization_id; el backend lo resuelve por NIF
-        # pero el endpoint /internal/publish necesita organization_id explícito.
-        # Lo obtenemos via el endpoint de resolucion o lo incluimos como campo.
-        # En la implementacion actual, pasamos customer_tax_id y el backend
-        # busca la org por NIF.
+        # El backend resuelve la organizacion por el codigo de la empresa
+        # emisora. customer_tax_id identifica al destinatario de la factura y
+        # no debe utilizarse para decidir en que area documental se publica.
 
         with open(pdf_path, "rb") as f:
             resp = self.http.post(

@@ -109,6 +109,11 @@ class _InMemoryDb:
         stmt_str = str(stmt)
         if "msg_sessions" in stmt_str:
             return self._session
+        if "msg_organizations" in stmt_str:
+            params = {str(value).upper() for value in stmt.compile().params.values()}
+            if str(self._org.company_code).upper() in params and self._org.active:
+                return self._org
+            return None
         if "client_documents" in stmt_str and "source_system" in stmt_str:
             params = stmt.compile().params
             expected_hash = next(
@@ -195,6 +200,34 @@ def _build_app(db=None, storage=None, override_internal_auth=False):
 # ---------- tests publicacion interna ----------
 
 class TestPublishDocument:
+    def test_resuelve_organizacion_por_empresa_emisora(self):
+        db = _InMemoryDb()
+        db._org = _FakeOrg(company_code="E00006")
+        storage = _FakeStorage()
+        client = TestClient(
+            _build_app(db, storage=storage, override_internal_auth=True),
+        )
+
+        resp = client.post(
+            "/api/v1/messaging/client/documents/internal/publish",
+            data={
+                "company_code": "e00006",
+                "customer_tax_id": "74095618Z",
+                "document_type": "factura",
+                "source_system": "desktop_invoice",
+                "source_id": "FAC-E00006-001",
+                "display_name": "Factura emitida 001",
+            },
+            files={
+                "file": ("factura.pdf", b"%PDF-1.4 contenido", "application/pdf"),
+            },
+            headers={"x-api-key": "test-key"},
+        )
+
+        assert resp.status_code == 200
+        assert len(db._docs) == 1
+        assert next(iter(db._docs.values())).organization_id == "org-1"
+
     def test_publicacion_exitosa(self):
         db = _InMemoryDb()
         storage = _FakeStorage()

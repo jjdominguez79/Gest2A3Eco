@@ -47,6 +47,7 @@ def _factura():
         "id": "fac-1",
         "serie": "A",
         "numero": "42",
+        "codigo_empresa": "E00006",
         "nif": "B12345678",
         "ejercicio": 2026,
         "fecha_expedicion": "2026-08-29",
@@ -67,6 +68,8 @@ def test_encola_antes_de_publicar_y_confirma_resultado(tmp_path):
     assert gestor.queued
     assert gestor.success == [("fac-1", "doc-8", 2)]
     assert backend.calls[0]["source_type"] == "factura"
+    assert backend.calls[0]["company_code"] == "E00006"
+    assert backend.calls[0]["customer_tax_id"] == "B12345678"
     assert backend.calls[0]["expected_sha256"] == gestor.queued[0][2]
 
 

@@ -108,6 +108,7 @@ class ClientDocumentPublicationService:
                 source_version=max(1, int(factura.get("area_cliente_version") or 1)),
                 display_name=f"Factura {serie}{numero}".strip(),
                 pdf_path=pdf_path,
+                company_code=str(factura.get("codigo_empresa") or "").strip(),
                 customer_tax_id=str(factura.get("nif") or "").strip(),
                 fiscal_year=int(factura.get("ejercicio") or 0),
                 amount=float(factura.get("area_cliente_importe") or 0),

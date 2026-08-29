@@ -1277,10 +1277,12 @@ class FacturasEmitidasController:
             total = tot.get("total", 0)
 
         try:
+            factura_publicacion = dict(fac)
+            factura_publicacion["codigo_empresa"] = self._codigo
             result = ClientDocumentPublicationService(
                 self._gestor,
             ).enqueue_and_publish(
-                fac, pdf_path, amount=float(total or 0),
+                factura_publicacion, pdf_path, amount=float(total or 0),
             )
             if result.status == "publicada":
                 if notify_success:
