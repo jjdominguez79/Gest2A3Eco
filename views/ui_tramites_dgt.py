@@ -11,6 +11,15 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from services.email_service import open_outlook_email
 from services.dgt_remote_integrations import BackendDatapriusClient, BackendSignRequestClient
 from services.tramites_dgt_repository import ApiDgtRepository
+from services.tramites_dgt_documentos import (
+    FILTROS_ARCHIVO_DGT,
+    ROLES_DOCUMENTO_DGT,
+    TIPOS_DOCUMENTO_DGT,
+    etiqueta_rol_documento,
+    etiqueta_tipo_documento,
+    rol_desde_etiqueta,
+    tipo_desde_etiqueta,
+)
 from services.tramites_dgt_facturacion_service import TramitesDgtFacturacionService
 from services.tramites_dgt_service import TramitesDgtService
 from utils.utilidades import load_app_config
@@ -548,8 +557,8 @@ class UITramitesDgt(ttk.Frame):
                 "end",
                 iid=str(doc.get("id") or doc.get("ruta") or ""),
                 values=(
-                    doc.get("rol", ""),
-                    doc.get("tipo", ""),
+                    etiqueta_rol_documento(doc.get("rol", "")),
+                    etiqueta_tipo_documento(doc.get("tipo", "")),
                     doc.get("nombre_archivo") or doc.get("ruta") or "",
                     str(doc.get("sha256") or "")[:16],
                 ),
@@ -761,22 +770,21 @@ class UITramitesDgt(ttk.Frame):
     def _adjuntar_documento(self):
         if not self._current_id:
             return
-        rol = simpledialog.askstring("Tramites DGT", "Rol del documento (vendedor/comprador):", parent=self.winfo_toplevel())
-        if not rol:
+        dialog = AdjuntarDocumentoDgtDialog(self.winfo_toplevel())
+        if not dialog.result:
             return
-        tipo = simpledialog.askstring("Tramites DGT", "Tipo de documento:", parent=self.winfo_toplevel()) or "documentacion"
         path = filedialog.askopenfilename(
             title="Seleccionar documento DGT",
-            filetypes=(("Documentos", "*.pdf *.jpg *.jpeg *.png *.doc *.docx"), ("Todos", "*.*")),
+            filetypes=FILTROS_ARCHIVO_DGT,
         )
         if not path:
             return
-        try:
-            self._service.adjuntar_documento(self._current_id, rol, path, tipo=tipo)
-            expediente = self._service.get_expediente(self._current_id)
-            self._load_adjuntos(expediente)
-        except Exception as exc:
-            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+        self._subir_documento(
+            path,
+            rol=dialog.result["rol"],
+            tipo=dialog.result["tipo"],
+            descripcion=dialog.result["descripcion"],
+        )
 
     def _email_vendedor(self):
         self._email("vendedor")
@@ -817,17 +825,27 @@ class UITramitesDgt(ttk.Frame):
             return
         path = filedialog.askopenfilename(
             title="Seleccionar modelo 620 presentado",
-            filetypes=(("PDF o imagen", "*.pdf *.jpg *.jpeg *.png"), ("Todos", "*.*")),
+            filetypes=FILTROS_ARCHIVO_DGT,
         )
         if not path:
             return
+        self._subir_documento(
+            path,
+            rol="gestor",
+            tipo="modelo_620",
+            descripcion=TIPOS_DOCUMENTO_DGT["modelo_620"],
+        )
+
+    def _subir_documento(self, path: str, *, rol: str, tipo: str, descripcion: str = ""):
         try:
             self._service.adjuntar_documento(
-                self._current_id, "gestor", path, tipo="modelo_620", descripcion="Modelo 620 presentado"
+                self._current_id, rol, path, tipo=tipo, descripcion=descripcion
             )
-            self._vars["modelo_620_presentado"].set(True)
-            self._service.guardar_expediente(self._current_id, self._payload())
-            self._load_adjuntos(self._service.get_expediente(self._current_id))
+            expediente = self._service.get_expediente(self._current_id) or {}
+            self._vars["modelo_620_presentado"].set(
+                bool(expediente.get("modelo_620_presentado"))
+            )
+            self._load_adjuntos(expediente)
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
 
@@ -887,6 +905,86 @@ class UITramitesDgt(ttk.Frame):
         self.docs_tv.delete(*self.docs_tv.get_children())
         self.attach_tv.delete(*self.attach_tv.get_children())
         self._set_readonly(False)
+
+
+class AdjuntarDocumentoDgtDialog(simpledialog.Dialog):
+    def __init__(self, parent):
+        self.result = None
+        self.var_rol = tk.StringVar(value=ROLES_DOCUMENTO_DGT["gestor"])
+        self.var_tipo = tk.StringVar(value=TIPOS_DOCUMENTO_DGT["justificante_presentacion"])
+        self.var_otro = tk.StringVar()
+        super().__init__(parent, "Adjuntar documento DGT")
+
+    def body(self, master):
+        ttk.Label(master, text="Corresponde a").grid(row=0, column=0, sticky="w", padx=8, pady=6)
+        rol_combo = ttk.Combobox(
+            master,
+            textvariable=self.var_rol,
+            values=tuple(ROLES_DOCUMENTO_DGT.values()),
+            state="readonly",
+            width=34,
+        )
+        rol_combo.grid(row=0, column=1, sticky="ew", padx=8, pady=6)
+
+        ttk.Label(master, text="Tipo de documento").grid(row=1, column=0, sticky="w", padx=8, pady=6)
+        tipo_combo = ttk.Combobox(
+            master,
+            textvariable=self.var_tipo,
+            values=tuple(TIPOS_DOCUMENTO_DGT.values()),
+            state="readonly",
+            width=34,
+        )
+        tipo_combo.grid(row=1, column=1, sticky="ew", padx=8, pady=6)
+        tipo_combo.bind("<<ComboboxSelected>>", self._actualizar_otro)
+
+        self.otro_label = ttk.Label(master, text="Descripción / tipo de documento")
+        self.otro_entry = ttk.Entry(master, textvariable=self.var_otro, width=36)
+        master.columnconfigure(1, weight=1)
+        self._actualizar_otro()
+        return rol_combo
+
+    def _actualizar_otro(self, _event=None):
+        if self.var_tipo.get() == TIPOS_DOCUMENTO_DGT["otro"]:
+            self.otro_label.grid(row=2, column=0, sticky="w", padx=8, pady=6)
+            self.otro_entry.grid(row=2, column=1, sticky="ew", padx=8, pady=6)
+            self.otro_entry.focus_set()
+        else:
+            self.otro_label.grid_remove()
+            self.otro_entry.grid_remove()
+
+    def validate(self):
+        try:
+            rol_desde_etiqueta(self.var_rol.get())
+            tipo = tipo_desde_etiqueta(self.var_tipo.get())
+        except ValueError as exc:
+            messagebox.showwarning("Adjuntar documento DGT", str(exc), parent=self)
+            return False
+        if tipo == "otro":
+            personalizado = self.var_otro.get().strip()
+            if not personalizado:
+                messagebox.showwarning(
+                    "Adjuntar documento DGT",
+                    "Indica la descripción o tipo del documento.",
+                    parent=self,
+                )
+                return False
+            if len(personalizado) > 64:
+                messagebox.showwarning(
+                    "Adjuntar documento DGT",
+                    "La descripción no puede superar 64 caracteres.",
+                    parent=self,
+                )
+                return False
+        return True
+
+    def apply(self):
+        tipo = tipo_desde_etiqueta(self.var_tipo.get())
+        personalizado = self.var_otro.get().strip()
+        self.result = {
+            "rol": rol_desde_etiqueta(self.var_rol.get()),
+            "tipo": personalizado if tipo == "otro" else tipo,
+            "descripcion": personalizado if tipo == "otro" else TIPOS_DOCUMENTO_DGT[tipo],
+        }
 
 
 class FacturarTramiteDgtDialog(simpledialog.Dialog):

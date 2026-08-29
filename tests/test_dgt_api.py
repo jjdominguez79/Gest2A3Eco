@@ -1,8 +1,12 @@
 import os
+import asyncio
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from fastapi import HTTPException, UploadFile
+from starlette.datastructures import Headers
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
@@ -15,6 +19,52 @@ from backend.api import app as app_module
 from backend.api.database import Base, build_engine
 from backend.api.integrations import DatapriusBackend, ProviderError
 from backend.api.models import Parte
+from backend.api.storage import MAX_FILE_SIZE, read_validated_upload
+
+
+def _validar_upload(filename: str, content_type: str, data: bytes):
+    upload = UploadFile(
+        file=BytesIO(data),
+        filename=filename,
+        headers=Headers({"content-type": content_type}),
+    )
+    return asyncio.run(read_validated_upload(upload))
+
+
+@pytest.mark.parametrize(
+    ("filename", "content_type", "data"),
+    (
+        ("documento.pdf", "application/pdf", b"%PDF-1.4 contenido"),
+        ("foto.jpg", "image/jpeg", b"\xff\xd8\xffcontenido"),
+        ("imagen.png", "image/png", b"\x89PNG\r\n\x1a\ncontenido"),
+    ),
+)
+def test_validador_admite_mime_y_firma_reales(filename, content_type, data):
+    contenido, metadata = _validar_upload(filename, content_type, data)
+
+    assert contenido == data
+    assert metadata["content_type"] == content_type
+
+
+def test_validador_rechaza_mime_no_permitido():
+    with pytest.raises(HTTPException) as exc_info:
+        _validar_upload("documento.pdf", "application/octet-stream", b"%PDF-1.4")
+
+    assert exc_info.value.status_code == 415
+
+
+def test_validador_rechaza_contenido_que_no_coincide_con_pdf_declarado():
+    with pytest.raises(HTTPException) as exc_info:
+        _validar_upload("documento.pdf", "application/pdf", b"no es un PDF")
+
+    assert exc_info.value.status_code == 422
+
+
+def test_validador_mantiene_limite_de_10_mb():
+    with pytest.raises(HTTPException) as exc_info:
+        _validar_upload("documento.pdf", "application/pdf", b"%PDF" + b"x" * MAX_FILE_SIZE)
+
+    assert exc_info.value.status_code == 413
 
 
 def _party_payload(*, role="vendedor", tipo_persona="fisica"):
@@ -293,6 +343,12 @@ def test_codigo_tasa_y_modelo_620_presentado(tmp_path, monkeypatch):
     missing = client.post(f"/api/v1/expedientes/{item['id']}/validar", headers=headers)
     assert missing.status_code == 422
     assert "620" in missing.json()["detail"]
+    reset = client.patch(
+        f"/api/v1/expedientes/{item['id']}",
+        headers=headers,
+        json={"modelo_620_presentado": False, "version": patched.json()["version"]},
+    )
+    assert reset.status_code == 200
 
     uploaded = client.post(
         f"/api/v1/expedientes/{item['id']}/documentos",
@@ -301,9 +357,38 @@ def test_codigo_tasa_y_modelo_620_presentado(tmp_path, monkeypatch):
         files={"file": ("modelo620.pdf", b"%PDF-1.4 modelo 620", "application/pdf")},
     )
     assert uploaded.status_code == 201
+    actualizado = client.get(f"/api/v1/expedientes/{item['id']}", headers=headers).json()
+    assert actualizado["operacion"]["modelo_620_presentado"] is True
     assert client.post(f"/api/v1/expedientes/{item['id']}/validar", headers=headers).status_code == 200
     docs = client.get(f"/api/v1/expedientes/{item['id']}/documentos", headers=headers).json()
     assert any(doc["tipo"] == "modelo_620" for doc in docs)
+    Base.metadata.drop_all(engine)
+
+
+def test_api_interna_admite_tipo_personalizado_y_rechaza_rol_invalido(tmp_path, monkeypatch):
+    client, engine = _client(tmp_path, monkeypatch)
+    monkeypatch.setenv("DGT_STORAGE_DIR", str(tmp_path / "private"))
+    headers = {"X-API-Key": "test-secret"}
+    item = client.post("/api/v1/expedientes", headers=headers, json={}).json()
+    endpoint = f"/api/v1/expedientes/{item['id']}/documentos"
+
+    personalizado = client.post(
+        endpoint,
+        headers=headers,
+        data={"rol": "gestor", "tipo": "Certificado historico del vehiculo"},
+        files={"file": ("certificado.PDF", b"%PDF-1.4 certificado", "application/pdf")},
+    )
+    assert personalizado.status_code == 201
+    documentos = client.get(endpoint, headers=headers).json()
+    assert documentos[0]["tipo"] == "Certificado historico del vehiculo"
+
+    invalido = client.post(
+        endpoint,
+        headers=headers,
+        data={"rol": "tercero", "tipo": "documentacion"},
+        files={"file": ("documento.pdf", b"%PDF-1.4", "application/pdf")},
+    )
+    assert invalido.status_code == 422
     Base.metadata.drop_all(engine)
 
 
