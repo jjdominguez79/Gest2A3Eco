@@ -9,6 +9,7 @@ import 'package:gestinem/features/platform/features_provider.dart';
 import 'package:gestinem/app/router.dart';
 import 'package:gestinem/features/documents/domain/client_document.dart';
 import 'package:gestinem/features/documents/presentation/documents_providers.dart';
+import 'package:gestinem/features/invoicing/presentation/invoicing_providers.dart';
 
 import 'test_helpers.dart';
 
@@ -284,6 +285,9 @@ void main() {
               (_) async =>
                   const PlatformFeatures(documents: true, invoicing: true),
             ),
+            invoicingConfigProvider.overrideWith(
+              (_) async => {'enabled': true},
+            ),
           ],
           child: Consumer(
             builder: (context, ref, _) {
@@ -319,6 +323,9 @@ void main() {
                 (ref) => FakeSessionController(ref, testSession),
               ),
               platformFeaturesProvider.overrideWith((_) => completer.future),
+              invoicingConfigProvider.overrideWith(
+                (_) async => {'enabled': true},
+              ),
             ],
             child: Consumer(
               builder: (context, ref, _) {

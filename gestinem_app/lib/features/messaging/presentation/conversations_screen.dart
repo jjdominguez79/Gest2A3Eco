@@ -14,7 +14,6 @@ import '../domain/conversation.dart';
 import 'conversation_screen.dart';
 import 'messaging_providers.dart';
 import '../../../core/notifications/web_permission_banner.dart';
-import '../../invoicing/presentation/invoicing_providers.dart';
 import '../../platform/features_provider.dart';
 
 class ConversationsScreen extends ConsumerStatefulWidget {
@@ -202,7 +201,9 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
         ],
       ),
       drawer: _AppDrawer(profile: profile),
-      bottomNavigationBar: kIsWeb ? const WebNotificationPermissionBanner() : null,
+      bottomNavigationBar: kIsWeb
+          ? const WebNotificationPermissionBanner()
+          : null,
       body: Row(
         children: [
           SizedBox(
@@ -316,10 +317,14 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
         ],
       ),
       actions: [
-        if (ref.watch(invoicingConfigProvider).whenOrNull(
-              data: (c) => c['enabled'] == true,
-            ) ==
-            true)
+        if (ref.watch(platformFeaturesProvider).valueOrNull?.documents == true)
+          IconButton(
+            key: const Key('client-documents-button'),
+            tooltip: 'Mis documentos',
+            onPressed: () => context.push('/documents'),
+            icon: const Icon(Icons.folder_outlined),
+          ),
+        if (ref.watch(platformFeaturesProvider).valueOrNull?.invoicing == true)
           IconButton(
             key: const Key('client-invoicing-button'),
             tooltip: 'Facturacion',
@@ -335,7 +340,9 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
         const SizedBox(width: 8),
       ],
     ),
-    bottomNavigationBar: kIsWeb ? const WebNotificationPermissionBanner() : null,
+    bottomNavigationBar: kIsWeb
+        ? const WebNotificationPermissionBanner()
+        : null,
     body: conversations.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (error, _) => Center(

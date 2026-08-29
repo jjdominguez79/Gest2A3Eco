@@ -10,9 +10,9 @@ import 'package:gestinem/features/auth/presentation/auth_controller.dart';
 import 'package:gestinem/features/company_profile/domain/company_profile.dart';
 import 'package:gestinem/features/company_profile/presentation/company_profile_providers.dart';
 import 'package:gestinem/features/company_profile/presentation/company_profile_screen.dart';
-import 'package:gestinem/features/invoicing/presentation/invoicing_providers.dart';
 import 'package:gestinem/features/messaging/presentation/conversations_screen.dart';
 import 'package:gestinem/features/messaging/presentation/messaging_providers.dart';
+import 'package:gestinem/features/platform/features_provider.dart';
 import 'package:go_router/go_router.dart';
 
 import 'test_helpers.dart';
@@ -48,12 +48,8 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
-            companyProfileProvider.overrideWith(
-              (ref) async => profile,
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+            companyProfileProvider.overrideWith((ref) async => profile),
           ],
           child: const MaterialApp(home: CompanyProfileScreen()),
         ),
@@ -81,12 +77,8 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
-            companyProfileProvider.overrideWith(
-              (ref) async => profile,
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+            companyProfileProvider.overrideWith((ref) async => profile),
           ],
           child: const MaterialApp(home: CompanyProfileScreen()),
         ),
@@ -107,12 +99,8 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
-            companyProfileProvider.overrideWith(
-              (ref) async => profile,
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+            companyProfileProvider.overrideWith((ref) async => profile),
           ],
           child: const MaterialApp(home: CompanyProfileScreen()),
         ),
@@ -129,9 +117,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
             companyProfileProvider.overrideWith(
               (ref) => throw Exception('Network error'),
             ),
@@ -145,17 +131,15 @@ void main() {
     });
   });
 
-  // -- Pantalla cliente: boton facturacion condicionado --
-  group('Client screen - invoicing button', () {
-    testWidgets('muestra boton facturacion cuando config enabled', (
+  // -- Pantalla cliente: accesos a modulos condicionados --
+  group('Client screen - module buttons', () {
+    testWidgets('muestra documentos y oculta facturacion segun permisos', (
       tester,
     ) async {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
             apiClientProvider.overrideWithValue(
               ApiClient(
                 dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
@@ -163,8 +147,9 @@ void main() {
                 tokenProvider: () => testSession.token,
               ),
             ),
-            invoicingConfigProvider.overrideWith(
-              (ref) async => {'enabled': true},
+            platformFeaturesProvider.overrideWith(
+              (ref) async =>
+                  const PlatformFeatures(documents: true, invoicing: false),
             ),
             conversationsProvider.overrideWith((ref) async => []),
             realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
@@ -177,21 +162,17 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(
-        find.byKey(const Key('client-invoicing-button')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const Key('client-documents-button')), findsOneWidget);
+      expect(find.byKey(const Key('client-invoicing-button')), findsNothing);
     });
 
-    testWidgets('oculta boton facturacion cuando config disabled', (
+    testWidgets('oculta documentos y muestra facturacion segun permisos', (
       tester,
     ) async {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
             apiClientProvider.overrideWithValue(
               ApiClient(
                 dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
@@ -199,8 +180,9 @@ void main() {
                 tokenProvider: () => testSession.token,
               ),
             ),
-            invoicingConfigProvider.overrideWith(
-              (ref) async => {'enabled': false},
+            platformFeaturesProvider.overrideWith(
+              (ref) async =>
+                  const PlatformFeatures(documents: false, invoicing: true),
             ),
             conversationsProvider.overrideWith((ref) async => []),
             realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
@@ -213,10 +195,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(
-        find.byKey(const Key('client-invoicing-button')),
-        findsNothing,
-      );
+      expect(find.byKey(const Key('client-documents-button')), findsNothing);
+      expect(find.byKey(const Key('client-invoicing-button')), findsOneWidget);
     });
   });
 
@@ -239,34 +219,13 @@ void main() {
 
       final router = GoRouter(
         routes: [
-          GoRoute(
-            path: '/',
-            builder: (_, _) => const ConversationsScreen(),
-          ),
-          GoRoute(
-            path: '/groups',
-            builder: (_, _) => const Scaffold(),
-          ),
-          GoRoute(
-            path: '/campaigns',
-            builder: (_, _) => const Scaffold(),
-          ),
-          GoRoute(
-            path: '/employees',
-            builder: (_, _) => const Scaffold(),
-          ),
-          GoRoute(
-            path: '/clients',
-            builder: (_, _) => const Scaffold(),
-          ),
-          GoRoute(
-            path: '/profile',
-            builder: (_, _) => const Scaffold(),
-          ),
-          GoRoute(
-            path: '/about',
-            builder: (_, _) => const Scaffold(),
-          ),
+          GoRoute(path: '/', builder: (_, _) => const ConversationsScreen()),
+          GoRoute(path: '/groups', builder: (_, _) => const Scaffold()),
+          GoRoute(path: '/campaigns', builder: (_, _) => const Scaffold()),
+          GoRoute(path: '/employees', builder: (_, _) => const Scaffold()),
+          GoRoute(path: '/clients', builder: (_, _) => const Scaffold()),
+          GoRoute(path: '/profile', builder: (_, _) => const Scaffold()),
+          GoRoute(path: '/about', builder: (_, _) => const Scaffold()),
         ],
       );
 
