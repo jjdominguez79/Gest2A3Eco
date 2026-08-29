@@ -118,6 +118,7 @@ def pg_org_invoice(pg_factory):
 
         queue_item = ClientInvoiceProcessingQueue(
             invoice_id=inv.id,
+            organization_id=org.id,
             queue_status="pdf_uploaded",
             pdf_blob_key="test/invoice.pdf",
         )
