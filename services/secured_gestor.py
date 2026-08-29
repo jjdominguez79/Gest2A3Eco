@@ -694,6 +694,30 @@ class SecuredGestor:
         self.security.ensure_company_write(codigo_empresa)
         return self._base.eliminar_notif_certificado(codigo_empresa, cert_id)
 
+    # ── certificados administrativos AEAT / TGSS ───────────────────────────
+
+    def upsert_cert_solicitud(self, solicitud: dict) -> str:
+        self.security.ensure_company_write(solicitud.get("codigo_empresa"))
+        return self._base.upsert_cert_solicitud(solicitud)
+
+    def eliminar_cert_solicitud(self, codigo_empresa: str, sid: str) -> None:
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.eliminar_cert_solicitud(codigo_empresa, sid)
+
+    def marcar_cert_solicitud_publicada(
+        self, codigo_empresa: str, sid: str, documento_id: str, version: int, fecha: str,
+    ) -> None:
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.marcar_cert_solicitud_publicada(
+            codigo_empresa, sid, documento_id, version, fecha,
+        )
+
+    def marcar_cert_solicitud_publicacion_error(
+        self, codigo_empresa: str, sid: str, error: str,
+    ) -> None:
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.marcar_cert_solicitud_publicacion_error(codigo_empresa, sid, error)
+
     # ── notif_organismos ─────────────────────────────────────────────────────
     # lectura: via __getattr__; escritura requiere admin (catalogo global)
 
@@ -739,6 +763,20 @@ class SecuredGestor:
         self.security.ensure_company_write(codigo_empresa)
         return self._base.marcar_notif_bandeja_enviada_cliente(codigo_empresa, item_id, fecha)
 
+    def marcar_notif_bandeja_publicada_cliente(
+        self, codigo_empresa: str, item_id: str, documento_id: str, version: int, fecha: str,
+    ) -> None:
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.marcar_notif_bandeja_publicada_cliente(
+            codigo_empresa, item_id, documento_id, version, fecha,
+        )
+
+    def marcar_notif_bandeja_publicacion_error(
+        self, codigo_empresa: str, item_id: str, error: str,
+    ) -> None:
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.marcar_notif_bandeja_publicacion_error(codigo_empresa, item_id, error)
+
     def asignar_responsable_notif_bandeja(self, codigo_empresa: str, item_id: str, responsable: str | None) -> None:
         self.security.ensure_company_write(codigo_empresa)
         return self._base.asignar_responsable_notif_bandeja(codigo_empresa, item_id, responsable)
@@ -761,6 +799,12 @@ class SecuredGestor:
 
     def listar_notif_certificados_global(self, filtros: dict | None = None):
         rows = self._base.listar_notif_certificados_global(filtros)
+        if self.security.session.is_admin():
+            return rows
+        return [row for row in rows if self.security.can_read_company(str(row.get("codigo_empresa") or ""))]
+
+    def listar_cert_solicitudes_global(self, filtros: dict | None = None):
+        rows = self._base.listar_cert_solicitudes_global(filtros)
         if self.security.session.is_admin():
             return rows
         return [row for row in rows if self.security.can_read_company(str(row.get("codigo_empresa") or ""))]

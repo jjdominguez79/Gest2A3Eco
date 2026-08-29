@@ -12,6 +12,7 @@ obligatorio.
 from __future__ import annotations
 
 import os
+import threading
 import tkinter as tk
 from datetime import date, datetime
 from tkinter import messagebox, simpledialog, ttk
@@ -175,7 +176,7 @@ class UIBandejaGlobal(ttk.Frame):
         self._btn_descargar = tk.Button(tb, text="Descargar", bg="#475569", fg="white",
                                          command=self._on_descargar, state="disabled", **btn)
         self._btn_descargar.pack(side="left", padx=(0, 3))
-        self._btn_enviar = tk.Button(tb, text="Enviar al cliente", bg=_PRIMARY, fg="white",
+        self._btn_enviar = tk.Button(tb, text="Enviar a documentos", bg=_PRIMARY, fg="white",
                                       command=self._on_enviar_cliente, state="disabled", **btn)
         self._btn_enviar.pack(side="left", padx=(0, 3))
         self._btn_archivar = tk.Button(tb, text="Archivar", bg="#475569", fg="white",
@@ -300,7 +301,12 @@ class UIBandejaGlobal(ttk.Frame):
             self._btn_comparecer.configure(state="normal" if estado == "PENDIENTE" else "disabled")
             self._btn_rechazar.configure(state="normal" if estado == "PENDIENTE" else "disabled")
             self._btn_descargar.configure(state="normal")
-            self._btn_enviar.configure(state="normal" if not item.get("enviada_cliente") else "disabled")
+            publicable = bool(
+                not item.get("enviada_cliente")
+                and item.get("pdf_path")
+                and os.path.isfile(item.get("pdf_path") or "")
+            )
+            self._btn_enviar.configure(state="normal" if publicable else "disabled")
             self._btn_archivar.configure(text="Desarchivar" if archivada else "Archivar", state="normal")
             self._btn_ver_cliente.configure(state="normal" if self._on_open_empresa else "disabled")
             self._btn_ver_buzon.configure(state="normal" if item.get("buzon_id") else "disabled")
@@ -364,10 +370,20 @@ class UIBandejaGlobal(ttk.Frame):
         return out
 
     def _on_comparecer(self) -> None:
-        self._cambiar_estado("ACEPTADA", "Marcar esta notificacion como ACEPTADA (Comparecer)?")
+        messagebox.showwarning(
+            "Comparecencia no disponible",
+            "La consulta DEHu actual es solo de recepcion. La aplicacion no cambiara "
+            "el estado hasta que DEHu confirme una comparecencia real y devuelva su justificante.",
+            parent=self.winfo_toplevel(),
+        )
 
     def _on_rechazar(self) -> None:
-        self._cambiar_estado("RECHAZADA", "Marcar esta notificacion como RECHAZADA?\nEsta accion queda registrada.")
+        messagebox.showwarning(
+            "Rechazo no disponible",
+            "La consulta DEHu actual es solo de recepcion. No se ha realizado ninguna "
+            "accion en el portal ni se ha modificado el estado local.",
+            parent=self.winfo_toplevel(),
+        )
 
     def _cambiar_estado(self, estado: str, pregunta: str) -> None:
         item = self._row_by_id(self._selected_id) if self._selected_id else None
@@ -406,18 +422,41 @@ class UIBandejaGlobal(ttk.Frame):
         item = self._row_by_id(self._selected_id) if self._selected_id else None
         if not item:
             return
+        pdf_path = item.get("pdf_path") or ""
+        if not pdf_path or not os.path.isfile(pdf_path):
+            messagebox.showwarning(
+                "Enviar a documentos",
+                "La notificacion todavia no tiene un PDF descargado. No se ha publicado nada.",
+                parent=self.winfo_toplevel(),
+            )
+            return
         if not messagebox.askyesno(
-            "Enviar al cliente",
-            "Marcar esta notificacion como enviada al cliente?",
+            "Enviar a documentos",
+            "Publicar el PDF en el modulo de documentos del cliente?",
             parent=self.winfo_toplevel(),
         ):
             return
-        fecha = datetime.now().strftime("%Y-%m-%d")
-        try:
-            self._gestor.marcar_notif_bandeja_enviada_cliente(item["codigo_empresa"], item["id"], fecha)
-        except Exception as exc:
-            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
-            return
+        self._btn_enviar.configure(state="disabled")
+
+        def _worker():
+            from services.aapp.document_publication import PublicadorDocumentosAAPP
+            resultado = PublicadorDocumentosAAPP(self._gestor).publicar_notificacion(item)
+            self.after(0, lambda: self._publicacion_cliente_fin(resultado))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _publicacion_cliente_fin(self, resultado) -> None:
+        if resultado.ok:
+            messagebox.showinfo(
+                "Documento publicado",
+                "La notificacion ya esta disponible en el modulo de documentos del cliente.",
+                parent=self.winfo_toplevel(),
+            )
+        else:
+            messagebox.showerror(
+                "No se pudo publicar", resultado.mensaje,
+                parent=self.winfo_toplevel(),
+            )
         self.refresh()
 
     def _on_archivar(self) -> None:

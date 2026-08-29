@@ -2024,6 +2024,11 @@ class GestorBase:
                 ON cert_solicitudes(codigo_empresa, tipo, estado);
             """
         )
+        self._ensure_column("cert_solicitudes", "area_cliente_estado", "TEXT NOT NULL DEFAULT 'NO_PUBLICADO'")
+        self._ensure_column("cert_solicitudes", "area_cliente_documento_id", "TEXT")
+        self._ensure_column("cert_solicitudes", "area_cliente_version", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("cert_solicitudes", "area_cliente_error", "TEXT")
+        self._ensure_column("cert_solicitudes", "fecha_publicacion_cliente", "TEXT")
         self.conn.commit()
 
     def listar_ccc(self, codigo_empresa: str, solo_activos: bool = False) -> list:
@@ -2082,6 +2087,14 @@ class GestorBase:
         cols = [c[0] for c in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
+    def get_cert_solicitud(self, sid: str) -> dict | None:
+        cur = self.conn.execute("SELECT * FROM cert_solicitudes WHERE id=?", (sid,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        cols = [c[0] for c in cur.description]
+        return dict(zip(cols, row))
+
     def upsert_cert_solicitud(self, sol: dict) -> str:
         import uuid as _uuid
         now = self._utc_now()
@@ -2120,6 +2133,34 @@ class GestorBase:
         self.conn.execute(
             "DELETE FROM cert_solicitudes WHERE id=? AND codigo_empresa=?",
             (sid, codigo_empresa),
+        )
+        self.conn.commit()
+
+    def marcar_cert_solicitud_publicada(
+        self, codigo_empresa: str, sid: str, documento_id: str, version: int, fecha: str,
+    ) -> None:
+        self.conn.execute(
+            """
+            UPDATE cert_solicitudes
+               SET area_cliente_estado='PUBLICADO', area_cliente_documento_id=?,
+                   area_cliente_version=?, area_cliente_error=NULL,
+                   fecha_publicacion_cliente=?, updated_at=?
+             WHERE id=? AND codigo_empresa=?
+            """,
+            (documento_id, int(version), fecha, self._utc_now(), sid, codigo_empresa),
+        )
+        self.conn.commit()
+
+    def marcar_cert_solicitud_publicacion_error(
+        self, codigo_empresa: str, sid: str, error: str,
+    ) -> None:
+        self.conn.execute(
+            """
+            UPDATE cert_solicitudes
+               SET area_cliente_estado='ERROR', area_cliente_error=?, updated_at=?
+             WHERE id=? AND codigo_empresa=?
+            """,
+            ((error or "")[:2000], self._utc_now(), sid, codigo_empresa),
         )
         self.conn.commit()
 
@@ -6154,6 +6195,9 @@ class GestorBase:
         self._ensure_column("notif_bandeja", "archivada", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("notif_bandeja", "enviada_cliente", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("notif_bandeja", "fecha_envio_cliente", "TEXT")
+        self._ensure_column("notif_bandeja", "area_cliente_documento_id", "TEXT")
+        self._ensure_column("notif_bandeja", "area_cliente_version", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("notif_bandeja", "area_cliente_error", "TEXT")
         self.conn.commit()
 
     def listar_notificaciones(
@@ -6660,6 +6704,34 @@ class GestorBase:
             "UPDATE notif_bandeja SET enviada_cliente=1, fecha_envio_cliente=?, updated_at=? "
             "WHERE id=? AND codigo_empresa=?",
             (fecha, now, item_id, codigo_empresa),
+        )
+        self.conn.commit()
+
+    def marcar_notif_bandeja_publicada_cliente(
+        self, codigo_empresa: str, item_id: str, documento_id: str, version: int, fecha: str,
+    ) -> None:
+        self.conn.execute(
+            """
+            UPDATE notif_bandeja
+               SET enviada_cliente=1, fecha_envio_cliente=?,
+                   area_cliente_documento_id=?, area_cliente_version=?,
+                   area_cliente_error=NULL, updated_at=?
+             WHERE id=? AND codigo_empresa=?
+            """,
+            (fecha, documento_id, int(version), self._utc_now(), item_id, codigo_empresa),
+        )
+        self.conn.commit()
+
+    def marcar_notif_bandeja_publicacion_error(
+        self, codigo_empresa: str, item_id: str, error: str,
+    ) -> None:
+        self.conn.execute(
+            """
+            UPDATE notif_bandeja
+               SET enviada_cliente=0, area_cliente_error=?, updated_at=?
+             WHERE id=? AND codigo_empresa=?
+            """,
+            ((error or "")[:2000], self._utc_now(), item_id, codigo_empresa),
         )
         self.conn.commit()
 

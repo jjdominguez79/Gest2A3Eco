@@ -47,6 +47,7 @@ class BackendClientService:
         *,
         source_type: str,
         source_id: str,
+        source_system: str = "desktop_invoice",
         source_version: int = 1,
         display_name: str,
         pdf_path: str,
@@ -68,7 +69,7 @@ class BackendClientService:
             raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
 
         fields = {
-            "source_system": "desktop_invoice",
+            "source_system": source_system,
             "source_id": source_id,
             "source_version": str(source_version),
             "document_type": source_type,

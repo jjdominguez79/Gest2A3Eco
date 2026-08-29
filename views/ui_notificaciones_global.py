@@ -8,6 +8,7 @@ electronicas de TODOS los clientes. Se accede desde el menu principal
 Subpantallas:
     - Bandeja global:    notificaciones de todos los clientes.
     - Certificados:      certificados digitales de todos los clientes.
+    - Certificados AAPP: solicitud y publicacion de certificados AEAT/TGSS.
     - Buzones DEHu:      configuracion DEHu de todos los clientes.
     - Sincronizaciones:  historico global de sincronizaciones (logs).
 
@@ -25,6 +26,7 @@ from views.notificaciones_theme import *  # noqa: F401,F403
 from views.ui_bandeja_global import UIBandejaGlobal
 from views.ui_buzones_global import UIBuzonesGlobal
 from views.ui_certificados_global import UICertificadosGlobal
+from views.ui_certificados_obtenidos import UICertificadosObtenidos
 from views.ui_sync_logs import UISyncLogs
 
 
@@ -58,13 +60,16 @@ class UINotificacionesGlobal(ttk.Frame):
         certificados = UICertificadosGlobal(nb, self._gestor, session=self._session)
         nb.add(certificados, text="Certificados")
 
+        certificados_aapp = UICertificadosObtenidos(nb, self._gestor, session=self._session)
+        nb.add(certificados_aapp, text="Certificados AEAT / TGSS")
+
         buzones = UIBuzonesGlobal(nb, self._gestor, session=self._session)
         nb.add(buzones, text="Buzones DEHu")
 
         logs = UISyncLogs(nb, self._gestor, session=self._session)
         nb.add(logs, text="Sincronizaciones / Logs")
 
-        self._views = [bandeja, certificados, buzones, logs]
+        self._views = [bandeja, certificados, certificados_aapp, buzones, logs]
         nb.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
     def _on_tab_changed(self, _e=None) -> None:

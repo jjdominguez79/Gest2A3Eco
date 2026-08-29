@@ -11,6 +11,7 @@ Requiere la libreria 'cryptography' para leer el .pfx.
 from __future__ import annotations
 
 import os
+import re
 import tkinter as tk
 from datetime import date, datetime
 from tkinter import filedialog, messagebox, ttk
@@ -51,6 +52,10 @@ def leer_metadatos_pfx(ruta, password):
         return store.info(mat), None
     except Exception as exc:
         return None, str(exc)
+
+
+def _normalizar_nif(valor) -> str:
+    return re.sub(r"[^0-9A-Z]", "", str(valor or "").upper())
 
 
 class UICertificados(ttk.Frame):
@@ -174,6 +179,20 @@ class UICertificados(ttk.Frame):
                 parent=self.winfo_toplevel(),
             )
             return
+
+        empresa = self._gestor.get_empresa(self._codigo) or {}
+        nif_empresa = _normalizar_nif(empresa.get("cif"))
+        nif_certificado = _normalizar_nif(info.get("nif"))
+        if nif_empresa and nif_certificado and nif_empresa != nif_certificado:
+            if not messagebox.askyesno(
+                "El titular no coincide",
+                f"El cliente tiene NIF {nif_empresa}, pero el certificado pertenece a "
+                f"{nif_certificado}.\n\n"
+                "Continua solo si es un certificado de representante autorizado para "
+                "este cliente. Guardarlo de todos modos?",
+                parent=self.winfo_toplevel(),
+            ):
+                return
 
         tipo = "PFX" if ruta.lower().endswith((".pfx", ".p12")) else "OTRO"
         cert = {

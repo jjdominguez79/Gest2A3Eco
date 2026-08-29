@@ -7,6 +7,7 @@ Permite:
   - Ver el listado de solicitudes de todos los clientes con su resumen
     (estado, resultado, fechas, ruta del PDF).
   - Abrir el PDF obtenido y compartirlo por email con el cliente.
+  - Publicar el PDF en el area documental que consume la aplicacion Flutter.
 """
 from __future__ import annotations
 
@@ -37,6 +38,7 @@ class UICertificadosObtenidos(ttk.Frame):
         ("f_sol",     "Solicitado",  120, "center"),
         ("f_obt",     "Obtenido",    120, "center"),
         ("pdf",       "PDF",          50, "center"),
+        ("flutter",   "Flutter",      75, "center"),
     ]
 
     def __init__(self, master, gestor, session=None):
@@ -91,6 +93,11 @@ class UICertificadosObtenidos(ttk.Frame):
         self._btn_email = tk.Button(tb, text="Compartir por email", bg="#0ea5e9", fg="white",
                                     command=self._on_email, state="disabled", **btn)
         self._btn_email.pack(side="left", padx=(0, 5))
+        self._btn_publicar = tk.Button(
+            tb, text="Enviar a documentos", bg="#7c3aed", fg="white",
+            command=self._on_publicar, state="disabled", **btn,
+        )
+        self._btn_publicar.pack(side="left", padx=(0, 5))
         self._btn_del = tk.Button(tb, text="Eliminar", bg=_DANGER, fg="white",
                                   command=self._on_eliminar, state="disabled", **btn)
         self._btn_del.pack(side="left", padx=(0, 5))
@@ -154,6 +161,10 @@ class UICertificadosObtenidos(ttk.Frame):
         tiene_pdf = bool(r and r.get("pdf_path") and os.path.isfile(r.get("pdf_path") or ""))
         self._btn_pdf.configure(state="normal" if tiene_pdf else "disabled")
         self._btn_email.configure(state="normal" if tiene_pdf else "disabled")
+        pendiente = bool(
+            tiene_pdf and r and r.get("area_cliente_estado") != "PUBLICADO"
+        )
+        self._btn_publicar.configure(state="normal" if pendiente else "disabled")
         self._btn_del.configure(state="normal" if r else "disabled")
 
     # ------------------------------------------------------------------ solicitar
@@ -279,6 +290,41 @@ class UICertificadosObtenidos(ttk.Frame):
             messagebox.showerror("Gest2A3Eco", f"No se pudo preparar el email:\n{exc}",
                                  parent=self.winfo_toplevel())
 
+    def _on_publicar(self):
+        solicitud = self._fila()
+        if not solicitud:
+            return
+        pdf = solicitud.get("pdf_path") or ""
+        if not pdf or not os.path.isfile(pdf):
+            messagebox.showwarning(
+                "Gest2A3Eco", "No hay un PDF obtenido que publicar.",
+                parent=self.winfo_toplevel(),
+            )
+            return
+        self._btn_publicar.configure(state="disabled")
+
+        def _worker():
+            from services.aapp.document_publication import PublicadorDocumentosAAPP
+            resultado = PublicadorDocumentosAAPP(self._gestor).publicar_certificado(solicitud)
+            self.after(0, lambda: self._publicacion_fin(resultado))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _publicacion_fin(self, resultado):
+        if resultado.ok:
+            messagebox.showinfo(
+                "Documento publicado",
+                "El certificado ya esta disponible en el modulo de documentos del cliente.",
+                parent=self.winfo_toplevel(),
+            )
+        else:
+            messagebox.showerror(
+                "No se pudo publicar",
+                resultado.mensaje,
+                parent=self.winfo_toplevel(),
+            )
+        self.refresh()
+
     def _on_eliminar(self):
         r = self._fila()
         if not r:
@@ -314,10 +360,14 @@ class UICertificadosObtenidos(ttk.Frame):
                 (r.get("fecha_solicitud") or "")[:16].replace("T", " "),
                 (r.get("fecha_obtencion") or "")[:16].replace("T", " "),
                 "Si" if (r.get("pdf_path") and os.path.isfile(r.get("pdf_path") or "")) else "-",
+                "Publicado" if r.get("area_cliente_estado") == "PUBLICADO" else (
+                    "Error" if r.get("area_cliente_estado") == "ERROR" else "-"
+                ),
             ), tags=(r.get("estado") or "",))
         n = len(self._cache)
         obt = sum(1 for r in self._cache if r.get("estado") == "OBTENIDO")
         self._lbl_status.configure(text=f"{n} solicitud(es)  |  Obtenidos: {obt}")
         self._btn_pdf.configure(state="disabled")
         self._btn_email.configure(state="disabled")
+        self._btn_publicar.configure(state="disabled")
         self._btn_del.configure(state="disabled")

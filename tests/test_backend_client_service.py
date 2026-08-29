@@ -43,7 +43,28 @@ def test_publish_document_uses_workstation_api_key(monkeypatch, tmp_path):
     assert request.kwargs["data"]["company_code"] == "E00006"
     assert request.kwargs["data"]["previous_document_id"] == "doc-anterior"
     assert request.kwargs["data"]["customer_tax_id"] == "B12345678"
+    assert request.kwargs["data"]["source_system"] == "desktop_invoice"
     response.raise_for_status.assert_called_once_with()
+
+
+def test_publish_document_accepts_aapp_source_system(monkeypatch, tmp_path):
+    pdf = tmp_path / "certificado.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    response = MagicMock()
+    response.json.return_value = {"id": "doc-aapp"}
+    session = MagicMock()
+    session.post.return_value = response
+
+    _service(monkeypatch, session).publish_document(
+        source_type="certificado_aeat",
+        source_system="desktop_aapp",
+        source_id="sol-1",
+        display_name="Estar al corriente",
+        pdf_path=str(pdf),
+        customer_tax_id="B12345678",
+    )
+
+    assert session.post.call_args.kwargs["data"]["source_system"] == "desktop_aapp"
 
 
 def test_unconfigured_service_fails_before_http(monkeypatch):
