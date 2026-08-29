@@ -412,6 +412,25 @@ class GestorPostgres(GestorBase):
             ("facturas_emitidas_docs", "updated_at", "TEXT"),
             ("facturas_emitidas_docs", "pdf_generated_at", "TEXT"),
             (
+                "facturas_emitidas_docs", "area_cliente_estado",
+                "TEXT NOT NULL DEFAULT ''",
+            ),
+            ("facturas_emitidas_docs", "area_cliente_documento_id", "TEXT"),
+            ("facturas_emitidas_docs", "area_cliente_pdf_path", "TEXT"),
+            ("facturas_emitidas_docs", "area_cliente_sha256", "TEXT"),
+            (
+                "facturas_emitidas_docs", "area_cliente_version",
+                "INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "facturas_emitidas_docs", "area_cliente_intentos",
+                "INTEGER NOT NULL DEFAULT 0",
+            ),
+            ("facturas_emitidas_docs", "area_cliente_siguiente_intento", "TEXT"),
+            ("facturas_emitidas_docs", "area_cliente_error", "TEXT"),
+            ("facturas_emitidas_docs", "area_cliente_importe", "DOUBLE PRECISION"),
+            ("facturas_emitidas_docs", "area_cliente_actualizado", "TEXT"),
+            (
                 "facturas_emitidas_docs", "origen_factura",
                 "TEXT NOT NULL DEFAULT 'facturacion'",
             ),

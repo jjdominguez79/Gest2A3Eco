@@ -10,6 +10,7 @@ import '../core/websocket/realtime_service.dart';
 import '../features/auth/domain/user_profile.dart';
 import '../features/auth/presentation/auth_controller.dart';
 import '../features/empleados/presentation/empleados_screen.dart';
+import '../features/documents/presentation/documents_providers.dart';
 import '../features/messaging/presentation/messaging_providers.dart';
 import 'router.dart';
 
@@ -38,6 +39,18 @@ class _GestinemAppState extends ConsumerState<GestinemApp> {
   }
 
   void _handleNotification(NotificationEvent event) {
+    final documentId = event.documentId;
+    if (documentId != null && documentId.isNotEmpty) {
+      ref.invalidate(documentsProvider);
+      ref.invalidate(documentDetailProvider(documentId));
+      if (event.opened && ref.read(sessionProvider).valueOrNull != null) {
+        final target = 'document:$documentId';
+        if (_lastOpenedNotification == target) return;
+        _lastOpenedNotification = target;
+        ref.read(routerProvider).go('/documents/$documentId');
+      }
+      return;
+    }
     ref.invalidate(conversationsProvider);
     ref.invalidate(unifiedConversationProvider);
     ref.invalidate(unifiedMessagesProvider);

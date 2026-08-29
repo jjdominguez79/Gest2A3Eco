@@ -235,8 +235,18 @@ def test_compartir_factura_publicar_area_cliente(monkeypatch, tmp_path):
             published.append(kwargs)
             return {"document_id": "doc-test-1"}
 
+    class GestorStub:
+        def encolar_publicacion_area_cliente(self, *_args):
+            return True
+
+        def marcar_publicacion_area_cliente_exitosa(self, *_args):
+            return None
+
+        def marcar_publicacion_area_cliente_fallida(self, *_args, **_kwargs):
+            return None
+
     monkeypatch.setattr(
-        "services.backend_client_service.BackendClientService",
+        "services.client_document_publication_service.BackendClientService",
         BackendClientStub,
     )
     pdf = tmp_path / "factura.pdf"
@@ -250,7 +260,7 @@ def test_compartir_factura_publicar_area_cliente(monkeypatch, tmp_path):
     )
     controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
     controller._view = view
-    controller._gestor = SimpleNamespace()
+    controller._gestor = GestorStub()
     controller._codigo = "E00001"
     controller._ejercicio = 2026
     controller._get_factura_by_id = lambda _id: {
@@ -268,7 +278,7 @@ def test_compartir_factura_publicar_area_cliente(monkeypatch, tmp_path):
 
     assert len(published) == 1
     assert published[0]["customer_tax_id"] == "B12345678"
-    assert published[0]["source_type"] == "factura_emitida"
+    assert published[0]["source_type"] == "factura"
     info = next(row for row in sent if row[0] == "info")
     assert "publicada" in info[1][1].lower()
 

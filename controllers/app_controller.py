@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 LOG = logging.getLogger(__name__)
 MAIL_NOTIFICATION_INTERVAL_MS = 30_000
 ATTACHMENT_NOTIFICATION_INTERVAL_MS = 30_000
+CLIENT_PUBLICATION_INTERVAL_MS = 60_000
 
 
 class AppController:
@@ -44,6 +45,9 @@ class AppController:
         self._attachment_poll_stopped = False
         self._attachment_toast = None
         self._attachment_status_callback = None
+        self._client_publication_running = False
+        self._client_publication_scheduled = False
+        self._client_publication_stopped = False
         self._content.bind("<Destroy>", self._on_content_destroy, add="+")
 
     @property
@@ -59,6 +63,67 @@ class AppController:
         self._show(self.build_panel_general)
         self._schedule_mail_poll(1_500)
         self._schedule_attachment_poll(2_000)
+        self._schedule_client_publications(3_000)
+
+    def _schedule_client_publications(
+        self, delay_ms=CLIENT_PUBLICATION_INTERVAL_MS,
+    ):
+        role = str(getattr(self._session.role, "value", self._session.role)).lower()
+        if (
+            self._client_publication_stopped
+            or self._client_publication_scheduled
+            or role not in {"admin", "empleado"}
+        ):
+            return
+        try:
+            self._content.after(delay_ms, self._start_client_publications)
+            self._client_publication_scheduled = True
+        except tk.TclError:
+            pass
+
+    def _start_client_publications(self):
+        self._client_publication_scheduled = False
+        if self._client_publication_stopped:
+            return
+        if self._client_publication_running:
+            self._schedule_client_publications()
+            return
+        self._client_publication_running = True
+
+        def worker():
+            try:
+                from services.client_document_publication_service import (
+                    ClientDocumentPublicationService,
+                )
+                results = ClientDocumentPublicationService(
+                    self._gestor,
+                ).process_pending(limit=10)
+                error = None
+            except Exception as exc:
+                results, error = [], exc
+            try:
+                self._content.after(
+                    0, self._finish_client_publications, results, error,
+                )
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_client_publications(self, results, error):
+        self._client_publication_running = False
+        if self._client_publication_stopped:
+            return
+        if error is not None:
+            LOG.warning("No se pudo procesar la cola del area cliente: %s", error)
+        elif results:
+            published = sum(item.status == "publicada" for item in results)
+            blocked = sum(item.status == "bloqueada" for item in results)
+            LOG.info(
+                "Cola area cliente: %s publicadas, %s bloqueadas, %s pendientes",
+                published, blocked, len(results) - published - blocked,
+            )
+        self._schedule_client_publications()
 
     def set_mail_status_callback(self, callback):
         self._mail_status_callback = callback
@@ -326,6 +391,7 @@ class AppController:
         if event.widget is self._content:
             self._mail_poll_stopped = True
             self._attachment_poll_stopped = True
+            self._client_publication_stopped = True
 
     def open_buzon(self):
         """Abre el buzon global de comunicaciones bajo demanda."""

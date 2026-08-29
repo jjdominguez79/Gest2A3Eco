@@ -1,8 +1,13 @@
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../../core/api/api_client.dart';
+import '../domain/client_document.dart';
 import 'documents_providers.dart';
 
 /// Pantalla de detalle de un documento con descarga y compartir.
@@ -22,6 +27,9 @@ class _DocumentDetailScreenState extends ConsumerState<DocumentDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final docAsync = ref.watch(documentDetailProvider(widget.documentId));
+    // Es una operacion independiente: si falla, el documento sigue siendo
+    // consultable y se intentara marcar de nuevo en la proxima apertura.
+    ref.watch(documentReadProvider(widget.documentId));
 
     return Scaffold(
       appBar: AppBar(title: const Text('Detalle del documento')),
@@ -39,10 +47,7 @@ class _DocumentDetailScreenState extends ConsumerState<DocumentDetailScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        doc.displayName,
-                        style: theme.textTheme.titleLarge,
-                      ),
+                      Text(doc.displayName, style: theme.textTheme.titleLarge),
                       const SizedBox(height: 8),
                       if (doc.documentDate != null)
                         _Row('Fecha', doc.documentDate!.substring(0, 10)),
@@ -50,7 +55,8 @@ class _DocumentDetailScreenState extends ConsumerState<DocumentDetailScreen> {
                         _Row('Importe', '${doc.amount} ${doc.currency}'),
                       _Row('Ejercicio', '${doc.fiscalYear}'),
                       _Row('Estado', _statusLabel(doc.status)),
-                      if (doc.description != null && doc.description!.isNotEmpty)
+                      if (doc.description != null &&
+                          doc.description!.isNotEmpty)
                         _Row('Descripcion', doc.description!),
                     ],
                   ),
@@ -63,9 +69,7 @@ class _DocumentDetailScreenState extends ConsumerState<DocumentDetailScreen> {
                   child: ListTile(
                     leading: const Icon(Icons.warning, color: Colors.orange),
                     title: const Text('Este documento ha sido sustituido'),
-                    subtitle: const Text(
-                      'Existe una version mas reciente.',
-                    ),
+                    subtitle: const Text('Existe una version mas reciente.'),
                     trailing: doc.replacedById != null
                         ? TextButton(
                             onPressed: () =>
@@ -91,21 +95,25 @@ class _DocumentDetailScreenState extends ConsumerState<DocumentDetailScreen> {
               ],
               const SizedBox(height: 16),
               if (doc.isPublished || doc.isReplaced)
-                Row(
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
                   children: [
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: _downloading ? null : () => _download(),
-                        icon: _downloading
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.download),
-                        label: const Text('Descargar'),
-                      ),
+                    ElevatedButton.icon(
+                      onPressed: _downloading ? null : () => _download(doc),
+                      icon: _downloading
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.download),
+                      label: const Text('Guardar PDF'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _downloading ? null : () => _share(doc),
+                      icon: const Icon(Icons.share_outlined),
+                      label: const Text('Compartir'),
                     ),
                   ],
                 ),
@@ -129,25 +137,59 @@ class _DocumentDetailScreenState extends ConsumerState<DocumentDetailScreen> {
     }
   }
 
-  Future<void> _download() async {
+  Future<void> _download(ClientDocument doc) async {
     setState(() => _downloading = true);
     try {
       final repo = ref.read(documentsRepositoryProvider);
-      await repo.downloadDocument(widget.documentId);
-      // Marcar como leido
-      await repo.markAsRead(widget.documentId);
-      ref.invalidate(documentDetailProvider(widget.documentId));
-      ref.invalidate(documentsProvider);
+      final bytes = await repo.downloadDocument(widget.documentId);
+      final uri = await FilePicker.saveFile(
+        dialogTitle: 'Guardar factura',
+        fileName: doc.fileName,
+        bytes: bytes,
+      );
+      if (uri == null) return;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Documento descargado')),
+          const SnackBar(content: Text('PDF guardado correctamente')),
         );
+      }
+      if (!kIsWeb && uri.scheme == 'file') {
+        await OpenFilex.open(uri.toFilePath());
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${apiErrorMessage(e)}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${apiErrorMessage(e)}')));
+      }
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
+  }
+
+  Future<void> _share(ClientDocument doc) async {
+    setState(() => _downloading = true);
+    try {
+      final bytes = await ref
+          .read(documentsRepositoryProvider)
+          .downloadDocument(widget.documentId);
+      await SharePlus.instance.share(
+        ShareParams(
+          text: doc.displayName,
+          files: [
+            XFile.fromData(
+              bytes,
+              mimeType: 'application/pdf',
+              name: doc.fileName,
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${apiErrorMessage(e)}')));
       }
     } finally {
       if (mounted) setState(() => _downloading = false);
@@ -173,8 +215,8 @@ class _Row extends StatelessWidget {
             child: Text(
               label,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
           Expanded(child: Text(value)),

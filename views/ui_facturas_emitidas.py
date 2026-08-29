@@ -2274,6 +2274,11 @@ class UIFacturasEmitidas(ttk.Frame):
         ttk.Button(top2, text="Exportar PDF", command=self._export_pdf).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(top2, text="Abrir PDF", command=self._abrir_pdf).pack(side=tk.LEFT, padx=8)
         ttk.Button(top2, text="Compartir PDF", command=self._compartir_pdf).pack(side=tk.LEFT, padx=8)
+        ttk.Button(
+            top2,
+            text="Reintentar area cliente",
+            command=self._reintentar_area_cliente,
+        ).pack(side=tk.LEFT, padx=8)
         ttk.Button(top2, text="Generar FACe", command=self._generar_facturae).pack(side=tk.LEFT, padx=8)
         ttk.Button(top2, text="PDF seleccion", command=self._export_pdf_multiple).pack(side=tk.LEFT, padx=8)
         ttk.Button(
@@ -2324,7 +2329,7 @@ class UIFacturasEmitidas(ttk.Frame):
 
         self.tv = ttk.Treeview(
             parent,
-            columns=("marcar", "ejercicio", "serie", "numero", "asiento", "cont_estado", "fecha", "cliente", "total", "enviado", "fecha_envio", "facturae_estado"),
+            columns=("marcar", "ejercicio", "serie", "numero", "asiento", "cont_estado", "fecha", "cliente", "total", "enviado", "fecha_envio", "area_cliente", "facturae_estado"),
             show="headings",
             selectmode="extended",
             height=12,
@@ -2341,6 +2346,7 @@ class UIFacturasEmitidas(ttk.Frame):
             ("total", "Total", 100, "e"),
             ("enviado", "Enviado", 90, "center"),
             ("fecha_envio", "Fecha envio", 110, "w"),
+            ("area_cliente", "Area cliente", 120, "center"),
             ("facturae_estado", "Facturae", 120, "center"),
         ]
         for c, h, w, align in cols:
@@ -2650,6 +2656,12 @@ class UIFacturasEmitidas(ttk.Frame):
                 fmt2s(total, sym),
                 "Si" if fac.get("enviado") else "No",
                 fac.get("fecha_envio", ""),
+                {
+                    "pendiente": "Pendiente",
+                    "publicada": "Publicada",
+                    "bloqueada": "Bloqueada",
+                    "error": "Reintentando",
+                }.get(str(fac.get("area_cliente_estado") or ""), "No publicada"),
                 _FACTURAE_LABELS.get(str(fac.get("facturae_status") or "").strip().lower(), "No generado"),
             ),
         )
@@ -3430,6 +3442,9 @@ class UIFacturasEmitidas(ttk.Frame):
 
     def _compartir_pdf(self):
         self.controller.compartir_pdf()
+
+    def _reintentar_area_cliente(self):
+        self.controller.reintentar_publicacion_area_cliente()
 
     def _export_pdf_multiple(self):
         self.controller.export_pdf_multiple()

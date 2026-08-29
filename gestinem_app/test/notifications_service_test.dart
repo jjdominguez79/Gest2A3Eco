@@ -39,12 +39,14 @@ void main() {
         conversationId: 'conv-123',
         opened: false,
         threadId: 'thread-456',
+        documentId: 'doc-789',
         title: 'Titulo',
         body: 'Cuerpo',
       );
 
       expect(event.conversationId, 'conv-123');
       expect(event.threadId, 'thread-456');
+      expect(event.documentId, 'doc-789');
       expect(event.opened, isFalse);
       expect(event.title, 'Titulo');
       expect(event.body, 'Cuerpo');

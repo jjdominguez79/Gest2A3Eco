@@ -5,6 +5,7 @@ import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault(
@@ -109,9 +110,14 @@ class _InMemoryDb:
         if "msg_sessions" in stmt_str:
             return self._session
         if "client_documents" in stmt_str and "source_system" in stmt_str:
-            # Busqueda por source
+            params = stmt.compile().params
+            expected_hash = next(
+                (str(value) for key, value in params.items() if "sha256" in key),
+                None,
+            )
             for d in self._docs.values():
-                return d  # simplificado
+                if expected_hash is None or d.sha256 == expected_hash:
+                    return d
             return None
         if "client_document_reads" in stmt_str:
             key = f"read-search"
@@ -125,6 +131,10 @@ class _InMemoryDb:
             def all(self):
                 return self._items
         stmt_str = str(stmt)
+        if "msg_clients.id" in stmt_str:
+            return _Result([self._client.id])
+        if "msg_app_devices" in stmt_str:
+            return _Result([])
         if "client_document_reads" in stmt_str:
             return _Result(list(self._reads.keys()))
         return _Result(list(self._docs.values()))
@@ -156,6 +166,9 @@ class _InMemoryDb:
         pass
 
     def close(self):
+        pass
+
+    def rollback(self):
         pass
 
 
@@ -200,7 +213,7 @@ class TestPublishDocument:
                 "fiscal_year": "2026",
                 "amount": "100.00",
             },
-            files={"file": ("factura.pdf", b"contenido pdf", "application/pdf")},
+            files={"file": ("factura.pdf", b"%PDF-1.4 contenido", "application/pdf")},
             headers={"x-api-key": "test-key"},
         )
         assert resp.status_code == 200
@@ -211,15 +224,9 @@ class TestPublishDocument:
 
     def test_publicacion_idempotente(self):
         db = _InMemoryDb()
-        existing = _FakeDoc()
+        content = b"%PDF-1.4 otro"
+        existing = _FakeDoc(sha256=_FakeStorage.compute_sha256(content))
         db._docs["doc-1"] = existing
-        original_scalar = db.scalar
-        def patched_scalar(stmt):
-            stmt_str = str(stmt)
-            if "source_system" in stmt_str and "client_documents" in stmt_str:
-                return existing
-            return original_scalar(stmt)
-        db.scalar = patched_scalar
 
         storage = _FakeStorage()
         app = _build_app(db, storage=storage, override_internal_auth=True)
@@ -234,11 +241,112 @@ class TestPublishDocument:
                 "source_version": "1",
                 "display_name": "Factura 001",
             },
-            files={"file": ("factura.pdf", b"otro contenido", "application/pdf")},
+            files={"file": ("factura.pdf", content, "application/pdf")},
             headers={"x-api-key": "test-key"},
         )
         assert resp.status_code == 200
         assert len(storage.files) == 0
+
+    def test_contenido_cambiado_crea_version_y_sustituye_anterior(self):
+        db = _InMemoryDb()
+        existing = _FakeDoc(sha256="hash-anterior", source_version=1)
+        db._docs["doc-1"] = existing
+        storage = _FakeStorage()
+        client = TestClient(
+            _build_app(db, storage=storage, override_internal_auth=True),
+        )
+
+        resp = client.post(
+            "/api/v1/messaging/client/documents/internal/publish",
+            data={
+                "organization_id": "org-1",
+                "document_type": "factura",
+                "source_system": "desktop_invoice",
+                "source_id": "FAC-001",
+                "source_version": "1",
+                "display_name": "Factura corregida",
+            },
+            files={
+                "file": ("factura.pdf", b"%PDF-1.4 corregida", "application/pdf"),
+            },
+            headers={"x-api-key": "test-key"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["source_version"] == 2
+        assert existing.status == "replaced"
+        assert len(storage.files) == 1
+
+    @pytest.mark.parametrize(
+        ("content", "extra_data", "expected_status"),
+        [
+            (b"texto", {}, 415),
+            (b"%PDF-1.4 valido", {"expected_sha256": "0" * 64}, 422),
+        ],
+    )
+    def test_rechaza_archivo_invalido_o_hash_incorrecto(
+        self, content, extra_data, expected_status,
+    ):
+        db = _InMemoryDb()
+        storage = _FakeStorage()
+        client = TestClient(
+            _build_app(db, storage=storage, override_internal_auth=True),
+        )
+        data = {
+            "organization_id": "org-1",
+            "document_type": "factura",
+            "source_system": "desktop_invoice",
+            "source_id": "FAC-001",
+            "display_name": "Factura 001",
+            **extra_data,
+        }
+
+        resp = client.post(
+            "/api/v1/messaging/client/documents/internal/publish",
+            data=data,
+            files={"file": ("factura.pdf", content, "application/pdf")},
+            headers={"x-api-key": "test-key"},
+        )
+
+        assert resp.status_code == expected_status
+        assert storage.files == {}
+
+
+def test_notificacion_documental_incluye_destino_directo(monkeypatch):
+    from backend.api import messaging_firebase
+    from backend.api.client_documents_api import _notify_document_published
+
+    device = SimpleNamespace(
+        push_token="token-1", platform="android", active=True,
+    )
+
+    class DbStub:
+        def __init__(self):
+            self.calls = 0
+            self.commits = 0
+
+        def scalars(self, _stmt):
+            self.calls += 1
+            values = ["cli-1"] if self.calls == 1 else [device]
+            return SimpleNamespace(all=lambda: values)
+
+        def commit(self):
+            self.commits += 1
+
+    payloads = []
+    monkeypatch.setattr(
+        messaging_firebase,
+        "send_fcm",
+        lambda token, payload, **kwargs: (
+            payloads.append((token, payload, kwargs))
+            or messaging_firebase.FcmResult(True, False)
+        ),
+    )
+
+    _notify_document_published(DbStub(), _FakeDoc())
+
+    assert payloads[0][1]["target_type"] == "document"
+    assert payloads[0][1]["document_id"] == "doc-1"
 
 
 # ---------- tests listado cliente ----------
@@ -394,7 +502,7 @@ class TestPublishDocumentFeatureFlag:
                     "display_name": "Factura 002",
                     "fiscal_year": "2026",
                 },
-                files={"file": ("factura.pdf", b"contenido pdf", "application/pdf")},
+                files={"file": ("factura.pdf", b"%PDF-1.4 contenido", "application/pdf")},
                 headers={"x-api-key": "test-key"},
             )
         assert resp.status_code == 403

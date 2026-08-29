@@ -134,12 +134,14 @@ class NotificationEvent {
     required this.conversationId,
     required this.opened,
     this.threadId,
+    this.documentId,
     this.title,
     this.body,
   });
 
   final String conversationId;
   final String? threadId;
+  final String? documentId;
   final bool opened;
   final String? title;
   final String? body;
@@ -388,6 +390,12 @@ class NotificationsService {
     final targetType = notificationTargetType(data);
     final targetId = notificationTargetId(data);
     try {
+      if (targetType == 'document') {
+        final response = await api.dio.get<Map<String, dynamic>>(
+          '/client/documents/$targetId',
+        );
+        return response.data?['is_read'] != true;
+      }
       final path = targetType == 'internal_thread'
           ? '/staff/internal/threads'
           : '/${session.profile.type.name}/conversations';
@@ -432,12 +440,16 @@ class NotificationsService {
     final targetId = notificationTargetId(data);
     final conversationId = targetType == 'conversation' ? targetId : '';
     final threadId = targetType == 'internal_thread' ? targetId : null;
-    if (conversationId.isEmpty && (threadId == null || threadId.isEmpty)) {
+    final documentId = targetType == 'document' ? targetId : null;
+    if (conversationId.isEmpty &&
+        (threadId == null || threadId.isEmpty) &&
+        (documentId == null || documentId.isEmpty)) {
       return;
     }
     final event = NotificationEvent(
       conversationId: conversationId,
       threadId: threadId,
+      documentId: documentId,
       opened: opened,
       title: title ?? data['title']?.toString(),
       body: body ?? data['body']?.toString(),

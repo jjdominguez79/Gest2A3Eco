@@ -55,6 +55,7 @@ class BackendClientService:
         amount: float | None = None,
         document_date: str | None = None,
         description: str = "",
+        expected_sha256: str = "",
     ) -> dict:
         """Sube un PDF al area documental del cliente por multipart."""
         self._ensure_configured()
@@ -73,6 +74,8 @@ class BackendClientService:
             "customer_tax_id": customer_tax_id,
             "fiscal_year": str(fiscal_year),
         }
+        if expected_sha256:
+            fields["expected_sha256"] = expected_sha256
         if amount is not None:
             fields["amount"] = str(amount)
         if document_date:

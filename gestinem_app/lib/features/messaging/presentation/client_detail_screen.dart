@@ -3,21 +3,36 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
-import '../../platform/features_provider.dart';
 import '../domain/client_organization.dart';
 import 'clients_screen.dart';
 import 'messaging_providers.dart';
 
+class OrganizationFeatures {
+  const OrganizationFeatures({
+    this.documents = false,
+    this.effectiveDocuments = false,
+    this.invoicing = false,
+    this.effectiveInvoicing = false,
+  });
+
+  final bool documents;
+  final bool effectiveDocuments;
+  final bool invoicing;
+  final bool effectiveInvoicing;
+}
+
 /// Provider para las feature flags de una organizacion concreta (vista admin).
 final orgFeaturesProvider = FutureProvider.autoDispose
-    .family<PlatformFeatures, String>((ref, companyCode) async {
-  final repo = ref.watch(messagingRepositoryProvider);
-  final json = await repo.getOrganizationFeatures(companyCode);
-  return PlatformFeatures(
-    documents: json['client_documents_enabled'] as bool? ?? false,
-    invoicing: json['client_invoicing_enabled'] as bool? ?? false,
-  );
-});
+    .family<OrganizationFeatures, String>((ref, companyCode) async {
+      final repo = ref.watch(messagingRepositoryProvider);
+      final json = await repo.getOrganizationFeatures(companyCode);
+      return OrganizationFeatures(
+        documents: json['client_documents_enabled'] as bool? ?? false,
+        effectiveDocuments: json['effective_documents'] as bool? ?? false,
+        invoicing: json['client_invoicing_enabled'] as bool? ?? false,
+        effectiveInvoicing: json['effective_invoicing'] as bool? ?? false,
+      );
+    });
 
 class ClientDetailScreen extends ConsumerStatefulWidget {
   const ClientDetailScreen({super.key, required this.companyCode});
@@ -111,14 +126,16 @@ class _ClientDetailScreenState extends ConsumerState<ClientDetailScreen> {
     }
     setState(() => _featuresBusy = true);
     try {
-      await ref
-          .read(messagingRepositoryProvider)
-          .setOrganizationFeatures(companyCode, {flag: value});
+      await ref.read(messagingRepositoryProvider).setOrganizationFeatures(
+        companyCode,
+        {flag: value},
+      );
       ref.invalidate(orgFeaturesProvider(companyCode));
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
       }
     } finally {
       if (mounted) setState(() => _featuresBusy = false);
@@ -165,7 +182,12 @@ class _ClientDetailScreenState extends ConsumerState<ClientDetailScreen> {
           }
           final client = matches.first;
           return ListView(
-            padding: const EdgeInsets.all(20),
+            padding: EdgeInsets.fromLTRB(
+              20,
+              20,
+              20,
+              20 + MediaQuery.paddingOf(context).bottom,
+            ),
             children: [
               Card(
                 child: Padding(
@@ -219,13 +241,12 @@ class _ClientDetailScreenState extends ConsumerState<ClientDetailScreen> {
               _FeaturesCard(
                 companyCode: client.companyCode,
                 busy: _featuresBusy,
-                onToggle: (flag, value, {confirm = false}) =>
-                    _toggleFeature(
-                      client.companyCode,
-                      flag,
-                      value,
-                      confirm: confirm,
-                    ),
+                onToggle: (flag, value, {confirm = false}) => _toggleFeature(
+                  client.companyCode,
+                  flag,
+                  value,
+                  confirm: confirm,
+                ),
               ),
               const SizedBox(height: 20),
               if ({'active', 'pending'}.contains(client.accessStatus))
@@ -330,22 +351,23 @@ class _FeaturesCard extends ConsumerWidget {
                 SwitchListTile(
                   secondary: const Icon(Icons.folder_outlined),
                   title: const Text('Area documental'),
+                  subtitle: Text(
+                    features.effectiveDocuments
+                        ? 'Disponible para el cliente'
+                        : features.documents
+                        ? 'Configurada; falta la activacion global'
+                        : 'No disponible para el cliente',
+                  ),
                   value: features.documents,
                   onChanged: busy
                       ? null
                       : (v) => onToggle('client_documents_enabled', v),
                 ),
-                SwitchListTile(
-                  secondary: const Icon(Icons.receipt_long_outlined),
-                  title: const Text('Facturacion'),
-                  value: features.invoicing,
-                  onChanged: busy
-                      ? null
-                      : (v) => onToggle(
-                            'client_invoicing_enabled',
-                            v,
-                            confirm: v,
-                          ),
+                const ListTile(
+                  leading: Icon(Icons.receipt_long_outlined),
+                  title: Text('Facturacion desde la app'),
+                  subtitle: Text('Disponible en una segunda fase'),
+                  trailing: Icon(Icons.schedule_outlined),
                 ),
               ],
             ),

@@ -295,6 +295,72 @@ def test_upsert_factura_emitida_con_id_textual_confirma_transaccion():
     assert params[0:3] == ("factura-empleado-809", "E00809", 2026)
 
 
+def test_cola_area_cliente_no_duplica_el_mismo_pdf_publicado():
+    class Conexion:
+        def __init__(self):
+            self.sentencias = []
+            self.commit_count = 0
+
+        def execute(self, sql, params=None):
+            self.sentencias.append((sql, params))
+            return _Resultado(row=FilaPostgres({
+                "area_cliente_estado": "publicada",
+                "area_cliente_sha256": "hash-1",
+                "area_cliente_intentos": 0,
+                "area_cliente_documento_id": "doc-1",
+            }))
+
+        def commit(self):
+            self.commit_count += 1
+
+    conexion = Conexion()
+    gestor = object.__new__(GestorPostgres)
+    gestor.conn = conexion
+
+    queued = gestor.encolar_publicacion_area_cliente(
+        "fac-1", "C:/factura.pdf", "hash-1", 100.0,
+    )
+
+    assert queued is False
+    assert len(conexion.sentencias) == 1
+    assert conexion.commit_count == 0
+
+
+def test_cola_area_cliente_encola_una_version_corregida():
+    class Conexion:
+        def __init__(self):
+            self.sentencias = []
+            self.commit_count = 0
+
+        def execute(self, sql, params=None):
+            self.sentencias.append((sql, params))
+            if sql.lstrip().startswith("SELECT"):
+                return _Resultado(row=FilaPostgres({
+                    "area_cliente_estado": "publicada",
+                    "area_cliente_sha256": "hash-anterior",
+                    "area_cliente_intentos": 4,
+                    "area_cliente_documento_id": "doc-anterior",
+                }))
+            return _Resultado()
+
+        def commit(self):
+            self.commit_count += 1
+
+    conexion = Conexion()
+    gestor = object.__new__(GestorPostgres)
+    gestor.conn = conexion
+
+    queued = gestor.encolar_publicacion_area_cliente(
+        "fac-1", "C:/factura.pdf", "hash-nuevo", 100.0,
+    )
+
+    assert queued is True
+    _sql, params = conexion.sentencias[1]
+    assert params[4] == 0
+    assert params[5] is None
+    assert conexion.commit_count == 1
+
+
 class _ConexionMigracionesFalsa:
     def __init__(
         self,
@@ -456,6 +522,16 @@ _COLUMNAS_ESENCIALES = {
     ("ocr_aprendizaje_ejemplos", "marcas_json"),
     ("facturas_emitidas_docs", "updated_at"),
     ("facturas_emitidas_docs", "pdf_generated_at"),
+    ("facturas_emitidas_docs", "area_cliente_estado"),
+    ("facturas_emitidas_docs", "area_cliente_documento_id"),
+    ("facturas_emitidas_docs", "area_cliente_pdf_path"),
+    ("facturas_emitidas_docs", "area_cliente_sha256"),
+    ("facturas_emitidas_docs", "area_cliente_version"),
+    ("facturas_emitidas_docs", "area_cliente_intentos"),
+    ("facturas_emitidas_docs", "area_cliente_siguiente_intento"),
+    ("facturas_emitidas_docs", "area_cliente_error"),
+    ("facturas_emitidas_docs", "area_cliente_importe"),
+    ("facturas_emitidas_docs", "area_cliente_actualizado"),
     ("facturas_emitidas_docs", "origen_factura"),
     ("facturas_emitidas_docs", "ocr_documento_id"),
     ("albaranes_emitidas_docs", "updated_at"),

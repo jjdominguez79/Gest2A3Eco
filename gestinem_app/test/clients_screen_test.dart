@@ -9,7 +9,6 @@ import 'package:gestinem/features/messaging/domain/client_organization.dart';
 import 'package:gestinem/features/messaging/presentation/client_detail_screen.dart';
 import 'package:gestinem/features/messaging/presentation/clients_screen.dart';
 import 'package:gestinem/features/messaging/presentation/messaging_providers.dart';
-import 'package:gestinem/features/platform/features_provider.dart';
 
 import 'test_helpers.dart';
 
@@ -117,17 +116,22 @@ void main() {
           ),
           apiClientProvider.overrideWithValue(api),
           clientOrganizationsProvider.overrideWith((ref) async => [row]),
-          orgFeaturesProvider('E00002').overrideWith(
-            (ref) async => const PlatformFeatures(),
-          ),
+          orgFeaturesProvider(
+            'E00002',
+          ).overrideWith((ref) async => const OrganizationFeatures()),
         ],
         child: const MaterialApp(
-          home: ClientDetailScreen(companyCode: 'E00002'),
+          home: MediaQuery(
+            data: MediaQueryData(padding: EdgeInsets.only(bottom: 32)),
+            child: ClientDetailScreen(companyCode: 'E00002'),
+          ),
         ),
       ),
     );
     await tester.pumpAndSettle();
 
+    final listView = tester.widget<ListView>(find.byType(ListView));
+    expect(listView.padding?.resolve(TextDirection.ltr).bottom, 52);
     expect(find.text('Ana Cliente'), findsOneWidget);
     expect(find.text('ana@example.test'), findsOneWidget);
     expect(find.byKey(const Key('client-open-direct')), findsOneWidget);

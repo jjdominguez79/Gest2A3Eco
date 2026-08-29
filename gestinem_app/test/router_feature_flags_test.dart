@@ -98,6 +98,7 @@ void main() {
                 status: 'published',
               ),
             ),
+            documentReadProvider('doc-abc').overrideWith((_) async {}),
           ],
           child: Consumer(
             builder: (context, ref, _) {

@@ -1154,6 +1154,9 @@ class FacturasEmitidasController:
                 internet_message_id=result.internet_message_id,
             )
             self._view.show_info("Gest2A3Eco", "Email enviado y registrado en Comunicaciones.")
+            self._publicar_en_area_cliente(
+                fac, pdf_path, notify_success=False,
+            )
 
         elif canal == "publicar":
             if not self._publicar_en_area_cliente(fac, pdf_path):
@@ -1209,7 +1212,7 @@ class FacturasEmitidasController:
             self._view.show_info("Gest2A3Eco", "Email enviado.")
 
             # Despues publicar. El email ya enviado no se revierte si falla.
-            self._publicar_en_area_cliente(fac, pdf_path)
+            self._publicar_en_area_cliente(fac, pdf_path, notify_success=False)
 
         if self._view.ask_yes_no("Gest2A3Eco", "¿Marcar factura como enviada?"):
             if not self._ensure_write("Necesitas permiso de escritura para marcar la factura como enviada."):
@@ -1246,9 +1249,13 @@ class FacturasEmitidasController:
             "mailbox": remitente,
         })
 
-    def _publicar_en_area_cliente(self, fac, pdf_path):
-        """Sube el PDF al area documental del cliente via multipart."""
-        from services.backend_client_service import BackendClientService
+    def _publicar_en_area_cliente(
+        self, fac, pdf_path, *, notify_success: bool = True,
+    ):
+        """Encola el PDF antes de publicarlo para que nunca se pierda."""
+        from services.client_document_publication_service import (
+            ClientDocumentPublicationService,
+        )
 
         nif = str(fac.get("nif") or "").strip()
         if not nif:
@@ -1264,38 +1271,62 @@ class FacturasEmitidasController:
             )
             return False
 
-        serie = str(fac.get("serie") or "")
-        numero = str(fac.get("numero") or "")
-        display = f"Factura {serie}{numero}".strip()
-        ejercicio = fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio
         total = fac.get("total")
         if total is None:
             tot = self._totales_factura(fac)
             total = tot.get("total", 0)
 
         try:
-            svc = BackendClientService()
-            result = svc.publish_document(
-                source_type="factura_emitida",
-                source_id=source_id,
-                source_version=1,
-                display_name=display,
-                pdf_path=pdf_path,
-                customer_tax_id=nif,
-                fiscal_year=ejercicio,
-                amount=total,
-                document_date=fac.get("fecha_expedicion"),
+            result = ClientDocumentPublicationService(
+                self._gestor,
+            ).enqueue_and_publish(
+                fac, pdf_path, amount=float(total or 0),
             )
-            self._view.show_info(
+            if result.status == "publicada":
+                if notify_success:
+                    self._view.show_info(
+                        "Gest2A3Eco",
+                        "Factura publicada en el area del cliente.\n"
+                        f"(ID: {result.document_id})",
+                    )
+                return True
+            if result.status == "bloqueada":
+                self._view.show_warning(
+                    "Gest2A3Eco",
+                    "La publicación se ha bloqueado y requiere revisión:\n"
+                    f"{result.error}",
+                )
+                return False
+            self._view.show_warning(
                 "Gest2A3Eco",
-                f"Factura publicada en el area del cliente.\n(ID: {result.get('document_id', '')})",
+                "La factura se ha enviado, pero su publicación queda pendiente "
+                "y se reintentará automáticamente.\n"
+                f"{result.error}",
             )
             return True
         except Exception as exc:
             self._view.show_error(
-                "Gest2A3Eco", f"No se pudo publicar en el area del cliente:\n{exc}",
+                "Gest2A3Eco",
+                f"No se pudo preparar la publicación en el area del cliente:\n{exc}",
             )
             return False
+
+    def reintentar_publicacion_area_cliente(self):
+        sel = self._view.get_selected_ids()
+        if not sel:
+            self._view.show_info("Gest2A3Eco", "Selecciona una factura.")
+            return
+        fac = self._get_factura_by_id(sel[0])
+        if not fac:
+            return
+        pdf_path = str(fac.get("area_cliente_pdf_path") or "").strip()
+        if not pdf_path:
+            pdf_path = self._resolve_app_pdf(fac)
+        if not pdf_path:
+            self._view.show_warning("Gest2A3Eco", "No se pudo generar el PDF.")
+            return
+        self._publicar_en_area_cliente(fac, pdf_path)
+        self.refresh_facturas()
 
     def generar_suenlace(self):
         if not self._ensure_write():

@@ -14,8 +14,9 @@ final documentsFiscalYearProvider = StateProvider<int>((ref) {
 });
 
 /// Lista de documentos filtrada por ejercicio.
-final documentsProvider =
-    FutureProvider.autoDispose<DocumentListResponse>((ref) {
+final documentsProvider = FutureProvider.autoDispose<DocumentListResponse>((
+  ref,
+) {
   final repo = ref.watch(documentsRepositoryProvider);
   final fiscalYear = ref.watch(documentsFiscalYearProvider);
   return repo.listDocuments(
@@ -26,7 +27,16 @@ final documentsProvider =
 });
 
 /// Detalle de un documento por ID.
-final documentDetailProvider =
-    FutureProvider.autoDispose.family<ClientDocument, String>((ref, id) {
-  return ref.watch(documentsRepositoryProvider).getDocument(id);
+final documentDetailProvider = FutureProvider.autoDispose
+    .family<ClientDocument, String>((ref, id) {
+      return ref.watch(documentsRepositoryProvider).getDocument(id);
+    });
+
+/// Marca como leido al abrir el detalle y refresca los indicadores de nuevo.
+final documentReadProvider = FutureProvider.autoDispose.family<void, String>((
+  ref,
+  id,
+) async {
+  await ref.watch(documentsRepositoryProvider).markAsRead(id);
+  ref.invalidate(documentsProvider);
 });

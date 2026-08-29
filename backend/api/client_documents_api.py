@@ -6,6 +6,7 @@ Endpoints de cliente para listado, descarga y lectura.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
@@ -27,6 +28,7 @@ from backend.api.client_models import ClientDocument, ClientDocumentRead
 from backend.api.client_storage import ClientDocumentStorage
 from backend.api.database import SessionLocal
 from backend.api.messaging_models import (
+    MessagingAppDevice,
     MessagingClient,
     MessagingOrganization,
     MessagingSession,
@@ -37,6 +39,7 @@ from backend.api.security import require_workstation_or_internal
 
 router = APIRouter(prefix="/api/v1/messaging/client/documents", tags=["client-documents"])
 MAX_CLIENT_DOCUMENT_BYTES = 50 * 1024 * 1024
+LOG = logging.getLogger(__name__)
 
 _storage: ClientDocumentStorage | None = None
 
@@ -85,6 +88,8 @@ def _doc_to_dict(doc: ClientDocument, is_read: bool = False) -> dict:
         "id": doc.id,
         "document_type": doc.document_type,
         "source_system": doc.source_system,
+        "source_version": doc.source_version,
+        "sha256": doc.sha256,
         "display_name": doc.display_name,
         "description": doc.description or None,
         "document_date": doc.document_date.isoformat() if doc.document_date else None,
@@ -101,6 +106,49 @@ def _doc_to_dict(doc: ClientDocument, is_read: bool = False) -> dict:
         "is_read": is_read,
     }
     return {k: v for k, v in result.items() if v is not None}
+
+
+def _notify_document_published(db: Session, doc: ClientDocument) -> None:
+    """Avisa a los usuarios cliente de la organizacion sin bloquear el alta."""
+    try:
+        client_ids = list(db.scalars(select(MessagingClient.id).where(
+            MessagingClient.organization_id == doc.organization_id,
+            MessagingClient.active.is_(True),
+        )).all())
+        if not client_ids:
+            return
+        devices = db.scalars(select(MessagingAppDevice).where(
+            MessagingAppDevice.user_type == "client",
+            MessagingAppDevice.user_id.in_(client_ids),
+            MessagingAppDevice.active.is_(True),
+        )).all()
+        from backend.api import messaging_firebase
+
+        updated = int(doc.source_version or 1) > 1
+        payload = {
+            "title": (
+                "Factura actualizada" if updated else "Nueva factura disponible"
+            ),
+            "body": doc.display_name,
+            "target_type": "document",
+            "target_id": doc.id,
+            "document_id": doc.id,
+            "type": "document_published",
+        }
+        for device in devices:
+            if not device.push_token:
+                continue
+            result = messaging_firebase.send_fcm(
+                device.push_token, payload, platform=device.platform,
+            )
+            if result.permanent_failure:
+                device.active = False
+        db.commit()
+    except Exception:
+        # La publicacion ya esta confirmada antes de entrar aqui. La
+        # notificacion es de mejor esfuerzo y nunca debe deshacer ni hacer
+        # fallar el alta del documento.
+        LOG.exception("No se pudo notificar el documento %s", doc.id)
 
 
 # ===== ENDPOINTS INTERNOS (workstation / API key) =====
@@ -148,6 +196,7 @@ async def publish_document(
     amount: str = Form(""),
     currency: str = Form("EUR"),
     customer_tax_id: str = Form(""),
+    expected_sha256: str = Form(""),
     db: Session = Depends(_db),
     _auth: str = Depends(require_workstation_or_internal),
 ):
@@ -174,27 +223,44 @@ async def publish_document(
     # Verificar que el area documental esta habilitada para esta organizacion
     require_documents_enabled(db, organization_id)
 
-    # Idempotencia: comprobar si ya existe
-    existing = db.scalar(
-        select(ClientDocument).where(
-            ClientDocument.organization_id == organization_id,
-            ClientDocument.source_system == source_system,
-            ClientDocument.source_id == source_id,
-            ClientDocument.source_version == source_version,
-        )
-    )
-    if existing:
-        return _doc_to_dict(existing)
-
     # Leer y almacenar archivo
     content = await file.read(MAX_CLIENT_DOCUMENT_BYTES + 1)
     if not content:
         raise HTTPException(status_code=400, detail="Archivo vacio")
     if len(content) > MAX_CLIENT_DOCUMENT_BYTES:
         raise HTTPException(status_code=413, detail="Archivo demasiado grande")
+    if not content.startswith(b"%PDF-"):
+        raise HTTPException(status_code=415, detail="El archivo no es un PDF valido")
+    content_type = (file.content_type or "").lower().split(";", 1)[0].strip()
+    if content_type not in {"", "application/pdf", "application/octet-stream"}:
+        raise HTTPException(status_code=415, detail="Tipo de archivo no permitido")
 
     storage = _get_storage()
     sha256 = storage.compute_sha256(content)
+    expected_sha256 = expected_sha256.strip().lower()
+    if expected_sha256 and expected_sha256 != sha256:
+        raise HTTPException(status_code=422, detail="El hash SHA-256 no coincide")
+
+    # Idempotencia por contenido: una respuesta perdida puede reintentarse sin
+    # crear otra version ni reenviar la notificacion.
+    same_content = db.scalar(select(ClientDocument).where(
+        ClientDocument.organization_id == organization_id,
+        ClientDocument.source_system == source_system,
+        ClientDocument.source_id == source_id,
+        ClientDocument.sha256 == sha256,
+    ))
+    if same_content:
+        return _doc_to_dict(same_content)
+
+    latest = db.scalar(select(ClientDocument).where(
+        ClientDocument.organization_id == organization_id,
+        ClientDocument.source_system == source_system,
+        ClientDocument.source_id == source_id,
+    ).order_by(ClientDocument.source_version.desc()).limit(1))
+    effective_version = max(1, source_version)
+    if latest:
+        effective_version = max(effective_version, latest.source_version + 1)
+
     blob_key = storage.put(content, file.filename or "documento.pdf",
                            organization_id=organization_id)
 
@@ -220,7 +286,7 @@ async def publish_document(
         document_type=document_type,
         source_system=source_system,
         source_id=source_id,
-        source_version=source_version,
+        source_version=effective_version,
         display_name=display_name,
         description=description,
         document_date=parsed_date,
@@ -228,7 +294,7 @@ async def publish_document(
         amount=parsed_amount,
         currency=currency,
         file_name=file.filename or "documento.pdf",
-        content_type=file.content_type or "application/pdf",
+        content_type="application/pdf",
         file_size=len(content),
         sha256=sha256,
         blob_key=blob_key,
@@ -237,6 +303,11 @@ async def publish_document(
     )
     db.add(doc)
     try:
+        db.flush()
+        if latest and latest.status != "withdrawn":
+            latest.status = "replaced"
+            latest.replaced_by_id = doc.id
+            latest.updated_at = utcnow()
         db.commit()
     except Exception:
         db.rollback()
@@ -246,6 +317,7 @@ async def publish_document(
             pass
         raise
     db.refresh(doc)
+    _notify_document_published(db, doc)
     return _doc_to_dict(doc)
 
 
@@ -267,6 +339,11 @@ async def replace_document(
         raise HTTPException(status_code=400, detail="Archivo vacio")
     if len(content) > MAX_CLIENT_DOCUMENT_BYTES:
         raise HTTPException(status_code=413, detail="Archivo demasiado grande")
+    if not content.startswith(b"%PDF-"):
+        raise HTTPException(status_code=415, detail="El archivo no es un PDF valido")
+    content_type = (file.content_type or "").lower().split(";", 1)[0].strip()
+    if content_type not in {"", "application/pdf", "application/octet-stream"}:
+        raise HTTPException(status_code=415, detail="Tipo de archivo no permitido")
 
     storage = _get_storage()
     sha256 = storage.compute_sha256(content)
@@ -286,7 +363,7 @@ async def replace_document(
         amount=old_doc.amount,
         currency=old_doc.currency,
         file_name=file.filename or old_doc.file_name,
-        content_type=file.content_type or old_doc.content_type,
+        content_type="application/pdf",
         file_size=len(content),
         sha256=sha256,
         blob_key=blob_key,
@@ -308,6 +385,7 @@ async def replace_document(
             pass
         raise
     db.refresh(new_doc)
+    _notify_document_published(db, new_doc)
     return _doc_to_dict(new_doc)
 
 

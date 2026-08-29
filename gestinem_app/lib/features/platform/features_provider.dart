@@ -23,14 +23,14 @@ class PlatformFeatures {
   }
 }
 
-final platformFeaturesProvider =
-    FutureProvider.autoDispose<PlatformFeatures>((ref) async {
-  final api = ref.watch(apiClientProvider);
-  try {
-    final resp = await api.dio.get('/client/features');
-    return PlatformFeatures.fromJson(resp.data as Map<String, dynamic>);
-  } catch (_) {
-    // Si falla (staff user o error), devolver solo perfil visible.
+final platformFeaturesProvider = FutureProvider.autoDispose<PlatformFeatures>((
+  ref,
+) async {
+  final session = ref.watch(sessionProvider).valueOrNull;
+  if (session == null || session.profile.type.name != 'client') {
     return const PlatformFeatures();
   }
+  final api = ref.watch(apiClientProvider);
+  final resp = await api.dio.get('/client/features');
+  return PlatformFeatures.fromJson(resp.data as Map<String, dynamic>);
 });

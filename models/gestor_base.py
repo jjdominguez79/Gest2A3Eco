@@ -267,6 +267,16 @@ CREATE TABLE IF NOT EXISTS facturas_emitidas_docs (
   facturae_generated_at TEXT,
   facturae_status TEXT,
   facturae_error TEXT,
+  area_cliente_estado TEXT NOT NULL DEFAULT '',
+  area_cliente_documento_id TEXT,
+  area_cliente_pdf_path TEXT,
+  area_cliente_sha256 TEXT,
+  area_cliente_version INTEGER NOT NULL DEFAULT 0,
+  area_cliente_intentos INTEGER NOT NULL DEFAULT 0,
+  area_cliente_siguiente_intento TEXT,
+  area_cliente_error TEXT,
+  area_cliente_importe REAL,
+  area_cliente_actualizado TEXT,
   updated_at TEXT,
   pdf_generated_at TEXT
 );
@@ -974,6 +984,25 @@ class GestorBase:
         self._ensure_column("facturas_emitidas_docs", "facturae_generated_at", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "facturae_status", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "facturae_error", "TEXT")
+        self._ensure_column(
+            "facturas_emitidas_docs", "area_cliente_estado",
+            "TEXT NOT NULL DEFAULT ''",
+        )
+        self._ensure_column("facturas_emitidas_docs", "area_cliente_documento_id", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "area_cliente_pdf_path", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "area_cliente_sha256", "TEXT")
+        self._ensure_column(
+            "facturas_emitidas_docs", "area_cliente_version",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        self._ensure_column(
+            "facturas_emitidas_docs", "area_cliente_intentos",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        self._ensure_column("facturas_emitidas_docs", "area_cliente_siguiente_intento", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "area_cliente_error", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "area_cliente_importe", "REAL")
+        self._ensure_column("facturas_emitidas_docs", "area_cliente_actualizado", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "updated_at", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "pdf_generated_at", "TEXT")
         self.conn.executescript(
@@ -3146,6 +3175,102 @@ class GestorBase:
         self.conn.execute(
             "UPDATE facturas_emitidas_docs SET enviado=1, fecha_envio=?, canal_envio=? WHERE codigo_empresa=? AND ejercicio=? AND id=?",
             (fecha, canal, codigo_empresa, _ej_val(ejercicio), factura_id),
+        )
+        self.conn.commit()
+
+    def encolar_publicacion_area_cliente(
+        self, factura_id: str, pdf_path: str, sha256: str, importe: float,
+    ) -> bool:
+        """Registra la ultima copia de una factura para publicacion asincrona."""
+        row = self.conn.execute(
+            "SELECT area_cliente_estado, area_cliente_sha256, "
+            "area_cliente_intentos, area_cliente_documento_id "
+            "FROM facturas_emitidas_docs WHERE id=?",
+            (str(factura_id),),
+        ).fetchone()
+        if not row:
+            raise ValueError("Factura no encontrada")
+        current = self._row_to_dict(row)
+        current_hash = str(current.get("area_cliente_sha256") or "")
+        if current.get("area_cliente_estado") == "publicada" and current_hash == sha256:
+            return False
+        changed = current_hash != sha256
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            "UPDATE facturas_emitidas_docs SET area_cliente_estado='pendiente', "
+            "area_cliente_pdf_path=?, area_cliente_sha256=?, area_cliente_importe=?, "
+            "area_cliente_error='', area_cliente_siguiente_intento=?, "
+            "area_cliente_intentos=?, area_cliente_documento_id=?, "
+            "area_cliente_actualizado=? WHERE id=?",
+            (
+                str(pdf_path), str(sha256), float(importe or 0), now,
+                0 if changed else int(current.get("area_cliente_intentos") or 0),
+                None if changed else current.get("area_cliente_documento_id"),
+                now, str(factura_id),
+            ),
+        )
+        self.conn.commit()
+        return True
+
+    def listar_publicaciones_area_cliente_pendientes(self, limit: int = 20) -> list[dict]:
+        now = datetime.now(timezone.utc).isoformat()
+        rows = self.conn.execute(
+            "SELECT * FROM facturas_emitidas_docs "
+            "WHERE area_cliente_estado IN ('pendiente', 'error') "
+            "AND (area_cliente_siguiente_intento IS NULL "
+            "OR area_cliente_siguiente_intento<=?) "
+            "ORDER BY area_cliente_actualizado NULLS FIRST LIMIT ?",
+            (now, max(1, min(int(limit), 100))),
+        ).fetchall()
+        result = []
+        for row in rows:
+            item = self._row_to_dict(row)
+            item["lineas"] = json.loads(item.get("lineas_json") or "[]")
+            item.pop("lineas_json", None)
+            result.append(item)
+        return result
+
+    def marcar_publicacion_area_cliente_exitosa(
+        self, factura_id: str, document_id: str, version: int,
+    ) -> None:
+        self.conn.execute(
+            "UPDATE facturas_emitidas_docs SET area_cliente_estado='publicada', "
+            "area_cliente_documento_id=?, area_cliente_version=?, "
+            "area_cliente_error='', area_cliente_siguiente_intento=NULL, "
+            "area_cliente_actualizado=? WHERE id=?",
+            (
+                str(document_id), int(version or 1),
+                datetime.now(timezone.utc).isoformat(), str(factura_id),
+            ),
+        )
+        self.conn.commit()
+
+    def marcar_publicacion_area_cliente_fallida(
+        self, factura_id: str, *, error: str, next_retry_at: str | None,
+        blocked: bool = False,
+    ) -> None:
+        self.conn.execute(
+            "UPDATE facturas_emitidas_docs SET area_cliente_estado=?, "
+            "area_cliente_intentos=COALESCE(area_cliente_intentos, 0)+1, "
+            "area_cliente_error=?, area_cliente_siguiente_intento=?, "
+            "area_cliente_actualizado=? WHERE id=?",
+            (
+                "bloqueada" if blocked else "error", str(error)[:1000],
+                next_retry_at, datetime.now(timezone.utc).isoformat(),
+                str(factura_id),
+            ),
+        )
+        self.conn.commit()
+
+    def reintentar_publicacion_area_cliente(self, factura_id: str) -> None:
+        self.conn.execute(
+            "UPDATE facturas_emitidas_docs SET area_cliente_estado='pendiente', "
+            "area_cliente_siguiente_intento=?, area_cliente_error='', "
+            "area_cliente_actualizado=? WHERE id=?",
+            (
+                datetime.now(timezone.utc).isoformat(),
+                datetime.now(timezone.utc).isoformat(), str(factura_id),
+            ),
         )
         self.conn.commit()
 

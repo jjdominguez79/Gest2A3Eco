@@ -1,4 +1,8 @@
-# Runbook: Piloto Plataforma Cliente (Documentos + Facturacion)
+# Runbook: fase 1 del area documental del cliente
+
+Esta fase permite que el cliente consulte, guarde y comparta en Flutter las
+facturas emitidas desde el escritorio. La creacion de facturas por el cliente
+y su worker de Word quedan expresamente para la fase 2.
 
 ## 1. Requisitos previos
 
@@ -19,32 +23,27 @@
 - Proyecto Firebase con messaging habilitado
 - Archivo de credenciales de servicio JSON
 
-### Puesto Windows (worker)
-- Windows 10/11 con Microsoft Word instalado (COM automation)
-- Python 3.12+ con dependencias del worker
-- Acceso de red al backend y a la base de datos PostgreSQL local
-- Plantilla Word en `plantillas_word/factura_emitida.docx`
+### Puesto de escritorio
+- Gest2A3Eco configurado con la URL del backend.
+- `Gest2A3Eco/WorkstationToken` guardado en Windows Credential Manager.
+- Acceso de red al backend y al PostgreSQL habitual del escritorio.
 
-> **Importante:** Word COM y el Windows Credential Manager requieren el
-> perfil interactivo del usuario. La tarea programada debe ejecutarse con
-> el usuario logueado (opcion "Ejecutar solo cuando el usuario haya iniciado
-> sesion"). NO usar "Ejecutar independientemente de si el usuario ha iniciado
-> sesion" (S4U), ya que impide el acceso a COM y a las credenciales del usuario.
+No es necesaria una maquina virtual ni Microsoft Word adicional para esta
+fase: el escritorio publica el PDF definitivo que ya genera actualmente.
 
 ---
 
 ## 2. Arquitectura del flujo
 
 ```
-Flutter app  -->  Backend API (Railway)  <--  Worker (Windows)
-                       |                         |
-                  Azure Blob              Word COM + PostgreSQL
-                  Graph Mail
-                  Firebase FCM
+Flutter app  -->  Backend API (Railway)  <--  Gest2A3Eco (Windows)
+                       |                            |
+                  Azure Blob                 PDF ya emitido
+                  Firebase FCM               Cola PostgreSQL
 ```
 
-El worker NO tiene acceso directo a Azure, Graph ni Firebase.
-Delega email y FCM al backend via endpoints REST.
+El escritorio no accede directamente a Azure ni Firebase. Publica el PDF por
+la API autenticada; si falla, conserva la cola en PostgreSQL y reintenta.
 
 ---
 
@@ -57,20 +56,16 @@ Delega email y FCM al backend via endpoints REST.
 | `DGT_DATABASE_URL` | Connection string PostgreSQL |
 | `DGT_INTERNAL_API_KEY` | Clave API interna (compartida con worker y escritorio) |
 | `CLIENT_DOCUMENTS_AZURE_CONNECTION_STRING` | Azure Blob para documentos permanentes |
-| `MESSAGING_GRAPH_TENANT_ID` | Azure AD tenant |
-| `MESSAGING_GRAPH_CLIENT_ID` | OAuth2 client ID |
-| `MESSAGING_GRAPH_CLIENT_SECRET` | OAuth2 client secret |
-| `MESSAGING_GRAPH_FROM` | Buzon remitente para emails de facturas |
 | `MESSAGING_PUBLIC_BASE_URL` | URL base publica del backend |
 | `MESSAGING_STAFF_ADMIN_EMAILS` | Emails de administradores (separados por coma) |
 | `MESSAGING_STAFF_ALLOWED_DOMAIN` | Dominio permitido para staff |
 
-### Feature flags (ambos `false` por defecto)
+### Feature flags
 
 | Variable | Descripcion |
 |----------|-------------|
 | `CLIENT_DOCUMENTS_ENABLED` | Habilitar area documental globalmente |
-| `CLIENT_INVOICING_ENABLED` | Habilitar facturacion online globalmente |
+| `CLIENT_INVOICING_ENABLED` | Facturacion creada por el cliente; mantener `false` en fase 1 |
 
 > **Importante:** El flag efectivo requiere AMBOS: global=true Y org=true.
 > Activar el flag global sin activar la organizacion no tiene efecto.
@@ -87,47 +82,34 @@ Delega email y FCM al backend via endpoints REST.
 | `MESSAGING_SMTP_HOST` | - | Fallback SMTP si Graph no disponible |
 
 > **Produccion:** `CLIENT_DOCUMENTS_AZURE_CONNECTION_STRING` es obligatorio
-> cuando `CLIENT_DOCUMENTS_ENABLED` o `CLIENT_INVOICING_ENABLED` son `true`.
+> cuando `CLIENT_DOCUMENTS_ENABLED` es `true`.
 > El backend arranca con error si falta Azure y el flag esta activo.
 
 ---
 
-## 4. Configuracion del worker Windows
+## 4. Configuracion del escritorio
 
 ### Secretos - Credential Manager (obligatorio en produccion)
 
-Los secretos del worker se almacenan SIEMPRE en Windows Credential Manager.
-Las variables de entorno solo se usan como fallback en desarrollo/tests.
+El token del puesto se almacena en Windows Credential Manager.
 
 ```powershell
-# Almacenar token API en Credential Manager
+# Almacenar token API en Credential Manager en el mismo usuario que ejecuta Gest2A3Eco
 # Nombre: Gest2A3Eco/WorkstationToken
 cmdkey /generic:"Gest2A3Eco/WorkstationToken" /user:"worker" /pass:"token-del-backend"
 
-# Almacenar credenciales PostgreSQL en Credential Manager
-# Nombre: Gest2A3Eco/PostgreSQL
-cmdkey /generic:"Gest2A3Eco/PostgreSQL" /user:"gest2a3eco" /pass:"contrasena-postgres"
 ```
 
-**No usar variables de entorno persistentes en produccion** para los secretos.
-`INVOICE_WORKER_API_TOKEN` y `INVOICE_WORKER_DESKTOP_DSN` son exclusivamente
-para desarrollo y tests.
+En la configuracion local de Gest2A3Eco, `integrations_api_url` debe apuntar al
+backend desplegado. No guardar el token ni contrasenas en el JSON local.
 
-### Variables de entorno del worker (no secretas)
+### Maquina virtual Synology (fase 2, no instalar ahora)
 
-| Variable | Default | Descripcion |
-|----------|---------|-------------|
-| `INVOICE_WORKER_API_URL` | `https://tramites.gestinem.es/api/v1/messaging/client/invoicing` | Endpoint del backend |
-| `INVOICE_WORKER_ID` | `worker-{pid}` | Identificador del worker |
-| `INVOICE_WORKER_LEASE_MINUTES` | `10` | Duracion del lease |
-| `INVOICE_WORKER_POLL_SECONDS` | `30` | Intervalo de sondeo |
-| `INVOICE_WORKER_MAX_RETRIES` | `5` | Reintentos maximos |
-| `INVOICE_WORKER_TEMPLATE_DIR` | `./plantillas_word` | Directorio de plantillas |
-| `INVOICE_WORKER_PDF_DIR` | `./pdfs_generados` | Directorio de salida PDF |
-| `INVOICE_WORKER_LOG_DIR` | `./logs` | Directorio de logs |
-| `INVOICE_WORKER_PG_HOST` | `localhost` | Host PostgreSQL |
-| `INVOICE_WORKER_PG_PORT` | `5432` | Puerto PostgreSQL |
-| `INVOICE_WORKER_PG_DB` | `gest2a3eco` | Base de datos PostgreSQL |
+La maquina que figuraba en la planificacion era una **VM Windows 10/11 con
+Microsoft Word**, destinada a ejecutar `invoice_worker` mediante Word COM para
+las facturas creadas desde Flutter. No interviene en la consulta de facturas
+emitidas por el escritorio y debe permanecer aplazada junto con
+`CLIENT_INVOICING_ENABLED=false`.
 
 ---
 
@@ -165,42 +147,32 @@ curl -s -H "X-API-Key: $API_KEY" \
   https://BACKEND_URL/api/v1/messaging/client/invoicing/worker/invoice/test/status
 ```
 
-### Paso 2: Configurar credenciales del worker (Windows)
+### Paso 2: Configurar el puesto de escritorio
 
 ```powershell
 # Almacenar en Credential Manager (obligatorio en produccion)
 cmdkey /generic:"Gest2A3Eco/WorkstationToken" /user:"worker" /pass:"TOKEN"
-cmdkey /generic:"Gest2A3Eco/PostgreSQL" /user:"gest2a3eco" /pass:"PASS"
 ```
 
-### Paso 3: Instalar y verificar worker
+Configurar `integrations_api_url` con la URL publica del backend y reiniciar el
+escritorio.
 
-```powershell
-cd invoice_worker
-pip install -r requirements.txt
+### Paso 3: Verificar el almacenamiento documental
 
-# Verificar configuracion sin procesar ninguna factura (no mutante)
-python -m invoice_worker --dry-run
-
-# Si el dry-run es exitoso, ejecutar el worker
-python -m invoice_worker
+```bash
+curl -s -H "X-API-Key: $API_KEY" \
+  https://BACKEND_URL/api/v1/messaging/client/documents/internal/storage-health
 ```
 
-El dry-run comprueba (sin modificar datos):
-1. Token API (Credential Manager: `Gest2A3Eco/WorkstationToken`)
-2. DSN PostgreSQL + conexion real (Credential Manager: `Gest2A3Eco/PostgreSQL`)
-3. Microsoft Word COM disponible
-4. Plantilla `.docx` en el directorio configurado
-5. Conectividad al backend (`/health`)
-6. Autenticacion con el backend (GET `/status` con ID ficticio)
-
-Sale con codigo 0 si todo OK, 1 si hay errores criticos.
+Debe responder `backend: azure` y `ok: true` en produccion.
 
 ### Paso 4: Activar flags por organizacion
 
 ```bash
 # 1. Activar flag global en Railway
-# En Railway: CLIENT_DOCUMENTS_ENABLED=true, CLIENT_INVOICING_ENABLED=true
+# En Railway:
+# CLIENT_DOCUMENTS_ENABLED=true
+# CLIENT_INVOICING_ENABLED=false
 
 # 2. Activar por organizacion (como admin desde la app o API)
 curl -X PATCH \
@@ -210,18 +182,17 @@ curl -X PATCH \
   -H "X-Staff-Id: admin-id" \
   -H "Content-Type: application/json" \
   https://BACKEND_URL/api/v1/messaging/staff/admin/organizations/CODIGO/features \
-  -d '{"client_documents_enabled": true, "client_invoicing_enabled": true}'
+  -d '{"client_documents_enabled": true, "client_invoicing_enabled": false}'
 ```
 
 ### Paso 5: Verificar desde la app Flutter
 
 1. Cerrar sesion y volver a entrar (para refrescar features)
 2. Comprobar que aparece "Mis documentos" en el menu lateral
-3. Comprobar que aparece "Facturacion" en el menu lateral
-4. Crear un borrador de factura y emitirlo
-5. Verificar que el worker lo procesa (logs del worker)
-6. Verificar que el PDF aparece en "Mis documentos"
-7. Verificar que se recibe el email (si hay destinatario)
+3. En el escritorio, enviar por email una factura definitiva del mismo cliente
+4. Verificar el estado `Area cliente: Publicada` en la lista de facturas
+5. Verificar que el PDF aparece una sola vez en "Mis documentos > Facturas"
+6. Abrirlo, guardarlo y compartirlo desde Flutter
 
 ---
 
@@ -230,40 +201,22 @@ curl -X PATCH \
 | Comprobacion | Comando / accion |
 |-------------|------------------|
 | Features visibles en app | Login como cliente de la org activada |
-| Worker procesando | `tail -f logs/invoice_worker.log` |
 | PDF en Azure | Portal Azure > contenedor `documentos-cliente` |
-| Email enviado | Bandeja del destinatario |
 | Auditoria de flags | `SELECT * FROM client_feature_flag_audit ORDER BY changed_at DESC;` |
-| Estado factura | `SELECT id, status FROM client_invoices WHERE organization_id = '...' ORDER BY created_at DESC;` |
-| Cola de procesamiento | `SELECT * FROM client_invoice_processing_queue WHERE queue_status != 'completed';` |
-| Log de notificaciones | `SELECT * FROM client_invoice_notification_log ORDER BY created_at DESC;` |
-| Entregas inciertas | `GET /api/v1/messaging/client/invoicing/worker/notification-health` con la clave interna |
+| Estado local | Columna `Area cliente` de Facturas emitidas |
+| Reintento manual | Boton `Reintentar area cliente` del escritorio |
 
 ---
 
 ## 8. Troubleshooting
 
-### Factura atascada en `issued_pending_processing`
+### Publicacion pendiente o bloqueada
 
-1. Verificar que el worker esta corriendo y conectado
-2. Comprobar `client_invoice_processing_queue`: si `lease_expires_at` ya caduco, el worker lo reclamara automaticamente
-3. Si `retry_count >= max_retries`, intervenir manualmente:
-   ```sql
-   UPDATE client_invoice_processing_queue
-   SET retry_count = 0, queue_status = 'pending', error_message = ''
-   WHERE invoice_id = 'xxx';
-   UPDATE client_invoices SET status = 'issued_pending_processing' WHERE id = 'xxx';
-   ```
-
-### Worker no arranca
-
-- Ejecutar dry-run para diagnostico: `python -m invoice_worker --dry-run`
-- Verificar que Word esta instalado: `python -c "import comtypes.client; w=comtypes.client.CreateObject('Word.Application'); w.Quit()"`
-- Verificar credenciales en Credential Manager: `cmdkey /list | findstr Gest2A3Eco`
-- Verificar conectividad: `curl https://BACKEND_URL/health`
-- Si el worker se ejecuta como tarea programada, asegurarse de que esta
-  configurada para ejecutarse "solo cuando el usuario haya iniciado sesion"
-  (no con S4U). Word COM y Credential Manager requieren perfil interactivo.
+- `Pendiente/Reintentando`: comprobar red, URL del backend, token del puesto y
+  el estado de Azure. La aplicacion reintenta con espera incremental.
+- `Bloqueada`: revisar que el NIF de la factura identifica una unica
+  organizacion activa y que esta tiene el area documental habilitada. Corregir
+  el dato y pulsar `Reintentar area cliente`.
 
 ### Email no enviado (status `rendered` pero no `emailed`)
 
@@ -334,9 +287,8 @@ La app simplemente oculta las secciones.
 ### Rollback completo
 
 1. Desactivar flags globales
-2. Detener el worker
-3. Los PDFs permanecen en Azure Blob (no se eliminan)
-4. La BD mantiene todo el historico
+2. Los PDFs permanecen en Azure Blob (no se eliminan)
+3. La BD mantiene todo el historico
 
 > No es necesario revertir migraciones de esquema: las columnas adicionales
 > no afectan al funcionamiento normal de la aplicacion.
