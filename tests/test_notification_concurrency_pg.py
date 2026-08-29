@@ -55,6 +55,7 @@ def pg_org_invoice(pg_factory):
     """Crea una organizacion, cliente y factura listos para enviar notificaciones."""
     from backend.api.client_models import (
         ClientInvoice,
+        ClientInvoiceCustomer,
         ClientInvoiceProcessingQueue,
     )
     from backend.api.messaging_models import (
@@ -92,9 +93,18 @@ def pg_org_invoice(pg_factory):
         db.add(session_obj)
         db.flush()
 
+        customer = ClientInvoiceCustomer(
+            organization_id=org.id,
+            tax_id="B12345678",
+            tax_id_normalized="B12345678",
+            legal_name="Cliente concurrencia",
+        )
+        db.add(customer)
+        db.flush()
+
         inv = ClientInvoice(
             organization_id=org.id,
-            customer_id=None,
+            customer_id=customer.id,
             fiscal_year=2025,
             series_code="PG",
             invoice_number=1,
@@ -118,6 +128,7 @@ def pg_org_invoice(pg_factory):
         # Limpieza
         db.delete(queue_item)
         db.delete(inv)
+        db.delete(customer)
         db.delete(session_obj)
         db.delete(client)
         db.delete(org)
