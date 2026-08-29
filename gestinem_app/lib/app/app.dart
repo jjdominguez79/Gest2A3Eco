@@ -121,6 +121,23 @@ class _GestinemAppState extends ConsumerState<GestinemApp> {
 
   void _handleRealtime(Map<String, dynamic> event) {
     if (event['type'] == 'ping') return;
+    if (event['type'] == 'document.published') {
+      final documentId = event['document_id']?.toString() ?? '';
+      if (documentId.isEmpty) return;
+      ref.invalidate(documentsProvider);
+      ref.invalidate(documentDetailProvider(documentId));
+      unawaited(
+        ref
+            .read(notificationsServiceProvider)
+            .showDesktop(
+              title: event['title']?.toString() ?? 'Nuevo documento disponible',
+              body: event['body']?.toString() ?? 'Tienes un nuevo documento',
+              onClick: () =>
+                  ref.read(routerProvider).go('/documents/$documentId'),
+            ),
+      );
+      return;
+    }
     ref.invalidate(conversationsProvider);
     ref.invalidate(unifiedConversationProvider);
     ref.invalidate(unifiedMessagesProvider);

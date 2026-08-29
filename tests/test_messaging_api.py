@@ -18,6 +18,7 @@ from sqlalchemy.pool import StaticPool
 from backend.api.database import Base
 from backend.api import messaging_api
 from backend.api.app import (
+    APP_DEVICE_TARGET_COLUMN_MIGRATIONS,
     CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS,
     STAFF_APP_CODE_PURPOSE_DDL,
     STARTUP_COLUMN_TABLES,
@@ -83,6 +84,14 @@ def test_startup_migra_columnas_de_plataforma_cliente_automaticamente():
 def test_startup_migra_purpose_de_staff_app_codes_de_forma_idempotente():
     assert "msg_staff_app_codes" in STARTUP_COLUMN_TABLES
     assert "ADD COLUMN IF NOT EXISTS purpose" in STAFF_APP_CODE_PURPOSE_DDL
+
+
+def test_startup_migra_destino_activo_de_dispositivos_android():
+    assert "msg_app_devices" in STARTUP_COLUMN_TABLES
+    assert set(APP_DEVICE_TARGET_COLUMN_MIGRATIONS) == {
+        ("msg_app_devices", "active_target_type"),
+        ("msg_app_devices", "active_target_id"),
+    }
 
 
 def test_public_app_version_exposes_release_information(tmp_path, monkeypatch):

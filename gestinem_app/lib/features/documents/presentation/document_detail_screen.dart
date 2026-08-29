@@ -100,6 +100,15 @@ class _DocumentDetailScreenState extends ConsumerState<DocumentDetailScreen> {
                   runSpacing: 10,
                   children: [
                     ElevatedButton.icon(
+                      onPressed: _downloading
+                          ? null
+                          : () => context.push(
+                              '/documents/${widget.documentId}/preview',
+                            ),
+                      icon: const Icon(Icons.visibility_outlined),
+                      label: const Text('Previsualizar'),
+                    ),
+                    ElevatedButton.icon(
                       onPressed: _downloading ? null : () => _download(doc),
                       icon: _downloading
                           ? const SizedBox(

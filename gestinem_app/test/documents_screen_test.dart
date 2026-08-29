@@ -17,18 +17,17 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
             platformFeaturesProvider.overrideWith(
               (ref) async => const PlatformFeatures(documents: false),
             ),
             documentsProvider.overrideWith(
-              (ref) async =>
-                  const DocumentListResponse(items: [], total: 0),
+              (ref) async => const DocumentListResponse(items: [], total: 0),
             ),
           ],
-          child: const MaterialApp(home: DocumentsScreen()),
+          child: const MaterialApp(
+            home: DocumentsScreen(folderKey: 'facturas'),
+          ),
         ),
       );
       await tester.pumpAndSettle();
@@ -62,16 +61,15 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
             platformFeaturesProvider.overrideWith(
-              (ref) async =>
-                  const PlatformFeatures(documents: true),
+              (ref) async => const PlatformFeatures(documents: true),
             ),
             documentsProvider.overrideWith((ref) async => docs),
           ],
-          child: const MaterialApp(home: DocumentsScreen()),
+          child: const MaterialApp(
+            home: DocumentsScreen(folderKey: 'facturas'),
+          ),
         ),
       );
       await tester.pumpAndSettle();
@@ -82,29 +80,67 @@ void main() {
   });
 
   group('DocumentsScreen - listado', () {
-    testWidgets('muestra mensaje vacio si no hay documentos', (tester) async {
+    testWidgets('agrupa documentos en carpetas con contador', (tester) async {
+      final docs = DocumentListResponse(
+        items: const [
+          ClientDocument(
+            id: 'fac-1',
+            documentType: 'factura',
+            displayName: 'Factura 1',
+            fileName: 'f.pdf',
+            status: 'published',
+          ),
+          ClientDocument(
+            id: 'cert-1',
+            documentType: 'certificado_aeat',
+            displayName: 'Certificado AEAT',
+            fileName: 'c.pdf',
+            status: 'published',
+          ),
+        ],
+        total: 2,
+      );
+
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
             platformFeaturesProvider.overrideWith(
-              (ref) async =>
-                  const PlatformFeatures(documents: true),
+              (ref) async => const PlatformFeatures(documents: true),
             ),
-            documentsProvider.overrideWith(
-              (ref) async =>
-                  const DocumentListResponse(items: [], total: 0),
-            ),
+            documentsProvider.overrideWith((ref) async => docs),
           ],
           child: const MaterialApp(home: DocumentsScreen()),
         ),
       );
       await tester.pumpAndSettle();
 
+      expect(find.text('Facturas'), findsOneWidget);
+      expect(find.text('Certificados'), findsOneWidget);
+      expect(find.text('Nominas'), findsOneWidget);
+      expect(find.text('1 documento'), findsNWidgets(2));
+    });
+
+    testWidgets('muestra mensaje vacio si no hay documentos', (tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+            platformFeaturesProvider.overrideWith(
+              (ref) async => const PlatformFeatures(documents: true),
+            ),
+            documentsProvider.overrideWith(
+              (ref) async => const DocumentListResponse(items: [], total: 0),
+            ),
+          ],
+          child: const MaterialApp(
+            home: DocumentsScreen(folderKey: 'facturas'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
       expect(
-        find.text('No hay documentos para este ejercicio.'),
+        find.textContaining('No hay documentos en facturas'),
         findsOneWidget,
       );
     });
@@ -135,16 +171,15 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
             platformFeaturesProvider.overrideWith(
-              (ref) async =>
-                  const PlatformFeatures(documents: true),
+              (ref) async => const PlatformFeatures(documents: true),
             ),
             documentsProvider.overrideWith((ref) async => docs),
           ],
-          child: const MaterialApp(home: DocumentsScreen()),
+          child: const MaterialApp(
+            home: DocumentsScreen(folderKey: 'facturas'),
+          ),
         ),
       );
       await tester.pumpAndSettle();
@@ -180,16 +215,15 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
             platformFeaturesProvider.overrideWith(
-              (ref) async =>
-                  const PlatformFeatures(documents: true),
+              (ref) async => const PlatformFeatures(documents: true),
             ),
             documentsProvider.overrideWith((ref) async => docs),
           ],
-          child: const MaterialApp(home: DocumentsScreen()),
+          child: const MaterialApp(
+            home: DocumentsScreen(folderKey: 'facturas'),
+          ),
         ),
       );
       await tester.pumpAndSettle();
@@ -218,16 +252,15 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
             platformFeaturesProvider.overrideWith(
-              (ref) async =>
-                  const PlatformFeatures(documents: true),
+              (ref) async => const PlatformFeatures(documents: true),
             ),
             documentsProvider.overrideWith((ref) async => docs),
           ],
-          child: const MaterialApp(home: DocumentsScreen()),
+          child: const MaterialApp(
+            home: DocumentsScreen(folderKey: 'facturas'),
+          ),
         ),
       );
       await tester.pumpAndSettle();
@@ -244,16 +277,12 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
             platformFeaturesProvider.overrideWith(
-              (ref) async =>
-                  const PlatformFeatures(documents: true),
+              (ref) async => const PlatformFeatures(documents: true),
             ),
             documentsProvider.overrideWith(
-              (ref) async =>
-                  const DocumentListResponse(items: [], total: 0),
+              (ref) async => const DocumentListResponse(items: [], total: 0),
             ),
           ],
           child: const MaterialApp(home: DocumentsScreen()),

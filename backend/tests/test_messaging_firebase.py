@@ -142,6 +142,26 @@ class TestSendFcm:
 
         assert '/internal/thread-99' in captured_link.get('link', '')
 
+    def test_enlace_documento_abre_su_detalle(self):
+        mod = self._module()
+        captured_link = {}
+
+        def fake_fcm_options(link):
+            captured_link['link'] = link
+            return MagicMock()
+
+        fake_messaging = self._fake_messaging(WebpushFCMOptions=fake_fcm_options)
+
+        with patch.object(mod, '_app', return_value=MagicMock()):
+            with _patch_messaging(fake_messaging):
+                mod.send_fcm(
+                    'token-web',
+                    {'title': 'T', 'body': 'B', 'document_id': 'doc-99'},
+                    platform='web',
+                )
+
+        assert '/documents/doc-99' in captured_link.get('link', '')
+
     def test_error_unregistered_es_permanente(self):
         mod = self._module()
 

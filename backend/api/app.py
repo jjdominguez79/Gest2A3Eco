@@ -161,6 +161,17 @@ CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS = {
     ),
 }
 
+APP_DEVICE_TARGET_COLUMN_MIGRATIONS = {
+    ("msg_app_devices", "active_target_type"): (
+        "ALTER TABLE msg_app_devices ADD COLUMN active_target_type "
+        "VARCHAR(24) NOT NULL DEFAULT ''"
+    ),
+    ("msg_app_devices", "active_target_id"): (
+        "ALTER TABLE msg_app_devices ADD COLUMN active_target_id "
+        "VARCHAR(36) NOT NULL DEFAULT ''"
+    ),
+}
+
 STARTUP_COLUMN_TABLES = frozenset({
     "dgt_documentos",
     "msg_organizations",
@@ -171,6 +182,7 @@ STARTUP_COLUMN_TABLES = frozenset({
     "msg_downloads",
     "msg_conversations",
     "msg_websocket_tickets",
+    "msg_app_devices",
     "msg_staff_app_codes",
     "msg_cleanup_audit",
 })
@@ -199,6 +211,7 @@ def startup():
                 "ADD COLUMN dataprius_json JSONB NOT NULL DEFAULT '{}'"
             ),
             **CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS,
+            **APP_DEVICE_TARGET_COLUMN_MIGRATIONS,
             ("msg_staff", "email"): (
                 "ALTER TABLE msg_staff ADD COLUMN email VARCHAR(254) NOT NULL DEFAULT ''"
             ),
@@ -285,7 +298,8 @@ def startup():
             "SELECT indexname FROM pg_indexes WHERE schemaname=current_schema() "
 
             "AND tablename IN ('msg_staff', 'msg_downloads', 'msg_conversations', "
-            "'msg_attachments', 'msg_websocket_tickets', 'msg_staff_presence_connections', "
+            "'msg_attachments', 'msg_websocket_tickets', 'msg_app_devices', "
+            "'msg_staff_presence_connections', "
             "'msg_organizations')"
         )).scalars())
         index_migrations = {
@@ -310,6 +324,10 @@ def startup():
             "ix_msg_websocket_tickets_staff_session_id": (
                 "CREATE INDEX ix_msg_websocket_tickets_staff_session_id "
                 "ON msg_websocket_tickets(staff_session_id)"
+            ),
+            "ix_msg_app_devices_active_target": (
+                "CREATE INDEX ix_msg_app_devices_active_target "
+                "ON msg_app_devices(active_target_type, active_target_id)"
             ),
             "ix_msg_organizations_is_test": (
                 "CREATE INDEX ix_msg_organizations_is_test "

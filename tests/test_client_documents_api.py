@@ -347,6 +347,7 @@ class TestPublishDocument:
 
 def test_notificacion_documental_incluye_destino_directo(monkeypatch):
     from backend.api import messaging_firebase
+    from backend.api import messaging_realtime
     from backend.api.client_documents_api import _notify_document_published
 
     device = SimpleNamespace(
@@ -367,6 +368,12 @@ def test_notificacion_documental_incluye_destino_directo(monkeypatch):
             self.commits += 1
 
     payloads = []
+    realtime = []
+    monkeypatch.setattr(
+        messaging_realtime.hub,
+        "publish",
+        lambda payload, **kwargs: realtime.append((payload, kwargs)),
+    )
     monkeypatch.setattr(
         messaging_firebase,
         "send_fcm",
@@ -380,6 +387,26 @@ def test_notificacion_documental_incluye_destino_directo(monkeypatch):
 
     assert payloads[0][1]["target_type"] == "document"
     assert payloads[0][1]["document_id"] == "doc-1"
+    assert payloads[0][1]["type"] == "document.published"
+    assert realtime[0][0]["document_id"] == "doc-1"
+    assert realtime[0][1]["organization_id"] == "org-1"
+
+
+@pytest.mark.parametrize(
+    ("document_type", "expected"),
+    [
+        ("factura_emitida_online", "facturas"),
+        ("certificado_aeat", "certificados"),
+        ("nomina", "nominas"),
+        ("modelo_303", "impuestos"),
+        ("contrato_laboral", "contratos"),
+        ("escritura", "otros"),
+    ],
+)
+def test_clasifica_documentos_en_carpetas(document_type, expected):
+    from backend.api.client_documents_api import _document_folder
+
+    assert _document_folder(document_type) == expected
 
 
 # ---------- tests listado cliente ----------

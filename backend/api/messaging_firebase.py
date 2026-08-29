@@ -87,10 +87,13 @@ def send_fcm(push_token: str, payload: dict, *, platform: str = 'android') -> Fc
             web_app_url = get_settings().messaging_app_web_url
             conversation_id = data.get('conversation_id', '')
             thread_id = data.get('thread_id', '')
+            document_id = data.get('document_id', '')
             if conversation_id:
                 link = f'{web_app_url}/#/conversation/{conversation_id}'
             elif thread_id:
                 link = f'{web_app_url}/#/internal/{thread_id}'
+            elif document_id:
+                link = f'{web_app_url}/#/documents/{document_id}'
             else:
                 link = f'{web_app_url}/'
             webpush = messaging.WebpushConfig(
@@ -111,10 +114,14 @@ def send_fcm(push_token: str, payload: dict, *, platform: str = 'android') -> Fc
             data['title'] = title
             data['body'] = body
             target_id = data.get('target_id') or data.get('conversation_id') or data.get('thread_id')
+            target_type = data.get('target_type', 'message')
             android = messaging.AndroidConfig(
                 priority='high',
                 ttl=timedelta(hours=24),
-                collapse_key=f'chat:{target_id}' if target_id else 'gestinem:messages',
+                collapse_key=(
+                    f'{target_type}:{target_id}'
+                    if target_id else 'gestinem:notifications'
+                ),
             )
             notification = None
 

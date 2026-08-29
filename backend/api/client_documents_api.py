@@ -44,6 +44,22 @@ LOG = logging.getLogger(__name__)
 _storage: ClientDocumentStorage | None = None
 
 
+def _document_folder(document_type: str) -> str:
+    """Devuelve la carpeta funcional sin depender del sistema de origen."""
+    value = (document_type or "").strip().lower()
+    if "factura" in value or "invoice" in value:
+        return "facturas"
+    if "certificado" in value or "certificate" in value:
+        return "certificados"
+    if "nomina" in value or "payroll" in value:
+        return "nominas"
+    if any(token in value for token in ("impuesto", "tribut", "modelo_")):
+        return "impuestos"
+    if "contrato" in value or "contract" in value:
+        return "contratos"
+    return "otros"
+
+
 def _get_storage() -> ClientDocumentStorage:
     global _storage
     if _storage is None:
@@ -87,6 +103,7 @@ def _doc_to_dict(doc: ClientDocument, is_read: bool = False) -> dict:
     result = {
         "id": doc.id,
         "document_type": doc.document_type,
+        "folder": _document_folder(doc.document_type),
         "source_system": doc.source_system,
         "source_version": doc.source_version,
         "sha256": doc.sha256,
@@ -111,6 +128,25 @@ def _doc_to_dict(doc: ClientDocument, is_read: bool = False) -> dict:
 def _notify_document_published(db: Session, doc: ClientDocument) -> None:
     """Avisa a los usuarios cliente de la organizacion sin bloquear el alta."""
     try:
+        updated = int(doc.source_version or 1) > 1
+        payload = {
+            "title": (
+                "Documento actualizado" if updated else "Nuevo documento disponible"
+            ),
+            "body": doc.display_name,
+            "target_type": "document",
+            "target_id": doc.id,
+            "document_id": doc.id,
+            "document_type": doc.document_type,
+            "folder": _document_folder(doc.document_type),
+            "type": "document.published",
+        }
+
+        # Windows no registra tokens FCM: recibe los avisos por el WebSocket
+        # de la sesion cliente y muestra una notificacion nativa en el EXE.
+        from backend.api.messaging_realtime import hub
+        hub.publish(payload, organization_id=doc.organization_id)
+
         client_ids = list(db.scalars(select(MessagingClient.id).where(
             MessagingClient.organization_id == doc.organization_id,
             MessagingClient.active.is_(True),
@@ -124,17 +160,6 @@ def _notify_document_published(db: Session, doc: ClientDocument) -> None:
         )).all()
         from backend.api import messaging_firebase
 
-        updated = int(doc.source_version or 1) > 1
-        payload = {
-            "title": (
-                "Factura actualizada" if updated else "Nueva factura disponible"
-            ),
-            "body": doc.display_name,
-            "target_type": "document",
-            "target_id": doc.id,
-            "document_id": doc.id,
-            "type": "document_published",
-        }
         for device in devices:
             if not device.push_token:
                 continue

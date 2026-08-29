@@ -27,6 +27,7 @@ import '../features/profile/presentation/profile_screen.dart';
 import '../features/company_profile/presentation/company_profile_screen.dart';
 import '../features/documents/presentation/documents_screen.dart';
 import '../features/documents/presentation/document_detail_screen.dart';
+import '../features/documents/presentation/document_preview_screen.dart';
 import '../core/deep_links/deep_link_controller.dart';
 
 class _RouterRefreshNotifier extends ChangeNotifier {
@@ -191,6 +192,16 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, _) => const CompanyProfileScreen(),
       ),
       GoRoute(path: '/documents', builder: (_, _) => const DocumentsScreen()),
+      GoRoute(
+        path: '/documents/folder/:folder',
+        builder: (_, state) =>
+            DocumentsScreen(folderKey: state.pathParameters['folder']),
+      ),
+      GoRoute(
+        path: '/documents/:id/preview',
+        builder: (_, state) =>
+            DocumentPreviewScreen(documentId: state.pathParameters['id']!),
+      ),
       GoRoute(
         path: '/documents/:id',
         builder: (_, state) =>

@@ -8,7 +8,9 @@ import 'documents_providers.dart';
 
 /// Pantalla de listado de documentos del area del cliente.
 class DocumentsScreen extends ConsumerWidget {
-  const DocumentsScreen({super.key});
+  const DocumentsScreen({super.key, this.folderKey});
+
+  final String? folderKey;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -26,10 +28,13 @@ class DocumentsScreen extends ConsumerWidget {
     final docsAsync = ref.watch(documentsProvider);
     final fiscalYear = ref.watch(documentsFiscalYearProvider);
     final currentYear = DateTime.now().year;
+    final selectedFolder = folderKey == null
+        ? null
+        : DocumentFolder.fromKey(folderKey!);
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Mis documentos'),
+        title: Text(selectedFolder?.label ?? 'Mis documentos'),
         actions: [
           // Selector de ejercicio
           PopupMenuButton<int>(
@@ -42,9 +47,7 @@ class DocumentsScreen extends ConsumerWidget {
               for (var y = currentYear; y >= currentYear - 4; y--)
                 PopupMenuItem(
                   value: y,
-                  child: Text(
-                    '$y${y == fiscalYear ? ' ✓' : ''}',
-                  ),
+                  child: Text('$y${y == fiscalYear ? ' ✓' : ''}'),
                 ),
             ],
           ),
@@ -66,15 +69,24 @@ class DocumentsScreen extends ConsumerWidget {
           ),
         ),
         data: (response) {
-          if (response.items.isEmpty) {
-            return const Center(
-              child: Text('No hay documentos para este ejercicio.'),
+          if (selectedFolder == null) {
+            return _FolderGrid(documents: response.items);
+          }
+          final documents = response.items
+              .where((document) => document.folder == selectedFolder)
+              .toList();
+          if (documents.isEmpty) {
+            return Center(
+              child: Text(
+                'No hay documentos en ${selectedFolder.label.toLowerCase()} '
+                'para este ejercicio.',
+              ),
             );
           }
           return ListView.builder(
-            itemCount: response.items.length,
+            itemCount: documents.length,
             itemBuilder: (context, index) {
-              final doc = response.items[index];
+              final doc = documents[index];
               return _DocumentTile(document: doc);
             },
           );
@@ -82,6 +94,89 @@ class DocumentsScreen extends ConsumerWidget {
       ),
     );
   }
+}
+
+class _FolderGrid extends StatelessWidget {
+  const _FolderGrid({required this.documents});
+
+  final List<ClientDocument> documents;
+
+  @override
+  Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final columns = width >= 900
+        ? 3
+        : width >= 560
+        ? 2
+        : 1;
+    return GridView.builder(
+      padding: const EdgeInsets.all(16),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: columns,
+        mainAxisExtent: 112,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+      ),
+      itemCount: DocumentFolder.values.length,
+      itemBuilder: (context, index) {
+        final folder = DocumentFolder.values[index];
+        final folderDocuments = documents
+            .where((document) => document.folder == folder)
+            .toList();
+        final unread = folderDocuments
+            .where((document) => document.isPublished && !document.isRead)
+            .length;
+        return Card(
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => context.push('/documents/folder/${folder.key}'),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+              child: Row(
+                children: [
+                  Icon(
+                    _folderIcon(folder),
+                    size: 38,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          folder.label,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${folderDocuments.length} documento${folderDocuments.length == 1 ? '' : 's'}',
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (unread > 0)
+                    Badge(label: Text('$unread'))
+                  else
+                    const Icon(Icons.chevron_right),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  IconData _folderIcon(DocumentFolder folder) => switch (folder) {
+    DocumentFolder.facturas => Icons.receipt_long_outlined,
+    DocumentFolder.certificados => Icons.workspace_premium_outlined,
+    DocumentFolder.nominas => Icons.badge_outlined,
+    DocumentFolder.impuestos => Icons.account_balance_outlined,
+    DocumentFolder.contratos => Icons.handshake_outlined,
+    DocumentFolder.otros => Icons.folder_outlined,
+  };
 }
 
 class _DocumentTile extends StatelessWidget {
@@ -101,13 +196,13 @@ class _DocumentTile extends StatelessWidget {
             document.isWithdrawn
                 ? Icons.block
                 : document.isReplaced
-                    ? Icons.swap_horiz
-                    : Icons.description,
+                ? Icons.swap_horiz
+                : Icons.description,
             color: document.isWithdrawn
                 ? theme.colorScheme.error
                 : document.isReplaced
-                    ? Colors.orange
-                    : null,
+                ? Colors.orange
+                : null,
           ),
           if (isUnread)
             Positioned(
@@ -134,14 +229,13 @@ class _DocumentTile extends StatelessWidget {
         [
           if (document.documentDate != null)
             document.documentDate!.substring(0, 10),
-          if (document.amount != null) '${document.amount} ${document.currency}',
+          if (document.amount != null)
+            '${document.amount} ${document.currency}',
           if (document.isReplaced) 'Sustituida',
           if (document.isWithdrawn) 'Retirada',
         ].join(' · '),
       ),
-      trailing: document.isPublished
-          ? const Icon(Icons.chevron_right)
-          : null,
+      trailing: document.isPublished ? const Icon(Icons.chevron_right) : null,
       onTap: () => context.push('/documents/${document.id}'),
     );
   }
