@@ -429,6 +429,10 @@ class GestorPostgres(GestorBase):
             ("facturas_emitidas_docs", "area_cliente_siguiente_intento", "TEXT"),
             ("facturas_emitidas_docs", "area_cliente_error", "TEXT"),
             ("facturas_emitidas_docs", "area_cliente_importe", "DOUBLE PRECISION"),
+            (
+                "facturas_emitidas_docs", "area_cliente_empresa_codigo",
+                "TEXT NOT NULL DEFAULT ''",
+            ),
             ("facturas_emitidas_docs", "area_cliente_actualizado", "TEXT"),
             (
                 "facturas_emitidas_docs", "origen_factura",

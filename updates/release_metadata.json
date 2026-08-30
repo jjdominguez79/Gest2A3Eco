@@ -1,6 +1,6 @@
 {
-  "version": "1.8.8",
-  "tag": "v1.8.8",
-  "changelog": "Las facturas emitidas se publican en el area documental de la empresa emisora.\nCorregida la confusion entre el NIF del emisor y el del destinatario.",
+  "version": "1.8.9",
+  "tag": "v1.8.9",
+  "changelog": "Corrige la publicación de facturas para usar siempre la empresa emisora.\nRepara automáticamente documentos publicados anteriormente en el área del receptor.\nImpide que versiones antiguas resuelvan facturas mediante el NIF del destinatario.",
   "force_update": false
 }

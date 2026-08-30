@@ -50,8 +50,14 @@ class ClientDocumentPublicationService:
         if not factura_id:
             raise ValueError("La factura no tiene identificador")
         sha256 = self._sha256(str(path))
+        company_code = str(factura.get("codigo_empresa") or "").strip().upper()
+        if not company_code:
+            raise ValueError(
+                "La factura no indica la empresa emisora; actualiza la aplicacion "
+                "de escritorio antes de publicarla"
+            )
         queued = self.gestor.encolar_publicacion_area_cliente(
-            factura_id, str(path), sha256, float(amount or 0),
+            factura_id, str(path), sha256, float(amount or 0), company_code,
         )
         if not queued:
             return PublicationResult(
@@ -96,8 +102,11 @@ class ClientDocumentPublicationService:
             queued_hash = str(factura.get("area_cliente_sha256") or "")
             if queued_hash and current_hash != queued_hash:
                 amount = float(factura.get("area_cliente_importe") or 0)
+                company_code = str(
+                    factura.get("codigo_empresa") or ""
+                ).strip().upper()
                 self.gestor.encolar_publicacion_area_cliente(
-                    factura_id, pdf_path, current_hash, amount,
+                    factura_id, pdf_path, current_hash, amount, company_code,
                 )
 
             serie = str(factura.get("serie") or "").strip()
@@ -109,6 +118,9 @@ class ClientDocumentPublicationService:
                 display_name=f"Factura {serie}{numero}".strip(),
                 pdf_path=pdf_path,
                 company_code=str(factura.get("codigo_empresa") or "").strip(),
+                previous_document_id=str(
+                    factura.get("area_cliente_documento_id") or ""
+                ).strip(),
                 customer_tax_id=str(factura.get("nif") or "").strip(),
                 fiscal_year=int(factura.get("ejercicio") or 0),
                 amount=float(factura.get("area_cliente_importe") or 0),

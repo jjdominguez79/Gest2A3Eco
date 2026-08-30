@@ -51,6 +51,7 @@ class BackendClientService:
         display_name: str,
         pdf_path: str,
         company_code: str = "",
+        previous_document_id: str = "",
         customer_tax_id: str = "",
         fiscal_year: int = 0,
         amount: float | None = None,
@@ -73,6 +74,7 @@ class BackendClientService:
             "document_type": source_type,
             "display_name": display_name,
             "company_code": company_code,
+            "previous_document_id": previous_document_id,
             "customer_tax_id": customer_tax_id,
             "fiscal_year": str(fiscal_year),
         }

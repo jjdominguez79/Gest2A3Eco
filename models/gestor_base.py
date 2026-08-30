@@ -276,6 +276,7 @@ CREATE TABLE IF NOT EXISTS facturas_emitidas_docs (
   area_cliente_siguiente_intento TEXT,
   area_cliente_error TEXT,
   area_cliente_importe REAL,
+  area_cliente_empresa_codigo TEXT NOT NULL DEFAULT '',
   area_cliente_actualizado TEXT,
   updated_at TEXT,
   pdf_generated_at TEXT
@@ -1002,6 +1003,10 @@ class GestorBase:
         self._ensure_column("facturas_emitidas_docs", "area_cliente_siguiente_intento", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "area_cliente_error", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "area_cliente_importe", "REAL")
+        self._ensure_column(
+            "facturas_emitidas_docs", "area_cliente_empresa_codigo",
+            "TEXT NOT NULL DEFAULT ''",
+        )
         self._ensure_column("facturas_emitidas_docs", "area_cliente_actualizado", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "updated_at", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "pdf_generated_at", "TEXT")
@@ -3180,11 +3185,13 @@ class GestorBase:
 
     def encolar_publicacion_area_cliente(
         self, factura_id: str, pdf_path: str, sha256: str, importe: float,
+        empresa_codigo: str = "",
     ) -> bool:
         """Registra la ultima copia de una factura para publicacion asincrona."""
         row = self.conn.execute(
             "SELECT area_cliente_estado, area_cliente_sha256, "
-            "area_cliente_intentos, area_cliente_documento_id "
+            "area_cliente_intentos, area_cliente_documento_id, "
+            "area_cliente_empresa_codigo "
             "FROM facturas_emitidas_docs WHERE id=?",
             (str(factura_id),),
         ).fetchone()
@@ -3192,7 +3199,16 @@ class GestorBase:
             raise ValueError("Factura no encontrada")
         current = self._row_to_dict(row)
         current_hash = str(current.get("area_cliente_sha256") or "")
-        if current.get("area_cliente_estado") == "publicada" and current_hash == sha256:
+        destination = str(empresa_codigo or "").strip().upper()
+        current_destination = str(
+            current.get("area_cliente_empresa_codigo") or ""
+        ).strip().upper()
+        if (
+            current.get("area_cliente_estado") == "publicada"
+            and current_hash == sha256
+            and destination
+            and current_destination == destination
+        ):
             return False
         changed = current_hash != sha256
         now = datetime.now(timezone.utc).isoformat()
@@ -3201,12 +3217,12 @@ class GestorBase:
             "area_cliente_pdf_path=?, area_cliente_sha256=?, area_cliente_importe=?, "
             "area_cliente_error='', area_cliente_siguiente_intento=?, "
             "area_cliente_intentos=?, area_cliente_documento_id=?, "
-            "area_cliente_actualizado=? WHERE id=?",
+            "area_cliente_empresa_codigo=?, area_cliente_actualizado=? WHERE id=?",
             (
                 str(pdf_path), str(sha256), float(importe or 0), now,
                 0 if changed else int(current.get("area_cliente_intentos") or 0),
                 None if changed else current.get("area_cliente_documento_id"),
-                now, str(factura_id),
+                destination, now, str(factura_id),
             ),
         )
         self.conn.commit()

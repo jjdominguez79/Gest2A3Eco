@@ -120,8 +120,16 @@ class _InMemoryDb:
                 (str(value) for key, value in params.items() if "sha256" in key),
                 None,
             )
+            expected_org = next(
+                (str(value) for key, value in params.items()
+                 if "organization_id" in key),
+                None,
+            )
             for d in self._docs.values():
-                if expected_hash is None or d.sha256 == expected_hash:
+                if (
+                    (expected_hash is None or d.sha256 == expected_hash)
+                    and (expected_org is None or d.organization_id == expected_org)
+                ):
                     return d
             return None
         if "client_document_reads" in stmt_str:
@@ -142,6 +150,31 @@ class _InMemoryDb:
             return _Result([])
         if "client_document_reads" in stmt_str:
             return _Result(list(self._reads.keys()))
+        if stmt_str.strip().startswith("SELECT client_documents.source_version"):
+            params = stmt.compile().params
+            expected_org = next(
+                (str(value) for key, value in params.items()
+                 if "organization_id" in key),
+                None,
+            )
+            return _Result([
+                d.source_version for d in self._docs.values()
+                if expected_org is None or d.organization_id == expected_org
+            ])
+        if "client_documents" in stmt_str and "source_system" in stmt_str:
+            params = stmt.compile().params
+            expected_org = next(
+                (str(value) for key, value in params.items()
+                 if "organization_id" in key),
+                None,
+            )
+            is_not_equal = "client_documents.organization_id !=" in stmt_str
+            return _Result([
+                d for d in self._docs.values()
+                if expected_org is None
+                or ((d.organization_id != expected_org) if is_not_equal
+                    else (d.organization_id == expected_org))
+            ])
         return _Result(list(self._docs.values()))
 
     def get(self, model, pk):
@@ -227,6 +260,67 @@ class TestPublishDocument:
         assert resp.status_code == 200
         assert len(db._docs) == 1
         assert next(iter(db._docs.values())).organization_id == "org-1"
+
+    def test_factura_no_usa_nif_receptor_como_destino(self):
+        db = _InMemoryDb()
+        storage = _FakeStorage()
+        client = TestClient(
+            _build_app(db, storage=storage, override_internal_auth=True),
+        )
+
+        resp = client.post(
+            "/api/v1/messaging/client/documents/internal/publish",
+            data={
+                "customer_tax_id": "74095618Z",
+                "document_type": "factura",
+                "source_system": "desktop_invoice",
+                "source_id": "FAC-SIN-EMISOR",
+                "display_name": "Factura sin emisor",
+            },
+            files={
+                "file": ("factura.pdf", b"%PDF-1.4 contenido", "application/pdf"),
+            },
+            headers={"x-api-key": "test-key"},
+        )
+
+        assert resp.status_code == 400
+        assert "empresa emisora" in resp.json()["detail"]
+
+    def test_repara_factura_publicada_en_organizacion_receptora(self):
+        import hashlib
+
+        content = b"%PDF-1.4 contenido corregible"
+        db = _InMemoryDb()
+        db._org = _FakeOrg(company_code="E00006")
+        misplaced = _FakeDoc(
+            id="doc-mal-ubicado",
+            organization_id="org-receptor",
+            source_id="FAC-A-42",
+            sha256=hashlib.sha256(content).hexdigest(),
+        )
+        db._docs[misplaced.id] = misplaced
+        client = TestClient(
+            _build_app(db, storage=_FakeStorage(), override_internal_auth=True),
+        )
+
+        resp = client.post(
+            "/api/v1/messaging/client/documents/internal/publish",
+            data={
+                "company_code": "E00006",
+                "previous_document_id": "doc-mal-ubicado",
+                "customer_tax_id": "74095618Z",
+                "document_type": "factura",
+                "source_system": "desktop_invoice",
+                "source_id": "FAC-A-42",
+                "display_name": "Factura A42",
+            },
+            files={"file": ("factura.pdf", content, "application/pdf")},
+            headers={"x-api-key": "test-key"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["id"] == "doc-mal-ubicado"
+        assert misplaced.organization_id == "org-1"
 
     def test_publicacion_exitosa(self):
         db = _InMemoryDb()

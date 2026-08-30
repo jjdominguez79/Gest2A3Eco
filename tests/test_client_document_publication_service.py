@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import requests
+import pytest
 
 from services.client_document_publication_service import (
     ClientDocumentPublicationService,
@@ -66,9 +67,11 @@ def test_encola_antes_de_publicar_y_confirma_resultado(tmp_path):
 
     assert result.status == "publicada"
     assert gestor.queued
+    assert gestor.queued[0][4] == "E00006"
     assert gestor.success == [("fac-1", "doc-8", 2)]
     assert backend.calls[0]["source_type"] == "factura"
     assert backend.calls[0]["company_code"] == "E00006"
+    assert backend.calls[0]["previous_document_id"] == ""
     assert backend.calls[0]["customer_tax_id"] == "B12345678"
     assert backend.calls[0]["expected_sha256"] == gestor.queued[0][2]
 
@@ -124,3 +127,28 @@ def test_pdf_ya_publicado_no_se_vuelve_a_enviar(tmp_path):
     assert result.status == "publicada"
     assert result.document_id == "doc-previo"
     assert backend.calls == []
+
+
+def test_rechaza_factura_sin_empresa_emisora(tmp_path):
+    pdf = tmp_path / "factura.pdf"
+    pdf.write_bytes(b"%PDF-1.4 factura")
+    factura = _factura() | {"codigo_empresa": ""}
+
+    with pytest.raises(ValueError, match="empresa emisora"):
+        ClientDocumentPublicationService(
+            _GestorStub(), _BackendStub(),
+        ).enqueue_and_publish(factura, str(pdf), amount=121.0)
+
+
+def test_republicacion_envia_documento_anterior_para_repararlo(tmp_path):
+    pdf = tmp_path / "factura.pdf"
+    pdf.write_bytes(b"%PDF-1.4 factura")
+    gestor = _GestorStub()
+    backend = _BackendStub()
+    factura = _factura() | {"area_cliente_documento_id": "doc-mal-ubicado"}
+
+    ClientDocumentPublicationService(
+        gestor, backend,
+    ).enqueue_and_publish(factura, str(pdf), amount=121.0)
+
+    assert backend.calls[0]["previous_document_id"] == "doc-mal-ubicado"

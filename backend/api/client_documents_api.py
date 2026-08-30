@@ -221,12 +221,14 @@ async def publish_document(
     amount: str = Form(""),
     currency: str = Form("EUR"),
     company_code: str = Form(""),
+    previous_document_id: str = Form(""),
     customer_tax_id: str = Form(""),
     expected_sha256: str = Form(""),
     db: Session = Depends(_db),
     _auth: str = Depends(require_workstation_or_internal),
 ):
     """Publica un documento en el area del cliente. Idempotente por source."""
+    is_desktop_invoice = source_system.strip().lower() == "desktop_invoice"
     # La empresa emisora determina el area documental. El NIF recibido en
     # customer_tax_id pertenece al destinatario de la factura y solo se
     # conserva como compatibilidad para publicadores antiguos.
@@ -250,8 +252,10 @@ async def publish_document(
                 ),
             )
 
-    # Compatibilidad con certificados y versiones de escritorio anteriores.
-    if not organization_id and customer_tax_id:
+    # Solo los publicadores documentales antiguos que no sean facturas pueden
+    # conservar la resolucion por NIF. En una factura ese NIF es el receptor y
+    # usarlo como destino produciria una filtracion entre organizaciones.
+    if not organization_id and customer_tax_id and not is_desktop_invoice:
         from backend.api.client_publication_service import find_organization_by_tax_id
         org = find_organization_by_tax_id(db, customer_tax_id)
         if org:
@@ -266,6 +270,9 @@ async def publish_document(
         raise HTTPException(
             status_code=400,
             detail=(
+                "La factura debe indicar la empresa emisora mediante "
+                "company_code u organization_id"
+                if is_desktop_invoice else
                 "organization_id, company_code o customer_tax_id requerido"
             ),
         )
@@ -303,6 +310,37 @@ async def publish_document(
         ClientDocument.source_id == source_id,
         ClientDocument.sha256 == sha256,
     ))
+
+    # Reparacion de publicaciones realizadas por versiones antiguas del
+    # escritorio, que resolvian el area por el NIF del receptor. El identificador
+    # guardado en la cola local permite corregir exclusivamente ese documento,
+    # sin inferir el propietario a partir de identificadores de otras empresas.
+    repaired_document = None
+    previous_document_id = previous_document_id.strip()
+    if is_desktop_invoice and previous_document_id:
+        old_doc = db.get(ClientDocument, previous_document_id)
+        if (
+            old_doc
+            and old_doc.organization_id != organization_id
+            and old_doc.source_system == source_system
+            and old_doc.source_id == source_id
+            and old_doc.sha256 == sha256
+        ):
+            used_versions = set(db.scalars(select(ClientDocument.source_version).where(
+                ClientDocument.organization_id == organization_id,
+                ClientDocument.source_system == source_system,
+                ClientDocument.source_id == source_id,
+            )).all())
+            if old_doc.source_version in used_versions:
+                old_doc.source_version = max(used_versions, default=0) + 1
+            old_doc.organization_id = organization_id
+            old_doc.updated_at = utcnow()
+            repaired_document = old_doc
+            db.commit()
+            db.refresh(repaired_document)
+            _notify_document_published(db, repaired_document)
+            return _doc_to_dict(repaired_document)
+
     if same_content:
         return _doc_to_dict(same_content)
 
@@ -484,6 +522,7 @@ def list_documents(
 
     query = select(ClientDocument).where(
         ClientDocument.organization_id == client.organization_id,
+        ClientDocument.status == "published",
     )
     if document_type:
         query = query.where(ClientDocument.document_type == document_type)

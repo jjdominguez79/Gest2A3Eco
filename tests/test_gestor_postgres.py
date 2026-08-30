@@ -308,6 +308,7 @@ def test_cola_area_cliente_no_duplica_el_mismo_pdf_publicado():
                 "area_cliente_sha256": "hash-1",
                 "area_cliente_intentos": 0,
                 "area_cliente_documento_id": "doc-1",
+                "area_cliente_empresa_codigo": "E00809",
             }))
 
         def commit(self):
@@ -318,7 +319,7 @@ def test_cola_area_cliente_no_duplica_el_mismo_pdf_publicado():
     gestor.conn = conexion
 
     queued = gestor.encolar_publicacion_area_cliente(
-        "fac-1", "C:/factura.pdf", "hash-1", 100.0,
+        "fac-1", "C:/factura.pdf", "hash-1", 100.0, "E00809",
     )
 
     assert queued is False
@@ -340,6 +341,7 @@ def test_cola_area_cliente_encola_una_version_corregida():
                     "area_cliente_sha256": "hash-anterior",
                     "area_cliente_intentos": 4,
                     "area_cliente_documento_id": "doc-anterior",
+                    "area_cliente_empresa_codigo": "E00809",
                 }))
             return _Resultado()
 
@@ -351,13 +353,48 @@ def test_cola_area_cliente_encola_una_version_corregida():
     gestor.conn = conexion
 
     queued = gestor.encolar_publicacion_area_cliente(
-        "fac-1", "C:/factura.pdf", "hash-nuevo", 100.0,
+        "fac-1", "C:/factura.pdf", "hash-nuevo", 100.0, "E00809",
     )
 
     assert queued is True
     _sql, params = conexion.sentencias[1]
     assert params[4] == 0
     assert params[5] is None
+    assert params[6] == "E00809"
+    assert conexion.commit_count == 1
+
+
+def test_cola_area_cliente_republica_si_falta_destino_emisor():
+    class Conexion:
+        def __init__(self):
+            self.sentencias = []
+            self.commit_count = 0
+
+        def execute(self, sql, params=None):
+            self.sentencias.append((sql, params))
+            if sql.lstrip().startswith("SELECT"):
+                return _Resultado(row=FilaPostgres({
+                    "area_cliente_estado": "publicada",
+                    "area_cliente_sha256": "hash-1",
+                    "area_cliente_intentos": 0,
+                    "area_cliente_documento_id": "doc-equivocado",
+                    "area_cliente_empresa_codigo": "",
+                }))
+            return _Resultado()
+
+        def commit(self):
+            self.commit_count += 1
+
+    conexion = Conexion()
+    gestor = object.__new__(GestorPostgres)
+    gestor.conn = conexion
+
+    queued = gestor.encolar_publicacion_area_cliente(
+        "fac-1", "C:/factura.pdf", "hash-1", 100.0, "E00006",
+    )
+
+    assert queued is True
+    assert conexion.sentencias[1][1][6] == "E00006"
     assert conexion.commit_count == 1
 
 
@@ -531,6 +568,7 @@ _COLUMNAS_ESENCIALES = {
     ("facturas_emitidas_docs", "area_cliente_siguiente_intento"),
     ("facturas_emitidas_docs", "area_cliente_error"),
     ("facturas_emitidas_docs", "area_cliente_importe"),
+    ("facturas_emitidas_docs", "area_cliente_empresa_codigo"),
     ("facturas_emitidas_docs", "area_cliente_actualizado"),
     ("facturas_emitidas_docs", "origen_factura"),
     ("facturas_emitidas_docs", "ocr_documento_id"),

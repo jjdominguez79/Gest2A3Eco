@@ -33,6 +33,7 @@ def test_publish_document_uses_workstation_api_key(monkeypatch, tmp_path):
         display_name="Factura A1",
         pdf_path=str(pdf),
         company_code="E00006",
+        previous_document_id="doc-anterior",
         customer_tax_id="B12345678",
     )
 
@@ -40,6 +41,7 @@ def test_publish_document_uses_workstation_api_key(monkeypatch, tmp_path):
     request = session.post.call_args
     assert request.kwargs["headers"] == {"X-API-Key": "g2a3_wks_test"}
     assert request.kwargs["data"]["company_code"] == "E00006"
+    assert request.kwargs["data"]["previous_document_id"] == "doc-anterior"
     assert request.kwargs["data"]["customer_tax_id"] == "B12345678"
     response.raise_for_status.assert_called_once_with()
 
