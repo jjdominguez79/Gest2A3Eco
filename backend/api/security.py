@@ -98,6 +98,16 @@ def require_workstation_or_internal(x_api_key: str = Header(default="")) -> str:
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credencial no valida")
 
 
+def require_master_sync_or_workstation_internal(
+    x_api_key: str = Header(default=""),
+) -> str:
+    """Acepta la clave exclusiva del replicador maestro o credenciales existentes."""
+    expected = get_settings().client_master_sync_api_key
+    if expected and secrets.compare_digest(x_api_key, expected):
+        return "client-master-sync"
+    return require_workstation_or_internal(x_api_key)
+
+
 def _extract_admin_bearer(request: Request) -> str:
     """Extrae el token Bearer de la cabecera Authorization."""
     auth = (request.headers.get("authorization") or "").strip()

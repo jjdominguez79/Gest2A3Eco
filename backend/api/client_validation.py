@@ -15,7 +15,32 @@ _CIF_PATTERN = re.compile(r"^[ABCDEFGHJKLMNPQRSUVW]\d{7}[0-9A-J]$")
 
 def normalize_tax_id(value: str) -> str:
     """Normaliza un NIF/CIF/NIE: mayusculas, sin espacios ni guiones."""
-    return re.sub(r"[\s\-.]", "", value.strip().upper())
+    return re.sub(r"[^A-Z0-9]", "", str(value or "").strip().upper())
+
+
+def normalize_upper_text(value: str) -> str:
+    """Limpia espacios y devuelve texto maestro en mayusculas."""
+    return " ".join(str(value or "").strip().upper().split())
+
+
+def normalize_email(value: str) -> str:
+    """Normaliza el correo para comparaciones y presentacion coherentes."""
+    return str(value or "").strip().lower()
+
+
+def normalize_phone(value: str) -> str:
+    """Conserva un prefijo + opcional y elimina separadores del telefono."""
+    raw = str(value or "").strip()
+    prefix = "+" if raw.startswith("+") else ""
+    return prefix + re.sub(r"\D", "", raw)
+
+
+def normalize_postal_code(value: str, country: str = "ES") -> str:
+    """Normaliza codigos postales; en Espana conserva solo cinco digitos."""
+    raw = re.sub(r"\s", "", str(value or "").strip().upper())
+    if normalize_upper_text(country) == "ES":
+        return re.sub(r"\D", "", raw)[:5]
+    return re.sub(r"[^A-Z0-9-]", "", raw)
 
 
 def validate_nif(value: str) -> bool:

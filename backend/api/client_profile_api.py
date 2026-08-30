@@ -8,9 +8,14 @@ from sqlalchemy.orm import Session
 
 from backend.api.database import SessionLocal
 from backend.api.client_validation import normalize_tax_id
-from backend.api.messaging_models import MessagingClient, MessagingOrganization, MessagingSession
+from backend.api.messaging_models import (
+    MessagingClient,
+    MessagingConversation,
+    MessagingOrganization,
+    MessagingSession,
+)
 from backend.api.messaging_security import hash_token, is_expired, utcnow
-from backend.api.security import require_workstation_or_internal
+from backend.api.security import require_master_sync_or_workstation_internal
 
 router = APIRouter(prefix="/api/v1/messaging/client", tags=["client-profile"])
 
@@ -96,7 +101,7 @@ def get_client_features(request: Request, db: Session = Depends(_db)):
 def sync_company_profile(
     payload: dict = Body(...),
     db: Session = Depends(_db),
-    _auth: str = Depends(require_workstation_or_internal),
+    _auth: str = Depends(require_master_sync_or_workstation_internal),
 ):
     """Sincroniza perfil empresarial desde el escritorio.
 
@@ -113,7 +118,18 @@ def sync_company_profile(
         )
     )
     if not org:
-        raise HTTPException(status_code=404, detail="Organizacion no encontrada")
+        name = str(payload.get("name") or company_code).strip()
+        org = MessagingOrganization(
+            company_code=company_code,
+            name=name,
+            active=bool(payload.get("active", True)),
+        )
+        db.add(org)
+        db.flush()
+        db.add_all([
+            MessagingConversation(organization_id=org.id, kind=kind)
+            for kind in ("laboral", "fiscal", "private")
+        ])
 
     # Campos sincronizables
     _SYNC_FIELDS = (
@@ -134,6 +150,12 @@ def sync_company_profile(
         name = payload["name"].strip()
         if org.name != name:
             org.name = name
+            changed = True
+
+    if "active" in payload:
+        active = bool(payload["active"])
+        if org.active != active:
+            org.active = active
             changed = True
 
     org.profile_synced_at = utcnow()

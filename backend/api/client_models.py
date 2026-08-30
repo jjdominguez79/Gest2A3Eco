@@ -159,9 +159,16 @@ class ClientInvoiceCustomer(Base):
     )
 
     # Vinculacion con tercero del escritorio (si existe)
-    desktop_tercero_id: Mapped[int | None] = mapped_column(Integer)
+    desktop_tercero_id: Mapped[str | None] = mapped_column(String(64))
     desktop_subcuenta: Mapped[str] = mapped_column(String(20), default="")
     pending_desktop_import: Mapped[bool] = mapped_column(Boolean, default=False)
+    desktop_sync_status: Mapped[str] = mapped_column(String(20), default="synced")
+    desktop_sync_error: Mapped[str] = mapped_column(Text, default="")
+    desktop_claimed_by: Mapped[str] = mapped_column(String(120), default="")
+    desktop_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    desktop_lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True,
+    )
 
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(

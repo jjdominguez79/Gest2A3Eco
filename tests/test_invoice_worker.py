@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -60,7 +61,24 @@ class MockGestor:
         self.terceros[tid] = tercero
         return tid
 
+    def get_tercero_empresa(self, codigo_empresa, tercero_id, ejercicio):
+        for relation in self.terceros_empresa:
+            if (
+                relation.get("codigo_empresa") == codigo_empresa
+                and relation.get("tercero_id") == tercero_id
+            ):
+                return relation
+        return None
+
     def upsert_tercero_empresa(self, rel: dict) -> None:
+        for index, current in enumerate(self.terceros_empresa):
+            if (
+                current.get("codigo_empresa") == rel.get("codigo_empresa")
+                and current.get("ejercicio") == rel.get("ejercicio")
+                and current.get("tercero_id") == rel.get("tercero_id")
+            ):
+                self.terceros_empresa[index] = rel
+                return
         self.terceros_empresa.append(rel)
 
     def upsert_maestro_subcuenta(self, datos: dict) -> int:
@@ -85,6 +103,11 @@ class MockGestor:
         self._next_id += 1
         self.facturas[fid] = factura
         return fid
+
+    def enviar_facturas_emitidas_a_contabilidad(self, codigo, ejercicio, ids):
+        for factura_id in ids:
+            if factura_id in self.facturas:
+                self.facturas[factura_id]["estado_contable"] = "pendiente"
 
 
 class MockRenderer:
@@ -191,6 +214,16 @@ def _make_config(tmp_path: Path) -> WorkerConfig:
     )
 
 
+def _payload_with_synced_customer(worker, gestor) -> dict:
+    payload = deepcopy(SAMPLE_PAYLOAD)
+    tercero_id, subcuenta = worker._import_customer_to_desktop(
+        payload["organization"], payload["customer"],
+    )
+    payload["customer"]["desktop_tercero_id"] = tercero_id
+    payload["customer"]["desktop_subcuenta"] = subcuenta
+    return payload
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -199,12 +232,36 @@ def _make_config(tmp_path: Path) -> WorkerConfig:
 class TestImportToDesktop:
     """Importacion de tercero y factura al escritorio."""
 
-    def test_creates_tercero_and_factura(self, tmp_path):
+    def test_alta_flutter_reutiliza_430_existente_del_tercero(self, tmp_path):
+        config = _make_config(tmp_path)
+        gestor = MockGestor()
+        tercero_id = gestor.upsert_tercero({
+            "nif": "B12345678",
+            "nif_normalizado": "B12345678",
+            "nombre": "Cliente existente",
+        })
+        gestor.upsert_tercero_empresa({
+            "codigo_empresa": "TEST01",
+            "ejercicio": 0,
+            "tercero_id": tercero_id,
+            "subcuenta_cliente": "43000009",
+        })
+        worker = InvoiceWorker(config, gestor=gestor)
+
+        result = worker._import_customer_to_desktop(
+            SAMPLE_PAYLOAD["organization"], SAMPLE_PAYLOAD["customer"],
+        )
+
+        assert result == (tercero_id, "43000009")
+        assert gestor.subcuentas[0]["subcuenta"] == "43000009"
+
+    def test_imports_factura_for_previously_synced_customer(self, tmp_path):
         config = _make_config(tmp_path)
         gestor = MockGestor()
         worker = InvoiceWorker(config, gestor=gestor)
 
-        worker._import_to_desktop("inv-001", SAMPLE_PAYLOAD)
+        payload = _payload_with_synced_customer(worker, gestor)
+        worker._import_to_desktop("inv-001", payload)
 
         # Tercero creado
         assert len(gestor.terceros) == 1
@@ -227,6 +284,7 @@ class TestImportToDesktop:
         assert fac["serie"] == "WEB"
         assert fac["numero"] == 1
         assert fac["codigo_empresa"] == "TEST01"
+        assert fac["estado_contable"] == "pendiente"
 
     def test_idempotent_import(self, tmp_path):
         """Segunda importacion no duplica tercero ni subcuenta."""
@@ -234,8 +292,9 @@ class TestImportToDesktop:
         gestor = MockGestor()
         worker = InvoiceWorker(config, gestor=gestor)
 
-        worker._import_to_desktop("inv-001", SAMPLE_PAYLOAD)
-        worker._import_to_desktop("inv-001", SAMPLE_PAYLOAD)
+        payload = _payload_with_synced_customer(worker, gestor)
+        worker._import_to_desktop("inv-001", payload)
+        worker._import_to_desktop("inv-001", payload)
 
         # Solo 1 tercero (segunda vez lo encuentra por NIF)
         assert len(gestor.terceros) == 1
@@ -269,7 +328,7 @@ class TestImportToDesktop:
         worker = InvoiceWorker(config, gestor=gestor)
 
         payload_wh = {
-            **SAMPLE_PAYLOAD,
+            **_payload_with_synced_customer(worker, gestor),
             "invoice": {
                 **SAMPLE_PAYLOAD["invoice"],
                 "withholding_rate": "15",
@@ -324,6 +383,25 @@ class TestResolveSubcuenta430:
 
 
 class TestRenderPdf:
+    def test_snapshot_de_emision_prevalece_y_conserva_enlace_desktop(self):
+        payload = deepcopy(SAMPLE_PAYLOAD)
+        payload["customer"]["desktop_tercero_id"] = "ter-1"
+        payload["customer"]["desktop_subcuenta"] = "43000001"
+        payload["issued_snapshot"] = json.dumps({
+            "organization": {"company_code": "TEST01", "name": "EMISOR AL EMITIR"},
+            "customer": {"tax_id": "B12345678", "legal_name": "CLIENTE AL EMITIR"},
+            "invoice": {"series_code": "APP", "invoice_number": 7},
+            "lines": [{"description": "LINEA AL EMITIR"}],
+        })
+
+        result = InvoiceWorker._apply_issued_snapshot(payload)
+
+        assert result["customer"]["legal_name"] == "CLIENTE AL EMITIR"
+        assert result["customer"]["desktop_subcuenta"] == "43000001"
+        assert result["organization"]["name"] == "EMISOR AL EMITIR"
+        assert result["invoice"]["series_code"] == "APP"
+        assert result["lines"][0]["description"] == "LINEA AL EMITIR"
+
     def test_calls_renderer_and_creates_file(self, tmp_path):
         config = _make_config(tmp_path)
         renderer = MockRenderer()
@@ -437,13 +515,14 @@ class TestFullProcess:
         )
 
         base = config.api_base_url
+        payload = _payload_with_synced_customer(worker, gestor)
 
         # Mock all API calls
         responses.add(responses.GET, f"{base}/worker/invoice/inv-full/status",
                       json={"invoice_status": "claimed", "pdf_uploaded": False,
                             "document_published": False})
         responses.add(responses.GET, f"{base}/worker/invoice/inv-full/payload",
-                      json=SAMPLE_PAYLOAD)
+                      json=payload)
         responses.add(responses.POST, f"{base}/worker/invoice/inv-full/import-confirmed",
                       json={"status": "ok"})
         responses.add(responses.POST, f"{base}/worker/invoice/inv-full/pdf",

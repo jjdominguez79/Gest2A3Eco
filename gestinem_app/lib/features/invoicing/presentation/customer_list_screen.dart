@@ -59,7 +59,9 @@ class _CustomerTile extends StatelessWidget {
       ),
       title: Text(customer.legalName),
       subtitle: Text(customer.taxId),
-      trailing: customer.active
+      trailing: customer.pendingDesktopImport
+          ? const Chip(label: Text('Pendiente'))
+          : customer.active
           ? null
           : const Chip(label: Text('Inactivo')),
     );

@@ -58,3 +58,22 @@ def test_unconfigured_service_fails_before_http(monkeypatch):
         service.sync_company_profile(company_code="E00001", profile={})
 
     session.put.assert_not_called()
+
+
+def test_sync_company_profile_uses_backend_route(monkeypatch):
+    response = MagicMock()
+    response.json.return_value = {"organization_id": "org-1"}
+    session = MagicMock()
+    session.put.return_value = response
+    service = _service(monkeypatch, session)
+
+    result = service.sync_company_profile(
+        company_code="E00001",
+        profile={"tax_id": "B12345678"},
+    )
+
+    assert result == {"organization_id": "org-1"}
+    assert session.put.call_args.args[0] == (
+        "https://api.example.test/api/v1/messaging/client/internal/sync-profile"
+    )
+    response.raise_for_status.assert_called_once_with()

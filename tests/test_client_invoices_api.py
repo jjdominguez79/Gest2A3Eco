@@ -116,11 +116,40 @@ def _setup(tmp_path=None):
             expires_at=datetime.now(timezone.utc) + timedelta(days=1),
         )
         db.add(session2)
+        db.add_all([
+            ClientInvoiceSeries(
+                organization_id=org.id,
+                fiscal_year=2026,
+                series_code="APP",
+                description="Facturas desde Flutter",
+                next_number=1,
+                active=True,
+            ),
+            ClientInvoiceSeries(
+                organization_id=org2.id,
+                fiscal_year=2026,
+                series_code="APP",
+                description="Facturas desde Flutter",
+                next_number=1,
+                active=True,
+            ),
+        ])
         db.commit()
 
         return TestClient(app), {"Authorization": "Bearer test-token"}, org.id, {
             "Authorization": "Bearer other-token"
         }
+
+
+def _mark_customer_synced(client, customer_id: str) -> None:
+    response = client.post(
+        f"/api/v1/messaging/client/invoicing/worker/customer/{customer_id}/confirm",
+        json={
+            "desktop_tercero_id": f"desktop-{customer_id}",
+            "desktop_subcuenta": "43000001",
+        },
+    )
+    assert response.status_code == 200
 
 
 # -- Config --
@@ -162,7 +191,8 @@ def test_create_and_list_customers(tmp_path):
     )
     assert resp.status_code == 200
     cust = resp.json()
-    assert cust["legal_name"] == "Acme SL"
+    assert cust["legal_name"] == "ACME SL"
+    assert cust["pending_desktop_import"] is True
     assert "id" in cust
 
     # List
@@ -252,6 +282,7 @@ def test_update_draft(tmp_path):
             "lines": [{"description": "Old", "quantity": "1", "unit_price": "10"}],
         },
     ).json()
+    _mark_customer_synced(client, cust["id"])
 
     resp = client.put(
         f"/api/v1/messaging/client/invoicing/drafts/{draft['id']}",
@@ -320,6 +351,7 @@ def test_issue_draft(tmp_path):
             ],
         },
     ).json()
+    _mark_customer_synced(client, cust["id"])
 
     resp = client.post(
         f"/api/v1/messaging/client/invoicing/drafts/{draft['id']}/issue",
@@ -329,7 +361,7 @@ def test_issue_draft(tmp_path):
     issued = resp.json()
     assert issued["status"] == "issued_pending_processing"
     assert issued["invoice_number"] is not None
-    assert issued["series_code"] == "WEB"
+    assert issued["series_code"] == "APP"
 
 
 def test_issue_idempotency(tmp_path):
@@ -348,6 +380,7 @@ def test_issue_idempotency(tmp_path):
             "lines": [{"description": "Item", "quantity": "1", "unit_price": "100"}],
         },
     ).json()
+    _mark_customer_synced(client, cust["id"])
 
     key = "idemp-key-unique"
     resp1 = client.post(
@@ -424,6 +457,7 @@ def test_issued_invoice_appears_in_list(tmp_path):
             "lines": [{"description": "Service", "quantity": "1", "unit_price": "200"}],
         },
     ).json()
+    _mark_customer_synced(client, cust["id"])
     client.post(
         f"/api/v1/messaging/client/invoicing/drafts/{draft['id']}/issue",
         headers={**headers, "Idempotency-Key": "list-test-1"},

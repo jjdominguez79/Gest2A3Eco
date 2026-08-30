@@ -13,7 +13,6 @@ from pathlib import Path, PureWindowsPath
 import psycopg
 import requests
 from psycopg.conninfo import make_conninfo
-from psycopg.rows import dict_row
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -120,37 +119,6 @@ class MessagingAttachmentWorker:
         LOG.info("Adjuntos de mensajeria: procesados=%d errores=%d", downloaded, errors)
         return downloaded, errors
 
-    def sync_organizations(self) -> int:
-        rows = self._load_organizations()
-        LOG.info("Sincronizando directorio de clientes: encontrados=%d", len(rows))
-        response = self.http.put(
-            self._url("/sync/organizations"), headers=self._headers,
-            json=rows, timeout=60,
-        )
-        response.raise_for_status()
-        synchronized = int(response.json().get("synchronized") or 0)
-        LOG.info("Directorio de clientes sincronizado: %d", synchronized)
-        return synchronized
-
-    def _load_organizations(self) -> list[dict]:
-        with psycopg.connect(self.config.postgres_dsn, row_factory=dict_row) as conn:
-            rows = conn.execute(
-                """
-                SELECT e.codigo,e.nombre,e.activo
-                FROM empresas e
-                JOIN (
-                  SELECT codigo,MAX(ejercicio) ejercicio
-                  FROM empresas GROUP BY codigo
-                ) latest ON latest.codigo=e.codigo AND latest.ejercicio=e.ejercicio
-                ORDER BY e.nombre,e.codigo
-                """
-            ).fetchall()
-        return [{
-            "company_code": str(row["codigo"] or "").strip(),
-            "name": str(row["nombre"] or row["codigo"] or "").strip(),
-            "active": bool(row["activo"] if row["activo"] is not None else True),
-        } for row in rows if str(row["codigo"] or "").strip()]
-
     def _sync_one(self, item: dict) -> None:
         destination = self._destination(item)
         public_destination = self._public_destination(item)
@@ -242,10 +210,6 @@ class MessagingAttachmentWorker:
     def run_forever(self) -> None:
         while not self.stop_event.is_set():
             LOG.info("Iniciando ciclo de sincronizacion")
-            try:
-                self.sync_organizations()
-            except Exception as exc:
-                LOG.exception("Fallo al sincronizar el directorio de clientes: %s", exc)
             try:
                 self.run_once()
             except Exception as exc:

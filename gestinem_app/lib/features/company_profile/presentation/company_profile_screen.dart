@@ -14,12 +14,15 @@ class CompanyProfileScreen extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(title: const Text('Mi empresa')),
-      body: profileAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, _) => Center(
-          child: Text('Error al cargar el perfil: $error'),
+      body: SafeArea(
+        top: false,
+        minimum: const EdgeInsets.only(bottom: 12),
+        child: profileAsync.when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (error, _) =>
+              Center(child: Text('Error al cargar el perfil: $error')),
+          data: (profile) => _ProfileContent(profile: profile),
         ),
-        data: (profile) => _ProfileContent(profile: profile),
       ),
     );
   }
@@ -117,8 +120,8 @@ class _InfoRow extends StatelessWidget {
             child: Text(
               label,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
           Expanded(child: Text(value)),

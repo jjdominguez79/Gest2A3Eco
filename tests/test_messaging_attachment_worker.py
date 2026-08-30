@@ -83,17 +83,6 @@ def test_worker_descarga_verifica_guarda_y_confirma(tmp_path, monkeypatch):
     assert any(method == "POST" and url.endswith("/confirm") for method, url, _ in session.calls)
 
 
-def test_worker_sincroniza_directorio_de_clientes(tmp_path, monkeypatch):
-    session = Session({}, b"")
-    worker = MessagingAttachmentWorker(_config(tmp_path), session=session)
-    rows = [
-        {"company_code": "E00042", "name": "Cliente Uno", "active": True},
-        {"company_code": "E00043", "name": "Cliente Dos", "active": False},
-    ]
-    monkeypatch.setattr(worker, "_load_organizations", lambda: rows)
-
-    assert worker.sync_organizations() == 2
-    method, url, kwargs = session.calls[-1]
-    assert method == "PUT"
-    assert url.endswith("/sync/organizations")
-    assert kwargs["json"] == rows
+def test_worker_de_adjuntos_no_sincroniza_datos_maestros(tmp_path):
+    worker = MessagingAttachmentWorker(_config(tmp_path), session=Session({}, b""))
+    assert not hasattr(worker, "sync_organizations")

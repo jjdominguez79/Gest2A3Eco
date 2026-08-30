@@ -173,13 +173,13 @@ class TestSyncProfile:
         db.scalar = patched_scalar
 
         from backend.api.client_profile_api import router, _db
-        from backend.api.security import require_workstation_or_internal
+        from backend.api.security import require_master_sync_or_workstation_internal
         from fastapi import FastAPI
 
         app = FastAPI()
         app.include_router(router)
         app.dependency_overrides[_db] = lambda: db
-        app.dependency_overrides[require_workstation_or_internal] = lambda: "test"
+        app.dependency_overrides[require_master_sync_or_workstation_internal] = lambda: "test"
 
         client = TestClient(app)
         resp = client.put(
@@ -202,13 +202,13 @@ class TestSyncProfile:
     def test_sync_sin_company_code(self):
         db = _FakeDb()
         from backend.api.client_profile_api import router, _db
-        from backend.api.security import require_workstation_or_internal
+        from backend.api.security import require_master_sync_or_workstation_internal
         from fastapi import FastAPI
 
         app = FastAPI()
         app.include_router(router)
         app.dependency_overrides[_db] = lambda: db
-        app.dependency_overrides[require_workstation_or_internal] = lambda: "test"
+        app.dependency_overrides[require_master_sync_or_workstation_internal] = lambda: "test"
 
         client = TestClient(app)
         resp = client.put(

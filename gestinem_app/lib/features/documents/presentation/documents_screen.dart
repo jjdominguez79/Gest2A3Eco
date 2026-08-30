@@ -53,44 +53,48 @@ class DocumentsScreen extends ConsumerWidget {
           ),
         ],
       ),
-      body: docsAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, _) => Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Error: $error'),
-              const SizedBox(height: 8),
-              ElevatedButton(
-                onPressed: () => ref.invalidate(documentsProvider),
-                child: const Text('Reintentar'),
-              ),
-            ],
+      body: SafeArea(
+        top: false,
+        minimum: const EdgeInsets.only(bottom: 12),
+        child: docsAsync.when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (error, _) => Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Error: $error'),
+                const SizedBox(height: 8),
+                ElevatedButton(
+                  onPressed: () => ref.invalidate(documentsProvider),
+                  child: const Text('Reintentar'),
+                ),
+              ],
+            ),
           ),
-        ),
-        data: (response) {
-          if (selectedFolder == null) {
-            return _FolderGrid(documents: response.items);
-          }
-          final documents = response.items
-              .where((document) => document.folder == selectedFolder)
-              .toList();
-          if (documents.isEmpty) {
-            return Center(
-              child: Text(
-                'No hay documentos en ${selectedFolder.label.toLowerCase()} '
-                'para este ejercicio.',
-              ),
+          data: (response) {
+            if (selectedFolder == null) {
+              return _FolderGrid(documents: response.items);
+            }
+            final documents = response.items
+                .where((document) => document.folder == selectedFolder)
+                .toList();
+            if (documents.isEmpty) {
+              return Center(
+                child: Text(
+                  'No hay documentos en ${selectedFolder.label.toLowerCase()} '
+                  'para este ejercicio.',
+                ),
+              );
+            }
+            return ListView.builder(
+              itemCount: documents.length,
+              itemBuilder: (context, index) {
+                final doc = documents[index];
+                return _DocumentTile(document: doc);
+              },
             );
-          }
-          return ListView.builder(
-            itemCount: documents.length,
-            itemBuilder: (context, index) {
-              final doc = documents[index];
-              return _DocumentTile(document: doc);
-            },
-          );
-        },
+          },
+        ),
       ),
     );
   }

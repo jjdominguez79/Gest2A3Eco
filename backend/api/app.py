@@ -367,7 +367,11 @@ def startup():
                 conn.execute(text(_mig_012.read_text(encoding="utf-8")))
 
     # Migrar notification_log (013) y columnas de claim token (014)
-    for _mig_name in ("013_notification_log.sql", "014_notification_log_claim.sql"):
+    for _mig_name in (
+        "013_notification_log.sql",
+        "014_notification_log_claim.sql",
+        "015_client_customer_desktop_sync.sql",
+    ):
         _mig_path = Path(__file__).resolve().parent.parent / "migrations" / _mig_name
         if _mig_path.exists():
             with engine.begin() as conn:

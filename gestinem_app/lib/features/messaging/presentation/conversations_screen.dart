@@ -317,6 +317,12 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
         ],
       ),
       actions: [
+        IconButton(
+          key: const Key('client-company-profile-button'),
+          tooltip: 'Mi empresa',
+          onPressed: () => context.push('/company-profile'),
+          icon: const Icon(Icons.business_outlined),
+        ),
         if (ref.watch(platformFeaturesProvider).valueOrNull?.documents == true)
           IconButton(
             key: const Key('client-documents-button'),

@@ -34,6 +34,7 @@ from backend.api.client_models import (
     ClientInvoiceCustomer,
     ClientInvoiceNotificationLog,
     ClientInvoiceProcessingQueue,
+    ClientInvoiceSeries,
 )
 from backend.api.messaging_models import (
     MessagingAppDevice,
@@ -42,7 +43,10 @@ from backend.api.messaging_models import (
     MessagingSession,
 )
 from backend.api.messaging_security import hash_token
-from backend.api.security import require_workstation_or_internal
+from backend.api.security import (
+    require_master_sync_or_workstation_internal,
+    require_workstation_or_internal,
+)
 from backend.api import client_models  # noqa: F401
 from backend.api import messaging_models  # noqa: F401
 
@@ -68,6 +72,9 @@ def _setup():
 
     app.dependency_overrides[_db] = override
     app.dependency_overrides[require_workstation_or_internal] = lambda: "test"
+    app.dependency_overrides[require_master_sync_or_workstation_internal] = (
+        lambda: "test"
+    )
 
     with factory() as db:
         org = MessagingOrganization(
@@ -140,6 +147,59 @@ def _setup():
 
 
 PREFIX = "/api/v1/messaging/client/invoicing"
+
+
+def test_worker_claim_y_confirma_cliente_flutter():
+    http, factory, _, org_id, _ = _setup()
+    with factory() as db:
+        customer = ClientInvoiceCustomer(
+            organization_id=org_id,
+            tax_id="B12345678",
+            tax_id_normalized="B12345678",
+            legal_name="CLIENTE FLUTTER",
+            pending_desktop_import=True,
+            desktop_sync_status="pending",
+        )
+        db.add(customer)
+        db.commit()
+        customer_id = customer.id
+
+    claim = http.post(
+        f"{PREFIX}/worker/customer/claim",
+        json={"worker_id": "windows-1", "lease_minutes": 10},
+    )
+    assert claim.status_code == 200
+    assert claim.json()["customer"]["id"] == customer_id
+
+    confirm = http.post(
+        f"{PREFIX}/worker/customer/{customer_id}/confirm",
+        json={"desktop_tercero_id": "ter-42", "desktop_subcuenta": "43000042"},
+    )
+    assert confirm.status_code == 200
+    assert confirm.json()["customer"]["pending_desktop_import"] is False
+
+
+def test_worker_configura_una_unica_serie_online_activa():
+    http, factory, _, org_id, _ = _setup()
+    with factory() as db:
+        db.add(ClientInvoiceSeries(
+            organization_id=org_id,
+            fiscal_year=2026,
+            series_code="WEB",
+            next_number=8,
+            active=True,
+        ))
+        db.commit()
+
+    response = http.post(
+        f"{PREFIX}/worker/series-sync",
+        json={"organization_id": org_id, "fiscal_year": 2026, "series_code": "APP"},
+    )
+    assert response.status_code == 200
+    with factory() as db:
+        series = db.scalars(select(ClientInvoiceSeries)).all()
+        active = [item.series_code for item in series if item.active]
+        assert active == ["APP"]
 
 
 # -- Claim --

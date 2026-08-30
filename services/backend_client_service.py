@@ -107,7 +107,7 @@ class BackendClientService:
     def sync_company_profile(self, *, company_code: str, profile: dict) -> dict:
         """Sincroniza los datos del perfil de la empresa con el backend."""
         self._ensure_configured()
-        url = f"{self.base_url}/api/v1/messaging/client/company-profile/internal/sync-profile"
+        url = f"{self.base_url}/api/v1/messaging/client/internal/sync-profile"
         payload = {"company_code": company_code, **profile}
         resp = self.http.put(url, headers=self._headers(), json=payload, timeout=30)
         resp.raise_for_status()

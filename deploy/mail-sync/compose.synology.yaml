@@ -62,6 +62,34 @@ services:
     cap_drop:
       - ALL
 
+  master-data-sync:
+    build:
+      context: ../..
+      dockerfile: deploy/mail-sync/Dockerfile
+    container_name: gest2a3eco-master-data-sync
+    command: ["python", "-m", "sync_worker.master_data_worker"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    environment:
+      CLIENT_MASTER_SYNC_API_URL: "https://gest2a3eco-production.up.railway.app"
+      CLIENT_MASTER_SYNC_TOKEN_FILE: "/run/secrets/client_master_sync_token"
+      CLIENT_MASTER_SYNC_INTERVAL_SECONDS: "300"
+      CLIENT_ONLINE_SERIES_CODE: "APP"
+      POSTGRES_HOST: "192.168.0.19"
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: "gest2a3eco"
+      POSTGRES_USER: "gest2a3eco_sync"
+      POSTGRES_PASSWORD_FILE: "/run/secrets/postgres_password"
+    secrets:
+      - client_master_sync_token
+      - postgres_password
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
 secrets:
   graph_certificate:
     file: ./secrets/Gest2A3Eco-Sync.pfx
@@ -71,4 +99,6 @@ secrets:
     file: ./secrets/postgres_password.txt
   messaging_sync_token:
     file: ./secrets/messaging_sync_token.txt
+  client_master_sync_token:
+    file: ./secrets/client_master_sync_token.txt
 

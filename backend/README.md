@@ -51,6 +51,8 @@ La cabecera `X-API-Key` tiene dos credenciales posibles segun la ruta:
 
 - `BACKEND_INTERNAL_API_KEY`: administracion de puestos y organizaciones,
   invitaciones internas y otras rutas exclusivas del servidor.
+- `CLIENT_MASTER_SYNC_API_KEY`: sincronizacion unidireccional de perfiles,
+  clientes y serie online desde el Synology; debe ser una clave distinta.
 - `WorkstationToken`: operaciones del escritorio en DGT, OCR, firma,
   Dataprius, estado de integraciones y alta del dispositivo de mensajeria.
 
@@ -69,6 +71,7 @@ revocable y tambien lo guarda en Credential Manager.
 
 - `BACKEND_DATABASE_URL`: DSN SQLAlchemy PostgreSQL obligatorio.
 - `BACKEND_INTERNAL_API_KEY`: credencial interna obligatoria fuera de pruebas.
+- `CLIENT_MASTER_SYNC_API_KEY`: credencial exclusiva del worker maestro.
 - `BACKEND_PUBLIC_BASE_URL`: origen comun del servicio. DGT y mensajeria lo
   heredan si no definen un origen especifico.
 

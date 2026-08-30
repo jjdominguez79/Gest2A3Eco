@@ -48,7 +48,14 @@ from backend.api.client_models import (
     ClientInvoiceSeries,
 )
 from backend.api.client_storage import ClientDocumentStorage
-from backend.api.client_validation import normalize_tax_id, validate_tax_id
+from backend.api.client_validation import (
+    normalize_email,
+    normalize_phone,
+    normalize_postal_code,
+    normalize_tax_id,
+    normalize_upper_text,
+    validate_tax_id,
+)
 from backend.api.feature_flags import (
     is_invoicing_enabled,
     require_invoicing_enabled as _require_invoicing_enabled,
@@ -61,7 +68,11 @@ from backend.api.messaging_models import (
 )
 from backend.api import messaging_firebase, messaging_mail
 from backend.api.messaging_security import hash_token, is_expired, utcnow
-from backend.api.security import require_internal_key, require_workstation_or_internal
+from backend.api.security import (
+    require_internal_key,
+    require_master_sync_or_workstation_internal,
+    require_workstation_or_internal,
+)
 
 router = APIRouter(
     prefix="/api/v1/messaging/client/invoicing",
@@ -286,8 +297,34 @@ def _customer_to_dict(c: ClientInvoiceCustomer) -> dict:
         "email": c.email,
         "phone": c.phone,
         "default_vat_rate": str(c.default_vat_rate),
+        "desktop_tercero_id": c.desktop_tercero_id,
+        "desktop_subcuenta": c.desktop_subcuenta,
+        "pending_desktop_import": c.pending_desktop_import,
+        "desktop_sync_status": c.desktop_sync_status,
+        "desktop_sync_error": c.desktop_sync_error,
         "active": c.active,
     }
+
+
+def _configured_online_series(
+    db: Session, organization_id: str, fiscal_year: int,
+) -> ClientInvoiceSeries:
+    series = db.scalar(
+        select(ClientInvoiceSeries)
+        .where(
+            ClientInvoiceSeries.organization_id == organization_id,
+            ClientInvoiceSeries.fiscal_year == fiscal_year,
+            ClientInvoiceSeries.active.is_(True),
+        )
+        .order_by(ClientInvoiceSeries.series_code)
+        .limit(1)
+    )
+    if not series:
+        raise HTTPException(
+            status_code=409,
+            detail="Gestinem aun no ha configurado la serie de facturacion online",
+        )
+    return series
 
 
 # ===== CONFIGURACION =====
@@ -367,24 +404,27 @@ def create_customer(
     if existing:
         return _customer_to_dict(existing)
 
-    legal_name = payload.get("legal_name", "").strip()
+    legal_name = normalize_upper_text(payload.get("legal_name", ""))
     if not legal_name:
         raise HTTPException(status_code=400, detail="Razon social es obligatoria")
 
     cust = ClientInvoiceCustomer(
         organization_id=client.organization_id,
-        tax_id=tax_id.upper().strip(),
+        tax_id=normalized,
         tax_id_normalized=normalized,
         legal_name=legal_name,
-        address=payload.get("address", ""),
-        postal_code=payload.get("postal_code", ""),
-        city=payload.get("city", ""),
-        province=payload.get("province", ""),
-        country=payload.get("country", "ES"),
-        email=payload.get("email", ""),
-        phone=payload.get("phone", ""),
+        address=normalize_upper_text(payload.get("address", "")),
+        postal_code=normalize_postal_code(
+            payload.get("postal_code", ""), payload.get("country", "ES"),
+        ),
+        city=normalize_upper_text(payload.get("city", "")),
+        province=normalize_upper_text(payload.get("province", "")),
+        country=normalize_upper_text(payload.get("country", "ES")) or "ES",
+        email=normalize_email(payload.get("email", "")),
+        phone=normalize_phone(payload.get("phone", "")),
         default_vat_rate=Decimal(str(payload.get("default_vat_rate", "21.00"))),
         pending_desktop_import=True,
+        desktop_sync_status="pending",
     )
     db.add(cust)
     db.commit()
@@ -427,8 +467,10 @@ def create_draft(
     if not customer or customer.organization_id != client.organization_id:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
-    fiscal_year = payload.get("fiscal_year", datetime.now(timezone.utc).year)
-    series_code = payload.get("series_code", "WEB")
+    fiscal_year = int(payload.get("fiscal_year", datetime.now(timezone.utc).year))
+    series_code = _configured_online_series(
+        db, client.organization_id, fiscal_year,
+    ).series_code
 
     invoice_date = None
     if payload.get("invoice_date"):
@@ -629,6 +671,20 @@ def issue_invoice(
     customer = db.get(ClientInvoiceCustomer, inv.customer_id)
     if not customer:
         raise HTTPException(status_code=400, detail="Cliente no encontrado")
+    if customer.pending_desktop_import or not customer.desktop_subcuenta:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "El cliente esta pendiente de validacion por Gestinem y aun "
+                "no tiene subcuenta asignada"
+            ),
+        )
+    configured_series = _configured_online_series(db, org.id, inv.fiscal_year)
+    if inv.series_code != configured_series.series_code:
+        raise HTTPException(
+            status_code=409,
+            detail="La serie del borrador ya no es la serie online activa",
+        )
 
     # Recalcular con Decimal
     recalculate_invoice(inv, lines)
@@ -1459,21 +1515,38 @@ def worker_get_status(
 def worker_sync_customers(
     payload: dict = Body(...),
     db: Session = Depends(_db),
-    _auth: str = Depends(require_workstation_or_internal),
+    _auth: str = Depends(require_master_sync_or_workstation_internal),
 ):
     """Sincroniza clientes desde el escritorio (bulk upsert por NIF)."""
     org_id = payload.get("organization_id", "")
     customers_data = payload.get("customers", [])
+    full_snapshot = bool(payload.get("full_snapshot", False))
 
     if not org_id:
         raise HTTPException(status_code=400, detail="organization_id requerido")
 
     synced = 0
+    seen_normalized: set[str] = set()
     for cd in customers_data:
         tax_id = cd.get("tax_id", "").strip()
         if not tax_id:
             continue
         normalized = normalize_tax_id(tax_id)
+        if not normalized:
+            continue
+        seen_normalized.add(normalized)
+
+        country = normalize_upper_text(cd.get("country", "ES")) or "ES"
+        clean = {
+            "legal_name": normalize_upper_text(cd.get("legal_name", "")),
+            "address": normalize_upper_text(cd.get("address", "")),
+            "postal_code": normalize_postal_code(cd.get("postal_code", ""), country),
+            "city": normalize_upper_text(cd.get("city", "")),
+            "province": normalize_upper_text(cd.get("province", "")),
+            "country": country,
+            "email": normalize_email(cd.get("email", "")),
+            "phone": normalize_phone(cd.get("phone", "")),
+        }
 
         existing = db.scalar(
             select(ClientInvoiceCustomer).where(
@@ -1483,38 +1556,199 @@ def worker_sync_customers(
         )
         if existing:
             # Actualizar datos fiscales
-            for field in ("legal_name", "address", "postal_code", "city",
-                         "province", "country", "email", "phone"):
-                if field in cd and cd[field]:
-                    setattr(existing, field, cd[field])
+            existing.tax_id = normalized
+            for field, value in clean.items():
+                setattr(existing, field, value)
             if "default_vat_rate" in cd:
                 existing.default_vat_rate = Decimal(str(cd["default_vat_rate"]))
             if "desktop_tercero_id" in cd:
                 existing.desktop_tercero_id = cd["desktop_tercero_id"]
                 existing.pending_desktop_import = False
+                existing.desktop_sync_status = "synced"
+                existing.desktop_sync_error = ""
             if "desktop_subcuenta" in cd:
                 existing.desktop_subcuenta = cd["desktop_subcuenta"]
             existing.updated_at = utcnow()
+            existing.active = bool(cd.get("active", True))
         else:
             cust = ClientInvoiceCustomer(
                 organization_id=org_id,
-                tax_id=tax_id.upper(),
+                tax_id=normalized,
                 tax_id_normalized=normalized,
-                legal_name=cd.get("legal_name", ""),
-                address=cd.get("address", ""),
-                postal_code=cd.get("postal_code", ""),
-                city=cd.get("city", ""),
-                province=cd.get("province", ""),
-                country=cd.get("country", "ES"),
-                email=cd.get("email", ""),
-                phone=cd.get("phone", ""),
+                **clean,
                 default_vat_rate=Decimal(str(cd.get("default_vat_rate", "21.00"))),
                 desktop_tercero_id=cd.get("desktop_tercero_id"),
                 desktop_subcuenta=cd.get("desktop_subcuenta", ""),
                 pending_desktop_import=False,
+                desktop_sync_status="synced",
+                active=bool(cd.get("active", True)),
             )
             db.add(cust)
         synced += 1
 
+    deactivated = 0
+    if full_snapshot:
+        current = db.scalars(
+            select(ClientInvoiceCustomer).where(
+                ClientInvoiceCustomer.organization_id == org_id,
+                ClientInvoiceCustomer.pending_desktop_import.is_(False),
+            )
+        ).all()
+        for customer in current:
+            if customer.tax_id_normalized not in seen_normalized and customer.active:
+                customer.active = False
+                customer.updated_at = utcnow()
+                deactivated += 1
+
     db.commit()
-    return {"status": "ok", "synced": synced}
+    return {"status": "ok", "synced": synced, "deactivated": deactivated}
+
+
+@router.post("/worker/series-sync")
+def worker_sync_series(
+    payload: dict = Body(...),
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_master_sync_or_workstation_internal),
+):
+    """Configura la serie exclusiva online sin retroceder su contador."""
+    org_id = str(payload.get("organization_id") or "").strip()
+    fiscal_year = int(payload.get("fiscal_year") or 0)
+    series_code = normalize_upper_text(payload.get("series_code", "APP"))
+    if not org_id or fiscal_year < 2000 or not series_code:
+        raise HTTPException(status_code=400, detail="Serie online no valida")
+    series_code = series_code[:10]
+    series = db.scalar(
+        select(ClientInvoiceSeries).where(
+            ClientInvoiceSeries.organization_id == org_id,
+            ClientInvoiceSeries.fiscal_year == fiscal_year,
+            ClientInvoiceSeries.series_code == series_code,
+        )
+    )
+    created = series is None
+    if series is None:
+        series = ClientInvoiceSeries(
+            organization_id=org_id,
+            fiscal_year=fiscal_year,
+            series_code=series_code,
+            next_number=max(1, int(payload.get("initial_next_number") or 1)),
+        )
+        db.add(series)
+    if bool(payload.get("active", True)):
+        other_series = db.scalars(
+            select(ClientInvoiceSeries).where(
+                ClientInvoiceSeries.organization_id == org_id,
+                ClientInvoiceSeries.fiscal_year == fiscal_year,
+                ClientInvoiceSeries.series_code != series_code,
+                ClientInvoiceSeries.active.is_(True),
+            )
+        ).all()
+        for other in other_series:
+            other.active = False
+            other.updated_at = utcnow()
+    series.description = normalize_upper_text(
+        payload.get("description", "FACTURAS EMITIDAS DESDE FLUTTER"),
+    )
+    series.active = bool(payload.get("active", True))
+    series.updated_at = utcnow()
+    db.commit()
+    return {
+        "status": "ok",
+        "created": created,
+        "series_code": series.series_code,
+        "next_number": series.next_number,
+    }
+
+
+@router.post("/worker/customer/claim")
+def worker_claim_customer(
+    payload: dict = Body(...),
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    """Reclama un alta Flutter pendiente de integrar en el escritorio."""
+    worker_id = str(payload.get("worker_id") or "unknown")[:120]
+    lease_minutes = max(1, min(int(payload.get("lease_minutes") or 10), 60))
+    now = utcnow()
+    customer = db.scalar(
+        select(ClientInvoiceCustomer)
+        .where(ClientInvoiceCustomer.pending_desktop_import.is_(True))
+        .where(ClientInvoiceCustomer.desktop_sync_status.in_(["pending", "error"]))
+        .where(
+            (ClientInvoiceCustomer.desktop_lease_expires_at.is_(None))
+            | (ClientInvoiceCustomer.desktop_lease_expires_at < now)
+        )
+        .order_by(ClientInvoiceCustomer.created_at)
+        .with_for_update(skip_locked=True)
+        .limit(1)
+    )
+    if not customer:
+        return {"claimed": False}
+
+    customer.desktop_sync_status = "processing"
+    customer.desktop_claimed_by = worker_id
+    customer.desktop_claimed_at = now
+    customer.desktop_lease_expires_at = now + timedelta(minutes=lease_minutes)
+    customer.desktop_sync_error = ""
+    org = db.get(MessagingOrganization, customer.organization_id)
+    db.commit()
+    return {
+        "claimed": True,
+        "customer": _customer_to_dict(customer),
+        "organization": {
+            "id": org.id,
+            "company_code": org.company_code,
+            "name": org.name,
+        } if org else None,
+    }
+
+
+@router.post("/worker/customer/{customer_id}/confirm")
+def worker_confirm_customer(
+    customer_id: str,
+    payload: dict = Body(...),
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    """Confirma tercero y subcuenta asignados por Gest2A3Eco."""
+    customer = db.get(ClientInvoiceCustomer, customer_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    tercero_id = str(payload.get("desktop_tercero_id") or "").strip()
+    subcuenta = str(payload.get("desktop_subcuenta") or "").strip()
+    if not tercero_id or not subcuenta.startswith("430") or not subcuenta.isdigit():
+        raise HTTPException(
+            status_code=400,
+            detail="Tercero y subcuenta 430 validos son obligatorios",
+        )
+    customer.desktop_tercero_id = tercero_id[:64]
+    customer.desktop_subcuenta = subcuenta[:20]
+    customer.pending_desktop_import = False
+    customer.desktop_sync_status = "synced"
+    customer.desktop_sync_error = ""
+    customer.desktop_claimed_by = ""
+    customer.desktop_claimed_at = None
+    customer.desktop_lease_expires_at = None
+    customer.updated_at = utcnow()
+    db.commit()
+    return {"status": "ok", "customer": _customer_to_dict(customer)}
+
+
+@router.post("/worker/customer/{customer_id}/error")
+def worker_customer_error(
+    customer_id: str,
+    payload: dict = Body(...),
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    """Libera el alta para reintento y conserva el error visible."""
+    customer = db.get(ClientInvoiceCustomer, customer_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    customer.desktop_sync_status = "error"
+    customer.desktop_sync_error = str(payload.get("error") or "Error desconocido")[:2000]
+    customer.desktop_claimed_by = ""
+    customer.desktop_claimed_at = None
+    customer.updated_at = utcnow()
+    customer.desktop_lease_expires_at = customer.updated_at + timedelta(minutes=5)
+    db.commit()
+    return {"status": "ok", "retryable": True, "retry_after_seconds": 300}

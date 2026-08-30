@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
@@ -26,6 +27,27 @@ class _CustomerFormScreenState extends ConsumerState<CustomerFormScreen> {
   String _country = 'ES';
   bool _saving = false;
 
+  static final _uppercaseFormatter = TextInputFormatter.withFunction(
+    (oldValue, newValue) => newValue.copyWith(
+      text: newValue.text.toUpperCase(),
+      selection: newValue.selection,
+      composing: TextRange.empty,
+    ),
+  );
+  static final _taxIdFormatter = TextInputFormatter.withFunction((
+    oldValue,
+    newValue,
+  ) {
+    final clean = newValue.text.toUpperCase().replaceAll(
+      RegExp(r'[^A-Z0-9]'),
+      '',
+    );
+    return TextEditingValue(
+      text: clean,
+      selection: TextSelection.collapsed(offset: clean.length),
+    );
+  });
+
   @override
   void dispose() {
     _taxId.dispose();
@@ -45,24 +67,24 @@ class _CustomerFormScreenState extends ConsumerState<CustomerFormScreen> {
     try {
       final repo = ref.read(invoicingRepositoryProvider);
       await repo.createCustomer({
-        'tax_id': _taxId.text.trim(),
-        'legal_name': _legalName.text.trim(),
-        'address': _address.text.trim(),
+        'tax_id': _taxId.text,
+        'legal_name': _legalName.text,
+        'address': _address.text,
         'postal_code': _postalCode.text.trim(),
-        'city': _city.text.trim(),
-        'province': _province.text.trim(),
+        'city': _city.text,
+        'province': _province.text,
         'country': _country,
-        'email': _email.text.trim(),
-        'phone': _phone.text.trim(),
+        'email': _email.text.trim().toLowerCase(),
+        'phone': _phone.text.replaceAll(RegExp(r'[^0-9+]'), ''),
       });
       if (mounted) {
         context.pop(true);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(apiErrorMessage(e))),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(e))));
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -87,6 +109,7 @@ class _CustomerFormScreenState extends ConsumerState<CustomerFormScreen> {
                   hintText: 'Ej: B12345678',
                 ),
                 textCapitalization: TextCapitalization.characters,
+                inputFormatters: [_taxIdFormatter],
                 validator: (v) {
                   if (v == null || v.trim().isEmpty) {
                     return 'El NIF/CIF es obligatorio';
@@ -101,8 +124,9 @@ class _CustomerFormScreenState extends ConsumerState<CustomerFormScreen> {
               const SizedBox(height: 12),
               TextFormField(
                 controller: _legalName,
-                decoration:
-                    const InputDecoration(labelText: 'Razon social *'),
+                textCapitalization: TextCapitalization.characters,
+                inputFormatters: [_uppercaseFormatter],
+                decoration: const InputDecoration(labelText: 'Razon social *'),
                 validator: (v) => v == null || v.trim().isEmpty
                     ? 'La razon social es obligatoria'
                     : null,
@@ -110,6 +134,8 @@ class _CustomerFormScreenState extends ConsumerState<CustomerFormScreen> {
               const SizedBox(height: 12),
               TextFormField(
                 controller: _address,
+                textCapitalization: TextCapitalization.characters,
+                inputFormatters: [_uppercaseFormatter],
                 decoration: const InputDecoration(labelText: 'Direccion'),
               ),
               const SizedBox(height: 12),
@@ -119,8 +145,9 @@ class _CustomerFormScreenState extends ConsumerState<CustomerFormScreen> {
                     flex: 2,
                     child: TextFormField(
                       controller: _postalCode,
-                      decoration:
-                          const InputDecoration(labelText: 'Codigo postal'),
+                      decoration: const InputDecoration(
+                        labelText: 'Codigo postal',
+                      ),
                       keyboardType: TextInputType.number,
                     ),
                   ),
@@ -129,8 +156,9 @@ class _CustomerFormScreenState extends ConsumerState<CustomerFormScreen> {
                     flex: 3,
                     child: TextFormField(
                       controller: _city,
-                      decoration:
-                          const InputDecoration(labelText: 'Poblacion'),
+                      textCapitalization: TextCapitalization.characters,
+                      inputFormatters: [_uppercaseFormatter],
+                      decoration: const InputDecoration(labelText: 'Poblacion'),
                     ),
                   ),
                 ],
@@ -141,8 +169,9 @@ class _CustomerFormScreenState extends ConsumerState<CustomerFormScreen> {
                   Expanded(
                     child: TextFormField(
                       controller: _province,
-                      decoration:
-                          const InputDecoration(labelText: 'Provincia'),
+                      textCapitalization: TextCapitalization.characters,
+                      inputFormatters: [_uppercaseFormatter],
+                      decoration: const InputDecoration(labelText: 'Provincia'),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -156,7 +185,10 @@ class _CustomerFormScreenState extends ConsumerState<CustomerFormScreen> {
                         DropdownMenuItem(value: 'FR', child: Text('Francia')),
                         DropdownMenuItem(value: 'DE', child: Text('Alemania')),
                         DropdownMenuItem(value: 'IT', child: Text('Italia')),
-                        DropdownMenuItem(value: 'GB', child: Text('Reino Unido')),
+                        DropdownMenuItem(
+                          value: 'GB',
+                          child: Text('Reino Unido'),
+                        ),
                       ],
                       onChanged: (v) {
                         if (v != null) setState(() => _country = v);
@@ -178,6 +210,11 @@ class _CustomerFormScreenState extends ConsumerState<CustomerFormScreen> {
                 keyboardType: TextInputType.phone,
               ),
               const SizedBox(height: 24),
+              const Text(
+                'Gestinem validara el cliente y le asignara la subcuenta '
+                'contable antes de que pueda utilizarse para emitir.',
+              ),
+              const SizedBox(height: 12),
               FilledButton(
                 onPressed: _saving ? null : _save,
                 child: _saving

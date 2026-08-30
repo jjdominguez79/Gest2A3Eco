@@ -19,6 +19,7 @@ proveedores permanecen en el backend.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 import signal
@@ -48,11 +49,17 @@ class DesktopGestor(Protocol):
 
     def get_tercero_by_nif_normalizado(self, nif: str) -> dict | None: ...
     def upsert_tercero(self, tercero: dict) -> str: ...
+    def get_tercero_empresa(
+        self, codigo_empresa: str, tercero_id: str, ejercicio: int,
+    ) -> dict | None: ...
     def upsert_tercero_empresa(self, rel: dict) -> None: ...
     def upsert_maestro_subcuenta(self, datos: dict) -> int: ...
     def get_maestro_subcuenta_por_subcuenta(self, codigo: str, sub: str) -> dict | None: ...
     def listar_maestro_subcuentas_empresa(self, codigo: str, tipo: str | None = None, activo: bool = True) -> list: ...
     def upsert_factura_emitida(self, factura: dict) -> str: ...
+    def enviar_facturas_emitidas_a_contabilidad(
+        self, codigo_empresa: str, ejercicio: int, ids: list,
+    ) -> None: ...
     def get_empresa(self, codigo: str) -> dict | None: ...
 
 
@@ -170,6 +177,11 @@ class InvoiceWorker:
 
         while self._running:
             try:
+                customer_claim = self._claim_customer()
+                if customer_claim:
+                    self._process_customer(customer_claim)
+                    self._consecutive_errors = 0
+                    continue
                 claimed = self._claim()
                 if claimed:
                     self._process(claimed)
@@ -203,6 +215,114 @@ class InvoiceWorker:
     # ------------------------------------------------------------------
     # Reclamo y procesamiento
     # ------------------------------------------------------------------
+
+    def _claim_customer(self) -> dict | None:
+        """Reclama el siguiente cliente creado desde Flutter."""
+        resp = self._session.post(
+            f"{self.config.api_base_url}/worker/customer/claim",
+            json={
+                "worker_id": self.config.worker_id,
+                "lease_minutes": self.config.lease_minutes,
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data if data.get("claimed") else None
+
+    def _process_customer(self, claim: dict) -> None:
+        customer = claim.get("customer") or {}
+        organization = claim.get("organization") or {}
+        customer_id = str(customer.get("id") or "")
+        try:
+            tercero_id, subcuenta = self._import_customer_to_desktop(
+                organization, customer,
+            )
+            resp = self._session.post(
+                f"{self.config.api_base_url}/worker/customer/{customer_id}/confirm",
+                json={
+                    "desktop_tercero_id": str(tercero_id),
+                    "desktop_subcuenta": subcuenta,
+                },
+            )
+            resp.raise_for_status()
+            logger.info(
+                "Cliente %s integrado como tercero %s, subcuenta %s",
+                customer_id, tercero_id, subcuenta,
+            )
+        except Exception as exc:
+            logger.exception("Error integrando cliente %s", customer_id)
+            if customer_id:
+                try:
+                    self._session.post(
+                        f"{self.config.api_base_url}/worker/customer/{customer_id}/error",
+                        json={"error": str(exc)},
+                    ).raise_for_status()
+                except Exception:
+                    logger.exception("No se pudo reportar el error del cliente %s", customer_id)
+
+    def _import_customer_to_desktop(
+        self, organization: dict, customer: dict,
+    ) -> tuple[str, str]:
+        """Crea o vincula el tercero y asigna su 430 en Gest2A3Eco."""
+        gestor = self._ensure_gestor()
+        codigo_empresa = str(organization.get("company_code") or "").strip()
+        if not codigo_empresa:
+            raise ValueError("company_code no disponible")
+        empresa = gestor.get_empresa(codigo_empresa)
+        if not empresa:
+            raise ValueError(f"Empresa {codigo_empresa} no existe en escritorio")
+
+        nif_raw = str(customer.get("tax_id") or "").strip().upper()
+        nif_normalizado = re.sub(r"[^A-Z0-9]", "", nif_raw)
+        if not nif_normalizado:
+            raise ValueError("NIF del cliente vacio")
+        tercero = gestor.get_tercero_by_nif_normalizado(nif_normalizado)
+        if tercero:
+            tercero_id = str(tercero["id"])
+        else:
+            tercero_id = str(gestor.upsert_tercero({
+                "nif": nif_normalizado,
+                "nif_normalizado": nif_normalizado,
+                "nombre": customer.get("legal_name", ""),
+                "nombre_legal": customer.get("legal_name", ""),
+                "direccion": customer.get("address", ""),
+                "cp": customer.get("postal_code", ""),
+                "poblacion": customer.get("city", ""),
+                "provincia": customer.get("province", ""),
+                "pais": customer.get("country", "ES"),
+                "email": customer.get("email", ""),
+                "telefono": customer.get("phone", ""),
+                "origen": "flutter",
+            }))
+
+        digitos_plan = int(empresa.get("digitos_plan") or 8)
+        relacion = gestor.get_tercero_empresa(codigo_empresa, tercero_id, 0) or {}
+        subcuenta_existente = str(relacion.get("subcuenta_cliente") or "")
+        if subcuenta_existente.startswith("430") and subcuenta_existente.isdigit():
+            subcuenta = subcuenta_existente
+        else:
+            subcuenta = self._resolve_subcuenta_430(
+                gestor, codigo_empresa, nif_normalizado, digitos_plan,
+            )
+        gestor.upsert_tercero_empresa({
+            "codigo_empresa": codigo_empresa,
+            "ejercicio": 0,
+            "tercero_id": tercero_id,
+            "subcuenta_cliente": subcuenta,
+        })
+        if not gestor.get_maestro_subcuenta_por_subcuenta(codigo_empresa, subcuenta):
+            gestor.upsert_maestro_subcuenta({
+                "codigo_empresa": codigo_empresa,
+                "tercero_id": tercero_id,
+                "subcuenta": subcuenta,
+                "nombre_subcuenta": customer.get("legal_name", ""),
+                "tipo_subcuenta": "cliente",
+                "nif_snapshot": nif_normalizado,
+                "activo": True,
+                "origen": "flutter",
+                "pendiente_alta_a3": True,
+            })
+        return tercero_id, subcuenta
 
     def _claim(self) -> dict | None:
         """Reclama la siguiente factura pendiente."""
@@ -285,7 +405,34 @@ class InvoiceWorker:
             f"{self.config.api_base_url}/worker/invoice/{invoice_id}/payload",
         )
         resp.raise_for_status()
-        return resp.json()
+        return self._apply_issued_snapshot(resp.json())
+
+    @staticmethod
+    def _apply_issued_snapshot(payload: dict) -> dict:
+        """Usa los datos inmutables de emision y conserva solo enlaces internos."""
+        raw_snapshot = payload.get("issued_snapshot")
+        if not raw_snapshot:
+            return payload
+        try:
+            snapshot = json.loads(raw_snapshot)
+        except (TypeError, ValueError):
+            logger.warning("issued_snapshot no contiene JSON valido")
+            return payload
+        if not isinstance(snapshot, dict):
+            return payload
+
+        result = dict(payload)
+        for section in ("organization", "customer", "invoice"):
+            live = payload.get(section) or {}
+            issued = snapshot.get(section) or {}
+            if isinstance(live, dict) and isinstance(issued, dict):
+                # El snapshot manda en los datos visibles. Los campos que no
+                # existian al emitir (identificadores desktop, destinatario)
+                # siguen disponibles para completar el proceso interno.
+                result[section] = {**live, **issued}
+        if isinstance(snapshot.get("lines"), list):
+            result["lines"] = snapshot["lines"]
+        return result
 
     # ------------------------------------------------------------------
     # Paso 2: Importacion idempotente al escritorio
@@ -295,8 +442,8 @@ class InvoiceWorker:
         """Importa tercero y factura al escritorio PostgreSQL.
 
         Idempotente:
-        - Busca tercero por NIF normalizado; crea si no existe
-        - Vincula tercero a empresa con subcuenta 430xxx
+        - Exige que el tercero ya haya sido validado por el flujo de altas
+        - Usa exclusivamente la subcuenta 430 asignada por el escritorio
         - Registra subcuenta en maestro
         - Guarda factura en facturas_emitidas_docs
         """
@@ -315,8 +462,6 @@ class InvoiceWorker:
             raise ValueError(f"Empresa {codigo_empresa} no existe en escritorio")
 
         ejercicio = invoice.get("fiscal_year", datetime.now().year)
-        digitos_plan = int(empresa.get("digitos_plan") or 8)
-
         # -- Tercero --
         nif_raw = customer.get("tax_id", "")
         nif_normalizado = re.sub(r"[^A-Za-z0-9]", "", nif_raw).upper()
@@ -324,29 +469,21 @@ class InvoiceWorker:
             raise ValueError("NIF del cliente vacio")
 
         tercero = gestor.get_tercero_by_nif_normalizado(nif_normalizado)
-        if tercero:
-            tercero_id = tercero["id"]
-            logger.info("Tercero existente %s (NIF %s)", tercero_id, nif_normalizado)
-        else:
-            tercero_id = gestor.upsert_tercero({
-                "nif": nif_raw.upper(),
-                "nif_normalizado": nif_normalizado,
-                "nombre": customer.get("legal_name", ""),
-                "nombre_legal": customer.get("legal_name", ""),
-                "direccion": customer.get("address", ""),
-                "cp": customer.get("postal_code", ""),
-                "poblacion": customer.get("city", ""),
-                "provincia": customer.get("province", ""),
-                "pais": customer.get("country", "ES"),
-                "email": customer.get("email", ""),
-                "telefono": customer.get("phone", ""),
-            })
-            logger.info("Tercero creado %s (NIF %s)", tercero_id, nif_normalizado)
+        expected_tercero_id = str(customer.get("desktop_tercero_id") or "")
+        if not tercero:
+            raise ValueError(
+                "El cliente no esta integrado en Gest2A3Eco; "
+                "sincroniza el alta antes de procesar la factura"
+            )
+        tercero_id = str(tercero["id"])
+        if expected_tercero_id and tercero_id != expected_tercero_id:
+            raise ValueError("El tercero sincronizado no coincide con el NIF de la factura")
+        logger.info("Tercero existente %s (NIF %s)", tercero_id, nif_normalizado)
 
         # -- Subcuenta 430 --
-        subcuenta_cliente = self._resolve_subcuenta_430(
-            gestor, codigo_empresa, nif_normalizado, digitos_plan,
-        )
+        subcuenta_cliente = str(customer.get("desktop_subcuenta") or "")
+        if not subcuenta_cliente.startswith("430") or not subcuenta_cliente.isdigit():
+            raise ValueError("El cliente no tiene una subcuenta 430 sincronizada")
 
         # -- Relacion tercero-empresa --
         gestor.upsert_tercero_empresa({
@@ -422,7 +559,10 @@ class InvoiceWorker:
             })
         fac_dict["lineas"] = lineas_json
 
-        gestor.upsert_factura_emitida(fac_dict)
+        factura_desktop_id = gestor.upsert_factura_emitida(fac_dict)
+        gestor.enviar_facturas_emitidas_a_contabilidad(
+            codigo_empresa, ejercicio, [factura_desktop_id],
+        )
         logger.info(
             "Factura importada %s-%06d (empresa %s)",
             series, numero, codigo_empresa,

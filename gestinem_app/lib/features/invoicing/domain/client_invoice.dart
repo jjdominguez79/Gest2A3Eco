@@ -39,12 +39,12 @@ class InvoiceLine {
   }
 
   Map<String, dynamic> toJson() => {
-        'description': description,
-        'quantity': quantity,
-        'unit_price': unitPrice,
-        'discount_percent': discountPercent,
-        'vat_rate': vatRate,
-      };
+    'description': description,
+    'quantity': quantity,
+    'unit_price': unitPrice,
+    'discount_percent': discountPercent,
+    'vat_rate': vatRate,
+  };
 }
 
 /// Cliente/deudor para facturacion.
@@ -61,6 +61,8 @@ class InvoiceCustomer {
     this.email = '',
     this.phone = '',
     this.defaultVatRate = '21.00',
+    this.desktopSubaccount = '',
+    this.pendingDesktopImport = false,
     this.active = true,
   });
 
@@ -75,6 +77,8 @@ class InvoiceCustomer {
   final String email;
   final String phone;
   final String defaultVatRate;
+  final String desktopSubaccount;
+  final bool pendingDesktopImport;
   final bool active;
 
   factory InvoiceCustomer.fromJson(Map<String, dynamic> json) {
@@ -90,6 +94,8 @@ class InvoiceCustomer {
       email: json['email'] as String? ?? '',
       phone: json['phone'] as String? ?? '',
       defaultVatRate: json['default_vat_rate'] as String? ?? '21.00',
+      desktopSubaccount: json['desktop_subcuenta'] as String? ?? '',
+      pendingDesktopImport: json['pending_desktop_import'] as bool? ?? false,
       active: json['active'] as bool? ?? true,
     );
   }
@@ -164,7 +170,8 @@ class ClientInvoice {
       recipientEmail: json['recipient_email'] as String? ?? '',
       createdAt: json['created_at'] as String?,
       issuedAt: json['issued_at'] as String?,
-      lines: (json['lines'] as List<dynamic>?)
+      lines:
+          (json['lines'] as List<dynamic>?)
               ?.map((e) => InvoiceLine.fromJson(e as Map<String, dynamic>))
               .toList() ??
           const [],
