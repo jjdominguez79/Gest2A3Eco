@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.8.8",
+  "latest_version": "1.8.9",
   "minimum_required_version": "1.8.6",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.8/Setup_Gest2A3Eco_1.8.8.exe",
-  "changelog": "Las facturas emitidas se publican en el area documental de la empresa emisora.\nCorregida la confusion entre el NIF del emisor y el del destinatario.",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.9/Setup_Gest2A3Eco_1.8.9.exe",
+  "changelog": "Corrige la publicaci�n de facturas para usar siempre la empresa emisora.\nRepara autom�ticamente documentos publicados anteriormente en el �rea del receptor.\nImpide que versiones antiguas resuelvan facturas mediante el NIF del destinatario.",
   "force_update": false
 }
