@@ -1,6 +1,6 @@
 {
-  "version": "1.8.9",
-  "tag": "v1.8.9",
-  "changelog": "Corrige la publicación de facturas para usar siempre la empresa emisora.\nRepara automáticamente documentos publicados anteriormente en el área del receptor.\nImpide que versiones antiguas resuelvan facturas mediante el NIF del destinatario.",
+  "version": "1.8.10",
+  "tag": "v1.8.10",
+  "changelog": "Añade la sincronización unidireccional de empresas y clientes con Railway.\nPrepara las altas de clientes desde Flutter con asignación contable exclusiva en Gest2A3Eco.\nConfigura la serie APP e importa las facturas de Flutter pendientes de revisión contable.",
   "force_update": false
 }

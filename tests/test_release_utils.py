@@ -56,10 +56,16 @@ def test_read_setup_version(tmp_path) -> None:
 
 def test_update_app_version_file(tmp_path) -> None:
     path = tmp_path / "app_version.py"
-    path.write_text('APP_VERSION = "1.2.1"\nUPDATE_CHECK_URL = "x"\n', encoding="utf-8")
+    path.write_text(
+        'APP_VERSION = "1.2.1"\nAPP_RELEASE_DATE = "2026-01-01"\n'
+        'UPDATE_CHECK_URL = "x"\n',
+        encoding="utf-8",
+    )
     update_app_version_file(path, "1.2.2")
-    assert 'APP_VERSION = "1.2.2"' in path.read_text(encoding="utf-8")
-    assert 'UPDATE_CHECK_URL = "x"' in path.read_text(encoding="utf-8")
+    content = path.read_text(encoding="utf-8")
+    assert 'APP_VERSION = "1.2.2"' in content
+    assert 'APP_RELEASE_DATE = "2026-' in content
+    assert 'UPDATE_CHECK_URL = "x"' in content
 
 
 def test_update_setup_version_file(tmp_path) -> None:
