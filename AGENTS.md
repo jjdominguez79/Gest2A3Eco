@@ -67,7 +67,7 @@ Entry point: `main.py`. The company workspace is coordinated by
 PostgreSQL is the only application database. Do not add SQLite or other local
 file-database fallbacks. Schema initialization and additive checks belong in
 `models/gestor_postgres.py`. The DGT/messaging backend uses its own PostgreSQL
-through `DGT_DATABASE_URL`.
+through `BACKEND_DATABASE_URL`.
 
 Desktop configuration lives in
 `%LOCALAPPDATA%\Gest2A3Eco\config.local.json`. It must contain only non-secret

@@ -32,6 +32,14 @@ def _flutter_release_version() -> tuple[str, int]:
     )
 
 
+def _env_con_compatibilidad(nombre: str, nombre_anterior: str, default: str = "") -> str:
+    """Prioriza el nombre actual y mantiene el anterior durante la migracion."""
+    valor = os.getenv(nombre)
+    if valor is not None:
+        return valor
+    return os.getenv(nombre_anterior, default)
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str
@@ -98,18 +106,31 @@ class Settings:
 
 
 def get_settings() -> Settings:
-    database_url = os.getenv("DGT_DATABASE_URL", "").strip()
+    database_url = _env_con_compatibilidad(
+        "BACKEND_DATABASE_URL",
+        "DGT_DATABASE_URL",
+    ).strip()
     if not database_url:
         raise RuntimeError(
-            "DGT_DATABASE_URL es obligatorio y debe apuntar a PostgreSQL."
+            "BACKEND_DATABASE_URL es obligatorio y debe apuntar a PostgreSQL."
         )
 
     flutter_version, flutter_build = _flutter_release_version()
+    backend_public_base_url = os.getenv(
+        "BACKEND_PUBLIC_BASE_URL",
+        os.getenv("DGT_PUBLIC_BASE_URL", "https://tramites.gestinem.es"),
+    ).rstrip("/")
 
     return Settings(
         database_url=database_url,
-        internal_api_key=os.getenv("DGT_INTERNAL_API_KEY", ""),
-        public_base_url=os.getenv("DGT_PUBLIC_BASE_URL", "https://tramites.gestinem.es").rstrip("/"),
+        internal_api_key=_env_con_compatibilidad(
+            "BACKEND_INTERNAL_API_KEY",
+            "DGT_INTERNAL_API_KEY",
+        ),
+        public_base_url=os.getenv(
+            "DGT_PUBLIC_BASE_URL",
+            backend_public_base_url,
+        ).rstrip("/"),
         token_ttl_hours=max(1, int(os.getenv("DGT_TOKEN_TTL_HOURS", "168"))),
         storage_dir=os.getenv("DGT_STORAGE_DIR", "./dgt_private_storage"),
         signrequest_token=os.getenv("SIGNREQUEST_TOKEN", ""),
@@ -123,7 +144,7 @@ def get_settings() -> Settings:
         dataprius_base_path=os.getenv("DATAPRIUS_BASE_PATH", "FOLDERS/Gest2A3Eco/Tramites DGT").rstrip("/"),
         messaging_public_base_url=os.getenv(
             "MESSAGING_PUBLIC_BASE_URL",
-            os.getenv("DGT_PUBLIC_BASE_URL", "https://tramites.gestinem.es"),
+            backend_public_base_url,
         ).rstrip("/"),
         messaging_storage_dir=os.getenv("MESSAGING_STORAGE_DIR", "./messaging_private_storage"),
         messaging_azure_connection_string=os.getenv("MESSAGING_AZURE_CONNECTION_STRING", ""),

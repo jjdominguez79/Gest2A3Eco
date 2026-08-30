@@ -8,9 +8,9 @@ empleados. Revisado contra el codigo el 2026-08-15.
 
 ```powershell
 python -m pip install -r backend/requirements.txt
-$env:DGT_DATABASE_URL = "postgresql+psycopg://usuario:password@localhost:5432/gest2a3eco_backend"
-$env:DGT_INTERNAL_API_KEY = "secreto-solo-desarrollo"
-$env:DGT_PUBLIC_BASE_URL = "http://localhost:8000"
+$env:BACKEND_DATABASE_URL = "postgresql+psycopg://usuario:password@localhost:5432/gest2a3eco_backend"
+$env:BACKEND_INTERNAL_API_KEY = "secreto-solo-desarrollo"
+$env:BACKEND_PUBLIC_BASE_URL = "http://localhost:8000"
 python -m uvicorn backend.api.app:app --reload
 ```
 
@@ -23,7 +23,7 @@ Comprobaciones:
 - PWA de empleados en `/equipo/mensajes`
 
 La base del backend es PostgreSQL y se configura exclusivamente mediante
-`DGT_DATABASE_URL`. No existe fallback a SQLite. El esquema inicial esta en
+`BACKEND_DATABASE_URL`. No existe fallback a SQLite. El esquema inicial esta en
 `backend/migrations/001_initial.sql`; los modelos aplican las ampliaciones
 aditivas posteriores.
 
@@ -49,7 +49,7 @@ aditivas posteriores.
 
 La cabecera `X-API-Key` tiene dos credenciales posibles segun la ruta:
 
-- `DGT_INTERNAL_API_KEY`: administracion de puestos y organizaciones,
+- `BACKEND_INTERNAL_API_KEY`: administracion de puestos y organizaciones,
   invitaciones internas y otras rutas exclusivas del servidor.
 - `WorkstationToken`: operaciones del escritorio en DGT, OCR, firma,
   Dataprius, estado de integraciones y alta del dispositivo de mensajeria.
@@ -65,13 +65,23 @@ revocable y tambien lo guarda en Credential Manager.
 
 ## Variables de entorno
 
-### Nucleo y DGT
+### Nucleo del backend
 
-- `DGT_DATABASE_URL`: DSN SQLAlchemy PostgreSQL obligatorio.
-- `DGT_INTERNAL_API_KEY`: credencial interna obligatoria fuera de pruebas.
-- `DGT_PUBLIC_BASE_URL`: origen de enlaces publicos.
+- `BACKEND_DATABASE_URL`: DSN SQLAlchemy PostgreSQL obligatorio.
+- `BACKEND_INTERNAL_API_KEY`: credencial interna obligatoria fuera de pruebas.
+- `BACKEND_PUBLIC_BASE_URL`: origen comun del servicio. DGT y mensajeria lo
+  heredan si no definen un origen especifico.
+
+### DGT
+
+- `DGT_PUBLIC_BASE_URL`: anulacion opcional del origen para enlaces DGT.
 - `DGT_TOKEN_TTL_HOURS`: caducidad de enlaces; 168 horas por defecto.
 - `DGT_STORAGE_DIR`: almacenamiento privado local de desarrollo.
+
+Durante la migracion, el backend acepta `DGT_DATABASE_URL` y
+`DGT_INTERNAL_API_KEY` como alias heredados. Si existe tambien el nombre
+`BACKEND_*`, este tiene prioridad. Los alias antiguos deben retirarse de
+Railway despues de verificar el primer despliegue con los nombres nuevos.
 
 ### OCR e integraciones
 

@@ -47,9 +47,9 @@ jobs:
           --health-retries 10
     env:
       PYTHONPATH: .
-      DGT_DATABASE_URL: postgresql+psycopg://gestinem_test:gestinem_test@localhost:5432/gestinem_test
+      BACKEND_DATABASE_URL: postgresql+psycopg://gestinem_test:gestinem_test@localhost:5432/gestinem_test
       TEST_POSTGRES_URL: postgresql+psycopg://gestinem_test:gestinem_test@localhost:5432/gestinem_test
-      DGT_INTERNAL_API_KEY: test-pg-concurrent
+      BACKEND_INTERNAL_API_KEY: test-pg-concurrent
       MESSAGING_GRAPH_FROM: noreply@test.es
     steps:
       - uses: actions/checkout@v4

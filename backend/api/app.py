@@ -67,7 +67,7 @@ from backend.api.client_invoices_api import router as client_invoices_router
 app = FastAPI(title="Gestinem Integraciones API", version="1.1.0")
 
 # CORS: se configura en startup para evitar llamar get_settings() en tiempo de import
-# (puede fallar si DGT_DATABASE_URL no esta definida)
+# (puede fallar si BACKEND_DATABASE_URL no esta definida)
 _cors_origins_raw = __import__("os").getenv("MESSAGING_CORS_ORIGINS", "")
 _cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
 if _cors_origins:
