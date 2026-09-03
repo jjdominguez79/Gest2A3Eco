@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.8.10",
+  "latest_version": "1.8.11",
   "minimum_required_version": "1.8.6",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.10/Setup_Gest2A3Eco_1.8.10.exe",
-  "changelog": "A�ade la sincronizaci�n unidireccional de empresas y clientes con Railway.\nPrepara las altas de clientes desde Flutter con asignaci�n contable exclusiva en Gest2A3Eco.\nConfigura la serie APP e importa las facturas de Flutter pendientes de revisi�n contable.",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.11/Setup_Gest2A3Eco_1.8.11.exe",
+  "changelog": "Publica la nueva app Gestinem para acceso desde navegador y retira la antigua interfaz de mensajer�a.\nPermite seleccionar e invitar clientes de forma masiva, con un email explicativo y el manual actualizado adjunto.\nUnifica los paquetes de despliegue Synology y mejora la selecci�n segura de plantillas de facturas y albaranes.",
   "force_update": false
 }
