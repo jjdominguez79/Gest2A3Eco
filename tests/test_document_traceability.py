@@ -51,7 +51,7 @@ def _utcnow():
 def _make_client(tmp_path):
     os.environ["DGT_INTERNAL_API_KEY"] = "test-secret"
     os.environ["MESSAGING_STORAGE_DIR"] = str(tmp_path / "cloud")
-    os.environ["MESSAGING_PUBLIC_BASE_URL"] = "https://mensajes.example.test"
+    os.environ["MESSAGING_PUBLIC_BASE_URL"] = "https://api.example.test"
     os.environ["MESSAGING_SYNC_TOKEN"] = "sync-secret"
     os.environ["MESSAGING_STAFF_ALLOWED_DOMAIN"] = "gestinem.es"
     os.environ["MESSAGING_STAFF_ADMIN_EMAILS"] = "admin@gestinem.es"
@@ -70,7 +70,7 @@ def _make_client(tmp_path):
             yield db
 
     app.dependency_overrides[get_db] = override
-    return TestClient(app, base_url="https://mensajes.example.test"), factory
+    return TestClient(app, base_url="https://api.example.test"), factory
 
 
 def _seed(factory):

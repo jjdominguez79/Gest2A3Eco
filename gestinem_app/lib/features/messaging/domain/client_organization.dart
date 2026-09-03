@@ -10,6 +10,7 @@ class ClientOrganization {
     this.privateOwnerExternalId = '',
     this.contactName = '',
     this.contactEmail = '',
+    this.organizationEmail = '',
     this.invitationExpiresAt,
   });
 
@@ -26,6 +27,7 @@ class ClientOrganization {
             json['private_owner_external_id'] as String? ?? '',
         contactName: json['contact_name'] as String? ?? '',
         contactEmail: json['contact_email'] as String? ?? '',
+        organizationEmail: json['organization_email'] as String? ?? '',
         invitationExpiresAt: DateTime.tryParse(
           json['invitation_expires_at'] as String? ?? '',
         )?.toLocal(),
@@ -41,6 +43,7 @@ class ClientOrganization {
   final String privateOwnerExternalId;
   final String contactName;
   final String contactEmail;
+  final String organizationEmail;
   final DateTime? invitationExpiresAt;
 
   String get displayName => name.isEmpty ? companyCode : name;

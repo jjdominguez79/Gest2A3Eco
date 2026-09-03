@@ -103,6 +103,10 @@ class InviteIn(BaseModel):
     send_email: bool = True
 
 
+class BatchInviteIn(BaseModel):
+    invitations: list[InviteIn] = Field(min_length=1, max_length=200)
+
+
 class AcceptInviteIn(BaseModel):
     token: str
     password: str = Field(min_length=10, max_length=200)
@@ -406,7 +410,6 @@ def _revoke_staff_access(db: Session, external_id: str) -> None:
     db.query(MessagingStaffPresenceConnection).filter(
         MessagingStaffPresenceConnection.staff_external_id == external_id,
     ).delete(synchronize_session=False)
-    # Web Push/VAPID retirado: ya no hay suscripciones que desactivar aqui.
 
 
 def _staff_online(db: Session, external_id: str) -> bool:
@@ -810,18 +813,6 @@ def _unread_count(db: Session, conv: MessagingConversation, actor_type: str, act
     return int(db.scalar(stmt) or 0)
 
 
-def _queue_staff_pushes(
-    db: Session, background: BackgroundTasks, conv: MessagingConversation,
-) -> None:
-    """Web Push (VAPID) retirado. Las notificaciones al despacho van solo por FCM."""
-
-
-def _queue_client_pushes(
-    db: Session, background: BackgroundTasks, conv: MessagingConversation,
-) -> None:
-    """Web Push (VAPID) retirado. Las notificaciones al cliente van solo por FCM."""
-
-
 def _queue_app_pushes(
     db: Session, background: BackgroundTasks, conv: MessagingConversation,
     recipient_type: str, message_id: str = "",
@@ -1004,6 +995,14 @@ def put_organization(company_code: str, payload: OrganizationIn, db: Session = D
 
 @router.post("/internal/invitations", dependencies=[Depends(require_internal_key)])
 def create_invitation(payload: InviteIn, background: BackgroundTasks, db: Session = Depends(get_db)):
+    client, invitation, token = _prepare_invitation(payload, db)
+    db.commit()
+    return _invitation_result(payload, client, invitation, token, background)
+
+
+def _prepare_invitation(
+    payload: InviteIn, db: Session,
+) -> tuple[MessagingClient, MessagingInvitation, str]:
     org = _organization(db, payload.company_code)
     org.active = True
     email = payload.email.strip().lower()
@@ -1021,7 +1020,15 @@ def create_invitation(payload: InviteIn, background: BackgroundTasks, db: Sessio
     invitation = MessagingInvitation(
         client_id=client.id, token_hash=hash_token(token), expires_at=invitation_expiry(),
     )
-    db.add(invitation); db.commit()
+    db.add(invitation)
+    db.flush()
+    return client, invitation, token
+
+
+def _invitation_result(
+    payload: InviteIn, client: MessagingClient, invitation: MessagingInvitation,
+    token: str, background: BackgroundTasks,
+) -> dict:
     app_url = _app_deep_link("invite", token)
     url = _public_app_link("invite", token)
     email_queued = payload.send_email and mail_configured()
@@ -1046,18 +1053,19 @@ def _app_deep_link(action: str, token: str) -> str:
 
 
 def _public_app_link(action: str, token: str) -> str:
-    base_url = get_settings().messaging_public_base_url.strip().rstrip("/")
+    base_url = get_settings().messaging_app_web_url.strip().rstrip("/")
     parsed = urlparse(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise RuntimeError("MESSAGING_PUBLIC_BASE_URL no es una URL publica valida")
+        raise RuntimeError("MESSAGING_APP_WEB_URL no es una URL publica valida")
     query = urlencode({"token": token})
-    return f"{base_url}/api/v1/messaging/public/app-link/{action}?{query}"
+    route = "accept-invite" if action == "invite" else "reset-password"
+    return f"{base_url}/#/{route}?{query}"
 
 
 @router.get("/public/app-link/{action}")
 def public_app_link(action: Literal["invite", "reset"], token: str = Query(min_length=1)):
-    """Enlace HTTPS apto para correo que entrega el token a la app Flutter."""
-    return RedirectResponse(_app_deep_link(action, token), status_code=307)
+    """Redirige enlaces conservados a la ruta web equivalente de Gestinem."""
+    return RedirectResponse(_public_app_link(action, token), status_code=307)
 
 
 @router.get("/public/auth-done")
@@ -1259,14 +1267,11 @@ def staff_auth_callback(request: Request, db: Session = Depends(get_db)):
         base_url = get_settings().messaging_public_base_url.strip().rstrip("/")
         done_url = f"{base_url}/api/v1/messaging/public/auth-done?{urlencode({'code': code})}"
         return RedirectResponse(done_url, status_code=302)
-    # El acceso web al despacho (/equipo/mensajes) ha sido retirado.
-    # El flujo OAuth sin app=true ya no tiene destino valido.
-    # Para iniciar sesion en la mensajeria, usa la aplicacion Flutter con app=true.
+    # El cliente debe indicar el destino nativo o web para completar el acceso.
     db.commit()
     raise HTTPException(
-        410,
-        "La interfaz web de mensajeria del despacho ha sido retirada. "
-        "Usa la aplicacion Gestinem (app=true en el parametro de inicio de sesion).",
+        400,
+        "Falta el destino de la aplicacion Gestinem para completar el acceso.",
     )
 
 
@@ -1372,11 +1377,6 @@ def upload_own_avatar(
             pass
     db.commit()
     return {"ok": True, "avatar_url": f"/api/v1/messaging/staff/avatars/{staff.external_id}"}
-
-
-# Web Push/VAPID retirado. Los endpoints /staff/push/* y /client/push/* han sido eliminados.
-# Las notificaciones van exclusivamente por Firebase Cloud Messaging (FCM) a traves de
-# los endpoints /{audience}/app-devices existentes.
 
 
 def _serialize_staff_thread_message(db: Session, item: MessagingStaffThreadMessage) -> dict:
@@ -1913,6 +1913,7 @@ def staff_organizations(
         access = _organization_access_state(db, row)
         result.append({
             "company_code": row.company_code, "name": row.name,
+            "organization_email": row.email,
             "active": row.active,
             "is_test": row.is_test,
             "private_owner_external_id": row.private_owner_external_id,
@@ -2071,6 +2072,43 @@ def staff_create_invitation(
     return create_invitation(payload, background, db)
 
 
+@router.post("/staff/admin/invitations/batch")
+def staff_create_invitations_batch(
+    payload: BatchInviteIn, background: BackgroundTasks,
+    admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
+):
+    company_codes = [item.company_code.strip().upper() for item in payload.invitations]
+    if len(company_codes) != len(set(company_codes)):
+        raise HTTPException(422, "No se puede invitar dos veces a la misma empresa")
+
+    prepared = []
+    for item in payload.invitations:
+        org = _organization(db, item.company_code)
+        if (
+            org.company_code.strip().upper() in TEST_COMPANY_CODES
+            and org.private_owner_external_id != admin.external_id
+        ):
+            raise HTTPException(403, "Cliente de pruebas privado")
+        if not org.private_owner_external_id:
+            org.private_owner_external_id = admin.external_id
+            db.add(org)
+        client, invitation, token = _prepare_invitation(item, db)
+        prepared.append((item, client, invitation, token))
+
+    db.commit()
+    invitations = [
+        _invitation_result(item, client, invitation, token, background)
+        for item, client, invitation, token in prepared
+    ]
+    return {
+        "invitation_count": len(invitations),
+        "email_queued_count": sum(
+            1 for invitation in invitations if invitation["email_queued"]
+        ),
+        "invitations": invitations,
+    }
+
+
 @router.get("/public/app-version")
 def public_app_version(platform: str = ""):
     """Version publicada que los clientes Flutter pueden comparar con la instalada."""
@@ -2181,7 +2219,7 @@ def forgot_password(
         ))
         db.commit()
         if mail_configured():
-            reset_url = _app_deep_link("reset", token)
+            reset_url = _public_app_link("reset", token)
             background.add_task(send_password_reset, client.email, client.name, reset_url)
     else:
         db.commit()  # persist rate limit counts
@@ -2397,7 +2435,6 @@ def client_send_unified(
         files=files,
         reply_to_message_id=reply_id,
     )
-    _queue_staff_pushes(db, background, target_conv)
     _queue_app_pushes(db, background, target_conv, "staff", item.id)
 
     if mail_configured():
@@ -2624,10 +2661,8 @@ def post_message(
         reply_to_message_id=reply_to_message_id or None,
     )
     if audience == "client":
-        _queue_staff_pushes(db, background, conv)
         _queue_app_pushes(db, background, conv, "staff", item.id)
     if audience == "staff":
-        _queue_client_pushes(db, background, conv)
         _queue_app_pushes(db, background, conv, "client", item.id)
     if audience == "staff" and mail_configured():
         clients = db.scalars(select(MessagingClient).where(
@@ -2637,10 +2672,8 @@ def post_message(
         for recipient in clients:
             presence = db.get(MessagingPresence, recipient.id)
             if not presence or is_expired(presence.connected_until):
-                # TODO(flutter-notice): sustituir por deep link Flutter cuando este implementado.
-                # Se envia aviso informativo sin enlace (la PWA ha sido retirada).
                 background.add_task(
-                    send_message_notice, recipient.email, recipient.name, "",
+                    send_message_notice, recipient.email, recipient.name,
                 )
     return _serialize_message(db, item, audience)
 

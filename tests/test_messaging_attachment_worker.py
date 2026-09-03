@@ -42,7 +42,7 @@ class Session:
 
 def _config(tmp_path):
     return SimpleNamespace(
-        api_url="https://mensajes.example.test", sync_token="secret",
+        api_url="https://api.example.test", sync_token="secret",
         repository_dir=tmp_path, postgres_dsn="unused", worker_id="synology",
         public_repository_dir=PureWindowsPath(r"\\Servidor\Documentos\Gest2A3Eco"),
         interval_seconds=60,

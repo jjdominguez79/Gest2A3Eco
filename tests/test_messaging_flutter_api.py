@@ -37,7 +37,8 @@ from backend.api.messaging_security import utcnow
 def _api(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("DGT_INTERNAL_API_KEY", "test-secret")
     monkeypatch.setenv("MESSAGING_STORAGE_DIR", str(tmp_path / "cloud"))
-    monkeypatch.setenv("MESSAGING_PUBLIC_BASE_URL", "https://mensajes.example.test")
+    monkeypatch.setenv("MESSAGING_PUBLIC_BASE_URL", "https://api.example.test")
+    monkeypatch.setenv("MESSAGING_APP_WEB_URL", "https://app.example.test")
     engine = create_engine(
         "sqlite+pysqlite://", connect_args={"check_same_thread": False},
         poolclass=StaticPool,
@@ -53,7 +54,7 @@ def _api(tmp_path: Path, monkeypatch):
             yield db
 
     app.dependency_overrides[get_db] = override
-    return TestClient(app, base_url="https://mensajes.example.test"), factory
+    return TestClient(app, base_url="https://api.example.test"), factory
 
 
 def _setup(tmp_path: Path, monkeypatch):
@@ -237,14 +238,11 @@ def test_invitacion_https_entrega_deep_link_y_token_a_accept_invite(tmp_path, mo
     assert response.status_code == 200
     invitation = response.json()
     assert invitation["url"].startswith(
-        "https://mensajes.example.test/api/v1/messaging/public/app-link/invite?token="
+        "https://app.example.test/#/accept-invite?token="
     )
     assert sent == [("ana@example.test", "Ana", invitation["url"])]
 
-    redirect = client.get(invitation["url"], follow_redirects=False)
-    assert redirect.status_code == 307
-    assert redirect.headers["location"] == invitation["app_url"]
-    token = parse_qs(urlparse(redirect.headers["location"]).query)["token"][0]
+    token = parse_qs(urlparse(urlparse(invitation["url"]).fragment).query)["token"][0]
     accepted = client.post(
         "/api/v1/messaging/auth/accept-invite",
         json={"token": token, "password": "contrasena-muy-segura"},
@@ -805,7 +803,7 @@ def test_login_staff_app_usa_codigo_un_solo_uso(tmp_path, monkeypatch):
     )
     assert callback.status_code == 302
     assert callback.headers["location"].startswith(
-        "https://mensajes.example.test/api/v1/messaging/public/auth-done?code="
+        "https://api.example.test/api/v1/messaging/public/auth-done?code="
     )
     code = parse_qs(urlparse(callback.headers["location"]).query)["code"][0]
     exchanged = client.post(

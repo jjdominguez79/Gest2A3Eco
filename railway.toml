@@ -4,7 +4,7 @@ dockerfilePath = "backend/Dockerfile"
 # El servicio de Railway solo debe reconstruirse cuando cambia su API, no al
 # publicar una nueva version de la aplicacion de escritorio. La version Flutter
 # si forma parte del contrato publico del backend y debe disparar el despliegue.
-watchPatterns = ["backend/**", "gestinem_app/pubspec.yaml", "railway.toml"]
+watchPatterns = ["backend/**", "docs/Manual_Mensajeria_Gestinem.pdf", "gestinem_app/pubspec.yaml", "railway.toml"]
 
 [deploy]
 healthcheckPath = "/health"

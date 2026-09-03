@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gestinem/core/api/api_client.dart';
 import 'package:gestinem/features/messaging/data/messaging_repository.dart';
+import 'package:gestinem/features/messaging/domain/client_organization.dart';
 
 import 'test_helpers.dart';
 
@@ -119,6 +120,7 @@ void main() {
         'private_owner_external_id': 'admin',
         'contact_name': 'Ana Cliente',
         'contact_email': 'ana@example.test',
+        'organization_email': 'empresa@example.test',
         'invitation_expires_at': '2026-08-30T10:00:00Z',
       },
     ]);
@@ -132,8 +134,53 @@ void main() {
     expect(rows.single.companyCode, 'E00006');
     expect(rows.single.accessStatus, 'pending');
     expect(rows.single.contactName, 'Ana Cliente');
+    expect(rows.single.organizationEmail, 'empresa@example.test');
     expect(rows.single.invitationExpiresAt, isNotNull);
     expect(adapter.lastRequest!.path, '/staff/admin/organizations');
+  });
+
+  test('administrador puede invitar clientes de forma masiva', () async {
+    final adapter = JsonAdapter({
+      'invitation_count': 2,
+      'email_queued_count': 2,
+      'invitations': <Object>[],
+    });
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+    )..httpClientAdapter = adapter;
+    final api = ApiClient(dio: dio, tokenProvider: () => testSession.token);
+    const organizations = [
+      ClientOrganization(
+        companyCode: 'E00006',
+        name: 'Cliente Uno',
+        active: true,
+        accessStatus: 'not_invited',
+        accessActive: false,
+        hasAcceptedAccess: false,
+        clientCount: 0,
+        organizationEmail: 'uno@example.test',
+      ),
+      ClientOrganization(
+        companyCode: 'E00007',
+        name: 'Cliente Dos',
+        active: true,
+        accessStatus: 'pending',
+        accessActive: false,
+        hasAcceptedAccess: false,
+        clientCount: 1,
+        contactName: 'Ana Dos',
+        contactEmail: 'dos@example.test',
+      ),
+    ];
+
+    final result = await MessagingRepository(api).inviteClients(organizations);
+
+    expect(result['email_queued_count'], 2);
+    expect(adapter.lastRequest!.path, '/staff/admin/invitations/batch');
+    final data = adapter.lastRequest!.data as Map<String, dynamic>;
+    final invitations = data['invitations'] as List<dynamic>;
+    expect(invitations[0]['email'], 'uno@example.test');
+    expect(invitations[1]['name'], 'Ana Dos');
   });
 
   test('administrador puede crear una invitacion de cliente', () async {

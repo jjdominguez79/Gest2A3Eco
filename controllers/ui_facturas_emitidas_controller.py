@@ -2104,16 +2104,19 @@ class FacturasEmitidasController:
         default_path = os.path.join(tpl_dir, default_filename)
         if not fac:
             return default_path
-        chosen = str(fac.get("plantilla_word") or "").strip()
+        chosen = os.path.basename(str(fac.get("plantilla_word") or "").strip())
         if not chosen:
             return default_path
         candidate = os.path.join(tpl_dir, chosen)
         if os.path.exists(candidate):
             return candidate
-        # Fallback: buscar en la raiz de plantillas (plantillas aun no migradas)
-        candidate_raiz = os.path.join(get_word_templates_dir(), chosen)
-        if os.path.exists(candidate_raiz):
-            return candidate_raiz
+        # Fallback legacy limitado al prefijo propio del tipo de documento. La
+        # raiz compartida contiene tambien mandatos y modelos administrativos.
+        prefijo_legacy = "albaran_" if tipo_carpeta == "albaranes" else "factura_emitida_"
+        if chosen.lower().startswith(prefijo_legacy):
+            candidate_raiz = os.path.join(get_word_templates_dir(), chosen)
+            if os.path.exists(candidate_raiz):
+                return candidate_raiz
         if warn_missing:
             self._view.show_warning(
                 "Gest2A3Eco",

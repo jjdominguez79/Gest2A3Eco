@@ -22,7 +22,7 @@ Documentacion especializada:
 - [Tramites DGT](docs/implantacion_dgt_online.md)
 - [Arquitectura de secretos](docs/security/secrets-architecture.md)
 - [Publicacion de versiones](docs/PUBLICACION_VERSIONES.md)
-- [Servicios Synology](deploy/mail-sync/README.md)
+- [Servicios Synology](deploy/synology/README.md)
 - [Cliente Flutter en preparacion](gestinem_app/README.md)
 
 Documentacion contrastada con el repositorio el 2026-08-15.
@@ -89,19 +89,18 @@ views/                      Pantallas Tkinter
 procesos/                   Registros A3ECO y generacion Word/PDF
 models/                     Persistencia PostgreSQL y renderizadores A3ECO
 services/                   OCR, correo, firma, DGT y gestion documental
-backend/api/                API FastAPI y portales web
+backend/api/                API FastAPI, autenticacion y tiempo real
 sync_worker/                Workers de correo y adjuntos para Synology
-gestinem_app/               Scaffold Flutter para el futuro cliente movil
+gestinem_app/               Aplicacion Flutter web, Android, iOS y Windows
 utils/                      Configuracion, credenciales y validaciones
 ```
 
 El escritorio aplica una arquitectura MVC con servicios y procesos. El backend
 FastAPI concentra los secretos de proveedores externos y expone DGT, OCR,
-SignRequest, Dataprius y los portales de mensajeria. Los procesos de Synology
+SignRequest, Dataprius y las API de mensajeria. Los procesos de Synology
 mantienen la sincronizacion aunque ningun usuario tenga abierta la aplicacion.
-El backend ya contiene contratos para dispositivos moviles, FCM, WebSocket,
-grupos y campanas; `gestinem_app/` sigue siendo un scaffold Flutter y aun no es
-un cliente funcional.
+El backend contiene los contratos de FCM, WebSocket, grupos y campanas que
+consume `gestinem_app/`. El frontend web se publica en Firebase Hosting.
 
 ## Datos y documentos
 
@@ -113,19 +112,20 @@ La distribucion es:
 
 - **PostgreSQL principal:** empresas, usuarios, facturacion, OCR, contabilidad,
   comunicaciones, firma y gestion documental.
-- **PostgreSQL del backend:** expedientes DGT, portales de mensajeria, tokens,
+- **PostgreSQL del backend:** expedientes DGT, mensajeria, tokens,
   auditoria y estado temporal de integraciones.
 - **Repositorio documental compartido:** por defecto
   `\\GestinemMain\Doc_Compartidos\Gest2A3Eco`; contiene documentos definitivos
   que deben compartir todos los puestos.
 - **Dataprius:** archivo de documentos asociados a expedientes DGT.
-- **Azure Blob privado:** almacenamiento temporal de adjuntos enviados desde la
-  PWA hasta que el worker los verifica y copia al repositorio compartido.
+- **Azure Blob privado:** almacenamiento temporal de adjuntos enviados desde el
+  cliente Flutter hasta que el worker los verifica y copia al repositorio
+  compartido.
 
 Los correos de `oficina@gestinem.es` llegan mediante Microsoft Graph y el
 contenedor `mail-sync`. Se guardan en PostgreSQL sin descargar masivamente sus
 adjuntos; el usuario decide cuales incorpora al repositorio documental. El
-worker `messaging-sync` atiende por separado los adjuntos enviados desde la PWA.
+worker `messaging-sync` atiende por separado los adjuntos enviados desde Flutter.
 
 ## Compilacion y publicacion
 

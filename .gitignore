@@ -26,6 +26,7 @@ ENV/
 # Build artifacts
 build/
 dist/
+dist_synology/
 *.egg-info/
 .eggs/
 pip-wheel-metadata/

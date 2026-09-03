@@ -5,11 +5,17 @@ import ssl
 import base64
 from email.message import EmailMessage
 from html import escape
+from pathlib import Path
 from urllib.parse import quote
 
 import requests
 
 from backend.api.config import get_settings
+
+
+INVITATION_MANUAL_PATH = (
+    Path(__file__).resolve().parents[2] / "docs" / "Manual_Mensajeria_Gestinem.pdf"
+)
 
 
 def configured() -> bool:
@@ -183,23 +189,43 @@ def _send_mail_smtp(
 
 def send_invitation(to: str, name: str, url: str) -> bool:
     cfg = get_settings()
+    manual = {
+        "name": "Manual_Mensajeria_Gestinem.pdf",
+        "content_type": "application/pdf",
+        "content": INVITATION_MANUAL_PATH.read_bytes(),
+    }
     return send_mail(
-        to, "Invitacion a la mensajeria de Gestinem",
-        f"<p>Hola {escape(name)},</p><p>Gestinem te invita a utilizar su canal seguro de mensajeria.</p>"
-        f"<p><a href=\"{escape(url)}\">Activar mi cuenta</a></p>"
-        f"<p>Si el boton no funciona, abre este enlace:<br>{escape(url)}</p>"
-        "<p>El enlace es personal y caduca en 72 horas.</p>",
+        to, "Tu acceso a la nueva app Gestinem",
+        f"<p>Hola {escape(name)},</p>"
+        "<p>Gestinem pone a tu disposición una nueva aplicación para comunicarte "
+        "con el despacho y enviar documentación de forma ordenada y segura.</p>"
+        "<p>Las versiones para las tiendas de aplicaciones se publicarán próximamente. "
+        "Mientras tanto, puedes utilizarla directamente desde tu navegador, tanto en "
+        "el móvil como en la tableta o el ordenador, sin instalar nada.</p>"
+        f"<p><a href=\"{escape(url)}\" style=\"display:inline-block;padding:12px 20px;"
+        "background:#0759af;color:#ffffff;text-decoration:none;border-radius:6px;"
+        "font-weight:bold\">Activar mi cuenta y abrir Gestinem</a></p>"
+        f"<p>Si el botón no funciona, copia y pega este enlace en tu navegador:<br>"
+        f"{escape(url)}</p>"
+        "<p>Adjuntamos una guía breve con el primer acceso, los canales disponibles, "
+        "el envío de documentos y la activación de avisos.</p>"
+        "<p>Este enlace es personal y caduca en 72 horas. Si tienes alguna duda, "
+        "contacta con Gestinem por los medios habituales.</p>",
         sender=cfg.messaging_graph_invitation_from,
+        attachments=[manual],
         text=(
-            f"Hola {name},\n\nGestinem te invita a utilizar su canal seguro de mensajeria.\n"
-            f"Activa tu cuenta desde este enlace:\n{url}\n\n"
-            "El enlace es personal y caduca en 72 horas."
+            f"Hola {name},\n\nGestinem pone a tu disposición una nueva aplicación "
+            "para comunicarte con el despacho y enviar documentación de forma segura.\n\n"
+            "Las versiones para las tiendas se publicarán próximamente. Mientras tanto, "
+            "puedes utilizarla directamente desde el navegador, sin instalar nada.\n\n"
+            f"Activa tu cuenta y abre Gestinem desde este enlace:\n{url}\n\n"
+            "Adjuntamos el manual de uso. El enlace es personal y caduca en 72 horas."
         ),
     )
 
 
-def send_message_notice(to: str, name: str, portal_url: str = "") -> bool:
-    """Aviso de nuevo mensaje. portal_url ignorado (mensajeria web retirada)."""
+def send_message_notice(to: str, name: str) -> bool:
+    """Envia un aviso sin incluir el contenido confidencial del mensaje."""
     return send_mail(
         to, "Nuevo mensaje de Gestinem",
         f"<p>Hola {escape(name)},</p><p>Tienes un nuevo mensaje en el canal seguro de Gestinem.</p>"

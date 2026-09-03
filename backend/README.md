@@ -1,8 +1,8 @@
 # Backend de integraciones y mensajeria
 
 Backend FastAPI independiente del escritorio. Sirve los tramites DGT, OCR
-Azure, SignRequest, Dataprius y los portales de mensajeria de clientes y
-empleados. Revisado contra el codigo el 2026-08-15.
+Azure, SignRequest, Dataprius y las API que consume la aplicacion Flutter.
+Revisado contra el codigo el 2026-09-03.
 
 ## Desarrollo local
 
@@ -19,8 +19,7 @@ Comprobaciones:
 - `GET /health`
 - OpenAPI en `/docs` y `/openapi.json`
 - portal DGT en `/t/{referencia}/{rol}`
-- PWA de clientes en `/mensajes`
-- PWA de empleados en `/equipo/mensajes`
+- aplicacion Flutter Web en `https://app.gestinem.es`
 
 La base del backend es PostgreSQL y se configura exclusivamente mediante
 `BACKEND_DATABASE_URL`. No existe fallback a SQLite. El esquema inicial esta en
@@ -40,8 +39,8 @@ aditivas posteriores.
 - **Mensajeria:** invitaciones, autenticacion de clientes, acceso Microsoft 365
   del personal, chats con adjuntos, respuestas, borrado auditado, grupos,
   campanas, FCM y eventos en tiempo real.
-- **Cliente movil:** aplicacion Flutter funcional para clientes y empleados,
-  con codigos de acceso, registro/presencia de dispositivos y WebSocket.
+- **Aplicacion Flutter:** cliente web y nativo para clientes y empleados, con
+  codigos de acceso, registro/presencia de dispositivos y WebSocket.
 - **Worker de adjuntos:** endpoints tecnicos para reclamar, descargar, verificar
   y confirmar archivos temporales.
 
@@ -56,8 +55,8 @@ La cabecera `X-API-Key` tiene dos credenciales posibles segun la ruta:
 - `WorkstationToken`: operaciones del escritorio en DGT, OCR, firma,
   Dataprius, estado de integraciones y alta del dispositivo de mensajeria.
 
-Un `WorkstationToken` no puede acceder a endpoints administrativos. Los portales
-web usan sesiones propias y el worker de adjuntos usa `X-Sync-Token` con
+Un `WorkstationToken` no puede acceder a endpoints administrativos. Flutter
+usa sesiones propias y el worker de adjuntos usa `X-Sync-Token` con
 `MESSAGING_SYNC_TOKEN`.
 
 En cada puesto se configuran las URLs `integrations_api_url` y
@@ -100,7 +99,9 @@ Railway despues de verificar el primer despliegue con los nombres nuevos.
 
 ### Mensajeria
 
-- `MESSAGING_PUBLIC_BASE_URL`: origen HTTPS de los portales.
+- `MESSAGING_PUBLIC_BASE_URL`: origen HTTPS publico del backend.
+- `MESSAGING_APP_WEB_URL`: origen de Flutter Web; por defecto
+  `https://app.gestinem.es`.
 - `MESSAGING_STORAGE_DIR`: almacenamiento local de desarrollo.
 - `MESSAGING_AZURE_CONNECTION_STRING` y `MESSAGING_AZURE_CONTAINER`:
   almacenamiento temporal privado de adjuntos en produccion.
@@ -112,8 +113,9 @@ Railway despues de verificar el primer despliegue con los nombres nuevos.
   usado por Firebase Admin para FCM.
 - `MESSAGING_FIREBASE_CREDENTIALS_JSON`: JSON completo de la misma cuenta de
   servicio como variable secreta, util para Railway cuando no se monta un fichero.
-- `MESSAGING_APP_REDIRECT_URI`: deep link del cliente movil; por defecto
+- `MESSAGING_APP_REDIRECT_URI`: deep link del cliente nativo; por defecto
   `es.gestinem.app://auth/callback`.
+- `MESSAGING_APP_WEB_REDIRECT_URI`: callback de autenticacion de Flutter Web.
 - `MESSAGING_SYNC_TOKEN`: secreto exclusivo del worker Synology.
 - `MESSAGING_PRE_RELEASE_CLEANUP_ENABLED`: habilita excepcionalmente la purga
   global previa a la publicacion; `false` por defecto.

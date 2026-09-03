@@ -2,7 +2,7 @@
 
 **Estado:** vigente desde la serie 1.7.x.
 
-**Ultima revision contra el codigo:** 2026-08-18. PWA retirada; VAPID eliminado.
+**Ultima revision contra el codigo:** 2026-09-03.
 
 ## Principio de seguridad
 
@@ -10,9 +10,9 @@ Las credenciales maestras de Azure, SignRequest, Dataprius, Microsoft Graph,
 Azure Blob, FCM y correo pertenecen al backend o a los contenedores que las
 usan. Nunca se entregan al escritorio como respuesta de una API.
 
-**VAPID/Web Push ha sido eliminado.** Las notificaciones push van exclusivamente
-por Firebase Cloud Messaging (FCM). Las variables `MESSAGING_VAPID_*` ya no
-deben configurarse.
+Las notificaciones se envian mediante Firebase Cloud Messaging (FCM). La clave
+publica utilizada por Flutter Web se inyecta al compilar el frontend y no es un
+secreto del backend.
 
 Cada puesto Windows conserva solo credenciales propias y revocables:
 
@@ -117,7 +117,7 @@ depende de la ruta:
   alta/actualizacion del dispositivo de escritorio.
 - **Token de dispositivo:** complementa al `WorkstationToken` en mensajeria.
 - **`MESSAGING_SYNC_TOKEN`:** exclusivo del worker de adjuntos de Synology.
-- **Cookies de sesion:** portales web de clientes y empleados.
+- **Tokens de sesion:** autenticacion de clientes y empleados en Flutter.
 
 Cada `WorkstationToken` se genera con prefijo `g2a3_wks_`; el backend almacena
 solo su hash SHA-256, permite revocarlo y actualiza `last_seen_at` al autenticar.

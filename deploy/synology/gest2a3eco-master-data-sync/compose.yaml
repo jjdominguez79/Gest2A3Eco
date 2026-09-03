@@ -1,0 +1,33 @@
+services:
+  master-data-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gest2a3eco-master-data-sync
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    environment:
+      CLIENT_MASTER_SYNC_API_URL: "https://gest2a3eco-production.up.railway.app"
+      CLIENT_MASTER_SYNC_TOKEN_FILE: "/run/secrets/client_master_sync_token"
+      CLIENT_MASTER_SYNC_INTERVAL_SECONDS: "300"
+      CLIENT_ONLINE_SERIES_CODE: "APP"
+      POSTGRES_HOST: "192.168.0.18"
+      POSTGRES_PORT: "5433"
+      POSTGRES_DB: "gest2a3eco"
+      POSTGRES_USER: "gest2a3eco_sync"
+      POSTGRES_PASSWORD_FILE: "/run/secrets/postgres_password"
+    secrets:
+      - client_master_sync_token
+      - postgres_password
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+secrets:
+  client_master_sync_token:
+    file: ./secrets/client_master_sync_token.txt
+  postgres_password:
+    file: ./secrets/postgres_password.txt

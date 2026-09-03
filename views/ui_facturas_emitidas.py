@@ -1226,11 +1226,17 @@ class FacturaDialog(tk.Toplevel):
         self.var_moneda = tk.StringVar(value=moneda_label)
         self._moneda_simbolo = (self._moneda_by_label.get(moneda_label) or {}).get("simbolo", "")
         self._plantillas_word = self._listar_plantillas_word()
-        if not self.var_plantilla_word.get().strip():
+        # Una plantilla administrativa situada en la raiz compartida no debe
+        # quedar seleccionada en una factura antigua. Si el valor persistido no
+        # pertenece al catalogo del tipo de documento, volver a la plantilla
+        # predeterminada.
+        if self.var_plantilla_word.get().strip() not in self._plantillas_word:
             if "factura_emitida_template.docx" in self._plantillas_word:
                 self.var_plantilla_word.set("factura_emitida_template.docx")
             elif self._plantillas_word:
                 self.var_plantilla_word.set(self._plantillas_word[0])
+            else:
+                self.var_plantilla_word.set("")
         self._plantillas_emitidas = self._listar_plantillas_emitidas()
         if not self.var_plantilla_emitidas.get().strip() and self._plantillas_emitidas:
             self.var_plantilla_emitidas.set(self._plantillas_emitidas[0])
@@ -1585,10 +1591,17 @@ class FacturaDialog(tk.Toplevel):
         nombres: set[str] = set()
         if plantillas_dir.exists():
             nombres.update(p.name for p in plantillas_dir.glob("*.docx") if p.is_file())
-        # Incluir plantillas de la raiz que aun no se hayan migrado a la subcarpeta
+        # Compatibilidad limitada con plantillas legacy: la raiz compartida
+        # tambien contiene modelos administrativos y de firma, que nunca deben
+        # aparecer como opciones de facturas o albaranes.
         raiz = Path(get_word_templates_dir())
+        prefijo_legacy = "albaran_" if tipo == "albaranes" else "factura_emitida_"
         if raiz.exists():
-            nombres.update(p.name for p in raiz.glob("*.docx") if p.is_file())
+            nombres.update(
+                p.name
+                for p in raiz.glob("*.docx")
+                if p.is_file() and p.name.lower().startswith(prefijo_legacy)
+            )
         return sorted(nombres, key=lambda s: s.lower())
 
     def _listar_plantillas_emitidas(self):

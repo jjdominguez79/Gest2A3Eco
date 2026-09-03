@@ -1,0 +1,39 @@
+services:
+  mail-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gest2a3eco-mail-sync
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    environment:
+      GRAPH_TENANT_ID: "99d74b8f-e9cc-4cae-903f-d123bc7abc8a"
+      GRAPH_CLIENT_ID: "cfa49b8f-5009-4618-a4a5-1c5e03cef13a"
+      GRAPH_MAILBOX: "oficina@gestinem.es"
+      GRAPH_CERTIFICATE_FILE: "/run/secrets/graph_certificate"
+      GRAPH_CERTIFICATE_PASSWORD_FILE: "/run/secrets/graph_certificate_password"
+      POSTGRES_HOST: "192.168.0.18"
+      POSTGRES_PORT: "5433"
+      POSTGRES_DB: "gest2a3eco"
+      POSTGRES_USER: "gest2a3eco_sync"
+      POSTGRES_PASSWORD_FILE: "/run/secrets/postgres_password"
+      SYNC_INTERVAL_SECONDS: "300"
+      IMPORT_EXISTING_ON_FIRST_RUN: "false"
+    secrets:
+      - graph_certificate
+      - graph_certificate_password
+      - postgres_password
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+secrets:
+  graph_certificate:
+    file: ./secrets/Gest2A3Eco-Sync.pfx
+  graph_certificate_password:
+    file: ./secrets/pfx_password.txt
+  postgres_password:
+    file: ./secrets/postgres_password.txt

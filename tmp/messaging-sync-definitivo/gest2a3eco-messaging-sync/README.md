@@ -1,7 +1,7 @@
 # Sincronizador de adjuntos de mensajeria para Synology
 
 Paquete independiente para Container Manager. Descarga los adjuntos enviados
-por clientes desde la PWA, comprueba su SHA-256, los guarda en el repositorio
+por clientes desde Gestinem, comprueba su SHA-256, los guarda en el repositorio
 documental compartido y registra la entrada pendiente de clasificar en
 PostgreSQL. Tambien sincroniza el directorio de empresas para que el
 administrador pueda elegir un cliente de Gest2A3Eco al crear una invitacion.

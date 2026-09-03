@@ -52,6 +52,7 @@ void main() {
         accessActive: false,
         hasAcceptedAccess: false,
         clientCount: 0,
+        organizationEmail: 'cliente@example.test',
       ),
     ];
     final api = ApiClient(
@@ -77,6 +78,15 @@ void main() {
     expect(find.byKey(const Key('client-E00002')), findsOneWidget);
     expect(find.byKey(const Key('client-E00003')), findsOneWidget);
     expect(find.byKey(const Key('clients-back-button')), findsOneWidget);
+    expect(find.byKey(const Key('clients-bulk-invite-button')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('clients-bulk-invite-button')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('client-select-E00003')));
+    await tester.pump();
+    expect(find.text('Enviar (1)'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('clients-cancel-selection')));
+    await tester.pump();
 
     await tester.tap(find.byKey(const Key('clients-filter-pending')));
     await tester.pump();

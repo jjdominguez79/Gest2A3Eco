@@ -222,6 +222,38 @@ def test_resuelve_facturas_y_albaranes_en_subcarpetas_distintas(monkeypatch, tmp
     assert albaran == str(tmp_path / "albaranes" / "albaran_template.docx")
 
 
+def test_no_resuelve_modelo_administrativo_desde_raiz_compartida(monkeypatch, tmp_path):
+    controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
+    (tmp_path / "facturas").mkdir()
+    mandato = tmp_path / "Modelo representacion general.docx"
+    mandato.write_bytes(b"modelo administrativo")
+    monkeypatch.setattr(module, "get_word_templates_subdir", lambda tipo: tmp_path / tipo)
+    monkeypatch.setattr(module, "get_word_templates_dir", lambda: str(tmp_path))
+
+    resolved = controller._docx_template_path(
+        {"plantilla_word": mandato.name},
+        default_filename="factura_emitida_template.docx",
+    )
+
+    assert resolved == str(tmp_path / "facturas" / "factura_emitida_template.docx")
+
+
+def test_mantiene_fallback_legacy_para_plantilla_de_factura(monkeypatch, tmp_path):
+    controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
+    (tmp_path / "facturas").mkdir()
+    legacy = tmp_path / "factura_emitida_personalizada.docx"
+    legacy.write_bytes(b"plantilla de factura")
+    monkeypatch.setattr(module, "get_word_templates_subdir", lambda tipo: tmp_path / tipo)
+    monkeypatch.setattr(module, "get_word_templates_dir", lambda: str(tmp_path))
+
+    resolved = controller._docx_template_path(
+        {"plantilla_word": legacy.name},
+        default_filename="factura_emitida_template.docx",
+    )
+
+    assert resolved == str(legacy)
+
+
 def test_compartir_factura_publicar_area_cliente(monkeypatch, tmp_path):
     """Verifica que el canal 'publicar' sube el PDF al area documental."""
     sent = []

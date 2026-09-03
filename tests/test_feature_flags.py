@@ -79,7 +79,7 @@ def _setup():
 
     internal = {"X-API-Key": "test-secret"}
 
-    client = TestClient(app, base_url="https://mensajes.example.test")
+    client = TestClient(app, base_url="https://api.example.test")
 
     # Crear organizaciones via API
     assert client.put(

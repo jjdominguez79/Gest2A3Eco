@@ -30,7 +30,8 @@ from backend.api import messaging_models  # noqa: F401
 def _client(tmp_path: Path):
     os.environ["DGT_INTERNAL_API_KEY"] = "test-secret"
     os.environ["MESSAGING_STORAGE_DIR"] = str(tmp_path / "cloud")
-    os.environ["MESSAGING_PUBLIC_BASE_URL"] = "https://mensajes.example.test"
+    os.environ["MESSAGING_PUBLIC_BASE_URL"] = "https://api.example.test"
+    os.environ["MESSAGING_APP_WEB_URL"] = "https://app.example.test"
     os.environ["MESSAGING_SYNC_TOKEN"] = "sync-secret"
     os.environ["MESSAGING_STAFF_ALLOWED_DOMAIN"] = "gestinem.es"
     os.environ["MESSAGING_STAFF_ADMIN_EMAILS"] = "admin@gestinem.es"
@@ -48,7 +49,7 @@ def _client(tmp_path: Path):
             yield db
 
     app.dependency_overrides[get_db] = override
-    return TestClient(app, base_url="https://mensajes.example.test")
+    return TestClient(app, base_url="https://api.example.test")
 
 
 def test_startup_migra_columnas_de_plataforma_cliente_automaticamente():
@@ -187,7 +188,7 @@ def test_admin_preautoriza_empleado_y_primer_login_vincula_microsoft(tmp_path, m
             }}
 
     monkeypatch.setattr(messaging_api, "_staff_msal_app", lambda: FakeMsal())
-    # El flujo web (sin app=true) ya no redirige a /equipo/mensajes: devuelve 410.
+    # Sin un destino de aplicacion explicito, el callback rechaza la solicitud.
     assert client.get(
         "/api/v1/messaging/staff-auth/login", follow_redirects=False,
     ).status_code == 302
@@ -195,7 +196,7 @@ def test_admin_preautoriza_empleado_y_primer_login_vincula_microsoft(tmp_path, m
         "/api/v1/messaging/staff-auth/callback?state=state-ana&code=ok",
         follow_redirects=False,
     )
-    assert web_callback.status_code == 410
+    assert web_callback.status_code == 400
 
     # El flujo movil (app=true) sigue funcionando: devuelve 302 al deep link.
     login_app = client.get(
@@ -291,7 +292,7 @@ def test_cuenta_cliente_prueba_genera_enlace_sin_enviar_email(tmp_path, monkeypa
     assert invitation.status_code == 200
     assert invitation.json()["email_queued"] is False
     assert invitation.json()["url"].startswith(
-        "https://mensajes.example.test/api/v1/messaging/public/app-link/invite?token="
+        "https://app.example.test/#/accept-invite?token="
     )
     assert invitation.json()["app_url"].startswith(
         "es.gestinem.app://auth/invite?token="
@@ -307,6 +308,61 @@ def test_cuenta_cliente_prueba_genera_enlace_sin_enviar_email(tmp_path, monkeypa
         "/api/v1/messaging/auth/login",
         json={"email": "prueba@gestinem.es", "password": "prueba-segura-1234"},
     ).status_code == 200
+
+
+def test_admin_envia_invitaciones_en_lote(tmp_path, monkeypatch):
+    client = _client(tmp_path)
+    internal = {"X-API-Key": "test-secret"}
+    assert client.put(
+        "/api/v1/messaging/internal/staff/admin-batch", headers=internal,
+        json={
+            "external_id": "admin-batch", "name": "Administrador",
+            "email": "admin@gestinem.es", "role": "admin",
+        },
+    ).status_code == 200
+    device = client.post(
+        "/api/v1/messaging/internal/devices/puesto-batch", headers=internal,
+    ).json()
+    admin = {
+        **internal,
+        "X-Device-Id": "puesto-batch",
+        "X-Device-Token": device["device_token"],
+        "X-Staff-Id": "admin-batch",
+    }
+    for code in ("E10010", "E10011"):
+        assert client.put(
+            f"/api/v1/messaging/internal/organizations/{code}", headers=internal,
+            json={"company_code": code, "name": f"Cliente {code}"},
+        ).status_code == 200
+
+    sent = []
+    monkeypatch.setattr(messaging_api, "mail_configured", lambda: True)
+    monkeypatch.setattr(
+        messaging_api, "send_invitation",
+        lambda email, name, url: sent.append((email, name, url)),
+    )
+    response = client.post(
+        "/api/v1/messaging/staff/admin/invitations/batch",
+        headers=admin,
+        json={"invitations": [
+            {
+                "company_code": "E10010", "name": "Ana Uno",
+                "email": "ana.uno@example.test", "send_email": True,
+            },
+            {
+                "company_code": "E10011", "name": "Ana Dos",
+                "email": "ana.dos@example.test", "send_email": True,
+            },
+        ]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["invitation_count"] == 2
+    assert response.json()["email_queued_count"] == 2
+    assert [item[0] for item in sent] == [
+        "ana.uno@example.test", "ana.dos@example.test",
+    ]
+    assert all(item[2].startswith("https://app.example.test/") for item in sent)
 
 
 def test_empresa_pruebas_solo_es_visible_para_su_titular(tmp_path, monkeypatch):
@@ -388,15 +444,6 @@ def test_empresa_pruebas_solo_es_visible_para_su_titular(tmp_path, monkeypatch):
             "/api/v1/messaging/client/conversations", headers=client_auth,
         ).json() if row["kind"] == "private"
     )
-    # Web Push/VAPID retirado: los endpoints de suscripcion devuelven 404.
-    for headers in (owner, other):
-        assert client.post(
-            "/api/v1/messaging/staff/push/subscriptions", headers=headers,
-            json={
-                "endpoint": "https://push.example.test/device",
-                "p256dh": "public-key", "auth": "auth-key",
-            },
-        ).status_code == 404
     assert client.post(
         f"/api/v1/messaging/client/conversations/{private['id']}/messages",
         headers=client_auth,
@@ -640,18 +687,6 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
         "/api/v1/messaging/client/conversations", headers=client_auth,
     ).json()
     general = next(row for row in conversations if row["kind"] == "fiscal")
-    # Web Push/VAPID retirado: los endpoints de suscripcion devuelven 404.
-    assert client.post(
-        "/api/v1/messaging/client/push/subscriptions", headers=client_auth,
-        json={
-            "endpoint": "https://push.example.test/client-ana",
-            "p256dh": "public-key-client-ana", "auth": "auth-client-ana",
-        },
-    ).status_code == 404
-    assert client.post(
-        "/api/v1/messaging/client/push/test", headers=client_auth,
-    ).status_code == 404
-
     sent = client.post(
         f"/api/v1/messaging/client/conversations/{general['id']}/messages",
         headers=client_auth,
@@ -663,20 +698,6 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
     device_headers = {"X-Device-Id": "puesto-1", "X-Device-Token": device["device_token"]}
     staff7 = {**internal, **device_headers, "X-Staff-Id": "7"}
     staff8 = {**internal, **device_headers, "X-Staff-Id": "8"}
-    # Web Push/VAPID retirado: todos los endpoints push devuelven 404.
-    assert client.post(
-        "/api/v1/messaging/staff/push/test", headers=staff7,
-    ).status_code == 404
-    assert client.post(
-        "/api/v1/messaging/staff/push/subscriptions", headers=staff7,
-        json={
-            "endpoint": "https://push.example.test/device-7",
-            "p256dh": "public-key-device-7", "auth": "auth-device-7",
-        },
-    ).status_code == 404
-    assert client.post(
-        "/api/v1/messaging/client/push/test", headers=client_auth,
-    ).status_code == 404
     avatar = BytesIO()
     Image.new("RGB", (80, 80), "#145a86").save(avatar, format="PNG")
     assert client.put(
@@ -748,7 +769,7 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
     )
     outgoing_id = outgoing.json()["attachments"][0]["id"]
     assert outgoing.json()["author_name"] == "Titular fiscal"
-    # Web Push/VAPID retirado; las notificaciones van por FCM, no por push_payloads.
+    # Las notificaciones se encolan a traves de FCM.
     client_messages = client.get(
         f"/api/v1/messaging/client/conversations/{general['id']}/messages",
         headers=client_auth,

@@ -50,7 +50,7 @@ def _make_messaging_http(tmp: Path):
     )
     os.environ["DGT_INTERNAL_API_KEY"] = "test-internal-secret"
     os.environ["MESSAGING_STORAGE_DIR"] = str(tmp / "cloud")
-    os.environ["MESSAGING_PUBLIC_BASE_URL"] = "https://mensajes.example.test"
+    os.environ["MESSAGING_PUBLIC_BASE_URL"] = "https://api.example.test"
     os.environ["MESSAGING_SYNC_TOKEN"] = "sync-secret"
     os.environ["MESSAGING_STAFF_ALLOWED_DOMAIN"] = "gestinem.es"
 
@@ -79,7 +79,7 @@ def _make_messaging_http(tmp: Path):
             yield db
 
     app.dependency_overrides[get_db] = override
-    return TestClient(app, base_url="https://mensajes.example.test"), factory
+    return TestClient(app, base_url="https://api.example.test"), factory
 
 
 def _make_messaging_http_with_wks(tmp: Path, wks_token: str):

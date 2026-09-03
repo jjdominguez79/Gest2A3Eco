@@ -1,6 +1,6 @@
 {
-  "version": "1.8.10",
-  "tag": "v1.8.10",
-  "changelog": "Añade la sincronización unidireccional de empresas y clientes con Railway.\nPrepara las altas de clientes desde Flutter con asignación contable exclusiva en Gest2A3Eco.\nConfigura la serie APP e importa las facturas de Flutter pendientes de revisión contable.",
+  "version": "1.8.11",
+  "tag": "v1.8.11",
+  "changelog": "Publica la nueva app Gestinem para acceso desde navegador y retira la antigua interfaz de mensajería.\nPermite seleccionar e invitar clientes de forma masiva, con un email explicativo y el manual actualizado adjunto.\nUnifica los paquetes de despliegue Synology y mejora la selección segura de plantillas de facturas y albaranes.",
   "force_update": false
 }

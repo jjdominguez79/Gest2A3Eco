@@ -144,6 +144,30 @@ class MessagingRepository {
     return response.data!;
   }
 
+  Future<Map<String, dynamic>> inviteClients(
+    List<ClientOrganization> organizations,
+  ) async {
+    final response = await _api.dio.post<Map<String, dynamic>>(
+      '/staff/admin/invitations/batch',
+      data: {
+        'invitations': [
+          for (final organization in organizations)
+            {
+              'company_code': organization.companyCode,
+              'name': organization.contactName.trim().isNotEmpty
+                  ? organization.contactName.trim()
+                  : organization.displayName,
+              'email': organization.contactEmail.trim().isNotEmpty
+                  ? organization.contactEmail.trim()
+                  : organization.organizationEmail.trim(),
+              'send_email': true,
+            },
+        ],
+      },
+    );
+    return response.data!;
+  }
+
   Future<List<Organization>> organizations() async {
     final response = await _api.dio.get<List<dynamic>>(
       '/staff/admin/organizations',

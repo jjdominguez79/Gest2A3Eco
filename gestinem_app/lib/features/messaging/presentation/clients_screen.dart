@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/api/api_client.dart';
 import '../../auth/presentation/auth_controller.dart';
+import '../domain/client_organization.dart';
 import 'messaging_providers.dart';
 
 class ClientsScreen extends ConsumerStatefulWidget {
@@ -14,12 +16,99 @@ class ClientsScreen extends ConsumerStatefulWidget {
 
 class _ClientsScreenState extends ConsumerState<ClientsScreen> {
   final _search = TextEditingController();
+  final Set<String> _selected = {};
   String _status = 'all';
+  bool _selecting = false;
+  bool _bulkSending = false;
 
   @override
   void dispose() {
     _search.dispose();
     super.dispose();
+  }
+
+  String _recipientEmail(ClientOrganization row) =>
+      row.contactEmail.trim().isNotEmpty
+      ? row.contactEmail.trim()
+      : row.organizationEmail.trim();
+
+  bool _canBulkInvite(ClientOrganization row) =>
+      row.accessStatus != 'active' &&
+      row.accessStatus != 'disabled' &&
+      _recipientEmail(row).contains('@');
+
+  void _toggleSelected(ClientOrganization row) {
+    if (!_canBulkInvite(row)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Este cliente no tiene un correo válido para invitar.'),
+        ),
+      );
+      return;
+    }
+    setState(() {
+      if (!_selected.add(row.companyCode)) {
+        _selected.remove(row.companyCode);
+      }
+    });
+  }
+
+  Future<void> _sendBulk(List<ClientOrganization> rows) async {
+    if (rows.isEmpty || _bulkSending) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Enviar invitaciones'),
+        content: Text(
+          'Se enviará una invitación personal y el manual de Gestinem a '
+          '${rows.length} ${rows.length == 1 ? 'cliente' : 'clientes'}.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const Key('clients-confirm-bulk-invite'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Enviar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _bulkSending = true);
+    try {
+      final result = await ref
+          .read(messagingRepositoryProvider)
+          .inviteClients(rows);
+      ref.invalidate(clientOrganizationsProvider);
+      ref.invalidate(organizationsProvider);
+      if (!mounted) return;
+      final queued = result['email_queued_count'] as int? ?? 0;
+      setState(() {
+        _selected.clear();
+        _selecting = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            queued == rows.length
+                ? 'Se han preparado $queued invitaciones con el manual adjunto.'
+                : 'Invitaciones creadas: ${rows.length}. Correos preparados: $queued.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
+      }
+    } finally {
+      if (mounted) setState(() => _bulkSending = false);
+    }
   }
 
   @override
@@ -41,14 +130,34 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
           onPressed: () => context.go('/'),
           icon: const Icon(Icons.arrow_back),
         ),
-        title: const Text('Clientes'),
+        title: Text(
+          _selecting ? '${_selected.length} seleccionados' : 'Clientes',
+        ),
         actions: [
-          IconButton(
-            key: const Key('clients-invite-button'),
-            tooltip: 'Invitar cliente',
-            onPressed: () => context.go('/invite-client'),
-            icon: const Icon(Icons.person_add_alt_1),
-          ),
+          if (_selecting)
+            IconButton(
+              key: const Key('clients-cancel-selection'),
+              tooltip: 'Cancelar selección',
+              onPressed: () => setState(() {
+                _selected.clear();
+                _selecting = false;
+              }),
+              icon: const Icon(Icons.close),
+            )
+          else ...[
+            IconButton(
+              key: const Key('clients-bulk-invite-button'),
+              tooltip: 'Invitar varios clientes',
+              onPressed: () => setState(() => _selecting = true),
+              icon: const Icon(Icons.playlist_add_check),
+            ),
+            IconButton(
+              key: const Key('clients-invite-button'),
+              tooltip: 'Invitar cliente',
+              onPressed: () => context.go('/invite-client'),
+              icon: const Icon(Icons.person_add_alt_1),
+            ),
+          ],
           IconButton(
             tooltip: 'Actualizar',
             onPressed: () => ref.invalidate(clientOrganizationsProvider),
@@ -108,42 +217,121 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
                         return matchesStatus && matchesSearch;
                       }).toList()
                       ..sort((a, b) => a.displayName.compareTo(b.displayName));
+                final selectable = filtered.where(_canBulkInvite).toList();
+                final selectedRows = rows
+                    .where((row) => _selected.contains(row.companyCode))
+                    .toList(growable: false);
                 if (filtered.isEmpty) {
                   return const Center(
                     child: Text('No hay clientes con estos filtros'),
                   );
                 }
-                return RefreshIndicator(
-                  onRefresh: () async =>
-                      ref.invalidate(clientOrganizationsProvider),
-                  child: ListView.separated(
-                    key: const Key('clients-list'),
-                    padding: EdgeInsets.only(
-                      bottom: MediaQuery.viewPaddingOf(context).bottom,
+                return Column(
+                  children: [
+                    if (_selecting)
+                      Material(
+                        color: Theme.of(context).colorScheme.surfaceContainer,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          child: Row(
+                            children: [
+                              TextButton(
+                                key: const Key('clients-select-visible'),
+                                onPressed: selectable.isEmpty
+                                    ? null
+                                    : () => setState(
+                                        () => _selected.addAll(
+                                          selectable.map(
+                                            (row) => row.companyCode,
+                                          ),
+                                        ),
+                                      ),
+                                child: const Text('Seleccionar visibles'),
+                              ),
+                              const Spacer(),
+                              FilledButton.icon(
+                                key: const Key('clients-send-bulk-invite'),
+                                onPressed: selectedRows.isEmpty || _bulkSending
+                                    ? null
+                                    : () => _sendBulk(selectedRows),
+                                icon: _bulkSending
+                                    ? const SizedBox.square(
+                                        dimension: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.send_outlined),
+                                label: Text('Enviar (${selectedRows.length})'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    Expanded(
+                      child: RefreshIndicator(
+                        onRefresh: () async =>
+                            ref.invalidate(clientOrganizationsProvider),
+                        child: ListView.separated(
+                          key: const Key('clients-list'),
+                          padding: EdgeInsets.only(
+                            bottom: MediaQuery.viewPaddingOf(context).bottom,
+                          ),
+                          itemCount: filtered.length,
+                          separatorBuilder: (_, _) => const Divider(height: 1),
+                          itemBuilder: (context, index) {
+                            final row = filtered[index];
+                            final canInvite = _canBulkInvite(row);
+                            return ListTile(
+                              key: Key('client-${row.companyCode}'),
+                              enabled: !_selecting || canInvite,
+                              leading: _selecting
+                                  ? Checkbox(
+                                      key: Key(
+                                        'client-select-${row.companyCode}',
+                                      ),
+                                      value: _selected.contains(
+                                        row.companyCode,
+                                      ),
+                                      onChanged: canInvite
+                                          ? (_) => _toggleSelected(row)
+                                          : null,
+                                    )
+                                  : CircleAvatar(
+                                      child: Text(_initials(row.displayName)),
+                                    ),
+                              title: Text(row.displayName),
+                              subtitle: Text(
+                                _selecting && !canInvite
+                                    ? '${row.companyCode} · Sin correo válido'
+                                    : row.companyCode,
+                              ),
+                              trailing: _selecting
+                                  ? null
+                                  : Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        ClientStatusBadge(
+                                          status: row.accessStatus,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        const Icon(Icons.chevron_right),
+                                      ],
+                                    ),
+                              onTap: _selecting
+                                  ? () => _toggleSelected(row)
+                                  : () => context.go(
+                                      '/clients/${row.companyCode}',
+                                    ),
+                            );
+                          },
+                        ),
+                      ),
                     ),
-                    itemCount: filtered.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      final row = filtered[index];
-                      return ListTile(
-                        key: Key('client-${row.companyCode}'),
-                        leading: CircleAvatar(
-                          child: Text(_initials(row.displayName)),
-                        ),
-                        title: Text(row.displayName),
-                        subtitle: Text(row.companyCode),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            ClientStatusBadge(status: row.accessStatus),
-                            const SizedBox(width: 4),
-                            const Icon(Icons.chevron_right),
-                          ],
-                        ),
-                        onTap: () => context.go('/clients/${row.companyCode}'),
-                      );
-                    },
-                  ),
+                  ],
                 );
               },
             ),
