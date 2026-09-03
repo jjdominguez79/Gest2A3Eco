@@ -1,5 +1,6 @@
 services:
   messaging-sync:
+    image: gest2a3eco-messaging-sync:2026.09.03.1
     build:
       context: .
       dockerfile: Dockerfile

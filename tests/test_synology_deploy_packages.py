@@ -43,3 +43,21 @@ def test_package_builder_copies_only_required_worker_modules():
     assert "messaging_worker.py" in builder
     assert "master_data_worker.py" in builder
     assert "Los ficheros de secrets no se copian" in builder
+
+
+def test_worker_messaging_solo_sincroniza_adjuntos():
+    worker = (ROOT / "sync_worker" / "messaging_worker.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "sync_organizations" not in worker
+    assert "/sync/organizations" not in worker
+    assert "/sync/attachments/pending" in worker
+
+
+def test_imagen_messaging_tiene_version_explicita():
+    compose = (
+        SYNOLOGY / "gest2a3eco-messaging-sync" / "compose.yaml"
+    ).read_text(encoding="utf-8")
+
+    assert "image: gest2a3eco-messaging-sync:2026.09.03.1" in compose

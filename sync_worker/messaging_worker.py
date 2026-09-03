@@ -20,7 +20,7 @@ from sync_worker.config import _required, _secret
 
 
 LOG = logging.getLogger("gest2a3eco.messaging_sync")
-WORKER_VERSION = "2026.08.10.2"
+WORKER_VERSION = "2026.09.03.1"
 
 
 @dataclass(frozen=True)
