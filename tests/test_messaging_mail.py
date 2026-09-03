@@ -115,7 +115,7 @@ def test_invitacion_usa_remitente_personal_configurado(monkeypatch):
     html = calls[1][1]["json"]["message"]["body"]["content"]
     assert 'href="https://example.test/invite"' in html
     assert "https://example.test/invite" in html
-    assert "directamente desde tu navegador" in html
+    assert "acceder a Gestinem directamente desde" in html
     attachments = calls[1][1]["json"]["message"]["attachments"]
     assert attachments[0]["name"] == "Manual_Mensajeria_Gestinem.pdf"
     assert base64.b64decode(attachments[0]["contentBytes"]).startswith(b"%PDF")
@@ -137,3 +137,35 @@ def test_invitacion_incluye_enlace_en_html_y_texto_plano(monkeypatch):
     assert url in captured["text"]
     assert captured["sender"] == "jjdominguez@gestinem.es"
     assert captured["attachments"][0]["name"] == "Manual_Mensajeria_Gestinem.pdf"
+
+
+def test_invitacion_version_1_incluye_comunicado_aprobado(monkeypatch):
+    captured = {}
+
+    def fake_send_mail(to, subject, html, **kwargs):
+        captured.update(to=to, subject=subject, html=html, **kwargs)
+        return True
+
+    monkeypatch.setattr(messaging_mail, "get_settings", _settings)
+    monkeypatch.setattr(messaging_mail, "send_mail", fake_send_mail)
+
+    assert messaging_mail.INVITATION_EMAIL_VERSION == 1
+    assert messaging_mail.send_invitation(
+        "ana@example.test", "Ana", "https://example.test/invite"
+    )
+
+    assert captured["subject"] == (
+        "Nueva aplicación Gestinem y canales de comunicación desde el 1 de octubre"
+    )
+    for expected in (
+        "privacidad de las comunicaciones",
+        "plataforma de facturación ágil y gratuita",
+        "Android y Apple",
+        "1 de octubre de 2026",
+        "oficina@gestinem.es",
+        "laboral@gestinem.es",
+        "documentacion@gestinem.es",
+        "mensajes privados únicamente serán accesibles para su destinatario",
+    ):
+        assert expected in captured["html"]
+        assert expected in captured["text"]
