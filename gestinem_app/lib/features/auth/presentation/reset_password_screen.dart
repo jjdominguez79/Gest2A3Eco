@@ -11,7 +11,8 @@ class ResetPasswordScreen extends ConsumerStatefulWidget {
   final String token;
 
   @override
-  ConsumerState<ResetPasswordScreen> createState() => _ResetPasswordScreenState();
+  ConsumerState<ResetPasswordScreen> createState() =>
+      _ResetPasswordScreenState();
 }
 
 class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
@@ -40,10 +41,7 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
       final api = ref.read(apiClientProvider);
       await api.dio.post<void>(
         '/auth/reset-password',
-        data: {
-          'token': widget.token,
-          'password': _password.text,
-        },
+        data: {'token': widget.token, 'password': _password.text},
       );
       if (mounted) setState(() => _done = true);
     } catch (e) {
@@ -63,10 +61,12 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
           child: Padding(
             padding: const EdgeInsets.all(24),
             child: _done
-                ? _DoneCard(onGoToLogin: () {
-                    ref.read(deepLinkProvider.notifier).clear();
-                    context.go('/login');
-                  })
+                ? _DoneCard(
+                    onGoToLogin: () {
+                      ref.read(deepLinkProvider.notifier).clear();
+                      context.go('/login');
+                    },
+                  )
                 : _FormCard(
                     formKey: _formKey,
                     password: _password,
@@ -91,33 +91,33 @@ class _DoneCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Icon(Icons.check_circle_outline, size: 52, color: Colors.green),
-              const SizedBox(height: 16),
-              Text(
-                'Contraseña actualizada',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Tu contraseña ha sido restablecida correctamente. Ya puedes iniciar sesión.',
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 20),
-              FilledButton(
-                onPressed: onGoToLogin,
-                child: const Text('Ir al inicio de sesión'),
-              ),
-            ],
+    child: Padding(
+      padding: const EdgeInsets.all(28),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Icon(Icons.check_circle_outline, size: 52, color: Colors.green),
+          const SizedBox(height: 16),
+          Text(
+            'Contraseña actualizada',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.headlineSmall,
           ),
-        ),
-      );
+          const SizedBox(height: 8),
+          const Text(
+            'Tu contraseña ha sido restablecida correctamente. Ya puedes iniciar sesión.',
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 20),
+          FilledButton(
+            onPressed: onGoToLogin,
+            child: const Text('Ir al inicio de sesión'),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _FormCard extends StatelessWidget {
@@ -143,64 +143,67 @@ class _FormCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Form(
-            key: formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  'Establece tu nueva contraseña',
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                const SizedBox(height: 20),
-                TextFormField(
-                  controller: password,
-                  obscureText: obscurePassword,
-                  decoration: InputDecoration(
-                    labelText: 'Nueva contraseña',
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                          obscurePassword ? Icons.visibility_off : Icons.visibility),
-                      onPressed: onToggleObscure,
-                    ),
-                  ),
-                  validator: (v) {
-                    if (v == null || v.isEmpty) return 'Introduce una contraseña';
-                    if (v.length < 10) return 'Minimo 10 caracteres';
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: confirm,
-                  obscureText: obscurePassword,
-                  decoration: const InputDecoration(labelText: 'Confirmar contraseña'),
-                  validator: (v) =>
-                      v != password.text ? 'Las contraseñas no coinciden' : null,
-                ),
-                if (error != null) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    error!,
-                    style: TextStyle(color: Theme.of(context).colorScheme.error),
-                  ),
-                ],
-                const SizedBox(height: 20),
-                FilledButton(
-                  onPressed: loading ? null : onSubmit,
-                  child: loading
-                      ? const SizedBox.square(
-                          dimension: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Guardar contraseña'),
-                ),
-              ],
+    child: Padding(
+      padding: const EdgeInsets.all(28),
+      child: Form(
+        key: formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Establece tu nueva contraseña',
+              style: Theme.of(context).textTheme.headlineSmall,
             ),
-          ),
+            const SizedBox(height: 20),
+            TextFormField(
+              controller: password,
+              obscureText: obscurePassword,
+              decoration: InputDecoration(
+                labelText: 'Nueva contraseña',
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    obscurePassword ? Icons.visibility_off : Icons.visibility,
+                  ),
+                  onPressed: onToggleObscure,
+                ),
+              ),
+              validator: (v) {
+                if (v == null || v.isEmpty) return 'Introduce una contraseña';
+                if (v.length < 10) return 'Minimo 10 caracteres';
+                return null;
+              },
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: confirm,
+              obscureText: obscurePassword,
+              decoration: const InputDecoration(
+                labelText: 'Confirmar contraseña',
+              ),
+              validator: (v) =>
+                  v != password.text ? 'Las contraseñas no coinciden' : null,
+            ),
+            if (error != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+            const SizedBox(height: 20),
+            FilledButton(
+              onPressed: loading ? null : onSubmit,
+              child: loading
+                  ? const SizedBox.square(
+                      dimension: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Guardar contraseña'),
+            ),
+          ],
         ),
-      );
+      ),
+    ),
+  );
 }

@@ -37,6 +37,8 @@ class MessagingOrganization(Base):
     country: Mapped[str] = mapped_column(String(60), default="ES")
     phone: Mapped[str] = mapped_column(String(30), default="")
     email: Mapped[str] = mapped_column(String(254), default="")
+    logo_storage_key: Mapped[str] = mapped_column(String(500), default="")
+    logo_content_type: Mapped[str] = mapped_column(String(120), default="")
     profile_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     client_invoicing_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     client_documents_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -180,6 +182,36 @@ class MessagingPasswordReset(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MessagingProfileChangeRequest(Base):
+    """Solicitud del cliente; nunca modifica directamente los datos maestros."""
+
+    __tablename__ = "msg_profile_change_requests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_organizations.id", ondelete="CASCADE"), index=True,
+    )
+    client_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_clients.id", ondelete="CASCADE"), index=True,
+    )
+    message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("msg_messages.id", ondelete="SET NULL"), index=True,
+    )
+    changes_json: Mapped[str] = mapped_column(Text, default="{}")
+    current_values_json: Mapped[str] = mapped_column(Text, default="{}")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    review_note: Mapped[str] = mapped_column(Text, default="")
+    reviewed_by: Mapped[str] = mapped_column(String(64), default="")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow,
+    )
 
 
 class MessagingSession(Base):

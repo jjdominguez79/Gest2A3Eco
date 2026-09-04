@@ -1,3 +1,4 @@
+import json
 import os
 from io import BytesIO
 from pathlib import Path
@@ -24,6 +25,7 @@ from backend.api.app import (
     STARTUP_COLUMN_TABLES,
 )
 from backend.api.messaging_api import get_db, router
+from backend.api.client_profile_api import router as client_profile_router, _db as client_profile_db
 from backend.api import messaging_models  # noqa: F401
 
 
@@ -43,12 +45,14 @@ def _client(tmp_path: Path):
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     app = FastAPI()
     app.include_router(router)
+    app.include_router(client_profile_router)
 
     def override():
         with factory() as db:
             yield db
 
     app.dependency_overrides[get_db] = override
+    app.dependency_overrides[client_profile_db] = override
     return TestClient(app, base_url="https://api.example.test")
 
 
@@ -63,6 +67,8 @@ def test_startup_migra_columnas_de_plataforma_cliente_automaticamente():
         "country",
         "phone",
         "email",
+        "logo_storage_key",
+        "logo_content_type",
         "profile_synced_at",
         "client_invoicing_enabled",
         "client_documents_enabled",
@@ -363,6 +369,111 @@ def test_admin_envia_invitaciones_en_lote(tmp_path, monkeypatch):
         "ana.uno@example.test", "ana.dos@example.test",
     ]
     assert all(item[2].startswith("https://app.example.test/") for item in sent)
+
+
+def test_invitacion_rechaza_email_de_cliente_mal_formado(tmp_path):
+    client = _client(tmp_path)
+    internal = {"X-API-Key": "test-secret"}
+    assert client.put(
+        "/api/v1/messaging/internal/organizations/E10012", headers=internal,
+        json={"company_code": "E10012", "name": "Cliente sin correo"},
+    ).status_code == 200
+
+    response = client.post(
+        "/api/v1/messaging/internal/invitations", headers=internal,
+        json={
+            "company_code": "E10012", "name": "Cliente",
+            "email": "correo-incompleto@dominio", "send_email": True,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Email de cliente no valido"
+
+
+def test_cliente_solicita_cambios_de_empresa_sin_modificar_el_maestro(tmp_path):
+    client = _client(tmp_path)
+    internal = {"X-API-Key": "test-secret"}
+    assert client.put(
+        "/api/v1/messaging/internal/organizations/E10013", headers=internal,
+        json={"company_code": "E10013", "name": "Empresa Original"},
+    ).status_code == 200
+    invitation = client.post(
+        "/api/v1/messaging/internal/invitations", headers=internal,
+        json={
+            "company_code": "E10013", "name": "Ana Cliente",
+            "email": "ana.cambios@example.test", "send_email": False,
+        },
+    ).json()
+    token = invitation["url"].split("token=", 1)[1]
+    accepted = client.post(
+        "/api/v1/messaging/auth/accept-invite",
+        json={"token": token, "password": "password-segura-123"},
+    )
+    auth = {"Authorization": f"Bearer {accepted.json()['token']}"}
+
+    logo = BytesIO()
+    Image.new("RGB", (32, 16), "blue").save(logo, format="PNG")
+
+    response = client.post(
+        "/api/v1/messaging/client/profile-change-requests",
+        headers=auth,
+        data={
+            "changes_json": json.dumps({
+                "address": "Calle nueva 2",
+                "bank_accounts": ["ES12 3456 7890"],
+            }),
+            "notes": "Adjuntare justificante si es necesario",
+        },
+        files={"logo": ("logo.png", logo.getvalue(), "image/png")},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "pending"
+    assert data["changes"]["address"] == "CALLE NUEVA 2"
+    assert data["changes"]["bank_accounts"] == ["ES1234567890"]
+    assert data["message_id"]
+    rows = client.get(
+        "/api/v1/messaging/client/profile-change-requests", headers=auth,
+    ).json()
+    assert len(rows) == 1
+    assert rows[0]["current_values"]["legal_name"] == ""
+
+    assert client.put(
+        "/api/v1/messaging/internal/staff/admin-logo", headers=internal,
+        json={
+            "external_id": "admin-logo", "name": "Administrador",
+            "email": "admin@gestinem.es", "role": "admin", "active": True,
+            "channels": ["laboral", "fiscal"],
+        },
+    ).status_code == 200
+    device = client.post(
+        "/api/v1/messaging/internal/devices/puesto-logo", headers=internal,
+    ).json()
+    admin_headers = {
+        **internal,
+        "X-Device-Id": "puesto-logo",
+        "X-Device-Token": device["device_token"],
+        "X-Staff-Id": "admin-logo",
+    }
+    reviewed = client.patch(
+        f"/api/v1/messaging/staff/admin/profile-change-requests/{data['id']}",
+        headers=admin_headers,
+        json={"status": "applied", "note": "Logotipo comprobado"},
+    )
+    assert reviewed.status_code == 200
+    profile = client.get(
+        "/api/v1/messaging/client/company-profile", headers=auth,
+    )
+    assert profile.status_code == 200
+    assert profile.json()["logo_url"] == "/api/v1/messaging/client/company-logo"
+    approved_logo = client.get(
+        "/api/v1/messaging/client/company-logo", headers=auth,
+    )
+    assert approved_logo.status_code == 200
+    assert approved_logo.headers["content-type"] == "image/png"
+    assert approved_logo.content == logo.getvalue()
 
 
 def test_empresa_pruebas_solo_es_visible_para_su_titular(tmp_path, monkeypatch):

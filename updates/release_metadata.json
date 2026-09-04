@@ -1,6 +1,6 @@
 {
-  "version": "1.8.11",
-  "tag": "v1.8.11",
-  "changelog": "Publica la nueva app Gestinem para acceso desde navegador y retira la antigua interfaz de mensajería.\nPermite seleccionar e invitar clientes de forma masiva, con un email explicativo y el manual actualizado adjunto.\nUnifica los paquetes de despliegue Synology y mejora la selección segura de plantillas de facturas y albaranes.",
+  "version": "1.8.12",
+  "tag": "v1.8.12",
+  "changelog": "Incorpora Mi área con los datos separados del usuario y de la empresa, además del logotipo corporativo.\nPermite solicitar cambios de ficha, dirección, cuentas bancarias y logotipo sin modificar directamente el maestro.\nAñade en Gestión la revisión y confirmación de solicitudes: el logotipo aprobado se guarda en el repositorio documental y se utiliza en las facturas.\nCorrige la validación de correos al invitar clientes y permite activar o desactivar empresas mediante selección múltiple.",
   "force_update": false
 }

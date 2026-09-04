@@ -50,7 +50,10 @@ class InvoicingRepository {
     return ClientInvoice.fromJson(resp.data as Map<String, dynamic>);
   }
 
-  Future<ClientInvoice> updateDraft(String id, Map<String, dynamic> data) async {
+  Future<ClientInvoice> updateDraft(
+    String id,
+    Map<String, dynamic> data,
+  ) async {
     final resp = await _api.dio.put('/client/invoicing/drafts/$id', data: data);
     return ClientInvoice.fromJson(resp.data as Map<String, dynamic>);
   }

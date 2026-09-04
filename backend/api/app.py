@@ -148,6 +148,14 @@ CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS = {
         "ALTER TABLE msg_organizations "
         "ADD COLUMN email VARCHAR(254) NOT NULL DEFAULT ''"
     ),
+    ("msg_organizations", "logo_storage_key"): (
+        "ALTER TABLE msg_organizations "
+        "ADD COLUMN logo_storage_key VARCHAR(500) NOT NULL DEFAULT ''"
+    ),
+    ("msg_organizations", "logo_content_type"): (
+        "ALTER TABLE msg_organizations "
+        "ADD COLUMN logo_content_type VARCHAR(120) NOT NULL DEFAULT ''"
+    ),
     ("msg_organizations", "profile_synced_at"): (
         "ALTER TABLE msg_organizations ADD COLUMN profile_synced_at TIMESTAMPTZ"
     ),
@@ -371,6 +379,8 @@ def startup():
         "013_notification_log.sql",
         "014_notification_log_claim.sql",
         "015_client_customer_desktop_sync.sql",
+        "016_profile_change_requests.sql",
+        "017_organization_logo.sql",
     ):
         _mig_path = Path(__file__).resolve().parent.parent / "migrations" / _mig_name
         if _mig_path.exists():

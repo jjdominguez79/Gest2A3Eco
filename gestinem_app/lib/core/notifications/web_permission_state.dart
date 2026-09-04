@@ -10,10 +10,11 @@ import 'notifications_service.dart';
 // fichero no necesiten importar notifications_service.dart directamente.
 export 'notifications_service.dart' show NotificationPermissionState;
 
-final webNotifPermissionProvider = StateNotifierProvider<
-    WebNotifPermissionNotifier, NotificationPermissionState>(
-  (ref) => WebNotifPermissionNotifier(ref),
-);
+final webNotifPermissionProvider =
+    StateNotifierProvider<
+      WebNotifPermissionNotifier,
+      NotificationPermissionState
+    >((ref) => WebNotifPermissionNotifier(ref));
 
 /// Gestiona el estado del permiso de notificacion en Flutter Web.
 ///
@@ -23,7 +24,7 @@ final webNotifPermissionProvider = StateNotifierProvider<
 class WebNotifPermissionNotifier
     extends StateNotifier<NotificationPermissionState> {
   WebNotifPermissionNotifier(this._ref)
-      : super(NotificationPermissionState.available) {
+    : super(NotificationPermissionState.available) {
     _detectCurrentState();
   }
 
@@ -32,8 +33,8 @@ class WebNotifPermissionNotifier
   /// Detecta el estado actual del permiso sin interaccion del usuario.
   Future<void> _detectCurrentState() async {
     try {
-      final settings =
-          await FirebaseMessaging.instance.getNotificationSettings();
+      final settings = await FirebaseMessaging.instance
+          .getNotificationSettings();
       state = _fromStatus(settings.authorizationStatus);
     } catch (_) {
       // Firebase no esta inicializado todavia o las credenciales son invalidas.
@@ -67,9 +68,7 @@ class WebNotifPermissionNotifier
     state = NotificationPermissionState.authorized;
   }
 
-  static NotificationPermissionState _fromStatus(
-    AuthorizationStatus status,
-  ) =>
+  static NotificationPermissionState _fromStatus(AuthorizationStatus status) =>
       switch (status) {
         AuthorizationStatus.authorized =>
           NotificationPermissionState.authorized,

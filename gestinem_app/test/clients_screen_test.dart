@@ -82,6 +82,8 @@ void main() {
 
     await tester.tap(find.byKey(const Key('clients-bulk-invite-button')));
     await tester.pump();
+    expect(find.text('E00001 · Acceso ya activo'), findsOneWidget);
+    expect(find.textContaining('E00001 · Sin correo válido'), findsNothing);
     await tester.tap(find.byKey(const Key('client-select-E00003')));
     await tester.pump();
     expect(find.text('Enviar (1)'), findsOneWidget);
@@ -94,6 +96,57 @@ void main() {
     expect(find.byKey(const Key('client-E00002')), findsOneWidget);
     expect(find.byKey(const Key('client-E00003')), findsNothing);
   });
+
+  testWidgets(
+    'seleccion masiva distingue correo invalido y acceso deshabilitado',
+    (tester) async {
+      const rows = [
+        ClientOrganization(
+          companyCode: 'E00004',
+          name: 'Sin correo',
+          active: true,
+          accessStatus: 'not_invited',
+          accessActive: false,
+          hasAcceptedAccess: false,
+          clientCount: 0,
+          organizationEmail: 'correo-incompleto@dominio',
+        ),
+        ClientOrganization(
+          companyCode: 'E00005',
+          name: 'Acceso retirado',
+          active: true,
+          accessStatus: 'disabled',
+          accessActive: false,
+          hasAcceptedAccess: true,
+          clientCount: 1,
+          contactEmail: 'correcto@example.test',
+        ),
+      ];
+      final api = ApiClient(
+        dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
+          ..httpClientAdapter = JsonAdapter(<Object>[]),
+        tokenProvider: () => session.token,
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionProvider.overrideWith(
+              (ref) => FakeSessionController(ref, session),
+            ),
+            apiClientProvider.overrideWithValue(api),
+            clientOrganizationsProvider.overrideWith((ref) async => rows),
+          ],
+          child: const MaterialApp(home: ClientsScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('clients-bulk-invite-button')));
+      await tester.pump();
+
+      expect(find.text('E00004 · Sin correo válido'), findsOneWidget);
+      expect(find.text('E00005 · Acceso deshabilitado'), findsOneWidget);
+    },
+  );
 
   testWidgets('Ficha pendiente muestra contacto, chat y retirada', (
     tester,

@@ -145,3 +145,12 @@ Más información:
 - `../docs/flutter_production_build.md`: procedimiento completo de publicación.
 - `FIREBASE_HOSTING.md`: Firebase Hosting.
 - `../docs/flutter_messaging_architecture.md`: arquitectura y contrato backend.
+
+## Solicitudes de cambio de datos
+
+Desde `Mi área` el cliente ve por separado su usuario, los datos compartidos de
+la empresa y el historial de solicitudes. Desde el logotipo o desde
+`Solicitar modificación` puede proponer cambios de su ficha, cuentas bancarias
+o identidad corporativa. La aplicación envía una solicitud pendiente y un
+aviso al chat privado del despacho; nunca modifica
+directamente los datos maestros del escritorio.

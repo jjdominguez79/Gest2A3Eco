@@ -12,6 +12,7 @@ class CompanyProfile {
     this.country,
     this.phone,
     this.email,
+    this.logoUrl,
     this.active = true,
     this.profileSyncedAt,
   });
@@ -27,6 +28,7 @@ class CompanyProfile {
   final String? country;
   final String? phone;
   final String? email;
+  final String? logoUrl;
   final bool active;
   final String? profileSyncedAt;
 
@@ -43,6 +45,7 @@ class CompanyProfile {
       country: json['country'] as String?,
       phone: json['phone'] as String?,
       email: json['email'] as String?,
+      logoUrl: json['logo_url'] as String?,
       active: json['active'] as bool? ?? true,
       profileSyncedAt: json['profile_synced_at'] as String?,
     );

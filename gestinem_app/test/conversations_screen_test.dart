@@ -142,6 +142,10 @@ void main() {
     expect(find.byType(TextField), findsOneWidget);
     expect(find.text('Buscar por codigo o nombre'), findsNothing);
     expect(find.byKey(const Key('client-profile-button')), findsOneWidget);
+    expect(
+      find.byKey(const Key('client-company-profile-button')),
+      findsNothing,
+    );
 
     await tester.tap(find.byKey(const Key('client-channel-fiscal')));
     await tester.pumpAndSettle();

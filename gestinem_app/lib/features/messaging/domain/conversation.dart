@@ -139,6 +139,7 @@ class Organization {
     required this.name,
     required this.clientAccessStatus,
     required this.clientAccessActive,
+    this.email = '',
   });
 
   factory Organization.fromJson(Map<String, dynamic> json) => Organization(
@@ -147,12 +148,14 @@ class Organization {
     clientAccessStatus:
         json['client_access_status'] as String? ?? 'not_invited',
     clientAccessActive: json['client_access_active'] as bool? ?? false,
+    email: json['organization_email'] as String? ?? '',
   );
 
   final String companyCode;
   final String name;
   final String clientAccessStatus;
   final bool clientAccessActive;
+  final String email;
 
   String get displayName => name.isEmpty ? companyCode : name;
 

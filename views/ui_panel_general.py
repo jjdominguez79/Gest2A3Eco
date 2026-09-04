@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 
 class UIPanelGeneral(ttk.Frame):
@@ -12,6 +12,8 @@ class UIPanelGeneral(ttk.Frame):
         session,
         on_open_dashboard,
         on_create_company=None,
+        on_set_company_active=None,
+        on_open_profile_requests=None,
         on_open_control_facturas=None,
         on_open_firmas=None,
     ):
@@ -20,6 +22,8 @@ class UIPanelGeneral(ttk.Frame):
         self._session = session
         self._on_open_dashboard = on_open_dashboard
         self._on_create_company = on_create_company
+        self._on_set_company_active = on_set_company_active
+        self._on_open_profile_requests = on_open_profile_requests
         self._on_open_control_facturas = on_open_control_facturas
         self._on_open_firmas = on_open_firmas
         self._empresas = []
@@ -57,12 +61,36 @@ class UIPanelGeneral(ttk.Frame):
             ).pack(side=tk.LEFT, padx=6)
         ttk.Button(filtros, text="Actualizar", style="Primary.TButton", command=self.refresh).pack(side=tk.LEFT, padx=6)
         ttk.Button(filtros, text="Abrir empresa", style="Primary.TButton", command=self.open_selected).pack(side=tk.LEFT, padx=6)
+        if self._on_open_profile_requests is not None:
+            ttk.Button(
+                filtros,
+                text="Solicitudes de datos",
+                command=self._on_open_profile_requests,
+            ).pack(side=tk.LEFT, padx=6)
         self.var_buscar.trace_add("write", lambda *_: self.refresh())
 
         info = ttk.Frame(self)
         info.pack(fill="x", padx=12, pady=(0, 4))
         self.lbl_resumen = ttk.Label(info, text="")
         self.lbl_resumen.pack(anchor="w")
+
+        if self._on_set_company_active is not None:
+            acciones = ttk.Frame(self)
+            acciones.pack(fill="x", padx=12, pady=(0, 6))
+            ttk.Label(
+                acciones,
+                text="Seleccion multiple: usa Ctrl o Mayus mientras haces clic.",
+            ).pack(side=tk.LEFT)
+            ttk.Button(
+                acciones,
+                text="Desactivar seleccion",
+                command=lambda: self._change_selected_status(False),
+            ).pack(side=tk.RIGHT, padx=(6, 0))
+            ttk.Button(
+                acciones,
+                text="Reactivar seleccion",
+                command=lambda: self._change_selected_status(True),
+            ).pack(side=tk.RIGHT)
 
         tree_wrap = ttk.Frame(self)
         tree_wrap.pack(fill="both", expand=True, padx=12, pady=(0, 10))
@@ -73,6 +101,7 @@ class UIPanelGeneral(ttk.Frame):
             tree_wrap,
             columns=("codigo", "nombre", "cif", "ultimo_ejercicio", "digitos", "permiso", "estado"),
             show="headings",
+            selectmode="extended",
             height=16,
         )
         headers = (
@@ -114,7 +143,8 @@ class UIPanelGeneral(ttk.Frame):
                     item.get("estado_configuracion", ""),
                 ),
             )
-        self.lbl_resumen.configure(text=f"Empresas accesibles: {len(self._empresas)}")
+        estado = "incluyendo bajas" if include_inactive else "activas"
+        self.lbl_resumen.configure(text=f"Empresas {estado}: {len(self._empresas)}")
         children = self.tv.get_children()
         if children:
             self.tv.selection_set(children[0])
@@ -135,3 +165,44 @@ class UIPanelGeneral(ttk.Frame):
             if iid == f"{item.get('codigo')}::{item.get('ejercicio')}":
                 return item
         return None
+
+    def get_selected_companies(self):
+        seleccion = set(self.tv.selection())
+        return [
+            item for item in self._empresas
+            if f"{item.get('codigo')}::{item.get('ejercicio')}" in seleccion
+        ]
+
+    def _change_selected_status(self, activo: bool):
+        seleccionadas = self.get_selected_companies()
+        if not seleccionadas:
+            messagebox.showinfo(
+                "Empresas",
+                "Selecciona al menos una empresa.",
+                parent=self.winfo_toplevel(),
+            )
+            return
+        codigos = [str(item.get("codigo") or "") for item in seleccionadas]
+        accion = "reactivar" if activo else "desactivar"
+        consecuencia = (
+            "Volveran a estar disponibles para la aplicacion Flutter."
+            if activo
+            else "Dejaran de aparecer en la aplicacion Flutter tras la siguiente sincronizacion."
+        )
+        if not messagebox.askyesno(
+            "Empresas",
+            f"Se van a {accion} {len(codigos)} empresa(s).\n\n{consecuencia}\n\nContinuar?",
+            parent=self.winfo_toplevel(),
+        ):
+            return
+        try:
+            actualizadas = int(self._on_set_company_active(codigos, activo) or 0)
+        except (PermissionError, ValueError) as exc:
+            messagebox.showerror("Empresas", str(exc), parent=self.winfo_toplevel())
+            return
+        messagebox.showinfo(
+            "Empresas",
+            f"Empresas actualizadas: {actualizadas}.",
+            parent=self.winfo_toplevel(),
+        )
+        self.refresh()

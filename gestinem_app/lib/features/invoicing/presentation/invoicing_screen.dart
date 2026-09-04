@@ -62,12 +62,7 @@ class _InvoicingTabs extends ConsumerWidget {
             ),
           ],
         ),
-        body: const TabBarView(
-          children: [
-            _DraftsTab(),
-            _IssuedTab(),
-          ],
-        ),
+        body: const TabBarView(children: [_DraftsTab(), _IssuedTab()]),
         floatingActionButton: FloatingActionButton(
           onPressed: () => context.push('/invoicing/drafts/new'),
           child: const Icon(Icons.add),
@@ -117,9 +112,9 @@ class _IssuedTab extends ConsumerWidget {
           return Center(child: Text('Error: ${snapshot.error}'));
         }
         final data = snapshot.data!;
-        final items = (data['items'] as List<dynamic>?)
-                ?.map((e) =>
-                    ClientInvoice.fromJson(e as Map<String, dynamic>))
+        final items =
+            (data['items'] as List<dynamic>?)
+                ?.map((e) => ClientInvoice.fromJson(e as Map<String, dynamic>))
                 .toList() ??
             [];
         if (items.isEmpty) {
@@ -147,10 +142,10 @@ class _InvoiceTile extends StatelessWidget {
         invoice.status.isDraft
             ? Icons.edit_note
             : invoice.status.isError
-                ? Icons.error_outline
-                : invoice.status.isProcessing
-                    ? Icons.hourglass_empty
-                    : Icons.receipt_long,
+            ? Icons.error_outline
+            : invoice.status.isProcessing
+            ? Icons.hourglass_empty
+            : Icons.receipt_long,
         color: invoice.status.isError ? theme.colorScheme.error : null,
       ),
       title: Text(invoice.displayNumber),

@@ -77,3 +77,24 @@ def test_sync_company_profile_uses_backend_route(monkeypatch):
         "https://api.example.test/api/v1/messaging/client/internal/sync-profile"
     )
     response.raise_for_status.assert_called_once_with()
+
+
+def test_review_profile_change_request_uses_internal_route(monkeypatch):
+    response = MagicMock()
+    response.json.return_value = {"id": "request-1", "status": "applied"}
+    session = MagicMock()
+    session.patch.return_value = response
+    service = _service(monkeypatch, session)
+
+    result = service.review_profile_change_request(
+        "request-1", status="applied", note="Confirmado",
+    )
+
+    assert result["status"] == "applied"
+    assert session.patch.call_args.args[0].endswith(
+        "/internal/profile-change-requests/request-1"
+    )
+    assert session.patch.call_args.kwargs["json"] == {
+        "status": "applied", "note": "Confirmado",
+    }
+    response.raise_for_status.assert_called_once_with()

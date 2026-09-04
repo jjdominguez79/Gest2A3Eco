@@ -323,7 +323,10 @@ class EmpleadosScreen extends ConsumerWidget {
         ),
         data: (items) => ListView.separated(
           padding: EdgeInsets.fromLTRB(
-            12, 12, 12, 12 + MediaQuery.viewPaddingOf(context).bottom,
+            12,
+            12,
+            12,
+            12 + MediaQuery.viewPaddingOf(context).bottom,
           ),
           itemCount: items.length,
           separatorBuilder: (_, _) => const Divider(height: 1),

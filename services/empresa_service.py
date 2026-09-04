@@ -55,6 +55,10 @@ class EmpresaService:
         out.sort(key=lambda row: (str(row.get("nombre") or "").lower(), str(row.get("codigo") or "")))
         return out
 
+    def actualizar_estado_empresas(self, codigos: list[str], activo: bool) -> int:
+        """Cambia de una vez el estado de todas las empresas seleccionadas."""
+        return int(self._gestor.actualizar_estado_empresas(codigos, activo) or 0)
+
     def get_company_navigation(self, codigo: str) -> dict:
         companies = self.listar_empresas_panel()
         current = next(

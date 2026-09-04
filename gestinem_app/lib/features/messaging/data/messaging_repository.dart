@@ -3,6 +3,8 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 
+import '../../../core/validation/email_validation.dart';
+
 import '../../../core/api/api_client.dart';
 import '../../auth/domain/user_profile.dart';
 import '../domain/client_organization.dart';
@@ -137,7 +139,7 @@ class MessagingRepository {
       data: {
         'company_code': companyCode,
         'name': name,
-        'email': email,
+        'email': normalizeEmail(email),
         'send_email': sendEmail,
       },
     );
@@ -157,9 +159,11 @@ class MessagingRepository {
               'name': organization.contactName.trim().isNotEmpty
                   ? organization.contactName.trim()
                   : organization.displayName,
-              'email': organization.contactEmail.trim().isNotEmpty
-                  ? organization.contactEmail.trim()
-                  : organization.organizationEmail.trim(),
+              'email': normalizeEmail(
+                organization.contactEmail.trim().isNotEmpty
+                    ? organization.contactEmail
+                    : organization.organizationEmail,
+              ),
               'send_email': true,
             },
         ],

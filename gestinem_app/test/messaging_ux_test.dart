@@ -16,8 +16,14 @@ void main() {
       ];
       final groups = groupConversationsByClient(convs);
       expect(groups.length, 2);
-      expect(groups.firstWhere((g) => g.companyCode == 'E001').conversations.length, 2);
-      expect(groups.firstWhere((g) => g.companyCode == 'E002').conversations.length, 1);
+      expect(
+        groups.firstWhere((g) => g.companyCode == 'E001').conversations.length,
+        2,
+      );
+      expect(
+        groups.firstWhere((g) => g.companyCode == 'E002').conversations.length,
+        1,
+      );
     });
 
     test('sums unread counts correctly', () {
@@ -51,7 +57,12 @@ void main() {
     test('sorts groups by updatedAt descending', () {
       final now = DateTime.now();
       final convs = [
-        _makeConv('E001', 'Empresa A', 'fiscal', updatedAt: now.subtract(const Duration(hours: 2))),
+        _makeConv(
+          'E001',
+          'Empresa A',
+          'fiscal',
+          updatedAt: now.subtract(const Duration(hours: 2)),
+        ),
         _makeConv('E002', 'Empresa B', 'fiscal', updatedAt: now),
       ];
       final groups = groupConversationsByClient(convs);
@@ -152,17 +163,20 @@ void main() {
       expect(totalUnread, 3);
     });
 
-    test('groupConversationsByClient groups same client into one group with all channels', () {
-      final convs = [
-        _makeConv('E001', 'Empresa', 'laboral', unread: 1),
-        _makeConv('E001', 'Empresa', 'fiscal', unread: 2),
-        _makeConv('E001', 'Empresa', 'private', unread: 0),
-      ];
-      final groups = groupConversationsByClient(convs);
-      expect(groups.length, 1, reason: 'Staff ve 1 grupo por cliente');
-      expect(groups.first.conversations.length, 3);
-      expect(groups.first.totalUnread, 3);
-    });
+    test(
+      'groupConversationsByClient groups same client into one group with all channels',
+      () {
+        final convs = [
+          _makeConv('E001', 'Empresa', 'laboral', unread: 1),
+          _makeConv('E001', 'Empresa', 'fiscal', unread: 2),
+          _makeConv('E001', 'Empresa', 'private', unread: 0),
+        ];
+        final groups = groupConversationsByClient(convs);
+        expect(groups.length, 1, reason: 'Staff ve 1 grupo por cliente');
+        expect(groups.first.conversations.length, 3);
+        expect(groups.first.totalUnread, 3);
+      },
+    );
   });
 }
 

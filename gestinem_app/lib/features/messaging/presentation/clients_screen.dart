@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
+import '../../../core/validation/email_validation.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../domain/client_organization.dart';
 import 'messaging_providers.dart';
@@ -27,21 +28,32 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
     super.dispose();
   }
 
-  String _recipientEmail(ClientOrganization row) =>
-      row.contactEmail.trim().isNotEmpty
-      ? row.contactEmail.trim()
-      : row.organizationEmail.trim();
+  String _recipientEmail(ClientOrganization row) => normalizeEmail(
+    row.contactEmail.trim().isNotEmpty
+        ? row.contactEmail
+        : row.organizationEmail,
+  );
 
   bool _canBulkInvite(ClientOrganization row) =>
+      row.active &&
       row.accessStatus != 'active' &&
       row.accessStatus != 'disabled' &&
-      _recipientEmail(row).contains('@');
+      isValidEmail(_recipientEmail(row));
+
+  String _unavailableReason(ClientOrganization row) {
+    if (!row.active) return 'Empresa inactiva';
+    if (row.accessStatus == 'active') return 'Acceso ya activo';
+    if (row.accessStatus == 'disabled') return 'Acceso deshabilitado';
+    if (!isValidEmail(_recipientEmail(row))) return 'Sin correo válido';
+    return '';
+  }
 
   void _toggleSelected(ClientOrganization row) {
     if (!_canBulkInvite(row)) {
+      final reason = _unavailableReason(row);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Este cliente no tiene un correo válido para invitar.'),
+        SnackBar(
+          content: Text('No se puede invitar: ${reason.toLowerCase()}.'),
         ),
       );
       return;
@@ -285,6 +297,7 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
                           itemBuilder: (context, index) {
                             final row = filtered[index];
                             final canInvite = _canBulkInvite(row);
+                            final unavailableReason = _unavailableReason(row);
                             return ListTile(
                               key: Key('client-${row.companyCode}'),
                               enabled: !_selecting || canInvite,
@@ -306,7 +319,7 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
                               title: Text(row.displayName),
                               subtitle: Text(
                                 _selecting && !canInvite
-                                    ? '${row.companyCode} · Sin correo válido'
+                                    ? '${row.companyCode} · $unavailableReason'
                                     : row.companyCode,
                               ),
                               trailing: _selecting

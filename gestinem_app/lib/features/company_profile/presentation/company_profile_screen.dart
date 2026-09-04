@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../domain/company_profile.dart';
 import 'company_profile_providers.dart';
@@ -96,6 +97,13 @@ class _ProfileContent extends StatelessWidget {
               ],
             ),
           ),
+        ),
+        const SizedBox(height: 12),
+        FilledButton.icon(
+          key: const Key('request-profile-change-button'),
+          onPressed: () => context.push('/company-profile/change-request'),
+          icon: const Icon(Icons.edit_note_outlined),
+          label: const Text('Solicitar modificación de datos'),
         ),
       ],
     );

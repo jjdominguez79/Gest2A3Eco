@@ -71,24 +71,27 @@ class _InvoiceDetailBody extends StatelessWidget {
         if (invoice.lines.isNotEmpty) ...[
           Text('Lineas', style: theme.textTheme.titleMedium),
           const SizedBox(height: 8),
-          ...invoice.lines.map((line) => Card(
-                child: ListTile(
-                  title: Text(
-                    line.description.isNotEmpty
-                        ? line.description
-                        : 'Linea ${line.lineNumber}',
-                  ),
-                  subtitle: Text(
-                    '${line.quantity} x ${line.unitPrice} EUR '
-                    '(IVA ${line.vatRate}%)',
-                  ),
-                  trailing: Text(
-                    '${line.lineTotal} EUR',
-                    style: theme.textTheme.bodyMedium
-                        ?.copyWith(fontWeight: FontWeight.bold),
+          ...invoice.lines.map(
+            (line) => Card(
+              child: ListTile(
+                title: Text(
+                  line.description.isNotEmpty
+                      ? line.description
+                      : 'Linea ${line.lineNumber}',
+                ),
+                subtitle: Text(
+                  '${line.quantity} x ${line.unitPrice} EUR '
+                  '(IVA ${line.vatRate}%)',
+                ),
+                trailing: Text(
+                  '${line.lineTotal} EUR',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-              )),
+              ),
+            ),
+          ),
           const SizedBox(height: 12),
         ],
 

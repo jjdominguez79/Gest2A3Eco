@@ -11,16 +11,26 @@ void main() {
   test('provider principal expone conversaciones del repository', () async {
     final adapter = JsonAdapter([
       {
-        'id': 'c1', 'company_code': 'E1', 'company_name': 'Empresa',
-        'kind': 'laboral', 'state': 'pendiente', 'unread_count': 0,
-        'updated_at': '2026-08-15T10:00:00Z', 'last_message': null,
-      }
+        'id': 'c1',
+        'company_code': 'E1',
+        'company_name': 'Empresa',
+        'kind': 'laboral',
+        'state': 'pendiente',
+        'unread_count': 0,
+        'updated_at': '2026-08-15T10:00:00Z',
+        'last_message': null,
+      },
     ]);
-    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'))..httpClientAdapter = adapter;
-    final container = ProviderContainer(overrides: [
-      sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
-      apiClientProvider.overrideWithValue(ApiClient(dio: dio, tokenProvider: () => testSession.token)),
-    ]);
+    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'))
+      ..httpClientAdapter = adapter;
+    final container = ProviderContainer(
+      overrides: [
+        sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+        apiClientProvider.overrideWithValue(
+          ApiClient(dio: dio, tokenProvider: () => testSession.token),
+        ),
+      ],
+    );
     addTearDown(container.dispose);
 
     final conversations = await container.read(conversationsProvider.future);

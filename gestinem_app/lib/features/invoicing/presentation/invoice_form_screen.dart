@@ -56,21 +56,23 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
         _lines = draft.lines.isEmpty
             ? [_LineData()]
             : draft.lines
-                .map((l) => _LineData(
+                  .map(
+                    (l) => _LineData(
                       description: l.description,
                       quantity: l.quantity,
                       unitPrice: l.unitPrice,
                       discountPercent: l.discountPercent,
                       vatRate: l.vatRate,
-                    ))
-                .toList();
+                    ),
+                  )
+                  .toList();
         _loading = false;
       });
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(apiErrorMessage(e))),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(e))));
         context.pop();
       }
     }
@@ -103,9 +105,9 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     if (_customerId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Selecciona un cliente')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Selecciona un cliente')));
       return;
     }
     setState(() => _saving = true);
@@ -121,9 +123,9 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
       if (mounted) context.pop();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(apiErrorMessage(e))),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(e))));
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -159,9 +161,9 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
       if (mounted) context.pop();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(apiErrorMessage(e))),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(e))));
       }
     }
   }
@@ -170,7 +172,9 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
   Widget build(BuildContext context) {
     if (_loading) {
       return Scaffold(
-        appBar: AppBar(title: Text(_isEdit ? 'Editar borrador' : 'Nueva factura')),
+        appBar: AppBar(
+          title: Text(_isEdit ? 'Editar borrador' : 'Nueva factura'),
+        ),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
@@ -187,9 +191,8 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
             ),
           if (_isEdit)
             TextButton(
-              onPressed: () => context.push(
-                '/invoicing/drafts/${widget.draftId}/issue',
-              ),
+              onPressed: () =>
+                  context.push('/invoicing/drafts/${widget.draftId}/issue'),
               child: const Text('Emitir'),
             ),
         ],
@@ -246,13 +249,11 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('Lineas',
-                    style: Theme.of(context).textTheme.titleMedium),
+                Text('Lineas', style: Theme.of(context).textTheme.titleMedium),
                 IconButton(
                   icon: const Icon(Icons.add_circle_outline),
                   tooltip: 'Anadir linea',
-                  onPressed: () =>
-                      setState(() => _lines.add(_LineData())),
+                  onPressed: () => setState(() => _lines.add(_LineData())),
                 ),
               ],
             ),
@@ -309,10 +310,7 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
 
 /// Selector de cliente con dropdown.
 class _CustomerSelector extends ConsumerWidget {
-  const _CustomerSelector({
-    required this.selectedId,
-    required this.onChanged,
-  });
+  const _CustomerSelector({required this.selectedId, required this.onChanged});
 
   final String? selectedId;
   final ValueChanged<String?> onChanged;
@@ -328,8 +326,9 @@ class _CustomerSelector extends ConsumerWidget {
         if (customers.isEmpty) {
           return OutlinedButton.icon(
             onPressed: () async {
-              final created =
-                  await context.push<bool>('/invoicing/customers/new');
+              final created = await context.push<bool>(
+                '/invoicing/customers/new',
+              );
               if (created == true) {
                 ref.invalidate(invoiceCustomersProvider);
               }
@@ -339,13 +338,17 @@ class _CustomerSelector extends ConsumerWidget {
           );
         }
         return DropdownButtonFormField<String>(
-          initialValue: customers.any((c) => c.id == selectedId) ? selectedId : null,
+          initialValue: customers.any((c) => c.id == selectedId)
+              ? selectedId
+              : null,
           decoration: const InputDecoration(labelText: 'Cliente *'),
           items: customers
-              .map((c) => DropdownMenuItem(
-                    value: c.id,
-                    child: Text('${c.legalName} (${c.taxId})'),
-                  ))
+              .map(
+                (c) => DropdownMenuItem(
+                  value: c.id,
+                  child: Text('${c.legalName} (${c.taxId})'),
+                ),
+              )
               .toList(),
           onChanged: onChanged,
           validator: (v) =>
@@ -381,8 +384,10 @@ class _LineEditor extends StatelessWidget {
           children: [
             Row(
               children: [
-                Text('Linea ${index + 1}',
-                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                Text(
+                  'Linea ${index + 1}',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
                 const Spacer(),
                 if (canRemove)
                   IconButton(
@@ -406,8 +411,9 @@ class _LineEditor extends StatelessWidget {
                   child: TextFormField(
                     initialValue: data.quantity,
                     decoration: const InputDecoration(labelText: 'Cantidad'),
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     onChanged: (v) => data.quantity = v,
                   ),
                 ),
@@ -415,10 +421,12 @@ class _LineEditor extends StatelessWidget {
                 Expanded(
                   child: TextFormField(
                     initialValue: data.unitPrice,
-                    decoration:
-                        const InputDecoration(labelText: 'Precio unitario'),
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: 'Precio unitario',
+                    ),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     onChanged: (v) => data.unitPrice = v,
                   ),
                 ),
@@ -431,8 +439,9 @@ class _LineEditor extends StatelessWidget {
                   child: TextFormField(
                     initialValue: data.discountPercent,
                     decoration: const InputDecoration(labelText: 'Dto %'),
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     onChanged: (v) => data.discountPercent = v,
                   ),
                 ),
@@ -478,10 +487,10 @@ class _LineData {
   });
 
   Map<String, dynamic> toJson() => {
-        'description': description,
-        'quantity': quantity,
-        'unit_price': unitPrice,
-        'discount_percent': discountPercent,
-        'vat_rate': vatRate,
-      };
+    'description': description,
+    'quantity': quantity,
+    'unit_price': unitPrice,
+    'discount_percent': discountPercent,
+    'vat_rate': vatRate,
+  };
 }

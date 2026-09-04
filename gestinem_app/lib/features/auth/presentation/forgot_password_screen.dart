@@ -8,7 +8,8 @@ class ForgotPasswordScreen extends ConsumerStatefulWidget {
   const ForgotPasswordScreen({super.key});
 
   @override
-  ConsumerState<ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
+  ConsumerState<ForgotPasswordScreen> createState() =>
+      _ForgotPasswordScreenState();
 }
 
 class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
@@ -35,10 +36,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
     });
     try {
       final api = ref.read(apiClientProvider);
-      await api.dio.post<void>(
-        '/auth/forgot-password',
-        data: {'email': email},
-      );
+      await api.dio.post<void>('/auth/forgot-password', data: {'email': email});
       if (mounted) setState(() => _sent = true);
     } catch (e) {
       if (mounted) setState(() => _error = apiErrorMessage(e));
@@ -76,25 +74,30 @@ class _SentCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.mark_email_read_outlined,
-                  size: 48, color: Color(0xFF004B76)),
-              const SizedBox(height: 16),
-              Text('Revisa tu correo',
-                  style: Theme.of(context).textTheme.headlineSmall),
-              const SizedBox(height: 8),
-              const Text(
-                'Si existe una cuenta con ese correo, recibirás un enlace para restablecer tu contraseña.',
-                textAlign: TextAlign.center,
-              ),
-            ],
+    child: Padding(
+      padding: const EdgeInsets.all(28),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.mark_email_read_outlined,
+            size: 48,
+            color: Color(0xFF004B76),
           ),
-        ),
-      );
+          const SizedBox(height: 16),
+          Text(
+            'Revisa tu correo',
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Si existe una cuenta con ese correo, recibirás un enlace para restablecer tu contraseña.',
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _FormCard extends StatelessWidget {
@@ -112,45 +115,45 @@ class _FormCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                '¿Olvidaste tu contraseña?',
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Introduce tu correo electrónico y te enviaremos un enlace para restablecer tu contraseña.',
-              ),
-              const SizedBox(height: 20),
-              TextField(
-                controller: email,
-                keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(labelText: 'Correo electrónico'),
-              ),
-              if (error != null) ...[
-                const SizedBox(height: 8),
-                Text(
-                  error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-              ],
-              const SizedBox(height: 16),
-              FilledButton(
-                onPressed: loading ? null : onSubmit,
-                child: loading
-                    ? const SizedBox.square(
-                        dimension: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Enviar enlace'),
-              ),
-            ],
+    child: Padding(
+      padding: const EdgeInsets.all(28),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            '¿Olvidaste tu contraseña?',
+            style: Theme.of(context).textTheme.headlineSmall,
           ),
-        ),
-      );
+          const SizedBox(height: 8),
+          const Text(
+            'Introduce tu correo electrónico y te enviaremos un enlace para restablecer tu contraseña.',
+          ),
+          const SizedBox(height: 20),
+          TextField(
+            controller: email,
+            keyboardType: TextInputType.emailAddress,
+            decoration: const InputDecoration(labelText: 'Correo electrónico'),
+          ),
+          if (error != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              error!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ],
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: loading ? null : onSubmit,
+            child: loading
+                ? const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Enviar enlace'),
+          ),
+        ],
+      ),
+    ),
+  );
 }

@@ -68,7 +68,10 @@ class _AboutScreenState extends ConsumerState<AboutScreen> {
             constraints: const BoxConstraints(maxWidth: 620),
             child: ListView(
               padding: EdgeInsets.fromLTRB(
-                24, 24, 24, 24 + MediaQuery.viewPaddingOf(context).bottom,
+                24,
+                24,
+                24,
+                24 + MediaQuery.viewPaddingOf(context).bottom,
               ),
               children: [
                 Center(

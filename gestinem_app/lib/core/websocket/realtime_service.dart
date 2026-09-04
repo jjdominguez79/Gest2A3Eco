@@ -21,11 +21,13 @@ class RealtimeService {
     final audience = session.profile.type.name;
     while (!_closed) {
       try {
-        final response = await api.dio.post<Map<String, dynamic>>('/$audience/ws-ticket');
-        final ticket = response.data!['ticket'] as String;
-        final uri = Uri.parse('${appConfig.webSocketUrl}/$audience').replace(
-          queryParameters: {'ticket': ticket},
+        final response = await api.dio.post<Map<String, dynamic>>(
+          '/$audience/ws-ticket',
         );
+        final ticket = response.data!['ticket'] as String;
+        final uri = Uri.parse(
+          '${appConfig.webSocketUrl}/$audience',
+        ).replace(queryParameters: {'ticket': ticket});
         final channel = WebSocketChannel.connect(uri);
         _channel = channel;
         await channel.ready;

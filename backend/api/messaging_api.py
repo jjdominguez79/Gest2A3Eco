@@ -5,9 +5,11 @@ import hashlib
 import io
 import json
 import mimetypes
+import re
 import secrets
 import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Literal
 from urllib.parse import urlencode, urlparse
 
@@ -27,6 +29,7 @@ from backend.api.messaging_models import (
     MessagingDeletionAudit, MessagingEvent, MessagingGroup, MessagingGroupMember,
     MessagingInvitation, MessagingMessage, MessagingOrganization,
     MessagingPasswordReset, MessagingPresence, MessagingRead, MessagingSession, MessagingStaff,
+    MessagingProfileChangeRequest,
     MessagingStaffAuthFlow, MessagingStaffChannel, MessagingStaffSession,
     MessagingStaffAppCode, MessagingStaffThread, MessagingStaffThreadMessage,
     MessagingStaffPresenceConnection, MessagingStaffThreadRead, MessagingWebSocketTicket,
@@ -105,6 +108,11 @@ class InviteIn(BaseModel):
 
 class BatchInviteIn(BaseModel):
     invitations: list[InviteIn] = Field(min_length=1, max_length=200)
+
+
+class ProfileChangeReviewIn(BaseModel):
+    status: Literal["applied", "rejected"]
+    note: str = Field(default="", max_length=1000)
 
 
 class AcceptInviteIn(BaseModel):
@@ -386,6 +394,13 @@ def _validated_staff_email(value: str) -> str:
         raise HTTPException(422, "Email corporativo no valido")
     if domain and not email.endswith(f"@{domain}"):
         raise HTTPException(422, f"El usuario debe pertenecer a @{domain}")
+    return email
+
+
+def _validated_client_email(value: str) -> str:
+    email = value.strip().lower()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise HTTPException(422, "Email de cliente no valido")
     return email
 
 
@@ -1005,7 +1020,7 @@ def _prepare_invitation(
 ) -> tuple[MessagingClient, MessagingInvitation, str]:
     org = _organization(db, payload.company_code)
     org.active = True
-    email = payload.email.strip().lower()
+    email = _validated_client_email(payload.email)
     client = db.scalar(select(MessagingClient).where(
         MessagingClient.email == email,
     ))
@@ -2107,6 +2122,234 @@ def staff_create_invitations_batch(
         ),
         "invitations": invitations,
     }
+
+
+_PROFILE_CHANGE_FIELDS = {
+    "legal_name": "razon social",
+    "tax_id": "NIF/CIF",
+    "address": "direccion",
+    "postal_code": "codigo postal",
+    "city": "poblacion",
+    "province": "provincia",
+    "country": "pais",
+    "phone": "telefono",
+    "email": "correo electronico",
+    "bank_accounts": "cuentas bancarias",
+}
+
+
+def _normalize_profile_changes(raw: object) -> dict[str, object]:
+    if not isinstance(raw, dict):
+        raise HTTPException(422, "Los cambios deben ser un objeto JSON")
+    unknown = set(raw) - set(_PROFILE_CHANGE_FIELDS)
+    if unknown:
+        raise HTTPException(422, f"Campos no permitidos: {', '.join(sorted(unknown))}")
+    result: dict[str, object] = {}
+    for field, raw_value in raw.items():
+        if field == "bank_accounts":
+            values = raw_value if isinstance(raw_value, list) else str(raw_value or "").splitlines()
+            accounts = [re.sub(r"\s+", "", str(value)).upper() for value in values]
+            result[field] = [value for value in accounts if value][:10]
+            continue
+        value = str(raw_value or "").strip()
+        if len(value) > 500:
+            raise HTTPException(422, f"El campo {_PROFILE_CHANGE_FIELDS[field]} es demasiado largo")
+        if field == "tax_id":
+            value = re.sub(r"[^A-Za-z0-9]", "", value).upper()
+        elif field == "email" and value:
+            value = _validated_client_email(value)
+        elif field == "phone":
+            value = re.sub(r"[^0-9+]", "", value)
+        elif field in {"legal_name", "address", "city", "province", "country"}:
+            value = value.upper()
+        result[field] = value
+    return result
+
+
+def _validate_profile_logo(upload: UploadFile) -> None:
+    name = safe_name(upload.filename or "logo")
+    suffix = Path(name).suffix.lower()
+    if suffix not in {".png", ".jpg", ".jpeg", ".webp"}:
+        raise HTTPException(415, "El logotipo debe ser PNG, JPG o WEBP")
+    content = upload.file.read(MAX_AVATAR + 1)
+    upload.file.seek(0)
+    if len(content) > MAX_AVATAR:
+        raise HTTPException(413, "El logotipo supera 5 MB")
+    try:
+        with Image.open(io.BytesIO(content)) as image:
+            image.verify()
+    except (UnidentifiedImageError, OSError) as exc:
+        raise HTTPException(415, "El logotipo no es una imagen valida") from exc
+
+
+def _serialize_profile_change_request(item: MessagingProfileChangeRequest) -> dict:
+    return {
+        "id": item.id,
+        "organization_id": item.organization_id,
+        "client_id": item.client_id,
+        "message_id": item.message_id,
+        "changes": json.loads(item.changes_json or "{}"),
+        "current_values": json.loads(item.current_values_json or "{}"),
+        "notes": item.notes,
+        "status": item.status,
+        "review_note": item.review_note,
+        "reviewed_by": item.reviewed_by,
+        "reviewed_at": item.reviewed_at.isoformat() if item.reviewed_at else None,
+        "created_at": item.created_at.isoformat(),
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
+@router.post("/client/profile-change-requests")
+def create_profile_change_request(
+    background: BackgroundTasks,
+    changes_json: str = Form(default="{}"),
+    notes: str = Form(default=""),
+    logo: UploadFile | None = File(default=None),
+    client: MessagingClient = Depends(_client),
+    db: Session = Depends(get_db),
+):
+    """Registra una propuesta; nunca altera directamente la ficha empresarial."""
+    try:
+        raw_changes = json.loads(changes_json or "{}")
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "Los cambios no contienen JSON valido") from exc
+    changes = _normalize_profile_changes(raw_changes)
+    if logo:
+        _validate_profile_logo(logo)
+    if not changes and not logo:
+        raise HTTPException(422, "Indica al menos un cambio o adjunta un logotipo")
+    if len(notes.strip()) > 2000:
+        raise HTTPException(422, "Las observaciones son demasiado largas")
+
+    org = db.get(MessagingOrganization, client.organization_id)
+    current = {
+        field: getattr(org, field, "")
+        for field in _PROFILE_CHANGE_FIELDS
+        if field != "bank_accounts"
+    }
+    request_item = MessagingProfileChangeRequest(
+        organization_id=org.id,
+        client_id=client.id,
+        changes_json=json.dumps(changes, ensure_ascii=True, sort_keys=True),
+        current_values_json=json.dumps(current, ensure_ascii=True, sort_keys=True),
+        notes=notes.strip(),
+    )
+    db.add(request_item)
+    db.flush()
+
+    labels = [_PROFILE_CHANGE_FIELDS[field] for field in changes]
+    if logo:
+        labels.append("logotipo")
+    detail_lines = []
+    for field, proposed in changes.items():
+        previous = current.get(field, "")
+        previous_text = ", ".join(previous) if isinstance(previous, list) else str(previous or "Sin informar")
+        proposed_text = ", ".join(proposed) if isinstance(proposed, list) else str(proposed or "Vacío")
+        detail_lines.append(
+            f"- {_PROFILE_CHANGE_FIELDS[field].capitalize()}: {previous_text} -> {proposed_text}"
+        )
+    if logo:
+        detail_lines.append(f"- Logotipo: archivo adjunto ({safe_name(logo.filename or 'logo')})")
+    if notes.strip():
+        detail_lines.append(f"- Observaciones: {notes.strip()}")
+    conv = db.scalar(select(MessagingConversation).where(
+        MessagingConversation.organization_id == org.id,
+        MessagingConversation.kind == "private",
+    ))
+    if not conv:
+        conv = MessagingConversation(organization_id=org.id, kind="private")
+        db.add(conv)
+        db.flush()
+    message = _create_message(
+        db,
+        conv,
+        actor_type="client",
+        actor_id=client.id,
+        actor_name=client.name,
+        body=(
+            "He solicitado modificar los datos de mi empresa: "
+            + ", ".join(labels)
+            + ".\n\n"
+            + "\n".join(detail_lines)
+            + "\n\nRevisa la solicitud antes de aplicar cambios en el escritorio."
+        ),
+        idempotency_key=f"profile-change-{request_item.id}",
+        files=[logo] if logo else [],
+    )
+    request_item.message_id = message.id
+    db.commit()
+    db.refresh(request_item)
+    _queue_app_pushes(db, background, conv, "staff", message.id)
+    return _serialize_profile_change_request(request_item)
+
+
+@router.get("/client/profile-change-requests")
+def client_profile_change_requests(
+    client: MessagingClient = Depends(_client), db: Session = Depends(get_db),
+):
+    rows = db.scalars(select(MessagingProfileChangeRequest).where(
+        MessagingProfileChangeRequest.organization_id == client.organization_id,
+    ).order_by(MessagingProfileChangeRequest.created_at.desc())).all()
+    return [_serialize_profile_change_request(item) for item in rows]
+
+
+@router.get("/staff/admin/profile-change-requests")
+def staff_profile_change_requests(
+    status: str = Query(default="pending"),
+    _admin: MessagingStaff = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    stmt = select(MessagingProfileChangeRequest)
+    if status:
+        stmt = stmt.where(MessagingProfileChangeRequest.status == status)
+    rows = db.scalars(stmt.order_by(MessagingProfileChangeRequest.created_at.desc())).all()
+    result = []
+    for item in rows:
+        data = _serialize_profile_change_request(item)
+        org = db.get(MessagingOrganization, item.organization_id)
+        data.update({
+            "company_code": org.company_code if org else "",
+            "company_name": org.name if org else "",
+        })
+        result.append(data)
+    return result
+
+
+@router.patch("/staff/admin/profile-change-requests/{request_id}")
+def review_profile_change_request(
+    request_id: str,
+    payload: ProfileChangeReviewIn,
+    admin: MessagingStaff = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    item = db.get(MessagingProfileChangeRequest, request_id)
+    if not item:
+        raise HTTPException(404, "Solicitud no encontrada")
+    if item.status != "pending":
+        raise HTTPException(409, "La solicitud ya fue revisada")
+    item.status = payload.status
+    item.review_note = payload.note.strip()
+    item.reviewed_by = admin.external_id
+    item.reviewed_at = utcnow()
+    if payload.status == "applied" and item.message_id:
+        logo = db.scalar(
+            select(MessagingAttachment).where(
+                MessagingAttachment.message_id == item.message_id,
+                MessagingAttachment.content_type.like("image/%"),
+                MessagingAttachment.storage_deleted_at.is_(None),
+            ).order_by(MessagingAttachment.created_at.desc())
+        )
+        if logo:
+            organization = db.get(MessagingOrganization, item.organization_id)
+            if organization:
+                organization.logo_storage_key = logo.storage_key
+                organization.logo_content_type = logo.content_type
+                # El logotipo aprobado es identidad corporativa permanente, no
+                # un adjunto temporal sujeto a la limpieza periodica.
+                logo.expires_at = None
+    db.commit()
+    return _serialize_profile_change_request(item)
 
 
 @router.get("/public/app-version")

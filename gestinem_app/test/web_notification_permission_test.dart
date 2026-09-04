@@ -59,10 +59,12 @@ class _CountingNotificationsService extends NotificationsService {
 // ---------------------------------------------------------------------------
 
 ProviderContainer _makeContainer(NotificationsService svc) {
-  return ProviderContainer(overrides: [
-    notificationsServiceProvider.overrideWithValue(svc),
-    sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
-  ]);
+  return ProviderContainer(
+    overrides: [
+      notificationsServiceProvider.overrideWithValue(svc),
+      sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+    ],
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -82,23 +84,25 @@ void main() {
       );
     });
 
-    test('activate llega a authorized cuando el servicio devuelve true', () async {
-      final svc = _FakeNotificationsService()..activateResult = true;
-      final container = _makeContainer(svc);
-      addTearDown(container.dispose);
+    test(
+      'activate llega a authorized cuando el servicio devuelve true',
+      () async {
+        final svc = _FakeNotificationsService()..activateResult = true;
+        final container = _makeContainer(svc);
+        addTearDown(container.dispose);
 
-      final api = container.read(apiClientProvider);
-      await container.read(webNotifPermissionProvider.notifier).activate(
-            testSession,
-            api,
-          );
+        final api = container.read(apiClientProvider);
+        await container
+            .read(webNotifPermissionProvider.notifier)
+            .activate(testSession, api);
 
-      expect(
-        container.read(webNotifPermissionProvider),
-        NotificationPermissionState.authorized,
-      );
-      expect(svc.activateCalled, isTrue);
-    });
+        expect(
+          container.read(webNotifPermissionProvider),
+          NotificationPermissionState.authorized,
+        );
+        expect(svc.activateCalled, isTrue);
+      },
+    );
 
     test('activate llega a denied cuando el servicio devuelve false', () async {
       final svc = _FakeNotificationsService()..activateResult = false;
@@ -106,10 +110,9 @@ void main() {
       addTearDown(container.dispose);
 
       final api = container.read(apiClientProvider);
-      await container.read(webNotifPermissionProvider.notifier).activate(
-            testSession,
-            api,
-          );
+      await container
+          .read(webNotifPermissionProvider.notifier)
+          .activate(testSession, api);
 
       expect(
         container.read(webNotifPermissionProvider),
@@ -117,21 +120,23 @@ void main() {
       );
     });
 
-    test('activate llega a configError si el servicio lanza excepcion', () async {
-      final container = _makeContainer(_ThrowingNotificationsService());
-      addTearDown(container.dispose);
+    test(
+      'activate llega a configError si el servicio lanza excepcion',
+      () async {
+        final container = _makeContainer(_ThrowingNotificationsService());
+        addTearDown(container.dispose);
 
-      final api = container.read(apiClientProvider);
-      await container.read(webNotifPermissionProvider.notifier).activate(
-            testSession,
-            api,
-          );
+        final api = container.read(apiClientProvider);
+        await container
+            .read(webNotifPermissionProvider.notifier)
+            .activate(testSession, api);
 
-      expect(
-        container.read(webNotifPermissionProvider),
-        NotificationPermissionState.configError,
-      );
-    });
+        expect(
+          container.read(webNotifPermissionProvider),
+          NotificationPermissionState.configError,
+        );
+      },
+    );
 
     test('activate no hace nada si ya esta authorized', () async {
       final svc = _FakeNotificationsService()..activateResult = true;
@@ -146,10 +151,9 @@ void main() {
       );
 
       final api = container.read(apiClientProvider);
-      await container.read(webNotifPermissionProvider.notifier).activate(
-            testSession,
-            api,
-          );
+      await container
+          .read(webNotifPermissionProvider.notifier)
+          .activate(testSession, api);
 
       // No debe haber llamado al servicio.
       expect(svc.activateCalled, isFalse);
@@ -185,38 +189,42 @@ void main() {
       expect(svc.initCount, 1);
     });
 
-    test('permiso concedido: activate devuelve true y estado es authorized', () async {
-      final svc = _FakeNotificationsService()..activateResult = true;
-      final container = _makeContainer(svc);
-      addTearDown(container.dispose);
+    test(
+      'permiso concedido: activate devuelve true y estado es authorized',
+      () async {
+        final svc = _FakeNotificationsService()..activateResult = true;
+        final container = _makeContainer(svc);
+        addTearDown(container.dispose);
 
-      final api = container.read(apiClientProvider);
-      await container.read(webNotifPermissionProvider.notifier).activate(
-            testSession,
-            api,
-          );
+        final api = container.read(apiClientProvider);
+        await container
+            .read(webNotifPermissionProvider.notifier)
+            .activate(testSession, api);
 
-      expect(
-        container.read(webNotifPermissionProvider),
-        NotificationPermissionState.authorized,
-      );
-    });
+        expect(
+          container.read(webNotifPermissionProvider),
+          NotificationPermissionState.authorized,
+        );
+      },
+    );
 
-    test('permiso denegado: activate devuelve false y estado es denied', () async {
-      final svc = _FakeNotificationsService()..activateResult = false;
-      final container = _makeContainer(svc);
-      addTearDown(container.dispose);
+    test(
+      'permiso denegado: activate devuelve false y estado es denied',
+      () async {
+        final svc = _FakeNotificationsService()..activateResult = false;
+        final container = _makeContainer(svc);
+        addTearDown(container.dispose);
 
-      final api = container.read(apiClientProvider);
-      await container.read(webNotifPermissionProvider.notifier).activate(
-            testSession,
-            api,
-          );
+        final api = container.read(apiClientProvider);
+        await container
+            .read(webNotifPermissionProvider.notifier)
+            .activate(testSession, api);
 
-      expect(
-        container.read(webNotifPermissionProvider),
-        NotificationPermissionState.denied,
-      );
-    });
+        expect(
+          container.read(webNotifPermissionProvider),
+          NotificationPermissionState.denied,
+        );
+      },
+    );
   });
 }

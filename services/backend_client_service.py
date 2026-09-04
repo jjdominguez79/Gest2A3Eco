@@ -113,6 +113,49 @@ class BackendClientService:
         resp.raise_for_status()
         return resp.json()
 
+    def list_profile_change_requests(self, status: str = "pending") -> list[dict]:
+        """Lista solicitudes empresariales pendientes para revision local."""
+        self._ensure_configured()
+        url = (
+            f"{self.base_url}/api/v1/messaging/client/"
+            "internal/profile-change-requests"
+        )
+        resp = self.http.get(
+            url, headers=self._headers(), params={"status": status}, timeout=30,
+        )
+        resp.raise_for_status()
+        return list(resp.json() or [])
+
+    def download_profile_change_logo(self, request_id: str) -> tuple[bytes, str, str]:
+        """Descarga el logotipo propuesto conservando nombre y tipo MIME."""
+        self._ensure_configured()
+        url = (
+            f"{self.base_url}/api/v1/messaging/client/internal/"
+            f"profile-change-requests/{request_id}/logo"
+        )
+        resp = self.http.get(url, headers=self._headers(), timeout=60)
+        resp.raise_for_status()
+        filename = resp.headers.get("X-Logo-Filename", "logo.png")
+        return resp.content, filename, resp.headers.get("Content-Type", "image/png")
+
+    def review_profile_change_request(
+        self, request_id: str, *, status: str, note: str = "",
+    ) -> dict:
+        """Confirma al backend el resultado aplicado desde el escritorio."""
+        self._ensure_configured()
+        url = (
+            f"{self.base_url}/api/v1/messaging/client/internal/"
+            f"profile-change-requests/{request_id}"
+        )
+        resp = self.http.patch(
+            url,
+            headers=self._headers(),
+            json={"status": status, "note": note},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     # ----- Sincronizacion de clientes/deudores -----
 
     def sync_customers(self, *, organization_id: str, customers: list[dict]) -> dict:

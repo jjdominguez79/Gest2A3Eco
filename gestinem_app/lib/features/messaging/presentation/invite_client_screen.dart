@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
+import '../../../core/validation/email_validation.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../domain/conversation.dart';
 import 'messaging_providers.dart';
@@ -56,7 +57,7 @@ class _InviteClientScreenState extends ConsumerState<InviteClientScreen> {
           .inviteClient(
             companyCode: _companyCode,
             name: _name.text.trim(),
-            email: _email.text.trim(),
+            email: normalizeEmail(_email.text),
             sendEmail: _sendEmail,
           );
       ref.invalidate(conversationsProvider);
@@ -201,6 +202,10 @@ class _InviteClientScreenState extends ConsumerState<InviteClientScreen> {
                       onSelected: (org) {
                         setState(() => _selectedOrg = org);
                         _companyText = org.companyCode;
+                        if (_email.text.trim().isEmpty &&
+                            isValidEmail(org.email)) {
+                          _email.text = normalizeEmail(org.email);
+                        }
                       },
                       fieldViewBuilder:
                           (context, controller, focusNode, onSubmit) =>
@@ -251,8 +256,7 @@ class _InviteClientScreenState extends ConsumerState<InviteClientScreen> {
                         prefixIcon: Icon(Icons.email_outlined),
                       ),
                       validator: (value) {
-                        final email = (value ?? '').trim();
-                        return email.contains('@') && email.contains('.')
+                        return isValidEmail(value ?? '')
                             ? null
                             : 'Indica un correo válido';
                       },
@@ -327,9 +331,20 @@ class _OptionsView extends StatelessWidget {
                   child: Row(
                     children: [
                       Expanded(
-                        child: Text(
-                          '${org.companyCode} · ${org.displayName}',
-                          overflow: TextOverflow.ellipsis,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${org.companyCode} · ${org.displayName}',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            if (org.email.trim().isNotEmpty)
+                              Text(
+                                normalizeEmail(org.email),
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                          ],
                         ),
                       ),
                       if (org.hasExistingInvitation) ...[

@@ -28,42 +28,40 @@ Attachment _att({
   int? completedDownloadCount,
   DateTime? lastDownloadedAt,
   String? lastClientName,
-}) =>
-    Attachment(
-      id: 'att-1',
-      name: 'documento.pdf',
-      contentType: 'application/pdf',
-      size: 12345,
-      direction: direction,
-      status: status,
-      available: available,
-      expiresAt: expiresAt,
-      localConfirmed: localConfirmed,
-      withdrawnAt: withdrawnAt,
-      withdrawalReason: withdrawalReason,
-      completedDownloadCount: completedDownloadCount,
-      lastDownloadedAt: lastDownloadedAt,
-      lastClientName: lastClientName,
-    );
+}) => Attachment(
+  id: 'att-1',
+  name: 'documento.pdf',
+  contentType: 'application/pdf',
+  size: 12345,
+  direction: direction,
+  status: status,
+  available: available,
+  expiresAt: expiresAt,
+  localConfirmed: localConfirmed,
+  withdrawnAt: withdrawnAt,
+  withdrawalReason: withdrawalReason,
+  completedDownloadCount: completedDownloadCount,
+  lastDownloadedAt: lastDownloadedAt,
+  lastClientName: lastClientName,
+);
 
 Message _msg({
   bool hasAttachments = false,
   List<Attachment> attachments = const [],
   bool deleted = false,
-}) =>
-    Message(
-      id: 'msg-1',
-      conversationId: 'conv-1',
-      authorType: 'staff',
-      authorId: 'staff-1',
-      authorName: 'Gestor',
-      authorAvatarUrl: '',
-      body: 'Adjunto importante',
-      createdAt: DateTime(2026, 8, 19),
-      deleted: deleted,
-      hasAttachments: hasAttachments,
-      attachments: attachments,
-    );
+}) => Message(
+  id: 'msg-1',
+  conversationId: 'conv-1',
+  authorType: 'staff',
+  authorId: 'staff-1',
+  authorName: 'Gestor',
+  authorAvatarUrl: '',
+  body: 'Adjunto importante',
+  createdAt: DateTime(2026, 8, 19),
+  deleted: deleted,
+  hasAttachments: hasAttachments,
+  attachments: attachments,
+);
 
 Widget _wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
 
@@ -202,56 +200,69 @@ void main() {
   group('AttachmentCard cliente', () {
     testWidgets('adjunto disponible muestra boton de descarga', (tester) async {
       bool tapped = false;
-      await tester.pumpWidget(_wrap(
-        AttachmentCard(
-          attachment: _att(status: 'disponible', available: true),
-          isStaff: false,
-          onDownload: () => tapped = true,
+      await tester.pumpWidget(
+        _wrap(
+          AttachmentCard(
+            attachment: _att(status: 'disponible', available: true),
+            isStaff: false,
+            onDownload: () => tapped = true,
+          ),
         ),
-      ));
+      );
       expect(find.byKey(const Key('download-att-1')), findsOneWidget);
       await tester.tap(find.byKey(const Key('download-att-1')));
       expect(tapped, isTrue);
     });
 
-    testWidgets('adjunto caducado no muestra boton de descarga', (tester) async {
-      await tester.pumpWidget(_wrap(
-        AttachmentCard(
-          attachment: _att(status: 'caducado', available: false),
-          isStaff: false,
+    testWidgets('adjunto caducado no muestra boton de descarga', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _wrap(
+          AttachmentCard(
+            attachment: _att(status: 'caducado', available: false),
+            isStaff: false,
+          ),
         ),
-      ));
+      );
       expect(find.byKey(const Key('download-att-1')), findsNothing);
       expect(find.textContaining('caducado'), findsOneWidget);
     });
 
-    testWidgets('adjunto retirado no muestra boton de descarga', (tester) async {
-      await tester.pumpWidget(_wrap(
-        AttachmentCard(
-          attachment: _att(
-            status: 'retirado',
-            available: false,
-            withdrawnAt: DateTime(2026, 8, 19),
+    testWidgets('adjunto retirado no muestra boton de descarga', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _wrap(
+          AttachmentCard(
+            attachment: _att(
+              status: 'retirado',
+              available: false,
+              withdrawnAt: DateTime(2026, 8, 19),
+            ),
+            isStaff: false,
           ),
-          isStaff: false,
         ),
-      ));
+      );
       expect(find.byKey(const Key('download-att-1')), findsNothing);
       expect(find.textContaining('retirado'), findsOneWidget);
     });
 
-    testWidgets('adjunto entrante del propio cliente no es descargable',
-        (tester) async {
-      await tester.pumpWidget(_wrap(
-        AttachmentCard(
-          attachment: _att(
-            direction: 'incoming',
-            status: 'recibido_por_gestinem',
-            available: false,
+    testWidgets('adjunto entrante del propio cliente no es descargable', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _wrap(
+          AttachmentCard(
+            attachment: _att(
+              direction: 'incoming',
+              status: 'recibido_por_gestinem',
+              available: false,
+            ),
+            isStaff: false,
           ),
-          isStaff: false,
         ),
-      ));
+      );
       expect(find.byKey(const Key('download-att-1')), findsNothing);
       expect(find.textContaining('Gestinem'), findsOneWidget);
     });
@@ -260,87 +271,105 @@ void main() {
   // ── AttachmentCard para personal ───────────────────────────────────────────
 
   group('AttachmentCard personal', () {
-    testWidgets('adjunto saliente no tiene boton de descarga para staff',
-        (tester) async {
-      await tester.pumpWidget(_wrap(
-        AttachmentCard(
-          attachment: _att(status: 'disponible', available: true),
-          isStaff: true,
+    testWidgets('adjunto saliente no tiene boton de descarga para staff', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _wrap(
+          AttachmentCard(
+            attachment: _att(status: 'disponible', available: true),
+            isStaff: true,
+          ),
         ),
-      ));
+      );
       expect(find.byKey(const Key('download-att-1')), findsNothing);
     });
 
-    testWidgets('adjunto entrante muestra estado recibido_por_gestinem',
-        (tester) async {
-      await tester.pumpWidget(_wrap(
-        AttachmentCard(
-          attachment: _att(
-            direction: 'incoming',
-            status: 'recibido_por_gestinem',
-            available: false,
+    testWidgets('adjunto entrante muestra estado recibido_por_gestinem', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _wrap(
+          AttachmentCard(
+            attachment: _att(
+              direction: 'incoming',
+              status: 'recibido_por_gestinem',
+              available: false,
+            ),
+            isStaff: true,
           ),
-          isStaff: true,
         ),
-      ));
+      );
       expect(find.textContaining('Gestinem'), findsOneWidget);
     });
 
-    testWidgets('adjunto entrante confirmado muestra guardado_por_asesoria',
-        (tester) async {
-      await tester.pumpWidget(_wrap(
-        AttachmentCard(
-          attachment: _att(
-            direction: 'incoming',
-            status: 'guardado_por_asesoria',
-            localConfirmed: true,
-            available: false,
+    testWidgets('adjunto entrante confirmado muestra guardado_por_asesoria', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _wrap(
+          AttachmentCard(
+            attachment: _att(
+              direction: 'incoming',
+              status: 'guardado_por_asesoria',
+              localConfirmed: true,
+              available: false,
+            ),
+            isStaff: true,
           ),
-          isStaff: true,
         ),
-      ));
+      );
       expect(find.textContaining('asesoria'), findsOneWidget);
     });
 
-    testWidgets('muestra resumen de descargas para adjunto saliente',
-        (tester) async {
-      await tester.pumpWidget(_wrap(
-        AttachmentCard(
-          attachment: _att(
-            completedDownloadCount: 2,
-            lastDownloadedAt: DateTime(2026, 8, 20, 10, 30),
-            lastClientName: 'Maria',
+    testWidgets('muestra resumen de descargas para adjunto saliente', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _wrap(
+          AttachmentCard(
+            attachment: _att(
+              completedDownloadCount: 2,
+              lastDownloadedAt: DateTime(2026, 8, 20, 10, 30),
+              lastClientName: 'Maria',
+            ),
+            isStaff: true,
           ),
-          isStaff: true,
         ),
-      ));
+      );
       expect(find.textContaining('Descargas: 2'), findsOneWidget);
       expect(find.textContaining('Maria'), findsOneWidget);
     });
 
-    testWidgets('muestra "Pendiente de descarga" cuando no hay descargas',
-        (tester) async {
-      await tester.pumpWidget(_wrap(
-        AttachmentCard(
-          attachment: _att(completedDownloadCount: 0),
-          isStaff: true,
+    testWidgets('muestra "Pendiente de descarga" cuando no hay descargas', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _wrap(
+          AttachmentCard(
+            attachment: _att(completedDownloadCount: 0),
+            isStaff: true,
+          ),
         ),
-      ));
+      );
       expect(find.textContaining('Pendiente de descarga'), findsOneWidget);
     });
 
-    testWidgets('permite abrir historial y retirar al administrador',
-        (tester) async {
+    testWidgets('permite abrir historial y retirar al administrador', (
+      tester,
+    ) async {
       var history = false;
       var withdrawn = false;
-      await tester.pumpWidget(_wrap(
-        AttachmentCard(
-          attachment: _att(completedDownloadCount: 1),
-          isStaff: true,
-          onShowHistory: () => history = true,
-          onWithdraw: () => withdrawn = true,
+      await tester.pumpWidget(
+        _wrap(
+          AttachmentCard(
+            attachment: _att(completedDownloadCount: 1),
+            isStaff: true,
+            onShowHistory: () => history = true,
+            onWithdraw: () => withdrawn = true,
+          ),
         ),
-      ));
+      );
       await tester.tap(find.byKey(const Key('download-history-att-1')));
       await tester.tap(find.byKey(const Key('withdraw-att-1')));
       expect(history, isTrue);
@@ -348,17 +377,19 @@ void main() {
     });
 
     testWidgets('muestra el motivo de un documento retirado', (tester) async {
-      await tester.pumpWidget(_wrap(
-        AttachmentCard(
-          attachment: _att(
-            status: 'retirado',
-            available: false,
-            withdrawnAt: DateTime(2026, 8, 19),
-            withdrawalReason: 'Documento equivocado',
+      await tester.pumpWidget(
+        _wrap(
+          AttachmentCard(
+            attachment: _att(
+              status: 'retirado',
+              available: false,
+              withdrawnAt: DateTime(2026, 8, 19),
+              withdrawalReason: 'Documento equivocado',
+            ),
+            isStaff: true,
           ),
-          isStaff: true,
         ),
-      ));
+      );
       expect(find.textContaining('Documento equivocado'), findsOneWidget);
     });
   });
@@ -368,12 +399,14 @@ void main() {
   //  pero hasAttachments viaja en el modelo Message y MessageBubble lo expone)
 
   group('MessageBubble hasAttachments', () {
-    testWidgets('mensaje con adjuntos renderiza tarjeta documental', (tester) async {
+    testWidgets('mensaje con adjuntos renderiza tarjeta documental', (
+      tester,
+    ) async {
       final att = _att(status: 'disponible', available: true);
       final msg = _msg(hasAttachments: true, attachments: [att]);
-      await tester.pumpWidget(_wrap(
-        MessageBubble(message: msg, mine: false, isStaff: false),
-      ));
+      await tester.pumpWidget(
+        _wrap(MessageBubble(message: msg, mine: false, isStaff: false)),
+      );
       expect(find.byKey(const Key('attachment-card-att-1')), findsOneWidget);
     });
   });

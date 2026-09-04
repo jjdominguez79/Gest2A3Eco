@@ -36,12 +36,18 @@ class JsonAdapter implements HttpClientAdapter {
   RequestOptions? lastRequest;
 
   @override
-  Future<ResponseBody> fetch(RequestOptions options, Stream<Uint8List>? requestStream, Future<void>? cancelFuture) async {
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
     lastRequest = options;
     return ResponseBody.fromString(
       jsonEncode(payload),
       statusCode,
-      headers: {Headers.contentTypeHeader: ['application/json']},
+      headers: {
+        Headers.contentTypeHeader: ['application/json'],
+      },
     );
   }
 

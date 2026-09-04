@@ -10,6 +10,7 @@ import '../../../core/notifications/notifications_service.dart';
 import '../../../core/widgets/authenticated_avatar.dart';
 import '../../auth/domain/user_profile.dart';
 import '../../auth/presentation/auth_controller.dart';
+import '../../company_profile/presentation/company_profile_providers.dart';
 import '../domain/conversation.dart';
 import 'conversation_screen.dart';
 import 'messaging_providers.dart';
@@ -317,12 +318,6 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
         ],
       ),
       actions: [
-        IconButton(
-          key: const Key('client-company-profile-button'),
-          tooltip: 'Mi empresa',
-          onPressed: () => context.push('/company-profile'),
-          icon: const Icon(Icons.business_outlined),
-        ),
         if (ref.watch(platformFeaturesProvider).valueOrNull?.documents == true)
           IconButton(
             key: const Key('client-documents-button'),
@@ -339,7 +334,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
           ),
         IconButton(
           key: const Key('client-profile-button'),
-          tooltip: 'Mi perfil',
+          tooltip: 'Mi área',
           onPressed: () => context.go('/profile'),
           icon: _ProfileAvatar(profile: profile, radius: 17),
         ),
@@ -1098,9 +1093,9 @@ class _AppDrawer extends ConsumerWidget {
             ),
           if (profile.type == UserType.client) ...[
             ListTile(
-              leading: const Icon(Icons.business_outlined),
-              title: const Text('Mi empresa'),
-              onTap: () => _navigate(context, '/company-profile'),
+              leading: const Icon(Icons.account_circle_outlined),
+              title: const Text('Mi área'),
+              onTap: () => _navigate(context, '/profile'),
             ),
             if (features.documents)
               ListTile(
@@ -1115,11 +1110,12 @@ class _AppDrawer extends ConsumerWidget {
                 onTap: () => _navigate(context, '/invoicing'),
               ),
           ],
-          ListTile(
-            leading: const Icon(Icons.person_outline),
-            title: const Text('Perfil'),
-            onTap: () => _navigate(context, '/profile'),
-          ),
+          if (profile.type == UserType.staff)
+            ListTile(
+              leading: const Icon(Icons.person_outline),
+              title: const Text('Perfil'),
+              onTap: () => _navigate(context, '/profile'),
+            ),
           ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('Acerca de Gestinem'),
@@ -1139,6 +1135,33 @@ class _ProfileAvatar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (profile.type == UserType.client) {
+      final company = ref.watch(companyProfileProvider).valueOrNull;
+      if (company?.logoUrl?.isNotEmpty == true) {
+        return AuthenticatedAvatar(
+          radius: radius,
+          baseUrl: ref
+              .read(apiClientProvider)
+              .dio
+              .options
+              .baseUrl
+              .replaceAll(RegExp(r'/api/v1/messaging/?$'), ''),
+          authToken: ref.read(sessionProvider).valueOrNull?.token ?? '',
+          imagePath: company!.logoUrl!,
+          fallbackText: company.name.isEmpty ? 'E' : company.name[0],
+          cacheVersion: company.profileSyncedAt ?? company.name,
+        );
+      }
+      return CircleAvatar(
+        radius: radius,
+        backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+        child: Icon(
+          Icons.business,
+          size: radius,
+          color: Theme.of(context).colorScheme.onPrimaryContainer,
+        ),
+      );
+    }
     final avatarUrl = profile.avatarUrl;
     return AuthenticatedAvatar(
       radius: radius,

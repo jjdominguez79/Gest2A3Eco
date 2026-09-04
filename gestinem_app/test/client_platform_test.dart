@@ -8,8 +8,11 @@ import 'package:gestinem/core/websocket/realtime_service.dart';
 import 'package:gestinem/features/auth/domain/user_profile.dart';
 import 'package:gestinem/features/auth/presentation/auth_controller.dart';
 import 'package:gestinem/features/company_profile/domain/company_profile.dart';
+import 'package:gestinem/features/company_profile/domain/profile_change_request.dart';
+import 'package:gestinem/features/company_profile/data/company_profile_repository.dart';
 import 'package:gestinem/features/company_profile/presentation/company_profile_providers.dart';
 import 'package:gestinem/features/company_profile/presentation/company_profile_screen.dart';
+import 'package:gestinem/features/profile/presentation/profile_screen.dart';
 import 'package:gestinem/features/messaging/presentation/conversations_screen.dart';
 import 'package:gestinem/features/messaging/presentation/messaging_providers.dart';
 import 'package:gestinem/features/platform/features_provider.dart';
@@ -28,6 +31,77 @@ class _FakeNotifications extends NotificationsService {
 }
 
 void main() {
+  test('envia la solicitud de cambios como formulario estructurado', () async {
+    final adapter = JsonAdapter({'id': 'request-1', 'status': 'pending'});
+    final api = ApiClient(
+      dio: Dio(BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'))
+        ..httpClientAdapter = adapter,
+      tokenProvider: () => testSession.token,
+    );
+
+    await CompanyProfileRepository(api).requestChanges(
+      changes: {
+        'address': 'CALLE NUEVA 2',
+        'bank_accounts': ['ES1234567890'],
+      },
+      notes: 'Revisar domicilio',
+    );
+
+    expect(adapter.lastRequest!.path, '/client/profile-change-requests');
+    final form = adapter.lastRequest!.data as FormData;
+    final fields = Map<String, String>.fromEntries(form.fields);
+    expect(fields['changes_json'], contains('CALLE NUEVA 2'));
+    expect(fields['notes'], 'Revisar domicilio');
+  });
+
+  testWidgets('Mi área separa usuario, empresa y solicitudes', (tester) async {
+    const company = CompanyProfile(
+      companyCode: 'E00006',
+      name: 'Empresa prueba',
+      legalName: 'EMPRESA PRUEBA SL',
+      taxId: 'B12345678',
+      address: 'CALLE MAYOR 1',
+      city: 'MADRID',
+    );
+    final requests = [
+      ProfileChangeRequest(
+        id: 'request-1',
+        status: 'pending',
+        changes: const {'address': 'CALLE NUEVA 2'},
+        createdAt: DateTime(2026, 9, 3),
+      ),
+    ];
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+          companyProfileProvider.overrideWith((ref) async => company),
+          profileChangeRequestsProvider.overrideWith((ref) async => requests),
+        ],
+        child: const MaterialApp(home: ProfileScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Mi área'), findsOneWidget);
+    expect(find.text('Mi usuario'), findsOneWidget);
+    expect(find.text('Mi empresa'), findsOneWidget);
+    expect(find.text('Conectado como: Cliente Prueba'), findsOneWidget);
+    expect(find.byKey(const Key('company-logo-avatar')), findsOneWidget);
+    expect(
+      find.byKey(const Key('request-company-logo-button')),
+      findsOneWidget,
+    );
+    await tester.scrollUntilVisible(
+      find.text('Solicitudes'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Solicitudes'), findsOneWidget);
+    expect(find.text('Pendiente de revisión'), findsOneWidget);
+  });
+
   // -- Perfil empresarial --
   group('CompanyProfileScreen', () {
     testWidgets('renderiza campos del perfil', (tester) async {
@@ -64,6 +138,10 @@ void main() {
       expect(find.text('Madrid'), findsNWidgets(2));
       expect(find.text('600000000'), findsOneWidget);
       expect(find.text('info@testcorp.es'), findsOneWidget);
+      expect(
+        find.byKey(const Key('request-profile-change-button')),
+        findsOneWidget,
+      );
     });
 
     testWidgets('solo lectura - no hay campos editables', (tester) async {
@@ -282,12 +360,14 @@ void main() {
         'email': 'corp@corp.es',
         'active': true,
         'profile_synced_at': '2026-08-15T10:00:00Z',
+        'logo_url': '/api/v1/messaging/client/company-logo',
       });
 
       expect(profile.companyCode, 'E00001');
       expect(profile.legalName, 'Corp SL');
       expect(profile.taxId, 'B11111111');
       expect(profile.profileSyncedAt, '2026-08-15T10:00:00Z');
+      expect(profile.logoUrl, '/api/v1/messaging/client/company-logo');
     });
 
     test('campos opcionales son null por defecto', () {

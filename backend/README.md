@@ -229,3 +229,16 @@ endpoint de eventos siguen siendo la fuente de verdad y el fallback. Antes de
 usar varios workers o escalar horizontalmente debe sustituirse el bus por
 pub/sub compartido (Redis, PostgreSQL u otro equivalente), sin cambiar el
 contrato exterior.
+
+## Solicitudes de modificación de empresa
+
+Flutter no actualiza directamente los datos maestros. El cliente puede proponer
+cambios de razón social, NIF, domicilio, contacto, cuentas bancarias y logotipo
+mediante `POST /api/v1/messaging/client/profile-change-requests`. Cada solicitud
+guarda una instantánea de los valores vigentes y crea un mensaje en el canal
+privado, por lo que el personal recibe el aviso FCM habitual. El logotipo se
+adjunta al mensaje y lo recoge el worker de adjuntos existente. Las solicitudes
+permanecen `pending` hasta que un administrador las marca `applied` o `rejected`.
+Al aprobar una solicitud con imagen, esa imagen pasa a ser el logotipo
+corporativo visible en Flutter. Los restantes cambios no modifican
+automaticamente PostgreSQL del escritorio.

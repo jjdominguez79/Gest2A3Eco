@@ -41,14 +41,14 @@ class UserProfile {
   bool get isAdmin => staffRole == StaffRole.admin;
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'email': email,
-        'type': type.name,
-        'role': staffRole?.name,
-        'channels': channels,
-        'avatar_url': avatarUrl,
-      };
+    'id': id,
+    'name': name,
+    'email': email,
+    'type': type.name,
+    'role': staffRole?.name,
+    'channels': channels,
+    'avatar_url': avatarUrl,
+  };
 }
 
 class AuthSession {
@@ -58,13 +58,15 @@ class AuthSession {
   final UserProfile profile;
 
   Map<String, dynamic> toJson() => {
-        'token': token,
-        'profile': profile.toJson(),
-      };
+    'token': token,
+    'profile': profile.toJson(),
+  };
 
   factory AuthSession.fromJson(Map<String, dynamic> json) {
     final profileJson = json['profile'] as Map<String, dynamic>;
-    final type = profileJson['type'] == 'staff' ? UserType.staff : UserType.client;
+    final type = profileJson['type'] == 'staff'
+        ? UserType.staff
+        : UserType.client;
     return AuthSession(
       token: json['token'] as String,
       profile: UserProfile.fromJson(profileJson, type),

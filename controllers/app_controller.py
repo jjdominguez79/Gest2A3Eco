@@ -481,9 +481,29 @@ class AppController:
             self._session,
             on_open_dashboard=self.open_company_dashboard,
             on_create_company=on_create_company,
+            on_set_company_active=(
+                self._set_companies_active
+                if self.authorization.can_manage_company_catalog()
+                else None
+            ),
+            on_open_profile_requests=(
+                self.open_profile_change_requests
+                if self.authorization.can_manage_company_catalog()
+                else None
+            ),
             on_open_control_facturas=self.open_control_facturas_global,
             on_open_firmas=(self.open_firmas_global if self.authorization.can_manage_firmas() else None),
         )
+
+    def open_profile_change_requests(self):
+        from views.ui_solicitudes_empresa import UISolicitudesEmpresa
+
+        self._show(lambda parent: UISolicitudesEmpresa(
+            parent, self._gestor, on_back=self.open_empresas,
+        ))
+
+    def _set_companies_active(self, codigos: list[str], activo: bool) -> int:
+        return self._empresa_service.actualizar_estado_empresas(codigos, activo)
 
     # ------------------------------------------------------------------ empresa
 

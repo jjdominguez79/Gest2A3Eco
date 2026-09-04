@@ -24,7 +24,7 @@ import '../features/invoicing/presentation/invoicing_screen.dart';
 import '../features/invoicing/presentation/issue_confirmation_screen.dart';
 import '../features/profile/presentation/about_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
-import '../features/company_profile/presentation/company_profile_screen.dart';
+import '../features/company_profile/presentation/company_profile_change_request_screen.dart';
 import '../features/documents/presentation/documents_screen.dart';
 import '../features/documents/presentation/document_detail_screen.dart';
 import '../features/documents/presentation/document_preview_screen.dart';
@@ -187,9 +187,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           companyCode: state.uri.queryParameters['company'] ?? '',
         ),
       ),
+      GoRoute(path: '/company-profile', redirect: (_, _) => '/profile'),
       GoRoute(
-        path: '/company-profile',
-        builder: (_, _) => const CompanyProfileScreen(),
+        path: '/company-profile/change-request',
+        builder: (_, _) => const CompanyProfileChangeRequestScreen(),
       ),
       GoRoute(path: '/documents', builder: (_, _) => const DocumentsScreen()),
       GoRoute(

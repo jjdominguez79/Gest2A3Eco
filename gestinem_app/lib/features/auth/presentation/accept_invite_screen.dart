@@ -52,8 +52,10 @@ class _AcceptInviteScreenState extends ConsumerState<AcceptInviteScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Text('Crea tu contraseña',
-                          style: Theme.of(context).textTheme.headlineSmall),
+                      Text(
+                        'Crea tu contraseña',
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
                       const SizedBox(height: 8),
                       const Text(
                         'Esta contraseña protege el acceso a tu canal seguro con Gestinem.',
@@ -66,10 +68,13 @@ class _AcceptInviteScreenState extends ConsumerState<AcceptInviteScreen> {
                         decoration: InputDecoration(
                           labelText: 'Contraseña',
                           suffixIcon: IconButton(
-                            onPressed: () => setState(() => _obscure = !_obscure),
-                            icon: Icon(_obscure
-                                ? Icons.visibility_off
-                                : Icons.visibility),
+                            onPressed: () =>
+                                setState(() => _obscure = !_obscure),
+                            icon: Icon(
+                              _obscure
+                                  ? Icons.visibility_off
+                                  : Icons.visibility,
+                            ),
                           ),
                         ),
                         validator: (value) => (value?.length ?? 0) < 10
@@ -81,17 +86,21 @@ class _AcceptInviteScreenState extends ConsumerState<AcceptInviteScreen> {
                         key: const Key('invite-confirm'),
                         controller: _confirm,
                         obscureText: _obscure,
-                        decoration:
-                            const InputDecoration(labelText: 'Repite la contraseña'),
+                        decoration: const InputDecoration(
+                          labelText: 'Repite la contraseña',
+                        ),
                         validator: (value) => value != _password.text
                             ? 'Las contraseñas no coinciden'
                             : null,
                       ),
                       if (error != null) ...[
                         const SizedBox(height: 12),
-                        Text(error,
-                            style: TextStyle(
-                                color: Theme.of(context).colorScheme.error)),
+                        Text(
+                          error,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
                       ],
                       const SizedBox(height: 20),
                       FilledButton(
@@ -102,7 +111,9 @@ class _AcceptInviteScreenState extends ConsumerState<AcceptInviteScreen> {
                         child: session.isLoading
                             ? const SizedBox.square(
                                 dimension: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Text('Activar y entrar'),
                       ),

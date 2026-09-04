@@ -139,6 +139,29 @@ void main() {
     expect(adapter.lastRequest!.path, '/staff/admin/organizations');
   });
 
+  test(
+    'selector de invitacion recibe el correo sincronizado de empresa',
+    () async {
+      final adapter = JsonAdapter([
+        {
+          'company_code': 'E00006',
+          'name': 'Cliente Uno',
+          'client_access_status': 'not_invited',
+          'client_access_active': false,
+          'organization_email': 'EMPRESA@EXAMPLE.TEST',
+        },
+      ]);
+      final dio = Dio(
+        BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+      )..httpClientAdapter = adapter;
+      final api = ApiClient(dio: dio, tokenProvider: () => testSession.token);
+
+      final rows = await MessagingRepository(api).organizations();
+
+      expect(rows.single.email, 'EMPRESA@EXAMPLE.TEST');
+    },
+  );
+
   test('administrador puede invitar clientes de forma masiva', () async {
     final adapter = JsonAdapter({
       'invitation_count': 2,
@@ -199,7 +222,7 @@ void main() {
     final result = await MessagingRepository(api).inviteClient(
       companyCode: 'E00006',
       name: 'Ana Cliente',
-      email: 'ana@example.test',
+      email: '  ANA@EXAMPLE.TEST ',
     );
 
     expect(result['email_queued'], isTrue);

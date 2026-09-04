@@ -1746,6 +1746,75 @@ class GestorBase:
             )
         return self._normalize_empresa_activo(self._row_to_dict(cur.fetchone()))
 
+    def actualizar_estado_empresas(self, codigos: list[str], activo: bool) -> int:
+        """Activa o desactiva todos los ejercicios de varias empresas."""
+        normalizados = []
+        vistos = set()
+        for codigo in codigos or []:
+            valor = normalizar_codigo_empresa_a3(codigo)
+            if valor and valor not in vistos:
+                vistos.add(valor)
+                normalizados.append(valor)
+        if not normalizados:
+            return 0
+
+        actualizadas = 0
+        for codigo in normalizados:
+            cur = self.conn.execute(
+                "UPDATE empresas SET activo=? WHERE codigo=?",
+                (1 if activo else 0, codigo),
+            )
+            if getattr(cur, "rowcount", 0) > 0:
+                actualizadas += 1
+        self.conn.commit()
+        return actualizadas
+
+    def aplicar_cambios_empresa_solicitados(
+        self,
+        codigo: str,
+        cambios: dict,
+        logo_path: str | None = None,
+    ) -> int:
+        """Aplica a todos los ejercicios cambios empresariales ya aprobados."""
+        codigo = normalizar_codigo_empresa_a3(codigo)
+        if not codigo:
+            raise ValueError("El codigo de empresa es obligatorio.")
+        columnas = {
+            "legal_name": "nombre",
+            "tax_id": "cif",
+            "address": "direccion",
+            "postal_code": "cp",
+            "city": "poblacion",
+            "province": "provincia",
+            "country": "pais",
+            "phone": "telefono",
+            "email": "email",
+            "bank_accounts": "cuentas_bancarias",
+        }
+        valores = {}
+        for clave, columna in columnas.items():
+            if clave not in (cambios or {}):
+                continue
+            valor = cambios[clave]
+            if clave == "bank_accounts":
+                valor = "\n".join(str(item).strip() for item in valor or [] if str(item).strip())
+            elif clave == "tax_id":
+                valor = normalizar_nif_cif(valor)
+            else:
+                valor = str(valor or "").strip()
+            valores[columna] = valor
+        if logo_path:
+            valores["logo_path"] = str(logo_path)
+        if not valores:
+            return 0
+        assignments = ", ".join(f"{columna}=?" for columna in valores)
+        cur = self.conn.execute(
+            f"UPDATE empresas SET {assignments} WHERE codigo=?",
+            (*valores.values(), codigo),
+        )
+        self.conn.commit()
+        return 1 if getattr(cur, "rowcount", 0) > 0 else 0
+
     def buscar_empresa_por_nif(self, nif: str | None, excluir_codigo: str | None = None):
         """Localiza una empresa por CIF/NIF normalizado.
 

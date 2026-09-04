@@ -176,15 +176,11 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
             apiClientProvider.overrideWithValue(
               ApiClient(
                 dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
-                  ..httpClientAdapter = JsonAdapter(
-                    {'enabled': false},
-                  ),
+                  ..httpClientAdapter = JsonAdapter({'enabled': false}),
                 tokenProvider: () => testSession.token,
               ),
             ),
@@ -209,9 +205,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
             apiClientProvider.overrideWithValue(
               ApiClient(
                 dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
@@ -243,9 +237,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
             apiClientProvider.overrideWithValue(
               ApiClient(
                 dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
@@ -282,9 +274,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
             apiClientProvider.overrideWithValue(
               ApiClient(
                 dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
@@ -329,9 +319,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
             apiClientProvider.overrideWithValue(
               ApiClient(
                 dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
@@ -339,9 +327,7 @@ void main() {
                 tokenProvider: () => testSession.token,
               ),
             ),
-            invoiceCustomersProvider.overrideWith(
-              (ref) async => customers,
-            ),
+            invoiceCustomersProvider.overrideWith((ref) async => customers),
           ],
           child: const MaterialApp(home: CustomerListScreen()),
         ),
@@ -358,9 +344,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
             apiClientProvider.overrideWithValue(
               ApiClient(
                 dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
@@ -414,9 +398,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
             invoiceDetailProvider(
               'inv-100',
             ).overrideWith((ref) async => invoice),
@@ -449,9 +431,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
             invoiceDetailProvider(
               'inv-err',
             ).overrideWith((ref) async => invoice),
@@ -477,9 +457,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            sessionProvider.overrideWith(
-              (ref) => FakeSessionController(ref),
-            ),
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
             invoiceDetailProvider(
               'inv-proc',
             ).overrideWith((ref) async => invoice),
@@ -513,9 +491,7 @@ void main() {
       );
       final container = ProviderContainer(
         overrides: [
-          sessionProvider.overrideWith(
-            (ref) => FakeSessionController(ref),
-          ),
+          sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
           apiClientProvider.overrideWithValue(api),
         ],
       );
@@ -525,11 +501,11 @@ void main() {
       final result = await repo.issueDraft('draft-1');
 
       expect(result.status, InvoiceStatus.issuedPendingProcessing);
-      expect(adapter.lastRequest!.path, '/client/invoicing/drafts/draft-1/issue');
       expect(
-        adapter.lastRequest!.headers.containsKey('Idempotency-Key'),
-        true,
+        adapter.lastRequest!.path,
+        '/client/invoicing/drafts/draft-1/issue',
       );
+      expect(adapter.lastRequest!.headers.containsKey('Idempotency-Key'), true);
       expect(
         (adapter.lastRequest!.headers['Idempotency-Key'] as String).isNotEmpty,
         true,

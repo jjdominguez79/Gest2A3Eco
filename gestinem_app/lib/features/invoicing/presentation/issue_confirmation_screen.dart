@@ -28,17 +28,15 @@ class _IssueConfirmationScreenState
       ref.invalidate(invoiceDraftsProvider);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Factura ${invoice.displayNumber} emitida'),
-          ),
+          SnackBar(content: Text('Factura ${invoice.displayNumber} emitida')),
         );
         context.go('/invoicing/invoices/${invoice.id}');
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(apiErrorMessage(e))),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(e))));
         setState(() => _issuing = false);
       }
     }
@@ -67,8 +65,11 @@ class _IssueConfirmationScreenState
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(Icons.warning_amber_rounded,
-                          color: Colors.amber.shade800, size: 28),
+                      Icon(
+                        Icons.warning_amber_rounded,
+                        color: Colors.amber.shade800,
+                        size: 28,
+                      ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Column(
@@ -102,8 +103,10 @@ class _IssueConfirmationScreenState
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Resumen del borrador',
-                          style: theme.textTheme.titleMedium),
+                      Text(
+                        'Resumen del borrador',
+                        style: theme.textTheme.titleMedium,
+                      ),
                       const SizedBox(height: 12),
                       _SummaryRow('Lineas', '${draft.lines.length}'),
                       _SummaryRow('Base imponible', '${draft.subtotal} EUR'),
@@ -148,8 +151,7 @@ class _IssueConfirmationScreenState
                           ? const SizedBox(
                               height: 18,
                               width: 18,
-                              child:
-                                  CircularProgressIndicator(strokeWidth: 2),
+                              child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.send),
                       label: const Text('Confirmar emision'),
