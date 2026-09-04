@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
+import '../../auth/domain/user_profile.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../../messaging/presentation/messaging_providers.dart';
 import '../data/empleados_repository.dart';
@@ -280,6 +281,103 @@ class EmpleadosScreen extends ConsumerWidget {
     return CircleAvatar(child: Text(initials.isEmpty ? '?' : initials));
   }
 
+  Widget _empleadoTile(
+    BuildContext context,
+    WidgetRef ref,
+    EmpleadoDespacho empleado,
+    String baseUrl,
+    String token,
+    UserProfile profile,
+  ) {
+    final conectado = empleado.activo && empleado.online;
+    return ListTile(
+      key: Key('employee-${empleado.id}'),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      leading: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          _avatar(empleado, baseUrl, token),
+          Positioned(
+            right: -1,
+            bottom: -1,
+            child: Container(
+              width: 14,
+              height: 14,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: conectado ? Colors.green : Colors.grey,
+                border: Border.all(
+                  color: Theme.of(context).colorScheme.surface,
+                  width: 2,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+      title: Text(empleado.nombreVisible),
+      subtitle: Text(
+        '${empleado.email}\n'
+        '${empleado.rol == 'admin' ? 'Administrador' : 'Empleado'} · '
+        '${empleado.canales.isEmpty ? 'Sin canales' : empleado.canales.join(', ')} · '
+        '${empleado.vinculado ? 'Microsoft vinculado' : 'Pendiente de primer acceso'} · '
+        '${!empleado.activo
+            ? 'Acceso desactivado'
+            : conectado
+            ? 'En linea'
+            : 'Desconectado'}',
+      ),
+      isThreeLine: true,
+      enabled: empleado.activo,
+      trailing: PopupMenuButton<String>(
+        onSelected: (value) => _accion(context, ref, empleado, value),
+        itemBuilder: (_) => [
+          const PopupMenuItem(value: 'editar', child: Text('Editar permisos')),
+          const PopupMenuItem(
+            value: 'avatar',
+            child: Text('Subir o cambiar avatar'),
+          ),
+          if (empleado.avatarConfigurado)
+            const PopupMenuItem(
+              value: 'quitar_avatar',
+              child: Text('Quitar avatar'),
+            ),
+          if (empleado.id != profile.id)
+            const PopupMenuItem(
+              value: 'revocar',
+              child: Text('Cerrar sus sesiones'),
+            ),
+        ],
+      ),
+      onTap: () => _editar(context, ref, empleado),
+    );
+  }
+
+  List<Widget> _grupoEmpleados(
+    BuildContext context,
+    WidgetRef ref,
+    String titulo,
+    List<EmpleadoDespacho> empleados,
+    String baseUrl,
+    String token,
+    UserProfile profile,
+  ) {
+    if (empleados.isEmpty) return const [];
+    return [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(8, 18, 8, 6),
+        child: Text(
+          '$titulo (${empleados.length})',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+      ),
+      for (final empleado in empleados) ...[
+        _empleadoTile(context, ref, empleado, baseUrl, token, profile),
+        const Divider(height: 1),
+      ],
+    ];
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final profile = ref.watch(sessionProvider).valueOrNull!.profile;
@@ -321,61 +419,54 @@ class EmpleadosScreen extends ConsumerWidget {
             label: const Text('Reintentar'),
           ),
         ),
-        data: (items) => ListView.separated(
-          padding: EdgeInsets.fromLTRB(
-            12,
-            12,
-            12,
-            12 + MediaQuery.viewPaddingOf(context).bottom,
-          ),
-          itemCount: items.length,
-          separatorBuilder: (_, _) => const Divider(height: 1),
-          itemBuilder: (context, index) {
-            final empleado = items[index];
-            return ListTile(
-              key: Key('employee-${empleado.id}'),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 8,
-                vertical: 6,
+        data: (items) {
+          final conectados = items
+              .where((item) => item.activo && item.online)
+              .toList(growable: false);
+          final desconectados = items
+              .where((item) => item.activo && !item.online)
+              .toList(growable: false);
+          final sinAcceso = items
+              .where((item) => !item.activo)
+              .toList(growable: false);
+          return ListView(
+            padding: EdgeInsets.fromLTRB(
+              12,
+              0,
+              12,
+              12 + MediaQuery.viewPaddingOf(context).bottom,
+            ),
+            children: [
+              ..._grupoEmpleados(
+                context,
+                ref,
+                'En linea',
+                conectados,
+                baseUrl,
+                token,
+                profile,
               ),
-              leading: _avatar(empleado, baseUrl, token),
-              title: Text(empleado.nombreVisible),
-              subtitle: Text(
-                '${empleado.email}\n'
-                '${empleado.rol == 'admin' ? 'Administrador' : 'Empleado'} · '
-                '${empleado.canales.isEmpty ? 'Sin canales' : empleado.canales.join(', ')} · '
-                '${empleado.vinculado ? 'Microsoft vinculado' : 'Pendiente de primer acceso'} · '
-                '${empleado.online ? 'Activo' : 'Inactivo'}',
+              ..._grupoEmpleados(
+                context,
+                ref,
+                'Desconectados',
+                desconectados,
+                baseUrl,
+                token,
+                profile,
               ),
-              isThreeLine: true,
-              enabled: empleado.activo,
-              trailing: PopupMenuButton<String>(
-                onSelected: (value) => _accion(context, ref, empleado, value),
-                itemBuilder: (_) => [
-                  const PopupMenuItem(
-                    value: 'editar',
-                    child: Text('Editar permisos'),
-                  ),
-                  const PopupMenuItem(
-                    value: 'avatar',
-                    child: Text('Subir o cambiar avatar'),
-                  ),
-                  if (empleado.avatarConfigurado)
-                    const PopupMenuItem(
-                      value: 'quitar_avatar',
-                      child: Text('Quitar avatar'),
-                    ),
-                  if (empleado.id != profile.id)
-                    const PopupMenuItem(
-                      value: 'revocar',
-                      child: Text('Cerrar sus sesiones'),
-                    ),
-                ],
+              ..._grupoEmpleados(
+                context,
+                ref,
+                'Acceso desactivado',
+                sinAcceso,
+                baseUrl,
+                token,
+                profile,
               ),
-              onTap: () => _editar(context, ref, empleado),
-            );
-          },
-        ),
+            ],
+          );
+        },
       ),
     );
   }

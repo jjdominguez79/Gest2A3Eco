@@ -9,6 +9,8 @@
 /// - Confirmacion de descarga
 library;
 
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -408,6 +410,28 @@ void main() {
         _wrap(MessageBubble(message: msg, mine: false, isStaff: false)),
       );
       expect(find.byKey(const Key('attachment-card-att-1')), findsOneWidget);
+    });
+
+    testWidgets('nota de voz usa reproductor integrado', (tester) async {
+      const voice = Attachment(
+        id: 'voice-1',
+        name: 'nota_voz.opus',
+        contentType: 'audio/ogg',
+        size: 2048,
+      );
+      final msg = _msg(hasAttachments: true, attachments: const [voice]);
+      await tester.pumpWidget(
+        _wrap(
+          MessageBubble(
+            message: msg,
+            mine: false,
+            isStaff: false,
+            onVoiceLoad: (_) async => Uint8List(0),
+          ),
+        ),
+      );
+      expect(find.byKey(const Key('voice-note-voice-1')), findsOneWidget);
+      expect(find.byKey(const Key('attachment-card-voice-1')), findsNothing);
     });
   });
 }

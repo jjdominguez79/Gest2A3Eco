@@ -61,6 +61,7 @@ def test_aprobar_solicitud_guarda_logo_antes_de_confirmar_backend(
         "E00006", {"legal_name": "Empresa Demo SL"}, str(expected),
     )]
     assert backend.reviews == [(
-        "request-1", "applied", "Aplicado y confirmado desde Gest2A3Eco.",
+        "request-1", "applied",
+        "Actualizado manualmente en A3 y aplicado desde Gest2A3Eco.",
     )]
     assert result["status"] == "applied"

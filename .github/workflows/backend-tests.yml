@@ -52,13 +52,14 @@ jobs:
       BACKEND_INTERNAL_API_KEY: test-pg-concurrent
       MESSAGING_GRAPH_FROM: noreply@test.es
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
       - run: pip install -r backend/requirements.txt pytest
-      - run: >-
+      - name: Ejecutar pruebas backend
+        run: >-
           pytest
           tests/test_dgt_api.py
           tests/test_dgt_postgres_migration.py
@@ -74,4 +75,14 @@ jobs:
           tests/test_feature_flags.py
           tests/test_worker_endpoints.py
           tests/test_notification_concurrency_pg.py
+          --junitxml=backend-test-results.xml
+          --tb=short
+          -ra
           -q
+      - name: Conservar resultados de pruebas
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results
+          path: backend-test-results.xml
+          if-no-files-found: warn

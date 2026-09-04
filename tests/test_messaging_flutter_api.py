@@ -109,6 +109,60 @@ def _setup(tmp_path: Path, monkeypatch):
     return client, factory, staff_headers, auth, accepted["client"]["id"], conversation["id"]
 
 
+def test_notas_de_voz_se_reproducen_y_no_entran_en_bandeja_documental(
+    tmp_path, monkeypatch,
+):
+    client, _factory, staff_headers, client_auth, _client_id, conversation_id = (
+        _setup(tmp_path, monkeypatch)
+    )
+    voice_bytes = b"OggS-nota-de-voz"
+    sent = client.post(
+        f"/api/v1/messaging/client/conversations/{conversation_id}/messages",
+        headers=client_auth,
+        data={"idempotency_key": "voice-client-1"},
+        files={"files": ("nota_voz.opus", voice_bytes, "audio/ogg")},
+    )
+    assert sent.status_code == 200
+    attachment = sent.json()["attachments"][0]
+    assert attachment["content_type"] == "audio/ogg"
+
+    # Una nota de voz permanece en el chat y no se archiva como documento.
+    assert client.get(
+        "/api/v1/messaging/staff/attachments/pending",
+        headers=staff_headers("admin"),
+    ).json() == []
+    staff_playback = client.get(
+        f"/api/v1/messaging/staff/attachments/{attachment['id']}/download",
+        headers=staff_headers("admin"),
+    )
+    assert staff_playback.status_code == 200
+    assert staff_playback.content == voice_bytes
+
+    # El autor tambien puede volver a escuchar su propia grabacion.
+    client_playback = client.get(
+        f"/api/v1/messaging/client/attachments/{attachment['id']}",
+        headers=client_auth,
+    )
+    assert client_playback.status_code == 200
+    assert client_playback.content == voice_bytes
+
+    reply_bytes = b"OggS-respuesta-del-despacho"
+    reply = client.post(
+        f"/api/v1/messaging/staff/conversations/{conversation_id}/messages",
+        headers=staff_headers("admin"),
+        data={"idempotency_key": "voice-staff-1"},
+        files={"files": ("nota_voz.opus", reply_bytes, "audio/ogg")},
+    )
+    assert reply.status_code == 200
+    reply_attachment = reply.json()["attachments"][0]
+    downloaded_reply = client.get(
+        f"/api/v1/messaging/client/attachments/{reply_attachment['id']}",
+        headers=client_auth,
+    )
+    assert downloaded_reply.status_code == 200
+    assert downloaded_reply.content == reply_bytes
+
+
 def test_adjuntos_en_chat_interno_son_multiples_privados_y_borrables(tmp_path, monkeypatch):
     client, factory, staff_headers, _auth, _client_id, _conversation_id = _setup(
         tmp_path, monkeypatch,

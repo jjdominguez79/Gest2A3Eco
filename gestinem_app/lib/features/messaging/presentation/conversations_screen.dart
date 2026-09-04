@@ -461,6 +461,12 @@ class _StaffInbox extends StatelessWidget {
               )
               .toList()
             ..sort(_compareThreads);
+      final onlineThreads = directThreads
+          .where((item) => item.counterpartOnline)
+          .toList(growable: false);
+      final offlineThreads = directThreads
+          .where((item) => !item.counterpartOnline)
+          .toList(growable: false);
       final clients = conversations.where((item) {
         return _matches(item.companyCode) || _matches(item.companyName);
       }).toList()..sort(_compareConversations);
@@ -491,7 +497,27 @@ class _StaffInbox extends StatelessWidget {
 
       if (directThreads.isNotEmpty) {
         children.addAll([
-          for (final thread in directThreads)
+          if (onlineThreads.isNotEmpty)
+            _EmployeePresenceHeader(
+              title: 'En linea',
+              count: onlineThreads.length,
+              online: true,
+            ),
+          for (final thread in onlineThreads)
+            _InternalThreadTile(
+              thread: thread,
+              selected: selectedInternal && selectedId == thread.id,
+              baseUrl: baseUrl,
+              authToken: authToken,
+              onTap: () => onInternal(thread.id),
+            ),
+          if (offlineThreads.isNotEmpty)
+            _EmployeePresenceHeader(
+              title: 'Desconectados',
+              count: offlineThreads.length,
+              online: false,
+            ),
+          for (final thread in offlineThreads)
             _InternalThreadTile(
               thread: thread,
               selected: selectedInternal && selectedId == thread.id,
@@ -591,6 +617,30 @@ class _InboxSectionHeader extends StatelessWidget {
   );
 }
 
+class _EmployeePresenceHeader extends StatelessWidget {
+  const _EmployeePresenceHeader({
+    required this.title,
+    required this.count,
+    required this.online,
+  });
+
+  final String title;
+  final int count;
+  final bool online;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(18, 9, 14, 3),
+    child: Row(
+      children: [
+        Icon(Icons.circle, size: 9, color: online ? Colors.green : Colors.grey),
+        const SizedBox(width: 7),
+        Text('$title ($count)', style: Theme.of(context).textTheme.labelMedium),
+      ],
+    ),
+  );
+}
+
 class _EmptySection extends StatelessWidget {
   const _EmptySection(this.label);
   final String label;
@@ -626,13 +676,35 @@ class _InternalThreadTile extends StatelessWidget {
     key: Key('internal-thread-${thread.id}'),
     selected: selected,
     onTap: onTap,
-    leading: AuthenticatedAvatar(
-      radius: 22,
-      baseUrl: baseUrl,
-      authToken: authToken,
-      imagePath: thread.counterpartAvatarUrl,
-      fallbackText: _initials(thread.title),
-      cacheVersion: thread.id,
+    leading: Stack(
+      clipBehavior: Clip.none,
+      children: [
+        AuthenticatedAvatar(
+          radius: 22,
+          baseUrl: baseUrl,
+          authToken: authToken,
+          imagePath: thread.counterpartAvatarUrl,
+          fallbackText: _initials(thread.title),
+          cacheVersion: thread.id,
+        ),
+        if (thread.kind == 'direct')
+          Positioned(
+            right: -1,
+            bottom: -1,
+            child: Container(
+              width: 13,
+              height: 13,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: thread.counterpartOnline ? Colors.green : Colors.grey,
+                border: Border.all(
+                  color: Theme.of(context).colorScheme.surface,
+                  width: 2,
+                ),
+              ),
+            ),
+          ),
+      ],
     ),
     title: Text(thread.title, maxLines: 1, overflow: TextOverflow.ellipsis),
     subtitle: Text(

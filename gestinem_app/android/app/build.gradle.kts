@@ -55,6 +55,7 @@ extensions.configure<ApplicationExtension>("android") {
 
     defaultConfig {
         applicationId = "es.gestinem.app"
+        // La grabacion de notas de voz requiere Android 6.0 (API 23).
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

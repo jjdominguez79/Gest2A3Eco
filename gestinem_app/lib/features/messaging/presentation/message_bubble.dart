@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:typed_data';
+
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/widgets/authenticated_avatar.dart';
@@ -196,6 +200,154 @@ class _StaffDownloadSummary extends StatelessWidget {
   }
 }
 
+class VoiceNoteCard extends StatefulWidget {
+  const VoiceNoteCard({
+    super.key,
+    required this.attachment,
+    required this.loadAudio,
+  });
+
+  final Attachment attachment;
+  final Future<Uint8List> Function() loadAudio;
+
+  @override
+  State<VoiceNoteCard> createState() => _VoiceNoteCardState();
+}
+
+class _VoiceNoteCardState extends State<VoiceNoteCard> {
+  final AudioPlayer _player = AudioPlayer();
+  final List<StreamSubscription<dynamic>> _subscriptions = [];
+  Duration _duration = Duration.zero;
+  Duration _position = Duration.zero;
+  bool _loading = false;
+  bool _playing = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _subscriptions.add(
+      _player.onDurationChanged.listen((value) {
+        if (mounted) setState(() => _duration = value);
+      }),
+    );
+    _subscriptions.add(
+      _player.onPositionChanged.listen((value) {
+        if (mounted) setState(() => _position = value);
+      }),
+    );
+    _subscriptions.add(
+      _player.onPlayerStateChanged.listen((value) {
+        if (!mounted) return;
+        setState(() {
+          _playing = value == PlayerState.playing;
+          if (value == PlayerState.completed) _position = Duration.zero;
+        });
+      }),
+    );
+  }
+
+  @override
+  void dispose() {
+    for (final subscription in _subscriptions) {
+      unawaited(subscription.cancel());
+    }
+    unawaited(_player.dispose());
+    super.dispose();
+  }
+
+  Future<void> _toggle() async {
+    if (_playing) {
+      await _player.pause();
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      if (_player.state == PlayerState.paused) {
+        await _player.resume();
+      } else {
+        final bytes = await widget.loadAudio();
+        await _player.play(
+          BytesSource(bytes, mimeType: widget.attachment.contentType),
+        );
+      }
+    } catch (_) {
+      if (mounted) setState(() => _error = 'No se pudo reproducir');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  String _time(Duration value) {
+    final minutes = value.inMinutes.toString().padLeft(2, '0');
+    final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final max = _duration.inMilliseconds > 0
+        ? _duration.inMilliseconds.toDouble()
+        : 1.0;
+    final value = _position.inMilliseconds.clamp(0, max.toInt()).toDouble();
+    return Container(
+      key: Key('voice-note-${widget.attachment.id}'),
+      constraints: const BoxConstraints(minWidth: 230),
+      margin: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest.withValues(alpha: .55),
+        borderRadius: const BorderRadius.all(Radius.circular(20)),
+      ),
+      child: Row(
+        children: [
+          IconButton.filledTonal(
+            key: Key('play-voice-${widget.attachment.id}'),
+            tooltip: _playing ? 'Pausar nota de voz' : 'Reproducir nota de voz',
+            onPressed: _loading ? null : _toggle,
+            icon: _loading
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(_playing ? Icons.pause : Icons.play_arrow),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Slider(
+                  value: value,
+                  max: max,
+                  onChanged: _duration == Duration.zero
+                      ? null
+                      : (next) =>
+                            _player.seek(Duration(milliseconds: next.round())),
+                ),
+                Text(
+                  _error ??
+                      '${_time(_position)} / ${_duration == Duration.zero ? '--:--' : _time(_duration)}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: _error == null
+                        ? colors.onSurfaceVariant
+                        : colors.error,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Icon(Icons.mic, size: 18),
+        ],
+      ),
+    );
+  }
+}
+
 class MessageBubble extends StatelessWidget {
   const MessageBubble({
     super.key,
@@ -210,6 +362,7 @@ class MessageBubble extends StatelessWidget {
     this.onAttachmentTap,
     this.onAttachmentHistory,
     this.onAttachmentWithdraw,
+    this.onVoiceLoad,
     this.onTap,
     this.onLongPress,
   });
@@ -230,6 +383,7 @@ class MessageBubble extends StatelessWidget {
   final void Function(Attachment attachment)? onAttachmentTap;
   final void Function(Attachment attachment)? onAttachmentHistory;
   final void Function(Attachment attachment)? onAttachmentWithdraw;
+  final Future<Uint8List> Function(Attachment attachment)? onVoiceLoad;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
 
@@ -400,29 +554,35 @@ class MessageBubble extends StatelessWidget {
                     else if (message.body.isNotEmpty)
                       Text(message.body),
                     for (final att in message.attachments)
-                      AttachmentCard(
-                        attachment: att,
-                        isStaff: isStaff,
-                        staffCanDownload: allowStaffAttachmentDownload,
-                        onDownload:
-                            (att.available &&
-                                (!isStaff || allowStaffAttachmentDownload))
-                            ? () => onAttachmentTap?.call(att)
-                            : null,
-                        onShowHistory:
-                            isStaff &&
-                                !att.isIncoming &&
-                                onAttachmentHistory != null
-                            ? () => onAttachmentHistory?.call(att)
-                            : null,
-                        onWithdraw:
-                            isStaff &&
-                                !att.isIncoming &&
-                                !att.isWithdrawn &&
-                                onAttachmentWithdraw != null
-                            ? () => onAttachmentWithdraw?.call(att)
-                            : null,
-                      ),
+                      if (att.isVoiceNote && onVoiceLoad != null)
+                        VoiceNoteCard(
+                          attachment: att,
+                          loadAudio: () => onVoiceLoad!(att),
+                        )
+                      else
+                        AttachmentCard(
+                          attachment: att,
+                          isStaff: isStaff,
+                          staffCanDownload: allowStaffAttachmentDownload,
+                          onDownload:
+                              (att.available &&
+                                  (!isStaff || allowStaffAttachmentDownload))
+                              ? () => onAttachmentTap?.call(att)
+                              : null,
+                          onShowHistory:
+                              isStaff &&
+                                  !att.isIncoming &&
+                                  onAttachmentHistory != null
+                              ? () => onAttachmentHistory?.call(att)
+                              : null,
+                          onWithdraw:
+                              isStaff &&
+                                  !att.isIncoming &&
+                                  !att.isWithdrawn &&
+                                  onAttachmentWithdraw != null
+                              ? () => onAttachmentWithdraw?.call(att)
+                              : null,
+                        ),
                     Align(
                       alignment: mine
                           ? Alignment.bottomRight

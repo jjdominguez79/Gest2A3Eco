@@ -47,6 +47,8 @@ void main() {
 
     expect(find.text('Empleados del despacho'), findsOneWidget);
     expect(find.text('Ana'), findsOneWidget);
+    expect(find.text('Desconectados (1)'), findsOneWidget);
+    expect(find.textContaining(' · Desconectado'), findsOneWidget);
     expect(find.byKey(const Key('add-employee')), findsOneWidget);
     expect(find.byKey(const Key('employee-empleado-1')), findsOneWidget);
   });

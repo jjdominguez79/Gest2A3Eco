@@ -1,6 +1,6 @@
 {
-  "version": "1.8.12",
-  "tag": "v1.8.12",
-  "changelog": "Incorpora Mi área con los datos separados del usuario y de la empresa, además del logotipo corporativo.\nPermite solicitar cambios de ficha, dirección, cuentas bancarias y logotipo sin modificar directamente el maestro.\nAñade en Gestión la revisión y confirmación de solicitudes: el logotipo aprobado se guarda en el repositorio documental y se utiliza en las facturas.\nCorrige la validación de correos al invitar clientes y permite activar o desactivar empresas mediante selección múltiple.",
-  "force_update": false
+  "version": "1.8.13",
+  "tag": "v1.8.13",
+  "changelog": "Aclara el flujo de solicitudes de cambios empresariales y exige confirmar que los datos ya se han actualizado manualmente en A3 antes de comunicar su aplicación al cliente.\nAñade notas de voz con grabación y reproducción integrada en los chats de Gestinem.\nMejora la visualización de presencia separando empleados conectados, desconectados y con acceso desactivado.",
+  "force_update": true
 }

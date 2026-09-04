@@ -7,7 +7,7 @@ publica no debe enviarse hasta completar los puntos marcados como pendientes.
 
 - Nombre: `Gestinem`
 - Identificador inmutable: `es.gestinem.app`
-- Version preparada: `0.1.11` (`versionCode` 26)
+- Version preparada: `0.1.12` (`versionCode` 27)
 - Backend de produccion actual:
   `https://gest2a3eco-production.up.railway.app`
 - Formato de entrega: Android App Bundle (`.aab`)

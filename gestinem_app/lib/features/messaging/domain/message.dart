@@ -81,6 +81,20 @@ class Attachment {
   bool get isIncoming => direction == 'incoming';
   bool get isWithdrawn => withdrawnAt != null;
   bool get isExpired => status == 'caducado';
+  bool get isVoiceNote {
+    final type = contentType.toLowerCase();
+    final extension = name.toLowerCase().split('.').last;
+    return type.startsWith('audio/') ||
+        const {
+          'aac',
+          'm4a',
+          'mp3',
+          'ogg',
+          'opus',
+          'wav',
+          'webm',
+        }.contains(extension);
+  }
 }
 
 class AttachmentDownload {

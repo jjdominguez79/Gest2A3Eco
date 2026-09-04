@@ -94,6 +94,7 @@ void main() {
     expect(find.text('Chat directo'), findsOneWidget);
     expect(find.text('Buenos dias'), findsOneWidget);
     expect(find.byKey(const Key('message-composer')), findsOneWidget);
+    expect(find.byKey(const Key('record-voice-note')), findsOneWidget);
     expect(find.byKey(const Key('send-message')), findsOneWidget);
     await tester.pumpAndSettle();
     expect(adapter.lastRequest?.path, '/staff/internal/threads/t1/read');

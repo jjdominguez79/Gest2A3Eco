@@ -23,13 +23,13 @@ jobs:
 
     steps:
       - name: Checkout completo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
       - name: Configurar Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           # Coincide exactamente con el intérprete del entorno local de compilación (.venv).
           python-version: "3.14.2"

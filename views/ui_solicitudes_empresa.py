@@ -30,7 +30,7 @@ class UISolicitudesEmpresa(ttk.Frame):
         actions.pack(fill="x", padx=12, pady=(0, 8))
         ttk.Button(actions, text="Actualizar", command=self.refresh).pack(side=tk.LEFT)
         ttk.Button(
-            actions, text="Aplicar solicitud", style="Primary.TButton",
+            actions, text="Confirmar A3 y aplicar", style="Primary.TButton",
             command=self._apply_selected,
         ).pack(side=tk.LEFT, padx=6)
         ttk.Button(
@@ -127,10 +127,15 @@ class UISolicitudesEmpresa(ttk.Frame):
         if not item:
             return
         if not messagebox.askyesno(
-            "Aplicar solicitud",
-            "Se actualizaran los datos de todos los ejercicios de la empresa. "
+            "Confirmar actualizacion en A3",
+            "Antes de continuar, actualiza manualmente en A3 los datos "
+            "indicados en esta solicitud.\n\n"
+            "Al confirmar, se actualizaran los datos de todos los ejercicios "
+            "de la empresa en Gest2A3Eco y se comunicara al cliente que la "
+            "solicitud ha sido aplicada. "
             "Si incluye logotipo, se guardara en el repositorio documental y "
-            "sera el utilizado en las facturas.\n\nContinuar?",
+            "sera el utilizado en las facturas.\n\n"
+            "Confirmas que A3 ya esta actualizado?",
             parent=self.winfo_toplevel(),
         ):
             return
@@ -140,7 +145,8 @@ class UISolicitudesEmpresa(ttk.Frame):
             messagebox.showerror("Solicitudes", str(exc), parent=self.winfo_toplevel())
             return
         messagebox.showinfo(
-            "Solicitudes", "Solicitud aplicada correctamente.",
+            "Solicitudes",
+            "Solicitud aplicada correctamente en Gest2A3Eco y confirmada al cliente.",
             parent=self.winfo_toplevel(),
         )
         self.refresh()

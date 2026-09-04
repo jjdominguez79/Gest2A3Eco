@@ -54,10 +54,20 @@ MAX_AVATAR = 5 * 1024 * 1024
 ALLOWED_SUFFIXES = {
     ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".tif", ".tiff",
     ".txt", ".xml", ".csv", ".xls", ".xlsx", ".doc", ".docx", ".zip",
+    ".aac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".webm",
 }
 STAFF_CHANNELS = {"laboral", "fiscal"}
 STAFF_ROLES = {"admin", "empleado"}
 TEST_COMPANY_CODES = {"E0000", "E00000"}
+
+
+def _is_voice_attachment(item: MessagingAttachment) -> bool:
+    """Distingue las notas de voz de los documentos que archiva el NAS."""
+    content_type = str(item.content_type or "").lower()
+    suffix = Path(str(item.name or "")).suffix.lower()
+    return content_type.startswith("audio/") or suffix in {
+        ".aac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".webm",
+    }
 
 
 def get_db():
@@ -930,7 +940,9 @@ def _create_message(
             content_type=upload.content_type or mimetypes.guess_type(name)[0] or "application/octet-stream",
             size=len(content), sha256=hashlib.sha256(content).hexdigest(), storage_key=key,
             direction="outgoing" if outgoing else "incoming",
-            expires_at=(utcnow() + timedelta(days=get_settings().messaging_attachment_days)) if outgoing else None,
+            expires_at=(utcnow() + timedelta(days=get_settings().messaging_attachment_days))
+            if outgoing or suffix in {".aac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".webm"}
+            else None,
         ))
     conv.state = "pendiente"
     conv.started_at = conv.started_at or utcnow()
@@ -2943,6 +2955,8 @@ def pending_attachments(staff: MessagingStaff = Depends(_staff), db: Session = D
     ).order_by(MessagingAttachment.created_at)).all()
     result = []
     for item in rows:
+        if _is_voice_attachment(item):
+            continue
         message = db.get(MessagingMessage, item.message_id)
         if not message or message.deleted_at:
             continue
@@ -3015,18 +3029,34 @@ def hmac_compare(left: str, right: str) -> bool:
 @router.get("/client/attachments/{attachment_id}")
 def client_download(attachment_id: str, request: Request, client: MessagingClient = Depends(_client), db: Session = Depends(get_db)):
     item = db.get(MessagingAttachment, attachment_id)
-    if not item or item.direction != "outgoing":
+    if not item or item.direction not in {"incoming", "outgoing"}:
         raise HTTPException(404, "Adjunto no disponible")
-    if item.withdrawn_at:
-        raise HTTPException(410, "Documento retirado por el despacho")
-    if item.storage_deleted_at or is_expired(item.expires_at):
-        raise HTTPException(410, "Adjunto caducado")
     message = db.get(MessagingMessage, item.message_id)
     if not message or message.deleted_at:
         raise HTTPException(404, "Adjunto no disponible")
     _conversation_for_client(db, message.conversation_id, client)
+    own_voice_note = bool(
+        item.direction == "incoming"
+        and _is_voice_attachment(item)
+        and message.author_type == "client"
+        and message.author_id == client.id
+    )
+    if item.direction == "incoming" and not own_voice_note:
+        raise HTTPException(404, "Adjunto no disponible")
+    if item.withdrawn_at:
+        raise HTTPException(410, "Documento retirado por el despacho")
+    if item.storage_deleted_at or not item.storage_key or (
+        item.expires_at and is_expired(item.expires_at)
+    ):
+        raise HTTPException(410, "Adjunto caducado")
     content = MessagingStorage().get(item.storage_key)
     valid = hmac_compare(hashlib.sha256(content).hexdigest(), item.sha256)
+    if own_voice_note:
+        if not valid:
+            raise HTTPException(500, "La integridad del adjunto no es valida")
+        return Response(content, media_type=item.content_type, headers={
+            "Content-Disposition": f'inline; filename="{safe_name(item.name)}"',
+        })
     dl = MessagingDownload(
         attachment_id=item.id, client_id=client.id,
         ip=request.client.host if request.client else "",
@@ -3142,7 +3172,9 @@ def staff_download_attachment(
     attachment_id: str, staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
 ):
     item = db.get(MessagingAttachment, attachment_id)
-    if not item or item.storage_deleted_at or not item.storage_key:
+    if not item or item.storage_deleted_at or not item.storage_key or (
+        item.expires_at and is_expired(item.expires_at)
+    ):
         raise HTTPException(404, "Adjunto no disponible")
     message = db.get(MessagingMessage, item.message_id)
     if not message or message.deleted_at:
@@ -3166,6 +3198,8 @@ def sync_pending_attachments(db: Session = Depends(get_db)):
     stale_threshold = timedelta(hours=1)
     result = []
     for item in rows:
+        if _is_voice_attachment(item):
+            continue
         message = db.get(MessagingMessage, item.message_id)
         if not message or message.deleted_at:
             continue

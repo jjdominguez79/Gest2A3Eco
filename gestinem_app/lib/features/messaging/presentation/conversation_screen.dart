@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:record/record.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/notifications/notifications_service.dart';
@@ -71,6 +73,14 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   List<PlatformFile> _files = [];
   Message? _replyingTo;
   bool _sending = false;
+  final AudioRecorder _recorder = AudioRecorder();
+  StreamSubscription<Uint8List>? _recordingSubscription;
+  Completer<void>? _recordingDone;
+  Timer? _recordingTimer;
+  final List<int> _recordingBytes = [];
+  bool _recording = false;
+  int _recordingSeconds = 0;
+  String _voiceExtension = 'opus';
   String? _lastMessageMarkedRead;
   Timer? _presenceTimer;
   late final NotificationsService _notificationsService;
@@ -101,6 +111,9 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   @override
   void dispose() {
     _presenceTimer?.cancel();
+    _recordingTimer?.cancel();
+    unawaited(_recordingSubscription?.cancel());
+    unawaited(_recorder.dispose());
     unawaited(_notificationsService.clearActiveTarget());
     _body.dispose();
     _scroll.dispose();
@@ -186,6 +199,117 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       result = [?file];
     }
     if (result.isNotEmpty) setState(() => _files = result);
+  }
+
+  Future<void> _startVoiceRecording() async {
+    if (_sending || _recording) return;
+    try {
+      if (!await _recorder.hasPermission()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Autoriza el acceso al microfono para grabar.'),
+            ),
+          );
+        }
+        return;
+      }
+      var encoder = AudioEncoder.opus;
+      if (!await _recorder.isEncoderSupported(encoder)) {
+        encoder = AudioEncoder.wav;
+      }
+      if (!await _recorder.isEncoderSupported(encoder)) {
+        encoder = AudioEncoder.aacLc;
+      }
+      _voiceExtension = switch (encoder) {
+        AudioEncoder.wav => 'wav',
+        AudioEncoder.aacLc ||
+        AudioEncoder.aacEld ||
+        AudioEncoder.aacHe => 'm4a',
+        _ => 'opus',
+      };
+      _recordingBytes.clear();
+      _recordingDone = Completer<void>();
+      final stream = await _recorder.startStream(
+        RecordConfig(
+          encoder: encoder,
+          bitRate: 64000,
+          sampleRate: 24000,
+          numChannels: 1,
+        ),
+      );
+      _recordingSubscription = stream.listen(
+        _recordingBytes.addAll,
+        onDone: () {
+          if (!(_recordingDone?.isCompleted ?? true)) {
+            _recordingDone!.complete();
+          }
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _recording = true;
+        _recordingSeconds = 0;
+      });
+      _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted) return;
+        if (_recordingSeconds >= 299) {
+          unawaited(_stopVoiceRecording(send: true));
+        } else {
+          setState(() => _recordingSeconds++);
+        }
+      });
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No se pudo iniciar la grabacion: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _stopVoiceRecording({required bool send}) async {
+    if (!_recording) return;
+    _recordingTimer?.cancel();
+    setState(() => _recording = false);
+    try {
+      if (send) {
+        await _recorder.stop();
+      } else {
+        await _recorder.cancel();
+      }
+      try {
+        await _recordingDone?.future.timeout(const Duration(seconds: 2));
+      } on TimeoutException {
+        // Algunos dispositivos no cierran el stream de forma inmediata.
+      }
+      await _recordingSubscription?.cancel();
+      if (!send || _recordingBytes.isEmpty) return;
+      final bytes = Uint8List.fromList(_recordingBytes);
+      _files = [
+        _VoicePlatformFile(
+          name:
+              'nota_voz_${DateTime.now().millisecondsSinceEpoch}.$_voiceExtension',
+          bytes: bytes,
+        ),
+      ];
+      await _send();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No se pudo enviar la nota de voz: $error')),
+        );
+      }
+    } finally {
+      _recordingBytes.clear();
+      _recordingSeconds = 0;
+    }
+  }
+
+  String _recordingTime() {
+    final minutes = (_recordingSeconds ~/ 60).toString().padLeft(2, '0');
+    final seconds = (_recordingSeconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
   }
 
   Future<void> _send() async {
@@ -297,6 +421,15 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
         ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
       }
     }
+  }
+
+  Future<Uint8List> _loadVoice(Attachment attachment) async {
+    final repository = ref.read(messagingRepositoryProvider);
+    if (widget.internal) {
+      return repository.downloadInternalAttachment(attachment.id);
+    }
+    final profile = ref.read(sessionProvider).valueOrNull!.profile;
+    return repository.download(profile, attachment);
   }
 
   String _fmtAuditDate(DateTime value) =>
@@ -622,6 +755,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                     onAttachmentWithdraw: profile.isAdmin
                         ? _withdrawAttachment
                         : null,
+                    onVoiceLoad: _loadVoice,
                     onTap: message.deleted
                         ? null
                         : () => _messageActions(message, mine),
@@ -676,34 +810,63 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  IconButton(
-                    key: const Key('attach-files'),
-                    onPressed: _sending ? null : _pickFiles,
-                    icon: const Icon(Icons.attach_file),
-                  ),
-                  Expanded(
-                    child: TextField(
-                      key: const Key('message-composer'),
-                      controller: _body,
-                      minLines: 1,
-                      maxLines: 5,
-                      decoration: const InputDecoration(
-                        hintText: 'Escribe un mensaje...',
-                        isDense: true,
+                  if (_recording) ...[
+                    IconButton(
+                      key: const Key('cancel-voice-note'),
+                      tooltip: 'Cancelar nota de voz',
+                      onPressed: () => _stopVoiceRecording(send: false),
+                      icon: const Icon(Icons.delete_outline),
+                    ),
+                    const Icon(Icons.fiber_manual_record, color: Colors.red),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Grabando ${_recordingTime()}',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton.filled(
-                    key: const Key('send-message'),
-                    onPressed: _sending ? null : _send,
-                    icon: _sending
-                        ? const SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.send),
-                  ),
+                    IconButton.filled(
+                      key: const Key('send-voice-note'),
+                      tooltip: 'Detener y enviar',
+                      onPressed: () => _stopVoiceRecording(send: true),
+                      icon: const Icon(Icons.send),
+                    ),
+                  ] else ...[
+                    IconButton(
+                      key: const Key('attach-files'),
+                      onPressed: _sending ? null : _pickFiles,
+                      icon: const Icon(Icons.attach_file),
+                    ),
+                    Expanded(
+                      child: TextField(
+                        key: const Key('message-composer'),
+                        controller: _body,
+                        minLines: 1,
+                        maxLines: 5,
+                        decoration: const InputDecoration(
+                          hintText: 'Escribe un mensaje...',
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      key: const Key('record-voice-note'),
+                      tooltip: 'Grabar nota de voz',
+                      onPressed: _sending ? null : _startVoiceRecording,
+                      icon: const Icon(Icons.mic_none),
+                    ),
+                    const SizedBox(width: 4),
+                    IconButton.filled(
+                      key: const Key('send-message'),
+                      onPressed: _sending ? null : _send,
+                      icon: _sending
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.send),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -712,6 +875,30 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       ],
     );
   }
+}
+
+final class _VoicePlatformFile extends PlatformFile {
+  _VoicePlatformFile({required this.name, required Uint8List bytes})
+    : _bytes = bytes;
+
+  @override
+  final String name;
+  final Uint8List _bytes;
+
+  @override
+  Uri get uri => Uri.dataFromBytes(_bytes);
+
+  @override
+  Future<int> length() async => _bytes.length;
+
+  @override
+  Future<Uint8List> readAsBytes() async => _bytes;
+
+  @override
+  Stream<Uint8List> readAsByteStream() => Stream.value(_bytes);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 bool messageBelongsToProfile(Message message, UserProfile profile) =>

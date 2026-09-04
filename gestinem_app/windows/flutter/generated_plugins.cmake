@@ -4,10 +4,12 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   app_links
+  audioplayers_windows
   firebase_core
   flutter_secure_storage_windows
   local_notifier
   pdfx
+  record_windows
   share_plus
   url_launcher_windows
 )

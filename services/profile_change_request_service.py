@@ -44,7 +44,7 @@ class ProfileChangeRequestService:
         return self._backend.review_profile_change_request(
             request_id,
             status="applied",
-            note="Aplicado y confirmado desde Gest2A3Eco.",
+            note="Actualizado manualmente en A3 y aplicado desde Gest2A3Eco.",
         )
 
     def reject(self, item: dict, note: str) -> dict:
