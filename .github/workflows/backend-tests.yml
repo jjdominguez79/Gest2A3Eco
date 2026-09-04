@@ -81,8 +81,20 @@ jobs:
           -q
       - name: Conservar resultados de pruebas
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: backend-test-results
           path: backend-test-results.xml
           if-no-files-found: warn
+      - name: Publicar fallos como anotaciones
+        if: failure()
+        shell: pwsh
+        run: |
+          [xml]$results = Get-Content "backend-test-results.xml" -Raw
+          $failures = @($results.testsuites.testsuite.testcase | Where-Object { $_.failure -or $_.error })
+          foreach ($case in $failures) {
+            $failure = if ($case.failure) { $case.failure } else { $case.error }
+            $message = "$($case.classname).$($case.name): $($failure.message)`n$($failure.'#text')"
+            $message = $message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::error title=Pytest::$message"
+          }
