@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.8.12",
-  "minimum_required_version": "1.8.6",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.12/Setup_Gest2A3Eco_1.8.12.exe",
-  "changelog": "Incorpora Mi �rea con los datos separados del usuario y de la empresa, adem�s del logotipo corporativo.\nPermite solicitar cambios de ficha, direcci�n, cuentas bancarias y logotipo sin modificar directamente el maestro.\nA�ade en Gesti�n la revisi�n y confirmaci�n de solicitudes: el logotipo aprobado se guarda en el repositorio documental y se utiliza en las facturas.\nCorrige la validaci�n de correos al invitar clientes y permite activar o desactivar empresas mediante selecci�n m�ltiple.",
-  "force_update": false
+  "latest_version": "1.8.13",
+  "minimum_required_version": "1.8.13",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.13/Setup_Gest2A3Eco_1.8.13.exe",
+  "changelog": "Aclara el flujo de solicitudes de cambios empresariales y exige confirmar que los datos ya se han actualizado manualmente en A3 antes de comunicar su aplicaci�n al cliente.\nA�ade notas de voz con grabaci�n y reproducci�n integrada en los chats de Gestinem.\nMejora la visualizaci�n de presencia separando empleados conectados, desconectados y con acceso desactivado.",
+  "force_update": true
 }
