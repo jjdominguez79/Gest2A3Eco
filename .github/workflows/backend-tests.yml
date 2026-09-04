@@ -49,7 +49,10 @@ jobs:
       PYTHONPATH: .
       BACKEND_DATABASE_URL: postgresql+psycopg://gestinem_test:gestinem_test@localhost:5432/gestinem_test
       TEST_POSTGRES_URL: postgresql+psycopg://gestinem_test:gestinem_test@localhost:5432/gestinem_test
-      BACKEND_INTERNAL_API_KEY: test-pg-concurrent
+      # Los modulos de prueba cambian esta clave segun el escenario. Se usa
+      # temporalmente el alias compatible para que puedan aislarla sin que la
+      # variable canonica BACKEND_INTERNAL_API_KEY tenga prioridad global.
+      DGT_INTERNAL_API_KEY: test-pg-concurrent
       MESSAGING_GRAPH_FROM: noreply@test.es
     steps:
       - uses: actions/checkout@v6
