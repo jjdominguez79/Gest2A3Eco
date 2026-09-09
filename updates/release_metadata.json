@@ -1,6 +1,6 @@
 {
-  "version": "1.8.14",
-  "tag": "v1.8.14",
-  "changelog": "Se modifica el menu principal y se añaden los filtros en el control de facturas.",
+  "version": "1.8.15",
+  "tag": "v1.8.15",
+  "changelog": "Corrige el guardado de adjuntos de correo mediante el backend.\nMejora la asignacion automatica del responsable de los clientes, incluidos los alias de A3.",
   "force_update": true
 }
