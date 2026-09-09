@@ -316,6 +316,68 @@ def test_compartir_factura_publicar_area_cliente(monkeypatch, tmp_path):
     assert "publicada" in info[1][1].lower()
 
 
+def test_compartir_factura_solo_email_no_publica_en_area_cliente(
+    monkeypatch, tmp_path,
+):
+    publicaciones = []
+
+    class BackendMailStub:
+        def send(self, **_kwargs):
+            return SimpleNamespace(
+                sender="oficina@gestinem.es",
+                message_id="msg-1",
+                internet_message_id="internet-1",
+            )
+
+    monkeypatch.setattr(
+        "services.backend_mail_service.BackendMailService", BackendMailStub,
+    )
+    monkeypatch.setattr(
+        "services.email_service.build_invoice_email_text",
+        lambda *_args: "Texto del email",
+    )
+
+    pdf = tmp_path / "factura.pdf"
+    pdf.write_bytes(b"%PDF-1.4 factura")
+    view = SimpleNamespace(
+        session=SimpleNamespace(user=SimpleNamespace(id=7, nombre="Administrador")),
+        get_selected_ids=lambda: ["fac-1"],
+        ask_share_channel=lambda: "email",
+        ask_yes_no=lambda *_args: False,
+        ask_email_compose=lambda *_args, **_kwargs: {
+            "emails": ["cliente@example.com"],
+            "cc": "",
+            "bcc": "",
+            "asunto": "Factura A000025",
+            "cuerpo": "Texto del email",
+        },
+        show_info=lambda *_args: None,
+        show_warning=lambda *_args: None,
+        show_error=lambda *_args: None,
+    )
+    controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
+    controller._view = view
+    controller._codigo = "E00436"
+    controller._ejercicio = 2026
+    controller._empresa_conf = {}
+    controller._get_factura_by_id = lambda _id: {
+        "id": "fac-1", "numero": "000025", "nif": "B39806146",
+    }
+    controller._ensure_write = lambda *_args: True
+    controller._resolve_app_pdf = lambda _fac: str(pdf)
+    controller._albaranes_de_factura = lambda _fac: []
+    controller._cliente_factura = lambda _fac: {"email": "cliente@example.com"}
+    controller._totales_factura = lambda _fac: {"total": 75.30}
+    controller._registrar_envio_factura = lambda *_args, **_kwargs: None
+    controller._publicar_en_area_cliente = (
+        lambda *_args, **_kwargs: publicaciones.append("publicada")
+    )
+
+    controller.compartir_pdf()
+
+    assert publicaciones == []
+
+
 def test_compartir_factura_email_muestra_factura_y_albaran_en_adjuntos(monkeypatch, tmp_path):
     recibidos = {}
     factura_pdf = tmp_path / "factura.pdf"

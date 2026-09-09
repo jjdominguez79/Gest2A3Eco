@@ -1,7 +1,10 @@
 from controllers.ui_control_facturas_global_controller import (
     ControlFacturasGlobalController,
 )
+from models.auth import CompanyPermission, UserRecord, UserRole, UserSession
+from services.auth_service import AuthorizationService
 from services.empresa_service import EmpresaService
+from services.secured_gestor import SecuredGestor
 from views.ui_control_facturas_global import UIControlFacturasGlobal
 
 
@@ -133,3 +136,65 @@ def test_busqueda_incluye_el_nombre_del_responsable():
 
 def test_formatea_importes_con_convencion_espanola():
     assert UIControlFacturasGlobal._format_amount(1234567.8) == "1.234.567,80"
+
+
+def _session(role, permissions=None):
+    return UserSession(
+        user=UserRecord(
+            id=1,
+            username="usuario",
+            nombre="Usuario",
+            rol=role,
+            activo=True,
+        ),
+        company_permissions=permissions or {},
+    )
+
+
+def test_control_facturas_es_accesible_para_todos_los_roles():
+    for role in UserRole:
+        authorization = AuthorizationService(_session(role))
+
+        assert authorization.can_view_control_facturas() is True
+        assert authorization.ensure_control_facturas() is None
+
+
+class _GestorControlProtegido:
+    def listar_empresas(self):
+        return [
+            {
+                "codigo": "E00001",
+                "ejercicio": 2026,
+                "nombre": "Permitida",
+                "activo": True,
+            },
+            {
+                "codigo": "E00002",
+                "ejercicio": 2026,
+                "nombre": "Restringida",
+                "activo": True,
+            },
+        ]
+
+    def listar_control_facturas_global(self, codigos):
+        assert codigos == ["E00001"]
+        return []
+
+
+def test_control_solo_consulta_empresas_autorizadas_para_el_usuario():
+    session = _session(
+        UserRole.EMPLEADO,
+        {"E00001": CompanyPermission.READ},
+    )
+    gestor = SecuredGestor(
+        _GestorControlProtegido(),
+        AuthorizationService(session),
+    )
+
+    rows, empresas = ControlFacturasGlobalController(
+        gestor,
+        EmpresaService(gestor),
+    ).cargar()
+
+    assert rows == []
+    assert empresas == {"E00001": "Permitida"}

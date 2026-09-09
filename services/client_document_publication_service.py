@@ -169,7 +169,7 @@ class ClientDocumentPublicationService:
         if isinstance(exc, (FileNotFoundError, ValueError)):
             return True
         if isinstance(exc, requests.HTTPError) and exc.response is not None:
-            return exc.response.status_code in {400, 404, 409, 413, 415, 422}
+            return exc.response.status_code in {400, 403, 404, 409, 413, 415, 422}
         return False
 
     @staticmethod

@@ -1,6 +1,24 @@
 from types import SimpleNamespace
 
-from views.ui_facturas_emitidas import UIFacturasEmitidas
+from views.ui_facturas_emitidas import (
+    UIFacturasEmitidas,
+    _texto_estado_area_cliente,
+)
+
+
+def test_area_cliente_sin_publicacion_solicitada_se_muestra_pendiente():
+    assert _texto_estado_area_cliente({"area_cliente_estado": ""}) == "Pendiente"
+    assert _texto_estado_area_cliente({}) == "Pendiente"
+    assert _texto_estado_area_cliente({
+        "area_cliente_estado": "error",
+        "canal_envio": "email",
+    }) == "Pendiente"
+
+
+def test_area_cliente_conserva_los_estados_de_publicacion():
+    assert _texto_estado_area_cliente({"area_cliente_estado": "publicada"}) == "Publicada"
+    assert _texto_estado_area_cliente({"area_cliente_estado": "bloqueada"}) == "Bloqueada"
+    assert _texto_estado_area_cliente({"area_cliente_estado": "error"}) == "Reintentando"
 
 
 def test_fin_actualizacion_aplica_cambios_preservando_estado_y_reprograma():

@@ -40,6 +40,21 @@ _FACTURAE_LABELS = {
     "firmado": "Firmado",
     "presentado": "Presentado",
 }
+_AREA_CLIENTE_LABELS = {
+    "": "Pendiente",
+    "pendiente": "Pendiente",
+    "publicada": "Publicada",
+    "bloqueada": "Bloqueada",
+    "error": "Reintentando",
+}
+
+
+def _texto_estado_area_cliente(factura: dict) -> str:
+    estado = str(factura.get("area_cliente_estado") or "").strip().lower()
+    canal = str(factura.get("canal_envio") or "").strip().lower()
+    if canal == "email" and estado != "publicada":
+        return "Pendiente"
+    return _AREA_CLIENTE_LABELS.get(estado, "Pendiente")
 
 TIPOS_IDENTIFICACION_TERCERO = [
     ("auto", "Auto"),
@@ -2669,12 +2684,7 @@ class UIFacturasEmitidas(ttk.Frame):
                 fmt2s(total, sym),
                 "Si" if fac.get("enviado") else "No",
                 fac.get("fecha_envio", ""),
-                {
-                    "pendiente": "Pendiente",
-                    "publicada": "Publicada",
-                    "bloqueada": "Bloqueada",
-                    "error": "Reintentando",
-                }.get(str(fac.get("area_cliente_estado") or ""), "No publicada"),
+                _texto_estado_area_cliente(fac),
                 _FACTURAE_LABELS.get(str(fac.get("facturae_status") or "").strip().lower(), "No generado"),
             ),
         )

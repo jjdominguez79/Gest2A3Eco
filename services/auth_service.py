@@ -83,6 +83,10 @@ class AuthorizationService:
     def can_manage_global_third_parties(self) -> bool:
         return self._session.role in (UserRole.ADMIN, UserRole.EMPLEADO)
 
+    def can_view_control_facturas(self) -> bool:
+        """El control es comun; sus filas se limitan por permisos de empresa."""
+        return True
+
     def can_manage_tramites_dgt(self) -> bool:
         return self._session.has_global_permission("tramites_dgt")
 
@@ -115,6 +119,13 @@ class AuthorizationService:
         if self.can_manage_firmas():
             return
         raise PermissionError(message or "Acceso restringido al modulo Firmas.")
+
+    def ensure_control_facturas(self, message: str | None = None) -> None:
+        if self.can_view_control_facturas():
+            return
+        raise PermissionError(
+            message or "Acceso restringido al control global de facturas."
+        )
 
     def ensure_company_read(self, codigo_empresa: str, message: str | None = None) -> None:
         if self.can_read_company(codigo_empresa):

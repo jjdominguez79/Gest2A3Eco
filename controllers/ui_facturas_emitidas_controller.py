@@ -1154,9 +1154,6 @@ class FacturasEmitidasController:
                 internet_message_id=result.internet_message_id,
             )
             self._view.show_info("Gest2A3Eco", "Email enviado y registrado en Comunicaciones.")
-            self._publicar_en_area_cliente(
-                fac, pdf_path, notify_success=False,
-            )
 
         elif canal == "publicar":
             if not self._publicar_en_area_cliente(fac, pdf_path):

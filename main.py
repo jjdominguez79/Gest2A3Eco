@@ -57,6 +57,29 @@ def find_login_logo_path() -> str:
     return ""
 
 
+def _posicion_menu_contextual(root: tk.Tk, margen: int = 8) -> tuple[int, int]:
+    """Situa un menu secundario junto al punto que origino la accion."""
+    return (
+        int(root.winfo_pointerx()) + int(margen),
+        int(root.winfo_pointery()) + int(margen),
+    )
+
+
+def _deshabilitar_boton_secundario(root: tk.Tk) -> None:
+    """Impide que el boton derecho abra acciones dentro de la aplicacion."""
+
+    def _bloquear(_event):
+        return "break"
+
+    root.bind_all("<Button-3>", _bloquear)
+    root.bind_all("<ButtonRelease-3>", _bloquear)
+
+
+def _restaurar_boton_secundario(root: tk.Tk) -> None:
+    root.unbind_all("<Button-3>")
+    root.unbind_all("<ButtonRelease-3>")
+
+
 def _build_header(
     root: tk.Tk,
     session,
@@ -74,21 +97,24 @@ def _build_header(
     db_label: str | None = None,
     word_tpl_dir: str | None = None,
 ) -> tk.Frame:
-    COLOR_PRIMARY      = "#002C57"
-    COLOR_PRIMARY_HOV  = "#1a4a7a"
-    COLOR_DANGER       = "#c0392b"
-    COLOR_DANGER_HOV   = "#a93226"
-    COLOR_WHITE        = "#ffffff"
-    COLOR_ACCENT       = "#a8c4e0"
-    COLOR_SEPARATOR    = "#d0d0d0"
-    COLOR_INFOBAR      = "#e8ecf0"
-    COLOR_MUTED        = "#6c757d"
+    COLOR_PRIMARY = "#002C57"
+    COLOR_PRIMARY_HOV = "#164B7A"
+    COLOR_DANGER = "#B4322A"
+    COLOR_DANGER_HOV = "#922820"
+    COLOR_WHITE = "#FFFFFF"
+    COLOR_ACCENT = "#BFD3E7"
+    COLOR_NAV = "#F7F9FC"
+    COLOR_NAV_TEXT = "#24364B"
+    COLOR_NAV_HOV = "#E4EDF6"
+    COLOR_SEPARATOR = "#D8E0E8"
+    COLOR_INFOBAR = "#EEF2F6"
+    COLOR_MUTED = "#647284"
 
     # ── Franja principal ────────────────────────────────────────────────
     header = tk.Frame(root, bg=COLOR_PRIMARY)
     header.pack(side="top", fill="x")
 
-    inner = tk.Frame(header, bg=COLOR_PRIMARY, padx=16, pady=10)
+    inner = tk.Frame(header, bg=COLOR_PRIMARY, padx=18, pady=9)
     inner.pack(fill="x")
 
     # ── Lado izquierdo: logo + datos empresa ────────────────────────────
@@ -97,7 +123,7 @@ def _build_header(
 
     try:
         logo_img = tk.PhotoImage(file=resource_path("logo.png"))
-        max_h = 64
+        max_h = 52
         if logo_img.height() > max_h:
             factor = max(1, logo_img.height() // max_h)
             logo_img = logo_img.subsample(factor, factor)
@@ -112,7 +138,7 @@ def _build_header(
     tk.Label(
         company, text=EMPRESA_NOMBRE,
         bg=COLOR_PRIMARY, fg=COLOR_WHITE,
-        font=("Segoe UI", 15, "bold"), anchor="w",
+        font=("Segoe UI", 14, "bold"), anchor="w",
     ).pack(anchor="w")
     tk.Label(
         company, text=f"CIF: {EMPRESA_CIF}  ·  {EMPRESA_DIRECCION}",
@@ -129,17 +155,31 @@ def _build_header(
     right = tk.Frame(inner, bg=COLOR_PRIMARY)
     right.pack(side="right", fill="y", anchor="center")
 
-    role_label = str(getattr(session, "role", "")).replace("UserRole.", "")
+    role_label = (
+        str(getattr(session, "role", "")).replace("UserRole.", "").title()
+    )
+    user_badge = tk.Frame(
+        right,
+        bg=COLOR_PRIMARY_HOV,
+        padx=10,
+        pady=4,
+        highlightbackground="#3C648B",
+        highlightthickness=1,
+    )
+    user_badge.pack(anchor="e", pady=(0, 6))
     tk.Label(
-        right, text=f"\u25cf  {session.user.nombre}  \u2014  {role_label}",
-        bg=COLOR_PRIMARY, fg=COLOR_ACCENT,
-        font=("Segoe UI", 9), anchor="e",
-    ).pack(anchor="e", pady=(0, 8))
+        user_badge,
+        text=f"\u25cf  {session.user.nombre}  ·  {role_label}",
+        bg=COLOR_PRIMARY_HOV,
+        fg=COLOR_WHITE,
+        font=("Segoe UI", 9, "bold"),
+        anchor="e",
+    ).pack()
 
     mail_status = tk.Frame(right, bg=COLOR_PRIMARY, cursor="hand2")
-    mail_status.pack(anchor="e", pady=(0, 7))
+    mail_status.pack(anchor="e")
     tk.Label(
-        mail_status, text="Correo:", bg=COLOR_PRIMARY, fg=COLOR_ACCENT,
+        mail_status, text="Correo", bg=COLOR_PRIMARY, fg=COLOR_ACCENT,
         font=("Segoe UI", 9, "bold"), cursor="hand2",
     ).pack(side="left", padx=(0, 5))
     mail_labels = {}
@@ -169,76 +209,171 @@ def _build_header(
         )
 
     attachment_button = None
+    attachment_menu = None
+    attachment_menu_index = None
 
     def _set_attachment_count(count):
-        if attachment_button is None:
+        if (
+            attachment_button is None
+            or attachment_menu is None
+            or attachment_menu_index is None
+        ):
             return
         count = int(count or 0)
+        attachment_menu.entryconfigure(
+            attachment_menu_index,
+            label=f"Documentos recibidos ({count})",
+        )
         attachment_button.configure(
-            text=f"Documentos recibidos ({count})",
-            bg="#d68910" if count else COLOR_PRIMARY_HOV,
-            activebackground="#b9770e" if count else "#1e5999",
+            text=(
+                f"Comunicaciones ({count})  ⌄"
+                if count else "Comunicaciones  ⌄"
+            ),
+            bg="#C87800" if count else COLOR_NAV,
+            fg=COLOR_WHITE if count else COLOR_NAV_TEXT,
+            activebackground="#A96300" if count else COLOR_NAV_HOV,
+            activeforeground=COLOR_WHITE if count else COLOR_NAV_TEXT,
+        )
+        attachment_button.bind(
+            "<Enter>",
+            lambda _event: attachment_button.configure(
+                bg="#A96300" if count else COLOR_NAV_HOV,
+            ),
+        )
+        attachment_button.bind(
+            "<Leave>",
+            lambda _event: attachment_button.configure(
+                bg="#C87800" if count else COLOR_NAV,
+            ),
         )
 
-    btn_row = tk.Frame(right, bg=COLOR_PRIMARY)
-    btn_row.pack(anchor="e")
+    # La navegacion ocupa su propia fila: conserva espacio y permite agrupar
+    # opciones relacionadas sin convertir la cabecera en una lista de botones.
+    btn_row = tk.Frame(
+        header,
+        bg=COLOR_NAV,
+        padx=14,
+        pady=6,
+        highlightbackground=COLOR_SEPARATOR,
+        highlightthickness=1,
+    )
+    btn_row.pack(fill="x")
+    nav_left = tk.Frame(btn_row, bg=COLOR_NAV)
+    nav_left.pack(side="left")
+    nav_right = tk.Frame(btn_row, bg=COLOR_NAV)
+    nav_right.pack(side="right")
 
-    def _hbtn(text, command, danger=False):
-        bg  = COLOR_DANGER      if danger else COLOR_PRIMARY_HOV
-        hov = COLOR_DANGER_HOV  if danger else "#1e5999"
-        b = tk.Button(
-            btn_row, text=text, command=command,
-            bg=bg, fg=COLOR_WHITE,
+    def _hbtn(text, command, danger=False, parent=nav_left):
+        bg = COLOR_DANGER if danger else COLOR_NAV
+        fg = COLOR_WHITE if danger else COLOR_NAV_TEXT
+        hov = COLOR_DANGER_HOV if danger else COLOR_NAV_HOV
+        button = tk.Button(
+            parent,
+            text=text,
+            command=command,
+            bg=bg,
+            fg=fg,
             font=("Segoe UI", 9, "bold"),
-            relief="flat", padx=12, pady=5,
+            relief="flat",
+            padx=13,
+            pady=6,
             cursor="hand2",
-            activebackground=hov, activeforeground=COLOR_WHITE,
+            activebackground=hov,
+            activeforeground=fg,
             borderwidth=0,
         )
-        b.pack(side="left", padx=(0, 6))
-        return b
+        button.pack(side="left", padx=(0, 4))
+        button.bind("<Enter>", lambda _event: button.configure(bg=hov))
+        button.bind("<Leave>", lambda _event: button.configure(bg=bg))
+        return button
 
     def _hmenu(text, commands):
         button = tk.Menubutton(
-            btn_row, text=text, bg=COLOR_PRIMARY_HOV, fg=COLOR_WHITE,
-            font=("Segoe UI", 9, "bold"), relief="flat", padx=12, pady=5,
-            cursor="hand2", activebackground="#1e5999", activeforeground=COLOR_WHITE,
-            borderwidth=0, direction="below",
+            nav_left,
+            text=f"{text}  ⌄",
+            bg=COLOR_NAV,
+            fg=COLOR_NAV_TEXT,
+            font=("Segoe UI", 9, "bold"),
+            relief="flat",
+            padx=13,
+            pady=6,
+            cursor="hand2",
+            activebackground=COLOR_NAV_HOV,
+            activeforeground=COLOR_NAV_TEXT,
+            borderwidth=0,
+            direction="below",
         )
-        menu = tk.Menu(button, tearoff=0)
+        menu = tk.Menu(
+            button,
+            tearoff=0,
+            font=("Segoe UI", 9),
+            bg=COLOR_WHITE,
+            fg=COLOR_NAV_TEXT,
+            activebackground=COLOR_PRIMARY,
+            activeforeground=COLOR_WHITE,
+            relief="solid",
+            borderwidth=1,
+        )
         for label, command in commands:
             menu.add_command(label=label, command=command)
         button.configure(menu=menu)
-        button.pack(side="left", padx=(0, 6))
-        return button
-
-    _hbtn("Buzon", on_cambiar_empresa)
-    if on_open_adjuntos_mensajeria:
-        attachment_button = _hbtn(
-            "Documentos recibidos (0)", on_open_adjuntos_mensajeria,
+        button.pack(side="left", padx=(0, 4))
+        button.bind(
+            "<Enter>", lambda _event: button.configure(bg=COLOR_NAV_HOV),
         )
+        button.bind(
+            "<Leave>", lambda _event: button.configure(bg=COLOR_NAV),
+        )
+        return button, menu
+
     if on_open_empresas:
         _hbtn("Empresas", on_open_empresas)
+
+    comunicaciones_menu = [("Buzón de comunicaciones", on_cambiar_empresa)]
+    if on_open_adjuntos_mensajeria:
+        comunicaciones_menu.append(
+            ("Documentos recibidos (0)", on_open_adjuntos_mensajeria),
+        )
+    attachment_button, attachment_menu = _hmenu(
+        "Comunicaciones", comunicaciones_menu,
+    )
+    if on_open_adjuntos_mensajeria:
+        attachment_menu_index = len(comunicaciones_menu) - 1
+
     if on_open_terceros:
         _hbtn("Terceros", on_open_terceros)
+
     documentos_menu = []
     if on_open_control_facturas:
-        documentos_menu.append(("Control facturas", on_open_control_facturas))
+        documentos_menu.append(
+            ("Control global de facturas", on_open_control_facturas),
+        )
     if on_open_firmas:
         documentos_menu.append(("Firma documental", on_open_firmas))
     if documentos_menu:
         _hmenu("Documentos", documentos_menu)
+
+    gestiones_menu = []
     if on_open_notificaciones:
-        _hbtn("Notificaciones/Certificados", on_open_notificaciones)
+        gestiones_menu.append(
+            ("Notificaciones y certificados", on_open_notificaciones),
+        )
     if on_open_tramites_dgt:
-        _hbtn("Tramites DGT", on_open_tramites_dgt)
+        gestiones_menu.append(("Trámites DGT", on_open_tramites_dgt))
+    if gestiones_menu:
+        _hmenu("Gestiones", gestiones_menu)
+
+    admin_menu = []
     if on_open_config and session.is_admin():
-        _hbtn("Configuracion", on_open_config)
+        admin_menu.append(("Configuración", on_open_config))
     if on_open_users and session.is_admin():
-        _hbtn("Usuarios", on_open_users)
+        admin_menu.append(("Gestión de usuarios", on_open_users))
+    if admin_menu:
+        _hmenu("Administración", admin_menu)
+
     if on_logout:
-        _hbtn("Cerrar sesion", on_logout)
-    _hbtn("Cerrar", root.destroy, danger=True)
+        _hbtn("Cerrar sesión", on_logout, parent=nav_right)
+    _hbtn("Salir", root.destroy, danger=True, parent=nav_right)
 
     # ── Separador ───────────────────────────────────────────────────────
     tk.Frame(root, bg=COLOR_SEPARATOR, height=1).pack(side="top", fill="x")
@@ -557,14 +692,6 @@ def main():
             return
         MonedasDialog(root)
 
-    def _build_context_menu(controller):
-        ctx = tk.Menu(root, tearoff=0)
-        ctx.add_command(label="Buzon de comunicaciones", command=controller.open_buzon)
-        ctx.add_separator()
-        ctx.add_command(label="Cerrar sesion", command=_logout)
-        ctx.add_command(label="Cerrar", command=root.destroy)
-        return ctx
-
     def _on_workstation_admin():
         if not state["session"] or not state["session"].is_admin():
             messagebox.showerror("Gest2A3Eco", "Solo el administrador puede gestionar puestos de trabajo.", parent=root)
@@ -585,8 +712,7 @@ def main():
         admin_menu.add_command(label="Puestos de trabajo", command=_on_workstation_admin)
         menu.add_cascade(label="Administracion", menu=admin_menu)
         try:
-            x = root.winfo_rootx() + root.winfo_width() - 220
-            y = root.winfo_rooty() + 110
+            x, y = _posicion_menu_contextual(root)
             menu.tk_popup(x, y)
         finally:
             menu.grab_release()
@@ -605,7 +731,11 @@ def main():
             on_cambiar_empresa=controller.open_buzon,
             on_open_empresas=controller.open_empresas,
             on_open_terceros=controller.open_terceros,
-            on_open_control_facturas=controller.open_control_facturas_global,
+            on_open_control_facturas=(
+                controller.open_control_facturas_global
+                if controller.authorization.can_view_control_facturas()
+                else None
+            ),
             on_open_firmas=(
                 controller.open_firmas_global
                 if controller.authorization.can_manage_firmas()
@@ -627,15 +757,7 @@ def main():
         controller.set_mail_status_callback(header.set_mail_counts)
         controller.set_attachment_status_callback(header.set_attachment_count)
         content.pack(side="top", fill="both", expand=True)
-        ctx = _build_context_menu(controller)
-
-        def _show_ctx(event):
-            try:
-                ctx.tk_popup(event.x_root, event.y_root)
-            finally:
-                ctx.grab_release()
-
-        root.bind("<Button-3>", _show_ctx)
+        _deshabilitar_boton_secundario(root)
         controller.start()
 
     def _force_password_change(username: str, current_password: str, user_id: int) -> str | None:
@@ -684,7 +806,7 @@ def main():
             initial_admin_info = None
 
     def _logout():
-        root.unbind("<Button-3>")
+        _restaurar_boton_secundario(root)
         _show_login()
 
     if not check_for_updates(root):

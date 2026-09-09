@@ -435,6 +435,15 @@ class AppController:
 
     def open_control_facturas_global(self):
         from views.ui_control_facturas_global import UIControlFacturasGlobal
+        try:
+            self.authorization.ensure_control_facturas()
+        except PermissionError as exc:
+            messagebox.showerror(
+                "Control de facturas",
+                str(exc),
+                parent=self._content.winfo_toplevel(),
+            )
+            return
         self._show(lambda parent: UIControlFacturasGlobal(
             parent, self._gestor, self._empresa_service,
             on_open_empresa=self.open_company_module,

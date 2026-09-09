@@ -110,6 +110,24 @@ def test_error_de_datos_bloquea_hasta_revision(tmp_path):
     assert gestor.failed[0][1]["next_retry_at"] is None
 
 
+def test_area_documental_no_habilitada_bloquea_sin_reintento(tmp_path):
+    pdf = tmp_path / "factura.pdf"
+    pdf.write_bytes(b"%PDF-1.4 factura")
+    response = requests.Response()
+    response.status_code = 403
+    response._content = b'{"detail":"Area documental no habilitada"}'
+    error = requests.HTTPError(response=response)
+    gestor = _GestorStub()
+
+    result = ClientDocumentPublicationService(
+        gestor, _BackendStub(error=error),
+    ).enqueue_and_publish(_factura(), str(pdf), amount=121.0)
+
+    assert result.status == "bloqueada"
+    assert gestor.failed[0][1]["blocked"] is True
+    assert gestor.failed[0][1]["next_retry_at"] is None
+
+
 def test_pdf_ya_publicado_no_se_vuelve_a_enviar(tmp_path):
     pdf = tmp_path / "factura.pdf"
     pdf.write_bytes(b"%PDF-1.4 factura")
