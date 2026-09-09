@@ -1,6 +1,6 @@
 {
-  "version": "1.8.13",
-  "tag": "v1.8.13",
-  "changelog": "Aclara el flujo de solicitudes de cambios empresariales y exige confirmar que los datos ya se han actualizado manualmente en A3 antes de comunicar su aplicación al cliente.\nAñade notas de voz con grabación y reproducción integrada en los chats de Gestinem.\nMejora la visualización de presencia separando empleados conectados, desconectados y con acceso desactivado.",
+  "version": "1.8.14",
+  "tag": "v1.8.14",
+  "changelog": "Se modifica el menu principal y se añaden los filtros en el control de facturas.",
   "force_update": true
 }
