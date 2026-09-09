@@ -3,7 +3,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from controllers.app_controller import AppController
-from views.ui_comunicaciones_global import UIComunicacionesGlobal
+from views.ui_comunicaciones_global import (
+    UIComunicacionesGlobal,
+    _buscar_usuario_responsable,
+)
 
 
 class GestorStub:
@@ -84,6 +87,62 @@ def test_collect_refresh_data_no_consulta_supervision_para_empleado():
 
     assert "supervision" not in data
     assert "discarded" not in data
+
+
+def test_responsable_a3_casa_con_alias_incluido_en_el_usuario():
+    gusa = {"id": 8, "nombre": "Gustavo Sanchez", "username": "jgusa"}
+
+    result = _buscar_usuario_responsable(
+        {"responsable": "GUSA"},
+        {"Gustavo Sanchez [jgusa]": gusa},
+    )
+
+    assert result is gusa
+
+
+def test_responsable_a3_no_se_asigna_si_el_alias_es_ambiguo():
+    result = _buscar_usuario_responsable(
+        {"responsable": "GUSA"},
+        {
+            "Uno": {"id": 8, "nombre": "Gustavo Sanchez", "username": "jgusa"},
+            "Dos": {"id": 9, "nombre": "Guillermo Sainz", "username": "gusa2"},
+        },
+    )
+
+    assert result is None
+
+
+class VariableStub:
+    def __init__(self, value=""):
+        self.value = value
+
+    def get(self):
+        return self.value
+
+    def set(self, value):
+        self.value = value
+
+
+def test_filtrar_unico_cliente_recalcula_su_responsable():
+    view = object.__new__(UIComunicacionesGlobal)
+    view._company_search = VariableStub("cliente gusa")
+    view._company_var = VariableStub()
+    view._company_combo = {}
+    view._companies = {
+        "Cliente Gusa [E00008]": {
+            "codigo": "E00008", "nombre": "Cliente Gusa",
+        },
+        "Otro cliente [E00009]": {
+            "codigo": "E00009", "nombre": "Otro cliente",
+        },
+    }
+    suggested = []
+    view._suggest_pending_responsible = lambda: suggested.append(True)
+
+    UIComunicacionesGlobal._filter_companies(view)
+
+    assert view._company_var.get() == "Cliente Gusa [E00008]"
+    assert suggested == [True]
 
 
 def test_auto_refresh_descarta_resultado_obsoleto():

@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from services.graph_mail_service import GraphMailService
+from services.backend_mail_service import BackendMailService
 from services.ocr.ocr_service import OcrService
 from utils.utilidades import get_document_repository_dir
 
@@ -43,9 +43,12 @@ class ArchiveSummary:
 
 
 class GestionDocumentalService:
-    def __init__(self, gestor, graph: GraphMailService | None = None):
+    def __init__(self, gestor, graph=None):
         self._gestor = gestor
-        self._graph = graph or GraphMailService()
+        # Los adjuntos de correo se consultan mediante el backend, igual que
+        # en la vista previa. Las credenciales de Microsoft Graph no deben
+        # depender de la configuracion local de cada puesto.
+        self._graph = graph or BackendMailService()
 
     def categorias(self) -> list[dict]:
         return self._gestor.listar_categorias_documentales()

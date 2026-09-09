@@ -61,3 +61,15 @@ def test_adjunto_chat_se_archiva_como_factura_y_elimina_entrada(tmp_path, monkey
     assert gestor.saved["origen"] == "chat"
     assert gestor.saved["categoria_id"] == "facturas_recibidas"
     assert gestor.saved["mensaje_id"] == "msg-1"
+
+
+def test_gestion_documental_usa_backend_para_adjuntos_de_correo(monkeypatch):
+    backend = object()
+    monkeypatch.setattr(
+        "services.gestion_documental_service.BackendMailService",
+        lambda: backend,
+    )
+
+    service = GestionDocumentalService(object())
+
+    assert service._graph is backend

@@ -21,7 +21,13 @@ AUTO_REFRESH_MS = 30_000
 def _normalizar_texto(value: str) -> str:
     """Normaliza nombres para casar el responsable de la ficha con un usuario."""
     value = unicodedata.normalize("NFKD", str(value or ""))
-    return "".join(ch for ch in value if not unicodedata.combining(ch)).casefold().strip()
+    value = "".join(ch for ch in value if not unicodedata.combining(ch)).casefold()
+    return " ".join(value.split())
+
+
+def _clave_responsable(value: str) -> str:
+    """Reduce alias de A3 y usuarios locales a una clave comparable."""
+    return "".join(ch for ch in _normalizar_texto(value) if ch.isalnum())
 
 
 def _buscar_usuario_responsable(company: dict, users: dict) -> dict | None:
@@ -29,15 +35,26 @@ def _buscar_usuario_responsable(company: dict, users: dict) -> dict | None:
     responsable = _normalizar_texto(company.get("responsable"))
     if not responsable:
         return None
+    clave_responsable = _clave_responsable(responsable)
     candidatos = []
     for user in users.values():
         nombres = (
             user.get("nombre"), user.get("username"),
         )
-        if any(_normalizar_texto(value) == responsable for value in nombres):
+        normalizados = [_normalizar_texto(value) for value in nombres if value]
+        claves = [_clave_responsable(value) for value in nombres if value]
+        if responsable in normalizados or (
+            clave_responsable and clave_responsable in claves
+        ):
             return user
         if len(responsable) >= 3 and any(
-            _normalizar_texto(value).startswith(responsable) for value in nombres
+            value.startswith(responsable) for value in normalizados
+        ):
+            candidatos.append(user)
+            continue
+        if len(clave_responsable) >= 4 and any(
+            clave_responsable in value or value in clave_responsable
+            for value in claves if len(value) >= 4
         ):
             candidatos.append(user)
     return candidatos[0] if len(candidatos) == 1 else None
@@ -966,7 +983,10 @@ class UIComunicacionesGlobal(ttk.Frame):
         values.sort()
         self._company_combo["values"] = values
         if self._company_var.get() not in values:
-            self._company_var.set(values[0] if len(values) == 1 else "")
+            selected = values[0] if len(values) == 1 else ""
+            self._company_var.set(selected)
+            if selected:
+                self._suggest_pending_responsible()
 
     def _select_same_sender(self):
         selected = self._pending_tree.selection()
