@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.8.14",
-  "minimum_required_version": "1.8.14",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.14/Setup_Gest2A3Eco_1.8.14.exe",
-  "changelog": "Se modifica el menu principal y se a�aden los filtros en el control de facturas.",
+  "latest_version": "1.8.15",
+  "minimum_required_version": "1.8.15",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.15/Setup_Gest2A3Eco_1.8.15.exe",
+  "changelog": "Corrige el guardado de adjuntos de correo mediante el backend.\nMejora la asignacion automatica del responsable de los clientes, incluidos los alias de A3.",
   "force_update": true
 }
