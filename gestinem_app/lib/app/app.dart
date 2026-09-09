@@ -132,8 +132,8 @@ class _GestinemAppState extends ConsumerState<GestinemApp> {
             .showDesktop(
               title: event['title']?.toString() ?? 'Nuevo documento disponible',
               body: event['body']?.toString() ?? 'Tienes un nuevo documento',
-              onClick: () =>
-                  ref.read(routerProvider).go('/documents/$documentId'),
+              targetType: 'document',
+              targetId: documentId,
             ),
       );
       return;
@@ -173,11 +173,6 @@ class _GestinemAppState extends ConsumerState<GestinemApp> {
     }
     final authorName = event['author_name']?.toString().trim() ?? '';
     final preview = event['preview']?.toString().trim() ?? '';
-    final route = threadId != null && threadId.isNotEmpty
-        ? '/internal/$threadId'
-        : (conversationId != null && conversationId.isNotEmpty
-              ? '/conversation/$conversationId'
-              : '/');
     unawaited(
       ref
           .read(notificationsServiceProvider)
@@ -186,7 +181,12 @@ class _GestinemAppState extends ConsumerState<GestinemApp> {
                 ? 'Nuevo mensaje en Gestinem'
                 : 'Nuevo mensaje de $authorName',
             body: preview.isEmpty ? 'Tienes un nuevo mensaje' : preview,
-            onClick: () => ref.read(routerProvider).go(route),
+            targetType: threadId != null && threadId.isNotEmpty
+                ? 'internal_thread'
+                : 'conversation',
+            targetId: threadId != null && threadId.isNotEmpty
+                ? threadId
+                : conversationId ?? '',
           ),
     );
   }

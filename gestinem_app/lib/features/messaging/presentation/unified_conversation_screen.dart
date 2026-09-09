@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/config/app_config.dart';
+import '../../../core/text/sentence_capitalization_formatter.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../domain/message.dart';
 import 'message_bubble.dart';
@@ -360,6 +361,10 @@ class _UnifiedConversationScreenState
                       child: TextField(
                         key: const Key('unified-message-composer'),
                         controller: _body,
+                        textCapitalization: TextCapitalization.sentences,
+                        inputFormatters: const [
+                          SentenceCapitalizationFormatter(),
+                        ],
                         minLines: 1,
                         maxLines: 5,
                         decoration: const InputDecoration(

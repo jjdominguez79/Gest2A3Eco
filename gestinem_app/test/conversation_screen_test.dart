@@ -96,6 +96,11 @@ void main() {
     expect(find.byKey(const Key('message-composer')), findsOneWidget);
     expect(find.byKey(const Key('record-voice-note')), findsOneWidget);
     expect(find.byKey(const Key('send-message')), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const Key('message-composer')),
+      'hola. segundo mensaje',
+    );
+    expect(find.text('Hola. Segundo mensaje'), findsOneWidget);
     await tester.pumpAndSettle();
     expect(adapter.lastRequest?.path, '/staff/internal/threads/t1/read');
   });

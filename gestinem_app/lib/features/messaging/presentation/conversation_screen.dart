@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -9,6 +9,7 @@ import 'package:record/record.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/notifications/notifications_service.dart';
+import '../../../core/text/sentence_capitalization_formatter.dart';
 import '../../../core/widgets/authenticated_avatar.dart';
 import '../../auth/domain/user_profile.dart';
 import '../../auth/presentation/auth_controller.dart';
@@ -16,6 +17,7 @@ import '../domain/conversation.dart';
 import '../domain/message.dart';
 import 'message_bubble.dart';
 import 'messaging_providers.dart';
+import 'voice_recording.dart';
 
 class ConversationScreen extends ConsumerWidget {
   const ConversationScreen({
@@ -80,7 +82,8 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   final List<int> _recordingBytes = [];
   bool _recording = false;
   int _recordingSeconds = 0;
-  String _voiceExtension = 'opus';
+  AudioEncoder _voiceEncoder = AudioEncoder.aacLc;
+  String _voiceExtension = 'aac';
   String? _lastMessageMarkedRead;
   Timer? _presenceTimer;
   late final NotificationsService _notificationsService;
@@ -214,28 +217,32 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
         }
         return;
       }
-      var encoder = AudioEncoder.opus;
-      if (!await _recorder.isEncoderSupported(encoder)) {
-        encoder = AudioEncoder.wav;
+      final candidates = voiceStreamEncoderCandidates(
+        isWeb: kIsWeb,
+        platform: defaultTargetPlatform,
+      );
+      AudioEncoder? encoder;
+      for (final candidate in candidates) {
+        if (await _recorder.isEncoderSupported(candidate)) {
+          encoder = candidate;
+          break;
+        }
       }
-      if (!await _recorder.isEncoderSupported(encoder)) {
-        encoder = AudioEncoder.aacLc;
+      if (encoder == null) {
+        throw UnsupportedError(
+          'Este dispositivo no admite grabacion de audio en streaming.',
+        );
       }
-      _voiceExtension = switch (encoder) {
-        AudioEncoder.wav => 'wav',
-        AudioEncoder.aacLc ||
-        AudioEncoder.aacEld ||
-        AudioEncoder.aacHe => 'm4a',
-        _ => 'opus',
-      };
+      _voiceEncoder = encoder;
+      _voiceExtension = voiceStreamExtension(encoder);
       _recordingBytes.clear();
       _recordingDone = Completer<void>();
       final stream = await _recorder.startStream(
         RecordConfig(
           encoder: encoder,
           bitRate: 64000,
-          sampleRate: 24000,
-          numChannels: 1,
+          sampleRate: voiceSampleRate,
+          numChannels: voiceChannelCount,
         ),
       );
       _recordingSubscription = stream.listen(
@@ -285,7 +292,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       }
       await _recordingSubscription?.cancel();
       if (!send || _recordingBytes.isEmpty) return;
-      final bytes = Uint8List.fromList(_recordingBytes);
+      final bytes = finalizeVoiceStream(_voiceEncoder, _recordingBytes);
       _files = [
         _VoicePlatformFile(
           name:
@@ -841,6 +848,10 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                       child: TextField(
                         key: const Key('message-composer'),
                         controller: _body,
+                        textCapitalization: TextCapitalization.sentences,
+                        inputFormatters: const [
+                          SentenceCapitalizationFormatter(),
+                        ],
                         minLines: 1,
                         maxLines: 5,
                         decoration: const InputDecoration(

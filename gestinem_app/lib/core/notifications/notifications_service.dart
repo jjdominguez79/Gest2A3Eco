@@ -204,7 +204,7 @@ class NotificationsService {
     if (_desktop.supported) {
       if (_owner == _ownerFor(session)) return;
       try {
-        await _desktop.initialize();
+        await _desktop.initialize(onClick: _handleDesktopClick);
         _owner = _ownerFor(session);
       } catch (error, stackTrace) {
         debugPrint(
@@ -305,13 +305,37 @@ class NotificationsService {
   Future<void> showDesktop({
     required String title,
     required String body,
-    required void Function() onClick,
+    required String targetType,
+    required String targetId,
   }) async {
+    if (!_desktop.supported || targetId.isEmpty) return;
     try {
-      await _desktop.show(title: title, body: body, onClick: onClick);
+      final data = <String, dynamic>{
+        'target_type': targetType,
+        'target_id': targetId,
+        'title': title,
+        'body': body,
+      };
+      await _desktop.show(
+        id: notificationIdForTarget(targetType, targetId),
+        title: title,
+        body: body,
+        payload: jsonEncode(data),
+      );
     } catch (error, stackTrace) {
       debugPrint(
         'No se pudo mostrar la notificacion de Windows: $error\n$stackTrace',
+      );
+    }
+  }
+
+  void _handleDesktopClick(String payload) {
+    try {
+      final data = jsonDecode(payload) as Map<String, dynamic>;
+      _emitData(data, opened: true);
+    } catch (error, stackTrace) {
+      debugPrint(
+        'No se pudo abrir la notificacion de Windows: $error\n$stackTrace',
       );
     }
   }
@@ -475,12 +499,22 @@ class NotificationsService {
   Future<void> clearActiveTarget() => setActiveTarget('', '');
 
   Future<void> cancelTarget(String targetType, String targetId) async {
-    if (defaultTargetPlatform != TargetPlatform.android ||
-        targetId.isEmpty ||
-        !_localNotificationsConfigured) {
+    if (targetId.isEmpty) {
       return;
     }
-    await _local.cancel(id: notificationIdForTarget(targetType, targetId));
+    final id = notificationIdForTarget(targetType, targetId);
+    if (_desktop.supported) {
+      try {
+        await _desktop.cancel(id);
+      } catch (_) {
+        // La limpieza de avisos antiguos es oportunista en instalaciones Win32.
+      }
+      return;
+    }
+    if (defaultTargetPlatform == TargetPlatform.android &&
+        _localNotificationsConfigured) {
+      await _local.cancel(id: id);
+    }
   }
 
   Future<void> unregister(AuthSession session, ApiClient api) async {
