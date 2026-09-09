@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.8.13",
-  "minimum_required_version": "1.8.13",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.13/Setup_Gest2A3Eco_1.8.13.exe",
-  "changelog": "Aclara el flujo de solicitudes de cambios empresariales y exige confirmar que los datos ya se han actualizado manualmente en A3 antes de comunicar su aplicaci�n al cliente.\nA�ade notas de voz con grabaci�n y reproducci�n integrada en los chats de Gestinem.\nMejora la visualizaci�n de presencia separando empleados conectados, desconectados y con acceso desactivado.",
+  "latest_version": "1.8.14",
+  "minimum_required_version": "1.8.14",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.14/Setup_Gest2A3Eco_1.8.14.exe",
+  "changelog": "Se modifica el menu principal y se a�aden los filtros en el control de facturas.",
   "force_update": true
 }
