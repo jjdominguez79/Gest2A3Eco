@@ -13,9 +13,15 @@ class ControlFacturasGlobalController:
     def cargar(self) -> tuple[list[dict], dict[str, str]]:
         empresas = self._empresa_service.listar_empresas_panel()
         nombres = {str(e["codigo"]): str(e.get("nombre") or e["codigo"]) for e in empresas}
+        responsables = {
+            str(e["codigo"]): str(e.get("responsable") or "").strip()
+            for e in empresas
+        }
         rows = self._gestor.listar_control_facturas_global(list(nombres))
         for row in rows:
-            row["empresa_nombre"] = nombres.get(str(row.get("codigo_empresa")), row.get("codigo_empresa", ""))
+            codigo = str(row.get("codigo_empresa") or "")
+            row["empresa_nombre"] = nombres.get(codigo, codigo)
+            row["responsable"] = responsables.get(codigo, "")
             row["generada"] = bool(row.get("generada"))
             row["total_calculado"] = self._total(row)
             row["estado_etiqueta"] = self._estado(row)

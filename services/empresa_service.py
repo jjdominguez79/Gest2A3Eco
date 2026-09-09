@@ -30,6 +30,7 @@ class EmpresaService:
                 "codigo": codigo,
                 "nombre": str(preferred.get("nombre") or ""),
                 "cif": str(preferred.get("cif") or ""),
+                "responsable": str(preferred.get("responsable") or "").strip(),
                 "ejercicio": preferred.get("ejercicio"),
                 "ultimo_ejercicio": preferred.get("ejercicio"),
                 "digitos_plan": int(preferred.get("digitos_plan") or 8),
