@@ -1,6 +1,6 @@
 {
-  "version": "1.8.15",
-  "tag": "v1.8.15",
-  "changelog": "Corrige el guardado de adjuntos de correo mediante el backend.\nMejora la asignacion automatica del responsable de los clientes, incluidos los alias de A3.",
-  "force_update": true
+  "version": "1.8.16",
+  "tag": "v1.8.16",
+  "changelog": "Mejora la mensajeria de clientes, la apertura de adjuntos y el envio a multiples destinatarios.\nIncorpora la primera fase de notificaciones electronicas y solicitudes de certificados AEAT y Seguridad Social con el certificado digital del cliente.\nAnade la custodia cifrada en Azure, la integracion con Flutter y el worker AAPP.",
+  "force_update": false
 }
