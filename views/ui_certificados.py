@@ -68,6 +68,7 @@ class UICertificados(ttk.Frame):
         self._codigo = codigo
         self._session = session
         self._cert = None
+        self._estado_central_seq = 0
         self._build()
         self.refresh()
 
@@ -97,6 +98,7 @@ class UICertificados(ttk.Frame):
             ("estado",    "Estado"),
             ("ruta",      "Fichero"),
             ("clave",     "Contrasena guardada"),
+            ("central",   "Copia segura en Azure"),
         ]
         for i, (key, label) in enumerate(campos):
             tk.Label(card, text=label + ":", bg=_BG, fg=_SUB, font=("Segoe UI", 9, "bold"),
@@ -118,7 +120,7 @@ class UICertificados(ttk.Frame):
         self._btn_del.pack(side="left", padx=(0, 6))
         self._btn_cloud = tk.Button(
             tb,
-            text="Preparar para app / worker",
+            text="Reenviar a Azure / worker",
             bg="#0f766e",
             fg="white",
             command=self._on_subir_central,
@@ -142,9 +144,11 @@ class UICertificados(ttk.Frame):
                 pass
 
         if not self._cert:
+            self._estado_central_seq += 1
             for v in self._vals.values():
                 v.configure(text="-", fg="#0f172a")
             self._vals["estado"].configure(text="Sin certificado", fg=_SUB)
+            self._vals["central"].configure(text="Sin comprobar", fg=_SUB)
             self._btn_set.configure(text="Seleccionar certificado...")
             self._btn_del.configure(state="disabled")
             self._btn_cloud.configure(state="disabled")
@@ -162,6 +166,7 @@ class UICertificados(ttk.Frame):
         self._vals["estado"].configure(text=lbl, fg=color)
         self._vals["ruta"].configure(text=c.get("ruta_archivo", "") or "-")
         self._vals["clave"].configure(text="Si" if c.get("password_cifrada") else "No")
+        self._vals["central"].configure(text="Comprobando...", fg=_SUB)
         self._btn_set.configure(text="Reemplazar certificado...")
         self._btn_del.configure(state="normal")
         self._btn_cloud.configure(state="normal")
@@ -176,6 +181,40 @@ class UICertificados(ttk.Frame):
             self._banner.pack(fill="x", after=self.winfo_children()[0])
         else:
             self._banner.pack_forget()
+        self._consultar_estado_central()
+
+    def _consultar_estado_central(self):
+        """Consulta Azure sin bloquear la interfaz ni exponer el PFX."""
+        self._estado_central_seq += 1
+        seq = self._estado_central_seq
+
+        def _worker():
+            try:
+                from services.backend_client_service import BackendClientService
+
+                result = BackendClientService().get_client_certificate_status(
+                    company_code=self._codigo,
+                )
+                self.after(0, lambda: self._estado_central_fin(seq, result, None))
+            except Exception as exc:
+                self.after(0, lambda error=exc: self._estado_central_fin(seq, None, error))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _estado_central_fin(self, seq, result, error):
+        if seq != self._estado_central_seq or not self.winfo_exists():
+            return
+        if error is not None:
+            self._vals["central"].configure(text="No se pudo comprobar", fg=_WARNING)
+            return
+        if not result or not result.get("configured"):
+            self._vals["central"].configure(text="No guardado", fg=_DANGER)
+            return
+        version = result.get("version")
+        suffix = f" (version {version})" if version else ""
+        estado = "Caducado" if result.get("status") == "expired" else "Guardado"
+        color = _DANGER if result.get("status") == "expired" else _SUCCESS
+        self._vals["central"].configure(text=estado + suffix, fg=color)
 
     # ------------------------------------------------------------------ eventos
     def _on_seleccionar(self):
@@ -224,51 +263,79 @@ class UICertificados(ttk.Frame):
         if self._cert and self._cert.get("id"):
             cert["id"] = self._cert["id"]
 
+        anterior = dict(self._cert) if self._cert else None
         try:
-            self._gestor.upsert_notif_certificado(cert)
+            cert["id"] = self._gestor.upsert_notif_certificado(cert)
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
             return
-
-        # Aviso segun vigencia detectada.
-        lbl, tag = _vigencia(cert["fecha_caducidad"])
-        if tag == "caducado":
-            messagebox.showwarning(
-                "Certificado caducado",
-                f"El certificado de '{cert['nombre']}' esta CADUCADO "
-                f"(caduco el {cert['fecha_caducidad']}).\n\nGuardado, pero debes renovarlo.",
-                parent=self.winfo_toplevel(),
-            )
-        elif tag == "por_vencer":
-            messagebox.showwarning(
-                "Certificado por vencer",
-                f"El certificado de '{cert['nombre']}' {lbl.lower()}.",
-                parent=self.winfo_toplevel(),
-            )
-        else:
-            messagebox.showinfo(
-                "Certificado guardado",
-                f"Titular: {cert['nombre']}\nNIF: {cert['nif_titular']}\n"
-                f"Emitido: {cert['fecha_emision']}\nCaduca: {cert['fecha_caducidad']}",
-                parent=self.winfo_toplevel(),
-            )
         self.refresh()
+        self._iniciar_subida_central(
+            cert=cert,
+            password=password,
+            automatico=True,
+            anterior=anterior,
+        )
 
     def _on_eliminar(self):
         if not self._cert:
             return
         if not messagebox.askyesno(
             "Eliminar certificado",
-            f"Eliminar el certificado de '{self._cert.get('nombre')}'?",
+            f"Eliminar el certificado de '{self._cert.get('nombre')}'?\n\n"
+            "Se eliminara tanto del puesto como de la custodia cifrada en Azure. "
+            "El cliente dejara de poder solicitar certificados hasta configurar otro.",
             parent=self.winfo_toplevel(),
         ):
             return
+        cert = dict(self._cert)
+        self._estado_central_seq += 1
+        self._vals["central"].configure(text="Eliminando...", fg=_WARNING)
+        self._btn_set.configure(state="disabled")
+        self._btn_del.configure(state="disabled")
+        self._btn_cloud.configure(state="disabled")
+
+        def _worker():
+            try:
+                from services.backend_client_service import BackendClientService
+
+                BackendClientService().delete_client_certificate(company_code=self._codigo)
+                self.after(0, lambda: self._eliminacion_fin(cert, None))
+            except Exception as exc:
+                self.after(0, lambda error=exc: self._eliminacion_fin(cert, error))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _eliminacion_fin(self, cert, error):
+        if error is not None:
+            self._btn_set.configure(state="normal")
+            self._btn_del.configure(state="normal")
+            self._btn_cloud.configure(state="normal")
+            self._vals["central"].configure(text="No se pudo eliminar", fg=_DANGER)
+            messagebox.showerror(
+                "Eliminar certificado",
+                "No se ha eliminado el certificado porque Azure no confirmo la operacion."
+                f"\n\nDetalle: {error}",
+                parent=self.winfo_toplevel(),
+            )
+            return
         try:
-            self._gestor.eliminar_notif_certificado(self._codigo, self._cert["id"])
+            self._gestor.eliminar_notif_certificado(self._codigo, cert["id"])
         except Exception as exc:
-            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
+            messagebox.showerror(
+                "Eliminar certificado",
+                "La copia de Azure se elimino, pero no se pudo borrar el registro del puesto."
+                f"\n\nDetalle: {exc}",
+                parent=self.winfo_toplevel(),
+            )
+            self.refresh()
             return
         self.refresh()
+        messagebox.showinfo(
+            "Certificado eliminado",
+            "El certificado se ha eliminado del puesto y de Azure.",
+            parent=self.winfo_toplevel(),
+        )
 
     def _on_subir_central(self):
         if not self._cert:
@@ -281,45 +348,117 @@ class UICertificados(ttk.Frame):
             parent=self.winfo_toplevel(),
         ):
             return
-        self._btn_cloud.configure(state="disabled", text="Preparando...")
+        self._iniciar_subida_central(cert=dict(self._cert))
+
+    def _iniciar_subida_central(self, *, cert, password=None, automatico=False, anterior=None):
+        self._estado_central_seq += 1
+        self._vals["central"].configure(text="Guardando...", fg=_WARNING)
+        self._btn_set.configure(state="disabled")
+        self._btn_del.configure(state="disabled")
+        self._btn_cloud.configure(state="disabled", text="Guardando en Azure...")
 
         def _worker():
             try:
                 from services.aapp.cert_store import CertStore
                 from services.backend_client_service import BackendClientService
 
-                material = CertStore(self._gestor).material_para_certificado(self._cert["id"])
+                if password is None:
+                    material = CertStore(self._gestor).material_para_certificado(cert["id"])
+                    ruta_archivo = material.ruta_archivo
+                    clave = material.password or ""
+                else:
+                    ruta_archivo = cert["ruta_archivo"]
+                    clave = password
                 result = BackendClientService().upload_client_certificate(
                     company_code=self._codigo,
-                    pfx_path=material.ruta_archivo,
-                    password=material.password or "",
+                    pfx_path=ruta_archivo,
+                    password=clave,
                 )
-                self.after(0, lambda: self._subida_central_fin(result, None))
+                self.after(
+                    0,
+                    lambda: self._subida_central_fin(
+                        result, None, cert=cert, automatico=automatico, anterior=anterior,
+                    ),
+                )
             except Exception as exc:
-                self.after(0, lambda error=exc: self._subida_central_fin(None, error))
+                self.after(
+                    0,
+                    lambda error=exc: self._subida_central_fin(
+                        None, error, cert=cert, automatico=automatico, anterior=anterior,
+                    ),
+                )
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _subida_central_fin(self, result, error):
-        self._btn_cloud.configure(state="normal", text="Preparar para app / worker")
+    def _subida_central_fin(self, result, error, *, cert, automatico=False, anterior=None):
+        self._btn_set.configure(state="normal")
+        self._btn_cloud.configure(state="normal", text="Reenviar a Azure / worker")
         if error is not None:
+            if automatico:
+                try:
+                    if anterior:
+                        self._gestor.upsert_notif_certificado(anterior)
+                    else:
+                        self._gestor.eliminar_notif_certificado(self._codigo, cert["id"])
+                except Exception as rollback_error:
+                    error = RuntimeError(
+                        f"{error}\nAdemas, no se pudo restaurar el registro local: {rollback_error}"
+                    )
+                self.refresh()
+            else:
+                self._btn_del.configure(state="normal")
+                self._vals["central"].configure(text="Error al guardar", fg=_DANGER)
             messagebox.showerror(
                 "Certificado central",
-                f"No se pudo preparar el certificado para la app:\n{error}",
+                "No se pudo guardar el certificado cifrado en Azure."
+                + (" Se ha conservado el certificado anterior." if automatico and anterior else "")
+                + f"\n\nDetalle: {error}",
                 parent=self.winfo_toplevel(),
             )
             return
+        self._btn_del.configure(state="normal")
+        version = result.get("version")
+        self._vals["central"].configure(
+            text=f"Guardado (version {version})" if version else "Guardado",
+            fg=_SUCCESS,
+        )
         warning = (
             "\n\nAviso: el NIF detectado no coincide con la empresa. "
             "Comprueba que sea un certificado de representante autorizado."
             if result.get("tax_id_warning") else ""
         )
-        messagebox.showinfo(
-            "Certificado central",
-            "El certificado ha quedado cifrado y preparado para el worker."
-            + warning,
-            parent=self.winfo_toplevel(),
-        )
+        if automatico:
+            lbl, tag = _vigencia(cert.get("fecha_caducidad"))
+            detalle = (
+                f"Titular: {cert['nombre']}\nNIF: {cert['nif_titular']}\n"
+                f"Caduca: {cert['fecha_caducidad']}\n"
+                f"Copia segura en Azure: version {version or '-'}"
+            )
+            if tag == "caducado":
+                messagebox.showwarning(
+                    "Certificado caducado",
+                    detalle + "\n\nEl certificado esta CADUCADO y no podra utilizarse." + warning,
+                    parent=self.winfo_toplevel(),
+                )
+            elif tag == "por_vencer":
+                messagebox.showwarning(
+                    "Certificado por vencer",
+                    detalle + f"\n\nEl certificado {lbl.lower()}." + warning,
+                    parent=self.winfo_toplevel(),
+                )
+            else:
+                messagebox.showinfo(
+                    "Certificado guardado",
+                    detalle + "\n\nYa esta preparado para la app y el worker." + warning,
+                    parent=self.winfo_toplevel(),
+                )
+        else:
+            messagebox.showinfo(
+                "Certificado central",
+                f"El certificado ha quedado cifrado en Azure (version {version or '-'})."
+                + warning,
+                parent=self.winfo_toplevel(),
+            )
 
 
 # ── Dialogo de seleccion (fichero + contrasena) ─────────────────────────────
@@ -345,12 +484,20 @@ class _SeleccionCertDialog(tk.Toplevel):
         ttk.Label(frm, text="Contrasena del certificado").grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 4))
         self._ent_pwd = ttk.Entry(frm, textvariable=self._var_pwd, width=30, show="*")
         self._ent_pwd.grid(row=3, column=0, sticky="w")
-        ttk.Label(frm, text="(Las propiedades se detectan automaticamente al guardar.)",
-                  foreground="#64748b").grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Label(
+            frm,
+            text=(
+                "Las propiedades se detectan automaticamente. Al guardar, el PFX se envia "
+                "por HTTPS y se custodia cifrado en Azure."
+            ),
+            foreground="#64748b",
+            wraplength=430,
+            justify="left",
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
         btns = ttk.Frame(self, padding=(16, 8))
         btns.pack(fill="x")
         ttk.Button(btns, text="Cancelar", command=self.destroy).pack(side="right", padx=(6, 0))
-        ttk.Button(btns, text="Guardar", command=self._on_ok).pack(side="right")
+        ttk.Button(btns, text="Guardar y proteger", command=self._on_ok).pack(side="right")
 
     def _browse(self):
         path = filedialog.askopenfilename(

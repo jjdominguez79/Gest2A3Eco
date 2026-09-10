@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import timedelta
+from types import SimpleNamespace
 
 os.environ.setdefault(
     "BACKEND_DATABASE_URL",
@@ -203,6 +204,60 @@ def test_cliente_solo_puede_cancelar_una_solicitud_en_cola(monkeypatch):
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "cancelled"
     assert repeated.status_code == 409
+
+
+def test_escritorio_reemplaza_certificado_y_elimina_el_blob_anterior(monkeypatch):
+    client, factory, org_id, _headers = _setup(monkeypatch)
+    eliminados = []
+
+    class _Storage:
+        def put(self, encrypted, organization_id):
+            assert encrypted == b"sobre-cifrado"
+            assert organization_id == org_id
+            return f"{organization_id}/nuevo.g2cert"
+
+        def delete(self, key):
+            eliminados.append(key)
+
+    monkeypatch.setattr(
+        "backend.api.client_certificates_api.inspect_pfx",
+        lambda _content, _password: SimpleNamespace(
+            pfx_sha256="b" * 64,
+            common_name="Certificado renovado",
+            tax_id="B12345678",
+            issuer="FNMT",
+            serial_number="ABC123",
+            valid_from=utcnow(),
+            valid_until=utcnow() + timedelta(days=730),
+        ),
+    )
+    monkeypatch.setattr(
+        "backend.api.client_certificates_api.encrypt_material",
+        lambda _content, _password, _org_id: b"sobre-cifrado",
+    )
+    monkeypatch.setattr(
+        "backend.api.client_certificates_api.ClientCertificateVaultStorage",
+        _Storage,
+    )
+
+    response = client.post(
+        "/api/v1/messaging/client/certificates/internal/certificate",
+        data={"company_code": "E00001", "password": "nueva-clave"},
+        files={"file": ("renovado.pfx", b"pfx-renovado", "application/x-pkcs12")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["configured"] is True
+    assert response.json()["version"] == 2
+    assert eliminados == [f"{org_id}/test.g2cert"]
+    with factory() as db:
+        secret = db.scalar(select(ClientCertificateSecret).where(
+            ClientCertificateSecret.organization_id == org_id,
+        ))
+        assert secret.encrypted_blob_key == f"{org_id}/nuevo.g2cert"
+        assert secret.file_name == "renovado.pfx"
+        assert secret.common_name == "Certificado renovado"
+        assert secret.version == 2
 
 
 def test_worker_claim_y_reintento_con_token(monkeypatch):
