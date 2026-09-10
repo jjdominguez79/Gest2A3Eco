@@ -47,5 +47,38 @@ foreach ($package in $packages) {
     }
 }
 
+$aappTemplateRoot = Join-Path $scriptRoot 'gest2a3eco-aapp-worker'
+$aappPackageRoot = Join-Path $outputPath 'gest2a3eco-aapp-worker'
+$aappSecretRoot = Join-Path $aappPackageRoot 'secrets'
+$aappWorkerRoot = Join-Path $aappPackageRoot 'aapp_worker'
+$aappServicesRoot = Join-Path $aappPackageRoot 'services'
+$aappConnectorsRoot = Join-Path $aappServicesRoot 'aapp'
+$aappUtilsRoot = Join-Path $aappPackageRoot 'utils'
+
+New-Item -ItemType Directory -Path @(
+    $aappPackageRoot,
+    $aappSecretRoot,
+    $aappWorkerRoot,
+    $aappServicesRoot,
+    $aappConnectorsRoot,
+    $aappUtilsRoot
+) -Force | Out-Null
+
+foreach ($file in @('compose.yaml', 'Dockerfile', 'requirements.txt', 'README.md')) {
+    Copy-Item -LiteralPath (Join-Path $aappTemplateRoot $file) -Destination (Join-Path $aappPackageRoot $file) -Force
+}
+Copy-Item -LiteralPath (Join-Path $aappTemplateRoot 'secrets\.gitignore') -Destination (Join-Path $aappSecretRoot '.gitignore') -Force
+
+foreach ($module in @('__init__.py', '__main__.py', 'backend_client.py', 'config.py', 'worker.py')) {
+    Copy-Item -LiteralPath (Join-Path $repoRoot "aapp_worker\$module") -Destination (Join-Path $aappWorkerRoot $module) -Force
+}
+Copy-Item -LiteralPath (Join-Path $repoRoot 'services\__init__.py') -Destination (Join-Path $aappServicesRoot '__init__.py') -Force
+foreach ($module in @('__init__.py', 'base.py', 'cert_store.py', 'certificados.py')) {
+    Copy-Item -LiteralPath (Join-Path $repoRoot "services\aapp\$module") -Destination (Join-Path $aappConnectorsRoot $module) -Force
+}
+foreach ($module in @('__init__.py', 'crypto_utils.py')) {
+    Copy-Item -LiteralPath (Join-Path $repoRoot "utils\$module") -Destination (Join-Path $aappUtilsRoot $module) -Force
+}
+
 Write-Host "Paquetes Synology generados en: $outputPath"
 Write-Host 'Los ficheros de secrets no se copian ni se modifican.'

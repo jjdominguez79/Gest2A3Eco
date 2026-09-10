@@ -42,7 +42,26 @@ def test_package_builder_copies_only_required_worker_modules():
     assert "gest2a3eco-mail-sync" in builder
     assert "messaging_worker.py" in builder
     assert "master_data_worker.py" in builder
+    assert "gest2a3eco-aapp-worker" in builder
+    assert "'worker.py'" in builder
+    assert '"aapp_worker\\$module"' in builder
+    assert "'certificados.py'" in builder
+    assert '"services\\aapp\\$module"' in builder
     assert "Los ficheros de secrets no se copian" in builder
+
+
+def test_aapp_worker_synology_es_aislado_y_usa_secreto_montado():
+    root = SYNOLOGY / "gest2a3eco-aapp-worker"
+    compose = (root / "compose.yaml").read_text(encoding="utf-8")
+    dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "container_name: gest2a3eco-aapp-worker" in compose
+    assert "AAPP_WORKER_API_KEY_FILE" in compose
+    assert "aapp_worker_api_key.txt" in compose
+    assert "read_only: true" in compose
+    assert "cap_drop:" in compose
+    assert "COPY aapp_worker /app/aapp_worker" in dockerfile
+    assert "COPY services /app/services" in dockerfile
 
 
 def test_worker_messaging_solo_sincroniza_adjuntos():

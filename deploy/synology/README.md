@@ -8,6 +8,7 @@ proyecto separado de Container Manager:
 |-- gest2a3eco-mail-sync/
 |-- gest2a3eco-messaging-sync/
 |-- gest2a3eco-master-data-sync/
+|-- gest2a3eco-aapp-worker/
 `-- gest2a3eco-postgres/
 ```
 
@@ -32,7 +33,7 @@ Desde la raiz del repositorio, en PowerShell:
 .\deploy\synology\build_packages.ps1
 ```
 
-Se generan tres carpetas autocontenidas bajo `dist_synology/`. El proceso no
+Se generan cuatro carpetas autocontenidas bajo `dist_synology/`. El proceso no
 copia secretos. Al actualizar un proyecto existente, copiar el contenido del
 paquete sin eliminar ni reemplazar su carpeta `secrets/`.
 
@@ -126,3 +127,25 @@ GRANT SELECT ON TABLE terceros_empresas TO gest2a3eco_sync;
 
 El `invoice_worker` no se instala en Synology: requiere Windows y Microsoft
 Word y debe continuar como tarea programada en el equipo de facturacion.
+
+## 4. Crear aapp-worker
+
+Copiar `dist_synology/gest2a3eco-aapp-worker` a
+`/volume1/docker/gest2a3eco-aapp-worker` y crear:
+
+```text
+secrets/aapp_worker_api_key.txt
+```
+
+El fichero debe contener exactamente el valor de Railway
+`AAPP_WORKER_API_KEY`, sin comillas. El PFX y su contrasena no se guardan en el
+NAS: el worker los descarga cifrados para una solicitud reclamada, los usa en
+`tmpfs` y los elimina al terminar.
+
+```sh
+cd /volume1/docker/gest2a3eco-aapp-worker
+docker compose config
+docker compose up --build -d
+docker compose ps
+docker compose logs --tail=100 aapp-worker
+```
