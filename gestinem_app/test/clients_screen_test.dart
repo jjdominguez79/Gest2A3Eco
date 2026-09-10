@@ -54,6 +54,15 @@ void main() {
         clientCount: 0,
         organizationEmail: 'cliente@example.test',
       ),
+      ClientOrganization(
+        companyCode: 'E00004',
+        name: 'Cliente de baja',
+        active: false,
+        accessStatus: 'disabled',
+        accessActive: false,
+        hasAcceptedAccess: true,
+        clientCount: 1,
+      ),
     ];
     final api = ApiClient(
       dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
@@ -77,6 +86,7 @@ void main() {
     expect(find.byKey(const Key('client-E00001')), findsOneWidget);
     expect(find.byKey(const Key('client-E00002')), findsOneWidget);
     expect(find.byKey(const Key('client-E00003')), findsOneWidget);
+    expect(find.byKey(const Key('client-E00004')), findsNothing);
     expect(find.byKey(const Key('clients-back-button')), findsOneWidget);
     expect(find.byKey(const Key('clients-bulk-invite-button')), findsOneWidget);
 

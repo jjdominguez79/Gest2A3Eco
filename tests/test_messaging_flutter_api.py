@@ -20,6 +20,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.api import messaging_api
+from backend.api.client_profile_api import (
+    _db as client_profile_db,
+    router as client_profile_router,
+)
 from backend.api.database import Base
 from backend.api.messaging_api import get_db, router
 from backend.api.messaging_models import (
@@ -48,12 +52,14 @@ def _api(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(messaging_api, "SessionLocal", factory)
     app = FastAPI()
     app.include_router(router)
+    app.include_router(client_profile_router)
 
     def override():
         with factory() as db:
             yield db
 
     app.dependency_overrides[get_db] = override
+    app.dependency_overrides[client_profile_db] = override
     return TestClient(app, base_url="https://api.example.test"), factory
 
 
@@ -107,6 +113,91 @@ def _setup(tmp_path: Path, monkeypatch):
         ).json() if row["kind"] == "fiscal"
     )
     return client, factory, staff_headers, auth, accepted["client"]["id"], conversation["id"]
+
+
+def test_baja_maestra_oculta_empresa_y_revoca_acceso(tmp_path, monkeypatch):
+    client, factory, staff_headers, auth, client_id, _conversation_id = _setup(
+        tmp_path, monkeypatch,
+    )
+    device = client.put(
+        "/api/v1/messaging/client/app-devices",
+        headers=auth,
+        json={
+            "platform": "android",
+            "push_token": "token-baja-maestra-abcdefghijklmnopqrstuvwxyz",
+        },
+    )
+    assert device.status_code == 200
+
+    disabled = client.put(
+        "/api/v1/messaging/client/internal/sync-profile",
+        headers={"X-API-Key": "test-secret"},
+        json={"company_code": "E10001", "active": False},
+    )
+    assert disabled.status_code == 200
+
+    organizations = client.get(
+        "/api/v1/messaging/staff/admin/organizations",
+        headers=staff_headers("admin"),
+    ).json()
+    assert all(row["company_code"] != "E10001" for row in organizations)
+    assert client.get(
+        "/api/v1/messaging/client/conversations", headers=auth,
+    ).status_code in {401, 403}
+    assert client.post(
+        "/api/v1/messaging/staff/admin/invitations",
+        headers=staff_headers("admin"),
+        json={
+            "company_code": "E10001",
+            "name": "Maria",
+            "email": "maria@example.test",
+            "send_email": False,
+        },
+    ).status_code == 409
+
+    from backend.api.messaging_models import (
+        MessagingAppDevice,
+        MessagingClient,
+        MessagingInvitation,
+        MessagingOrganization,
+        MessagingSession,
+    )
+
+    with factory() as db:
+        org = db.scalar(select(MessagingOrganization).where(
+            MessagingOrganization.company_code == "E10001",
+        ))
+        account = db.get(MessagingClient, client_id)
+        sessions = db.scalars(select(MessagingSession).where(
+            MessagingSession.client_id == client_id,
+        )).all()
+        invitations = db.scalars(select(MessagingInvitation).where(
+            MessagingInvitation.client_id == client_id,
+        )).all()
+        app_devices = db.scalars(select(MessagingAppDevice).where(
+            MessagingAppDevice.user_id == client_id,
+        )).all()
+        assert org.active is False
+        assert account.active is False
+        assert sessions and all(row.revoked_at is not None for row in sessions)
+        assert invitations and all(
+            row.used_at is not None or row.revoked_at is not None
+            for row in invitations
+        )
+        assert app_devices and all(not row.active for row in app_devices)
+
+    enabled = client.put(
+        "/api/v1/messaging/client/internal/sync-profile",
+        headers={"X-API-Key": "test-secret"},
+        json={"company_code": "E10001", "active": True},
+    )
+    assert enabled.status_code == 200
+    organizations = client.get(
+        "/api/v1/messaging/staff/admin/organizations",
+        headers=staff_headers("admin"),
+    ).json()
+    restored = next(row for row in organizations if row["company_code"] == "E10001")
+    assert restored["client_access_status"] == "disabled"
 
 
 def test_notas_de_voz_se_reproducen_y_no_entran_en_bandeja_documental(

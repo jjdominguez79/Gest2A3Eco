@@ -71,6 +71,7 @@ class ConversationView extends ConsumerStatefulWidget {
 
 class _ConversationViewState extends ConsumerState<ConversationView> {
   final _body = TextEditingController();
+  final _composerFocus = FocusNode();
   final _scroll = ScrollController();
   List<PlatformFile> _files = [];
   Message? _replyingTo;
@@ -85,6 +86,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   AudioEncoder _voiceEncoder = AudioEncoder.aacLc;
   String _voiceExtension = 'aac';
   String? _lastMessageMarkedRead;
+  String? _messagePendingScrollId;
   Timer? _presenceTimer;
   late final NotificationsService _notificationsService;
 
@@ -119,6 +121,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     unawaited(_recorder.dispose());
     unawaited(_notificationsService.clearActiveTarget());
     _body.dispose();
+    _composerFocus.dispose();
     _scroll.dispose();
     super.dispose();
   }
@@ -319,36 +322,46 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     return '$minutes:$seconds';
   }
 
-  Future<void> _send() async {
+  Future<void> _send({bool keepComposerFocus = false}) async {
     if (_body.text.trim().isEmpty && _files.isEmpty || _sending) return;
+    final restoreComposerFocus =
+        keepComposerFocus && _body.text.trim().isNotEmpty;
+    if (restoreComposerFocus) _composerFocus.requestFocus();
     setState(() => _sending = true);
     try {
       final repository = ref.read(messagingRepositoryProvider);
+      final Message sentMessage;
       if (widget.internal) {
-        await repository.sendInternal(
+        sentMessage = await repository.sendInternal(
           widget.conversationId,
           _body.text,
           _files,
           replyToMessageId: _replyingTo?.id,
         );
-        ref.invalidate(internalMessagesProvider(widget.conversationId));
       } else {
         final profile = ref.read(sessionProvider).valueOrNull!.profile;
-        await repository.send(
+        sentMessage = await repository.send(
           profile,
           widget.conversationId,
           _body.text,
           _files,
           replyToMessageId: _replyingTo?.id,
         );
-        ref.invalidate(messagesProvider(widget.conversationId));
-        ref.invalidate(conversationsProvider);
       }
+      if (!mounted) return;
+      _messagePendingScrollId = sentMessage.id;
+      if (restoreComposerFocus) _composerFocus.requestFocus();
       _body.clear();
       setState(() {
         _files = [];
         _replyingTo = null;
       });
+      if (widget.internal) {
+        ref.invalidate(internalMessagesProvider(widget.conversationId));
+      } else {
+        ref.invalidate(messagesProvider(widget.conversationId));
+        ref.invalidate(conversationsProvider);
+      }
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -357,6 +370,43 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       }
     } finally {
       if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  void _scrollToSentMessageWhenReady(List<Message> messages) {
+    final messageId = _messagePendingScrollId;
+    if (messageId == null ||
+        !messages.any((message) => message.id == messageId)) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          _messagePendingScrollId != messageId ||
+          !_scroll.hasClients) {
+        return;
+      }
+      _messagePendingScrollId = null;
+      unawaited(_animateToBottom());
+    });
+  }
+
+  Future<void> _animateToBottom() async {
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (!mounted || !_scroll.hasClients) return;
+      await _scroll.animateTo(
+        _scroll.position.maxScrollExtent,
+        duration: Duration(milliseconds: attempt == 0 ? 300 : 100),
+        curve: Curves.easeOut,
+      );
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted || !_scroll.hasClients) return;
+      if ((_scroll.position.maxScrollExtent - _scroll.position.pixels).abs() <
+          1) {
+        return;
+      }
+    }
+    if (mounted && _scroll.hasClients) {
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
     }
   }
 
@@ -729,50 +779,54 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
           child: asyncMessages.when(
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (error, _) => Center(child: Text(apiErrorMessage(error))),
-            data: (messages) => Scrollbar(
-              controller: _scroll,
-              child: ListView.builder(
-                key: const Key('message-list'),
+            data: (messages) {
+              _scrollToSentMessageWhenReady(messages);
+              return Scrollbar(
                 controller: _scroll,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                itemCount: messages.length,
-                itemBuilder: (context, index) {
-                  final message = messages[index];
-                  final mine = messageBelongsToProfile(message, profile);
-                  return MessageBubble(
-                    message: message,
-                    mine: mine,
-                    isStaff: profile.type == UserType.staff,
-                    baseUrl: ref
-                        .read(apiClientProvider)
-                        .dio
-                        .options
-                        .baseUrl
-                        .replaceAll(RegExp(r'/api/v1/messaging/?$'), ''),
-                    authToken:
-                        ref.read(sessionProvider).valueOrNull?.token ?? '',
-                    onReplyTap: message.replyTo == null
-                        ? null
-                        : () => _scrollToMessage(messages, message.replyTo!.id),
-                    onAttachmentTap: _download,
-                    allowStaffAttachmentDownload: widget.internal,
-                    onAttachmentHistory: profile.type == UserType.staff
-                        ? _showAttachmentHistory
-                        : null,
-                    onAttachmentWithdraw: profile.isAdmin
-                        ? _withdrawAttachment
-                        : null,
-                    onVoiceLoad: _loadVoice,
-                    onTap: message.deleted
-                        ? null
-                        : () => _messageActions(message, mine),
-                    onLongPress: message.deleted
-                        ? null
-                        : () => _messageActions(message, mine),
-                  );
-                },
-              ),
-            ),
+                child: ListView.builder(
+                  key: const Key('message-list'),
+                  controller: _scroll,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  itemCount: messages.length,
+                  itemBuilder: (context, index) {
+                    final message = messages[index];
+                    final mine = messageBelongsToProfile(message, profile);
+                    return MessageBubble(
+                      message: message,
+                      mine: mine,
+                      isStaff: profile.type == UserType.staff,
+                      baseUrl: ref
+                          .read(apiClientProvider)
+                          .dio
+                          .options
+                          .baseUrl
+                          .replaceAll(RegExp(r'/api/v1/messaging/?$'), ''),
+                      authToken:
+                          ref.read(sessionProvider).valueOrNull?.token ?? '',
+                      onReplyTap: message.replyTo == null
+                          ? null
+                          : () =>
+                                _scrollToMessage(messages, message.replyTo!.id),
+                      onAttachmentTap: _download,
+                      allowStaffAttachmentDownload: widget.internal,
+                      onAttachmentHistory: profile.type == UserType.staff
+                          ? _showAttachmentHistory
+                          : null,
+                      onAttachmentWithdraw: profile.isAdmin
+                          ? _withdrawAttachment
+                          : null,
+                      onVoiceLoad: _loadVoice,
+                      onTap: message.deleted
+                          ? null
+                          : () => _messageActions(message, mine),
+                      onLongPress: message.deleted
+                          ? null
+                          : () => _messageActions(message, mine),
+                    );
+                  },
+                ),
+              );
+            },
           ),
         ),
         if (_replyingTo != null)
@@ -848,6 +902,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                       child: TextField(
                         key: const Key('message-composer'),
                         controller: _body,
+                        focusNode: _composerFocus,
                         textCapitalization: TextCapitalization.sentences,
                         inputFormatters: const [
                           SentenceCapitalizationFormatter(),
@@ -869,7 +924,9 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                     const SizedBox(width: 4),
                     IconButton.filled(
                       key: const Key('send-message'),
-                      onPressed: _sending ? null : _send,
+                      onPressed: _sending
+                          ? null
+                          : () => _send(keepComposerFocus: true),
                       icon: _sending
                           ? const SizedBox.square(
                               dimension: 18,

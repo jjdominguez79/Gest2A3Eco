@@ -8,8 +8,9 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.api.database import SessionLocal
+from backend.api.client_access import revoke_organization_client_access
 from backend.api.client_validation import normalize_tax_id
+from backend.api.database import SessionLocal
 from backend.api.messaging_models import (
     MessagingClient,
     MessagingAttachment,
@@ -300,6 +301,8 @@ def sync_company_profile(
         if org.active != active:
             org.active = active
             changed = True
+        if not active:
+            revoke_organization_client_access(db, org.id)
 
     org.profile_synced_at = utcnow()
     db.commit()

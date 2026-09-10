@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -156,4 +159,115 @@ void main() {
 
     expect(find.text('Lista de inicio'), findsOneWidget);
   });
+
+  testWidgets(
+    'al enviar mantiene el foco y muestra el mensaje nuevo al final',
+    (tester) async {
+      final adapter = _ConversationAdapter();
+      final dio = Dio(BaseOptions(baseUrl: 'https://example.test'))
+        ..httpClientAdapter = adapter;
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+            apiClientProvider.overrideWithValue(
+              ApiClient(dio: dio, tokenProvider: () => testSession.token),
+            ),
+            internalThreadsProvider.overrideWith(
+              (ref) async => const [
+                InternalThread(
+                  id: 't1',
+                  kind: 'direct',
+                  channel: '',
+                  title: 'Analía Pérez',
+                  unreadCount: 0,
+                ),
+              ],
+            ),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(
+              body: ConversationView(conversationId: 't1', internal: true),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      const composerKey = Key('message-composer');
+      await tester.tap(find.byKey(composerKey));
+      await tester.enterText(find.byKey(composerKey), 'mensaje nuevo');
+      await tester.tap(find.byKey(const Key('send-message')));
+      await tester.pumpAndSettle();
+
+      final editable = tester.widget<EditableText>(
+        find.descendant(
+          of: find.byKey(composerKey),
+          matching: find.byType(EditableText),
+        ),
+      );
+      final messageScroll = tester.state<ScrollableState>(
+        find
+            .descendant(
+              of: find.byKey(const Key('message-list')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      expect(find.text('mensaje nuevo'), findsOneWidget);
+      expect(editable.focusNode.hasFocus, isTrue);
+      expect(
+        messageScroll.position.pixels,
+        closeTo(messageScroll.position.maxScrollExtent, 0.5),
+      );
+    },
+  );
+}
+
+class _ConversationAdapter implements HttpClientAdapter {
+  bool _sent = false;
+
+  Map<String, dynamic> _message(int index) => {
+    'id': 'm$index',
+    'thread_id': 't1',
+    'author_type': index == 20 ? 'client' : 'staff',
+    'author_id': index == 20 ? testProfile.id : 'staff-1',
+    'author_name': index == 20 ? testProfile.name : 'Ana',
+    'author_avatar_url': '',
+    'body': index == 20 ? 'mensaje nuevo' : 'Mensaje anterior $index',
+    'created_at': DateTime(2026, 8, 15, 10, index).toIso8601String(),
+    'deleted': false,
+    'attachments': <dynamic>[],
+  };
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    Object payload = <String, dynamic>{};
+    if (options.path == '/staff/internal/threads/t1/messages') {
+      if (options.method == 'POST') {
+        _sent = true;
+        payload = _message(20);
+      } else {
+        payload = [
+          for (var index = 0; index < 20; index++) _message(index),
+          if (_sent) _message(20),
+        ];
+      }
+    }
+    return ResponseBody.fromString(
+      jsonEncode(payload),
+      200,
+      headers: {
+        Headers.contentTypeHeader: ['application/json'],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
 }

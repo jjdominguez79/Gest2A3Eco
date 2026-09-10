@@ -220,6 +220,7 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
                 final query = _search.text.trim().toLowerCase();
                 final filtered =
                     rows.where((row) {
+                        if (!row.active) return false;
                         final matchesStatus =
                             _status == 'all' || row.accessStatus == _status;
                         final matchesSearch =
@@ -231,7 +232,10 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
                       ..sort((a, b) => a.displayName.compareTo(b.displayName));
                 final selectable = filtered.where(_canBulkInvite).toList();
                 final selectedRows = rows
-                    .where((row) => _selected.contains(row.companyCode))
+                    .where(
+                      (row) =>
+                          row.active && _selected.contains(row.companyCode),
+                    )
                     .toList(growable: false);
                 if (filtered.isEmpty) {
                   return const Center(

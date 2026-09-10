@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from backend.api.client_access import revoke_organization_client_access
 from backend.api.config import get_settings
 from backend.api.database import SessionLocal
 from backend.api.messaging_models import (
@@ -1010,6 +1011,8 @@ def put_organization(company_code: str, payload: OrganizationIn, db: Session = D
         ])
     item.name = payload.name
     item.active = payload.active
+    if not item.active:
+        revoke_organization_client_access(db, item.id)
     if company_code.strip().upper() in TEST_COMPANY_CODES:
         item.is_test = True
     elif payload.is_test is not None:
@@ -1031,7 +1034,8 @@ def _prepare_invitation(
     payload: InviteIn, db: Session,
 ) -> tuple[MessagingClient, MessagingInvitation, str]:
     org = _organization(db, payload.company_code)
-    org.active = True
+    if not org.active:
+        raise HTTPException(409, "La empresa esta inactiva en el escritorio")
     email = _validated_client_email(payload.email)
     client = db.scalar(select(MessagingClient).where(
         MessagingClient.email == email,
@@ -1929,7 +1933,11 @@ def revoke_staff_sessions(
 def staff_organizations(
     admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
 ):
-    rows = db.scalars(select(MessagingOrganization).order_by(MessagingOrganization.name)).all()
+    rows = db.scalars(
+        select(MessagingOrganization)
+        .where(MessagingOrganization.active.is_(True))
+        .order_by(MessagingOrganization.name)
+    ).all()
     result = []
     for row in rows:
         if (
@@ -1971,25 +1979,12 @@ def set_client_access(
     )).all()
     if payload.active and not clients:
         raise HTTPException(409, "El cliente todavia no ha sido invitado")
-    org.active = payload.active
+    if payload.active and not org.active:
+        raise HTTPException(409, "La empresa esta inactiva en el escritorio")
     for client in clients:
         client.active = payload.active
     if not payload.active and clients:
-        client_ids = [client.id for client in clients]
-        now = utcnow()
-        db.query(MessagingSession).filter(
-            MessagingSession.client_id.in_(client_ids),
-            MessagingSession.revoked_at.is_(None),
-        ).update({MessagingSession.revoked_at: now}, synchronize_session=False)
-        db.query(MessagingAppDevice).filter(
-            MessagingAppDevice.user_type == "client",
-            MessagingAppDevice.user_id.in_(client_ids),
-        ).update({MessagingAppDevice.active: False}, synchronize_session=False)
-        db.query(MessagingInvitation).filter(
-            MessagingInvitation.client_id.in_(client_ids),
-            MessagingInvitation.used_at.is_(None),
-            MessagingInvitation.revoked_at.is_(None),
-        ).update({MessagingInvitation.revoked_at: now}, synchronize_session=False)
+        revoke_organization_client_access(db, org.id)
     db.commit()
     return _organization_access_state(db, org)
 
@@ -3239,6 +3234,8 @@ def sync_organizations(payload: list[OrganizationIn], db: Session = Depends(get_
             ])
         item.name = row.name.strip()
         item.active = row.active
+        if not item.active:
+            revoke_organization_client_access(db, item.id)
         db.add(item)
         synchronized += 1
     db.commit()

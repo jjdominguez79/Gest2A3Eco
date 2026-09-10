@@ -139,6 +139,7 @@ class Organization {
     required this.name,
     required this.clientAccessStatus,
     required this.clientAccessActive,
+    this.active = true,
     this.email = '',
   });
 
@@ -148,6 +149,7 @@ class Organization {
     clientAccessStatus:
         json['client_access_status'] as String? ?? 'not_invited',
     clientAccessActive: json['client_access_active'] as bool? ?? false,
+    active: json['active'] as bool? ?? true,
     email: json['organization_email'] as String? ?? '',
   );
 
@@ -155,13 +157,16 @@ class Organization {
   final String name;
   final String clientAccessStatus;
   final bool clientAccessActive;
+  final bool active;
   final String email;
 
   String get displayName => name.isEmpty ? companyCode : name;
 
   /// Se puede invitar si no está activa ni deshabilitada.
   bool get canInvite =>
-      clientAccessStatus != 'active' && clientAccessStatus != 'disabled';
+      active &&
+      clientAccessStatus != 'active' &&
+      clientAccessStatus != 'disabled';
 
   /// Ya tiene una invitación enviada (pendiente o caducada) → "Reenviar".
   bool get hasExistingInvitation =>

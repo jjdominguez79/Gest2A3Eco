@@ -23,11 +23,13 @@ class UnifiedConversationScreen extends ConsumerStatefulWidget {
 class _UnifiedConversationScreenState
     extends ConsumerState<UnifiedConversationScreen> {
   final _body = TextEditingController();
+  final _composerFocus = FocusNode();
   final _scroll = ScrollController();
   List<PlatformFile> _files = [];
   Message? _replyingTo;
   bool _sending = false;
   String? _lastMessageMarkedRead;
+  String? _messagePendingScrollId;
 
   @override
   void initState() {
@@ -38,6 +40,7 @@ class _UnifiedConversationScreenState
   @override
   void dispose() {
     _body.dispose();
+    _composerFocus.dispose();
     _scroll.dispose();
     super.dispose();
   }
@@ -83,11 +86,16 @@ class _UnifiedConversationScreenState
 
   Future<void> _send() async {
     if ((_body.text.trim().isEmpty && _files.isEmpty) || _sending) return;
+    final restoreComposerFocus = _body.text.trim().isNotEmpty;
+    if (restoreComposerFocus) _composerFocus.requestFocus();
     setState(() => _sending = true);
     try {
-      await ref
+      final sentMessage = await ref
           .read(messagingRepositoryProvider)
           .sendUnified(_body.text, _files, replyToMessageId: _replyingTo?.id);
+      if (!mounted) return;
+      _messagePendingScrollId = sentMessage.id;
+      if (restoreComposerFocus) _composerFocus.requestFocus();
       _body.clear();
       setState(() {
         _files = [];
@@ -95,15 +103,6 @@ class _UnifiedConversationScreenState
       });
       ref.invalidate(unifiedMessagesProvider);
       ref.invalidate(unifiedConversationProvider);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scroll.hasClients) {
-          _scroll.animateTo(
-            _scroll.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        }
-      });
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -112,6 +111,43 @@ class _UnifiedConversationScreenState
       }
     } finally {
       if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  void _scrollToSentMessageWhenReady(List<Message> messages) {
+    final messageId = _messagePendingScrollId;
+    if (messageId == null ||
+        !messages.any((message) => message.id == messageId)) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          _messagePendingScrollId != messageId ||
+          !_scroll.hasClients) {
+        return;
+      }
+      _messagePendingScrollId = null;
+      unawaited(_animateToBottom());
+    });
+  }
+
+  Future<void> _animateToBottom() async {
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (!mounted || !_scroll.hasClients) return;
+      await _scroll.animateTo(
+        _scroll.position.maxScrollExtent,
+        duration: Duration(milliseconds: attempt == 0 ? 300 : 100),
+        curve: Curves.easeOut,
+      );
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted || !_scroll.hasClients) return;
+      if ((_scroll.position.maxScrollExtent - _scroll.position.pixels).abs() <
+          1) {
+        return;
+      }
+    }
+    if (mounted && _scroll.hasClients) {
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
     }
   }
 
@@ -237,6 +273,7 @@ class _UnifiedConversationScreenState
                 ),
               ),
               data: (messages) {
+                _scrollToSentMessageWhenReady(messages);
                 if (messages.isEmpty) {
                   return const Center(
                     child: Column(
@@ -361,6 +398,7 @@ class _UnifiedConversationScreenState
                       child: TextField(
                         key: const Key('unified-message-composer'),
                         controller: _body,
+                        focusNode: _composerFocus,
                         textCapitalization: TextCapitalization.sentences,
                         inputFormatters: const [
                           SentenceCapitalizationFormatter(),

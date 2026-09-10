@@ -23,8 +23,12 @@ class MessagingRepository {
         ? '/client/conversations'
         : '/staff/conversations';
     final response = await _api.dio.get<List<dynamic>>(path);
-    return response.data!
+    final rows = response.data!
         .map((item) => Conversation.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false);
+    if (profile.type == UserType.client) return rows;
+    return rows
+        .where((conversation) => conversation.organizationActive)
         .toList(growable: false);
   }
 
@@ -34,6 +38,7 @@ class MessagingRepository {
     );
     return response.data!
         .map((item) => Conversation.fromJson(item as Map<String, dynamic>))
+        .where((conversation) => conversation.organizationActive)
         .toList(growable: false);
   }
 
@@ -63,6 +68,7 @@ class MessagingRepository {
         .map(
           (item) => ClientOrganization.fromJson(item as Map<String, dynamic>),
         )
+        .where((organization) => organization.active)
         .toList(growable: false);
   }
 
@@ -178,6 +184,7 @@ class MessagingRepository {
     );
     return response.data!
         .map((item) => Organization.fromJson(item as Map<String, dynamic>))
+        .where((organization) => organization.active)
         .toList(growable: false);
   }
 

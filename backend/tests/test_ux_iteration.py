@@ -562,7 +562,7 @@ class TestStaffAccessAndInternalNotifications:
         )
         assert result["status"] == "disabled"
         assert not client.active
-        assert not org.active
+        assert org.active
 
     def test_push_interno_solo_se_dirige_a_miembros_autorizados(self, db_session):
         from backend.api import messaging_api

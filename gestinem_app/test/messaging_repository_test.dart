@@ -162,6 +162,35 @@ void main() {
     },
   );
 
+  test('omite empresas inactivas aunque el backend las devuelva', () async {
+    final adapter = JsonAdapter([
+      {
+        'company_code': 'E00006',
+        'name': 'Cliente activo',
+        'active': true,
+        'organization_active': true,
+        'updated_at': '2026-08-30T10:00:00Z',
+      },
+      {
+        'company_code': 'E00007',
+        'name': 'Cliente de baja',
+        'active': false,
+        'organization_active': false,
+        'updated_at': '2026-08-30T10:00:00Z',
+      },
+    ]);
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+    )..httpClientAdapter = adapter;
+    final repository = MessagingRepository(
+      ApiClient(dio: dio, tokenProvider: () => testSession.token),
+    );
+
+    final organizations = await repository.clientOrganizations();
+
+    expect(organizations.map((row) => row.companyCode), ['E00006']);
+  });
+
   test('administrador puede invitar clientes de forma masiva', () async {
     final adapter = JsonAdapter({
       'invitation_count': 2,

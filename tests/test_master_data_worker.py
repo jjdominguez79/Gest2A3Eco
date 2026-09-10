@@ -83,3 +83,28 @@ def test_backend_acepta_clave_exclusiva_del_worker_maestro(monkeypatch):
         security.require_master_sync_or_workstation_internal("master-secret")
         == "client-master-sync"
     )
+
+
+def test_worker_envia_la_baja_de_la_empresa_al_backend(monkeypatch):
+    session = _Session()
+    worker = MasterDataWorker(
+        MasterDataConfig(
+            api_url="https://backend.example",
+            api_token="secret",
+            postgres_dsn="postgresql://desktop",
+            interval_seconds=300,
+            online_series_code="APP",
+        ),
+        session=session,
+    )
+    monkeypatch.setattr(worker, "_load_companies", lambda: [{
+        "codigo": "E00007", "ejercicio": 2026, "nombre": "Empresa de baja",
+        "activo": False, "cif": "", "direccion": "", "cp": "",
+        "poblacion": "", "provincia": "", "pais": "ES",
+        "telefono": "", "email": "",
+    }])
+    monkeypatch.setattr(worker, "_load_customers", lambda _code: [])
+
+    worker.run_once()
+
+    assert session.calls[0][2]["json"]["active"] is False
