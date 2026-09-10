@@ -23,7 +23,11 @@ from utils.utilidades import (
     load_app_config,
     load_monedas,
 )
-from utils.validaciones import inferir_pais_desde_identificacion, normalizar_nif_cif
+from utils.validaciones import (
+    inferir_pais_desde_identificacion,
+    normalizar_nif_cif,
+    separar_emails,
+)
 
 
 class FacturasEmitidasController:
@@ -1117,6 +1121,7 @@ class FacturasEmitidasController:
             )
             if not compose:
                 return
+            compose = {**compose, "emails": separar_emails(compose.get("emails"))}
 
             user = getattr(getattr(self._view, "session", None), "user", None)
             # Las credenciales de correo pertenecen al backend. El puesto no
@@ -1177,6 +1182,7 @@ class FacturasEmitidasController:
             )
             if not compose:
                 return
+            compose = {**compose, "emails": separar_emails(compose.get("emails"))}
 
             user = getattr(getattr(self._view, "session", None), "user", None)
             user_name = str(getattr(user, "nombre", "") or "").strip()
@@ -1222,8 +1228,8 @@ class FacturasEmitidasController:
             self.refresh_facturas()
 
     @staticmethod
-    def _split_email_addresses(value: str) -> list[str]:
-        return [item.strip() for item in str(value or "").replace(";", ",").split(",") if item.strip()]
+    def _split_email_addresses(value) -> list[str]:
+        return separar_emails(value)
 
     def _registrar_envio_factura(
         self, compose, remitente, cc, adjuntos, cuerpo_html, user, *, estado,

@@ -25,6 +25,7 @@ from utils.validaciones import (
     inferir_pais_desde_identificacion,
     normalizar_codigo_pais,
     normalizar_nif_cif,
+    separar_emails,
     validar_nif_o_nif_iva_intracomunitario,
 )
 
@@ -3224,14 +3225,11 @@ class UIFacturasEmitidas(ttk.Frame):
         def _enviar():
             emails = []
             if var_empresa.get() and email_empresa:
-                emails.append(email_empresa)
+                emails.extend(separar_emails(email_empresa))
             if var_cliente.get() and email_cliente:
-                emails.append(email_cliente)
-            extra_raw = var_extra.get()
-            for e in extra_raw.replace(";", ",").split(","):
-                e = e.strip()
-                if e:
-                    emails.append(e)
+                emails.extend(separar_emails(email_cliente))
+            emails.extend(separar_emails(var_extra.get()))
+            emails = separar_emails(emails)
             if not emails:
                 messagebox.showwarning(
                     "Gest2A3Eco", "Selecciona al menos un destinatario o introduce un correo.", parent=dlg

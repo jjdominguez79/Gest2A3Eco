@@ -320,9 +320,11 @@ def test_compartir_factura_solo_email_no_publica_en_area_cliente(
     monkeypatch, tmp_path,
 ):
     publicaciones = []
+    envios = []
 
     class BackendMailStub:
-        def send(self, **_kwargs):
+        def send(self, **kwargs):
+            envios.append(kwargs)
             return SimpleNamespace(
                 sender="oficina@gestinem.es",
                 message_id="msg-1",
@@ -345,7 +347,7 @@ def test_compartir_factura_solo_email_no_publica_en_area_cliente(
         ask_share_channel=lambda: "email",
         ask_yes_no=lambda *_args: False,
         ask_email_compose=lambda *_args, **_kwargs: {
-            "emails": ["cliente@example.com"],
+            "emails": ["cliente@example.com; administracion@example.com"],
             "cc": "",
             "bcc": "",
             "asunto": "Factura A000025",
@@ -366,7 +368,9 @@ def test_compartir_factura_solo_email_no_publica_en_area_cliente(
     controller._ensure_write = lambda *_args: True
     controller._resolve_app_pdf = lambda _fac: str(pdf)
     controller._albaranes_de_factura = lambda _fac: []
-    controller._cliente_factura = lambda _fac: {"email": "cliente@example.com"}
+    controller._cliente_factura = lambda _fac: {
+        "email": "cliente@example.com; administracion@example.com",
+    }
     controller._totales_factura = lambda _fac: {"total": 75.30}
     controller._registrar_envio_factura = lambda *_args, **_kwargs: None
     controller._publicar_en_area_cliente = (
@@ -376,6 +380,9 @@ def test_compartir_factura_solo_email_no_publica_en_area_cliente(
     controller.compartir_pdf()
 
     assert publicaciones == []
+    assert envios[0]["to"] == [
+        "cliente@example.com", "administracion@example.com",
+    ]
 
 
 def test_compartir_factura_email_muestra_factura_y_albaran_en_adjuntos(monkeypatch, tmp_path):

@@ -1,4 +1,5 @@
 import re
+from collections.abc import Iterable
 
 
 _DNI_LETTERS = "TRWAGMYFPDXBNJZSQVHLCKE"
@@ -35,6 +36,23 @@ _VAT_SIMPLE_PATTERNS = {
     "SI": r"\d{8}",
     "SK": r"\d{10}",
 }
+
+
+def separar_emails(value: str | Iterable[object] | None) -> list[str]:
+    """Separa direcciones delimitadas por coma o punto y coma sin duplicados."""
+    if value is None:
+        return []
+    values = [value] if isinstance(value, str) else value
+    result = []
+    seen = set()
+    for raw in values:
+        for item in str(raw or "").replace(";", ",").split(","):
+            email = item.strip()
+            key = email.casefold()
+            if email and key not in seen:
+                seen.add(key)
+                result.append(email)
+    return result
 
 
 def normalizar_nif_cif(value: str | None) -> str:

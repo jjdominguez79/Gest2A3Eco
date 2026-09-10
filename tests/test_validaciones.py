@@ -1,4 +1,4 @@
-from utils.validaciones import normalizar_nif_cif, validar_nif_cif_nie
+from utils.validaciones import normalizar_nif_cif, separar_emails, validar_nif_cif_nie
 
 
 def test_normalizar_nif_cif_elimina_separadores_y_mayusculiza():
@@ -16,4 +16,13 @@ def test_validar_nif_cif_nie_rechaza_valores_invalidos():
     assert validar_nif_cif_nie("") is False
     assert validar_nif_cif_nie("12345678A") is False
     assert validar_nif_cif_nie("A58818502") is False
+
+
+def test_separar_emails_admite_coma_punto_y_coma_y_listas():
+    assert separar_emails([
+        "uno@example.com; dos@example.com",
+        "tres@example.com, UNO@example.com",
+    ]) == [
+        "uno@example.com", "dos@example.com", "tres@example.com",
+    ]
 
