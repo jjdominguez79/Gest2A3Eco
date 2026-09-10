@@ -129,10 +129,17 @@ en el backend y nunca se configuran en cada puesto.
 
 ## Almacenamiento de adjuntos
 
-Los adjuntos enviados desde Flutter permanecen temporalmente en Azure Blob. El
-worker Synology los reclama, verifica su SHA-256, copia el contenido al
-repositorio documental compartido y confirma la entrega. Solo entonces el
-backend elimina la copia temporal.
+Todos los adjuntos de mensajeria enviados desde Flutter se almacenan
+temporalmente en Azure Blob en produccion, pero su destino depende del flujo:
+
+- Los documentos que envia un cliente al despacho los reclama el worker
+  Synology, verifica su SHA-256 y los copia al repositorio documental
+  compartido. Solo despues de confirmar esa copia el backend elimina el blob.
+- Los documentos enviados por el despacho a un cliente y los adjuntos de chats
+  internos no los recoge el worker ni se copian automaticamente al repositorio
+  documental. Permanecen descargables en el blob hasta su fecha de caducidad
+  (`MESSAGING_ATTACHMENT_DAYS`, 30 dias por defecto) y despues se eliminan,
+  conservando en PostgreSQL los metadatos y la trazabilidad.
 
 El disco local configurado por `MESSAGING_STORAGE_DIR` es valido para desarrollo,
 pero no es el archivo definitivo de produccion.

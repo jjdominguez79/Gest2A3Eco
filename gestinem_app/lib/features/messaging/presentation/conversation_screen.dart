@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:record/record.dart';
 
 import '../../../core/api/api_client.dart';
+import '../../../core/files/archivo_descargado.dart';
 import '../../../core/notifications/notifications_service.dart';
 import '../../../core/text/sentence_capitalization_formatter.dart';
 import '../../../core/widgets/authenticated_avatar.dart';
@@ -423,30 +424,58 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
 
   /// Descarga un adjunto saliente (solo cliente) y confirma al backend.
   Future<void> _download(Attachment attachment) async {
+    final apertura = prepararAperturaArchivoDescargado();
     final repository = ref.read(messagingRepositoryProvider);
     try {
       if (widget.internal) {
         final bytes = await repository.downloadInternalAttachment(
           attachment.id,
         );
-        final savedPath = await FilePicker.saveFile(
+        final savedUri = await FilePicker.saveFile(
           fileName: attachment.name,
           bytes: bytes,
           mimeType: attachment.contentType,
         );
-        if (!mounted || savedPath == null) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Archivo guardado.')));
+        if (savedUri == null && !kIsWeb) {
+          cancelarAperturaArchivoDescargado(apertura);
+          return;
+        }
+        final abierto = await abrirArchivoDescargado(
+          apertura,
+          uriGuardado: savedUri,
+          bytes: bytes,
+          fileName: attachment.name,
+          contentType: attachment.contentType,
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              abierto
+                  ? 'Archivo guardado y abierto.'
+                  : 'Archivo guardado. No se pudo abrir automaticamente.',
+            ),
+          ),
+        );
         return;
       }
       final (bytes, downloadId) = await repository.downloadWithId(attachment);
-      final savedPath = await FilePicker.saveFile(
+      final savedUri = await FilePicker.saveFile(
         fileName: attachment.name,
         bytes: bytes,
         mimeType: attachment.contentType,
       );
-      if (savedPath == null) return;
+      if (savedUri == null && !kIsWeb) {
+        cancelarAperturaArchivoDescargado(apertura);
+        return;
+      }
+      final abierto = await abrirArchivoDescargado(
+        apertura,
+        uriGuardado: savedUri,
+        bytes: bytes,
+        fileName: attachment.name,
+        contentType: attachment.contentType,
+      );
       var confirmed = downloadId.isEmpty;
       if (downloadId.isNotEmpty) {
         for (var attempt = 0; attempt < 3 && !confirmed; attempt++) {
@@ -466,12 +495,15 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
         SnackBar(
           content: Text(
             confirmed
-                ? 'Documento guardado y descarga registrada.'
+                ? abierto
+                      ? 'Documento guardado, abierto y descarga registrada.'
+                      : 'Documento guardado y descarga registrada; no se pudo abrir automaticamente.'
                 : 'Documento guardado, pero no se pudo registrar la descarga.',
           ),
         ),
       );
     } catch (error) {
+      cancelarAperturaArchivoDescargado(apertura);
       if (mounted) {
         ScaffoldMessenger.of(
           context,

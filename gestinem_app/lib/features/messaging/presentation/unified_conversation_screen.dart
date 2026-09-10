@@ -1,11 +1,13 @@
 import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/config/app_config.dart';
+import '../../../core/files/archivo_descargado.dart';
 import '../../../core/text/sentence_capitalization_formatter.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../domain/message.dart';
@@ -164,15 +166,26 @@ class _UnifiedConversationScreenState
 
   /// Descarga un adjunto saliente y confirma al backend tras guardar.
   Future<void> _download(Attachment attachment) async {
+    final apertura = prepararAperturaArchivoDescargado();
     final repository = ref.read(messagingRepositoryProvider);
     try {
       final (bytes, downloadId) = await repository.downloadWithId(attachment);
-      final savedPath = await FilePicker.saveFile(
+      final savedUri = await FilePicker.saveFile(
         fileName: attachment.name,
         bytes: bytes,
         mimeType: attachment.contentType,
       );
-      if (savedPath == null) return;
+      if (savedUri == null && !kIsWeb) {
+        cancelarAperturaArchivoDescargado(apertura);
+        return;
+      }
+      final abierto = await abrirArchivoDescargado(
+        apertura,
+        uriGuardado: savedUri,
+        bytes: bytes,
+        fileName: attachment.name,
+        contentType: attachment.contentType,
+      );
       var confirmed = downloadId.isEmpty;
       if (downloadId.isNotEmpty) {
         for (var attempt = 0; attempt < 3 && !confirmed; attempt++) {
@@ -192,12 +205,15 @@ class _UnifiedConversationScreenState
         SnackBar(
           content: Text(
             confirmed
-                ? 'Documento guardado y descarga registrada.'
+                ? abierto
+                      ? 'Documento guardado, abierto y descarga registrada.'
+                      : 'Documento guardado y descarga registrada; no se pudo abrir automaticamente.'
                 : 'Documento guardado, pero no se pudo registrar la descarga.',
           ),
         ),
       );
     } catch (error) {
+      cancelarAperturaArchivoDescargado(apertura);
       if (mounted) {
         ScaffoldMessenger.of(
           context,
