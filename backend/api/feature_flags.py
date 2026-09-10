@@ -29,6 +29,14 @@ def is_invoicing_enabled(org: MessagingOrganization) -> bool:
     )
 
 
+def is_certificates_enabled(org: MessagingOrganization) -> bool:
+    """Comprueba si el autoservicio de certificados esta activo."""
+    settings = get_settings()
+    return bool(getattr(settings, "client_certificates_enabled", False)) and bool(
+        getattr(org, "client_certificates_enabled", False)
+    )
+
+
 def require_documents_enabled(
     db: Session, org_id: str
 ) -> MessagingOrganization:
@@ -55,5 +63,20 @@ def require_invoicing_enabled(
         raise HTTPException(
             status_code=403,
             detail="Facturacion online no habilitada para esta organizacion",
+        )
+    return org
+
+
+def require_certificates_enabled(
+    db: Session, org_id: str,
+) -> MessagingOrganization:
+    """Exige que el autoservicio de certificados este habilitado."""
+    org = db.get(MessagingOrganization, org_id)
+    if not org or not org.active:
+        raise HTTPException(status_code=404, detail="Organizacion no encontrada")
+    if not is_certificates_enabled(org):
+        raise HTTPException(
+            status_code=403,
+            detail="Solicitud de certificados no habilitada para esta organizacion",
         )
     return org

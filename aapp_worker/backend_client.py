@@ -1,0 +1,97 @@
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+
+import requests
+
+from aapp_worker.config import AappWorkerConfig
+
+
+class AappBackendClient:
+    def __init__(self, config: AappWorkerConfig, session=None):
+        self.config = config
+        self.http = session or requests.Session()
+
+    @property
+    def _headers(self) -> dict:
+        return {"X-API-Key": self.config.api_key}
+
+    def claim(self) -> dict | None:
+        response = self.http.post(
+            f"{self.config.backend_url}/api/v1/messaging/client/certificates/internal/worker/claim",
+            headers=self._headers,
+            timeout=self.config.request_timeout_seconds,
+        )
+        response.raise_for_status()
+        return response.json().get("item")
+
+    def certificate_material(self, item: dict) -> dict:
+        response = self.http.post(
+            f"{self.config.backend_url}/api/v1/messaging/client/certificates/internal/worker/certificate-material",
+            headers=self._headers,
+            json={"request_id": item["id"], "claim_token": item["claim_token"]},
+            timeout=self.config.request_timeout_seconds,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def publish_pdf(self, item: dict, pdf_path: Path) -> dict:
+        certificate_type = str(item["certificate_type"])
+        organization = "AEAT" if certificate_type.startswith("AEAT_") else "TGSS"
+        content = pdf_path.read_bytes()
+        with pdf_path.open("rb") as stream:
+            response = self.http.post(
+                f"{self.config.backend_url}/api/v1/messaging/client/documents/internal/publish",
+                headers=self._headers,
+                data={
+                    "organization_id": item["organization_id"],
+                    "document_type": f"certificado_{organization.lower()}",
+                    "source_system": "aapp_worker",
+                    "source_id": item["id"],
+                    "source_version": "1",
+                    "display_name": item.get("certificate_name") or certificate_type,
+                    "description": f"Certificado obtenido de {organization}",
+                    "expected_sha256": hashlib.sha256(content).hexdigest(),
+                },
+                files={"file": (pdf_path.name, stream, "application/pdf")},
+                timeout=self.config.request_timeout_seconds,
+            )
+        response.raise_for_status()
+        return response.json()
+
+    def complete(self, item: dict, document_id: str, summary: str = "") -> None:
+        response = self.http.post(
+            f"{self.config.backend_url}/api/v1/messaging/client/certificates/internal/worker/requests/{item['id']}/complete",
+            headers=self._headers,
+            json={
+                "claim_token": item["claim_token"],
+                "document_id": document_id,
+                "result_summary": summary,
+            },
+            timeout=self.config.request_timeout_seconds,
+        )
+        response.raise_for_status()
+
+    def fail(
+        self,
+        item: dict,
+        message: str,
+        *,
+        code: str = "worker_error",
+        needs_action: bool = False,
+        retry_after_seconds: int | None = None,
+    ) -> None:
+        response = self.http.post(
+            f"{self.config.backend_url}/api/v1/messaging/client/certificates/internal/worker/requests/{item['id']}/fail",
+            headers=self._headers,
+            json={
+                "claim_token": item["claim_token"],
+                "error_code": code,
+                "error_message": message[:4000],
+                "needs_action": needs_action,
+                "retry_after_seconds": retry_after_seconds,
+            },
+            timeout=self.config.request_timeout_seconds,
+        )
+        response.raise_for_status()

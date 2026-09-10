@@ -81,6 +81,50 @@ def test_unconfigured_service_fails_before_http(monkeypatch):
     session.put.assert_not_called()
 
 
+def test_create_certificate_request_uses_internal_backend(monkeypatch):
+    response = MagicMock()
+    response.json.return_value = {"id": "sol-1", "status": "queued"}
+    session = MagicMock()
+    session.post.return_value = response
+    service = _service(monkeypatch, session)
+
+    result = service.create_certificate_request(
+        company_code="E00006",
+        certificate_type="AEAT_CORRIENTE",
+        idempotency_key="desktop-sol-1",
+    )
+
+    assert result["status"] == "queued"
+    request = session.post.call_args
+    assert request.kwargs["params"] == {"company_code": "E00006"}
+    assert request.kwargs["json"]["certificate_type"] == "AEAT_CORRIENTE"
+    assert request.kwargs["headers"] == {"X-API-Key": "g2a3_wks_test"}
+
+
+def test_upload_client_certificate_uses_multipart(monkeypatch, tmp_path):
+    pfx = tmp_path / "cliente.pfx"
+    pfx.write_bytes(b"pfx-test")
+    response = MagicMock()
+    response.json.return_value = {"configured": True, "status": "valid"}
+    session = MagicMock()
+    session.post.return_value = response
+
+    result = _service(monkeypatch, session).upload_client_certificate(
+        company_code="E00006",
+        pfx_path=str(pfx),
+        password="secreto",
+    )
+
+    assert result["configured"] is True
+    request = session.post.call_args
+    assert request.kwargs["data"] == {
+        "company_code": "E00006", "password": "secreto",
+    }
+    assert request.kwargs["files"]["file"][0] == "cliente.pfx"
+    assert request.kwargs["headers"] == {"X-API-Key": "g2a3_wks_test"}
+    response.raise_for_status.assert_called_once_with()
+
+
 def test_sync_company_profile_uses_backend_route(monkeypatch):
     response = MagicMock()
     response.json.return_value = {"organization_id": "org-1"}

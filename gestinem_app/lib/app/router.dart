@@ -28,6 +28,7 @@ import '../features/company_profile/presentation/company_profile_change_request_
 import '../features/documents/presentation/documents_screen.dart';
 import '../features/documents/presentation/document_detail_screen.dart';
 import '../features/documents/presentation/document_preview_screen.dart';
+import '../features/certificates/presentation/certificates_screen.dart';
 import '../core/deep_links/deep_link_controller.dart';
 
 class _RouterRefreshNotifier extends ChangeNotifier {
@@ -40,6 +41,7 @@ bool _isProtectedClientRoute(String location) {
   final path = uri.path;
   return path == '/documents' ||
       path.startsWith('/documents/') ||
+      path == '/certificates' ||
       path == '/invoicing' ||
       path.startsWith('/invoicing/');
 }
@@ -97,6 +99,9 @@ final routerProvider = Provider<GoRouter>((ref) {
         if (nextPath.startsWith('/invoicing') && !features.invoicing) {
           return '/';
         }
+        if (nextPath.startsWith('/certificates') && !features.certificates) {
+          return '/';
+        }
         return next;
       }
 
@@ -113,7 +118,8 @@ final routerProvider = Provider<GoRouter>((ref) {
 
       // Proteger rutas de documentos e invoicing con observacion reactiva.
       if (state.matchedLocation.startsWith('/documents') ||
-          state.matchedLocation.startsWith('/invoicing')) {
+          state.matchedLocation.startsWith('/invoicing') ||
+          state.matchedLocation.startsWith('/certificates')) {
         // Mientras cargan: mostrar splash preservando la ruta destino.
         if (featuresAsync.isLoading) {
           final encoded = Uri.encodeComponent(state.uri.toString());
@@ -129,6 +135,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         }
         if (state.matchedLocation.startsWith('/invoicing') &&
             !features.invoicing) {
+          return '/';
+        }
+        if (state.matchedLocation.startsWith('/certificates') &&
+            !features.certificates) {
           return '/';
         }
       }
@@ -193,6 +203,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, _) => const CompanyProfileChangeRequestScreen(),
       ),
       GoRoute(path: '/documents', builder: (_, _) => const DocumentsScreen()),
+      GoRoute(
+        path: '/certificates',
+        builder: (_, _) => const CertificatesScreen(),
+      ),
       GoRoute(
         path: '/documents/folder/:folder',
         builder: (_, state) =>

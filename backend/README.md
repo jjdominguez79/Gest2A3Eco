@@ -71,6 +71,8 @@ revocable y tambien lo guarda en Credential Manager.
 - `BACKEND_DATABASE_URL`: DSN SQLAlchemy PostgreSQL obligatorio.
 - `BACKEND_INTERNAL_API_KEY`: credencial interna obligatoria fuera de pruebas.
 - `CLIENT_MASTER_SYNC_API_KEY`: credencial exclusiva del worker maestro.
+- `AAPP_WORKER_API_KEY`: credencial exclusiva del worker que obtiene
+  certificados AEAT/TGSS; no debe compartirse con los puestos de escritorio.
 - `BACKEND_PUBLIC_BASE_URL`: origen comun del servicio. DGT y mensajeria lo
   heredan si no definen un origen especifico.
 
@@ -107,6 +109,18 @@ Railway despues de verificar el primer despliegue con los nombres nuevos.
   almacenamiento temporal privado de adjuntos en produccion.
 - `MESSAGING_ATTACHMENT_DAYS`: retencion temporal, minimo 15 y 30 por defecto.
 - `MESSAGING_GRAPH_*`: credenciales Graph y buzones de envio.
+
+### Certificados AEAT/TGSS
+
+- `CLIENT_CERTIFICATES_ENABLED`: interruptor global del autoservicio.
+- `CLIENT_CERTIFICATES_MASTER_KEY`: clave AES-256 en base64 URL-safe. Debe
+  conservarse en el gestor de secretos del despliegue y nunca en PostgreSQL.
+- `CLIENT_CERTIFICATES_AZURE_CONNECTION_STRING` y
+  `CLIENT_CERTIFICATES_AZURE_CONTAINER`: contenedor privado separado donde se
+  guardan exclusivamente sobres PFX ya cifrados.
+- `CLIENT_CERTIFICATES_ALLOW_LOCAL_STORAGE`: solo para desarrollo y tests.
+- `AAPP_WORKER_API_KEY`: secreto independiente montado tanto en el backend como
+  en el contenedor del worker.
 - `MESSAGING_STAFF_*`: acceso Microsoft 365 de empleados, dominio permitido y
   administradores iniciales.
 - `MESSAGING_FIREBASE_CREDENTIALS`: ruta privada al JSON de cuenta de servicio

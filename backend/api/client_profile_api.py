@@ -233,11 +233,16 @@ def get_client_features(request: Request, db: Session = Depends(_db)):
     if not org or not org.active:
         raise HTTPException(status_code=404, detail="Organizacion no encontrada")
 
-    from backend.api.feature_flags import is_documents_enabled, is_invoicing_enabled
+    from backend.api.feature_flags import (
+        is_certificates_enabled,
+        is_documents_enabled,
+        is_invoicing_enabled,
+    )
     return {
         "company_profile": True,
         "documents": is_documents_enabled(org),
         "invoicing": is_invoicing_enabled(org),
+        "certificates": is_certificates_enabled(org),
     }
 
 

@@ -1175,6 +1175,13 @@ class _AppDrawer extends ConsumerWidget {
                 title: const Text('Mis documentos'),
                 onTap: () => _navigate(context, '/documents'),
               ),
+            if (features.certificates)
+              ListTile(
+                key: const Key('drawer-certificates'),
+                leading: const Icon(Icons.verified_user_outlined),
+                title: const Text('Certificados oficiales'),
+                onTap: () => _navigate(context, '/certificates'),
+              ),
             if (features.invoicing)
               ListTile(
                 leading: const Icon(Icons.receipt_long_outlined),

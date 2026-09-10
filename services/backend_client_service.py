@@ -171,3 +171,81 @@ class BackendClientService:
         )
         resp.raise_for_status()
         return resp.json()
+
+    # ----- Solicitudes de certificados AEAT / TGSS -----
+
+    def upload_client_certificate(
+        self, *, company_code: str, pfx_path: str, password: str = "",
+    ) -> dict:
+        """Cifra y custodia en el backend el certificado usado por el worker."""
+        self._ensure_configured()
+        path = Path(pfx_path)
+        if not path.is_file():
+            raise FileNotFoundError(f"Certificado no encontrado: {pfx_path}")
+        url = f"{self.base_url}/api/v1/messaging/client/certificates/internal/certificate"
+        with path.open("rb") as stream:
+            response = self.http.post(
+                url,
+                headers=self._headers(),
+                data={"company_code": company_code, "password": password},
+                files={
+                    "file": (
+                        path.name,
+                        stream,
+                        "application/x-pkcs12",
+                    ),
+                },
+                timeout=60,
+            )
+        response.raise_for_status()
+        return response.json()
+
+    def get_client_certificate_status(self, *, company_code: str) -> dict:
+        self._ensure_configured()
+        url = f"{self.base_url}/api/v1/messaging/client/certificates/internal/certificate-status"
+        response = self.http.get(
+            url,
+            headers=self._headers(),
+            params={"company_code": company_code},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def delete_client_certificate(self, *, company_code: str) -> dict:
+        self._ensure_configured()
+        url = f"{self.base_url}/api/v1/messaging/client/certificates/internal/certificate"
+        response = self.http.delete(
+            url,
+            headers=self._headers(),
+            params={"company_code": company_code},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def create_certificate_request(
+        self,
+        *,
+        company_code: str,
+        certificate_type: str,
+        parameters: dict | None = None,
+        idempotency_key: str = "",
+    ) -> dict:
+        """Crea en el backend una solicitud originada por el escritorio."""
+        self._ensure_configured()
+        url = f"{self.base_url}/api/v1/messaging/client/certificates/internal/requests"
+        payload = {
+            "certificate_type": certificate_type,
+            "parameters": parameters or {},
+            "idempotency_key": idempotency_key,
+        }
+        resp = self.http.post(
+            url,
+            headers=self._headers(),
+            params={"company_code": company_code},
+            json=payload,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()

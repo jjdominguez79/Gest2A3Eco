@@ -442,6 +442,23 @@ class GestorPostgres(GestorBase):
             ("albaranes_emitidas_docs", "updated_at", "TEXT"),
             ("albaranes_emitidas_docs", "pdf_generated_at", "TEXT"),
             ("firma_solicitudes", "documento_firmado_archivo_id", "TEXT"),
+            (
+                "cert_solicitudes", "area_cliente_estado",
+                "TEXT NOT NULL DEFAULT 'NO_PUBLICADO'",
+            ),
+            ("cert_solicitudes", "area_cliente_documento_id", "TEXT"),
+            (
+                "cert_solicitudes", "area_cliente_version",
+                "INTEGER NOT NULL DEFAULT 0",
+            ),
+            ("cert_solicitudes", "area_cliente_error", "TEXT"),
+            ("cert_solicitudes", "fecha_publicacion_cliente", "TEXT"),
+            ("notif_bandeja", "area_cliente_documento_id", "TEXT"),
+            (
+                "notif_bandeja", "area_cliente_version",
+                "INTEGER NOT NULL DEFAULT 0",
+            ),
+            ("notif_bandeja", "area_cliente_error", "TEXT"),
         )
         existentes = {
             (str(row["table_name"]), str(row["column_name"]))

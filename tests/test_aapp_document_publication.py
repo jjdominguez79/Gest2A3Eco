@@ -58,6 +58,7 @@ def test_publica_certificado_tgss_en_documentos_flutter(tmp_path):
     assert resultado.ok is True
     assert backend.calls[0]["source_system"] == "desktop_aapp"
     assert backend.calls[0]["source_type"] == "certificado_tgss"
+    assert backend.calls[0]["company_code"] == "E00001"
     assert backend.calls[0]["customer_tax_id"] == "B12345678"
     assert gestor.cert_publicado[0][:4] == ("E00001", "sol-1", "doc-42", 2)
 
@@ -78,6 +79,7 @@ def test_publica_notificacion_dehu_en_documentos_flutter(tmp_path):
 
     assert resultado.ok is True
     assert backend.calls[0]["source_type"] == "notificacion_dehu"
+    assert backend.calls[0]["company_code"] == "E00001"
     assert gestor.notif_publicada[0][:4] == ("E00001", "nb-1", "doc-42", 2)
 
 

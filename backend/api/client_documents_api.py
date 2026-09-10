@@ -35,7 +35,7 @@ from backend.api.messaging_models import (
 )
 from backend.api.feature_flags import require_documents_enabled
 from backend.api.messaging_security import hash_token, is_expired, utcnow
-from backend.api.security import require_workstation_or_internal
+from backend.api.security import require_document_publisher, require_workstation_or_internal
 
 router = APIRouter(prefix="/api/v1/messaging/client/documents", tags=["client-documents"])
 MAX_CLIENT_DOCUMENT_BYTES = 50 * 1024 * 1024
@@ -225,7 +225,7 @@ async def publish_document(
     customer_tax_id: str = Form(""),
     expected_sha256: str = Form(""),
     db: Session = Depends(_db),
-    _auth: str = Depends(require_workstation_or_internal),
+    _auth: str = Depends(require_document_publisher),
 ):
     """Publica un documento en el area del cliente. Idempotente por source."""
     is_desktop_invoice = source_system.strip().lower() == "desktop_invoice"

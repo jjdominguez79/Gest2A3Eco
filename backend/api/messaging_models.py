@@ -42,6 +42,7 @@ class MessagingOrganization(Base):
     profile_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     client_invoicing_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     client_documents_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    client_certificates_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class MessagingStaff(Base):

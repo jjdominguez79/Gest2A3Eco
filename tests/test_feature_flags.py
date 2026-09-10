@@ -40,7 +40,11 @@ from backend.api.feature_flags import (
 @pytest.fixture(autouse=True)
 def _restore_global_feature_flags():
     """Evita que los cambios directos de entorno contaminen otras pruebas."""
-    names = ("CLIENT_DOCUMENTS_ENABLED", "CLIENT_INVOICING_ENABLED")
+    names = (
+        "CLIENT_DOCUMENTS_ENABLED",
+        "CLIENT_INVOICING_ENABLED",
+        "CLIENT_CERTIFICATES_ENABLED",
+    )
     original = {name: os.environ.get(name) for name in names}
     yield
     for name, value in original.items():
@@ -59,6 +63,7 @@ def _setup():
     # Flags globales desactivadas por defecto
     os.environ["CLIENT_DOCUMENTS_ENABLED"] = "false"
     os.environ["CLIENT_INVOICING_ENABLED"] = "false"
+    os.environ["CLIENT_CERTIFICATES_ENABLED"] = "false"
 
     engine = create_engine(
         "sqlite+pysqlite://",
@@ -100,6 +105,7 @@ def _setup():
         ).one()
         org2.client_documents_enabled = True
         org2.client_invoicing_enabled = True
+        org2.client_certificates_enabled = True
         db.commit()
         org1 = db.scalars(
             select(MessagingOrganization).where(
@@ -244,6 +250,7 @@ class TestAdminAuthorization:
         data = resp.json()
         assert data["company_code"] == "ORG01"
         assert "client_documents_enabled" in data
+        assert "client_certificates_enabled" in data
         assert "effective_documents" in data
 
     def test_empleado_no_puede_ver_features(self):
@@ -264,6 +271,19 @@ class TestAdminAuthorization:
         assert resp.status_code == 200
         data = resp.json()
         assert data["client_documents_enabled"] is True
+        assert data["changes"] == 1
+
+    def test_admin_puede_habilitar_solicitud_de_certificados(self):
+        client, _, admin_h, _, _, _ = _setup()
+        resp = client.patch(
+            "/api/v1/messaging/staff/admin/organizations/ORG01/features",
+            headers=admin_h,
+            json={"client_certificates_enabled": True},
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["client_certificates_enabled"] is True
         assert data["changes"] == 1
 
     def test_empleado_no_puede_modificar_features(self):

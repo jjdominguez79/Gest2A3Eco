@@ -8,17 +8,20 @@ class PlatformFeatures {
     this.companyProfile = true,
     this.documents = false,
     this.invoicing = false,
+    this.certificates = false,
   });
 
   final bool companyProfile;
   final bool documents;
   final bool invoicing;
+  final bool certificates;
 
   factory PlatformFeatures.fromJson(Map<String, dynamic> json) {
     return PlatformFeatures(
       companyProfile: json['company_profile'] as bool? ?? true,
       documents: json['documents'] as bool? ?? false,
       invoicing: json['invoicing'] as bool? ?? false,
+      certificates: json['certificates'] as bool? ?? false,
     );
   }
 }

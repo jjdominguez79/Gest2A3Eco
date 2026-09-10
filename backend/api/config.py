@@ -101,6 +101,14 @@ class Settings:
     client_documents_enabled: bool
     # Facturacion online
     client_invoicing_enabled: bool
+    # Autoservicio de certificados AEAT/TGSS
+    client_certificates_enabled: bool
+    client_certificates_master_key: str
+    client_certificates_azure_connection_string: str
+    client_certificates_azure_container: str
+    client_certificates_storage_dir: str
+    client_certificates_allow_local_storage: bool
+    aapp_worker_api_key: str
     client_master_sync_api_key: str
     # Permitir almacenamiento local como fallback (solo para tests/desarrollo)
     client_documents_allow_local_storage: bool
@@ -221,6 +229,26 @@ def get_settings() -> Settings:
         client_invoicing_enabled=os.getenv(
             "CLIENT_INVOICING_ENABLED", "false",
         ).strip().lower() in {"1", "true", "yes", "si"},
+        client_certificates_enabled=os.getenv(
+            "CLIENT_CERTIFICATES_ENABLED", "false",
+        ).strip().lower() in {"1", "true", "yes", "si"},
+        client_certificates_master_key=os.getenv(
+            "CLIENT_CERTIFICATES_MASTER_KEY", "",
+        ).strip(),
+        client_certificates_azure_connection_string=os.getenv(
+            "CLIENT_CERTIFICATES_AZURE_CONNECTION_STRING",
+            os.getenv("CLIENT_DOCUMENTS_AZURE_CONNECTION_STRING", ""),
+        ),
+        client_certificates_azure_container=os.getenv(
+            "CLIENT_CERTIFICATES_AZURE_CONTAINER", "certificados-clientes",
+        ),
+        client_certificates_storage_dir=os.getenv(
+            "CLIENT_CERTIFICATES_STORAGE_DIR", "./client_certificates_storage",
+        ),
+        client_certificates_allow_local_storage=os.getenv(
+            "CLIENT_CERTIFICATES_ALLOW_LOCAL_STORAGE", "false",
+        ).strip().lower() in {"1", "true", "yes", "si"},
+        aapp_worker_api_key=os.getenv("AAPP_WORKER_API_KEY", "").strip(),
         client_master_sync_api_key=os.getenv("CLIENT_MASTER_SYNC_API_KEY", ""),
         client_documents_allow_local_storage=os.getenv(
             "CLIENT_DOCUMENTS_ALLOW_LOCAL_STORAGE", "false",

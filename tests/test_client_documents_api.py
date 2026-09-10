@@ -20,6 +20,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from backend.api.messaging_security import hash_token
+from backend.api.security import require_document_publisher, require_workstation_or_internal
 
 
 # ---------- stubs ----------
@@ -213,7 +214,6 @@ class _InMemoryDb:
 def _build_app(db=None, storage=None, override_internal_auth=False):
     from fastapi import FastAPI
     from backend.api.client_documents_api import router, _db
-    from backend.api.security import require_workstation_or_internal
 
     app = FastAPI()
     app.include_router(router)
@@ -222,6 +222,7 @@ def _build_app(db=None, storage=None, override_internal_auth=False):
         app.dependency_overrides[_db] = lambda: db
     if override_internal_auth:
         app.dependency_overrides[require_workstation_or_internal] = lambda: "test"
+        app.dependency_overrides[require_document_publisher] = lambda: "test"
 
     if storage is not None:
         import backend.api.client_documents_api as mod

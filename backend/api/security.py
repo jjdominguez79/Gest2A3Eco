@@ -98,6 +98,25 @@ def require_workstation_or_internal(x_api_key: str = Header(default="")) -> str:
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credencial no valida")
 
 
+def require_aapp_worker_key(x_api_key: str = Header(default="")) -> str:
+    """Credencial exclusiva del worker que maneja certificados privados."""
+    expected = get_settings().aapp_worker_api_key
+    if not expected or not secrets.compare_digest(x_api_key, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Credencial del worker AAPP no valida",
+        )
+    return "aapp-worker"
+
+
+def require_document_publisher(x_api_key: str = Header(default="")) -> str:
+    """Publicadores autorizados: escritorio/interno y worker AAPP."""
+    worker_key = get_settings().aapp_worker_api_key
+    if worker_key and secrets.compare_digest(x_api_key, worker_key):
+        return "aapp-worker"
+    return require_workstation_or_internal(x_api_key)
+
+
 def require_master_sync_or_workstation_internal(
     x_api_key: str = Header(default=""),
 ) -> str:

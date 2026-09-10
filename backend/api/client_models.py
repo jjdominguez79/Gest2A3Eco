@@ -97,6 +97,92 @@ class ClientDocumentRead(Base):
 
 
 # ==========================================================================
+# SOLICITUDES DE CERTIFICADOS DE ADMINISTRACIONES PUBLICAS
+# ==========================================================================
+
+class ClientCertificateRequest(Base):
+    """Solicitud central creada por el escritorio o por un cliente Flutter."""
+
+    __tablename__ = "client_certificate_requests"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id", "idempotency_key",
+            name="uq_client_cert_request_idempotency",
+        ),
+        CheckConstraint(
+            "requester_type IN ('client', 'desktop', 'staff')",
+            name="ck_client_cert_requester_type",
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'processing', 'completed', 'needs_action', "
+            "'failed', 'cancelled')",
+            name="ck_client_cert_request_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_organizations.id", ondelete="CASCADE"), index=True,
+    )
+    requester_type: Mapped[str] = mapped_column(String(16), index=True)
+    requester_id: Mapped[str] = mapped_column(String(64), default="")
+    certificate_type: Mapped[str] = mapped_column(String(50), index=True)
+    parameters_json: Mapped[str] = mapped_column(Text, default="{}")
+    idempotency_key: Mapped[str] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(20), default="queued", index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True,
+    )
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    claim_token: Mapped[str] = mapped_column(String(64), default="")
+    error_code: Mapped[str] = mapped_column(String(60), default="")
+    error_message: Mapped[str] = mapped_column(Text, default="")
+    result_summary: Mapped[str] = mapped_column(Text, default="")
+    document_id: Mapped[str | None] = mapped_column(
+        ForeignKey("client_documents.id", ondelete="SET NULL"), index=True,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow,
+    )
+
+
+class ClientCertificateSecret(Base):
+    """Referencia al PFX del cliente, cifrado fuera de PostgreSQL."""
+
+    __tablename__ = "client_certificate_secrets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_organizations.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+    )
+    encrypted_blob_key: Mapped[str] = mapped_column(String(500), unique=True)
+    pfx_sha256: Mapped[str] = mapped_column(String(64))
+    file_name: Mapped[str] = mapped_column(String(255), default="certificado.pfx")
+    common_name: Mapped[str] = mapped_column(String(300), default="")
+    tax_id: Mapped[str] = mapped_column(String(30), default="")
+    issuer: Mapped[str] = mapped_column(String(300), default="")
+    serial_number: Mapped[str] = mapped_column(String(100), default="")
+    valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    uploaded_by: Mapped[str] = mapped_column(String(100), default="desktop")
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow,
+    )
+
+
+# ==========================================================================
 # FACTURACION DEL CLIENTE
 # ==========================================================================
 

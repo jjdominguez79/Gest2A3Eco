@@ -63,6 +63,7 @@ from backend.api.mail_api import router as mail_router
 from backend.api.client_profile_api import router as client_profile_router
 from backend.api.client_documents_api import router as client_documents_router
 from backend.api.client_invoices_api import router as client_invoices_router
+from backend.api.client_certificates_api import router as client_certificates_router
 
 app = FastAPI(title="Gestinem Integraciones API", version="1.1.0")
 
@@ -109,6 +110,7 @@ app.include_router(mail_router)
 app.include_router(client_profile_router)
 app.include_router(client_documents_router)
 app.include_router(client_invoices_router)
+app.include_router(client_certificates_router)
 
 
 CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS = {
@@ -166,6 +168,10 @@ CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS = {
     ("msg_organizations", "client_documents_enabled"): (
         "ALTER TABLE msg_organizations "
         "ADD COLUMN client_documents_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+    ),
+    ("msg_organizations", "client_certificates_enabled"): (
+        "ALTER TABLE msg_organizations "
+        "ADD COLUMN client_certificates_enabled BOOLEAN NOT NULL DEFAULT FALSE"
     ),
 }
 
@@ -381,6 +387,8 @@ def startup():
         "015_client_customer_desktop_sync.sql",
         "016_profile_change_requests.sql",
         "017_organization_logo.sql",
+        "018_client_certificate_requests.sql",
+        "019_client_certificate_secrets.sql",
     ):
         _mig_path = Path(__file__).resolve().parent.parent / "migrations" / _mig_name
         if _mig_path.exists():
@@ -419,6 +427,15 @@ def startup():
                 f"Azure Blob no accesible (contenedor '{cfg.client_documents_azure_container}'): {exc}. "
                 "Verifica CLIENT_DOCUMENTS_AZURE_CONNECTION_STRING y los permisos del contenedor."
             ) from exc
+
+    if cfg.client_certificates_enabled:
+        if not cfg.aapp_worker_api_key:
+            raise RuntimeError(
+                "AAPP_WORKER_API_KEY es obligatoria cuando "
+                "CLIENT_CERTIFICATES_ENABLED es true."
+            )
+        from backend.api.client_certificate_vault import validate_vault_configuration
+        validate_vault_configuration()
 
     try:
         cleanup_expired_attachments()

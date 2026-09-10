@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import tkinter as tk
 from datetime import date, datetime
 from tkinter import filedialog, messagebox, ttk
@@ -115,6 +116,16 @@ class UICertificados(ttk.Frame):
         self._btn_del = tk.Button(tb, text="Eliminar", bg=_DANGER, fg="white",
                                   command=self._on_eliminar, state="disabled", **btn)
         self._btn_del.pack(side="left", padx=(0, 6))
+        self._btn_cloud = tk.Button(
+            tb,
+            text="Preparar para app / worker",
+            bg="#0f766e",
+            fg="white",
+            command=self._on_subir_central,
+            state="disabled",
+            **btn,
+        )
+        self._btn_cloud.pack(side="left", padx=(0, 6))
         tk.Button(tb, text="↻ Actualizar", bg="#64748b", fg="white",
                   command=self.refresh, **btn).pack(side="left")
 
@@ -136,6 +147,7 @@ class UICertificados(ttk.Frame):
             self._vals["estado"].configure(text="Sin certificado", fg=_SUB)
             self._btn_set.configure(text="Seleccionar certificado...")
             self._btn_del.configure(state="disabled")
+            self._btn_cloud.configure(state="disabled")
             self._banner.pack_forget()
             return
 
@@ -152,6 +164,7 @@ class UICertificados(ttk.Frame):
         self._vals["clave"].configure(text="Si" if c.get("password_cifrada") else "No")
         self._btn_set.configure(text="Reemplazar certificado...")
         self._btn_del.configure(state="normal")
+        self._btn_cloud.configure(state="normal")
 
         if tag == "caducado":
             self._lbl_banner.configure(bg=_DANGER, text="⚠  Certificado CADUCADO. Debes renovarlo para poder acceder a los organismos.")
@@ -256,6 +269,57 @@ class UICertificados(ttk.Frame):
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
             return
         self.refresh()
+
+    def _on_subir_central(self):
+        if not self._cert:
+            return
+        if not messagebox.askyesno(
+            "Preparar certificado para la app",
+            "Se enviara el PFX y su contrasena al servidor mediante HTTPS. "
+            "El servidor lo guardara cifrado y solo el worker podra utilizarlo.\n\n"
+            "¿Continuar?",
+            parent=self.winfo_toplevel(),
+        ):
+            return
+        self._btn_cloud.configure(state="disabled", text="Preparando...")
+
+        def _worker():
+            try:
+                from services.aapp.cert_store import CertStore
+                from services.backend_client_service import BackendClientService
+
+                material = CertStore(self._gestor).material_para_certificado(self._cert["id"])
+                result = BackendClientService().upload_client_certificate(
+                    company_code=self._codigo,
+                    pfx_path=material.ruta_archivo,
+                    password=material.password or "",
+                )
+                self.after(0, lambda: self._subida_central_fin(result, None))
+            except Exception as exc:
+                self.after(0, lambda error=exc: self._subida_central_fin(None, error))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _subida_central_fin(self, result, error):
+        self._btn_cloud.configure(state="normal", text="Preparar para app / worker")
+        if error is not None:
+            messagebox.showerror(
+                "Certificado central",
+                f"No se pudo preparar el certificado para la app:\n{error}",
+                parent=self.winfo_toplevel(),
+            )
+            return
+        warning = (
+            "\n\nAviso: el NIF detectado no coincide con la empresa. "
+            "Comprueba que sea un certificado de representante autorizado."
+            if result.get("tax_id_warning") else ""
+        )
+        messagebox.showinfo(
+            "Certificado central",
+            "El certificado ha quedado cifrado y preparado para el worker."
+            + warning,
+            parent=self.winfo_toplevel(),
+        )
 
 
 # ── Dialogo de seleccion (fichero + contrasena) ─────────────────────────────

@@ -2024,11 +2024,6 @@ class GestorBase:
                 ON cert_solicitudes(codigo_empresa, tipo, estado);
             """
         )
-        self._ensure_column("cert_solicitudes", "area_cliente_estado", "TEXT NOT NULL DEFAULT 'NO_PUBLICADO'")
-        self._ensure_column("cert_solicitudes", "area_cliente_documento_id", "TEXT")
-        self._ensure_column("cert_solicitudes", "area_cliente_version", "INTEGER NOT NULL DEFAULT 0")
-        self._ensure_column("cert_solicitudes", "area_cliente_error", "TEXT")
-        self._ensure_column("cert_solicitudes", "fecha_publicacion_cliente", "TEXT")
         self.conn.commit()
 
     def listar_ccc(self, codigo_empresa: str, solo_activos: bool = False) -> list:
@@ -6195,9 +6190,6 @@ class GestorBase:
         self._ensure_column("notif_bandeja", "archivada", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("notif_bandeja", "enviada_cliente", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("notif_bandeja", "fecha_envio_cliente", "TEXT")
-        self._ensure_column("notif_bandeja", "area_cliente_documento_id", "TEXT")
-        self._ensure_column("notif_bandeja", "area_cliente_version", "INTEGER NOT NULL DEFAULT 0")
-        self._ensure_column("notif_bandeja", "area_cliente_error", "TEXT")
         self.conn.commit()
 
     def listar_notificaciones(

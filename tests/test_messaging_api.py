@@ -72,6 +72,7 @@ def test_startup_migra_columnas_de_plataforma_cliente_automaticamente():
         "profile_synced_at",
         "client_invoicing_enabled",
         "client_documents_enabled",
+        "client_certificates_enabled",
     }
 
     assert {

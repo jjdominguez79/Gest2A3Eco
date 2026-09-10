@@ -13,12 +13,16 @@ class OrganizationFeatures {
     this.effectiveDocuments = false,
     this.invoicing = false,
     this.effectiveInvoicing = false,
+    this.certificates = false,
+    this.effectiveCertificates = false,
   });
 
   final bool documents;
   final bool effectiveDocuments;
   final bool invoicing;
   final bool effectiveInvoicing;
+  final bool certificates;
+  final bool effectiveCertificates;
 }
 
 /// Provider para las feature flags de una organizacion concreta (vista admin).
@@ -31,6 +35,8 @@ final orgFeaturesProvider = FutureProvider.autoDispose
         effectiveDocuments: json['effective_documents'] as bool? ?? false,
         invoicing: json['client_invoicing_enabled'] as bool? ?? false,
         effectiveInvoicing: json['effective_invoicing'] as bool? ?? false,
+        certificates: json['client_certificates_enabled'] as bool? ?? false,
+        effectiveCertificates: json['effective_certificates'] as bool? ?? false,
       );
     });
 
@@ -102,13 +108,22 @@ class _ClientDetailScreenState extends ConsumerState<ClientDetailScreen> {
   }) async {
     if (_featuresBusy) return;
     if (confirm) {
+      final certificates = flag == 'client_certificates_enabled';
       final ok = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('Activar facturacion'),
-          content: const Text(
-            'Esto habilitara el modulo de facturacion para este cliente. '
-            'Asegurate de que la configuracion fiscal esta completa.',
+          title: Text(
+            certificates
+                ? 'Activar solicitud de certificados'
+                : 'Activar facturacion',
+          ),
+          content: Text(
+            certificates
+                ? 'Esto permitira al cliente solicitar certificados AEAT y '
+                      'de Seguridad Social. Activalo solo cuando su certificado '
+                      'digital este custodiado y el worker AAPP operativo.'
+                : 'Esto habilitara el modulo de facturacion para este cliente. '
+                      'Asegurate de que la configuracion fiscal esta completa.',
           ),
           actions: [
             TextButton(
@@ -362,6 +377,25 @@ class _FeaturesCard extends ConsumerWidget {
                   onChanged: busy
                       ? null
                       : (v) => onToggle('client_documents_enabled', v),
+                ),
+                SwitchListTile(
+                  secondary: const Icon(Icons.verified_user_outlined),
+                  title: const Text('Solicitud de certificados'),
+                  subtitle: Text(
+                    features.effectiveCertificates
+                        ? 'Disponible para el cliente'
+                        : features.certificates
+                        ? 'Configurada; falta la activacion global'
+                        : 'No disponible para el cliente',
+                  ),
+                  value: features.certificates,
+                  onChanged: busy
+                      ? null
+                      : (v) => onToggle(
+                          'client_certificates_enabled',
+                          v,
+                          confirm: v,
+                        ),
                 ),
                 const ListTile(
                   leading: Icon(Icons.receipt_long_outlined),
