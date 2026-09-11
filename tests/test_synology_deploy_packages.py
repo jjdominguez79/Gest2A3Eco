@@ -46,6 +46,7 @@ def test_package_builder_copies_only_required_worker_modules():
     assert "'worker.py'" in builder
     assert '"aapp_worker\\$module"' in builder
     assert "'certificados.py'" in builder
+    assert "'dehu_playwright.py'" in builder
     assert '"services\\aapp\\$module"' in builder
     assert "Los ficheros de secrets no se copian" in builder
 

@@ -73,7 +73,13 @@ foreach ($module in @('__init__.py', '__main__.py', 'backend_client.py', 'config
     Copy-Item -LiteralPath (Join-Path $repoRoot "aapp_worker\$module") -Destination (Join-Path $aappWorkerRoot $module) -Force
 }
 Copy-Item -LiteralPath (Join-Path $repoRoot 'services\__init__.py') -Destination (Join-Path $aappServicesRoot '__init__.py') -Force
-foreach ($module in @('__init__.py', 'base.py', 'cert_store.py', 'certificados.py')) {
+foreach ($module in @(
+    '__init__.py',
+    'base.py',
+    'cert_store.py',
+    'certificados.py',
+    'dehu_playwright.py'
+)) {
     Copy-Item -LiteralPath (Join-Path $repoRoot "services\aapp\$module") -Destination (Join-Path $aappConnectorsRoot $module) -Force
 }
 foreach ($module in @('__init__.py', 'crypto_utils.py')) {
