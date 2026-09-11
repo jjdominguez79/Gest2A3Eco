@@ -203,7 +203,14 @@ class UICertificadosObtenidos(ttk.Frame):
         tiene_pdf = bool(r and r.get("document_id"))
         self._btn_pdf.configure(state="normal" if tiene_pdf else "disabled")
         self._btn_email.configure(state="normal" if tiene_pdf else "disabled")
-        self._btn_publicar.configure(state="disabled")
+        publicable = bool(
+            r
+            and r.get("requester_type") == "desktop"
+            and r.get("status") == "completed"
+            and r.get("document_id")
+            and r.get("document_status") == "draft"
+        )
+        self._btn_publicar.configure(state="normal" if publicable else "disabled")
         reintentable = bool(r and r.get("status") in {"needs_action", "failed"})
         self._btn_reintentar.configure(state="normal" if reintentable else "disabled")
         self._btn_del.configure(state="disabled")
@@ -306,7 +313,8 @@ class UICertificadosObtenidos(ttk.Frame):
             messagebox.showinfo(
                 "Solicitud enviada",
                 "La solicitud ha quedado en cola. El worker obtendra el certificado "
-                "y lo publicara automaticamente en los documentos del cliente.",
+                "y lo dejara disponible en esta pantalla. Solo se enviara al area "
+                "del cliente cuando pulses 'Enviar a documentos'.",
                 parent=self.winfo_toplevel(),
             )
         self.refresh()
@@ -377,14 +385,38 @@ class UICertificadosObtenidos(ttk.Frame):
         return str(target)
 
     def _on_publicar(self):
-        messagebox.showinfo(
-            "Documento central",
-            "El worker publica automaticamente el PDF en los documentos del cliente.",
+        solicitud = self._fila()
+        if (
+            not solicitud
+            or solicitud.get("document_status") != "draft"
+            or not solicitud.get("document_id")
+        ):
+            return
+        if not messagebox.askyesno(
+            "Enviar a documentos",
+            "El certificado se publicara en el area documental del cliente y se le "
+            "enviara una notificacion. ¿Quieres continuar?",
             parent=self.winfo_toplevel(),
-        )
+        ):
+            return
+        self._btn_publicar.configure(state="disabled")
 
-    def _publicacion_fin(self, resultado):
-        if resultado.ok:
+        def _worker():
+            try:
+                resultado = BackendClientService().publish_certificate_request_document(
+                    solicitud["id"],
+                )
+                self.after(0, lambda: self._publicacion_fin(resultado, None))
+            except Exception as exc:
+                self.after(
+                    0,
+                    lambda error=exc: self._publicacion_fin(None, error),
+                )
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _publicacion_fin(self, resultado, error=None):
+        if error is None and resultado:
             messagebox.showinfo(
                 "Documento publicado",
                 "El certificado ya esta disponible en el modulo de documentos del cliente.",
@@ -393,7 +425,7 @@ class UICertificadosObtenidos(ttk.Frame):
         else:
             messagebox.showerror(
                 "No se pudo publicar",
-                resultado.mensaje,
+                str(error or "El servidor no confirmo la publicacion"),
                 parent=self.winfo_toplevel(),
             )
         self.refresh()
@@ -459,7 +491,13 @@ class UICertificadosObtenidos(ttk.Frame):
                 (r.get("created_at") or "")[:16].replace("T", " "),
                 (r.get("completed_at") or "")[:16].replace("T", " "),
                 "Si" if r.get("document_id") else "-",
-                "Publicado" if r.get("document_id") else "-",
+                (
+                    "Publicado"
+                    if r.get("document_status") == "published"
+                    else "Pendiente"
+                    if r.get("document_status") == "draft"
+                    else "-"
+                ),
             ), tags=(estado,))
         n = len(self._cache)
         obt = sum(1 for r in self._cache if r.get("status") == "completed")

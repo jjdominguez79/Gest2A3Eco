@@ -295,3 +295,18 @@ class BackendClientService:
         match = re.search(r'filename="?([^";]+)', disposition, re.IGNORECASE)
         filename = match.group(1) if match else f"certificado-{request_id}.pdf"
         return response.content, filename, response.headers.get("Content-Type", "application/pdf")
+
+    def publish_certificate_request_document(self, request_id: str) -> dict:
+        """Hace visible en Flutter el PDF obtenido por una solicitud de escritorio."""
+        self._ensure_configured()
+        requests = self.list_certificate_requests(limit=500)
+        item = next((row for row in requests if row.get("id") == request_id), None)
+        if not item or not item.get("document_id"):
+            raise ValueError("La solicitud no tiene un documento disponible")
+        url = (
+            f"{self.base_url}/api/v1/messaging/client/documents/internal/"
+            f"{item['document_id']}/publish"
+        )
+        response = self.http.post(url, headers=self._headers(), timeout=30)
+        response.raise_for_status()
+        return response.json()

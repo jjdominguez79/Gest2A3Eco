@@ -155,7 +155,11 @@ def _authenticated_client(request: Request, db: Session) -> MessagingClient:
     return client
 
 
-def _serialize(item: ClientCertificateRequest) -> dict:
+def _serialize(
+    item: ClientCertificateRequest,
+    *,
+    document_status: str | None = None,
+) -> dict:
     try:
         parameters = json.loads(item.parameters_json or "{}")
     except (TypeError, ValueError):
@@ -175,6 +179,7 @@ def _serialize(item: ClientCertificateRequest) -> dict:
         "error_message": item.error_message or None,
         "result_summary": item.result_summary or None,
         "document_id": item.document_id,
+        "document_status": document_status,
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "updated_at": item.updated_at.isoformat() if item.updated_at else None,
         "completed_at": item.completed_at.isoformat() if item.completed_at else None,
@@ -358,6 +363,7 @@ def list_client_requests(
     require_certificates_enabled(db, client.organization_id)
     items = list(db.scalars(select(ClientCertificateRequest).where(
         ClientCertificateRequest.organization_id == client.organization_id,
+        ClientCertificateRequest.requester_type == "client",
     ).order_by(ClientCertificateRequest.created_at.desc()).limit(limit)).all())
     return {"items": [_serialize(item) for item in items]}
 
@@ -369,7 +375,11 @@ def get_client_request(
     client = _authenticated_client(request, db)
     require_certificates_enabled(db, client.organization_id)
     item = db.get(ClientCertificateRequest, request_id)
-    if not item or item.organization_id != client.organization_id:
+    if (
+        not item
+        or item.organization_id != client.organization_id
+        or item.requester_type != "client"
+    ):
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
     return _serialize(item)
 
@@ -381,7 +391,11 @@ def cancel_client_request(
     client = _authenticated_client(request, db)
     require_certificates_enabled(db, client.organization_id)
     item = db.get(ClientCertificateRequest, request_id)
-    if not item or item.organization_id != client.organization_id:
+    if (
+        not item
+        or item.organization_id != client.organization_id
+        or item.requester_type != "client"
+    ):
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
     if item.status != "queued":
         raise HTTPException(status_code=409, detail="La solicitud ya no se puede cancelar")
@@ -399,7 +413,11 @@ def retry_client_request(
     client = _authenticated_client(request, db)
     require_certificates_enabled(db, client.organization_id)
     item = db.get(ClientCertificateRequest, request_id)
-    if not item or item.organization_id != client.organization_id:
+    if (
+        not item
+        or item.organization_id != client.organization_id
+        or item.requester_type != "client"
+    ):
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
     return _serialize(_retry_request(db, item))
 
@@ -436,10 +454,18 @@ def list_internal_requests(
     _auth: str = Depends(require_workstation_or_internal),
 ):
     statement = (
-        select(ClientCertificateRequest, MessagingOrganization)
+        select(
+            ClientCertificateRequest,
+            MessagingOrganization,
+            ClientDocument.status,
+        )
         .join(
             MessagingOrganization,
             MessagingOrganization.id == ClientCertificateRequest.organization_id,
+        )
+        .outerjoin(
+            ClientDocument,
+            ClientDocument.id == ClientCertificateRequest.document_id,
         )
         .order_by(ClientCertificateRequest.created_at.desc())
         .limit(limit)
@@ -449,8 +475,8 @@ def list_internal_requests(
             MessagingOrganization.company_code == company_code.strip(),
         )
     items = []
-    for request_item, organization in db.execute(statement).all():
-        serialized = _serialize(request_item)
+    for request_item, organization, document_status in db.execute(statement).all():
+        serialized = _serialize(request_item, document_status=document_status)
         serialized["company_code"] = organization.company_code
         serialized["company_name"] = organization.name
         items.append(serialized)

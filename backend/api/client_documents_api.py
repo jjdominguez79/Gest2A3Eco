@@ -224,6 +224,7 @@ async def publish_document(
     previous_document_id: str = Form(""),
     customer_tax_id: str = Form(""),
     expected_sha256: str = Form(""),
+    publish_to_client: bool = Form(True),
     db: Session = Depends(_db),
     _auth: str = Depends(require_document_publisher),
 ):
@@ -281,8 +282,16 @@ async def publish_document(
     if not org:
         raise HTTPException(status_code=404, detail="Organizacion no encontrada")
 
-    # Verificar que el area documental esta habilitada para esta organizacion
-    require_documents_enabled(db, organization_id)
+    # Los resultados solicitados desde el escritorio se custodian primero como
+    # borrador. El area documental solo tiene que estar habilitada cuando el
+    # documento vaya a hacerse visible al cliente.
+    if publish_to_client:
+        require_documents_enabled(db, organization_id)
+    elif source_system.strip().lower() != "aapp_worker":
+        raise HTTPException(
+            status_code=422,
+            detail="Solo el worker AAPP puede custodiar documentos sin publicar",
+        )
 
     # Leer y almacenar archivo
     content = await file.read(MAX_CLIENT_DOCUMENT_BYTES + 1)
@@ -390,7 +399,7 @@ async def publish_document(
         file_size=len(content),
         sha256=sha256,
         blob_key=blob_key,
-        status="published",
+        status="published" if publish_to_client else "draft",
         published_at=utcnow(),
     )
     db.add(doc)
@@ -408,6 +417,34 @@ async def publish_document(
         except Exception:
             pass
         raise
+    db.refresh(doc)
+    if publish_to_client:
+        _notify_document_published(db, doc)
+    return _doc_to_dict(doc)
+
+
+@router.post("/internal/{document_id}/publish")
+def publish_staged_document(
+    document_id: str,
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    """Publica manualmente un documento AAPP custodiado como borrador."""
+    doc = db.get(ClientDocument, document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    if doc.status == "published":
+        return _doc_to_dict(doc)
+    if doc.status != "draft" or doc.source_system != "aapp_worker":
+        raise HTTPException(
+            status_code=409,
+            detail="El documento no esta pendiente de publicacion manual",
+        )
+    require_documents_enabled(db, doc.organization_id)
+    doc.status = "published"
+    doc.published_at = utcnow()
+    doc.updated_at = utcnow()
+    db.commit()
     db.refresh(doc)
     _notify_document_published(db, doc)
     return _doc_to_dict(doc)

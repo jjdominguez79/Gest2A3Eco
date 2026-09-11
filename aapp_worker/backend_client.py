@@ -53,6 +53,11 @@ class AappBackendClient:
                     "display_name": item.get("certificate_name") or certificate_type,
                     "description": f"Certificado obtenido de {organization}",
                     "expected_sha256": hashlib.sha256(content).hexdigest(),
+                    # Solo las solicitudes creadas por el propio cliente se
+                    # publican automaticamente en Flutter.
+                    "publish_to_client": str(
+                        item.get("requester_type") == "client"
+                    ).lower(),
                 },
                 files={"file": (pdf_path.name, stream, "application/pdf")},
                 timeout=self.config.request_timeout_seconds,

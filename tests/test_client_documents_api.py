@@ -350,6 +350,73 @@ class TestPublishDocument:
         assert data["document_type"] == "factura"
         assert data["status"] == "published"
 
+    def test_resultado_aapp_de_escritorio_queda_privado_hasta_publicarlo(
+        self, monkeypatch,
+    ):
+        db = _InMemoryDb()
+        storage = _FakeStorage()
+        notifications = []
+        monkeypatch.setattr(
+            "backend.api.client_documents_api._notify_document_published",
+            lambda _db, doc: notifications.append(doc.id),
+        )
+        client = TestClient(
+            _build_app(db, storage=storage, override_internal_auth=True),
+        )
+
+        staged = client.post(
+            "/api/v1/messaging/client/documents/internal/publish",
+            data={
+                "organization_id": "org-1",
+                "document_type": "certificado_aeat",
+                "source_system": "aapp_worker",
+                "source_id": "solicitud-escritorio-1",
+                "display_name": "Certificado AEAT",
+                "publish_to_client": "false",
+            },
+            files={
+                "file": ("certificado.pdf", b"%PDF-1.4 certificado", "application/pdf"),
+            },
+        )
+
+        assert staged.status_code == 200
+        assert staged.json()["status"] == "draft"
+        assert notifications == []
+        document = next(iter(db._docs.values()))
+        db._docs.pop(document.id)
+        document.id = "draft-doc"
+        db._docs[document.id] = document
+
+        published = client.post(
+            "/api/v1/messaging/client/documents/internal/draft-doc/publish",
+        )
+
+        assert published.status_code == 200
+        assert published.json()["status"] == "published"
+        assert notifications == ["draft-doc"]
+
+    def test_solo_worker_aapp_puede_custodiar_sin_publicar(self):
+        client = TestClient(
+            _build_app(
+                _InMemoryDb(), storage=_FakeStorage(), override_internal_auth=True,
+            ),
+        )
+
+        response = client.post(
+            "/api/v1/messaging/client/documents/internal/publish",
+            data={
+                "organization_id": "org-1",
+                "document_type": "factura",
+                "source_system": "desktop_invoice",
+                "source_id": "FAC-PRIVADA",
+                "display_name": "Factura",
+                "publish_to_client": "false",
+            },
+            files={"file": ("factura.pdf", b"%PDF-1.4", "application/pdf")},
+        )
+
+        assert response.status_code == 422
+
     def test_publicacion_idempotente(self):
         db = _InMemoryDb()
         content = b"%PDF-1.4 otro"

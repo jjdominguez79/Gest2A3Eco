@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import base64
+from pathlib import Path
 
 from aapp_worker.config import AappWorkerConfig
 from aapp_worker.worker import AappWorker
 from services.aapp.base import NotificacionDTO, ResultadoSync
 from services.aapp.certificados import ResultadoCertificado
+from aapp_worker.backend_client import AappBackendClient
 
 
 class _Backend:
@@ -123,6 +125,39 @@ def test_worker_sin_trabajo_no_hace_nada(tmp_path):
     assert AappWorker(_config(tmp_path), backend=backend).run_once() is False
     assert backend.completed is None
     assert backend.failed is None
+
+
+def test_publicacion_automatica_solo_para_solicitudes_flutter(tmp_path):
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"id": "doc-1"}
+
+    class Session:
+        def __init__(self):
+            self.payloads = []
+
+        def post(self, _url, **kwargs):
+            self.payloads.append(kwargs["data"])
+            return Response()
+
+    pdf = Path(tmp_path) / "certificado.pdf"
+    pdf.write_bytes(b"%PDF-1.7\ncertificado")
+    session = Session()
+    backend = AappBackendClient(_config(tmp_path), session=session)
+    base_item = {
+        "id": "request-1",
+        "organization_id": "org-1",
+        "certificate_type": "AEAT_CORRIENTE",
+    }
+
+    backend.publish_pdf({**base_item, "requester_type": "desktop"}, pdf)
+    backend.publish_pdf({**base_item, "requester_type": "client"}, pdf)
+
+    assert session.payloads[0]["publish_to_client"] == "false"
+    assert session.payloads[1]["publish_to_client"] == "true"
 
 
 def test_worker_dehu_publica_documento_y_elimina_pfx_temporal(monkeypatch, tmp_path):
