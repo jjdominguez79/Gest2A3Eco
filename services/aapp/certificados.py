@@ -461,6 +461,10 @@ class SedePlaywrightProvider(ProveedorCertificado):
     def _descargar_documento(self, page, opciones, tipo):
         """Busca el enlace del documento generado y lo guarda como PDF via la
         sesion autenticada (evita el problema de "descarga sin extension")."""
+        if self.codigo_organismo == "AEAT":
+            descargado = self._descargar_boton_aeat(page, opciones, tipo)
+            if descargado:
+                return descargado
         selectores = [
             "a.pr_enlaceDocumento",
             "a[data-pc_tipo='documento']",
@@ -513,6 +517,33 @@ class SedePlaywrightProvider(ProveedorCertificado):
             return destino
         opciones.trace(f"[{self.codigo_organismo}] no se obtuvo un PDF valido de {href}")
         return None
+
+    def _descargar_boton_aeat(self, page, opciones, tipo):
+        """Captura el PDF que AEAT entrega mediante el boton final #descarga."""
+        try:
+            boton = page.locator("#descarga")
+            if boton.count() == 0:
+                return None
+        except Exception:
+            return None
+        destino = opciones.ruta_pdf_destino
+        if not destino:
+            carpeta = opciones.carpeta_descargas or os.getcwd()
+            destino = os.path.join(carpeta, f"cert_{tipo}.pdf")
+        os.makedirs(os.path.dirname(destino), exist_ok=True)
+        try:
+            with page.expect_download(timeout=opciones.timeout_ms) as descarga_info:
+                boton.first.click(timeout=6000)
+            descarga = descarga_info.value
+            descarga.save_as(destino)
+            with open(destino, "rb") as fh:
+                if not self._es_pdf(fh.read(4)):
+                    raise RuntimeError("La descarga final de AEAT no es un PDF valido")
+            opciones.trace(f"[AEAT] certificado descargado mediante el boton final en {destino}")
+            return destino
+        except Exception as exc:
+            opciones.trace(f"[AEAT] no se pudo capturar el boton final de descarga: {exc}")
+            return None
 
     @staticmethod
     def _es_pdf(b):
@@ -611,13 +642,11 @@ class SedePlaywrightProvider(ProveedorCertificado):
             locator = page.locator("input, select, button")
             for indice in range(min(locator.count(), 30)):
                 control = locator.nth(indice)
-                etiqueta = " ".join((control.inner_text(timeout=500) or "").split())[:60]
                 controles.append({
                     "tag": control.evaluate("el => el.tagName.toLowerCase()"),
                     "type": control.get_attribute("type") or "",
                     "id": control.get_attribute("id") or "",
                     "name": control.get_attribute("name") or "",
-                    "text": etiqueta,
                 })
             return f"titulo={titulo!r}; controles={controles}"
         except Exception as exc:

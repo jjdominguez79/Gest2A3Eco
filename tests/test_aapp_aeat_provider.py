@@ -138,3 +138,46 @@ def test_aeat_confirma_firma_en_la_ventana_emergente():
     assert activa is firma
     assert ("check", "input[type='checkbox']") in firma.actions
     assert ("click", "input[id^='FirmayEnvia_'], input[value*='Firmar'], button:has-text('Firmar')") in firma.actions
+
+
+class _Descarga:
+    def save_as(self, destino):
+        with open(destino, "wb") as fichero:
+            fichero.write(b"%PDF-1.7\nprueba")
+
+
+class _EsperaDescarga:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    @property
+    def value(self):
+        return _Descarga()
+
+
+class _PaginaDescarga:
+    def __init__(self):
+        self.actions = []
+
+    def locator(self, selector):
+        return _Locator(selector, self.actions)
+
+    def expect_download(self, timeout=None):
+        return _EsperaDescarga()
+
+
+def test_aeat_captura_el_boton_final_como_pdf(tmp_path):
+    provider = SedePlaywrightProvider("AEAT", {"AEAT_CORRIENTE"}, "https://example.test")
+    destino = tmp_path / "certificado.pdf"
+
+    obtenido = provider._descargar_boton_aeat(
+        _PaginaDescarga(),
+        OpcionesSync(ruta_pdf_destino=str(destino), log=lambda _message: None),
+        "AEAT_CORRIENTE",
+    )
+
+    assert obtenido == str(destino)
+    assert destino.read_bytes().startswith(b"%PDF-")
