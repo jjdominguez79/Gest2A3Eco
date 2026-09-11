@@ -135,6 +135,25 @@ Railway despues de verificar el primer despliegue con los nombres nuevos.
   global previa a la publicacion; `false` por defecto.
 - `MESSAGING_SMTP_*`: respaldo opcional si Graph no esta disponible.
 
+La custodia es unica y central: el PFX seleccionado en el escritorio se usa
+solamente para la subida HTTPS inicial. El backend valida que contiene una
+clave privada, cifra conjuntamente el PFX y su contrasena con AES-256-GCM y
+guarda el sobre cifrado en el contenedor privado de Azure. PostgreSQL conserva
+solo metadatos, la version y la clave virtual del blob; el escritorio elimina
+de su registro la ruta y la contrasena locales tras confirmar la subida.
+
+Cada sustitucion crea primero un blob nuevo y actualiza despues la version en
+PostgreSQL. Solo cuando la transaccion termina correctamente se elimina el blob
+anterior. El prefijo `{organization_id}/` que muestra Azure es una carpeta
+virtual para separar clientes, no una copia adicional.
+
+El worker es el unico consumidor autorizado del material privado. Lo obtiene
+para una solicitud ya reclamada, lo escribe como PFX dentro de un directorio
+temporal aislado y elimina ese directorio al terminar, tambien si el tramite
+falla. Los PDF obtenidos se publican en el almacenamiento documental central y
+quedan disponibles para Flutter; nunca se usa el PFX original del puesto para
+ejecutar AEAT, TGSS o DEHu.
+
 La aplicacion Azure necesita los permisos Graph correspondientes; `Mail.Send`
 de aplicacion es necesario para invitaciones, recuperaciones, avisos y facturas.
 El escritorio envia estas ultimas mediante `POST /api/v1/mail/send`, autenticado

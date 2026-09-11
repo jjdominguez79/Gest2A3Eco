@@ -12,13 +12,16 @@ Permite:
 from __future__ import annotations
 
 import os
+import tempfile
 import threading
 import tkinter as tk
+import uuid
+from pathlib import Path
 from tkinter import messagebox, ttk
 
 from views.notificaciones_theme import *  # noqa: F401,F403
-from services.aapp.certificados import TIPOS, solicitar_certificado, requisitos_ok
-from services.aapp.base import OpcionesSync
+from services.aapp.certificados import TIPOS
+from services.backend_client_service import BackendClientService
 
 
 def _label_tipo(code: str) -> str:
@@ -79,9 +82,13 @@ class UICertificadosObtenidos(ttk.Frame):
                                         font=("Segoe UI", 9, "bold"), relief="flat", cursor="hand2",
                                         padx=14, pady=3, command=self._on_solicitar)
         self._btn_solicitar.pack(side="left", padx=(0, 10))
-        self._var_ver_navegador = tk.BooleanVar(value=False)
-        tk.Checkbutton(bar, text="Mostrar navegador", variable=self._var_ver_navegador,
-                       bg="#e2e8f0", font=("Segoe UI", 9)).pack(side="left")
+        tk.Label(
+            bar,
+            text="El worker usa exclusivamente la copia cifrada de Azure",
+            bg="#e2e8f0",
+            fg=_SUB,
+            font=("Segoe UI", 8),
+        ).pack(side="left")
 
         # Toolbar acciones
         tb = tk.Frame(self, bg=_BG, pady=6)
@@ -158,14 +165,11 @@ class UICertificadosObtenidos(ttk.Frame):
 
     def _on_select(self, _e=None):
         r = self._fila()
-        tiene_pdf = bool(r and r.get("pdf_path") and os.path.isfile(r.get("pdf_path") or ""))
+        tiene_pdf = bool(r and r.get("document_id"))
         self._btn_pdf.configure(state="normal" if tiene_pdf else "disabled")
         self._btn_email.configure(state="normal" if tiene_pdf else "disabled")
-        pendiente = bool(
-            tiene_pdf and r and r.get("area_cliente_estado") != "PUBLICADO"
-        )
-        self._btn_publicar.configure(state="normal" if pendiente else "disabled")
-        self._btn_del.configure(state="normal" if r else "disabled")
+        self._btn_publicar.configure(state="disabled")
+        self._btn_del.configure(state="disabled")
 
     # ------------------------------------------------------------------ solicitar
     def _on_solicitar(self):
@@ -177,26 +181,31 @@ class UICertificadosObtenidos(ttk.Frame):
         if not tipo:
             messagebox.showinfo("Gest2A3Eco", "Selecciona un tipo de certificado.", parent=self.winfo_toplevel())
             return
-        ok_req, msg_req = requisitos_ok(self._gestor, cod, tipo)
-        if not ok_req:
-            messagebox.showwarning("Faltan requisitos", msg_req, parent=self.winfo_toplevel())
-            return
         if not messagebox.askyesno("Solicitar certificado",
                                    f"Solicitar '{_label_tipo(tipo)}' para el cliente {cod}?\n\n"
-                                   "Se accedera al organismo con el certificado del cliente. Puede tardar.",
+                                   "La solicitud se enviara al worker, que utilizara exclusivamente "
+                                   "el certificado cifrado custodiado en Azure.",
                                    parent=self.winfo_toplevel()):
             return
         self._btn_solicitar.configure(state="disabled")
-        ver = bool(self._var_ver_navegador.get())
-        self._mostrar_progreso(f"Solicitando '{_label_tipo(tipo)}'\npara el cliente {cod}...\n\n"
-                               "Accediendo al organismo. Puede tardar unos segundos.")
 
         def _worker():
-            import os as _os
-            _logs = _os.path.join(_os.getcwd(), "logs")
-            _op = OpcionesSync(headless=not ver, modo_diagnostico=True, carpeta_diagnostico=_logs)
-            res = solicitar_certificado(self._gestor, cod, tipo, _op)
-            self.after(0, lambda: self._solicitud_fin(res))
+            try:
+                backend = BackendClientService()
+                estado = backend.get_client_certificate_status(company_code=cod)
+                if not estado.get("configured"):
+                    raise ValueError(
+                        "El cliente no tiene un certificado custodiado en Azure. "
+                        "Configuralo antes de crear la solicitud."
+                    )
+                result = backend.create_certificate_request(
+                    company_code=cod,
+                    certificate_type=tipo,
+                    idempotency_key=f"desktop-{uuid.uuid4().hex}",
+                )
+                self.after(0, lambda: self._solicitud_fin(result, None))
+            except Exception as exc:
+                self.after(0, lambda error=exc: self._solicitud_fin(None, error))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -232,25 +241,23 @@ class UICertificadosObtenidos(ttk.Frame):
             pass
         self._prog = None
 
-    def _solicitud_fin(self, res):
+    def _solicitud_fin(self, res, error=None):
         self._cerrar_progreso()
         try:
             self._btn_solicitar.configure(state="normal")
         except Exception:
             pass
-        if res.estado == "OBTENIDO":
-            messagebox.showinfo("Certificado obtenido",
-                                f"{_label_tipo(res.tipo)}\nResultado: {res.resultado or '-'}\n"
-                                f"PDF: {res.pdf_path or '-'}",
-                                parent=self.winfo_toplevel())
-        elif res.estado == "PENDIENTE":
-            messagebox.showwarning("Pendiente de calibrar",
-                                   res.mensaje or "El flujo de este certificado aun no esta disponible.",
-                                   parent=self.winfo_toplevel())
-        else:
+        if error is not None:
             messagebox.showerror("No se pudo obtener",
-                                 res.mensaje or "Error al solicitar el certificado.",
+                                 str(error),
                                  parent=self.winfo_toplevel())
+        else:
+            messagebox.showinfo(
+                "Solicitud enviada",
+                "La solicitud ha quedado en cola. El worker obtendra el certificado "
+                "y lo publicara automaticamente en los documentos del cliente.",
+                parent=self.winfo_toplevel(),
+            )
         self.refresh()
 
     # ------------------------------------------------------------------ acciones
@@ -258,12 +265,8 @@ class UICertificadosObtenidos(ttk.Frame):
         r = self._fila()
         if not r:
             return
-        pdf = r.get("pdf_path")
-        if not pdf or not os.path.isfile(pdf):
-            messagebox.showwarning("Gest2A3Eco", "No hay PDF disponible para esta solicitud.",
-                                   parent=self.winfo_toplevel())
-            return
         try:
+            pdf = self._descargar_pdf(r)
             os.startfile(pdf)  # Windows
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", f"No se pudo abrir el PDF:\n{exc}",
@@ -273,42 +276,40 @@ class UICertificadosObtenidos(ttk.Frame):
         r = self._fila()
         if not r:
             return
-        pdf = r.get("pdf_path")
-        if not pdf or not os.path.isfile(pdf):
-            messagebox.showwarning("Gest2A3Eco", "No hay PDF que adjuntar.", parent=self.winfo_toplevel())
-            return
-        destino = r.get("empresa_email") or ""
-        asunto = f"{_label_tipo(r.get('tipo'))} - {r.get('empresa_nombre') or r.get('codigo_empresa')}"
+        empresa = self._gestor.get_empresa(r.get("company_code")) or {}
+        destino = empresa.get("email") or empresa.get("correo") or ""
+        asunto = f"{_label_tipo(r.get('certificate_type'))} - {r.get('company_name') or r.get('company_code')}"
         cuerpo = (f"Adjunto el certificado solicitado.\n\n"
-                  f"Cliente: {r.get('empresa_nombre') or r.get('codigo_empresa')}\n"
-                  f"Tipo: {_label_tipo(r.get('tipo'))}\n"
-                  f"Fecha: {r.get('fecha_obtencion') or r.get('fecha_solicitud') or ''}\n")
+                  f"Cliente: {r.get('company_name') or r.get('company_code')}\n"
+                  f"Tipo: {_label_tipo(r.get('certificate_type'))}\n"
+                  f"Fecha: {r.get('completed_at') or r.get('created_at') or ''}\n")
         try:
+            pdf = self._descargar_pdf(r)
             from services.email_service import open_outlook_email
             open_outlook_email(to=destino, subject=asunto, body=cuerpo, attachments=[pdf])
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", f"No se pudo preparar el email:\n{exc}",
                                  parent=self.winfo_toplevel())
 
+    def _descargar_pdf(self, solicitud):
+        if not solicitud.get("document_id"):
+            raise ValueError("La solicitud todavia no tiene un PDF disponible.")
+        content, filename, _content_type = (
+            BackendClientService().download_certificate_request_document(solicitud["id"])
+        )
+        if not content.startswith(b"%PDF-"):
+            raise ValueError("El servidor no devolvio un PDF valido.")
+        safe_name = os.path.basename(filename) or f"certificado-{solicitud['id']}.pdf"
+        target = Path(tempfile.gettempdir()) / f"gestinem-{uuid.uuid4().hex}-{safe_name}"
+        target.write_bytes(content)
+        return str(target)
+
     def _on_publicar(self):
-        solicitud = self._fila()
-        if not solicitud:
-            return
-        pdf = solicitud.get("pdf_path") or ""
-        if not pdf or not os.path.isfile(pdf):
-            messagebox.showwarning(
-                "Gest2A3Eco", "No hay un PDF obtenido que publicar.",
-                parent=self.winfo_toplevel(),
-            )
-            return
-        self._btn_publicar.configure(state="disabled")
-
-        def _worker():
-            from services.aapp.document_publication import PublicadorDocumentosAAPP
-            resultado = PublicadorDocumentosAAPP(self._gestor).publicar_certificado(solicitud)
-            self.after(0, lambda: self._publicacion_fin(resultado))
-
-        threading.Thread(target=_worker, daemon=True).start()
+        messagebox.showinfo(
+            "Documento central",
+            "El worker publica automaticamente el PDF en los documentos del cliente.",
+            parent=self.winfo_toplevel(),
+        )
 
     def _publicacion_fin(self, resultado):
         if resultado.ok:
@@ -326,19 +327,7 @@ class UICertificadosObtenidos(ttk.Frame):
         self.refresh()
 
     def _on_eliminar(self):
-        r = self._fila()
-        if not r:
-            return
-        if not messagebox.askyesno("Eliminar solicitud",
-                                   "Eliminar esta solicitud del listado?",
-                                   parent=self.winfo_toplevel()):
-            return
-        try:
-            self._gestor.eliminar_cert_solicitud(r.get("codigo_empresa"), r.get("id"))
-        except Exception as exc:
-            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
-            return
-        self.refresh()
+        return
 
     # ------------------------------------------------------------------ refresh
     def refresh(self):
@@ -347,26 +336,52 @@ class UICertificadosObtenidos(ttk.Frame):
         self._todas_empresas = [f"{e['codigo']} - {e.get('nombre','')}" for e in empresas]
         self._cb_cliente.configure(values=self._todas_empresas)
 
-        self._cache = self._gestor.listar_cert_solicitudes_global()
+        self._lbl_status.configure(text="Consultando solicitudes centrales...")
+
+        def _worker():
+            try:
+                items = BackendClientService().list_certificate_requests(limit=500)
+                self.after(0, lambda: self._refresh_fin(items, None))
+            except Exception as exc:
+                self.after(0, lambda error=exc: self._refresh_fin([], error))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _refresh_fin(self, items, error=None):
+        # Las operaciones internas (por ejemplo DEHU_SYNC) se consultan desde
+        # su propia pantalla y no deben mezclarse con certificados obtenidos.
+        self._cache = [
+            item for item in items if item.get("certificate_type") in TIPOS
+        ]
         self._tv.delete(*self._tv.get_children())
         for r in self._cache:
+            status = str(r.get("status") or "").lower()
+            estado = {
+                "queued": "PENDIENTE",
+                "processing": "PROCESANDO",
+                "completed": "OBTENIDO",
+                "needs_action": "PENDIENTE",
+                "failed": "ERROR",
+                "cancelled": "CANCELADO",
+            }.get(status, status.upper())
             self._tv.insert("", tk.END, values=(
                 r.get("id"),
-                r.get("empresa_nombre") or r.get("codigo_empresa") or "",
-                _label_tipo(r.get("tipo")),
-                r.get("organismo") or "",
-                r.get("estado") or "",
-                r.get("resultado") or "",
-                (r.get("fecha_solicitud") or "")[:16].replace("T", " "),
-                (r.get("fecha_obtencion") or "")[:16].replace("T", " "),
-                "Si" if (r.get("pdf_path") and os.path.isfile(r.get("pdf_path") or "")) else "-",
-                "Publicado" if r.get("area_cliente_estado") == "PUBLICADO" else (
-                    "Error" if r.get("area_cliente_estado") == "ERROR" else "-"
-                ),
-            ), tags=(r.get("estado") or "",))
+                r.get("company_name") or r.get("company_code") or "",
+                _label_tipo(r.get("certificate_type")),
+                r.get("issuing_organization") or "",
+                estado,
+                r.get("result_summary") or r.get("error_message") or "",
+                (r.get("created_at") or "")[:16].replace("T", " "),
+                (r.get("completed_at") or "")[:16].replace("T", " "),
+                "Si" if r.get("document_id") else "-",
+                "Publicado" if r.get("document_id") else "-",
+            ), tags=(estado,))
         n = len(self._cache)
-        obt = sum(1 for r in self._cache if r.get("estado") == "OBTENIDO")
-        self._lbl_status.configure(text=f"{n} solicitud(es)  |  Obtenidos: {obt}")
+        obt = sum(1 for r in self._cache if r.get("status") == "completed")
+        texto = f"{n} solicitud(es) centrales  |  Obtenidos: {obt}"
+        if error is not None:
+            texto = f"No se pudieron consultar las solicitudes centrales: {error}"
+        self._lbl_status.configure(text=texto)
         self._btn_pdf.configure(state="disabled")
         self._btn_email.configure(state="disabled")
         self._btn_publicar.configure(state="disabled")

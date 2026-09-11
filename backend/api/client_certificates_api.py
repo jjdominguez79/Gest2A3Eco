@@ -12,7 +12,7 @@ import re
 import secrets
 from datetime import timedelta, timezone
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -30,6 +30,7 @@ from backend.api.client_models import (
     ClientDocument,
 )
 from backend.api.database import SessionLocal
+from backend.api.client_storage import ClientDocumentStorage
 from backend.api.feature_flags import require_certificates_enabled
 from backend.api.messaging_models import (
     MessagingClient,
@@ -86,6 +87,17 @@ CERTIFICATE_TYPES = {
     },
 }
 
+INTERNAL_OPERATION_TYPES = {
+    "DEHU_SYNC": {
+        "code": "DEHU_SYNC",
+        "organization": "DEHU",
+        "name": "Sincronizacion de notificaciones electronicas",
+        "parameters": [],
+        "internal_only": True,
+    },
+}
+_ALL_REQUEST_TYPES = {**CERTIFICATE_TYPES, **INTERNAL_OPERATION_TYPES}
+
 ACTIVE_STATUSES = {"queued", "processing", "needs_action"}
 
 
@@ -97,7 +109,7 @@ class CertificateRequestIn(BaseModel):
 
 class WorkerResultIn(BaseModel):
     claim_token: str = Field(min_length=16, max_length=64)
-    document_id: str = Field(min_length=1, max_length=36)
+    document_id: str | None = Field(default=None, min_length=1, max_length=36)
     result_summary: str = Field(default="", max_length=2000)
 
 
@@ -147,7 +159,7 @@ def _serialize(item: ClientCertificateRequest) -> dict:
         parameters = json.loads(item.parameters_json or "{}")
     except (TypeError, ValueError):
         parameters = {}
-    catalog = CERTIFICATE_TYPES.get(item.certificate_type, {})
+    catalog = _ALL_REQUEST_TYPES.get(item.certificate_type, {})
     return {
         "id": item.id,
         "organization_id": item.organization_id,
@@ -198,9 +210,12 @@ def _organization_by_code(db: Session, company_code: str) -> MessagingOrganizati
     return org
 
 
-def _validate_request(payload: CertificateRequestIn) -> tuple[str, str]:
+def _validate_request(
+    payload: CertificateRequestIn, *, allow_internal: bool = False,
+) -> tuple[str, str]:
     certificate_type = payload.certificate_type.strip().upper()
-    if certificate_type not in CERTIFICATE_TYPES:
+    allowed_types = _ALL_REQUEST_TYPES if allow_internal else CERTIFICATE_TYPES
+    if certificate_type not in allowed_types:
         raise HTTPException(status_code=422, detail="Tipo de certificado no soportado")
     serialized = json.dumps(payload.parameters, ensure_ascii=False, separators=(",", ":"))
     if len(serialized.encode("utf-8")) > 8000:
@@ -215,8 +230,11 @@ def _create_request(
     payload: CertificateRequestIn,
     requester_type: str,
     requester_id: str,
+    allow_internal: bool = False,
 ) -> ClientCertificateRequest:
-    certificate_type, parameters_json = _validate_request(payload)
+    certificate_type, parameters_json = _validate_request(
+        payload, allow_internal=allow_internal,
+    )
     key = payload.idempotency_key.strip() or new_id()
     existing = db.scalar(select(ClientCertificateRequest).where(
         ClientCertificateRequest.organization_id == org.id,
@@ -354,10 +372,74 @@ def create_internal_request(
     _auth: str = Depends(require_workstation_or_internal),
 ):
     org = _organization_by_code(db, company_code)
+    secret = db.scalar(select(ClientCertificateSecret).where(
+        ClientCertificateSecret.organization_id == org.id,
+        ClientCertificateSecret.active.is_(True),
+    ))
+    secret_state = _secret_status(secret)
+    if not secret_state["configured"]:
+        raise HTTPException(status_code=409, detail="Certificado digital no configurado")
+    if secret_state["status"] == "expired":
+        raise HTTPException(status_code=409, detail="El certificado digital esta caducado")
     return _serialize(_create_request(
         db, org=org, payload=payload,
         requester_type="desktop", requester_id="desktop",
+        allow_internal=True,
     ))
+
+
+@router.get("/internal/requests")
+def list_internal_requests(
+    company_code: str = "",
+    limit: int = Query(default=200, ge=1, le=500),
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    statement = (
+        select(ClientCertificateRequest, MessagingOrganization)
+        .join(
+            MessagingOrganization,
+            MessagingOrganization.id == ClientCertificateRequest.organization_id,
+        )
+        .order_by(ClientCertificateRequest.created_at.desc())
+        .limit(limit)
+    )
+    if company_code.strip():
+        statement = statement.where(
+            MessagingOrganization.company_code == company_code.strip(),
+        )
+    items = []
+    for request_item, organization in db.execute(statement).all():
+        serialized = _serialize(request_item)
+        serialized["company_code"] = organization.company_code
+        serialized["company_name"] = organization.name
+        items.append(serialized)
+    return {"items": items}
+
+
+@router.get("/internal/requests/{request_id}/document")
+def download_internal_request_document(
+    request_id: str,
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    item = db.get(ClientCertificateRequest, request_id)
+    if not item or not item.document_id:
+        raise HTTPException(status_code=404, detail="La solicitud no tiene documento")
+    document = db.get(ClientDocument, item.document_id)
+    if not document or document.organization_id != item.organization_id:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    if document.status == "withdrawn":
+        raise HTTPException(status_code=410, detail="Documento retirado")
+    content = ClientDocumentStorage().get(document.blob_key)
+    return Response(
+        content=content,
+        media_type=document.content_type or "application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{document.file_name}"',
+            "Content-Length": str(len(content)),
+        },
+    )
 
 
 @router.get("/internal/certificate-status")
@@ -544,11 +626,13 @@ def complete_request(
     _auth: str = Depends(require_aapp_worker_key),
 ):
     item = _claimed_request(db, request_id, payload.claim_token)
-    document = db.get(ClientDocument, payload.document_id)
-    if not document or document.organization_id != item.organization_id:
+    document = db.get(ClientDocument, payload.document_id) if payload.document_id else None
+    if payload.document_id and (
+        not document or document.organization_id != item.organization_id
+    ):
         raise HTTPException(status_code=422, detail="Documento resultante no valido")
     item.status = "completed"
-    item.document_id = document.id
+    item.document_id = document.id if document else None
     item.result_summary = payload.result_summary
     item.error_code = ""
     item.error_message = ""

@@ -60,7 +60,32 @@ class AappBackendClient:
         response.raise_for_status()
         return response.json()
 
-    def complete(self, item: dict, document_id: str, summary: str = "") -> None:
+    def publish_notification_pdf(self, item: dict, notification, pdf_path: Path) -> dict:
+        content = pdf_path.read_bytes()
+        source_id = hashlib.sha256(
+            f"{item['organization_id']}|{notification.dedup_key()}".encode("utf-8")
+        ).hexdigest()[:40]
+        with pdf_path.open("rb") as stream:
+            response = self.http.post(
+                f"{self.config.backend_url}/api/v1/messaging/client/documents/internal/publish",
+                headers=self._headers,
+                data={
+                    "organization_id": item["organization_id"],
+                    "document_type": "notificacion_dehu",
+                    "source_system": "aapp_worker",
+                    "source_id": source_id,
+                    "source_version": "1",
+                    "display_name": notification.asunto or "Notificacion DEHu",
+                    "description": notification.descripcion or "Notificacion electronica recibida en DEHu",
+                    "expected_sha256": hashlib.sha256(content).hexdigest(),
+                },
+                files={"file": (pdf_path.name, stream, "application/pdf")},
+                timeout=self.config.request_timeout_seconds,
+            )
+        response.raise_for_status()
+        return response.json()
+
+    def complete(self, item: dict, document_id: str | None, summary: str = "") -> None:
         response = self.http.post(
             f"{self.config.backend_url}/api/v1/messaging/client/certificates/internal/worker/requests/{item['id']}/complete",
             headers=self._headers,

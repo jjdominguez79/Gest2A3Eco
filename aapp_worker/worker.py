@@ -10,8 +10,10 @@ from pathlib import Path
 from aapp_worker.backend_client import AappBackendClient
 from aapp_worker.config import AappWorkerConfig
 from services.aapp.base import OpcionesSync
+from services.aapp.base import obtener_conector
 from services.aapp.cert_store import CertMaterial
 from services.aapp.certificados import obtener_proveedor
+from services.aapp import dehu_playwright  # noqa: F401
 
 
 LOG = logging.getLogger("gest2a3eco.aapp_worker")
@@ -40,6 +42,9 @@ class AappWorker:
         return True
 
     def _process(self, item: dict) -> None:
+        if item["certificate_type"] == "DEHU_SYNC":
+            self._process_dehu(item)
+            return
         provider = obtener_proveedor(item["certificate_type"])
         if provider is None:
             self.backend.fail(
@@ -94,6 +99,73 @@ class AappWorker:
                 raise RuntimeError("El backend no devolvio el identificador del documento")
             self.backend.complete(item, document_id, result.resultado or "")
             LOG.info("Solicitud %s completada", item["id"])
+
+    def _process_dehu(self, item: dict) -> None:
+        connector = obtener_conector("DEHU")
+        if connector is None:
+            raise RuntimeError("El conector DEHu no esta disponible en el worker")
+        material = self.backend.certificate_material(item)
+        parameters = item.get("parameters") or {}
+        with tempfile.TemporaryDirectory(prefix="gestinem-dehu-") as directory:
+            workdir = Path(directory)
+            pfx_path = workdir / "cliente.pfx"
+            pfx_path.write_bytes(base64.b64decode(material["pfx_base64"]))
+            cert = CertMaterial(
+                cert_id="central",
+                nombre=material.get("file_name") or "certificado",
+                nif_titular=parameters.get("tax_id"),
+                ruta_archivo=str(pfx_path),
+                password=material.get("password") or "",
+                fecha_caducidad=material.get("valid_until"),
+            )
+            options = OpcionesSync(
+                headless=self.config.headless,
+                descargar_pdf=True,
+                carpeta_descargas=str(workdir),
+                nif_filtro=parameters.get("tax_id") or None,
+                modo_diagnostico=self.config.diagnostic_dir is not None,
+                carpeta_diagnostico=(
+                    str(self.config.diagnostic_dir)
+                    if self.config.diagnostic_dir is not None else None
+                ),
+                log=lambda message: LOG.info("%s: %s", item["id"], message),
+            )
+            result = connector.sincronizar(
+                {
+                    "id": parameters.get("mailbox_id") or "dehu-central",
+                    "nombre": parameters.get("mailbox_name") or "DEHu",
+                    "organismo_codigo": "DEHU",
+                    "codigo_empresa": parameters.get("company_code") or "",
+                    "modo_descarga": parameters.get("download_mode") or "PENDIENTES",
+                },
+                cert,
+                options,
+            )
+            if not result.ok:
+                raise RuntimeError(result.mensaje or "No se pudo sincronizar DEHu")
+            document_ids = []
+            for notification in result.notificaciones:
+                if not notification.pdf_path:
+                    continue
+                pdf_path = Path(notification.pdf_path)
+                if not pdf_path.is_file() or not pdf_path.read_bytes().startswith(b"%PDF-"):
+                    continue
+                document = self.backend.publish_notification_pdf(
+                    item, notification, pdf_path,
+                )
+                document_id = str(document.get("id") or document.get("document_id") or "")
+                if document_id:
+                    document_ids.append(document_id)
+            summary = (
+                f"{result.total} notificacion(es) detectada(s); "
+                f"{len(document_ids)} documento(s) publicado(s)."
+            )
+            self.backend.complete(
+                item,
+                document_ids[0] if document_ids else None,
+                summary,
+            )
+            LOG.info("Sincronizacion DEHu %s completada: %s", item["id"], summary)
 
     def run_forever(self) -> None:
         while not self.stop_event.is_set():

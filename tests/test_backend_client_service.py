@@ -125,6 +125,38 @@ def test_upload_client_certificate_uses_multipart(monkeypatch, tmp_path):
     response.raise_for_status.assert_called_once_with()
 
 
+def test_list_certificate_requests_uses_internal_backend(monkeypatch):
+    response = MagicMock()
+    response.json.return_value = {"items": [{"id": "sol-1"}]}
+    session = MagicMock()
+    session.get.return_value = response
+
+    result = _service(monkeypatch, session).list_certificate_requests(
+        company_code="E00006", limit=50,
+    )
+
+    assert result == [{"id": "sol-1"}]
+    request = session.get.call_args
+    assert request.kwargs["params"] == {"limit": 50, "company_code": "E00006"}
+    assert request.kwargs["headers"] == {"X-API-Key": "g2a3_wks_test"}
+
+
+def test_download_certificate_request_document(monkeypatch):
+    response = MagicMock()
+    response.content = b"%PDF-1.7"
+    response.headers = {
+        "Content-Disposition": 'attachment; filename="corriente.pdf"',
+        "Content-Type": "application/pdf",
+    }
+    session = MagicMock()
+    session.get.return_value = response
+
+    result = _service(monkeypatch, session).download_certificate_request_document("sol-1")
+
+    assert result == (b"%PDF-1.7", "corriente.pdf", "application/pdf")
+    assert session.get.call_args.args[0].endswith("/internal/requests/sol-1/document")
+
+
 def test_sync_company_profile_uses_backend_route(monkeypatch):
     response = MagicMock()
     response.json.return_value = {"organization_id": "org-1"}

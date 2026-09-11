@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from datetime import timedelta
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 os.environ.setdefault(
     "BACKEND_DATABASE_URL",
@@ -16,7 +17,11 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.api.client_certificates_api import _db, router
-from backend.api.client_models import ClientCertificateRequest, ClientCertificateSecret
+from backend.api.client_models import (
+    ClientCertificateRequest,
+    ClientCertificateSecret,
+    ClientDocument,
+)
 from backend.api.database import Base
 from backend.api.messaging_models import (
     MessagingClient,
@@ -260,6 +265,76 @@ def test_escritorio_reemplaza_certificado_y_elimina_el_blob_anterior(monkeypatch
         assert secret.version == 2
 
 
+def test_escritorio_lista_solicitudes_centrales_con_empresa(monkeypatch):
+    client, _, _, _headers = _setup(monkeypatch)
+    created = client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={"certificate_type": "AEAT_CENSAL"},
+    )
+
+    response = client.get(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+    )
+
+    assert created.status_code == 201
+    assert response.status_code == 200
+    assert len(response.json()["items"]) == 1
+    item = response.json()["items"][0]
+    assert item["id"] == created.json()["id"]
+    assert item["company_code"] == "E00001"
+    assert item["company_name"] == "Cliente Uno"
+
+
+def test_escritorio_descarga_documento_de_solicitud_central(monkeypatch):
+    client, factory, org_id, _headers = _setup(monkeypatch)
+    with factory() as db:
+        document = ClientDocument(
+            organization_id=org_id,
+            document_type="certificado_aeat",
+            source_system="aapp_worker",
+            source_id="sol-doc",
+            source_version=1,
+            display_name="Certificado censal",
+            file_name="censal.pdf",
+            content_type="application/pdf",
+            file_size=8,
+            sha256="c" * 64,
+            blob_key=f"{org_id}/censal.pdf",
+            status="published",
+        )
+        db.add(document)
+        db.flush()
+        request_item = ClientCertificateRequest(
+            organization_id=org_id,
+            requester_type="desktop",
+            requester_id="desktop",
+            certificate_type="AEAT_CENSAL",
+            idempotency_key="sol-doc",
+            status="completed",
+            document_id=document.id,
+        )
+        db.add(request_item)
+        db.commit()
+        request_id = request_item.id
+
+    storage = MagicMock()
+    storage.get.return_value = b"%PDF-1.7"
+    monkeypatch.setattr(
+        "backend.api.client_certificates_api.ClientDocumentStorage",
+        lambda: storage,
+    )
+
+    response = client.get(
+        f"/api/v1/messaging/client/certificates/internal/requests/{request_id}/document",
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"%PDF-1.7"
+    assert response.headers["content-disposition"] == 'attachment; filename="censal.pdf"'
+
+
 def test_worker_claim_y_reintento_con_token(monkeypatch):
     client, factory, _, headers = _setup(monkeypatch)
     client.post(
@@ -291,3 +366,51 @@ def test_worker_claim_y_reintento_con_token(monkeypatch):
         stored = db.get(ClientCertificateRequest, item["id"])
         assert stored.next_attempt_at is not None
         assert stored.claim_token == ""
+
+
+def test_dehu_solo_se_puede_encolar_desde_el_escritorio(monkeypatch):
+    client, _, _, headers = _setup(monkeypatch)
+
+    public_response = client.post(
+        "/api/v1/messaging/client/certificates/requests",
+        headers=headers,
+        json={"certificate_type": "DEHU_SYNC"},
+    )
+    internal_response = client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={"certificate_type": "DEHU_SYNC"},
+    )
+
+    assert public_response.status_code == 422
+    assert internal_response.status_code == 201
+    assert internal_response.json()["issuing_organization"] == "DEHU"
+
+
+def test_worker_completa_sin_documento_una_sincronizacion_dehu(monkeypatch):
+    client, factory, _, _headers = _setup(monkeypatch)
+    created = client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={"certificate_type": "DEHU_SYNC"},
+    )
+    claim = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/claim",
+    ).json()["item"]
+
+    response = client.post(
+        f"/api/v1/messaging/client/certificates/internal/worker/requests/{claim['id']}/complete",
+        json={
+            "claim_token": claim["claim_token"],
+            "document_id": None,
+            "result_summary": "No habia documentos nuevos",
+        },
+    )
+
+    assert created.status_code == 201
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+    assert response.json()["document_id"] is None
+    with factory() as db:
+        stored = db.get(ClientCertificateRequest, claim["id"])
+        assert stored.document_id is None

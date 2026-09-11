@@ -7,6 +7,7 @@ accede a rutas locales del puesto de trabajo.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import requests
@@ -249,3 +250,37 @@ class BackendClientService:
         )
         resp.raise_for_status()
         return resp.json()
+
+    def list_certificate_requests(
+        self, *, company_code: str = "", limit: int = 200,
+    ) -> list[dict]:
+        """Lista solicitudes centrales creadas por escritorio o Flutter."""
+        self._ensure_configured()
+        url = f"{self.base_url}/api/v1/messaging/client/certificates/internal/requests"
+        params = {"limit": limit}
+        if company_code:
+            params["company_code"] = company_code
+        response = self.http.get(
+            url,
+            headers=self._headers(),
+            params=params,
+            timeout=30,
+        )
+        response.raise_for_status()
+        return list(response.json().get("items") or [])
+
+    def download_certificate_request_document(
+        self, request_id: str,
+    ) -> tuple[bytes, str, str]:
+        """Descarga el PDF obtenido sin acceder al certificado privado."""
+        self._ensure_configured()
+        url = (
+            f"{self.base_url}/api/v1/messaging/client/certificates/internal/"
+            f"requests/{request_id}/document"
+        )
+        response = self.http.get(url, headers=self._headers(), timeout=60)
+        response.raise_for_status()
+        disposition = response.headers.get("Content-Disposition", "")
+        match = re.search(r'filename="?([^";]+)', disposition, re.IGNORECASE)
+        filename = match.group(1) if match else f"certificado-{request_id}.pdf"
+        return response.content, filename, response.headers.get("Content-Type", "application/pdf")

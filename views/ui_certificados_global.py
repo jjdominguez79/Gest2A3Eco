@@ -26,7 +26,7 @@ class UICertificadosGlobal(ttk.Frame):
         ("fecha_emision",   "Emitido",          100, "center"),
         ("fecha_caducidad", "Caduca",           100, "center"),
         ("vigencia",        "Estado vigencia",  130, "center"),
-        ("clave",           "Clave",             60, "center"),
+        ("custodia",        "Custodia",         110, "center"),
         ("activo",          "Activo",            70, "center"),
     ]
 
@@ -182,7 +182,11 @@ class UICertificadosGlobal(ttk.Frame):
             self._tv.insert("", tk.END, values=(
                 c["id"], cliente, c.get("nombre", ""), c.get("nif_titular", ""),
                 c.get("fecha_emision", "") or "", c.get("fecha_caducidad", "") or "", vig_label,
-                "Si" if c.get("password_cifrada") else "-",
+                (
+                    "Azure"
+                    if not c.get("ruta_archivo") and not c.get("password_cifrada")
+                    else "Local pendiente"
+                ),
                 "Si" if c.get("activo") else "No",
             ), tags=(tag,))
             rows_mostradas += 1

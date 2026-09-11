@@ -10,11 +10,11 @@ SINCRONIZACION MANUAL (de un buzon seleccionado o de todos los activos).
 from __future__ import annotations
 
 import tkinter as tk
-from datetime import datetime
 from tkinter import messagebox, ttk
+import uuid
 
+from services.backend_client_service import BackendClientService
 from views.notificaciones_theme import *  # noqa: F401,F403
-from views.ui_bandeja_notificaciones import LABEL_ESTADO, _fmt_fecha
 from views.ui_buzones import LABELS_MODO_DESCARGA
 
 
@@ -140,17 +140,11 @@ class UIBuzonesGlobal(ttk.Frame):
         buzon = self._row_seleccionada()
         if not buzon:
             return
-        try:
-            from services.aapp.sync_service import sincronizar_buzon
-            from services.aapp.base import OpcionesSync
-        except Exception as exc:
-            self._sync_no_disponible(str(exc))
-            return
         if not messagebox.askyesno(
             "Sincronizar buzon",
-            f"Se accedera al organismo con el certificado del buzon "
-            f"'{buzon.get('nombre')}' para buscar notificaciones pendientes.\n\n"
-            "El proceso puede tardar unos segundos. Continuar?",
+            f"El worker consultara '{buzon.get('nombre')}' utilizando exclusivamente "
+            "el certificado cifrado de Azure.\n\n"
+            "La copia privada nunca se descargara en este equipo. Continuar?",
             parent=self.winfo_toplevel(),
         ):
             return
@@ -158,18 +152,15 @@ class UIBuzonesGlobal(ttk.Frame):
         import threading
 
         def _worker():
-            res = sincronizar_buzon(self._gestor, buzon, OpcionesSync(headless=True))
-            self.after(0, lambda: self._sync_fin(res))
+            try:
+                res = self._encolar_buzon(buzon)
+                self.after(0, lambda: self._sync_fin(res, None))
+            except Exception as exc:
+                self.after(0, lambda error=exc: self._sync_fin(None, error))
 
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_sincronizar_todos(self) -> None:
-        try:
-            from services.aapp.sync_service import sincronizar_buzones
-            from services.aapp.base import OpcionesSync
-        except Exception as exc:
-            self._sync_no_disponible(str(exc))
-            return
         activos = [b for b in self._cache if b.get("activo")]
         if not activos:
             messagebox.showinfo("Sincronizar", "No hay buzones activos que sincronizar.",
@@ -177,8 +168,8 @@ class UIBuzonesGlobal(ttk.Frame):
             return
         if not messagebox.askyesno(
             "Sincronizar todos",
-            f"Se sincronizaran {len(activos)} buzon(es) activo(s) de todos los clientes.\n\n"
-            "Puede tardar bastante. Continuar?",
+            f"Se enviaran al worker {len(activos)} buzon(es) activo(s). Cada operacion "
+            "usara la copia cifrada de Azure.\n\nContinuar?",
             parent=self.winfo_toplevel(),
         ):
             return
@@ -186,36 +177,63 @@ class UIBuzonesGlobal(ttk.Frame):
         import threading
 
         def _worker():
-            glob = sincronizar_buzones(self._gestor, activos, OpcionesSync(headless=True))
-            self.after(0, lambda: self._sync_todos_fin(glob))
+            encoladas = 0
+            errores = []
+            empresas_encoladas = set()
+            for buzon in activos:
+                codigo = buzon.get("codigo_empresa")
+                if not codigo or codigo in empresas_encoladas:
+                    continue
+                empresas_encoladas.add(codigo)
+                try:
+                    self._encolar_buzon(buzon)
+                    encoladas += 1
+                except Exception as exc:
+                    errores.append(f"{codigo}: {exc}")
+            self.after(0, lambda: self._sync_todos_fin(encoladas, errores))
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _sync_fin(self, res) -> None:
+    def _encolar_buzon(self, buzon):
+        codigo = buzon.get("codigo_empresa") or ""
+        empresa = self._gestor.get_empresa(codigo) or {}
+        return BackendClientService().create_certificate_request(
+            company_code=codigo,
+            certificate_type="DEHU_SYNC",
+            parameters={
+                "company_code": codigo,
+                "tax_id": empresa.get("cif") or "",
+                "mailbox_id": buzon.get("id") or "",
+                "mailbox_name": buzon.get("nombre") or "DEHu",
+                "download_mode": buzon.get("modo_descarga") or "PENDIENTES",
+            },
+            idempotency_key=f"desktop-dehu-{uuid.uuid4().hex}",
+        )
+
+    def _sync_fin(self, res, error=None) -> None:
         self._set_busy(False)
-        if getattr(res, "ok", False):
+        if error is None:
             messagebox.showinfo(
-                "Sincronizacion completada",
-                f"Buzon '{res.buzon_nombre}':\n"
-                f"{res.total_detectadas} notificacion(es) detectada(s), {res.nuevas} nueva(s).",
+                "Sincronizacion en cola",
+                "La solicitud se ha enviado al worker. Las notificaciones descargadas "
+                "se publicaran en los documentos del cliente.",
                 parent=self.winfo_toplevel(),
             )
         else:
             messagebox.showerror(
-                "Sincronizacion con errores",
-                f"Buzon '{getattr(res, 'buzon_nombre', '?')}':\n{getattr(res, 'mensaje', '')}",
+                "No se pudo encolar",
+                str(error),
                 parent=self.winfo_toplevel(),
             )
         self.refresh()
 
-    def _sync_todos_fin(self, glob) -> None:
+    def _sync_todos_fin(self, encoladas, errores) -> None:
         self._set_busy(False)
-        errores = getattr(glob, "con_error", [])
         messagebox.showinfo(
-            "Sincronizacion completada",
-            f"Buzones procesados: {len(glob.resultados)}\n"
-            f"Notificaciones nuevas: {glob.total_nuevas}\n"
-            f"Con error: {len(errores)}",
+            "Sincronizacion en cola",
+            f"Clientes enviados al worker: {encoladas}\n"
+            f"No encolados: {len(errores)}"
+            + (("\n\n" + "\n".join(errores[:8])) if errores else ""),
             parent=self.winfo_toplevel(),
         )
         self.refresh()
@@ -243,34 +261,24 @@ class UIBuzonesGlobal(ttk.Frame):
         buzon = self._row_seleccionada()
         if not buzon:
             return
-        items = [
-            n for n in self._gestor.listar_notif_bandeja_global({"codigo_empresa": buzon["codigo_empresa"]})
-            if n.get("buzon_id") == buzon.get("id")
-        ]
-        dlg = tk.Toplevel(self.winfo_toplevel())
-        dlg.title(f"Notificaciones del buzon '{buzon.get('nombre')}'")
-        dlg.geometry("720x360")
-        cols = ("asunto", "f_disp", "f_venc", "estado")
-        tv = ttk.Treeview(dlg, columns=cols, show="headings")
-        for key, header, width in (
-            ("asunto", "Asunto", 380), ("f_disp", "Disposicion", 100),
-            ("f_venc", "Vencimiento", 100), ("estado", "Estado", 100),
-        ):
-            tv.heading(key, text=header)
-            tv.column(key, width=width, anchor="w" if key == "asunto" else "center")
-        for n in items:
-            tv.insert("", tk.END, values=(
-                n.get("asunto", ""),
-                _fmt_fecha(n.get("fecha_puesta_disposicion")),
-                _fmt_fecha(n.get("fecha_vencimiento")),
-                LABEL_ESTADO.get(n.get("estado", ""), n.get("estado", "")),
-            ))
-        tv.pack(fill="both", expand=True, padx=8, pady=8)
-        if not items:
-            ttk.Label(dlg, text="Este buzon no tiene notificaciones registradas.").pack(pady=(0, 8))
-        ttk.Button(dlg, text="Cerrar", command=dlg.destroy).pack(pady=(0, 8))
-        dlg.transient(self.winfo_toplevel())
-        dlg.grab_set()
+        try:
+            items = BackendClientService().list_certificate_requests(
+                company_code=buzon["codigo_empresa"], limit=50,
+            )
+            items = [item for item in items if item.get("certificate_type") == "DEHU_SYNC"]
+        except Exception as exc:
+            messagebox.showerror("Notificaciones DEHu", str(exc), parent=self.winfo_toplevel())
+            return
+        resumen = "\n".join(
+            f"- {(item.get('created_at') or '')[:16].replace('T', ' ')}: "
+            f"{item.get('status')} - {item.get('result_summary') or item.get('error_message') or ''}"
+            for item in items[:10]
+        )
+        messagebox.showinfo(
+            "Sincronizaciones DEHu",
+            resumen or "Todavia no hay sincronizaciones centrales para este cliente.",
+            parent=self.winfo_toplevel(),
+        )
 
     # ----------------------------------------------------------------- refresh
     def refresh(self) -> None:

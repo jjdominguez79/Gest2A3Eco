@@ -4,6 +4,7 @@ import base64
 
 from aapp_worker.config import AappWorkerConfig
 from aapp_worker.worker import AappWorker
+from services.aapp.base import NotificacionDTO, ResultadoSync
 from services.aapp.certificados import ResultadoCertificado
 
 
@@ -26,6 +27,9 @@ class _Backend:
 
     def publish_pdf(self, _item, _path):
         return {"id": "doc-1"}
+
+    def publish_notification_pdf(self, _item, _notification, _path):
+        return {"id": "notification-doc-1"}
 
     def complete(self, item, document_id, summary=""):
         self.completed = (item["id"], document_id, summary)
@@ -119,3 +123,82 @@ def test_worker_sin_trabajo_no_hace_nada(tmp_path):
     assert AappWorker(_config(tmp_path), backend=backend).run_once() is False
     assert backend.completed is None
     assert backend.failed is None
+
+
+def test_worker_dehu_publica_documento_y_elimina_pfx_temporal(monkeypatch, tmp_path):
+    item = {
+        "id": "request-dehu-1",
+        "organization_id": "org-1",
+        "certificate_type": "DEHU_SYNC",
+        "claim_token": "claim-token-valido",
+        "attempt_count": 1,
+        "parameters": {
+            "company_code": "E00001",
+            "tax_id": "B12345678",
+            "mailbox_id": "mailbox-1",
+            "mailbox_name": "DEHu Cliente Uno",
+        },
+    }
+    backend = _Backend(item)
+
+    class Connector:
+        certificate_path = None
+
+        def sincronizar(self, _mailbox, material, options):
+            self.certificate_path = material.ruta_archivo
+            assert material.password == "clave"
+            assert options.headless is True
+            pdf = __import__("pathlib").Path(options.carpeta_descargas) / "notificacion.pdf"
+            pdf.write_bytes(b"%PDF-1.7\nnotificacion")
+            return ResultadoSync(
+                ok=True,
+                organismo_codigo="DEHU",
+                notificaciones=[NotificacionDTO(
+                    referencia="DEHU-1",
+                    asunto="Notificacion de prueba",
+                    pdf_path=str(pdf),
+                )],
+            )
+
+    connector = Connector()
+    monkeypatch.setattr("aapp_worker.worker.obtener_conector", lambda _code: connector)
+
+    assert AappWorker(_config(tmp_path), backend=backend).run_once() is True
+
+    assert backend.completed == (
+        "request-dehu-1",
+        "notification-doc-1",
+        "1 notificacion(es) detectada(s); 1 documento(s) publicado(s).",
+    )
+    assert backend.failed is None
+    assert connector.certificate_path is not None
+    assert not __import__("pathlib").Path(connector.certificate_path).exists()
+
+
+def test_worker_dehu_completa_aunque_no_haya_pdf(monkeypatch, tmp_path):
+    item = {
+        "id": "request-dehu-2",
+        "organization_id": "org-1",
+        "certificate_type": "DEHU_SYNC",
+        "claim_token": "claim-token-valido",
+        "attempt_count": 1,
+        "parameters": {},
+    }
+    backend = _Backend(item)
+
+    class Connector:
+        def sincronizar(self, *_args):
+            return ResultadoSync(
+                ok=True,
+                organismo_codigo="DEHU",
+                notificaciones=[NotificacionDTO(referencia="DEHU-2")],
+            )
+
+    monkeypatch.setattr("aapp_worker.worker.obtener_conector", lambda _code: Connector())
+
+    assert AappWorker(_config(tmp_path), backend=backend).run_once() is True
+    assert backend.completed == (
+        "request-dehu-2",
+        None,
+        "1 notificacion(es) detectada(s); 0 documento(s) publicado(s).",
+    )

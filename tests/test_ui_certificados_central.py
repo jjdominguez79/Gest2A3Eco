@@ -18,6 +18,7 @@ def _ui(gestor):
     ui = object.__new__(UICertificados)
     ui._codigo = "E00001"
     ui._gestor = gestor
+    ui._cert = None
     ui._estado_central_seq = 0
     ui._vals = {"central": MagicMock()}
     ui._btn_set = MagicMock()
@@ -25,6 +26,7 @@ def _ui(gestor):
     ui._btn_cloud = MagicMock()
     ui.after = lambda _delay, callback: callback()
     ui.winfo_toplevel = lambda: None
+    ui.winfo_exists = lambda: True
     ui.refresh = MagicMock()
     return ui
 
@@ -56,7 +58,6 @@ def test_reemplazo_sube_automaticamente_a_azure(monkeypatch):
         },
         password="clave-nueva",
         automatico=True,
-        anterior={"id": "cert-1", "nombre": "Anterior"},
     )
 
     backend.upload_client_certificate.assert_called_once_with(
@@ -64,15 +65,17 @@ def test_reemplazo_sube_automaticamente_a_azure(monkeypatch):
         pfx_path="C:/certificados/nuevo.pfx",
         password="clave-nueva",
     )
-    gestor.upsert_notif_certificado.assert_not_called()
+    guardado = gestor.upsert_notif_certificado.call_args.args[0]
+    assert guardado["ruta_archivo"] is None
+    assert guardado["password_cifrada"] is None
     modulo.messagebox.showinfo.assert_called_once()
     assert "version 2" in modulo.messagebox.showinfo.call_args.args[1]
 
 
-def test_reemplazo_restaura_el_certificado_local_si_azure_falla(monkeypatch):
+def test_reemplazo_no_conserva_material_local_si_azure_falla(monkeypatch):
     gestor = MagicMock()
     ui = _ui(gestor)
-    anterior = {"id": "cert-1", "codigo_empresa": "E00001", "nombre": "Anterior"}
+    ui._cert = {"id": "cert-1", "codigo_empresa": "E00001", "nombre": "Anterior"}
     backend = MagicMock()
     backend.upload_client_certificate.side_effect = RuntimeError("Azure no disponible")
     monkeypatch.setattr(modulo.threading, "Thread", _ThreadInmediato)
@@ -86,12 +89,31 @@ def test_reemplazo_restaura_el_certificado_local_si_azure_falla(monkeypatch):
         cert={"id": "cert-1", "ruta_archivo": "nuevo.pfx"},
         password="clave",
         automatico=True,
-        anterior=anterior,
     )
 
-    gestor.upsert_notif_certificado.assert_called_once_with(anterior)
-    ui.refresh.assert_called_once_with()
-    assert "conservado" in modulo.messagebox.showerror.call_args.args[1]
+    gestor.upsert_notif_certificado.assert_not_called()
+    assert "ninguna copia nueva" in modulo.messagebox.showerror.call_args.args[1]
+
+
+def test_estado_azure_confirmado_elimina_ruta_y_clave_locales():
+    gestor = MagicMock()
+    ui = _ui(gestor)
+    ui._cert = {
+        "id": "cert-1",
+        "codigo_empresa": "E00001",
+        "ruta_archivo": "C:/temporal/cliente.pfx",
+        "password_cifrada": "cifrada",
+    }
+
+    ui._estado_central_fin(
+        0,
+        {"configured": True, "status": "valid", "version": 3},
+        None,
+    )
+
+    limpio = gestor.upsert_notif_certificado.call_args.args[0]
+    assert limpio["ruta_archivo"] is None
+    assert limpio["password_cifrada"] is None
 
 
 def test_eliminacion_confirmada_borra_el_registro_local(monkeypatch):
