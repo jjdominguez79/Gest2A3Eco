@@ -40,7 +40,7 @@ def test_aeat_corriente_prepara_solicitud_generica_en_nombre_propio():
         page, OpcionesSync(log=lambda _message: None), "AEAT_CORRIENTE",
     )
 
-    assert acted is True
+    assert acted is page
     assert page.actions[:4] == [
         ("check", "#fTipoRepresentacion0"),
         ("check", "#fTipoCertificado4"),
@@ -100,3 +100,41 @@ def test_resumen_pagina_no_incluye_valores_del_contribuyente():
     assert "Certificados Tributarios" in resumen
     assert "validarSolicitud" in resumen
     assert "72044071K" not in resumen
+
+
+class _PaginaFirma:
+    def __init__(self):
+        self.actions = []
+        self.frames = [self]
+
+    def is_closed(self):
+        return False
+
+    def locator(self, selector):
+        return _Locator(selector, self.actions)
+
+    def wait_for_load_state(self, state, timeout=None):
+        self.actions.append(("wait", state))
+
+
+class _PaginaOrigen(_PaginaFirma):
+    def __init__(self, pagina_firma):
+        super().__init__()
+        self.context = type("Contexto", (), {"pages": [self, pagina_firma]})()
+
+    def wait_for_timeout(self, _timeout):
+        pass
+
+
+def test_aeat_confirma_firma_en_la_ventana_emergente():
+    firma = _PaginaFirma()
+    origen = _PaginaOrigen(firma)
+    provider = SedePlaywrightProvider("AEAT", {"AEAT_CORRIENTE"}, "https://example.test")
+
+    activa = provider._aeat_confirmar_firma(
+        origen, OpcionesSync(log=lambda _message: None),
+    )
+
+    assert activa is firma
+    assert ("check", "input[type='checkbox']") in firma.actions
+    assert ("click", "input[id^='FirmayEnvia_'], input[value*='Firmar'], button:has-text('Firmar')") in firma.actions

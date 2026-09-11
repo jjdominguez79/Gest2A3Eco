@@ -188,7 +188,9 @@ class SedePlaywrightProvider(ProveedorCertificado):
                         except Exception:
                             pass
                     elif self.codigo_organismo == "AEAT":
-                        self._aeat_preparar_solicitud(page, opciones, tipo)
+                        pagina_aeat = self._aeat_preparar_solicitud(page, opciones, tipo)
+                        if pagina_aeat:
+                            page = pagina_aeat
                     if opciones.pausa_login_segundos > 0:
                         opciones.trace(f"[{self.codigo_organismo}] modo aprendizaje: navega hasta el "
                                        f"certificado '{tipo}' y descargalo. Esperando...")
@@ -299,10 +301,57 @@ class SedePlaywrightProvider(ProveedorCertificado):
                 except Exception:
                     pass
                 opciones.trace("[AEAT] pulsada la confirmacion previa Firmar y Enviar")
-            return True
+                return self._aeat_confirmar_firma(page, opciones)
+            return page
         except Exception as exc:
             opciones.trace(f"[AEAT] no se pudo validar la solicitud ECOT: {exc}")
             return False
+
+    def _aeat_confirmar_firma(self, page, opciones):
+        """Marca Conforme en la ventana de firma y ejecuta el envio final."""
+        try:
+            page.wait_for_timeout(1000)
+        except Exception:
+            pass
+        try:
+            paginas = [pg for pg in page.context.pages if not pg.is_closed()]
+        except Exception:
+            paginas = [page]
+        for pagina in reversed(paginas):
+            try:
+                marcos = list(reversed(pagina.frames))
+            except Exception:
+                marcos = [pagina]
+            for marco in marcos:
+                try:
+                    conforme = marco.locator("input[type='checkbox']")
+                    if conforme.count() == 0:
+                        continue
+                    conforme.first.check(timeout=5000)
+                    boton = marco.locator(
+                        "input[id^='FirmayEnvia_'], input[value*='Firmar'], "
+                        "button:has-text('Firmar')"
+                    )
+                    if boton.count() == 0:
+                        continue
+                    boton.first.click(timeout=6000)
+                    try:
+                        pagina.wait_for_load_state(
+                            "networkidle", timeout=opciones.timeout_ms,
+                        )
+                    except Exception:
+                        pass
+                    opciones.trace(
+                        "[AEAT] conformidad marcada y solicitud firmada y enviada"
+                    )
+                    return pagina
+                except Exception:
+                    continue
+        if paginas and paginas[-1] is not page:
+            opciones.trace("[AEAT] abierta ventana de firma; pendiente de identificar controles")
+            return paginas[-1]
+        opciones.trace("[AEAT] no se encontro la casilla Conforme tras la confirmacion previa")
+        return page
 
     def _ss_acceso(self, page, ctx, opciones):
         """En 'Informes y Certificados' despliega el acordeon de 'estar al
@@ -404,7 +453,6 @@ class SedePlaywrightProvider(ProveedorCertificado):
             "a[data-pc_tipo='documento']",
             "a[href*='ViewDoc']",
             "a[href*='.pdf']",
-            "a:has-text('Certificado')",
         ]
         href = None
         origen = page
