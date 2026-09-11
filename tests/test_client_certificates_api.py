@@ -287,6 +287,75 @@ def test_escritorio_lista_solicitudes_centrales_con_empresa(monkeypatch):
     assert item["company_name"] == "Cliente Uno"
 
 
+def test_escritorio_reintenta_solicitud_sin_crear_duplicado(monkeypatch):
+    client, factory, _, _headers = _setup(monkeypatch)
+    created = client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={"certificate_type": "AEAT_CORRIENTE"},
+    ).json()
+    with factory() as db:
+        item = db.get(ClientCertificateRequest, created["id"])
+        item.status = "needs_action"
+        item.attempt_count = 2
+        item.error_code = "portal_interactivo"
+        item.error_message = "No se encontro el tramite"
+        item.result_summary = "Requiere revision"
+        item.claim_token = "token-anterior"
+        db.commit()
+
+    response = client.post(
+        f"/api/v1/messaging/client/certificates/internal/requests/{created['id']}/retry",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["id"] == created["id"]
+    assert response.json()["status"] == "queued"
+    assert response.json()["attempt_count"] == 0
+    assert response.json()["error_message"] is None
+    with factory() as db:
+        assert len(db.scalars(select(ClientCertificateRequest)).all()) == 1
+
+
+def test_cliente_solo_reintenta_sus_solicitudes_reintentables(monkeypatch):
+    client, _, _, headers = _setup(monkeypatch)
+    created = client.post(
+        "/api/v1/messaging/client/certificates/requests",
+        headers=headers,
+        json={"certificate_type": "TGSS_CORRIENTE"},
+    ).json()
+
+    response = client.post(
+        f"/api/v1/messaging/client/certificates/requests/{created['id']}/retry",
+        headers=headers,
+    )
+
+    assert response.status_code == 409
+
+
+def test_cliente_reintenta_su_solicitud_con_intervencion(monkeypatch):
+    client, factory, _, headers = _setup(monkeypatch)
+    created = client.post(
+        "/api/v1/messaging/client/certificates/requests",
+        headers=headers,
+        json={"certificate_type": "TGSS_CORRIENTE"},
+    ).json()
+    with factory() as db:
+        item = db.get(ClientCertificateRequest, created["id"])
+        item.status = "needs_action"
+        item.error_message = "El portal requiere revision"
+        db.commit()
+
+    response = client.post(
+        f"/api/v1/messaging/client/certificates/requests/{created['id']}/retry",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "queued"
+    assert response.json()["error_message"] is None
+
+
 def test_escritorio_descarga_documento_de_solicitud_central(monkeypatch):
     client, factory, org_id, _headers = _setup(monkeypatch)
     with factory() as db:

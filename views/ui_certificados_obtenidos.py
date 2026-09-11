@@ -131,6 +131,11 @@ class UICertificadosObtenidos(ttk.Frame):
             command=self._on_publicar, state="disabled", **btn,
         )
         self._btn_publicar.pack(side="left", padx=(0, 5))
+        self._btn_reintentar = tk.Button(
+            tb, text="Reintentar", bg="#d97706", fg="white",
+            command=self._on_reintentar, state="disabled", **btn,
+        )
+        self._btn_reintentar.pack(side="left", padx=(0, 5))
         self._btn_del = tk.Button(tb, text="Eliminar", bg=_DANGER, fg="white",
                                   command=self._on_eliminar, state="disabled", **btn)
         self._btn_del.pack(side="left", padx=(0, 5))
@@ -148,6 +153,7 @@ class UICertificadosObtenidos(ttk.Frame):
             self._tv.column(key, width=width, anchor=anchor, stretch=(key == "tipo"))
         self._tv.tag_configure("OBTENIDO",  foreground=_SUCCESS)
         self._tv.tag_configure("PENDIENTE", foreground=_WARNING)
+        self._tv.tag_configure("REQUIERE REINTENTO", foreground="#d97706")
         self._tv.tag_configure("ERROR",     foreground=_DANGER)
         sb = ttk.Scrollbar(wrapper, orient="vertical", command=self._tv.yview)
         self._tv.configure(yscrollcommand=sb.set)
@@ -198,6 +204,8 @@ class UICertificadosObtenidos(ttk.Frame):
         self._btn_pdf.configure(state="normal" if tiene_pdf else "disabled")
         self._btn_email.configure(state="normal" if tiene_pdf else "disabled")
         self._btn_publicar.configure(state="disabled")
+        reintentable = bool(r and r.get("status") in {"needs_action", "failed"})
+        self._btn_reintentar.configure(state="normal" if reintentable else "disabled")
         self._btn_del.configure(state="disabled")
 
     # ------------------------------------------------------------------ solicitar
@@ -210,11 +218,22 @@ class UICertificadosObtenidos(ttk.Frame):
         if not tipo:
             messagebox.showinfo("Gest2A3Eco", "Selecciona un tipo de certificado.", parent=self.winfo_toplevel())
             return
-        if not messagebox.askyesno("Solicitar certificado",
-                                   f"Solicitar '{_label_tipo(tipo)}' para el cliente {cod}?\n\n"
-                                   "La solicitud se enviara al worker, que utilizara exclusivamente "
-                                   "el certificado cifrado custodiado en Azure.",
-                                   parent=self.winfo_toplevel()):
+        anterior = next((
+            r for r in self._cache
+            if r.get("company_code") == cod
+            and r.get("certificate_type") == tipo
+            and r.get("status") in {"needs_action", "failed"}
+        ), None)
+        accion = "Reintentar" if anterior else "Solicitar"
+        detalle = (
+            "Se volvera a poner en cola la solicitud existente, sin crear un duplicado."
+            if anterior else
+            "La solicitud se enviara al worker, que utilizara exclusivamente "
+            "el certificado cifrado custodiado en Azure."
+        )
+        if not messagebox.askyesno(f"{accion} certificado",
+                                   f"{accion} '{_label_tipo(tipo)}' para el cliente {cod}?\n\n"
+                                   f"{detalle}", parent=self.winfo_toplevel()):
             return
         self._btn_solicitar.configure(state="disabled")
 
@@ -227,11 +246,14 @@ class UICertificadosObtenidos(ttk.Frame):
                         "El cliente no tiene un certificado custodiado en Azure. "
                         "Configuralo antes de crear la solicitud."
                     )
-                result = backend.create_certificate_request(
-                    company_code=cod,
-                    certificate_type=tipo,
-                    idempotency_key=f"desktop-{uuid.uuid4().hex}",
-                )
+                if anterior:
+                    result = backend.retry_certificate_request(anterior["id"])
+                else:
+                    result = backend.create_certificate_request(
+                        company_code=cod,
+                        certificate_type=tipo,
+                        idempotency_key=f"desktop-{uuid.uuid4().hex}",
+                    )
                 self.after(0, lambda: self._solicitud_fin(result, None))
             except Exception as exc:
                 self.after(0, lambda error=exc: self._solicitud_fin(None, error))
@@ -290,6 +312,27 @@ class UICertificadosObtenidos(ttk.Frame):
         self.refresh()
 
     # ------------------------------------------------------------------ acciones
+    def _on_reintentar(self):
+        solicitud = self._fila()
+        if not solicitud or solicitud.get("status") not in {"needs_action", "failed"}:
+            return
+        if not messagebox.askyesno(
+            "Reintentar certificado",
+            "La misma solicitud volvera a ponerse en cola para que el worker la procese.",
+            parent=self.winfo_toplevel(),
+        ):
+            return
+        self._btn_reintentar.configure(state="disabled")
+
+        def _worker():
+            try:
+                result = BackendClientService().retry_certificate_request(solicitud["id"])
+                self.after(0, lambda: self._solicitud_fin(result, None))
+            except Exception as exc:
+                self.after(0, lambda error=exc: self._solicitud_fin(None, error))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
     def _on_abrir_pdf(self):
         r = self._fila()
         if not r:
@@ -402,7 +445,7 @@ class UICertificadosObtenidos(ttk.Frame):
                 "queued": "PENDIENTE",
                 "processing": "PROCESANDO",
                 "completed": "OBTENIDO",
-                "needs_action": "PENDIENTE",
+                "needs_action": "REQUIERE REINTENTO",
                 "failed": "ERROR",
                 "cancelled": "CANCELADO",
             }.get(status, status.upper())
@@ -427,4 +470,5 @@ class UICertificadosObtenidos(ttk.Frame):
         self._btn_pdf.configure(state="disabled")
         self._btn_email.configure(state="disabled")
         self._btn_publicar.configure(state="disabled")
+        self._btn_reintentar.configure(state="disabled")
         self._btn_del.configure(state="disabled")

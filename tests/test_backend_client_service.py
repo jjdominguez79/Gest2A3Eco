@@ -141,6 +141,20 @@ def test_list_certificate_requests_uses_internal_backend(monkeypatch):
     assert request.kwargs["headers"] == {"X-API-Key": "g2a3_wks_test"}
 
 
+def test_retry_certificate_request_uses_internal_backend(monkeypatch):
+    response = MagicMock()
+    response.json.return_value = {"id": "sol-1", "status": "queued"}
+    session = MagicMock()
+    session.post.return_value = response
+
+    result = _service(monkeypatch, session).retry_certificate_request("sol-1")
+
+    assert result["status"] == "queued"
+    assert session.post.call_args.args[0].endswith("/internal/requests/sol-1/retry")
+    assert session.post.call_args.kwargs["headers"] == {"X-API-Key": "g2a3_wks_test"}
+    response.raise_for_status.assert_called_once_with()
+
+
 def test_download_certificate_request_document(monkeypatch):
     response = MagicMock()
     response.content = b"%PDF-1.7"

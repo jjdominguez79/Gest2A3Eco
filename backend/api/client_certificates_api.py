@@ -99,6 +99,7 @@ INTERNAL_OPERATION_TYPES = {
 _ALL_REQUEST_TYPES = {**CERTIFICATE_TYPES, **INTERNAL_OPERATION_TYPES}
 
 ACTIVE_STATUSES = {"queued", "processing", "needs_action"}
+RETRYABLE_STATUSES = {"needs_action", "failed"}
 
 
 class CertificateRequestIn(BaseModel):
@@ -280,6 +281,32 @@ def _create_request(
     return item
 
 
+def _retry_request(
+    db: Session,
+    item: ClientCertificateRequest,
+) -> ClientCertificateRequest:
+    if item.status not in RETRYABLE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail="La solicitud no esta en un estado que permita reintentarla",
+        )
+    item.status = "queued"
+    item.attempt_count = 0
+    item.next_attempt_at = None
+    item.claimed_at = None
+    item.claim_token = ""
+    item.error_code = ""
+    item.error_message = ""
+    item.result_summary = ""
+    item.document_id = None
+    item.completed_at = None
+    item.cancelled_at = None
+    item.updated_at = utcnow()
+    db.commit()
+    db.refresh(item)
+    return item
+
+
 @router.get("/types")
 def list_certificate_types(request: Request, db: Session = Depends(_db)):
     client = _authenticated_client(request, db)
@@ -364,6 +391,18 @@ def cancel_client_request(
     return _serialize(item)
 
 
+@router.post("/requests/{request_id}/retry")
+def retry_client_request(
+    request_id: str, request: Request, db: Session = Depends(_db),
+):
+    client = _authenticated_client(request, db)
+    require_certificates_enabled(db, client.organization_id)
+    item = db.get(ClientCertificateRequest, request_id)
+    if not item or item.organization_id != client.organization_id:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    return _serialize(_retry_request(db, item))
+
+
 @router.post("/internal/requests", status_code=201)
 def create_internal_request(
     company_code: str,
@@ -415,6 +454,18 @@ def list_internal_requests(
         serialized["company_name"] = organization.name
         items.append(serialized)
     return {"items": items}
+
+
+@router.post("/internal/requests/{request_id}/retry")
+def retry_internal_request(
+    request_id: str,
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    item = db.get(ClientCertificateRequest, request_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    return _serialize(_retry_request(db, item))
 
 
 @router.get("/internal/requests/{request_id}/document")

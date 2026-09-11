@@ -269,6 +269,17 @@ class BackendClientService:
         response.raise_for_status()
         return list(response.json().get("items") or [])
 
+    def retry_certificate_request(self, request_id: str) -> dict:
+        """Vuelve a encolar una solicitud fallida o que requiere intervencion."""
+        self._ensure_configured()
+        url = (
+            f"{self.base_url}/api/v1/messaging/client/certificates/internal/"
+            f"requests/{request_id}/retry"
+        )
+        response = self.http.post(url, headers=self._headers(), timeout=30)
+        response.raise_for_status()
+        return response.json()
+
     def download_certificate_request_document(
         self, request_id: str,
     ) -> tuple[bytes, str, str]:
