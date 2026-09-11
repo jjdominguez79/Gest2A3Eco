@@ -187,6 +187,8 @@ class SedePlaywrightProvider(ProveedorCertificado):
                                 timeout=20000)
                         except Exception:
                             pass
+                    elif self.codigo_organismo == "AEAT":
+                        self._aeat_preparar_solicitud(page, opciones, tipo)
                     if opciones.pausa_login_segundos > 0:
                         opciones.trace(f"[{self.codigo_organismo}] modo aprendizaje: navega hasta el "
                                        f"certificado '{tipo}' y descargalo. Esperando...")
@@ -268,6 +270,29 @@ class SedePlaywrightProvider(ProveedorCertificado):
             except Exception:
                 continue
         opciones.trace(f"[TGSS] IdP: no se hallo selector de certificado en {page.url}")
+
+    def _aeat_preparar_solicitud(self, page, opciones, tipo):
+        """Cumplimenta la primera pantalla del certificado ECOT en nombre propio."""
+        if tipo != "AEAT_CORRIENTE":
+            return False
+        try:
+            if page.locator("#validarSolicitud").count() == 0:
+                return False
+            page.locator("#fTipoRepresentacion0").check(timeout=5000)
+            # Orden publicado por AEAT: contratacion, transporte, subvenciones,
+            # extranjeria y generico. La solicitud base usa la finalidad generica.
+            page.locator("#fTipoCertificado4").check(timeout=5000)
+            page.locator("#fMomentoDeterminacionEcot0").check(timeout=5000)
+            page.locator("#validarSolicitud").click(timeout=6000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=opciones.timeout_ms)
+            except Exception:
+                pass
+            opciones.trace("[AEAT] solicitud ECOT validada: nombre propio, generica y fecha actual")
+            return True
+        except Exception as exc:
+            opciones.trace(f"[AEAT] no se pudo validar la solicitud ECOT: {exc}")
+            return False
 
     def _ss_acceso(self, page, ctx, opciones):
         """En 'Informes y Certificados' despliega el acordeon de 'estar al
