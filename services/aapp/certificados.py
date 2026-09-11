@@ -218,13 +218,15 @@ class SedePlaywrightProvider(ProveedorCertificado):
                         url_actual = page.url
                     except Exception:
                         url_actual = "?"
-                    self._trace_controles(page, opciones)
+                    resumen_pagina = self._resumir_pagina(page)
+                    self._trace_controles(page, opciones, resumen_pagina)
                     return ResultadoCertificado(
                         ok=False, tipo=tipo, estado="PENDIENTE",
                         mensaje=(f"No se encontro el documento generado para '{tipo}'. "
                                  f"Se quedo en: {url_actual}. Comprueba si el login "
                                  "(Cl@ve/certificado) se completo o si el portal pidio "
-                                 "algun dato mas (p.ej. una fecha)."),
+                                 "algun dato mas (p.ej. una fecha). "
+                                 f"Pantalla segura: {resumen_pagina}"),
                     )
                 finally:
                     ctx.close()
@@ -529,8 +531,8 @@ class SedePlaywrightProvider(ProveedorCertificado):
             return "POSITIVO"
         return None
 
-    def _trace_controles(self, page, opciones):
-        """Registra estructura util del formulario sin valores del contribuyente."""
+    def _resumir_pagina(self, page):
+        """Resume la pantalla sin leer ni registrar valores del contribuyente."""
         try:
             titulo = (page.title() or "")[:120]
         except Exception:
@@ -548,12 +550,16 @@ class SedePlaywrightProvider(ProveedorCertificado):
                     "name": control.get_attribute("name") or "",
                     "text": etiqueta,
                 })
-            opciones.trace(
-                f"[{self.codigo_organismo}] pagina pendiente: titulo={titulo!r}; "
-                f"url={page.url}; controles={controles}"
-            )
+            return f"titulo={titulo!r}; controles={controles}"
         except Exception as exc:
-            opciones.trace(f"[{self.codigo_organismo}] no se pudo resumir el formulario: {exc}")
+            return f"no se pudo resumir el formulario: {exc}"
+
+    def _trace_controles(self, page, opciones, resumen=None):
+        """Registra estructura util del formulario sin valores del contribuyente."""
+        resumen = resumen or self._resumir_pagina(page)
+        opciones.trace(
+            f"[{self.codigo_organismo}] pagina pendiente: url={page.url}; {resumen}"
+        )
 
     def _origenes(self):
         base = self.url_sede.rstrip("/")
@@ -588,8 +594,11 @@ class SedePlaywrightProvider(ProveedorCertificado):
             with open(os.path.join(carpeta, f"cert_{self.codigo_organismo}_{tipo}_{ts}.html"), "w", encoding="utf-8") as fh:
                 fh.write(page.content())
             opciones.trace(f"[{self.codigo_organismo}] diagnostico guardado en {carpeta}")
-        except Exception:
-            pass
+        except Exception as exc:
+            opciones.trace(
+                f"[{self.codigo_organismo}] no se pudo guardar el diagnostico "
+                f"en {carpeta}: {exc}"
+            )
 
 
 # Radio "name=certificado" del formulario de SEDESS: 1=generico, 3=subvenciones,

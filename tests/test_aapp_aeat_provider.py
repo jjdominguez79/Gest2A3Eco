@@ -53,3 +53,45 @@ def test_aeat_no_aplica_formulario_ecot_a_otros_certificados():
         page, OpcionesSync(log=lambda _message: None), "AEAT_CENSAL",
     ) is False
     assert page.actions == []
+
+
+class _ControlSeguro:
+    def inner_text(self, timeout=None):
+        return "Validar solicitud"
+
+    def evaluate(self, _expression):
+        return "button"
+
+    def get_attribute(self, name):
+        return {
+            "type": "submit",
+            "id": "validarSolicitud",
+            "name": "validarSolicitud",
+            "value": "72044071K",
+        }.get(name)
+
+
+class _ListaControles:
+    def count(self):
+        return 1
+
+    def nth(self, _index):
+        return _ControlSeguro()
+
+
+class _PaginaSegura:
+    def title(self):
+        return "Certificados Tributarios"
+
+    def locator(self, _selector):
+        return _ListaControles()
+
+
+def test_resumen_pagina_no_incluye_valores_del_contribuyente():
+    provider = SedePlaywrightProvider("AEAT", {"AEAT_CORRIENTE"}, "https://example.test")
+
+    resumen = provider._resumir_pagina(_PaginaSegura())
+
+    assert "Certificados Tributarios" in resumen
+    assert "validarSolicitud" in resumen
+    assert "72044071K" not in resumen
