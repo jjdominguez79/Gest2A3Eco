@@ -213,6 +213,7 @@ class SedePlaywrightProvider(ProveedorCertificado):
                         url_actual = page.url
                     except Exception:
                         url_actual = "?"
+                    self._trace_controles(page, opciones)
                     return ResultadoCertificado(
                         ok=False, tipo=tipo, estado="PENDIENTE",
                         mensaje=(f"No se encontro el documento generado para '{tipo}'. "
@@ -500,6 +501,32 @@ class SedePlaywrightProvider(ProveedorCertificado):
             return "POSITIVO"
         return None
 
+    def _trace_controles(self, page, opciones):
+        """Registra estructura util del formulario sin valores del contribuyente."""
+        try:
+            titulo = (page.title() or "")[:120]
+        except Exception:
+            titulo = ""
+        try:
+            controles = []
+            locator = page.locator("input, select, button")
+            for indice in range(min(locator.count(), 30)):
+                control = locator.nth(indice)
+                etiqueta = " ".join((control.inner_text(timeout=500) or "").split())[:60]
+                controles.append({
+                    "tag": control.evaluate("el => el.tagName.toLowerCase()"),
+                    "type": control.get_attribute("type") or "",
+                    "id": control.get_attribute("id") or "",
+                    "name": control.get_attribute("name") or "",
+                    "text": etiqueta,
+                })
+            opciones.trace(
+                f"[{self.codigo_organismo}] pagina pendiente: titulo={titulo!r}; "
+                f"url={page.url}; controles={controles}"
+            )
+        except Exception as exc:
+            opciones.trace(f"[{self.codigo_organismo}] no se pudo resumir el formulario: {exc}")
+
     def _origenes(self):
         base = self.url_sede.rstrip("/")
         extra = []
@@ -564,8 +591,23 @@ SS_URL_CORRIENTE = (
 )
 
 # Registrar proveedores para AEAT y TGSS.
+AEAT_URLS = {
+    "AEAT_CORRIENTE": (
+        "https://www1.agenciatributaria.gob.es/wlpl/EMCE-JDIT/"
+        "ECOTInternetCiudadanosServlet"
+    ),
+    "AEAT_CENSAL": (
+        "https://www1.agenciatributaria.gob.es/wlpl/EMCE-JDIT/"
+        "ServletSitCenInternet"
+    ),
+    "AEAT_IAE": (
+        "https://www1.agenciatributaria.gob.es/wlpl/EMCE-JDIT/"
+        "ServletAaeeGralnternet"
+    ),
+}
 registrar_proveedor(SedePlaywrightProvider("AEAT",
-    {"AEAT_CORRIENTE", "AEAT_CENSAL", "AEAT_IAE"}, TIPOS["AEAT_CORRIENTE"][2]))
+    {"AEAT_CORRIENTE", "AEAT_CENSAL", "AEAT_IAE"},
+    TIPOS["AEAT_CORRIENTE"][2], urls=AEAT_URLS))
 # Todos estos tipos comparten el mismo tramite "Estar al corriente" (misma URL
 # de entrada); el radio "name=certificado" (SS_CERT_RADIO) elige cual descargar.
 _TGSS_CORRIENTE_TIPOS = {
