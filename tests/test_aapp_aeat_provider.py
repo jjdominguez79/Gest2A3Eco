@@ -10,6 +10,10 @@ class _Locator:
     def count(self):
         return 1
 
+    @property
+    def first(self):
+        return self
+
     def check(self, timeout=None):
         self.actions.append(("check", self.selector))
 
@@ -43,6 +47,7 @@ def test_aeat_corriente_prepara_solicitud_generica_en_nombre_propio():
         ("check", "#fMomentoDeterminacionEcot0"),
         ("click", "#validarSolicitud"),
     ]
+    assert ("click", "input[id^='FirmayEnvia_']") in page.actions
 
 
 def test_aeat_no_aplica_formulario_ecot_a_otros_certificados():

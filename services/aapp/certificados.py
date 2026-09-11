@@ -291,6 +291,14 @@ class SedePlaywrightProvider(ProveedorCertificado):
             except Exception:
                 pass
             opciones.trace("[AEAT] solicitud ECOT validada: nombre propio, generica y fecha actual")
+            firmar = page.locator("input[id^='FirmayEnvia_']")
+            if firmar.count() > 0:
+                firmar.first.click(timeout=6000)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=opciones.timeout_ms)
+                except Exception:
+                    pass
+                opciones.trace("[AEAT] pulsada la confirmacion previa Firmar y Enviar")
             return True
         except Exception as exc:
             opciones.trace(f"[AEAT] no se pudo validar la solicitud ECOT: {exc}")
