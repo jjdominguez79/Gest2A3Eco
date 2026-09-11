@@ -317,6 +317,30 @@ def test_escritorio_reintenta_solicitud_sin_crear_duplicado(monkeypatch):
         assert len(db.scalars(select(ClientCertificateRequest)).all()) == 1
 
 
+def test_escritorio_adelanta_reintento_automatico_aplazado(monkeypatch):
+    client, factory, _, _headers = _setup(monkeypatch)
+    created = client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={"certificate_type": "AEAT_CORRIENTE"},
+    ).json()
+    with factory() as db:
+        item = db.get(ClientCertificateRequest, created["id"])
+        item.next_attempt_at = utcnow() + timedelta(minutes=5)
+        item.error_message = "Reintento automatico aplazado"
+        db.commit()
+
+    response = client.post(
+        f"/api/v1/messaging/client/certificates/internal/requests/{created['id']}/retry",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "queued"
+    assert response.json()["error_message"] is None
+    with factory() as db:
+        assert db.get(ClientCertificateRequest, created["id"]).next_attempt_at is None
+
+
 def test_cliente_solo_reintenta_sus_solicitudes_reintentables(monkeypatch):
     client, _, _, headers = _setup(monkeypatch)
     created = client.post(

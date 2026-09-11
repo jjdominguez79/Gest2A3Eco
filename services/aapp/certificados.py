@@ -196,7 +196,10 @@ class SedePlaywrightProvider(ProveedorCertificado):
                     if self._ss_generar_certificado(page, opciones, tipo):
                         page.wait_for_timeout(2000)
                     self._diag(page, opciones, tipo)
-                    err = self._ss_error_mensaje(page)
+                    err = (
+                        self._ss_error_mensaje(page)
+                        if self.codigo_organismo == "TGSS" else None
+                    )
                     if err:
                         return ResultadoCertificado(ok=False, tipo=tipo, estado="ERROR", mensaje=err)
                     # Localizar el documento generado (enlace) y guardarlo como PDF.

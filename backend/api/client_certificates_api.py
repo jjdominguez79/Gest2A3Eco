@@ -285,7 +285,8 @@ def _retry_request(
     db: Session,
     item: ClientCertificateRequest,
 ) -> ClientCertificateRequest:
-    if item.status not in RETRYABLE_STATUSES:
+    delayed_retry = item.status == "queued" and item.next_attempt_at is not None
+    if item.status not in RETRYABLE_STATUSES and not delayed_retry:
         raise HTTPException(
             status_code=409,
             detail="La solicitud no esta en un estado que permita reintentarla",
