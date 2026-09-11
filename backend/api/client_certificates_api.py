@@ -458,6 +458,8 @@ def list_internal_requests(
             ClientCertificateRequest,
             MessagingOrganization,
             ClientDocument.status,
+            ClientDocument.fiscal_year,
+            ClientDocument.document_date,
         )
         .join(
             MessagingOrganization,
@@ -475,10 +477,20 @@ def list_internal_requests(
             MessagingOrganization.company_code == company_code.strip(),
         )
     items = []
-    for request_item, organization, document_status in db.execute(statement).all():
+    for (
+        request_item,
+        organization,
+        document_status,
+        document_fiscal_year,
+        document_date,
+    ) in db.execute(statement).all():
         serialized = _serialize(request_item, document_status=document_status)
         serialized["company_code"] = organization.company_code
         serialized["company_name"] = organization.name
+        serialized["document_fiscal_year"] = document_fiscal_year
+        serialized["document_date"] = (
+            document_date.isoformat() if document_date else None
+        )
         items.append(serialized)
     return {"items": items}
 
