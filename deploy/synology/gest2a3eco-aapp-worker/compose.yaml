@@ -17,8 +17,10 @@ services:
       AAPP_REQUEST_TIMEOUT_SECONDS: "120"
       AAPP_HEADLESS: "true"
       AAPP_DIAGNOSTIC_DIR: "/data/diagnostico"
+    # Un volumen gestionado conserva el propietario 10001 de la imagen. Los
+    # bind mounts creados por DSM quedan como root y bloquean las capturas.
     volumes:
-      - "/volume1/docker/gest2a3eco-aapp-worker/diagnostico:/data/diagnostico:rw"
+      - "aapp-worker-diagnostico:/data/diagnostico"
     secrets:
       - aapp_worker_api_key
     security_opt:
@@ -29,3 +31,6 @@ services:
 secrets:
   aapp_worker_api_key:
     file: ./secrets/aapp_worker_api_key.txt
+
+volumes:
+  aapp-worker-diagnostico:
