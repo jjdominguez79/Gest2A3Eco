@@ -15,6 +15,7 @@ import os
 import tempfile
 import threading
 import tkinter as tk
+import unicodedata
 import uuid
 from pathlib import Path
 from tkinter import messagebox, ttk
@@ -27,6 +28,23 @@ from services.backend_client_service import BackendClientService
 def _label_tipo(code: str) -> str:
     org, descr, _url = TIPOS.get(code, ("", code, ""))
     return f"{descr} ({org})" if org else descr
+
+
+def _normalizar_busqueda(valor) -> str:
+    texto = unicodedata.normalize("NFKD", str(valor or ""))
+    return "".join(ch for ch in texto if not unicodedata.combining(ch)).casefold()
+
+
+def _label_cliente(empresa: dict) -> str:
+    nombre = str(empresa.get("nombre") or "Sin nombre").strip()
+    cif = str(empresa.get("cif") or "").strip()
+    codigo = str(empresa.get("codigo") or "").strip()
+    partes = [nombre]
+    if cif:
+        partes.append(cif)
+    if codigo:
+        partes.append(codigo)
+    return " - ".join(partes)
 
 
 class UICertificadosObtenidos(ttk.Frame):
@@ -50,6 +68,7 @@ class UICertificadosObtenidos(ttk.Frame):
         self._session = session
         self._cache: list[dict] = []
         self._todas_empresas: list[str] = []
+        self._cliente_codes: dict[str, str] = {}
         self._build()
         self.refresh()
 
@@ -65,12 +84,19 @@ class UICertificadosObtenidos(ttk.Frame):
         # Barra de solicitud
         bar = tk.Frame(self, bg="#e2e8f0", pady=6)
         bar.pack(fill="x", padx=8, pady=(0, 2))
-        tk.Label(bar, text="Cliente:", bg="#e2e8f0", font=("Segoe UI", 9)).pack(side="left", padx=(8, 4))
+        tk.Label(bar, text="Buscar:", bg="#e2e8f0", font=("Segoe UI", 9)).pack(side="left", padx=(8, 4))
+        self._var_buscar_cliente = tk.StringVar()
+        self._ent_buscar_cliente = ttk.Entry(
+            bar, textvariable=self._var_buscar_cliente, width=22,
+        )
+        self._ent_buscar_cliente.pack(side="left", padx=(0, 8))
+        self._ent_buscar_cliente.bind("<KeyRelease>", self._on_filtrar_clientes)
+        tk.Label(bar, text="Cliente:", bg="#e2e8f0", font=("Segoe UI", 9)).pack(side="left", padx=(0, 4))
         self._var_cliente = tk.StringVar()
-        self._cb_cliente = ttk.Combobox(bar, textvariable=self._var_cliente, state="normal", width=30)
+        self._cb_cliente = ttk.Combobox(
+            bar, textvariable=self._var_cliente, state="readonly", width=38,
+        )
         self._cb_cliente.pack(side="left", padx=(0, 10))
-        self._cb_cliente.bind("<KeyRelease>", self._on_filtrar_clientes)
-        self._cb_cliente.bind("<<ComboboxSelected>>", lambda _e: self._cb_cliente.icursor(tk.END))
         tk.Label(bar, text="Certificado:", bg="#e2e8f0", font=("Segoe UI", 9)).pack(side="left", padx=(0, 4))
         self._tipo_labels = [_label_tipo(t) for t in TIPOS]
         self._tipo_codes = list(TIPOS.keys())
@@ -143,7 +169,7 @@ class UICertificadosObtenidos(ttk.Frame):
 
     def _cliente_sel(self):
         txt = self._var_cliente.get()
-        return txt.split(" - ", 1)[0].strip() if txt else None
+        return self._cliente_codes.get(txt) if txt else None
 
     def _tipo_sel(self):
         lbl = self._var_tipo.get()
@@ -152,16 +178,19 @@ class UICertificadosObtenidos(ttk.Frame):
         return None
 
     def _on_filtrar_clientes(self, event=None):
-        if event and event.keysym in ("Return", "Tab", "Down", "Up", "Escape"):
-            return
-        texto = self._var_cliente.get().strip().lower()
+        texto = _normalizar_busqueda(self._var_buscar_cliente.get())
         if texto:
-            filtradas = [e for e in self._todas_empresas if texto in e.lower()]
+            filtradas = [
+                label for label in self._todas_empresas
+                if texto in _normalizar_busqueda(label)
+            ]
         else:
             filtradas = self._todas_empresas
         self._cb_cliente.configure(values=filtradas)
         if filtradas:
-            self._cb_cliente.event_generate("<<ComboboxDropdown>>")
+            self._var_cliente.set(filtradas[0])
+        else:
+            self._var_cliente.set("")
 
     def _on_select(self, _e=None):
         r = self._fila()
@@ -333,8 +362,21 @@ class UICertificadosObtenidos(ttk.Frame):
     def refresh(self):
         # clientes
         empresas = self._gestor.listar_empresas_resumen()
-        self._todas_empresas = [f"{e['codigo']} - {e.get('nombre','')}" for e in empresas]
+        empresas = sorted(
+            empresas,
+            key=lambda e: (
+                _normalizar_busqueda(e.get("nombre")),
+                _normalizar_busqueda(e.get("cif")),
+                _normalizar_busqueda(e.get("codigo")),
+            ),
+        )
+        self._todas_empresas = [_label_cliente(e) for e in empresas]
+        self._cliente_codes = {
+            _label_cliente(e): str(e.get("codigo") or "") for e in empresas
+        }
         self._cb_cliente.configure(values=self._todas_empresas)
+        if self._todas_empresas and self._var_cliente.get() not in self._cliente_codes:
+            self._var_cliente.set(self._todas_empresas[0])
 
         self._lbl_status.configure(text="Consultando solicitudes centrales...")
 
