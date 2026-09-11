@@ -119,10 +119,10 @@ class UICertificados(ttk.Frame):
         self._btn_del.pack(side="left", padx=(0, 6))
         self._btn_cloud = tk.Button(
             tb,
-            text="Comprobar Azure",
+            text="Verificar custodia en Azure",
             bg="#0f766e",
             fg="white",
-            command=self._consultar_estado_central,
+            command=lambda: self._consultar_estado_central(avisar=True),
             state="disabled",
             **btn,
         )
@@ -172,8 +172,8 @@ class UICertificados(ttk.Frame):
         self._btn_del.configure(state="normal")
         self._btn_cloud.configure(
             state="normal",
-            text="Comprobar Azure",
-            command=self._consultar_estado_central,
+            text="Verificar custodia en Azure",
+            command=lambda: self._consultar_estado_central(avisar=True),
         )
 
         if tag == "caducado":
@@ -188,10 +188,13 @@ class UICertificados(ttk.Frame):
             self._banner.pack_forget()
         self._consultar_estado_central()
 
-    def _consultar_estado_central(self):
+    def _consultar_estado_central(self, *, avisar=False):
         """Consulta Azure sin bloquear la interfaz ni exponer el PFX."""
         self._estado_central_seq += 1
         seq = self._estado_central_seq
+        if avisar:
+            self._vals["central"].configure(text="Verificando custodia...", fg=_SUB)
+            self._btn_cloud.configure(state="disabled", text="Verificando...")
 
         def _worker():
             try:
@@ -200,17 +203,39 @@ class UICertificados(ttk.Frame):
                 result = BackendClientService().get_client_certificate_status(
                     company_code=self._codigo,
                 )
-                self.after(0, lambda: self._estado_central_fin(seq, result, None))
+                self.after(
+                    0,
+                    lambda: self._estado_central_fin(
+                        seq, result, None, avisar=avisar,
+                    ),
+                )
             except Exception as exc:
-                self.after(0, lambda error=exc: self._estado_central_fin(seq, None, error))
+                self.after(
+                    0,
+                    lambda error=exc: self._estado_central_fin(
+                        seq, None, error, avisar=avisar,
+                    ),
+                )
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _estado_central_fin(self, seq, result, error):
+    def _estado_central_fin(self, seq, result, error, *, avisar=False):
         if seq != self._estado_central_seq or not self.winfo_exists():
             return
+        self._btn_cloud.configure(
+            state="normal",
+            text="Verificar custodia en Azure",
+            command=lambda: self._consultar_estado_central(avisar=True),
+        )
         if error is not None:
             self._vals["central"].configure(text="No se pudo comprobar", fg=_WARNING)
+            if avisar:
+                messagebox.showerror(
+                    "Custodia en Azure",
+                    "No se ha podido verificar la copia del certificado en Azure."
+                    f"\n\nDetalle: {error}",
+                    parent=self.winfo_toplevel(),
+                )
             return
         if not result or not result.get("configured"):
             self._vals["central"].configure(
@@ -221,6 +246,13 @@ class UICertificados(ttk.Frame):
                 text="Seleccionar PFX para Azure...",
                 command=self._on_seleccionar,
             )
+            if avisar:
+                messagebox.showwarning(
+                    "Custodia en Azure",
+                    "Azure no tiene una copia del certificado de este cliente. "
+                    "Selecciona de nuevo el fichero PFX para guardarlo.",
+                    parent=self.winfo_toplevel(),
+                )
             return
         try:
             self._eliminar_material_local_confirmado()
@@ -233,10 +265,21 @@ class UICertificados(ttk.Frame):
         estado = "Caducado" if result.get("status") == "expired" else "Guardado"
         color = _DANGER if result.get("status") == "expired" else _SUCCESS
         self._vals["central"].configure(text=estado + suffix, fg=color)
-        self._btn_cloud.configure(
-            text="Comprobar Azure",
-            command=self._consultar_estado_central,
-        )
+        if avisar:
+            if result.get("status") == "expired":
+                messagebox.showwarning(
+                    "Custodia verificada",
+                    f"Azure confirma que conserva el certificado (version {version or '-'}), "
+                    "pero esta caducado.",
+                    parent=self.winfo_toplevel(),
+                )
+            else:
+                messagebox.showinfo(
+                    "Custodia verificada",
+                    f"Azure confirma que conserva correctamente el certificado cifrado "
+                    f"(version {version or '-'}).",
+                    parent=self.winfo_toplevel(),
+                )
 
     def _eliminar_material_local_confirmado(self):
         """Borra ruta y clave locales solo tras confirmar la copia de Azure."""
@@ -403,8 +446,8 @@ class UICertificados(ttk.Frame):
         self._btn_set.configure(state="normal")
         self._btn_cloud.configure(
             state="normal",
-            text="Comprobar Azure",
-            command=self._consultar_estado_central,
+            text="Verificar custodia en Azure",
+            command=lambda: self._consultar_estado_central(avisar=True),
         )
         if error is not None:
             self._btn_del.configure(state="normal" if self._cert else "disabled")

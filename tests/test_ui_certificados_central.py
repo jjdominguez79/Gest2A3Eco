@@ -116,6 +116,34 @@ def test_estado_azure_confirmado_elimina_ruta_y_clave_locales():
     assert limpio["password_cifrada"] is None
 
 
+def test_comprobacion_manual_confirma_la_custodia_al_usuario(monkeypatch):
+    gestor = MagicMock()
+    ui = _ui(gestor)
+    ui._cert = {
+        "id": "cert-1",
+        "codigo_empresa": "E00001",
+        "ruta_archivo": None,
+        "password_cifrada": None,
+    }
+    backend = MagicMock()
+    backend.get_client_certificate_status.return_value = {
+        "configured": True,
+        "status": "valid",
+        "version": 4,
+    }
+    monkeypatch.setattr(modulo.threading, "Thread", _ThreadInmediato)
+    monkeypatch.setattr(
+        "services.backend_client_service.BackendClientService",
+        lambda: backend,
+    )
+    monkeypatch.setattr(modulo.messagebox, "showinfo", MagicMock())
+
+    ui._consultar_estado_central(avisar=True)
+
+    modulo.messagebox.showinfo.assert_called_once()
+    assert "version 4" in modulo.messagebox.showinfo.call_args.args[1]
+
+
 def test_eliminacion_confirmada_borra_el_registro_local(monkeypatch):
     gestor = MagicMock()
     ui = _ui(gestor)
