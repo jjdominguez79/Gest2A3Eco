@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from services.aapp.base import OpcionesSync
-from services.aapp.cert_store import CertStore
+from services.aapp.cert_store import CertStore, preparar_pfx_para_navegador
 
 # tipo -> (organismo, descripcion, url_sede)
 TIPOS = {
@@ -109,10 +109,14 @@ class SedePlaywrightProvider(ProveedorCertificado):
                 mensaje="Playwright no esta instalado. pip install playwright && playwright install chromium",
                 error_detalle="ModuleNotFoundError: playwright",
             )
+        ruta_navegador, password_navegador = preparar_pfx_para_navegador(
+            cert_material,
+            os.path.join(os.path.dirname(cert_material.ruta_archivo), "navegador.pfx"),
+        )
         client_certs = [{
             "origin": o,
-            "pfxPath": cert_material.ruta_archivo,
-            "passphrase": cert_material.password or "",
+            "pfxPath": ruta_navegador,
+            "passphrase": password_navegador,
         } for o in self._origenes()]
         try:
             with sync_playwright() as p:

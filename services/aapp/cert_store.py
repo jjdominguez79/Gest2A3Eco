@@ -19,12 +19,15 @@ disponibles para el conector.
 from __future__ import annotations
 
 import os
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 
 from utils.crypto_utils import descifrar_password
 
 try:
+    from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.serialization import pkcs12
     from cryptography import x509
     from cryptography.x509.oid import NameOID
@@ -50,6 +53,51 @@ class CertMaterial:
 
 class CertError(Exception):
     pass
+
+
+def preparar_pfx_para_navegador(
+    mat: CertMaterial,
+    ruta_destino: str,
+) -> tuple[str, str]:
+    """Reempaqueta el PFX temporalmente con cifrado moderno.
+
+    Algunos PFX validos, especialmente los exportados hace anos, usan RC2 o
+    3DES. Python puede leerlos, pero Chromium sobre OpenSSL 3 los rechaza como
+    ``Unsupported TLS certificate``. La copia original no se modifica: se crea
+    otra dentro del directorio temporal del worker y se devuelve su contrasena
+    efimera.
+    """
+    if not _CRYPTO_OK:
+        raise CertError("Falta la libreria 'cryptography' para preparar el PFX.")
+    if not mat.existe:
+        raise CertError(f"No existe el fichero: {mat.ruta_archivo}")
+    try:
+        contenido = Path(mat.ruta_archivo).read_bytes()
+        password_origen = mat.password.encode("utf-8") if mat.password else None
+        key, cert, adicionales = pkcs12.load_key_and_certificates(
+            contenido,
+            password_origen,
+        )
+        if key is None or cert is None:
+            raise CertError("El PFX no contiene la clave privada y el certificado.")
+        password_temporal = secrets.token_urlsafe(32)
+        modernizado = pkcs12.serialize_key_and_certificates(
+            b"gestinem-client-certificate",
+            key,
+            cert,
+            adicionales,
+            serialization.BestAvailableEncryption(password_temporal.encode("utf-8")),
+        )
+        destino = Path(ruta_destino)
+        destino.write_bytes(modernizado)
+        return str(destino), password_temporal
+    except CertError:
+        raise
+    except Exception as exc:
+        raise CertError(
+            "No se pudo preparar el certificado para el navegador. "
+            "Comprueba el PFX y su contrasena."
+        ) from exc
 
 
 class CertStore:

@@ -36,6 +36,7 @@ from .base import (
     ResultadoSync,
     registrar_conector,
 )
+from .cert_store import preparar_pfx_para_navegador
 
 DEHU_URL_DEFECTO = "https://dehu.redsara.es"
 
@@ -72,10 +73,14 @@ class ConectorDEHU(ConectorOrganismo):
         opciones.trace(f"[DEHU] abriendo {base} con certificado '{cert_material.nombre}'")
 
         origenes = [base] + ORIGENES_CLAVE + list(opciones.origenes_certificado or [])
+        ruta_navegador, password_navegador = preparar_pfx_para_navegador(
+            cert_material,
+            os.path.join(os.path.dirname(cert_material.ruta_archivo), "navegador.pfx"),
+        )
         client_certs = [{
             "origin": o,
-            "pfxPath": cert_material.ruta_archivo,
-            "passphrase": cert_material.password or "",
+            "pfxPath": ruta_navegador,
+            "passphrase": password_navegador,
         } for o in origenes]
 
         page = None
