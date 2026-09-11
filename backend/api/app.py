@@ -389,6 +389,7 @@ def startup():
         "017_organization_logo.sql",
         "018_client_certificate_requests.sql",
         "019_client_certificate_secrets.sql",
+        "020_aapp_document_fiscal_year.sql",
     ):
         _mig_path = Path(__file__).resolve().parent.parent / "migrations" / _mig_name
         if _mig_path.exists():

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
@@ -39,6 +40,7 @@ class AappBackendClient:
     def publish_pdf(self, item: dict, pdf_path: Path) -> dict:
         certificate_type = str(item["certificate_type"])
         organization = "AEAT" if certificate_type.startswith("AEAT_") else "TGSS"
+        obtained_at = datetime.now(timezone.utc)
         content = pdf_path.read_bytes()
         with pdf_path.open("rb") as stream:
             response = self.http.post(
@@ -52,6 +54,8 @@ class AappBackendClient:
                     "source_version": "1",
                     "display_name": item.get("certificate_name") or certificate_type,
                     "description": f"Certificado obtenido de {organization}",
+                    "document_date": obtained_at.date().isoformat(),
+                    "fiscal_year": str(obtained_at.year),
                     "expected_sha256": hashlib.sha256(content).hexdigest(),
                     # Solo las solicitudes creadas por el propio cliente se
                     # publican automaticamente en Flutter.

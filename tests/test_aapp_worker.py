@@ -158,6 +158,8 @@ def test_publicacion_automatica_solo_para_solicitudes_flutter(tmp_path):
 
     assert session.payloads[0]["publish_to_client"] == "false"
     assert session.payloads[1]["publish_to_client"] == "true"
+    assert int(session.payloads[0]["fiscal_year"]) >= 2026
+    assert session.payloads[0]["document_date"].startswith("2026-")
 
 
 def test_worker_dehu_publica_documento_y_elimina_pfx_temporal(monkeypatch, tmp_path):
