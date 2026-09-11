@@ -310,6 +310,10 @@ class SedePlaywrightProvider(ProveedorCertificado):
     def _aeat_confirmar_firma(self, page, opciones):
         """Marca Conforme en la ventana de firma y ejecuta el envio final."""
         try:
+            contexto = page.context
+        except Exception:
+            contexto = None
+        try:
             page.wait_for_timeout(1000)
         except Exception:
             pass
@@ -344,7 +348,16 @@ class SedePlaywrightProvider(ProveedorCertificado):
                     opciones.trace(
                         "[AEAT] conformidad marcada y solicitud firmada y enviada"
                     )
-                    return pagina
+                    if contexto is not None:
+                        try:
+                            abiertas = [
+                                pg for pg in contexto.pages if not pg.is_closed()
+                            ]
+                            if abiertas:
+                                return abiertas[-1]
+                        except Exception:
+                            pass
+                    return page
                 except Exception:
                     continue
         if paginas and paginas[-1] is not page:
