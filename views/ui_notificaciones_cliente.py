@@ -20,9 +20,10 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import messagebox, ttk
 
+from services.backend_client_service import BackendClientService
 from views.notificaciones_theme import *  # noqa: F401,F403
 from views.ui_certificados import UICertificados
-from views.ui_buzones import MODOS_DESCARGA, PERIODICIDADES, LABELS_MODO_DESCARGA
+from views.ui_buzones import PERIODICIDADES, LABELS_MODO_DESCARGA
 
 _MARCADO = "☑"     # casilla marcada
 _SIN_MARCAR = "☐"  # casilla vacia
@@ -70,12 +71,13 @@ class UINotificacionesCliente(ttk.Frame):
         self._var_periodicidad = tk.StringVar(value="MANUAL")
         self._var_responsable = tk.StringVar()
         self._var_envio = tk.BooleanVar(value=False)
-        self._modo_labels = [LABELS_MODO_DESCARGA[m] for m in MODOS_DESCARGA]
+        # La consulta nunca comparece ni descarga: esas acciones son manuales.
+        self._modo_labels = [LABELS_MODO_DESCARGA["SOLO_DETECTAR"]]
         self._var_modo = tk.StringVar(value=self._modo_labels[0])
 
         filas = [
             ("Email de aviso", ttk.Entry(card, textvariable=self._var_email, width=34)),
-            ("Modo de descarga", ttk.Combobox(card, textvariable=self._var_modo, width=24,
+            ("Modo de consulta", ttk.Combobox(card, textvariable=self._var_modo, width=24,
                                                values=self._modo_labels, state="readonly")),
             ("Periodicidad sincronizacion", ttk.Combobox(card, textvariable=self._var_periodicidad, width=24,
                                                          values=PERIODICIDADES, state="readonly")),
@@ -85,8 +87,12 @@ class UINotificacionesCliente(ttk.Frame):
             tk.Label(card, text=lbl + ":", bg=_BG, fg=_SUB, font=("Segoe UI", 9),
                      anchor="e").grid(row=i, column=0, sticky="e", padx=(0, 8), pady=3)
             widget.grid(row=i, column=1, sticky="w", pady=3)
-        ttk.Checkbutton(card, text="Envio automatico al cliente",
-                        variable=self._var_envio).grid(row=len(filas) + 1, column=1, sticky="w", pady=(4, 0))
+        ttk.Checkbutton(
+            card,
+            text="Envio al cliente siempre manual",
+            variable=self._var_envio,
+            state="disabled",
+        ).grid(row=len(filas) + 1, column=1, sticky="w", pady=(4, 0))
 
     def _build_right(self, right):
         hdr = tk.Frame(right, bg=_HDR_BG)
@@ -170,10 +176,8 @@ class UINotificacionesCliente(ttk.Frame):
             self._var_email.set(alguno.get("email_aviso") or "")
             self._var_responsable.set(alguno.get("responsable_interno") or "")
             self._var_periodicidad.set(alguno.get("periodicidad_sync") or "MANUAL")
-            self._var_envio.set(bool(alguno.get("envio_automatico_cliente")))
-            modo = alguno.get("modo_descarga") or "SOLO_DETECTAR"
-            if modo in MODOS_DESCARGA:
-                self._var_modo.set(self._modo_labels[MODOS_DESCARGA.index(modo)])
+            self._var_envio.set(False)
+            self._var_modo.set(LABELS_MODO_DESCARGA["SOLO_DETECTAR"])
 
     # ------------------------------------------------------------------ tabla
     def _fila_sel(self):
@@ -201,14 +205,12 @@ class UINotificacionesCliente(ttk.Frame):
 
     # ------------------------------------------------------------------ helpers
     def _opciones(self):
-        modo_label = self._var_modo.get()
-        modo = MODOS_DESCARGA[self._modo_labels.index(modo_label)] if modo_label in self._modo_labels else "SOLO_DETECTAR"
         return {
-            "modo_descarga": modo,
+            "modo_descarga": "SOLO_DETECTAR",
             "periodicidad_sync": self._var_periodicidad.get() or "MANUAL",
             "email_aviso": self._var_email.get().strip() or None,
             "responsable_interno": self._var_responsable.get().strip() or None,
-            "envio_automatico_cliente": 1 if self._var_envio.get() else 0,
+            "envio_automatico_cliente": 0,
         }
 
     def _cert(self):
@@ -220,12 +222,21 @@ class UINotificacionesCliente(ttk.Frame):
     # ------------------------------------------------------------------ guardar
     def _on_guardar(self):
         opts = self._opciones()
+        email = str(opts.get("email_aviso") or "")
+        if opts["periodicidad_sync"] != "MANUAL" and (not email or "@" not in email):
+            messagebox.showerror(
+                "Gest2A3Eco",
+                "Indica un email valido para recibir el resumen de la sincronizacion automatica.",
+                parent=self.winfo_toplevel(),
+            )
+            return
         cert = self._cert()
         cert_id = cert["id"] if cert else None
         nif = (cert.get("nif_titular") if cert else None) or None
 
         buzones = {b.get("organismo_id"): b for b in self._gestor.listar_notif_buzones(self._codigo)}
         creados = activados = desactivados = 0
+        cambios = []
         try:
             for org in self._organismos:
                 oid = org["id"]
@@ -250,13 +261,32 @@ class UINotificacionesCliente(ttk.Frame):
                             activados += 1
                     else:
                         creados += 1
-                    self._gestor.upsert_notif_buzon(data)
+                    cambios.append(data)
                 elif existente and existente.get("activo"):
                     data = dict(existente)
                     data["activo"] = 0
                     data["id"] = existente["id"]
-                    self._gestor.upsert_notif_buzon(data)
+                    cambios.append(data)
                     desactivados += 1
+
+            activos = [b for b in cambios if b.get("activo")]
+            if activos:
+                principal = activos[0]
+                BackendClientService().save_dehu_mailbox_config(
+                    company_code=self._codigo,
+                    mailbox_id=str(principal.get("id") or ""),
+                    mailbox_name=str(principal.get("nombre") or "DEHu"),
+                    active=True,
+                    periodicity=str(principal.get("periodicidad_sync") or "MANUAL"),
+                    notification_email=str(principal.get("email_aviso") or ""),
+                )
+            else:
+                BackendClientService().delete_dehu_mailbox_config(
+                    company_code=self._codigo,
+                )
+
+            for data in cambios:
+                self._gestor.upsert_notif_buzon(data)
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
             return
