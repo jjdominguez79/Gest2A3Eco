@@ -72,3 +72,38 @@ def test_api_dehu_empieza_en_pagina_uno_no_filtra_y_lee_comunicaciones():
     assert all("page=1" in url for url in calls)
     assert all("titularNif" not in url for url in calls)
     assert any("/realized-notifications?" in url for url in calls)
+
+
+def test_dehu_inicia_login_directo_si_el_frontal_no_renderiza_acceso(monkeypatch):
+    connector = ConectorDEHU()
+    visited = []
+
+    class Page:
+        def goto(self, url, **_kwargs):
+            visited.append(url)
+
+    monkeypatch.setattr(connector, "_diagnostico", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(connector, "_click_acceder", lambda *_args: False)
+    monkeypatch.setattr(connector, "_elegir_certificado_clave", lambda *_args: None)
+    monkeypatch.setattr(connector, "_fetch_api", lambda *_args: [{"identifier": "REF-1"}])
+
+    result = connector._flujo(
+        Page(),
+        "https://dehu.redsara.es",
+        {},
+        CertMaterial(
+            cert_id="cert-1",
+            nombre="Cliente Uno",
+            nif_titular="B12345678",
+            ruta_archivo="cliente.pfx",
+            password="",
+        ),
+        OpcionesSync(),
+        [],
+    )
+
+    assert visited == [
+        "https://dehu.redsara.es/",
+        "https://dehu.redsara.es/api/login/login-clave-sso",
+    ]
+    assert result[0].referencia == "REF-1"

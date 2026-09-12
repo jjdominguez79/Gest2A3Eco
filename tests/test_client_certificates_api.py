@@ -119,7 +119,12 @@ def test_cliente_crea_y_lista_solicitud(monkeypatch):
 
 
 def test_worker_guarda_bandeja_dehu_idempotente_y_escritorio_la_lista(monkeypatch):
-    client, factory, _, _ = _setup(monkeypatch)
+    client, factory, org_id, _ = _setup(monkeypatch)
+    with factory() as db:
+        db.add(ClientDehuMailboxConfig(
+            organization_id=org_id, mailbox_id="mailbox-1", active=True,
+        ))
+        db.commit()
     created = client.post(
         "/api/v1/messaging/client/certificates/internal/requests",
         params={"company_code": "E00001"},
@@ -176,6 +181,10 @@ def test_worker_asigna_dehu_por_nif_titular_y_omite_desconocidos(monkeypatch):
             active=True,
         )
         db.add(target)
+        db.flush()
+        db.add(ClientDehuMailboxConfig(
+            organization_id=target.id, mailbox_id="mailbox-target", active=True,
+        ))
         db.commit()
         target_org_id = target.id
 
@@ -203,13 +212,56 @@ def test_worker_asigna_dehu_por_nif_titular_y_omite_desconocidos(monkeypatch):
     assert response.json()["assigned_count"] == 1
     assert response.json()["unassigned_count"] == 1
     assert response.json()["unassigned_tax_ids"] == ["B00000000"]
+    assert response.json()["discarded_without_active_mailbox_count"] == 1
     with factory() as db:
         item = db.scalars(select(ClientDehuNotification)).one()
         assert item.organization_id == target_org_id
         assert item.organization_id != source_org_id
+        assert item.mailbox_id == "mailbox-target"
         metadata = __import__("json").loads(item.metadata_json)
         assert metadata["certificate_organization_id"] == source_org_id
         assert metadata["assigned_organization_id"] == target_org_id
+        assert metadata["assigned_mailbox_id"] == "mailbox-target"
+
+
+def test_worker_descarta_titular_con_cliente_pero_sin_buzon_dehu_activo(monkeypatch):
+    client, factory, _, _ = _setup(monkeypatch)
+    with factory() as db:
+        unsubscribed = MessagingOrganization(
+            company_code="E00003",
+            name="Cliente sin servicio DEHu",
+            tax_id="B11223344",
+            active=True,
+        )
+        db.add(unsubscribed)
+        db.commit()
+
+    created = client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={"certificate_type": "DEHU_SYNC", "idempotency_key": "dehu-sin-servicio"},
+    )
+    assert created.status_code == 201
+    claimed = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/claim",
+    ).json()["item"]
+    response = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/requests/"
+        f"{claimed['id']}/dehu-notifications",
+        json={
+            "claim_token": claimed["claim_token"],
+            "notifications": [
+                {"reference": "REF-SIN-BUZON", "holder_tax_id": "B11223344"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["assigned_count"] == 0
+    assert response.json()["discarded_without_active_mailbox_count"] == 1
+    assert response.json()["discarded_without_active_mailbox_tax_ids"] == ["B11223344"]
+    with factory() as db:
+        assert list(db.scalars(select(ClientDehuNotification)).all()) == []
 
 
 def test_programacion_dehu_encola_y_envia_un_resumen_al_terminar(monkeypatch):

@@ -141,6 +141,14 @@ class ConectorDEHU(ConectorOrganismo):
         if self._click_acceder(page, opciones):
             page.wait_for_load_state("networkidle")
             self._diagnostico(page, opciones, "02_tras_acceder", capturas)
+        else:
+            # El frontal actual puede responder sin renderizar el boton en un
+            # navegador headless. Este es el endpoint que usa el propio boton
+            # para iniciar el SSO de Cl@ve.
+            login_url = base + "/api/login/login-clave-sso"
+            opciones.trace(f"[DEHU] iniciando acceso directo en {login_url}")
+            page.goto(login_url, wait_until="domcontentloaded")
+            self._diagnostico(page, opciones, "02_login_directo", capturas)
 
         self._elegir_certificado_clave(page, opciones)
         self._diagnostico(page, opciones, "03_clave", capturas)

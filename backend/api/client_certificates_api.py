@@ -1122,29 +1122,43 @@ def upsert_worker_dehu_notifications(
     created_count = 0
     unassigned_count = 0
     unassigned_tax_ids = set()
-    organizations_by_tax_id = {}
+    # Una organizacion solo es destinataria si tiene contratado/configurado un
+    # buzon DEHu activo. El certificado usado para consultar puede ser el de un
+    # autorizado RED y devolver avisos de muchas empresas; no debemos conservar
+    # los de clientes sin este servicio.
+    destinations_by_tax_id = {}
     ambiguous_tax_ids = set()
-    for organization in db.scalars(
-        select(MessagingOrganization).where(MessagingOrganization.active.is_(True))
-    ).all():
+    rows = db.execute(
+        select(MessagingOrganization, ClientDehuMailboxConfig)
+        .join(
+            ClientDehuMailboxConfig,
+            ClientDehuMailboxConfig.organization_id == MessagingOrganization.id,
+        )
+        .where(
+            MessagingOrganization.active.is_(True),
+            ClientDehuMailboxConfig.active.is_(True),
+        )
+    ).all()
+    for organization, mailbox in rows:
         normalized = re.sub(r"[^0-9A-Z]", "", (organization.tax_id or "").upper())
         if not normalized:
             continue
-        if normalized in organizations_by_tax_id:
+        if normalized in destinations_by_tax_id:
             ambiguous_tax_ids.add(normalized)
         else:
-            organizations_by_tax_id[normalized] = organization
+            destinations_by_tax_id[normalized] = (organization, mailbox)
     for normalized in ambiguous_tax_ids:
-        organizations_by_tax_id.pop(normalized, None)
+        destinations_by_tax_id.pop(normalized, None)
     for incoming in payload.notifications:
         reference = incoming.reference.strip()
         holder_tax_id = re.sub(r"[^0-9A-Z]", "", incoming.holder_tax_id.upper())
-        target_organization = organizations_by_tax_id.get(holder_tax_id)
-        if target_organization is None:
+        destination = destinations_by_tax_id.get(holder_tax_id)
+        if destination is None:
             unassigned_count += 1
             if holder_tax_id:
                 unassigned_tax_ids.add(holder_tax_id)
             continue
+        target_organization, target_mailbox = destination
         item = db.scalar(select(ClientDehuNotification).where(
             ClientDehuNotification.organization_id == target_organization.id,
             ClientDehuNotification.external_reference == reference,
@@ -1163,7 +1177,9 @@ def upsert_worker_dehu_notifications(
         ):
             raise HTTPException(status_code=422, detail="Documento DEHu no valido")
         item.request_id = request_item.id
-        item.mailbox_id = incoming.mailbox_id.strip()
+        # El buzon de destino es el configurado para el titular, no el buzon
+        # del certificado del autorizado que hizo la consulta.
+        item.mailbox_id = target_mailbox.mailbox_id
         item.subject = incoming.subject.strip()
         item.description = incoming.description.strip()
         item.issuing_body = incoming.issuing_body.strip()
@@ -1179,6 +1195,8 @@ def upsert_worker_dehu_notifications(
         metadata.update({
             "certificate_organization_id": request_item.organization_id,
             "assigned_organization_id": target_organization.id,
+            "source_mailbox_id": incoming.mailbox_id.strip(),
+            "assigned_mailbox_id": target_mailbox.mailbox_id,
         })
         item.metadata_json = json.dumps(
             metadata, ensure_ascii=False, separators=(",", ":"), default=str,
@@ -1195,6 +1213,8 @@ def upsert_worker_dehu_notifications(
         "created_count": created_count,
         "unassigned_count": unassigned_count,
         "unassigned_tax_ids": sorted(unassigned_tax_ids),
+        "discarded_without_active_mailbox_count": unassigned_count,
+        "discarded_without_active_mailbox_tax_ids": sorted(unassigned_tax_ids),
     }
 
 

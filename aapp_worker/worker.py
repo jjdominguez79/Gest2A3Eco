@@ -181,11 +181,15 @@ class AappWorker:
             stored = self.backend.upsert_dehu_notifications(item, central_notifications)
             new_count = int(stored.get("created_count") or 0)
             assigned_count = int(stored.get("assigned_count") or len(central_notifications))
-            unassigned_count = int(stored.get("unassigned_count") or 0)
+            unassigned_count = int(
+                stored.get("discarded_without_active_mailbox_count")
+                or stored.get("unassigned_count")
+                or 0
+            )
             summary = (
                 f"{result.total} elemento(s) detectado(s); "
                 f"{assigned_count} asignado(s); {new_count} nuevo(s); "
-                f"{unassigned_count} sin cliente."
+                f"{unassigned_count} descartada(s) sin buzon DEHu activo."
             )
             self.backend.complete(
                 item,
