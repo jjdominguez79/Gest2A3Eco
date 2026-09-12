@@ -31,12 +31,15 @@ class CertificatesRepository {
         .toList();
   }
 
-  Future<CertificateRequest> create(String certificateType) async {
+  Future<CertificateRequest> create(
+    String certificateType, {
+    Map<String, dynamic> parameters = const {},
+  }) async {
     final response = await _api.dio.post(
       '/client/certificates/requests',
       data: {
         'certificate_type': certificateType,
-        'parameters': <String, dynamic>{},
+        'parameters': parameters,
         'idempotency_key': DateTime.now().microsecondsSinceEpoch.toString(),
       },
     );

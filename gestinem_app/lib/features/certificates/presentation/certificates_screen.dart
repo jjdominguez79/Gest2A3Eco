@@ -16,13 +16,16 @@ class CertificatesScreen extends ConsumerStatefulWidget {
 
 class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
   String? _selectedType;
+  final Map<String, String> _parameterValues = {};
   bool _submitting = false;
 
   Future<void> _requestCertificate() async {
     if (_selectedType == null || _submitting) return;
     setState(() => _submitting = true);
     try {
-      await ref.read(certificatesRepositoryProvider).create(_selectedType!);
+      await ref
+          .read(certificatesRepositoryProvider)
+          .create(_selectedType!, parameters: Map.of(_parameterValues));
       ref.invalidate(certificateRequestsProvider);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -83,32 +86,76 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
             ),
             const SizedBox(height: 8),
             types.when(
-              data: (items) => DropdownButtonFormField<String>(
-                key: const Key('certificate-type-selector'),
-                initialValue: _selectedType,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  labelText: 'Tipo de certificado',
-                ),
-                items: items
-                    .map(
-                      (item) => DropdownMenuItem(
-                        value: item.code,
-                        child: Text('${item.organization} · ${item.name}'),
+              data: (items) {
+                final selected = items
+                    .where((item) => item.code == _selectedType)
+                    .firstOrNull;
+                return Column(
+                  children: [
+                    DropdownButtonFormField<String>(
+                      key: const Key('certificate-type-selector'),
+                      initialValue: _selectedType,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        labelText: 'Tipo de certificado',
                       ),
-                    )
-                    .toList(),
-                onChanged: configured
-                    ? (value) => setState(() => _selectedType = value)
-                    : null,
-              ),
+                      items: items
+                          .map(
+                            (item) => DropdownMenuItem(
+                              value: item.code,
+                              child: Text(
+                                '${item.organization} · ${item.name}',
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: configured
+                          ? (value) => setState(() {
+                              _selectedType = value;
+                              _parameterValues.clear();
+                            })
+                          : null,
+                    ),
+                    if (selected != null)
+                      ...selected.parameters.map(
+                        (parameter) => Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: TextFormField(
+                            key: Key('certificate-parameter-${parameter.key}'),
+                            decoration: InputDecoration(
+                              border: const OutlineInputBorder(),
+                              labelText: parameter.label,
+                              helperText: parameter.type == 'date'
+                                  ? 'Formato: AAAA-MM-DD'
+                                  : null,
+                            ),
+                            textCapitalization: parameter.type == 'tax_id'
+                                ? TextCapitalization.characters
+                                : TextCapitalization.words,
+                            keyboardType: parameter.type == 'date'
+                                ? TextInputType.datetime
+                                : TextInputType.text,
+                            onChanged: (value) => setState(
+                              () => _parameterValues[parameter.key] = value
+                                  .trim(),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
               loading: () => const LinearProgressIndicator(),
               error: (error, _) => Text(apiErrorMessage(error)),
             ),
             const SizedBox(height: 12),
             FilledButton.icon(
               key: const Key('request-certificate-button'),
-              onPressed: configured && _selectedType != null && !_submitting
+              onPressed:
+                  configured &&
+                      _selectedType != null &&
+                      !_submitting &&
+                      _requiredParametersComplete(types.valueOrNull ?? const [])
                   ? _requestCertificate
                   : null,
               icon: _submitting
@@ -139,6 +186,18 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
         ),
       ),
     );
+  }
+
+  bool _requiredParametersComplete(List<CertificateType> types) {
+    final selected = types
+        .where((item) => item.code == _selectedType)
+        .firstOrNull;
+    if (selected == null) return false;
+    return selected.parameters
+        .where((parameter) => parameter.required)
+        .every(
+          (parameter) => (_parameterValues[parameter.key] ?? '').isNotEmpty,
+        );
   }
 
   Widget _requestTile(CertificateRequest item) {

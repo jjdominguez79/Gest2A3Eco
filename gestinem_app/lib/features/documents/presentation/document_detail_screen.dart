@@ -32,7 +32,21 @@ class _DocumentDetailScreenState extends ConsumerState<DocumentDetailScreen> {
     ref.watch(documentReadProvider(widget.documentId));
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Detalle del documento')),
+      appBar: AppBar(
+        leading: IconButton(
+          key: const Key('document-back-button'),
+          tooltip: 'Volver al inicio',
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/');
+            }
+          },
+        ),
+        title: const Text('Detalle del documento'),
+      ),
       body: docAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, _) => Center(child: Text('Error: $error')),

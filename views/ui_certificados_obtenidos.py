@@ -17,8 +17,9 @@ import threading
 import tkinter as tk
 import unicodedata
 import uuid
+from datetime import date
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 
 from views.notificaciones_theme import *  # noqa: F401,F403
 from services.aapp.certificados import TIPOS
@@ -213,7 +214,12 @@ class UICertificadosObtenidos(ttk.Frame):
         self._btn_publicar.configure(state="normal" if publicable else "disabled")
         reintentable = bool(r and r.get("status") in {"needs_action", "failed"})
         self._btn_reintentar.configure(state="normal" if reintentable else "disabled")
-        self._btn_del.configure(state="disabled")
+        eliminable = bool(
+            r
+            and r.get("status") in {"failed", "cancelled"}
+            and not r.get("document_id")
+        )
+        self._btn_del.configure(state="normal" if eliminable else "disabled")
 
     # ------------------------------------------------------------------ solicitar
     def _on_solicitar(self):
@@ -242,6 +248,11 @@ class UICertificadosObtenidos(ttk.Frame):
                                    f"{accion} '{_label_tipo(tipo)}' para el cliente {cod}?\n\n"
                                    f"{detalle}", parent=self.winfo_toplevel()):
             return
+        parametros = dict(anterior.get("parameters") or {}) if anterior else None
+        if not anterior:
+            parametros = self._pedir_parametros(tipo)
+            if parametros is None:
+                return
         self._btn_solicitar.configure(state="disabled")
 
         def _worker():
@@ -259,6 +270,7 @@ class UICertificadosObtenidos(ttk.Frame):
                     result = backend.create_certificate_request(
                         company_code=cod,
                         certificate_type=tipo,
+                        parameters=parametros,
                         idempotency_key=f"desktop-{uuid.uuid4().hex}",
                     )
                 self.after(0, lambda: self._solicitud_fin(result, None))
@@ -266,6 +278,51 @@ class UICertificadosObtenidos(ttk.Frame):
                 self.after(0, lambda error=exc: self._solicitud_fin(None, error))
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def _pedir_parametros(self, tipo):
+        """Solicita solo los datos adicionales exigidos por cada organismo."""
+        parent = self.winfo_toplevel()
+        if tipo == "AEAT_CONTRATISTAS":
+            tax_id = simpledialog.askstring(
+                "Contratistas y subcontratistas",
+                "CIF/NIF de la empresa con la que el cliente contrata:",
+                parent=parent,
+            )
+            if tax_id is None:
+                return None
+            tax_id = "".join(ch for ch in tax_id.upper() if ch.isalnum())
+            if len(tax_id) < 8:
+                messagebox.showwarning(
+                    "Dato obligatorio", "Introduce un CIF/NIF valido.", parent=parent,
+                )
+                return None
+            name = simpledialog.askstring(
+                "Contratistas y subcontratistas",
+                "Nombre o razon social de esa empresa:",
+                parent=parent,
+            )
+            if name is None:
+                return None
+            if not name.strip():
+                messagebox.showwarning(
+                    "Dato obligatorio", "Introduce el nombre o razon social.", parent=parent,
+                )
+                return None
+            return {
+                "contracting_party_tax_id": tax_id,
+                "contracting_party_name": name.strip(),
+            }
+        if tipo == "TGSS_SIN_DEUDA_FECHA":
+            value = simpledialog.askstring(
+                "Certificado a una fecha",
+                "Fecha del certificado (AAAA-MM-DD):",
+                initialvalue=date.today().isoformat(),
+                parent=parent,
+            )
+            if value is None:
+                return None
+            return {"as_of_date": value.strip()}
+        return {}
 
     def _mostrar_progreso(self, texto):
         dlg = tk.Toplevel(self.winfo_toplevel())
@@ -431,7 +488,42 @@ class UICertificadosObtenidos(ttk.Frame):
         self.refresh()
 
     def _on_eliminar(self):
-        return
+        solicitud = self._fila()
+        if (
+            not solicitud
+            or solicitud.get("status") not in {"failed", "cancelled"}
+            or solicitud.get("document_id")
+        ):
+            return
+        if not messagebox.askyesno(
+            "Eliminar intento",
+            "Se eliminara definitivamente este intento sin documento. ¿Continuar?",
+            parent=self.winfo_toplevel(),
+        ):
+            return
+        self._btn_del.configure(state="disabled")
+
+        def _worker():
+            try:
+                BackendClientService().delete_certificate_request(solicitud["id"])
+                self.after(0, lambda: self._eliminacion_fin(None))
+            except Exception as exc:
+                self.after(0, lambda error=exc: self._eliminacion_fin(error))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _eliminacion_fin(self, error=None):
+        if error is None:
+            messagebox.showinfo(
+                "Intento eliminado",
+                "La solicitud fallida se ha eliminado.",
+                parent=self.winfo_toplevel(),
+            )
+        else:
+            messagebox.showerror(
+                "No se pudo eliminar", str(error), parent=self.winfo_toplevel(),
+            )
+        self.refresh()
 
     # ------------------------------------------------------------------ refresh
     def refresh(self):

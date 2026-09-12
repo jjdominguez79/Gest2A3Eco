@@ -43,9 +43,11 @@ class _Backend:
 class _Provider:
     def __init__(self):
         self.pfx_path = None
+        self.parameters = None
 
     def obtener(self, material, _type, options):
         self.pfx_path = material.ruta_archivo
+        self.parameters = options.parametros
         assert material.password == "clave"
         with open(options.ruta_pdf_destino, "wb") as stream:
             stream.write(b"%PDF-1.7\ncertificado")
@@ -77,6 +79,7 @@ def test_worker_publica_y_elimina_material_temporal(monkeypatch, tmp_path):
         "certificate_name": "Estar al corriente",
         "claim_token": "claim-token-valido",
         "attempt_count": 1,
+        "parameters": {"contracting_party_tax_id": "B12345678"},
     }
     backend = _Backend(item)
     provider = _Provider()
@@ -87,6 +90,7 @@ def test_worker_publica_y_elimina_material_temporal(monkeypatch, tmp_path):
     assert backend.completed == ("request-1", "doc-1", "POSITIVO")
     assert backend.failed is None
     assert provider.pfx_path is not None
+    assert provider.parameters == {"contracting_party_tax_id": "B12345678"}
     assert not __import__("pathlib").Path(provider.pfx_path).exists()
 
 

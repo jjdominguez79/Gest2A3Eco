@@ -154,6 +154,57 @@ def test_impide_dos_solicitudes_activas_del_mismo_tipo(monkeypatch):
     assert second.status_code == 409
 
 
+def test_impide_repetir_el_mismo_certificado_aunque_el_anterior_terminase(monkeypatch):
+    client, factory, _, headers = _setup(monkeypatch)
+    first = client.post(
+        "/api/v1/messaging/client/certificates/requests",
+        headers=headers,
+        json={"certificate_type": "AEAT_IAE", "idempotency_key": "primera"},
+    )
+    with factory() as db:
+        item = db.get(ClientCertificateRequest, first.json()["id"])
+        item.status = "completed"
+        db.commit()
+
+    second = client.post(
+        "/api/v1/messaging/client/certificates/requests",
+        headers=headers,
+        json={"certificate_type": "AEAT_IAE", "idempotency_key": "segunda"},
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 409
+    assert "hoy" in second.json()["detail"]
+
+
+def test_contratistas_exige_y_normaliza_datos_del_contratante(monkeypatch):
+    client, _, _, headers = _setup(monkeypatch)
+
+    missing = client.post(
+        "/api/v1/messaging/client/certificates/requests",
+        headers=headers,
+        json={"certificate_type": "AEAT_CONTRATISTAS"},
+    )
+    created = client.post(
+        "/api/v1/messaging/client/certificates/requests",
+        headers=headers,
+        json={
+            "certificate_type": "AEAT_CONTRATISTAS",
+            "parameters": {
+                "contracting_party_tax_id": "b-12345678",
+                "contracting_party_name": "Empresa contratante SL",
+            },
+        },
+    )
+
+    assert missing.status_code == 422
+    assert created.status_code == 201
+    assert created.json()["parameters"] == {
+        "contracting_party_tax_id": "B12345678",
+        "contracting_party_name": "Empresa contratante SL",
+    }
+
+
 def test_flag_desactivado_bloquea_autoservicio(monkeypatch):
     client, _, _, headers = _setup(monkeypatch, enabled=False)
 
@@ -315,6 +366,29 @@ def test_escritorio_reintenta_solicitud_sin_crear_duplicado(monkeypatch):
     assert response.json()["error_message"] is None
     with factory() as db:
         assert len(db.scalars(select(ClientCertificateRequest)).all()) == 1
+
+
+def test_escritorio_elimina_solo_intento_fallido_sin_documento(monkeypatch):
+    client, factory, _, _headers = _setup(monkeypatch)
+    created = client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={"certificate_type": "AEAT_CORRIENTE"},
+    ).json()
+    with factory() as db:
+        item = db.get(ClientCertificateRequest, created["id"])
+        item.status = "failed"
+        item.error_message = "Intento de prueba"
+        db.commit()
+
+    deleted = client.delete(
+        f"/api/v1/messaging/client/certificates/internal/requests/{created['id']}",
+    )
+
+    assert deleted.status_code == 200
+    assert deleted.json() == {"deleted": True, "id": created["id"]}
+    with factory() as db:
+        assert db.get(ClientCertificateRequest, created["id"]) is None
 
 
 def test_escritorio_adelanta_reintento_automatico_aplazado(monkeypatch):

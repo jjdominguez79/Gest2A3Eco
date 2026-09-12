@@ -280,6 +280,17 @@ class BackendClientService:
         response.raise_for_status()
         return response.json()
 
+    def delete_certificate_request(self, request_id: str) -> dict:
+        """Elimina una solicitud central fallida o cancelada sin documento."""
+        self._ensure_configured()
+        url = (
+            f"{self.base_url}/api/v1/messaging/client/certificates/internal/"
+            f"requests/{request_id}"
+        )
+        response = self.http.delete(url, headers=self._headers(), timeout=30)
+        response.raise_for_status()
+        return response.json()
+
     def download_certificate_request_document(
         self, request_id: str,
     ) -> tuple[bytes, str, str]:

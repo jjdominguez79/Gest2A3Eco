@@ -77,6 +77,7 @@ class AappWorker:
                     str(self.config.diagnostic_dir)
                     if self.config.diagnostic_dir is not None else None
                 ),
+                parametros=dict(item.get("parameters") or {}),
                 log=lambda message: LOG.info("%s: %s", item["id"], message),
             )
             result = provider.obtener(cert, item["certificate_type"], options)

@@ -3,17 +3,47 @@ class CertificateType {
     required this.code,
     required this.organization,
     required this.name,
+    this.parameters = const [],
   });
 
   final String code;
   final String organization;
   final String name;
+  final List<CertificateParameter> parameters;
 
   factory CertificateType.fromJson(Map<String, dynamic> json) =>
       CertificateType(
         code: json['code'] as String? ?? '',
         organization: json['organization'] as String? ?? '',
         name: json['name'] as String? ?? '',
+        parameters: (json['parameters'] as List<dynamic>? ?? const [])
+            .map(
+              (item) =>
+                  CertificateParameter.fromJson(item as Map<String, dynamic>),
+            )
+            .toList(),
+      );
+}
+
+class CertificateParameter {
+  const CertificateParameter({
+    required this.key,
+    required this.label,
+    required this.type,
+    required this.required,
+  });
+
+  final String key;
+  final String label;
+  final String type;
+  final bool required;
+
+  factory CertificateParameter.fromJson(Map<String, dynamic> json) =>
+      CertificateParameter(
+        key: json['key'] as String? ?? '',
+        label: json['label'] as String? ?? '',
+        type: json['type'] as String? ?? 'text',
+        required: json['required'] as bool? ?? false,
       );
 }
 

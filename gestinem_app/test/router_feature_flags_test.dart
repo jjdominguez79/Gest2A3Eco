@@ -65,7 +65,7 @@ void main() {
       await tester.pumpAndSettle();
 
       router.go('/documents/doc-abc');
-      await tester.pump();
+      await tester.pumpAndSettle();
 
       expect(
         router.routerDelegate.currentConfiguration.uri.path,

@@ -4,12 +4,54 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gestinem/features/auth/presentation/auth_controller.dart';
 import 'package:gestinem/features/documents/domain/client_document.dart';
 import 'package:gestinem/features/documents/presentation/documents_providers.dart';
+import 'package:gestinem/features/documents/presentation/document_detail_screen.dart';
 import 'package:gestinem/features/documents/presentation/documents_screen.dart';
 import 'package:gestinem/features/platform/features_provider.dart';
+import 'package:go_router/go_router.dart';
 
 import 'test_helpers.dart';
 
 void main() {
+  testWidgets('detalle abierto directamente permite volver al inicio', (
+    tester,
+  ) async {
+    final router = GoRouter(
+      initialLocation: '/documents/doc-1',
+      routes: [
+        GoRoute(path: '/', builder: (_, _) => const Text('Inicio')),
+        GoRoute(
+          path: '/documents/:id',
+          builder: (_, state) =>
+              DocumentDetailScreen(documentId: state.pathParameters['id']!),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          documentDetailProvider('doc-1').overrideWith(
+            (_) async => const ClientDocument(
+              id: 'doc-1',
+              documentType: 'certificado_aeat',
+              displayName: 'Certificado AEAT',
+              fileName: 'certificado.pdf',
+              status: 'published',
+            ),
+          ),
+          documentReadProvider('doc-1').overrideWith((_) async {}),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('document-back-button')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('document-back-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('Inicio'), findsOneWidget);
+  });
+
   group('DocumentsScreen - feature gate', () {
     testWidgets('muestra mensaje cuando documents esta desactivado', (
       tester,

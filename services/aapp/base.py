@@ -69,6 +69,8 @@ class OpcionesSync:
     datos_ss: dict = field(default_factory=dict)
     # Ruta destino donde el proveedor debe guardar el PDF del certificado.
     ruta_pdf_destino: str | None = None
+    # Datos propios de la solicitud (CIF del contratante, fecha, etc.).
+    parametros: dict = field(default_factory=dict)
 
     def trace(self, msg: str) -> None:
         if self.log:

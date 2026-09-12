@@ -78,6 +78,63 @@ void main() {
     expect(button.onPressed, isNull);
   });
 
+  testWidgets('solicita los datos obligatorios del certificado contratista', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          platformFeaturesProvider.overrideWith(
+            (_) async => const PlatformFeatures(certificates: true),
+          ),
+          certificateStatusProvider.overrideWith(
+            (_) async =>
+                const CertificateStatus(configured: true, status: 'valid'),
+          ),
+          certificateTypesProvider.overrideWith(
+            (_) async => const [
+              CertificateType(
+                code: 'AEAT_CONTRATISTAS',
+                organization: 'AEAT',
+                name: 'Contratistas y subcontratistas',
+                parameters: [
+                  CertificateParameter(
+                    key: 'contracting_party_tax_id',
+                    label: 'CIF/NIF de la empresa con la que contrata',
+                    type: 'tax_id',
+                    required: true,
+                  ),
+                ],
+              ),
+            ],
+          ),
+          certificateRequestsProvider.overrideWith((_) async => const []),
+        ],
+        child: const MaterialApp(home: CertificatesScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('certificate-type-selector')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('AEAT · Contratistas y subcontratistas').last);
+    await tester.pumpAndSettle();
+
+    final field = find.byKey(
+      const Key('certificate-parameter-contracting_party_tax_id'),
+    );
+    expect(field, findsOneWidget);
+    var button = tester.widget<FilledButton>(
+      find.byKey(const Key('request-certificate-button')),
+    );
+    expect(button.onPressed, isNull);
+    await tester.enterText(field, 'B12345678');
+    await tester.pump();
+    button = tester.widget<FilledButton>(
+      find.byKey(const Key('request-certificate-button')),
+    );
+    expect(button.onPressed, isNotNull);
+  });
+
   testWidgets('muestra solicitud completada enlazada a documentos', (
     tester,
   ) async {

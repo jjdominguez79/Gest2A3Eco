@@ -10,7 +10,8 @@ import json
 import base64
 import re
 import secrets
-from datetime import timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field
@@ -67,6 +68,25 @@ CERTIFICATE_TYPES = {
         "name": "Situacion en el IAE",
         "parameters": [],
     },
+    "AEAT_CONTRATISTAS": {
+        "code": "AEAT_CONTRATISTAS",
+        "organization": "AEAT",
+        "name": "Contratistas y subcontratistas",
+        "parameters": [
+            {
+                "key": "contracting_party_tax_id",
+                "label": "CIF/NIF de la empresa con la que contrata",
+                "type": "tax_id",
+                "required": True,
+            },
+            {
+                "key": "contracting_party_name",
+                "label": "Nombre o razon social de la empresa",
+                "type": "text",
+                "required": True,
+            },
+        ],
+    },
     "TGSS_CORRIENTE": {
         "code": "TGSS_CORRIENTE",
         "organization": "TGSS",
@@ -83,6 +103,43 @@ CERTIFICATE_TYPES = {
         "code": "TGSS_LICITACION",
         "organization": "TGSS",
         "name": "Estar al corriente para licitacion publica",
+        "parameters": [],
+    },
+    "TGSS_COTIZACION": {
+        "code": "TGSS_COTIZACION",
+        "organization": "TGSS",
+        "name": "Situacion de cotizacion",
+        "parameters": [],
+    },
+    "TGSS_ART42": {
+        "code": "TGSS_ART42",
+        "organization": "TGSS",
+        "name": "Articulo 42 - Subcontratacion",
+        "parameters": [],
+    },
+    "TGSS_SIN_DEUDA_FECHA": {
+        "code": "TGSS_SIN_DEUDA_FECHA",
+        "organization": "TGSS",
+        "name": "Sin deuda a una fecha",
+        "parameters": [
+            {
+                "key": "as_of_date",
+                "label": "Fecha del certificado (AAAA-MM-DD)",
+                "type": "date",
+                "required": True,
+            },
+        ],
+    },
+    "TGSS_INFORME_DEUDA": {
+        "code": "TGSS_INFORME_DEUDA",
+        "organization": "TGSS",
+        "name": "Informe de deuda total",
+        "parameters": [],
+    },
+    "TGSS_DETALLE_DEUDA": {
+        "code": "TGSS_DETALLE_DEUDA",
+        "organization": "TGSS",
+        "name": "Informe de detalle de deuda",
         "parameters": [],
     },
 }
@@ -223,7 +280,43 @@ def _validate_request(
     allowed_types = _ALL_REQUEST_TYPES if allow_internal else CERTIFICATE_TYPES
     if certificate_type not in allowed_types:
         raise HTTPException(status_code=422, detail="Tipo de certificado no soportado")
-    serialized = json.dumps(payload.parameters, ensure_ascii=False, separators=(",", ":"))
+    parameters = dict(payload.parameters or {})
+    catalog = allowed_types[certificate_type]
+    if not catalog.get("internal_only"):
+        definitions = catalog.get("parameters") or []
+        allowed_keys = {definition["key"] for definition in definitions}
+        unknown = set(parameters) - allowed_keys
+        if unknown:
+            raise HTTPException(status_code=422, detail="Parametros no reconocidos")
+        cleaned = {}
+        for definition in definitions:
+            key = definition["key"]
+            value = str(parameters.get(key) or "").strip()
+            if definition.get("required") and not value:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Falta el campo: {definition['label']}",
+                )
+            if not value:
+                continue
+            if definition.get("type") == "tax_id":
+                value = re.sub(r"[^A-Z0-9]", "", value.upper())
+                if not re.fullmatch(r"[A-Z0-9]{8,12}", value):
+                    raise HTTPException(status_code=422, detail="CIF/NIF no valido")
+            elif definition.get("type") == "date":
+                try:
+                    parsed = date.fromisoformat(value)
+                except ValueError as exc:
+                    raise HTTPException(
+                        status_code=422, detail="La fecha debe tener formato AAAA-MM-DD",
+                    ) from exc
+                if parsed > datetime.now(ZoneInfo("Europe/Madrid")).date():
+                    raise HTTPException(status_code=422, detail="La fecha no puede ser futura")
+            elif len(value) > 200:
+                raise HTTPException(status_code=422, detail="Campo demasiado largo")
+            cleaned[key] = value
+        parameters = cleaned
+    serialized = json.dumps(parameters, ensure_ascii=False, separators=(",", ":"))
     if len(serialized.encode("utf-8")) > 8000:
         raise HTTPException(status_code=413, detail="Parametros demasiado grandes")
     return certificate_type, serialized
@@ -248,6 +341,20 @@ def _create_request(
     ))
     if existing:
         return existing
+    madrid_now = datetime.now(ZoneInfo("Europe/Madrid"))
+    madrid_start = madrid_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    madrid_end = madrid_start + timedelta(days=1)
+    requested_today = db.scalar(select(ClientCertificateRequest).where(
+        ClientCertificateRequest.organization_id == org.id,
+        ClientCertificateRequest.certificate_type == certificate_type,
+        ClientCertificateRequest.created_at >= madrid_start.astimezone(timezone.utc),
+        ClientCertificateRequest.created_at < madrid_end.astimezone(timezone.utc),
+    ).order_by(ClientCertificateRequest.created_at.desc()).limit(1))
+    if requested_today:
+        raise HTTPException(
+            status_code=409,
+            detail="Este certificado ya se ha solicitado hoy. Podras pedir otro manana.",
+        )
     active = db.scalar(select(ClientCertificateRequest).where(
         ClientCertificateRequest.organization_id == org.id,
         ClientCertificateRequest.certificate_type == certificate_type,
@@ -505,6 +612,26 @@ def retry_internal_request(
     if not item:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
     return _serialize(_retry_request(db, item))
+
+
+@router.delete("/internal/requests/{request_id}")
+def delete_internal_request(
+    request_id: str,
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    """Elimina intentos sin documento que no forman parte del historial util."""
+    item = db.get(ClientCertificateRequest, request_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if item.document_id or item.status not in {"failed", "cancelled"}:
+        raise HTTPException(
+            status_code=409,
+            detail="Solo se pueden eliminar solicitudes fallidas o canceladas sin documento",
+        )
+    db.delete(item)
+    db.commit()
+    return {"deleted": True, "id": request_id}
 
 
 @router.get("/internal/requests/{request_id}/document")

@@ -32,6 +32,8 @@ TIPOS = {
                        "https://sede.agenciatributaria.gob.es/"),
     "AEAT_IAE":       ("AEAT", "Certificado de situacion en el IAE",
                        "https://sede.agenciatributaria.gob.es/"),
+    "AEAT_CONTRATISTAS": ("AEAT", "Certificado de contratistas y subcontratistas",
+                           "https://sede.agenciatributaria.gob.es/"),
     "TGSS_CORRIENTE": ("TGSS", "Estar al corriente en la Seguridad Social",
                        "https://sede.seg-social.gob.es/"),
     "TGSS_COTIZACION": ("TGSS", "Certificado de situacion de cotizacion",
@@ -276,26 +278,47 @@ class SedePlaywrightProvider(ProveedorCertificado):
         opciones.trace(f"[TGSS] IdP: no se hallo selector de certificado en {page.url}")
 
     def _aeat_preparar_solicitud(self, page, opciones, tipo):
-        """Cumplimenta la primera pantalla del certificado ECOT en nombre propio."""
-        if tipo != "AEAT_CORRIENTE":
+        """Cumplimenta y envia los formularios AEAT conocidos de forma segura."""
+        soportados = {
+            "AEAT_CORRIENTE", "AEAT_CENSAL", "AEAT_IAE", "AEAT_CONTRATISTAS",
+        }
+        if tipo not in soportados:
             return False
         try:
-            if page.locator("#validarSolicitud").count() == 0:
+            self._marcar_si_existe(page, "#fTipoRepresentacion0")
+            if tipo == "AEAT_CORRIENTE":
+                # Orden publicado por AEAT: contratacion, transporte, subvenciones,
+                # extranjeria y generico. La solicitud base usa la finalidad generica.
+                self._marcar_si_existe(page, "#fTipoCertificado4", obligatorio=True)
+                self._marcar_si_existe(page, "#fMomentoDeterminacionEcot0", obligatorio=True)
+            elif tipo == "AEAT_CONTRATISTAS":
+                if not self._aeat_rellenar_contratante(page, opciones):
+                    return False
+                self._marcar_si_existe(page, "#fMomentoDeterminacionEcot0")
+
+            validar = self._primer_control(page, (
+                "#validarSolicitud",
+                "input[value*='Validar' i]",
+                "button:has-text('Validar')",
+                "input[type='submit'][value*='Continuar' i]",
+                "button:has-text('Continuar')",
+            ))
+            if validar is None:
+                opciones.trace(f"[AEAT] no se encontro el boton de validacion para {tipo}")
                 return False
-            page.locator("#fTipoRepresentacion0").check(timeout=5000)
-            # Orden publicado por AEAT: contratacion, transporte, subvenciones,
-            # extranjeria y generico. La solicitud base usa la finalidad generica.
-            page.locator("#fTipoCertificado4").check(timeout=5000)
-            page.locator("#fMomentoDeterminacionEcot0").check(timeout=5000)
-            page.locator("#validarSolicitud").click(timeout=6000)
+            validar.click(timeout=6000)
             try:
                 page.wait_for_load_state("networkidle", timeout=opciones.timeout_ms)
             except Exception:
                 pass
-            opciones.trace("[AEAT] solicitud ECOT validada: nombre propio, generica y fecha actual")
-            firmar = page.locator("input[id^='FirmayEnvia_']")
-            if firmar.count() > 0:
-                firmar.first.click(timeout=6000)
+            opciones.trace(f"[AEAT] solicitud {tipo} validada")
+            firmar = self._primer_control(page, (
+                "input[id^='FirmayEnvia_']",
+                "input[value*='Firmar y Enviar' i]",
+                "button:has-text('Firmar y Enviar')",
+            ))
+            if firmar is not None:
+                firmar.click(timeout=6000)
                 try:
                     page.wait_for_load_state("networkidle", timeout=opciones.timeout_ms)
                 except Exception:
@@ -304,8 +327,64 @@ class SedePlaywrightProvider(ProveedorCertificado):
                 return self._aeat_confirmar_firma(page, opciones)
             return page
         except Exception as exc:
-            opciones.trace(f"[AEAT] no se pudo validar la solicitud ECOT: {exc}")
+            opciones.trace(f"[AEAT] no se pudo validar la solicitud {tipo}: {exc}")
             return False
+
+    @staticmethod
+    def _primer_control(page, selectores):
+        for selector in selectores:
+            try:
+                control = page.locator(selector)
+                if control.count() > 0:
+                    return control.first
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    def _marcar_si_existe(page, selector, obligatorio=False):
+        control = page.locator(selector)
+        if control.count() > 0:
+            control.first.check(timeout=5000)
+            return True
+        if obligatorio:
+            raise RuntimeError(f"No se encontro el control {selector}")
+        return False
+
+    def _aeat_rellenar_contratante(self, page, opciones):
+        parametros = opciones.parametros or {}
+        tax_id = str(parametros.get("contracting_party_tax_id") or "").strip()
+        name = str(parametros.get("contracting_party_name") or "").strip()
+        if not tax_id or not name:
+            opciones.trace("[AEAT] faltan CIF/NIF o razon social del contratante")
+            return False
+        nif = self._primer_control(page, (
+            "input[id*='nif' i][id*='contrat' i]",
+            "input[name*='nif' i][name*='contrat' i]",
+            "input[id*='nif' i][id*='pagador' i]",
+            "input[name*='nif' i][name*='pagador' i]",
+            "input[id*='nif' i][id*='cliente' i]",
+            "input[name*='nif' i][name*='cliente' i]",
+        ))
+        razon = self._primer_control(page, (
+            "input[id*='razon' i][id*='contrat' i]",
+            "input[name*='razon' i][name*='contrat' i]",
+            "input[id*='nombre' i][id*='contrat' i]",
+            "input[name*='nombre' i][name*='contrat' i]",
+            "input[id*='razon' i][id*='pagador' i]",
+            "input[name*='razon' i][name*='pagador' i]",
+            "input[id*='nombre' i][id*='cliente' i]",
+            "input[name*='nombre' i][name*='cliente' i]",
+        ))
+        if nif is None or razon is None:
+            opciones.trace(
+                "[AEAT] no se identificaron con seguridad los campos del contratante"
+            )
+            return False
+        nif.fill(tax_id, timeout=5000)
+        razon.fill(name, timeout=5000)
+        opciones.trace("[AEAT] datos del contratante cumplimentados")
+        return True
 
     def _aeat_confirmar_firma(self, page, opciones):
         """Marca Conforme en la ventana de firma y ejecuta el envio final."""
@@ -419,6 +498,18 @@ class SedePlaywrightProvider(ProveedorCertificado):
                 page.locator("#certificado_1").check(timeout=3000)
             except Exception:
                 pass
+        if tipo == "TGSS_SIN_DEUDA_FECHA":
+            value = str((opciones.parametros or {}).get("as_of_date") or "").strip()
+            fecha = self._primer_control(page, (
+                "input[type='date']",
+                "input[id*='fecha' i]",
+                "input[name*='fecha' i]",
+            ))
+            if not value or fecha is None:
+                opciones.trace("[TGSS] falta la fecha o no se encontro su campo")
+                return False
+            fecha.fill(value, timeout=5000)
+            opciones.trace(f"[TGSS] fecha del certificado cumplimentada: {value}")
         for sel in ("button[name='SPM.ACC.CONTINUAR']", "#ENVIO_11",
                     "button:has-text('Continuar')", "button:has-text('Generar')"):
             try:
@@ -739,9 +830,13 @@ AEAT_URLS = {
         "https://www1.agenciatributaria.gob.es/wlpl/EMCE-JDIT/"
         "ServletAaeeGralnternet"
     ),
+    "AEAT_CONTRATISTAS": (
+        "https://www1.agenciatributaria.gob.es/wlpl/EMCE-JDIT/"
+        "ContratistasInternetServlet"
+    ),
 }
 registrar_proveedor(SedePlaywrightProvider("AEAT",
-    {"AEAT_CORRIENTE", "AEAT_CENSAL", "AEAT_IAE"},
+    {"AEAT_CORRIENTE", "AEAT_CENSAL", "AEAT_IAE", "AEAT_CONTRATISTAS"},
     TIPOS["AEAT_CORRIENTE"][2], urls=AEAT_URLS))
 # Todos estos tipos comparten el mismo tramite "Estar al corriente" (misma URL
 # de entrada); el radio "name=certificado" (SS_CERT_RADIO) elige cual descargar.
