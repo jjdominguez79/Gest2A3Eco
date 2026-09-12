@@ -195,6 +195,7 @@ def test_worker_dehu_solo_consulta_metadatos_y_elimina_pfx_temporal(monkeypatch,
             assert material.password == "clave"
             assert options.headless is True
             assert options.descargar_pdf is False
+            assert options.nif_filtro is None
             pdf = __import__("pathlib").Path(options.carpeta_descargas) / "notificacion.pdf"
             pdf.write_bytes(b"%PDF-1.7\nnotificacion")
             return ResultadoSync(
@@ -215,7 +216,7 @@ def test_worker_dehu_solo_consulta_metadatos_y_elimina_pfx_temporal(monkeypatch,
     assert backend.completed == (
         "request-dehu-1",
         None,
-        "1 notificacion(es) detectada(s); 1 nueva(s).",
+        "1 elemento(s) detectado(s); 1 asignado(s); 1 nuevo(s); 0 sin cliente.",
     )
     assert backend.failed is None
     assert backend.dehu_notifications[0]["reference"] == "DEHU-1"
@@ -249,7 +250,7 @@ def test_worker_dehu_completa_aunque_no_haya_pdf(monkeypatch, tmp_path):
     assert backend.completed == (
         "request-dehu-2",
         None,
-        "1 notificacion(es) detectada(s); 1 nueva(s).",
+        "1 elemento(s) detectado(s); 1 asignado(s); 1 nuevo(s); 0 sin cliente.",
     )
     assert backend.dehu_notifications[0]["reference"] == "DEHU-2"
     assert backend.dehu_notifications[0]["document_id"] is None

@@ -126,7 +126,10 @@ class AappWorker:
                 # operacion manual de aceptacion.
                 descargar_pdf=False,
                 carpeta_descargas=str(workdir),
-                nif_filtro=parameters.get("tax_id") or None,
+                # No limitar por el NIF del certificado: los autorizados RED
+                # reciben avisos de los clientes a los que representan. El
+                # backend asigna cada resultado por el nifTitular de DEHu.
+                nif_filtro=None,
                 modo_diagnostico=self.config.diagnostic_dir is not None,
                 carpeta_diagnostico=(
                     str(self.config.diagnostic_dir)
@@ -177,9 +180,12 @@ class AappWorker:
                 })
             stored = self.backend.upsert_dehu_notifications(item, central_notifications)
             new_count = int(stored.get("created_count") or 0)
+            assigned_count = int(stored.get("assigned_count") or len(central_notifications))
+            unassigned_count = int(stored.get("unassigned_count") or 0)
             summary = (
-                f"{result.total} notificacion(es) detectada(s); "
-                f"{new_count} nueva(s)."
+                f"{result.total} elemento(s) detectado(s); "
+                f"{assigned_count} asignado(s); {new_count} nuevo(s); "
+                f"{unassigned_count} sin cliente."
             )
             self.backend.complete(
                 item,

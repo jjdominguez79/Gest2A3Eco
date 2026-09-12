@@ -1,4 +1,5 @@
 from services.aapp.cert_store import CertMaterial
+from services.aapp.base import OpcionesSync
 from services.aapp.dehu_playwright import ConectorDEHU, _map_estado
 
 
@@ -33,3 +34,41 @@ def test_registro_realizado_sin_estado_se_mantiene_como_realizado():
     assert rows[0].estado == "REALIZADA"
     assert rows[0].descripcion == "Agencia Estatal de Administracion Tributaria"
     assert rows[0].metadatos["emitterEntity"].startswith("Agencia Estatal")
+
+
+def test_api_dehu_empieza_en_pagina_uno_no_filtra_y_lee_comunicaciones():
+    calls = []
+
+    class Response:
+        ok = True
+        status = 200
+
+        def __init__(self, data):
+            self._data = data
+
+        def json(self):
+            return self._data
+
+    class Request:
+        def get(self, url, **_kwargs):
+            calls.append(url)
+            if "/communications?" in url:
+                return Response({
+                    "items": [{"identifier": "COM-1", "nifTitular": "B22222222"}],
+                    "total": 1,
+                    "limit": 100,
+                    "page": 1,
+                })
+            return Response({"items": [], "total": 0, "limit": 100, "page": 1})
+
+    page = type("Page", (), {"context": type("Context", (), {"request": Request()})()})()
+    rows = ConectorDEHU()._fetch_api(
+        page,
+        "https://dehu.redsara.es",
+        OpcionesSync(nif_filtro="B11111111"),
+    )
+
+    assert rows[0]["_category"] == "COMUNICACION"
+    assert all("page=1" in url for url in calls)
+    assert all("titularNif" not in url for url in calls)
+    assert any("/realized-notifications?" in url for url in calls)

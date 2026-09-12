@@ -1120,15 +1120,38 @@ def upsert_worker_dehu_notifications(
     now = utcnow()
     stored = []
     created_count = 0
+    unassigned_count = 0
+    unassigned_tax_ids = set()
+    organizations_by_tax_id = {}
+    ambiguous_tax_ids = set()
+    for organization in db.scalars(
+        select(MessagingOrganization).where(MessagingOrganization.active.is_(True))
+    ).all():
+        normalized = re.sub(r"[^0-9A-Z]", "", (organization.tax_id or "").upper())
+        if not normalized:
+            continue
+        if normalized in organizations_by_tax_id:
+            ambiguous_tax_ids.add(normalized)
+        else:
+            organizations_by_tax_id[normalized] = organization
+    for normalized in ambiguous_tax_ids:
+        organizations_by_tax_id.pop(normalized, None)
     for incoming in payload.notifications:
         reference = incoming.reference.strip()
+        holder_tax_id = re.sub(r"[^0-9A-Z]", "", incoming.holder_tax_id.upper())
+        target_organization = organizations_by_tax_id.get(holder_tax_id)
+        if target_organization is None:
+            unassigned_count += 1
+            if holder_tax_id:
+                unassigned_tax_ids.add(holder_tax_id)
+            continue
         item = db.scalar(select(ClientDehuNotification).where(
-            ClientDehuNotification.organization_id == request_item.organization_id,
+            ClientDehuNotification.organization_id == target_organization.id,
             ClientDehuNotification.external_reference == reference,
         ))
         if item is None:
             item = ClientDehuNotification(
-                organization_id=request_item.organization_id,
+                organization_id=target_organization.id,
                 external_reference=reference,
                 first_seen_at=now,
             )
@@ -1146,14 +1169,19 @@ def upsert_worker_dehu_notifications(
         item.issuing_body = incoming.issuing_body.strip()
         item.issuing_body_source = incoming.issuing_body_source.strip()
         item.action_type = incoming.action_type.strip()
-        item.holder_tax_id = re.sub(r"[^0-9A-Z]", "", incoming.holder_tax_id.upper())
+        item.holder_tax_id = holder_tax_id
         item.holder_name = incoming.holder_name.strip()
         item.available_date = incoming.available_date.strip()
         item.expiration_date = incoming.expiration_date.strip()
         item.status = incoming.status.strip().upper() or "PENDIENTE"
         item.source_endpoint = incoming.source_endpoint.strip()
+        metadata = dict(incoming.metadata)
+        metadata.update({
+            "certificate_organization_id": request_item.organization_id,
+            "assigned_organization_id": target_organization.id,
+        })
         item.metadata_json = json.dumps(
-            incoming.metadata, ensure_ascii=False, separators=(",", ":"), default=str,
+            metadata, ensure_ascii=False, separators=(",", ":"), default=str,
         )
         item.document_id = document.id if document else item.document_id
         item.last_seen_at = now
@@ -1163,7 +1191,10 @@ def upsert_worker_dehu_notifications(
     return {
         "items": [_serialize_dehu_notification(item) for item in stored],
         "count": len(stored),
+        "assigned_count": len(stored),
         "created_count": created_count,
+        "unassigned_count": unassigned_count,
+        "unassigned_tax_ids": sorted(unassigned_tax_ids),
     }
 
 

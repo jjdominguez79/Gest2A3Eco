@@ -49,6 +49,7 @@ def _setup(monkeypatch, *, enabled=True):
         org = MessagingOrganization(
             company_code="E00001",
             name="Cliente Uno",
+            tax_id="B12345678",
             active=True,
             client_certificates_enabled=enabled,
         )
@@ -163,6 +164,52 @@ def test_worker_guarda_bandeja_dehu_idempotente_y_escritorio_la_lista(monkeypatc
     assert listed.json()["items"][0]["company_code"] == "E00001"
     with factory() as db:
         assert len(list(db.scalars(select(ClientDehuNotification)).all())) == 1
+
+
+def test_worker_asigna_dehu_por_nif_titular_y_omite_desconocidos(monkeypatch):
+    client, factory, source_org_id, _ = _setup(monkeypatch)
+    with factory() as db:
+        target = MessagingOrganization(
+            company_code="E00002",
+            name="Cliente representado",
+            tax_id="B87654321",
+            active=True,
+        )
+        db.add(target)
+        db.commit()
+        target_org_id = target.id
+
+    created = client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={"certificate_type": "DEHU_SYNC", "idempotency_key": "dehu-red"},
+    )
+    assert created.status_code == 201
+    claimed = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/claim",
+    ).json()["item"]
+    response = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/requests/"
+        f"{claimed['id']}/dehu-notifications",
+        json={
+            "claim_token": claimed["claim_token"],
+            "notifications": [
+                {"reference": "REF-ASIGNADA", "holder_tax_id": "B87654321"},
+                {"reference": "REF-SIN-CLIENTE", "holder_tax_id": "B00000000"},
+            ],
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["assigned_count"] == 1
+    assert response.json()["unassigned_count"] == 1
+    assert response.json()["unassigned_tax_ids"] == ["B00000000"]
+    with factory() as db:
+        item = db.scalars(select(ClientDehuNotification)).one()
+        assert item.organization_id == target_org_id
+        assert item.organization_id != source_org_id
+        metadata = __import__("json").loads(item.metadata_json)
+        assert metadata["certificate_organization_id"] == source_org_id
+        assert metadata["assigned_organization_id"] == target_org_id
 
 
 def test_programacion_dehu_encola_y_envia_un_resumen_al_terminar(monkeypatch):

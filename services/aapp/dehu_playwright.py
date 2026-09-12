@@ -9,7 +9,8 @@ Realidad tecnica del portal (verificada con volcados reales)
   electronico". El certificado TLS lo pide Cl@ve/@firma (*.clave.gob.es).
 - Ya autenticado, los datos se sirven por una API REST interna:
     GET /api/v1/notifications?limit=&page=            -> pendientes  {count,total,limit,page,items[]}
-    GET /api/v1/realized_notifications?limit=&page=   -> realizadas
+    GET /api/v1/realized-notifications?limit=&page=   -> realizadas
+    GET /api/v1/communications?limit=&page=            -> comunicaciones
   Campos de cada item: identifier, concept, emitterEntity, emitterSourceEntity,
   nifTitular, sentReference, availabilityDate, expirationDate, bondType, state...
   Por eso, tras autenticar, llamamos DIRECTAMENTE a esa API (reutilizando la
@@ -49,8 +50,12 @@ ORIGENES_CLAVE = [
 
 _RED_IGNORAR = re.compile(r"(visitas-web|ruxit|ruxitagent|action_name=|/beacon|google|matomo)", re.I)
 
-# Endpoints REST de DEHu (pendientes y realizadas).
-_ENDPOINTS = ("/api/v1/notifications", "/api/v1/realized_notifications")
+# Endpoints REST usados por el frontal DEHu actual. La paginacion empieza en 1.
+_ENDPOINTS = (
+    ("/api/v1/notifications", "NOTIFICACION"),
+    ("/api/v1/realized-notifications", "NOTIFICACION"),
+    ("/api/v1/communications", "COMUNICACION"),
+)
 
 
 class ConectorDEHU(ConectorOrganismo):
@@ -168,12 +173,14 @@ class ConectorDEHU(ConectorOrganismo):
             req = page.context.request
         except Exception:
             return registros
-        nif_raw = (opciones.nif_filtro or "").strip().upper()
-        filtro = f"&titularNif={nif_raw}" if nif_raw else ""
-        for endpoint in _ENDPOINTS:
+        consultas_validas = 0
+        for endpoint, categoria in _ENDPOINTS:
             page_num = 1
             while True:
-                url = f"{base}{endpoint}?limit=100&page={page_num}{filtro}"
+                # No se filtra por el NIF del propietario del certificado. Un
+                # autorizado RED puede ver avisos cuyos titulares son varias
+                # empresas. El backend los asigna despues por nifTitular.
+                url = f"{base}{endpoint}?limit=100&page={page_num}"
                 try:
                     resp = req.get(url, timeout=opciones.timeout_ms)
                     if not resp.ok:
@@ -183,12 +190,17 @@ class ConectorDEHU(ConectorOrganismo):
                 except Exception as exc:
                     opciones.trace(f"[DEHU][api] error {endpoint}: {exc}")
                     break
-                items = data.get("items") if isinstance(data, dict) else None
+                if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+                    opciones.trace(f"[DEHU][api] respuesta no valida {endpoint}")
+                    break
+                consultas_validas += 1
+                items = data["items"]
                 if not items:
                     break
                 for it in items:
                     if isinstance(it, dict):
                         it["_endpoint"] = endpoint
+                        it["_category"] = categoria
                 registros.extend(items)
                 total = (data.get("total") or 0) if isinstance(data, dict) else 0
                 limit = (data.get("limit") or 100) if isinstance(data, dict) else 100
@@ -196,6 +208,10 @@ class ConectorDEHU(ConectorOrganismo):
                 if page_num * (limit or 100) >= total:
                     break
                 page_num += 1
+        if not consultas_validas:
+            raise RuntimeError(
+                "DEHu no devolvio ninguna bandeja valida; la sesion puede no estar autenticada"
+            )
         return registros
 
     def _map_registros(self, registros, cert_material, nif_filtro=None):
@@ -211,13 +227,15 @@ class ConectorDEHU(ConectorOrganismo):
             if not ref or ref in vistos:
                 continue
             vistos.add(ref)
-            realizada = "realized" in (r.get("_endpoint") or "")
+            endpoint = r.get("_endpoint") or ""
+            categoria = r.get("_category") or "NOTIFICACION"
+            realizada = "realized" in endpoint
             estado = r.get("state") or ("REALIZADA" if realizada else "PENDIENTE")
             notifs.append(NotificacionDTO(
                 referencia=str(ref),
                 asunto=r.get("concept") or "(sin asunto)",
                 descripcion=r.get("emitterEntity"),
-                tipo_acto=r.get("bondType"),
+                tipo_acto=r.get("bondType") or categoria,
                 nif_interesado=r.get("nifTitular") or cert_material.nif_titular,
                 nombre_interesado=cert_material.nombre,
                 fecha_puesta_disposicion=_norm_fecha(r.get("availabilityDate")),
@@ -227,7 +245,8 @@ class ConectorDEHU(ConectorOrganismo):
                     "emitterEntity": r.get("emitterEntity"),
                     "emitterSourceEntity": r.get("emitterSourceEntity"),
                     "sentReference": r.get("sentReference"),
-                    "endpoint": r.get("_endpoint"),
+                    "endpoint": endpoint,
+                    "category": categoria,
                     "finalDate": r.get("finalDate"),
                     "raw": r,
                 },
@@ -272,7 +291,8 @@ class ConectorDEHU(ConectorOrganismo):
             try:
                 resp = page.context.request.get(f"{base}/api/v1/notifications?limit=1&page=1",
                                                  timeout=8000)
-                if resp.ok:
+                data = resp.json() if resp.ok else None
+                if isinstance(data, dict) and isinstance(data.get("items"), list):
                     page.wait_for_timeout(1000)
                     return
             except Exception:
