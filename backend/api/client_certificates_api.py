@@ -45,7 +45,11 @@ from backend.api.messaging_models import (
     new_id,
 )
 from backend.api.messaging_security import hash_token, is_expired, utcnow
-from backend.api.security import require_aapp_worker_key, require_workstation_or_internal
+from backend.api.security import (
+    require_aapp_worker_claim_protocol,
+    require_aapp_worker_key,
+    require_workstation_or_internal,
+)
 
 
 router = APIRouter(
@@ -1041,6 +1045,7 @@ def _try_send_dehu_batch_summary(db: Session, batch_id: str | None) -> None:
 def claim_next_request(
     db: Session = Depends(_db),
     _auth: str = Depends(require_aapp_worker_key),
+    _protocol: str = Depends(require_aapp_worker_claim_protocol),
 ):
     now = utcnow()
     _enqueue_due_dehu_mailboxes(db, now)

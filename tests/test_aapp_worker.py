@@ -136,6 +136,29 @@ def test_worker_sin_trabajo_no_hace_nada(tmp_path):
     assert backend.failed is None
 
 
+def test_cliente_worker_envia_protocolo_vigente(tmp_path):
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"item": None}
+
+    class Session:
+        def __init__(self):
+            self.headers = None
+
+        def post(self, _url, **kwargs):
+            self.headers = kwargs["headers"]
+            return Response()
+
+    session = Session()
+    backend = AappBackendClient(_config(tmp_path), session=session)
+
+    assert backend.claim() is None
+    assert session.headers["X-AAPP-Worker-Protocol"] == "2"
+
+
 def test_publicacion_automatica_solo_para_solicitudes_flutter(tmp_path):
     class Response:
         def raise_for_status(self):

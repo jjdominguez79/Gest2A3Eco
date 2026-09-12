@@ -32,7 +32,11 @@ from backend.api.messaging_models import (
     MessagingSession,
 )
 from backend.api.messaging_security import hash_token, utcnow
-from backend.api.security import require_aapp_worker_key, require_workstation_or_internal
+from backend.api.security import (
+    require_aapp_worker_claim_protocol,
+    require_aapp_worker_key,
+    require_workstation_or_internal,
+)
 
 
 def _setup(monkeypatch, *, enabled=True):
@@ -90,6 +94,7 @@ def _setup(monkeypatch, *, enabled=True):
     app.dependency_overrides[_db] = override_db
     app.dependency_overrides[require_workstation_or_internal] = lambda: "test"
     app.dependency_overrides[require_aapp_worker_key] = lambda: "test-worker"
+    app.dependency_overrides[require_aapp_worker_claim_protocol] = lambda: "test-protocol"
     return TestClient(app), factory, org_id, {"Authorization": f"Bearer {token}"}
 
 

@@ -21,3 +21,11 @@ def test_credencial_worker_es_independiente_de_la_interna(monkeypatch):
     with pytest.raises(HTTPException) as error:
         security.require_aapp_worker_key("internal-secret")
     assert error.value.status_code == 401
+
+
+def test_protocolo_worker_rechaza_versiones_obsoletas():
+    assert security.require_aapp_worker_claim_protocol("2") == "aapp-worker-protocol-2"
+
+    with pytest.raises(HTTPException) as error:
+        security.require_aapp_worker_claim_protocol("1")
+    assert error.value.status_code == 426

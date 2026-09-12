@@ -16,7 +16,10 @@ class AappBackendClient:
 
     @property
     def _headers(self) -> dict:
-        return {"X-API-Key": self.config.api_key}
+        return {
+            "X-API-Key": self.config.api_key,
+            "X-AAPP-Worker-Protocol": "2",
+        }
 
     def claim(self) -> dict | None:
         response = self.http.post(
