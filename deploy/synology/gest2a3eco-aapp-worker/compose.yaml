@@ -4,7 +4,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: gest2a3eco-aapp-worker-v2
     restart: unless-stopped
     read_only: true
     tmpfs:
