@@ -15,6 +15,7 @@ class _Backend:
         self.item = item
         self.completed = None
         self.failed = None
+        self.dehu_notifications = None
 
     def claim(self):
         return self.item
@@ -32,6 +33,10 @@ class _Backend:
 
     def publish_notification_pdf(self, _item, _notification, _path):
         return {"id": "notification-doc-1"}
+
+    def upsert_dehu_notifications(self, _item, notifications):
+        self.dehu_notifications = notifications
+        return {"count": len(notifications)}
 
     def complete(self, item, document_id, summary=""):
         self.completed = (item["id"], document_id, summary)
@@ -212,6 +217,8 @@ def test_worker_dehu_publica_documento_y_elimina_pfx_temporal(monkeypatch, tmp_p
         "1 notificacion(es) detectada(s); 1 documento(s) publicado(s).",
     )
     assert backend.failed is None
+    assert backend.dehu_notifications[0]["reference"] == "DEHU-1"
+    assert backend.dehu_notifications[0]["document_id"] == "notification-doc-1"
     assert connector.certificate_path is not None
     assert not __import__("pathlib").Path(connector.certificate_path).exists()
 
@@ -243,3 +250,5 @@ def test_worker_dehu_completa_aunque_no_haya_pdf(monkeypatch, tmp_path):
         None,
         "1 notificacion(es) detectada(s); 0 documento(s) publicado(s).",
     )
+    assert backend.dehu_notifications[0]["reference"] == "DEHU-2"
+    assert backend.dehu_notifications[0]["document_id"] is None

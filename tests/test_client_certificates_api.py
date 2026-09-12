@@ -20,6 +20,7 @@ from backend.api.client_certificates_api import _db, router
 from backend.api.client_models import (
     ClientCertificateRequest,
     ClientCertificateSecret,
+    ClientDehuNotification,
     ClientDocument,
 )
 from backend.api.database import Base
@@ -112,6 +113,54 @@ def test_cliente_crea_y_lista_solicitud(monkeypatch):
     with factory() as db:
         item = db.scalars(select(ClientCertificateRequest)).one()
         assert item.requester_type == "client"
+
+
+def test_worker_guarda_bandeja_dehu_idempotente_y_escritorio_la_lista(monkeypatch):
+    client, factory, _, _ = _setup(monkeypatch)
+    created = client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={
+            "certificate_type": "DEHU_SYNC",
+            "idempotency_key": "dehu-central-1",
+        },
+    )
+    assert created.status_code == 201
+    claimed = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/claim",
+    ).json()["item"]
+    payload = {
+        "claim_token": claimed["claim_token"],
+        "notifications": [{
+            "reference": "DEHU-REF-1",
+            "mailbox_id": "mailbox-1",
+            "subject": "Requerimiento de prueba",
+            "holder_tax_id": "B12345678",
+            "available_date": "2026-09-12",
+            "expiration_date": "2026-09-22",
+            "status": "PENDIENTE",
+            "source_endpoint": "/api/v1/notifications",
+            "metadata": {"sentReference": "ENV-1"},
+        }],
+    }
+    url = (
+        "/api/v1/messaging/client/certificates/internal/worker/requests/"
+        f"{claimed['id']}/dehu-notifications"
+    )
+    assert client.post(url, json=payload).status_code == 200
+    payload["notifications"][0]["subject"] = "Requerimiento actualizado"
+    assert client.post(url, json=payload).status_code == 200
+
+    listed = client.get(
+        "/api/v1/messaging/client/certificates/internal/dehu-notifications",
+        params={"company_code": "E00001"},
+    )
+    assert listed.status_code == 200
+    assert len(listed.json()["items"]) == 1
+    assert listed.json()["items"][0]["subject"] == "Requerimiento actualizado"
+    assert listed.json()["items"][0]["company_code"] == "E00001"
+    with factory() as db:
+        assert len(list(db.scalars(select(ClientDehuNotification)).all())) == 1
 
 
 def test_idempotencia_devuelve_la_misma_solicitud(monkeypatch):

@@ -145,18 +145,40 @@ class AappWorker:
             if not result.ok:
                 raise RuntimeError(result.mensaje or "No se pudo sincronizar DEHu")
             document_ids = []
+            central_notifications = []
             for notification in result.notificaciones:
+                document_id = None
                 if not notification.pdf_path:
-                    continue
-                pdf_path = Path(notification.pdf_path)
-                if not pdf_path.is_file() or not pdf_path.read_bytes().startswith(b"%PDF-"):
-                    continue
-                document = self.backend.publish_notification_pdf(
-                    item, notification, pdf_path,
-                )
-                document_id = str(document.get("id") or document.get("document_id") or "")
-                if document_id:
-                    document_ids.append(document_id)
+                    pass
+                else:
+                    pdf_path = Path(notification.pdf_path)
+                    if pdf_path.is_file() and pdf_path.read_bytes().startswith(b"%PDF-"):
+                        document = self.backend.publish_notification_pdf(
+                            item, notification, pdf_path,
+                        )
+                        document_id = str(
+                            document.get("id") or document.get("document_id") or ""
+                        ) or None
+                        if document_id:
+                            document_ids.append(document_id)
+                central_notifications.append({
+                    "reference": notification.referencia,
+                    "mailbox_id": parameters.get("mailbox_id") or "",
+                    "subject": notification.asunto or "",
+                    "description": notification.descripcion or "",
+                    "action_type": notification.tipo_acto or "",
+                    "holder_tax_id": notification.nif_interesado or "",
+                    "holder_name": notification.nombre_interesado or "",
+                    "available_date": notification.fecha_puesta_disposicion or "",
+                    "expiration_date": notification.fecha_vencimiento or "",
+                    "status": notification.estado or "PENDIENTE",
+                    "source_endpoint": str(
+                        (notification.metadatos or {}).get("endpoint") or ""
+                    ),
+                    "metadata": notification.metadatos or {},
+                    "document_id": document_id,
+                })
+            self.backend.upsert_dehu_notifications(item, central_notifications)
             summary = (
                 f"{result.total} notificacion(es) detectada(s); "
                 f"{len(document_ids)} documento(s) publicado(s)."

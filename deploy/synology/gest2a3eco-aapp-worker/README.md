@@ -8,9 +8,9 @@ Antes de arrancar, crear `secrets/aapp_worker_api_key.txt` con el mismo valor de
 
 ```sh
 docker compose config
-docker compose up --build -d
+docker compose -p gest2a3eco-aapp-worker-v2 up --build -d
 docker compose ps
-docker compose logs --tail=100 aapp-worker
+docker compose -p gest2a3eco-aapp-worker-v2 logs --tail=100 aapp-worker
 ```
 
 Los certificados de cliente y sus contrasenas solo existen durante cada

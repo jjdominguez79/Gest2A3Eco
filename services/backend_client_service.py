@@ -269,6 +269,24 @@ class BackendClientService:
         response.raise_for_status()
         return list(response.json().get("items") or [])
 
+    def list_dehu_notifications(
+        self, *, company_code: str = "", limit: int = 1000,
+    ) -> list[dict]:
+        """Lee la bandeja DEHu central alimentada por el worker AAPP."""
+        self._ensure_configured()
+        url = f"{self.base_url}/api/v1/messaging/client/certificates/internal/dehu-notifications"
+        params = {"limit": limit}
+        if company_code:
+            params["company_code"] = company_code
+        response = self.http.get(
+            url,
+            headers=self._headers(),
+            params=params,
+            timeout=30,
+        )
+        response.raise_for_status()
+        return list(response.json().get("items") or [])
+
     def retry_certificate_request(self, request_id: str) -> dict:
         """Vuelve a encolar una solicitud fallida o que requiere intervencion."""
         self._ensure_configured()

@@ -426,12 +426,16 @@ def _norm_nif(v):
 
 def _map_estado(s):
     s = (s or "").upper()
-    if "ACEPTAD" in s:
+    if "ACEPTAD" in s or "ACCEPT" in s:
         return "ACEPTADA"
-    if "RECHAZ" in s:
+    if "RECHAZ" in s or "REJECT" in s:
         return "RECHAZADA"
-    if "LEID" in s or "LEÍD" in s:
+    if "VENCID" in s or "EXPIR" in s:
+        return "VENCIDA"
+    if "LEID" in s or "LEÍD" in s or "READ" in s:
         return "LEIDA"
+    if "REALIZ" in s or "DONE" in s:
+        return "REALIZADA"
     return "PENDIENTE"
 
 

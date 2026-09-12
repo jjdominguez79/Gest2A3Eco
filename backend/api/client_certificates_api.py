@@ -28,6 +28,7 @@ from backend.api.client_certificate_vault import (
 from backend.api.client_models import (
     ClientCertificateRequest,
     ClientCertificateSecret,
+    ClientDehuNotification,
     ClientDocument,
 )
 from backend.api.database import SessionLocal
@@ -184,6 +185,27 @@ class WorkerMaterialIn(BaseModel):
     claim_token: str = Field(min_length=16, max_length=64)
 
 
+class DehuNotificationIn(BaseModel):
+    reference: str = Field(min_length=1, max_length=300)
+    mailbox_id: str = Field(default="", max_length=100)
+    subject: str = Field(default="", max_length=500)
+    description: str = Field(default="", max_length=4000)
+    action_type: str = Field(default="", max_length=120)
+    holder_tax_id: str = Field(default="", max_length=30)
+    holder_name: str = Field(default="", max_length=300)
+    available_date: str = Field(default="", max_length=32)
+    expiration_date: str = Field(default="", max_length=32)
+    status: str = Field(default="PENDIENTE", max_length=30)
+    source_endpoint: str = Field(default="", max_length=200)
+    metadata: dict = Field(default_factory=dict)
+    document_id: str | None = Field(default=None, min_length=1, max_length=36)
+
+
+class WorkerDehuNotificationsIn(BaseModel):
+    claim_token: str = Field(min_length=16, max_length=64)
+    notifications: list[DehuNotificationIn] = Field(default_factory=list, max_length=1000)
+
+
 def _db():
     db = SessionLocal()
     try:
@@ -262,6 +284,40 @@ def _secret_status(secret: ClientCertificateSecret | None) -> dict:
         "version": secret.version,
         "updated_at": secret.updated_at.isoformat() if secret.updated_at else None,
     }
+
+
+def _serialize_dehu_notification(
+    item: ClientDehuNotification,
+    organization: MessagingOrganization | None = None,
+) -> dict:
+    try:
+        metadata = json.loads(item.metadata_json or "{}")
+    except (TypeError, ValueError):
+        metadata = {}
+    result = {
+        "id": item.id,
+        "organization_id": item.organization_id,
+        "request_id": item.request_id,
+        "mailbox_id": item.mailbox_id,
+        "reference": item.external_reference,
+        "subject": item.subject,
+        "description": item.description,
+        "action_type": item.action_type,
+        "holder_tax_id": item.holder_tax_id,
+        "holder_name": item.holder_name,
+        "available_date": item.available_date,
+        "expiration_date": item.expiration_date,
+        "status": item.status,
+        "source_endpoint": item.source_endpoint,
+        "metadata": metadata,
+        "document_id": item.document_id,
+        "first_seen_at": item.first_seen_at.isoformat() if item.first_seen_at else None,
+        "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
+    }
+    if organization is not None:
+        result["company_code"] = organization.company_code
+        result["company_name"] = organization.name
+    return result
 
 
 def _organization_by_code(db: Session, company_code: str) -> MessagingOrganization:
@@ -819,6 +875,91 @@ def get_worker_certificate_material(
         "pfx_base64": base64.b64encode(pfx).decode("ascii"),
         "password": password,
         "valid_until": secret.valid_until.isoformat() if secret.valid_until else None,
+    }
+
+
+@router.post("/internal/worker/requests/{request_id}/dehu-notifications")
+def upsert_worker_dehu_notifications(
+    request_id: str,
+    payload: WorkerDehuNotificationsIn,
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_aapp_worker_key),
+):
+    """Guarda de forma idempotente las notificaciones leidas por el worker."""
+    request_item = _claimed_request(db, request_id, payload.claim_token)
+    if request_item.certificate_type != "DEHU_SYNC":
+        raise HTTPException(status_code=409, detail="La solicitud no es una sincronizacion DEHu")
+    now = utcnow()
+    stored = []
+    for incoming in payload.notifications:
+        reference = incoming.reference.strip()
+        item = db.scalar(select(ClientDehuNotification).where(
+            ClientDehuNotification.organization_id == request_item.organization_id,
+            ClientDehuNotification.external_reference == reference,
+        ))
+        if item is None:
+            item = ClientDehuNotification(
+                organization_id=request_item.organization_id,
+                external_reference=reference,
+                first_seen_at=now,
+            )
+            db.add(item)
+        document = db.get(ClientDocument, incoming.document_id) if incoming.document_id else None
+        if incoming.document_id and (
+            not document or document.organization_id != request_item.organization_id
+        ):
+            raise HTTPException(status_code=422, detail="Documento DEHu no valido")
+        item.request_id = request_item.id
+        item.mailbox_id = incoming.mailbox_id.strip()
+        item.subject = incoming.subject.strip()
+        item.description = incoming.description.strip()
+        item.action_type = incoming.action_type.strip()
+        item.holder_tax_id = re.sub(r"[^0-9A-Z]", "", incoming.holder_tax_id.upper())
+        item.holder_name = incoming.holder_name.strip()
+        item.available_date = incoming.available_date.strip()
+        item.expiration_date = incoming.expiration_date.strip()
+        item.status = incoming.status.strip().upper() or "PENDIENTE"
+        item.source_endpoint = incoming.source_endpoint.strip()
+        item.metadata_json = json.dumps(
+            incoming.metadata, ensure_ascii=False, separators=(",", ":"), default=str,
+        )
+        item.document_id = document.id if document else item.document_id
+        item.last_seen_at = now
+        item.updated_at = now
+        stored.append(item)
+    db.commit()
+    return {
+        "items": [_serialize_dehu_notification(item) for item in stored],
+        "count": len(stored),
+    }
+
+
+@router.get("/internal/dehu-notifications")
+def list_internal_dehu_notifications(
+    company_code: str = "",
+    limit: int = Query(default=1000, ge=1, le=2000),
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    """Lista la bandeja DEHu central para importarla en el escritorio."""
+    statement = (
+        select(ClientDehuNotification, MessagingOrganization)
+        .join(
+            MessagingOrganization,
+            MessagingOrganization.id == ClientDehuNotification.organization_id,
+        )
+        .order_by(ClientDehuNotification.last_seen_at.desc())
+        .limit(limit)
+    )
+    if company_code.strip():
+        statement = statement.where(
+            MessagingOrganization.company_code == company_code.strip(),
+        )
+    return {
+        "items": [
+            _serialize_dehu_notification(item, organization)
+            for item, organization in db.execute(statement).all()
+        ],
     }
 
 

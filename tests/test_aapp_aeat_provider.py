@@ -50,14 +50,16 @@ def test_aeat_corriente_prepara_solicitud_generica_en_nombre_propio():
     assert ("click", "input[id^='FirmayEnvia_']") in page.actions
 
 
-def test_aeat_no_aplica_formulario_ecot_a_otros_certificados():
+def test_aeat_censal_valida_sin_marcar_opciones_de_corriente():
     page = _Page()
     provider = SedePlaywrightProvider("AEAT", {"AEAT_CENSAL"}, "https://example.test")
 
     assert provider._aeat_preparar_solicitud(
         page, OpcionesSync(log=lambda _message: None), "AEAT_CENSAL",
-    ) is False
-    assert page.actions == []
+    ) is page
+    assert ("check", "#fTipoRepresentacion0") in page.actions
+    assert ("check", "#fTipoCertificado4") not in page.actions
+    assert ("click", "#validarSolicitud") in page.actions
 
 
 class _ControlSeguro:

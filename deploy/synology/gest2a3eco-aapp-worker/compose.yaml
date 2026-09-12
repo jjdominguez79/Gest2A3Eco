@@ -1,10 +1,10 @@
 services:
   aapp-worker:
-    image: gest2a3eco-aapp-worker:2026.09.12.14
+    image: gest2a3eco-aapp-worker:2026.09.12.15
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: gest2a3eco-aapp-worker
+    container_name: gest2a3eco-aapp-worker-v2
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -13,7 +13,7 @@ services:
     environment:
       AAPP_BACKEND_URL: "https://gest2a3eco-production.up.railway.app"
       AAPP_WORKER_API_KEY_FILE: "/run/secrets/aapp_worker_api_key"
-      AAPP_INTERVAL_SECONDS: "30"
+      AAPP_INTERVAL_SECONDS: "10"
       AAPP_REQUEST_TIMEOUT_SECONDS: "120"
       AAPP_HEADLESS: "true"
       AAPP_DIAGNOSTIC_DIR: "/data/diagnostico"

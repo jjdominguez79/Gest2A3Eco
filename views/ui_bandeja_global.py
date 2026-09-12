@@ -76,12 +76,19 @@ class UIBandejaGlobal(ttk.Frame):
                  font=("Segoe UI", 11, "bold"), anchor="w").pack(side="left", padx=16, pady=10)
         tk.Label(hdr, text="Notificaciones de todos los clientes",
                  bg=_HDR_BG, fg=_HDR_SUB, font=("Segoe UI", 9)).pack(side="left", pady=10)
+        self._btn_importar = tk.Button(
+            hdr, text="Consultar bandeja DEHu",
+            bg=_PRIMARY, fg="white",
+            font=("Segoe UI", 8), relief="flat", padx=8, pady=4, cursor="hand2",
+            command=self._on_importar_central,
+        )
+        self._btn_importar.pack(side="right", padx=(4, 12), pady=8)
         tk.Button(
-            hdr, text="↻  Actualizar",
+            hdr, text="↻  Actualizar local",
             bg="#334155", fg=_HDR_SUB,
             font=("Segoe UI", 8), relief="flat", padx=8, pady=4, cursor="hand2",
             command=self.refresh,
-        ).pack(side="right", padx=12, pady=8)
+        ).pack(side="right", padx=4, pady=8)
 
     def _build_filter_bar(self) -> None:
         fb = tk.Frame(self, bg="#e2e8f0", pady=4)
@@ -194,7 +201,7 @@ class UIBandejaGlobal(ttk.Frame):
         for key, header, width, anchor in self._COLS:
             self._tv.heading(key, text=header)
             self._tv.column(key, width=width, anchor=anchor, stretch=(key == "asunto"))
-        for estado in ("PENDIENTE", "ACEPTADA", "RECHAZADA", "VENCIDA"):
+        for estado in (value for value in ESTADOS if value):
             self._tv.tag_configure(estado, foreground=COLOR_ESTADO[estado])
         self._tv.tag_configure("URGENTE", foreground="#dc2626", font=("Segoe UI", 9, "bold"))
         self._tv.tag_configure("ARCHIVADA", foreground=_SUB)
@@ -517,6 +524,35 @@ class UIBandejaGlobal(ttk.Frame):
         self.refresh()
 
     # ----------------------------------------------------------------- refresh
+
+    def _on_importar_central(self) -> None:
+        self._btn_importar.configure(state="disabled", text="Consultando...")
+
+        def _worker():
+            try:
+                from services.aapp.sync_service import importar_bandeja_central
+                result = importar_bandeja_central(self._gestor)
+                self.after(0, lambda: self._importacion_fin(result, None))
+            except Exception as exc:
+                self.after(0, lambda error=exc: self._importacion_fin(None, error))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _importacion_fin(self, result, error=None) -> None:
+        self._btn_importar.configure(state="normal", text="Consultar bandeja DEHu")
+        if error is not None:
+            messagebox.showerror(
+                "No se pudo consultar DEHu", str(error), parent=self.winfo_toplevel(),
+            )
+            return
+        self.refresh()
+        messagebox.showinfo(
+            "Bandeja DEHu actualizada",
+            f"Notificaciones centrales: {result.total}\n"
+            f"Nuevas en el escritorio: {result.nuevas}\n"
+            f"Omitidas por falta de buzon local: {result.omitidas}",
+            parent=self.winfo_toplevel(),
+        )
 
     def refresh(self) -> None:
         self._cache = self._gestor.listar_notif_bandeja_global()

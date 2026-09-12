@@ -182,6 +182,51 @@ class ClientCertificateSecret(Base):
     )
 
 
+class ClientDehuNotification(Base):
+    """Notificacion DEHu detectada por el worker con el certificado del cliente."""
+
+    __tablename__ = "client_dehu_notifications"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id", "external_reference",
+            name="uq_client_dehu_notification_reference",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_organizations.id", ondelete="CASCADE"), index=True,
+    )
+    request_id: Mapped[str | None] = mapped_column(
+        ForeignKey("client_certificate_requests.id", ondelete="SET NULL"), index=True,
+    )
+    mailbox_id: Mapped[str] = mapped_column(String(100), default="")
+    external_reference: Mapped[str] = mapped_column(String(300))
+    subject: Mapped[str] = mapped_column(String(500), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    action_type: Mapped[str] = mapped_column(String(120), default="")
+    holder_tax_id: Mapped[str] = mapped_column(String(30), default="", index=True)
+    holder_name: Mapped[str] = mapped_column(String(300), default="")
+    available_date: Mapped[str] = mapped_column(String(32), default="")
+    expiration_date: Mapped[str] = mapped_column(String(32), default="")
+    status: Mapped[str] = mapped_column(String(30), default="PENDIENTE", index=True)
+    source_endpoint: Mapped[str] = mapped_column(String(200), default="")
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    document_id: Mapped[str | None] = mapped_column(
+        ForeignKey("client_documents.id", ondelete="SET NULL"), index=True,
+    )
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow,
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow,
+    )
+
+
 # ==========================================================================
 # FACTURACION DEL CLIENTE
 # ==========================================================================

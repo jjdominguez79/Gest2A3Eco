@@ -53,6 +53,13 @@ class ResultadoGlobal:
         return [r for r in self.resultados if not r.ok]
 
 
+@dataclass
+class ResultadoImportacionCentral:
+    total: int = 0
+    nuevas: int = 0
+    omitidas: int = 0
+
+
 def _bandeja_id(codigo_empresa: str, organismo_codigo: str, referencia: str) -> str:
     base = f"{codigo_empresa}|{organismo_codigo}|{referencia}".encode("utf-8", "ignore")
     return "nb_" + hashlib.sha1(base).hexdigest()[:24]
@@ -177,6 +184,71 @@ def sincronizar_buzones(gestor, buzones: list, opciones: OpcionesSync | None = N
             continue
         glob.resultados.append(sincronizar_buzon(gestor, b, opciones, ejercicio))
     return glob
+
+
+def importar_bandeja_central(
+    gestor, *, company_code: str = "", backend=None,
+) -> ResultadoImportacionCentral:
+    """Importa en PostgreSQL local la bandeja detectada por el worker AAPP."""
+    if backend is None:
+        from services.backend_client_service import BackendClientService
+        backend = BackendClientService()
+    rows = backend.list_dehu_notifications(company_code=company_code, limit=2000)
+    buzones = gestor.listar_notif_buzones_global()
+    by_id = {str(row.get("id")): row for row in buzones}
+    by_company = {}
+    for row in buzones:
+        if (row.get("organismo_codigo") or "").upper() == "DEHU":
+            by_company.setdefault(str(row.get("codigo_empresa") or ""), row)
+    result = ResultadoImportacionCentral(total=len(rows))
+    for remote in rows:
+        codigo = str(remote.get("company_code") or "")
+        buzon = by_id.get(str(remote.get("mailbox_id") or "")) or by_company.get(codigo)
+        if not codigo or not buzon:
+            result.omitidas += 1
+            continue
+        reference = str(remote.get("reference") or "").strip()
+        if not reference:
+            result.omitidas += 1
+            continue
+        item_id = _bandeja_id(codigo, "DEHU", reference)
+        existing = gestor.get_notif_bandeja_item(item_id)
+        metadata = dict(remote.get("metadata") or {})
+        metadata.update({
+            "backend_notification_id": remote.get("id"),
+            "backend_document_id": remote.get("document_id"),
+            "request_id": remote.get("request_id"),
+            "last_seen_at": remote.get("last_seen_at"),
+        })
+        gestor.upsert_notif_bandeja_item({
+            "id": item_id,
+            "codigo_empresa": codigo,
+            "ejercicio": _notification_year(remote),
+            "buzon_id": buzon.get("id"),
+            "organismo_id": buzon.get("organismo_id"),
+            "asunto": remote.get("subject") or "(sin asunto)",
+            "descripcion": remote.get("description") or "",
+            "tipo_acto": remote.get("action_type") or "",
+            "referencia": reference,
+            "nif_interesado": remote.get("holder_tax_id") or "",
+            "nombre_interesado": remote.get("holder_name") or "",
+            "fecha_puesta_disposicion": remote.get("available_date") or None,
+            "fecha_vencimiento": remote.get("expiration_date") or None,
+            "estado": remote.get("status") or "PENDIENTE",
+            "pdf_path": (existing or {}).get("pdf_path"),
+            "metadatos_json": json.dumps(metadata, ensure_ascii=False, default=str),
+        })
+        if existing is None:
+            result.nuevas += 1
+    return result
+
+
+def _notification_year(item: dict) -> int:
+    value = str(item.get("available_date") or "")
+    try:
+        return int(value[:4]) if len(value) >= 4 else datetime.now().year
+    except ValueError:
+        return datetime.now().year
 
 
 def _existe_bandeja(gestor, codigo_empresa: str, item_id: str) -> bool:
