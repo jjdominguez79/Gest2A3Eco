@@ -61,7 +61,7 @@ class UIBandejaNotificaciones(ttk.Frame):
         ("tipo_acto",   "Tipo acto",        110, "w"),
         ("asunto",      "Asunto",           260, "w"),
         ("f_disp",      "Disposicion",       88, "center"),
-        ("f_venc",      "Vencimiento",       88, "center"),
+        ("f_venc",      "Fecha maxima lectura", 120, "center"),
         ("estado",      "Estado",            80, "center"),
     ]
 
@@ -98,7 +98,7 @@ class UIBandejaNotificaciones(ttk.Frame):
                  bg=_HDR_BG, fg=_HDR_SUB, font=("Segoe UI", 9)).pack(side="left", pady=10)
         # Boton actualizar en el header
         tk.Button(
-            hdr, text="\u21bb  Sincronizar (simulado)",
+            hdr, text="\u21bb  Consultar desde bandeja global",
             bg="#334155", fg=_HDR_SUB,
             font=("Segoe UI", 8), relief="flat", padx=8, pady=4, cursor="hand2",
             command=self._on_sincronizar,
@@ -145,7 +145,7 @@ class UIBandejaNotificaciones(ttk.Frame):
         tb = tk.Frame(left, bg=_BG, pady=4)
         tb.grid(row=0, column=0, sticky="ew")
         btn = dict(font=("Segoe UI", 9), relief="flat", cursor="hand2", padx=9, pady=3)
-        self._btn_aceptar  = tk.Button(tb, text="\u2714 Aceptar",  bg=_SUCCESS, fg="white", command=self._on_aceptar,  state="disabled", **btn)
+        self._btn_aceptar  = tk.Button(tb, text="\u2714 Aceptar y descargar",  bg=_SUCCESS, fg="white", command=self._on_aceptar,  state="disabled", **btn)
         self._btn_aceptar.pack(side="left", padx=(0, 4))
         self._btn_rechazar = tk.Button(tb, text="\u2718 Rechazar", bg=_DANGER,  fg="white", command=self._on_rechazar, state="disabled", **btn)
         self._btn_rechazar.pack(side="left", padx=(0, 4))
@@ -219,7 +219,7 @@ class UIBandejaNotificaciones(ttk.Frame):
         _campo("Referencia",              self._dv_referencia)
         _campo("Estado",                  self._dv_estado)
         _campo("Puesta a disposicion",    self._dv_f_disp)
-        _campo("Vencimiento",             self._dv_f_venc)
+        _campo("Fecha maxima de lectura", self._dv_f_venc)
         _campo("Fecha accion",            self._dv_f_accion)
         _campo("NIF interesado",          self._dv_nif)
         _campo("Nombre interesado",       self._dv_nombre)
@@ -268,35 +268,20 @@ class UIBandejaNotificaciones(ttk.Frame):
         )
 
     def _on_aceptar(self) -> None:
-        if not self._selected_id:
-            return
-        if not messagebox.askyesno("Aceptar notificacion",
-                                   "Marcar esta notificacion como ACEPTADA?",
-                                   parent=self.winfo_toplevel()):
-            return
-        fecha = datetime.now().strftime("%Y-%m-%d")
-        try:
-            self._controller.cambiar_estado_bandeja(self._selected_id, "ACEPTADA", fecha)
-        except Exception as exc:
-            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
-            return
-        self.refresh()
+        messagebox.showwarning(
+            "Comparecencia no disponible",
+            "No se ha realizado ninguna accion en DEHu. La aceptacion solo se "
+            "habilitara cuando firme realmente la comparecencia y descargue el "
+            "documento y su justificante.",
+            parent=self.winfo_toplevel(),
+        )
 
     def _on_rechazar(self) -> None:
-        if not self._selected_id:
-            return
-        if not messagebox.askyesno("Rechazar notificacion",
-                                   "Marcar esta notificacion como RECHAZADA?\n"
-                                   "Esta accion queda registrada.",
-                                   parent=self.winfo_toplevel()):
-            return
-        fecha = datetime.now().strftime("%Y-%m-%d")
-        try:
-            self._controller.cambiar_estado_bandeja(self._selected_id, "RECHAZADA", fecha)
-        except Exception as exc:
-            messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
-            return
-        self.refresh()
+        messagebox.showwarning(
+            "Rechazo no disponible",
+            "No se ha realizado ninguna accion en DEHu ni se ha cambiado el estado local.",
+            parent=self.winfo_toplevel(),
+        )
 
     def _on_eliminar(self) -> None:
         if not self._selected_id:

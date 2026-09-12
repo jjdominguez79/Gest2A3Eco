@@ -287,6 +287,39 @@ class BackendClientService:
         response.raise_for_status()
         return list(response.json().get("items") or [])
 
+    def save_dehu_mailbox_config(
+        self, *, company_code: str, mailbox_id: str, mailbox_name: str,
+        active: bool, periodicity: str, notification_email: str,
+    ) -> dict:
+        """Guarda en el backend la programacion que ejecutara el worker."""
+        self._ensure_configured()
+        response = requests.put(
+            f"{self.base_url}/api/v1/messaging/client/certificates/"
+            f"internal/dehu-mailboxes/{company_code}",
+            headers=self._headers(),
+            json={
+                "mailbox_id": mailbox_id,
+                "mailbox_name": mailbox_name,
+                "active": bool(active),
+                "periodicity": periodicity,
+                "notification_email": notification_email,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def delete_dehu_mailbox_config(self, *, company_code: str) -> dict:
+        self._ensure_configured()
+        response = requests.delete(
+            f"{self.base_url}/api/v1/messaging/client/certificates/"
+            f"internal/dehu-mailboxes/{company_code}",
+            headers=self._headers(),
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def retry_certificate_request(self, request_id: str) -> dict:
         """Vuelve a encolar una solicitud fallida o que requiere intervencion."""
         self._ensure_configured()

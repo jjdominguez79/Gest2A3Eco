@@ -89,6 +89,11 @@ class UIBuzonesGlobal(ttk.Frame):
         self._btn_sync_all = tk.Button(tb, text="↻ Sincronizar todos", bg="#0284c7", fg="white",
                                        command=self._on_sincronizar_todos, **btn)
         self._btn_sync_all.pack(side="left", padx=(0, 5))
+        self._btn_programar = tk.Button(
+            tb, text="Guardar programacion en Azure", bg="#7c3aed", fg="white",
+            command=self._on_programar_automaticos, **btn,
+        )
+        self._btn_programar.pack(side="left", padx=(0, 5))
         self._btn_ver_notif = tk.Button(tb, text="Ver notificaciones", bg="#475569", fg="white",
                                          command=self._on_ver_notificaciones, state="disabled", **btn)
         self._btn_ver_notif.pack(side="left", padx=(0, 5))
@@ -205,7 +210,7 @@ class UIBuzonesGlobal(ttk.Frame):
                 "tax_id": empresa.get("cif") or "",
                 "mailbox_id": buzon.get("id") or "",
                 "mailbox_name": buzon.get("nombre") or "DEHu",
-                "download_mode": buzon.get("modo_descarga") or "PENDIENTES",
+                "download_mode": "SOLO_DETECTAR",
             },
             idempotency_key=f"desktop-dehu-{uuid.uuid4().hex}",
         )
@@ -215,8 +220,8 @@ class UIBuzonesGlobal(ttk.Frame):
         if error is None:
             messagebox.showinfo(
                 "Sincronizacion en cola",
-                "La solicitud se ha enviado al worker. Las notificaciones descargadas "
-                "se publicaran en los documentos del cliente.",
+                "La solicitud se ha enviado al worker. Se consultaran exclusivamente "
+                "los metadatos; no se aceptara ni descargara ninguna notificacion.",
                 parent=self.winfo_toplevel(),
             )
         else:
@@ -226,6 +231,62 @@ class UIBuzonesGlobal(ttk.Frame):
                 parent=self.winfo_toplevel(),
             )
         self.refresh()
+
+    def _on_programar_automaticos(self) -> None:
+        activos = [b for b in self._cache if b.get("activo")]
+        automaticos = [
+            b for b in activos
+            if str(b.get("periodicidad_sync") or "MANUAL") != "MANUAL"
+        ]
+        if not automaticos:
+            messagebox.showinfo(
+                "Programacion DEHu",
+                "No hay buzones activos con periodicidad automatica.",
+                parent=self.winfo_toplevel(),
+            )
+            return
+        if not messagebox.askyesno(
+            "Programacion DEHu",
+            f"Se guardara en Azure la programacion de {len(automaticos)} buzon(es). "
+            "El worker los consultara aunque el escritorio este cerrado y enviara "
+            "el resumen al email configurado.\n\nContinuar?",
+            parent=self.winfo_toplevel(),
+        ):
+            return
+        self._set_busy(True)
+
+        def _worker():
+            guardados = 0
+            errores = []
+            backend = BackendClientService()
+            for buzon in automaticos:
+                codigo = str(buzon.get("codigo_empresa") or "")
+                try:
+                    backend.save_dehu_mailbox_config(
+                        company_code=codigo,
+                        mailbox_id=str(buzon.get("id") or ""),
+                        mailbox_name=str(buzon.get("nombre") or "DEHu"),
+                        active=True,
+                        periodicity=str(buzon.get("periodicidad_sync") or "MANUAL"),
+                        notification_email=str(buzon.get("email_aviso") or ""),
+                    )
+                    guardados += 1
+                except Exception as exc:
+                    errores.append(f"{codigo}: {exc}")
+            self.after(0, lambda: self._programacion_fin(guardados, errores))
+
+        import threading
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _programacion_fin(self, guardados: int, errores: list[str]) -> None:
+        self._set_busy(False)
+        texto = (
+            f"Buzones programados en Azure: {guardados}\n"
+            f"Errores: {len(errores)}"
+        )
+        if errores:
+            texto += "\n\n" + "\n".join(errores[:10])
+        messagebox.showinfo("Programacion DEHu", texto, parent=self.winfo_toplevel())
 
     def _sync_todos_fin(self, encoladas, errores) -> None:
         self._set_busy(False)
@@ -242,6 +303,7 @@ class UIBuzonesGlobal(ttk.Frame):
         st = "disabled" if busy else "normal"
         try:
             self._btn_sync_all.configure(state=st)
+            self._btn_programar.configure(state=st)
             self._btn_sync.configure(state=st if self._tv.selection() else "disabled")
         except Exception:
             pass

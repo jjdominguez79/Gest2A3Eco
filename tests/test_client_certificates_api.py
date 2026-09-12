@@ -21,6 +21,8 @@ from backend.api.client_models import (
     ClientCertificateRequest,
     ClientCertificateSecret,
     ClientDehuNotification,
+    ClientDehuMailboxConfig,
+    ClientDehuSyncBatch,
     ClientDocument,
 )
 from backend.api.database import Base
@@ -161,6 +163,84 @@ def test_worker_guarda_bandeja_dehu_idempotente_y_escritorio_la_lista(monkeypatc
     assert listed.json()["items"][0]["company_code"] == "E00001"
     with factory() as db:
         assert len(list(db.scalars(select(ClientDehuNotification)).all())) == 1
+
+
+def test_programacion_dehu_encola_y_envia_un_resumen_al_terminar(monkeypatch):
+    client, factory, _, _ = _setup(monkeypatch)
+    sent = []
+    monkeypatch.setattr(
+        "backend.api.client_certificates_api.messaging_mail.send_mail",
+        lambda to, subject, html: sent.append((to, subject, html)) or True,
+    )
+    configured = client.put(
+        "/api/v1/messaging/client/certificates/internal/dehu-mailboxes/E00001",
+        json={
+            "mailbox_id": "mailbox-1",
+            "mailbox_name": "DEHu Cliente Uno",
+            "active": True,
+            "periodicity": "DIARIA",
+            "notification_email": "avisos@gestinem.es",
+        },
+    )
+    assert configured.status_code == 200
+    assert configured.json()["next_sync_at"]
+
+    claimed = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/claim",
+    ).json()["item"]
+    assert claimed["certificate_type"] == "DEHU_SYNC"
+    assert claimed["requester_type"] == "staff"
+    assert claimed["parameters"]["automatic"] is True
+    assert claimed["parameters"]["download_mode"] == "SOLO_DETECTAR"
+    assert claimed["dehu_batch_id"]
+
+    completed = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/requests/"
+        f"{claimed['id']}/complete",
+        json={
+            "claim_token": claimed["claim_token"],
+            "result_summary": "2 notificaciones detectadas; 1 nueva.",
+        },
+    )
+    assert completed.status_code == 200
+    assert sent[0][0] == "avisos@gestinem.es"
+    assert "1 buzones consultados" in sent[0][1]
+    assert "Cliente Uno" in sent[0][2]
+    with factory() as db:
+        config = db.scalars(select(ClientDehuMailboxConfig)).one()
+        batch = db.scalars(select(ClientDehuSyncBatch)).one()
+        assert config.last_request_id == claimed["id"]
+        assert config.next_sync_at > config.last_enqueued_at
+        assert batch.status == "sent"
+
+
+def test_programacion_automatica_dehu_exige_email(monkeypatch):
+    client, _, _, _ = _setup(monkeypatch)
+    response = client.put(
+        "/api/v1/messaging/client/certificates/internal/dehu-mailboxes/E00001",
+        json={"active": True, "periodicity": "DIARIA", "notification_email": ""},
+    )
+    assert response.status_code == 422
+
+
+def test_dehu_permite_repetir_consulta_tras_completar_el_mismo_dia(monkeypatch):
+    client, factory, _, _ = _setup(monkeypatch)
+    first = client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={"certificate_type": "DEHU_SYNC", "idempotency_key": "dehu-primera"},
+    )
+    with factory() as db:
+        request_item = db.get(ClientCertificateRequest, first.json()["id"])
+        request_item.status = "completed"
+        db.commit()
+    second = client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={"certificate_type": "DEHU_SYNC", "idempotency_key": "dehu-segunda"},
+    )
+    assert first.status_code == 201
+    assert second.status_code == 201
 
 
 def test_idempotencia_devuelve_la_misma_solicitud(monkeypatch):

@@ -12,6 +12,7 @@ obligatorio.
 from __future__ import annotations
 
 import os
+import json
 import threading
 import tkinter as tk
 from datetime import date, datetime
@@ -36,11 +37,11 @@ class UIBandejaGlobal(ttk.Frame):
     _COLS = [
         ("cliente",     "Cliente",          150, "w"),
         ("nif",         "NIF",               90, "center"),
-        ("organismo",   "Organismo",        110, "w"),
+        ("organismo",   "Organismo emisor", 160, "w"),
         ("buzon",       "Buzon",            130, "w"),
         ("asunto",      "Asunto",           220, "w"),
         ("f_disp",      "Disposicion",       85, "center"),
-        ("f_venc",      "Vencimiento",       95, "center"),
+        ("f_venc",      "Fecha maxima lectura", 120, "center"),
         ("estado",      "Estado",            80, "center"),
         ("responsable", "Responsable",      110, "w"),
     ]
@@ -252,14 +253,14 @@ class UIBandejaGlobal(ttk.Frame):
 
         _campo("Cliente",                 self._dv_cliente, _TITLE)
         _campo("NIF",                     self._dv_nif)
-        _campo("Organismo",               self._dv_organismo)
+        _campo("Organismo emisor",        self._dv_organismo)
         _campo("Buzon",                   self._dv_buzon)
         _campo("Asunto",                  self._dv_asunto, _TITLE)
         _campo("Tipo de acto",            self._dv_tipo_acto)
         _campo("Referencia",              self._dv_referencia)
         _campo("Estado",                  self._dv_estado)
         _campo("Puesta a disposicion",    self._dv_f_disp)
-        _campo("Vencimiento",             self._dv_f_venc)
+        _campo("Fecha maxima de lectura", self._dv_f_venc)
         _campo("Fecha accion",            self._dv_f_accion)
         _campo("Responsable",             self._dv_responsable)
         _campo("Envio al cliente",        self._dv_envio)
@@ -350,7 +351,7 @@ class UIBandejaGlobal(ttk.Frame):
                 if nif not in r_nif:
                     continue
             if org_lbl not in ("", "Todos"):
-                org = r.get("organismo_nombre") or r.get("organismo_codigo") or ""
+                org = r.get("organismo_emisor") or "DEHu"
                 if org != org_lbl:
                     continue
             if estado_val and r.get("estado") != estado_val:
@@ -556,13 +557,24 @@ class UIBandejaGlobal(ttk.Frame):
 
     def refresh(self) -> None:
         self._cache = self._gestor.listar_notif_bandeja_global()
+        for item in self._cache:
+            try:
+                metadata = json.loads(item.get("metadatos_json") or "{}")
+            except (TypeError, ValueError):
+                metadata = {}
+            item["organismo_emisor"] = (
+                metadata.get("issuing_body")
+                or metadata.get("emitterEntity")
+                or item.get("descripcion")
+                or "DEHu"
+            )
 
         clientes = sorted({r.get("empresa_nombre") or r.get("codigo_empresa") or "" for r in self._cache} - {""})
         self._cb_cliente.configure(values=["Todos"] + clientes)
         if self._cb_cliente.get() not in (["Todos"] + clientes):
             self._cb_cliente.set("Todos")
 
-        organismos = sorted({r.get("organismo_nombre") or r.get("organismo_codigo") or "" for r in self._cache} - {""})
+        organismos = sorted({r.get("organismo_emisor") or "DEHu" for r in self._cache})
         self._cb_org.configure(values=["Todos"] + organismos)
         if self._cb_org.get() not in (["Todos"] + organismos):
             self._cb_org.set("Todos")
@@ -587,7 +599,7 @@ class UIBandejaGlobal(ttk.Frame):
                 f_venc = f"{f_venc} ({dias}d)" if dias >= 0 else f"{f_venc} (!)"
             cliente = r.get("empresa_nombre") or r.get("codigo_empresa") or ""
             nif = r.get("empresa_cif") or r.get("nif_interesado") or ""
-            org = r.get("organismo_nombre") or r.get("organismo_codigo") or ""
+            org = r.get("organismo_emisor") or "DEHu"
             buzon = r.get("buzon_nombre") or ""
             self._tv.insert("", tk.END, values=(
                 r["id"], cliente, nif, org, buzon,
@@ -628,7 +640,7 @@ class UIBandejaGlobal(ttk.Frame):
 
         self._dv_cliente.set(item.get("empresa_nombre") or item.get("codigo_empresa") or "—")
         self._dv_nif.set(item.get("empresa_cif") or item.get("nif_interesado") or "—")
-        self._dv_organismo.set(item.get("organismo_nombre") or item.get("organismo_codigo") or "—")
+        self._dv_organismo.set(item.get("organismo_emisor") or "DEHu")
         self._dv_buzon.set(item.get("buzon_nombre") or "—")
         self._dv_asunto.set(item.get("asunto") or "—")
         self._dv_tipo_acto.set(item.get("tipo_acto") or "—")

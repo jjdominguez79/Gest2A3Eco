@@ -15,6 +15,8 @@ def test_registro_realizado_sin_estado_se_mantiene_como_realizado():
         [{
             "identifier": "DEHU-1",
             "concept": "Notificacion historica",
+            "emitterEntity": "Agencia Estatal de Administracion Tributaria",
+            "emitterSourceEntity": "AEAT",
             "nifTitular": "B12345678",
             "_endpoint": "/api/v1/realized_notifications",
         }],
@@ -29,3 +31,5 @@ def test_registro_realizado_sin_estado_se_mantiene_como_realizado():
     )
 
     assert rows[0].estado == "REALIZADA"
+    assert rows[0].descripcion == "Agencia Estatal de Administracion Tributaria"
+    assert rows[0].metadatos["emitterEntity"].startswith("Agencia Estatal")

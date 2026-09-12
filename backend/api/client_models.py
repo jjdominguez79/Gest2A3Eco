@@ -127,6 +127,9 @@ class ClientCertificateRequest(Base):
     requester_type: Mapped[str] = mapped_column(String(16), index=True)
     requester_id: Mapped[str] = mapped_column(String(64), default="")
     certificate_type: Mapped[str] = mapped_column(String(50), index=True)
+    dehu_batch_id: Mapped[str | None] = mapped_column(
+        ForeignKey("client_dehu_sync_batches.id", ondelete="SET NULL"), index=True,
+    )
     parameters_json: Mapped[str] = mapped_column(Text, default="{}")
     idempotency_key: Mapped[str] = mapped_column(String(80))
     status: Mapped[str] = mapped_column(String(20), default="queued", index=True)
@@ -204,6 +207,8 @@ class ClientDehuNotification(Base):
     external_reference: Mapped[str] = mapped_column(String(300))
     subject: Mapped[str] = mapped_column(String(500), default="")
     description: Mapped[str] = mapped_column(Text, default="")
+    issuing_body: Mapped[str] = mapped_column(String(500), default="")
+    issuing_body_source: Mapped[str] = mapped_column(String(500), default="")
     action_type: Mapped[str] = mapped_column(String(120), default="")
     holder_tax_id: Mapped[str] = mapped_column(String(30), default="", index=True)
     holder_name: Mapped[str] = mapped_column(String(300), default="")
@@ -222,6 +227,50 @@ class ClientDehuNotification(Base):
         DateTime(timezone=True), default=utcnow, index=True,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow,
+    )
+
+
+class ClientDehuMailboxConfig(Base):
+    """Programacion central del buzon DEHu unico de una organizacion."""
+
+    __tablename__ = "client_dehu_mailbox_configs"
+
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_organizations.id", ondelete="CASCADE"), primary_key=True,
+    )
+    mailbox_id: Mapped[str] = mapped_column(String(100), default="")
+    mailbox_name: Mapped[str] = mapped_column(String(300), default="DEHu")
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    periodicity: Mapped[str] = mapped_column(String(20), default="MANUAL", index=True)
+    notification_email: Mapped[str] = mapped_column(String(254), default="")
+    next_sync_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True,
+    )
+    last_enqueued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_request_id: Mapped[str | None] = mapped_column(String(36), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow,
+    )
+
+
+class ClientDehuSyncBatch(Base):
+    """Lote de consultas automaticas que genera un unico correo resumen."""
+
+    __tablename__ = "client_dehu_sync_batches"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    notification_email: Mapped[str] = mapped_column(String(254), default="")
+    status: Mapped[str] = mapped_column(String(20), default="running", index=True)
+    total_mailboxes: Mapped[int] = mapped_column(Integer, default=0)
+    email_error: Mapped[str] = mapped_column(Text, default="")
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    email_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True,
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow,
     )

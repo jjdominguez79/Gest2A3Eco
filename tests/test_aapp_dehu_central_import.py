@@ -11,6 +11,8 @@ class _Backend:
             "reference": "DEHU-1",
             "subject": "Notificacion de prueba",
             "description": "Descripcion",
+            "issuing_body": "Agencia Tributaria",
+            "issuing_body_source": "AEAT",
             "action_type": "NOTIFICACION",
             "holder_tax_id": "B12345678",
             "holder_name": "Cliente Uno",
@@ -52,4 +54,6 @@ def test_importa_bandeja_central_sin_duplicar():
     assert len(gestor.rows) == 1
     row = next(iter(gestor.rows.values()))
     assert row["ejercicio"] == 2026
+    assert row["descripcion"] == "Agencia Tributaria"
     assert "central-1" in row["metadatos_json"]
+    assert "issuing_body" in row["metadatos_json"]

@@ -121,7 +121,10 @@ class AappWorker:
             )
             options = OpcionesSync(
                 headless=self.config.headless,
-                descargar_pdf=True,
+                # La consulta de bandeja es pasiva: no comparece, no firma y
+                # no descarga documentos. La descarga pertenece a la futura
+                # operacion manual de aceptacion.
+                descargar_pdf=False,
                 carpeta_descargas=str(workdir),
                 nif_filtro=parameters.get("tax_id") or None,
                 modo_diagnostico=self.config.diagnostic_dir is not None,
@@ -144,28 +147,22 @@ class AappWorker:
             )
             if not result.ok:
                 raise RuntimeError(result.mensaje or "No se pudo sincronizar DEHu")
-            document_ids = []
             central_notifications = []
             for notification in result.notificaciones:
-                document_id = None
-                if not notification.pdf_path:
-                    pass
-                else:
-                    pdf_path = Path(notification.pdf_path)
-                    if pdf_path.is_file() and pdf_path.read_bytes().startswith(b"%PDF-"):
-                        document = self.backend.publish_notification_pdf(
-                            item, notification, pdf_path,
-                        )
-                        document_id = str(
-                            document.get("id") or document.get("document_id") or ""
-                        ) or None
-                        if document_id:
-                            document_ids.append(document_id)
+                metadata = notification.metadatos or {}
                 central_notifications.append({
                     "reference": notification.referencia,
                     "mailbox_id": parameters.get("mailbox_id") or "",
                     "subject": notification.asunto or "",
                     "description": notification.descripcion or "",
+                    "issuing_body": str(
+                        metadata.get("emitterEntity")
+                        or notification.descripcion
+                        or ""
+                    ),
+                    "issuing_body_source": str(
+                        metadata.get("emitterSourceEntity") or ""
+                    ),
                     "action_type": notification.tipo_acto or "",
                     "holder_tax_id": notification.nif_interesado or "",
                     "holder_name": notification.nombre_interesado or "",
@@ -173,19 +170,20 @@ class AappWorker:
                     "expiration_date": notification.fecha_vencimiento or "",
                     "status": notification.estado or "PENDIENTE",
                     "source_endpoint": str(
-                        (notification.metadatos or {}).get("endpoint") or ""
+                        metadata.get("endpoint") or ""
                     ),
-                    "metadata": notification.metadatos or {},
-                    "document_id": document_id,
+                    "metadata": metadata,
+                    "document_id": None,
                 })
-            self.backend.upsert_dehu_notifications(item, central_notifications)
+            stored = self.backend.upsert_dehu_notifications(item, central_notifications)
+            new_count = int(stored.get("created_count") or 0)
             summary = (
                 f"{result.total} notificacion(es) detectada(s); "
-                f"{len(document_ids)} documento(s) publicado(s)."
+                f"{new_count} nueva(s)."
             )
             self.backend.complete(
                 item,
-                document_ids[0] if document_ids else None,
+                None,
                 summary,
             )
             LOG.info("Sincronizacion DEHu %s completada: %s", item["id"], summary)

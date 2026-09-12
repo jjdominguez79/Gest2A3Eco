@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import tkinter as tk
 from tkinter import messagebox, ttk
+import uuid
 
+from services.backend_client_service import BackendClientService
 from views.notificaciones_theme import *  # noqa: F401,F403
 
 try:
@@ -27,7 +29,7 @@ PERIODICIDADES = ["MANUAL", "DIARIA", "SEMANAL", "QUINCENAL", "MENSUAL"]
 MODOS_DESCARGA = ["SOLO_DETECTAR", "DETECTAR_Y_AVISAR", "DESCARGA_MANUAL", "DESCARGA_AUTOMATICA"]
 
 LABELS_MODO_DESCARGA = {
-    "SOLO_DETECTAR": "Solo detectar",
+    "SOLO_DETECTAR": "Consultar metadatos",
     "DETECTAR_Y_AVISAR": "Detectar y avisar",
     "DESCARGA_MANUAL": "Descarga manual",
     "DESCARGA_AUTOMATICA": "Descarga automatica",
@@ -122,7 +124,7 @@ class UIBuzones(ttk.Frame):
         dlg = _BuzonDialog(self.winfo_toplevel(), None, self._gestor, self._codigo)
         if dlg.result:
             try:
-                self._gestor.upsert_notif_buzon(dlg.result)
+                self._guardar_configuracion(dlg.result)
             except Exception as exc:
                 messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
                 return
@@ -139,7 +141,7 @@ class UIBuzones(ttk.Frame):
         dlg = _BuzonDialog(self.winfo_toplevel(), buzon, self._gestor, self._codigo)
         if dlg.result:
             try:
-                self._gestor.upsert_notif_buzon(dlg.result)
+                self._guardar_configuracion(dlg.result)
             except Exception as exc:
                 messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
                 return
@@ -156,11 +158,26 @@ class UIBuzones(ttk.Frame):
                                    parent=self.winfo_toplevel()):
             return
         try:
+            BackendClientService().delete_dehu_mailbox_config(
+                company_code=self._codigo,
+            )
             self._gestor.eliminar_notif_buzon(self._codigo, buzon_id)
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
             return
         self.refresh()
+
+    def _guardar_configuracion(self, buzon: dict) -> None:
+        """Persiste la configuracion local y su programacion central."""
+        BackendClientService().save_dehu_mailbox_config(
+            company_code=self._codigo,
+            mailbox_id=str(buzon.get("id") or ""),
+            mailbox_name=str(buzon.get("nombre") or "DEHu"),
+            active=bool(buzon.get("activo")),
+            periodicity=str(buzon.get("periodicidad_sync") or "MANUAL"),
+            notification_email=str(buzon.get("email_aviso") or ""),
+        )
+        self._gestor.upsert_notif_buzon(buzon)
 
     # ----------------------------------------------------------------- refresh
     def refresh(self) -> None:
@@ -224,10 +241,9 @@ class _BuzonDialog(tk.Toplevel):
         self._var_periodicidad = tk.StringVar(value=self._buzon.get("periodicidad_sync", "MANUAL"))
         self._var_email      = tk.StringVar(value=self._buzon.get("email_aviso", "") or "")
         self._var_responsable = tk.StringVar(value=self._buzon.get("responsable_interno", "") or "")
-        self._var_envio_auto = tk.BooleanVar(value=bool(self._buzon.get("envio_automatico_cliente", False)))
         self._var_activo     = tk.BooleanVar(value=bool(self._buzon.get("activo", True)))
 
-        self._modo_values = MODOS_DESCARGA
+        self._modo_values = ["SOLO_DETECTAR"]
         self._modo_labels = [LABELS_MODO_DESCARGA[m] for m in self._modo_values]
         modo_actual = self._buzon.get("modo_descarga", "SOLO_DETECTAR")
         idx_modo = self._modo_values.index(modo_actual) if modo_actual in self._modo_values else 0
@@ -242,7 +258,7 @@ class _BuzonDialog(tk.Toplevel):
             ("Organismo",    self._var_org,    ttk.Combobox, {"width": 36, "values": self._org_nombres, "state": "readonly"}),
             ("Tipo buzon",   self._var_tipo,   ttk.Combobox, {"width": 22, "values": TIPOS_BUZON, "state": "readonly"}),
             ("Periodicidad sincronizacion", self._var_periodicidad, ttk.Combobox, {"width": 22, "values": PERIODICIDADES, "state": "readonly"}),
-            ("Modo de descarga", self._var_modo, ttk.Combobox, {"width": 22, "values": self._modo_labels, "state": "readonly"}),
+            ("Modo de consulta", self._var_modo, ttk.Combobox, {"width": 22, "values": self._modo_labels, "state": "readonly"}),
             ("Email de aviso", self._var_email, ttk.Entry, {"width": 36}),
             ("Responsable interno", self._var_responsable, ttk.Entry, {"width": 36}),
         ]
@@ -264,8 +280,11 @@ class _BuzonDialog(tk.Toplevel):
             tk.Label(frm, text="Este cliente no tiene certificado. Configuralo en la pestana 'Certificado'.",
                      fg=_DANGER, anchor="w", justify="left", wraplength=320).grid(row=r, column=1, sticky="w", **pad)
 
-        ttk.Checkbutton(frm, text="Envio automatico al cliente", variable=self._var_envio_auto).grid(
-            row=r + 1, column=1, sticky="w", **pad)
+        ttk.Label(
+            frm,
+            text="La aceptacion, descarga y envio al cliente seran siempre manuales.",
+            foreground=_SUB,
+        ).grid(row=r + 1, column=1, sticky="w", **pad)
         ttk.Checkbutton(frm, text="Activo", variable=self._var_activo).grid(
             row=r + 2, column=1, sticky="w", **pad)
 
@@ -290,26 +309,37 @@ class _BuzonDialog(tk.Toplevel):
         idx_modo = self._modo_labels.index(modo_label) if modo_label in self._modo_labels else 0
         modo_descarga = self._modo_values[idx_modo]
 
+        periodicidad = self._var_periodicidad.get().strip() or "MANUAL"
+        email = self._var_email.get().strip()
+        if self._var_activo.get() and periodicidad != "MANUAL" and (
+            not email or "@" not in email
+        ):
+            messagebox.showerror(
+                "Gest2A3Eco",
+                "Indica un email valido para recibir el resumen de la sincronizacion automatica.",
+                parent=self,
+            )
+            return
+
         # Certificado unico del cliente: se asigna automaticamente.
         cert_id = self._cert["id"] if self._cert else None
         nif     = (self._cert.get("nif_titular") if self._cert else None) or None
 
         self.result = {
+            "id":              self._buzon.get("id") or str(uuid.uuid4()),
             "codigo_empresa": self._empresa,
             "nombre":         nombre,
             "organismo_id":   org_id,
             "tipo_buzon":     "DEHU",
             "nif_titular":    nif,
             "certificado_id": cert_id,
-            "periodicidad_sync": self._var_periodicidad.get().strip() or "MANUAL",
+            "periodicidad_sync": periodicidad,
             "modo_descarga":  modo_descarga,
-            "envio_automatico_cliente": 1 if self._var_envio_auto.get() else 0,
-            "email_aviso":    self._var_email.get().strip() or None,
+            "envio_automatico_cliente": 0,
+            "email_aviso":    email or None,
             "responsable_interno": self._var_responsable.get().strip() or None,
             "activo":         1 if self._var_activo.get() else 0,
         }
-        if self._buzon.get("id"):
-            self.result["id"] = self._buzon["id"]
         if self._buzon.get("ultima_consulta"):
             self.result["ultima_consulta"] = self._buzon["ultima_consulta"]
         self.destroy()

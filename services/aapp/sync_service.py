@@ -219,6 +219,8 @@ def importar_bandeja_central(
             "backend_document_id": remote.get("document_id"),
             "request_id": remote.get("request_id"),
             "last_seen_at": remote.get("last_seen_at"),
+            "issuing_body": remote.get("issuing_body") or "",
+            "issuing_body_source": remote.get("issuing_body_source") or "",
         })
         gestor.upsert_notif_bandeja_item({
             "id": item_id,
@@ -227,7 +229,9 @@ def importar_bandeja_central(
             "buzon_id": buzon.get("id"),
             "organismo_id": buzon.get("organismo_id"),
             "asunto": remote.get("subject") or "(sin asunto)",
-            "descripcion": remote.get("description") or "",
+            "descripcion": (
+                remote.get("issuing_body") or remote.get("description") or ""
+            ),
             "tipo_acto": remote.get("action_type") or "",
             "referencia": reference,
             "nif_interesado": remote.get("holder_tax_id") or "",

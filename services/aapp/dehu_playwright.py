@@ -224,6 +224,7 @@ class ConectorDEHU(ConectorOrganismo):
                 fecha_vencimiento=_norm_fecha(r.get("expirationDate")),
                 estado=_map_estado(estado),
                 metadatos={
+                    "emitterEntity": r.get("emitterEntity"),
                     "emitterSourceEntity": r.get("emitterSourceEntity"),
                     "sentReference": r.get("sentReference"),
                     "endpoint": r.get("_endpoint"),

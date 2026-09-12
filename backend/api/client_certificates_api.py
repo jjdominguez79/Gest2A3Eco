@@ -10,6 +10,7 @@ import json
 import base64
 import re
 import secrets
+from html import escape
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -29,8 +30,11 @@ from backend.api.client_models import (
     ClientCertificateRequest,
     ClientCertificateSecret,
     ClientDehuNotification,
+    ClientDehuMailboxConfig,
+    ClientDehuSyncBatch,
     ClientDocument,
 )
+from backend.api import messaging_mail
 from backend.api.database import SessionLocal
 from backend.api.client_storage import ClientDocumentStorage
 from backend.api.feature_flags import require_certificates_enabled
@@ -190,6 +194,8 @@ class DehuNotificationIn(BaseModel):
     mailbox_id: str = Field(default="", max_length=100)
     subject: str = Field(default="", max_length=500)
     description: str = Field(default="", max_length=4000)
+    issuing_body: str = Field(default="", max_length=500)
+    issuing_body_source: str = Field(default="", max_length=500)
     action_type: str = Field(default="", max_length=120)
     holder_tax_id: str = Field(default="", max_length=30)
     holder_name: str = Field(default="", max_length=300)
@@ -204,6 +210,14 @@ class DehuNotificationIn(BaseModel):
 class WorkerDehuNotificationsIn(BaseModel):
     claim_token: str = Field(min_length=16, max_length=64)
     notifications: list[DehuNotificationIn] = Field(default_factory=list, max_length=1000)
+
+
+class DehuMailboxConfigIn(BaseModel):
+    mailbox_id: str = Field(default="", max_length=100)
+    mailbox_name: str = Field(default="DEHu", max_length=300)
+    active: bool = True
+    periodicity: str = Field(default="MANUAL", max_length=20)
+    notification_email: str = Field(default="", max_length=254)
 
 
 def _db():
@@ -249,6 +263,7 @@ def _serialize(
         "organization_id": item.organization_id,
         "requester_type": item.requester_type,
         "certificate_type": item.certificate_type,
+        "dehu_batch_id": item.dehu_batch_id,
         "certificate_name": catalog.get("name", item.certificate_type),
         "issuing_organization": catalog.get("organization", ""),
         "parameters": parameters,
@@ -302,6 +317,8 @@ def _serialize_dehu_notification(
         "reference": item.external_reference,
         "subject": item.subject,
         "description": item.description,
+        "issuing_body": item.issuing_body,
+        "issuing_body_source": item.issuing_body_source,
         "action_type": item.action_type,
         "holder_tax_id": item.holder_tax_id,
         "holder_name": item.holder_name,
@@ -397,20 +414,21 @@ def _create_request(
     ))
     if existing:
         return existing
-    madrid_now = datetime.now(ZoneInfo("Europe/Madrid"))
-    madrid_start = madrid_now.replace(hour=0, minute=0, second=0, microsecond=0)
-    madrid_end = madrid_start + timedelta(days=1)
-    requested_today = db.scalar(select(ClientCertificateRequest).where(
-        ClientCertificateRequest.organization_id == org.id,
-        ClientCertificateRequest.certificate_type == certificate_type,
-        ClientCertificateRequest.created_at >= madrid_start.astimezone(timezone.utc),
-        ClientCertificateRequest.created_at < madrid_end.astimezone(timezone.utc),
-    ).order_by(ClientCertificateRequest.created_at.desc()).limit(1))
-    if requested_today:
-        raise HTTPException(
-            status_code=409,
-            detail="Este certificado ya se ha solicitado hoy. Podras pedir otro manana.",
-        )
+    if certificate_type in CERTIFICATE_TYPES:
+        madrid_now = datetime.now(ZoneInfo("Europe/Madrid"))
+        madrid_start = madrid_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        madrid_end = madrid_start + timedelta(days=1)
+        requested_today = db.scalar(select(ClientCertificateRequest).where(
+            ClientCertificateRequest.organization_id == org.id,
+            ClientCertificateRequest.certificate_type == certificate_type,
+            ClientCertificateRequest.created_at >= madrid_start.astimezone(timezone.utc),
+            ClientCertificateRequest.created_at < madrid_end.astimezone(timezone.utc),
+        ).order_by(ClientCertificateRequest.created_at.desc()).limit(1))
+        if requested_today:
+            raise HTTPException(
+                status_code=409,
+                detail="Este certificado ya se ha solicitado hoy. Podras pedir otro manana.",
+            )
     active = db.scalar(select(ClientCertificateRequest).where(
         ClientCertificateRequest.organization_id == org.id,
         ClientCertificateRequest.certificate_type == certificate_type,
@@ -810,12 +828,222 @@ def delete_internal_certificate(
     return {"ok": True}
 
 
+_DEHU_PERIODICITIES = {"MANUAL", "DIARIA", "SEMANAL", "QUINCENAL", "MENSUAL"}
+
+
+def _serialize_dehu_mailbox(item: ClientDehuMailboxConfig, org=None) -> dict:
+    return {
+        "organization_id": item.organization_id,
+        "company_code": getattr(org, "company_code", ""),
+        "company_name": getattr(org, "name", ""),
+        "mailbox_id": item.mailbox_id,
+        "mailbox_name": item.mailbox_name,
+        "active": item.active,
+        "periodicity": item.periodicity,
+        "notification_email": item.notification_email,
+        "next_sync_at": item.next_sync_at.isoformat() if item.next_sync_at else None,
+        "last_enqueued_at": (
+            item.last_enqueued_at.isoformat() if item.last_enqueued_at else None
+        ),
+        "last_request_id": item.last_request_id,
+    }
+
+
+def _next_dehu_sync(now: datetime, periodicity: str) -> datetime | None:
+    days = {"DIARIA": 1, "SEMANAL": 7, "QUINCENAL": 15, "MENSUAL": 30}
+    interval = days.get(periodicity)
+    return now + timedelta(days=interval) if interval else None
+
+
+@router.put("/internal/dehu-mailboxes/{company_code}")
+def upsert_internal_dehu_mailbox(
+    company_code: str,
+    payload: DehuMailboxConfigIn,
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    """Replica en Azure la programacion necesaria para consultar DEHu sin escritorio."""
+    org = _organization_by_code(db, company_code)
+    periodicity = payload.periodicity.strip().upper()
+    if periodicity not in _DEHU_PERIODICITIES:
+        raise HTTPException(status_code=422, detail="Periodicidad DEHu no valida")
+    email = payload.notification_email.strip().lower()
+    automatic = payload.active and periodicity != "MANUAL"
+    if automatic and (not email or "@" not in email):
+        raise HTTPException(
+            status_code=422,
+            detail="La sincronizacion automatica necesita un email de resumen valido",
+        )
+    item = db.get(ClientDehuMailboxConfig, org.id)
+    now = utcnow()
+    if item is None:
+        item = ClientDehuMailboxConfig(organization_id=org.id)
+        db.add(item)
+    schedule_changed = (
+        item.periodicity != periodicity or item.active != payload.active
+    )
+    item.mailbox_id = payload.mailbox_id.strip()
+    item.mailbox_name = payload.mailbox_name.strip() or "DEHu"
+    item.active = payload.active
+    item.periodicity = periodicity
+    item.notification_email = email
+    if not automatic:
+        item.next_sync_at = None
+    elif schedule_changed or item.next_sync_at is None:
+        item.next_sync_at = now
+    item.updated_at = now
+    db.commit()
+    return _serialize_dehu_mailbox(item, org)
+
+
+@router.get("/internal/dehu-mailboxes")
+def list_internal_dehu_mailboxes(
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    rows = db.execute(
+        select(ClientDehuMailboxConfig, MessagingOrganization)
+        .join(MessagingOrganization, MessagingOrganization.id == ClientDehuMailboxConfig.organization_id)
+        .order_by(MessagingOrganization.name)
+    ).all()
+    return {"items": [_serialize_dehu_mailbox(item, org) for item, org in rows]}
+
+
+@router.delete("/internal/dehu-mailboxes/{company_code}")
+def delete_internal_dehu_mailbox(
+    company_code: str,
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    org = _organization_by_code(db, company_code)
+    item = db.get(ClientDehuMailboxConfig, org.id)
+    if item:
+        db.delete(item)
+        db.commit()
+    return {"deleted": bool(item)}
+
+
+def _enqueue_due_dehu_mailboxes(db: Session, now: datetime) -> None:
+    due = db.execute(
+        select(ClientDehuMailboxConfig, MessagingOrganization)
+        .join(MessagingOrganization, MessagingOrganization.id == ClientDehuMailboxConfig.organization_id)
+        .where(
+            ClientDehuMailboxConfig.active.is_(True),
+            ClientDehuMailboxConfig.periodicity != "MANUAL",
+            ClientDehuMailboxConfig.next_sync_at.is_not(None),
+            ClientDehuMailboxConfig.next_sync_at <= now,
+            MessagingOrganization.active.is_(True),
+        )
+        .with_for_update(skip_locked=True)
+    ).all()
+    by_email: dict[str, list[tuple[ClientDehuMailboxConfig, MessagingOrganization]]] = {}
+    for config, org in due:
+        by_email.setdefault(config.notification_email, []).append((config, org))
+    for email, mailboxes in by_email.items():
+        batch = ClientDehuSyncBatch(
+            notification_email=email,
+            total_mailboxes=len(mailboxes),
+            status="running",
+        )
+        db.add(batch)
+        db.flush()
+        for config, org in mailboxes:
+            parameters = {
+                "company_code": org.company_code,
+                "tax_id": org.tax_id or "",
+                "mailbox_id": config.mailbox_id,
+                "mailbox_name": config.mailbox_name,
+                "download_mode": "SOLO_DETECTAR",
+                "automatic": True,
+            }
+            request_item = ClientCertificateRequest(
+                organization_id=org.id,
+                requester_type="staff",
+                requester_id="dehu-scheduler",
+                certificate_type="DEHU_SYNC",
+                dehu_batch_id=batch.id,
+                parameters_json=json.dumps(parameters, ensure_ascii=False, separators=(",", ":")),
+                idempotency_key=f"auto-dehu-{batch.id}",
+                status="queued",
+            )
+            db.add(request_item)
+            db.flush()
+            config.last_request_id = request_item.id
+            config.last_enqueued_at = now
+            config.next_sync_at = _next_dehu_sync(now, config.periodicity)
+            config.updated_at = now
+    if due:
+        db.commit()
+
+
+def _try_send_dehu_batch_summary(db: Session, batch_id: str | None) -> None:
+    if not batch_id:
+        return
+    batch = db.scalar(
+        select(ClientDehuSyncBatch)
+        .where(ClientDehuSyncBatch.id == batch_id)
+        .with_for_update()
+    )
+    if not batch or batch.status not in {"running", "email_error"}:
+        return
+    rows = db.execute(
+        select(ClientCertificateRequest, MessagingOrganization)
+        .join(MessagingOrganization, MessagingOrganization.id == ClientCertificateRequest.organization_id)
+        .where(ClientCertificateRequest.dehu_batch_id == batch.id)
+        .order_by(MessagingOrganization.name)
+    ).all()
+    terminal = {"completed", "failed", "needs_action", "cancelled"}
+    if len(rows) < batch.total_mailboxes or any(item.status not in terminal for item, _ in rows):
+        return
+    batch.status = "sending"
+    batch.completed_at = utcnow()
+    batch.updated_at = utcnow()
+    db.commit()
+    ok_count = sum(1 for item, _ in rows if item.status == "completed")
+    error_count = len(rows) - ok_count
+    details = "".join(
+        "<tr>"
+        f"<td>{escape(org.name or org.company_code)}</td>"
+        f"<td>{'Correcto' if item.status == 'completed' else 'Error'}</td>"
+        f"<td>{escape(item.result_summary or item.error_message or item.status)}</td>"
+        "</tr>"
+        for item, org in rows
+    )
+    html = (
+        "<p>Ha finalizado la consulta automatica de buzones DEHu.</p>"
+        f"<p><strong>Consultados:</strong> {len(rows)} &nbsp; "
+        f"<strong>Correctos:</strong> {ok_count} &nbsp; "
+        f"<strong>Errores:</strong> {error_count}</p>"
+        "<table border='1' cellpadding='6' cellspacing='0'>"
+        "<tr><th>Cliente</th><th>Resultado</th><th>Detalle</th></tr>"
+        f"{details}</table>"
+    )
+    try:
+        sent = messaging_mail.send_mail(
+            batch.notification_email,
+            f"Resumen DEHu: {len(rows)} buzones consultados, {error_count} errores",
+            html,
+        )
+        if not sent:
+            raise RuntimeError("El correo no esta configurado en el backend")
+    except Exception as exc:
+        batch.status = "email_error"
+        batch.email_error = str(exc)[:4000]
+    else:
+        batch.status = "sent"
+        batch.email_error = ""
+        batch.email_sent_at = utcnow()
+    batch.updated_at = utcnow()
+    db.commit()
+
+
 @router.post("/internal/worker/claim")
 def claim_next_request(
     db: Session = Depends(_db),
     _auth: str = Depends(require_aapp_worker_key),
 ):
     now = utcnow()
+    _enqueue_due_dehu_mailboxes(db, now)
     stale_before = now - timedelta(minutes=15)
     item = db.scalar(
         select(ClientCertificateRequest).where(
@@ -891,6 +1119,7 @@ def upsert_worker_dehu_notifications(
         raise HTTPException(status_code=409, detail="La solicitud no es una sincronizacion DEHu")
     now = utcnow()
     stored = []
+    created_count = 0
     for incoming in payload.notifications:
         reference = incoming.reference.strip()
         item = db.scalar(select(ClientDehuNotification).where(
@@ -904,6 +1133,7 @@ def upsert_worker_dehu_notifications(
                 first_seen_at=now,
             )
             db.add(item)
+            created_count += 1
         document = db.get(ClientDocument, incoming.document_id) if incoming.document_id else None
         if incoming.document_id and (
             not document or document.organization_id != request_item.organization_id
@@ -913,6 +1143,8 @@ def upsert_worker_dehu_notifications(
         item.mailbox_id = incoming.mailbox_id.strip()
         item.subject = incoming.subject.strip()
         item.description = incoming.description.strip()
+        item.issuing_body = incoming.issuing_body.strip()
+        item.issuing_body_source = incoming.issuing_body_source.strip()
         item.action_type = incoming.action_type.strip()
         item.holder_tax_id = re.sub(r"[^0-9A-Z]", "", incoming.holder_tax_id.upper())
         item.holder_name = incoming.holder_name.strip()
@@ -931,6 +1163,7 @@ def upsert_worker_dehu_notifications(
     return {
         "items": [_serialize_dehu_notification(item) for item in stored],
         "count": len(stored),
+        "created_count": created_count,
     }
 
 
@@ -998,6 +1231,7 @@ def complete_request(
     item.completed_at = utcnow()
     item.updated_at = utcnow()
     db.commit()
+    _try_send_dehu_batch_summary(db, item.dehu_batch_id)
     return _serialize(item)
 
 
@@ -1023,4 +1257,5 @@ def fail_request(
         item.next_attempt_at = None
     item.updated_at = utcnow()
     db.commit()
+    _try_send_dehu_batch_summary(db, item.dehu_batch_id)
     return _serialize(item)

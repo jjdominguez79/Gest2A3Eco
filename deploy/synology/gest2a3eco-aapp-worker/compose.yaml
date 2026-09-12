@@ -1,6 +1,6 @@
 services:
   aapp-worker:
-    image: gest2a3eco-aapp-worker:2026.09.12.15
+    image: gest2a3eco-aapp-worker:2026.09.12.16
     build:
       context: .
       dockerfile: Dockerfile

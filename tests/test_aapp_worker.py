@@ -36,7 +36,7 @@ class _Backend:
 
     def upsert_dehu_notifications(self, _item, notifications):
         self.dehu_notifications = notifications
-        return {"count": len(notifications)}
+        return {"count": len(notifications), "created_count": len(notifications)}
 
     def complete(self, item, document_id, summary=""):
         self.completed = (item["id"], document_id, summary)
@@ -171,7 +171,7 @@ def test_publicacion_automatica_solo_para_solicitudes_flutter(tmp_path):
     assert session.payloads[0]["document_date"].startswith("2026-")
 
 
-def test_worker_dehu_publica_documento_y_elimina_pfx_temporal(monkeypatch, tmp_path):
+def test_worker_dehu_solo_consulta_metadatos_y_elimina_pfx_temporal(monkeypatch, tmp_path):
     item = {
         "id": "request-dehu-1",
         "organization_id": "org-1",
@@ -194,6 +194,7 @@ def test_worker_dehu_publica_documento_y_elimina_pfx_temporal(monkeypatch, tmp_p
             self.certificate_path = material.ruta_archivo
             assert material.password == "clave"
             assert options.headless is True
+            assert options.descargar_pdf is False
             pdf = __import__("pathlib").Path(options.carpeta_descargas) / "notificacion.pdf"
             pdf.write_bytes(b"%PDF-1.7\nnotificacion")
             return ResultadoSync(
@@ -213,12 +214,12 @@ def test_worker_dehu_publica_documento_y_elimina_pfx_temporal(monkeypatch, tmp_p
 
     assert backend.completed == (
         "request-dehu-1",
-        "notification-doc-1",
-        "1 notificacion(es) detectada(s); 1 documento(s) publicado(s).",
+        None,
+        "1 notificacion(es) detectada(s); 1 nueva(s).",
     )
     assert backend.failed is None
     assert backend.dehu_notifications[0]["reference"] == "DEHU-1"
-    assert backend.dehu_notifications[0]["document_id"] == "notification-doc-1"
+    assert backend.dehu_notifications[0]["document_id"] is None
     assert connector.certificate_path is not None
     assert not __import__("pathlib").Path(connector.certificate_path).exists()
 
@@ -248,7 +249,7 @@ def test_worker_dehu_completa_aunque_no_haya_pdf(monkeypatch, tmp_path):
     assert backend.completed == (
         "request-dehu-2",
         None,
-        "1 notificacion(es) detectada(s); 0 documento(s) publicado(s).",
+        "1 notificacion(es) detectada(s); 1 nueva(s).",
     )
     assert backend.dehu_notifications[0]["reference"] == "DEHU-2"
     assert backend.dehu_notifications[0]["document_id"] is None
