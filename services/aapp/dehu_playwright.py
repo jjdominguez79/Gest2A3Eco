@@ -41,6 +41,16 @@ from .cert_store import preparar_pfx_para_navegador
 
 DEHU_URL_DEFECTO = "https://dehu.redsara.es"
 
+# El frontal de DEHu rechaza los agentes HTTP genericos (incluido el
+# ``HeadlessChrome`` que Playwright anuncia por defecto) antes incluso de
+# cargar la SPA. Se identifica el navegador como Chromium normal; no se
+# alteran otras propiedades ni se intenta eludir el flujo de autenticacion.
+DEHU_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/140.0.0.0 Safari/537.36"
+)
+
 ORIGENES_CLAVE = [
     "https://se-pasarela.clave.gob.es",
     "https://pasarela.clave.gob.es",
@@ -77,7 +87,9 @@ class ConectorDEHU(ConectorOrganismo):
         base = (buzon.get("url_portal") or self.base_url).rstrip("/")
         opciones.trace(f"[DEHU] abriendo {base} con certificado '{cert_material.nombre}'")
 
-        origenes = [base] + ORIGENES_CLAVE + list(opciones.origenes_certificado or [])
+        # El certificado se presenta en Cl@ve/@firma, no al frontal DEHu. Si
+        # se ofrece tambien a DEHu, su proxy puede rechazar la peticion inicial.
+        origenes = ORIGENES_CLAVE + list(opciones.origenes_certificado or [])
         ruta_navegador, password_navegador = preparar_pfx_para_navegador(
             cert_material,
             os.path.join(os.path.dirname(cert_material.ruta_archivo), "navegador.pfx"),
@@ -98,6 +110,12 @@ class ConectorDEHU(ConectorOrganismo):
                         accept_downloads=True,
                         ignore_https_errors=False,
                         client_certificates=client_certs,
+                        user_agent=DEHU_USER_AGENT,
+                        locale="es-ES",
+                        timezone_id="Europe/Madrid",
+                        extra_http_headers={
+                            "Accept-Language": "es-ES,es;q=0.9,en;q=0.7",
+                        },
                     )
                 except TypeError as exc:
                     browser.close()
