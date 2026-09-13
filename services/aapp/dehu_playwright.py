@@ -29,6 +29,7 @@ import os
 import re
 import time
 from datetime import datetime
+from urllib.parse import urlsplit
 
 from .base import (
     ConectorOrganismo,
@@ -284,6 +285,20 @@ class ConectorDEHU(ConectorOrganismo):
 
     # ── red / captura (respaldo y diagnostico) ─────────────────────────
     def _instalar_captura_red(self, page, capturas, opciones):
+        def _url_segura(url):
+            try:
+                parsed = urlsplit(str(url or ""))
+                return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+            except Exception:
+                return "(url no disponible)"
+
+        def _on_navigation(frame):
+            try:
+                if frame == page.main_frame:
+                    opciones.trace(f"[DEHU][nav] {_url_segura(frame.url)}")
+            except Exception:
+                pass
+
         def _on_response(resp):
             try:
                 url = resp.url
@@ -293,6 +308,11 @@ class ConectorDEHU(ConectorOrganismo):
                     rt = resp.request.resource_type
                 except Exception:
                     rt = ""
+                if rt == "document":
+                    opciones.trace(
+                        f"[DEHU][document] {resp.status} {_url_segura(url)}"
+                    )
+                    return
                 ct = (resp.headers or {}).get("content-type", "")
                 if rt not in ("xhr", "fetch") and "json" not in ct.lower():
                     return
@@ -310,6 +330,7 @@ class ConectorDEHU(ConectorOrganismo):
                 opciones.trace(f"[DEHU][xhr] {resp.status} {rt} {url}")
             except Exception:
                 pass
+        page.on("framenavigated", _on_navigation)
         page.on("response", _on_response)
 
     def _esperar_login(self, page, base, opciones):
