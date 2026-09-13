@@ -55,6 +55,9 @@ DEHU_USER_AGENT = (
 ORIGENES_CLAVE = [
     "https://se-pasarela.clave.gob.es",
     "https://pasarela.clave.gob.es",
+    # El selector redirige a este IdP para realizar la autenticacion TLS con
+    # el certificado del ciudadano/representante.
+    "https://pasarela-ident.clave.gob.es",
     "https://afirma.clave.gob.es",
     "https://componentes.clave.gob.es",
 ]

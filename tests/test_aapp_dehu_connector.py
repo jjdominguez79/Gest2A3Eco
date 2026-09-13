@@ -1,6 +1,10 @@
 from services.aapp.cert_store import CertMaterial
 from services.aapp.base import OpcionesSync
-from services.aapp.dehu_playwright import ConectorDEHU, _map_estado
+from services.aapp.dehu_playwright import ConectorDEHU, ORIGENES_CLAVE, _map_estado
+
+
+def test_origen_real_del_idp_clave_recibe_el_certificado():
+    assert "https://pasarela-ident.clave.gob.es" in ORIGENES_CLAVE
 
 
 def test_estados_dehu_no_convierten_historico_en_pendiente():
