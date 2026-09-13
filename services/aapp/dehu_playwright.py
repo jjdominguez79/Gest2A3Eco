@@ -176,8 +176,11 @@ class ConectorDEHU(ConectorOrganismo):
                 "[DEHU] MODO APRENDIZAJE: identificate con el certificado en la ventana. "
                 f"Esperando hasta {opciones.pausa_login_segundos}s..."
             )
-            self._esperar_login(page, base, opciones)
-            self._diagnostico(page, opciones, "04_autenticado", capturas, forzar=True)
+        # El salto Cl@ve -> DEHu es asincrono incluso en modo headless. No se
+        # puede consultar la API nada mas pulsar el certificado: hay que esperar
+        # a que la cookie de sesion quede establecida y la API responda 200.
+        self._esperar_login(page, base, opciones)
+        self._diagnostico(page, opciones, "04_autenticado", capturas, forzar=True)
 
         # Fuente principal: API REST interna (reutiliza la sesion autenticada).
         registros = self._fetch_api(page, base, opciones)
@@ -311,7 +314,10 @@ class ConectorDEHU(ConectorOrganismo):
 
     def _esperar_login(self, page, base, opciones):
         """Espera a que la sesion quede autenticada (la API responde 200)."""
-        fin = time.time() + opciones.pausa_login_segundos
+        segundos = opciones.pausa_login_segundos or max(
+            20, min(90, int(opciones.timeout_ms / 1000)),
+        )
+        fin = time.time() + segundos
         while time.time() < fin:
             page.wait_for_timeout(2000)
             try:
@@ -320,9 +326,18 @@ class ConectorDEHU(ConectorOrganismo):
                 data = resp.json() if resp.ok else None
                 if isinstance(data, dict) and isinstance(data.get("items"), list):
                     page.wait_for_timeout(1000)
-                    return
+                    opciones.trace("[DEHU] sesion autenticada correctamente")
+                    return True
             except Exception:
                 continue
+        try:
+            pagina = f"{page.url} ({page.title()})"
+        except Exception:
+            pagina = "pagina de autenticacion desconocida"
+        raise RuntimeError(
+            "DEHu no completo la autenticacion con certificado tras "
+            f"{segundos}s; ultima pagina: {pagina}"
+        )
 
     def _desde_capturas(self, capturas, cert_material, nif_filtro=None):
         registros = []
@@ -369,11 +384,17 @@ class ConectorDEHU(ConectorOrganismo):
                 el = page.locator(sel)
                 if el.count() > 0:
                     el.first.click(timeout=5000)
-                    page.wait_for_load_state("networkidle")
                     opciones.trace(f"[DEHU] acceso por certificado via '{sel}'")
+                    try:
+                        page.wait_for_load_state("domcontentloaded", timeout=10000)
+                    except Exception:
+                        # La navegacion SSO puede continuar en segundo plano; la
+                        # comprobacion definitiva la hace _esperar_login.
+                        pass
                     return
             except Exception:
                 continue
+        raise RuntimeError("No se encontro el acceso por DNIe/certificado en Cl@ve")
 
     def _abrir_notificaciones(self, page, base, opciones):
         for sel in ('text=Notificaciones pendientes', 'a:has-text("Notificaciones")', 'text=Notificaciones'):

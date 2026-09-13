@@ -85,6 +85,7 @@ def test_dehu_inicia_login_directo_si_el_frontal_no_renderiza_acceso(monkeypatch
     monkeypatch.setattr(connector, "_diagnostico", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(connector, "_click_acceder", lambda *_args: False)
     monkeypatch.setattr(connector, "_elegir_certificado_clave", lambda *_args: None)
+    monkeypatch.setattr(connector, "_esperar_login", lambda *_args: True)
     monkeypatch.setattr(connector, "_fetch_api", lambda *_args: [{"identifier": "REF-1"}])
 
     result = connector._flujo(
@@ -107,3 +108,42 @@ def test_dehu_inicia_login_directo_si_el_frontal_no_renderiza_acceso(monkeypatch
         "https://dehu.redsara.es/api/login/login-clave-sso",
     ]
     assert result[0].referencia == "REF-1"
+
+
+def test_dehu_espera_sesion_aunque_no_este_en_modo_aprendizaje(monkeypatch):
+    connector = ConectorDEHU()
+    calls = []
+
+    class Page:
+        def goto(self, *_args, **_kwargs):
+            pass
+
+    monkeypatch.setattr(connector, "_diagnostico", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(connector, "_click_acceder", lambda *_args: False)
+    monkeypatch.setattr(connector, "_elegir_certificado_clave", lambda *_args: None)
+    monkeypatch.setattr(
+        connector,
+        "_esperar_login",
+        lambda *_args: calls.append("authenticated") or True,
+    )
+    monkeypatch.setattr(connector, "_fetch_api", lambda *_args: [])
+    monkeypatch.setattr(connector, "_desde_capturas", lambda *_args: [])
+    monkeypatch.setattr(connector, "_abrir_notificaciones", lambda *_args: False)
+    monkeypatch.setattr(connector, "_extraer_tabla", lambda *_args: [])
+
+    connector._flujo(
+        Page(),
+        "https://dehu.redsara.es",
+        {},
+        CertMaterial(
+            cert_id="cert-1",
+            nombre="Cliente Uno",
+            nif_titular="B12345678",
+            ruta_archivo="cliente.pfx",
+            password="",
+        ),
+        OpcionesSync(pausa_login_segundos=0),
+        [],
+    )
+
+    assert calls == ["authenticated"]

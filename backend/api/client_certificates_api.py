@@ -1013,11 +1013,84 @@ def _try_send_dehu_batch_summary(db: Session, batch_id: str | None) -> None:
         "</tr>"
         for item, org in rows
     )
+    audit_items = []
+    for item, _org in rows:
+        try:
+            parameters = json.loads(item.parameters_json or "{}")
+        except (TypeError, ValueError):
+            parameters = {}
+        report = parameters.get("_dehu_audit") or []
+        if isinstance(report, list):
+            audit_items.extend(entry for entry in report if isinstance(entry, dict))
+
+    # Un certificado de autorizado puede mostrar el mismo aviso al consultar
+    # mas de un buzon. El correo debe enumerarlo una sola vez.
+    unique_audit = {}
+    for entry in audit_items:
+        key = (
+            str(entry.get("reference") or ""),
+            str(entry.get("holder_tax_id") or ""),
+        )
+        unique_audit[key] = entry
+    audit_items = list(unique_audit.values())
+    contracted = [entry for entry in audit_items if entry.get("contracted")]
+    opportunities = [entry for entry in audit_items if not entry.get("contracted")]
+
+    def _audit_table(entries: list[dict], *, contracted_service: bool) -> str:
+        if not entries:
+            return "<p>Ninguna.</p>"
+        rows_html = []
+        for entry in sorted(
+            entries,
+            key=lambda value: (
+                str(value.get("holder_name") or value.get("company_name") or ""),
+                str(value.get("available_date") or ""),
+                str(value.get("reference") or ""),
+            ),
+        ):
+            client_name = (
+                entry.get("company_name")
+                or entry.get("holder_name")
+                or "No localizado en Gestinem"
+            )
+            service = "Importada" if contracted_service else (
+                "Cliente sin buzon activo" if entry.get("known_client")
+                else "NIF no localizado"
+            )
+            rows_html.append(
+                "<tr>"
+                f"<td>{escape(str(client_name))}</td>"
+                f"<td>{escape(str(entry.get('holder_tax_id') or 'Sin NIF'))}</td>"
+                f"<td>{escape(str(entry.get('category') or 'NOTIFICACION'))}</td>"
+                f"<td>{escape(str(entry.get('issuing_body') or 'No indicado'))}</td>"
+                f"<td>{escape(str(entry.get('subject') or '(sin asunto)'))}</td>"
+                f"<td>{escape(str(entry.get('available_date') or '-'))}</td>"
+                f"<td>{escape(str(entry.get('expiration_date') or '-'))}</td>"
+                f"<td>{escape(service)}</td>"
+                "</tr>"
+            )
+        return (
+            "<table border='1' cellpadding='6' cellspacing='0'>"
+            "<tr><th>Cliente/titular</th><th>NIF/CIF</th><th>Tipo</th>"
+            "<th>Organismo</th><th>Asunto</th><th>Puesta a disposicion</th>"
+            "<th>Fecha maxima</th><th>Tratamiento</th></tr>"
+            f"{''.join(rows_html)}</table>"
+        )
     html = (
         "<p>Ha finalizado la consulta automatica de buzones DEHu.</p>"
         f"<p><strong>Consultados:</strong> {len(rows)} &nbsp; "
         f"<strong>Correctos:</strong> {ok_count} &nbsp; "
-        f"<strong>Errores:</strong> {error_count}</p>"
+        f"<strong>Errores:</strong> {error_count} &nbsp; "
+        f"<strong>Avisos detectados:</strong> {len(audit_items)} &nbsp; "
+        f"<strong>Con servicio:</strong> {len(contracted)} &nbsp; "
+        f"<strong>Sin servicio:</strong> {len(opportunities)}</p>"
+        "<h3>Notificaciones y comunicaciones de clientes con buzon activo</h3>"
+        f"{_audit_table(contracted, contracted_service=True)}"
+        "<h3>Oportunidades: avisos detectados sin buzon activo</h3>"
+        "<p>Estos avisos solo se han detectado. No se han importado ni se ha "
+        "descargado o abierto su contenido.</p>"
+        f"{_audit_table(opportunities, contracted_service=False)}"
+        "<h3>Resultado tecnico por buzon consultado</h3>"
         "<table border='1' cellpadding='6' cellspacing='0'>"
         "<tr><th>Cliente</th><th>Resultado</th><th>Detalle</th></tr>"
         f"{details}</table>"
@@ -1127,6 +1200,7 @@ def upsert_worker_dehu_notifications(
     created_count = 0
     unassigned_count = 0
     unassigned_tax_ids = set()
+    audit_items = []
     # Una organizacion solo es destinataria si tiene contratado/configurado un
     # buzon DEHu activo. El certificado usado para consultar puede ser el de un
     # autorizado RED y devolver avisos de muchas empresas; no debemos conservar
@@ -1154,10 +1228,43 @@ def upsert_worker_dehu_notifications(
             destinations_by_tax_id[normalized] = (organization, mailbox)
     for normalized in ambiguous_tax_ids:
         destinations_by_tax_id.pop(normalized, None)
+    known_by_tax_id = {}
+    known_ambiguous_tax_ids = set()
+    for organization in db.scalars(select(MessagingOrganization)).all():
+        normalized = re.sub(r"[^0-9A-Z]", "", (organization.tax_id or "").upper())
+        if not normalized:
+            continue
+        if normalized in known_by_tax_id:
+            known_ambiguous_tax_ids.add(normalized)
+        else:
+            known_by_tax_id[normalized] = organization
+    for normalized in known_ambiguous_tax_ids:
+        known_by_tax_id.pop(normalized, None)
     for incoming in payload.notifications:
         reference = incoming.reference.strip()
         holder_tax_id = re.sub(r"[^0-9A-Z]", "", incoming.holder_tax_id.upper())
         destination = destinations_by_tax_id.get(holder_tax_id)
+        known_organization = known_by_tax_id.get(holder_tax_id)
+        report_organization = destination[0] if destination else known_organization
+        audit_items.append({
+            "reference": reference,
+            "holder_tax_id": holder_tax_id,
+            "holder_name": incoming.holder_name.strip(),
+            "category": str(
+                incoming.metadata.get("category")
+                or incoming.action_type
+                or "NOTIFICACION"
+            ),
+            "issuing_body": incoming.issuing_body.strip(),
+            "subject": incoming.subject.strip(),
+            "available_date": incoming.available_date.strip(),
+            "expiration_date": incoming.expiration_date.strip(),
+            "status": incoming.status.strip().upper() or "PENDIENTE",
+            "contracted": destination is not None,
+            "known_client": report_organization is not None,
+            "company_code": report_organization.company_code if report_organization else "",
+            "company_name": report_organization.name if report_organization else "",
+        })
         if destination is None:
             unassigned_count += 1
             if holder_tax_id:
@@ -1210,6 +1317,15 @@ def upsert_worker_dehu_notifications(
         item.last_seen_at = now
         item.updated_at = now
         stored.append(item)
+    try:
+        request_parameters = json.loads(request_item.parameters_json or "{}")
+    except (TypeError, ValueError):
+        request_parameters = {}
+    request_parameters["_dehu_audit"] = audit_items
+    request_item.parameters_json = json.dumps(
+        request_parameters, ensure_ascii=False, separators=(",", ":"), default=str,
+    )
+    request_item.updated_at = now
     db.commit()
     return {
         "items": [_serialize_dehu_notification(item) for item in stored],
@@ -1220,6 +1336,7 @@ def upsert_worker_dehu_notifications(
         "unassigned_tax_ids": sorted(unassigned_tax_ids),
         "discarded_without_active_mailbox_count": unassigned_count,
         "discarded_without_active_mailbox_tax_ids": sorted(unassigned_tax_ids),
+        "audit_items": audit_items,
     }
 
 

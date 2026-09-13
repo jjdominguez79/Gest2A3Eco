@@ -218,6 +218,10 @@ def test_worker_asigna_dehu_por_nif_titular_y_omite_desconocidos(monkeypatch):
     assert response.json()["unassigned_count"] == 1
     assert response.json()["unassigned_tax_ids"] == ["B00000000"]
     assert response.json()["discarded_without_active_mailbox_count"] == 1
+    assert response.json()["audit_items"][0]["contracted"] is True
+    assert response.json()["audit_items"][0]["company_name"] == "Cliente representado"
+    assert response.json()["audit_items"][1]["contracted"] is False
+    assert response.json()["audit_items"][1]["known_client"] is False
     with factory() as db:
         item = db.scalars(select(ClientDehuNotification)).one()
         assert item.organization_id == target_org_id
@@ -265,6 +269,10 @@ def test_worker_descarta_titular_con_cliente_pero_sin_buzon_dehu_activo(monkeypa
     assert response.json()["assigned_count"] == 0
     assert response.json()["discarded_without_active_mailbox_count"] == 1
     assert response.json()["discarded_without_active_mailbox_tax_ids"] == ["B11223344"]
+    audit = response.json()["audit_items"][0]
+    assert audit["known_client"] is True
+    assert audit["contracted"] is False
+    assert audit["company_name"] == "Cliente sin servicio DEHu"
     with factory() as db:
         assert list(db.scalars(select(ClientDehuNotification)).all()) == []
 
@@ -298,6 +306,42 @@ def test_programacion_dehu_encola_y_envia_un_resumen_al_terminar(monkeypatch):
     assert claimed["parameters"]["download_mode"] == "SOLO_DETECTAR"
     assert claimed["dehu_batch_id"]
 
+    with factory() as db:
+        prospect = MessagingOrganization(
+            company_code="E00009",
+            name="Cliente sin servicio",
+            tax_id="B99999999",
+            active=True,
+        )
+        db.add(prospect)
+        db.commit()
+    audit_response = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/requests/"
+        f"{claimed['id']}/dehu-notifications",
+        json={
+            "claim_token": claimed["claim_token"],
+            "notifications": [
+                {
+                    "reference": "REF-CONTRATADA",
+                    "holder_tax_id": "B12345678",
+                    "subject": "Requerimiento contratado",
+                    "issuing_body": "TGSS",
+                    "available_date": "2026-09-13",
+                    "expiration_date": "2026-09-23",
+                    "metadata": {"category": "NOTIFICACION"},
+                },
+                {
+                    "reference": "REF-OPORTUNIDAD",
+                    "holder_tax_id": "B99999999",
+                    "subject": "Aviso no contratado",
+                    "issuing_body": "TGSS",
+                    "metadata": {"category": "COMUNICACION"},
+                },
+            ],
+        },
+    )
+    assert audit_response.status_code == 200
+
     completed = client.post(
         "/api/v1/messaging/client/certificates/internal/worker/requests/"
         f"{claimed['id']}/complete",
@@ -310,6 +354,11 @@ def test_programacion_dehu_encola_y_envia_un_resumen_al_terminar(monkeypatch):
     assert sent[0][0] == "avisos@gestinem.es"
     assert "1 buzones consultados" in sent[0][1]
     assert "Cliente Uno" in sent[0][2]
+    assert "Avisos detectados:</strong> 2" in sent[0][2]
+    assert "Requerimiento contratado" in sent[0][2]
+    assert "Aviso no contratado" in sent[0][2]
+    assert "Cliente sin buzon activo" in sent[0][2]
+    assert "No se han importado" in sent[0][2]
     with factory() as db:
         config = db.scalars(select(ClientDehuMailboxConfig)).one()
         batch = db.scalars(select(ClientDehuSyncBatch)).one()
