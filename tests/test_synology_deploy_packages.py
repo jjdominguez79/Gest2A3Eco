@@ -55,9 +55,11 @@ def test_aapp_worker_synology_es_aislado_y_usa_secreto_montado():
     root = SYNOLOGY / "gest2a3eco-aapp-worker"
     compose = (root / "compose.yaml").read_text(encoding="utf-8")
     dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
+    requirements = (root / "requirements.txt").read_text(encoding="utf-8")
 
     assert "container_name:" not in compose
-    assert "image: gest2a3eco-aapp-worker:2026.09.13.23" in compose
+    assert "image: gest2a3eco-aapp-worker:2026.09.14.25" in compose
+    assert "playwright==1.61.0" in requirements
     assert "AAPP_WORKER_API_KEY_FILE" in compose
     assert "aapp_worker_api_key.txt" in compose
     assert "read_only: true" in compose

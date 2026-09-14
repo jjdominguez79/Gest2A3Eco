@@ -9,7 +9,7 @@ Realidad tecnica del portal (verificada con volcados reales)
   electronico". El certificado TLS lo pide Cl@ve/@firma (*.clave.gob.es).
 - Ya autenticado, los datos se sirven por una API REST interna:
     GET /api/v1/notifications?limit=&page=            -> pendientes  {count,total,limit,page,items[]}
-    GET /api/v1/realized-notifications?limit=&page=   -> realizadas
+    GET /api/v1/realized_notifications?limit=&page=   -> realizadas
     GET /api/v1/communications?limit=&page=            -> comunicaciones
   Campos de cada item: identifier, concept, emitterEntity, emitterSourceEntity,
   nifTitular, sentReference, availabilityDate, expirationDate, bondType, state...
@@ -28,8 +28,8 @@ import json
 import os
 import re
 import time
-from datetime import datetime
-from urllib.parse import urlsplit
+from datetime import date, datetime, timedelta
+from urllib.parse import urlencode, urlsplit
 
 from .base import (
     ConectorOrganismo,
@@ -66,9 +66,24 @@ _RED_IGNORAR = re.compile(r"(visitas-web|ruxit|ruxitagent|action_name=|/beacon|g
 
 # Endpoints REST usados por el frontal DEHu actual. La paginacion empieza en 1.
 _ENDPOINTS = (
-    ("/api/v1/notifications", "NOTIFICACION"),
-    ("/api/v1/realized-notifications", "NOTIFICACION"),
-    ("/api/v1/communications", "COMUNICACION"),
+    ("/api/v1/notifications", "NOTIFICACION", {
+        "emitterEntityCode": "", "bondType": "", "titularNif": "",
+        "vinculoReceptor": "", "postalDelivery": "", "publicId": "",
+        "availabilityDate[left_date]": "", "availabilityDate[right_date]": "",
+        "expirationDate[left_date]": "", "expirationDate[right_date]": "",
+    }),
+    ("/api/v1/realized_notifications", "NOTIFICACION", {
+        "emitterEntityCode": "", "state": "", "publicId": "",
+        "titularNif": "", "bondType": "", "vinculoReceptor": "",
+        "postalDelivery": "", "finalDate[left_date]": "",
+        "finalDate[right_date]": "", "expirationDate[left_date]": "",
+        "expirationDate[right_date]": "",
+    }),
+    ("/api/v1/communications", "COMUNICACION", {
+        "emitterEntityCode": "", "bondType": "", "vinculoReceptor": "",
+        "titularNif": "", "publicId": "", "state": "",
+        "availabilityDate[left_date]": "", "availabilityDate[right_date]": "",
+    }),
 )
 
 
@@ -132,8 +147,9 @@ class ConectorDEHU(ConectorOrganismo):
                 context.set_default_timeout(opciones.timeout_ms)
                 page = context.new_page()
 
-                if opciones.capturar_red:
-                    self._instalar_captura_red(page, capturas, opciones)
+                # La respuesta de usuario contiene el JWT efimero que el
+                # frontal usa para consultar sus APIs.
+                self._instalar_captura_red(page, capturas, opciones)
 
                 try:
                     notifs = self._flujo(page, base, buzon, cert_material, opciones, capturas)
@@ -182,12 +198,12 @@ class ConectorDEHU(ConectorOrganismo):
             )
         # El salto Cl@ve -> DEHu es asincrono incluso en modo headless. No se
         # puede consultar la API nada mas pulsar el certificado: hay que esperar
-        # a que la cookie de sesion quede establecida y la API responda 200.
-        self._esperar_login(page, base, opciones)
+        # a que DEHu entregue el token de la sesion autenticada.
+        self._esperar_login(page, base, opciones, capturas)
         self._diagnostico(page, opciones, "04_autenticado", capturas, forzar=True)
 
         # Fuente principal: API REST interna (reutiliza la sesion autenticada).
-        registros = self._fetch_api(page, base, opciones)
+        registros = self._fetch_api(page, base, opciones, capturas)
         self._diagnostico(page, opciones, "05_listado", capturas, forzar=True)
         if registros:
             return self._map_registros(registros, cert_material, opciones.nif_filtro)
@@ -199,34 +215,54 @@ class ConectorDEHU(ConectorOrganismo):
         return notifs
 
     # ── API REST ───────────────────────────────────────────────────────
-    def _fetch_api(self, page, base, opciones):
+    def _fetch_api(self, page, base, opciones, capturas=None):
         """Llama a los endpoints REST paginando. Devuelve lista de items dict."""
         registros = []
         try:
             req = page.context.request
         except Exception:
             return registros
-        consultas_validas = 0
-        for endpoint, categoria in _ENDPOINTS:
+        token = _token_sesion(capturas or [])
+        if not token:
+            raise RuntimeError("DEHu no devolvio el token de la sesion autenticada")
+        authorization = token if token.lower().startswith("bearer ") else f"Bearer {token}"
+        headers = {"Authorization": authorization}
+        endpoints_validos = set()
+        for endpoint, categoria, filtros in _ENDPOINTS:
             page_num = 1
+            endpoint_completo = True
             while True:
                 # No se filtra por el NIF del propietario del certificado. Un
                 # autorizado RED puede ver avisos cuyos titulares son varias
                 # empresas. El backend los asigna despues por nifTitular.
-                url = f"{base}{endpoint}?limit=100&page={page_num}"
+                params = dict(filtros)
+                if endpoint == "/api/v1/realized_notifications":
+                    params["finalDate[left_date]"] = _fecha_hace_30_dias()
+                    params["finalDate[right_date]"] = _fecha_hoy()
+                elif endpoint == "/api/v1/communications":
+                    params["availabilityDate[left_date]"] = _fecha_hace_30_dias()
+                    params["availabilityDate[right_date]"] = _fecha_hoy()
+                params.update({"limit": 50, "page": page_num})
+                url = f"{base}{endpoint}?{urlencode(params)}"
                 try:
-                    resp = req.get(url, timeout=opciones.timeout_ms)
+                    resp = req.get(
+                        url,
+                        headers=headers,
+                        timeout=opciones.timeout_ms,
+                    )
                     if not resp.ok:
-                        opciones.trace(f"[DEHU][api] {resp.status} {url}")
+                        opciones.trace(f"[DEHU][api] {resp.status} {endpoint}")
+                        endpoint_completo = False
                         break
                     data = resp.json()
                 except Exception as exc:
                     opciones.trace(f"[DEHU][api] error {endpoint}: {exc}")
+                    endpoint_completo = False
                     break
                 if not isinstance(data, dict) or not isinstance(data.get("items"), list):
                     opciones.trace(f"[DEHU][api] respuesta no valida {endpoint}")
+                    endpoint_completo = False
                     break
-                consultas_validas += 1
                 items = data["items"]
                 if not items:
                     break
@@ -241,9 +277,16 @@ class ConectorDEHU(ConectorOrganismo):
                 if page_num * (limit or 100) >= total:
                     break
                 page_num += 1
-        if not consultas_validas:
+            if endpoint_completo:
+                endpoints_validos.add(endpoint)
+        if len(endpoints_validos) != len(_ENDPOINTS):
+            ausentes = sorted(
+                endpoint for endpoint, _categoria, _filtros in _ENDPOINTS
+                if endpoint not in endpoints_validos
+            )
             raise RuntimeError(
-                "DEHu no devolvio ninguna bandeja valida; la sesion puede no estar autenticada"
+                "DEHu no devolvio todas las bandejas requeridas: "
+                + ", ".join(ausentes)
             )
         return registros
 
@@ -288,17 +331,10 @@ class ConectorDEHU(ConectorOrganismo):
 
     # ── red / captura (respaldo y diagnostico) ─────────────────────────
     def _instalar_captura_red(self, page, capturas, opciones):
-        def _url_segura(url):
-            try:
-                parsed = urlsplit(str(url or ""))
-                return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-            except Exception:
-                return "(url no disponible)"
-
         def _on_navigation(frame):
             try:
                 if frame == page.main_frame:
-                    opciones.trace(f"[DEHU][nav] {_url_segura(frame.url)}")
+                    opciones.trace(f"[DEHU][nav] {_url_sin_consulta(frame.url)}")
             except Exception:
                 pass
 
@@ -313,7 +349,7 @@ class ConectorDEHU(ConectorOrganismo):
                     rt = ""
                 if rt == "document":
                     opciones.trace(
-                        f"[DEHU][document] {resp.status} {_url_segura(url)}"
+                        f"[DEHU][document] {resp.status} {_url_sin_consulta(url)}"
                     )
                     return
                 ct = (resp.headers or {}).get("content-type", "")
@@ -330,30 +366,38 @@ class ConectorDEHU(ConectorOrganismo):
                             body = None
                 capturas.append({"url": url, "status": resp.status,
                                  "resource_type": rt, "content_type": ct, "body": body})
-                opciones.trace(f"[DEHU][xhr] {resp.status} {rt} {url}")
+                opciones.trace(
+                    f"[DEHU][xhr] {resp.status} {rt} {_url_sin_consulta(url)}"
+                )
             except Exception:
                 pass
+
+        def _on_request_failed(request):
+            try:
+                motivo = request.failure or "motivo no disponible"
+                opciones.trace(
+                    f"[DEHU][requestfailed] {_url_sin_consulta(request.url)}: "
+                    f"{motivo}"
+                )
+            except Exception:
+                pass
+
         page.on("framenavigated", _on_navigation)
         page.on("response", _on_response)
+        page.on("requestfailed", _on_request_failed)
 
-    def _esperar_login(self, page, base, opciones):
-        """Espera a que la sesion quede autenticada (la API responde 200)."""
+    def _esperar_login(self, page, base, opciones, capturas=None):
+        """Espera el JWT que DEHu entrega despues del retorno SAML."""
         segundos = opciones.pausa_login_segundos or max(
             20, min(90, int(opciones.timeout_ms / 1000)),
         )
         fin = time.time() + segundos
         while time.time() < fin:
-            page.wait_for_timeout(2000)
-            try:
-                resp = page.context.request.get(f"{base}/api/v1/notifications?limit=1&page=1",
-                                                 timeout=8000)
-                data = resp.json() if resp.ok else None
-                if isinstance(data, dict) and isinstance(data.get("items"), list):
-                    page.wait_for_timeout(1000)
-                    opciones.trace("[DEHU] sesion autenticada correctamente")
-                    return True
-            except Exception:
-                continue
+            page.wait_for_timeout(500)
+            if _token_sesion(capturas or []):
+                page.wait_for_timeout(500)
+                opciones.trace("[DEHU] sesion autenticada correctamente")
+                return True
         try:
             pagina = f"{page.url} ({page.title()})"
         except Exception:
@@ -396,6 +440,9 @@ class ConectorDEHU(ConectorOrganismo):
 
     def _elegir_certificado_clave(self, page, opciones):
         selectores = [
+            # Selector estable del IdP actual. El DOM llega despues de la
+            # navegacion SAML; click() espera automaticamente a que aparezca.
+            "button[onclick*=\"'AFIRMA'\"]",
             "text=Acceso DNIe / Certificado electr",
             "text=DNIe / Certificado electr",
             "text=Certificado electr",
@@ -405,17 +452,20 @@ class ConectorDEHU(ConectorOrganismo):
         ]
         for sel in selectores:
             try:
-                el = page.locator(sel)
-                if el.count() > 0:
-                    el.first.click(timeout=5000)
-                    opciones.trace(f"[DEHU] acceso por certificado via '{sel}'")
-                    try:
-                        page.wait_for_load_state("domcontentloaded", timeout=10000)
-                    except Exception:
-                        # La navegacion SSO puede continuar en segundo plano; la
-                        # comprobacion definitiva la hace _esperar_login.
-                        pass
-                    return
+                # No consultar count(): es una lectura instantanea y puede
+                # ejecutarse mientras Cl@ve todavia sustituye el documento.
+                # El click de Playwright si espera a que el elemento exista,
+                # sea visible y quede habilitado.
+                el = page.locator(sel).first
+                el.click(timeout=10000)
+                opciones.trace(f"[DEHU] acceso por certificado via '{sel}'")
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=10000)
+                except Exception:
+                    # La navegacion SSO puede continuar en segundo plano; la
+                    # comprobacion definitiva la hace _esperar_login.
+                    pass
+                return
             except Exception:
                 continue
         raise RuntimeError("No se encontro el acceso por DNIe/certificado en Cl@ve")
@@ -479,13 +529,69 @@ class ConectorDEHU(ConectorOrganismo):
                 fh.write(page.content())
             if capturas:
                 with open(os.path.join(carpeta, f"dehu_api_{etiqueta}_{ts}.json"), "w", encoding="utf-8") as fh:
-                    json.dump(capturas, fh, ensure_ascii=False, indent=2, default=str)
+                    # No persistir JWT, refresh tokens ni contenido de las
+                    # bandejas en los diagnosticos del worker.
+                    resumen = []
+                    for captura in capturas:
+                        body = captura.get("body")
+                        body_summary = {"type": type(body).__name__}
+                        if isinstance(body, dict):
+                            body_summary["keys"] = sorted(
+                                key for key in body
+                                if key not in {"token", "refreshToken"}
+                            )
+                            if isinstance(body.get("items"), list):
+                                body_summary["items_count"] = len(body["items"])
+                            for key in ("total", "count", "limit", "page"):
+                                if key in body:
+                                    body_summary[key] = body[key]
+                        resumen.append({
+                            "url": _url_sin_consulta(captura.get("url")),
+                            "status": captura.get("status"),
+                            "resource_type": captura.get("resource_type"),
+                            "content_type": captura.get("content_type"),
+                            "body_summary": body_summary,
+                        })
+                    json.dump(resumen, fh, ensure_ascii=False, indent=2, default=str)
             opciones.trace(f"[DEHU] diagnostico '{etiqueta}' guardado en {carpeta}")
         except Exception as exc:
             opciones.trace(f"[DEHU] no se pudo guardar diagnostico '{etiqueta}': {exc}")
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
+def _url_sin_consulta(url):
+    try:
+        parsed = urlsplit(str(url or ""))
+        path = parsed.path
+        if path.startswith("/api/v1/user/"):
+            path = "/api/v1/user/[identificador-omitido]"
+        return f"{parsed.scheme}://{parsed.netloc}{path}"
+    except Exception:
+        return "(url no disponible)"
+
+
+def _token_sesion(capturas):
+    for captura in reversed(capturas or []):
+        try:
+            path = urlsplit(str(captura.get("url") or "")).path
+            body = captura.get("body")
+        except Exception:
+            continue
+        if path.startswith("/api/v1/user/") and isinstance(body, dict):
+            token = str(body.get("token") or "").strip()
+            if token:
+                return token
+    return ""
+
+
+def _fecha_hoy():
+    return date.today().strftime("%d/%m/%Y")
+
+
+def _fecha_hace_30_dias():
+    return (date.today() - timedelta(days=30)).strftime("%d/%m/%Y")
+
+
 _FECHA_RE = re.compile(r"\b(\d{2})[/-](\d{2})[/-](\d{4})\b")
 _ISO_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})")
 
