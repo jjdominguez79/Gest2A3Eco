@@ -88,6 +88,8 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   String _voiceExtension = 'aac';
   String? _lastMessageMarkedRead;
   String? _messagePendingScrollId;
+  bool _initialScrollPending = true;
+  bool _initialScrollScheduled = false;
   Timer? _presenceTimer;
   late final NotificationsService _notificationsService;
 
@@ -107,6 +109,8 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     if (oldWidget.conversationId != widget.conversationId ||
         oldWidget.internal != widget.internal) {
       _lastMessageMarkedRead = null;
+      _initialScrollPending = true;
+      _initialScrollScheduled = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _activateConversation();
         _markRead();
@@ -388,6 +392,29 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       }
       _messagePendingScrollId = null;
       unawaited(_animateToBottom());
+    });
+  }
+
+  void _scrollToBottomWhenOpened(List<Message> messages) {
+    if (messages.isEmpty ||
+        !_initialScrollPending ||
+        _initialScrollScheduled) {
+      return;
+    }
+    _initialScrollScheduled = true;
+    final conversationId = widget.conversationId;
+    final internal = widget.internal;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initialScrollScheduled = false;
+      if (!mounted ||
+          !_initialScrollPending ||
+          conversationId != widget.conversationId ||
+          internal != widget.internal ||
+          !_scroll.hasClients) {
+        return;
+      }
+      _initialScrollPending = false;
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
     });
   }
 
@@ -812,6 +839,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (error, _) => Center(child: Text(apiErrorMessage(error))),
             data: (messages) {
+              _scrollToBottomWhenOpened(messages);
               _scrollToSentMessageWhenReady(messages);
               return Scrollbar(
                 controller: _scroll,

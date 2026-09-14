@@ -160,6 +160,55 @@ void main() {
     expect(find.text('Lista de inicio'), findsOneWidget);
   });
 
+  testWidgets('al abrir una conversacion muestra los mensajes del final', (
+    tester,
+  ) async {
+    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'))
+      ..httpClientAdapter = _ConversationAdapter();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+          apiClientProvider.overrideWithValue(
+            ApiClient(dio: dio, tokenProvider: () => testSession.token),
+          ),
+          internalThreadsProvider.overrideWith(
+            (ref) async => const [
+              InternalThread(
+                id: 't1',
+                kind: 'direct',
+                channel: '',
+                title: 'Analía Pérez',
+                unreadCount: 0,
+              ),
+            ],
+          ),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(
+            body: ConversationView(conversationId: 't1', internal: true),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final messageScroll = tester.state<ScrollableState>(
+      find
+          .descendant(
+            of: find.byKey(const Key('message-list')),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    expect(messageScroll.position.maxScrollExtent, greaterThan(0));
+    expect(
+      messageScroll.position.pixels,
+      closeTo(messageScroll.position.maxScrollExtent, 0.5),
+    );
+  });
+
   testWidgets(
     'al enviar mantiene el foco y muestra el mensaje nuevo al final',
     (tester) async {
