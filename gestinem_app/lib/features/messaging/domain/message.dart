@@ -171,6 +171,9 @@ class Message {
     this.hasAttachments = false,
     this.replyTo,
     this.attachments = const [],
+    this.estadoEnvio = 'sent',
+    this.lecturas = 0,
+    this.destinatarios = 0,
   });
 
   factory Message.fromJson(Map<String, dynamic> json) => Message(
@@ -183,6 +186,9 @@ class Message {
     body: json['body'] as String? ?? '',
     createdAt: DateTime.parse(json['created_at'] as String).toLocal(),
     deleted: json['deleted'] as bool? ?? false,
+    estadoEnvio: json['estado_envio'] as String? ?? 'sent',
+    lecturas: json['lecturas'] as int? ?? 0,
+    destinatarios: json['destinatarios'] as int? ?? 0,
     hasAttachments: json['has_attachments'] as bool? ?? false,
     replyTo: json['reply_to'] is Map<String, dynamic>
         ? ReplyReference.fromJson(json['reply_to'] as Map<String, dynamic>)
@@ -207,4 +213,16 @@ class Message {
   final bool hasAttachments;
   final ReplyReference? replyTo;
   final List<Attachment> attachments;
+  final String estadoEnvio;
+  final int lecturas;
+  final int destinatarios;
+
+  String get etiquetaEstado => switch (estadoEnvio) {
+    'read' =>
+      destinatarios > 1
+          ? 'Leido por todos ($lecturas/$destinatarios)'
+          : 'Leido',
+    'partially_read' => 'Leido por $lecturas/$destinatarios',
+    _ => 'Enviado',
+  };
 }

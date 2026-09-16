@@ -120,6 +120,16 @@ class MensajeriaRemoteClient:
         response.raise_for_status()
         return response.json()
 
+    def obtener_perfil(self) -> dict:
+        response = self.http.get(self._url("/staff/me"), headers=self._headers(), timeout=20)
+        response.raise_for_status()
+        return response.json()
+
+    def configurar_estados_mensajes(self, mostrar: bool) -> None:
+        response = self.http.patch(self._url("/staff/me"), headers=self._headers(),
+                                   json={"mostrar_estados_mensajes": mostrar}, timeout=20)
+        response.raise_for_status()
+
     def company_conversation(self, company_code: str, kind: str) -> dict | None:
         code = str(company_code or "").strip().upper()
         channel = str(kind or "").strip().lower()

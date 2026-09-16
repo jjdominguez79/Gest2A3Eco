@@ -19,6 +19,7 @@ from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, File, Form, Hea
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from backend.api.client_access import revoke_organization_client_access
@@ -29,7 +30,7 @@ from backend.api.messaging_models import (
     MessagingAppDevice, MessagingCampaign, MessagingCampaignRecipient,
     MessagingDeletionAudit, MessagingEvent, MessagingGroup, MessagingGroupMember,
     MessagingInvitation, MessagingMessage, MessagingOrganization,
-    MessagingPasswordReset, MessagingPresence, MessagingRead, MessagingSession, MessagingStaff,
+    MessagingPasswordReset, MessagingPresence, MessagingRead, MessagingReceipt, MessagingSession, MessagingStaff,
     MessagingProfileChangeRequest,
     MessagingStaffAuthFlow, MessagingStaffChannel, MessagingStaffSession,
     MessagingStaffAppCode, MessagingStaffThread, MessagingStaffThreadMessage,
@@ -181,6 +182,7 @@ class AppDeviceIn(BaseModel):
 
 class StaffSelfPatchIn(BaseModel):
     chat_alias: str | None = Field(default=None, max_length=160)
+    mostrar_estados_mensajes: bool | None = None
 
 
 class ClientAccessIn(BaseModel):
@@ -825,6 +827,59 @@ def _serialize_message(db: Session, item: MessagingMessage, audience: str = "") 
     }
 
 
+def _receipt_time(value: datetime) -> datetime:
+    return value.replace(tzinfo=utcnow().tzinfo) if value.tzinfo is None else value
+
+
+def _confirm_message_read(db: Session, target_type: str, target_id: str,
+                          actor_type: str, actor_id: str, last) -> bool:
+    if last is None:
+        return False
+    stmt = insert(MessagingReceipt).values(target_type=target_type, target_id=target_id,
+                                         actor_type=actor_type, actor_id=actor_id,
+                                         read_through_at=last.created_at)
+    # Varios dispositivos pueden confirmar a la vez; la lectura solo avanza.
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["target_type", "target_id", "actor_type", "actor_id"],
+        set_={"read_through_at": stmt.excluded.read_through_at},
+        where=MessagingReceipt.read_through_at < stmt.excluded.read_through_at,
+    )
+    return db.execute(stmt).rowcount > 0
+
+
+def _add_message_states(db: Session, rows: list, result: list[dict], target_type: str,
+                        target_id: str, actor_type: str, actor_id: str) -> None:
+    """Estados del emisor, calculados en bloque con las lecturas confirmadas."""
+    own = [(row, data) for row, data in zip(rows, result)
+           if data.get("author_type", "staff") == actor_type and data["author_id"] == actor_id]
+    if not own:
+        return
+    if target_type == "internal_thread":
+        thread = db.get(MessagingStaffThread, target_id)
+        recipients = {("staff", value) for value in _staff_thread_recipient_ids(db, thread)}
+    else:
+        conv = db.get(MessagingConversation, target_id)
+        if actor_type == "staff":
+            recipients = {("client", value) for value in db.scalars(select(MessagingClient.id).where(
+                MessagingClient.organization_id == conv.organization_id,
+                MessagingClient.active.is_(True), MessagingClient.password_hash != "",
+            ))}
+        else:
+            recipients = {("staff", staff.external_id) for staff in db.scalars(select(MessagingStaff).where(
+                MessagingStaff.active.is_(True),
+            )) if _can_access_conversation(db, conv, staff)}
+    recipients.discard((actor_type, actor_id))
+    receipts = {(receipt.actor_type, receipt.actor_id): _receipt_time(receipt.read_through_at)
+                for receipt in db.scalars(select(MessagingReceipt).where(
+                    MessagingReceipt.target_type == target_type, MessagingReceipt.target_id == target_id,
+                ))}
+    for row, data in own:
+        count = sum(1 for key in recipients if key in receipts and receipts[key] >= _receipt_time(row.created_at))
+        data["estado_envio"] = "read" if recipients and count == len(recipients) else "partially_read" if count else "sent"
+        data["lecturas"] = count
+        data["destinatarios"] = len(recipients)
+
+
 def _unread_count(db: Session, conv: MessagingConversation, actor_type: str, actor_id: str) -> int:
     read = db.scalar(select(MessagingRead).where(
         MessagingRead.conversation_id == conv.id,
@@ -1333,6 +1388,7 @@ def staff_app_exchange(payload: StaffAppCodeIn, db: Session = Depends(get_db)):
             "name": staff.chat_alias.strip() or staff.name,
             "email": staff.email,
             "role": staff.role,
+            "mostrar_estados_mensajes": staff.mostrar_estados_mensajes,
             "avatar_url": (
                 f"/api/v1/messaging/staff/avatars/{staff.external_id}"
                 if staff.avatar_storage_key else ""
@@ -1369,6 +1425,7 @@ def staff_me(staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_
         "name": staff.chat_alias.strip() or staff.name,
         "email": staff.email,
         "role": staff.role, "chat_alias": staff.chat_alias,
+        "mostrar_estados_mensajes": staff.mostrar_estados_mensajes,
         "avatar_configured": bool(staff.avatar_storage_key),
         "avatar_url": f"/api/v1/messaging/staff/avatars/{staff.external_id}" if staff.avatar_storage_key else "",
         "channels": sorted(_channels_for_staff(db, staff)),
@@ -1385,6 +1442,8 @@ def patch_staff_me(
     staff = _staff_from_request(db, request)
     if payload.chat_alias is not None:
         staff.chat_alias = payload.chat_alias.strip()
+    if payload.mostrar_estados_mensajes is not None:
+        staff.mostrar_estados_mensajes = payload.mostrar_estados_mensajes
     db.commit()
     return {"ok": True}
 
@@ -1566,7 +1625,9 @@ def staff_thread_messages(
     rows = db.scalars(select(MessagingStaffThreadMessage).where(
         MessagingStaffThreadMessage.thread_id == thread.id,
     ).order_by(MessagingStaffThreadMessage.created_at).limit(500)).all()
-    return [_serialize_staff_thread_message(db, row) for row in rows]
+    result = [_serialize_staff_thread_message(db, row) for row in rows]
+    _add_message_states(db, rows, result, "internal_thread", thread.id, "staff", staff.external_id)
+    return result
 
 
 @router.get("/staff/internal/attachments/{attachment_id}")
@@ -1610,8 +1671,13 @@ def mark_staff_thread_read(
     )) or MessagingStaffThreadRead(thread_id=thread.id, staff_external_id=staff.external_id)
     read.last_message_id = last.id if last else ""
     read.read_at = utcnow()
+    changed = _confirm_message_read(db, "internal_thread", thread.id, "staff", staff.external_id, last)
     db.add(read)
+    if changed:
+        db.add(MessagingEvent(organization_id="", conversation_id=thread.id, event_type="read_updated"))
     db.commit()
+    if changed:
+        hub.publish({"type": "message.read", "thread_id": thread.id}, staff_ids=_staff_thread_recipient_ids(db, thread))
     return {"ok": True}
 
 
@@ -2633,7 +2699,12 @@ def client_unified_messages(
         ).order_by(MessagingMessage.created_at.asc()).limit(limit)
     ).all()
 
-    return [_serialize_message(db, row, "client") for row in rows]
+    result = [_serialize_message(db, row, "client") for row in rows]
+    for conv in convs:
+        selected = [(row, data) for row, data in zip(rows, result) if row.conversation_id == conv.id]
+        _add_message_states(db, [row for row, _ in selected], [data for _, data in selected],
+                            "conversation", conv.id, "client", client.id)
+    return result
 
 
 @router.post("/client/unified-messages", status_code=201)
@@ -2816,7 +2887,10 @@ def messages(audience: str, conversation_id: str, request: Request, db: Session 
     rows = db.scalars(select(MessagingMessage).where(
         MessagingMessage.conversation_id == conv.id,
     ).order_by(MessagingMessage.created_at.asc()).limit(500)).all()
-    return [_serialize_message(db, row, audience) for row in rows]
+    result = [_serialize_message(db, row, audience) for row in rows]
+    actor_id = actor.id if audience == "client" else actor.external_id
+    _add_message_states(db, rows, result, "conversation", conv.id, audience, actor_id)
+    return result
 
 
 def _resolve_actor(audience: str, request: Request, db: Session):
@@ -2873,7 +2947,9 @@ def mark_read(audience: str, conversation_id: str, request: Request, db: Session
         MessagingRead.actor_id == actor_id,
     ))
     last_id = last.id if last else ""
+    _confirm_message_read(db, "conversation", conv.id, audience, actor_id, last)
     if read and read.last_message_id == last_id:
+        db.commit()
         return {"ok": True, "changed": False}
     read = read or MessagingRead(conversation_id=conv.id, actor_type=audience, actor_id=actor_id)
     read.last_message_id = last_id

@@ -4,6 +4,40 @@ import 'package:gestinem/features/messaging/domain/message.dart';
 import 'package:gestinem/features/messaging/presentation/message_bubble.dart';
 
 void main() {
+  testWidgets('muestra estados propios y permite ocultarlos', (tester) async {
+    final message = Message(
+      id: 'receipt',
+      conversationId: 'c1',
+      authorType: 'staff',
+      authorId: 's1',
+      authorName: 'Ana',
+      authorAvatarUrl: '',
+      body: 'Aviso',
+      createdAt: DateTime(2026),
+      deleted: false,
+      estadoEnvio: 'partially_read',
+      lecturas: 1,
+      destinatarios: 3,
+    );
+    Future<void> mostrar(bool mine, bool mostrarEstados) => tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MessageBubble(
+            message: message,
+            mine: mine,
+            mostrarEstados: mostrarEstados,
+          ),
+        ),
+      ),
+    );
+    await mostrar(true, true);
+    expect(find.textContaining('Leido por 1/3'), findsOneWidget);
+    await mostrar(true, false);
+    expect(find.textContaining('Leido por'), findsNothing);
+    await mostrar(false, true);
+    expect(find.textContaining('Leido por'), findsNothing);
+  });
+
   testWidgets('identifica explicitamente el emisor propio y ajeno', (
     tester,
   ) async {

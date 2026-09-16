@@ -235,6 +235,9 @@ def startup():
             ("msg_staff", "chat_alias"): (
                 "ALTER TABLE msg_staff ADD COLUMN chat_alias VARCHAR(160) NOT NULL DEFAULT ''"
             ),
+            ("msg_staff", "mostrar_estados_mensajes"): (
+                "ALTER TABLE msg_staff ADD COLUMN mostrar_estados_mensajes BOOLEAN NOT NULL DEFAULT TRUE"
+            ),
             ("msg_staff", "avatar_storage_key"): (
                 "ALTER TABLE msg_staff ADD COLUMN avatar_storage_key VARCHAR(500) NOT NULL DEFAULT ''"
             ),
@@ -393,6 +396,7 @@ def startup():
         "021_dehu_notifications.sql",
         "022_dehu_automatic_sync.sql",
         "023_dehu_new_notifications.sql",
+        "024_message_receipts.sql",
     ):
         _mig_path = Path(__file__).resolve().parent.parent / "migrations" / _mig_name
         if _mig_path.exists():

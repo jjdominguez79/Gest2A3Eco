@@ -115,6 +115,80 @@ def _setup(tmp_path: Path, monkeypatch):
     return client, factory, staff_headers, auth, accepted["client"]["id"], conversation["id"]
 
 
+def test_estados_mensajes_conservan_lectura_y_distinguen_nuevos(tmp_path, monkeypatch):
+    client, _factory, staff_headers, auth, _client_id, conv_id = _setup(tmp_path, monkeypatch)
+    path = f"/api/v1/messaging/staff/conversations/{conv_id}/messages"
+    sent = client.post(path, headers=staff_headers("admin"),
+                       data={"body": "Aviso", "idempotency_key": "receipt-1"})
+    assert sent.status_code == 200
+    initial = client.get(path, headers=staff_headers("admin")).json()[0]
+    assert (initial["estado_envio"], initial["lecturas"], initial["destinatarios"]) == ("sent", 0, 1)
+    # Abrir la propia conversacion no confirma la lectura del destinatario.
+    assert client.post(f"/api/v1/messaging/staff/conversations/{conv_id}/read",
+                       headers=staff_headers("admin")).status_code == 200
+    assert client.get(path, headers=staff_headers("admin")).json()[0]["estado_envio"] == "sent"
+    read_path = f"/api/v1/messaging/client/conversations/{conv_id}/read"
+    assert client.post(read_path, headers=auth).status_code == 200
+    assert client.post(read_path, headers=auth).json()["changed"] is False
+    read = client.get(path, headers=staff_headers("admin")).json()[0]
+    assert (read["estado_envio"], read["lecturas"]) == ("read", 1)
+    assert client.delete(read_path, headers=auth).status_code == 204
+    assert client.get(path, headers=staff_headers("admin")).json()[0]["estado_envio"] == "read"
+    assert client.post(path, headers=staff_headers("admin"),
+                       data={"body": "Otro aviso", "idempotency_key": "receipt-2"}).status_code == 200
+    assert [row["estado_envio"] for row in client.get(path, headers=staff_headers("admin")).json()] == ["read", "sent"]
+    # Los estados del emisor no se exponen en mensajes de otros usuarios.
+    received = client.get(f"/api/v1/messaging/client/conversations/{conv_id}/messages", headers=auth).json()
+    assert all("estado_envio" not in row for row in received)
+
+
+def test_preferencia_estados_mensajes_es_personal_y_no_altera_lecturas(tmp_path, monkeypatch):
+    client, _factory, staff_headers, auth, _client_id, conv_id = _setup(tmp_path, monkeypatch)
+    me = "/api/v1/messaging/staff/me"
+    admin = staff_headers("admin")
+    assert client.get(me, headers=admin).json()["mostrar_estados_mensajes"] is True
+    assert client.patch(me, headers=admin, json={"mostrar_estados_mensajes": False}).status_code == 200
+    assert client.get(me, headers=admin).json()["mostrar_estados_mensajes"] is False
+    assert client.get(me, headers=staff_headers("employee")).json()["mostrar_estados_mensajes"] is True
+    assert client.patch(me, json={"mostrar_estados_mensajes": True}).status_code == 401
+    # La preferencia no puede modificar a otro empleado ni deja de registrar lecturas.
+    assert client.patch(me, headers=admin, json={"chat_alias": "Mi alias"}).status_code == 200
+    assert client.get(me, headers=admin).json()["mostrar_estados_mensajes"] is False
+    path = f"/api/v1/messaging/client/conversations/{conv_id}/messages"
+    assert client.post(path, headers=auth,
+                       data={"body": "Pregunta", "idempotency_key": "client-receipt"}).status_code == 200
+    assert client.post(f"/api/v1/messaging/staff/conversations/{conv_id}/read", headers=admin).status_code == 200
+    state = client.get(path, headers=auth).json()[0]
+    assert state["estado_envio"] == "partially_read"
+    assert (state["lecturas"], state["destinatarios"]) == (1, 2)
+    unified = client.get("/api/v1/messaging/client/unified-messages", headers=auth).json()
+    assert unified[0]["estado_envio"] == "partially_read"
+    assert client.post(f"/api/v1/messaging/staff/conversations/{conv_id}/read",
+                       headers=staff_headers("employee")).status_code == 200
+    assert client.get(path, headers=auth).json()[0]["estado_envio"] == "read"
+
+
+def test_estados_chat_interno_lectura_parcial_y_evento(tmp_path, monkeypatch):
+    client, _factory, staff_headers, auth, _client_id, _conv_id = _setup(tmp_path, monkeypatch)
+    admin = staff_headers("admin")
+    threads = client.get("/api/v1/messaging/staff/internal/threads", headers=admin).json()
+    direct = next(row for row in threads if row["kind"] == "direct")
+    path = f"/api/v1/messaging/staff/internal/threads/{direct['id']}/messages"
+    events = []
+    monkeypatch.setattr(messaging_api.hub, "publish", lambda payload, **kwargs: events.append((payload, kwargs)))
+    assert client.post(path, headers=admin, data={"body": "Hola", "idempotency_key": "internal-receipt"}).status_code == 200
+    assert client.get(path, headers=admin).json()[0]["estado_envio"] == "sent"
+    read_path = f"/api/v1/messaging/staff/internal/threads/{direct['id']}/read"
+    assert client.post(read_path, headers=staff_headers("employee")).status_code == 200
+    assert client.get(path, headers=admin).json()[0]["estado_envio"] == "read"
+    assert events[-1] == ({"type": "message.read", "thread_id": direct["id"]},
+                          {"staff_ids": {"admin", "employee"}})
+    total = len(events)
+    assert client.post(read_path, headers=staff_headers("employee")).status_code == 200
+    assert len(events) == total
+    assert client.get(path, headers=auth).status_code in {401, 403}
+
+
 def test_baja_maestra_oculta_empresa_y_revoca_acceso(tmp_path, monkeypatch):
     client, factory, staff_headers, auth, client_id, _conversation_id = _setup(
         tmp_path, monkeypatch,

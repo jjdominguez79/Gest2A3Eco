@@ -11,6 +11,7 @@ class UserProfile {
     this.staffRole,
     this.channels = const [],
     this.avatarUrl = '',
+    this.mostrarEstadosMensajes = true,
   });
 
   factory UserProfile.fromJson(Map<String, dynamic> json, UserType type) {
@@ -27,6 +28,7 @@ class UserProfile {
           .map((item) => item.toString())
           .toList(growable: false),
       avatarUrl: json['avatar_url'] as String? ?? '',
+      mostrarEstadosMensajes: json['mostrar_estados_mensajes'] as bool? ?? true,
     );
   }
 
@@ -37,6 +39,7 @@ class UserProfile {
   final StaffRole? staffRole;
   final List<String> channels;
   final String avatarUrl;
+  final bool mostrarEstadosMensajes;
 
   bool get isAdmin => staffRole == StaffRole.admin;
 
@@ -48,6 +51,7 @@ class UserProfile {
     'role': staffRole?.name,
     'channels': channels,
     'avatar_url': avatarUrl,
+    'mostrar_estados_mensajes': mostrarEstadosMensajes,
   };
 }
 

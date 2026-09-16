@@ -27,6 +27,7 @@ from backend.api.messaging_models import (
     MessagingPasswordReset,
     MessagingPresence,
     MessagingRead,
+    MessagingReceipt,
     MessagingSession,
     MessagingStaffThread,
     MessagingStaffThreadMessage,
@@ -499,6 +500,7 @@ def execute_cleanup_plan(
             _delete_chunks(db, MessagingSession, MessagingSession.client_id, plan.client_ids)
             _delete_chunks(db, MessagingPresence, MessagingPresence.client_id, plan.client_ids)
             _delete_chunks(db, MessagingRead, MessagingRead.conversation_id, plan.conversation_ids)
+            _delete_chunks(db, MessagingReceipt, MessagingReceipt.target_id, plan.conversation_ids)
             _delete_chunks(
                 db, MessagingDeletionAudit, MessagingDeletionAudit.conversation_id,
                 plan.conversation_ids,

@@ -52,6 +52,7 @@ class MessagingStaff(Base):
     email: Mapped[str] = mapped_column(String(254), default="", index=True)
     entra_oid: Mapped[str] = mapped_column(String(64), default="", index=True)
     chat_alias: Mapped[str] = mapped_column(String(160), default="")
+    mostrar_estados_mensajes: Mapped[bool] = mapped_column(Boolean, default=True)
     avatar_storage_key: Mapped[str] = mapped_column(String(500), default="")
     avatar_content_type: Mapped[str] = mapped_column(String(120), default="")
     role: Mapped[str] = mapped_column(String(32), default="empleado")
@@ -308,6 +309,16 @@ class MessagingRead(Base):
     actor_id: Mapped[str] = mapped_column(String(64))
     last_message_id: Mapped[str] = mapped_column(String(36), default="")
     read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MessagingReceipt(Base):
+    """Lectura confirmada independiente de la marca personal de no leido."""
+    __tablename__ = "msg_receipts"
+    target_type: Mapped[str] = mapped_column(String(24), primary_key=True)
+    target_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    actor_type: Mapped[str] = mapped_column(String(16), primary_key=True)
+    actor_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    read_through_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class MessagingDownload(Base):

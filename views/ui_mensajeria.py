@@ -21,6 +21,8 @@ class UIMensajeria(ttk.Frame):
         self.messages = {}
         self.attachments = {}
         self.selected_files: list[str] = []
+        self.mostrar_estados = tk.BooleanVar(value=True)
+        self._guardando_estados = False
         self._event_stop = threading.Event()
         self._event_started = False
         self._event_refresh_id = None
@@ -39,6 +41,9 @@ class UIMensajeria(ttk.Frame):
         self.status = ttk.Label(bar, text="")
         self.status.pack(side="left")
         ttk.Button(bar, text="Actualizar", command=self.refresh).pack(side="right")
+        self.estados_check = ttk.Checkbutton(bar, text="Mostrar estados de mis mensajes",
+                                            variable=self.mostrar_estados, command=self._guardar_estados)
+        self.estados_check.pack(side="right", padx=6)
         if self.session.is_admin():
             ttk.Button(bar, text="Activar cliente / invitar", command=self._invite).pack(side="right", padx=6)
 
@@ -69,8 +74,8 @@ class UIMensajeria(ttk.Frame):
         ttk.Button(controls, text="Resuelta", command=lambda: self._set_state("resuelta")).pack(side="left")
         ttk.Button(controls, text="Asignarme", command=self._assign_me).pack(side="left", padx=8)
 
-        self.msg_tree = ttk.Treeview(right, columns=("fecha", "autor", "mensaje", "adjuntos"), show="headings", height=12)
-        for key, title, width in (("fecha", "Fecha", 145), ("autor", "Autor", 150), ("mensaje", "Mensaje", 420), ("adjuntos", "Adjuntos", 80)):
+        self.msg_tree = ttk.Treeview(right, columns=("fecha", "autor", "mensaje", "adjuntos", "estado_envio"), show="headings", height=12)
+        for key, title, width in (("fecha", "Fecha", 145), ("autor", "Autor", 150), ("mensaje", "Mensaje", 420), ("adjuntos", "Adjuntos", 80), ("estado_envio", "Envio / lectura", 165)):
             self.msg_tree.heading(key, text=title); self.msg_tree.column(key, width=width, anchor="w")
         self.msg_tree.pack(fill="both", expand=True)
         self.msg_tree.bind("<<TreeviewSelect>>", lambda _event: self._show_message_attachments())
@@ -119,9 +124,39 @@ class UIMensajeria(ttk.Frame):
     def refresh(self):
         def work():
             self.client.sync_staff(role=str(getattr(self.session.role, "value", self.session.role)))
-            return self.client.list_conversations()
-        self._run("Actualizando chats...", work, self._render_conversations)
+            return self.client.list_conversations(), self.client.obtener_perfil()
+        def done(result):
+            rows, perfil = result
+            if not self._guardando_estados:
+                self.mostrar_estados.set(perfil.get("mostrar_estados_mensajes", True))
+                self._actualizar_columnas_estados()
+            self._render_conversations(rows)
+        self._run("Actualizando chats...", work, done)
         self._render_incoming()
+
+    def _actualizar_columnas_estados(self):
+        columnas = ("fecha", "autor", "mensaje", "adjuntos")
+        self.msg_tree.configure(displaycolumns=columnas + (("estado_envio",) if self.mostrar_estados.get() else ()))
+
+    def _guardar_estados(self):
+        mostrar = self.mostrar_estados.get()
+        self._guardando_estados = True
+        self.estados_check.state(["disabled"])
+        def work():
+            try:
+                self.client.configurar_estados_mensajes(mostrar)
+                return mostrar, None
+            except Exception as exc:
+                return not mostrar, exc
+        def done(result):
+            valor, error = result
+            self._guardando_estados = False
+            self.estados_check.state(["!disabled"])
+            self.mostrar_estados.set(valor)
+            self._actualizar_columnas_estados()
+            if error:
+                messagebox.showerror("Mensajeria", str(error), parent=self)
+        self._run("Guardando preferencias...", work, done)
 
     def _schedule_refresh(self):
         if not self.winfo_exists():
@@ -136,6 +171,7 @@ class UIMensajeria(ttk.Frame):
         self._schedule_refresh()
 
     def _render_conversations(self, rows):
+        selected = self._selected_conversation_id()
         self.conv_tree.delete(*self.conv_tree.get_children()); self.conversations = {}
         for item in rows:
             self.conversations[item["id"]] = item
@@ -143,6 +179,8 @@ class UIMensajeria(ttk.Frame):
                 item.get("company_name"), "Privado" if item.get("kind") == "private" else "General",
                 item.get("state"), item.get("updated_at"),
             ))
+        if selected in self.conversations:
+            self.conv_tree.selection_set(selected)
         if not self._event_started:
             self._event_started = True
             threading.Thread(
@@ -190,7 +228,18 @@ class UIMensajeria(ttk.Frame):
             self.msg_tree.insert("", "end", iid=item["id"], values=(
                 item.get("created_at"), item.get("author_name"),
                 (item.get("body") or "").replace("\n", " ")[:240], len(item.get("attachments") or []),
+                self._etiqueta_estado(item),
             ))
+
+    def _etiqueta_estado(self, item):
+        if item.get("author_type") != "staff" or str(item.get("author_id")) != str(self.session.user.id) or item.get("deleted"):
+            return ""
+        lecturas, total = item.get("lecturas", 0), item.get("destinatarios", 0)
+        if item.get("estado_envio") == "read":
+            return f"Leido por todos ({lecturas}/{total})" if total > 1 else "Leido"
+        if item.get("estado_envio") == "partially_read":
+            return f"Leido por {lecturas}/{total}"
+        return "Enviado"
 
     def _show_message_attachments(self):
         self.att_tree.delete(*self.att_tree.get_children())

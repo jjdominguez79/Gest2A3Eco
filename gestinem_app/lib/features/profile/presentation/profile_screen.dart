@@ -24,6 +24,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   late TextEditingController _aliasController;
   bool _editingAlias = false;
   bool _uploadingAvatar = false;
+  bool _guardandoEstados = false;
   String? _localAvatarUrl;
   String? _error;
 
@@ -98,6 +99,24 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           context,
         ).showSnackBar(SnackBar(content: Text(apiErrorMessage(e))));
       }
+    }
+  }
+
+  Future<void> _guardarEstados(bool mostrar) async {
+    setState(() => _guardandoEstados = true);
+    try {
+      await ref
+          .read(profileRepositoryProvider)
+          .actualizarEstadosMensajes(mostrar);
+      await ref.read(sessionProvider.notifier).refreshProfile();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
+      }
+    } finally {
+      if (mounted) setState(() => _guardandoEstados = false);
     }
   }
 
@@ -235,6 +254,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               ],
               Text(profile.email, textAlign: TextAlign.center),
               const SizedBox(height: 20),
+              SwitchListTile(
+                title: const Text('Mostrar estados de mis mensajes'),
+                subtitle: const Text(
+                  'Ver si se han enviado o leido. Esta opcion solo cambia lo que ves en tu pantalla.',
+                ),
+                value: profile.mostrarEstadosMensajes,
+                onChanged: _guardandoEstados ? null : _guardarEstados,
+              ),
               ListTile(
                 leading: const Icon(Icons.badge_outlined),
                 title: const Text('Tipo de acceso'),

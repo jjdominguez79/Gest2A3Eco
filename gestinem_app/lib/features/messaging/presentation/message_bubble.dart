@@ -356,6 +356,7 @@ class MessageBubble extends StatelessWidget {
     this.baseUrl = '',
     this.authToken = '',
     this.showAuthor = true,
+    this.mostrarEstados = true,
     this.isStaff = false,
     this.allowStaffAttachmentDownload = false,
     this.onReplyTap,
@@ -372,6 +373,7 @@ class MessageBubble extends StatelessWidget {
   final String baseUrl;
   final String authToken;
   final bool showAuthor;
+  final bool mostrarEstados;
 
   /// True cuando el visor es personal del despacho (no cliente)
   final bool isStaff;
@@ -588,7 +590,7 @@ class MessageBubble extends StatelessWidget {
                           ? Alignment.bottomRight
                           : Alignment.bottomLeft,
                       child: Text(
-                        _timeLabel(message.createdAt),
+                        '${_timeLabel(message.createdAt)}${mine && mostrarEstados && !message.deleted ? ' \u00b7 ${message.etiquetaEstado}' : ''}',
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
                           color: colors.onSurface.withValues(alpha: .55),
                         ),

@@ -8,6 +8,13 @@ class ProfileRepository {
   ProfileRepository(this.api);
   final ApiClient api;
 
+  Future<void> actualizarEstadosMensajes(bool mostrar) async {
+    await api.dio.patch<void>(
+      '/staff/me',
+      data: {'mostrar_estados_mensajes': mostrar},
+    );
+  }
+
   Future<void> updateChatAlias(String alias) async {
     await api.dio.patch<void>('/staff/me', data: {'chat_alias': alias});
   }
