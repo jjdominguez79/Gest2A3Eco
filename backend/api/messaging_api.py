@@ -184,6 +184,8 @@ class AppDeviceIn(BaseModel):
 class StaffSelfPatchIn(BaseModel):
     chat_alias: str | None = Field(default=None, max_length=160)
     mostrar_estados_mensajes: bool | None = None
+    mostrar_lecturas_clientes: bool | None = None
+    mostrar_lecturas_empleados: bool | None = None
 
 
 class ClientAccessIn(BaseModel):
@@ -663,11 +665,13 @@ def _conversation_for_client(db: Session, conversation_id: str, client: Messagin
     return conv
 
 
-def _event(db: Session, conv: MessagingConversation, event_type: str) -> None:
+def _event(db: Session, conv: MessagingConversation, event_type: str,
+           actor_type: str = "", actor_id: str = "") -> None:
     db.add(MessagingEvent(
         organization_id=conv.organization_id,
         conversation_id=conv.id,
         event_type=event_type,
+        actor_type=actor_type, actor_id=actor_id,
     ))
 
 
@@ -832,6 +836,18 @@ def _receipt_time(value: datetime) -> datetime:
     return value.replace(tzinfo=utcnow().tzinfo) if value.tzinfo is None else value
 
 
+def _puede_ver_lectura(lector: MessagingStaff | None, audience: str,
+                       observador: MessagingStaff | None = None) -> bool:
+    # El administrador siempre ve las lecturas; no hay reciprocidad.
+    if observador and (observador.role == "admin" or
+                       (lector and observador.external_id == lector.external_id)):
+        return True
+    if lector is None:
+        return False
+    return (lector.mostrar_lecturas_clientes if audience == "client"
+            else lector.mostrar_lecturas_empleados)
+
+
 def _confirm_message_read(db: Session, target_type: str, target_id: str,
                           actor_type: str, actor_id: str, last) -> bool:
     if last is None:
@@ -874,6 +890,15 @@ def _add_message_states(db: Session, rows: list, result: list[dict], target_type
                 for receipt in db.scalars(select(MessagingReceipt).where(
                     MessagingReceipt.target_type == target_type, MessagingReceipt.target_id == target_id,
                 ))}
+    observador = db.get(MessagingStaff, actor_id) if actor_type == "staff" else None
+    lectores_staff = {staff.external_id: staff for staff in db.scalars(
+        select(MessagingStaff).where(MessagingStaff.external_id.in_(
+            [key[1] for key in recipients if key[0] == "staff"]
+        )))}
+    # Filtrar antes de calcular totales, tambien para clientes antiguos.
+    receipts = {key: fecha for key, fecha in receipts.items()
+                if key[0] != "staff" or _puede_ver_lectura(
+                    lectores_staff.get(key[1]), actor_type, observador)}
     for row, data in own:
         count = sum(1 for key in recipients if key in receipts and receipts[key] >= _receipt_time(row.created_at))
         data["estado_envio"] = "read" if recipients and count == len(recipients) else "partially_read" if count else "sent"
@@ -952,6 +977,15 @@ def _queue_app_pushes(
 
 def _publish_conversation_event(db: Session, conv: MessagingConversation, event_type: str, **extra) -> None:
     payload = {"type": event_type, "conversation_id": conv.id, **extra}
+    if event_type == "message.read" and extra.get("actor_type") == "staff":
+        lector = db.get(MessagingStaff, extra.get("actor_id", ""))
+        staff_ids = {staff.external_id for staff in db.scalars(
+            select(MessagingStaff).where(MessagingStaff.active.is_(True)))
+            if _can_access_conversation(db, conv, staff)
+            and _puede_ver_lectura(lector, "staff", staff)}
+        hub.publish(payload, staff_ids=staff_ids,
+                    organization_id=conv.organization_id if _puede_ver_lectura(lector, "client") else "")
+        return
     org = db.get(MessagingOrganization, conv.organization_id)
     staff_ids = None
     if conv.kind == "private" or (org and org.company_code.strip().upper() in TEST_COMPANY_CODES):
@@ -1389,7 +1423,9 @@ def staff_app_exchange(payload: StaffAppCodeIn, db: Session = Depends(get_db)):
             "name": staff.chat_alias.strip() or staff.name,
             "email": staff.email,
             "role": staff.role,
-            "mostrar_estados_mensajes": staff.mostrar_estados_mensajes,
+            "mostrar_estados_mensajes": staff.role == "admin" or staff.mostrar_estados_mensajes,
+            "mostrar_lecturas_clientes": staff.mostrar_lecturas_clientes,
+            "mostrar_lecturas_empleados": staff.mostrar_lecturas_empleados,
             "avatar_url": (
                 f"/api/v1/messaging/staff/avatars/{staff.external_id}"
                 if staff.avatar_storage_key else ""
@@ -1426,7 +1462,9 @@ def staff_me(staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_
         "name": staff.chat_alias.strip() or staff.name,
         "email": staff.email,
         "role": staff.role, "chat_alias": staff.chat_alias,
-        "mostrar_estados_mensajes": staff.mostrar_estados_mensajes,
+        "mostrar_estados_mensajes": staff.role == "admin" or staff.mostrar_estados_mensajes,
+        "mostrar_lecturas_clientes": staff.mostrar_lecturas_clientes,
+        "mostrar_lecturas_empleados": staff.mostrar_lecturas_empleados,
         "avatar_configured": bool(staff.avatar_storage_key),
         "avatar_url": f"/api/v1/messaging/staff/avatars/{staff.external_id}" if staff.avatar_storage_key else "",
         "channels": sorted(_channels_for_staff(db, staff)),
@@ -1441,11 +1479,31 @@ def patch_staff_me(
 ):
     """Actualiza el perfil propio del staff (alias de chat)."""
     staff = _staff_from_request(db, request)
+    privacidad = (payload.mostrar_lecturas_clientes, payload.mostrar_lecturas_empleados)
+    if any(valor is not None for valor in privacidad) and staff.role != "admin":
+        raise HTTPException(403, "Solo el administrador configura la privacidad de sus lecturas")
     if payload.chat_alias is not None:
         staff.chat_alias = payload.chat_alias.strip()
     if payload.mostrar_estados_mensajes is not None:
-        staff.mostrar_estados_mensajes = payload.mostrar_estados_mensajes
+        staff.mostrar_estados_mensajes = staff.role == "admin" or payload.mostrar_estados_mensajes
+    if payload.mostrar_lecturas_clientes is not None:
+        staff.mostrar_lecturas_clientes = payload.mostrar_lecturas_clientes
+    if payload.mostrar_lecturas_empleados is not None:
+        staff.mostrar_lecturas_empleados = payload.mostrar_lecturas_empleados
     db.commit()
+    if any(valor is not None for valor in privacidad):
+        # Invalida estados ya mostrados sin comunicar quien ha leido ni cuando.
+        for conv in db.scalars(select(MessagingConversation)):
+            if _can_access_conversation(db, conv, staff):
+                _event(db, conv, "message_states_updated")
+                _publish_conversation_event(db, conv, "message.states_updated")
+        for thread in db.scalars(select(MessagingStaffThread)):
+            if _can_access_staff_thread(db, thread, staff):
+                db.add(MessagingEvent(organization_id="", conversation_id=thread.id,
+                                      event_type="internal_states_updated"))
+                hub.publish({"type": "message.states_updated", "thread_id": thread.id},
+                            staff_ids=_staff_thread_recipient_ids(db, thread))
+        db.commit()
     return {"ok": True}
 
 
@@ -1675,10 +1733,13 @@ def mark_staff_thread_read(
     changed = _confirm_message_read(db, "internal_thread", thread.id, "staff", staff.external_id, last)
     db.add(read)
     if changed:
-        db.add(MessagingEvent(organization_id="", conversation_id=thread.id, event_type="read_updated"))
+        db.add(MessagingEvent(organization_id="", conversation_id=thread.id, event_type="read_updated",
+                              actor_type="staff", actor_id=staff.external_id))
     db.commit()
     if changed:
-        hub.publish({"type": "message.read", "thread_id": thread.id}, staff_ids=_staff_thread_recipient_ids(db, thread))
+        destinatarios = {value for value in _staff_thread_recipient_ids(db, thread)
+                         if _puede_ver_lectura(staff, "staff", db.get(MessagingStaff, value))}
+        hub.publish({"type": "message.read", "thread_id": thread.id}, staff_ids=destinatarios)
     return {"ok": True}
 
 
@@ -2954,7 +3015,8 @@ def mark_read(audience: str, conversation_id: str, request: Request, db: Session
         return {"ok": True, "changed": False}
     read = read or MessagingRead(conversation_id=conv.id, actor_type=audience, actor_id=actor_id)
     read.last_message_id = last_id
-    read.read_at = utcnow(); db.add(read); _event(db, conv, "read_updated")
+    read.read_at = utcnow(); db.add(read)
+    _event(db, conv, "read_updated", audience, actor_id)
     if audience == "client":
         recipients = db.scalars(select(MessagingCampaignRecipient).where(
             MessagingCampaignRecipient.client_id == actor.id,
@@ -4116,7 +4178,17 @@ async def events(audience: str, request: Request, after: int = 0, db: Session = 
                     cursor = max(cursor, row.id)
                     if org_id and row.organization_id != org_id:
                         continue
-                    if audience == "staff" and row.event_type == "internal_message":
+                    event_staff = event_db.get(MessagingStaff, staff_id) if staff_id else None
+                    if row.event_type == "read_updated":
+                        if row.actor_type == "staff":
+                            lector = event_db.get(MessagingStaff, row.actor_id)
+                            if not _puede_ver_lectura(lector, audience, event_staff):
+                                continue
+                        elif row.actor_type != "client" and not (event_staff and event_staff.role == "admin"):
+                            # Eventos antiguos sin lector: no exponer metadatos ambiguos.
+                            continue
+                    if audience == "staff" and (row.event_type in {"internal_message", "internal_states_updated"}
+                                               or (row.event_type == "read_updated" and not row.organization_id)):
                         thread = event_db.get(MessagingStaffThread, row.conversation_id)
                         event_staff = event_db.get(MessagingStaff, staff_id)
                         if not thread or not event_staff or not _can_access_staff_thread(

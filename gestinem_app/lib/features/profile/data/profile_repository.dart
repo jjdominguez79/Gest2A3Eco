@@ -19,6 +19,19 @@ class ProfileRepository {
     await api.dio.patch<void>('/staff/me', data: {'chat_alias': alias});
   }
 
+  Future<void> actualizarPrivacidadLecturas({
+    bool? clientes,
+    bool? empleados,
+  }) async {
+    await api.dio.patch<void>(
+      '/staff/me',
+      data: {
+        'mostrar_lecturas_clientes': ?clientes,
+        'mostrar_lecturas_empleados': ?empleados,
+      },
+    );
+  }
+
   Future<String> uploadAvatar(PlatformFile file) async {
     final bytes = await prepararAvatar(file);
     final form = FormData.fromMap({

@@ -61,6 +61,31 @@ del escritorio y de las integraciones; nunca se distribuyen en Flutter.
 
 ## Tiempo real y notificaciones
 
+### Privacidad de las confirmaciones de lectura
+
+El administrador ve siempre los estados de sus mensajes, dentro de las
+conversaciones a las que tiene acceso. No hay reciprocidad: ocultar sus propias
+lecturas no impide consultar las de clientes y empleados.
+
+En Flutter (`Mi perfil`) y Desktop (`Privacidad de lecturas`) puede configurar
+por separado `mostrar_lecturas_clientes` y `mostrar_lecturas_empleados`. Son
+preferencias de su usuario, no de la empresa ni del dispositivo. Por defecto
+ambas conservan el comportamiento anterior (compartir). Otros administradores
+siempre pueden consultar las lecturas; empleados y clientes no pueden cambiar
+esta configuracion. La antigua preferencia visual sigue disponible para los
+empleados, pero no permite desactivar los indicadores del administrador.
+
+El backend conserva los recibos y los contadores personales, pero filtra los
+totales expuestos por REST y los eventos de lectura por WebSocket y SSE. Los
+ajustes afectan tambien a los recibos anteriores: ocultar no borra lecturas y
+volver a compartir puede mostrar lecturas ya confirmadas. El cambio invalida
+los estados mostrados sin difundir quien ha leido o cuando. Los eventos SSE
+antiguos sin identidad del lector no se divulgan a clientes o empleados.
+
+La migracion aditiva `025_read_receipt_privacy.sql` crea las preferencias y la
+identidad del lector en el registro de eventos, sin borrar recibos ni reiniciar
+la privacidad guardada en posteriores arranques.
+
 REST es siempre la fuente de verdad. WebSocket avisa de `message.created`,
 `message.deleted`, `message.read`, `conversation.updated` y `group.updated`.
 Flutter refresca mediante REST y reconecta con espera exponencial de 1 a 30

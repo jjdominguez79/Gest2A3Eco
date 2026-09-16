@@ -397,6 +397,7 @@ def startup():
         "022_dehu_automatic_sync.sql",
         "023_dehu_new_notifications.sql",
         "024_message_receipts.sql",
+        "025_read_receipt_privacy.sql",
     ):
         _mig_path = Path(__file__).resolve().parent.parent / "migrations" / _mig_name
         if _mig_path.exists():

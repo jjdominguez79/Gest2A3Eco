@@ -75,6 +75,7 @@ jobs:
           tests/test_messaging_firebase.py
           tests/test_messaging_mail.py
           tests/test_messaging_flutter_api.py
+          tests/test_messaging_receipt_privacy_pg.py
           tests/test_client_validation.py
           tests/test_client_profile_api.py
           tests/test_client_documents_api.py

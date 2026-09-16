@@ -53,6 +53,8 @@ class MessagingStaff(Base):
     entra_oid: Mapped[str] = mapped_column(String(64), default="", index=True)
     chat_alias: Mapped[str] = mapped_column(String(160), default="")
     mostrar_estados_mensajes: Mapped[bool] = mapped_column(Boolean, default=True)
+    mostrar_lecturas_clientes: Mapped[bool] = mapped_column(Boolean, default=True)
+    mostrar_lecturas_empleados: Mapped[bool] = mapped_column(Boolean, default=True)
     avatar_storage_key: Mapped[str] = mapped_column(String(500), default="")
     avatar_content_type: Mapped[str] = mapped_column(String(120), default="")
     role: Mapped[str] = mapped_column(String(32), default="empleado")
@@ -341,6 +343,8 @@ class MessagingEvent(Base):
     organization_id: Mapped[str] = mapped_column(String(36), index=True)
     conversation_id: Mapped[str] = mapped_column(String(36), default="", index=True)
     event_type: Mapped[str] = mapped_column(String(40), index=True)
+    actor_type: Mapped[str] = mapped_column(String(16), default="")
+    actor_id: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 

@@ -152,12 +152,12 @@ def test_preferencia_estados_mensajes_es_personal_y_no_altera_lecturas(tmp_path,
     admin = staff_headers("admin")
     assert client.get(me, headers=admin).json()["mostrar_estados_mensajes"] is True
     assert client.patch(me, headers=admin, json={"mostrar_estados_mensajes": False}).status_code == 200
-    assert client.get(me, headers=admin).json()["mostrar_estados_mensajes"] is False
+    assert client.get(me, headers=admin).json()["mostrar_estados_mensajes"] is True
     assert client.get(me, headers=staff_headers("employee")).json()["mostrar_estados_mensajes"] is True
     assert client.patch(me, json={"mostrar_estados_mensajes": True}).status_code == 401
     # La preferencia no puede modificar a otro empleado ni deja de registrar lecturas.
     assert client.patch(me, headers=admin, json={"chat_alias": "Mi alias"}).status_code == 200
-    assert client.get(me, headers=admin).json()["mostrar_estados_mensajes"] is False
+    assert client.get(me, headers=admin).json()["mostrar_estados_mensajes"] is True
     path = f"/api/v1/messaging/client/conversations/{conv_id}/messages"
     assert client.post(path, headers=auth,
                        data={"body": "Pregunta", "idempotency_key": "client-receipt"}).status_code == 200
@@ -191,6 +191,120 @@ def test_estados_chat_interno_lectura_parcial_y_evento(tmp_path, monkeypatch):
     assert client.post(read_path, headers=staff_headers("employee")).status_code == 200
     assert len(events) == total
     assert client.get(path, headers=auth).status_code in {401, 403}
+
+
+@pytest.mark.parametrize("clientes,empleados", [(False, False), (False, True), (True, False), (True, True)])
+def test_privacidad_lecturas_independiente_por_destinatario(tmp_path, monkeypatch, clientes, empleados):
+    client, _factory, staff_headers, auth, _client_id, conv_id = _setup(tmp_path, monkeypatch)
+    admin = staff_headers("admin")
+    employee = staff_headers("employee")
+    assert client.patch("/api/v1/messaging/staff/me", headers=admin, json={
+        "mostrar_lecturas_clientes": clientes, "mostrar_lecturas_empleados": empleados,
+    }).status_code == 200
+    perfil = client.get("/api/v1/messaging/staff/me", headers=admin).json()
+    assert perfil["mostrar_lecturas_clientes"] is clientes
+    assert perfil["mostrar_lecturas_empleados"] is empleados
+    assert perfil["mostrar_estados_mensajes"] is True
+    path = f"/api/v1/messaging/client/conversations/{conv_id}/messages"
+    assert client.post(path, headers=auth, data={"body": "Pregunta", "idempotency_key": "privacy-client"}).status_code == 200
+    eventos = []
+    monkeypatch.setattr(messaging_api.hub, "publish", lambda payload, **kwargs: eventos.append((payload, kwargs)))
+    assert client.post(f"/api/v1/messaging/staff/conversations/{conv_id}/read", headers=admin).status_code == 200
+    for row in (client.get(path, headers=auth).json()[0],
+                client.get("/api/v1/messaging/client/unified-messages", headers=auth).json()[0]):
+        assert row["lecturas"] == int(clientes)
+        assert row["estado_envio"] == ("partially_read" if clientes else "sent")
+    payload, destinos = eventos[-1]
+    assert payload["type"] == "message.read"
+    assert bool(destinos["organization_id"]) is clientes
+    assert ("employee" in destinos["staff_ids"]) is empleados
+    assert "admin" in destinos["staff_ids"]
+    threads = client.get("/api/v1/messaging/staff/internal/threads", headers=employee).json()
+    direct = next(row for row in threads if row["kind"] == "direct")
+    internal = f"/api/v1/messaging/staff/internal/threads/{direct['id']}/messages"
+    assert client.post(internal, headers=employee, data={"body": "Consulta", "idempotency_key": "privacy-employee"}).status_code == 200
+    assert client.post(f"/api/v1/messaging/staff/internal/threads/{direct['id']}/read", headers=admin).status_code == 200
+    row = client.get(internal, headers=employee).json()[0]
+    assert row["lecturas"] == int(empleados)
+    assert row["estado_envio"] == ("read" if empleados else "sent")
+    assert eventos[-1][1]["staff_ids"] == ({"admin", "employee"} if empleados else {"admin"})
+    # Ocultar la propia lectura nunca impide consultar las lecturas ajenas.
+    assert client.post(f"/api/v1/messaging/staff/conversations/{conv_id}/messages", headers=admin,
+                       data={"body": "Respuesta", "idempotency_key": "privacy-admin"}).status_code == 200
+    assert client.post(f"/api/v1/messaging/client/conversations/{conv_id}/read", headers=auth).status_code == 200
+    respuesta = next(row for row in client.get(f"/api/v1/messaging/staff/conversations/{conv_id}/messages", headers=admin).json()
+                     if row["body"] == "Respuesta")
+    assert respuesta["estado_envio"] == "read"
+    assert client.post(internal, headers=admin, data={"body": "Respuesta", "idempotency_key": "privacy-admin-internal"}).status_code == 200
+    assert client.post(f"/api/v1/messaging/staff/internal/threads/{direct['id']}/read", headers=employee).status_code == 200
+    respuesta = next(row for row in client.get(internal, headers=admin).json() if row["body"] == "Respuesta")
+    assert respuesta["estado_envio"] == "read"
+
+
+def test_privacidad_se_aplica_a_lecturas_historicas_sin_borrarlas(tmp_path, monkeypatch):
+    client, _factory, staff_headers, auth, _client_id, conv_id = _setup(tmp_path, monkeypatch)
+    admin = staff_headers("admin")
+    me = "/api/v1/messaging/staff/me"
+    path = f"/api/v1/messaging/client/conversations/{conv_id}/messages"
+    client.post(path, headers=auth, data={"body": "Pregunta", "idempotency_key": "old-receipt"})
+    client.post(f"/api/v1/messaging/staff/conversations/{conv_id}/read", headers=admin)
+    assert client.get(path, headers=auth).json()[0]["lecturas"] == 1
+    for compartir in (False, True, False):
+        assert client.patch(me, headers=admin, json={"mostrar_lecturas_clientes": compartir}).status_code == 200
+        assert client.get(path, headers=auth).json()[0]["lecturas"] == int(compartir)
+        # No altera la otra preferencia ni el contador de mensajes pendientes.
+        assert client.get(me, headers=admin).json()["mostrar_lecturas_empleados"] is True
+        conv = next(row for row in client.get("/api/v1/messaging/staff/conversations", headers=admin).json() if row["id"] == conv_id)
+        assert conv["unread_count"] == 0
+    assert client.patch(me, headers=staff_headers("employee"), json={"mostrar_lecturas_clientes": False}).status_code == 403
+    assert client.patch(me, headers=auth, json={"mostrar_lecturas_empleados": False}).status_code in {401, 403}
+    assert client.patch(me, json={"mostrar_lecturas_clientes": False}).status_code == 401
+
+
+def test_privacidad_es_del_usuario_y_no_oculta_lecturas_a_otros_administradores(tmp_path, monkeypatch):
+    client, _factory, staff_headers, _auth, _client_id, _conv_id = _setup(tmp_path, monkeypatch)
+    assert client.put("/api/v1/messaging/internal/staff/admin2", headers={"X-API-Key": "test-secret"},
+                      json={"external_id": "admin2", "name": "Admin2", "email": "admin2@gestinem.es",
+                            "role": "admin", "active": True, "channels": ["fiscal"]}).status_code == 200
+    admin = staff_headers("admin")
+    admin2 = staff_headers("admin2")
+    me = "/api/v1/messaging/staff/me"
+    assert client.patch(me, headers=admin2, json={"mostrar_lecturas_clientes": False,
+                                                "mostrar_lecturas_empleados": False}).status_code == 200
+    assert client.get(me, headers=admin).json()["mostrar_lecturas_clientes"] is True
+    assert client.get(me, headers=admin).json()["mostrar_lecturas_empleados"] is True
+    direct = client.post("/api/v1/messaging/staff/internal/direct/admin2", headers=admin)
+    assert direct.status_code == 201
+    thread_id = direct.json()["id"]
+    path = f"/api/v1/messaging/staff/internal/threads/{thread_id}/messages"
+    assert client.post(path, headers=admin, data={"body": "Pregunta", "idempotency_key": "admin-to-admin"}).status_code == 200
+    assert client.post(f"/api/v1/messaging/staff/internal/threads/{thread_id}/read", headers=admin2).status_code == 200
+    assert client.get(path, headers=admin).json()[0]["estado_envio"] == "read"
+
+
+def test_sse_no_revela_lecturas_ocultas_y_filtra_chats_internos(tmp_path, monkeypatch):
+    client, factory, staff_headers, auth, _client_id, conv_id = _setup(tmp_path, monkeypatch)
+    admin = staff_headers("admin")
+    client.patch("/api/v1/messaging/staff/me", headers=admin, json={"mostrar_lecturas_clientes": False, "mostrar_lecturas_empleados": False})
+    path = f"/api/v1/messaging/client/conversations/{conv_id}/messages"
+    client.post(path, headers=auth, data={"body": "Pregunta", "idempotency_key": "sse-privacy"})
+    client.post(f"/api/v1/messaging/staff/conversations/{conv_id}/read", headers=admin)
+    threads = client.get("/api/v1/messaging/staff/internal/threads", headers=staff_headers("employee")).json()
+    direct = next(row for row in threads if row["kind"] == "direct")
+    client.post(f"/api/v1/messaging/staff/internal/threads/{direct['id']}/messages",
+                headers=staff_headers("employee"), data={"body": "Consulta", "idempotency_key": "sse-internal"})
+    client.post(f"/api/v1/messaging/staff/internal/threads/{direct['id']}/read", headers=admin)
+    async def no_esperar(_seconds):
+        pass
+    monkeypatch.setattr(messaging_api.asyncio, "sleep", no_esperar)
+    assert "event: read_updated" not in client.get("/api/v1/messaging/client/events", headers=auth).text
+    assert "event: read_updated" not in client.get("/api/v1/messaging/staff/events", headers=staff_headers("employee")).text
+    assert "event: read_updated" in client.get("/api/v1/messaging/staff/events", headers=admin).text
+    client.patch("/api/v1/messaging/staff/me", headers=admin, json={"mostrar_lecturas_empleados": True})
+    assert f'"thread_id": "{direct["id"]}"' in client.get("/api/v1/messaging/staff/events", headers=staff_headers("employee")).text
+    assert client.put("/api/v1/messaging/internal/staff/otro", headers={"X-API-Key": "test-secret"},
+                      json={"external_id": "otro", "name": "Otro", "role": "empleado", "active": True, "channels": ["fiscal"]}).status_code == 200
+    assert f'"thread_id": "{direct["id"]}"' not in client.get("/api/v1/messaging/staff/events", headers=staff_headers("otro")).text
 
 
 def test_baja_maestra_oculta_empresa_y_revoca_acceso(tmp_path, monkeypatch):

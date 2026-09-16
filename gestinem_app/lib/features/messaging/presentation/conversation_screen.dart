@@ -852,7 +852,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                     return MessageBubble(
                       message: message,
                       mine: mine,
-                      mostrarEstados: profile.mostrarEstadosMensajes,
+                      mostrarEstados: profile.verEstadosMensajes,
                       isStaff: profile.type == UserType.staff,
                       baseUrl: ref
                           .read(apiClientProvider)

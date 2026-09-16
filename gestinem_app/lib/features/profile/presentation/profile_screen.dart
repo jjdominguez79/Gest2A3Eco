@@ -25,6 +25,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   bool _editingAlias = false;
   bool _uploadingAvatar = false;
   bool _guardandoEstados = false;
+  bool _guardandoLecturas = false;
   String? _localAvatarUrl;
   String? _error;
 
@@ -148,6 +149,30 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     );
   }
 
+  Future<void> _guardarPrivacidadLecturas({
+    bool? clientes,
+    bool? empleados,
+  }) async {
+    setState(() => _guardandoLecturas = true);
+    try {
+      await ref
+          .read(profileRepositoryProvider)
+          .actualizarPrivacidadLecturas(
+            clientes: clientes,
+            empleados: empleados,
+          );
+      await ref.read(sessionProvider.notifier).refreshProfile();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
+      }
+    } finally {
+      if (mounted) setState(() => _guardandoLecturas = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final profile = ref.watch(sessionProvider).valueOrNull!.profile;
@@ -254,14 +279,45 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               ],
               Text(profile.email, textAlign: TextAlign.center),
               const SizedBox(height: 20),
-              SwitchListTile(
-                title: const Text('Mostrar estados de mis mensajes'),
-                subtitle: const Text(
-                  'Ver si se han enviado o leido. Esta opcion solo cambia lo que ves en tu pantalla.',
+              if (profile.isAdmin) ...[
+                const ListTile(
+                  leading: Icon(Icons.visibility_outlined),
+                  title: Text('Siempre ves las lecturas de tus mensajes'),
+                  subtitle: Text(
+                    'Ves siempre si clientes y empleados han leido tus mensajes, aunque ocultes tus propias lecturas.',
+                  ),
                 ),
-                value: profile.mostrarEstadosMensajes,
-                onChanged: _guardandoEstados ? null : _guardarEstados,
-              ),
+                SwitchListTile(
+                  key: const Key('mostrar-lecturas-clientes'),
+                  title: const Text('Mostrar mis lecturas a clientes'),
+                  subtitle: const Text(
+                    'Permitir que los clientes vean que he leido sus mensajes.',
+                  ),
+                  value: profile.mostrarLecturasClientes,
+                  onChanged: _guardandoLecturas
+                      ? null
+                      : (valor) => _guardarPrivacidadLecturas(clientes: valor),
+                ),
+                SwitchListTile(
+                  key: const Key('mostrar-lecturas-empleados'),
+                  title: const Text('Mostrar mis lecturas a empleados'),
+                  subtitle: const Text(
+                    'Permitir que los empleados vean que he leido sus mensajes. Los administradores siempre ven las lecturas.',
+                  ),
+                  value: profile.mostrarLecturasEmpleados,
+                  onChanged: _guardandoLecturas
+                      ? null
+                      : (valor) => _guardarPrivacidadLecturas(empleados: valor),
+                ),
+              ] else
+                SwitchListTile(
+                  title: const Text('Mostrar estados de mis mensajes'),
+                  subtitle: const Text(
+                    'Ver si se han enviado o leido. Esta opcion solo cambia lo que ves en tu pantalla.',
+                  ),
+                  value: profile.mostrarEstadosMensajes,
+                  onChanged: _guardandoEstados ? null : _guardarEstados,
+                ),
               ListTile(
                 leading: const Icon(Icons.badge_outlined),
                 title: const Text('Tipo de acceso'),

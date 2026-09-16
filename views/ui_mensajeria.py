@@ -41,9 +41,13 @@ class UIMensajeria(ttk.Frame):
         self.status = ttk.Label(bar, text="")
         self.status.pack(side="left")
         ttk.Button(bar, text="Actualizar", command=self.refresh).pack(side="right")
-        self.estados_check = ttk.Checkbutton(bar, text="Mostrar estados de mis mensajes",
-                                            variable=self.mostrar_estados, command=self._guardar_estados)
-        self.estados_check.pack(side="right", padx=6)
+        self.estados_check = None
+        if self.session.is_admin():
+            ttk.Button(bar, text="Privacidad de lecturas", command=self._privacidad_lecturas).pack(side="right", padx=6)
+        else:
+            self.estados_check = ttk.Checkbutton(bar, text="Mostrar estados de mis mensajes",
+                                                variable=self.mostrar_estados, command=self._guardar_estados)
+            self.estados_check.pack(side="right", padx=6)
         if self.session.is_admin():
             ttk.Button(bar, text="Activar cliente / invitar", command=self._invite).pack(side="right", padx=6)
 
@@ -128,7 +132,7 @@ class UIMensajeria(ttk.Frame):
         def done(result):
             rows, perfil = result
             if not self._guardando_estados:
-                self.mostrar_estados.set(perfil.get("mostrar_estados_mensajes", True))
+                self.mostrar_estados.set(self.session.is_admin() or perfil.get("mostrar_estados_mensajes", True))
                 self._actualizar_columnas_estados()
             self._render_conversations(rows)
         self._run("Actualizando chats...", work, done)
@@ -136,9 +140,12 @@ class UIMensajeria(ttk.Frame):
 
     def _actualizar_columnas_estados(self):
         columnas = ("fecha", "autor", "mensaje", "adjuntos")
-        self.msg_tree.configure(displaycolumns=columnas + (("estado_envio",) if self.mostrar_estados.get() else ()))
+        ver_estados = self.session.is_admin() or self.mostrar_estados.get()
+        self.msg_tree.configure(displaycolumns=columnas + (("estado_envio",) if ver_estados else ()))
 
     def _guardar_estados(self):
+        if self.session.is_admin():
+            return
         mostrar = self.mostrar_estados.get()
         self._guardando_estados = True
         self.estados_check.state(["disabled"])
@@ -157,6 +164,47 @@ class UIMensajeria(ttk.Frame):
             if error:
                 messagebox.showerror("Mensajeria", str(error), parent=self)
         self._run("Guardando preferencias...", work, done)
+
+    def _privacidad_lecturas(self):
+        if not self.session.is_admin():
+            return
+        def abrir(perfil):
+            dialogo = tk.Toplevel(self)
+            dialogo.title("Privacidad de lecturas")
+            dialogo.transient(self.winfo_toplevel())
+            marco = ttk.Frame(dialogo, padding=16)
+            marco.pack(fill="both", expand=True)
+            ttk.Label(marco, text="Ves siempre las lecturas de clientes y empleados.\n"
+                      "Estos controles solo deciden quien puede ver tus lecturas.",
+                      wraplength=430).pack(anchor="w", pady=(0, 12))
+            clientes = tk.BooleanVar(dialogo, value=perfil.get("mostrar_lecturas_clientes", True))
+            empleados = tk.BooleanVar(dialogo, value=perfil.get("mostrar_lecturas_empleados", True))
+            ttk.Checkbutton(marco, text="Mostrar mis lecturas a clientes", variable=clientes).pack(anchor="w", pady=4)
+            ttk.Checkbutton(marco, text="Mostrar mis lecturas a empleados", variable=empleados).pack(anchor="w", pady=4)
+            ttk.Label(marco, text="Los administradores siempre ven las lecturas.").pack(anchor="w", pady=8)
+            guardar = ttk.Button(marco, text="Guardar")
+            def confirmar():
+                valores = clientes.get(), empleados.get()
+                guardar.state(["disabled"])
+                def trabajo():
+                    try:
+                        self.client.configurar_privacidad_lecturas(*valores)
+                        return None
+                    except Exception as exc:
+                        return exc
+                def terminado(error):
+                    if not dialogo.winfo_exists():
+                        return
+                    if error:
+                        guardar.state(["!disabled"])
+                        messagebox.showerror("Privacidad de lecturas", str(error), parent=dialogo)
+                    else:
+                        dialogo.destroy()
+                self._run("Guardando privacidad de lecturas...", trabajo, terminado)
+            guardar.configure(command=confirmar)
+            guardar.pack(anchor="e", pady=(8, 0))
+            dialogo.grab_set()
+        self._run("Leyendo privacidad de lecturas...", self.client.obtener_perfil, abrir)
 
     def _schedule_refresh(self):
         if not self.winfo_exists():
