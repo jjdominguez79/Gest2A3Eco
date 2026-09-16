@@ -64,7 +64,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r backend/requirements.txt pytest
+      - run: pip install -r backend/requirements.txt pytest pytest-asyncio
       - name: Ejecutar pruebas backend
         run: >-
           pytest
