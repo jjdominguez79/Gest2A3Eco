@@ -378,6 +378,7 @@ class GestorPostgres(GestorBase):
         ese bloqueo podia retrasar el login aunque el esquema ya estuviera al
         dia.
         """
+        self._asegurar_esquema_notificaciones_global()
         self._asegurar_esquema_plantillas_firma()
         self._asegurar_esquema_mensajeria_local()
         self._asegurar_esquema_cuotas_periodicas()
@@ -459,6 +460,9 @@ class GestorPostgres(GestorBase):
                 "INTEGER NOT NULL DEFAULT 0",
             ),
             ("notif_bandeja", "area_cliente_error", "TEXT"),
+            ("notif_bandeja", "email_cliente_estado", "TEXT NOT NULL DEFAULT ''"),
+            ("notif_bandeja", "email_cliente_fecha", "TEXT"),
+            ("notif_bandeja", "email_cliente_error", "TEXT"),
         )
         existentes = {
             (str(row["table_name"]), str(row["column_name"]))
@@ -474,6 +478,7 @@ class GestorPostgres(GestorBase):
                     , 'ocr_aprendizaje_ejemplos', 'facturas_emitidas_docs',
                     'albaranes_emitidas_docs',
                     'firma_solicitudes'
+                    , 'cert_solicitudes', 'notif_bandeja'
                   )
                 """
             ).fetchall()
@@ -841,6 +846,48 @@ class GestorPostgres(GestorBase):
             )
         self._seed_categorias_documentales()
         self.conn.commit()
+
+    def _asegurar_esquema_notificaciones_global(self) -> None:
+        row = self.conn.execute(
+            "SELECT to_regclass('public.notif_config_global') AS tabla"
+        ).fetchone()
+        if row is None or "tabla" not in row:
+            return
+        if not row.get("tabla"):
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS notif_config_global (
+                  id INTEGER PRIMARY KEY,
+                  periodicidad_sync TEXT NOT NULL DEFAULT 'MANUAL',
+                  avisar_cliente_email INTEGER NOT NULL DEFAULT 0,
+                  email_resumen_interno TEXT NOT NULL DEFAULT '',
+                  email_asunto TEXT NOT NULL DEFAULT 'Nueva notificacion electronica: {asunto}',
+                  email_html TEXT,
+                  updated_at TEXT NOT NULL
+                )
+                """
+            )
+            self.conn.commit()
+
+        existentes = self.conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema=current_schema() AND table_name='notif_config_global'"
+        ).fetchall()
+        if existentes and not any(row[0] == "email_resumen_interno" for row in existentes):
+            self.conn.execute(
+                "ALTER TABLE notif_config_global ADD COLUMN email_resumen_interno TEXT NOT NULL DEFAULT ''"
+            )
+            self.conn.commit()
+
+        if not self.conn.execute("SELECT id FROM notif_config_global WHERE id=1").fetchone():
+            legacy = self.get_notif_config_global()
+            self.conn.execute(
+                "INSERT INTO notif_config_global "
+                "(id, periodicidad_sync, avisar_cliente_email, email_resumen_interno, updated_at) "
+                "VALUES (1,?,0,?,?) ON CONFLICT(id) DO NOTHING",
+                (legacy["periodicidad_sync"], legacy["email_resumen_interno"], self._utc_now()),
+            )
+            self.conn.commit()
 
     def _asegurar_esquema_mensajeria_local(self) -> None:
         row = self.conn.execute(

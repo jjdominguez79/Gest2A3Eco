@@ -82,7 +82,7 @@ foreach ($module in @(
 )) {
     Copy-Item -LiteralPath (Join-Path $repoRoot "services\aapp\$module") -Destination (Join-Path $aappConnectorsRoot $module) -Force
 }
-foreach ($module in @('__init__.py', 'crypto_utils.py')) {
+foreach ($module in @('__init__.py', 'crypto_utils.py', 'estados_dehu.py')) {
     Copy-Item -LiteralPath (Join-Path $repoRoot "utils\$module") -Destination (Join-Path $aappUtilsRoot $module) -Force
 }
 

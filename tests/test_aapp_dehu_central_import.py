@@ -57,3 +57,13 @@ def test_importa_bandeja_central_sin_duplicar():
     assert row["descripcion"] == "Agencia Tributaria"
     assert "central-1" in row["metadatos_json"]
     assert "issuing_body" in row["metadatos_json"]
+
+
+def test_no_reimporta_leidas_ni_revierte_estado_local():
+    gestor = _Gestor()
+    importar_bandeja_central(gestor, backend=_Backend())
+    row = next(iter(gestor.rows.values()))
+    row["estado"] = "LEIDA"
+    result = importar_bandeja_central(gestor, backend=_Backend())
+    assert result.omitidas == 1
+    assert row["estado"] == "LEIDA"

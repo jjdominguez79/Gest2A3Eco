@@ -13,6 +13,11 @@ class _Var:
 
 
 def _vista(gestor):
+    gestor.get_notif_config_global = Mock(return_value={
+        "periodicidad_sync": "SEMANAL", "avisar_cliente_email": True,
+        "email_resumen_interno": "avisos@gestinem.es",
+    })
+    gestor.get_empresa = Mock(return_value={"email": "ficha@cliente.test"})
     vista = object.__new__(modulo.UINotificacionesCliente)
     vista._gestor = gestor
     vista._codigo = "E00006"
@@ -53,12 +58,13 @@ def test_guardar_programa_en_backend_antes_de_actualizar_local(monkeypatch):
         mailbox_id="buzon-1",
         mailbox_name="DEHu",
         active=True,
-        periodicity="DIARIA",
+        periodicity="SEMANAL",
         notification_email="avisos@gestinem.es",
     )
     guardado = gestor.upsert_notif_buzon.call_args.args[0]
     assert guardado["modo_descarga"] == "SOLO_DETECTAR"
     assert guardado["envio_automatico_cliente"] == 0
+    assert guardado["email_aviso"] == "ficha@cliente.test"
 
 
 def test_no_actualiza_local_si_falla_la_programacion_central(monkeypatch):

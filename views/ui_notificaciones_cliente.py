@@ -3,9 +3,8 @@ Vista: configuracion del unico buzon DEHu del cliente.
 
 Izquierda:
   - Certificado digital unico del cliente (panel UICertificados).
-  - Opciones del buzon DEHu del cliente.
-    (email de aviso, modo de descarga, periodicidad, envio automatico,
-    responsable interno).
+  - Certificado, activacion y responsable interno del buzon DEHu del cliente.
+  - Email de la ficha y politica global en modo de consulta (no editables aqui).
 
 Derecha (patron Portal NEOS):
   - Tabla con todas las administraciones/organismos configurados globalmente
@@ -18,6 +17,7 @@ Un unico boton "Guardar configuracion" concilia todo.
 from __future__ import annotations
 
 import tkinter as tk
+import uuid
 from tkinter import messagebox, ttk
 
 from services.backend_client_service import BackendClientService
@@ -76,11 +76,11 @@ class UINotificacionesCliente(ttk.Frame):
         self._var_modo = tk.StringVar(value=self._modo_labels[0])
 
         filas = [
-            ("Email de aviso", ttk.Entry(card, textvariable=self._var_email, width=34)),
+            ("Email de la ficha", ttk.Entry(card, textvariable=self._var_email, width=34, state="readonly")),
             ("Modo de consulta", ttk.Combobox(card, textvariable=self._var_modo, width=24,
                                                values=self._modo_labels, state="readonly")),
             ("Periodicidad sincronizacion", ttk.Combobox(card, textvariable=self._var_periodicidad, width=24,
-                                                         values=PERIODICIDADES, state="readonly")),
+                                                         values=PERIODICIDADES, state="disabled")),
             ("Responsable interno", ttk.Entry(card, textvariable=self._var_responsable, width=34)),
         ]
         for i, (lbl, widget) in enumerate(filas, start=1):
@@ -89,10 +89,15 @@ class UINotificacionesCliente(ttk.Frame):
             widget.grid(row=i, column=1, sticky="w", pady=3)
         ttk.Checkbutton(
             card,
-            text="Envio al cliente siempre manual",
+            text="Aviso por email al comunicar (configuracion global)",
             variable=self._var_envio,
             state="disabled",
         ).grid(row=len(filas) + 1, column=1, sticky="w", pady=(4, 0))
+        tk.Label(
+            card,
+            text="La periodicidad, el aviso por email y su plantilla se configuran en el modulo global.",
+            bg=_BG, fg=_SUB, font=("Segoe UI", 8), wraplength=430, justify="left",
+        ).grid(row=len(filas) + 2, column=1, sticky="w", pady=(2, 0))
 
     def _build_right(self, right):
         hdr = tk.Frame(right, bg=_HDR_BG)
@@ -170,13 +175,16 @@ class UINotificacionesCliente(ttk.Frame):
                 counts.get(oid, 0) or "",
             ), tags=("marcado",) if marcado else ())
 
-        # Prefill de opciones desde un buzon existente
+        config_global = self._gestor.get_notif_config_global()
+        empresa = self._gestor.get_empresa(self._codigo) or {}
+        self._var_email.set(empresa.get("email") or "")
+        self._var_periodicidad.set(config_global.get("periodicidad_sync") or "MANUAL")
+        self._var_envio.set(bool(config_global.get("avisar_cliente_email")))
+
+        # El responsable sigue siendo propio del buzon/cliente.
         alguno = next(iter(buzones.values()), None)
         if alguno:
-            self._var_email.set(alguno.get("email_aviso") or "")
             self._var_responsable.set(alguno.get("responsable_interno") or "")
-            self._var_periodicidad.set(alguno.get("periodicidad_sync") or "MANUAL")
-            self._var_envio.set(False)
             self._var_modo.set(LABELS_MODO_DESCARGA["SOLO_DETECTAR"])
 
     # ------------------------------------------------------------------ tabla
@@ -205,10 +213,12 @@ class UINotificacionesCliente(ttk.Frame):
 
     # ------------------------------------------------------------------ helpers
     def _opciones(self):
+        config = self._gestor.get_notif_config_global()
+        empresa = self._gestor.get_empresa(self._codigo) or {}
         return {
             "modo_descarga": "SOLO_DETECTAR",
-            "periodicidad_sync": self._var_periodicidad.get() or "MANUAL",
-            "email_aviso": self._var_email.get().strip() or None,
+            "periodicidad_sync": config.get("periodicidad_sync") or "MANUAL",
+            "email_aviso": str(empresa.get("email") or "").strip() or None,
             "responsable_interno": self._var_responsable.get().strip() or None,
             "envio_automatico_cliente": 0,
         }
@@ -222,14 +232,6 @@ class UINotificacionesCliente(ttk.Frame):
     # ------------------------------------------------------------------ guardar
     def _on_guardar(self):
         opts = self._opciones()
-        email = str(opts.get("email_aviso") or "")
-        if opts["periodicidad_sync"] != "MANUAL" and (not email or "@" not in email):
-            messagebox.showerror(
-                "Gest2A3Eco",
-                "Indica un email valido para recibir el resumen de la sincronizacion automatica.",
-                parent=self.winfo_toplevel(),
-            )
-            return
         cert = self._cert()
         cert_id = cert["id"] if cert else None
         nif = (cert.get("nif_titular") if cert else None) or None
@@ -244,6 +246,7 @@ class UINotificacionesCliente(ttk.Frame):
                 existente = buzones.get(oid)
                 if marcado:
                     data = {
+                        "id": existente["id"] if existente else str(uuid.uuid4()),
                         "codigo_empresa": self._codigo,
                         "nombre": (existente.get("nombre") if existente else None) or org.get("nombre") or "Buzon",
                         "organismo_id": oid,
@@ -254,7 +257,6 @@ class UINotificacionesCliente(ttk.Frame):
                         **opts,
                     }
                     if existente:
-                        data["id"] = existente["id"]
                         if existente.get("ultima_consulta"):
                             data["ultima_consulta"] = existente["ultima_consulta"]
                         if not existente.get("activo"):
@@ -278,7 +280,9 @@ class UINotificacionesCliente(ttk.Frame):
                     mailbox_name=str(principal.get("nombre") or "DEHu"),
                     active=True,
                     periodicity=str(principal.get("periodicidad_sync") or "MANUAL"),
-                    notification_email=str(principal.get("email_aviso") or ""),
+                    notification_email=str(
+                        self._gestor.get_notif_config_global().get("email_resumen_interno") or ""
+                    ),
                 )
             else:
                 BackendClientService().delete_dehu_mailbox_config(

@@ -354,7 +354,7 @@ def test_programacion_dehu_encola_y_envia_un_resumen_al_terminar(monkeypatch):
     assert sent[0][0] == "avisos@gestinem.es"
     assert "1 buzones consultados" in sent[0][1]
     assert "Cliente Uno" in sent[0][2]
-    assert "Avisos detectados:</strong> 2" in sent[0][2]
+    assert "Avisos nuevos:</strong> 2" in sent[0][2]
     assert "Requerimiento contratado" in sent[0][2]
     assert "Aviso no contratado" in sent[0][2]
     assert "Cliente sin buzon activo" in sent[0][2]
@@ -367,13 +367,96 @@ def test_programacion_dehu_encola_y_envia_un_resumen_al_terminar(monkeypatch):
         assert batch.status == "sent"
 
 
-def test_programacion_automatica_dehu_exige_email(monkeypatch):
+def test_programacion_automatica_dehu_permite_desactivar_email_interno(monkeypatch):
     client, _, _, _ = _setup(monkeypatch)
     response = client.put(
         "/api/v1/messaging/client/certificates/internal/dehu-mailboxes/E00001",
         json={"active": True, "periodicity": "DIARIA", "notification_email": ""},
     )
-    assert response.status_code == 422
+    assert response.status_code == 200
+    assert response.json()["next_sync_at"]
+
+
+def test_resumen_segunda_consulta_solo_enumera_nuevas_y_excluye_leidas(monkeypatch):
+    client, factory, _, _ = _setup(monkeypatch)
+    sent = []
+    monkeypatch.setattr(
+        "backend.api.client_certificates_api.messaging_mail.send_mail",
+        lambda to, subject, html: sent.append((to, subject, html)) or True,
+    )
+    assert client.put(
+        "/api/v1/messaging/client/certificates/internal/dehu-mailboxes/E00001",
+        json={"active": True, "periodicity": "DIARIA", "notification_email": "despacho@gestinem.es"},
+    ).status_code == 200
+    anteriores = [
+        {"reference": "ANTIGUA", "subject": "Asunto del dia anterior", "holder_tax_id": "B12345678"},
+        {"reference": "OP-ANTIGUA", "subject": "Oportunidad del dia anterior", "holder_tax_id": "B99999999"},
+    ]
+
+    def ciclo(notificaciones):
+        claimed = client.post(
+            "/api/v1/messaging/client/certificates/internal/worker/claim",
+        ).json()["item"]
+        assert claimed is not None
+        prefix = "/api/v1/messaging/client/certificates/internal/worker/requests/" + claimed["id"]
+        result = client.post(prefix + "/dehu-notifications", json={
+            "claim_token": claimed["claim_token"], "notifications": notificaciones,
+        })
+        assert result.status_code == 200
+        assert client.post(prefix + "/complete", json={"claim_token": claimed["claim_token"]}).status_code == 200
+        return result.json()
+
+    ciclo(anteriores)
+    with factory() as db:
+        config = db.scalars(select(ClientDehuMailboxConfig)).one()
+        config.next_sync_at = utcnow() - timedelta(seconds=1)
+        db.commit()
+    result = ciclo(anteriores + [
+        {"reference": "NUEVA", "subject": "Asunto recien recibido", "holder_tax_id": "B12345678"},
+        {"reference": "OP-NUEVA", "subject": "Oportunidad recien recibida", "holder_tax_id": "B99999999"},
+        {"reference": "LEIDA", "subject": "Asunto ya leido", "holder_tax_id": "B12345678", "status": "READ"},
+        {"reference": "REALIZADA", "subject": "Asunto realizado", "holder_tax_id": "B12345678", "source_endpoint": "/api/v1/realized_notifications"},
+    ])
+    assert result["created_count"] == 1
+    assert result["ignored_read_count"] == 2
+    assert result["audit_items"][0]["new"] is False
+    assert len(sent) == 2
+    assert "2 avisos nuevos" in sent[1][1]
+    assert "Asunto recien recibido" in sent[1][2]
+    assert "Oportunidad recien recibida" in sent[1][2]
+    assert "Asunto del dia anterior" not in sent[1][2]
+    assert "Oportunidad del dia anterior" not in sent[1][2]
+    assert "Asunto ya leido" not in sent[1][2]
+    assert "Asunto realizado" not in sent[1][2]
+
+
+def test_backend_no_devuelve_a_pendiente_notificacion_ya_leida(monkeypatch):
+    client, factory, org_id, _ = _setup(monkeypatch)
+    with factory() as db:
+        db.add(ClientDehuMailboxConfig(organization_id=org_id, active=True))
+        db.add(ClientDehuNotification(
+            organization_id=org_id, external_reference="REF-LEIDA", status="LEIDA",
+        ))
+        db.commit()
+    client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={"certificate_type": "DEHU_SYNC"},
+    )
+    claimed = client.post("/api/v1/messaging/client/certificates/internal/worker/claim").json()["item"]
+    result = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/requests/"
+        + claimed["id"] + "/dehu-notifications",
+        json={"claim_token": claimed["claim_token"], "notifications": [
+            {"reference": "REF-LEIDA", "holder_tax_id": "B12345678", "status": "PENDIENTE"},
+        ]},
+    )
+    assert result.json()["ignored_read_count"] == 1
+    with factory() as db:
+        assert db.scalars(select(ClientDehuNotification)).one().status == "LEIDA"
+    assert client.get(
+        "/api/v1/messaging/client/certificates/internal/dehu-notifications",
+    ).json()["items"] == []
 
 
 def test_dehu_permite_repetir_consulta_tras_completar_el_mismo_dia(monkeypatch):

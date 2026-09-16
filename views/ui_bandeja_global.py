@@ -184,19 +184,23 @@ class UIBandejaGlobal(ttk.Frame):
         self._btn_descargar = tk.Button(tb, text="Descargar", bg="#475569", fg="white",
                                          command=self._on_descargar, state="disabled", **btn)
         self._btn_descargar.pack(side="left", padx=(0, 3))
-        self._btn_enviar = tk.Button(tb, text="Enviar a documentos", bg=_PRIMARY, fg="white",
+        self._btn_enviar = tk.Button(tb, text="Comunicar al cliente", bg=_PRIMARY, fg="white",
                                       command=self._on_enviar_cliente, state="disabled", **btn)
         self._btn_enviar.pack(side="left", padx=(0, 3))
         self._btn_archivar = tk.Button(tb, text="Archivar", bg="#475569", fg="white",
                                         command=self._on_archivar, state="disabled", **btn)
         self._btn_archivar.pack(side="left", padx=(0, 3))
+        tk.Button(
+            tb, text="Seleccionar visibles", bg="#64748b", fg="white",
+            command=lambda: self._tv.selection_set(self._tv.get_children()), **btn,
+        ).pack(side="left", padx=(0, 3))
         tk.Button(tb, text="↻", bg="#64748b", fg="white", command=self.refresh, **btn).pack(side="left")
 
         tree_wrap = tk.Frame(left, bg=_BG)
         tree_wrap.grid(row=1, column=0, sticky="nsew")
 
         col_ids = ["_id"] + [c[0] for c in self._COLS]
-        self._tv = ttk.Treeview(tree_wrap, columns=col_ids, show="headings", selectmode="browse")
+        self._tv = ttk.Treeview(tree_wrap, columns=col_ids, show="headings", selectmode="extended")
         self._tv.column("_id", width=0, stretch=False)
         self._tv.heading("_id", text="")
         for key, header, width, anchor in self._COLS:
@@ -291,6 +295,20 @@ class UIBandejaGlobal(ttk.Frame):
     def _row_by_id(self, item_id: str) -> dict | None:
         return next((r for r in self._cache if str(r.get("id")) == str(item_id)), None)
 
+    def _filas_seleccionadas(self) -> list[dict]:
+        ids = [self._tv.set(iid, "_id") for iid in self._tv.selection()]
+        return [row for item_id in ids if (row := self._row_by_id(item_id)) is not None]
+
+    def _es_publicable(self, item: dict) -> bool:
+        if self._session is not None and not self._session.can_write_company(str(item.get("codigo_empresa") or "")):
+            return False
+        pdf_path = str(item.get("pdf_path") or "")
+        pendiente_email = (
+            self._config_global.get("avisar_cliente_email")
+            and item.get("email_cliente_estado") not in {"ENVIADO", "ENVIANDO", "DESCONOCIDO"}
+        )
+        return bool(pdf_path and os.path.isfile(pdf_path) and (not item.get("enviada_cliente") or pendiente_email))
+
     # ----------------------------------------------------------------- eventos
 
     def _on_select(self, _e=None) -> None:
@@ -300,25 +318,24 @@ class UIBandejaGlobal(ttk.Frame):
             self._clear_detail()
             self._set_action_buttons_state("disabled")
             return
+        filas = self._filas_seleccionadas()
         self._selected_id = self._tv.set(sel[0], "_id")
         item = self._row_by_id(self._selected_id)
         if item:
             self._populate_detail(item)
             estado = item.get("estado", "")
             archivada = bool(item.get("archivada"))
-            self._btn_comparecer.configure(state="normal" if estado == "PENDIENTE" else "disabled")
-            self._btn_rechazar.configure(state="normal" if estado == "PENDIENTE" else "disabled")
-            self._btn_descargar.configure(state="normal")
-            publicable = bool(
-                not item.get("enviada_cliente")
-                and item.get("pdf_path")
-                and os.path.isfile(item.get("pdf_path") or "")
-            )
-            self._btn_enviar.configure(state="normal" if publicable else "disabled")
-            self._btn_archivar.configure(text="Desarchivar" if archivada else "Archivar", state="normal")
-            self._btn_ver_cliente.configure(state="normal" if self._on_open_empresa else "disabled")
-            self._btn_ver_buzon.configure(state="normal" if item.get("buzon_id") else "disabled")
-            self._btn_responsable.configure(state="normal")
+            individual = len(filas) == 1
+            self._btn_comparecer.configure(state="normal" if individual and estado == "PENDIENTE" else "disabled")
+            self._btn_rechazar.configure(state="normal" if individual and estado == "PENDIENTE" else "disabled")
+            self._btn_descargar.configure(state="normal" if individual else "disabled")
+            publicables = [row for row in filas if self._es_publicable(row)]
+            texto = "Comunicar al cliente" + (f" ({len(publicables)})" if len(filas) > 1 else "")
+            self._btn_enviar.configure(state="normal" if publicables else "disabled", text=texto)
+            self._btn_archivar.configure(text="Desarchivar" if archivada else "Archivar", state="normal" if individual else "disabled")
+            self._btn_ver_cliente.configure(state="normal" if individual and self._on_open_empresa else "disabled")
+            self._btn_ver_buzon.configure(state="normal" if individual and item.get("buzon_id") else "disabled")
+            self._btn_responsable.configure(state="normal" if individual else "disabled")
 
     def _on_filter(self, _e=None) -> None:
         self._render_rows(self._filtrar(self._cache))
@@ -427,42 +444,53 @@ class UIBandejaGlobal(ttk.Frame):
         )
 
     def _on_enviar_cliente(self) -> None:
-        item = self._row_by_id(self._selected_id) if self._selected_id else None
-        if not item:
+        seleccionadas = self._filas_seleccionadas()
+        items = [item for item in seleccionadas if self._es_publicable(item)]
+        if not items:
             return
-        pdf_path = item.get("pdf_path") or ""
-        if not pdf_path or not os.path.isfile(pdf_path):
-            messagebox.showwarning(
-                "Enviar a documentos",
-                "La notificacion todavia no tiene un PDF descargado. No se ha publicado nada.",
-                parent=self.winfo_toplevel(),
-            )
-            return
+        omitidas = len(seleccionadas) - len(items)
+        clientes = len({item.get("codigo_empresa") for item in items})
+        config = self._gestor.get_notif_config_global()
+        aviso = (
+            "Tambien se enviara un email a cada cliente usando el correo de su ficha."
+            if config.get("avisar_cliente_email")
+            else "No se enviara email, segun la configuracion global actual."
+        )
         if not messagebox.askyesno(
-            "Enviar a documentos",
-            "Publicar el PDF en el modulo de documentos del cliente?",
+            "Comunicar notificaciones",
+            f"Se publicaran {len(items)} notificacion(es) para {clientes} cliente(s).\n"
+            f"{aviso}"
+            + (f"\n\nSe omitiran {omitidas} no comunicables (sin PDF, ya enviadas o sin permiso)." if omitidas else "")
+            + "\n\nContinuar?",
             parent=self.winfo_toplevel(),
         ):
             return
-        self._btn_enviar.configure(state="disabled")
+        self._btn_enviar.configure(state="disabled", text="Comunicando...")
 
         def _worker():
-            from services.aapp.document_publication import PublicadorDocumentosAAPP
-            resultado = PublicadorDocumentosAAPP(self._gestor).publicar_notificacion(item)
+            from services.aapp.notification_communication import ComunicadorNotificacionesCliente, ResultadoComunicacion
+            try:
+                resultado = ComunicadorNotificacionesCliente(self._gestor).comunicar(items)
+            except Exception as exc:
+                resultado = ResultadoComunicacion(total=len(items), errores=[str(exc)])
             self.after(0, lambda: self._publicacion_cliente_fin(resultado))
 
         threading.Thread(target=_worker, daemon=True).start()
 
     def _publicacion_cliente_fin(self, resultado) -> None:
-        if resultado.ok:
+        texto = (
+            f"Notificaciones publicadas: {resultado.publicadas} de {resultado.total}.\n"
+            f"Emails enviados: {resultado.emails_enviados}."
+        )
+        if not resultado.errores:
             messagebox.showinfo(
-                "Documento publicado",
-                "La notificacion ya esta disponible en el modulo de documentos del cliente.",
+                "Comunicacion completada", texto,
                 parent=self.winfo_toplevel(),
             )
         else:
             messagebox.showerror(
-                "No se pudo publicar", resultado.mensaje,
+                "Comunicacion incompleta",
+                texto + f"\nErrores: {len(resultado.errores)}\n\n" + "\n".join(resultado.errores[:10]),
                 parent=self.winfo_toplevel(),
             )
         self.refresh()
@@ -556,6 +584,7 @@ class UIBandejaGlobal(ttk.Frame):
         )
 
     def refresh(self) -> None:
+        self._config_global = self._gestor.get_notif_config_global()
         self._cache = self._gestor.listar_notif_bandeja_global()
         for item in self._cache:
             try:
@@ -637,6 +666,10 @@ class UIBandejaGlobal(ttk.Frame):
             envio_lbl = f"Si ({_fmt_fecha(item.get('fecha_envio_cliente')) or '-'})"
         else:
             envio_lbl = "No"
+        if item.get("email_cliente_estado"):
+            envio_lbl += f" / Email: {item['email_cliente_estado']}"
+        if item.get("email_cliente_error"):
+            envio_lbl += f" ({item['email_cliente_error']})"
 
         self._dv_cliente.set(item.get("empresa_nombre") or item.get("codigo_empresa") or "—")
         self._dv_nif.set(item.get("empresa_cif") or item.get("nif_interesado") or "—")
@@ -665,7 +698,7 @@ class UIBandejaGlobal(ttk.Frame):
         self._btn_comparecer.configure(state=state)
         self._btn_rechazar.configure(state=state)
         self._btn_descargar.configure(state=state)
-        self._btn_enviar.configure(state=state)
+        self._btn_enviar.configure(state=state, text="Comunicar al cliente")
         self._btn_archivar.configure(state=state)
         self._btn_ver_cliente.configure(state=state)
         self._btn_ver_buzon.configure(state=state)

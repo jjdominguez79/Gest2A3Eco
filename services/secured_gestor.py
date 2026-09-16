@@ -683,6 +683,12 @@ class SecuredGestor:
         self.security.ensure_company_write(config.get("codigo_empresa"))
         return self._base.upsert_notificaciones_config(config)
 
+    def upsert_notif_config_global(self, config: dict) -> None:
+        self.security.ensure_admin(
+            "Solo el administrador puede cambiar la configuracion global de notificaciones."
+        )
+        return self._base.upsert_notif_config_global(config)
+
     # ── notif_certificados ───────────────────────────────────────────────────
     # lectura: via __getattr__ (no requiere empresa especifica al leer lista)
 
@@ -780,6 +786,12 @@ class SecuredGestor:
     def asignar_responsable_notif_bandeja(self, codigo_empresa: str, item_id: str, responsable: str | None) -> None:
         self.security.ensure_company_write(codigo_empresa)
         return self._base.asignar_responsable_notif_bandeja(codigo_empresa, item_id, responsable)
+
+    def marcar_notif_bandeja_email_cliente(
+        self, codigo_empresa: str, item_id: str, estado: str, error: str = "",
+    ) -> None:
+        self.security.ensure_company_write(codigo_empresa)
+        return self._base.marcar_notif_bandeja_email_cliente(codigo_empresa, item_id, estado, error)
 
     # ── Notificaciones: listados globales (modulo global) ───────────────────
     # No usan __getattr__ porque deben filtrarse por empresa segun permisos

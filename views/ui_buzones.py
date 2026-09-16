@@ -238,8 +238,10 @@ class _BuzonDialog(tk.Toplevel):
 
         self._var_nombre     = tk.StringVar(value=self._buzon.get("nombre", ""))
         self._var_tipo       = tk.StringVar(value="DEHU")
-        self._var_periodicidad = tk.StringVar(value=self._buzon.get("periodicidad_sync", "MANUAL"))
-        self._var_email      = tk.StringVar(value=self._buzon.get("email_aviso", "") or "")
+        config_global = self._gestor.get_notif_config_global()
+        empresa = self._gestor.get_empresa(self._empresa) or {}
+        self._var_periodicidad = tk.StringVar(value=config_global.get("periodicidad_sync") or "MANUAL")
+        self._var_email      = tk.StringVar(value=empresa.get("email") or "")
         self._var_responsable = tk.StringVar(value=self._buzon.get("responsable_interno", "") or "")
         self._var_activo     = tk.BooleanVar(value=bool(self._buzon.get("activo", True)))
 
@@ -257,9 +259,9 @@ class _BuzonDialog(tk.Toplevel):
             ("Nombre *",     self._var_nombre, ttk.Entry,    {"width": 36}),
             ("Organismo",    self._var_org,    ttk.Combobox, {"width": 36, "values": self._org_nombres, "state": "readonly"}),
             ("Tipo buzon",   self._var_tipo,   ttk.Combobox, {"width": 22, "values": TIPOS_BUZON, "state": "readonly"}),
-            ("Periodicidad sincronizacion", self._var_periodicidad, ttk.Combobox, {"width": 22, "values": PERIODICIDADES, "state": "readonly"}),
+            ("Periodicidad global", self._var_periodicidad, ttk.Combobox, {"width": 22, "values": PERIODICIDADES, "state": "disabled"}),
             ("Modo de consulta", self._var_modo, ttk.Combobox, {"width": 22, "values": self._modo_labels, "state": "readonly"}),
-            ("Email de aviso", self._var_email, ttk.Entry, {"width": 36}),
+            ("Email de la ficha", self._var_email, ttk.Entry, {"width": 36, "state": "readonly"}),
             ("Responsable interno", self._var_responsable, ttk.Entry, {"width": 36}),
         ]
         for i, (lbl, var, cls, kw) in enumerate(rows_def):
@@ -309,17 +311,10 @@ class _BuzonDialog(tk.Toplevel):
         idx_modo = self._modo_labels.index(modo_label) if modo_label in self._modo_labels else 0
         modo_descarga = self._modo_values[idx_modo]
 
-        periodicidad = self._var_periodicidad.get().strip() or "MANUAL"
-        email = self._var_email.get().strip()
-        if self._var_activo.get() and periodicidad != "MANUAL" and (
-            not email or "@" not in email
-        ):
-            messagebox.showerror(
-                "Gest2A3Eco",
-                "Indica un email valido para recibir el resumen de la sincronizacion automatica.",
-                parent=self,
-            )
-            return
+        config_global = self._gestor.get_notif_config_global()
+        empresa = self._gestor.get_empresa(self._empresa) or {}
+        periodicidad = config_global.get("periodicidad_sync") or "MANUAL"
+        email = str(empresa.get("email") or "").strip()
 
         # Certificado unico del cliente: se asigna automaticamente.
         cert_id = self._cert["id"] if self._cert else None

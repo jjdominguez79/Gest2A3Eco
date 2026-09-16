@@ -9,12 +9,13 @@ Realidad tecnica del portal (verificada con volcados reales)
   electronico". El certificado TLS lo pide Cl@ve/@firma (*.clave.gob.es).
 - Ya autenticado, los datos se sirven por una API REST interna:
     GET /api/v1/notifications?limit=&page=            -> pendientes  {count,total,limit,page,items[]}
-    GET /api/v1/realized_notifications?limit=&page=   -> realizadas
     GET /api/v1/communications?limit=&page=            -> comunicaciones
   Campos de cada item: identifier, concept, emitterEntity, emitterSourceEntity,
   nifTitular, sentReference, availabilityDate, expirationDate, bondType, state...
   Por eso, tras autenticar, llamamos DIRECTAMENTE a esa API (reutilizando la
   sesion del navegador) y paginamos, en lugar de raspar el DOM.
+  Solo se consultan bandejas vigentes: no se solicita el historico de realizadas
+  y se excluyen los estados leidos/aceptados/rechazados.
 
 Puesta en marcha (modo aprendizaje)
 -----------------------------------
@@ -39,6 +40,7 @@ from .base import (
     registrar_conector,
 )
 from .cert_store import preparar_pfx_para_navegador
+from utils.estados_dehu import es_pendiente_dehu, normalizar_estado_dehu
 
 DEHU_URL_DEFECTO = "https://dehu.redsara.es"
 
@@ -71,13 +73,6 @@ _ENDPOINTS = (
         "vinculoReceptor": "", "postalDelivery": "", "publicId": "",
         "availabilityDate[left_date]": "", "availabilityDate[right_date]": "",
         "expirationDate[left_date]": "", "expirationDate[right_date]": "",
-    }),
-    ("/api/v1/realized_notifications", "NOTIFICACION", {
-        "emitterEntityCode": "", "state": "", "publicId": "",
-        "titularNif": "", "bondType": "", "vinculoReceptor": "",
-        "postalDelivery": "", "finalDate[left_date]": "",
-        "finalDate[right_date]": "", "expirationDate[left_date]": "",
-        "expirationDate[right_date]": "",
     }),
     ("/api/v1/communications", "COMUNICACION", {
         "emitterEntityCode": "", "bondType": "", "vinculoReceptor": "",
@@ -205,14 +200,9 @@ class ConectorDEHU(ConectorOrganismo):
         # Fuente principal: API REST interna (reutiliza la sesion autenticada).
         registros = self._fetch_api(page, base, opciones, capturas)
         self._diagnostico(page, opciones, "05_listado", capturas, forzar=True)
-        if registros:
-            return self._map_registros(registros, cert_material, opciones.nif_filtro)
-        # Respaldo: lo capturado por red o el DOM.
-        notifs = self._desde_capturas(capturas, cert_material, opciones.nif_filtro)
-        if not notifs:
-            self._abrir_notificaciones(page, base, opciones)
-            notifs = self._extraer_tabla(page, buzon, cert_material)
-        return notifs
+        # Una bandeja vacia es un resultado valido. No reutilizar capturas del
+        # historico ni filas DOM sin referencia/estado verificables.
+        return self._map_registros(registros, cert_material, opciones.nif_filtro)
 
     # ── API REST ───────────────────────────────────────────────────────
     def _fetch_api(self, page, base, opciones, capturas=None):
@@ -236,12 +226,6 @@ class ConectorDEHU(ConectorOrganismo):
                 # autorizado RED puede ver avisos cuyos titulares son varias
                 # empresas. El backend los asigna despues por nifTitular.
                 params = dict(filtros)
-                if endpoint == "/api/v1/realized_notifications":
-                    params["finalDate[left_date]"] = _fecha_hace_30_dias()
-                    params["finalDate[right_date]"] = _fecha_hoy()
-                elif endpoint == "/api/v1/communications":
-                    params["availabilityDate[left_date]"] = _fecha_hace_30_dias()
-                    params["availabilityDate[right_date]"] = _fecha_hoy()
                 params.update({"limit": 50, "page": page_num})
                 url = f"{base}{endpoint}?{urlencode(params)}"
                 try:
@@ -299,10 +283,13 @@ class ConectorDEHU(ConectorOrganismo):
                 continue
             if objetivo and _norm_nif(r.get("nifTitular")) != objetivo:
                 continue
-            ref = r.get("identifier") or r.get("sentReference")
-            if not ref or ref in vistos:
+            if not es_pendiente_dehu(r.get("state"), r.get("_endpoint")):
                 continue
-            vistos.add(ref)
+            ref = r.get("identifier") or r.get("sentReference")
+            clave = (str(ref or ""), _norm_nif(r.get("nifTitular")))
+            if not ref or clave in vistos:
+                continue
+            vistos.add(clave)
             endpoint = r.get("_endpoint") or ""
             categoria = r.get("_category") or "NOTIFICACION"
             realizada = "realized" in endpoint
@@ -623,18 +610,7 @@ def _norm_nif(v):
 
 
 def _map_estado(s):
-    s = (s or "").upper()
-    if "ACEPTAD" in s or "ACCEPT" in s:
-        return "ACEPTADA"
-    if "RECHAZ" in s or "REJECT" in s:
-        return "RECHAZADA"
-    if "VENCID" in s or "EXPIR" in s:
-        return "VENCIDA"
-    if "LEID" in s or "LEÍD" in s or "READ" in s:
-        return "LEIDA"
-    if "REALIZ" in s or "DONE" in s:
-        return "REALIZADA"
-    return "PENDIENTE"
+    return normalizar_estado_dehu(s)
 
 
 registrar_conector(ConectorDEHU())

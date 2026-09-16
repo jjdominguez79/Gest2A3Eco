@@ -32,6 +32,7 @@ from backend.api.client_models import (
     ClientDehuNotification,
     ClientDehuMailboxConfig,
     ClientDehuSyncBatch,
+    ClientDehuSeenReference,
     ClientDocument,
 )
 from backend.api import messaging_mail
@@ -50,6 +51,7 @@ from backend.api.security import (
     require_aapp_worker_key,
     require_workstation_or_internal,
 )
+from utils.estados_dehu import es_pendiente_dehu, normalizar_estado_dehu
 
 
 router = APIRouter(
@@ -873,10 +875,10 @@ def upsert_internal_dehu_mailbox(
         raise HTTPException(status_code=422, detail="Periodicidad DEHu no valida")
     email = payload.notification_email.strip().lower()
     automatic = payload.active and periodicity != "MANUAL"
-    if automatic and (not email or "@" not in email):
+    if email and "@" not in email:
         raise HTTPException(
             status_code=422,
-            detail="La sincronizacion automatica necesita un email de resumen valido",
+            detail="El email de aviso DEHu no es valido",
         )
     item = db.get(ClientDehuMailboxConfig, org.id)
     now = utcnow()
@@ -1003,6 +1005,12 @@ def _try_send_dehu_batch_summary(db: Session, batch_id: str | None) -> None:
     batch.completed_at = utcnow()
     batch.updated_at = utcnow()
     db.commit()
+    if not batch.notification_email:
+        batch.status = "completed"
+        batch.email_error = ""
+        batch.updated_at = utcnow()
+        db.commit()
+        return
     ok_count = sum(1 for item, _ in rows if item.status == "completed")
     error_count = len(rows) - ok_count
     details = "".join(
@@ -1031,8 +1039,13 @@ def _try_send_dehu_batch_summary(db: Session, batch_id: str | None) -> None:
             str(entry.get("reference") or ""),
             str(entry.get("holder_tax_id") or ""),
         )
-        unique_audit[key] = entry
-    audit_items = list(unique_audit.values())
+        anterior = unique_audit.get(key)
+        if anterior is None or entry.get("new"):
+            unique_audit[key] = entry
+    audit_items = [
+        entry for entry in unique_audit.values()
+        if entry.get("new") and es_pendiente_dehu(entry.get("status"))
+    ]
     contracted = [entry for entry in audit_items if entry.get("contracted")]
     opportunities = [entry for entry in audit_items if not entry.get("contracted")]
 
@@ -1081,10 +1094,10 @@ def _try_send_dehu_batch_summary(db: Session, batch_id: str | None) -> None:
         f"<p><strong>Consultados:</strong> {len(rows)} &nbsp; "
         f"<strong>Correctos:</strong> {ok_count} &nbsp; "
         f"<strong>Errores:</strong> {error_count} &nbsp; "
-        f"<strong>Avisos detectados:</strong> {len(audit_items)} &nbsp; "
+        f"<strong>Avisos nuevos:</strong> {len(audit_items)} &nbsp; "
         f"<strong>Con servicio:</strong> {len(contracted)} &nbsp; "
         f"<strong>Sin servicio:</strong> {len(opportunities)}</p>"
-        "<h3>Notificaciones y comunicaciones de clientes con buzon activo</h3>"
+        "<h3>Notificaciones y comunicaciones nuevas de clientes con buzon activo</h3>"
         f"{_audit_table(contracted, contracted_service=True)}"
         "<h3>Oportunidades: avisos detectados sin buzon activo</h3>"
         "<p>Estos avisos solo se han detectado. No se han importado ni se ha "
@@ -1098,7 +1111,7 @@ def _try_send_dehu_batch_summary(db: Session, batch_id: str | None) -> None:
     try:
         sent = messaging_mail.send_mail(
             batch.notification_email,
-            f"Resumen DEHu: {len(rows)} buzones consultados, {error_count} errores",
+            f"Resumen DEHu: {len(audit_items)} avisos nuevos, {len(rows)} buzones consultados, {error_count} errores",
             html,
         )
         if not sent:
@@ -1184,6 +1197,31 @@ def get_worker_certificate_material(
     }
 
 
+def _referencia_nueva_dehu(
+    db: Session, request_item: ClientCertificateRequest,
+    holder_tax_id: str, reference: str, *, conocida: bool = False,
+) -> bool:
+    clave = (holder_tax_id, reference)
+    seen = db.get(ClientDehuSeenReference, clave)
+    if seen is None:
+        try:
+            with db.begin_nested():
+                seen = ClientDehuSeenReference(
+                    holder_tax_id=holder_tax_id,
+                    external_reference=reference,
+                    first_request_id=None if conocida else request_item.id,
+                    first_batch_id=None if conocida else request_item.dehu_batch_id,
+                )
+                db.add(seen)
+                db.flush()
+        except IntegrityError:
+            seen = db.get(ClientDehuSeenReference, clave)
+    return bool(seen and (
+        seen.first_request_id == request_item.id
+        or (request_item.dehu_batch_id and seen.first_batch_id == request_item.dehu_batch_id)
+    ))
+
+
 @router.post("/internal/worker/requests/{request_id}/dehu-notifications")
 def upsert_worker_dehu_notifications(
     request_id: str,
@@ -1199,6 +1237,7 @@ def upsert_worker_dehu_notifications(
     stored = []
     created_count = 0
     unassigned_count = 0
+    ignored_read_count = 0
     unassigned_tax_ids = set()
     audit_items = []
     # Una organizacion solo es destinataria si tiene contratado/configurado un
@@ -1242,8 +1281,27 @@ def upsert_worker_dehu_notifications(
         known_by_tax_id.pop(normalized, None)
     for incoming in payload.notifications:
         reference = incoming.reference.strip()
+        if not reference:
+            raise HTTPException(status_code=422, detail="La referencia DEHu no puede estar vacia")
         holder_tax_id = re.sub(r"[^0-9A-Z]", "", incoming.holder_tax_id.upper())
+        if not es_pendiente_dehu(incoming.status, incoming.source_endpoint):
+            ignored_read_count += 1
+            continue
         destination = destinations_by_tax_id.get(holder_tax_id)
+        item = None
+        if destination:
+            item = db.scalar(select(ClientDehuNotification).where(
+                ClientDehuNotification.organization_id == destination[0].id,
+                ClientDehuNotification.external_reference == reference,
+            ))
+            # Una respuesta antigua no puede devolver a pendiente un aviso
+            # que el sistema ya conoce como leido/realizado.
+            if item and not es_pendiente_dehu(item.status, item.source_endpoint):
+                ignored_read_count += 1
+                continue
+        nueva = _referencia_nueva_dehu(
+            db, request_item, holder_tax_id, reference, conocida=item is not None,
+        )
         known_organization = known_by_tax_id.get(holder_tax_id)
         report_organization = destination[0] if destination else known_organization
         audit_items.append({
@@ -1259,7 +1317,8 @@ def upsert_worker_dehu_notifications(
             "subject": incoming.subject.strip(),
             "available_date": incoming.available_date.strip(),
             "expiration_date": incoming.expiration_date.strip(),
-            "status": incoming.status.strip().upper() or "PENDIENTE",
+            "status": normalizar_estado_dehu(incoming.status),
+            "new": nueva,
             "contracted": destination is not None,
             "known_client": report_organization is not None,
             "company_code": report_organization.company_code if report_organization else "",
@@ -1301,7 +1360,7 @@ def upsert_worker_dehu_notifications(
         item.holder_name = incoming.holder_name.strip()
         item.available_date = incoming.available_date.strip()
         item.expiration_date = incoming.expiration_date.strip()
-        item.status = incoming.status.strip().upper() or "PENDIENTE"
+        item.status = normalizar_estado_dehu(incoming.status)
         item.source_endpoint = incoming.source_endpoint.strip()
         metadata = dict(incoming.metadata)
         metadata.update({
@@ -1316,6 +1375,7 @@ def upsert_worker_dehu_notifications(
         item.document_id = document.id if document else item.document_id
         item.last_seen_at = now
         item.updated_at = now
+        db.flush()
         stored.append(item)
     try:
         request_parameters = json.loads(request_item.parameters_json or "{}")
@@ -1332,6 +1392,7 @@ def upsert_worker_dehu_notifications(
         "count": len(stored),
         "assigned_count": len(stored),
         "created_count": created_count,
+        "ignored_read_count": ignored_read_count,
         "unassigned_count": unassigned_count,
         "unassigned_tax_ids": sorted(unassigned_tax_ids),
         "discarded_without_active_mailbox_count": unassigned_count,
@@ -1354,6 +1415,7 @@ def list_internal_dehu_notifications(
             MessagingOrganization,
             MessagingOrganization.id == ClientDehuNotification.organization_id,
         )
+        .where(ClientDehuNotification.status == "PENDIENTE")
         .order_by(ClientDehuNotification.last_seen_at.desc())
         .limit(limit)
     )

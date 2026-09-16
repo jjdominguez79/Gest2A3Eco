@@ -23,9 +23,37 @@ def test_estados_dehu_no_convierten_historico_en_pendiente():
     assert _map_estado("REJECTED") == "RECHAZADA"
     assert _map_estado("EXPIRED") == "VENCIDA"
     assert _map_estado("REALIZADA") == "REALIZADA"
+    assert _map_estado("UNREAD") == "PENDIENTE"
+    assert _map_estado("NOT_READ") == "PENDIENTE"
+    assert _map_estado("READ") == "LEIDA"
 
 
-def test_registro_realizado_sin_estado_se_mantiene_como_realizado():
+def test_solo_mapea_pendientes_y_no_leidas():
+    material = CertMaterial("cert-1", "Cliente", "B12345678", "cliente.pfx", "")
+    rows = ConectorDEHU()._map_registros([
+        {"identifier": "1", "state": "READ"},
+        {"identifier": "2", "state": "ACCEPTED"},
+        {"identifier": "3", "state": "LEIDA"},
+        {"identifier": "4", "state": "UNREAD"},
+        {"identifier": "5", "state": "NOT_READ"},
+        {"identifier": "6", "_endpoint": "/api/v1/realized_notifications"},
+    ], material)
+    assert [row.referencia for row in rows] == ["4", "5"]
+
+
+def test_bandeja_vacia_no_reutiliza_historico_capturado(monkeypatch):
+    connector = ConectorDEHU()
+    for nombre in ("_diagnostico", "_elegir_certificado_clave", "_esperar_login"):
+        monkeypatch.setattr(connector, nombre, lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(connector, "_click_acceder", lambda *_args: False)
+    monkeypatch.setattr(connector, "_fetch_api", lambda *_args: [])
+    monkeypatch.setattr(connector, "_desde_capturas", lambda *_args: pytest.fail("No debe usar capturas"))
+    page = type("Page", (), {"goto": lambda *_args, **_kwargs: None})()
+    material = CertMaterial("cert-1", "Cliente", "B12345678", "cliente.pfx", "")
+    assert connector._flujo(page, "https://dehu.redsara.es", {}, material, OpcionesSync(), []) == []
+
+
+def test_registro_realizado_sin_estado_se_excluye():
     connector = ConectorDEHU()
     rows = connector._map_registros(
         [{
@@ -46,9 +74,7 @@ def test_registro_realizado_sin_estado_se_mantiene_como_realizado():
         "B12345678",
     )
 
-    assert rows[0].estado == "REALIZADA"
-    assert rows[0].descripcion == "Agencia Estatal de Administracion Tributaria"
-    assert rows[0].metadatos["emitterEntity"].startswith("Agencia Estatal")
+    assert rows == []
 
 
 def test_api_dehu_empieza_en_pagina_uno_no_filtra_y_lee_comunicaciones():
@@ -93,24 +119,20 @@ def test_api_dehu_empieza_en_pagina_uno_no_filtra_y_lee_comunicaciones():
     assert all("page=1" in url for url in calls)
     assert all("titularNif=" in url for url in calls)
     assert all("B11111111" not in url for url in calls)
-    assert any("/realized_notifications?" in url for url in calls)
+    assert not any("/realized_notifications?" in url for url in calls)
     assert all(headers["Authorization"] == "Bearer jwt-efimero" for headers in request_headers)
-    realized_url = next(url for url in calls if "/realized_notifications?" in url)
     communications_url = next(url for url in calls if "/communications?" in url)
-    for url in (realized_url, communications_url):
+    for url in (communications_url,):
         query = parse_qs(urlsplit(url).query, keep_blank_values=True)
         assert query["limit"] == ["50"]
         assert query["page"] == ["1"]
         assert query["titularNif"] == [""]
-    realized_query = parse_qs(urlsplit(realized_url).query, keep_blank_values=True)
-    assert realized_query["finalDate[left_date]"] != [""]
-    assert realized_query["finalDate[right_date]"] != [""]
     communications_query = parse_qs(
         urlsplit(communications_url).query,
         keep_blank_values=True,
     )
-    assert communications_query["availabilityDate[left_date]"] != [""]
-    assert communications_query["availabilityDate[right_date]"] != [""]
+    assert communications_query["availabilityDate[left_date]"] == [""]
+    assert communications_query["availabilityDate[right_date]"] == [""]
 
 
 def test_api_dehu_no_acepta_resultado_parcial_si_falla_una_pagina():

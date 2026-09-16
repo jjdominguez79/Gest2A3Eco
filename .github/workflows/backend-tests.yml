@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - "backend/**"
+      - "utils/estados_dehu.py"
+      - "tests/test_dehu_postgres_migration.py"
       - "tests/test_dgt_api.py"
       - "tests/test_dgt_postgres_migration.py"
       - "tests/test_mail_api.py"
@@ -18,6 +20,8 @@ on:
   pull_request:
     paths:
       - "backend/**"
+      - "utils/estados_dehu.py"
+      - "tests/test_dehu_postgres_migration.py"
       - "tests/test_dgt_api.py"
       - "tests/test_dgt_postgres_migration.py"
       - "tests/test_mail_api.py"
@@ -74,6 +78,8 @@ jobs:
           tests/test_client_validation.py
           tests/test_client_profile_api.py
           tests/test_client_documents_api.py
+          tests/test_client_certificates_api.py
+          tests/test_dehu_postgres_migration.py
           tests/test_client_invoices_api.py
           tests/test_feature_flags.py
           tests/test_worker_endpoints.py

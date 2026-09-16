@@ -6087,6 +6087,15 @@ class GestorBase:
                 config_json     TEXT,
                 PRIMARY KEY (codigo_empresa, ejercicio, canal)
             );
+            CREATE TABLE IF NOT EXISTS notif_config_global (
+                id                    INTEGER PRIMARY KEY,
+                periodicidad_sync     TEXT NOT NULL DEFAULT 'MANUAL',
+                avisar_cliente_email  INTEGER NOT NULL DEFAULT 0,
+                email_resumen_interno TEXT NOT NULL DEFAULT '',
+                email_asunto          TEXT NOT NULL DEFAULT 'Nueva notificacion electronica: {asunto}',
+                email_html            TEXT,
+                updated_at            TEXT NOT NULL
+            );
             -- v2: gestion de certificados, organismos, buzones y bandeja
             CREATE TABLE IF NOT EXISTS notif_certificados (
                 id              TEXT PRIMARY KEY,
@@ -6190,6 +6199,65 @@ class GestorBase:
         self._ensure_column("notif_bandeja", "archivada", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("notif_bandeja", "enviada_cliente", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("notif_bandeja", "fecha_envio_cliente", "TEXT")
+        self._ensure_column("notif_bandeja", "email_cliente_estado", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("notif_bandeja", "email_cliente_fecha", "TEXT")
+        self._ensure_column("notif_bandeja", "email_cliente_error", "TEXT")
+        self.conn.commit()
+
+    def get_notif_config_global(self) -> dict:
+        """Devuelve la politica unica del modulo de notificaciones."""
+        row = self.conn.execute(
+            "SELECT * FROM notif_config_global WHERE id=1"
+        ).fetchone()
+        if row:
+            return self._row_to_dict(row)
+        correos_legacy = self.conn.execute(
+            "SELECT DISTINCT email_aviso FROM notif_buzones "
+            "WHERE activo=1 AND email_aviso IS NOT NULL AND email_aviso<>''"
+        ).fetchall()
+        email_interno = str(correos_legacy[0][0]) if len(correos_legacy) == 1 else ""
+        periodicidades = self.conn.execute(
+            "SELECT DISTINCT periodicidad_sync FROM notif_buzones "
+            "WHERE activo=1 AND periodicidad_sync<>'MANUAL'"
+        ).fetchall()
+        periodicidad = str(periodicidades[0][0]) if len(periodicidades) == 1 else "MANUAL"
+        return {
+            "id": 1,
+            "periodicidad_sync": periodicidad,
+            "avisar_cliente_email": 0,
+            "email_resumen_interno": email_interno,
+            "email_asunto": "Nueva notificacion electronica: {asunto}",
+            "email_html": None,
+            "updated_at": None,
+        }
+
+    def upsert_notif_config_global(self, config: dict) -> None:
+        periodicidad = str(config.get("periodicidad_sync") or "MANUAL").upper()
+        if periodicidad not in {"MANUAL", "DIARIA", "SEMANAL", "QUINCENAL", "MENSUAL"}:
+            raise ValueError("Periodicidad de sincronizacion no valida.")
+        self.conn.execute(
+            """
+            INSERT INTO notif_config_global
+                (id, periodicidad_sync, avisar_cliente_email,
+                 email_resumen_interno, email_asunto, email_html, updated_at)
+            VALUES (1,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                periodicidad_sync=excluded.periodicidad_sync,
+                avisar_cliente_email=excluded.avisar_cliente_email,
+                email_resumen_interno=excluded.email_resumen_interno,
+                email_asunto=excluded.email_asunto,
+                email_html=excluded.email_html,
+                updated_at=excluded.updated_at
+            """,
+            (
+                periodicidad,
+                int(bool(config.get("avisar_cliente_email"))),
+                str(config.get("email_resumen_interno") or "").strip(),
+                str(config.get("email_asunto") or "").strip(),
+                config.get("email_html"),
+                self._utc_now(),
+            ),
+        )
         self.conn.commit()
 
     def listar_notificaciones(
@@ -6727,6 +6795,19 @@ class GestorBase:
         )
         self.conn.commit()
 
+    def marcar_notif_bandeja_email_cliente(
+        self, codigo_empresa: str, item_id: str, estado: str, error: str = "",
+    ) -> None:
+        self.conn.execute(
+            "UPDATE notif_bandeja SET email_cliente_estado=?, email_cliente_fecha=?, "
+            "email_cliente_error=?, updated_at=? WHERE id=? AND codigo_empresa=?",
+            (
+                estado, self._utc_now() if estado == "ENVIADO" else None,
+                str(error or "")[:2000] or None, self._utc_now(), item_id, codigo_empresa,
+            ),
+        )
+        self.conn.commit()
+
     def asignar_responsable_notif_bandeja(self, codigo_empresa: str, item_id: str, responsable: str | None) -> None:
         now = self._utc_now()
         self.conn.execute(
@@ -6754,7 +6835,8 @@ class GestorBase:
         sql = """
             SELECT nb.*, o.nombre AS organismo_nombre, o.codigo AS organismo_codigo,
                    bz.nombre AS buzon_nombre,
-                   e.nombre AS empresa_nombre, e.cif AS empresa_cif
+                   e.nombre AS empresa_nombre, e.cif AS empresa_cif,
+                   e.email AS empresa_email
             FROM notif_bandeja nb
             LEFT JOIN notif_organismos o  ON nb.organismo_id = o.id
             LEFT JOIN notif_buzones    bz ON nb.buzon_id     = bz.id

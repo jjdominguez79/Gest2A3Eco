@@ -20,6 +20,7 @@ from datetime import datetime
 
 from .base import OpcionesSync, obtener_conector
 from .cert_store import CertStore, CertError
+from utils.estados_dehu import es_pendiente_dehu
 
 # Importar conectores para que se registren (efecto de import).
 from . import dehu_playwright  # noqa: F401  (registra ConectorDEHU)
@@ -202,6 +203,9 @@ def importar_bandeja_central(
             by_company.setdefault(str(row.get("codigo_empresa") or ""), row)
     result = ResultadoImportacionCentral(total=len(rows))
     for remote in rows:
+        if not es_pendiente_dehu(remote.get("status"), remote.get("source_endpoint")):
+            result.omitidas += 1
+            continue
         codigo = str(remote.get("company_code") or "")
         buzon = by_id.get(str(remote.get("mailbox_id") or "")) or by_company.get(codigo)
         if not codigo or not buzon:
@@ -213,6 +217,9 @@ def importar_bandeja_central(
             continue
         item_id = _bandeja_id(codigo, "DEHU", reference)
         existing = gestor.get_notif_bandeja_item(item_id)
+        if existing and not es_pendiente_dehu(existing.get("estado")):
+            result.omitidas += 1
+            continue
         metadata = dict(remote.get("metadata") or {})
         metadata.update({
             "backend_notification_id": remote.get("id"),

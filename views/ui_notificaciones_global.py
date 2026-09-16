@@ -11,6 +11,7 @@ Subpantallas:
     - Certificados AAPP: solicitud y publicacion de certificados AEAT/TGSS.
     - Buzones DEHu:      configuracion DEHu de todos los clientes.
     - Sincronizaciones:  historico global de sincronizaciones (logs).
+    - Configuracion:    periodicidad, resumen interno y plantilla de email cliente.
 
 El cliente es una dimension de configuracion y filtrado: la configuracion
 detallada de certificados/buzones de un cliente concreto vive tambien en su
@@ -28,6 +29,7 @@ from views.ui_buzones_global import UIBuzonesGlobal
 from views.ui_certificados_global import UICertificadosGlobal
 from views.ui_certificados_obtenidos import UICertificadosObtenidos
 from views.ui_sync_logs import UISyncLogs
+from views.ui_config_notificaciones_global import UIConfigNotificacionesGlobal
 
 
 class UINotificacionesGlobal(ttk.Frame):
@@ -69,7 +71,10 @@ class UINotificacionesGlobal(ttk.Frame):
         logs = UISyncLogs(nb, self._gestor, session=self._session)
         nb.add(logs, text="Sincronizaciones / Logs")
 
-        self._views = [bandeja, certificados, certificados_aapp, buzones, logs]
+        config = UIConfigNotificacionesGlobal(nb, self._gestor, session=self._session)
+        nb.add(config, text="Configuracion global")
+
+        self._views = [bandeja, certificados, certificados_aapp, buzones, logs, config]
         nb.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
     def _on_tab_changed(self, _e=None) -> None:

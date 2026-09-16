@@ -7,6 +7,7 @@ WORKDIR /app
 COPY backend/requirements.txt /app/backend/requirements.txt
 RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 COPY backend /app/backend
+COPY utils/__init__.py utils/estados_dehu.py /app/utils/
 COPY gestinem_app/pubspec.yaml /app/gestinem_app/pubspec.yaml
 COPY docs/Manual_Mensajeria_Gestinem.pdf /app/docs/Manual_Mensajeria_Gestinem.pdf
 

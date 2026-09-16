@@ -392,6 +392,7 @@ def startup():
         "020_aapp_document_fiscal_year.sql",
         "021_dehu_notifications.sql",
         "022_dehu_automatic_sync.sql",
+        "023_dehu_new_notifications.sql",
     ):
         _mig_path = Path(__file__).resolve().parent.parent / "migrations" / _mig_name
         if _mig_path.exists():

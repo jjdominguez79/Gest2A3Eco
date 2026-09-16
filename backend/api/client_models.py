@@ -232,6 +232,18 @@ class ClientDehuNotification(Base):
     )
 
 
+class ClientDehuSeenReference(Base):
+    """Referencias conocidas, sin conservar contenido de titulares sin servicio."""
+
+    __tablename__ = "client_dehu_seen_references"
+
+    holder_tax_id: Mapped[str] = mapped_column(String(30), primary_key=True)
+    external_reference: Mapped[str] = mapped_column(String(300), primary_key=True)
+    first_request_id: Mapped[str | None] = mapped_column(String(36))
+    first_batch_id: Mapped[str | None] = mapped_column(String(36))
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ClientDehuMailboxConfig(Base):
     """Programacion central del buzon DEHu unico de una organizacion."""
 

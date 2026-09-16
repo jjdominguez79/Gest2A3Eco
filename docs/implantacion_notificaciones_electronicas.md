@@ -60,6 +60,38 @@ Flutter ya incluye la pantalla **Certificados oficiales** para consultar la
 vigencia, crear y cancelar solicitudes, seguir su estado y abrir el documento
 resultante. El PFX y la contrasena nunca forman parte de una respuesta cliente.
 
+## Configuracion global y comunicaciones DEHu
+
+La pestana **Configuracion global** del modulo de notificaciones guarda en
+PostgreSQL una unica periodicidad para todos los buzones, el email de resumen
+interno y la politica/plantilla de aviso al cliente. Solo el administrador
+puede cambiarla. **Guardar y aplicar** replica la periodicidad en el backend;
+la ficha del cliente conserva certificado, activacion y responsable, sin
+permitir periodicidades particulares.
+
+El resumen interno del despacho es distinto del email de comunicacion al
+cliente. Este ultimo se dirige siempre al campo Email de la ficha y utiliza
+su propia plantilla HTML y asunto, independientes de la plantilla de facturas.
+En la bandeja se puede seleccionar con Ctrl/Mayus o **Seleccionar visibles**;
+**Comunicar al cliente** publica los PDF seleccionados y, si esta habilitado,
+envia un unico email por cliente con todos sus adjuntos, sin mezclar clientes.
+Se registra por separado la publicacion y el estado del correo. Un fallo
+seguro permite reintentar el email sin republicar los PDF; un resultado
+incierto requiere comprobar el envio antes de reenviarlo.
+
+La consulta es pasiva y excluye leidas/aceptadas/rechazadas/realizadas. No pide
+la bandeja historica `realized_notifications` ni reutiliza capturas/filas DOM
+cuando la API devuelve una bandeja vacia. Los resumenes enumeran solo
+referencias nuevas, no todas las pendientes. La migracion backend
+`023_dehu_new_notifications.sql` recuerda tambien las referencias de
+resumenes anteriores y de titulares sin servicio, sin almacenar su contenido.
+Un aviso descubierto por primera vez sigue siendo nuevo aunque su fecha de
+puesta a disposicion sea anterior al dia de consulta.
+
+Para activar el cambio en produccion es necesario actualizar escritorio,
+backend y worker AAPP. El backend aplica la migracion al arrancar; el builder
+Synology incluye el modulo compartido de estados DEHu.
+
 ## Limites deliberados
 
 - Los botones de comparecencia y rechazo no modifican el estado: falta el flujo
