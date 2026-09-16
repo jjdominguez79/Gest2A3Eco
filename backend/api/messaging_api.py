@@ -53,6 +53,7 @@ from backend.api.security import require_internal_key, require_workstation_or_in
 router = APIRouter(prefix="/api/v1/messaging", tags=["messaging"])
 MAX_ATTACHMENT = 50 * 1024 * 1024
 MAX_AVATAR = 5 * 1024 * 1024
+INTERVALO_PRESENCIA_WS = 25
 ALLOWED_SUFFIXES = {
     ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".tif", ".tiff",
     ".txt", ".xml", ".csv", ".xls", ".xlsx", ".doc", ".docx", ".zip",
@@ -4023,33 +4024,60 @@ async def messaging_websocket(websocket: WebSocket, audience: str, ticket: str =
                 channels=_channels_for_staff(db, actor),
             )
         db.commit()
-    await websocket.accept()
-    if presence_staff_id:
-        hub.publish(
-            {"type": "presence.updated", "staff_id": presence_staff_id, "online": True},
-        )
+    tareas = set()
     try:
+        await websocket.accept()
+        if presence_staff_id:
+            hub.publish(
+                {"type": "presence.updated", "staff_id": presence_staff_id, "online": True},
+            )
         await websocket.send_json({"type": "connected"})
+        recepcion = asyncio.create_task(websocket.receive())
+        siguiente_evento = asyncio.create_task(subscription.queue.get())
+        tareas = {recepcion, siguiente_evento}
+        reloj = asyncio.get_running_loop()
+        proxima_renovacion = reloj.time() + INTERVALO_PRESENCIA_WS
         while True:
-            try:
-                event = await asyncio.wait_for(subscription.queue.get(), timeout=25)
-                await websocket.send_json(event)
-            except asyncio.TimeoutError:
+            completadas, _ = await asyncio.wait(
+                tareas, timeout=max(0, proxima_renovacion - reloj.time()),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            # Recibir el cierre evita mantener activo un socket sin mensajes.
+            if recepcion in completadas:
+                mensaje = recepcion.result()
+                if mensaje["type"] == "websocket.disconnect":
+                    break
+                tareas.remove(recepcion)
+                recepcion = asyncio.create_task(websocket.receive())
+                tareas.add(recepcion)
+            # El plazo no se reinicia al recibir eventos del chat.
+            if reloj.time() >= proxima_renovacion:
+                await websocket.send_json({"type": "ping"})
                 if presence_id:
                     with SessionLocal() as presence_db:
                         presence = presence_db.get(MessagingStaffPresenceConnection, presence_id)
                         session = presence_db.get(
                             MessagingStaffSession, presence.staff_session_id,
                         ) if presence else None
-                        if not presence or not session or session.revoked_at or is_expired(session.expires_at):
+                        staff = presence_db.get(MessagingStaff, presence_staff_id)
+                        if (not presence or not session or session.revoked_at
+                                or is_expired(session.expires_at) or not staff or not staff.active):
                             await websocket.close(code=4401)
                             break
                         presence.connected_until = utcnow() + timedelta(seconds=35)
                         presence_db.commit()
-                await websocket.send_json({"type": "ping"})
-    except WebSocketDisconnect:
+                proxima_renovacion = reloj.time() + INTERVALO_PRESENCIA_WS
+            if siguiente_evento in completadas:
+                await websocket.send_json(siguiente_evento.result())
+                tareas.remove(siguiente_evento)
+                siguiente_evento = asyncio.create_task(subscription.queue.get())
+                tareas.add(siguiente_evento)
+    except (WebSocketDisconnect, OSError):
         pass
     finally:
+        for tarea in tareas:
+            tarea.cancel()
+        # Limpiar antes de esperar: el servidor puede cancelar de nuevo al apagar.
         hub.unsubscribe(subscription)
         if presence_id:
             with SessionLocal() as presence_db:
@@ -4057,9 +4085,11 @@ async def messaging_websocket(websocket: WebSocket, audience: str, ticket: str =
                 if presence:
                     presence_db.delete(presence)
                     presence_db.commit()
+                online = _staff_online(presence_db, presence_staff_id)
             hub.publish(
-                {"type": "presence.updated", "staff_id": presence_staff_id, "online": False},
+                {"type": "presence.updated", "staff_id": presence_staff_id, "online": online},
             )
+        await asyncio.gather(*tareas, return_exceptions=True)
 
 
 @router.get("/{audience}/events")

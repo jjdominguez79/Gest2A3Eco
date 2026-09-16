@@ -1,3 +1,4 @@
+import asyncio
 import os
 from datetime import timedelta
 from io import BytesIO
@@ -32,10 +33,13 @@ from backend.api.messaging_models import (
     MessagingCampaignRecipient,
     MessagingDeletionAudit,
     MessagingMessage,
+    MessagingStaff,
     MessagingStaffPresenceConnection,
     MessagingStaffSession,
+    MessagingWebSocketTicket,
 )
-from backend.api.messaging_security import utcnow
+from backend.api.messaging_realtime import RealtimeHub
+from backend.api.messaging_security import hash_token, utcnow
 
 
 def _api(tmp_path: Path, monkeypatch):
@@ -431,6 +435,149 @@ def test_presencia_staff_exige_conexion_viva_y_sesion_valida(tmp_path, monkeypat
         "/api/v1/messaging/staff/admin/directory", headers=staff_headers("admin"),
     ).json()
     assert next(row for row in directory if row["id"] == "employee")["online"] is False
+
+
+def _ticket_presencia(factory, token):
+    with factory() as db:
+        session = MessagingStaffSession(
+            staff_external_id="employee", token_hash=hash_token(f"session-{token}"),
+            expires_at=utcnow() + timedelta(days=1),
+        )
+        db.add(session)
+        db.flush()
+        db.add(MessagingWebSocketTicket(
+            user_type="staff", user_id="employee", token_hash=hash_token(token),
+            staff_session_id=session.id, expires_at=utcnow() + timedelta(seconds=60),
+        ))
+        db.commit()
+        return session.id
+
+
+@pytest.mark.asyncio
+async def test_presencia_se_renueva_con_eventos_continuos(tmp_path, monkeypatch):
+    _client, factory, *_rest = _setup(tmp_path, monkeypatch)
+    _ticket_presencia(factory, "busy-ticket")
+    bus = RealtimeHub()
+    monkeypatch.setattr(messaging_api, "hub", bus)
+    monkeypatch.setattr(messaging_api, "INTERVALO_PRESENCIA_WS", 0.02)
+    eventos = []
+
+    class SocketOcupado:
+        def __init__(self):
+            self.entrada = asyncio.Queue()
+
+        async def accept(self):
+            pass
+
+        async def receive(self):
+            return await self.entrada.get()
+
+        async def send_json(self, payload):
+            eventos.append(payload)
+            if payload["type"] == "connected":
+                # Simula la caducidad; el latido debe renovarla sin silencio.
+                with factory() as db:
+                    row = db.scalar(select(MessagingStaffPresenceConnection))
+                    row.connected_until = utcnow() - timedelta(seconds=1)
+                    db.commit()
+            elif payload["type"] == "ping":
+                self.entrada.put_nowait({"type": "websocket.disconnect"})
+            bus.publish({"type": "message.created"})
+            await asyncio.sleep(0.001)
+
+    # El cierre borra la presencia, por eso comprobamos la renovacion en el UPDATE.
+    actualizaciones = []
+
+    def registrar_actualizacion(_mapper, _connection, target):
+        actualizaciones.append(target.connected_until)
+
+    event.listen(MessagingStaffPresenceConnection, "after_update", registrar_actualizacion)
+    try:
+        await asyncio.wait_for(
+            messaging_api.messaging_websocket(SocketOcupado(), "staff", "busy-ticket"),
+            timeout=1,
+        )
+    finally:
+        event.remove(MessagingStaffPresenceConnection, "after_update", registrar_actualizacion)
+    assert any(payload["type"] == "message.created" for payload in eventos)
+    assert any(payload["type"] == "ping" for payload in eventos)
+    assert actualizaciones[-1] > utcnow() + timedelta(seconds=30)
+    with factory() as db:
+        assert db.scalar(select(func.count()).select_from(MessagingStaffPresenceConnection)) == 0
+    assert not bus._subscriptions
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("estado", ["revocada", "caducada", "inactivo"])
+async def test_presencia_revalida_acceso_aunque_haya_eventos(tmp_path, monkeypatch, estado):
+    _client, factory, *_rest = _setup(tmp_path, monkeypatch)
+    session_id = _ticket_presencia(factory, "ticket-revocado")
+    bus = RealtimeHub()
+    monkeypatch.setattr(messaging_api, "hub", bus)
+    monkeypatch.setattr(messaging_api, "INTERVALO_PRESENCIA_WS", 0.02)
+
+    class SocketRevocado:
+        codigo_cierre = None
+
+        async def accept(self):
+            pass
+
+        async def receive(self):
+            await asyncio.Future()
+
+        async def close(self, code):
+            self.codigo_cierre = code
+
+        async def send_json(self, payload):
+            if payload["type"] == "connected":
+                with factory() as db:
+                    session = db.get(MessagingStaffSession, session_id)
+                    if estado == "revocada":
+                        session.revoked_at = utcnow()
+                    elif estado == "caducada":
+                        session.expires_at = utcnow() - timedelta(seconds=1)
+                    else:
+                        db.get(MessagingStaff, "employee").active = False
+                    db.commit()
+            bus.publish({"type": "message.created"})
+            await asyncio.sleep(0.001)
+
+    socket = SocketRevocado()
+    await asyncio.wait_for(
+        messaging_api.messaging_websocket(socket, "staff", "ticket-revocado"), timeout=1,
+    )
+    assert socket.codigo_cierre == 4401
+    with factory() as db:
+        assert db.scalar(select(func.count()).select_from(MessagingStaffPresenceConnection)) == 0
+    assert not bus._subscriptions
+
+
+def test_cerrar_una_pestana_conserva_presencia_de_la_otra(tmp_path, monkeypatch):
+    client, factory, *_rest = _setup(tmp_path, monkeypatch)
+    _ticket_presencia(factory, "ticket-uno")
+    _ticket_presencia(factory, "ticket-dos")
+    bus = RealtimeHub()
+    monkeypatch.setattr(messaging_api, "hub", bus)
+    eventos = []
+    publish = bus.publish
+
+    def publicar(payload, **kwargs):
+        eventos.append(payload)
+        publish(payload, **kwargs)
+
+    monkeypatch.setattr(bus, "publish", publicar)
+    with client:
+        with client.websocket_connect("/api/v1/messaging/ws/staff?ticket=ticket-uno") as uno:
+            assert uno.receive_json()["type"] == "connected"
+            with client.websocket_connect("/api/v1/messaging/ws/staff?ticket=ticket-dos") as dos:
+                assert dos.receive_json()["type"] == "connected"
+            assert eventos[-1]["online"] is True
+            with factory() as db:
+                assert messaging_api._staff_online(db, "employee") is True
+    assert eventos[-1]["online"] is False
+    with factory() as db:
+        assert messaging_api._staff_online(db, "employee") is False
+    assert not bus._subscriptions
 
 
 def test_invitacion_https_entrega_deep_link_y_token_a_accept_invite(tmp_path, monkeypatch):

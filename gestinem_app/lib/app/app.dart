@@ -121,6 +121,13 @@ class _GestinemAppState extends ConsumerState<GestinemApp> {
 
   void _handleRealtime(Map<String, dynamic> event) {
     if (event['type'] == 'ping') return;
+    if (event['type'] == 'presence.updated' ||
+        event['type'] == 'connected' ||
+        event['type'] == 'disconnected') {
+      ref.invalidate(internalThreadsProvider);
+      ref.invalidate(empleadosProvider);
+      if (event['type'] != 'connected') return;
+    }
     if (event['type'] == 'document.published') {
       final documentId = event['document_id']?.toString() ?? '';
       if (documentId.isEmpty) return;
@@ -141,10 +148,6 @@ class _GestinemAppState extends ConsumerState<GestinemApp> {
     ref.invalidate(conversationsProvider);
     ref.invalidate(unifiedConversationProvider);
     ref.invalidate(unifiedMessagesProvider);
-    if (event['type'] == 'presence.updated') {
-      ref.invalidate(internalThreadsProvider);
-      ref.invalidate(empleadosProvider);
-    }
     final conversationId = event['conversation_id'] as String?;
     if (conversationId != null && conversationId.isNotEmpty) {
       ref.invalidate(messagesProvider(conversationId));
