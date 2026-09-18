@@ -46,6 +46,7 @@ def test_package_builder_copies_only_required_worker_modules():
     assert "'worker.py'" in builder
     assert '"aapp_worker\\$module"' in builder
     assert "'certificados.py'" in builder
+    assert "'aeat_documentos.py'" in builder
     assert "'dehu_playwright.py'" in builder
     assert "'estados_dehu.py'" in builder
     assert '"services\\aapp\\$module"' in builder
@@ -59,7 +60,7 @@ def test_aapp_worker_synology_es_aislado_y_usa_secreto_montado():
     requirements = (root / "requirements.txt").read_text(encoding="utf-8")
 
     assert "container_name:" not in compose
-    assert "image: gest2a3eco-aapp-worker:2026.09.16.1" in compose
+    assert "image: gest2a3eco-aapp-worker:2026.09.18.8" in compose
     assert "playwright==1.61.0" in requirements
     assert "AAPP_WORKER_API_KEY_FILE" in compose
     assert "aapp_worker_api_key.txt" in compose

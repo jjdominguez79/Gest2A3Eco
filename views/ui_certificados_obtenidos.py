@@ -201,9 +201,9 @@ class UICertificadosObtenidos(ttk.Frame):
 
     def _on_select(self, _e=None):
         r = self._fila()
-        tiene_pdf = bool(r and r.get("document_id"))
+        tiene_pdf = bool(r and (r.get("document_id") or r.get("receipt_document_id")))
         self._btn_pdf.configure(state="normal" if tiene_pdf else "disabled")
-        self._btn_email.configure(state="normal" if tiene_pdf else "disabled")
+        self._btn_email.configure(state="normal" if r and r.get("document_id") else "disabled")
         publicable = bool(
             r
             and r.get("requester_type") == "desktop"
@@ -212,12 +212,17 @@ class UICertificadosObtenidos(ttk.Frame):
             and r.get("document_status") == "draft"
         )
         self._btn_publicar.configure(state="normal" if publicable else "disabled")
-        reintentable = bool(r and r.get("status") in {"needs_action", "failed"})
-        self._btn_reintentar.configure(state="normal" if reintentable else "disabled")
+        reintentable = bool(r and r.get("status") in {"needs_action", "failed", "awaiting_issuance"})
+        self._btn_reintentar.configure(
+            state="normal" if reintentable else "disabled",
+            text="Comprobar emision" if r and r.get("submitted_at") else "Reintentar",
+        )
         eliminable = bool(
             r
             and r.get("status") in {"failed", "cancelled"}
             and not r.get("document_id")
+            and not r.get("receipt_document_id")
+            and not r.get("submitted_at")
         )
         self._btn_del.configure(state="normal" if eliminable else "disabled")
 
@@ -235,7 +240,7 @@ class UICertificadosObtenidos(ttk.Frame):
             r for r in self._cache
             if r.get("company_code") == cod
             and r.get("certificate_type") == tipo
-            and r.get("status") in {"needs_action", "failed"}
+            and r.get("status") in {"needs_action", "failed", "awaiting_issuance"}
         ), None)
         accion = "Reintentar" if anterior else "Solicitar"
         detalle = (
@@ -379,11 +384,13 @@ class UICertificadosObtenidos(ttk.Frame):
     # ------------------------------------------------------------------ acciones
     def _on_reintentar(self):
         solicitud = self._fila()
-        if not solicitud or solicitud.get("status") not in {"needs_action", "failed"}:
+        if not solicitud or solicitud.get("status") not in {"needs_action", "failed", "awaiting_issuance"}:
             return
         if not messagebox.askyesno(
             "Reintentar certificado",
-            "La misma solicitud volvera a ponerse en cola para que el worker la procese.",
+            ("Se consultara el expediente ya presentado, sin pedir otro certificado."
+             if solicitud.get("submitted_at") else
+             "La misma solicitud volvera a ponerse en cola para que el worker la procese."),
             parent=self.winfo_toplevel(),
         ):
             return
@@ -411,7 +418,7 @@ class UICertificadosObtenidos(ttk.Frame):
 
     def _on_email(self):
         r = self._fila()
-        if not r:
+        if not r or not r.get("document_id"):
             return
         empresa = self._gestor.get_empresa(r.get("company_code")) or {}
         destino = empresa.get("email") or empresa.get("correo") or ""
@@ -429,10 +436,13 @@ class UICertificadosObtenidos(ttk.Frame):
                                  parent=self.winfo_toplevel())
 
     def _descargar_pdf(self, solicitud):
-        if not solicitud.get("document_id"):
+        if not (solicitud.get("document_id") or solicitud.get("receipt_document_id")):
             raise ValueError("La solicitud todavia no tiene un PDF disponible.")
         content, filename, _content_type = (
-            BackendClientService().download_certificate_request_document(solicitud["id"])
+            BackendClientService().download_certificate_request_document(
+                solicitud["id"],
+                **({"receipt": True} if not solicitud.get("document_id") else {}),
+            )
         )
         if not content.startswith(b"%PDF-"):
             raise ValueError("El servidor no devolvio un PDF valido.")
@@ -569,6 +579,7 @@ class UICertificadosObtenidos(ttk.Frame):
                 "queued": "PENDIENTE",
                 "processing": "PROCESANDO",
                 "completed": "OBTENIDO",
+                "awaiting_issuance": "PENDIENTE EMISION",
                 "needs_action": "REQUIERE REINTENTO",
                 "failed": "ERROR",
                 "cancelled": "CANCELADO",
@@ -579,10 +590,10 @@ class UICertificadosObtenidos(ttk.Frame):
                 _label_tipo(r.get("certificate_type")),
                 r.get("issuing_organization") or "",
                 estado,
-                r.get("result_summary") or r.get("error_message") or "",
+                r.get("certificate_result") or r.get("error_message") or r.get("result_summary") or "",
                 (r.get("created_at") or "")[:16].replace("T", " "),
                 (r.get("completed_at") or "")[:16].replace("T", " "),
-                "Si" if r.get("document_id") else "-",
+                "Si" if r.get("document_id") else "Resguardo" if r.get("receipt_document_id") else "-",
                 (
                     "Publicado"
                     if r.get("document_status") == "published"

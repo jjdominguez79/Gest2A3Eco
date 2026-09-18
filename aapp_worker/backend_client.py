@@ -18,7 +18,7 @@ class AappBackendClient:
     def _headers(self) -> dict:
         return {
             "X-API-Key": self.config.api_key,
-            "X-AAPP-Worker-Protocol": "2",
+            "X-AAPP-Worker-Protocol": "3",
         }
 
     def claim(self) -> dict | None:
@@ -43,6 +43,8 @@ class AappBackendClient:
     def publish_pdf(self, item: dict, pdf_path: Path) -> dict:
         certificate_type = str(item["certificate_type"])
         organization = "AEAT" if certificate_type.startswith("AEAT_") else "TGSS"
+        clase = item.get("_document_kind") or "certificado"
+        resguardo = clase != "certificado"
         obtained_at = datetime.now(timezone.utc)
         content = pdf_path.read_bytes()
         with pdf_path.open("rb") as stream:
@@ -51,12 +53,18 @@ class AappBackendClient:
                 headers=self._headers,
                 data={
                     "organization_id": item["organization_id"],
-                    "document_type": f"certificado_{organization.lower()}",
+                    "document_type": f"{clase}_{organization.lower()}",
                     "source_system": "aapp_worker",
-                    "source_id": item["id"],
+                    "source_id": f"{item['id']}:{clase}" if resguardo else item["id"],
                     "source_version": "1",
-                    "display_name": item.get("certificate_name") or certificate_type,
-                    "description": f"Certificado obtenido de {organization}",
+                    "display_name": (
+                        ("Resguardo - " if clase == "resguardo" else "Documento en revision - ")
+                        if resguardo else ""
+                    ) + (item.get("certificate_name") or certificate_type),
+                    "description": (
+                        "Documento de la solicitud AEAT; no es el certificado definitivo"
+                        if resguardo else f"Certificado obtenido de {organization}"
+                    ),
                     "document_date": obtained_at.date().isoformat(),
                     "fiscal_year": str(obtained_at.year),
                     "expected_sha256": hashlib.sha256(content).hexdigest(),
@@ -71,6 +79,16 @@ class AappBackendClient:
             )
         response.raise_for_status()
         return response.json()
+
+    def receipt_pdf(self, item: dict) -> bytes:
+        response = self.http.post(
+            f"{self.config.backend_url}/api/v1/messaging/client/certificates/internal/worker/receipt-document",
+            headers=self._headers,
+            json={"request_id": item["id"], "claim_token": item["claim_token"]},
+            timeout=self.config.request_timeout_seconds,
+        )
+        response.raise_for_status()
+        return response.content
 
     def publish_notification_pdf(self, item: dict, notification, pdf_path: Path) -> dict:
         content = pdf_path.read_bytes()
@@ -119,6 +137,26 @@ class AappBackendClient:
                 "claim_token": item["claim_token"],
                 "document_id": document_id,
                 "result_summary": summary,
+                "certificate_result": summary if summary in {"POSITIVO", "NEGATIVO"} else "",
+            },
+            timeout=self.config.request_timeout_seconds,
+        )
+        response.raise_for_status()
+
+    def pending_issuance(
+        self, item: dict, *, receipt_document_id=None, reference="",
+        requires_review=False, message="La AEAT sigue tramitando el certificado.",
+    ) -> None:
+        response = self.http.post(
+            f"{self.config.backend_url}/api/v1/messaging/client/certificates/"
+            f"internal/worker/requests/{item['id']}/pending-issuance",
+            headers=self._headers,
+            json={
+                "claim_token": item["claim_token"],
+                "receipt_document_id": receipt_document_id,
+                "external_reference": reference or "",
+                "requires_review": requires_review,
+                "message": message,
             },
             timeout=self.config.request_timeout_seconds,
         )

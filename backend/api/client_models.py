@@ -115,7 +115,7 @@ class ClientCertificateRequest(Base):
         ),
         CheckConstraint(
             "status IN ('queued', 'processing', 'completed', 'needs_action', "
-            "'failed', 'cancelled')",
+            "'failed', 'cancelled', 'awaiting_issuance')",
             name="ck_client_cert_request_status",
         ),
     )
@@ -142,6 +142,13 @@ class ClientCertificateRequest(Base):
     error_code: Mapped[str] = mapped_column(String(60), default="")
     error_message: Mapped[str] = mapped_column(Text, default="")
     result_summary: Mapped[str] = mapped_column(Text, default="")
+    external_reference: Mapped[str] = mapped_column(String(60), default="")
+    certificate_result: Mapped[str] = mapped_column(String(16), default="")
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    receipt_document_id: Mapped[str | None] = mapped_column(
+        ForeignKey("client_documents.id", ondelete="SET NULL"),
+    )
     document_id: Mapped[str | None] = mapped_column(
         ForeignKey("client_documents.id", ondelete="SET NULL"), index=True,
     )

@@ -71,6 +71,8 @@ class OpcionesSync:
     ruta_pdf_destino: str | None = None
     # Datos propios de la solicitud (CIF del contratante, fecha, etc.).
     parametros: dict = field(default_factory=dict)
+    # Metadatos internos del expediente ya presentado; nunca proceden del cliente.
+    seguimiento_certificado: dict = field(default_factory=dict)
 
     def trace(self, msg: str) -> None:
         if self.log:

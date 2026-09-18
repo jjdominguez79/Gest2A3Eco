@@ -25,6 +25,9 @@ ENV/
 
 # Build artifacts
 build/
+# Los motores PDF.js son recursos distribuidos, no artefactos de compilacion.
+!/gestinem_app/web/pdfjs/*/build/
+!/gestinem_app/web/pdfjs/*/build/*.mjs
 dist/
 dist_synology/
 *.egg-info/
@@ -54,6 +57,8 @@ Thumbs.db
 ~$*
 logs/
 .tmp/
+# Paquetes de despliegue y pruebas locales; conservarlos fuera de Git.
+/tmp/
 
 # Local runtime / generated data
 config.json

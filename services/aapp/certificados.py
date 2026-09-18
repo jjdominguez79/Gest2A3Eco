@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -103,6 +104,13 @@ class SedePlaywrightProvider(ProveedorCertificado):
         self.urls = urls or {}  # url especifica por tipo (entrada directa al tramite)
 
     def obtener(self, cert_material, tipo: str, opciones: OpcionesSync) -> ResultadoCertificado:
+        if opciones.seguimiento_certificado and (
+            self.codigo_organismo != "AEAT" or tipo not in AEAT_CONSULTA_URLS
+        ):
+            return ResultadoCertificado(
+                ok=False, tipo=tipo, estado="PENDIENTE",
+                mensaje="No hay una consulta segura configurada para este tramite ya presentado.",
+            )
         try:
             from playwright.sync_api import sync_playwright
         except Exception:
@@ -168,7 +176,18 @@ class SedePlaywrightProvider(ProveedorCertificado):
                 except Exception:
                     pass
 
-                destino_url = self.urls.get(tipo) or self.url_sede
+                seguimiento = opciones.seguimiento_certificado or {}
+                destino_url = (
+                    AEAT_CONSULTA_URLS.get(tipo) if seguimiento
+                    else self.urls.get(tipo) or self.url_sede
+                )
+                if not destino_url:
+                    ctx.close()
+                    browser.close()
+                    return ResultadoCertificado(
+                        ok=False, tipo=tipo, estado="PENDIENTE",
+                        mensaje="No hay una consulta segura configurada para este tramite.",
+                    )
                 opciones.trace(f"[{self.codigo_organismo}] abriendo {destino_url}")
                 try:
                     page.goto(destino_url, wait_until="domcontentloaded")
@@ -190,6 +209,9 @@ class SedePlaywrightProvider(ProveedorCertificado):
                         except Exception:
                             pass
                     elif self.codigo_organismo == "AEAT":
+                        if seguimiento:
+                            # Consultar NUNCA vuelve a validar, firmar ni presentar.
+                            return self._aeat_consultar_solicitud(page, opciones, tipo)
                         pagina_aeat = self._aeat_preparar_solicitud(page, opciones, tipo)
                         if pagina_aeat:
                             page = pagina_aeat
@@ -212,6 +234,8 @@ class SedePlaywrightProvider(ProveedorCertificado):
                     doc = self._descargar_documento(page, opciones, tipo)
                     ruta_pdf = descargado["path"] or doc
                     if ruta_pdf:
+                        if self.codigo_organismo == "AEAT":
+                            return self._aeat_resultado_pdf(ruta_pdf, page, tipo)
                         return ResultadoCertificado(
                             ok=True, tipo=tipo, estado="OBTENIDO",
                             pdf_path=ruta_pdf,
@@ -219,7 +243,7 @@ class SedePlaywrightProvider(ProveedorCertificado):
                             mensaje="Certificado descargado.",
                         )
                     try:
-                        url_actual = page.url
+                        url_actual = self._url_diagnostico_segura(page.url)
                     except Exception:
                         url_actual = "?"
                     resumen_pagina = self._resumir_pagina(page)
@@ -556,6 +580,10 @@ class SedePlaywrightProvider(ProveedorCertificado):
             descargado = self._descargar_boton_aeat(page, opciones, tipo)
             if descargado:
                 return descargado
+        elif self.codigo_organismo == "TGSS":
+            descargado = self._descargar_boton_tgss(page, opciones, tipo)
+            if descargado:
+                return descargado
         selectores = [
             "a.pr_enlaceDocumento",
             "a[data-pc_tipo='documento']",
@@ -608,6 +636,96 @@ class SedePlaywrightProvider(ProveedorCertificado):
             return destino
         opciones.trace(f"[{self.codigo_organismo}] no se obtuvo un PDF valido de {href}")
         return None
+
+    def _descargar_boton_tgss(self, page, opciones, tipo):
+        """SPM entrega el PDF mediante Imprimir, no necesariamente un enlace.
+
+        Pulsar una sola vez: capturar descarga o respuesta PDF de la misma
+        pagina, un frame o una pestana nueva, sin reenviar la solicitud.
+        """
+        try:
+            boton = page.locator(
+                "button[name='SPM.ACC.IMPRIMIR'], "
+                "input[name='SPM.ACC.IMPRIMIR'], "
+                "button#ENVIO_10[name='SPM.ACC.IMPRIMIR']"
+            )
+            if boton.count() == 0:
+                return None
+        except Exception:
+            return None
+        destino = opciones.ruta_pdf_destino or os.path.join(
+            opciones.carpeta_descargas or os.getcwd(), f"cert_{tipo}.pdf",
+        )
+        os.makedirs(os.path.dirname(destino), exist_ok=True)
+        capturado = {"body": None, "saved": False}
+        contexto = page.context
+        paginas = []
+
+        def respuesta(resp):
+            try:
+                ct = (resp.headers or {}).get("content-type", "").lower()
+                url = resp.url.split("?")[0].lower()
+                if "pdf" not in ct and "viewdoc" not in url and not url.endswith(".pdf"):
+                    return
+                body = resp.body()
+                if self._es_pdf(body):
+                    capturado["body"] = body
+            except Exception:
+                pass
+
+        def descarga(dl):
+            parcial = destino + ".part"
+            try:
+                dl.save_as(parcial)
+                with open(parcial, "rb") as fh:
+                    valido = self._es_pdf(fh.read(4))
+                if valido:
+                    os.replace(parcial, destino)
+                    capturado["saved"] = True
+            except Exception:
+                pass
+            finally:
+                if os.path.exists(parcial):
+                    os.remove(parcial)
+
+        def nueva_pagina(pg):
+            pg.on("download", descarga)
+            paginas.append(pg)
+
+        contexto.on("response", respuesta)
+        contexto.on("page", nueva_pagina)
+        try:
+            for pg in contexto.pages:
+                nueva_pagina(pg)
+            try:
+                boton.first.click(timeout=6000)
+            except Exception as exc:
+                # Una navegacion convertida en descarga puede interrumpir click.
+                # No pulsar de nuevo: las capturas siguen activas.
+                opciones.trace(f"[TGSS] Imprimir: {type(exc).__name__}")
+            fin = time.monotonic() + opciones.timeout_ms / 1000
+            while not capturado["saved"] and capturado["body"] is None:
+                if time.monotonic() >= fin:
+                    break
+                activa = next((pg for pg in reversed(paginas) if not pg.is_closed()), None)
+                if activa is None:
+                    break
+                activa.wait_for_timeout(200)
+            if capturado["saved"]:
+                opciones.trace("[TGSS] PDF descargado mediante Imprimir")
+                return destino
+            if capturado["body"]:
+                with open(destino, "wb") as fh:
+                    fh.write(capturado["body"])
+                opciones.trace("[TGSS] respuesta PDF de Imprimir guardada")
+                return destino
+            opciones.trace("[TGSS] Imprimir no entrego una descarga ni respuesta PDF valida")
+            return None
+        finally:
+            contexto.remove_listener("response", respuesta)
+            contexto.remove_listener("page", nueva_pagina)
+            for pg in paginas:
+                pg.remove_listener("download", descarga)
 
     def _descargar_boton_aeat(self, page, opciones, tipo):
         """Captura el PDF que AEAT entrega mediante el boton final #descarga."""
@@ -710,6 +828,143 @@ class SedePlaywrightProvider(ProveedorCertificado):
                 pass
         return "SAVED" if got["saved"] else got["body"]
 
+    def _aeat_resultado_pdf(self, ruta_pdf, page, tipo):
+        from services.aapp.aeat_documentos import inspeccionar_pdf, referencia_solicitud
+        documento = inspeccionar_pdf(ruta_pdf)
+        if documento.clase == "CERTIFICADO" and tipo in {"AEAT_CORRIENTE", "AEAT_CONTRATISTAS"} and not documento.resultado:
+            return ResultadoCertificado(
+                ok=False, tipo=tipo, estado="REVISION", pdf_path=ruta_pdf,
+                referencia=documento.referencia,
+                mensaje="Certificado AEAT sin resultado positivo o negativo identificable; requiere revision.",
+            )
+        referencia = documento.referencia
+        if not referencia and documento.clase != "CERTIFICADO":
+            try:
+                referencia = referencia_solicitud(page.locator("body").inner_text())
+            except Exception:
+                pass
+        return ResultadoCertificado(
+            ok=documento.clase == "CERTIFICADO", tipo=tipo,
+            estado="OBTENIDO" if documento.clase == "CERTIFICADO" else documento.clase,
+            pdf_path=ruta_pdf, referencia=referencia, resultado=documento.resultado,
+            mensaje=("Certificado descargado." if documento.clase == "CERTIFICADO"
+                     else "La AEAT ha entregado un resguardo; pendiente de emision."
+                     if documento.clase == "RESGUARDO"
+                     else "Documento AEAT pendiente de revision: no se identifica como certificado."),
+        )
+
+    def _aeat_consultar_solicitud(self, page, opciones, tipo):
+        """Consulta pasiva: solo recoge el certificado del expediente exacto."""
+        from services.aapp.aeat_documentos import normalizar_texto
+        referencia = str(opciones.seguimiento_certificado.get("referencia") or "").strip()
+        if not re.fullmatch(r"[A-Z0-9][A-Z0-9/\-]{5,59}", referencia):
+            return ResultadoCertificado(ok=False, tipo=tipo, estado="PENDIENTE",
+                                        mensaje="Falta una referencia de solicitud verificable.")
+        self._diag(page, opciones, f"{tipo}_consulta")
+        self._trace_controles(page, opciones, self._resumir_pagina(page))
+        try:
+            # Solo controles de consulta, no los formularios de nueva solicitud.
+            formulario_recogida = page.locator("#fCodSolicitud")
+            es_recogida = formulario_recogida.count() == 1
+            if es_recogida:
+                codigo = str(opciones.seguimiento_certificado.get("codigo_electronico") or "")
+                if not re.fullmatch(r"[A-Z0-9]{16}", codigo):
+                    return ResultadoCertificado(ok=False, tipo=tipo, estado="PENDIENTE",
+                                                mensaje="Falta el codigo electronico de recogida del resguardo AEAT.")
+                campo = formulario_recogida
+                propio = page.locator("#fRepresenta0")
+                if propio.count() == 1:
+                    propio.check(timeout=5000)
+                # La referencia exacta identifica la solicitud: no restringir
+                # su recogida a las fechas que el portal cargue por defecto.
+                for selector_fecha in ("#fFecSolDesde", "#fFecSolHasta"):
+                    fecha = page.locator(selector_fecha)
+                    if fecha.count() == 1:
+                        fecha.fill("")
+                buscar = page.locator("#Enviar")
+            else:
+                campo = page.get_by_label(re.compile(r"referencia|n[uú]mero de (?:la )?solicitud", re.I))
+                buscar = page.get_by_role("button", name=re.compile(r"^(Consultar|Buscar)$", re.I))
+            if campo.count() == 1:
+                campo.fill(codigo if es_recogida else referencia)
+                if buscar.count() == 1:
+                    buscar.click(timeout=5000)
+                    page.wait_for_load_state("domcontentloaded")
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=10000)
+                    except Exception:
+                        pass
+                    self._diag(page, opciones, f"{tipo}_consulta_resultado")
+                    self._trace_controles(page, opciones, self._resumir_pagina(page))
+            # DOM textContent concatena columnas sin separador: comparar la
+            # celda completa, no un substring de toda la fila. Mis Expedientes
+            # puede anteponer TCT a la referencia del resguardo.
+            celda = page.locator("td").filter(has_text=re.compile(
+                rf"^\s*(?:TCT)?{re.escape(referencia)}\s*$", re.I,
+            ))
+            filas = page.locator("tr").filter(has=celda)
+            if filas.count() == 1:
+                fila = filas.first
+            elif filas.count() == 0 and es_recogida:
+                from services.aapp.aeat_documentos import referencia_solicitud, codigo_electronico_solicitud
+                cuerpo = page.locator("body")
+                texto_respuesta = cuerpo.inner_text()
+                ref_respuesta = referencia_solicitud(texto_respuesta)
+                identidad = (ref_respuesta == referencia if ref_respuesta
+                             else codigo_electronico_solicitud(texto_respuesta) == codigo)
+                if not identidad:
+                    return ResultadoCertificado(ok=False, tipo=tipo, estado="PENDIENTE",
+                                                mensaje="La respuesta de recogida no identifica el expediente AEAT.")
+                fila = cuerpo
+            else:
+                return ResultadoCertificado(ok=False, tipo=tipo, estado="PENDIENTE",
+                                            mensaje="No se identifica de forma unica el expediente en la consulta AEAT.")
+            enlaces = fila.locator("a[href]")
+            candidatos = []
+            for indice in range(enlaces.count()):
+                enlace = enlaces.nth(indice)
+                texto = normalizar_texto(enlace.inner_text())
+                if re.fullmatch(
+                    r"(?:pinche aqui para recoger el certificado|recoger (?:el )?certificado|"
+                    r"descargar (?:el )?certificado|certificado(?: tributario)?)\.?", texto,
+                ):
+                    candidatos.append(enlace)
+            if not candidatos:
+                texto = normalizar_texto(fila.inner_text())
+                if (any(p in texto for p in ("en tramitacion", "pendiente", "en tramite", "no ha sido atendida", "no ha sido tramitada"))
+                        or re.search(r"estado de tramitacion\s*:\s*solicitado\b", texto)):
+                    return ResultadoCertificado(ok=False, tipo=tipo, estado="EN_TRAMITE",
+                                                referencia=referencia, mensaje="La AEAT sigue tramitando el certificado.")
+                return ResultadoCertificado(ok=False, tipo=tipo, estado="PENDIENTE",
+                                            mensaje="El expediente no ofrece un certificado identificable; requiere revision.")
+            if len(candidatos) != 1:
+                raise ValueError("Varios documentos posibles en el expediente; requiere revision.")
+            from urllib.parse import urljoin, urlsplit
+            href = urljoin(page.url, candidatos[0].get_attribute("href") or "")
+            url = urlsplit(href)
+            if url.scheme != "https" or url.hostname not in {"www1.agenciatributaria.gob.es", "www2.agenciatributaria.gob.es", "sede.agenciatributaria.gob.es"}:
+                raise ValueError("El enlace no es una descarga segura de la AEAT.")
+            destino = opciones.ruta_pdf_destino
+            contenido = self._pdf_bytes_request(page, href, opciones)
+            if contenido:
+                with open(destino, "wb") as fichero:
+                    fichero.write(contenido)
+            else:
+                contenido = self._pdf_bytes_navegando(page, href, destino, opciones)
+                if contenido is None:
+                    raise ValueError("No se pudo recoger el PDF del expediente AEAT.")
+                if contenido != "SAVED":
+                    with open(destino, "wb") as fichero:
+                        fichero.write(contenido)
+            resultado = self._aeat_resultado_pdf(destino, page, tipo)
+            if resultado.referencia and resultado.referencia != referencia:
+                raise ValueError("El PDF pertenece a otro expediente.")
+            resultado.referencia = referencia
+            return resultado
+        except Exception:
+            return ResultadoCertificado(ok=False, tipo=tipo, estado="PENDIENTE",
+                                        mensaje="No se pudo consultar con seguridad el expediente AEAT; requiere revision.")
+
     def _resultado_corriente(self, page):
         """Intenta deducir POSITIVO/NEGATIVO del texto de la pagina (best-effort)."""
         try:
@@ -718,7 +973,7 @@ class SedePlaywrightProvider(ProveedorCertificado):
             return None
         if "no se encuentra al corriente" in txt or "no esta al corriente" in txt or "informe de deuda" in txt:
             return "NEGATIVO"
-        if "se encuentra al corriente" in txt or "esta al corriente" in txt or "al corriente" in txt:
+        if "se encuentra al corriente" in txt or "esta al corriente" in txt:
             return "POSITIVO"
         return None
 
@@ -730,7 +985,7 @@ class SedePlaywrightProvider(ProveedorCertificado):
             titulo = ""
         try:
             controles = []
-            locator = page.locator("input, select, button")
+            locator = page.locator("input:not([type='hidden']), select, button")
             for indice in range(min(locator.count(), 30)):
                 control = locator.nth(indice)
                 controles.append({
@@ -747,16 +1002,27 @@ class SedePlaywrightProvider(ProveedorCertificado):
         """Registra estructura util del formulario sin valores del contribuyente."""
         resumen = resumen or self._resumir_pagina(page)
         opciones.trace(
-            f"[{self.codigo_organismo}] pagina pendiente: url={page.url}; {resumen}"
+            f"[{self.codigo_organismo}] pagina pendiente: "
+            f"url={self._url_diagnostico_segura(page.url)}; {resumen}"
         )
+
+    @staticmethod
+    def _url_diagnostico_segura(url):
+        """No mostrar tickets, query strings ni sesiones SPM al cliente."""
+        from urllib.parse import urlsplit, urlunsplit
+        partes = urlsplit(url)
+        path = re.sub(r";[^/]*", "", partes.path)
+        return urlunsplit((partes.scheme, partes.netloc, path, "", ""))
 
     def _origenes(self):
         base = self.url_sede.rstrip("/")
         extra = []
         if self.codigo_organismo == "TGSS":
+            # Playwright ofrece el PFX solo al origen exacto; IPCE tambien
+            # autentica por certificado al entrar al tramite de estar al corriente.
             extra = ["https://sede.seg-social.gob.es", "https://sp.seg-social.es",
                      "https://sede.seg-social.es", "https://w6.seg-social.es",
-                     "https://w2.seg-social.es",
+                     "https://w2.seg-social.es", "https://ipce.seg-social.es",
                      "https://idp.seg-social.es", "https://idp.seg-social.gob.es",
                      "https://portal.seg-social.gob.es"]
         elif self.codigo_organismo == "AEAT":
@@ -833,6 +1099,15 @@ AEAT_URLS = {
     "AEAT_CONTRATISTAS": (
         "https://www1.agenciatributaria.gob.es/wlpl/EMCE-JDIT/"
         "ContratistasInternetServlet"
+    ),
+}
+# Enlace oficial de G304: "Estado de tramitacion de la solicitud". Otros
+# tramites se habilitaran al verificar sus propias pantallas de recogida.
+AEAT_CONSULTA_URLS = {
+    "AEAT_CORRIENTE": (
+        "https://www1.agenciatributaria.gob.es/wlpl/inwinvoc/"
+        "es.aeat.dit.adu.emce.recogidaCertInt.RceAcciones"
+        "?fAccion=1&fTipoPet=2&fTramite=G3042"
     ),
 }
 registrar_proveedor(SedePlaywrightProvider("AEAT",

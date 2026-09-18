@@ -1,3 +1,4 @@
 requests>=2.31,<3
 cryptography>=43,<48
 playwright==1.61.0
+pypdf>=6,<7

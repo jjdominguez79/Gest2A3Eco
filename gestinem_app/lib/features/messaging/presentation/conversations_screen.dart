@@ -289,6 +289,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     UserProfile profile,
     AsyncValue<List<Conversation>> conversations,
   ) => Scaffold(
+    drawer: _AppDrawer(profile: profile),
     appBar: AppBar(
       toolbarHeight: 72,
       titleSpacing: 16,
@@ -317,29 +318,6 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
           ),
         ],
       ),
-      actions: [
-        if (ref.watch(platformFeaturesProvider).valueOrNull?.documents == true)
-          IconButton(
-            key: const Key('client-documents-button'),
-            tooltip: 'Mis documentos',
-            onPressed: () => context.push('/documents'),
-            icon: const Icon(Icons.folder_outlined),
-          ),
-        if (ref.watch(platformFeaturesProvider).valueOrNull?.invoicing == true)
-          IconButton(
-            key: const Key('client-invoicing-button'),
-            tooltip: 'Facturacion',
-            onPressed: () => context.push('/invoicing'),
-            icon: const Icon(Icons.receipt_long_outlined),
-          ),
-        IconButton(
-          key: const Key('client-profile-button'),
-          tooltip: 'Mi área',
-          onPressed: () => context.go('/profile'),
-          icon: _ProfileAvatar(profile: profile, radius: 17),
-        ),
-        const SizedBox(width: 8),
-      ],
     ),
     bottomNavigationBar: kIsWeb
         ? const WebNotificationPermissionBanner()
@@ -1114,7 +1092,26 @@ class _AppDrawer extends ConsumerWidget {
 
   void _navigate(BuildContext context, String route) {
     Navigator.of(context).pop();
-    context.go(route);
+    if (route == '/') {
+      context.go(route);
+    } else {
+      // Conservar el inicio para poder volver desde las opciones del menu.
+      context.push(route);
+    }
+  }
+
+  Future<void> _cerrarSesion(BuildContext context, WidgetRef ref) async {
+    final sesion = ref.read(sessionProvider.notifier);
+    Navigator.of(context).pop();
+    try {
+      await sesion.logout();
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
+      }
+    }
   }
 
   @override
@@ -1165,29 +1162,24 @@ class _AppDrawer extends ConsumerWidget {
             ),
           if (profile.type == UserType.client) ...[
             ListTile(
+              key: const Key('drawer-documentation'),
+              leading: const Icon(Icons.folder_outlined),
+              title: const Text('Documentaci\u00f3n'),
+              onTap: () => _navigate(context, '/documentation'),
+            ),
+            if (features.invoicing)
+              ListTile(
+                key: const Key('drawer-invoicing'),
+                leading: const Icon(Icons.receipt_long_outlined),
+                title: const Text('Facturaci\u00f3n'),
+                onTap: () => _navigate(context, '/invoicing'),
+              ),
+            ListTile(
+              key: const Key('drawer-profile'),
               leading: const Icon(Icons.account_circle_outlined),
               title: const Text('Mi área'),
               onTap: () => _navigate(context, '/profile'),
             ),
-            if (features.documents)
-              ListTile(
-                leading: const Icon(Icons.folder_outlined),
-                title: const Text('Mis documentos'),
-                onTap: () => _navigate(context, '/documents'),
-              ),
-            if (features.certificates)
-              ListTile(
-                key: const Key('drawer-certificates'),
-                leading: const Icon(Icons.verified_user_outlined),
-                title: const Text('Certificados oficiales'),
-                onTap: () => _navigate(context, '/certificates'),
-              ),
-            if (features.invoicing)
-              ListTile(
-                leading: const Icon(Icons.receipt_long_outlined),
-                title: const Text('Facturacion'),
-                onTap: () => _navigate(context, '/invoicing'),
-              ),
           ],
           if (profile.type == UserType.staff)
             ListTile(
@@ -1199,6 +1191,13 @@ class _AppDrawer extends ConsumerWidget {
             leading: const Icon(Icons.info_outline),
             title: const Text('Acerca de Gestinem'),
             onTap: () => _navigate(context, '/about'),
+          ),
+          const Divider(),
+          ListTile(
+            key: const Key('drawer-logout'),
+            leading: const Icon(Icons.logout),
+            title: const Text('Cerrar sesi\u00f3n'),
+            onTap: () => _cerrarSesion(context, ref),
           ),
         ],
       ),

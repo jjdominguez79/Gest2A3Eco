@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import pytest
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -540,6 +541,119 @@ def test_impide_repetir_el_mismo_certificado_aunque_el_anterior_terminase(monkey
     assert first.status_code == 201
     assert second.status_code == 409
     assert "hoy" in second.json()["detail"]
+
+
+@pytest.mark.parametrize("status", ["queued", "completed", "failed", "needs_action", "cancelled"])
+def test_cliente_retira_solicitud_y_puede_pedir_otra_hoy(monkeypatch, status):
+    client, factory, org_id, headers = _setup(monkeypatch)
+    created = client.post(
+        "/api/v1/messaging/client/certificates/requests",
+        headers=headers,
+        json={"certificate_type": "AEAT_CORRIENTE", "idempotency_key": "original"},
+    ).json()
+    with factory() as db:
+        document = ClientDocument(
+            organization_id=org_id, document_type="certificado_aeat",
+            display_name="Certificado AEAT", file_name="certificado.pdf",
+            content_type="application/pdf", blob_key="certificado-original.pdf",
+            sha256="a" * 64,
+            source_system="aapp_worker", source_id=created["id"],
+        )
+        db.add(document)
+        db.flush()
+        document_id = document.id
+        item = db.get(ClientCertificateRequest, created["id"])
+        item.status = status
+        if status == "completed":
+            item.document_id = document_id
+            item.completed_at = utcnow()
+        db.commit()
+
+    url = f"/api/v1/messaging/client/certificates/requests/{created['id']}"
+    removed = client.delete(url, headers=headers)
+    assert removed.status_code == 200
+    assert removed.json()["deleted"] is True
+    assert client.delete(url, headers=headers).status_code == 200
+    assert client.get(
+        "/api/v1/messaging/client/certificates/requests", headers=headers,
+    ).json()["items"] == []
+    with factory() as db:
+        item = db.get(ClientCertificateRequest, created["id"])
+        assert item.status == "cancelled"
+        assert item.error_code == "client_removed"
+        assert item.cancelled_at is not None
+        assert item.claim_token == ""
+        assert db.get(ClientDocument, document_id).blob_key == "certificado-original.pdf"
+        if status == "completed":
+            assert item.document_id == document_id
+            assert item.completed_at is not None
+    second = client.post(
+        "/api/v1/messaging/client/certificates/requests", headers=headers,
+        json={"certificate_type": "AEAT_CORRIENTE", "idempotency_key": "nueva"},
+    )
+    assert second.status_code == 201
+    assert second.json()["id"] != created["id"]
+
+
+def test_cliente_no_retira_una_solicitud_en_tramitacion(monkeypatch):
+    client, factory, _, headers = _setup(monkeypatch)
+    created = client.post(
+        "/api/v1/messaging/client/certificates/requests", headers=headers,
+        json={"certificate_type": "TGSS_CORRIENTE"},
+    ).json()
+    with factory() as db:
+        item = db.get(ClientCertificateRequest, created["id"])
+        item.status = "processing"
+        item.claim_token = "claim-en-curso"
+        db.commit()
+    response = client.delete(
+        f"/api/v1/messaging/client/certificates/requests/{created['id']}", headers=headers,
+    )
+    assert response.status_code == 409
+    with factory() as db:
+        item = db.get(ClientCertificateRequest, created["id"])
+        assert item.status == "processing"
+        assert item.claim_token == "claim-en-curso"
+
+
+@pytest.mark.parametrize("own_org", [True, False])
+def test_cliente_no_retira_solicitudes_del_escritorio_ni_de_otra_empresa(monkeypatch, own_org):
+    client, factory, org_id, headers = _setup(monkeypatch)
+    with factory() as db:
+        if not own_org:
+            org = MessagingOrganization(company_code="E00002", name="Otra empresa", active=True)
+            db.add(org)
+            db.flush()
+            org_id = org.id
+        item = ClientCertificateRequest(
+            organization_id=org_id, requester_type="desktop" if own_org else "client",
+            requester_id="otro", certificate_type="AEAT_CORRIENTE",
+            idempotency_key="ajena", status="failed",
+        )
+        db.add(item)
+        db.commit()
+        request_id = item.id
+    response = client.delete(
+        f"/api/v1/messaging/client/certificates/requests/{request_id}", headers=headers,
+    )
+    assert response.status_code == 404
+    with factory() as db:
+        assert db.get(ClientCertificateRequest, request_id).status == "failed"
+
+
+def test_cancelar_solicitud_libera_el_limite_diario(monkeypatch):
+    client, _, _, headers = _setup(monkeypatch)
+    created = client.post(
+        "/api/v1/messaging/client/certificates/requests", headers=headers,
+        json={"certificate_type": "TGSS_CORRIENTE"},
+    ).json()
+    assert client.post(
+        f"/api/v1/messaging/client/certificates/requests/{created['id']}/cancel", headers=headers,
+    ).status_code == 200
+    assert client.post(
+        "/api/v1/messaging/client/certificates/requests", headers=headers,
+        json={"certificate_type": "TGSS_CORRIENTE"},
+    ).status_code == 201
 
 
 def test_contratistas_exige_y_normaliza_datos_del_contratante(monkeypatch):

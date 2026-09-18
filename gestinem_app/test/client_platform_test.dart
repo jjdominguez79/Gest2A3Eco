@@ -211,7 +211,7 @@ void main() {
 
   // -- Pantalla cliente: accesos a modulos condicionados --
   group('Client screen - module buttons', () {
-    testWidgets('muestra documentos y oculta facturacion segun permisos', (
+    testWidgets('menu centraliza documentacion sin repetir documentos', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -240,11 +240,19 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('client-documents-button')), findsOneWidget);
+      expect(
+        find.byKey(const Key('client-documentation-button')),
+        findsNothing,
+      );
       expect(find.byKey(const Key('client-invoicing-button')), findsNothing);
+      await tester.tap(find.byIcon(Icons.menu));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('drawer-documentation')), findsOneWidget);
+      expect(find.text('Mis documentos'), findsNothing);
+      expect(find.byKey(const Key('drawer-invoicing')), findsNothing);
     });
 
-    testWidgets('oculta documentos y muestra facturacion segun permisos', (
+    testWidgets('conserva documentacion sin documentos y muestra facturacion', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -273,8 +281,16 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('client-documents-button')), findsNothing);
-      expect(find.byKey(const Key('client-invoicing-button')), findsOneWidget);
+      expect(
+        find.byKey(const Key('client-documentation-button')),
+        findsNothing,
+      );
+      expect(find.byKey(const Key('client-invoicing-button')), findsNothing);
+      await tester.tap(find.byIcon(Icons.menu));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('drawer-documentation')), findsOneWidget);
+      expect(find.text('Mis documentos'), findsNothing);
+      expect(find.byKey(const Key('drawer-invoicing')), findsOneWidget);
     });
   });
 

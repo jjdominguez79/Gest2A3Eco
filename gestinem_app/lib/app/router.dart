@@ -26,6 +26,7 @@ import '../features/profile/presentation/about_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
 import '../features/company_profile/presentation/company_profile_change_request_screen.dart';
 import '../features/documents/presentation/documents_screen.dart';
+import '../features/documents/presentation/documentation_screen.dart';
 import '../features/documents/presentation/document_detail_screen.dart';
 import '../features/documents/presentation/document_preview_screen.dart';
 import '../features/certificates/presentation/certificates_screen.dart';
@@ -216,6 +217,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, _) => const CompanyProfileChangeRequestScreen(),
       ),
       GoRoute(path: '/documents', builder: (_, _) => const DocumentsScreen()),
+      GoRoute(
+        path: '/documentation',
+        builder: (_, _) => const DocumentationScreen(),
+      ),
       GoRoute(
         path: '/certificates',
         builder: (_, _) => const CertificatesScreen(),

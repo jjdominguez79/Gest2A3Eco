@@ -113,12 +113,12 @@ def require_aapp_worker_claim_protocol(
     x_aapp_worker_protocol: str = Header(default=""),
 ) -> str:
     """Impide que workers obsoletos reclamen nuevas solicitudes."""
-    if not secrets.compare_digest(x_aapp_worker_protocol, "2"):
+    if not secrets.compare_digest(x_aapp_worker_protocol, "3"):
         raise HTTPException(
             status_code=status.HTTP_426_UPGRADE_REQUIRED,
             detail="El worker AAPP debe actualizarse antes de reclamar solicitudes",
         )
-    return "aapp-worker-protocol-2"
+    return "aapp-worker-protocol-3"
 
 
 def require_document_publisher(x_api_key: str = Header(default="")) -> str:

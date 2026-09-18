@@ -49,7 +49,7 @@ def _document_folder(document_type: str) -> str:
     value = (document_type or "").strip().lower()
     if "factura" in value or "invoice" in value:
         return "facturas"
-    if "certificado" in value or "certificate" in value:
+    if "certificado" in value or "certificate" in value or value in {"resguardo_aeat", "revision_aeat"}:
         return "certificados"
     if "nomina" in value or "payroll" in value:
         return "nominas"

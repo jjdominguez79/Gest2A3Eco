@@ -78,6 +78,7 @@ foreach ($module in @(
     'base.py',
     'cert_store.py',
     'certificados.py',
+    'aeat_documentos.py',
     'dehu_playwright.py'
 )) {
     Copy-Item -LiteralPath (Join-Path $repoRoot "services\aapp\$module") -Destination (Join-Path $aappConnectorsRoot $module) -Force

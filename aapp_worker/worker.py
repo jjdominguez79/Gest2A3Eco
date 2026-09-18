@@ -78,9 +78,53 @@ class AappWorker:
                     if self.config.diagnostic_dir is not None else None
                 ),
                 parametros=dict(item.get("parameters") or {}),
+                seguimiento_certificado=(
+                    {"referencia": item.get("external_reference") or ""}
+                    if item.get("submitted_at") else {}
+                ),
                 log=lambda message: LOG.info("%s: %s", item["id"], message),
             )
+            if item.get("submitted_at") and item.get("receipt_document_id"):
+                from services.aapp.aeat_documentos import inspeccionar_pdf
+                resguardo = workdir / "resguardo_original.pdf"
+                resguardo.write_bytes(self.backend.receipt_pdf(item))
+                documento = inspeccionar_pdf(str(resguardo))
+                if documento.clase != "RESGUARDO" or documento.referencia != options.seguimiento_certificado["referencia"]:
+                    self.backend.fail(item, "El resguardo archivado no identifica este expediente AEAT", needs_action=True)
+                    return
+                if documento.codigo_electronico:
+                    options.seguimiento_certificado["codigo_electronico"] = documento.codigo_electronico
             result = provider.obtener(cert, item["certificate_type"], options)
+            if result.estado in {"RESGUARDO", "REVISION", "EN_TRAMITE"}:
+                receipt_id = None
+                revision = result.estado == "REVISION"
+                message = result.mensaje
+                if result.pdf_path and not item.get("receipt_document_id"):
+                    final_pdf = Path(result.pdf_path)
+                    if not final_pdf.is_file() or not final_pdf.read_bytes().startswith(b"%PDF-"):
+                        revision = True
+                        message = "No se pudo archivar el documento AEAT; revisar la solicitud ya presentada."
+                    else:
+                        try:
+                            documento = self.backend.publish_pdf(
+                                {**item, "_document_kind": "revision" if revision else "resguardo"},
+                                final_pdf,
+                            )
+                            receipt_id = str(documento.get("id") or documento.get("document_id") or "") or None
+                            if not receipt_id:
+                                raise RuntimeError("No se devolvio identificador del documento")
+                        except Exception:
+                            # No reintentar presentando otra solicitud si el archivo falla.
+                            revision = True
+                            message = "La solicitud AEAT ya se presento, pero no se pudo archivar su documento. Requiere revision."
+                from services.aapp.certificados import AEAT_CONSULTA_URLS
+                self.backend.pending_issuance(
+                    item, receipt_document_id=receipt_id,
+                    reference=result.referencia or item.get("external_reference") or "",
+                    requires_review=revision or item["certificate_type"] not in AEAT_CONSULTA_URLS,
+                    message=message or "La AEAT sigue tramitando el certificado.",
+                )
+                return
             if result.estado == "PENDIENTE":
                 self.backend.fail(
                     item,

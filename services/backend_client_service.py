@@ -343,7 +343,7 @@ class BackendClientService:
         return response.json()
 
     def download_certificate_request_document(
-        self, request_id: str,
+        self, request_id: str, *, receipt: bool = False,
     ) -> tuple[bytes, str, str]:
         """Descarga el PDF obtenido sin acceder al certificado privado."""
         self._ensure_configured()
@@ -351,7 +351,10 @@ class BackendClientService:
             f"{self.base_url}/api/v1/messaging/client/certificates/internal/"
             f"requests/{request_id}/document"
         )
-        response = self.http.get(url, headers=self._headers(), timeout=60)
+        response = self.http.get(
+            url, headers=self._headers(), timeout=60,
+            **({"params": {"kind": "receipt"}} if receipt else {}),
+        )
         response.raise_for_status()
         disposition = response.headers.get("Content-Disposition", "")
         match = re.search(r'filename="?([^";]+)', disposition, re.IGNORECASE)

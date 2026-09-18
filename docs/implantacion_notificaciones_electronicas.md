@@ -94,6 +94,28 @@ Synology incluye el modulo compartido de estados DEHu.
 
 ## Limites deliberados
 
+### Acceso desde el cliente Flutter
+
+El cliente dispone de un menu lateral en la pantalla de conversaciones. La
+entrada unica `Documentacion` (`/documentation`) agrupa `Mis documentos` y
+`Solicitar certificados`, sin repetir esas opciones en el menu principal ni
+mostrar accesos adicionales a la derecha de la cabecera. El menu incluye tambien
+`Conversaciones`, `Facturacion` (si esta habilitada), `Mi area`, `Acerca de Gestinem`
+y, como ultima opcion, `Cerrar sesion`.
+La pantalla de certificados permite elegir el tramite y consultar `Mis solicitudes`.
+Las opciones del menu conservan el inicio en el historial. `Documentacion`
+dispone ademas de un boton para volver incluso si se abre por enlace directo.
+
+El menu documental es visible aunque las funciones no esten habilitadas; en ese
+caso muestra el motivo y no permite abrir el servicio deshabilitado. No activa
+automaticamente los permisos globales ni los de la empresa. Para probar una
+solicitud con un usuario cliente deben estar activos `CLIENT_CERTIFICATES_ENABLED`
+y `client_certificates_enabled`, y el despacho debe haber preparado un certificado
+digital vigente para su empresa. El catalogo mostrado procede del backend;
+la presencia de un tramite no sustituye su calibracion ni una prueba real del worker.
+
+### Restricciones de los tramites
+
 - Los botones de comparecencia y rechazo no modifican el estado: falta el flujo
   remoto con confirmacion y justificante de DEHu.
 - Una notificacion solo se puede publicar en Flutter cuando existe un PDF real.

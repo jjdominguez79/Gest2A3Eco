@@ -52,4 +52,15 @@ class CertificatesRepository {
     );
     return CertificateRequest.fromJson(response.data as Map<String, dynamic>);
   }
+
+  Future<CertificateRequest> retry(String requestId) async {
+    final response = await _api.dio.post(
+      '/client/certificates/requests/$requestId/retry',
+    );
+    return CertificateRequest.fromJson(response.data as Map<String, dynamic>);
+  }
+
+  Future<void> remove(String requestId) async {
+    await _api.dio.delete('/client/certificates/requests/$requestId');
+  }
 }

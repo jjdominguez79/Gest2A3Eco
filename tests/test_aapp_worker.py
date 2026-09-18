@@ -156,7 +156,7 @@ def test_cliente_worker_envia_protocolo_vigente(tmp_path):
     backend = AappBackendClient(_config(tmp_path), session=session)
 
     assert backend.claim() is None
-    assert session.headers["X-AAPP-Worker-Protocol"] == "2"
+    assert session.headers["X-AAPP-Worker-Protocol"] == "3"
 
 
 def test_publicacion_automatica_solo_para_solicitudes_flutter(tmp_path):

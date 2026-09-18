@@ -10,6 +10,10 @@ import 'package:gestinem/core/api/api_client.dart';
 import 'package:gestinem/core/notifications/notifications_service.dart';
 import 'package:gestinem/core/websocket/realtime_service.dart';
 import 'package:gestinem/features/auth/domain/user_profile.dart';
+import 'package:gestinem/features/platform/features_provider.dart';
+import 'package:gestinem/app/router.dart';
+import 'package:gestinem/features/certificates/domain/certificate_request.dart';
+import 'package:gestinem/features/certificates/presentation/certificates_providers.dart';
 import 'package:go_router/go_router.dart';
 
 import 'test_helpers.dart';
@@ -22,6 +26,18 @@ class _FakeRealtime extends RealtimeService {
 class _FakeNotifications extends NotificationsService {
   @override
   Future<void> initialize(AuthSession session, ApiClient api) async {}
+}
+
+class _SesionConCierre extends FakeSessionController {
+  _SesionConCierre(super.ref, super.session);
+
+  int cierres = 0;
+
+  @override
+  Future<void> logout() async {
+    cierres++;
+    state = const AsyncData(null);
+  }
 }
 
 void main() {
@@ -76,7 +92,7 @@ void main() {
     expect(find.byKey(const Key('inbox-section-clients')), findsOneWidget);
   });
 
-  testWidgets('cliente ve canales separados sin buscador ni menu', (
+  testWidgets('cliente ve canales separados y menu documental sin buscador', (
     tester,
   ) async {
     final channels = [
@@ -141,7 +157,10 @@ void main() {
     expect(find.text('3'), findsOneWidget);
     expect(find.byType(TextField), findsOneWidget);
     expect(find.text('Buscar por codigo o nombre'), findsNothing);
-    expect(find.byKey(const Key('client-profile-button')), findsOneWidget);
+    expect(find.byKey(const Key('client-profile-button')), findsNothing);
+    expect(find.byKey(const Key('client-documentation-button')), findsNothing);
+    expect(find.byIcon(Icons.menu), findsOneWidget);
+    expect(tester.widget<AppBar>(find.byType(AppBar)).actions, isNull);
     expect(
       find.byKey(const Key('client-company-profile-button')),
       findsNothing,
@@ -153,7 +172,179 @@ void main() {
       find.byKey(const ValueKey('client-conversation-fiscal')),
       findsOneWidget,
     );
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('drawer-documentation')), findsOneWidget);
+    expect(find.byKey(const Key('drawer-profile')), findsOneWidget);
   });
+
+  testWidgets('cliente abre documentacion desde menu y puede volver', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    late GoRouter router;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+          apiClientProvider.overrideWithValue(
+            ApiClient(
+              dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
+                ..httpClientAdapter = JsonAdapter(<String, dynamic>{}),
+              tokenProvider: () => testSession.token,
+            ),
+          ),
+          platformFeaturesProvider.overrideWith(
+            (_) async => const PlatformFeatures(
+              documents: true,
+              certificates: true,
+              invoicing: true,
+            ),
+          ),
+          certificateStatusProvider.overrideWith(
+            (_) async =>
+                const CertificateStatus(configured: true, status: 'valid'),
+          ),
+          certificateTypesProvider.overrideWith(
+            (_) async => const [
+              CertificateType(
+                code: 'AEAT_CORRIENTE',
+                organization: 'AEAT',
+                name: 'Estar al corriente',
+              ),
+            ],
+          ),
+          certificateRequestsProvider.overrideWith((_) async => const []),
+          conversationsProvider.overrideWith((_) async => []),
+          realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
+          notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
+        ],
+        child: Consumer(
+          builder: (_, ref, _) {
+            router = ref.watch(routerProvider);
+            return MaterialApp.router(routerConfig: router);
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('drawer-certificates')), findsNothing);
+    expect(find.text('Mis documentos'), findsNothing);
+    expect(find.text('Documentaci\u00f3n'), findsOneWidget);
+    expect(find.byKey(const Key('drawer-invoicing')), findsOneWidget);
+    final opciones = tester
+        .widgetList<ListTile>(
+          find.descendant(
+            of: find.byType(Drawer),
+            matching: find.byType(ListTile),
+          ),
+        )
+        .toList();
+    expect(opciones.last.key, const Key('drawer-logout'));
+    await tester.tap(find.byKey(const Key('drawer-documentation')));
+    await tester.pumpAndSettle();
+    expect(find.text('Documentaci\u00f3n'), findsOneWidget);
+    expect(router.canPop(), isTrue);
+    expect(find.byKey(const Key('drawer-documentation')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('documentation-back')));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.menu), findsOneWidget);
+    expect(router.canPop(), isFalse);
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('drawer-documentation')));
+    await tester.pumpAndSettle();
+    expect(find.text('Documentaci\u00f3n'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('documentation-certificates')));
+    await tester.pumpAndSettle();
+    expect(find.text('Certificados oficiales'), findsOneWidget);
+    expect(find.byKey(const Key('certificate-type-selector')), findsOneWidget);
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    expect(find.text('Documentaci\u00f3n'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('documentation-back')));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.menu), findsOneWidget);
+  });
+
+  for (final perfil in [
+    testProfile,
+    const UserProfile(
+      id: 'staff-1',
+      name: 'Gestor',
+      email: 'gestor@example.test',
+      type: UserType.staff,
+      staffRole: StaffRole.admin,
+    ),
+  ]) {
+    testWidgets('ultima opcion cierra sesion de ${perfil.type.name}', (
+      tester,
+    ) async {
+      final sesion = AuthSession(token: 'test-token', profile: perfil);
+      late _SesionConCierre controlador;
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionProvider.overrideWith((ref) {
+              controlador = _SesionConCierre(ref, sesion);
+              return controlador;
+            }),
+            apiClientProvider.overrideWithValue(
+              ApiClient(
+                dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
+                  ..httpClientAdapter = JsonAdapter(<String, dynamic>{}),
+                tokenProvider: () => sesion.token,
+              ),
+            ),
+            platformFeaturesProvider.overrideWith(
+              (_) async => const PlatformFeatures(),
+            ),
+            conversationsProvider.overrideWith((_) async => []),
+            internalThreadsProvider.overrideWith((_) async => []),
+            realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
+            notificationsServiceProvider.overrideWithValue(
+              _FakeNotifications(),
+            ),
+          ],
+          child: Consumer(
+            builder: (_, ref, _) =>
+                MaterialApp.router(routerConfig: ref.watch(routerProvider)),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.menu));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('drawer-logout')),
+        100,
+        scrollable: find.descendant(
+          of: find.byType(Drawer),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      final opciones = tester
+          .widgetList<ListTile>(
+            find.descendant(
+              of: find.byType(Drawer),
+              matching: find.byType(ListTile),
+            ),
+          )
+          .toList();
+      expect(opciones.last.key, const Key('drawer-logout'));
+      await tester.ensureVisible(find.byKey(const Key('drawer-logout')));
+      await tester.tap(find.byKey(const Key('drawer-logout')));
+      await tester.pumpAndSettle();
+      expect(controlador.cierres, 1);
+      expect(controlador.state.valueOrNull, isNull);
+      expect(find.byKey(const Key('drawer-logout')), findsNothing);
+      expect(find.byKey(const Key('client-login-button')), findsOneWidget);
+    });
+  }
 
   testWidgets('staff ve una fila por cada canal del mismo cliente', (
     tester,

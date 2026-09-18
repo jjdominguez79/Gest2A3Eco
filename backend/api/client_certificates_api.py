@@ -166,8 +166,9 @@ INTERNAL_OPERATION_TYPES = {
 }
 _ALL_REQUEST_TYPES = {**CERTIFICATE_TYPES, **INTERNAL_OPERATION_TYPES}
 
-ACTIVE_STATUSES = {"queued", "processing", "needs_action"}
+ACTIVE_STATUSES = {"queued", "processing", "needs_action", "awaiting_issuance"}
 RETRYABLE_STATUSES = {"needs_action", "failed"}
+CLIENT_REMOVED_CODE = "client_removed"
 
 
 class CertificateRequestIn(BaseModel):
@@ -180,6 +181,21 @@ class WorkerResultIn(BaseModel):
     claim_token: str = Field(min_length=16, max_length=64)
     document_id: str | None = Field(default=None, min_length=1, max_length=36)
     result_summary: str = Field(default="", max_length=2000)
+    certificate_result: str = Field(default="", pattern="^(|POSITIVO|NEGATIVO)$")
+
+
+class WorkerPendingIssuanceIn(BaseModel):
+    claim_token: str = Field(min_length=16, max_length=64)
+    receipt_document_id: str | None = Field(default=None, min_length=1, max_length=36)
+    external_reference: str = Field(default="", max_length=60)
+    requires_review: bool = False
+    message: str = Field(default="La AEAT sigue tramitando el certificado.", max_length=2000)
+
+
+class ReclassifyReceiptIn(BaseModel):
+    document_id: str = Field(min_length=1, max_length=36)
+    expected_sha256: str = Field(pattern="^[a-f0-9]{64}$")
+    external_reference: str = Field(pattern=r"^[A-Z0-9][A-Z0-9/\-]{5,59}$")
 
 
 class WorkerFailureIn(BaseModel):
@@ -278,6 +294,12 @@ def _serialize(
         "error_code": item.error_code or None,
         "error_message": item.error_message or None,
         "result_summary": item.result_summary or None,
+        "external_reference": item.external_reference or None,
+        "certificate_result": item.certificate_result or None,
+        "receipt_document_id": item.receipt_document_id,
+        "submitted_at": item.submitted_at.isoformat() if item.submitted_at else None,
+        "last_checked_at": item.last_checked_at.isoformat() if item.last_checked_at else None,
+        "next_attempt_at": item.next_attempt_at.isoformat() if item.next_attempt_at else None,
         "document_id": item.document_id,
         "document_status": document_status,
         "created_at": item.created_at.isoformat() if item.created_at else None,
@@ -427,13 +449,15 @@ def _create_request(
         requested_today = db.scalar(select(ClientCertificateRequest).where(
             ClientCertificateRequest.organization_id == org.id,
             ClientCertificateRequest.certificate_type == certificate_type,
+            ClientCertificateRequest.status != "cancelled",
             ClientCertificateRequest.created_at >= madrid_start.astimezone(timezone.utc),
             ClientCertificateRequest.created_at < madrid_end.astimezone(timezone.utc),
         ).order_by(ClientCertificateRequest.created_at.desc()).limit(1))
         if requested_today:
             raise HTTPException(
                 status_code=409,
-                detail="Este certificado ya se ha solicitado hoy. Podras pedir otro manana.",
+                detail=("Este certificado ya se ha solicitado hoy. Puedes reintentar "
+                        "la solicitud fallida o eliminarla para pedir otra."),
             )
     active = db.scalar(select(ClientCertificateRequest).where(
         ClientCertificateRequest.organization_id == org.id,
@@ -477,15 +501,15 @@ def _retry_request(
     db: Session,
     item: ClientCertificateRequest,
 ) -> ClientCertificateRequest:
-    delayed_retry = item.status == "queued" and item.next_attempt_at is not None
+    delayed_retry = item.status in {"queued", "awaiting_issuance"} and item.next_attempt_at is not None
     if item.status not in RETRYABLE_STATUSES and not delayed_retry:
         raise HTTPException(
             status_code=409,
             detail="La solicitud no esta en un estado que permita reintentarla",
         )
-    item.status = "queued"
+    item.status = "awaiting_issuance" if item.submitted_at else "queued"
     item.attempt_count = 0
-    item.next_attempt_at = None
+    item.next_attempt_at = utcnow() if item.submitted_at else None
     item.claimed_at = None
     item.claim_token = ""
     item.error_code = ""
@@ -551,6 +575,7 @@ def list_client_requests(
     items = list(db.scalars(select(ClientCertificateRequest).where(
         ClientCertificateRequest.organization_id == client.organization_id,
         ClientCertificateRequest.requester_type == "client",
+        ClientCertificateRequest.error_code != CLIENT_REMOVED_CODE,
     ).order_by(ClientCertificateRequest.created_at.desc()).limit(limit)).all())
     return {"items": [_serialize(item) for item in items]}
 
@@ -584,7 +609,7 @@ def cancel_client_request(
         or item.requester_type != "client"
     ):
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
-    if item.status != "queued":
+    if item.status != "queued" or item.submitted_at:
         raise HTTPException(status_code=409, detail="La solicitud ya no se puede cancelar")
     item.status = "cancelled"
     item.cancelled_at = utcnow()
@@ -607,6 +632,37 @@ def retry_client_request(
     ):
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
     return _serialize(_retry_request(db, item))
+
+
+@router.delete("/requests/{request_id}")
+def delete_client_request(
+    request_id: str, request: Request, db: Session = Depends(_db),
+):
+    """Retira la solicitud del cliente sin borrar el historial ni su PDF."""
+    client = _authenticated_client(request, db)
+    require_certificates_enabled(db, client.organization_id)
+    # Comparte el bloqueo de fila con el claim: no se retira un tramite
+    # que el worker haya empezado a ejecutar mientras se pulsa Eliminar.
+    item = db.scalar(select(ClientCertificateRequest).where(
+        ClientCertificateRequest.id == request_id,
+        ClientCertificateRequest.organization_id == client.organization_id,
+        ClientCertificateRequest.requester_type == "client",
+    ).with_for_update())
+    if not item:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if item.status == "processing" or item.submitted_at and item.status != "completed":
+        raise HTTPException(
+            status_code=409,
+            detail="No se puede eliminar una solicitud en tramitacion o pendiente de emision.",
+        )
+    item.status = "cancelled"
+    item.error_code = CLIENT_REMOVED_CODE
+    item.cancelled_at = utcnow()
+    item.next_attempt_at = None
+    item.claim_token = ""
+    item.updated_at = utcnow()
+    db.commit()
+    return {"deleted": True, "id": request_id}
 
 
 @router.post("/internal/requests", status_code=201)
@@ -704,7 +760,7 @@ def delete_internal_request(
     item = db.get(ClientCertificateRequest, request_id)
     if not item:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
-    if item.document_id or item.status not in {"failed", "cancelled"}:
+    if item.document_id or item.receipt_document_id or item.submitted_at or item.status not in {"failed", "cancelled"}:
         raise HTTPException(
             status_code=409,
             detail="Solo se pueden eliminar solicitudes fallidas o canceladas sin documento",
@@ -717,13 +773,15 @@ def delete_internal_request(
 @router.get("/internal/requests/{request_id}/document")
 def download_internal_request_document(
     request_id: str,
+    kind: str = Query(default="certificate", pattern="^(certificate|receipt)$"),
     db: Session = Depends(_db),
     _auth: str = Depends(require_workstation_or_internal),
 ):
     item = db.get(ClientCertificateRequest, request_id)
-    if not item or not item.document_id:
+    documento_id = (item.receipt_document_id if kind == "receipt" else item.document_id) if item else None
+    if not item or not documento_id:
         raise HTTPException(status_code=404, detail="La solicitud no tiene documento")
-    document = db.get(ClientDocument, item.document_id)
+    document = db.get(ClientDocument, documento_id)
     if not document or document.organization_id != item.organization_id:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
     if document.status == "withdrawn":
@@ -1140,7 +1198,7 @@ def claim_next_request(
         select(ClientCertificateRequest).where(
             or_(
                 and_(
-                    ClientCertificateRequest.status == "queued",
+                    ClientCertificateRequest.status.in_({"queued", "awaiting_issuance"}),
                     (
                         ClientCertificateRequest.next_attempt_at.is_(None)
                         | (ClientCertificateRequest.next_attempt_at <= now)
@@ -1195,6 +1253,22 @@ def get_worker_certificate_material(
         "password": password,
         "valid_until": secret.valid_until.isoformat() if secret.valid_until else None,
     }
+
+
+@router.post("/internal/worker/receipt-document")
+def get_worker_receipt_document(
+    payload: WorkerMaterialIn,
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_aapp_worker_key),
+):
+    """Lee solo el resguardo del expediente reclamado por este worker."""
+    item = _claimed_request(db, payload.request_id, payload.claim_token)
+    document = db.get(ClientDocument, item.receipt_document_id) if item.receipt_document_id else None
+    if not item.submitted_at or not document or document.organization_id != item.organization_id:
+        raise HTTPException(status_code=404, detail="Resguardo no encontrado")
+    if document.status == "withdrawn":
+        raise HTTPException(status_code=410, detail="Resguardo retirado")
+    return Response(content=ClientDocumentStorage().get(document.blob_key), media_type="application/pdf")
 
 
 def _referencia_nueva_dehu(
@@ -1457,9 +1531,18 @@ def complete_request(
         not document or document.organization_id != item.organization_id
     ):
         raise HTTPException(status_code=422, detail="Documento resultante no valido")
+    if item.submitted_at and (
+        not document or document.id == item.receipt_document_id
+        or document.document_type in {"resguardo_aeat", "revision_aeat"}
+    ):
+        raise HTTPException(status_code=422, detail="Se requiere el certificado definitivo, no su resguardo")
     item.status = "completed"
     item.document_id = document.id if document else None
     item.result_summary = payload.result_summary
+    item.certificate_result = payload.certificate_result
+    item.next_attempt_at = None
+    if item.submitted_at:
+        item.last_checked_at = utcnow()
     item.error_code = ""
     item.error_message = ""
     item.claim_token = ""
@@ -1467,6 +1550,102 @@ def complete_request(
     item.updated_at = utcnow()
     db.commit()
     _try_send_dehu_batch_summary(db, item.dehu_batch_id)
+    return _serialize(item)
+
+
+@router.post("/internal/requests/{request_id}/reclassify-receipt")
+def reclassify_receipt(
+    request_id: str, company_code: str, payload: ReclassifyReceiptIn,
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    """Migracion explicita tras inspeccionar el PDF desde el escritorio."""
+    org = _organization_by_code(db, company_code)
+    item = db.scalar(select(ClientCertificateRequest).where(
+        ClientCertificateRequest.id == request_id,
+        ClientCertificateRequest.organization_id == org.id,
+    ).with_for_update())
+    if not item:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if item.receipt_document_id == payload.document_id and item.external_reference == payload.external_reference:
+        return _serialize(item)
+    if item.status != "completed" or item.certificate_type != "AEAT_CORRIENTE" or item.document_id != payload.document_id:
+        raise HTTPException(status_code=409, detail="No es una solicitud AEAT finalizada con ese documento")
+    doc = db.get(ClientDocument, payload.document_id)
+    if not doc or doc.organization_id != org.id or doc.status != "published" or not secrets.compare_digest(doc.sha256, payload.expected_sha256):
+        raise HTTPException(status_code=409, detail="El documento ha cambiado o no pertenece al expediente")
+    # Conservar id, PDF, firma y lecturas; separar la identidad del resguardo.
+    doc.source_id = f"{item.id}:resguardo"
+    doc.document_type = "resguardo_aeat"
+    doc.display_name = "Resguardo - " + CERTIFICATE_TYPES[item.certificate_type]["name"]
+    doc.description = "Resguardo de solicitud AEAT; pendiente de certificado definitivo"
+    item.receipt_document_id = doc.id
+    item.document_id = None
+    item.external_reference = payload.external_reference
+    item.submitted_at = item.completed_at or item.created_at
+    item.completed_at = None
+    item.certificate_result = ""
+    item.result_summary = "Resguardo recibido; pendiente de emision del certificado AEAT."
+    item.status = "awaiting_issuance"
+    item.claim_token = ""
+    item.next_attempt_at = utcnow()
+    item.error_code = ""
+    item.error_message = ""
+    item.updated_at = utcnow()
+    db.commit()
+    return _serialize(item)
+
+
+@router.post("/internal/worker/requests/{request_id}/pending-issuance")
+def pending_issuance_request(
+    request_id: str,
+    payload: WorkerPendingIssuanceIn,
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_aapp_worker_key),
+):
+    item = _claimed_request(db, request_id, payload.claim_token)
+    if not item.certificate_type.startswith("AEAT_"):
+        raise HTTPException(status_code=422, detail="El seguimiento corresponde a solicitudes AEAT")
+    if payload.receipt_document_id:
+        documento = db.get(ClientDocument, payload.receipt_document_id)
+        if not documento or documento.organization_id != item.organization_id:
+            raise HTTPException(status_code=422, detail="Resguardo no valido")
+        if item.receipt_document_id and item.receipt_document_id != documento.id:
+            raise HTTPException(status_code=409, detail="La solicitud ya tiene un resguardo archivado")
+        item.receipt_document_id = documento.id
+    referencia = payload.external_reference.strip().upper()
+    if referencia and not re.fullmatch(r"[A-Z0-9][A-Z0-9/\-]{5,59}", referencia):
+        raise HTTPException(status_code=422, detail="Referencia de expediente no valida")
+    if item.external_reference and referencia and item.external_reference != referencia:
+        raise HTTPException(status_code=409, detail="La referencia del expediente no puede cambiar")
+    if referencia:
+        item.external_reference = referencia
+    now = utcnow()
+    primera = item.submitted_at is None
+    if primera:
+        item.submitted_at = now
+    else:
+        item.last_checked_at = now
+    presentado = item.submitted_at
+    if presentado.tzinfo is None:
+        presentado = presentado.replace(tzinfo=timezone.utc)
+    vencido = now >= presentado + timedelta(hours=72)
+    revision = payload.requires_review or not item.external_reference
+    item.status = "needs_action" if revision else "awaiting_issuance"
+    item.next_attempt_at = None if revision else now + timedelta(hours=24)
+    item.result_summary = payload.message
+    item.error_code = "aeat_issuance_review" if revision else "aeat_issuance_delayed" if vencido else ""
+    item.error_message = (
+        "La AEAT no ha emitido el certificado tras 72 horas. Revisar el expediente; "
+        "esto no significa que el certificado sea negativo."
+        if vencido else payload.message if revision else ""
+    )
+    item.certificate_result = ""
+    item.document_id = None
+    item.completed_at = None
+    item.claim_token = ""
+    item.updated_at = now
+    db.commit()
     return _serialize(item)
 
 

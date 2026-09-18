@@ -57,6 +57,12 @@ class CertificateRequest {
     required this.createdAt,
     this.errorMessage,
     this.documentId,
+    this.receiptDocumentId,
+    this.certificateResult,
+    this.externalReference,
+    this.nextAttemptAt,
+    this.submittedAt,
+    this.resultSummary,
   });
 
   final String id;
@@ -67,9 +73,28 @@ class CertificateRequest {
   final DateTime? createdAt;
   final String? errorMessage;
   final String? documentId;
+  final String? receiptDocumentId;
+  final String? certificateResult;
+  final String? externalReference;
+  final DateTime? nextAttemptAt;
+  final DateTime? submittedAt;
+  final String? resultSummary;
 
   bool get completed => status == 'completed';
-  bool get cancellable => status == 'queued';
+  bool get cancellable => status == 'queued' && submittedAt == null;
+  bool get retryable =>
+      status == 'failed' ||
+      status == 'needs_action' ||
+      status == 'awaiting_issuance';
+  bool get removable =>
+      (submittedAt == null || completed) &&
+      const {
+        'queued',
+        'completed',
+        'failed',
+        'needs_action',
+        'cancelled',
+      }.contains(status);
 
   factory CertificateRequest.fromJson(Map<String, dynamic> json) =>
       CertificateRequest(
@@ -81,6 +106,14 @@ class CertificateRequest {
         createdAt: DateTime.tryParse(json['created_at'] as String? ?? ''),
         errorMessage: json['error_message'] as String?,
         documentId: json['document_id'] as String?,
+        receiptDocumentId: json['receipt_document_id'] as String?,
+        certificateResult: json['certificate_result'] as String?,
+        externalReference: json['external_reference'] as String?,
+        nextAttemptAt: DateTime.tryParse(
+          json['next_attempt_at'] as String? ?? '',
+        ),
+        submittedAt: DateTime.tryParse(json['submitted_at'] as String? ?? ''),
+        resultSummary: json['result_summary'] as String?,
       );
 }
 

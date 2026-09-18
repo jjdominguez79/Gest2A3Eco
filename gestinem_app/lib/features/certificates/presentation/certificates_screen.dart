@@ -18,6 +18,76 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
   String? _selectedType;
   final Map<String, String> _parameterValues = {};
   bool _submitting = false;
+  final Set<String> _busyRequests = {};
+
+  Future<void> _manageRequest(CertificateRequest item, String action) async {
+    if (_busyRequests.contains(item.id)) return;
+    if (action == 'remove') {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Eliminar solicitud'),
+          content: const Text(
+            'Se quitará de Mis solicitudes y podrás pedir otra hoy. '
+            'El despacho conservará el historial y el PDF, si existe, '
+            'seguirá disponible en Mis documentos.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Volver'),
+            ),
+            FilledButton(
+              key: const Key('confirm-remove-certificate-request'),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Eliminar solicitud'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted || _busyRequests.contains(item.id)) {
+        return;
+      }
+    }
+    if (!mounted) return;
+    setState(() => _busyRequests.add(item.id));
+    try {
+      final repository = ref.read(certificatesRepositoryProvider);
+      switch (action) {
+        case 'remove':
+          await repository.remove(item.id);
+        case 'retry':
+          await repository.retry(item.id);
+        case 'cancel':
+          await repository.cancel(item.id);
+        default:
+          return;
+      }
+      ref.invalidate(certificateRequestsProvider);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(switch (action) {
+              'remove' => 'Solicitud eliminada. Ya puedes pedir otra.',
+              'retry' =>
+                item.submittedAt != null
+                    ? 'Consulta de emisión preparada. No se presentará otra solicitud.'
+                    : 'Solicitud preparada para reintentar.',
+              _ => 'Solicitud cancelada.',
+            }),
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
+      }
+    } finally {
+      if (mounted) setState(() => _busyRequests.remove(item.id));
+    }
+  }
 
   Future<void> _requestCertificate() async {
     if (_selectedType == null || _submitting) return;
@@ -94,6 +164,7 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
                   children: [
                     DropdownButtonFormField<String>(
                       key: const Key('certificate-type-selector'),
+                      isExpanded: true,
                       initialValue: _selectedType,
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
@@ -105,6 +176,8 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
                               value: item.code,
                               child: Text(
                                 '${item.organization} · ${item.name}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
                           )
@@ -206,25 +279,55 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
         title: Text(item.name),
         subtitle: Text(
           '${item.organization} · ${_statusLabel(item.status)}'
+          '${item.certificateResult == 'POSITIVO'
+              ? ' · Positivo'
+              : item.certificateResult == 'NEGATIVO'
+              ? ' · Negativo'
+              : ''}'
+          '${item.externalReference != null ? '\nReferencia: ${item.externalReference}' : ''}'
+          '${item.status == 'awaiting_issuance' ? '\nResguardo recibido. Se comprobara la emision cada 24 horas.' : ''}'
+          '${item.receiptDocumentId != null && !item.completed ? '\nToca para ver el documento de la solicitud.' : ''}'
           '${item.errorMessage?.isNotEmpty == true ? '\n${item.errorMessage}' : ''}',
         ),
         leading: Icon(_statusIcon(item.status)),
-        trailing: item.completed && item.documentId != null
-            ? const Icon(Icons.chevron_right)
-            : item.cancellable
-            ? IconButton(
-                tooltip: 'Cancelar solicitud',
-                icon: const Icon(Icons.cancel_outlined),
-                onPressed: () async {
-                  await ref
-                      .read(certificatesRepositoryProvider)
-                      .cancel(item.id);
-                  ref.invalidate(certificateRequestsProvider);
-                },
+        trailing: _busyRequests.contains(item.id)
+            ? const SizedBox.square(
+                dimension: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : item.removable || item.retryable
+            ? PopupMenuButton<String>(
+                key: Key('certificate-request-actions-${item.id}'),
+                tooltip: 'Opciones de la solicitud',
+                onSelected: (action) => _manageRequest(item, action),
+                itemBuilder: (_) => [
+                  if (item.retryable)
+                    PopupMenuItem(
+                      value: 'retry',
+                      child: Text(
+                        item.submittedAt != null
+                            ? 'Comprobar emisión'
+                            : 'Reintentar solicitud',
+                      ),
+                    ),
+                  if (item.cancellable)
+                    const PopupMenuItem(
+                      value: 'cancel',
+                      child: Text('Cancelar solicitud'),
+                    ),
+                  if (item.removable)
+                    const PopupMenuItem(
+                      value: 'remove',
+                      child: Text('Eliminar solicitud'),
+                    ),
+                ],
               )
             : null,
-        onTap: item.completed && item.documentId != null
-            ? () => context.push('/documents/${item.documentId}')
+        onTap:
+            (item.completed ? item.documentId : item.receiptDocumentId) != null
+            ? () => context.push(
+                '/documents/${item.completed ? item.documentId : item.receiptDocumentId}',
+              )
             : null,
       ),
     );
@@ -234,6 +337,7 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
     'queued' => 'Pendiente',
     'processing' => 'En tramitación',
     'completed' => 'Disponible',
+    'awaiting_issuance' => 'Pendiente de emisión en Hacienda',
     'needs_action' => 'Requiere intervención',
     'failed' => 'No se pudo obtener',
     'cancelled' => 'Cancelada',

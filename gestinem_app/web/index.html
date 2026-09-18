@@ -34,6 +34,30 @@
 </head>
 <body>
   <script>
+    // El visor recibe el PDF autenticado en memoria. Motor y recursos se
+    // sirven desde la propia app, sin enviar documentos a servicios externos.
+    globalThis.gestinemPdfJsReady = import('./pdfjs/4.6.82/build/pdf.min.mjs')
+      .then((pdfjs) => {
+        const base = new URL('./pdfjs/4.6.82/', document.baseURI);
+        pdfjs.GlobalWorkerOptions.workerSrc =
+          new URL('build/pdf.worker.min.mjs', base).href;
+        globalThis.pdfjsLib = {
+          ...pdfjs,
+          getDocument: (options) => pdfjs.getDocument({
+            ...options,
+            standardFontDataUrl: new URL('standard_fonts/', base).href,
+            isEvalSupported: false,
+          }),
+        };
+        globalThis.pdfRenderOptions = {
+          cMapUrl: new URL('cmaps/', base).href,
+          cMapPacked: true,
+        };
+      });
+    // Si el recurso falla, la app sigue disponible y permite guardar el PDF.
+    globalThis.gestinemPdfJsReady.catch(() => {});
+  </script>
+  <script>
     // GoRouter usa rutas hash en web. Conservamos el codigo del callback en
     // esa ruta antes de iniciar Flutter para que el router pueda canjearlo.
     const initialUrl = new URL(window.location.href);
@@ -56,6 +80,6 @@
     For more details:
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
-  <script src="flutter_bootstrap.js" async></script>
+  <script src="flutter_bootstrap.js?v=certificados-pdf-20260918" async></script>
 </body>
 </html>
