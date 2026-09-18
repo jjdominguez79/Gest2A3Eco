@@ -43,11 +43,14 @@ class RealtimeHub:
     def publish(
         self, event: dict[str, Any], *, organization_id: str = "",
         channel: str = "", staff_ids: set[str] | None = None,
+        organization_ids: set[str] | None = None,
     ) -> None:
         for subscription in tuple(self._subscriptions):
             allowed = False
             if subscription.audience == "client":
                 allowed = bool(organization_id and subscription.organization_id == organization_id)
+                if organization_ids is not None:
+                    allowed = subscription.organization_id in organization_ids
             elif staff_ids is not None:
                 allowed = subscription.actor_id in staff_ids
             else:

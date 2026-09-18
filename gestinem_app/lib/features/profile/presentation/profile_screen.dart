@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -25,7 +27,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   bool _editingAlias = false;
   bool _uploadingAvatar = false;
   bool _guardandoEstados = false;
-  bool _guardandoLecturas = false;
+  bool? _clientesPendientes;
+  bool? _empleadosPendientes;
   String? _localAvatarUrl;
   String? _error;
 
@@ -153,15 +156,32 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     bool? clientes,
     bool? empleados,
   }) async {
-    setState(() => _guardandoLecturas = true);
+    setState(() {
+      if (clientes != null) _clientesPendientes = clientes;
+      if (empleados != null) _empleadosPendientes = empleados;
+    });
     try {
       await ref
           .read(profileRepositoryProvider)
           .actualizarPrivacidadLecturas(
             clientes: clientes,
             empleados: empleados,
-          );
-      await ref.read(sessionProvider.notifier).refreshProfile();
+          )
+          .timeout(const Duration(seconds: 15));
+      await ref
+          .read(sessionProvider.notifier)
+          .refreshProfile()
+          .timeout(const Duration(seconds: 15));
+    } on TimeoutException {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No se pudo confirmar el cambio a tiempo. Vuelve a intentarlo.',
+            ),
+          ),
+        );
+      }
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -169,7 +189,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
       }
     } finally {
-      if (mounted) setState(() => _guardandoLecturas = false);
+      if (mounted) {
+        setState(() {
+          if (clientes != null) _clientesPendientes = null;
+          if (empleados != null) _empleadosPendientes = null;
+        });
+      }
     }
   }
 
@@ -293,8 +318,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   subtitle: const Text(
                     'Permitir que los clientes vean que he leido sus mensajes.',
                   ),
-                  value: profile.mostrarLecturasClientes,
-                  onChanged: _guardandoLecturas
+                  value: _clientesPendientes ?? profile.mostrarLecturasClientes,
+                  secondary: _clientesPendientes == null
+                      ? null
+                      : const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                  onChanged: _clientesPendientes != null
                       ? null
                       : (valor) => _guardarPrivacidadLecturas(clientes: valor),
                 ),
@@ -304,8 +336,16 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   subtitle: const Text(
                     'Permitir que los empleados vean que he leido sus mensajes. Los administradores siempre ven las lecturas.',
                   ),
-                  value: profile.mostrarLecturasEmpleados,
-                  onChanged: _guardandoLecturas
+                  value:
+                      _empleadosPendientes ?? profile.mostrarLecturasEmpleados,
+                  secondary: _empleadosPendientes == null
+                      ? null
+                      : const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                  onChanged: _empleadosPendientes != null
                       ? null
                       : (valor) => _guardarPrivacidadLecturas(empleados: valor),
                 ),

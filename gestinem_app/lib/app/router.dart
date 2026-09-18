@@ -47,7 +47,19 @@ bool _isProtectedClientRoute(String location) {
 }
 
 final routerProvider = Provider<GoRouter>((ref) {
-  final session = ref.watch(sessionProvider);
+  // Las preferencias del perfil no deben recrear el router ni la pantalla.
+  ref.watch(
+    sessionProvider.select(
+      (session) => (
+        session.isLoading,
+        session.hasError,
+        session.valueOrNull?.token,
+        session.valueOrNull?.profile.id,
+        session.valueOrNull?.profile.type,
+        session.valueOrNull?.profile.staffRole,
+      ),
+    ),
+  );
   final deepLinkRoute = routeForDeepLink(ref.watch(deepLinkProvider));
   final refreshNotifier = _RouterRefreshNotifier();
   ref.onDispose(refreshNotifier.dispose);
@@ -59,6 +71,7 @@ final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     refreshListenable: refreshNotifier,
     redirect: (context, state) {
+      final session = ref.read(sessionProvider);
       final featuresAsync = ref.read(platformFeaturesProvider);
       final loggedIn = session.valueOrNull != null;
       if (!loggedIn &&

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 
@@ -23,13 +25,29 @@ class ProfileRepository {
     bool? clientes,
     bool? empleados,
   }) async {
-    await api.dio.patch<void>(
-      '/staff/me',
-      data: {
-        'mostrar_lecturas_clientes': ?clientes,
-        'mostrar_lecturas_empleados': ?empleados,
-      },
-    );
+    final cancelacion = CancelToken();
+    await api.dio
+        .patch<void>(
+          '/staff/me',
+          data: {
+            'mostrar_lecturas_clientes': ?clientes,
+            'mostrar_lecturas_empleados': ?empleados,
+          },
+          cancelToken: cancelacion,
+          options: Options(
+            sendTimeout: const Duration(seconds: 10),
+            receiveTimeout: const Duration(seconds: 10),
+          ),
+        )
+        .timeout(
+          const Duration(seconds: 15),
+          onTimeout: () {
+            cancelacion.cancel(
+              'Tiempo de espera agotado al guardar privacidad',
+            );
+            throw TimeoutException('No se pudo confirmar el guardado');
+          },
+        );
   }
 
   Future<String> uploadAvatar(PlatformFile file) async {

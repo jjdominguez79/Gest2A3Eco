@@ -241,6 +241,66 @@ def test_privacidad_lecturas_independiente_por_destinatario(tmp_path, monkeypatc
     assert respuesta["estado_envio"] == "read"
 
 
+def test_guardar_privacidad_solo_invalida_chats_con_lecturas_y_emite_un_aviso(tmp_path, monkeypatch):
+    from backend.api.messaging_models import MessagingConversation, MessagingEvent, MessagingOrganization
+    client, factory, staff_headers, auth, _client_id, conv_id = _setup(tmp_path, monkeypatch)
+    admin = staff_headers("admin")
+    path = f"/api/v1/messaging/client/conversations/{conv_id}"
+    assert client.post(f"{path}/messages", headers=auth,
+                       data={"body": "Pregunta", "idempotency_key": "privacy-refresh"}).status_code == 200
+    assert client.post(f"/api/v1/messaging/staff/conversations/{conv_id}/read", headers=admin).status_code == 200
+    with factory() as db:
+        organization_id = db.get(MessagingConversation, conv_id).organization_id
+        for numero in range(40):
+            org = MessagingOrganization(company_code=f"E{30000 + numero}", name="Empresa sin lecturas")
+            db.add(org)
+            db.flush()
+            db.add(MessagingConversation(organization_id=org.id, kind="fiscal"))
+        db.commit()
+    avisos = []
+    consultas = []
+    monkeypatch.setattr(messaging_api.hub, "publish", lambda payload, **kwargs: avisos.append((payload, kwargs)))
+    engine = factory.kw["bind"]
+    def contar(_conn, _cursor, statement, _parameters, _context, _many):
+        if statement.lstrip().upper().startswith("SELECT"):
+            consultas.append(statement)
+    event.listen(engine, "before_cursor_execute", contar)
+    try:
+        response = client.patch("/api/v1/messaging/staff/me", headers=admin,
+                                json={"mostrar_lecturas_clientes": False})
+    finally:
+        event.remove(engine, "before_cursor_execute", contar)
+    assert response.status_code == 200
+    assert len(consultas) <= 15
+    assert avisos == [({"type": "message.states_updated"},
+                       {"staff_ids": set(), "organization_ids": {organization_id}})]
+    with factory() as db:
+        actualizados = db.scalars(select(MessagingEvent).where(
+            MessagingEvent.event_type == "message_states_updated",
+        )).all()
+        assert [row.conversation_id for row in actualizados] == [conv_id]
+    perfil = client.get("/api/v1/messaging/staff/me", headers=admin).json()
+    assert perfil["mostrar_lecturas_clientes"] is False
+    assert perfil["mostrar_lecturas_empleados"] is True
+
+
+def test_aviso_privacidad_llega_una_vez_y_solo_a_destinatarios_seleccionados():
+    async def comprobar():
+        bus = RealtimeHub()
+        cliente = bus.subscribe(audience="client", actor_id="cliente", organization_id="empresa")
+        ajeno = bus.subscribe(audience="client", actor_id="ajeno", organization_id="otra")
+        empleado = bus.subscribe(audience="staff", actor_id="empleado")
+        otro = bus.subscribe(audience="staff", actor_id="otro")
+        bus.publish({"type": "message.states_updated"}, organization_ids={"empresa"}, staff_ids={"empleado"})
+        await asyncio.sleep(0)
+        assert cliente.queue.qsize() == 1
+        assert empleado.queue.qsize() == 1
+        assert ajeno.queue.empty()
+        assert otro.queue.empty()
+        assert cliente.queue.get_nowait() == {"type": "message.states_updated"}
+    asyncio.run(comprobar())
+
+
 def test_privacidad_se_aplica_a_lecturas_historicas_sin_borrarlas(tmp_path, monkeypatch):
     client, _factory, staff_headers, auth, _client_id, conv_id = _setup(tmp_path, monkeypatch)
     admin = staff_headers("admin")

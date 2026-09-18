@@ -121,6 +121,15 @@ class _GestinemAppState extends ConsumerState<GestinemApp> {
 
   void _handleRealtime(Map<String, dynamic> event) {
     if (event['type'] == 'ping') return;
+    if (event['type'] == 'message.states_updated') {
+      ref.invalidate(conversationsProvider);
+      ref.invalidate(unifiedConversationProvider);
+      ref.invalidate(unifiedMessagesProvider);
+      ref.invalidate(messagesProvider);
+      ref.invalidate(internalThreadsProvider);
+      ref.invalidate(internalMessagesProvider);
+      return;
+    }
     if (event['type'] == 'presence.updated' ||
         event['type'] == 'connected' ||
         event['type'] == 'disconnected') {

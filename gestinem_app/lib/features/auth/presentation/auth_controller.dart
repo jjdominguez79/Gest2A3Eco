@@ -54,13 +54,17 @@ class SessionController extends StateNotifier<AsyncValue<AuthSession?>> {
 
   final Ref ref;
   String? _initialStaffAuthCode;
+  int _versionPerfil = 0;
 
   Future<AuthSession> _refreshSession(AuthSession saved) async {
+    final version = ++_versionPerfil;
     final refreshed = AuthSession(
       token: saved.token,
       profile: await ref.read(authRepositoryProvider).currentProfile(saved),
     );
+    if (version != _versionPerfil) return state.valueOrNull ?? saved;
     await ref.read(sessionStorageProvider).write(refreshed);
+    if (version != _versionPerfil) return state.valueOrNull ?? saved;
     state = AsyncData(refreshed);
     return refreshed;
   }
@@ -178,6 +182,7 @@ class SessionController extends StateNotifier<AsyncValue<AuthSession?>> {
   }
 
   Future<void> expire() async {
+    _versionPerfil++;
     await ref.read(sessionStorageProvider).clear();
     state = const AsyncData(null);
   }

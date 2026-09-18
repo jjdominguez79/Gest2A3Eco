@@ -1490,20 +1490,34 @@ def patch_staff_me(
         staff.mostrar_lecturas_clientes = payload.mostrar_lecturas_clientes
     if payload.mostrar_lecturas_empleados is not None:
         staff.mostrar_lecturas_empleados = payload.mostrar_lecturas_empleados
-    db.commit()
+    organizaciones = set()
+    empleados = set()
     if any(valor is not None for valor in privacidad):
-        # Invalida estados ya mostrados sin comunicar quien ha leido ni cuando.
-        for conv in db.scalars(select(MessagingConversation)):
-            if _can_access_conversation(db, conv, staff):
-                _event(db, conv, "message_states_updated")
-                _publish_conversation_event(db, conv, "message.states_updated")
-        for thread in db.scalars(select(MessagingStaffThread)):
-            if _can_access_staff_thread(db, thread, staff):
-                db.add(MessagingEvent(organization_id="", conversation_id=thread.id,
-                                      event_type="internal_states_updated"))
-                hub.publish({"type": "message.states_updated", "thread_id": thread.id},
-                            staff_ids=_staff_thread_recipient_ids(db, thread))
-        db.commit()
+        # Solo los chats con lecturas de este usuario tienen estados que invalidar.
+        destinos = select(MessagingReceipt.target_id).where(
+            MessagingReceipt.actor_type == "staff", MessagingReceipt.actor_id == staff.external_id,
+        )
+        eventos = []
+        for conv in db.scalars(select(MessagingConversation).where(
+            MessagingConversation.id.in_(destinos.where(MessagingReceipt.target_type == "conversation")),
+        )):
+            eventos.append({"organization_id": conv.organization_id, "conversation_id": conv.id,
+                            "event_type": "message_states_updated"})
+            if payload.mostrar_lecturas_clientes is not None:
+                organizaciones.add(conv.organization_id)
+        if payload.mostrar_lecturas_empleados is not None:
+            for thread_id in db.scalars(select(MessagingStaffThread.id).where(
+                MessagingStaffThread.id.in_(destinos.where(MessagingReceipt.target_type == "internal_thread")),
+            )):
+                eventos.append({"organization_id": "", "conversation_id": thread_id,
+                                "event_type": "internal_states_updated"})
+            empleados = set(db.scalars(select(MessagingStaff.external_id).where(MessagingStaff.active.is_(True))))
+        if eventos:
+            db.execute(insert(MessagingEvent), eventos)
+    db.commit()
+    if organizaciones or empleados:
+        # Un solo aviso por conexion, sin identificadores de lectores ni chats.
+        hub.publish({"type": "message.states_updated"}, staff_ids=empleados, organization_ids=organizaciones)
     return {"ok": True}
 
 
