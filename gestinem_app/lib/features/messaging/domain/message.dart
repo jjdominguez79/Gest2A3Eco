@@ -174,6 +174,8 @@ class Message {
     this.estadoEnvio = 'sent',
     this.lecturas = 0,
     this.destinatarios = 0,
+    this.editedAt,
+    this.canViewHistory = false,
   });
 
   factory Message.fromJson(Map<String, dynamic> json) => Message(
@@ -186,6 +188,10 @@ class Message {
     body: json['body'] as String? ?? '',
     createdAt: DateTime.parse(json['created_at'] as String).toLocal(),
     deleted: json['deleted'] as bool? ?? false,
+    editedAt: json['edited_at'] == null
+        ? null
+        : DateTime.parse(json['edited_at'] as String).toLocal(),
+    canViewHistory: json['can_view_history'] as bool? ?? false,
     estadoEnvio: json['estado_envio'] as String? ?? 'sent',
     lecturas: json['lecturas'] as int? ?? 0,
     destinatarios: json['destinatarios'] as int? ?? 0,
@@ -207,6 +213,8 @@ class Message {
   final String body;
   final DateTime createdAt;
   final bool deleted;
+  final DateTime? editedAt;
+  final bool canViewHistory;
 
   /// True si el mensaje tiene o tuvo adjuntos (incluso si esta eliminado logicamente).
   /// Evita ofrecer la accion Eliminar en este tipo de mensajes.
@@ -225,4 +233,22 @@ class Message {
     'partially_read' => 'Leido por $lecturas/$destinatarios',
     _ => 'Enviado',
   };
+}
+
+class MessageVersion {
+  const MessageVersion({
+    required this.body,
+    required this.createdAt,
+    required this.replacedAt,
+  });
+
+  factory MessageVersion.fromJson(Map<String, dynamic> json) => MessageVersion(
+    body: json['body'] as String,
+    createdAt: DateTime.parse(json['created_at'] as String).toLocal(),
+    replacedAt: DateTime.parse(json['replaced_at'] as String).toLocal(),
+  );
+
+  final String body;
+  final DateTime createdAt;
+  final DateTime replacedAt;
 }

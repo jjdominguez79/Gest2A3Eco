@@ -119,6 +119,107 @@ def _setup(tmp_path: Path, monkeypatch):
     return client, factory, staff_headers, auth, accepted["client"]["id"], conversation["id"]
 
 
+@pytest.mark.parametrize("autor", ["client", "staff"])
+def test_edicion_guarda_todas_las_versiones_solo_para_propietario(tmp_path, monkeypatch, autor):
+    monkeypatch.setenv("MESSAGING_HISTORY_OWNER_EMAIL", "admin@gestinem.es")
+    client, factory, staff_headers, auth, _, conv_id = _setup(tmp_path, monkeypatch)
+    headers = auth if autor == "client" else staff_headers("employee")
+    listado = f"/api/v1/messaging/{autor}/conversations/{conv_id}/messages"
+    original = client.post(listado, headers=headers,
+                           data={"body": "Original privado", "idempotency_key": "edit-1"}).json()
+    ruta = f"/api/v1/messaging/{autor}/messages/{original['id']}"
+    historial = f"/api/v1/messaging/staff/messages/{original['id']}/history"
+    for anterior, nuevo in (("Original privado", "Segundo privado"), ("Segundo privado", "Actual")):
+        editado = client.patch(ruta, headers=headers,
+                               json={"body": nuevo, "original_body": anterior})
+        assert editado.status_code == 200
+        assert editado.json()["edited_at"]
+        assert editado.json()["created_at"] == original["created_at"]
+    respuesta_historial = client.get(historial, headers=staff_headers("admin"))
+    assert respuesta_historial.headers["cache-control"] == "no-store"
+    assert [v["body"] for v in respuesta_historial.json()] == [
+        "Original privado", "Segundo privado",
+    ]
+    # Ni el autor cliente/empleado ni otro administrador pueden leer versiones.
+    assert client.get(historial, headers=auth).status_code in (401, 403)
+    assert client.get(historial, headers=staff_headers("employee")).status_code == 403
+    with factory() as db:
+        db.get(MessagingStaff, "employee").role = "admin"
+        db.commit()
+    assert client.get(historial, headers=staff_headers("employee")).status_code == 403
+    for audiencia, receptor in (("client", auth), ("staff", staff_headers("employee")),
+                                ("staff", staff_headers("admin"))):
+        publico = client.get(f"/api/v1/messaging/{audiencia}/conversations/{conv_id}/messages",
+                              headers=receptor)
+        assert publico.json()[0]["body"] == "Actual"
+        assert publico.json()[0]["can_view_history"] == (receptor == staff_headers("admin"))
+        assert "Original privado" not in publico.text and "Segundo privado" not in publico.text
+    monkeypatch.setenv("MESSAGING_HISTORY_OWNER_EMAIL", "")
+    assert client.get(historial, headers=staff_headers("admin")).status_code == 403
+
+
+def test_edicion_rechaza_ajenos_borrados_vacios_y_conflictos(tmp_path, monkeypatch):
+    client, factory, staff_headers, auth, _, conv_id = _setup(tmp_path, monkeypatch)
+    original = client.post(f"/api/v1/messaging/client/conversations/{conv_id}/messages",
+        headers=auth, data={"body": "Original", "idempotency_key": "edit-denied"}).json()
+    message_id = original["id"]
+    ruta = f"/api/v1/messaging/client/messages/{message_id}"
+    payload = {"body": "Actual", "original_body": "Original"}
+    assert client.patch(f"/api/v1/messaging/staff/messages/{message_id}",
+        headers=staff_headers("admin"), json=payload).status_code == 403
+    assert client.patch(ruta, headers=auth, json={**payload, "body": "   "}).status_code == 422
+    assert client.patch(ruta, headers=auth, json={**payload, "body": "x" * 20001}).status_code == 422
+    assert client.patch(ruta, headers=auth, json={**payload, "body": "Original"}).status_code == 200
+    assert client.patch(ruta, headers=auth, json=payload).status_code == 200
+    assert client.patch(ruta, headers=auth, json=payload).status_code == 409
+    with factory() as db:
+        from backend.api.messaging_models import MessagingMessageVersion
+        versiones = list(db.scalars(select(MessagingMessageVersion)))
+        assert [v.body for v in versiones] == ["Original"]
+    assert client.delete(ruta, headers=auth).status_code == 200
+    assert client.patch(ruta, headers=auth,
+        json={"body": "Otro", "original_body": "Actual"}).status_code == 409
+
+
+def test_edicion_interna_historial_y_eventos_no_filtran_versiones(tmp_path, monkeypatch):
+    monkeypatch.setenv("MESSAGING_HISTORY_OWNER_EMAIL", "admin@gestinem.es")
+    client, factory, staff_headers, _, _, _ = _setup(tmp_path, monkeypatch)
+    thread = client.post("/api/v1/messaging/staff/internal/direct/employee",
+                          headers=staff_headers("admin")).json()
+    listado = f"/api/v1/messaging/staff/internal/threads/{thread['id']}/messages"
+    original = client.post(listado, headers=staff_headers("employee"),
+                           data={"body": "Interno privado", "idempotency_key": "internal-edit"}).json()
+    ruta = f"/api/v1/messaging/staff/internal/messages/{original['id']}"
+    payload = {"body": "Interno actual", "original_body": "Interno privado"}
+    assert client.patch(ruta, headers=staff_headers("admin"), json=payload).status_code == 403
+    eventos = []
+    monkeypatch.setattr(messaging_api.hub, "publish", lambda event, **kwargs: eventos.append(event))
+    assert client.patch(ruta, headers=staff_headers("employee"), json=payload).status_code == 200
+    assert eventos == [{"type": "message.edited", "thread_id": thread["id"], "message_id": original["id"]}]
+    assert client.get(ruta + "/history", headers=staff_headers("employee")).status_code == 403
+    versiones = client.get(ruta + "/history", headers=staff_headers("admin")).json()
+    assert [v["body"] for v in versiones] == ["Interno privado"]
+    publico = client.get(listado, headers=staff_headers("employee"))
+    assert publico.json()[0]["edited_at"] and "Interno privado" not in publico.text
+    assert client.delete(ruta, headers=staff_headers("employee")).status_code == 200
+    assert client.get(ruta + "/history", headers=staff_headers("admin")).json() == versiones
+
+
+def test_edicion_no_cambia_adjuntos_y_cita_usa_texto_actual(tmp_path, monkeypatch):
+    client, _, staff_headers, auth, _, conv_id = _setup(tmp_path, monkeypatch)
+    listado = f"/api/v1/messaging/client/conversations/{conv_id}/messages"
+    original = client.post(listado, headers=auth,
+        data={"body": "Pie antiguo", "idempotency_key": "caption-edit"},
+        files=[("files", ("nota.txt", b"Documento", "text/plain"))]).json()
+    assert client.post(listado, headers=auth,
+        data={"body": "Respuesta", "idempotency_key": "reply-edit",
+              "reply_to_message_id": original["id"]}).status_code == 200
+    nuevo = client.patch(f"/api/v1/messaging/client/messages/{original['id']}", headers=auth,
+        json={"body": "Pie actual", "original_body": "Pie antiguo"}).json()
+    assert nuevo["attachments"] == original["attachments"]
+    assert client.get(listado, headers=auth).json()[1]["reply_to"]["body_fragment"] == "Pie actual"
+
+
 def test_estados_mensajes_conservan_lectura_y_distinguen_nuevos(tmp_path, monkeypatch):
     client, _factory, staff_headers, auth, _client_id, conv_id = _setup(tmp_path, monkeypatch)
     path = f"/api/v1/messaging/staff/conversations/{conv_id}/messages"

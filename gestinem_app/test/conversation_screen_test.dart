@@ -203,9 +203,10 @@ void main() {
           .first,
     );
     expect(messageScroll.position.maxScrollExtent, greaterThan(0));
+    expect(find.text('Mensaje anterior 19').hitTestable(), findsOneWidget);
     expect(
       messageScroll.position.pixels,
-      closeTo(messageScroll.position.maxScrollExtent, 0.5),
+      closeTo(messageScroll.position.minScrollExtent, 0.5),
     );
   });
 
@@ -245,6 +246,12 @@ void main() {
       await tester.pumpAndSettle();
 
       const composerKey = Key('message-composer');
+      // Enviar desde el historial tambien debe volver al mensaje mas reciente.
+      await tester.drag(
+        find.byKey(const Key('message-list')),
+        const Offset(0, 900),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(composerKey));
       await tester.enterText(find.byKey(composerKey), 'mensaje nuevo');
       await tester.tap(find.byKey(const Key('send-message')));
@@ -268,7 +275,7 @@ void main() {
       expect(editable.focusNode.hasFocus, isTrue);
       expect(
         messageScroll.position.pixels,
-        closeTo(messageScroll.position.maxScrollExtent, 0.5),
+        closeTo(messageScroll.position.minScrollExtent, 0.5),
       );
     },
   );

@@ -29,7 +29,7 @@ from backend.api.messaging_models import (
     MessagingAttachment, MessagingClient, MessagingConversation, MessagingDevice, MessagingDownload,
     MessagingAppDevice, MessagingCampaign, MessagingCampaignRecipient,
     MessagingDeletionAudit, MessagingEvent, MessagingGroup, MessagingGroupMember,
-    MessagingInvitation, MessagingMessage, MessagingOrganization,
+    MessagingInvitation, MessagingMessage, MessagingMessageVersion, MessagingOrganization,
     MessagingPasswordReset, MessagingPresence, MessagingRead, MessagingReceipt, MessagingSession, MessagingStaff,
     MessagingProfileChangeRequest,
     MessagingStaffAuthFlow, MessagingStaffChannel, MessagingStaffSession,
@@ -196,6 +196,11 @@ class ClientFeaturesIn(BaseModel):
     client_documents_enabled: bool | None = None
     client_invoicing_enabled: bool | None = None
     client_certificates_enabled: bool | None = None
+
+
+class MessageEditIn(BaseModel):
+    body: str = Field(min_length=1, max_length=20000)
+    original_body: str = Field(max_length=20000)
 
 
 class MessageDeleteIn(BaseModel):
@@ -567,6 +572,20 @@ def _require_admin(staff: MessagingStaff = Depends(_staff)) -> MessagingStaff:
     return staff
 
 
+def _puede_ver_historial(staff: MessagingStaff | None) -> bool:
+    propietario = get_settings().messaging_history_owner_email
+    return bool(
+        propietario and staff and staff.active and staff.role == "admin"
+        and staff.email.strip().lower() == propietario
+    )
+
+
+def _propietario_historial(staff: MessagingStaff = Depends(_staff)) -> MessagingStaff:
+    if not _puede_ver_historial(staff):
+        raise HTTPException(403, "No puedes consultar las versiones anteriores")
+    return staff
+
+
 def _sync_worker(x_sync_token: str = Header(default="")) -> str:
     expected = get_settings().messaging_sync_token
     if not expected or not secrets.compare_digest(x_sync_token, expected):
@@ -822,6 +841,7 @@ def _serialize_message(db: Session, item: MessagingMessage, audience: str = "") 
         "author_type": item.author_type, "author_id": item.author_id,
         "author_name": author_name, "author_avatar_url": author_avatar_url,
         "body": "" if item.deleted_at else item.body,
+        "edited_at": item.edited_at.isoformat() if item.edited_at else None,
         "deleted": bool(item.deleted_at),
         "deleted_at": item.deleted_at.isoformat() if item.deleted_at else None,
         "delete_reason": item.delete_reason if item.deleted_at and audience == "staff" else "",
@@ -867,6 +887,11 @@ def _confirm_message_read(db: Session, target_type: str, target_id: str,
 def _add_message_states(db: Session, rows: list, result: list[dict], target_type: str,
                         target_id: str, actor_type: str, actor_id: str) -> None:
     """Estados del emisor, calculados en bloque con las lecturas confirmadas."""
+    puede_ver_historial = _puede_ver_historial(
+        db.get(MessagingStaff, actor_id) if actor_type == "staff" else None,
+    )
+    for data in result:
+        data["can_view_history"] = puede_ver_historial
     own = [(row, data) for row, data in zip(rows, result)
            if data.get("author_type", "staff") == actor_type and data["author_id"] == actor_id]
     if not own:
@@ -1560,6 +1585,7 @@ def _serialize_staff_thread_message(db: Session, item: MessagingStaffThreadMessa
             if author and author.avatar_storage_key else ""
         ),
         "body": "" if item.deleted_at else item.body,
+        "edited_at": item.edited_at.isoformat() if item.edited_at else None,
         "deleted": bool(item.deleted_at),
         "deleted_at": item.deleted_at.isoformat() if item.deleted_at else None,
         "has_attachments": bool(db.scalar(select(func.count(MessagingAttachment.id)).where(
@@ -3473,6 +3499,109 @@ def sync_confirm_attachment(
     except Exception:
         cleanup_pending = True
     return {"ok": True, "storage_cleanup_pending": cleanup_pending}
+
+
+def _guardar_edicion(db: Session, item, payload: MessageEditIn,
+                     actor_type: str, actor_id: str, *, internal: bool = False) -> bool:
+    # La fila se bloquea hasta commit para no perder versiones entre dispositivos.
+    if item.deleted_at:
+        raise HTTPException(409, "No puedes editar un mensaje eliminado")
+    texto = payload.body.strip()
+    if not texto:
+        raise HTTPException(422, "El mensaje no puede estar vacio")
+    if item.body != payload.original_body:
+        raise HTTPException(409, "El mensaje ha cambiado. Actualiza el chat antes de editarlo")
+    if texto == item.body:
+        return False
+    ahora = utcnow()
+    db.add(MessagingMessageVersion(
+        message_id=None if internal else item.id,
+        internal_message_id=item.id if internal else None,
+        body=item.body, version_created_at=item.edited_at or item.created_at,
+        replaced_at=ahora, edited_by=actor_id, edited_by_type=actor_type,
+    ))
+    item.body = texto
+    item.edited_at = ahora
+    return True
+
+
+def _versiones_anteriores(db: Session, message_id: str, *, internal: bool = False) -> list[dict]:
+    columna = (MessagingMessageVersion.internal_message_id if internal
+               else MessagingMessageVersion.message_id)
+    versiones = db.scalars(select(MessagingMessageVersion).where(
+        columna == message_id,
+    ).order_by(MessagingMessageVersion.id)).all()
+    return [{
+        "id": version.id, "body": version.body,
+        "created_at": version.version_created_at.isoformat(),
+        "replaced_at": version.replaced_at.isoformat(),
+    } for version in versiones]
+
+
+@router.patch("/{audience}/messages/{message_id}")
+def edit_message(audience: str, message_id: str, request: Request,
+                 payload: MessageEditIn, db: Session = Depends(get_db)):
+    actor = _resolve_actor(audience, request, db)
+    item = db.scalar(select(MessagingMessage).where(
+        MessagingMessage.id == message_id,
+    ).with_for_update())
+    if not item:
+        raise HTTPException(404, "Mensaje no encontrado")
+    conv = (_conversation_for_client(db, item.conversation_id, actor) if audience == "client"
+            else _conversation_for_staff(db, item.conversation_id, actor))
+    actor_id = actor.id if audience == "client" else actor.external_id
+    if item.author_type != audience or item.author_id != actor_id:
+        raise HTTPException(403, "Solo puedes editar tus propios mensajes")
+    if _guardar_edicion(db, item, payload, audience, actor_id):
+        conv.updated_at = item.edited_at
+        _event(db, conv, "message_edited")
+        db.commit()
+        _publish_conversation_event(db, conv, "message.edited", message_id=item.id)
+    return _serialize_message(db, item, audience)
+
+
+@router.patch("/staff/internal/messages/{message_id}")
+def edit_internal_message(message_id: str, payload: MessageEditIn,
+                          staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db)):
+    item = db.scalar(select(MessagingStaffThreadMessage).where(
+        MessagingStaffThreadMessage.id == message_id,
+    ).with_for_update())
+    if not item:
+        raise HTTPException(404, "Mensaje no encontrado")
+    thread = _staff_thread(db, item.thread_id, staff)
+    if item.author_staff_external_id != staff.external_id:
+        raise HTTPException(403, "Solo puedes editar tus propios mensajes")
+    if _guardar_edicion(db, item, payload, "staff", staff.external_id, internal=True):
+        thread.updated_at = item.edited_at
+        db.add(MessagingEvent(
+            organization_id="", conversation_id=thread.id, event_type="internal_message",
+        ))
+        db.commit()
+        hub.publish({"type": "message.edited", "thread_id": thread.id, "message_id": item.id},
+                    staff_ids=_staff_thread_recipient_ids(db, thread))
+    return _serialize_staff_thread_message(db, item)
+
+
+@router.get("/staff/messages/{message_id}/history")
+def message_history(message_id: str, response: Response, staff: MessagingStaff = Depends(_propietario_historial),
+                    db: Session = Depends(get_db)):
+    item = db.get(MessagingMessage, message_id)
+    if not item:
+        raise HTTPException(404, "Mensaje no encontrado")
+    _conversation_for_staff(db, item.conversation_id, staff)
+    response.headers["Cache-Control"] = "no-store"
+    return _versiones_anteriores(db, item.id)
+
+
+@router.get("/staff/internal/messages/{message_id}/history")
+def internal_message_history(message_id: str, response: Response, staff: MessagingStaff = Depends(_propietario_historial),
+                             db: Session = Depends(get_db)):
+    item = db.get(MessagingStaffThreadMessage, message_id)
+    if not item:
+        raise HTTPException(404, "Mensaje no encontrado")
+    _staff_thread(db, item.thread_id, staff)
+    response.headers["Cache-Control"] = "no-store"
+    return _versiones_anteriores(db, item.id, internal=True)
 
 
 @router.delete("/{audience}/messages/{message_id}")

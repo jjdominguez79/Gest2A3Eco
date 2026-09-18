@@ -590,7 +590,7 @@ class MessageBubble extends StatelessWidget {
                           ? Alignment.bottomRight
                           : Alignment.bottomLeft,
                       child: Text(
-                        '${_timeLabel(message.createdAt)}${mine && mostrarEstados && !message.deleted ? ' \u00b7 ${message.etiquetaEstado}' : ''}',
+                        '${_timeLabel(message.createdAt)}${message.editedAt != null && !message.deleted ? ' \u00b7 Editado' : ''}${mine && mostrarEstados && !message.deleted ? ' \u00b7 ${message.etiquetaEstado}' : ''}',
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
                           color: colors.onSurface.withValues(alpha: .55),
                         ),

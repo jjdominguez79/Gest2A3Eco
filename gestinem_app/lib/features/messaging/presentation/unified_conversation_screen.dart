@@ -12,6 +12,7 @@ import '../../../core/text/sentence_capitalization_formatter.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../domain/message.dart';
 import 'message_bubble.dart';
+import 'message_edit_dialogs.dart';
 import 'messaging_providers.dart';
 
 class UnifiedConversationScreen extends ConsumerStatefulWidget {
@@ -26,7 +27,7 @@ class _UnifiedConversationScreenState
     extends ConsumerState<UnifiedConversationScreen> {
   final _body = TextEditingController();
   final _composerFocus = FocusNode();
-  final _scroll = ScrollController();
+  final _scroll = ScrollController(keepScrollOffset: false);
   List<PlatformFile> _files = [];
   Message? _replyingTo;
   bool _sending = false;
@@ -137,19 +138,19 @@ class _UnifiedConversationScreenState
     for (var attempt = 0; attempt < 3; attempt++) {
       if (!mounted || !_scroll.hasClients) return;
       await _scroll.animateTo(
-        _scroll.position.maxScrollExtent,
+        _scroll.position.minScrollExtent,
         duration: Duration(milliseconds: attempt == 0 ? 300 : 100),
         curve: Curves.easeOut,
       );
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted || !_scroll.hasClients) return;
-      if ((_scroll.position.maxScrollExtent - _scroll.position.pixels).abs() <
+      if ((_scroll.position.minScrollExtent - _scroll.position.pixels).abs() <
           1) {
         return;
       }
     }
     if (mounted && _scroll.hasClients) {
-      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      _scroll.jumpTo(_scroll.position.minScrollExtent);
     }
   }
 
@@ -157,7 +158,7 @@ class _UnifiedConversationScreenState
     final index = messages.indexWhere((m) => m.id == id);
     if (index >= 0 && _scroll.hasClients) {
       _scroll.animateTo(
-        index * 80.0,
+        (messages.length - 1 - index) * 80.0,
         duration: const Duration(milliseconds: 350),
         curve: Curves.easeOut,
       );
@@ -223,6 +224,10 @@ class _UnifiedConversationScreenState
   }
 
   Future<void> _messageActions(Message message) async {
+    final profile = ref.read(sessionProvider).valueOrNull!.profile;
+    final mine =
+        message.authorType == profile.type.name &&
+        message.authorId == profile.id;
     final action = await showModalBottomSheet<String>(
       context: context,
       builder: (ctx) => SafeArea(
@@ -233,12 +238,29 @@ class _UnifiedConversationScreenState
               title: const Text('Responder'),
               onTap: () => Navigator.pop(ctx, 'reply'),
             ),
+            if (mine && !message.deleted)
+              ListTile(
+                key: const Key('edit-message-option'),
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('Editar mensaje'),
+                onTap: () => Navigator.pop(ctx, 'edit'),
+              ),
           ],
         ),
       ),
     );
     if (!mounted) return;
     if (action == 'reply') setState(() => _replyingTo = message);
+    if (action == 'edit') {
+      final repository = ref.read(messagingRepositoryProvider);
+      final cambiado = await editarMensaje(context, message, (texto) async {
+        await repository.edit(profile, message, texto);
+      });
+      if (!mounted || !cambiado) return;
+      if (_replyingTo?.id == message.id) setState(() => _replyingTo = null);
+      ref.invalidate(unifiedMessagesProvider);
+      ref.invalidate(unifiedConversationProvider);
+    }
   }
 
   @override
@@ -314,10 +336,12 @@ class _UnifiedConversationScreenState
                   child: ListView.builder(
                     key: const Key('unified-message-list'),
                     controller: _scroll,
+                    reverse: true,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     itemCount: messages.length,
                     itemBuilder: (context, index) {
-                      final message = messages[index];
+                      final messageIndex = messages.length - 1 - index;
+                      final message = messages[messageIndex];
                       final profile = ref
                           .read(sessionProvider)
                           .valueOrNull!
@@ -326,9 +350,9 @@ class _UnifiedConversationScreenState
                           message.authorType == 'client' &&
                           message.authorId == profile.id;
                       final showDate =
-                          index == 0 ||
+                          messageIndex == 0 ||
                           !_sameDay(
-                            messages[index - 1].createdAt,
+                            messages[messageIndex - 1].createdAt,
                             message.createdAt,
                           );
                       return Column(

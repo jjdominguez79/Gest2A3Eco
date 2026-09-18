@@ -70,6 +70,7 @@ class Settings:
     messaging_staff_client_id: str
     messaging_staff_client_secret: str
     messaging_staff_admin_emails: str
+    messaging_history_owner_email: str
     messaging_staff_allowed_domain: str
     messaging_sync_token: str
     messaging_smtp_host: str
@@ -176,6 +177,9 @@ def get_settings() -> Settings:
         messaging_staff_admin_emails=os.getenv(
             "MESSAGING_STAFF_ADMIN_EMAILS", "jjdominguez@gestinem.es",
         ),
+        messaging_history_owner_email=os.getenv(
+            "MESSAGING_HISTORY_OWNER_EMAIL", "jjdominguez@gestinem.es",
+        ).strip().lower(),
         messaging_staff_allowed_domain=os.getenv(
             "MESSAGING_STAFF_ALLOWED_DOMAIN", "gestinem.es",
         ).strip().lower(),

@@ -202,6 +202,35 @@ class MessagingRepository {
         data: {'reason': ''},
       );
 
+  Future<Message> edit(
+    UserProfile profile,
+    Message message,
+    String body, {
+    bool internal = false,
+  }) async {
+    final path = internal
+        ? '/staff/internal/messages/${message.id}'
+        : '/${_audience(profile)}/messages/${message.id}';
+    final response = await _api.dio.patch<Map<String, dynamic>>(
+      path,
+      data: {'body': body, 'original_body': message.body},
+    );
+    return Message.fromJson(response.data!);
+  }
+
+  Future<List<MessageVersion>> messageHistory(
+    String messageId, {
+    bool internal = false,
+  }) async {
+    final path = internal
+        ? '/staff/internal/messages/$messageId/history'
+        : '/staff/messages/$messageId/history';
+    final response = await _api.dio.get<List<dynamic>>(path);
+    return response.data!
+        .map((item) => MessageVersion.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
   Future<void> softDeleteInternal(String messageId) => _api.dio.delete<void>(
     '/staff/internal/messages/$messageId',
     data: {'reason': ''},

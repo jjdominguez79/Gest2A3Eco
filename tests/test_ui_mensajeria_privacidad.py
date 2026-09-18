@@ -3,6 +3,25 @@ from types import SimpleNamespace
 from views.ui_mensajeria import UIMensajeria
 
 
+def test_edicion_es_solo_del_autor_y_marca_siempre_visible():
+    vista = SimpleNamespace(session=SimpleNamespace(user=SimpleNamespace(id=1)))
+    propio = {"author_type": "staff", "author_id": "1", "body": "Actual", "edited_at": "fecha"}
+    assert UIMensajeria._puede_editar_mensaje(vista, propio)
+    assert not UIMensajeria._puede_editar_mensaje(vista, {**propio, "author_id": "2"})
+    assert not UIMensajeria._puede_editar_mensaje(vista, {**propio, "author_type": "client"})
+    assert not UIMensajeria._puede_editar_mensaje(vista, {**propio, "deleted": True})
+    assert UIMensajeria._texto_mensaje(propio) == "Actual [Editado]"
+    assert UIMensajeria._texto_mensaje({**propio, "deleted": True}) == "Mensaje eliminado"
+
+
+def test_historial_de_escritorio_no_se_consulta_sin_permiso():
+    for item in ({"id": "m1", "edited_at": "fecha"},
+                 {"id": "m1", "can_view_history": True}):
+        vista = SimpleNamespace(_mensaje_seleccionado=lambda: item)
+        # No llega a realizar ninguna llamada remota ni abre un dialogo.
+        UIMensajeria._ver_versiones_mensaje(vista)
+
+
 def test_administrador_no_puede_ocultar_sus_indicadores_de_lectura():
     configuracion = {}
     vista = SimpleNamespace(

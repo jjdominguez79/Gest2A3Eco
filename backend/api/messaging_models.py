@@ -119,6 +119,7 @@ class MessagingStaffThreadMessage(Base):
     )
     author_name: Mapped[str] = mapped_column(String(160))
     body: Mapped[str] = mapped_column(Text)
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reply_to_message_id: Mapped[str | None] = mapped_column(
         ForeignKey("msg_staff_thread_messages.id", ondelete="SET NULL"), index=True,
     )
@@ -257,6 +258,7 @@ class MessagingMessage(Base):
     author_id: Mapped[str] = mapped_column(String(64))
     author_name: Mapped[str] = mapped_column(String(160))
     body: Mapped[str] = mapped_column(Text, default="")
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reply_to_message_id: Mapped[str | None] = mapped_column(
         ForeignKey("msg_messages.id", ondelete="SET NULL"), index=True,
     )
@@ -266,6 +268,31 @@ class MessagingMessage(Base):
     delete_reason: Mapped[str] = mapped_column(String(500), default="")
     idempotency_key: Mapped[str] = mapped_column(String(80))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class MessagingMessageVersion(Base):
+    """Versiones anteriores; nunca se incluyen en mensajes ni eventos publicos."""
+
+    __tablename__ = "msg_message_versions"
+    __table_args__ = (
+        CheckConstraint(
+            "(message_id IS NOT NULL AND internal_message_id IS NULL) OR "
+            "(message_id IS NULL AND internal_message_id IS NOT NULL)",
+            name="ck_msg_message_versions_single_parent",
+        ),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("msg_messages.id", ondelete="CASCADE"), index=True,
+    )
+    internal_message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("msg_staff_thread_messages.id", ondelete="CASCADE"), index=True,
+    )
+    body: Mapped[str] = mapped_column(Text)
+    version_created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    replaced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    edited_by: Mapped[str] = mapped_column(String(64))
+    edited_by_type: Mapped[str] = mapped_column(String(16))
 
 
 class MessagingAttachment(Base):

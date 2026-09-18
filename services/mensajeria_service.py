@@ -176,6 +176,22 @@ class MensajeriaRemoteClient:
             for handle in opened:
                 handle.close()
 
+    def editar_mensaje(self, message_id: str, texto: str, texto_original: str) -> dict:
+        response = self.http.patch(
+            self._url(f"/staff/messages/{message_id}"), headers=self._headers(),
+            json={"body": texto, "original_body": texto_original}, timeout=20,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def versiones_mensaje(self, message_id: str) -> list[dict]:
+        response = self.http.get(
+            self._url(f"/staff/messages/{message_id}/history"),
+            headers=self._headers(), timeout=20,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def update_conversation(self, conversation_id: str, *, state: str | None = None, assigned_to: str | None = None) -> dict:
         payload = {}
         if state is not None:

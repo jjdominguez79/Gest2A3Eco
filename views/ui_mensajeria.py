@@ -83,6 +83,13 @@ class UIMensajeria(ttk.Frame):
             self.msg_tree.heading(key, text=title); self.msg_tree.column(key, width=width, anchor="w")
         self.msg_tree.pack(fill="both", expand=True)
         self.msg_tree.bind("<<TreeviewSelect>>", lambda _event: self._show_message_attachments())
+        acciones_mensaje = ttk.Frame(right)
+        acciones_mensaje.pack(fill="x", pady=(4, 0))
+        self.editar_btn = ttk.Button(acciones_mensaje, text="Editar mensaje", command=self._editar_mensaje,
+                                     state="disabled")
+        self.editar_btn.pack(side="left")
+        self.historial_btn = ttk.Button(acciones_mensaje, text="Versiones anteriores",
+                                        command=self._ver_versiones_mensaje)
         self.att_tree = ttk.Treeview(right, columns=("nombre", "tamano", "caduca"), show="headings", height=3)
         for key, title, width in (("nombre", "Adjunto", 320), ("tamano", "Tamano", 90), ("caduca", "Disponible hasta", 170)):
             self.att_tree.heading(key, text=title); self.att_tree.column(key, width=width, anchor="w")
@@ -275,9 +282,114 @@ class UIMensajeria(ttk.Frame):
                 self.attachments[attachment["id"]] = attachment
             self.msg_tree.insert("", "end", iid=item["id"], values=(
                 item.get("created_at"), item.get("author_name"),
-                (item.get("body") or "").replace("\n", " ")[:240], len(item.get("attachments") or []),
+                self._texto_mensaje(item), len(item.get("attachments") or []),
                 self._etiqueta_estado(item),
             ))
+        self.editar_btn.state(["disabled"])
+        self.historial_btn.pack_forget()
+
+    @staticmethod
+    def _texto_mensaje(item):
+        if item.get("deleted"):
+            return "Mensaje eliminado"
+        marca = " [Editado]" if item.get("edited_at") else ""
+        return (item.get("body") or "").replace("\n", " ")[:240] + marca
+
+    def _mensaje_seleccionado(self):
+        selected = self.msg_tree.selection()
+        return self.messages.get(selected[0]) if selected else None
+
+    def _puede_editar_mensaje(self, item):
+        return bool(item and not item.get("deleted") and item.get("author_type") == "staff"
+                    and str(item.get("author_id")) == str(self.session.user.id))
+
+    def _editar_mensaje(self):
+        item = self._mensaje_seleccionado()
+        if not self._puede_editar_mensaje(item):
+            return
+        dialogo = tk.Toplevel(self)
+        dialogo.title("Editar mensaje")
+        dialogo.transient(self.winfo_toplevel())
+        marco = ttk.Frame(dialogo, padding=12)
+        marco.pack(fill="both", expand=True)
+        texto = tk.Text(marco, width=65, height=8, wrap="word")
+        texto.insert("1.0", item.get("body") or "")
+        texto.pack(fill="both", expand=True)
+        acciones = ttk.Frame(marco)
+        acciones.pack(fill="x", pady=(8, 0))
+        guardando = False
+
+        def cancelar():
+            if not guardando:
+                dialogo.destroy()
+
+        cancelar_btn = ttk.Button(acciones, text="Cancelar", command=cancelar)
+        cancelar_btn.pack(side="left")
+        guardar_btn = ttk.Button(acciones, text="Guardar")
+
+        def guardar():
+            nonlocal guardando
+            nuevo = texto.get("1.0", "end-1c").strip()
+            if not nuevo or len(nuevo) > 20000:
+                messagebox.showwarning("Editar mensaje", "Escribe entre 1 y 20000 caracteres.", parent=dialogo)
+                return
+            if nuevo == item.get("body"):
+                dialogo.destroy()
+                return
+            guardando = True
+            guardar_btn.state(["disabled"])
+            cancelar_btn.state(["disabled"])
+            texto.configure(state="disabled")
+
+            def trabajo():
+                try:
+                    self.client.editar_mensaje(item["id"], nuevo, item.get("body") or "")
+                    return None
+                except Exception as exc:
+                    return exc
+
+            def terminado(error):
+                nonlocal guardando
+                if not dialogo.winfo_exists():
+                    return
+                guardando = False
+                if error:
+                    guardar_btn.state(["!disabled"])
+                    cancelar_btn.state(["!disabled"])
+                    texto.configure(state="normal")
+                    messagebox.showerror("Editar mensaje", str(error), parent=dialogo)
+                else:
+                    dialogo.destroy()
+                    self._load_selected()
+                    self.refresh()
+            self._run("Editando mensaje...", trabajo, terminado)
+
+        guardar_btn.configure(command=guardar)
+        guardar_btn.pack(side="right")
+        dialogo.protocol("WM_DELETE_WINDOW", cancelar)
+        dialogo.grab_set()
+        texto.focus_set()
+
+    def _ver_versiones_mensaje(self):
+        item = self._mensaje_seleccionado()
+        if not item or not item.get("can_view_history") or not item.get("edited_at"):
+            return
+
+        def abrir(versiones):
+            dialogo = tk.Toplevel(self)
+            dialogo.title("Versiones anteriores")
+            dialogo.transient(self.winfo_toplevel())
+            texto = tk.Text(dialogo, width=80, height=22, wrap="word", padx=12, pady=12)
+            texto.pack(fill="both", expand=True)
+            for indice, version in enumerate(versiones):
+                titulo = "Original" if indice == 0 else f"Version {indice + 1}"
+                texto.insert("end", f"{titulo}\n{version['created_at']} - {version['replaced_at']}\n\n{version['body']}\n\n")
+            if not versiones:
+                texto.insert("end", "No hay versiones anteriores.")
+            texto.configure(state="disabled")
+            ttk.Button(dialogo, text="Cerrar", command=dialogo.destroy).pack(pady=8)
+            dialogo.grab_set()
+        self._run("Consultando versiones...", lambda: self.client.versiones_mensaje(item["id"]), abrir)
 
     def _etiqueta_estado(self, item):
         if item.get("author_type") != "staff" or str(item.get("author_id")) != str(self.session.user.id) or item.get("deleted"):
@@ -291,6 +403,12 @@ class UIMensajeria(ttk.Frame):
 
     def _show_message_attachments(self):
         self.att_tree.delete(*self.att_tree.get_children())
+        mensaje = self._mensaje_seleccionado()
+        self.editar_btn.state(["!disabled"] if self._puede_editar_mensaje(mensaje) else ["disabled"])
+        if mensaje and mensaje.get("can_view_history") and mensaje.get("edited_at"):
+            self.historial_btn.pack(side="left", padx=6)
+        else:
+            self.historial_btn.pack_forget()
         selected = self.msg_tree.selection()
         if not selected: return
         for item in self.messages[selected[0]].get("attachments") or []:

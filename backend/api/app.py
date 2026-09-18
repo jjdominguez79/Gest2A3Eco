@@ -220,6 +220,8 @@ def startup():
             f"AND table_name IN ({startup_tables_sql})"
         )).tuples())
         column_migrations = {
+            ("msg_messages", "edited_at"): "ALTER TABLE msg_messages ADD COLUMN edited_at TIMESTAMPTZ",
+            ("msg_staff_thread_messages", "edited_at"): "ALTER TABLE msg_staff_thread_messages ADD COLUMN edited_at TIMESTAMPTZ",
             ("dgt_documentos", "dataprius_json"): (
                 "ALTER TABLE dgt_documentos "
                 "ADD COLUMN dataprius_json JSONB NOT NULL DEFAULT '{}'"

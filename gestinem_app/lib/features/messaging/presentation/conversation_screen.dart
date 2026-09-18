@@ -17,6 +17,7 @@ import '../../auth/presentation/auth_controller.dart';
 import '../domain/conversation.dart';
 import '../domain/message.dart';
 import 'message_bubble.dart';
+import 'message_edit_dialogs.dart';
 import 'messaging_providers.dart';
 import 'voice_recording.dart';
 
@@ -73,7 +74,7 @@ class ConversationView extends ConsumerStatefulWidget {
 class _ConversationViewState extends ConsumerState<ConversationView> {
   final _body = TextEditingController();
   final _composerFocus = FocusNode();
-  final _scroll = ScrollController();
+  final _scroll = ScrollController(keepScrollOffset: false);
   List<PlatformFile> _files = [];
   Message? _replyingTo;
   bool _sending = false;
@@ -109,6 +110,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     if (oldWidget.conversationId != widget.conversationId ||
         oldWidget.internal != widget.internal) {
       _lastMessageMarkedRead = null;
+      _messagePendingScrollId = null;
       _initialScrollPending = true;
       _initialScrollScheduled = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -412,7 +414,8 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
         return;
       }
       _initialScrollPending = false;
-      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      // La lista invertida ancla el ultimo mensaje sin estimar el historial.
+      _scroll.jumpTo(_scroll.position.minScrollExtent);
     });
   }
 
@@ -420,19 +423,19 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     for (var attempt = 0; attempt < 3; attempt++) {
       if (!mounted || !_scroll.hasClients) return;
       await _scroll.animateTo(
-        _scroll.position.maxScrollExtent,
+        _scroll.position.minScrollExtent,
         duration: Duration(milliseconds: attempt == 0 ? 300 : 100),
         curve: Curves.easeOut,
       );
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted || !_scroll.hasClients) return;
-      if ((_scroll.position.maxScrollExtent - _scroll.position.pixels).abs() <
+      if ((_scroll.position.minScrollExtent - _scroll.position.pixels).abs() <
           1) {
         return;
       }
     }
     if (mounted && _scroll.hasClients) {
-      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      _scroll.jumpTo(_scroll.position.minScrollExtent);
     }
   }
 
@@ -440,7 +443,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     final index = messages.indexWhere((message) => message.id == id);
     if (index >= 0 && _scroll.hasClients) {
       _scroll.animateTo(
-        index * 96.0,
+        (messages.length - 1 - index) * 96.0,
         duration: const Duration(milliseconds: 350),
         curve: Curves.easeOut,
       );
@@ -679,6 +682,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     final profile = ref.read(sessionProvider).valueOrNull!.profile;
     // Los mensajes con adjuntos no pueden eliminarse
     final canDelete =
+        !message.deleted &&
         (mine || profile.isAdmin) &&
         (widget.internal || !message.hasAttachments);
     final action = await showModalBottomSheet<String>(
@@ -686,11 +690,26 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       builder: (context) => SafeArea(
         child: Wrap(
           children: [
-            ListTile(
-              leading: const Icon(Icons.reply),
-              title: const Text('Responder'),
-              onTap: () => Navigator.pop(context, 'reply'),
-            ),
+            if (!message.deleted)
+              ListTile(
+                leading: const Icon(Icons.reply),
+                title: const Text('Responder'),
+                onTap: () => Navigator.pop(context, 'reply'),
+              ),
+            if (mine && !message.deleted)
+              ListTile(
+                key: const Key('edit-message-option'),
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('Editar mensaje'),
+                onTap: () => Navigator.pop(context, 'edit'),
+              ),
+            if (message.canViewHistory && message.editedAt != null)
+              ListTile(
+                key: const Key('message-history-option'),
+                leading: const Icon(Icons.history),
+                title: const Text('Versiones anteriores'),
+                onTap: () => Navigator.pop(context, 'history'),
+              ),
             if (canDelete)
               ListTile(
                 key: const Key('delete-message-option'),
@@ -707,6 +726,32 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     if (!mounted) return;
     if (action == 'reply') {
       setState(() => _replyingTo = message);
+    } else if (action == 'edit') {
+      final repository = ref.read(messagingRepositoryProvider);
+      final cambiado = await editarMensaje(context, message, (texto) async {
+        await repository.edit(
+          profile,
+          message,
+          texto,
+          internal: widget.internal,
+        );
+      });
+      if (!mounted || !cambiado) return;
+      if (_replyingTo?.id == message.id) setState(() => _replyingTo = null);
+      if (widget.internal) {
+        ref.invalidate(internalMessagesProvider(widget.conversationId));
+        ref.invalidate(internalThreadsProvider);
+      } else {
+        ref.invalidate(messagesProvider(widget.conversationId));
+        ref.invalidate(conversationsProvider);
+      }
+    } else if (action == 'history') {
+      await verHistorialMensaje(
+        context,
+        () => ref
+            .read(messagingRepositoryProvider)
+            .messageHistory(message.id, internal: widget.internal),
+      );
     } else if (action == 'delete') {
       final confirmed = await showDialog<bool>(
         context: context,
@@ -844,10 +889,11 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                 child: ListView.builder(
                   key: const Key('message-list'),
                   controller: _scroll,
+                  reverse: true,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   itemCount: messages.length,
                   itemBuilder: (context, index) {
-                    final message = messages[index];
+                    final message = messages[messages.length - 1 - index];
                     final mine = messageBelongsToProfile(message, profile);
                     return MessageBubble(
                       message: message,
@@ -875,10 +921,10 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                           ? _withdrawAttachment
                           : null,
                       onVoiceLoad: _loadVoice,
-                      onTap: message.deleted
+                      onTap: message.deleted && !message.canViewHistory
                           ? null
                           : () => _messageActions(message, mine),
-                      onLongPress: message.deleted
+                      onLongPress: message.deleted && !message.canViewHistory
                           ? null
                           : () => _messageActions(message, mine),
                     );
