@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - "backend/**"
+      - "services/aapp/dehu_playwright.py"
+      - "tests/test_aapp_dehu_connector.py"
       - "utils/estados_dehu.py"
       - "tests/test_dehu_postgres_migration.py"
       - "tests/test_dgt_api.py"
@@ -20,6 +22,8 @@ on:
   pull_request:
     paths:
       - "backend/**"
+      - "services/aapp/dehu_playwright.py"
+      - "tests/test_aapp_dehu_connector.py"
       - "utils/estados_dehu.py"
       - "tests/test_dehu_postgres_migration.py"
       - "tests/test_dgt_api.py"
@@ -76,6 +80,7 @@ jobs:
           tests/test_messaging_mail.py
           tests/test_messaging_flutter_api.py
           tests/test_messaging_receipt_privacy_pg.py
+          tests/test_aapp_dehu_connector.py
           tests/test_client_validation.py
           tests/test_client_profile_api.py
           tests/test_client_documents_api.py

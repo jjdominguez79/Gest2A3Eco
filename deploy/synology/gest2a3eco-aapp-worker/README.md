@@ -3,6 +3,12 @@
 Worker aislado para procesar en Synology las solicitudes de certificados AEAT
 y TGSS creadas desde el escritorio o Flutter.
 
+La consulta DEHu de comunicaciones usa el intervalo de los ultimos 30 dias
+en formato DD/MM/AAAA, como el portal, y el estado PENDIENTE. No consulta el
+historico de notificaciones realizadas, ni abre o descarga documentos. Si una
+bandeja falla, no se importa un resultado parcial; el error incluye el estado
+HTTP cuando esta disponible.
+
 Antes de arrancar, crear `secrets/aapp_worker_api_key.txt` con el mismo valor de
 `AAPP_WORKER_API_KEY` configurado en Railway, sin comillas ni espacios.
 

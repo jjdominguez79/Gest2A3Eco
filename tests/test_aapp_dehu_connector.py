@@ -77,7 +77,9 @@ def test_registro_realizado_sin_estado_se_excluye():
     assert rows == []
 
 
-def test_api_dehu_empieza_en_pagina_uno_no_filtra_y_lee_comunicaciones():
+def test_api_dehu_empieza_en_pagina_uno_no_filtra_y_lee_comunicaciones(monkeypatch):
+    monkeypatch.setattr("services.aapp.dehu_playwright._fecha_hoy", lambda: "18/09/2026")
+    monkeypatch.setattr("services.aapp.dehu_playwright._fecha_hace_30_dias", lambda: "19/08/2026")
     calls = []
     request_headers = []
 
@@ -131,8 +133,70 @@ def test_api_dehu_empieza_en_pagina_uno_no_filtra_y_lee_comunicaciones():
         urlsplit(communications_url).query,
         keep_blank_values=True,
     )
-    assert communications_query["availabilityDate[left_date]"] == [""]
-    assert communications_query["availabilityDate[right_date]"] == [""]
+    assert communications_query["availabilityDate[left_date]"] == ["19/08/2026"]
+    assert communications_query["availabilityDate[right_date]"] == ["18/09/2026"]
+    assert communications_query["state"] == ["PENDIENTE"]
+    notifications_query = parse_qs(urlsplit(next(url for url in calls if "/notifications?" in url)).query, keep_blank_values=True)
+    assert notifications_query["availabilityDate[left_date]"] == [""]
+    assert notifications_query["availabilityDate[right_date]"] == [""]
+
+
+def test_comunicaciones_pagina_con_fechas_y_solo_importa_no_leidas(monkeypatch):
+    llamadas = []
+    monkeypatch.setattr("services.aapp.dehu_playwright._fecha_hoy", lambda: "18/09/2026")
+    monkeypatch.setattr("services.aapp.dehu_playwright._fecha_hace_30_dias", lambda: "19/08/2026")
+
+    class Response:
+        ok = True
+        status = 200
+
+        def __init__(self, items, total=0):
+            self.data = {"items": items, "total": total, "limit": 50}
+
+        def json(self):
+            return self.data
+
+    class Request:
+        def get(self, url, **_kwargs):
+            query = parse_qs(urlsplit(url).query, keep_blank_values=True)
+            if "/notifications?" in url:
+                return Response([])
+            llamadas.append(query)
+            assert query["availabilityDate[left_date]"] == ["19/08/2026"]
+            assert query["availabilityDate[right_date]"] == ["18/09/2026"]
+            assert query["state"] == ["PENDIENTE"]
+            if query["page"] == ["1"]:
+                return Response([{"identifier": "COM-LEIDA", "state": "LEIDA"}], 51)
+            return Response([{"identifier": "COM-NUEVA", "state": "PENDIENTE"}], 51)
+
+    page = type("Page", (), {"context": type("Context", (), {"request": Request()})()})()
+    capturas = [{"url": "https://dehu.redsara.es/api/v1/user/test", "body": {"token": "jwt"}}]
+    connector = ConectorDEHU()
+    registros = connector._fetch_api(page, "https://dehu.redsara.es", OpcionesSync(), capturas)
+    material = CertMaterial("cert-1", "Cliente", "B12345678", "cliente.pfx", "")
+    assert [consulta["page"] for consulta in llamadas] == [["1"], ["2"]]
+    assert [item.referencia for item in connector._map_registros(registros, material)] == ["COM-NUEVA"]
+
+
+def test_error_comunicaciones_incluye_http_y_no_publica_resultado_parcial():
+    class Response:
+        def __init__(self, ok, status, data):
+            self.ok, self.status, self.data = ok, status, data
+
+        def json(self):
+            return self.data
+
+    class Request:
+        def get(self, url, **_kwargs):
+            if "/communications?" in url:
+                return Response(False, 400, {"token": "no-debe-mostrarse"})
+            return Response(True, 200, {"items": [{"identifier": "N-1"}], "total": 1})
+
+    page = type("Page", (), {"context": type("Context", (), {"request": Request()})()})()
+    capturas = [{"url": "https://dehu.redsara.es/api/v1/user/test", "body": {"token": "jwt"}}]
+    with pytest.raises(RuntimeError, match=r"/api/v1/communications \(HTTP 400\)") as error:
+        ConectorDEHU()._fetch_api(page, "https://dehu.redsara.es", OpcionesSync(), capturas)
+    assert "no-debe-mostrarse" not in str(error.value)
 
 
 def test_api_dehu_no_acepta_resultado_parcial_si_falla_una_pagina():

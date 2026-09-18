@@ -76,7 +76,7 @@ _ENDPOINTS = (
     }),
     ("/api/v1/communications", "COMUNICACION", {
         "emitterEntityCode": "", "bondType": "", "vinculoReceptor": "",
-        "titularNif": "", "publicId": "", "state": "",
+        "titularNif": "", "publicId": "", "state": "PENDIENTE",
         "availabilityDate[left_date]": "", "availabilityDate[right_date]": "",
     }),
 )
@@ -218,7 +218,15 @@ class ConectorDEHU(ConectorOrganismo):
         authorization = token if token.lower().startswith("bearer ") else f"Bearer {token}"
         headers = {"Authorization": authorization}
         endpoints_validos = set()
+        errores_http = {}
         for endpoint, categoria, filtros in _ENDPOINTS:
+            filtros = dict(filtros)
+            if categoria == "COMUNICACION":
+                # El frontal exige un intervalo de puesta a disposicion y
+                # consulta por defecto los ultimos 30 dias. Fechas vacias
+                # provocan HTTP 400; fijarlas una vez conserva la paginacion.
+                filtros["availabilityDate[left_date]"] = _fecha_hace_30_dias()
+                filtros["availabilityDate[right_date]"] = _fecha_hoy()
             page_num = 1
             endpoint_completo = True
             while True:
@@ -236,6 +244,7 @@ class ConectorDEHU(ConectorOrganismo):
                     )
                     if not resp.ok:
                         opciones.trace(f"[DEHU][api] {resp.status} {endpoint}")
+                        errores_http[endpoint] = resp.status
                         endpoint_completo = False
                         break
                     data = resp.json()
@@ -270,7 +279,11 @@ class ConectorDEHU(ConectorOrganismo):
             )
             raise RuntimeError(
                 "DEHu no devolvio todas las bandejas requeridas: "
-                + ", ".join(ausentes)
+                + ", ".join(
+                    f"{endpoint} (HTTP {errores_http[endpoint]})"
+                    if endpoint in errores_http else endpoint
+                    for endpoint in ausentes
+                )
             )
         return registros
 
