@@ -264,13 +264,13 @@ def test_preferencia_estados_mensajes_es_personal_y_no_altera_lecturas(tmp_path,
                        data={"body": "Pregunta", "idempotency_key": "client-receipt"}).status_code == 200
     assert client.post(f"/api/v1/messaging/staff/conversations/{conv_id}/read", headers=admin).status_code == 200
     state = client.get(path, headers=auth).json()[0]
-    assert state["estado_envio"] == "partially_read"
-    assert (state["lecturas"], state["destinatarios"]) == (1, 2)
+    assert all(campo not in state for campo in ("estado_envio", "lecturas", "destinatarios"))
     unified = client.get("/api/v1/messaging/client/unified-messages", headers=auth).json()
-    assert unified[0]["estado_envio"] == "partially_read"
+    assert all(campo not in unified[0] for campo in ("estado_envio", "lecturas", "destinatarios"))
     assert client.post(f"/api/v1/messaging/staff/conversations/{conv_id}/read",
                        headers=staff_headers("employee")).status_code == 200
-    assert client.get(path, headers=auth).json()[0]["estado_envio"] == "read"
+    state = client.get(path, headers=auth).json()[0]
+    assert all(campo not in state for campo in ("estado_envio", "lecturas", "destinatarios"))
 
 
 def test_estados_chat_interno_lectura_parcial_y_evento(tmp_path, monkeypatch):
@@ -295,7 +295,9 @@ def test_estados_chat_interno_lectura_parcial_y_evento(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("clientes,empleados", [(False, False), (False, True), (True, False), (True, True)])
-def test_privacidad_lecturas_independiente_por_destinatario(tmp_path, monkeypatch, clientes, empleados):
+def test_clientes_nunca_ven_lecturas_y_privacidad_interna_es_independiente(
+    tmp_path, monkeypatch, clientes, empleados,
+):
     client, _factory, staff_headers, auth, _client_id, conv_id = _setup(tmp_path, monkeypatch)
     admin = staff_headers("admin")
     employee = staff_headers("employee")
@@ -313,11 +315,10 @@ def test_privacidad_lecturas_independiente_por_destinatario(tmp_path, monkeypatc
     assert client.post(f"/api/v1/messaging/staff/conversations/{conv_id}/read", headers=admin).status_code == 200
     for row in (client.get(path, headers=auth).json()[0],
                 client.get("/api/v1/messaging/client/unified-messages", headers=auth).json()[0]):
-        assert row["lecturas"] == int(clientes)
-        assert row["estado_envio"] == ("partially_read" if clientes else "sent")
+        assert all(campo not in row for campo in ("estado_envio", "lecturas", "destinatarios"))
     payload, destinos = eventos[-1]
     assert payload["type"] == "message.read"
-    assert bool(destinos["organization_id"]) is clientes
+    assert destinos["organization_id"] == ""
     assert ("employee" in destinos["staff_ids"]) is empleados
     assert "admin" in destinos["staff_ids"]
     threads = client.get("/api/v1/messaging/staff/internal/threads", headers=employee).json()
@@ -409,10 +410,11 @@ def test_privacidad_se_aplica_a_lecturas_historicas_sin_borrarlas(tmp_path, monk
     path = f"/api/v1/messaging/client/conversations/{conv_id}/messages"
     client.post(path, headers=auth, data={"body": "Pregunta", "idempotency_key": "old-receipt"})
     client.post(f"/api/v1/messaging/staff/conversations/{conv_id}/read", headers=admin)
-    assert client.get(path, headers=auth).json()[0]["lecturas"] == 1
+    assert "lecturas" not in client.get(path, headers=auth).json()[0]
     for compartir in (False, True, False):
         assert client.patch(me, headers=admin, json={"mostrar_lecturas_clientes": compartir}).status_code == 200
-        assert client.get(path, headers=auth).json()[0]["lecturas"] == int(compartir)
+        row = client.get(path, headers=auth).json()[0]
+        assert all(campo not in row for campo in ("estado_envio", "lecturas", "destinatarios"))
         # No altera la otra preferencia ni el contador de mensajes pendientes.
         assert client.get(me, headers=admin).json()["mostrar_lecturas_empleados"] is True
         conv = next(row for row in client.get("/api/v1/messaging/staff/conversations", headers=admin).json() if row["id"] == conv_id)
@@ -446,7 +448,8 @@ def test_privacidad_es_del_usuario_y_no_oculta_lecturas_a_otros_administradores(
 def test_sse_no_revela_lecturas_ocultas_y_filtra_chats_internos(tmp_path, monkeypatch):
     client, factory, staff_headers, auth, _client_id, conv_id = _setup(tmp_path, monkeypatch)
     admin = staff_headers("admin")
-    client.patch("/api/v1/messaging/staff/me", headers=admin, json={"mostrar_lecturas_clientes": False, "mostrar_lecturas_empleados": False})
+    # Incluso una preferencia historica permisiva no expone lecturas al cliente.
+    client.patch("/api/v1/messaging/staff/me", headers=admin, json={"mostrar_lecturas_clientes": True, "mostrar_lecturas_empleados": False})
     path = f"/api/v1/messaging/client/conversations/{conv_id}/messages"
     client.post(path, headers=auth, data={"body": "Pregunta", "idempotency_key": "sse-privacy"})
     client.post(f"/api/v1/messaging/staff/conversations/{conv_id}/read", headers=admin)

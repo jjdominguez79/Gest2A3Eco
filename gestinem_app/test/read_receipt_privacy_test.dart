@@ -191,50 +191,10 @@ void main() {
     },
   );
 
-  testWidgets('guardar un control no apaga ni bloquea el otro', (tester) async {
-    final repo = _RepositorioPrivacidad()
-      ..clientes = true
-      ..esperaClientes = Completer<void>();
-    final perfil = UserProfile.fromJson({
-      ...admin.toJson(),
-      'mostrar_lecturas_clientes': true,
-    }, UserType.staff);
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          sessionProvider.overrideWith(
-            (ref) => _SesionPrivacidad(ref, repo, perfil),
-          ),
-          profileRepositoryProvider.overrideWithValue(repo),
-        ],
-        child: const MaterialApp(home: ProfileScreen()),
-      ),
-    );
-    final clientes = find.byKey(const Key('mostrar-lecturas-clientes'));
-    final empleados = find.byKey(const Key('mostrar-lecturas-empleados'));
-    await tester.scrollUntilVisible(clientes, 200);
-    await tester.tap(clientes);
-    await tester.pump();
-    expect(tester.widget<SwitchListTile>(clientes).value, isFalse);
-    expect(tester.widget<SwitchListTile>(clientes).onChanged, isNull);
-    expect(tester.widget<SwitchListTile>(empleados).value, isTrue);
-    expect(tester.widget<SwitchListTile>(empleados).onChanged, isNotNull);
-    await tester.scrollUntilVisible(empleados, 100);
-    await tester.tap(empleados);
-    await tester.pump();
-    expect(tester.widget<SwitchListTile>(empleados).value, isFalse);
-    repo.esperaClientes!.complete();
-    await tester.pumpAndSettle();
-    expect(repo.clientes, isFalse);
-    expect(repo.empleados, isFalse);
-    expect(tester.widget<SwitchListTile>(clientes).onChanged, isNotNull);
-    expect(tester.widget<SwitchListTile>(empleados).onChanged, isNotNull);
-  });
-
-  testWidgets('guardado sin respuesta libera el control y permite reintentar', (
+  testWidgets('el cliente no tiene control de lectura y el interno funciona', (
     tester,
   ) async {
-    final repo = _RepositorioPrivacidad()..esperaClientes = Completer<void>();
+    final repo = _RepositorioPrivacidad()..clientes = true;
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -246,27 +206,53 @@ void main() {
         child: const MaterialApp(home: ProfileScreen()),
       ),
     );
-    final clientes = find.byKey(const Key('mostrar-lecturas-clientes'));
-    await tester.scrollUntilVisible(clientes, 200);
-    await tester.tap(clientes);
-    await tester.pump();
-    await tester.pump(const Duration(seconds: 16));
     await tester.pumpAndSettle();
-    expect(tester.widget<SwitchListTile>(clientes).value, isFalse);
-    expect(tester.widget<SwitchListTile>(clientes).onChanged, isNotNull);
+    expect(find.byKey(const Key('mostrar-lecturas-clientes')), findsNothing);
     expect(
-      find.text(
-        'No se pudo confirmar el cambio a tiempo. Vuelve a intentarlo.',
-      ),
+      find.textContaining('Los clientes nunca ven si el despacho ha leido'),
       findsOneWidget,
     );
-    repo.esperaClientes = null;
-    await tester.tap(clientes);
+    final empleados = find.byKey(const Key('mostrar-lecturas-empleados'));
+    expect(tester.widget<SwitchListTile>(empleados).value, isTrue);
+    expect(tester.widget<SwitchListTile>(empleados).onChanged, isNotNull);
+    await tester.scrollUntilVisible(empleados, 100);
+    await tester.tap(empleados);
     await tester.pumpAndSettle();
-    expect(tester.widget<SwitchListTile>(clientes).value, isTrue);
+    expect(tester.widget<SwitchListTile>(empleados).value, isFalse);
+    expect(repo.clientes, isTrue);
+    expect(repo.empleados, isFalse);
+    expect(tester.widget<SwitchListTile>(empleados).onChanged, isNotNull);
   });
 
-  testWidgets('administrador configura clientes y empleados por separado', (
+  testWidgets('fallo temporal libera el control y permite reintentar', (
+    tester,
+  ) async {
+    final repo = _RepositorioPrivacidad()..fallar = true;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith(
+            (ref) => _SesionPrivacidad(ref, repo, admin),
+          ),
+          profileRepositoryProvider.overrideWithValue(repo),
+        ],
+        child: const MaterialApp(home: ProfileScreen()),
+      ),
+    );
+    final empleados = find.byKey(const Key('mostrar-lecturas-empleados'));
+    await tester.scrollUntilVisible(empleados, 200);
+    await tester.tap(empleados);
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(empleados).value, isTrue);
+    expect(tester.widget<SwitchListTile>(empleados).onChanged, isNotNull);
+    expect(find.byType(SnackBar), findsOneWidget);
+    repo.fallar = false;
+    await tester.tap(empleados);
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(empleados).value, isFalse);
+  });
+
+  testWidgets('administrador solo configura lecturas entre empleados', (
     tester,
   ) async {
     final repo = _RepositorioPrivacidad();
@@ -283,18 +269,12 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Mostrar estados de mis mensajes'), findsNothing);
-    final clientes = find.byKey(const Key('mostrar-lecturas-clientes'));
+    expect(find.byKey(const Key('mostrar-lecturas-clientes')), findsNothing);
     final empleados = find.byKey(const Key('mostrar-lecturas-empleados'));
-    await tester.scrollUntilVisible(clientes, 200);
-    expect(tester.widget<SwitchListTile>(clientes).value, isFalse);
-    await tester.tap(clientes);
-    await tester.pumpAndSettle();
-    expect(repo.clientes, isTrue);
-    expect(repo.empleados, isTrue);
     await tester.scrollUntilVisible(empleados, 200);
     await tester.tap(empleados);
     await tester.pumpAndSettle();
-    expect(repo.clientes, isTrue);
+    expect(repo.clientes, isFalse);
     expect(repo.empleados, isFalse);
     expect(tester.widget<SwitchListTile>(empleados).value, isFalse);
   });
@@ -314,12 +294,12 @@ void main() {
         child: const MaterialApp(home: ProfileScreen()),
       ),
     );
-    final clientes = find.byKey(const Key('mostrar-lecturas-clientes'));
-    await tester.scrollUntilVisible(clientes, 200);
-    await tester.tap(clientes);
+    final empleados = find.byKey(const Key('mostrar-lecturas-empleados'));
+    await tester.scrollUntilVisible(empleados, 200);
+    await tester.tap(empleados);
     await tester.pumpAndSettle();
-    expect(tester.widget<SwitchListTile>(clientes).value, isFalse);
-    expect(tester.widget<SwitchListTile>(clientes).onChanged, isNotNull);
+    expect(tester.widget<SwitchListTile>(empleados).value, isTrue);
+    expect(tester.widget<SwitchListTile>(empleados).onChanged, isNotNull);
     expect(find.byType(SnackBar), findsOneWidget);
   });
 

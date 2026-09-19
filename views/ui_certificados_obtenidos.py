@@ -303,20 +303,15 @@ class UICertificadosObtenidos(ttk.Frame):
                 return None
             name = simpledialog.askstring(
                 "Contratistas y subcontratistas",
-                "Nombre o razon social de esa empresa:",
+                "Nombre o razon social de esa empresa (opcional):",
                 parent=parent,
             )
             if name is None:
                 return None
-            if not name.strip():
-                messagebox.showwarning(
-                    "Dato obligatorio", "Introduce el nombre o razon social.", parent=parent,
-                )
-                return None
-            return {
-                "contracting_party_tax_id": tax_id,
-                "contracting_party_name": name.strip(),
-            }
+            parametros = {"contracting_party_tax_id": tax_id}
+            if name.strip():
+                parametros["contracting_party_name"] = name.strip()
+            return parametros
         if tipo == "TGSS_SIN_DEUDA_FECHA":
             value = simpledialog.askstring(
                 "Certificado a una fecha",

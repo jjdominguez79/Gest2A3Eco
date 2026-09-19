@@ -1,6 +1,6 @@
 {
-  "version": "1.8.16",
-  "tag": "v1.8.16",
-  "changelog": "Mejora la mensajeria de clientes, la apertura de adjuntos y el envio a multiples destinatarios.\nIncorpora la primera fase de notificaciones electronicas y solicitudes de certificados AEAT y Seguridad Social con el certificado digital del cliente.\nAnade la custodia cifrada en Azure, la integracion con Flutter y el worker AAPP.",
+  "version": "1.8.17",
+  "tag": "v1.8.17",
+  "changelog": "Hace opcional la razon social en las solicitudes de certificados AEAT de contratistas.\nOculta siempre a los clientes las confirmaciones de lectura del despacho y mantiene la privacidad entre empleados.",
   "force_update": false
 }

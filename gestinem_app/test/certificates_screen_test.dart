@@ -169,6 +169,12 @@ void main() {
                     type: 'tax_id',
                     required: true,
                   ),
+                  CertificateParameter(
+                    key: 'contracting_party_name',
+                    label: 'Nombre o razon social de la empresa (opcional)',
+                    type: 'text',
+                    required: false,
+                  ),
                 ],
               ),
             ],
@@ -188,6 +194,10 @@ void main() {
       const Key('certificate-parameter-contracting_party_tax_id'),
     );
     expect(field, findsOneWidget);
+    expect(
+      find.byKey(const Key('certificate-parameter-contracting_party_name')),
+      findsOneWidget,
+    );
     var button = tester.widget<FilledButton>(
       find.byKey(const Key('request-certificate-button')),
     );

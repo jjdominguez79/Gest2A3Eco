@@ -261,6 +261,35 @@ def test_tramite_sin_recogida_configurada_no_abre_certificado_ni_presenta():
     assert not resultado.ok
 
 
+def test_contratistas_rellena_solo_cif_si_no_hay_razon_social():
+    rellenados = {}
+
+    class Control:
+        def __init__(self, campo):
+            self.campo = campo
+
+        def count(self):
+            return 1
+
+        @property
+        def first(self):
+            return self
+
+        def fill(self, value, timeout):
+            rellenados[self.campo] = (value, timeout)
+
+    class Pagina:
+        def locator(self, selector):
+            return Control("cif") if "nif" in selector.lower() else Control("razon_social")
+
+    proveedor = obtener_proveedor("AEAT_CONTRATISTAS")
+    assert proveedor._aeat_rellenar_contratante(
+        Pagina(),
+        OpcionesSync(parametros={"contracting_party_tax_id": "B12345678"}),
+    )
+    assert rellenados == {"cif": ("B12345678", 5000)}
+
+
 def test_worker_no_consulta_con_resguardo_de_otro_expediente(monkeypatch, tmp_path):
     from services.aapp.aeat_documentos import DocumentoAEAT
     backend = BackendSeguimiento({"id": "sol-1", "certificate_type": "AEAT_CORRIENTE", "submitted_at": "2026-09-18",

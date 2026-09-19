@@ -656,7 +656,7 @@ def test_cancelar_solicitud_libera_el_limite_diario(monkeypatch):
     ).status_code == 201
 
 
-def test_contratistas_exige_y_normaliza_datos_del_contratante(monkeypatch):
+def test_contratistas_exige_cif_y_admite_razon_social_opcional(monkeypatch):
     client, _, _, headers = _setup(monkeypatch)
 
     missing = client.post(
@@ -664,7 +664,24 @@ def test_contratistas_exige_y_normaliza_datos_del_contratante(monkeypatch):
         headers=headers,
         json={"certificate_type": "AEAT_CONTRATISTAS"},
     )
-    created = client.post(
+    created_without_name = client.post(
+        "/api/v1/messaging/client/certificates/requests",
+        headers=headers,
+        json={
+            "certificate_type": "AEAT_CONTRATISTAS",
+            "parameters": {"contracting_party_tax_id": "b-12345678"},
+        },
+    )
+    assert missing.status_code == 422
+    assert created_without_name.status_code == 201
+    assert created_without_name.json()["parameters"] == {
+        "contracting_party_tax_id": "B12345678",
+    }
+    assert client.post(
+        f"/api/v1/messaging/client/certificates/requests/{created_without_name.json()['id']}/cancel",
+        headers=headers,
+    ).status_code == 200
+    created_with_name = client.post(
         "/api/v1/messaging/client/certificates/requests",
         headers=headers,
         json={
@@ -675,10 +692,8 @@ def test_contratistas_exige_y_normaliza_datos_del_contratante(monkeypatch):
             },
         },
     )
-
-    assert missing.status_code == 422
-    assert created.status_code == 201
-    assert created.json()["parameters"] == {
+    assert created_with_name.status_code == 201
+    assert created_with_name.json()["parameters"] == {
         "contracting_party_tax_id": "B12345678",
         "contracting_party_name": "Empresa contratante SL",
     }

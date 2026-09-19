@@ -59,6 +59,20 @@ void main() {
       createdAt: DateTime(2026, 8, 15),
       deleted: false,
     );
+    final ownMessage = Message(
+      id: 'm2',
+      conversationId: 't1',
+      authorType: 'client',
+      authorId: testProfile.id,
+      authorName: testProfile.name,
+      authorAvatarUrl: '',
+      body: 'Mensaje propio',
+      createdAt: DateTime(2026, 8, 15, 12),
+      deleted: false,
+      estadoEnvio: 'read',
+      lecturas: 2,
+      destinatarios: 2,
+    );
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -77,7 +91,9 @@ void main() {
               ),
             ],
           ),
-          internalMessagesProvider.overrideWith((ref, id) async => [message]),
+          internalMessagesProvider.overrideWith(
+            (ref, id) async => [message, ownMessage],
+          ),
         ],
         child: const MaterialApp(
           home: Scaffold(
@@ -96,6 +112,8 @@ void main() {
     expect(find.text('Analía Pérez'), findsOneWidget);
     expect(find.text('Chat directo'), findsOneWidget);
     expect(find.text('Buenos dias'), findsOneWidget);
+    expect(find.text('Mensaje propio'), findsOneWidget);
+    expect(find.textContaining('Leido'), findsNothing);
     expect(find.byKey(const Key('message-composer')), findsOneWidget);
     expect(find.byKey(const Key('record-voice-note')), findsOneWidget);
     expect(find.byKey(const Key('send-message')), findsOneWidget);

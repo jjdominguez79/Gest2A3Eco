@@ -92,9 +92,9 @@ CERTIFICATE_TYPES = {
             },
             {
                 "key": "contracting_party_name",
-                "label": "Nombre o razon social de la empresa",
+                "label": "Nombre o razon social de la empresa (opcional)",
                 "type": "text",
-                "required": True,
+                "required": False,
             },
         ],
     },

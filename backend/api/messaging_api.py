@@ -887,6 +887,13 @@ def _confirm_message_read(db: Session, target_type: str, target_id: str,
 def _add_message_states(db: Session, rows: list, result: list[dict], target_type: str,
                         target_id: str, actor_type: str, actor_id: str) -> None:
     """Estados del emisor, calculados en bloque con las lecturas confirmadas."""
+    # Los clientes no reciben confirmaciones de lectura del despacho. Las
+    # lecturas se siguen registrando para pendientes y para que el staff vea
+    # cuando un cliente ha leido sus mensajes.
+    if actor_type == "client":
+        for data in result:
+            data["can_view_history"] = False
+        return
     puede_ver_historial = _puede_ver_historial(
         db.get(MessagingStaff, actor_id) if actor_type == "staff" else None,
     )
@@ -1008,8 +1015,8 @@ def _publish_conversation_event(db: Session, conv: MessagingConversation, event_
             select(MessagingStaff).where(MessagingStaff.active.is_(True)))
             if _can_access_conversation(db, conv, staff)
             and _puede_ver_lectura(lector, "staff", staff)}
-        hub.publish(payload, staff_ids=staff_ids,
-                    organization_id=conv.organization_id if _puede_ver_lectura(lector, "client") else "")
+        # Una lectura del despacho nunca se publica a conexiones de clientes.
+        hub.publish(payload, staff_ids=staff_ids, organization_id="")
         return
     org = db.get(MessagingOrganization, conv.organization_id)
     staff_ids = None
@@ -4324,6 +4331,8 @@ async def events(audience: str, request: Request, after: int = 0, db: Session = 
                     event_staff = event_db.get(MessagingStaff, staff_id) if staff_id else None
                     if row.event_type == "read_updated":
                         if row.actor_type == "staff":
+                            if audience == "client":
+                                continue
                             lector = event_db.get(MessagingStaff, row.actor_id)
                             if not _puede_ver_lectura(lector, audience, event_staff):
                                 continue

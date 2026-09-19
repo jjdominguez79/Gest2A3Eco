@@ -379,8 +379,8 @@ class SedePlaywrightProvider(ProveedorCertificado):
         parametros = opciones.parametros or {}
         tax_id = str(parametros.get("contracting_party_tax_id") or "").strip()
         name = str(parametros.get("contracting_party_name") or "").strip()
-        if not tax_id or not name:
-            opciones.trace("[AEAT] faltan CIF/NIF o razon social del contratante")
+        if not tax_id:
+            opciones.trace("[AEAT] falta el CIF/NIF del contratante")
             return False
         nif = self._primer_control(page, (
             "input[id*='nif' i][id*='contrat' i]",
@@ -390,23 +390,24 @@ class SedePlaywrightProvider(ProveedorCertificado):
             "input[id*='nif' i][id*='cliente' i]",
             "input[name*='nif' i][name*='cliente' i]",
         ))
-        razon = self._primer_control(page, (
-            "input[id*='razon' i][id*='contrat' i]",
-            "input[name*='razon' i][name*='contrat' i]",
-            "input[id*='nombre' i][id*='contrat' i]",
-            "input[name*='nombre' i][name*='contrat' i]",
-            "input[id*='razon' i][id*='pagador' i]",
-            "input[name*='razon' i][name*='pagador' i]",
-            "input[id*='nombre' i][id*='cliente' i]",
-            "input[name*='nombre' i][name*='cliente' i]",
-        ))
-        if nif is None or razon is None:
-            opciones.trace(
-                "[AEAT] no se identificaron con seguridad los campos del contratante"
-            )
+        razon = None
+        if name:
+            razon = self._primer_control(page, (
+                "input[id*='razon' i][id*='contrat' i]",
+                "input[name*='razon' i][name*='contrat' i]",
+                "input[id*='nombre' i][id*='contrat' i]",
+                "input[name*='nombre' i][name*='contrat' i]",
+                "input[id*='razon' i][id*='pagador' i]",
+                "input[name*='razon' i][name*='pagador' i]",
+                "input[id*='nombre' i][id*='cliente' i]",
+                "input[name*='nombre' i][name*='cliente' i]",
+            ))
+        if nif is None:
+            opciones.trace("[AEAT] no se identifico el campo CIF/NIF del contratante")
             return False
         nif.fill(tax_id, timeout=5000)
-        razon.fill(name, timeout=5000)
+        if name and razon is not None:
+            razon.fill(name, timeout=5000)
         opciones.trace("[AEAT] datos del contratante cumplimentados")
         return True
 

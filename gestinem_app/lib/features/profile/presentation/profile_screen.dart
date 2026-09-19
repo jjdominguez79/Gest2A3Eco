@@ -27,7 +27,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   bool _editingAlias = false;
   bool _uploadingAvatar = false;
   bool _guardandoEstados = false;
-  bool? _clientesPendientes;
   bool? _empleadosPendientes;
   String? _localAvatarUrl;
   String? _error;
@@ -152,21 +151,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     );
   }
 
-  Future<void> _guardarPrivacidadLecturas({
-    bool? clientes,
-    bool? empleados,
-  }) async {
+  Future<void> _guardarPrivacidadLecturas({bool? empleados}) async {
     setState(() {
-      if (clientes != null) _clientesPendientes = clientes;
       if (empleados != null) _empleadosPendientes = empleados;
     });
     try {
       await ref
           .read(profileRepositoryProvider)
-          .actualizarPrivacidadLecturas(
-            clientes: clientes,
-            empleados: empleados,
-          )
+          .actualizarPrivacidadLecturas(empleados: empleados)
           .timeout(const Duration(seconds: 15));
       await ref
           .read(sessionProvider.notifier)
@@ -191,7 +183,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     } finally {
       if (mounted) {
         setState(() {
-          if (clientes != null) _clientesPendientes = null;
           if (empleados != null) _empleadosPendientes = null;
         });
       }
@@ -306,29 +297,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               const SizedBox(height: 20),
               if (profile.isAdmin) ...[
                 const ListTile(
-                  leading: Icon(Icons.visibility_outlined),
-                  title: Text('Siempre ves las lecturas de tus mensajes'),
+                  leading: Icon(Icons.privacy_tip_outlined),
+                  title: Text('Confirmaciones de lectura'),
                   subtitle: Text(
-                    'Ves siempre si clientes y empleados han leido tus mensajes, aunque ocultes tus propias lecturas.',
+                    'Siempre ves si los clientes han leido tus mensajes. Los clientes nunca ven si el despacho ha leido los suyos.',
                   ),
-                ),
-                SwitchListTile(
-                  key: const Key('mostrar-lecturas-clientes'),
-                  title: const Text('Mostrar mis lecturas a clientes'),
-                  subtitle: const Text(
-                    'Permitir que los clientes vean que he leido sus mensajes.',
-                  ),
-                  value: _clientesPendientes ?? profile.mostrarLecturasClientes,
-                  secondary: _clientesPendientes == null
-                      ? null
-                      : const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                  onChanged: _clientesPendientes != null
-                      ? null
-                      : (valor) => _guardarPrivacidadLecturas(clientes: valor),
                 ),
                 SwitchListTile(
                   key: const Key('mostrar-lecturas-empleados'),
