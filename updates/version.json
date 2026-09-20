@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.8.17",
-  "minimum_required_version": "1.8.15",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.17/Setup_Gest2A3Eco_1.8.17.exe",
-  "changelog": "Hace opcional la razon social en las solicitudes de certificados AEAT de contratistas.\nOculta siempre a los clientes las confirmaciones de lectura del despacho y mantiene la privacidad entre empleados.",
-  "force_update": false
+  "latest_version": "1.8.18",
+  "minimum_required_version": "1.8.18",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.18/Setup_Gest2A3Eco_1.8.18.exe",
+  "changelog": "Correccion de error en conexion de base de datos",
+  "force_update": true
 }
