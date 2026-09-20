@@ -29,14 +29,15 @@ String voiceStreamExtension(AudioEncoder encoder) => switch (encoder) {
   ),
 };
 
-Uint8List finalizeVoiceStream(AudioEncoder encoder, List<int> bytes) {
+Uint8List finalizeVoiceStream(
+  AudioEncoder encoder,
+  List<int> bytes, {
+  required int sampleRate,
+  required int channels,
+}) {
   final audio = Uint8List.fromList(bytes);
   if (encoder != AudioEncoder.pcm16bits) return audio;
-  return pcm16ToWav(
-    audio,
-    sampleRate: voiceSampleRate,
-    channels: voiceChannelCount,
-  );
+  return pcm16ToWav(audio, sampleRate: sampleRate, channels: channels);
 }
 
 @visibleForTesting

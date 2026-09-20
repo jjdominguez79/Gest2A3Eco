@@ -41,4 +41,30 @@ void main() {
     expect(data.getUint32(40, Endian.little), 4);
     expect(wav.sublist(44), [1, 2, 3, 4]);
   });
+
+  test('PCM16 conserva la frecuencia y canales efectivos del dispositivo', () {
+    final wav = finalizeVoiceStream(
+      AudioEncoder.pcm16bits,
+      [1, 2, 3, 4],
+      sampleRate: 48000,
+      channels: 2,
+    );
+    final data = ByteData.sublistView(wav);
+
+    expect(data.getUint16(22, Endian.little), 2);
+    expect(data.getUint32(24, Endian.little), 48000);
+    expect(data.getUint32(28, Endian.little), 192000);
+    expect(data.getUint16(32, Endian.little), 4);
+  });
+
+  test('AAC no se modifica al finalizar el stream', () {
+    final audio = finalizeVoiceStream(
+      AudioEncoder.aacLc,
+      [1, 2, 3, 4],
+      sampleRate: 48000,
+      channels: 2,
+    );
+
+    expect(audio, [1, 2, 3, 4]);
+  });
 }

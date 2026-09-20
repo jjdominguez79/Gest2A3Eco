@@ -87,6 +87,8 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   int _recordingSeconds = 0;
   AudioEncoder _voiceEncoder = AudioEncoder.aacLc;
   String _voiceExtension = 'aac';
+  int _voiceSampleRate = voiceSampleRate;
+  int _voiceChannelCount = voiceChannelCount;
   String? _lastMessageMarkedRead;
   String? _messagePendingScrollId;
   bool _initialScrollPending = true;
@@ -245,6 +247,12 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       }
       _voiceEncoder = encoder;
       _voiceExtension = voiceStreamExtension(encoder);
+      _voiceSampleRate = voiceSampleRate;
+      _voiceChannelCount = voiceChannelCount;
+      await _recorder.setOnConfigChanged((config) {
+        _voiceSampleRate = config.sampleRate;
+        _voiceChannelCount = config.numChannels;
+      });
       _recordingBytes.clear();
       _recordingDone = Completer<void>();
       final stream = await _recorder.startStream(
@@ -302,7 +310,12 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       }
       await _recordingSubscription?.cancel();
       if (!send || _recordingBytes.isEmpty) return;
-      final bytes = finalizeVoiceStream(_voiceEncoder, _recordingBytes);
+      final bytes = finalizeVoiceStream(
+        _voiceEncoder,
+        _recordingBytes,
+        sampleRate: _voiceSampleRate,
+        channels: _voiceChannelCount,
+      );
       _files = [
         _VoicePlatformFile(
           name:
