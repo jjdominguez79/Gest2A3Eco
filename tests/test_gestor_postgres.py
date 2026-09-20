@@ -212,6 +212,22 @@ def test_cursor_insert_identity_recupera_lastrowid():
     assert cursor.lastrowid == 42
 
 
+def test_cursor_insert_identity_con_id_explicito_no_consulta_currval():
+    conexion = _ConexionFalsa(secuencia="public.notif_config_global_id_seq")
+    cursor = CursorPostgres(_CursorFalso(conexion))
+
+    cursor.execute(
+        """
+        INSERT INTO notif_config_global (id, periodicidad_sync, updated_at)
+        VALUES (1, %s, %s) ON CONFLICT(id) DO NOTHING
+        """,
+        ("MANUAL", "2026-09-20T12:00:00"),
+    )
+
+    assert cursor.lastrowid is None
+    assert conexion.rollback_count == 0
+
+
 def test_cursor_error_hace_rollback_para_recuperar_conexion():
     conexion = _ConexionFalsa()
     cursor = CursorPostgres(_CursorFalso(conexion, error=RuntimeError("sql incorrecto")))

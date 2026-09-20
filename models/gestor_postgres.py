@@ -169,9 +169,24 @@ class CursorPostgres:
 
         ``SELECT LASTVAL()`` falla cuando el INSERT usa una clave textual y
         aborta toda la transaccion. ``pg_get_serial_sequence`` permite
-        comprobarlo sin provocar ese fallo.
+        comprobarlo sin provocar ese fallo. Si el INSERT proporciona ``id``
+        expresamente tampoco se consulta ``currval``: en ese caso la secuencia
+        no tiene por que haberse usado en la sesion (por ejemplo, al sembrar
+        la fila unica de ``notif_config_global``).
         """
         self.lastrowid = None
+        columnas_match = re.match(
+            r'^\s*INSERT\s+INTO\s+(?:"?[\w]+"?\.)?"?[\w]+"?\s*\(([^)]*)\)',
+            sql,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if columnas_match:
+            columnas = {
+                columna.strip().strip('"').lower()
+                for columna in columnas_match.group(1).split(",")
+            }
+            if "id" in columnas:
+                return
         match = re.match(
             r'^\s*INSERT\s+INTO\s+("?[\w]+"?)',
             sql,
