@@ -155,6 +155,21 @@ def test_retry_certificate_request_uses_internal_backend(monkeypatch):
     response.raise_for_status.assert_called_once_with()
 
 
+def test_retry_certificate_request_sends_corrected_parameters(monkeypatch):
+    response = MagicMock()
+    response.json.return_value = {"id": "sol-1", "status": "queued"}
+    session = MagicMock()
+    session.post.return_value = response
+
+    _service(monkeypatch, session).retry_certificate_request(
+        "sol-1", parameters={"contracting_party_name": "Empresa corregida"},
+    )
+
+    assert session.post.call_args.kwargs["json"] == {
+        "parameters": {"contracting_party_name": "Empresa corregida"},
+    }
+
+
 def test_download_certificate_request_document(monkeypatch):
     response = MagicMock()
     response.content = b"%PDF-1.7"

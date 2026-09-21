@@ -213,8 +213,9 @@ class SedePlaywrightProvider(ProveedorCertificado):
                             # Consultar NUNCA vuelve a validar, firmar ni presentar.
                             return self._aeat_consultar_solicitud(page, opciones, tipo)
                         pagina_aeat = self._aeat_preparar_solicitud(page, opciones, tipo)
-                        if pagina_aeat:
-                            page = pagina_aeat
+                        if isinstance(pagina_aeat, ResultadoCertificado):
+                            return pagina_aeat
+                        page = pagina_aeat
                     if opciones.pausa_login_segundos > 0:
                         opciones.trace(f"[{self.codigo_organismo}] modo aprendizaje: navega hasta el "
                                        f"certificado '{tipo}' y descargalo. Esperando...")
@@ -307,7 +308,10 @@ class SedePlaywrightProvider(ProveedorCertificado):
             "AEAT_CORRIENTE", "AEAT_CENSAL", "AEAT_IAE", "AEAT_CONTRATISTAS",
         }
         if tipo not in soportados:
-            return False
+            return ResultadoCertificado(
+                ok=False, tipo=tipo, estado="PENDIENTE",
+                mensaje="Este tramite AEAT no tiene un formulario de solicitud configurado.",
+            )
         try:
             self._marcar_si_existe(page, "#fTipoRepresentacion0")
             if tipo == "AEAT_CORRIENTE":
@@ -317,7 +321,11 @@ class SedePlaywrightProvider(ProveedorCertificado):
                 self._marcar_si_existe(page, "#fMomentoDeterminacionEcot0", obligatorio=True)
             elif tipo == "AEAT_CONTRATISTAS":
                 if not self._aeat_rellenar_contratante(page, opciones):
-                    return False
+                    return ResultadoCertificado(
+                        ok=False, tipo=tipo, estado="PENDIENTE",
+                        mensaje=("No se pudieron cumplimentar el NIF y la razon social del "
+                                 "contratante en la AEAT. Revisa los datos y el formulario."),
+                    )
                 self._marcar_si_existe(page, "#fMomentoDeterminacionEcot0")
 
             validar = self._primer_control(page, (
@@ -329,7 +337,10 @@ class SedePlaywrightProvider(ProveedorCertificado):
             ))
             if validar is None:
                 opciones.trace(f"[AEAT] no se encontro el boton de validacion para {tipo}")
-                return False
+                return ResultadoCertificado(
+                    ok=False, tipo=tipo, estado="PENDIENTE",
+                    mensaje="No se encontro el boton Validar solicitud en la AEAT.",
+                )
             validar.click(timeout=6000)
             try:
                 page.wait_for_load_state("networkidle", timeout=opciones.timeout_ms)
@@ -348,11 +359,21 @@ class SedePlaywrightProvider(ProveedorCertificado):
                 except Exception:
                     pass
                 opciones.trace("[AEAT] pulsada la confirmacion previa Firmar y Enviar")
-                return self._aeat_confirmar_firma(page, opciones)
+                return self._aeat_confirmar_firma(page, opciones, tipo)
+            if tipo == "AEAT_CONTRATISTAS":
+                return ResultadoCertificado(
+                    ok=False, tipo=tipo, estado="PENDIENTE",
+                    mensaje=("La AEAT no mostro el paso Firmar y Enviar tras validar. "
+                             "Revisa los datos de la solicitud en la sede."),
+                )
             return page
         except Exception as exc:
             opciones.trace(f"[AEAT] no se pudo validar la solicitud {tipo}: {exc}")
-            return False
+            return ResultadoCertificado(
+                ok=False, tipo=tipo, estado="PENDIENTE",
+                mensaje=("No se pudo completar el formulario AEAT. Revisa la solicitud "
+                         "en la sede antes de reintentar."),
+            )
 
     @staticmethod
     def _primer_control(page, selectores):
@@ -379,8 +400,8 @@ class SedePlaywrightProvider(ProveedorCertificado):
         parametros = opciones.parametros or {}
         tax_id = str(parametros.get("contracting_party_tax_id") or "").strip()
         name = str(parametros.get("contracting_party_name") or "").strip()
-        if not tax_id:
-            opciones.trace("[AEAT] falta el CIF/NIF del contratante")
+        if not tax_id or not name:
+            opciones.trace("[AEAT] faltan el CIF/NIF o la razon social del contratante")
             return False
         nif = self._primer_control(page, (
             "input[id*='nif' i][id*='contrat' i]",
@@ -390,9 +411,7 @@ class SedePlaywrightProvider(ProveedorCertificado):
             "input[id*='nif' i][id*='cliente' i]",
             "input[name*='nif' i][name*='cliente' i]",
         ))
-        razon = None
-        if name:
-            razon = self._primer_control(page, (
+        razon = self._primer_control(page, (
                 "input[id*='razon' i][id*='contrat' i]",
                 "input[name*='razon' i][name*='contrat' i]",
                 "input[id*='nombre' i][id*='contrat' i]",
@@ -401,17 +420,16 @@ class SedePlaywrightProvider(ProveedorCertificado):
                 "input[name*='razon' i][name*='pagador' i]",
                 "input[id*='nombre' i][id*='cliente' i]",
                 "input[name*='nombre' i][name*='cliente' i]",
-            ))
-        if nif is None:
-            opciones.trace("[AEAT] no se identifico el campo CIF/NIF del contratante")
+        ))
+        if nif is None or razon is None:
+            opciones.trace("[AEAT] no se identificaron los campos del contratante")
             return False
         nif.fill(tax_id, timeout=5000)
-        if name and razon is not None:
-            razon.fill(name, timeout=5000)
+        razon.fill(name, timeout=5000)
         opciones.trace("[AEAT] datos del contratante cumplimentados")
         return True
 
-    def _aeat_confirmar_firma(self, page, opciones):
+    def _aeat_confirmar_firma(self, page, opciones, tipo):
         """Marca Conforme en la ventana de firma y ejecuta el envio final."""
         try:
             contexto = page.context
@@ -464,11 +482,12 @@ class SedePlaywrightProvider(ProveedorCertificado):
                     return page
                 except Exception:
                     continue
-        if paginas and paginas[-1] is not page:
-            opciones.trace("[AEAT] abierta ventana de firma; pendiente de identificar controles")
-            return paginas[-1]
-        opciones.trace("[AEAT] no se encontro la casilla Conforme tras la confirmacion previa")
-        return page
+        opciones.trace("[AEAT] no se identificaron Conforme y Firmar y Enviar")
+        return ResultadoCertificado(
+            ok=False, tipo=tipo, estado="PENDIENTE",
+            mensaje=("No se pudo confirmar la firma en la AEAT. Comprueba en la sede "
+                     "si la solicitud se presento antes de reintentar."),
+        )
 
     def _ss_acceso(self, page, ctx, opciones):
         """En 'Informes y Certificados' despliega el acordeon de 'estar al
@@ -729,10 +748,12 @@ class SedePlaywrightProvider(ProveedorCertificado):
                 pg.remove_listener("download", descarga)
 
     def _descargar_boton_aeat(self, page, opciones, tipo):
-        """Captura el PDF que AEAT entrega mediante el boton final #descarga."""
+        """Captura el PDF entregado por el boton final de la AEAT."""
         try:
             boton = page.locator("#descarga")
             if boton.count() == 0:
+                boton = page.get_by_role("button", name=re.compile(r"^Descargar documento$", re.I))
+            if boton.count() != 1:
                 return None
         except Exception:
             return None

@@ -656,7 +656,7 @@ def test_cancelar_solicitud_libera_el_limite_diario(monkeypatch):
     ).status_code == 201
 
 
-def test_contratistas_exige_cif_y_admite_razon_social_opcional(monkeypatch):
+def test_contratistas_exige_cif_y_razon_social(monkeypatch):
     client, _, _, headers = _setup(monkeypatch)
 
     missing = client.post(
@@ -673,14 +673,7 @@ def test_contratistas_exige_cif_y_admite_razon_social_opcional(monkeypatch):
         },
     )
     assert missing.status_code == 422
-    assert created_without_name.status_code == 201
-    assert created_without_name.json()["parameters"] == {
-        "contracting_party_tax_id": "B12345678",
-    }
-    assert client.post(
-        f"/api/v1/messaging/client/certificates/requests/{created_without_name.json()['id']}/cancel",
-        headers=headers,
-    ).status_code == 200
+    assert created_without_name.status_code == 422
     created_with_name = client.post(
         "/api/v1/messaging/client/certificates/requests",
         headers=headers,
@@ -860,6 +853,77 @@ def test_escritorio_reintenta_solicitud_sin_crear_duplicado(monkeypatch):
     assert response.json()["error_message"] is None
     with factory() as db:
         assert len(db.scalars(select(ClientCertificateRequest)).all()) == 1
+
+
+def test_escritorio_corrige_contratante_antes_de_reintentar(monkeypatch):
+    client, factory, _, _headers = _setup(monkeypatch)
+    created = client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={
+            "certificate_type": "AEAT_CONTRATISTAS",
+            "parameters": {
+                "contracting_party_tax_id": "B12345678",
+                "contracting_party_name": "Nombre anterior",
+            },
+        },
+    ).json()
+    with factory() as db:
+        item = db.get(ClientCertificateRequest, created["id"])
+        item.status = "needs_action"
+        item.parameters_json = '{"contracting_party_tax_id":"B12345678"}'
+        db.commit()
+
+    ruta = f"/api/v1/messaging/client/certificates/internal/requests/{created['id']}/retry"
+    assert client.post(ruta, json={"parameters": {"contracting_party_tax_id": "B12345678"}}).status_code == 422
+    response = client.post(ruta, json={"parameters": {
+        "contracting_party_tax_id": "b-12345678",
+        "contracting_party_name": "Empresa corregida",
+    }})
+
+    assert response.status_code == 200
+    assert response.json()["id"] == created["id"]
+    assert response.json()["status"] == "queued"
+    assert response.json()["parameters"] == {
+        "contracting_party_tax_id": "B12345678",
+        "contracting_party_name": "Empresa corregida",
+    }
+    with factory() as db:
+        assert len(db.scalars(select(ClientCertificateRequest)).all()) == 1
+
+
+def test_no_cambia_contratante_tras_presentar_en_aeat(monkeypatch):
+    client, factory, _, _headers = _setup(monkeypatch)
+    created = client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={
+            "certificate_type": "AEAT_CONTRATISTAS",
+            "parameters": {
+                "contracting_party_tax_id": "B12345678",
+                "contracting_party_name": "Empresa original",
+            },
+        },
+    ).json()
+    with factory() as db:
+        item = db.get(ClientCertificateRequest, created["id"])
+        item.status = "needs_action"
+        item.submitted_at = utcnow()
+        db.commit()
+
+    response = client.post(
+        f"/api/v1/messaging/client/certificates/internal/requests/{created['id']}/retry",
+        json={"parameters": {
+            "contracting_party_tax_id": "B87654321",
+            "contracting_party_name": "Otra empresa",
+        }},
+    )
+
+    assert response.status_code == 409
+    with factory() as db:
+        item = db.get(ClientCertificateRequest, created["id"])
+        assert item.status == "needs_action"
+        assert 'Empresa original' in item.parameters_json
 
 
 def test_escritorio_elimina_solo_intento_fallido_sin_documento(monkeypatch):

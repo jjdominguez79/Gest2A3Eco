@@ -171,9 +171,9 @@ void main() {
                   ),
                   CertificateParameter(
                     key: 'contracting_party_name',
-                    label: 'Nombre o razon social de la empresa (opcional)',
+                    label: 'Nombre o razon social de la empresa',
                     type: 'text',
-                    required: false,
+                    required: true,
                   ),
                 ],
               ),
@@ -203,6 +203,15 @@ void main() {
     );
     expect(button.onPressed, isNull);
     await tester.enterText(field, 'B12345678');
+    await tester.pump();
+    button = tester.widget<FilledButton>(
+      find.byKey(const Key('request-certificate-button')),
+    );
+    expect(button.onPressed, isNull);
+    await tester.enterText(
+      find.byKey(const Key('certificate-parameter-contracting_party_name')),
+      'Empresa contratante SL',
+    );
     await tester.pump();
     button = tester.widget<FilledButton>(
       find.byKey(const Key('request-certificate-button')),

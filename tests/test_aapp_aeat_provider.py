@@ -1,5 +1,5 @@
 from services.aapp.base import OpcionesSync
-from services.aapp.certificados import SedePlaywrightProvider
+from services.aapp.certificados import ResultadoCertificado, SedePlaywrightProvider
 
 
 class _Locator:
@@ -134,12 +134,57 @@ def test_aeat_confirma_firma_en_la_ventana_emergente():
     provider = SedePlaywrightProvider("AEAT", {"AEAT_CORRIENTE"}, "https://example.test")
 
     activa = provider._aeat_confirmar_firma(
-        origen, OpcionesSync(log=lambda _message: None),
+        origen, OpcionesSync(log=lambda _message: None), "AEAT_CORRIENTE",
     )
 
     assert activa is firma
     assert ("check", "input[type='checkbox']") in firma.actions
     assert ("click", "input[id^='FirmayEnvia_'], input[value*='Firmar'], button:has-text('Firmar')") in firma.actions
+
+
+def test_contratistas_sin_razon_social_no_valida_ni_firma():
+    page = _Page()
+    provider = SedePlaywrightProvider("AEAT", {"AEAT_CONTRATISTAS"}, "https://example.test")
+
+    resultado = provider._aeat_preparar_solicitud(
+        page,
+        OpcionesSync(
+            parametros={"contracting_party_tax_id": "B12345678"},
+            log=lambda _message: None,
+        ),
+        "AEAT_CONTRATISTAS",
+    )
+
+    assert isinstance(resultado, ResultadoCertificado)
+    assert resultado.estado == "PENDIENTE"
+    assert "razon social" in resultado.mensaje
+    assert not any(accion == "click" for accion, _ in page.actions)
+
+
+def test_contratistas_no_confunde_validacion_fallida_con_pdf_ausente():
+    class PaginaSinFirma(_Page):
+        def locator(self, selector):
+            control = super().locator(selector)
+            if "FirmayEnvia" in selector or "Firmar y Enviar" in selector:
+                control.count = lambda: 0
+            return control
+
+    page = PaginaSinFirma()
+    provider = SedePlaywrightProvider("AEAT", {"AEAT_CONTRATISTAS"}, "https://example.test")
+    provider._aeat_rellenar_contratante = lambda *_args: True
+
+    resultado = provider._aeat_preparar_solicitud(
+        page,
+        OpcionesSync(
+            parametros={"contracting_party_tax_id": "B12345678", "contracting_party_name": "Empresa"},
+            log=lambda _message: None,
+        ),
+        "AEAT_CONTRATISTAS",
+    )
+
+    assert isinstance(resultado, ResultadoCertificado)
+    assert resultado.estado == "PENDIENTE"
+    assert "Firmar y Enviar" in resultado.mensaje
 
 
 class _Descarga:
@@ -183,3 +228,30 @@ def test_aeat_captura_el_boton_final_como_pdf(tmp_path):
 
     assert obtenido == str(destino)
     assert destino.read_bytes().startswith(b"%PDF-")
+
+
+def test_aeat_captura_boton_descargar_documento_sin_id(tmp_path):
+    class PaginaConBoton(_PaginaDescarga):
+        def locator(self, selector):
+            control = super().locator(selector)
+            if selector == "#descarga":
+                control.count = lambda: 0
+            return control
+
+        def get_by_role(self, role, name):
+            assert role == "button"
+            assert name.fullmatch("Descargar documento")
+            return _Locator("Descargar documento", self.actions)
+
+    page = PaginaConBoton()
+    destino = tmp_path / "certificado.pdf"
+    provider = SedePlaywrightProvider("AEAT", {"AEAT_CONTRATISTAS"}, "https://example.test")
+
+    obtenido = provider._descargar_boton_aeat(
+        page,
+        OpcionesSync(ruta_pdf_destino=str(destino), log=lambda _message: None),
+        "AEAT_CONTRATISTAS",
+    )
+
+    assert obtenido == str(destino)
+    assert ("click", "Descargar documento") in page.actions

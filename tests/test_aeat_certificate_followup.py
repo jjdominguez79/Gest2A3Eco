@@ -261,7 +261,7 @@ def test_tramite_sin_recogida_configurada_no_abre_certificado_ni_presenta():
     assert not resultado.ok
 
 
-def test_contratistas_rellena_solo_cif_si_no_hay_razon_social():
+def test_contratistas_no_rellena_si_no_hay_razon_social():
     rellenados = {}
 
     class Control:
@@ -283,11 +283,11 @@ def test_contratistas_rellena_solo_cif_si_no_hay_razon_social():
             return Control("cif") if "nif" in selector.lower() else Control("razon_social")
 
     proveedor = obtener_proveedor("AEAT_CONTRATISTAS")
-    assert proveedor._aeat_rellenar_contratante(
+    assert not proveedor._aeat_rellenar_contratante(
         Pagina(),
         OpcionesSync(parametros={"contracting_party_tax_id": "B12345678"}),
     )
-    assert rellenados == {"cif": ("B12345678", 5000)}
+    assert rellenados == {}
 
 
 def test_worker_no_consulta_con_resguardo_de_otro_expediente(monkeypatch, tmp_path):

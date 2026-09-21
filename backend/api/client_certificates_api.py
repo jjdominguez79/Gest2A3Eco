@@ -92,9 +92,9 @@ CERTIFICATE_TYPES = {
             },
             {
                 "key": "contracting_party_name",
-                "label": "Nombre o razon social de la empresa (opcional)",
+                "label": "Nombre o razon social de la empresa",
                 "type": "text",
-                "required": False,
+                "required": True,
             },
         ],
     },
@@ -175,6 +175,10 @@ class CertificateRequestIn(BaseModel):
     certificate_type: str = Field(min_length=3, max_length=50)
     parameters: dict = Field(default_factory=dict)
     idempotency_key: str = Field(default="", max_length=80)
+
+
+class CertificateRetryIn(BaseModel):
+    parameters: dict | None = None
 
 
 class WorkerResultIn(BaseModel):
@@ -500,12 +504,27 @@ def _create_request(
 def _retry_request(
     db: Session,
     item: ClientCertificateRequest,
+    *,
+    parameters: dict | None = None,
+    allow_internal: bool = False,
 ) -> ClientCertificateRequest:
     delayed_retry = item.status in {"queued", "awaiting_issuance"} and item.next_attempt_at is not None
     if item.status not in RETRYABLE_STATUSES and not delayed_retry:
         raise HTTPException(
             status_code=409,
             detail="La solicitud no esta en un estado que permita reintentarla",
+        )
+    if parameters is not None:
+        if item.submitted_at or item.receipt_document_id or item.document_id:
+            raise HTTPException(
+                status_code=409,
+                detail="No se pueden cambiar los datos de una solicitud ya presentada",
+            )
+        _, item.parameters_json = _validate_request(
+            CertificateRequestIn(
+                certificate_type=item.certificate_type, parameters=parameters,
+            ),
+            allow_internal=allow_internal,
         )
     item.status = "awaiting_issuance" if item.submitted_at else "queued"
     item.attempt_count = 0
@@ -620,7 +639,8 @@ def cancel_client_request(
 
 @router.post("/requests/{request_id}/retry")
 def retry_client_request(
-    request_id: str, request: Request, db: Session = Depends(_db),
+    request_id: str, request: Request, payload: CertificateRetryIn | None = None,
+    db: Session = Depends(_db),
 ):
     client = _authenticated_client(request, db)
     require_certificates_enabled(db, client.organization_id)
@@ -631,7 +651,9 @@ def retry_client_request(
         or item.requester_type != "client"
     ):
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
-    return _serialize(_retry_request(db, item))
+    return _serialize(_retry_request(
+        db, item, parameters=payload.parameters if payload else None,
+    ))
 
 
 @router.delete("/requests/{request_id}")
@@ -741,13 +763,17 @@ def list_internal_requests(
 @router.post("/internal/requests/{request_id}/retry")
 def retry_internal_request(
     request_id: str,
+    payload: CertificateRetryIn | None = None,
     db: Session = Depends(_db),
     _auth: str = Depends(require_workstation_or_internal),
 ):
     item = db.get(ClientCertificateRequest, request_id)
     if not item:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
-    return _serialize(_retry_request(db, item))
+    return _serialize(_retry_request(
+        db, item, parameters=payload.parameters if payload else None,
+        allow_internal=True,
+    ))
 
 
 @router.delete("/internal/requests/{request_id}")

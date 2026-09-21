@@ -55,7 +55,7 @@ class UICertificadosObtenidos(ttk.Frame):
         ("cliente",   "Cliente",     160, "w"),
         ("tipo",      "Certificado", 220, "w"),
         ("organismo", "Organismo",    80, "center"),
-        ("estado",    "Estado",       95, "center"),
+        ("estado",    "Estado",      140, "center"),
         ("resultado", "Resultado",    90, "center"),
         ("f_sol",     "Solicitado",  120, "center"),
         ("f_obt",     "Obtenido",    120, "center"),
@@ -124,6 +124,11 @@ class UICertificadosObtenidos(ttk.Frame):
         self._btn_pdf = tk.Button(tb, text="Abrir PDF", bg="#475569", fg="white",
                                   command=self._on_abrir_pdf, state="disabled", **btn)
         self._btn_pdf.pack(side="left", padx=(0, 5))
+        self._btn_detalle = tk.Button(
+            tb, text="Ver detalle", bg="#475569", fg="white",
+            command=self._on_ver_detalle, state="disabled", **btn,
+        )
+        self._btn_detalle.pack(side="left", padx=(0, 5))
         self._btn_email = tk.Button(tb, text="Compartir por email", bg="#0ea5e9", fg="white",
                                     command=self._on_email, state="disabled", **btn)
         self._btn_email.pack(side="left", padx=(0, 5))
@@ -154,14 +159,14 @@ class UICertificadosObtenidos(ttk.Frame):
             self._tv.column(key, width=width, anchor=anchor, stretch=(key == "tipo"))
         self._tv.tag_configure("OBTENIDO",  foreground=_SUCCESS)
         self._tv.tag_configure("PENDIENTE", foreground=_WARNING)
-        self._tv.tag_configure("REQUIERE REINTENTO", foreground="#d97706")
+        self._tv.tag_configure("REQUIERE REVISION", foreground="#d97706")
         self._tv.tag_configure("ERROR",     foreground=_DANGER)
         sb = ttk.Scrollbar(wrapper, orient="vertical", command=self._tv.yview)
         self._tv.configure(yscrollcommand=sb.set)
         self._tv.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
         self._tv.bind("<<TreeviewSelect>>", self._on_select)
-        self._tv.bind("<Double-1>", lambda _e: self._on_abrir_pdf())
+        self._tv.bind("<Double-1>", self._on_abrir_o_ver_detalle)
 
         self._lbl_status = tk.Label(self, text="", bg=_BG, fg=_SUB, font=("Segoe UI", 8), anchor="w")
         self._lbl_status.pack(fill="x", side="bottom", padx=8)
@@ -173,6 +178,25 @@ class UICertificadosObtenidos(ttk.Frame):
             return None
         sid = self._tv.set(sel[0], "_id")
         return next((r for r in self._cache if str(r.get("id")) == str(sid)), None)
+
+    def _on_ver_detalle(self):
+        solicitud = self._fila()
+        if not solicitud:
+            return
+        detalle = (solicitud.get("error_message") or solicitud.get("result_summary")
+                   or solicitud.get("certificate_result") or "Sin detalle adicional.")
+        messagebox.showinfo(
+            "Detalle de la solicitud",
+            f"{_label_tipo(solicitud.get('certificate_type'))}\n\n{detalle}",
+            parent=self.winfo_toplevel(),
+        )
+
+    def _on_abrir_o_ver_detalle(self, _event=None):
+        solicitud = self._fila()
+        if solicitud and (solicitud.get("document_id") or solicitud.get("receipt_document_id")):
+            self._on_abrir_pdf()
+        else:
+            self._on_ver_detalle()
 
     def _cliente_sel(self):
         txt = self._var_cliente.get()
@@ -203,6 +227,7 @@ class UICertificadosObtenidos(ttk.Frame):
         r = self._fila()
         tiene_pdf = bool(r and (r.get("document_id") or r.get("receipt_document_id")))
         self._btn_pdf.configure(state="normal" if tiene_pdf else "disabled")
+        self._btn_detalle.configure(state="normal" if r else "disabled")
         self._btn_email.configure(state="normal" if r and r.get("document_id") else "disabled")
         publicable = bool(
             r
@@ -244,6 +269,9 @@ class UICertificadosObtenidos(ttk.Frame):
         ), None)
         accion = "Reintentar" if anterior else "Solicitar"
         detalle = (
+            "Comprueba antes en la sede AEAT si la solicitud llego a presentarse. "
+            "El reintento usara el mismo registro, pero podria presentar otra solicitud."
+            if anterior and tipo.startswith("AEAT_") and not anterior.get("submitted_at") else
             "Se volvera a poner en cola la solicitud existente, sin crear un duplicado."
             if anterior else
             "La solicitud se enviara al worker, que utilizara exclusivamente "
@@ -253,9 +281,10 @@ class UICertificadosObtenidos(ttk.Frame):
                                    f"{accion} '{_label_tipo(tipo)}' para el cliente {cod}?\n\n"
                                    f"{detalle}", parent=self.winfo_toplevel()):
             return
+        corregir = bool(anterior and tipo == "AEAT_CONTRATISTAS" and not anterior.get("submitted_at"))
         parametros = dict(anterior.get("parameters") or {}) if anterior else None
-        if not anterior:
-            parametros = self._pedir_parametros(tipo)
+        if not anterior or corregir:
+            parametros = self._pedir_parametros(tipo, parametros)
             if parametros is None:
                 return
         self._btn_solicitar.configure(state="disabled")
@@ -270,7 +299,9 @@ class UICertificadosObtenidos(ttk.Frame):
                         "Configuralo antes de crear la solicitud."
                     )
                 if anterior:
-                    result = backend.retry_certificate_request(anterior["id"])
+                    result = backend.retry_certificate_request(
+                        anterior["id"], parameters=parametros if corregir else None,
+                    )
                 else:
                     result = backend.create_certificate_request(
                         company_code=cod,
@@ -284,13 +315,15 @@ class UICertificadosObtenidos(ttk.Frame):
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _pedir_parametros(self, tipo):
+    def _pedir_parametros(self, tipo, anteriores=None):
         """Solicita solo los datos adicionales exigidos por cada organismo."""
         parent = self.winfo_toplevel()
+        anteriores = anteriores or {}
         if tipo == "AEAT_CONTRATISTAS":
             tax_id = simpledialog.askstring(
                 "Contratistas y subcontratistas",
                 "CIF/NIF de la empresa con la que el cliente contrata:",
+                initialvalue=anteriores.get("contracting_party_tax_id") or "",
                 parent=parent,
             )
             if tax_id is None:
@@ -303,15 +336,22 @@ class UICertificadosObtenidos(ttk.Frame):
                 return None
             name = simpledialog.askstring(
                 "Contratistas y subcontratistas",
-                "Nombre o razon social de esa empresa (opcional):",
+                "Nombre o razon social de esa empresa:",
+                initialvalue=anteriores.get("contracting_party_name") or "",
                 parent=parent,
             )
             if name is None:
                 return None
-            parametros = {"contracting_party_tax_id": tax_id}
-            if name.strip():
-                parametros["contracting_party_name"] = name.strip()
-            return parametros
+            if not name.strip():
+                messagebox.showwarning(
+                    "Dato obligatorio", "Introduce el nombre o razon social del contratante.",
+                    parent=parent,
+                )
+                return None
+            return {
+                "contracting_party_tax_id": tax_id,
+                "contracting_party_name": name.strip(),
+            }
         if tipo == "TGSS_SIN_DEUDA_FECHA":
             value = simpledialog.askstring(
                 "Certificado a una fecha",
@@ -385,15 +425,27 @@ class UICertificadosObtenidos(ttk.Frame):
             "Reintentar certificado",
             ("Se consultara el expediente ya presentado, sin pedir otro certificado."
              if solicitud.get("submitted_at") else
+             "Comprueba antes en la sede AEAT si la solicitud llego a presentarse. "
+             "El reintento podria presentar otra solicitud."
+             if str(solicitud.get("certificate_type") or "").startswith("AEAT_") else
              "La misma solicitud volvera a ponerse en cola para que el worker la procese."),
             parent=self.winfo_toplevel(),
         ):
             return
+        parametros = None
+        if solicitud.get("certificate_type") == "AEAT_CONTRATISTAS" and not solicitud.get("submitted_at"):
+            parametros = self._pedir_parametros(
+                "AEAT_CONTRATISTAS", solicitud.get("parameters"),
+            )
+            if parametros is None:
+                return
         self._btn_reintentar.configure(state="disabled")
 
         def _worker():
             try:
-                result = BackendClientService().retry_certificate_request(solicitud["id"])
+                result = BackendClientService().retry_certificate_request(
+                    solicitud["id"], parameters=parametros,
+                )
                 self.after(0, lambda: self._solicitud_fin(result, None))
             except Exception as exc:
                 self.after(0, lambda error=exc: self._solicitud_fin(None, error))
@@ -575,7 +627,7 @@ class UICertificadosObtenidos(ttk.Frame):
                 "processing": "PROCESANDO",
                 "completed": "OBTENIDO",
                 "awaiting_issuance": "PENDIENTE EMISION",
-                "needs_action": "REQUIERE REINTENTO",
+                "needs_action": "REQUIERE REVISION",
                 "failed": "ERROR",
                 "cancelled": "CANCELADO",
             }.get(status, status.upper())
@@ -604,6 +656,7 @@ class UICertificadosObtenidos(ttk.Frame):
             texto = f"No se pudieron consultar las solicitudes centrales: {error}"
         self._lbl_status.configure(text=texto)
         self._btn_pdf.configure(state="disabled")
+        self._btn_detalle.configure(state="disabled")
         self._btn_email.configure(state="disabled")
         self._btn_publicar.configure(state="disabled")
         self._btn_reintentar.configure(state="disabled")

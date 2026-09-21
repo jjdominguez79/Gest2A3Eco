@@ -320,14 +320,17 @@ class BackendClientService:
         response.raise_for_status()
         return response.json()
 
-    def retry_certificate_request(self, request_id: str) -> dict:
+    def retry_certificate_request(
+        self, request_id: str, *, parameters: dict | None = None,
+    ) -> dict:
         """Vuelve a encolar una solicitud fallida o que requiere intervencion."""
         self._ensure_configured()
         url = (
             f"{self.base_url}/api/v1/messaging/client/certificates/internal/"
             f"requests/{request_id}/retry"
         )
-        response = self.http.post(url, headers=self._headers(), timeout=30)
+        kwargs = {"json": {"parameters": parameters}} if parameters is not None else {}
+        response = self.http.post(url, headers=self._headers(), timeout=30, **kwargs)
         response.raise_for_status()
         return response.json()
 
