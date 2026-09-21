@@ -702,6 +702,45 @@ def test_flag_desactivado_bloquea_autoservicio(monkeypatch):
     assert response.status_code == 403
 
 
+def test_estado_del_certificado_visible_sin_autoservicio_y_sin_secretos(monkeypatch):
+    client, _, _, headers = _setup(monkeypatch, enabled=False)
+
+    response = client.get(
+        "/api/v1/messaging/client/certificates/certificate-status",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "valid"
+    assert response.json()["common_name"] == "Certificado de pruebas"
+    assert "valid_until" in response.json()
+    assert not ({"encrypted_blob_key", "pfx_sha256", "file_name", "serial_number"}
+                & response.json().keys())
+
+
+def test_certificado_aun_no_vigente_bloquea_solicitud(monkeypatch):
+    client, factory, org_id, headers = _setup(monkeypatch)
+    with factory() as db:
+        secret = db.scalar(select(ClientCertificateSecret).where(
+            ClientCertificateSecret.organization_id == org_id,
+        ))
+        secret.valid_from = utcnow() + timedelta(days=2)
+        db.commit()
+
+    status = client.get(
+        "/api/v1/messaging/client/certificates/certificate-status",
+        headers=headers,
+    )
+    created = client.post(
+        "/api/v1/messaging/client/certificates/requests",
+        headers=headers,
+        json={"certificate_type": "AEAT_CORRIENTE"},
+    )
+
+    assert status.json()["status"] == "not_yet_valid"
+    assert created.status_code == 409
+
+
 def test_cliente_no_puede_solicitar_sin_certificado_central(monkeypatch):
     client, factory, org_id, headers = _setup(monkeypatch)
     with factory() as db:

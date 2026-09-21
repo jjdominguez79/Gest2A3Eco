@@ -104,10 +104,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('Certificado digital preparado hasta 10/9/2027.'),
-      findsOneWidget,
-    );
+    expect(find.text('Certificado digital en vigor'), findsOneWidget);
+    expect(find.text('Vence: 10/09/2027'), findsOneWidget);
     expect(find.byKey(const Key('certificate-type-selector')), findsOneWidget);
     expect(find.byKey(const Key('request-certificate-button')), findsOneWidget);
   });
@@ -134,7 +132,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text('El despacho todavía no ha preparado tu certificado digital.'),
+      find.text('No consta un certificado digital preparado por el despacho.'),
       findsOneWidget,
     );
     final button = tester.widget<FilledButton>(

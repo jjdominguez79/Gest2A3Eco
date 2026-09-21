@@ -122,19 +122,28 @@ class CertificateStatus {
     required this.configured,
     required this.status,
     this.commonName,
+    this.issuer,
+    this.validFrom,
     this.validUntil,
+    this.updatedAt,
   });
 
   final bool configured;
   final String status;
   final String? commonName;
+  final String? issuer;
+  final DateTime? validFrom;
   final DateTime? validUntil;
+  final DateTime? updatedAt;
 
   factory CertificateStatus.fromJson(Map<String, dynamic> json) =>
       CertificateStatus(
         configured: json['configured'] as bool? ?? false,
         status: json['status'] as String? ?? 'missing',
         commonName: json['common_name'] as String?,
+        issuer: json['issuer'] as String?,
+        validFrom: DateTime.tryParse(json['valid_from'] as String? ?? ''),
         validUntil: DateTime.tryParse(json['valid_until'] as String? ?? ''),
+        updatedAt: DateTime.tryParse(json['updated_at'] as String? ?? ''),
       );
 }

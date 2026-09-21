@@ -185,8 +185,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/', builder: (_, _) => const ConversationsScreen()),
       GoRoute(
         path: '/conversation/:id',
-        builder: (_, state) =>
-            ConversationScreen(conversationId: state.pathParameters['id']!),
+        builder: (_, state) => ConversationScreen(
+          conversationId: state.pathParameters['id']!,
+          initialDraft: state.extra is String ? state.extra! as String : null,
+        ),
       ),
       GoRoute(
         path: '/internal/:id',

@@ -26,9 +26,11 @@ class ConversationScreen extends ConsumerWidget {
     super.key,
     required this.conversationId,
     this.internal = false,
+    this.initialDraft,
   });
   final String conversationId;
   final bool internal;
+  final String? initialDraft;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -51,6 +53,7 @@ class ConversationScreen extends ConsumerWidget {
       body: ConversationView(
         conversationId: conversationId,
         internal: internal,
+        initialDraft: initialDraft,
       ),
     );
   }
@@ -62,10 +65,12 @@ class ConversationView extends ConsumerStatefulWidget {
     required this.conversationId,
     this.internal = false,
     this.showInternalHeader = false,
+    this.initialDraft,
   });
   final String conversationId;
   final bool internal;
   final bool showInternalHeader;
+  final String? initialDraft;
 
   @override
   ConsumerState<ConversationView> createState() => _ConversationViewState();
@@ -99,6 +104,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   @override
   void initState() {
     super.initState();
+    _body.text = widget.initialDraft ?? '';
     _notificationsService = ref.read(notificationsServiceProvider);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _activateConversation();

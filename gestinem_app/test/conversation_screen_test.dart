@@ -101,6 +101,7 @@ void main() {
               conversationId: 't1',
               internal: true,
               showInternalHeader: true,
+              initialDraft: 'Consulta sobre certificado digital',
             ),
           ),
         ),
@@ -115,6 +116,13 @@ void main() {
     expect(find.text('Mensaje propio'), findsOneWidget);
     expect(find.textContaining('Leido'), findsNothing);
     expect(find.byKey(const Key('message-composer')), findsOneWidget);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('message-composer')))
+          .controller!
+          .text,
+      'Consulta sobre certificado digital',
+    );
     expect(find.byKey(const Key('record-voice-note')), findsOneWidget);
     expect(find.byKey(const Key('send-message')), findsOneWidget);
     await tester.enterText(

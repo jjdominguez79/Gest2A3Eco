@@ -6,6 +6,7 @@ import '../../../core/api/api_client.dart';
 import '../../platform/features_provider.dart';
 import '../domain/certificate_request.dart';
 import 'certificates_providers.dart';
+import 'digital_certificate_card.dart';
 
 class CertificatesScreen extends ConsumerStatefulWidget {
   const CertificatesScreen({super.key});
@@ -148,7 +149,7 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            _CertificateStatusCard(status: status),
+            DigitalCertificateCard(status: status),
             const SizedBox(height: 16),
             Text(
               'Nueva solicitud',
@@ -352,41 +353,4 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
     'cancelled' => Icons.cancel_outlined,
     _ => Icons.schedule,
   };
-}
-
-class _CertificateStatusCard extends StatelessWidget {
-  const _CertificateStatusCard({required this.status});
-
-  final AsyncValue<CertificateStatus> status;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: status.when(
-          data: (value) {
-            final valid = value.configured && value.status == 'valid';
-            return Row(
-              children: [
-                Icon(valid ? Icons.lock_outline : Icons.warning_amber_outlined),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    valid
-                        ? 'Certificado digital preparado${value.validUntil == null ? '' : ' hasta ${value.validUntil!.day}/${value.validUntil!.month}/${value.validUntil!.year}'}.'
-                        : value.status == 'expired'
-                        ? 'El certificado digital está caducado.'
-                        : 'El despacho todavía no ha preparado tu certificado digital.',
-                  ),
-                ),
-              ],
-            );
-          },
-          loading: () => const LinearProgressIndicator(),
-          error: (error, _) => Text(apiErrorMessage(error)),
-        ),
-      ),
-    );
-  }
 }

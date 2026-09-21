@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../platform/features_provider.dart';
+import '../../certificates/presentation/certificates_providers.dart';
+import '../../certificates/presentation/digital_certificate_card.dart';
 
 /// Menu documental del cliente, sin alterar las habilitaciones del despacho.
 class DocumentationScreen extends ConsumerWidget {
@@ -11,6 +13,7 @@ class DocumentationScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final funciones = ref.watch(platformFeaturesProvider);
+    final certificado = ref.watch(certificateStatusProvider);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Documentaci\u00f3n'),
@@ -48,6 +51,8 @@ class DocumentationScreen extends ConsumerWidget {
             const Text(
               'Consulta tus documentos y solicita certificados oficiales al despacho.',
             ),
+            const SizedBox(height: 16),
+            DigitalCertificateCard(status: certificado),
             const SizedBox(height: 16),
             Card(
               child: ListTile(

@@ -319,7 +319,14 @@ def _secret_status(secret: ClientCertificateSecret | None) -> dict:
     valid_until = secret.valid_until
     if valid_until and valid_until.tzinfo is None:
         valid_until = valid_until.replace(tzinfo=timezone.utc)
-    status = "expired" if valid_until and valid_until <= now else "valid"
+    valid_from = secret.valid_from
+    if valid_from and valid_from.tzinfo is None:
+        valid_from = valid_from.replace(tzinfo=timezone.utc)
+    status = (
+        "expired" if valid_until and valid_until <= now else
+        "not_yet_valid" if valid_from and valid_from > now else
+        "valid"
+    )
     return {
         "configured": True,
         "status": status,
@@ -553,11 +560,17 @@ def list_certificate_types(request: Request, db: Session = Depends(_db)):
 @router.get("/certificate-status")
 def get_client_certificate_status(request: Request, db: Session = Depends(_db)):
     client = _authenticated_client(request, db)
-    require_certificates_enabled(db, client.organization_id)
+    org = db.get(MessagingOrganization, client.organization_id)
+    if not org or not org.active:
+        raise HTTPException(status_code=404, detail="Organizacion no encontrada")
     secret = db.scalar(select(ClientCertificateSecret).where(
         ClientCertificateSecret.organization_id == client.organization_id,
     ))
-    return _secret_status(secret)
+    state = _secret_status(secret)
+    return {key: state[key] for key in (
+        "configured", "status", "common_name", "issuer", "valid_from",
+        "valid_until", "updated_at",
+    ) if key in state}
 
 
 @router.post("/requests", status_code=201)
@@ -575,8 +588,8 @@ def create_client_request(
     secret_state = _secret_status(secret)
     if not secret_state["configured"]:
         raise HTTPException(status_code=409, detail="Certificado digital no configurado")
-    if secret_state["status"] == "expired":
-        raise HTTPException(status_code=409, detail="El certificado digital esta caducado")
+    if secret_state["status"] != "valid":
+        raise HTTPException(status_code=409, detail="El certificado digital no esta en vigor")
     return _serialize(_create_request(
         db, org=org, payload=payload,
         requester_type="client", requester_id=client.id,
@@ -702,8 +715,8 @@ def create_internal_request(
     secret_state = _secret_status(secret)
     if not secret_state["configured"]:
         raise HTTPException(status_code=409, detail="Certificado digital no configurado")
-    if secret_state["status"] == "expired":
-        raise HTTPException(status_code=409, detail="El certificado digital esta caducado")
+    if secret_state["status"] != "valid":
+        raise HTTPException(status_code=409, detail="El certificado digital no esta en vigor")
     return _serialize(_create_request(
         db, org=org, payload=payload,
         requester_type="desktop", requester_id="desktop",

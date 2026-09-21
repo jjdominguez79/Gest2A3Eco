@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gestinem/features/documents/presentation/documentation_screen.dart';
+import 'package:gestinem/features/certificates/domain/certificate_request.dart';
+import 'package:gestinem/features/certificates/presentation/certificates_providers.dart';
 import 'package:gestinem/features/platform/features_provider.dart';
 import 'package:go_router/go_router.dart';
 
@@ -29,6 +31,10 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            certificateStatusProvider.overrideWith(
+              (_) async =>
+                  const CertificateStatus(configured: false, status: 'missing'),
+            ),
             platformFeaturesProvider.overrideWith(
               (_) async => const PlatformFeatures(),
             ),
@@ -75,6 +81,12 @@ void main() {
           await tester.pumpWidget(
             ProviderScope(
               overrides: [
+                certificateStatusProvider.overrideWith(
+                  (_) async => const CertificateStatus(
+                    configured: false,
+                    status: 'missing',
+                  ),
+                ),
                 platformFeaturesProvider.overrideWith(
                   (_) async => PlatformFeatures(
                     documents: documentos,
@@ -87,6 +99,7 @@ void main() {
           );
           await tester.pumpAndSettle();
           expect(find.text('Documentaci\u00f3n'), findsOneWidget);
+          expect(find.text('Certificado digital no preparado'), findsOneWidget);
           final documentosTile = find.byKey(
             const Key('documentation-documents'),
           );
@@ -130,6 +143,10 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          certificateStatusProvider.overrideWith(
+            (_) async =>
+                const CertificateStatus(configured: false, status: 'missing'),
+          ),
           platformFeaturesProvider.overrideWith((_) {
             intentos++;
             return intentos == 1
