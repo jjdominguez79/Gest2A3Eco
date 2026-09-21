@@ -58,3 +58,7 @@ La version 2026.09.18.8 usa el codigo electronico de 16 caracteres leido del
 resguardo original para la recogida AEAT. Es distinto de la referencia
 numerica/TCT. El worker solo puede descargar el resguardo del expediente
 reclamado con su token vigente; no se duplican codigos en configuraciones.
+
+La version 2026.09.21.1 exige NIF y razon social del contratante para AEAT,
+detiene el tramite si no se identifican los controles de validacion o firma y
+admite el boton final "Descargar documento". Requiere reconstruir la imagen.
