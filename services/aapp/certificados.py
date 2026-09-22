@@ -312,12 +312,43 @@ class SedePlaywrightProvider(ProveedorCertificado):
                 ok=False, tipo=tipo, estado="PENDIENTE",
                 mensaje="Este tramite AEAT no tiene un formulario de solicitud configurado.",
             )
+        paso = "acceso al formulario"
         try:
+            # La autenticacion por certificado puede terminar despues de goto.
+            # Esperar el formulario AEAT, no los selectores de SEDESS.
+            try:
+                page.wait_for_selector(
+                    "#fTipoRepresentacion0, #fTipoCertificado4, "
+                    "#validarSolicitud, input[id^='FirmayEnvia_']",
+                    timeout=opciones.timeout_ms,
+                )
+            except Exception:
+                pass
+            self._aeat_cerrar_avisos_iniciales(page, opciones)
+            paso = "representacion"
             self._marcar_si_existe(page, "#fTipoRepresentacion0")
             if tipo == "AEAT_CORRIENTE":
                 # Orden publicado por AEAT: contratacion, transporte, subvenciones,
                 # extranjeria y generico. La solicitud base usa la finalidad generica.
+                paso = "finalidad generica"
+                try:
+                    page.wait_for_selector(
+                        "#fTipoCertificado4", state="attached",
+                        timeout=opciones.timeout_ms,
+                    )
+                except Exception:
+                    pass
+                self._aeat_cerrar_avisos_iniciales(page, opciones)
                 self._marcar_si_existe(page, "#fTipoCertificado4", obligatorio=True)
+                paso = "fecha actual"
+                try:
+                    page.wait_for_selector(
+                        "#fMomentoDeterminacionEcot0", state="attached",
+                        timeout=opciones.timeout_ms,
+                    )
+                except Exception:
+                    pass
+                self._aeat_cerrar_avisos_iniciales(page, opciones)
                 self._marcar_si_existe(page, "#fMomentoDeterminacionEcot0", obligatorio=True)
             elif tipo == "AEAT_CONTRATISTAS":
                 if not self._aeat_rellenar_contratante(page, opciones):
@@ -328,6 +359,7 @@ class SedePlaywrightProvider(ProveedorCertificado):
                     )
                 self._marcar_si_existe(page, "#fMomentoDeterminacionEcot0")
 
+            paso = "validacion"
             validar = self._primer_control(page, (
                 "#validarSolicitud",
                 "input[value*='Validar' i]",
@@ -341,12 +373,20 @@ class SedePlaywrightProvider(ProveedorCertificado):
                     ok=False, tipo=tipo, estado="PENDIENTE",
                     mensaje="No se encontro el boton Validar solicitud en la AEAT.",
                 )
+            self._aeat_cerrar_avisos_iniciales(page, opciones)
             validar.click(timeout=6000)
             try:
                 page.wait_for_load_state("networkidle", timeout=opciones.timeout_ms)
             except Exception:
                 pass
             opciones.trace(f"[AEAT] solicitud {tipo} validada")
+            if self._aeat_aviso_visible(page):
+                return ResultadoCertificado(
+                    ok=False, tipo=tipo, estado="PENDIENTE",
+                    mensaje=("La AEAT mostro un aviso tras validar la solicitud. "
+                             "Revisa el formulario en la sede antes de reintentar."),
+                )
+            paso = "confirmacion previa"
             firmar = self._primer_control(page, (
                 "input[id^='FirmayEnvia_']",
                 "input[value*='Firmar y Enviar' i]",
@@ -368,12 +408,51 @@ class SedePlaywrightProvider(ProveedorCertificado):
                 )
             return page
         except Exception as exc:
-            opciones.trace(f"[AEAT] no se pudo validar la solicitud {tipo}: {exc}")
+            try:
+                self._trace_controles(page, opciones)
+            except Exception:
+                pass
+            opciones.trace(
+                f"[AEAT] no se pudo completar {paso} en {tipo}: "
+                f"{type(exc).__name__}"
+            )
             return ResultadoCertificado(
                 ok=False, tipo=tipo, estado="PENDIENTE",
-                mensaje=("No se pudo completar el formulario AEAT. Revisa la solicitud "
-                         "en la sede antes de reintentar."),
+                mensaje=(f"No se pudo completar {paso} en el formulario AEAT. "
+                         "Revisa la solicitud en la sede antes de reintentar."),
             )
+
+    @staticmethod
+    def _aeat_aviso_visible(page):
+        try:
+            aviso = page.locator("#alertsModal")
+            return aviso.count() > 0 and aviso.first.is_visible()
+        except Exception:
+            return False
+
+    def _aeat_cerrar_avisos_iniciales(self, page, opciones):
+        """Cierra el aviso inicial AEAT mediante su control visible.
+
+        No pulsa los campos del formulario a la fuerza ni cierra avisos de
+        validacion posteriores, que pueden indicar datos rechazados.
+        """
+        if not self._aeat_aviso_visible(page):
+            return
+        aviso = page.locator("#alertsModal")
+        cerrar = self._primer_control(aviso, (
+            "button:has-text('Continuar')",
+            "button[data-bs-dismiss='modal']",
+            "button[data-dismiss='modal']",
+            "button[aria-label='Cerrar']",
+            "button[aria-label='Close']",
+            "button:has-text('Cerrar')",
+            "button:has-text('Aceptar')",
+        ))
+        if cerrar is None:
+            raise RuntimeError("El aviso inicial AEAT no tiene boton de cierre")
+        cerrar.click(timeout=5000)
+        aviso.wait_for(state="hidden", timeout=5000)
+        opciones.trace("[AEAT] aviso inicial cerrado antes de cumplimentar")
 
     @staticmethod
     def _primer_control(page, selectores):

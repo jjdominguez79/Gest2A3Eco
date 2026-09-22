@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import pytest
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -17,7 +17,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from backend.api.client_certificates_api import _db, router
+from backend.api.client_certificates_api import _db, _next_dehu_sync, router
 from backend.api.client_models import (
     ClientCertificateRequest,
     ClientCertificateSecret,
@@ -376,6 +376,45 @@ def test_programacion_automatica_dehu_permite_desactivar_email_interno(monkeypat
     )
     assert response.status_code == 200
     assert response.json()["next_sync_at"]
+
+
+def test_hora_diaria_dehu_sigue_hora_de_madrid_con_cambio_estacional():
+    invierno = datetime(2026, 1, 15, 8, 0, tzinfo=timezone.utc)
+    verano = datetime(2026, 7, 15, 8, 0, tzinfo=timezone.utc)
+    assert _next_dehu_sync(invierno, "DIARIA", "08:45") == datetime(
+        2026, 1, 16, 7, 45, tzinfo=timezone.utc,
+    )
+    assert _next_dehu_sync(verano, "DIARIA", "08:45") == datetime(
+        2026, 7, 16, 6, 45, tzinfo=timezone.utc,
+    )
+
+
+def test_hora_diaria_dehu_se_guarda_y_no_encola_antes_de_hora(monkeypatch):
+    client, factory, _, _ = _setup(monkeypatch)
+    instante = datetime(2026, 9, 22, 5, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr("backend.api.client_certificates_api.utcnow", lambda: instante)
+    url = "/api/v1/messaging/client/certificates/internal/dehu-mailboxes/E00001"
+    response = client.put(url, json={
+        "active": True, "periodicity": "DIARIA",
+        "daily_sync_time": "08:45", "notification_email": "",
+    })
+    assert response.status_code == 200
+    assert datetime.fromisoformat(response.json()["next_sync_at"]) == datetime(
+        2026, 9, 22, 6, 45, tzinfo=timezone.utc,
+    )
+    with factory() as db:
+        assert db.scalars(select(ClientDehuMailboxConfig)).one().daily_sync_time == "08:45"
+    old_client = client.put(url, json={
+        "active": True, "periodicity": "DIARIA", "notification_email": "",
+    })
+    assert old_client.status_code == 200
+    assert old_client.json()["daily_sync_time"] == "08:45"
+    assert datetime.fromisoformat(old_client.json()["next_sync_at"]).replace(
+        tzinfo=timezone.utc,
+    ) == datetime.fromisoformat(response.json()["next_sync_at"])
+    assert client.put(url, json={
+        "active": True, "periodicity": "DIARIA", "daily_sync_time": "24:00",
+    }).status_code == 422
 
 
 def test_resumen_segunda_consulta_solo_enumera_nuevas_y_excluye_leidas(monkeypatch):

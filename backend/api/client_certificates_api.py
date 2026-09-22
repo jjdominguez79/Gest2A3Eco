@@ -243,6 +243,7 @@ class DehuMailboxConfigIn(BaseModel):
     mailbox_name: str = Field(default="DEHu", max_length=300)
     active: bool = True
     periodicity: str = Field(default="MANUAL", max_length=20)
+    daily_sync_time: str | None = Field(default=None, max_length=5)
     notification_email: str = Field(default="", max_length=254)
 
 
@@ -943,6 +944,7 @@ def _serialize_dehu_mailbox(item: ClientDehuMailboxConfig, org=None) -> dict:
         "mailbox_name": item.mailbox_name,
         "active": item.active,
         "periodicity": item.periodicity,
+        "daily_sync_time": item.daily_sync_time,
         "notification_email": item.notification_email,
         "next_sync_at": item.next_sync_at.isoformat() if item.next_sync_at else None,
         "last_enqueued_at": (
@@ -952,7 +954,24 @@ def _serialize_dehu_mailbox(item: ClientDehuMailboxConfig, org=None) -> dict:
     }
 
 
-def _next_dehu_sync(now: datetime, periodicity: str) -> datetime | None:
+def _next_dehu_sync(
+    now: datetime, periodicity: str, daily_sync_time: str = "",
+) -> datetime | None:
+    if periodicity == "DIARIA" and daily_sync_time:
+        hora, minuto = map(int, daily_sync_time.split(":"))
+        madrid = ZoneInfo("Europe/Madrid")
+        fecha_local = now.astimezone(madrid).date()
+        proxima = datetime(
+            fecha_local.year, fecha_local.month, fecha_local.day,
+            hora, minuto, tzinfo=madrid,
+        ).astimezone(timezone.utc)
+        if proxima <= now:
+            fecha_local += timedelta(days=1)
+            proxima = datetime(
+                fecha_local.year, fecha_local.month, fecha_local.day,
+                hora, minuto, tzinfo=madrid,
+            ).astimezone(timezone.utc)
+        return proxima
     days = {"DIARIA": 1, "SEMANAL": 7, "QUINCENAL": 15, "MENSUAL": 30}
     interval = days.get(periodicity)
     return now + timedelta(days=interval) if interval else None
@@ -970,6 +989,15 @@ def upsert_internal_dehu_mailbox(
     periodicity = payload.periodicity.strip().upper()
     if periodicity not in _DEHU_PERIODICITIES:
         raise HTTPException(status_code=422, detail="Periodicidad DEHu no valida")
+    item = db.get(ClientDehuMailboxConfig, org.id)
+    daily_sync_time = (
+        item.daily_sync_time if payload.daily_sync_time is None and item is not None
+        else (payload.daily_sync_time or "").strip()
+    )
+    if daily_sync_time and (
+        not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", daily_sync_time)
+    ):
+        raise HTTPException(status_code=422, detail="La hora diaria DEHu debe tener formato HH:MM")
     email = payload.notification_email.strip().lower()
     automatic = payload.active and periodicity != "MANUAL"
     if email and "@" not in email:
@@ -977,23 +1005,27 @@ def upsert_internal_dehu_mailbox(
             status_code=422,
             detail="El email de aviso DEHu no es valido",
         )
-    item = db.get(ClientDehuMailboxConfig, org.id)
     now = utcnow()
     if item is None:
         item = ClientDehuMailboxConfig(organization_id=org.id)
         db.add(item)
     schedule_changed = (
         item.periodicity != periodicity or item.active != payload.active
+        or item.daily_sync_time != daily_sync_time
     )
     item.mailbox_id = payload.mailbox_id.strip()
     item.mailbox_name = payload.mailbox_name.strip() or "DEHu"
     item.active = payload.active
     item.periodicity = periodicity
+    item.daily_sync_time = daily_sync_time
     item.notification_email = email
     if not automatic:
         item.next_sync_at = None
     elif schedule_changed or item.next_sync_at is None:
-        item.next_sync_at = now
+        item.next_sync_at = (
+            _next_dehu_sync(now, periodicity, daily_sync_time)
+            if periodicity == "DIARIA" and daily_sync_time else now
+        )
     item.updated_at = now
     db.commit()
     return _serialize_dehu_mailbox(item, org)
@@ -1073,7 +1105,9 @@ def _enqueue_due_dehu_mailboxes(db: Session, now: datetime) -> None:
             db.flush()
             config.last_request_id = request_item.id
             config.last_enqueued_at = now
-            config.next_sync_at = _next_dehu_sync(now, config.periodicity)
+            config.next_sync_at = _next_dehu_sync(
+                now, config.periodicity, config.daily_sync_time,
+            )
             config.updated_at = now
     if due:
         db.commit()

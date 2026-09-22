@@ -527,7 +527,7 @@ class UIBandejaGlobal(ttk.Frame):
             f"Tipo: {buzon.get('tipo_buzon', '')}\n"
             f"Certificado: {buzon.get('certificado_nombre') or '(sin certificado)'}\n"
             f"Periodicidad: {buzon.get('periodicidad_sync', '')}\n"
-            f"Modo descarga: {buzon.get('modo_descarga', '')}\n"
+            "Modo de consulta: Consultar metadatos\n"
             f"Ultima consulta: {buzon.get('ultima_consulta') or '-'}"
         )
         messagebox.showinfo("Ver buzon", info, parent=self.winfo_toplevel())

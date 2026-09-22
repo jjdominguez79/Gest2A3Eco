@@ -63,6 +63,22 @@ def test_configuracion_global_edita_plantilla_independiente(root):
     vista._validar(datos)
 
 
+def test_configuracion_diaria_exige_hora_valida():
+    vista = object.__new__(UIConfigNotificacionesGlobal)
+    datos = {
+        "periodicidad_sync": "DIARIA", "hora_sync_diaria": "",
+        "email_resumen_interno": "", "email_asunto": "Aviso",
+        "email_html": "<p>{nombre_cliente}</p>{notificaciones}",
+    }
+    with pytest.raises(ValueError, match="hora diaria"):
+        vista._validar(datos)
+    datos["hora_sync_diaria"] = "25:00"
+    with pytest.raises(ValueError, match="HH:MM"):
+        vista._validar(datos)
+    datos["hora_sync_diaria"] = "08:45"
+    vista._validar(datos)
+
+
 def test_dialogo_legacy_no_puede_guardar_periodicidad_ni_email_particulares():
     vista = object.__new__(_BuzonDialog)
     vista._gestor = SimpleNamespace(

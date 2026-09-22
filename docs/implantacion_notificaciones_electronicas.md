@@ -63,11 +63,24 @@ resultante. El PFX y la contrasena nunca forman parte de una respuesta cliente.
 ## Configuracion global y comunicaciones DEHu
 
 La pestana **Configuracion global** del modulo de notificaciones guarda en
-PostgreSQL una unica periodicidad para todos los buzones, el email de resumen
-interno y la politica/plantilla de aviso al cliente. Solo el administrador
-puede cambiarla. **Guardar y aplicar** replica la periodicidad en el backend;
+PostgreSQL una unica periodicidad para todos los buzones, la hora de Madrid
+para las consultas diarias, el email de resumen interno y la politica/plantilla
+de aviso al cliente. Solo el administrador puede cambiarla. La hora se escribe
+en formato HH:MM cuando se elige **DIARIA**. **Guardar y aplicar** replica la
+periodicidad y la hora en el backend;
 la ficha del cliente conserva certificado, activacion y responsable, sin
 permitir periodicidades particulares.
+
+La consulta diaria se programa para la siguiente aparicion de esa hora en
+Madrid, teniendo en cuenta el cambio de horario estacional. El worker la
+encola cuando vence; la ejecucion puede comenzar unos segundos despues. La
+sincronizacion manual se puede solicitar aparte y no cambia esa hora.
+
+**Consultar metadatos** enumera las notificaciones y comunicaciones pendientes
+y registra sus datos descriptivos (referencia, emisor, asunto y fechas). No
+abre ni descarga el contenido, no comparece ni rechaza, y no publica un PDF
+al cliente por si sola. Las etiquetas antiguas de descarga en algunos buzones
+procedian de configuraciones previas; el worker actual solo consulta metadatos.
 
 El resumen interno del despacho es distinto del email de comunicacion al
 cliente. Este ultimo se dirige siempre al campo Email de la ficha y utiliza

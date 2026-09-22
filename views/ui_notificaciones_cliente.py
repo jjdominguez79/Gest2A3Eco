@@ -280,6 +280,9 @@ class UINotificacionesCliente(ttk.Frame):
                     mailbox_name=str(principal.get("nombre") or "DEHu"),
                     active=True,
                     periodicity=str(principal.get("periodicidad_sync") or "MANUAL"),
+                    daily_sync_time=str(
+                        self._gestor.get_notif_config_global().get("hora_sync_diaria") or ""
+                    ),
                     notification_email=str(
                         self._gestor.get_notif_config_global().get("email_resumen_interno") or ""
                     ),

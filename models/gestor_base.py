@@ -6090,6 +6090,7 @@ class GestorBase:
             CREATE TABLE IF NOT EXISTS notif_config_global (
                 id                    INTEGER PRIMARY KEY,
                 periodicidad_sync     TEXT NOT NULL DEFAULT 'MANUAL',
+                hora_sync_diaria      TEXT NOT NULL DEFAULT '',
                 avisar_cliente_email  INTEGER NOT NULL DEFAULT 0,
                 email_resumen_interno TEXT NOT NULL DEFAULT '',
                 email_asunto          TEXT NOT NULL DEFAULT 'Nueva notificacion electronica: {asunto}',
@@ -6224,6 +6225,7 @@ class GestorBase:
         return {
             "id": 1,
             "periodicidad_sync": periodicidad,
+            "hora_sync_diaria": "",
             "avisar_cliente_email": 0,
             "email_resumen_interno": email_interno,
             "email_asunto": "Nueva notificacion electronica: {asunto}",
@@ -6235,14 +6237,18 @@ class GestorBase:
         periodicidad = str(config.get("periodicidad_sync") or "MANUAL").upper()
         if periodicidad not in {"MANUAL", "DIARIA", "SEMANAL", "QUINCENAL", "MENSUAL"}:
             raise ValueError("Periodicidad de sincronizacion no valida.")
+        hora_diaria = str(config.get("hora_sync_diaria") or "").strip()
+        if hora_diaria and not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", hora_diaria):
+            raise ValueError("La hora diaria debe tener formato HH:MM.")
         self.conn.execute(
             """
             INSERT INTO notif_config_global
-                (id, periodicidad_sync, avisar_cliente_email,
+                (id, periodicidad_sync, hora_sync_diaria, avisar_cliente_email,
                  email_resumen_interno, email_asunto, email_html, updated_at)
-            VALUES (1,?,?,?,?,?,?)
+            VALUES (1,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
                 periodicidad_sync=excluded.periodicidad_sync,
+                hora_sync_diaria=excluded.hora_sync_diaria,
                 avisar_cliente_email=excluded.avisar_cliente_email,
                 email_resumen_interno=excluded.email_resumen_interno,
                 email_asunto=excluded.email_asunto,
@@ -6251,6 +6257,7 @@ class GestorBase:
             """,
             (
                 periodicidad,
+                hora_diaria,
                 int(bool(config.get("avisar_cliente_email"))),
                 str(config.get("email_resumen_interno") or "").strip(),
                 str(config.get("email_asunto") or "").strip(),

@@ -22,6 +22,7 @@ def aplicar_programacion_global(gestor, config: dict, backend=None) -> tuple[int
             actualizado = dict(buzon)
             actualizado.update({
                 "periodicidad_sync": config.get("periodicidad_sync") or "MANUAL",
+                "modo_descarga": "SOLO_DETECTAR",
                 "envio_automatico_cliente": 0,
                 "email_aviso": str(empresa.get("email") or "").strip() or None,
             })
@@ -32,6 +33,7 @@ def aplicar_programacion_global(gestor, config: dict, backend=None) -> tuple[int
                 mailbox_name=str(buzon.get("nombre") or "DEHu"),
                 active=True,
                 periodicity=actualizado["periodicidad_sync"],
+                daily_sync_time=str(config.get("hora_sync_diaria") or ""),
                 notification_email=str(config.get("email_resumen_interno") or ""),
             )
             guardados += 1

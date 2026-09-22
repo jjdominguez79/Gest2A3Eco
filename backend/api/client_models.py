@@ -263,6 +263,7 @@ class ClientDehuMailboxConfig(Base):
     mailbox_name: Mapped[str] = mapped_column(String(300), default="DEHu")
     active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     periodicity: Mapped[str] = mapped_column(String(20), default="MANUAL", index=True)
+    daily_sync_time: Mapped[str] = mapped_column(String(5), default="")
     notification_email: Mapped[str] = mapped_column(String(254), default="")
     next_sync_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), index=True,

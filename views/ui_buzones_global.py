@@ -27,7 +27,7 @@ class UIBuzonesGlobal(ttk.Frame):
         ("nombre",          "Nombre buzon",     150, "w"),
         ("tipo_buzon",      "Tipo",              70, "center"),
         ("certificado",     "Certificado",      140, "w"),
-        ("modo_descarga",   "Modo descarga",    130, "center"),
+        ("modo_descarga",   "Modo de consulta",  140, "center"),
         ("ultima_consulta", "Ultima consulta",  120, "center"),
         ("activo",          "Activo",            60, "center"),
     ]
@@ -312,7 +312,7 @@ class UIBuzonesGlobal(ttk.Frame):
             if solo_activos and not b.get("activo"):
                 continue
             tag = "activo" if b.get("activo") else "inactivo"
-            modo = LABELS_MODO_DESCARGA.get(b.get("modo_descarga"), b.get("modo_descarga", ""))
+            modo = LABELS_MODO_DESCARGA["SOLO_DETECTAR"]
             ultima = (b.get("ultima_consulta") or "")[:16].replace("T", " ")
             self._tv.insert("", tk.END, values=(
                 b["id"], cliente, org, b.get("nombre", ""), b.get("tipo_buzon", ""),

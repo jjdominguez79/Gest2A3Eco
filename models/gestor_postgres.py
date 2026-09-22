@@ -874,6 +874,7 @@ class GestorPostgres(GestorBase):
                 CREATE TABLE IF NOT EXISTS notif_config_global (
                   id INTEGER PRIMARY KEY,
                   periodicidad_sync TEXT NOT NULL DEFAULT 'MANUAL',
+                  hora_sync_diaria TEXT NOT NULL DEFAULT '',
                   avisar_cliente_email INTEGER NOT NULL DEFAULT 0,
                   email_resumen_interno TEXT NOT NULL DEFAULT '',
                   email_asunto TEXT NOT NULL DEFAULT 'Nueva notificacion electronica: {asunto}',
@@ -891,6 +892,11 @@ class GestorPostgres(GestorBase):
         if existentes and not any(row[0] == "email_resumen_interno" for row in existentes):
             self.conn.execute(
                 "ALTER TABLE notif_config_global ADD COLUMN email_resumen_interno TEXT NOT NULL DEFAULT ''"
+            )
+            self.conn.commit()
+        if existentes and not any(row[0] == "hora_sync_diaria" for row in existentes):
+            self.conn.execute(
+                "ALTER TABLE notif_config_global ADD COLUMN hora_sync_diaria TEXT NOT NULL DEFAULT ''"
             )
             self.conn.commit()
 

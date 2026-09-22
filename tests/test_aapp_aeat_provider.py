@@ -50,6 +50,110 @@ def test_aeat_corriente_prepara_solicitud_generica_en_nombre_propio():
     assert ("click", "input[id^='FirmayEnvia_']") in page.actions
 
 
+def test_aeat_corriente_espera_los_campos_que_aparecen_tras_identificarse():
+    class PaginaConFormularioTardio(_Page):
+        def __init__(self):
+            super().__init__()
+            self.visibles = set()
+
+        def wait_for_selector(self, selector, state=None, timeout=None):
+            if selector in {"#fTipoCertificado4", "#fMomentoDeterminacionEcot0"}:
+                self.visibles.add(selector)
+
+        def locator(self, selector):
+            control = super().locator(selector)
+            if selector in {"#fTipoCertificado4", "#fMomentoDeterminacionEcot0"}:
+                control.count = lambda: int(selector in self.visibles)
+            return control
+
+    page = PaginaConFormularioTardio()
+    provider = SedePlaywrightProvider("AEAT", {"AEAT_CORRIENTE"}, "https://example.test")
+
+    assert provider._aeat_preparar_solicitud(
+        page, OpcionesSync(log=lambda _message: None), "AEAT_CORRIENTE",
+    ) is page
+    assert ("check", "#fTipoCertificado4") in page.actions
+    assert ("check", "#fMomentoDeterminacionEcot0") in page.actions
+
+
+def test_aeat_corriente_indica_que_campo_falta_sin_exponer_datos():
+    class PaginaSinFinalidad(_Page):
+        def locator(self, selector):
+            control = super().locator(selector)
+            if selector == "#fTipoCertificado4":
+                control.count = lambda: 0
+            return control
+
+    provider = SedePlaywrightProvider("AEAT", {"AEAT_CORRIENTE"}, "https://example.test")
+    resultado = provider._aeat_preparar_solicitud(
+        PaginaSinFinalidad(), OpcionesSync(log=lambda _message: None),
+        "AEAT_CORRIENTE",
+    )
+
+    assert isinstance(resultado, ResultadoCertificado)
+    assert resultado.estado == "PENDIENTE"
+    assert "finalidad generica" in resultado.mensaje
+
+
+def test_aeat_cierra_aviso_inicial_antes_de_marcar_generico():
+    class Aviso:
+        def __init__(self, page):
+            self.page = page
+
+        @property
+        def first(self):
+            return self
+
+        def count(self):
+            return 1
+
+        def is_visible(self):
+            return self.page.aviso_visible
+
+        def locator(self, selector):
+            boton = _Locator(selector, self.page.actions)
+            boton.count = lambda: int(selector == "button:has-text('Continuar')")
+            boton.click = lambda timeout=None: self.page.cerrar_aviso()
+            return boton
+
+        def wait_for(self, state, timeout=None):
+            assert state == "hidden" and not self.page.aviso_visible
+
+    class PaginaConAviso(_Page):
+        def __init__(self):
+            super().__init__()
+            self.aviso_visible = True
+
+        def cerrar_aviso(self):
+            self.actions.append(("click", "cerrar aviso"))
+            self.aviso_visible = False
+
+        def locator(self, selector):
+            if selector == "#alertsModal":
+                return Aviso(self)
+            if selector == "#fTipoCertificado4":
+                page = self
+
+                class Radio(_Locator):
+                    def check(self, timeout=None):
+                        if page.aviso_visible:
+                            raise RuntimeError("Aviso bloquea el radio")
+                        super().check(timeout=timeout)
+
+                return Radio(selector, self.actions)
+            return super().locator(selector)
+
+    page = PaginaConAviso()
+    provider = SedePlaywrightProvider("AEAT", {"AEAT_CORRIENTE"}, "https://example.test")
+
+    assert provider._aeat_preparar_solicitud(
+        page, OpcionesSync(log=lambda _message: None), "AEAT_CORRIENTE",
+    ) is page
+    assert page.actions.index(("click", "cerrar aviso")) < page.actions.index(
+        ("check", "#fTipoCertificado4")
+    )
+
+
 def test_aeat_censal_valida_sin_marcar_opciones_de_corriente():
     page = _Page()
     provider = SedePlaywrightProvider("AEAT", {"AEAT_CENSAL"}, "https://example.test")

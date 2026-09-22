@@ -290,6 +290,7 @@ class BackendClientService:
     def save_dehu_mailbox_config(
         self, *, company_code: str, mailbox_id: str, mailbox_name: str,
         active: bool, periodicity: str, notification_email: str,
+        daily_sync_time: str = "",
     ) -> dict:
         """Guarda en el backend la programacion que ejecutara el worker."""
         self._ensure_configured()
@@ -302,6 +303,7 @@ class BackendClientService:
                 "mailbox_name": mailbox_name,
                 "active": bool(active),
                 "periodicity": periodicity,
+                "daily_sync_time": daily_sync_time,
                 "notification_email": notification_email,
             },
             timeout=30,

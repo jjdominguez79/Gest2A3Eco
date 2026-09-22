@@ -45,7 +45,7 @@ class UIBuzones(ttk.Frame):
         ("tipo_buzon",      "Tipo",             70, "center"),
         ("nif_titular",     "NIF Titular",       90, "center"),
         ("certificado",     "Certificado",      160, "w"),
-        ("modo_descarga",   "Modo descarga",   140, "center"),
+        ("modo_descarga",   "Modo de consulta", 140, "center"),
         ("ultima_consulta", "Ultima consulta",  120, "center"),
         ("activo",          "Estado",            70, "center"),
     ]
@@ -175,6 +175,9 @@ class UIBuzones(ttk.Frame):
             mailbox_name=str(buzon.get("nombre") or "DEHu"),
             active=bool(buzon.get("activo")),
             periodicity=str(buzon.get("periodicidad_sync") or "MANUAL"),
+            daily_sync_time=str(
+                self._gestor.get_notif_config_global().get("hora_sync_diaria") or ""
+            ),
             notification_email=str(buzon.get("email_aviso") or ""),
         )
         self._gestor.upsert_notif_buzon(buzon)
@@ -189,7 +192,7 @@ class UIBuzones(ttk.Frame):
             org    = r.get("organismo_nombre") or r.get("organismo_codigo") or ""
             cert   = r.get("certificado_nombre") or ""
             ultima = (r.get("ultima_consulta") or "")[:16].replace("T", " ")
-            modo = LABELS_MODO_DESCARGA.get(r.get("modo_descarga"), r.get("modo_descarga", ""))
+            modo = LABELS_MODO_DESCARGA["SOLO_DETECTAR"]
             self._tv.insert("", tk.END, values=(
                 r["id"], org, r.get("nombre", ""),
                 r.get("tipo_buzon", ""), r.get("nif_titular", "") or "",

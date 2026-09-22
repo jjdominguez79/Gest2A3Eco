@@ -401,6 +401,7 @@ def startup():
         "024_message_receipts.sql",
         "025_read_receipt_privacy.sql",
         "026_aeat_certificate_followup.sql",
+        "027_dehu_daily_sync_time.sql",
     ):
         _mig_path = Path(__file__).resolve().parent.parent / "migrations" / _mig_name
         if _mig_path.exists():

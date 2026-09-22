@@ -59,6 +59,7 @@ def test_guardar_programa_en_backend_antes_de_actualizar_local(monkeypatch):
         mailbox_name="DEHu",
         active=True,
         periodicity="SEMANAL",
+        daily_sync_time="",
         notification_email="avisos@gestinem.es",
     )
     guardado = gestor.upsert_notif_buzon.call_args.args[0]

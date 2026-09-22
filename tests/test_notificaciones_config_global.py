@@ -27,6 +27,23 @@ def test_guardar_config_global_valida_periodicidad():
     gestor.conn.execute.assert_not_called()
 
 
+def test_guardar_config_global_valida_y_persiste_hora_diaria():
+    gestor = object.__new__(GestorPostgres)
+    gestor.conn = Mock()
+    with pytest.raises(ValueError, match="HH:MM"):
+        gestor.upsert_notif_config_global({
+            "periodicidad_sync": "DIARIA", "hora_sync_diaria": "25:00",
+        })
+    gestor.conn.execute.assert_not_called()
+    gestor._utc_now = Mock(return_value="2026-09-22T10:00:00")
+    gestor.upsert_notif_config_global({
+        "periodicidad_sync": "DIARIA", "hora_sync_diaria": "08:45",
+    })
+    args = gestor.conn.execute.call_args.args
+    assert "hora_sync_diaria" in args[0]
+    assert args[1][1] == "08:45"
+
+
 def test_migracion_global_conserva_programacion_y_resumen_legacy():
     def ejecutar(sql, params=None):
         result = Mock()
@@ -74,3 +91,21 @@ def test_programacion_comun_separa_resumen_interno_de_email_cliente():
         assert llamada.kwargs["notification_email"] == "despacho@gestinem.es"
     backend.delete_dehu_mailbox_config.assert_called_once_with(company_code="E00003")
     assert gestor.upsert_notif_buzon.call_args_list[0].args[0]["email_aviso"] == "E00001@cliente.test"
+
+
+def test_programacion_global_aplica_hora_y_modo_real():
+    gestor = SimpleNamespace(
+        listar_notif_buzones_global=Mock(return_value=[{
+            "id": "b1", "codigo_empresa": "E00001", "activo": 1,
+            "modo_descarga": "DESCARGA_AUTOMATICA",
+        }]),
+        get_empresa=Mock(return_value={}),
+        upsert_notif_buzon=Mock(),
+    )
+    backend = Mock()
+    count, errores = aplicar_programacion_global(gestor, {
+        "periodicidad_sync": "DIARIA", "hora_sync_diaria": "08:45",
+    }, backend)
+    assert (count, errores) == (1, [])
+    assert backend.save_dehu_mailbox_config.call_args.kwargs["daily_sync_time"] == "08:45"
+    assert gestor.upsert_notif_buzon.call_args.args[0]["modo_descarga"] == "SOLO_DETECTAR"

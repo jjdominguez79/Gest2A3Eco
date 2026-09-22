@@ -62,3 +62,9 @@ reclamado con su token vigente; no se duplican codigos en configuraciones.
 La version 2026.09.21.1 exige NIF y razon social del contratante para AEAT,
 detiene el tramite si no se identifican los controles de validacion o firma y
 admite el boton final "Descargar documento". Requiere reconstruir la imagen.
+
+La version 2026.09.22.1 cierra mediante "Continuar" el aviso informativo
+inicial de AEAT que bloqueaba la seleccion del certificado generico y el boton
+Validar solicitud. Si aparece un aviso despues de validar, detiene el tramite
+para revisar la respuesta de AEAT antes de cualquier firma. Requiere
+reconstruir la imagen; las solicitudes fallidas pueden reintentarse desde la app.
