@@ -1,6 +1,6 @@
 {
-  "version": "1.8.19",
-  "tag": "v1.8.19",
-  "changelog": "Correccion de error a la hora de solicitar certificado de AEAT.",
-  "force_update": true
+  "version": "1.8.20",
+  "tag": "v1.8.20",
+  "changelog": "Corrige solicitudes de certificados AEAT y permite configurar la hora diaria de sincronización DEHú.",
+  "force_update": false
 }
