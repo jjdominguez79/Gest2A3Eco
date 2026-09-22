@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.8.19",
+  "latest_version": "1.8.20",
   "minimum_required_version": "1.8.19",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.19/Setup_Gest2A3Eco_1.8.19.exe",
-  "changelog": "Correccion de error a la hora de solicitar certificado de AEAT.",
-  "force_update": true
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.20/Setup_Gest2A3Eco_1.8.20.exe",
+  "changelog": "Corrige solicitudes de certificados AEAT y permite configurar la hora diaria de sincronizaci�n DEH�.",
+  "force_update": false
 }
