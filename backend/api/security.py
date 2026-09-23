@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import hmac as _hmac
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -35,25 +34,6 @@ def utcnow() -> datetime:
 
 
 DESKTOP_ADMIN_SESSION_TTL = timedelta(hours=1)
-
-
-def _scrypt_verify(plain_password: str, stored_hash: str) -> bool:
-    """Verifica una password contra el formato scrypt del escritorio."""
-    try:
-        prefix, n_raw, r_raw, p_raw, salt_hex, digest_hex = stored_hash.split("$", 5)
-        if prefix != "scrypt":
-            return False
-        digest = hashlib.scrypt(
-            plain_password.encode("utf-8"),
-            salt=bytes.fromhex(salt_hex),
-            n=int(n_raw),
-            r=int(r_raw),
-            p=int(p_raw),
-            dklen=len(bytes.fromhex(digest_hex)),
-        )
-        return _hmac.compare_digest(digest, bytes.fromhex(digest_hex))
-    except Exception:
-        return False
 
 
 def require_internal_key(x_api_key: str = Header(default="")) -> str:

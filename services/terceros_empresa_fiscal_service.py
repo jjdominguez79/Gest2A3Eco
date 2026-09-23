@@ -64,23 +64,6 @@ DEFAULT_REL_CONFIG = {
     "facturae_referencia_pedido": "",
 }
 
-TIPOS_OPERACION_OCR_MAP = {
-    "interior": "INTERIOR_DEDUCIBLE",
-    "intracomunitaria": "INTRACOMUNITARIA",
-    "importacion": "IMPORTACION",
-    "exterior": "OTROS",
-}
-
-TIPOS_OPERACION_OCR_REVERSE_MAP = {
-    "INTERIOR_DEDUCIBLE": "interior",
-    "INTERIOR_NO_DEDUCIBLE": "interior",
-    "INTRACOMUNITARIA": "intracomunitaria",
-    "IMPORTACION": "importacion",
-    "EXPORTACION": "exterior",
-    "NO_SUJETA": "exterior",
-    "OTROS": "exterior",
-}
-
 TIPO_IVA_TOOLTIPS = {
     "INTERIOR_IVA": "Operacion interior sujeta a IVA repercutido.",
     "INTERIOR_EXENTO": "Venta interior exenta, util para futuras obligaciones fiscales.",
@@ -230,24 +213,3 @@ def split_iva_deducible(cuota_iva: Any, porcentaje_deduccion: Any) -> tuple[Deci
     ded = (cuota * pct / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     no_ded = (cuota - ded).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     return ded, no_ded
-
-
-def build_doc_proveedor_fiscal_data(rel: dict | None, *, cuenta_gasto: str = "", cuenta_proveedor: str = "") -> dict:
-    rel_norm = normalize_tercero_empresa_rel(rel)
-    return {
-        "cuenta_gasto": str(cuenta_gasto or rel_norm.get("subcuenta_gasto") or "").strip(),
-        "cuenta_proveedor": str(cuenta_proveedor or rel_norm.get("subcuenta_proveedor") or rel_norm.get("subcuenta_cliente") or "").strip(),
-        "proveedor_tipo_operacion_iva": rel_norm["proveedor_tipo_operacion_iva"],
-        "proveedor_iva_deducible": int(bool(rel_norm.get("proveedor_iva_deducible"))),
-        "proveedor_porcentaje_deduccion_iva": float(rel_norm.get("proveedor_porcentaje_deduccion_iva") or 0.0),
-    }
-
-
-def proveedor_tipo_to_ocr(tipo_operacion_iva: str | None) -> str:
-    key = str(tipo_operacion_iva or "").strip().upper()
-    return TIPOS_OPERACION_OCR_REVERSE_MAP.get(key, "interior")
-
-
-def ocr_tipo_to_proveedor(tipo_operacion: str | None) -> str:
-    key = str(tipo_operacion or "").strip().lower()
-    return TIPOS_OPERACION_OCR_MAP.get(key, DEFAULT_REL_CONFIG["proveedor_tipo_operacion_iva"])

@@ -52,12 +52,6 @@ def _fv_pct(x, fraccion: bool) -> float:
     return v
 
 
-def _r2(x) -> float:
-    try:
-        return round(float(x), 2)
-    except Exception:
-        return 0.0
-
 def _d2(x) -> Decimal:
     try:
         d = Decimal(str(x)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)

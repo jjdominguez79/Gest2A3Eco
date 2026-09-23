@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
 class ExpedienteCreate(BaseModel):
@@ -63,7 +63,3 @@ class DocumentoGeneradoCreate(BaseModel):
     json_datos_generacion: dict[str, Any] = Field(default_factory=dict)
     hash_contenido: str | None = None
     estado: str = ""
-
-
-class OrmModel(BaseModel):
-    model_config = ConfigDict(from_attributes=True)

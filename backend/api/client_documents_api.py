@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from backend.api.client_models import ClientDocument, ClientDocumentRead
 from backend.api.client_storage import ClientDocumentStorage
+from backend.api.client_validation import normalize_tax_id
 from backend.api.database import SessionLocal
 from backend.api.messaging_models import (
     MessagingAppDevice,
@@ -73,6 +74,22 @@ def _db():
         yield db
     finally:
         db.close()
+
+
+def _find_organization_by_tax_id(
+    db: Session, tax_id: str,
+) -> MessagingOrganization | None:
+    """Resuelve un NIF solo cuando identifica una organizacion activa unica."""
+    normalized = normalize_tax_id(tax_id)
+    if not normalized:
+        return None
+    organizations = db.scalars(
+        select(MessagingOrganization).where(
+            MessagingOrganization.tax_id == normalized,
+            MessagingOrganization.active.is_(True),
+        )
+    ).all()
+    return organizations[0] if len(organizations) == 1 else None
 
 
 def _authenticated_client(request: Request, db: Session) -> MessagingClient:
@@ -257,8 +274,7 @@ async def publish_document(
     # conservar la resolucion por NIF. En una factura ese NIF es el receptor y
     # usarlo como destino produciria una filtracion entre organizaciones.
     if not organization_id and customer_tax_id and not is_desktop_invoice:
-        from backend.api.client_publication_service import find_organization_by_tax_id
-        org = find_organization_by_tax_id(db, customer_tax_id)
+        org = _find_organization_by_tax_id(db, customer_tax_id)
         if org:
             organization_id = org.id
         else:

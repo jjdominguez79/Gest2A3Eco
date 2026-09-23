@@ -8,8 +8,6 @@ from utils.utilidades import (
     get_default_templates_dir,
     get_log_path,
     get_packaged_email_template_path,
-    load_user_config,
-    save_user_config,
 )
 
 # ── Plantilla HTML por defecto ───────────────────────────────────────────────
@@ -82,64 +80,6 @@ def ensure_template_file() -> Path:
         else:
             path.write_text(DEFAULT_HTML_TEMPLATE, encoding="utf-8")
     return path
-
-
-def load_email_preferences() -> dict:
-    return load_user_config()
-
-
-def save_email_preferences(cfg: dict) -> None:
-    save_user_config(cfg)
-
-
-def load_email_html_template() -> str:
-    """Carga la plantilla HTML editable desde AppData y la crea si no existe."""
-    path = ensure_template_file()
-    try:
-        return path.read_text(encoding="utf-8")
-    except Exception:
-        return DEFAULT_HTML_TEMPLATE
-
-
-def save_email_html_template(template: str) -> None:
-    """Guarda la plantilla HTML editable en AppData."""
-    path = ensure_template_file()
-    path.write_text(template, encoding="utf-8")
-
-
-def build_html_body(empresa_conf: dict, fac: dict, cliente: dict, totales: dict) -> str:
-    """Rellena la plantilla HTML con los datos de la factura."""
-    template = load_email_html_template()
-
-    def _v(d, *keys, default=""):
-        for k in keys:
-            v = d.get(k)
-            if v is not None and str(v).strip():
-                return str(v).strip()
-        return default
-
-    placeholders = {
-        "nombre_empresa":   _v(empresa_conf, "nombre"),
-        "cif_empresa":      _v(empresa_conf, "cif"),
-        "direccion_empresa": ", ".join(filter(None, [
-            _v(empresa_conf, "direccion"),
-            _v(empresa_conf, "cp"),
-            _v(empresa_conf, "poblacion"),
-            _v(empresa_conf, "provincia"),
-        ])),
-        "telefono_empresa": _v(empresa_conf, "telefono"),
-        "email_empresa":    _v(empresa_conf, "email"),
-        "nombre_cliente":   _v(cliente, "nombre"),
-        "nif_cliente":      _v(cliente, "nif"),
-        "numero":           _v(fac, "numero"),
-        "fecha":            _v(fac, "fecha_expedicion", "fecha_asiento"),
-        "total":            _fmt_total(totales, fac),
-    }
-    try:
-        return template.format(**placeholders)
-    except KeyError:
-        # Si la plantilla tiene llaves desconocidas, devolver sin sustituir
-        return template
 
 
 def build_invoice_email_text(fac: dict, cliente: dict, totales: dict) -> str:

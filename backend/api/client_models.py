@@ -614,52 +614,6 @@ class ClientInvoiceProcessingQueue(Base):
 
 
 # ==========================================================================
-# COLA DE PUBLICACION DOCUMENTAL (para el escritorio)
-# ==========================================================================
-
-class DesktopPublicationQueue(Base):
-    """Cola local de publicaciones pendientes desde el escritorio."""
-    __tablename__ = "desktop_publication_queue"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    organization_id: Mapped[str] = mapped_column(
-        ForeignKey("msg_organizations.id", ondelete="CASCADE"), index=True,
-    )
-
-    # Referencia al documento de origen en el escritorio
-    source_type: Mapped[str] = mapped_column(String(30))  # factura_emitida
-    source_id: Mapped[str] = mapped_column(String(120))
-    source_version: Mapped[int] = mapped_column(Integer, default=1)
-
-    # Ruta local del PDF
-    local_pdf_path: Mapped[str] = mapped_column(String(500))
-    display_name: Mapped[str] = mapped_column(String(300))
-    document_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    fiscal_year: Mapped[int] = mapped_column(Integer, default=0)
-    amount: Mapped[Decimal | None] = mapped_column(Numeric(15, 2))
-
-    # NIF del cliente para identificar la organizacion destino
-    customer_tax_id: Mapped[str] = mapped_column(String(20), default="")
-
-    # Estado: pending | published | blocked | error
-    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
-    error_message: Mapped[str] = mapped_column(Text, default="")
-    blocked_reason: Mapped[str] = mapped_column(Text, default="")
-
-    # Resultado
-    document_id: Mapped[str | None] = mapped_column(
-        ForeignKey("client_documents.id", ondelete="SET NULL"),
-    )
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, onupdate=utcnow,
-    )
-
-
-# ==========================================================================
 # AUDITORIA DE FEATURE FLAGS
 # ==========================================================================
 

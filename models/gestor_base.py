@@ -31,18 +31,6 @@ def _codigo_empresa_a3(v) -> str:
     return f"E{digits.zfill(5)}"
 
 
-def _ensure_dir(path: Path):
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-
-class DatabaseOpenError(RuntimeError):
-    def __init__(self, source: Path, action: str, original: Exception):
-        self.source = Path(source)
-        self.action = action
-        self.original = original
-        super().__init__(f"No se pudo {action} la base de datos en '{self.source}': {original}")
-
-
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS empresas (
   codigo TEXT NOT NULL,

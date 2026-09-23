@@ -60,13 +60,6 @@ def save_private_upload_bytes(
         "size": metadata["size"],
         "sha256": metadata["sha256"],
     }
-
-
-async def save_private_upload(file: UploadFile, referencia: str, rol: str) -> dict:
-    data, metadata = await read_validated_upload(file)
-    return save_private_upload_bytes(data, referencia, rol, metadata)
-
-
 def delete_private_upload(storage_key: str) -> bool:
     root = Path(get_settings().storage_dir).resolve()
     target = (root / str(storage_key or "")).resolve()
