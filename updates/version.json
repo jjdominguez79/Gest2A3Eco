@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.8.21",
-  "minimum_required_version": "1.8.19",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.21/Setup_Gest2A3Eco_1.8.21.exe",
-  "changelog": "Mejora las notificaciones electrónicas con bandeja global histórica, configuración masiva de buzones DEHú y DGT/DEV, sincronización de estados, reintentos automáticos y ordenación de certificados por vencimiento.",
-  "force_update": false
+  "latest_version": "1.8.22",
+  "minimum_required_version": "1.8.22",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.22/Setup_Gest2A3Eco_1.8.22.exe",
+  "changelog": "Se cambia el login para que el acceso sea por correo corporfativo.",
+  "force_update": true
 }
