@@ -23,3 +23,24 @@ final certificateRequestsProvider =
     FutureProvider.autoDispose<List<CertificateRequest>>((ref) {
       return ref.watch(certificatesRepositoryProvider).listRequests();
     });
+
+final staffCertificateTypesProvider = FutureProvider.autoDispose
+    .family<List<CertificateType>, String>((ref, companyCode) {
+      return ref
+          .watch(certificatesRepositoryProvider)
+          .listTypes(companyCode: companyCode);
+    });
+
+final staffCertificateStatusProvider = FutureProvider.autoDispose
+    .family<CertificateStatus, String>((ref, companyCode) {
+      return ref
+          .watch(certificatesRepositoryProvider)
+          .getStatus(companyCode: companyCode);
+    });
+
+final staffCertificateRequestsProvider = FutureProvider.autoDispose
+    .family<List<CertificateRequest>, String>((ref, companyCode) {
+      return ref
+          .watch(certificatesRepositoryProvider)
+          .listRequests(companyCode: companyCode);
+    });

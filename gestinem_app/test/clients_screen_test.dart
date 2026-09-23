@@ -208,6 +208,10 @@ void main() {
     expect(find.text('Ana Cliente'), findsOneWidget);
     expect(find.text('ana@example.test'), findsOneWidget);
     expect(find.byKey(const Key('client-open-direct')), findsOneWidget);
+    expect(
+      find.byKey(const Key('client-request-certificates')),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('client-withdraw-invite')), findsOneWidget);
     expect(find.byKey(const Key('client-disable-access')), findsNothing);
   });

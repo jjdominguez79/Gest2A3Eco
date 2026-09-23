@@ -8,9 +8,16 @@ import '../../messaging/presentation/messaging_providers.dart';
 import 'certificates_providers.dart';
 
 class DigitalCertificateCard extends ConsumerStatefulWidget {
-  const DigitalCertificateCard({super.key, required this.status});
+  const DigitalCertificateCard({
+    super.key,
+    required this.status,
+    this.showContactOffice = true,
+    this.onRefresh,
+  });
 
   final AsyncValue<CertificateStatus> status;
+  final bool showContactOffice;
+  final VoidCallback? onRefresh;
 
   @override
   ConsumerState<DigitalCertificateCard> createState() =>
@@ -72,7 +79,9 @@ class _DigitalCertificateCardState
                 'No se pudo consultar el certificado: ${apiErrorMessage(error)}',
               ),
               TextButton.icon(
-                onPressed: () => ref.invalidate(certificateStatusProvider),
+                onPressed:
+                    widget.onRefresh ??
+                    () => ref.invalidate(certificateStatusProvider),
                 icon: const Icon(Icons.refresh),
                 label: const Text('Reintentar'),
               ),
@@ -138,7 +147,7 @@ class _DigitalCertificateCardState
                   const Text(
                     'Estado calculado según las fechas del certificado.',
                   ),
-                if (needsOffice) ...[
+                if (needsOffice && widget.showContactOffice) ...[
                   const SizedBox(height: 12),
                   OutlinedButton.icon(
                     key: const Key('digital-certificate-contact-office'),

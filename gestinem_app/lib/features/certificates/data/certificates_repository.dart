@@ -6,23 +6,27 @@ class CertificatesRepository {
 
   final ApiClient _api;
 
-  Future<List<CertificateType>> listTypes() async {
-    final response = await _api.dio.get('/client/certificates/types');
+  String _basePath(String? companyCode) => companyCode == null
+      ? '/client/certificates'
+      : '/client/certificates/staff/organizations/${Uri.encodeComponent(companyCode)}';
+
+  Future<List<CertificateType>> listTypes({String? companyCode}) async {
+    final response = await _api.dio.get('${_basePath(companyCode)}/types');
     final data = response.data as Map<String, dynamic>;
     return (data['items'] as List<dynamic>? ?? const [])
         .map((item) => CertificateType.fromJson(item as Map<String, dynamic>))
         .toList();
   }
 
-  Future<CertificateStatus> getStatus() async {
+  Future<CertificateStatus> getStatus({String? companyCode}) async {
     final response = await _api.dio.get(
-      '/client/certificates/certificate-status',
+      '${_basePath(companyCode)}/certificate-status',
     );
     return CertificateStatus.fromJson(response.data as Map<String, dynamic>);
   }
 
-  Future<List<CertificateRequest>> listRequests() async {
-    final response = await _api.dio.get('/client/certificates/requests');
+  Future<List<CertificateRequest>> listRequests({String? companyCode}) async {
+    final response = await _api.dio.get('${_basePath(companyCode)}/requests');
     final data = response.data as Map<String, dynamic>;
     return (data['items'] as List<dynamic>? ?? const [])
         .map(
@@ -34,9 +38,10 @@ class CertificatesRepository {
   Future<CertificateRequest> create(
     String certificateType, {
     Map<String, dynamic> parameters = const {},
+    String? companyCode,
   }) async {
     final response = await _api.dio.post(
-      '/client/certificates/requests',
+      '${_basePath(companyCode)}/requests',
       data: {
         'certificate_type': certificateType,
         'parameters': parameters,
@@ -46,21 +51,27 @@ class CertificatesRepository {
     return CertificateRequest.fromJson(response.data as Map<String, dynamic>);
   }
 
-  Future<CertificateRequest> cancel(String requestId) async {
+  Future<CertificateRequest> cancel(
+    String requestId, {
+    String? companyCode,
+  }) async {
     final response = await _api.dio.post(
-      '/client/certificates/requests/$requestId/cancel',
+      '${_basePath(companyCode)}/requests/$requestId/cancel',
     );
     return CertificateRequest.fromJson(response.data as Map<String, dynamic>);
   }
 
-  Future<CertificateRequest> retry(String requestId) async {
+  Future<CertificateRequest> retry(
+    String requestId, {
+    String? companyCode,
+  }) async {
     final response = await _api.dio.post(
-      '/client/certificates/requests/$requestId/retry',
+      '${_basePath(companyCode)}/requests/$requestId/retry',
     );
     return CertificateRequest.fromJson(response.data as Map<String, dynamic>);
   }
 
-  Future<void> remove(String requestId) async {
-    await _api.dio.delete('/client/certificates/requests/$requestId');
+  Future<void> remove(String requestId, {String? companyCode}) async {
+    await _api.dio.delete('${_basePath(companyCode)}/requests/$requestId');
   }
 }

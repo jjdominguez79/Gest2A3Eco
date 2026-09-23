@@ -129,6 +129,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (state.matchedLocation == '/groups' && profile?.isAdmin != true) {
         return '/';
       }
+      if (state.matchedLocation.startsWith('/clients/') &&
+          state.matchedLocation.endsWith('/certificates') &&
+          profile?.isAdmin != true) {
+        return '/';
+      }
 
       // Proteger rutas de documentos e invoicing con observacion reactiva.
       if (state.matchedLocation.startsWith('/documents') ||
@@ -201,6 +206,13 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/campaigns', builder: (_, _) => const CampaignsScreen()),
       GoRoute(path: '/employees', builder: (_, _) => const EmpleadosScreen()),
       GoRoute(path: '/clients', builder: (_, _) => const ClientsScreen()),
+      GoRoute(
+        path: '/clients/:companyCode/certificates',
+        builder: (_, state) => CertificatesScreen(
+          companyCode: state.pathParameters['companyCode']!,
+          companyName: state.uri.queryParameters['name'],
+        ),
+      ),
       GoRoute(
         path: '/clients/:companyCode',
         builder: (_, state) => ClientDetailScreen(

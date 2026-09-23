@@ -12,6 +12,77 @@ import 'package:gestinem/features/platform/features_provider.dart';
 import 'test_helpers.dart';
 
 void main() {
+  testWidgets('admin solicita certificado desde la ficha del cliente', (
+    tester,
+  ) async {
+    final adapter = JsonAdapter({
+      'id': 'staff-request-1',
+      'certificate_type': 'AEAT_CENSAL',
+      'certificate_name': 'Situación censal',
+      'issuing_organization': 'AEAT',
+      'status': 'queued',
+    }, statusCode: 201);
+    var consultas = 0;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          apiClientProvider.overrideWithValue(
+            ApiClient(
+              dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
+                ..httpClientAdapter = adapter,
+              tokenProvider: () => 'staff-token',
+            ),
+          ),
+          staffCertificateStatusProvider('E00001').overrideWith(
+            (_) async =>
+                const CertificateStatus(configured: true, status: 'valid'),
+          ),
+          staffCertificateTypesProvider('E00001').overrideWith(
+            (_) async => const [
+              CertificateType(
+                code: 'AEAT_CENSAL',
+                organization: 'AEAT',
+                name: 'Situación censal',
+              ),
+            ],
+          ),
+          staffCertificateRequestsProvider('E00001').overrideWith((_) async {
+            consultas++;
+            return const [];
+          }),
+        ],
+        child: const MaterialApp(
+          home: CertificatesScreen(
+            companyCode: 'E00001',
+            companyName: 'Cliente Uno',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Certificados · Cliente Uno'), findsOneWidget);
+    expect(find.text('Solicitudes del cliente'), findsOneWidget);
+    expect(
+      find.byKey(const Key('digital-certificate-contact-office')),
+      findsNothing,
+    );
+    await tester.tap(find.byKey(const Key('certificate-type-selector')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('AEAT · Situación censal').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('request-certificate-button')));
+    await tester.pumpAndSettle();
+
+    expect(adapter.lastRequest?.method, 'POST');
+    expect(
+      adapter.lastRequest?.path,
+      '/client/certificates/staff/organizations/E00001/requests',
+    );
+    expect(adapter.lastRequest?.headers['Authorization'], 'Bearer staff-token');
+    expect(consultas, 2);
+  });
+
   testWidgets('cliente registra solicitud AEAT y refresca el historial', (
     tester,
   ) async {

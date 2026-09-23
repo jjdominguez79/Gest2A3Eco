@@ -9,7 +9,12 @@ import 'certificates_providers.dart';
 import 'digital_certificate_card.dart';
 
 class CertificatesScreen extends ConsumerStatefulWidget {
-  const CertificatesScreen({super.key});
+  const CertificatesScreen({super.key, this.companyCode, this.companyName});
+
+  final String? companyCode;
+  final String? companyName;
+
+  bool get isStaffView => companyCode != null;
 
   @override
   ConsumerState<CertificatesScreen> createState() => _CertificatesScreenState();
@@ -28,10 +33,13 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('Eliminar solicitud'),
-          content: const Text(
-            'Se quitará de Mis solicitudes y podrás pedir otra hoy. '
-            'El despacho conservará el historial y el PDF, si existe, '
-            'seguirá disponible en Mis documentos.',
+          content: Text(
+            widget.isStaffView
+                ? 'Se quitará de las solicitudes visibles del cliente y se podrá pedir otra hoy. '
+                      'Se conservarán el historial y el PDF, si existe.'
+                : 'Se quitará de Mis solicitudes y podrás pedir otra hoy. '
+                      'El despacho conservará el historial y el PDF, si existe, '
+                      'seguirá disponible en Mis documentos.',
           ),
           actions: [
             TextButton(
@@ -56,15 +64,15 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
       final repository = ref.read(certificatesRepositoryProvider);
       switch (action) {
         case 'remove':
-          await repository.remove(item.id);
+          await repository.remove(item.id, companyCode: widget.companyCode);
         case 'retry':
-          await repository.retry(item.id);
+          await repository.retry(item.id, companyCode: widget.companyCode);
         case 'cancel':
-          await repository.cancel(item.id);
+          await repository.cancel(item.id, companyCode: widget.companyCode);
         default:
           return;
       }
-      ref.invalidate(certificateRequestsProvider);
+      _invalidateRequests();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -96,8 +104,12 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
     try {
       await ref
           .read(certificatesRepositoryProvider)
-          .create(_selectedType!, parameters: Map.of(_parameterValues));
-      ref.invalidate(certificateRequestsProvider);
+          .create(
+            _selectedType!,
+            parameters: Map.of(_parameterValues),
+            companyCode: widget.companyCode,
+          );
+      _invalidateRequests();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Solicitud registrada correctamente.')),
@@ -115,31 +127,58 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
   }
 
   void _refresh() {
-    ref.invalidate(certificateStatusProvider);
-    ref.invalidate(certificateTypesProvider);
-    ref.invalidate(certificateRequestsProvider);
+    if (widget.companyCode case final companyCode?) {
+      ref.invalidate(staffCertificateStatusProvider(companyCode));
+      ref.invalidate(staffCertificateTypesProvider(companyCode));
+      ref.invalidate(staffCertificateRequestsProvider(companyCode));
+    } else {
+      ref.invalidate(certificateStatusProvider);
+      ref.invalidate(certificateTypesProvider);
+      ref.invalidate(certificateRequestsProvider);
+    }
+  }
+
+  void _invalidateRequests() {
+    if (widget.companyCode case final companyCode?) {
+      ref.invalidate(staffCertificateRequestsProvider(companyCode));
+    } else {
+      ref.invalidate(certificateRequestsProvider);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final features = ref.watch(platformFeaturesProvider).valueOrNull;
-    if (features != null && !features.certificates) {
+    final features = widget.isStaffView
+        ? null
+        : ref.watch(platformFeaturesProvider).valueOrNull;
+    if (!widget.isStaffView && features != null && !features.certificates) {
       return const Scaffold(
         body: Center(
           child: Text('La solicitud de certificados no está habilitada.'),
         ),
       );
     }
-    final status = ref.watch(certificateStatusProvider);
-    final types = ref.watch(certificateTypesProvider);
-    final requests = ref.watch(certificateRequestsProvider);
+    final companyCode = widget.companyCode;
+    final status = companyCode != null
+        ? ref.watch(staffCertificateStatusProvider(companyCode))
+        : ref.watch(certificateStatusProvider);
+    final types = companyCode != null
+        ? ref.watch(staffCertificateTypesProvider(companyCode))
+        : ref.watch(certificateTypesProvider);
+    final requests = companyCode != null
+        ? ref.watch(staffCertificateRequestsProvider(companyCode))
+        : ref.watch(certificateRequestsProvider);
     final configured =
         status.valueOrNull?.configured == true &&
         status.valueOrNull?.status == 'valid';
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Certificados oficiales'),
+        title: Text(
+          widget.companyName?.isNotEmpty == true
+              ? 'Certificados · ${widget.companyName}'
+              : 'Certificados oficiales',
+        ),
         actions: [
           IconButton(onPressed: _refresh, icon: const Icon(Icons.refresh)),
         ],
@@ -149,7 +188,11 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            DigitalCertificateCard(status: status),
+            DigitalCertificateCard(
+              status: status,
+              showContactOffice: !widget.isStaffView,
+              onRefresh: _refresh,
+            ),
             const SizedBox(height: 16),
             Text(
               'Nueva solicitud',
@@ -242,7 +285,9 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
             ),
             const SizedBox(height: 24),
             Text(
-              'Mis solicitudes',
+              widget.isStaffView
+                  ? 'Solicitudes del cliente'
+                  : 'Mis solicitudes',
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 8),
@@ -287,7 +332,11 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
               : ''}'
           '${item.externalReference != null ? '\nReferencia: ${item.externalReference}' : ''}'
           '${item.status == 'awaiting_issuance' ? '\nResguardo recibido. Se comprobara la emision cada 24 horas.' : ''}'
-          '${item.receiptDocumentId != null && !item.completed ? '\nToca para ver el documento de la solicitud.' : ''}'
+          '${item.receiptDocumentId != null && !item.completed
+              ? widget.isStaffView
+                    ? '\nResguardo disponible en el área documental.'
+                    : '\nToca para ver el documento de la solicitud.'
+              : ''}'
           '${item.errorMessage?.isNotEmpty == true ? '\n${item.errorMessage}' : ''}',
         ),
         leading: Icon(_statusIcon(item.status)),
@@ -325,7 +374,9 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
               )
             : null,
         onTap:
-            (item.completed ? item.documentId : item.receiptDocumentId) != null
+            !widget.isStaffView &&
+                (item.completed ? item.documentId : item.receiptDocumentId) !=
+                    null
             ? () => context.push(
                 '/documents/${item.completed ? item.documentId : item.receiptDocumentId}',
               )

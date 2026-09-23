@@ -1,8 +1,9 @@
 """Cola central de solicitudes de certificados AEAT y Seguridad Social.
 
-El cliente Flutter solo crea y consulta solicitudes. El certificado privado
-nunca se entrega al navegador: un worker interno ejecutara el tramite y
-publicara el PDF resultante en ``client_documents``.
+La app Flutter permite crear y consultar solicitudes al cliente y al
+administrador del despacho. El certificado privado nunca se entrega al
+navegador: un worker interno ejecutara el tramite y publicara el PDF resultante
+en ``client_documents``.
 """
 from __future__ import annotations
 
@@ -45,6 +46,8 @@ from backend.api.messaging_models import (
     MessagingClient,
     MessagingOrganization,
     MessagingSession,
+    MessagingStaff,
+    MessagingStaffSession,
     new_id,
 )
 from backend.api.messaging_security import hash_token, is_expired, utcnow
@@ -178,6 +181,7 @@ _ALL_REQUEST_TYPES = {**CERTIFICATE_TYPES, **INTERNAL_OPERATION_TYPES}
 ACTIVE_STATUSES = {"queued", "processing", "needs_action", "awaiting_issuance"}
 RETRYABLE_STATUSES = {"needs_action", "failed"}
 CLIENT_REMOVED_CODE = "client_removed"
+TEST_COMPANY_CODES = {"E0000", "E00000"}
 
 
 class CertificateRequestIn(BaseModel):
@@ -293,6 +297,25 @@ def _authenticated_client(request: Request, db: Session) -> MessagingClient:
     if not client or not client.active:
         raise HTTPException(status_code=403, detail="Cliente inactivo")
     return client
+
+
+def _authenticated_staff_admin(request: Request, db: Session) -> MessagingStaff:
+    """Autentica un administrador de la app sin aceptar claves internas."""
+    token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    token = token or request.cookies.get("msg_staff_session", "")
+    if not token:
+        raise HTTPException(status_code=401, detail="No autenticado")
+    session = db.scalar(select(MessagingStaffSession).where(
+        MessagingStaffSession.token_hash == hash_token(token),
+    ))
+    if not session or session.revoked_at or is_expired(session.expires_at):
+        raise HTTPException(status_code=401, detail="Sesion del despacho caducada")
+    staff = db.get(MessagingStaff, session.staff_external_id)
+    if not staff or not staff.active:
+        raise HTTPException(status_code=403, detail="Usuario del despacho no autorizado")
+    if staff.role != "admin":
+        raise HTTPException(status_code=403, detail="Solo el administrador puede solicitar certificados")
+    return staff
 
 
 def _serialize(
@@ -440,6 +463,18 @@ def _organization_by_code(db: Session, company_code: str) -> MessagingOrganizati
     ))
     if not org or not org.active:
         raise HTTPException(status_code=404, detail="Organizacion no encontrada")
+    return org
+
+
+def _staff_organization(
+    db: Session, company_code: str, staff: MessagingStaff,
+) -> MessagingOrganization:
+    org = _organization_by_code(db, company_code)
+    if (
+        org.company_code.strip().upper() in TEST_COMPANY_CODES
+        and org.private_owner_external_id != staff.external_id
+    ):
+        raise HTTPException(status_code=403, detail="Cliente de pruebas privado")
     return org
 
 
@@ -743,6 +778,138 @@ def delete_client_request(
     ).with_for_update())
     if not item:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if item.status == "processing" or item.submitted_at and item.status != "completed":
+        raise HTTPException(
+            status_code=409,
+            detail="No se puede eliminar una solicitud en tramitacion o pendiente de emision.",
+        )
+    item.status = "cancelled"
+    item.error_code = CLIENT_REMOVED_CODE
+    item.cancelled_at = utcnow()
+    item.next_attempt_at = None
+    item.claim_token = ""
+    item.updated_at = utcnow()
+    db.commit()
+    return {"deleted": True, "id": request_id}
+
+
+def _staff_certificate_request(
+    db: Session, request_id: str, org: MessagingOrganization, *, lock: bool = False,
+) -> ClientCertificateRequest:
+    statement = select(ClientCertificateRequest).where(
+        ClientCertificateRequest.id == request_id,
+        ClientCertificateRequest.organization_id == org.id,
+        ClientCertificateRequest.certificate_type.in_(tuple(CERTIFICATE_TYPES)),
+    )
+    if lock:
+        statement = statement.with_for_update()
+    item = db.scalar(statement)
+    if not item:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    return item
+
+
+@router.get("/staff/organizations/{company_code}/types")
+def list_staff_certificate_types(
+    company_code: str, request: Request, db: Session = Depends(_db),
+):
+    staff = _authenticated_staff_admin(request, db)
+    _staff_organization(db, company_code, staff)
+    return {"items": list(CERTIFICATE_TYPES.values())}
+
+
+@router.get("/staff/organizations/{company_code}/certificate-status")
+def get_staff_certificate_status(
+    company_code: str, request: Request, db: Session = Depends(_db),
+):
+    staff = _authenticated_staff_admin(request, db)
+    org = _staff_organization(db, company_code, staff)
+    secret = db.scalar(select(ClientCertificateSecret).where(
+        ClientCertificateSecret.organization_id == org.id,
+    ))
+    state = _secret_status(secret)
+    return {key: state[key] for key in (
+        "configured", "status", "common_name", "issuer", "valid_from",
+        "valid_until", "updated_at",
+    ) if key in state}
+
+
+@router.post("/staff/organizations/{company_code}/requests", status_code=201)
+def create_staff_request(
+    company_code: str, payload: CertificateRequestIn, request: Request,
+    db: Session = Depends(_db),
+):
+    staff = _authenticated_staff_admin(request, db)
+    org = _staff_organization(db, company_code, staff)
+    secret = db.scalar(select(ClientCertificateSecret).where(
+        ClientCertificateSecret.organization_id == org.id,
+        ClientCertificateSecret.active.is_(True),
+    ))
+    secret_state = _secret_status(secret)
+    if not secret_state["configured"]:
+        raise HTTPException(status_code=409, detail="Certificado digital no configurado")
+    if secret_state["status"] != "valid":
+        raise HTTPException(status_code=409, detail="El certificado digital no esta en vigor")
+    return _serialize(_create_request(
+        db, org=org, payload=payload,
+        requester_type="staff", requester_id=staff.external_id,
+    ))
+
+
+@router.get("/staff/organizations/{company_code}/requests")
+def list_staff_requests(
+    company_code: str, request: Request,
+    limit: int = Query(50, ge=1, le=100), db: Session = Depends(_db),
+):
+    staff = _authenticated_staff_admin(request, db)
+    org = _staff_organization(db, company_code, staff)
+    items = list(db.scalars(select(ClientCertificateRequest).where(
+        ClientCertificateRequest.organization_id == org.id,
+        ClientCertificateRequest.certificate_type.in_(tuple(CERTIFICATE_TYPES)),
+        ClientCertificateRequest.error_code != CLIENT_REMOVED_CODE,
+    ).order_by(ClientCertificateRequest.created_at.desc()).limit(limit)).all())
+    return {"items": [_serialize(item) for item in items]}
+
+
+@router.post("/staff/organizations/{company_code}/requests/{request_id}/cancel")
+def cancel_staff_request(
+    company_code: str, request_id: str, request: Request,
+    db: Session = Depends(_db),
+):
+    staff = _authenticated_staff_admin(request, db)
+    org = _staff_organization(db, company_code, staff)
+    item = _staff_certificate_request(db, request_id, org)
+    if item.status != "queued" or item.submitted_at:
+        raise HTTPException(status_code=409, detail="La solicitud ya no se puede cancelar")
+    item.status = "cancelled"
+    item.cancelled_at = utcnow()
+    item.updated_at = utcnow()
+    db.commit()
+    return _serialize(item)
+
+
+@router.post("/staff/organizations/{company_code}/requests/{request_id}/retry")
+def retry_staff_request(
+    company_code: str, request_id: str, request: Request,
+    payload: CertificateRetryIn | None = None, db: Session = Depends(_db),
+):
+    staff = _authenticated_staff_admin(request, db)
+    org = _staff_organization(db, company_code, staff)
+    item = _staff_certificate_request(db, request_id, org)
+    return _serialize(_retry_request(
+        db, item, parameters=payload.parameters if payload else None,
+    ))
+
+
+@router.delete("/staff/organizations/{company_code}/requests/{request_id}")
+def delete_staff_request(
+    company_code: str, request_id: str, request: Request,
+    db: Session = Depends(_db),
+):
+    """Oculta un intento conservando el historial y los documentos obtenidos."""
+    staff = _authenticated_staff_admin(request, db)
+    org = _staff_organization(db, company_code, staff)
+    item = _staff_certificate_request(db, request_id, org, lock=True)
     if item.status == "processing" or item.submitted_at and item.status != "completed":
         raise HTTPException(
             status_code=409,

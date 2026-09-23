@@ -263,6 +263,24 @@ class _ClientDetailScreenState extends ConsumerState<ClientDetailScreen> {
                   confirm: confirm,
                 ),
               ),
+              const SizedBox(height: 12),
+              Card(
+                child: ListTile(
+                  key: const Key('client-request-certificates'),
+                  leading: const Icon(Icons.verified_outlined),
+                  title: const Text('Solicitar certificado'),
+                  subtitle: const Text(
+                    'Pedir certificados oficiales para este cliente',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => context.push(
+                    Uri(
+                      path: '/clients/${client.companyCode}/certificates',
+                      queryParameters: {'name': client.displayName},
+                    ).toString(),
+                  ),
+                ),
+              ),
               const SizedBox(height: 20),
               if ({'active', 'pending'}.contains(client.accessStatus))
                 FilledButton.icon(

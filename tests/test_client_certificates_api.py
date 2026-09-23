@@ -33,6 +33,8 @@ from backend.api.messaging_models import (
     MessagingClient,
     MessagingOrganization,
     MessagingSession,
+    MessagingStaff,
+    MessagingStaffSession,
 )
 from backend.api.messaging_security import hash_token, utcnow
 from backend.api.security import (
@@ -124,6 +126,100 @@ def test_cliente_crea_y_lista_solicitud(monkeypatch):
     with factory() as db:
         item = db.scalars(select(ClientCertificateRequest)).one()
         assert item.requester_type == "client"
+
+
+def _staff_headers(factory, *, role="admin", external_id="admin-app"):
+    token = f"staff-certificate-token-{external_id}"
+    with factory() as db:
+        db.add(MessagingStaff(
+            external_id=external_id,
+            name="Administrador" if role == "admin" else "Empleado",
+            email=f"{external_id}@gestinem.es",
+            role=role,
+            active=True,
+        ))
+        db.add(MessagingStaffSession(
+            staff_external_id=external_id,
+            token_hash=hash_token(token),
+            expires_at=utcnow() + timedelta(hours=1),
+        ))
+        db.commit()
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_admin_app_solicita_certificado_para_cliente(monkeypatch):
+    client, factory, org_id, _ = _setup(monkeypatch, enabled=False)
+    headers = _staff_headers(factory)
+
+    types = client.get(
+        "/api/v1/messaging/client/certificates/staff/organizations/E00001/types",
+        headers=headers,
+    )
+    status = client.get(
+        "/api/v1/messaging/client/certificates/staff/organizations/"
+        "E00001/certificate-status",
+        headers=headers,
+    )
+    created = client.post(
+        "/api/v1/messaging/client/certificates/staff/organizations/E00001/requests",
+        headers=headers,
+        json={"certificate_type": "AEAT_CENSAL", "idempotency_key": "staff-1"},
+    )
+    listed = client.get(
+        "/api/v1/messaging/client/certificates/staff/organizations/E00001/requests",
+        headers=headers,
+    )
+
+    assert types.status_code == 200
+    assert any(item["code"] == "AEAT_CENSAL" for item in types.json()["items"])
+    assert status.status_code == 200
+    assert status.json()["status"] == "valid"
+    assert created.status_code == 201
+    assert created.json()["organization_id"] == org_id
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()["items"]] == [created.json()["id"]]
+    with factory() as db:
+        item = db.get(ClientCertificateRequest, created.json()["id"])
+        assert item.requester_type == "staff"
+        assert item.requester_id == "admin-app"
+
+
+def test_empleado_no_puede_solicitar_certificado_para_cliente(monkeypatch):
+    client, factory, _, _ = _setup(monkeypatch)
+    headers = _staff_headers(factory, role="empleado", external_id="empleado-app")
+
+    response = client.post(
+        "/api/v1/messaging/client/certificates/staff/organizations/E00001/requests",
+        headers=headers,
+        json={"certificate_type": "AEAT_CENSAL"},
+    )
+
+    assert response.status_code == 403
+    assert "administrador" in response.json()["detail"]
+
+
+def test_admin_app_no_opera_solicitud_de_otra_empresa(monkeypatch):
+    client, factory, _, client_headers = _setup(monkeypatch)
+    headers = _staff_headers(factory)
+    created = client.post(
+        "/api/v1/messaging/client/certificates/requests",
+        headers=client_headers,
+        json={"certificate_type": "TGSS_CORRIENTE"},
+    ).json()
+    with factory() as db:
+        other = MessagingOrganization(
+            company_code="E00002", name="Cliente Dos", active=True,
+        )
+        db.add(other)
+        db.commit()
+
+    response = client.post(
+        "/api/v1/messaging/client/certificates/staff/organizations/E00002/"
+        f"requests/{created['id']}/cancel",
+        headers=headers,
+    )
+
+    assert response.status_code == 404
 
 
 def test_worker_guarda_bandeja_dehu_idempotente_y_escritorio_la_lista(monkeypatch):
