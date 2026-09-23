@@ -1,6 +1,6 @@
 {
-  "version": "1.8.21",
-  "tag": "v1.8.21",
-  "changelog": "Mejora las notificaciones electrónicas con bandeja global histórica, configuración masiva de buzones DEHú y DGT/DEV, sincronización de estados, reintentos automáticos y ordenación de certificados por vencimiento.",
-  "force_update": false
+  "version": "1.8.22",
+  "tag": "v1.8.22",
+  "changelog": "Se cambia el login para que el acceso sea por correo corporfativo.",
+  "force_update": true
 }
