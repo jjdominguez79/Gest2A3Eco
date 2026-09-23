@@ -10,10 +10,42 @@ CADUCADOS (rojo), para controlarlos de un vistazo.
 from __future__ import annotations
 
 import tkinter as tk
+from datetime import date, datetime
 from tkinter import messagebox, ttk
 
 from views.notificaciones_theme import *  # noqa: F401,F403
 from views.ui_certificados import _vigencia
+
+
+def _fecha_caducidad_orden(valor) -> date | None:
+    """Normaliza la fecha de caducidad para poder ordenarla cronologicamente."""
+    if isinstance(valor, datetime):
+        return valor.date()
+    if isinstance(valor, date):
+        return valor
+    if not valor:
+        return None
+    texto = str(valor).strip()[:10]
+    for formato in ("%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(texto, formato).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _ordenar_por_caducidad(certificados: list[dict], descendente: bool = False) -> list[dict]:
+    """Ordena por fecha real y deja las fechas ausentes o invalidas al final."""
+    con_fecha: list[tuple[date, int, dict]] = []
+    sin_fecha: list[dict] = []
+    for posicion, certificado in enumerate(certificados):
+        fecha = _fecha_caducidad_orden(certificado.get("fecha_caducidad"))
+        if fecha is None:
+            sin_fecha.append(certificado)
+        else:
+            con_fecha.append((fecha, posicion, certificado))
+    con_fecha.sort(key=lambda item: (item[0], item[1]), reverse=descendente)
+    return [item[2] for item in con_fecha] + sin_fecha
 
 
 class UICertificadosGlobal(ttk.Frame):
@@ -35,6 +67,7 @@ class UICertificadosGlobal(ttk.Frame):
         self._gestor  = gestor
         self._session = session
         self._cache: list[dict] = []
+        self._orden_caducidad_desc = False
         self._build()
         self.refresh()
 
@@ -96,7 +129,10 @@ class UICertificadosGlobal(ttk.Frame):
         self._tv.column("_id", width=0, stretch=False)
         self._tv.heading("_id", text="")
         for key, header, width, anchor in self._COLS:
-            self._tv.heading(key, text=header)
+            if key == "fecha_caducidad":
+                self._tv.heading(key, text=f"{header} ▲", command=self._on_ordenar_caducidad)
+            else:
+                self._tv.heading(key, text=header)
             self._tv.column(key, width=width, anchor=anchor, stretch=(key == "nombre"))
         self._tv.tag_configure("vigente",    foreground=_SUCCESS)
         self._tv.tag_configure("por_vencer", foreground="white", background=_WARNING)
@@ -110,6 +146,16 @@ class UICertificadosGlobal(ttk.Frame):
         sb_h.pack(side="bottom", fill="x")
         self._tv.pack(fill="both", expand=True)
         self._tv.bind("<<TreeviewSelect>>", self._on_select)
+
+    def _on_ordenar_caducidad(self) -> None:
+        self._orden_caducidad_desc = not self._orden_caducidad_desc
+        indicador = "▼" if self._orden_caducidad_desc else "▲"
+        self._tv.heading(
+            "fecha_caducidad",
+            text=f"Caduca {indicador}",
+            command=self._on_ordenar_caducidad,
+        )
+        self._render()
 
     def _build_statusbar(self) -> None:
         sb = tk.Frame(self, bg=_BG, height=22)
@@ -165,8 +211,7 @@ class UICertificadosGlobal(ttk.Frame):
         vig_filtro = vig_map.get(vig_lbl)
         solo_urgentes = (vig_lbl == "Solo por vencer/caducados")
 
-        self._tv.delete(*self._tv.get_children())
-        rows_mostradas = 0
+        certificados_filtrados = []
         for c in self._cache:
             cliente = c.get("empresa_nombre") or c.get("codigo_empresa") or ""
             if cliente_lbl not in ("", "Todos") and cliente != cliente_lbl:
@@ -178,6 +223,15 @@ class UICertificadosGlobal(ttk.Frame):
                 continue
             if vig_filtro and vig_tag != vig_filtro:
                 continue
+            certificados_filtrados.append(c)
+
+        self._tv.delete(*self._tv.get_children())
+        for c in _ordenar_por_caducidad(
+            certificados_filtrados,
+            descendente=self._orden_caducidad_desc,
+        ):
+            cliente = c.get("empresa_nombre") or c.get("codigo_empresa") or ""
+            vig_label, vig_tag = _vigencia(c.get("fecha_caducidad"))
             tag = vig_tag if c.get("activo") else "inactivo"
             self._tv.insert("", tk.END, values=(
                 c["id"], cliente, c.get("nombre", ""), c.get("nif_titular", ""),
@@ -189,10 +243,10 @@ class UICertificadosGlobal(ttk.Frame):
                 ),
                 "Si" if c.get("activo") else "No",
             ), tags=(tag,))
-            rows_mostradas += 1
 
         urgentes = sum(1 for c in self._cache if _vigencia(c.get("fecha_caducidad"))[1] == "por_vencer")
         caducados = sum(1 for c in self._cache if _vigencia(c.get("fecha_caducidad"))[1] == "caducado")
+        rows_mostradas = len(certificados_filtrados)
         self._lbl_count.configure(text=f"{rows_mostradas} certificado{'s' if rows_mostradas != 1 else ''}")
         self._lbl_status.configure(
             text=f"Total: {len(self._cache)}  |  Por vencer: {urgentes}  |  Caducados: {caducados}"
