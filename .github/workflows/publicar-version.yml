@@ -20,6 +20,7 @@ jobs:
     env:
       REPO_SLUG: ${{ github.repository }}
       TARGET_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      PYTHONUTF8: "1"
 
     steps:
       - name: Checkout completo
@@ -196,9 +197,6 @@ jobs:
 
           python @args
           Get-Content "updates/version.json" -Raw | ConvertFrom-Json | Out-Null
-        env:
-          PYTHONUTF8: "1"
-
       - name: Commit y push de updates/version.json
         shell: pwsh
         run: |
