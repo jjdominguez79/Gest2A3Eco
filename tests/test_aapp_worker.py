@@ -16,6 +16,8 @@ class _Backend:
         self.completed = None
         self.failed = None
         self.dehu_notifications = None
+        self.dev_notifications = None
+        self.dev_registration_status = None
 
     def claim(self):
         return self.item
@@ -36,6 +38,13 @@ class _Backend:
 
     def upsert_dehu_notifications(self, _item, notifications):
         self.dehu_notifications = notifications
+        return {"count": len(notifications), "created_count": len(notifications)}
+
+    def upsert_dev_notifications(
+        self, _item, notifications, *, registration_status, registration_message="",
+    ):
+        self.dev_notifications = notifications
+        self.dev_registration_status = registration_status
         return {"count": len(notifications), "created_count": len(notifications)}
 
     def complete(self, item, document_id, summary=""):
@@ -279,3 +288,57 @@ def test_worker_dehu_completa_aunque_no_haya_pdf(monkeypatch, tmp_path):
     )
     assert backend.dehu_notifications[0]["reference"] == "DEHU-2"
     assert backend.dehu_notifications[0]["document_id"] is None
+
+
+def test_worker_dev_guarda_metadatos_y_estado_de_alta(monkeypatch, tmp_path):
+    item = {
+        "id": "request-dev-1",
+        "organization_id": "org-1",
+        "certificate_type": "DEV_SYNC",
+        "claim_token": "claim-token-valido",
+        "attempt_count": 1,
+        "parameters": {
+            "company_code": "E00999", "tax_id": "B12345678",
+            "mailbox_id": "dev-1", "mailbox_name": "DGT / DEV",
+        },
+    }
+    backend = _Backend(item)
+
+    class Connector:
+        def sincronizar(self, _mailbox, _material, options):
+            assert options.descargar_pdf is False
+            return ResultadoSync(
+                ok=True, organismo_codigo="DEV", mensaje="ACTIVO: 1 elemento.",
+                notificaciones=[NotificacionDTO(
+                    referencia="DEV-1", asunto="Aviso DGT", estado="LEIDA",
+                    nif_interesado="B12345678",
+                    metadatos={"endpoint": "/WEB_NTRA_CONSULTA/listadoNotificaciones.faces"},
+                )],
+            )
+
+    monkeypatch.setattr("aapp_worker.worker.obtener_conector", lambda _code: Connector())
+    assert AappWorker(_config(tmp_path), backend=backend).run_once() is True
+    assert backend.dev_registration_status == "ACTIVO"
+    assert backend.dev_notifications[0]["reference"] == "DEV-1"
+    assert "1 nueva(s)" in backend.completed[2]
+
+
+def test_worker_dev_completa_con_aviso_explicito_si_no_esta_de_alta(monkeypatch, tmp_path):
+    item = {
+        "id": "request-dev-2", "organization_id": "org-1",
+        "certificate_type": "DEV_SYNC", "claim_token": "claim-token-valido",
+        "attempt_count": 1, "parameters": {},
+    }
+    backend = _Backend(item)
+
+    class Connector:
+        def sincronizar(self, *_args):
+            return ResultadoSync(
+                ok=True, organismo_codigo="DEV",
+                mensaje="NO_ALTA: El titular no esta dado de alta en DEV.",
+            )
+
+    monkeypatch.setattr("aapp_worker.worker.obtener_conector", lambda _code: Connector())
+    assert AappWorker(_config(tmp_path), backend=backend).run_once() is True
+    assert backend.dev_registration_status == "NO_ALTA"
+    assert backend.completed[2].startswith("DEV_NO_ALTA:")

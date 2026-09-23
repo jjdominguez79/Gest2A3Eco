@@ -7,10 +7,9 @@ electronicas de TODOS los clientes. Se accede desde el menu principal
 
 Subpantallas:
     - Bandeja global:    notificaciones de todos los clientes.
+    - Buzones DEHu:      estado y sincronizacion de todos los clientes.
     - Certificados:      certificados digitales de todos los clientes.
     - Certificados AAPP: solicitud y publicacion de certificados AEAT/TGSS.
-    - Buzones DEHu:      configuracion DEHu de todos los clientes.
-    - Sincronizaciones:  historico global de sincronizaciones (logs).
     - Configuracion:    periodicidad, resumen interno y plantilla de email cliente.
 
 El cliente es una dimension de configuracion y filtrado: la configuracion
@@ -28,7 +27,6 @@ from views.ui_bandeja_global import UIBandejaGlobal
 from views.ui_buzones_global import UIBuzonesGlobal
 from views.ui_certificados_global import UICertificadosGlobal
 from views.ui_certificados_obtenidos import UICertificadosObtenidos
-from views.ui_sync_logs import UISyncLogs
 from views.ui_config_notificaciones_global import UIConfigNotificacionesGlobal
 
 
@@ -41,15 +39,15 @@ class UINotificacionesGlobal(ttk.Frame):
         self._session = session
         self._on_open_empresa = on_open_empresa
         self._tabs: dict[str, ttk.Frame] = {}
-        self._gestor.asegurar_dehu_unico()
+        self._gestor.asegurar_buzones_electronicos()
         self._build()
 
     def _build(self) -> None:
         hdr = tk.Frame(self, bg=_HDR_BG)
         hdr.pack(fill="x")
-        tk.Label(hdr, text="✉  Notificaciones DEHu", bg=_HDR_BG, fg=_HDR_FG,
+        tk.Label(hdr, text="✉  Notificaciones electronicas", bg=_HDR_BG, fg=_HDR_FG,
                  font=("Segoe UI", 13, "bold"), anchor="w").pack(side="left", padx=16, pady=10)
-        tk.Label(hdr, text="Gestion centralizada del Punto unico de notificaciones",
+        tk.Label(hdr, text="Bandeja historica centralizada DEHu y DGT/DEV",
                  bg=_HDR_BG, fg=_HDR_SUB, font=("Segoe UI", 9)).pack(side="left", pady=10)
 
         nb = ttk.Notebook(self)
@@ -59,28 +57,31 @@ class UINotificacionesGlobal(ttk.Frame):
         bandeja = UIBandejaGlobal(nb, self._gestor, session=self._session, on_open_empresa=self._on_open_empresa)
         nb.add(bandeja, text="Bandeja global")
 
+        buzones = UIBuzonesGlobal(nb, self._gestor, session=self._session)
+        nb.add(buzones, text="Buzones y sincronizacion")
+
         certificados = UICertificadosGlobal(nb, self._gestor, session=self._session)
         nb.add(certificados, text="Certificados")
 
         certificados_aapp = UICertificadosObtenidos(nb, self._gestor, session=self._session)
         nb.add(certificados_aapp, text="Certificados AEAT / TGSS")
 
-        buzones = UIBuzonesGlobal(nb, self._gestor, session=self._session)
-        nb.add(buzones, text="Buzones DEHu")
-
-        logs = UISyncLogs(nb, self._gestor, session=self._session)
-        nb.add(logs, text="Sincronizaciones / Logs")
-
         config = UIConfigNotificacionesGlobal(nb, self._gestor, session=self._session)
         nb.add(config, text="Configuracion global")
 
-        self._views = [bandeja, certificados, certificados_aapp, buzones, logs, config]
+        self._views = [bandeja, buzones, certificados, certificados_aapp, config]
         nb.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+        # La bandeja local es una replica operativa de la bandeja central. Al
+        # abrir el modulo se importa en segundo plano para que el usuario no
+        # tenga que recordar un segundo paso despues de la sincronizacion.
+        self.after_idle(bandeja.refresh_desde_central)
 
     def _on_tab_changed(self, _e=None) -> None:
         idx = self._nb.index(self._nb.select())
         view = self._views[idx]
-        if hasattr(view, "refresh"):
+        if hasattr(view, "refresh_desde_central"):
+            view.refresh_desde_central()
+        elif hasattr(view, "refresh"):
             view.refresh()
 
     def refresh(self) -> None:

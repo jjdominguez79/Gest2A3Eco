@@ -33,6 +33,8 @@ from backend.api.client_models import (
     ClientDehuMailboxConfig,
     ClientDehuSyncBatch,
     ClientDehuSeenReference,
+    ClientDevNotification,
+    ClientDevMailboxConfig,
     ClientDocument,
 )
 from backend.api import messaging_mail
@@ -163,6 +165,13 @@ INTERNAL_OPERATION_TYPES = {
         "parameters": [],
         "internal_only": True,
     },
+    "DEV_SYNC": {
+        "code": "DEV_SYNC",
+        "organization": "DGT",
+        "name": "Sincronizacion de notificaciones DGT/DEV",
+        "parameters": [],
+        "internal_only": True,
+    },
 }
 _ALL_REQUEST_TYPES = {**CERTIFICATE_TYPES, **INTERNAL_OPERATION_TYPES}
 
@@ -238,6 +247,13 @@ class WorkerDehuNotificationsIn(BaseModel):
     notifications: list[DehuNotificationIn] = Field(default_factory=list, max_length=1000)
 
 
+class WorkerDevNotificationsIn(BaseModel):
+    claim_token: str = Field(min_length=16, max_length=64)
+    registration_status: str = Field(default="ACTIVO", max_length=30)
+    registration_message: str = Field(default="", max_length=1000)
+    notifications: list[DehuNotificationIn] = Field(default_factory=list, max_length=1000)
+
+
 class DehuMailboxConfigIn(BaseModel):
     mailbox_id: str = Field(default="", max_length=100)
     mailbox_name: str = Field(default="DEHu", max_length=300)
@@ -245,6 +261,10 @@ class DehuMailboxConfigIn(BaseModel):
     periodicity: str = Field(default="MANUAL", max_length=20)
     daily_sync_time: str | None = Field(default=None, max_length=5)
     notification_email: str = Field(default="", max_length=254)
+
+
+class DevMailboxConfigIn(DehuMailboxConfigIn):
+    mailbox_name: str = Field(default="DGT / DEV", max_length=300)
 
 
 def _db():
@@ -370,6 +390,43 @@ def _serialize_dehu_notification(
         "document_id": item.document_id,
         "first_seen_at": item.first_seen_at.isoformat() if item.first_seen_at else None,
         "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
+    }
+    if organization is not None:
+        result["company_code"] = organization.company_code
+        result["company_name"] = organization.name
+    return result
+
+
+def _serialize_dev_notification(
+    item: ClientDevNotification,
+    organization: MessagingOrganization | None = None,
+) -> dict:
+    try:
+        metadata = json.loads(item.metadata_json or "{}")
+    except (TypeError, ValueError):
+        metadata = {}
+    result = {
+        "id": item.id,
+        "organization_id": item.organization_id,
+        "request_id": item.request_id,
+        "mailbox_id": item.mailbox_id,
+        "reference": item.external_reference,
+        "subject": item.subject,
+        "description": item.description,
+        "issuing_body": item.issuing_body,
+        "issuing_body_source": "DGT",
+        "action_type": item.action_type,
+        "holder_tax_id": item.holder_tax_id,
+        "holder_name": item.holder_name,
+        "available_date": item.available_date,
+        "expiration_date": item.expiration_date,
+        "status": item.status,
+        "source_endpoint": item.source_endpoint,
+        "metadata": metadata,
+        "document_id": None,
+        "first_seen_at": item.first_seen_at.isoformat() if item.first_seen_at else None,
+        "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
+        "provider": "DEV",
     }
     if organization is not None:
         result["company_code"] = organization.company_code
@@ -946,6 +1003,7 @@ def _serialize_dehu_mailbox(item: ClientDehuMailboxConfig, org=None) -> dict:
         "periodicity": item.periodicity,
         "daily_sync_time": item.daily_sync_time,
         "notification_email": item.notification_email,
+        "activated_at": item.activated_at.isoformat() if item.activated_at else None,
         "next_sync_at": item.next_sync_at.isoformat() if item.next_sync_at else None,
         "last_enqueued_at": (
             item.last_enqueued_at.isoformat() if item.last_enqueued_at else None
@@ -1007,8 +1065,12 @@ def upsert_internal_dehu_mailbox(
         )
     now = utcnow()
     if item is None:
-        item = ClientDehuMailboxConfig(organization_id=org.id)
+        item = ClientDehuMailboxConfig(organization_id=org.id, activated_at=now)
         db.add(item)
+    elif payload.active and not item.active:
+        # Una reactivacion inicia una nueva ventana incremental. Lo ya
+        # archivado se conserva, pero no se arrastra el pasado del portal.
+        item.activated_at = now
     schedule_changed = (
         item.periodicity != periodicity or item.active != payload.active
         or item.daily_sync_time != daily_sync_time
@@ -1052,6 +1114,111 @@ def delete_internal_dehu_mailbox(
 ):
     org = _organization_by_code(db, company_code)
     item = db.get(ClientDehuMailboxConfig, org.id)
+    if item:
+        db.delete(item)
+        db.commit()
+    return {"deleted": bool(item)}
+
+
+def _serialize_dev_mailbox(item: ClientDevMailboxConfig, org=None) -> dict:
+    return {
+        "organization_id": item.organization_id,
+        "company_code": getattr(org, "company_code", ""),
+        "company_name": getattr(org, "name", ""),
+        "mailbox_id": item.mailbox_id,
+        "mailbox_name": item.mailbox_name,
+        "active": item.active,
+        "periodicity": item.periodicity,
+        "daily_sync_time": item.daily_sync_time,
+        "notification_email": item.notification_email,
+        "registration_status": item.registration_status,
+        "registration_message": item.registration_message,
+        "activated_at": item.activated_at.isoformat() if item.activated_at else None,
+        "next_sync_at": item.next_sync_at.isoformat() if item.next_sync_at else None,
+        "last_enqueued_at": item.last_enqueued_at.isoformat() if item.last_enqueued_at else None,
+        "last_request_id": item.last_request_id,
+    }
+
+
+@router.put("/internal/dev-mailboxes/{company_code}")
+def upsert_internal_dev_mailbox(
+    company_code: str,
+    payload: DevMailboxConfigIn,
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    org = _organization_by_code(db, company_code)
+    periodicity = payload.periodicity.strip().upper()
+    if periodicity not in _DEHU_PERIODICITIES:
+        raise HTTPException(status_code=422, detail="Periodicidad DEV no valida")
+    item = db.get(ClientDevMailboxConfig, org.id)
+    daily_sync_time = (
+        item.daily_sync_time if payload.daily_sync_time is None and item is not None
+        else (payload.daily_sync_time or "").strip()
+    )
+    if daily_sync_time and not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", daily_sync_time):
+        raise HTTPException(status_code=422, detail="La hora diaria DEV debe tener formato HH:MM")
+    email = payload.notification_email.strip().lower()
+    if email and "@" not in email:
+        raise HTTPException(status_code=422, detail="El email de aviso DEV no es valido")
+    now = utcnow()
+    if item is None:
+        item = ClientDevMailboxConfig(
+            organization_id=org.id,
+            activated_at=now,
+            registration_status="PENDIENTE",
+        )
+        db.add(item)
+    elif payload.active and not item.active:
+        # Una reactivacion comienza un nuevo historico incremental. Los avisos
+        # ya archivados no se borran, pero no se incorpora el pasado del portal.
+        item.activated_at = now
+        item.registration_status = "PENDIENTE"
+        item.registration_message = ""
+    schedule_changed = (
+        item.periodicity != periodicity or item.active != payload.active
+        or item.daily_sync_time != daily_sync_time
+    )
+    item.mailbox_id = payload.mailbox_id.strip()
+    item.mailbox_name = payload.mailbox_name.strip() or "DGT / DEV"
+    item.active = payload.active
+    item.periodicity = periodicity
+    item.daily_sync_time = daily_sync_time
+    item.notification_email = email
+    automatic = payload.active and periodicity != "MANUAL"
+    if not automatic:
+        item.next_sync_at = None
+    elif schedule_changed or item.next_sync_at is None:
+        item.next_sync_at = (
+            _next_dehu_sync(now, periodicity, daily_sync_time)
+            if periodicity == "DIARIA" and daily_sync_time else now
+        )
+    item.updated_at = now
+    db.commit()
+    return _serialize_dev_mailbox(item, org)
+
+
+@router.get("/internal/dev-mailboxes")
+def list_internal_dev_mailboxes(
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    rows = db.execute(
+        select(ClientDevMailboxConfig, MessagingOrganization)
+        .join(MessagingOrganization, MessagingOrganization.id == ClientDevMailboxConfig.organization_id)
+        .order_by(MessagingOrganization.name)
+    ).all()
+    return {"items": [_serialize_dev_mailbox(item, org) for item, org in rows]}
+
+
+@router.delete("/internal/dev-mailboxes/{company_code}")
+def delete_internal_dev_mailbox(
+    company_code: str,
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    org = _organization_by_code(db, company_code)
+    item = db.get(ClientDevMailboxConfig, org.id)
     if item:
         db.delete(item)
         db.commit()
@@ -1109,6 +1276,47 @@ def _enqueue_due_dehu_mailboxes(db: Session, now: datetime) -> None:
                 now, config.periodicity, config.daily_sync_time,
             )
             config.updated_at = now
+    if due:
+        db.commit()
+
+
+def _enqueue_due_dev_mailboxes(db: Session, now: datetime) -> None:
+    due = db.execute(
+        select(ClientDevMailboxConfig, MessagingOrganization)
+        .join(MessagingOrganization, MessagingOrganization.id == ClientDevMailboxConfig.organization_id)
+        .where(
+            ClientDevMailboxConfig.active.is_(True),
+            ClientDevMailboxConfig.periodicity != "MANUAL",
+            ClientDevMailboxConfig.next_sync_at.is_not(None),
+            ClientDevMailboxConfig.next_sync_at <= now,
+            MessagingOrganization.active.is_(True),
+        )
+        .with_for_update(skip_locked=True)
+    ).all()
+    for config, org in due:
+        request_item = ClientCertificateRequest(
+            organization_id=org.id,
+            requester_type="staff",
+            requester_id="dev-scheduler",
+            certificate_type="DEV_SYNC",
+            parameters_json=json.dumps({
+                "company_code": org.company_code,
+                "tax_id": org.tax_id or "",
+                "mailbox_id": config.mailbox_id,
+                "mailbox_name": config.mailbox_name,
+                "download_mode": "SOLO_DETECTAR",
+            }, ensure_ascii=False, separators=(",", ":")),
+            idempotency_key=f"auto-dev-{new_id()}",
+            status="queued",
+        )
+        db.add(request_item)
+        db.flush()
+        config.last_request_id = request_item.id
+        config.last_enqueued_at = now
+        config.next_sync_at = _next_dehu_sync(
+            now, config.periodicity, config.daily_sync_time,
+        )
+        config.updated_at = now
     if due:
         db.commit()
 
@@ -1266,6 +1474,7 @@ def claim_next_request(
 ):
     now = utcnow()
     _enqueue_due_dehu_mailboxes(db, now)
+    _enqueue_due_dev_mailboxes(db, now)
     stale_before = now - timedelta(minutes=15)
     item = db.scalar(
         select(ClientCertificateRequest).where(
@@ -1385,6 +1594,7 @@ def upsert_worker_dehu_notifications(
     created_count = 0
     unassigned_count = 0
     ignored_read_count = 0
+    updated_status_count = 0
     unassigned_tax_ids = set()
     audit_items = []
     # Una organizacion solo es destinataria si tiene contratado/configurado un
@@ -1431,9 +1641,6 @@ def upsert_worker_dehu_notifications(
         if not reference:
             raise HTTPException(status_code=422, detail="La referencia DEHu no puede estar vacia")
         holder_tax_id = re.sub(r"[^0-9A-Z]", "", incoming.holder_tax_id.upper())
-        if not es_pendiente_dehu(incoming.status, incoming.source_endpoint):
-            ignored_read_count += 1
-            continue
         destination = destinations_by_tax_id.get(holder_tax_id)
         item = None
         if destination:
@@ -1441,9 +1648,24 @@ def upsert_worker_dehu_notifications(
                 ClientDehuNotification.organization_id == destination[0].id,
                 ClientDehuNotification.external_reference == reference,
             ))
-            # Una respuesta antigua no puede devolver a pendiente un aviso
-            # que el sistema ya conoce como leido/realizado.
-            if item and not es_pendiente_dehu(item.status, item.source_endpoint):
+            # Una respuesta pendiente atrasada no puede reabrir un aviso que
+            # ya figura como leido/aceptado/rechazado/caducado.
+            if (
+                item
+                and not es_pendiente_dehu(item.status, item.source_endpoint)
+                and es_pendiente_dehu(incoming.status, incoming.source_endpoint)
+            ):
+                ignored_read_count += 1
+                continue
+        incoming_pending = es_pendiente_dehu(incoming.status, incoming.source_endpoint)
+        # La bandeja de realizadas actualiza lo ya controlado. Una referencia
+        # terminal aun desconocida solo se incorpora si fue puesta a
+        # disposicion desde la activacion; asi cubrimos lecturas hechas en el
+        # portal antes de la primera sincronizacion sin importar el pasado.
+        if not incoming_pending and item is None:
+            activated_at = destination[1].activated_at.date() if destination else None
+            available = _fecha_notificacion(incoming.available_date)
+            if activated_at is None or available is None or available < activated_at:
                 ignored_read_count += 1
                 continue
         nueva = _referencia_nueva_dehu(
@@ -1481,6 +1703,7 @@ def upsert_worker_dehu_notifications(
             ClientDehuNotification.organization_id == target_organization.id,
             ClientDehuNotification.external_reference == reference,
         ))
+        previous_status = item.status if item is not None else ""
         if item is None:
             item = ClientDehuNotification(
                 organization_id=target_organization.id,
@@ -1522,6 +1745,8 @@ def upsert_worker_dehu_notifications(
         item.document_id = document.id if document else item.document_id
         item.last_seen_at = now
         item.updated_at = now
+        if previous_status and item.status != previous_status:
+            updated_status_count += 1
         db.flush()
         stored.append(item)
     try:
@@ -1540,6 +1765,7 @@ def upsert_worker_dehu_notifications(
         "assigned_count": len(stored),
         "created_count": created_count,
         "ignored_read_count": ignored_read_count,
+        "updated_status_count": updated_status_count,
         "unassigned_count": unassigned_count,
         "unassigned_tax_ids": sorted(unassigned_tax_ids),
         "discarded_without_active_mailbox_count": unassigned_count,
@@ -1562,7 +1788,6 @@ def list_internal_dehu_notifications(
             MessagingOrganization,
             MessagingOrganization.id == ClientDehuNotification.organization_id,
         )
-        .where(ClientDehuNotification.status == "PENDIENTE")
         .order_by(ClientDehuNotification.last_seen_at.desc())
         .limit(limit)
     )
@@ -1573,6 +1798,121 @@ def list_internal_dehu_notifications(
     return {
         "items": [
             _serialize_dehu_notification(item, organization)
+            for item, organization in db.execute(statement).all()
+        ],
+    }
+
+
+def _fecha_notificacion(value: str) -> date | None:
+    text_value = str(value or "").strip()
+    for pattern in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(text_value[:10], pattern).date()
+        except ValueError:
+            continue
+    return None
+
+
+@router.post("/internal/worker/requests/{request_id}/dev-notifications")
+def upsert_worker_dev_notifications(
+    request_id: str,
+    payload: WorkerDevNotificationsIn,
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_aapp_worker_key),
+):
+    """Guarda DEV incrementalmente y conserva los cambios de estado del portal."""
+    request_item = _claimed_request(db, request_id, payload.claim_token)
+    if request_item.certificate_type != "DEV_SYNC":
+        raise HTTPException(status_code=409, detail="La solicitud no es una sincronizacion DEV")
+    config = db.get(ClientDevMailboxConfig, request_item.organization_id)
+    if not config or not config.active:
+        raise HTTPException(status_code=409, detail="El buzon DEV no esta activo")
+    registration_status = payload.registration_status.strip().upper() or "ACTIVO"
+    if registration_status not in {"ACTIVO", "NO_ALTA"}:
+        raise HTTPException(status_code=422, detail="Estado de alta DEV no valido")
+    now = utcnow()
+    config.registration_status = registration_status
+    config.registration_message = payload.registration_message.strip()
+    config.updated_at = now
+    stored = []
+    created_count = 0
+    updated_status_count = 0
+    ignored_historical_count = 0
+    for incoming in payload.notifications:
+        reference = incoming.reference.strip()
+        if not reference:
+            raise HTTPException(status_code=422, detail="La referencia DEV no puede estar vacia")
+        item = db.scalar(select(ClientDevNotification).where(
+            ClientDevNotification.organization_id == request_item.organization_id,
+            ClientDevNotification.external_reference == reference,
+        ))
+        available = _fecha_notificacion(incoming.available_date)
+        activated_at = config.activated_at.date() if config.activated_at else now.date()
+        if item is None and available is not None and available < activated_at:
+            ignored_historical_count += 1
+            continue
+        previous_status = item.status if item is not None else ""
+        if item is None:
+            item = ClientDevNotification(
+                organization_id=request_item.organization_id,
+                external_reference=reference,
+                first_seen_at=now,
+            )
+            db.add(item)
+            created_count += 1
+        item.request_id = request_item.id
+        item.mailbox_id = config.mailbox_id
+        item.subject = incoming.subject.strip()
+        item.description = incoming.description.strip()
+        item.issuing_body = incoming.issuing_body.strip() or "DGT"
+        item.action_type = incoming.action_type.strip() or "NOTIFICACION"
+        item.holder_tax_id = re.sub(r"[^0-9A-Z]", "", incoming.holder_tax_id.upper())
+        item.holder_name = incoming.holder_name.strip()
+        item.available_date = incoming.available_date.strip()
+        item.expiration_date = incoming.expiration_date.strip()
+        item.status = normalizar_estado_dehu(incoming.status)
+        item.source_endpoint = incoming.source_endpoint.strip()
+        item.metadata_json = json.dumps(
+            dict(incoming.metadata), ensure_ascii=False,
+            separators=(",", ":"), default=str,
+        )
+        item.last_seen_at = now
+        item.updated_at = now
+        if previous_status and item.status != previous_status:
+            updated_status_count += 1
+        db.flush()
+        stored.append(item)
+    db.commit()
+    return {
+        "items": [_serialize_dev_notification(item) for item in stored],
+        "count": len(stored),
+        "created_count": created_count,
+        "updated_status_count": updated_status_count,
+        "ignored_historical_count": ignored_historical_count,
+        "registration_status": registration_status,
+    }
+
+
+@router.get("/internal/dev-notifications")
+def list_internal_dev_notifications(
+    company_code: str = "",
+    limit: int = Query(default=1000, ge=1, le=2000),
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    statement = (
+        select(ClientDevNotification, MessagingOrganization)
+        .join(MessagingOrganization, MessagingOrganization.id == ClientDevNotification.organization_id)
+        .order_by(ClientDevNotification.last_seen_at.desc())
+        .limit(limit)
+    )
+    if company_code.strip():
+        statement = statement.where(
+            MessagingOrganization.company_code == company_code.strip(),
+        )
+    return {
+        "items": [
+            _serialize_dev_notification(item, organization)
             for item, organization in db.execute(statement).all()
         ],
     }

@@ -6470,8 +6470,8 @@ class GestorBase:
     def upsert_notif_organismo(self, org: dict) -> int:
         now = self._utc_now()
         codigo = org.get("codigo", "").upper().strip()
-        if codigo != "DEHU":
-            raise ValueError("DEHu es el unico organismo de notificaciones soportado.")
+        if codigo not in {"DEHU", "DEV"}:
+            raise ValueError("Solo se admiten los buzones DEHu y DGT/DEV.")
         org_id = org.get("id")
         if org_id:
             self.conn.execute(
@@ -6579,8 +6579,9 @@ class GestorBase:
         buzon_id = str(buzon.get("id") or _uuid.uuid4())
         organismo_id = buzon.get("organismo_id")
         org = self.get_notif_organismo(organismo_id) if organismo_id else None
-        if not org or org.get("codigo") != "DEHU":
-            raise ValueError("El buzon debe pertenecer al organismo DEHu.")
+        org_codigo = str((org or {}).get("codigo") or "").upper()
+        if org_codigo not in {"DEHU", "DEV"}:
+            raise ValueError("El buzon debe pertenecer a DEHu o DGT/DEV.")
         self.conn.execute(
             """
             INSERT INTO notif_buzones
@@ -6609,7 +6610,7 @@ class GestorBase:
                 buzon.get("codigo_empresa"),
                 buzon.get("nombre", ""),
                 organismo_id,
-                "DEHU",
+                org_codigo,
                 buzon.get("nif_titular"),
                 buzon.get("certificado_id"),
                 int(buzon.get("activo", 1)),
@@ -6971,19 +6972,23 @@ class GestorBase:
         self.conn.commit()
         return log_id
 
-    # ── Configuracion del buzon unico DEHu ───────────────────────────────────
+    # ── Configuracion de buzones electronicos ────────────────────────────────
 
     def sembrar_organismos_simulados(self) -> None:
-        """Compatibilidad: configura DEHu como unico buzon de notificaciones."""
+        """Compatibilidad: asegura los organismos DEHu y DGT/DEV."""
+        self.asegurar_dehu_unico()
+
+    def asegurar_buzones_electronicos(self) -> None:
+        """Nombre actual del inicializador; conserva el alias historico."""
         self.asegurar_dehu_unico()
 
     def asegurar_dehu_unico(self) -> None:
-        """Deja un unico buzon DEHu por cliente y conserva el historico.
+        """Asegura DEHu y DGT/DEV y conserva todo el historico existente.
 
         Las versiones antiguas permitian configurar portales independientes,
         aunque todos terminaban usando el conector DEHu. La migracion reasigna
-        sus notificaciones y logs al buzon DEHu del cliente antes de eliminar
-        los buzones y organismos obsoletos.
+        sus notificaciones y logs al buzon DEHu del cliente. DGT/DEV se mantiene
+        separado y nunca se mezcla con DEHu.
         """
         now = self._utc_now()
         self.conn.execute(
@@ -7005,6 +7010,23 @@ class GestorBase:
         dehu_id = self.conn.execute(
             "SELECT id FROM notif_organismos WHERE codigo='DEHU'"
         ).fetchone()[0]
+        self.conn.execute(
+            """
+            INSERT INTO notif_organismos
+                (codigo, nombre, tipo, url_portal, descripcion, activo, created_at, updated_at)
+            VALUES ('DEV', ?, 'ESTATAL',
+                    'https://sedeapl.dgt.gob.es:9443/WEB_NTRA_CONSULTA/listadoNotificacionesIdiomaPostback.faces?idioma=es',
+                    'Direccion Electronica Vial para notificaciones de trafico', 1, ?, ?)
+            ON CONFLICT(codigo) DO UPDATE SET
+                nombre = excluded.nombre,
+                tipo = excluded.tipo,
+                url_portal = excluded.url_portal,
+                descripcion = excluded.descripcion,
+                activo = 1,
+                updated_at = excluded.updated_at
+            """,
+            ("DGT - Direccion Electronica Vial (DEV)", now, now),
+        )
 
         empresas = [
             r[0] for r in self.conn.execute(
@@ -7017,8 +7039,8 @@ class GestorBase:
                 SELECT b.id, o.codigo
                 FROM notif_buzones b
                 LEFT JOIN notif_organismos o ON o.id=b.organismo_id
-                WHERE b.codigo_empresa=?
-                ORDER BY CASE WHEN o.codigo='DEHU' THEN 0 ELSE 1 END, b.created_at, b.id
+                WHERE b.codigo_empresa=? AND o.codigo='DEHU'
+                ORDER BY b.created_at, b.id
                 """,
                 (codigo_empresa,),
             ).fetchall()
@@ -7052,15 +7074,6 @@ class GestorBase:
                     sobrantes,
                 )
 
-        self.conn.execute(
-            "UPDATE notif_bandeja SET organismo_id=? WHERE organismo_id IS NOT NULL",
-            (dehu_id,),
-        )
-        self.conn.execute(
-            "UPDATE notif_sync_logs SET organismo_id=? WHERE organismo_id IS NOT NULL",
-            (dehu_id,),
-        )
-        self.conn.execute("DELETE FROM notif_organismos WHERE codigo<>'DEHU'")
         self.conn.commit()
 
     def sembrar_datos_empresa_simulados(self, codigo_empresa: str, ejercicio: int) -> None:

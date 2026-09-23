@@ -1,7 +1,7 @@
 """
 Vista: Gestion de Buzones de Notificacion.
 
-Cada cliente puede tener un unico buzon DEHu.
+Cada cliente puede tener un buzon DEHu y otro DGT/DEV.
 
 Modelo de certificado unico: el buzon NO elige certificado; usa automaticamente
 el unico certificado digital del cliente (empresa). El NIF del titular tambien se
@@ -22,7 +22,7 @@ except Exception:  # pragma: no cover
     def _vigencia(_f):
         return ("", "neutro")
 
-TIPOS_BUZON = ["DEHU"]
+TIPOS_BUZON = ["DEHU", "DEV"]
 
 PERIODICIDADES = ["MANUAL", "DIARIA", "SEMANAL", "QUINCENAL", "MENSUAL"]
 
@@ -158,9 +158,14 @@ class UIBuzones(ttk.Frame):
                                    parent=self.winfo_toplevel()):
             return
         try:
-            BackendClientService().delete_dehu_mailbox_config(
-                company_code=self._codigo,
+            buzon = self._gestor.get_notif_buzon(buzon_id) or {}
+            provider = str(buzon.get("organismo_codigo") or "DEHU").upper()
+            backend = BackendClientService()
+            delete = (
+                backend.delete_dehu_mailbox_config
+                if provider == "DEHU" else backend.delete_dev_mailbox_config
             )
+            delete(company_code=self._codigo)
             self._gestor.eliminar_notif_buzon(self._codigo, buzon_id)
         except Exception as exc:
             messagebox.showerror("Gest2A3Eco", str(exc), parent=self.winfo_toplevel())
@@ -169,10 +174,17 @@ class UIBuzones(ttk.Frame):
 
     def _guardar_configuracion(self, buzon: dict) -> None:
         """Persiste la configuracion local y su programacion central."""
-        BackendClientService().save_dehu_mailbox_config(
+        org = self._gestor.get_notif_organismo(buzon.get("organismo_id")) or {}
+        provider = str(org.get("codigo") or "DEHU").upper()
+        backend = BackendClientService()
+        save = (
+            backend.save_dehu_mailbox_config
+            if provider == "DEHU" else backend.save_dev_mailbox_config
+        )
+        save(
             company_code=self._codigo,
             mailbox_id=str(buzon.get("id") or ""),
-            mailbox_name=str(buzon.get("nombre") or "DEHu"),
+            mailbox_name=str(buzon.get("nombre") or provider),
             active=bool(buzon.get("activo")),
             periodicity=str(buzon.get("periodicidad_sync") or "MANUAL"),
             daily_sync_time=str(
@@ -240,7 +252,7 @@ class _BuzonDialog(tk.Toplevel):
         self._org_ids     = [None] + [o["id"] for o in self._organismos]
 
         self._var_nombre     = tk.StringVar(value=self._buzon.get("nombre", ""))
-        self._var_tipo       = tk.StringVar(value="DEHU")
+        self._var_tipo       = tk.StringVar(value=self._buzon.get("tipo_buzon", "DEHU"))
         config_global = self._gestor.get_notif_config_global()
         empresa = self._gestor.get_empresa(self._empresa) or {}
         self._var_periodicidad = tk.StringVar(value=config_global.get("periodicidad_sync") or "MANUAL")
@@ -328,7 +340,10 @@ class _BuzonDialog(tk.Toplevel):
             "codigo_empresa": self._empresa,
             "nombre":         nombre,
             "organismo_id":   org_id,
-            "tipo_buzon":     "DEHU",
+            "tipo_buzon":     (
+                self._var_tipo.get().strip().upper()
+                if hasattr(self, "_var_tipo") else org_text.split(" -", 1)[0].upper()
+            ) or "DEHU",
             "nif_titular":    nif,
             "certificado_id": cert_id,
             "periodicidad_sync": periodicidad,

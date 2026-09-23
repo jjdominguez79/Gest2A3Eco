@@ -129,6 +129,29 @@ class AappBackendClient:
         response.raise_for_status()
         return response.json()
 
+    def upsert_dev_notifications(
+        self,
+        item: dict,
+        notifications: list[dict],
+        *,
+        registration_status: str,
+        registration_message: str = "",
+    ) -> dict:
+        response = self.http.post(
+            f"{self.config.backend_url}/api/v1/messaging/client/certificates/"
+            f"internal/worker/requests/{item['id']}/dev-notifications",
+            headers=self._headers,
+            json={
+                "claim_token": item["claim_token"],
+                "registration_status": registration_status,
+                "registration_message": registration_message,
+                "notifications": notifications,
+            },
+            timeout=self.config.request_timeout_seconds,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def complete(self, item: dict, document_id: str | None, summary: str = "") -> None:
         response = self.http.post(
             f"{self.config.backend_url}/api/v1/messaging/client/certificates/internal/worker/requests/{item['id']}/complete",

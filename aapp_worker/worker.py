@@ -14,6 +14,7 @@ from services.aapp.base import obtener_conector
 from services.aapp.cert_store import CertMaterial
 from services.aapp.certificados import obtener_proveedor
 from services.aapp import dehu_playwright  # noqa: F401
+from services.aapp import dev_notifications  # noqa: F401
 
 
 LOG = logging.getLogger("gest2a3eco.aapp_worker")
@@ -44,6 +45,9 @@ class AappWorker:
     def _process(self, item: dict) -> None:
         if item["certificate_type"] == "DEHU_SYNC":
             self._process_dehu(item)
+            return
+        if item["certificate_type"] == "DEV_SYNC":
+            self._process_dev(item)
             return
         provider = obtener_proveedor(item["certificate_type"])
         if provider is None:
@@ -146,9 +150,6 @@ class AappWorker:
             LOG.info("Solicitud %s completada", item["id"])
 
     def _process_dehu(self, item: dict) -> None:
-        connector = obtener_conector("DEHU")
-        if connector is None:
-            raise RuntimeError("El conector DEHu no esta disponible en el worker")
         material = self.backend.certificate_material(item)
         parameters = item.get("parameters") or {}
         with tempfile.TemporaryDirectory(prefix="gestinem-dehu-") as directory:
@@ -163,6 +164,12 @@ class AappWorker:
                 password=material.get("password") or "",
                 fecha_caducidad=material.get("valid_until"),
             )
+            if parameters.get("diagnostic_portal") == "DEV":
+                self._process_dev_diagnostic(item, cert)
+                return
+            connector = obtener_conector("DEHU")
+            if connector is None:
+                raise RuntimeError("El conector DEHu no esta disponible en el worker")
             options = OpcionesSync(
                 headless=self.config.headless,
                 # La consulta de bandeja es pasiva: no comparece, no firma y
@@ -241,6 +248,102 @@ class AappWorker:
                 summary,
             )
             LOG.info("Sincronizacion DEHu %s completada: %s", item["id"], summary)
+
+    def _process_dev_diagnostic(self, item: dict, cert: CertMaterial) -> None:
+        if self.config.diagnostic_dir is None:
+            raise RuntimeError("El directorio de diagnostico DEV no esta configurado")
+        from services.aapp.dev_playwright import diagnosticar_dev
+
+        target = self.config.diagnostic_dir / f"dev-{item['id']}"
+        result = diagnosticar_dev(
+            cert,
+            carpeta_diagnostico=str(target),
+            headless=self.config.headless,
+            timeout_ms=self.config.request_timeout_seconds * 1000,
+        )
+        summary = f"DEV_DIAGNOSTIC:{result.estado}: {result.mensaje}"
+        if not result.ok:
+            raise RuntimeError(summary)
+        self.backend.complete(item, None, summary)
+        LOG.info("Diagnostico DEV %s completado: %s", item["id"], summary)
+
+    def _process_dev(self, item: dict) -> None:
+        material = self.backend.certificate_material(item)
+        parameters = item.get("parameters") or {}
+        with tempfile.TemporaryDirectory(prefix="gestinem-dev-") as directory:
+            workdir = Path(directory)
+            pfx_path = workdir / "cliente.pfx"
+            pfx_path.write_bytes(base64.b64decode(material["pfx_base64"]))
+            cert = CertMaterial(
+                cert_id="central",
+                nombre=material.get("file_name") or "certificado",
+                nif_titular=parameters.get("tax_id"),
+                ruta_archivo=str(pfx_path),
+                password=material.get("password") or "",
+                fecha_caducidad=material.get("valid_until"),
+            )
+            connector = obtener_conector("DEV")
+            if connector is None:
+                raise RuntimeError("El conector DGT/DEV no esta disponible en el worker")
+            result = connector.sincronizar(
+                {
+                    "id": parameters.get("mailbox_id") or "dev-central",
+                    "nombre": parameters.get("mailbox_name") or "DGT / DEV",
+                    "organismo_codigo": "DEV",
+                    "codigo_empresa": parameters.get("company_code") or "",
+                },
+                cert,
+                OpcionesSync(
+                    headless=self.config.headless,
+                    descargar_pdf=False,
+                    carpeta_descargas=str(workdir),
+                    nif_filtro=parameters.get("tax_id") or None,
+                    modo_diagnostico=self.config.diagnostic_dir is not None,
+                    carpeta_diagnostico=(
+                        str(self.config.diagnostic_dir / f"dev-sync-{item['id']}")
+                        if self.config.diagnostic_dir is not None else None
+                    ),
+                    log=lambda message: LOG.info("%s: %s", item["id"], message),
+                ),
+            )
+            if not result.ok:
+                raise RuntimeError(result.mensaje or "No se pudo sincronizar DGT/DEV")
+            no_alta = result.mensaje.startswith("NO_ALTA:")
+            payload = []
+            for notification in result.notificaciones:
+                metadata = notification.metadatos or {}
+                payload.append({
+                    "reference": notification.referencia,
+                    "mailbox_id": parameters.get("mailbox_id") or "",
+                    "subject": notification.asunto or "",
+                    "description": notification.descripcion or "",
+                    "issuing_body": notification.descripcion or "DGT",
+                    "issuing_body_source": "DGT",
+                    "action_type": notification.tipo_acto or "NOTIFICACION",
+                    "holder_tax_id": notification.nif_interesado or "",
+                    "holder_name": notification.nombre_interesado or "",
+                    "available_date": notification.fecha_puesta_disposicion or "",
+                    "expiration_date": notification.fecha_vencimiento or "",
+                    "status": notification.estado or "PENDIENTE",
+                    "source_endpoint": str(metadata.get("endpoint") or ""),
+                    "metadata": metadata,
+                    "document_id": None,
+                })
+            stored = self.backend.upsert_dev_notifications(
+                item,
+                payload,
+                registration_status="NO_ALTA" if no_alta else "ACTIVO",
+                registration_message=result.mensaje,
+            )
+            summary = (
+                "DEV_NO_ALTA: El titular no esta dado de alta en DEV."
+                if no_alta else
+                f"DEV activo; {len(payload)} detectada(s); "
+                f"{int(stored.get('created_count') or 0)} nueva(s); "
+                f"{int(stored.get('updated_status_count') or 0)} estado(s) actualizado(s)."
+            )
+            self.backend.complete(item, None, summary)
+            LOG.info("Sincronizacion DEV %s completada: %s", item["id"], summary)
 
     def run_forever(self) -> None:
         while not self.stop_event.is_set():

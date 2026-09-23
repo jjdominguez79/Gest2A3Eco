@@ -53,6 +53,7 @@ class UIBandejaGlobal(ttk.Frame):
         self._on_open_empresa = on_open_empresa
         self._selected_id: str | None = None
         self._cache: list[dict] = []
+        self._importando_central = False
         self._build()
         self.refresh()
 
@@ -75,21 +76,15 @@ class UIBandejaGlobal(ttk.Frame):
         hdr.pack(fill="x")
         tk.Label(hdr, text="✉  Bandeja global de notificaciones", bg=_HDR_BG, fg=_HDR_FG,
                  font=("Segoe UI", 11, "bold"), anchor="w").pack(side="left", padx=16, pady=10)
-        tk.Label(hdr, text="Notificaciones de todos los clientes",
+        tk.Label(hdr, text="Todos los clientes; se actualiza desde DEHu al abrir",
                  bg=_HDR_BG, fg=_HDR_SUB, font=("Segoe UI", 9)).pack(side="left", pady=10)
         self._btn_importar = tk.Button(
-            hdr, text="Consultar bandeja DEHu",
+            hdr, text="Actualizar desde DEHu",
             bg=_PRIMARY, fg="white",
             font=("Segoe UI", 8), relief="flat", padx=8, pady=4, cursor="hand2",
             command=self._on_importar_central,
         )
         self._btn_importar.pack(side="right", padx=(4, 12), pady=8)
-        tk.Button(
-            hdr, text="↻  Actualizar local",
-            bg="#334155", fg=_HDR_SUB,
-            font=("Segoe UI", 8), relief="flat", padx=8, pady=4, cursor="hand2",
-            command=self.refresh,
-        ).pack(side="right", padx=4, pady=8)
 
     def _build_filter_bar(self) -> None:
         fb = tk.Frame(self, bg="#e2e8f0", pady=4)
@@ -555,33 +550,56 @@ class UIBandejaGlobal(ttk.Frame):
     # ----------------------------------------------------------------- refresh
 
     def _on_importar_central(self) -> None:
+        self._consultar_central(mostrar_resultado=True)
+
+    def refresh_desde_central(self) -> None:
+        """Importa silenciosamente la bandeja central y refresca la vista."""
+        self._consultar_central(mostrar_resultado=False)
+
+    def _consultar_central(self, *, mostrar_resultado: bool) -> None:
+        if self._importando_central:
+            return
+        self._importando_central = True
         self._btn_importar.configure(state="disabled", text="Consultando...")
 
         def _worker():
             try:
                 from services.aapp.sync_service import importar_bandeja_central
                 result = importar_bandeja_central(self._gestor)
-                self.after(0, lambda: self._importacion_fin(result, None))
+                self.after(
+                    0,
+                    lambda: self._importacion_fin(
+                        result, None, mostrar_resultado=mostrar_resultado,
+                    ),
+                )
             except Exception as exc:
-                self.after(0, lambda error=exc: self._importacion_fin(None, error))
+                self.after(
+                    0,
+                    lambda error=exc: self._importacion_fin(
+                        None, error, mostrar_resultado=mostrar_resultado,
+                    ),
+                )
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _importacion_fin(self, result, error=None) -> None:
-        self._btn_importar.configure(state="normal", text="Consultar bandeja DEHu")
+    def _importacion_fin(self, result, error=None, *, mostrar_resultado: bool = True) -> None:
+        self._importando_central = False
+        self._btn_importar.configure(state="normal", text="Actualizar desde DEHu")
         if error is not None:
-            messagebox.showerror(
-                "No se pudo consultar DEHu", str(error), parent=self.winfo_toplevel(),
-            )
+            if mostrar_resultado:
+                messagebox.showerror(
+                    "No se pudo consultar DEHu", str(error), parent=self.winfo_toplevel(),
+                )
             return
         self.refresh()
-        messagebox.showinfo(
-            "Bandeja DEHu actualizada",
-            f"Notificaciones centrales: {result.total}\n"
-            f"Nuevas en el escritorio: {result.nuevas}\n"
-            f"Omitidas por falta de buzon local: {result.omitidas}",
-            parent=self.winfo_toplevel(),
-        )
+        if mostrar_resultado:
+            messagebox.showinfo(
+                "Bandeja DEHu actualizada",
+                f"Notificaciones centrales: {result.total}\n"
+                f"Nuevas en el escritorio: {result.nuevas}\n"
+                f"Omitidas por falta de buzon local: {result.omitidas}",
+                parent=self.winfo_toplevel(),
+            )
 
     def refresh(self) -> None:
         self._config_global = self._gestor.get_notif_config_global()

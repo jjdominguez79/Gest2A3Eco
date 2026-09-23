@@ -322,6 +322,62 @@ class BackendClientService:
         response.raise_for_status()
         return response.json()
 
+    def list_dev_notifications(
+        self, *, company_code: str = "", limit: int = 1000,
+    ) -> list[dict]:
+        """Lee el historico incremental DGT/DEV alimentado por el worker."""
+        self._ensure_configured()
+        url = f"{self.base_url}/api/v1/messaging/client/certificates/internal/dev-notifications"
+        params = {"limit": limit}
+        if company_code:
+            params["company_code"] = company_code
+        response = self.http.get(url, headers=self._headers(), params=params, timeout=30)
+        response.raise_for_status()
+        return list(response.json().get("items") or [])
+
+    def save_dev_mailbox_config(
+        self, *, company_code: str, mailbox_id: str, mailbox_name: str,
+        active: bool, periodicity: str, notification_email: str,
+        daily_sync_time: str = "",
+    ) -> dict:
+        self._ensure_configured()
+        response = self.http.put(
+            f"{self.base_url}/api/v1/messaging/client/certificates/"
+            f"internal/dev-mailboxes/{company_code}",
+            headers=self._headers(),
+            json={
+                "mailbox_id": mailbox_id,
+                "mailbox_name": mailbox_name,
+                "active": bool(active),
+                "periodicity": periodicity,
+                "daily_sync_time": daily_sync_time,
+                "notification_email": notification_email,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def list_dev_mailbox_configs(self) -> list[dict]:
+        self._ensure_configured()
+        response = self.http.get(
+            f"{self.base_url}/api/v1/messaging/client/certificates/internal/dev-mailboxes",
+            headers=self._headers(), timeout=30,
+        )
+        response.raise_for_status()
+        return list(response.json().get("items") or [])
+
+    def delete_dev_mailbox_config(self, *, company_code: str) -> dict:
+        self._ensure_configured()
+        response = self.http.delete(
+            f"{self.base_url}/api/v1/messaging/client/certificates/"
+            f"internal/dev-mailboxes/{company_code}",
+            headers=self._headers(),
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def retry_certificate_request(
         self, request_id: str, *, parameters: dict | None = None,
     ) -> dict:

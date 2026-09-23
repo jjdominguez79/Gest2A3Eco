@@ -14,8 +14,9 @@ Realidad tecnica del portal (verificada con volcados reales)
   nifTitular, sentReference, availabilityDate, expirationDate, bondType, state...
   Por eso, tras autenticar, llamamos DIRECTAMENTE a esa API (reutilizando la
   sesion del navegador) y paginamos, en lugar de raspar el DOM.
-  Solo se consultan bandejas vigentes: no se solicita el historico de realizadas
-  y se excluyen los estados leidos/aceptados/rechazados.
+  Se consultan pendientes y, en una ventana movil de 30 dias, realizadas. Las
+  realizadas se usan para actualizar el estado de avisos ya descubiertos; el
+  backend no incorpora como nuevas las anteriores a la activacion del servicio.
 
 Puesta en marcha (modo aprendizaje)
 -----------------------------------
@@ -76,8 +77,15 @@ _ENDPOINTS = (
     }),
     ("/api/v1/communications", "COMUNICACION", {
         "emitterEntityCode": "", "bondType": "", "vinculoReceptor": "",
-        "titularNif": "", "publicId": "", "state": "PENDIENTE",
+        "titularNif": "", "publicId": "", "state": "",
         "availabilityDate[left_date]": "", "availabilityDate[right_date]": "",
+    }),
+    ("/api/v1/realized_notifications", "NOTIFICACION", {
+        "emitterEntityCode": "", "state": "", "publicId": "",
+        "titularNif": "", "bondType": "", "vinculoReceptor": "",
+        "postalDelivery": "", "finalDate[left_date]": "",
+        "finalDate[right_date]": "", "expirationDate[left_date]": "",
+        "expirationDate[right_date]": "",
     }),
 )
 
@@ -227,6 +235,9 @@ class ConectorDEHU(ConectorOrganismo):
                 # provocan HTTP 400; fijarlas una vez conserva la paginacion.
                 filtros["availabilityDate[left_date]"] = _fecha_hace_30_dias()
                 filtros["availabilityDate[right_date]"] = _fecha_hoy()
+            elif "realized_notifications" in endpoint:
+                filtros["finalDate[left_date]"] = _fecha_hace_30_dias()
+                filtros["finalDate[right_date]"] = _fecha_hoy()
             page_num = 1
             endpoint_completo = True
             while True:
@@ -289,25 +300,22 @@ class ConectorDEHU(ConectorOrganismo):
 
     def _map_registros(self, registros, cert_material, nif_filtro=None):
         objetivo = _norm_nif(nif_filtro) if nif_filtro else None
-        notifs = []
-        vistos = set()
+        por_clave = {}
+        orden = []
         for r in registros:
             if not isinstance(r, dict):
                 continue
             if objetivo and _norm_nif(r.get("nifTitular")) != objetivo:
                 continue
-            if not es_pendiente_dehu(r.get("state"), r.get("_endpoint")):
-                continue
             ref = r.get("identifier") or r.get("sentReference")
             clave = (str(ref or ""), _norm_nif(r.get("nifTitular")))
-            if not ref or clave in vistos:
+            if not ref:
                 continue
-            vistos.add(clave)
             endpoint = r.get("_endpoint") or ""
             categoria = r.get("_category") or "NOTIFICACION"
             realizada = "realized" in endpoint
             estado = r.get("state") or ("REALIZADA" if realizada else "PENDIENTE")
-            notifs.append(NotificacionDTO(
+            dto = NotificacionDTO(
                 referencia=str(ref),
                 asunto=r.get("concept") or "(sin asunto)",
                 descripcion=r.get("emitterEntity"),
@@ -326,8 +334,16 @@ class ConectorDEHU(ConectorOrganismo):
                     "finalDate": r.get("finalDate"),
                     "raw": r,
                 },
-            ))
-        return notifs
+            )
+            anterior = por_clave.get(clave)
+            if anterior is None:
+                orden.append(clave)
+                por_clave[clave] = dto
+            elif es_pendiente_dehu(anterior.estado) and not es_pendiente_dehu(dto.estado):
+                # Ante una respuesta simultanea de ambas bandejas prevalece
+                # el estado terminal observado en realizadas.
+                por_clave[clave] = dto
+        return [por_clave[clave] for clave in orden]
 
     # ── red / captura (respaldo y diagnostico) ─────────────────────────
     def _instalar_captura_red(self, page, capturas, opciones):

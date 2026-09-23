@@ -2,8 +2,8 @@ from services.aapp.sync_service import importar_bandeja_central
 
 
 class _Backend:
-    def list_dehu_notifications(self, **_kwargs):
-        return [{
+    def __init__(self):
+        self.items = [{
             "id": "central-1",
             "request_id": "request-1",
             "company_code": "E00001",
@@ -22,6 +22,9 @@ class _Backend:
             "document_id": None,
             "metadata": {"sentReference": "ENV-1"},
         }]
+
+    def list_dehu_notifications(self, **_kwargs):
+        return list(self.items)
 
 
 class _Gestor:
@@ -67,3 +70,32 @@ def test_no_reimporta_leidas_ni_revierte_estado_local():
     result = importar_bandeja_central(gestor, backend=_Backend())
     assert result.omitidas == 1
     assert row["estado"] == "LEIDA"
+
+
+def test_conserva_historico_local_si_deja_de_aparecer_en_la_bandeja_central():
+    gestor = _Gestor()
+    backend = _Backend()
+    importar_bandeja_central(gestor, backend=backend)
+    item_id = next(iter(gestor.rows))
+
+    # El portal ya no devuelve el aviso (por lectura, rechazo o caducidad),
+    # pero la sincronizacion incremental nunca purga el historico importado.
+    backend.items = []
+    result = importar_bandeja_central(gestor, backend=backend)
+
+    assert result.total == 0
+    assert item_id in gestor.rows
+    assert gestor.rows[item_id]["referencia"] == "DEHU-1"
+
+
+def test_actualiza_a_leida_si_el_portal_la_realiza_fuera_de_la_aplicacion():
+    gestor = _Gestor()
+    backend = _Backend()
+    importar_bandeja_central(gestor, backend=backend)
+    backend.items[0]["status"] = "LEIDA"
+    backend.items[0]["source_endpoint"] = "/api/v1/realized_notifications"
+
+    result = importar_bandeja_central(gestor, backend=backend)
+
+    assert result.omitidas == 0
+    assert next(iter(gestor.rows.values()))["estado"] == "LEIDA"

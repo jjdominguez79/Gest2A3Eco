@@ -34,11 +34,11 @@ fechas predefinidas, y nunca usa los controles de validar o firmar solicitudes.
 Las solicitudes antiguas marcadas completed no se reclasifican automaticamente:
 requieren inspeccionar su PDF y confirmar el expediente sin emitir otro.
 
-La consulta DEHu de comunicaciones usa el intervalo de los ultimos 30 dias
-en formato DD/MM/AAAA, como el portal, y el estado PENDIENTE. No consulta el
-historico de notificaciones realizadas, ni abre o descarga documentos. Si una
-bandeja falla, no se importa un resultado parcial; el error incluye el estado
-HTTP cuando esta disponible.
+La consulta DEHu usa los ultimos 30 dias para comunicaciones y realizadas.
+Las realizadas solo actualizan referencias ya controladas; no importan el
+historico previo al alta. Nunca abre ni descarga documentos. Si una bandeja
+falla, no se importa un resultado parcial; el error incluye el estado HTTP
+cuando esta disponible.
 
 Antes de arrancar, crear `secrets/aapp_worker_api_key.txt` con el mismo valor de
 `AAPP_WORKER_API_KEY` configurado en Railway, sin comillas ni espacios.
@@ -68,3 +68,13 @@ inicial de AEAT que bloqueaba la seleccion del certificado generico y el boton
 Validar solicitud. Si aparece un aviso despues de validar, detiene el tramite
 para revisar la respuesta de AEAT antes de cualquier firma. Requiere
 reconstruir la imagen; las solicitudes fallidas pueden reintentarse desde la app.
+
+La version 2026.09.22.2 incorpora un diagnostico de solo lectura para DGT/DEV.
+Ofrece al portal el certificado temporal del cliente, no pulsa acciones sobre
+notificaciones y elimina la copia del PFX al terminar. Las capturas privadas se
+usan para validar el conector antes de habilitar su sincronizacion general.
+
+La version 2026.09.22.3 activa la consulta pasiva DGT/DEV ya validada con
+E00006. Detecta expresamente los titulares no dados de alta, no abre ni acepta
+avisos y envia al backend las filas visibles para mantener su historico y sus
+cambios de estado.

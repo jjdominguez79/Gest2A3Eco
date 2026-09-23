@@ -60,7 +60,7 @@ Flutter ya incluye la pantalla **Certificados oficiales** para consultar la
 vigencia, crear y cancelar solicitudes, seguir su estado y abrir el documento
 resultante. El PFX y la contrasena nunca forman parte de una respuesta cliente.
 
-## Configuracion global y comunicaciones DEHu
+## Configuracion global, DEHu y DGT/DEV
 
 La pestana **Configuracion global** del modulo de notificaciones guarda en
 PostgreSQL una unica periodicidad para todos los buzones, la hora de Madrid
@@ -92,18 +92,37 @@ Se registra por separado la publicacion y el estado del correo. Un fallo
 seguro permite reintentar el email sin republicar los PDF; un resultado
 incierto requiere comprobar el envio antes de reenviarlo.
 
-La consulta es pasiva y excluye leidas/aceptadas/rechazadas/realizadas. No pide
-la bandeja historica `realized_notifications` ni reutiliza capturas/filas DOM
-cuando la API devuelve una bandeja vacia. Los resumenes enumeran solo
+La consulta es pasiva. DEHu lee pendientes y una ventana movil de realizadas
+para actualizar como leida, aceptada, rechazada o caducada una referencia ya
+controlada. Si una notificacion se lee directamente en el portal antes de la
+primera sincronizacion, tambien se incorpora cuando su puesta a disposicion es
+posterior al alta del buzon. Las realizadas anteriores a la activacion no se
+incorporan de golpe: el historico es incremental y nunca se purga porque una
+referencia deje de aparecer en el portal. Los resumenes enumeran solo
 referencias nuevas, no todas las pendientes. La migracion backend
 `023_dehu_new_notifications.sql` recuerda tambien las referencias de
-resumenes anteriores y de titulares sin servicio, sin almacenar su contenido.
+resumenes anteriores y de titulares sin servicio, sin almacenar su contenido;
+`029_dehu_activation_history.sql` fija el inicio del historico incremental.
 Un aviso descubierto por primera vez sigue siendo nuevo aunque su fecha de
 puesta a disposicion sea anterior al dia de consulta.
 
+La pantalla **Buzones y sincronizacion** muestra DEHu y DGT/DEV para todos los
+clientes, incluso cuando aun no existe una configuracion local. Admite seleccion
+multiple para activar o desactivar buzones. Cada fila activa genera su propia
+consulta con el certificado del cliente; nunca se reutiliza el certificado de
+otro titular. DGT/DEV conserva igualmente un historico incremental desde la
+fecha de activacion y muestra **No alta DEV** cuando el portal identifica el
+certificado pero el titular no esta suscrito. La consulta se limita al listado:
+no abre, acepta, rechaza ni descarga notificaciones.
+
+El acceso DGT/DEV se valido en modo de solo lectura con E00006 el 22/09/2026:
+el certificado autentico correctamente y la bandeja no contenia avisos en los
+ultimos 180 dias. La migracion `028_dev_notifications.sql` crea la programacion
+y el historico central de este segundo buzon.
+
 Para activar el cambio en produccion es necesario actualizar escritorio,
-backend y worker AAPP. El backend aplica la migracion al arrancar; el builder
-Synology incluye el modulo compartido de estados DEHu.
+backend y worker AAPP. El backend aplica las migraciones al arrancar; el builder
+Synology incluye ambos conectores y el modulo compartido de estados.
 
 ## Limites deliberados
 

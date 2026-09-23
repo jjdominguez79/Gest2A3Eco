@@ -1,5 +1,5 @@
 """
-Vista: configuracion del unico buzon DEHu del cliente.
+Vista: configuracion de los buzones DEHu y DGT/DEV del cliente.
 
 Izquierda:
   - Certificado digital unico del cliente (panel UICertificados).
@@ -64,7 +64,7 @@ class UINotificacionesCliente(ttk.Frame):
 
         card = tk.Frame(left, bg=_BG)
         card.pack(fill="x", padx=12, pady=(10, 6))
-        tk.Label(card, text="Opciones del buzon DEHu", bg=_BG, fg=_HDR_FG,
+        tk.Label(card, text="Opciones de los buzones", bg=_BG, fg=_HDR_FG,
                  font=("Segoe UI", 10, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
 
         self._var_email = tk.StringVar()
@@ -102,9 +102,9 @@ class UINotificacionesCliente(ttk.Frame):
     def _build_right(self, right):
         hdr = tk.Frame(right, bg=_HDR_BG)
         hdr.pack(fill="x")
-        tk.Label(hdr, text="Buzon DEHu", bg=_HDR_BG, fg=_HDR_FG,
+        tk.Label(hdr, text="Buzones DEHu y DGT/DEV", bg=_HDR_BG, fg=_HDR_FG,
                  font=("Segoe UI", 11, "bold")).pack(side="left", padx=16, pady=10)
-        tk.Label(hdr, text="Activa DEHu para consultar las notificaciones del cliente",
+        tk.Label(hdr, text="Activa cada servicio para consultar con el certificado del cliente",
                  bg=_HDR_BG, fg=_HDR_SUB, font=("Segoe UI", 9)).pack(side="left", pady=10)
 
         cont = tk.Frame(right, bg=_BG)
@@ -242,6 +242,7 @@ class UINotificacionesCliente(ttk.Frame):
         try:
             for org in self._organismos:
                 oid = org["id"]
+                provider = str(org.get("codigo") or "DEHU").upper()
                 marcado = self._org_marca.get(oid, False)
                 existente = buzones.get(oid)
                 if marcado:
@@ -250,7 +251,7 @@ class UINotificacionesCliente(ttk.Frame):
                         "codigo_empresa": self._codigo,
                         "nombre": (existente.get("nombre") if existente else None) or org.get("nombre") or "Buzon",
                         "organismo_id": oid,
-                        "tipo_buzon": "DEHU",
+                        "tipo_buzon": provider,
                         "nif_titular": nif,
                         "certificado_id": cert_id,
                         "activo": 1,
@@ -271,25 +272,29 @@ class UINotificacionesCliente(ttk.Frame):
                     cambios.append(data)
                     desactivados += 1
 
-            activos = [b for b in cambios if b.get("activo")]
-            if activos:
-                principal = activos[0]
-                BackendClientService().save_dehu_mailbox_config(
+            backend = BackendClientService()
+            por_org = {b.get("organismo_id"): b for b in cambios}
+            for org in self._organismos:
+                data = por_org.get(org["id"])
+                if data is None:
+                    continue
+                provider = str(org.get("codigo") or "DEHU").upper()
+                save = (
+                    backend.save_dehu_mailbox_config
+                    if provider == "DEHU" else backend.save_dev_mailbox_config
+                )
+                save(
                     company_code=self._codigo,
-                    mailbox_id=str(principal.get("id") or ""),
-                    mailbox_name=str(principal.get("nombre") or "DEHu"),
-                    active=True,
-                    periodicity=str(principal.get("periodicidad_sync") or "MANUAL"),
+                    mailbox_id=str(data.get("id") or ""),
+                    mailbox_name=str(data.get("nombre") or provider),
+                    active=bool(data.get("activo")),
+                    periodicity=str(data.get("periodicidad_sync") or "MANUAL"),
                     daily_sync_time=str(
                         self._gestor.get_notif_config_global().get("hora_sync_diaria") or ""
                     ),
                     notification_email=str(
                         self._gestor.get_notif_config_global().get("email_resumen_interno") or ""
                     ),
-                )
-            else:
-                BackendClientService().delete_dehu_mailbox_config(
-                    company_code=self._codigo,
                 )
 
             for data in cambios:

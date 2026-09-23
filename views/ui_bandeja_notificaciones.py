@@ -20,7 +20,7 @@ LABEL_ESTADO = {
     "RECHAZADA":  "Rechazada",
     "LEIDA":      "Leida",
     "REALIZADA":  "Realizada",
-    "VENCIDA":    "Vencida",
+    "VENCIDA":    "Caducada / vencida",
 }
 COLOR_ESTADO = {
     "PENDIENTE":  _WARNING,

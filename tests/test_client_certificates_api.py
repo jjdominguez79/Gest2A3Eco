@@ -24,6 +24,8 @@ from backend.api.client_models import (
     ClientDehuNotification,
     ClientDehuMailboxConfig,
     ClientDehuSyncBatch,
+    ClientDevMailboxConfig,
+    ClientDevNotification,
     ClientDocument,
 )
 from backend.api.database import Base
@@ -378,6 +380,52 @@ def test_programacion_automatica_dehu_permite_desactivar_email_interno(monkeypat
     assert response.json()["next_sync_at"]
 
 
+def test_programacion_automatica_encola_todos_los_buzones_activos(monkeypatch):
+    client, factory, first_org_id, _ = _setup(monkeypatch)
+    vencida = utcnow() - timedelta(minutes=1)
+    with factory() as db:
+        second = MessagingOrganization(
+            company_code="E00002", name="Cliente Dos", tax_id="B87654321", active=True,
+        )
+        inactive = MessagingOrganization(
+            company_code="E00003", name="Cliente Inactivo", tax_id="B11223344", active=True,
+        )
+        db.add_all([second, inactive])
+        db.flush()
+        db.add_all([
+            ClientDehuMailboxConfig(
+                organization_id=first_org_id, mailbox_id="mailbox-1",
+                active=True, periodicity="DIARIA", next_sync_at=vencida,
+            ),
+            ClientDehuMailboxConfig(
+                organization_id=second.id, mailbox_id="mailbox-2",
+                active=True, periodicity="DIARIA", next_sync_at=vencida,
+            ),
+            ClientDehuMailboxConfig(
+                organization_id=inactive.id, mailbox_id="mailbox-3",
+                active=False, periodicity="DIARIA", next_sync_at=vencida,
+            ),
+        ])
+        db.commit()
+
+    claimed = [
+        client.post(
+            "/api/v1/messaging/client/certificates/internal/worker/claim",
+        ).json()["item"]
+        for _ in range(3)
+    ]
+
+    assert {item["parameters"]["company_code"] for item in claimed if item} == {
+        "E00001", "E00002",
+    }
+    assert claimed[2] is None
+    with factory() as db:
+        requests = list(db.scalars(select(ClientCertificateRequest)).all())
+        assert len(requests) == 2
+        assert len({item.dehu_batch_id for item in requests}) == 1
+        assert db.scalars(select(ClientDehuSyncBatch)).one().total_mailboxes == 2
+
+
 def test_hora_diaria_dehu_sigue_hora_de_madrid_con_cambio_estacional():
     invierno = datetime(2026, 1, 15, 8, 0, tzinfo=timezone.utc)
     verano = datetime(2026, 7, 15, 8, 0, tzinfo=timezone.utc)
@@ -494,9 +542,169 @@ def test_backend_no_devuelve_a_pendiente_notificacion_ya_leida(monkeypatch):
     assert result.json()["ignored_read_count"] == 1
     with factory() as db:
         assert db.scalars(select(ClientDehuNotification)).one().status == "LEIDA"
-    assert client.get(
+    historical = client.get(
         "/api/v1/messaging/client/certificates/internal/dehu-notifications",
-    ).json()["items"] == []
+    ).json()["items"]
+    assert len(historical) == 1
+    assert historical[0]["status"] == "LEIDA"
+
+
+def test_backend_actualiza_a_leida_una_notificacion_pendiente_conocida(monkeypatch):
+    client, factory, org_id, _ = _setup(monkeypatch)
+    with factory() as db:
+        db.add(ClientDehuMailboxConfig(organization_id=org_id, active=True))
+        db.add(ClientDehuNotification(
+            organization_id=org_id, external_reference="REF-PORTAL",
+            holder_tax_id="B12345678", status="PENDIENTE",
+        ))
+        db.commit()
+    client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={"certificate_type": "DEHU_SYNC"},
+    )
+    claimed = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/claim",
+    ).json()["item"]
+    response = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/requests/"
+        + claimed["id"] + "/dehu-notifications",
+        json={"claim_token": claimed["claim_token"], "notifications": [{
+            "reference": "REF-PORTAL", "holder_tax_id": "B12345678",
+            "status": "READ", "source_endpoint": "/api/v1/realized_notifications",
+        }]},
+    )
+    assert response.status_code == 200
+    assert response.json()["updated_status_count"] == 1
+    with factory() as db:
+        assert db.scalars(select(ClientDehuNotification)).one().status == "LEIDA"
+
+
+def test_dehu_incorpora_leida_tras_el_alta_sin_importar_historico(monkeypatch):
+    client, factory, _, _ = _setup(monkeypatch)
+    assert client.put(
+        "/api/v1/messaging/client/certificates/internal/dehu-mailboxes/E00001",
+        json={"active": True, "periodicity": "MANUAL", "mailbox_id": "dehu-1"},
+    ).status_code == 200
+    request = client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={"certificate_type": "DEHU_SYNC"},
+    )
+    assert request.status_code == 201
+    claimed = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/claim",
+    ).json()["item"]
+    today = utcnow().date()
+    response = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/requests/"
+        + claimed["id"] + "/dehu-notifications",
+        json={"claim_token": claimed["claim_token"], "notifications": [
+            {
+                "reference": "DEHU-HISTORICA", "holder_tax_id": "B12345678",
+                "available_date": (today - timedelta(days=1)).isoformat(),
+                "status": "READ", "source_endpoint": "/api/v1/realized_notifications",
+            },
+            {
+                "reference": "DEHU-LEIDA-TRAS-ALTA", "holder_tax_id": "B12345678",
+                "available_date": today.isoformat(), "status": "READ",
+                "source_endpoint": "/api/v1/realized_notifications",
+            },
+        ]},
+    )
+    assert response.status_code == 200
+    assert response.json()["created_count"] == 1
+    assert response.json()["ignored_read_count"] == 1
+    with factory() as db:
+        item = db.scalars(select(ClientDehuNotification)).one()
+        assert item.external_reference == "DEHU-LEIDA-TRAS-ALTA"
+        assert item.status == "LEIDA"
+
+
+def test_dev_programado_se_encola_y_avisa_si_el_titular_no_esta_de_alta(monkeypatch):
+    client, factory, _, _ = _setup(monkeypatch)
+    response = client.put(
+        "/api/v1/messaging/client/certificates/internal/dev-mailboxes/E00001",
+        json={"active": True, "periodicity": "DIARIA"},
+    )
+    assert response.status_code == 200
+    claimed = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/claim",
+    ).json()["item"]
+    assert claimed["certificate_type"] == "DEV_SYNC"
+    result = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/requests/"
+        + claimed["id"] + "/dev-notifications",
+        json={
+            "claim_token": claimed["claim_token"],
+            "registration_status": "NO_ALTA",
+            "registration_message": "El titular no esta dado de alta en DEV.",
+            "notifications": [],
+        },
+    )
+    assert result.status_code == 200
+    with factory() as db:
+        config = db.scalars(select(ClientDevMailboxConfig)).one()
+        assert config.registration_status == "NO_ALTA"
+
+
+def test_dev_solo_incorpora_desde_el_alta_y_actualiza_estado_portal(monkeypatch):
+    client, factory, _, _ = _setup(monkeypatch)
+    assert client.put(
+        "/api/v1/messaging/client/certificates/internal/dev-mailboxes/E00001",
+        json={"active": True, "periodicity": "MANUAL", "mailbox_id": "dev-1"},
+    ).status_code == 200
+    request = client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={"certificate_type": "DEV_SYNC"},
+    )
+    assert request.status_code == 201
+    claimed = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/claim",
+    ).json()["item"]
+    today = utcnow().date()
+    yesterday = today - timedelta(days=1)
+    endpoint = (
+        "/api/v1/messaging/client/certificates/internal/worker/requests/"
+        + claimed["id"] + "/dev-notifications"
+    )
+    first = client.post(endpoint, json={
+        "claim_token": claimed["claim_token"],
+        "registration_status": "ACTIVO",
+        "notifications": [
+            {
+                "reference": "DEV-ANTERIOR", "holder_tax_id": "B12345678",
+                "available_date": yesterday.isoformat(), "status": "PENDIENTE",
+            },
+            {
+                "reference": "DEV-NUEVA", "holder_tax_id": "B12345678",
+                "available_date": today.isoformat(), "status": "PENDIENTE",
+            },
+        ],
+    })
+    assert first.status_code == 200
+    assert first.json()["created_count"] == 1
+    assert first.json()["ignored_historical_count"] == 1
+    second = client.post(endpoint, json={
+        "claim_token": claimed["claim_token"],
+        "registration_status": "ACTIVO",
+        "notifications": [{
+            "reference": "DEV-NUEVA", "holder_tax_id": "B12345678",
+            "available_date": today.isoformat(), "status": "LEIDA",
+        }],
+    })
+    assert second.status_code == 200
+    assert second.json()["updated_status_count"] == 1
+    with factory() as db:
+        item = db.scalars(select(ClientDevNotification)).one()
+        assert item.status == "LEIDA"
+    listed = client.get(
+        "/api/v1/messaging/client/certificates/internal/dev-notifications",
+    ).json()["items"]
+    assert len(listed) == 1
+    assert listed[0]["provider"] == "DEV"
+    assert listed[0]["status"] == "LEIDA"
 
 
 def test_dehu_permite_repetir_consulta_tras_completar_el_mismo_dia(monkeypatch):

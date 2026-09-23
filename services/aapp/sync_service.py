@@ -24,6 +24,7 @@ from utils.estados_dehu import es_pendiente_dehu
 
 # Importar conectores para que se registren (efecto de import).
 from . import dehu_playwright  # noqa: F401  (registra ConectorDEHU)
+from . import dev_notifications  # noqa: F401  (registra ConectorDEV)
 
 
 def _now() -> str:
@@ -87,14 +88,13 @@ def sincronizar_buzon(gestor, buzon: dict, opciones: OpcionesSync | None = None,
         # 1) Certificado (unico del cliente)
         material = CertStore(gestor).material_para_buzon(buzon)
 
-        # 2) DEHu es el unico buzon soportado. No se redirigen silenciosamente
-        # otros portales al conector DEHu.
-        if org_codigo != "DEHU":
+        # 2) Cada buzon usa su conector real; nunca se redirige DEV a DEHu.
+        if org_codigo not in {"DEHU", "DEV"}:
             raise CertError(
                 f"El buzon '{org_codigo or '(sin codigo)'} ya no esta soportado. "
-                "Configura el cliente con el buzon unico DEHu."
+                "Configura el cliente con DEHu o DGT/DEV."
             )
-        conector = obtener_conector("DEHU")
+        conector = obtener_conector(org_codigo)
         if conector is None:
             raise CertError(
                 f"No hay conector disponible para el organismo '{org_codigo or '(desconocido)'}'."
@@ -194,20 +194,34 @@ def importar_bandeja_central(
     if backend is None:
         from services.backend_client_service import BackendClientService
         backend = BackendClientService()
-    rows = backend.list_dehu_notifications(company_code=company_code, limit=2000)
+    rows = [
+        {**row, "provider": "DEHU"}
+        for row in backend.list_dehu_notifications(company_code=company_code, limit=2000)
+    ]
+    try:
+        rows.extend(
+            {**row, "provider": "DEV"}
+            for row in backend.list_dev_notifications(company_code=company_code, limit=2000)
+        )
+    except Exception:
+        # Compatibilidad durante el despliegue escalonado: DEHu sigue
+        # importandose aunque el backend aun no exponga DGT/DEV.
+        pass
     buzones = gestor.listar_notif_buzones_global()
     by_id = {str(row.get("id")): row for row in buzones}
     by_company = {}
     for row in buzones:
-        if (row.get("organismo_codigo") or "").upper() == "DEHU":
-            by_company.setdefault(str(row.get("codigo_empresa") or ""), row)
+        provider = (row.get("organismo_codigo") or "").upper()
+        if provider in {"DEHU", "DEV"}:
+            by_company.setdefault((str(row.get("codigo_empresa") or ""), provider), row)
     result = ResultadoImportacionCentral(total=len(rows))
     for remote in rows:
-        if not es_pendiente_dehu(remote.get("status"), remote.get("source_endpoint")):
-            result.omitidas += 1
-            continue
         codigo = str(remote.get("company_code") or "")
-        buzon = by_id.get(str(remote.get("mailbox_id") or "")) or by_company.get(codigo)
+        provider = str(remote.get("provider") or "DEHU").upper()
+        buzon = (
+            by_id.get(str(remote.get("mailbox_id") or ""))
+            or by_company.get((codigo, provider))
+        )
         if not codigo or not buzon:
             result.omitidas += 1
             continue
@@ -215,9 +229,14 @@ def importar_bandeja_central(
         if not reference:
             result.omitidas += 1
             continue
-        item_id = _bandeja_id(codigo, "DEHU", reference)
+        item_id = _bandeja_id(codigo, provider, reference)
         existing = gestor.get_notif_bandeja_item(item_id)
-        if existing and not es_pendiente_dehu(existing.get("estado")):
+        if (
+            existing
+            and not es_pendiente_dehu(existing.get("estado"))
+            and es_pendiente_dehu(remote.get("status"), remote.get("source_endpoint"))
+        ):
+            # Una respuesta pendiente atrasada nunca reabre un estado terminal.
             result.omitidas += 1
             continue
         metadata = dict(remote.get("metadata") or {})

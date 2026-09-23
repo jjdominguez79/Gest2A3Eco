@@ -7,5 +7,6 @@ build/
 dist/
 dist_installer/
 dist_synology/
+tmp/
 gestinem_app/build/
 gestinem_app/.dart_tool/

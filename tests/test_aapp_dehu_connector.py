@@ -28,7 +28,7 @@ def test_estados_dehu_no_convierten_historico_en_pendiente():
     assert _map_estado("READ") == "LEIDA"
 
 
-def test_solo_mapea_pendientes_y_no_leidas():
+def test_mapea_pendientes_y_estados_realizados_para_actualizar_historico():
     material = CertMaterial("cert-1", "Cliente", "B12345678", "cliente.pfx", "")
     rows = ConectorDEHU()._map_registros([
         {"identifier": "1", "state": "READ"},
@@ -38,7 +38,8 @@ def test_solo_mapea_pendientes_y_no_leidas():
         {"identifier": "5", "state": "NOT_READ"},
         {"identifier": "6", "_endpoint": "/api/v1/realized_notifications"},
     ], material)
-    assert [row.referencia for row in rows] == ["4", "5"]
+    assert [row.referencia for row in rows] == ["1", "2", "3", "4", "5", "6"]
+    assert rows[-1].estado == "REALIZADA"
 
 
 def test_bandeja_vacia_no_reutiliza_historico_capturado(monkeypatch):
@@ -53,7 +54,7 @@ def test_bandeja_vacia_no_reutiliza_historico_capturado(monkeypatch):
     assert connector._flujo(page, "https://dehu.redsara.es", {}, material, OpcionesSync(), []) == []
 
 
-def test_registro_realizado_sin_estado_se_excluye():
+def test_registro_realizado_sin_estado_se_marca_realizado():
     connector = ConectorDEHU()
     rows = connector._map_registros(
         [{
@@ -74,7 +75,8 @@ def test_registro_realizado_sin_estado_se_excluye():
         "B12345678",
     )
 
-    assert rows == []
+    assert len(rows) == 1
+    assert rows[0].estado == "REALIZADA"
 
 
 def test_api_dehu_empieza_en_pagina_uno_no_filtra_y_lee_comunicaciones(monkeypatch):
@@ -121,7 +123,7 @@ def test_api_dehu_empieza_en_pagina_uno_no_filtra_y_lee_comunicaciones(monkeypat
     assert all("page=1" in url for url in calls)
     assert all("titularNif=" in url for url in calls)
     assert all("B11111111" not in url for url in calls)
-    assert not any("/realized_notifications?" in url for url in calls)
+    assert any("/realized_notifications?" in url for url in calls)
     assert all(headers["Authorization"] == "Bearer jwt-efimero" for headers in request_headers)
     communications_url = next(url for url in calls if "/communications?" in url)
     for url in (communications_url,):
@@ -135,7 +137,13 @@ def test_api_dehu_empieza_en_pagina_uno_no_filtra_y_lee_comunicaciones(monkeypat
     )
     assert communications_query["availabilityDate[left_date]"] == ["19/08/2026"]
     assert communications_query["availabilityDate[right_date]"] == ["18/09/2026"]
-    assert communications_query["state"] == ["PENDIENTE"]
+    assert communications_query["state"] == [""]
+    realized_query = parse_qs(
+        urlsplit(next(url for url in calls if "/realized_notifications?" in url)).query,
+        keep_blank_values=True,
+    )
+    assert realized_query["finalDate[left_date]"] == ["19/08/2026"]
+    assert realized_query["finalDate[right_date]"] == ["18/09/2026"]
     notifications_query = parse_qs(urlsplit(next(url for url in calls if "/notifications?" in url)).query, keep_blank_values=True)
     assert notifications_query["availabilityDate[left_date]"] == [""]
     assert notifications_query["availabilityDate[right_date]"] == [""]
@@ -159,12 +167,12 @@ def test_comunicaciones_pagina_con_fechas_y_solo_importa_no_leidas(monkeypatch):
     class Request:
         def get(self, url, **_kwargs):
             query = parse_qs(urlsplit(url).query, keep_blank_values=True)
-            if "/notifications?" in url:
+            if "/notifications?" in url or "/realized_notifications?" in url:
                 return Response([])
             llamadas.append(query)
             assert query["availabilityDate[left_date]"] == ["19/08/2026"]
             assert query["availabilityDate[right_date]"] == ["18/09/2026"]
-            assert query["state"] == ["PENDIENTE"]
+            assert query["state"] == [""]
             if query["page"] == ["1"]:
                 return Response([{"identifier": "COM-LEIDA", "state": "LEIDA"}], 51)
             return Response([{"identifier": "COM-NUEVA", "state": "PENDIENTE"}], 51)
@@ -175,7 +183,9 @@ def test_comunicaciones_pagina_con_fechas_y_solo_importa_no_leidas(monkeypatch):
     registros = connector._fetch_api(page, "https://dehu.redsara.es", OpcionesSync(), capturas)
     material = CertMaterial("cert-1", "Cliente", "B12345678", "cliente.pfx", "")
     assert [consulta["page"] for consulta in llamadas] == [["1"], ["2"]]
-    assert [item.referencia for item in connector._map_registros(registros, material)] == ["COM-NUEVA"]
+    assert [item.referencia for item in connector._map_registros(registros, material)] == [
+        "COM-LEIDA", "COM-NUEVA",
+    ]
 
 
 def test_error_comunicaciones_incluye_http_y_no_publica_resultado_parcial():
