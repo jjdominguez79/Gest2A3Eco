@@ -57,8 +57,18 @@ Thumbs.db
 ~$*
 logs/
 .tmp/
+/.jtmp/
 # Paquetes de despliegue y pruebas locales; conservarlos fuera de Git.
 /tmp/
+/output/
+
+# Resultados locales de CI y pruebas de navegador
+/backend-test-results.xml
+/release_state.json
+/release_notes.md
+/release_changelog.txt
+playwright-report/
+test-results/
 
 # Local runtime / generated data
 config.json

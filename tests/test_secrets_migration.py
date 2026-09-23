@@ -4,6 +4,7 @@ redaccion de secretos en logs y migracion de postgres_dsn.
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import hashlib
 
@@ -551,26 +552,10 @@ def test_save_app_config_no_persists_secrets(monkeypatch):
     assert written_payload.get("postgres_host") == "192.168.0.18"
 
 
-def test_dataprius_client_raises_on_direct_use():
-    """DatapriusClient debe lanzar RuntimeError si se instancia sin _allow_legacy."""
-    import warnings
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        from services.dataprius_service import DatapriusClient
-
-    with pytest.raises(RuntimeError, match="obsoleto"):
-        DatapriusClient("key", "secret")
-
-
-def test_signrequest_client_raises_on_direct_use():
-    """SignRequestClient debe lanzar RuntimeError si se instancia sin _allow_legacy."""
-    import warnings
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        from services.signrequest_service import SignRequestClient
-
-    with pytest.raises(RuntimeError, match="obsoleto"):
-        SignRequestClient("token", "from@example.com")
+def test_clientes_legacy_de_proveedores_retirados():
+    """Los secretos de proveedor no deben volver al escritorio."""
+    assert importlib.util.find_spec("services.dataprius_service") is None
+    assert importlib.util.find_spec("services.signrequest_service") is None
 
 
 def test_redact_covers_all_secret_types():
