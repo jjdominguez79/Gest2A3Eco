@@ -539,6 +539,63 @@ def test_programacion_dehu_encola_y_envia_un_resumen_al_terminar(monkeypatch):
         assert batch.status == "sent"
 
 
+def test_resumen_dehu_espera_la_reconsulta_e_informa_los_intentos(monkeypatch):
+    client, factory, _, _ = _setup(monkeypatch)
+    sent = []
+    monkeypatch.setattr(
+        "backend.api.client_certificates_api.messaging_mail.send_mail",
+        lambda to, subject, html: sent.append((to, subject, html)) or True,
+    )
+    assert client.put(
+        "/api/v1/messaging/client/certificates/internal/dehu-mailboxes/E00001",
+        json={
+            "mailbox_id": "mailbox-1",
+            "mailbox_name": "DEHu Cliente Uno",
+            "active": True,
+            "periodicity": "DIARIA",
+            "notification_email": "avisos@gestinem.es",
+        },
+    ).status_code == 200
+
+    primer_intento = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/claim",
+    ).json()["item"]
+    ruta = (
+        "/api/v1/messaging/client/certificates/internal/worker/requests/"
+        f"{primer_intento['id']}"
+    )
+    fallo = client.post(ruta + "/fail", json={
+        "claim_token": primer_intento["claim_token"],
+        "error_code": "portal_temporal",
+        "error_message": "DEHu no responde",
+        "retry_after_seconds": 300,
+    })
+    assert fallo.status_code == 200
+    assert fallo.json()["status"] == "queued"
+    assert sent == []
+
+    with factory() as db:
+        solicitud = db.get(ClientCertificateRequest, primer_intento["id"])
+        solicitud.next_attempt_at = utcnow() - timedelta(seconds=1)
+        db.commit()
+
+    segundo_intento = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/claim",
+    ).json()["item"]
+    assert segundo_intento["id"] == primer_intento["id"]
+    assert segundo_intento["attempt_count"] == 2
+    completado = client.post(ruta + "/complete", json={
+        "claim_token": segundo_intento["claim_token"],
+        "result_summary": "Consulta recuperada; sin avisos nuevos.",
+    })
+    assert completado.status_code == 200
+    assert len(sent) == 1
+    assert "Reconsultados:</strong> 1" in sent[0][2]
+    assert "Correcto tras reintento" in sent[0][2]
+    assert "<th>Intentos</th>" in sent[0][2]
+    assert "<td>2</td>" in sent[0][2]
+
+
 def test_programacion_automatica_dehu_permite_desactivar_email_interno(monkeypatch):
     client, _, _, _ = _setup(monkeypatch)
     response = client.put(

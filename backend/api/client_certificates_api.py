@@ -1602,10 +1602,19 @@ def _try_send_dehu_batch_summary(db: Session, batch_id: str | None) -> None:
         return
     ok_count = sum(1 for item, _ in rows if item.status == "completed")
     error_count = len(rows) - ok_count
+    retried_count = sum(1 for item, _ in rows if int(item.attempt_count or 0) > 1)
+
+    def _resultado_consulta(item: ClientCertificateRequest) -> str:
+        intentos = max(1, int(item.attempt_count or 0))
+        if item.status == "completed":
+            return "Correcto tras reintento" if intentos > 1 else "Correcto"
+        return "Error tras reintentos" if intentos > 1 else "Error"
+
     details = "".join(
         "<tr>"
         f"<td>{escape(org.name or org.company_code)}</td>"
-        f"<td>{'Correcto' if item.status == 'completed' else 'Error'}</td>"
+        f"<td>{escape(_resultado_consulta(item))}</td>"
+        f"<td>{max(1, int(item.attempt_count or 0))}</td>"
         f"<td>{escape(item.result_summary or item.error_message or item.status)}</td>"
         "</tr>"
         for item, org in rows
@@ -1683,6 +1692,7 @@ def _try_send_dehu_batch_summary(db: Session, batch_id: str | None) -> None:
         f"<p><strong>Consultados:</strong> {len(rows)} &nbsp; "
         f"<strong>Correctos:</strong> {ok_count} &nbsp; "
         f"<strong>Errores:</strong> {error_count} &nbsp; "
+        f"<strong>Reconsultados:</strong> {retried_count} &nbsp; "
         f"<strong>Avisos nuevos:</strong> {len(audit_items)} &nbsp; "
         f"<strong>Con servicio:</strong> {len(contracted)} &nbsp; "
         f"<strong>Sin servicio:</strong> {len(opportunities)}</p>"
@@ -1694,7 +1704,7 @@ def _try_send_dehu_batch_summary(db: Session, batch_id: str | None) -> None:
         f"{_audit_table(opportunities, contracted_service=False)}"
         "<h3>Resultado tecnico por buzon consultado</h3>"
         "<table border='1' cellpadding='6' cellspacing='0'>"
-        "<tr><th>Cliente</th><th>Resultado</th><th>Detalle</th></tr>"
+        "<tr><th>Cliente</th><th>Resultado</th><th>Intentos</th><th>Detalle</th></tr>"
         f"{details}</table>"
     )
     try:

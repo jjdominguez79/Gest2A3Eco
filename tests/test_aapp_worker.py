@@ -3,8 +3,10 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
+import pytest
+
 from aapp_worker.config import AappWorkerConfig
-from aapp_worker.worker import AappWorker
+from aapp_worker.worker import AappWorker, _espera_reintento_segundos
 from services.aapp.base import NotificacionDTO, ResultadoSync
 from services.aapp.certificados import ResultadoCertificado
 from aapp_worker.backend_client import AappBackendClient
@@ -143,6 +145,35 @@ def test_worker_sin_trabajo_no_hace_nada(tmp_path):
     assert AappWorker(_config(tmp_path), backend=backend).run_once() is False
     assert backend.completed is None
     assert backend.failed is None
+
+
+@pytest.mark.parametrize(
+    ("intento", "espera"),
+    [
+        (1, 5 * 60),
+        (2, 15 * 60),
+        (3, 30 * 60),
+        (4, 60 * 60),
+        (5, 120 * 60),
+        (6, None),
+    ],
+)
+def test_dehu_reintenta_los_buzones_con_espera_escalonada(intento, espera):
+    assert _espera_reintento_segundos({
+        "certificate_type": "DEHU_SYNC",
+        "attempt_count": intento,
+    }) == espera
+
+
+def test_otros_tramites_conservan_tres_intentos():
+    assert _espera_reintento_segundos({
+        "certificate_type": "TGSS_CORRIENTE",
+        "attempt_count": 2,
+    }) == 300
+    assert _espera_reintento_segundos({
+        "certificate_type": "TGSS_CORRIENTE",
+        "attempt_count": 3,
+    }) is None
 
 
 def test_cliente_worker_envia_protocolo_vigente(tmp_path):

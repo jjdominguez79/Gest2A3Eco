@@ -78,3 +78,8 @@ La version 2026.09.22.3 activa la consulta pasiva DGT/DEV ya validada con
 E00006. Detecta expresamente los titulares no dados de alta, no abre ni acepta
 avisos y envia al backend las filas visibles para mantener su historico y sus
 cambios de estado.
+
+La version 2026.09.23.1 reintenta automaticamente los buzones DEHu que fallen
+en seis consultas escalonadas durante casi cuatro horas. El correo del lote no
+se envia hasta que esas reconsultas terminan e indica los buzones reconsultados
+y el numero de intentos utilizado por cada uno.

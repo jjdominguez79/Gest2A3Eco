@@ -52,7 +52,7 @@ os.environ.setdefault("DGT_INTERNAL_API_KEY", "test-internal-secret")
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def _make_test_app():
+def _make_test_app(monkeypatch):
     """Crea un TestClient con SQLite en memoria para tests aislados."""
     from fastapi.testclient import TestClient
     from sqlalchemy import create_engine, text
@@ -80,6 +80,10 @@ def _make_test_app():
     # Override tambien el get_db del messaging router
     from backend.api import messaging_api as msg_module
     app_module.app.dependency_overrides[msg_module.get_db] = override_db
+    # El middleware de mantenimiento usa SessionLocal directamente antes de
+    # resolver las dependencias del endpoint. Aislarlo tambien evita que una
+    # prueba intente abrir el PostgreSQL configurado para produccion.
+    monkeypatch.setattr(app_module, "SessionLocal", factory)
     client = TestClient(app_module.app)
     return client, factory, engine
 
@@ -155,9 +159,9 @@ def _admin_headers(session_token: str) -> dict:
 
 
 @pytest.fixture
-def test_env():
+def test_env(monkeypatch):
     """Fixture que devuelve (client, factory, engine) con DB limpia."""
-    client, factory, engine = _make_test_app()
+    client, factory, engine = _make_test_app(monkeypatch)
     yield client, factory, engine
     from backend.api import app as app_module
     app_module.app.dependency_overrides.clear()

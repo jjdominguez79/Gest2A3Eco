@@ -19,6 +19,21 @@ from services.aapp import dev_notifications  # noqa: F401
 
 LOG = logging.getLogger("gest2a3eco.aapp_worker")
 
+# DEHu sufre indisponibilidades breves en las que cierra la conexion sin
+# respuesta. Mantener el lote abierto permite volver a consultar solo los
+# buzones afectados y enviar un unico resumen cuando exista un resultado final.
+_REINTENTOS_DEHU_SEGUNDOS = (5 * 60, 15 * 60, 30 * 60, 60 * 60, 120 * 60)
+
+
+def _espera_reintento_segundos(item: dict) -> int | None:
+    """Devuelve la espera tras el intento actual o ``None`` si ya es final."""
+    intentos = max(1, int(item.get("attempt_count") or 1))
+    if item.get("certificate_type") == "DEHU_SYNC":
+        if intentos <= len(_REINTENTOS_DEHU_SEGUNDOS):
+            return _REINTENTOS_DEHU_SEGUNDOS[intentos - 1]
+        return None
+    return 300 if intentos < 3 else None
+
 
 class AappWorker:
     def __init__(self, config: AappWorkerConfig, backend=None):
@@ -34,11 +49,10 @@ class AappWorker:
             self._process(item)
         except Exception as exc:
             LOG.exception("Fallo procesando la solicitud %s", item.get("id"))
-            attempts = int(item.get("attempt_count") or 1)
             self.backend.fail(
                 item,
                 str(exc),
-                retry_after_seconds=300 if attempts < 3 else None,
+                retry_after_seconds=_espera_reintento_segundos(item),
             )
         return True
 
