@@ -31,7 +31,7 @@ void main() {
       ),
     );
     await mostrar(true, true);
-    expect(find.textContaining('Leido por 1/3'), findsOneWidget);
+    expect(find.textContaining('Leido por algunos'), findsOneWidget);
     await mostrar(true, false);
     expect(find.textContaining('Leido por'), findsNothing);
     await mostrar(false, true);

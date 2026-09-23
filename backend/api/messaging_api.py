@@ -928,15 +928,46 @@ def _add_message_states(db: Session, rows: list, result: list[dict], target_type
         select(MessagingStaff).where(MessagingStaff.external_id.in_(
             [key[1] for key in recipients if key[0] == "staff"]
         )))}
-    # Filtrar antes de calcular totales, tambien para clientes antiguos.
-    receipts = {key: fecha for key, fecha in receipts.items()
-                if key[0] != "staff" or _puede_ver_lectura(
-                    lectores_staff.get(key[1]), actor_type, observador)}
+    lectores_client = {client.id: client for client in db.scalars(
+        select(MessagingClient).where(MessagingClient.id.in_(
+            [key[1] for key in recipients if key[0] == "client"]
+        )))}
     for row, data in own:
-        count = sum(1 for key in recipients if key in receipts and receipts[key] >= _receipt_time(row.created_at))
+        estados = []
+        for recipient_type, recipient_id in recipients:
+            lectura_visible = recipient_type != "staff" or _puede_ver_lectura(
+                lectores_staff.get(recipient_id), actor_type, observador,
+            )
+            read_at = receipts.get((recipient_type, recipient_id))
+            leido = bool(
+                lectura_visible and read_at
+                and read_at >= _receipt_time(row.created_at)
+            )
+            if recipient_type == "staff":
+                recipient = lectores_staff.get(recipient_id)
+                nombre = (
+                    recipient.chat_alias.strip() or recipient.name.strip()
+                    if recipient else "Empleado"
+                )
+            else:
+                recipient = lectores_client.get(recipient_id)
+                nombre = recipient.name.strip() if recipient else "Cliente"
+            estados.append({
+                "actor_type": recipient_type,
+                "actor_id": recipient_id,
+                "nombre": nombre or ("Empleado" if recipient_type == "staff" else "Cliente"),
+                "lectura_visible": lectura_visible,
+                "leido": leido,
+                "leido_en": read_at.isoformat() if leido and read_at else None,
+            })
+        estados.sort(key=lambda estado: (
+            not estado["leido"], estado["nombre"].casefold(), estado["actor_id"],
+        ))
+        count = sum(1 for estado in estados if estado["leido"])
         data["estado_envio"] = "read" if recipients and count == len(recipients) else "partially_read" if count else "sent"
         data["lecturas"] = count
         data["destinatarios"] = len(recipients)
+        data["estado_destinatarios"] = estados
 
 
 def _unread_count(db: Session, conv: MessagingConversation, actor_type: str, actor_id: str) -> int:
@@ -2930,11 +2961,11 @@ def client_send_unified(
 
 @router.get("/staff/conversations")
 def staff_conversations(
-    active_only: bool = True,
+    active_only: bool | None = None,
     staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
 ):
     stmt = select(MessagingConversation)
-    if active_only:
+    if active_only is True:
         stmt = stmt.where(
             MessagingConversation.started_at.is_not(None) |
             select(MessagingMessage.id).where(
@@ -2952,7 +2983,10 @@ def staff_conversations(
             organization = db.get(MessagingOrganization, row.organization_id)
             access = _organization_access_state(db, organization)
             access_by_organization[row.organization_id] = access
-        if active_only and access["status"] not in {"active", "pending"}:
+        # Sin parametro, la bandeja incluye todos los clientes disponibles,
+        # aunque aun no exista ningun mensaje. ``active_only=false`` conserva
+        # la vista administrativa historica que tambien incluye no invitados.
+        if active_only is not False and access["status"] not in {"active", "pending"}:
             continue
         item = _serialize_conversation(db, row, access=access)
         item["unread_count"] = _unread_count(db, row, "staff", staff.external_id)

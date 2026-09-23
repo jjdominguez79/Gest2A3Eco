@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:gestinem/features/auth/domain/user_profile.dart';
 import 'package:gestinem/features/auth/presentation/auth_controller.dart';
 import 'package:gestinem/features/messaging/domain/conversation.dart';
 import 'package:gestinem/features/messaging/domain/message.dart';
@@ -305,6 +306,106 @@ void main() {
       );
     },
   );
+
+  testWidgets('muestra lectores y pendientes al pulsar un mensaje propio', (
+    tester,
+  ) async {
+    const staffProfile = UserProfile(
+      id: 'staff-1',
+      name: 'Ana Gestora',
+      email: 'ana@example.test',
+      type: UserType.staff,
+      staffRole: StaffRole.admin,
+    );
+    const staffSession = AuthSession(
+      token: 'staff-token',
+      profile: staffProfile,
+    );
+    final message = Message(
+      id: 'receipt-details',
+      conversationId: 't1',
+      authorType: 'staff',
+      authorId: 'staff-1',
+      authorName: 'Ana Gestora',
+      authorAvatarUrl: '',
+      body: 'Aviso para el grupo',
+      createdAt: DateTime(2026, 9, 23, 10),
+      deleted: false,
+      estadoEnvio: 'partially_read',
+      lecturas: 1,
+      destinatarios: 3,
+      recipientStatuses: [
+        MessageRecipientStatus(
+          actorType: 'staff',
+          actorId: 'staff-2',
+          name: 'Beatriz',
+          readVisible: true,
+          read: true,
+          readAt: DateTime(2026, 9, 23, 10, 5),
+        ),
+        const MessageRecipientStatus(
+          actorType: 'staff',
+          actorId: 'staff-3',
+          name: 'Carlos',
+          readVisible: true,
+          read: false,
+        ),
+        const MessageRecipientStatus(
+          actorType: 'staff',
+          actorId: 'staff-4',
+          name: 'Diana',
+          readVisible: false,
+          read: false,
+        ),
+      ],
+    );
+    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'))
+      ..httpClientAdapter = JsonAdapter(<String, dynamic>{});
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith(
+            (ref) => FakeSessionController(ref, staffSession),
+          ),
+          apiClientProvider.overrideWithValue(
+            ApiClient(dio: dio, tokenProvider: () => staffSession.token),
+          ),
+          internalThreadsProvider.overrideWith(
+            (ref) async => const [
+              InternalThread(
+                id: 't1',
+                kind: 'group',
+                channel: '',
+                title: 'Equipo fiscal',
+                unreadCount: 0,
+              ),
+            ],
+          ),
+          internalMessagesProvider.overrideWith((ref, id) async => [message]),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(
+            body: ConversationView(conversationId: 't1', internal: true),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('message-receipt-details')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('message-info-option')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('message-info-option')));
+    await tester.pumpAndSettle();
+    expect(find.text('Leido por'), findsOneWidget);
+    expect(find.text('Pendiente de leer'), findsOneWidget);
+    expect(find.text('Estado privado'), findsOneWidget);
+    expect(find.text('Beatriz'), findsOneWidget);
+    expect(find.text('Carlos'), findsOneWidget);
+    expect(find.text('Diana'), findsOneWidget);
+  });
 }
 
 class _ConversationAdapter implements HttpClientAdapter {

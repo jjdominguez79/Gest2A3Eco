@@ -228,6 +228,10 @@ def test_estados_mensajes_conservan_lectura_y_distinguen_nuevos(tmp_path, monkey
     assert sent.status_code == 200
     initial = client.get(path, headers=staff_headers("admin")).json()[0]
     assert (initial["estado_envio"], initial["lecturas"], initial["destinatarios"]) == ("sent", 0, 1)
+    assert initial["estado_destinatarios"] == [{
+        "actor_type": "client", "actor_id": initial["estado_destinatarios"][0]["actor_id"],
+        "nombre": "Maria", "lectura_visible": True, "leido": False, "leido_en": None,
+    }]
     # Abrir la propia conversacion no confirma la lectura del destinatario.
     assert client.post(f"/api/v1/messaging/staff/conversations/{conv_id}/read",
                        headers=staff_headers("admin")).status_code == 200
@@ -237,6 +241,9 @@ def test_estados_mensajes_conservan_lectura_y_distinguen_nuevos(tmp_path, monkey
     assert client.post(read_path, headers=auth).json()["changed"] is False
     read = client.get(path, headers=staff_headers("admin")).json()[0]
     assert (read["estado_envio"], read["lecturas"]) == ("read", 1)
+    assert read["estado_destinatarios"][0]["nombre"] == "Maria"
+    assert read["estado_destinatarios"][0]["leido"] is True
+    assert read["estado_destinatarios"][0]["leido_en"] is not None
     assert client.delete(read_path, headers=auth).status_code == 204
     assert client.get(path, headers=staff_headers("admin")).json()[0]["estado_envio"] == "read"
     assert client.post(path, headers=staff_headers("admin"),
@@ -1010,16 +1017,17 @@ def test_admin_reclama_directo_antiguo_sin_titular_al_abrirlo(tmp_path, monkeypa
     assert organization["private_owner_external_id"] == "admin"
 
 
-def test_bandeja_staff_separa_chats_de_clientes_disponibles(tmp_path, monkeypatch):
+def test_bandeja_staff_incluye_clientes_activos_sin_chat_previo(tmp_path, monkeypatch):
     client, _factory, staff_headers, _auth, _client_id, fiscal_id = _setup(
         tmp_path, monkeypatch,
     )
     admin = staff_headers("admin")
     employee = staff_headers("employee")
 
-    assert client.get(
+    admin_inbox = client.get(
         "/api/v1/messaging/staff/conversations", headers=admin,
-    ).json() == []
+    ).json()
+    assert fiscal_id in {row["id"] for row in admin_inbox}
     admin_targets = client.get(
         "/api/v1/messaging/staff/conversation-targets", headers=admin,
     ).json()
@@ -1028,6 +1036,12 @@ def test_bandeja_staff_separa_chats_de_clientes_disponibles(tmp_path, monkeypatc
         "/api/v1/messaging/staff/conversation-targets", headers=employee,
     ).json()
     assert {row["kind"] for row in employee_targets} == {"fiscal"}
+    employee_inbox = client.get(
+        "/api/v1/messaging/staff/conversations", headers=employee,
+    ).json()
+    assert [row["id"] for row in employee_inbox] == [fiscal_id]
+    assert employee_inbox[0]["started_at"] is None
+    assert employee_inbox[0]["last_message"] is None
 
     started = client.post(
         f"/api/v1/messaging/staff/conversations/{fiscal_id}/start",
@@ -1414,6 +1428,47 @@ def test_dispositivo_fcm_mockeado_y_websocket(tmp_path, monkeypatch):
             f"/api/v1/messaging/ws/client?ticket={ticket}",
         ):
             pass
+
+
+def test_lectura_se_publica_al_emisor_por_websocket_en_tiempo_real(tmp_path, monkeypatch):
+    client, factory, staff_headers, auth, _client_id, conversation_id = _setup(
+        tmp_path, monkeypatch,
+    )
+    admin = staff_headers("admin")
+    assert client.post(
+        f"/api/v1/messaging/staff/conversations/{conversation_id}/messages",
+        headers=admin,
+        data={"body": "Aviso en directo", "idempotency_key": "live-read"},
+    ).status_code == 200
+    ticket = "live-read-ticket"
+    with factory() as db:
+        session = MessagingStaffSession(
+            staff_external_id="admin",
+            token_hash=hash_token("live-read-session"),
+            expires_at=utcnow() + timedelta(days=1),
+        )
+        db.add(session)
+        db.flush()
+        db.add(MessagingWebSocketTicket(
+            user_type="staff", user_id="admin", token_hash=hash_token(ticket),
+            staff_session_id=session.id, expires_at=utcnow() + timedelta(seconds=60),
+        ))
+        db.commit()
+
+    with client.websocket_connect(
+        f"/api/v1/messaging/ws/staff?ticket={ticket}",
+    ) as websocket:
+        assert websocket.receive_json()["type"] == "connected"
+        response = client.post(
+            f"/api/v1/messaging/client/conversations/{conversation_id}/read",
+            headers=auth,
+        )
+        assert response.status_code == 200
+        assert response.json()["changed"] is True
+        events = [websocket.receive_json() for _ in range(2)]
+        read_event = next(event for event in events if event["type"] == "message.read")
+        assert read_event["conversation_id"] == conversation_id
+        assert read_event["actor_type"] == "client"
 
 
 def test_login_staff_app_usa_codigo_un_solo_uso(tmp_path, monkeypatch):

@@ -157,6 +157,36 @@ class ReplyReference {
   final bool deleted;
 }
 
+class MessageRecipientStatus {
+  const MessageRecipientStatus({
+    required this.actorType,
+    required this.actorId,
+    required this.name,
+    required this.readVisible,
+    required this.read,
+    this.readAt,
+  });
+
+  factory MessageRecipientStatus.fromJson(Map<String, dynamic> json) =>
+      MessageRecipientStatus(
+        actorType: json['actor_type'] as String? ?? '',
+        actorId: json['actor_id'] as String? ?? '',
+        name: json['nombre'] as String? ?? '',
+        readVisible: json['lectura_visible'] as bool? ?? true,
+        read: json['leido'] as bool? ?? false,
+        readAt: json['leido_en'] == null
+            ? null
+            : DateTime.parse(json['leido_en'] as String).toLocal(),
+      );
+
+  final String actorType;
+  final String actorId;
+  final String name;
+  final bool readVisible;
+  final bool read;
+  final DateTime? readAt;
+}
+
 class Message {
   const Message({
     required this.id,
@@ -174,6 +204,7 @@ class Message {
     this.estadoEnvio = 'sent',
     this.lecturas = 0,
     this.destinatarios = 0,
+    this.recipientStatuses = const [],
     this.editedAt,
     this.canViewHistory = false,
   });
@@ -195,6 +226,13 @@ class Message {
     estadoEnvio: json['estado_envio'] as String? ?? 'sent',
     lecturas: json['lecturas'] as int? ?? 0,
     destinatarios: json['destinatarios'] as int? ?? 0,
+    recipientStatuses:
+        (json['estado_destinatarios'] as List<dynamic>? ?? const [])
+            .map(
+              (item) =>
+                  MessageRecipientStatus.fromJson(item as Map<String, dynamic>),
+            )
+            .toList(growable: false),
     hasAttachments: json['has_attachments'] as bool? ?? false,
     replyTo: json['reply_to'] is Map<String, dynamic>
         ? ReplyReference.fromJson(json['reply_to'] as Map<String, dynamic>)
@@ -224,13 +262,11 @@ class Message {
   final String estadoEnvio;
   final int lecturas;
   final int destinatarios;
+  final List<MessageRecipientStatus> recipientStatuses;
 
   String get etiquetaEstado => switch (estadoEnvio) {
-    'read' =>
-      destinatarios > 1
-          ? 'Leido por todos ($lecturas/$destinatarios)'
-          : 'Leido',
-    'partially_read' => 'Leido por $lecturas/$destinatarios',
+    'read' => destinatarios > 1 ? 'Leido por todos' : 'Leido',
+    'partially_read' => 'Leido por algunos',
     _ => 'Enviado',
   };
 }

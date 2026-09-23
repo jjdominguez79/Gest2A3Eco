@@ -136,6 +136,10 @@ class _GestinemAppState extends ConsumerState<GestinemApp> {
       ref.invalidate(internalThreadsProvider);
       ref.invalidate(empleadosProvider);
       if (event['type'] != 'connected') return;
+      // Al reconectar, refrescar tambien los chats abiertos por si alguna
+      // confirmacion de lectura llego mientras el socket estaba desconectado.
+      ref.invalidate(messagesProvider);
+      ref.invalidate(internalMessagesProvider);
     }
     if (event['type'] == 'document.published') {
       final documentId = event['document_id']?.toString() ?? '';

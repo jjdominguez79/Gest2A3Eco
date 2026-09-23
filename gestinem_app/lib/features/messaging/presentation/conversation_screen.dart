@@ -697,6 +697,123 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     }
   }
 
+  Future<void> _showMessageInfo(Message message) async {
+    final readers = message.recipientStatuses
+        .where((status) => status.readVisible && status.read)
+        .toList(growable: false);
+    final pending = message.recipientStatuses
+        .where((status) => status.readVisible && !status.read)
+        .toList(growable: false);
+    final hidden = message.recipientStatuses
+        .where((status) => !status.readVisible)
+        .toList(growable: false);
+
+    Widget section(
+      String title,
+      IconData icon,
+      Color color,
+      List<MessageRecipientStatus> statuses, {
+      required String emptyText,
+    }) => Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 20, color: color),
+            const SizedBox(width: 8),
+            Text(title, style: Theme.of(context).textTheme.titleSmall),
+          ],
+        ),
+        const SizedBox(height: 4),
+        if (statuses.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(left: 28, bottom: 4),
+            child: Text(
+              emptyText,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          )
+        else
+          for (final status in statuses)
+            ListTile(
+              dense: true,
+              contentPadding: const EdgeInsets.only(left: 28),
+              leading: CircleAvatar(
+                radius: 14,
+                child: Text(
+                  status.name.trim().isEmpty
+                      ? '?'
+                      : status.name.trim()[0].toUpperCase(),
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+              title: Text(
+                status.name.trim().isEmpty ? 'Destinatario' : status.name,
+              ),
+              subtitle: status.readAt == null
+                  ? null
+                  : Text(_fmtAuditDate(status.readAt!)),
+            ),
+      ],
+    );
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Informacion del mensaje'),
+        content: SizedBox(
+          width: 440,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                section(
+                  'Leido por',
+                  Icons.done_all,
+                  Colors.blue,
+                  readers,
+                  emptyText: 'Todavia no lo ha leido nadie.',
+                ),
+                const Divider(height: 24),
+                section(
+                  'Pendiente de leer',
+                  Icons.schedule,
+                  Theme.of(context).colorScheme.outline,
+                  pending,
+                  emptyText: 'No hay lecturas pendientes.',
+                ),
+                if (hidden.isNotEmpty) ...[
+                  const Divider(height: 24),
+                  section(
+                    'Estado privado',
+                    Icons.visibility_off_outlined,
+                    Theme.of(context).colorScheme.outline,
+                    hidden,
+                    emptyText: '',
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.only(left: 28),
+                    child: Text(
+                      'Estas personas no comparten su estado de lectura.',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _messageActions(Message message, bool mine) async {
     final profile = ref.read(sessionProvider).valueOrNull!.profile;
     // Los mensajes con adjuntos no pueden eliminarse
@@ -709,6 +826,17 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       builder: (context) => SafeArea(
         child: Wrap(
           children: [
+            if (mine &&
+                profile.type == UserType.staff &&
+                !message.deleted &&
+                message.recipientStatuses.isNotEmpty)
+              ListTile(
+                key: const Key('message-info-option'),
+                leading: const Icon(Icons.info_outline),
+                title: const Text('Informacion del mensaje'),
+                subtitle: const Text('Ver quien lo ha leido y quien no'),
+                onTap: () => Navigator.pop(context, 'info'),
+              ),
             if (!message.deleted)
               ListTile(
                 leading: const Icon(Icons.reply),
@@ -743,7 +871,9 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       ),
     );
     if (!mounted) return;
-    if (action == 'reply') {
+    if (action == 'info') {
+      await _showMessageInfo(message);
+    } else if (action == 'reply') {
       setState(() => _replyingTo = message);
     } else if (action == 'edit') {
       final repository = ref.read(messagingRepositoryProvider);
