@@ -1,6 +1,6 @@
 {
-  "version": "1.8.22",
-  "tag": "v1.8.22",
-  "changelog": "Se cambia el login para que el acceso sea por correo corporfativo.",
+  "version": "1.8.23",
+  "tag": "v1.8.23",
+  "changelog": "Corrige la pantalla en blanco de Notificaciones y consolida el acceso corporativo con Microsoft y la sincronización automática de empleados.",
   "force_update": true
 }
