@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.8.22",
-  "minimum_required_version": "1.8.22",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.22/Setup_Gest2A3Eco_1.8.22.exe",
-  "changelog": "Se cambia el login para que el acceso sea por correo corporfativo.",
+  "latest_version": "1.8.23",
+  "minimum_required_version": "1.8.23",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.23/Setup_Gest2A3Eco_1.8.23.exe",
+  "changelog": "Corrige la pantalla en blanco de Notificaciones y consolida el acceso corporativo con Microsoft y la sincronización automática de empleados.",
   "force_update": true
 }
