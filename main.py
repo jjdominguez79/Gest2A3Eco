@@ -11,6 +11,7 @@ from controllers.app_controller import AppController
 from services.email_service import ensure_template_file
 from models.gestor_postgres import GestorPostgres, crear_dsn_postgres
 from services.auth_service import AuthService, AuthorizationService
+from services.desktop_staff_auth_service import DesktopStaffAuthService
 from services.secured_gestor import SecuredGestor
 from utils.utilidades import (
     get_default_templates_dir,
@@ -800,8 +801,6 @@ def main():
 
         def worker():
             try:
-                from services.desktop_staff_auth_service import DesktopStaffAuthService
-
                 data = DesktopStaffAuthService().login_microsoft()
                 error = None
             except Exception as exc:

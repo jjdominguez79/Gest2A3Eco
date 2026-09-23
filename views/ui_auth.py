@@ -54,14 +54,17 @@ class UILogin(ttk.Frame):
     def _build(self):
         self.configure(style="Login.TFrame")
         shell = tk.Frame(self, bg="#ffffff", highlightbackground="#d7dee8", highlightthickness=1)
-        shell.place(relx=0.5, rely=0.5, anchor="center", width=900, height=500)
+        # El acceso Microsoft anade una segunda accion y una explicacion. La
+        # altura anterior recortaba esos controles en Windows con escalado de
+        # texto/DPI, aunque el boton estuviera correctamente creado.
+        shell.place(relx=0.5, rely=0.5, anchor="center", width=900, height=540)
 
         brand = tk.Frame(shell, bg="#002C57", width=390)
         brand.pack(side="left", fill="both")
         brand.pack_propagate(False)
         self._build_brand_panel(brand)
 
-        access = tk.Frame(shell, bg="#ffffff", padx=64, pady=58)
+        access = tk.Frame(shell, bg="#ffffff", padx=64, pady=34)
         access.pack(side="right", fill="both", expand=True)
         self._build_access_panel(access)
 
