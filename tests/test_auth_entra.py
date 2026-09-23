@@ -76,6 +76,8 @@ def test_login_principal_expone_acceso_microsoft():
     main_source = (repo / "main.py").read_text(encoding="utf-8")
 
     assert 'text="Continuar con Microsoft"' in login_source
+    assert 'text="Usar la cuenta local de emergencia"' in login_source
+    assert 'text="Volver al acceso con Microsoft"' in login_source
     assert "on_microsoft_login=_try_microsoft_login" in main_source
     assert "from services.desktop_staff_auth_service import DesktopStaffAuthService" in main_source
 

@@ -46,6 +46,11 @@ class UILogin(ttk.Frame):
         self._logo_path = str(logo_path or "").strip()
         self._on_microsoft_login = on_microsoft_login
         self._logo_tk_img = None
+        self._microsoft_icon = None
+        self._access_content = None
+        self._notice_label = None
+        self._notice_is_error = True
+        self._current_access_mode = "microsoft"
         self.var_username = tk.StringVar()
         self.var_password = tk.StringVar()
         self.var_error = tk.StringVar()
@@ -57,14 +62,14 @@ class UILogin(ttk.Frame):
         # El acceso Microsoft anade una segunda accion y una explicacion. La
         # altura anterior recortaba esos controles en Windows con escalado de
         # texto/DPI, aunque el boton estuviera correctamente creado.
-        shell.place(relx=0.5, rely=0.5, anchor="center", width=900, height=540)
+        shell.place(relx=0.5, rely=0.5, anchor="center", width=900, height=560)
 
         brand = tk.Frame(shell, bg="#002C57", width=390)
         brand.pack(side="left", fill="both")
         brand.pack_propagate(False)
         self._build_brand_panel(brand)
 
-        access = tk.Frame(shell, bg="#ffffff", padx=64, pady=34)
+        access = tk.Frame(shell, bg="#ffffff", padx=64, pady=26)
         access.pack(side="right", fill="both", expand=True)
         self._build_access_panel(access)
 
@@ -85,9 +90,9 @@ class UILogin(ttk.Frame):
         ).pack(pady=(6, 0))
 
     def _build_access_panel(self, parent):
-        # Pack footer first so pack reserves space from the bottom before top elements fill
+        # Pack footer first so pack reserves space from the bottom before top elements fill.
         footer = tk.Frame(parent, bg="#ffffff")
-        footer.pack(side="bottom", fill="x", pady=(16, 0))
+        footer.pack(side="bottom", fill="x", pady=(10, 0))
         tk.Label(
             footer, text=get_version_label(), bg="#ffffff", fg="#98a2b3", font=("Segoe UI", 8),
         ).pack()
@@ -99,63 +104,208 @@ class UILogin(ttk.Frame):
             font=("Segoe UI", 9),
         ).pack(pady=(3, 0))
 
+        self._access_content = tk.Frame(parent, bg="#ffffff")
+        self._access_content.pack(fill="both", expand=True)
+        if self._on_microsoft_login is None:
+            self._show_emergency_access()
+        else:
+            self._show_microsoft_access()
+
+    def _clear_access_content(self):
+        for child in self._access_content.winfo_children():
+            child.destroy()
+        self._notice_label = None
+
+    def _title(self, text: str, subtitle: str, *, bottom_padding=26):
         tk.Label(
-            parent, text="Bienvenido de nuevo.", bg="#ffffff", fg="#002C57",
+            self._access_content, text=text, bg="#ffffff", fg="#002C57",
             font=("Segoe UI", 23, "bold"), anchor="w",
         ).pack(fill="x")
         tk.Label(
-            parent, text="Accede a tu espacio de trabajo", bg="#ffffff", fg="#667085",
-            font=("Segoe UI", 11), anchor="w",
-        ).pack(fill="x", pady=(6, 24))
+            self._access_content, text=subtitle, bg="#ffffff", fg="#667085",
+            font=("Segoe UI", 10), anchor="w", justify="left", wraplength=380,
+        ).pack(fill="x", pady=(7, bottom_padding))
 
-        self._field(parent, "Usuario", self.var_username, show=None)
-        entry_password = self._field(parent, "Contraseña", self.var_password, show="*")
+    def _build_notice(self, *, top_padding=12):
+        self._notice_label = tk.Label(
+            self._access_content,
+            textvariable=self.var_error,
+            bg="#ffffff",
+            fg="#b42318" if self._notice_is_error else "#0759af",
+            font=("Segoe UI", 9),
+            anchor="w",
+            justify="left",
+            wraplength=380,
+        )
+        self._notice_label.pack(fill="x", pady=(top_padding, 0))
+
+    def _create_microsoft_icon(self):
+        icon = tk.PhotoImage(width=19, height=19)
+        icon.put("#f25022", to=(0, 0, 9, 9))
+        icon.put("#7fba00", to=(10, 0, 19, 9))
+        icon.put("#00a4ef", to=(0, 10, 9, 19))
+        icon.put("#ffb900", to=(10, 10, 19, 19))
+        self._microsoft_icon = icon
+        return icon
+
+    def _show_microsoft_access(self):
+        self._current_access_mode = "microsoft"
+        self.var_error.set("")
+        self._notice_is_error = True
+        self._clear_access_content()
+        self._title(
+            "Bienvenido de nuevo",
+            "Accede con la misma cuenta corporativa que utilizas en Outlook y en Gestinem.",
+        )
+
+        microsoft_button = tk.Button(
+            self._access_content,
+            text="Continuar con Microsoft",
+            image=self._create_microsoft_icon(),
+            compound="left",
+            command=self._on_microsoft_login,
+            bg="#ffffff",
+            fg="#1f2937",
+            activebackground="#f3f6fa",
+            activeforeground="#111827",
+            relief="solid",
+            borderwidth=1,
+            cursor="hand2",
+            font=("Segoe UI", 11, "bold"),
+            padx=18,
+            pady=13,
+        )
+        microsoft_button.pack(fill="x")
 
         tk.Label(
-            parent, textvariable=self.var_error, bg="#ffffff", fg="#b42318",
-            font=("Segoe UI", 9), anchor="w", wraplength=360,
-        ).pack(fill="x", pady=(0, 12))
-        tk.Button(
-            parent, text="Iniciar sesion", command=self._submit, bg="#0759af", fg="#ffffff",
-            activebackground="#002C57", activeforeground="#ffffff", relief="flat", borderwidth=0,
-            cursor="hand2", font=("Segoe UI", 11, "bold"), pady=10,
+            self._access_content,
+            text="Inicio de sesión corporativo protegido por Microsoft Entra ID",
+            bg="#ffffff",
+            fg="#667085",
+            font=("Segoe UI", 9),
+            anchor="center",
+        ).pack(fill="x", pady=(11, 0))
+
+        separator = tk.Frame(self._access_content, bg="#ffffff")
+        separator.pack(fill="x", pady=(34, 16))
+        tk.Frame(separator, bg="#e4e7ec", height=1).pack(side="left", fill="x", expand=True)
+        tk.Label(
+            separator,
+            text="  ACCESO EXCEPCIONAL  ",
+            bg="#ffffff",
+            fg="#98a2b3",
+            font=("Segoe UI", 8, "bold"),
+        ).pack(side="left")
+        tk.Frame(separator, bg="#e4e7ec", height=1).pack(side="left", fill="x", expand=True)
+
+        emergency_button = tk.Button(
+            self._access_content,
+            text="Usar la cuenta local de emergencia",
+            command=self._show_emergency_access,
+            bg="#ffffff",
+            fg="#475467",
+            activebackground="#ffffff",
+            activeforeground="#002C57",
+            relief="flat",
+            borderwidth=0,
+            cursor="hand2",
+            font=("Segoe UI", 9, "underline"),
+            pady=4,
+        )
+        emergency_button.pack()
+        tk.Label(
+            self._access_content,
+            text="Reservado para incidencias en las que Microsoft no esté disponible.",
+            bg="#ffffff",
+            fg="#98a2b3",
+            font=("Segoe UI", 8),
+            justify="center",
+            wraplength=340,
+        ).pack(pady=(5, 0))
+        self._build_notice()
+        microsoft_button.focus_set()
+
+    def _show_emergency_access(self):
+        self._current_access_mode = "emergency"
+        self.var_error.set("")
+        self._notice_is_error = True
+        self._clear_access_content()
+        self._title(
+            "Acceso de emergencia",
+            "Utiliza esta entrada solo si el inicio de sesión con Microsoft no está disponible.",
+            bottom_padding=16,
+        )
+
+        warning = tk.Frame(
+            self._access_content,
+            bg="#fff8e7",
+            highlightbackground="#f2cf7d",
+            highlightthickness=1,
+            padx=12,
+            pady=9,
+        )
+        warning.pack(fill="x", pady=(0, 12))
+        tk.Label(
+            warning,
+            text="Solo admite la cuenta local admin de emergencia.",
+            bg="#fff8e7",
+            fg="#7a4d00",
+            font=("Segoe UI", 9, "bold"),
+            anchor="w",
         ).pack(fill="x")
+
+        self._field(
+            self._access_content, "Usuario de emergencia", self.var_username,
+            show=None, bottom_padding=9,
+        )
+        entry_password = self._field(
+            self._access_content, "Contraseña", self.var_password,
+            show="*", bottom_padding=11,
+        )
+
+        tk.Button(
+            self._access_content,
+            text="Entrar con la cuenta de emergencia",
+            command=self._submit,
+            bg="#344054",
+            fg="#ffffff",
+            activebackground="#1d2939",
+            activeforeground="#ffffff",
+            relief="flat",
+            borderwidth=0,
+            cursor="hand2",
+            font=("Segoe UI", 10, "bold"),
+            pady=8,
+        ).pack(fill="x")
+
         if self._on_microsoft_login is not None:
             tk.Button(
-                parent,
-                text="Continuar con Microsoft",
-                command=self._on_microsoft_login,
+                self._access_content,
+                text="Volver al acceso con Microsoft",
+                command=self._show_microsoft_access,
                 bg="#ffffff",
                 fg="#0759af",
-                activebackground="#eef5ff",
+                activebackground="#ffffff",
                 activeforeground="#002C57",
-                relief="solid",
-                borderwidth=1,
+                relief="flat",
+                borderwidth=0,
                 cursor="hand2",
-                font=("Segoe UI", 11, "bold"),
-                pady=10,
-            ).pack(fill="x", pady=(10, 0))
-            tk.Label(
-                parent,
-                text="El usuario y la contraseña locales se reservan para la cuenta de emergencia.",
-                bg="#ffffff",
-                fg="#667085",
-                font=("Segoe UI", 8),
-                wraplength=360,
-                justify="left",
-            ).pack(fill="x", pady=(8, 0))
+                font=("Segoe UI", 9, "underline"),
+                pady=4,
+            ).pack(pady=(5, 0))
 
+        self._build_notice(top_padding=6)
         self._entry_user.bind("<Return>", lambda _e: entry_password.focus_set())
         entry_password.bind("<Return>", lambda _e: self._submit())
         self._entry_user.focus_set()
 
-    def _field(self, parent, label, variable, show):
+    def _field(self, parent, label, variable, show, *, bottom_padding=18):
         tk.Label(
             parent, text=label, bg="#ffffff", fg="#344054", font=("Segoe UI", 10, "bold"), anchor="w",
         ).pack(fill="x", pady=(0, 6))
         entry = ttk.Entry(parent, textvariable=variable, show=show, width=36, font=("Segoe UI", 11))
-        entry.pack(fill="x", ipady=6, pady=(0, 18))
-        if label == "Usuario":
+        entry.pack(fill="x", ipady=6, pady=(0, bottom_padding))
+        if label in {"Usuario", "Usuario de emergencia"}:
             self._entry_user = entry
         return entry
 
@@ -181,7 +331,16 @@ class UILogin(ttk.Frame):
         self._on_login(self.var_username.get(), self.var_password.get())
 
     def show_error(self, message: str):
+        self._notice_is_error = True
         self.var_error.set(message)
+        if self._notice_label is not None:
+            self._notice_label.configure(fg="#b42318")
+
+    def show_status(self, message: str):
+        self._notice_is_error = False
+        self.var_error.set(message)
+        if self._notice_label is not None:
+            self._notice_label.configure(fg="#0759af")
 
 
 class ChangePasswordDialog(tk.Toplevel):

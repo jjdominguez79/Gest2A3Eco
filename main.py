@@ -797,7 +797,7 @@ def main():
     def _try_microsoft_login():
         login_view = state.get("login_view")
         if login_view:
-            login_view.show_error("Esperando autenticacion de Microsoft...")
+            login_view.show_status("Esperando autenticacion de Microsoft...")
 
         def worker():
             try:
