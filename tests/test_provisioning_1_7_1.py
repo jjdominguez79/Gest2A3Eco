@@ -20,8 +20,6 @@ from __future__ import annotations
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
-
 _PROD_URL = "https://gest2a3eco-production.up.railway.app"
 
 
@@ -117,20 +115,9 @@ def test_config_example_postgres_port_es_5433():
 
 def test_dialogo_postgres_default_port_es_5433():
     """PostgresConfigDialog debe proponer el puerto 5433 por defecto."""
-    import tkinter as tk
-    root = tk.Tk()
-    root.withdraw()
-    try:
-        # Parchear wait_window para que no bloquee el test
-        with patch.object(tk.Toplevel, "wait_window", lambda self: None):
-            from views.ui_postgres_config import PostgresConfigDialog
-            dlg = PostgresConfigDialog.__new__(PostgresConfigDialog)
-            dlg.var_port = tk.StringVar(value="")
-            # Reinstanciar para obtener el valor por defecto
-            dlg.var_port = tk.StringVar(value="5433")
-            assert dlg.var_port.get() == "5433"
-    finally:
-        root.destroy()
+    from views.ui_postgres_config import PUERTO_POSTGRES_POR_DEFECTO
+
+    assert PUERTO_POSTGRES_POR_DEFECTO == "5433"
 
 
 def test_normalize_config_postgres_port_fallback_5433():

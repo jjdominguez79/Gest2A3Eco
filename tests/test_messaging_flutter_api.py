@@ -1410,24 +1410,25 @@ def test_dispositivo_fcm_mockeado_y_websocket(tmp_path, monkeypatch):
     ticket = client.post(
         "/api/v1/messaging/client/ws-ticket", headers=auth,
     ).json()["ticket"]
-    with client.websocket_connect(
-        f"/api/v1/messaging/ws/client?ticket={ticket}",
-    ) as websocket:
-        assert websocket.receive_json()["type"] == "connected"
-        response = client.post(
-            f"/api/v1/messaging/staff/conversations/{conversation_id}/messages",
-            headers=staff_headers("admin"),
-            data={"body": "En tiempo real", "idempotency_key": "websocket"},
-        )
-        assert response.status_code == 200
-        event = websocket.receive_json()
-        assert event["type"] == "message.created"
-        assert event["conversation_id"] == conversation_id
-    with pytest.raises(WebSocketDisconnect):
+    with client:
         with client.websocket_connect(
             f"/api/v1/messaging/ws/client?ticket={ticket}",
-        ):
-            pass
+        ) as websocket:
+            assert websocket.receive_json()["type"] == "connected"
+            response = client.post(
+                f"/api/v1/messaging/staff/conversations/{conversation_id}/messages",
+                headers=staff_headers("admin"),
+                data={"body": "En tiempo real", "idempotency_key": "websocket"},
+            )
+            assert response.status_code == 200
+            event = websocket.receive_json()
+            assert event["type"] == "message.created"
+            assert event["conversation_id"] == conversation_id
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect(
+                f"/api/v1/messaging/ws/client?ticket={ticket}",
+            ):
+                pass
 
 
 def test_lectura_se_publica_al_emisor_por_websocket_en_tiempo_real(tmp_path, monkeypatch):
@@ -1455,20 +1456,21 @@ def test_lectura_se_publica_al_emisor_por_websocket_en_tiempo_real(tmp_path, mon
         ))
         db.commit()
 
-    with client.websocket_connect(
-        f"/api/v1/messaging/ws/staff?ticket={ticket}",
-    ) as websocket:
-        assert websocket.receive_json()["type"] == "connected"
-        response = client.post(
-            f"/api/v1/messaging/client/conversations/{conversation_id}/read",
-            headers=auth,
-        )
-        assert response.status_code == 200
-        assert response.json()["changed"] is True
-        events = [websocket.receive_json() for _ in range(2)]
-        read_event = next(event for event in events if event["type"] == "message.read")
-        assert read_event["conversation_id"] == conversation_id
-        assert read_event["actor_type"] == "client"
+    with client:
+        with client.websocket_connect(
+            f"/api/v1/messaging/ws/staff?ticket={ticket}",
+        ) as websocket:
+            assert websocket.receive_json()["type"] == "connected"
+            response = client.post(
+                f"/api/v1/messaging/client/conversations/{conversation_id}/read",
+                headers=auth,
+            )
+            assert response.status_code == 200
+            assert response.json()["changed"] is True
+            events = [websocket.receive_json() for _ in range(2)]
+            read_event = next(event for event in events if event["type"] == "message.read")
+            assert read_event["conversation_id"] == conversation_id
+            assert read_event["actor_type"] == "client"
 
 
 def test_login_staff_app_usa_codigo_un_solo_uso(tmp_path, monkeypatch):

@@ -4,6 +4,9 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 
+PUERTO_POSTGRES_POR_DEFECTO = "5433"
+
+
 class PostgresConfigDialog(tk.Toplevel):
     """Configuracion inicial de la base central para cada puesto."""
 
@@ -14,7 +17,7 @@ class PostgresConfigDialog(tk.Toplevel):
         self.result = None
 
         self.var_host = tk.StringVar(value="192.168.0.19")
-        self.var_port = tk.StringVar(value="5433")
+        self.var_port = tk.StringVar(value=PUERTO_POSTGRES_POR_DEFECTO)
         self.var_database = tk.StringVar(value="gest2a3eco")
         self.var_user = tk.StringVar(value="gest2a3eco")
         self.var_password = tk.StringVar()

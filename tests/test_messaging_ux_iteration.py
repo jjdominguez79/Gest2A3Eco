@@ -1,8 +1,7 @@
-"""Tests de UX iteration 2 para el backend de mensajeria.
+"""Tests de UX del backend de mensajeria.
 
-Los tests que requieren PostgreSQL se marcan con @pytest.mark.requires_db
-y se omiten automaticamente si no hay una base de datos disponible.
-Los tests de CORS, seguridad y modelos de dominio no requieren PostgreSQL.
+Las pruebas aíslan la persistencia con SQLite en memoria; la aplicacion de
+produccion sigue utilizando exclusivamente PostgreSQL.
 """
 from __future__ import annotations
 
@@ -18,26 +17,6 @@ from sqlalchemy.orm import sessionmaker
 # Configurar variables de entorno antes de importar la app
 os.environ.setdefault("DGT_DATABASE_URL", "sqlite:///")
 os.environ.setdefault("MESSAGING_CORS_ORIGINS", "http://localhost:3000,http://localhost:8080")
-
-# Marker para tests que requieren PostgreSQL real
-requires_db = pytest.mark.requires_db
-
-# Verificar si messaging_api puede importarse (requiere PostgreSQL)
-_messaging_api_available = False
-try:
-    with patch.dict(os.environ, {"DGT_DATABASE_URL": "postgresql+psycopg://fake:fake@localhost/fake"}):
-        pass
-except Exception:
-    pass
-
-try:
-    import importlib
-    import sys
-    # Patch database antes de importar messaging_api
-    _messaging_api_available = True
-except Exception:
-    _messaging_api_available = False
-
 
 # ---------------------------------------------------------------------------
 # Fixtures de base de datos en memoria
@@ -385,26 +364,10 @@ class TestUnifiedConversation:
 # ---------------------------------------------------------------------------
 
 def _load_normalized_avatar():
-    """Carga _normalized_avatar parcheando database para no necesitar PostgreSQL."""
-    from io import BytesIO
-    from PIL import Image
-    import sys
-    from unittest.mock import MagicMock, patch
+    """Devuelve el normalizador sin reemplazar modulos globales del backend."""
+    from backend.api.messaging_api import _normalized_avatar
 
-    # Parchar database antes de importar messaging_api
-    fake_engine = MagicMock()
-    fake_session_local = MagicMock()
-    fake_db_module = MagicMock()
-    fake_db_module.engine = fake_engine
-    fake_db_module.SessionLocal = fake_session_local
-    fake_db_module.Base = MagicMock()
-
-    with patch.dict(sys.modules, {"backend.api.database": fake_db_module}):
-        import importlib
-        if "backend.api.messaging_api" in sys.modules:
-            del sys.modules["backend.api.messaging_api"]
-        import backend.api.messaging_api as api_mod
-        return api_mod._normalized_avatar
+    return _normalized_avatar
 
 
 class TestStaffAvatarUpload:

@@ -4343,7 +4343,7 @@ async def messaging_websocket(websocket: WebSocket, audience: str, ticket: str =
                 tareas.remove(siguiente_evento)
                 siguiente_evento = asyncio.create_task(subscription.queue.get())
                 tareas.add(siguiente_evento)
-    except (WebSocketDisconnect, OSError):
+    except (WebSocketDisconnect, OSError, asyncio.CancelledError):
         pass
     finally:
         for tarea in tareas:
@@ -4360,7 +4360,12 @@ async def messaging_websocket(websocket: WebSocket, audience: str, ticket: str =
             hub.publish(
                 {"type": "presence.updated", "staff_id": presence_staff_id, "online": online},
             )
-        await asyncio.gather(*tareas, return_exceptions=True)
+        try:
+            await asyncio.gather(*tareas, return_exceptions=True)
+        except asyncio.CancelledError:
+            # El cierre del servidor puede cancelar de nuevo mientras se esperan
+            # las tareas hijas; la suscripcion y la presencia ya estan limpias.
+            pass
 
 
 @router.get("/{audience}/events")
