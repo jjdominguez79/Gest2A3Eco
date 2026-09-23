@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.8.20",
+  "latest_version": "1.8.21",
   "minimum_required_version": "1.8.19",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.20/Setup_Gest2A3Eco_1.8.20.exe",
-  "changelog": "Corrige solicitudes de certificados AEAT y permite configurar la hora diaria de sincronizaci�n DEH�.",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.21/Setup_Gest2A3Eco_1.8.21.exe",
+  "changelog": "Mejora las notificaciones electr�nicas con bandeja global hist�rica, configuraci�n masiva de buzones DEH� y DGT/DEV, sincronizaci�n de estados, reintentos autom�ticos y ordenaci�n de certificados por vencimiento.",
   "force_update": false
 }
