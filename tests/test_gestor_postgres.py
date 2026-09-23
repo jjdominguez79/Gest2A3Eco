@@ -89,6 +89,18 @@ def test_adaptar_sql_a_postgres_convierte_marcadores_e_ignore():
     )
 
 
+def test_adaptar_sql_a_postgres_conserva_interrogacion_en_literal():
+    sql = (
+        "INSERT INTO notif_organismos (nombre, url_portal, updated_at) "
+        "VALUES (?, 'https://dgt.example/listado?idioma=es', ?)"
+    )
+
+    assert adaptar_sql_a_postgres(sql) == (
+        "INSERT INTO notif_organismos (nombre, url_portal, updated_at) "
+        "VALUES (%s, 'https://dgt.example/listado?idioma=es', %s)"
+    )
+
+
 def test_traducir_insert_replace_plan_cuentas_usa_clave_compuesta():
     sql = (
         "INSERT OR REPLACE INTO plan_cuentas "

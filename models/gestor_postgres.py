@@ -78,6 +78,43 @@ def _traducir_insert_replace(sql: str) -> str:
     )
 
 
+def _traducir_marcadores_qmark(sql: str) -> str:
+    """Convierte ``?`` de parametros sin alterar literales SQL.
+
+    La capa historica usa marcadores SQLite. Un reemplazo global tambien
+    convertia signos de interrogacion incluidos en textos, como la URL de
+    DGT/DEV ``...?idioma=es``, y psycopg esperaba parametros inexistentes.
+    """
+    resultado: list[str] = []
+    quote = ""
+    index = 0
+    while index < len(sql):
+        char = sql[index]
+        if quote:
+            resultado.append(char)
+            if char == quote:
+                if index + 1 < len(sql) and sql[index + 1] == quote:
+                    resultado.append(sql[index + 1])
+                    index += 2
+                    continue
+                quote = ""
+            elif char == "\\" and index + 1 < len(sql):
+                resultado.append(sql[index + 1])
+                index += 2
+                continue
+            index += 1
+            continue
+        if char in ("'", '"'):
+            quote = char
+            resultado.append(char)
+        elif char == "?":
+            resultado.append("%s")
+        else:
+            resultado.append(char)
+        index += 1
+    return "".join(resultado)
+
+
 def adaptar_sql_a_postgres(sql: str) -> str:
     """Adapta el SQL historico de la capa de datos al dialecto PostgreSQL."""
     traducido = str(sql)
@@ -98,7 +135,7 @@ def adaptar_sql_a_postgres(sql: str) -> str:
         flags=re.IGNORECASE,
     )
     traducido = re.sub(r"\bREAL\b", "DOUBLE PRECISION", traducido, flags=re.IGNORECASE)
-    return traducido.replace("?", "%s")
+    return _traducir_marcadores_qmark(traducido)
 
 
 def _parse_pragma_table_info(sql: str) -> str:

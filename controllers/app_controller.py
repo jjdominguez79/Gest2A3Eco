@@ -465,13 +465,31 @@ class AppController:
 
     def _show(self, factory):
         """Reemplaza el contenido principal destruyendo el frame actual."""
-        if self._current_frame is not None:
-            self._current_frame.destroy()
-        # Al salir de la empresa, resetear el shell guardado
+        previous_frame = self._current_frame
+        previous_children = set(self._content.winfo_children())
+        try:
+            frame = factory(self._content)
+        except Exception as exc:
+            for child in self._content.winfo_children():
+                if child not in previous_children:
+                    try:
+                        child.destroy()
+                    except tk.TclError:
+                        pass
+            LOG.exception("No se pudo abrir el modulo solicitado")
+            messagebox.showerror(
+                "Gest2A3Eco",
+                f"No se pudo abrir esta pantalla.\n\nDetalle: {exc}",
+                parent=self._content.winfo_toplevel(),
+            )
+            return
+        if previous_frame is not None and previous_frame is not frame:
+            previous_frame.destroy()
+        # Al salir de la empresa, resetear el shell guardado solo despues de
+        # construir correctamente la nueva pantalla.
         self._company_shell = None
         self._current_codigo = None
         self._current_ejercicio = None
-        frame = factory(self._content)
         if not frame.winfo_manager():
             frame.pack(fill="both", expand=True)
         self._current_frame = frame
