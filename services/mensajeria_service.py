@@ -22,7 +22,11 @@ class SyncAdjuntosResult:
 
 
 class MensajeriaRemoteClient:
-    def __init__(self, *, user_id: int | str, user_name: str, config: dict | None = None, session=None):
+    def __init__(
+        self, *, user_id: int | str, user_name: str,
+        user_email: str = "", entra_oid: str = "",
+        config: dict | None = None, session=None,
+    ):
         cfg = config or load_app_config()
         self.base_url = str(
             cfg.get("messaging_api_url") or cfg.get("integrations_api_url")
@@ -44,6 +48,8 @@ class MensajeriaRemoteClient:
         )
         self.user_id = str(user_id)
         self.user_name = str(user_name or user_id)
+        self.user_email = str(user_email or "").strip().lower()
+        self.entra_oid = str(entra_oid or "").strip()
         self.http = session or requests.Session()
 
     @property
@@ -72,6 +78,7 @@ class MensajeriaRemoteClient:
         self.ensure_device_enrolled()
         payload = {
             "external_id": self.user_id, "name": self.user_name,
+            "email": self.user_email, "entra_oid": self.entra_oid,
             "role": role, "active": active,
         }
         if channels is not None:

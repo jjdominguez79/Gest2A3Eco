@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import re
 from dataclasses import dataclass
 
 from models.auth import CompanyPermission, UserRecord, UserRole, UserSession
@@ -160,9 +161,59 @@ class AuthService:
             return AuthenticationResult(False, "user_not_found", "Usuario inexistente.")
         if not bool(user.get("activo")):
             return AuthenticationResult(False, "inactive", "Usuario inactivo.")
+        if not bool(user.get("es_cuenta_emergencia")):
+            return AuthenticationResult(
+                False,
+                "microsoft_required",
+                "Esta cuenta debe acceder con Microsoft Entra.",
+            )
         if not self._hasher.verify_password(password, str(user.get("password_hash") or "")):
             return AuthenticationResult(False, "invalid_password", "Contraseña incorrecta.")
         session = self._build_session(user)
+        return AuthenticationResult(True, "ok", "", session=session)
+
+    def authenticate_entra(
+        self,
+        *,
+        email: str,
+        entra_oid: str,
+        messaging_staff_id: str,
+    ) -> AuthenticationResult:
+        """Vincula la identidad validada por Entra con el usuario local."""
+        email_norm = str(email or "").strip().lower()
+        oid = str(entra_oid or "").strip()
+        if not email_norm or not oid:
+            return AuthenticationResult(
+                False, "invalid_entra_identity", "Microsoft no devolvio una identidad valida."
+            )
+        user = self._gestor.get_usuario_by_entra_oid(oid)
+        if not user:
+            user = self._gestor.get_usuario_by_email_corporativo(email_norm)
+        if not user:
+            return AuthenticationResult(
+                False,
+                "user_not_authorized",
+                "La cuenta Microsoft no esta dada de alta en Gestinem.",
+            )
+        if not bool(user.get("activo")):
+            return AuthenticationResult(False, "inactive", "Usuario inactivo.")
+        stored_oid = str(user.get("entra_oid") or "").strip()
+        if stored_oid and stored_oid != oid:
+            return AuthenticationResult(
+                False,
+                "entra_identity_conflict",
+                "El correo esta vinculado a otra identidad de Microsoft.",
+            )
+        if bool(user.get("es_cuenta_emergencia")):
+            return AuthenticationResult(
+                False,
+                "emergency_local_only",
+                "La cuenta de emergencia solo admite acceso local.",
+            )
+        self._gestor.vincular_usuario_entra(int(user["id"]), oid, email_norm)
+        user = self._gestor.get_usuario(int(user["id"])) or user
+        session = self._build_session(user)
+        session.user.messaging_staff_id = str(messaging_staff_id or "").strip()
         return AuthenticationResult(True, "ok", "", session=session)
 
     def _build_session(self, user_row: dict) -> UserSession:
@@ -173,6 +224,9 @@ class AuthService:
             rol=UserRole(str(user_row["rol"])),
             activo=bool(user_row.get("activo")),
             must_change_password=bool(user_row.get("must_change_password")),
+            email_corporativo=str(user_row.get("email_corporativo") or ""),
+            entra_oid=str(user_row.get("entra_oid") or ""),
+            es_cuenta_emergencia=bool(user_row.get("es_cuenta_emergencia")),
         )
         permissions: dict[str, CompanyPermission] = {}
         for row in self._gestor.listar_permisos_usuario(user.id):
@@ -207,6 +261,8 @@ class AuthService:
         global_permissions: set[str] | list[str] | tuple[str, ...] | None = None,
         password: str | None = None,
         must_change_password: bool = False,
+        email_corporativo: str = "",
+        es_cuenta_emergencia: bool = False,
     ) -> int:
         username = str(username or "").strip()
         nombre = str(nombre or "").strip()
@@ -219,6 +275,30 @@ class AuthService:
         except Exception as exc:
             raise ValueError("Rol de usuario no valido.") from exc
 
+        email_norm = str(email_corporativo or "").strip().lower()
+        emergency = bool(es_cuenta_emergencia)
+        if emergency and user_role != UserRole.ADMIN:
+            raise ValueError("Solo un administrador puede ser cuenta de emergencia.")
+        if emergency:
+            if username.lower() != "admin":
+                raise ValueError("La cuenta local de emergencia debe ser el usuario admin.")
+            duplicate_emergency = next((
+                row for row in self._gestor.listar_usuarios()
+                if bool(row.get("es_cuenta_emergencia"))
+                and (user_id is None or int(row["id"]) != int(user_id))
+            ), None)
+            if duplicate_emergency:
+                raise ValueError("Ya existe una cuenta local de emergencia.")
+            email_norm = ""
+        elif user_role in {UserRole.ADMIN, UserRole.EMPLEADO}:
+            if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email_norm):
+                raise ValueError("El correo corporativo es obligatorio para acceder con Microsoft.")
+            duplicate_email = self._gestor.get_usuario_by_email_corporativo(email_norm)
+            if duplicate_email and (
+                user_id is None or int(duplicate_email["id"]) != int(user_id)
+            ):
+                raise ValueError("Ya existe un usuario con ese correo corporativo.")
+
         existing = self._gestor.get_usuario_by_username(username)
         if existing and (user_id is None or int(existing["id"]) != int(user_id)):
             raise ValueError("Ya existe un usuario con ese nombre.")
@@ -229,6 +309,8 @@ class AuthService:
             if not plain:
                 raise ValueError("La contraseña no puede estar vacia.")
             password_hash = self._hasher.hash_password(plain)
+        elif user_id is None and not emergency and user_role in {UserRole.ADMIN, UserRole.EMPLEADO}:
+            password_hash = "!ENTRA_ONLY!"
 
         stored_id = self._gestor.upsert_usuario(
             {
@@ -239,6 +321,8 @@ class AuthService:
                 "activo": 1 if activo else 0,
                 "must_change_password": 1 if must_change_password else 0,
                 "password_hash": password_hash,
+                "email_corporativo": email_norm,
+                "es_cuenta_emergencia": 1 if emergency else 0,
             }
         )
 

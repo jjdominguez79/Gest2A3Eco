@@ -37,10 +37,14 @@ def _center_window(win, parent=None):
 
 
 class UILogin(ttk.Frame):
-    def __init__(self, parent, on_login, logo_path: str | None = None):
+    def __init__(
+        self, parent, on_login, logo_path: str | None = None,
+        on_microsoft_login=None,
+    ):
         super().__init__(parent)
         self._on_login = on_login
         self._logo_path = str(logo_path or "").strip()
+        self._on_microsoft_login = on_microsoft_login
         self._logo_tk_img = None
         self.var_username = tk.StringVar()
         self.var_password = tk.StringVar()
@@ -113,6 +117,30 @@ class UILogin(ttk.Frame):
             activebackground="#002C57", activeforeground="#ffffff", relief="flat", borderwidth=0,
             cursor="hand2", font=("Segoe UI", 11, "bold"), pady=10,
         ).pack(fill="x")
+        if self._on_microsoft_login is not None:
+            tk.Button(
+                parent,
+                text="Continuar con Microsoft",
+                command=self._on_microsoft_login,
+                bg="#ffffff",
+                fg="#0759af",
+                activebackground="#eef5ff",
+                activeforeground="#002C57",
+                relief="solid",
+                borderwidth=1,
+                cursor="hand2",
+                font=("Segoe UI", 11, "bold"),
+                pady=10,
+            ).pack(fill="x", pady=(10, 0))
+            tk.Label(
+                parent,
+                text="El usuario y la contraseña locales se reservan para la cuenta de emergencia.",
+                bg="#ffffff",
+                fg="#667085",
+                font=("Segoe UI", 8),
+                wraplength=360,
+                justify="left",
+            ).pack(fill="x", pady=(8, 0))
 
         self._entry_user.bind("<Return>", lambda _e: entry_password.focus_set())
         entry_password.bind("<Return>", lambda _e: self._submit())

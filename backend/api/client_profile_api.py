@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 from sqlalchemy import select
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from backend.api.client_access import revoke_organization_client_access
 from backend.api.client_validation import normalize_tax_id
+from backend.api.config import get_settings
 from backend.api.database import SessionLocal
 from backend.api.messaging_models import (
     MessagingClient,
@@ -18,6 +20,9 @@ from backend.api.messaging_models import (
     MessagingOrganization,
     MessagingProfileChangeRequest,
     MessagingSession,
+    MessagingStaff,
+    MessagingStaffPresenceConnection,
+    MessagingStaffSession,
 )
 from backend.api.messaging_security import hash_token, is_expired, utcnow
 from backend.api.messaging_storage import MessagingStorage
@@ -244,6 +249,87 @@ def get_client_features(request: Request, db: Session = Depends(_db)):
         "invoicing": is_invoicing_enabled(org),
         "certificates": is_certificates_enabled(org),
     }
+
+
+@router.put("/internal/staff-snapshot")
+def sync_staff_snapshot(
+    payload: dict = Body(...),
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_master_sync_or_workstation_internal),
+):
+    """Proyecta los empleados del escritorio sin borrar su historial."""
+    rows = payload.get("staff")
+    if not isinstance(rows, list):
+        raise HTTPException(status_code=422, detail="staff debe ser una lista")
+    seen_ids: set[str] = set()
+    seen_emails: set[str] = set()
+    mappings: list[dict] = []
+    now = utcnow()
+    allowed_domain = get_settings().messaging_staff_allowed_domain.strip().lower()
+
+    for raw in rows:
+        desktop_user_id = str(raw.get("desktop_user_id") or "").strip()
+        email = str(raw.get("email") or "").strip().lower()
+        name = str(raw.get("name") or "").strip()
+        role = str(raw.get("role") or "empleado").strip().lower()
+        if not desktop_user_id or not email or not name:
+            raise HTTPException(422, "Cada empleado necesita id, nombre y correo")
+        if allowed_domain and not email.endswith(f"@{allowed_domain}"):
+            raise HTTPException(422, f"El empleado debe pertenecer a @{allowed_domain}")
+        if role not in {"admin", "empleado"}:
+            raise HTTPException(422, "Rol de empleado no valido")
+        if desktop_user_id in seen_ids or email in seen_emails:
+            raise HTTPException(409, "La fotografia contiene empleados duplicados")
+        seen_ids.add(desktop_user_id)
+        seen_emails.add(email)
+
+        staff = db.scalar(select(MessagingStaff).where(
+            MessagingStaff.desktop_user_id == desktop_user_id,
+        ))
+        if not staff:
+            staff = db.scalar(select(MessagingStaff).where(MessagingStaff.email == email))
+        if staff and staff.desktop_user_id and staff.desktop_user_id != desktop_user_id:
+            raise HTTPException(409, f"El correo {email} pertenece a otro usuario del escritorio")
+        if not staff:
+            staff = MessagingStaff(external_id=str(uuid.uuid4()))
+            db.add(staff)
+
+        staff.desktop_user_id = desktop_user_id
+        staff.name = name
+        staff.email = email
+        staff.role = role
+        staff.active = bool(raw.get("active", True))
+        if not staff.active:
+            db.query(MessagingStaffSession).filter(
+                MessagingStaffSession.staff_external_id == staff.external_id,
+                MessagingStaffSession.revoked_at.is_(None),
+            ).update({MessagingStaffSession.revoked_at: now}, synchronize_session=False)
+            db.query(MessagingStaffPresenceConnection).filter(
+                MessagingStaffPresenceConnection.staff_external_id == staff.external_id,
+            ).delete(synchronize_session=False)
+        mappings.append({
+            "desktop_user_id": desktop_user_id,
+            "staff_id": staff.external_id,
+            "email": email,
+            "active": staff.active,
+        })
+
+    if bool(payload.get("full_snapshot", True)):
+        stmt = select(MessagingStaff).where(MessagingStaff.desktop_user_id != "")
+        if seen_ids:
+            stmt = stmt.where(MessagingStaff.desktop_user_id.not_in(seen_ids))
+        for staff in db.scalars(stmt).all():
+            staff.active = False
+            db.query(MessagingStaffSession).filter(
+                MessagingStaffSession.staff_external_id == staff.external_id,
+                MessagingStaffSession.revoked_at.is_(None),
+            ).update({MessagingStaffSession.revoked_at: now}, synchronize_session=False)
+            db.query(MessagingStaffPresenceConnection).filter(
+                MessagingStaffPresenceConnection.staff_external_id == staff.external_id,
+            ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"ok": True, "staff": mappings}
 
 
 @router.put("/internal/sync-profile")

@@ -34,8 +34,10 @@ class UserAdminDialog(tk.Toplevel):
         self.controller = controller
         self.var_username = tk.StringVar()
         self.var_nombre = tk.StringVar()
+        self.var_email_corporativo = tk.StringVar()
         self.var_rol = tk.StringVar(value=UserRole.EMPLEADO.value)
         self.var_activo = tk.BooleanVar(value=True)
+        self.var_cuenta_emergencia = tk.BooleanVar(value=False)
         self.var_password = tk.StringVar()
         self.var_force_password_change = tk.BooleanVar(value=False)
         self.var_perm_tramites_dgt = tk.BooleanVar(value=False)
@@ -65,13 +67,14 @@ class UserAdminDialog(tk.Toplevel):
 
         self.tv_users = ttk.Treeview(
             left,
-            columns=("username", "nombre", "rol", "activo", "empresas"),
+            columns=("username", "nombre", "email", "rol", "activo", "empresas"),
             show="headings",
             selectmode="browse",
         )
         for col, label, width in (
             ("username", "Usuario", 120),
             ("nombre", "Nombre", 180),
+            ("email", "Correo corporativo", 210),
             ("rol", "Rol", 90),
             ("activo", "Activo", 70),
             ("empresas", "Empresas", 80),
@@ -84,26 +87,33 @@ class UserAdminDialog(tk.Toplevel):
         right = ttk.LabelFrame(root, text="Edicion")
         right.grid(row=0, column=1, sticky="nsew")
         right.columnconfigure(1, weight=1)
-        right.rowconfigure(7, weight=1)
+        right.rowconfigure(8, weight=1)
 
         ttk.Label(right, text="Usuario").grid(row=0, column=0, sticky="w", padx=10, pady=(10, 4))
         ttk.Entry(right, textvariable=self.var_username).grid(row=0, column=1, sticky="ew", padx=10, pady=(10, 4))
         ttk.Label(right, text="Nombre").grid(row=1, column=0, sticky="w", padx=10, pady=4)
         ttk.Entry(right, textvariable=self.var_nombre).grid(row=1, column=1, sticky="ew", padx=10, pady=4)
-        ttk.Label(right, text="Rol").grid(row=2, column=0, sticky="w", padx=10, pady=4)
+        ttk.Label(right, text="Correo corporativo").grid(row=2, column=0, sticky="w", padx=10, pady=4)
+        ttk.Entry(right, textvariable=self.var_email_corporativo).grid(
+            row=2, column=1, sticky="ew", padx=10, pady=4
+        )
+        ttk.Label(right, text="Rol").grid(row=3, column=0, sticky="w", padx=10, pady=4)
         role_cb = ttk.Combobox(
             right,
             textvariable=self.var_rol,
             state="readonly",
             values=[role.value for role in UserRole],
         )
-        role_cb.grid(row=2, column=1, sticky="w", padx=10, pady=4)
+        role_cb.grid(row=3, column=1, sticky="w", padx=10, pady=4)
         role_cb.bind("<<ComboboxSelected>>", lambda _e: self._toggle_company_permissions())
 
-        ttk.Checkbutton(right, text="Usuario activo", variable=self.var_activo).grid(row=3, column=1, sticky="w", padx=10, pady=4)
+        ttk.Checkbutton(
+            right, text="Cuenta local de emergencia", variable=self.var_cuenta_emergencia,
+        ).grid(row=4, column=0, sticky="w", padx=10, pady=4)
+        ttk.Checkbutton(right, text="Usuario activo", variable=self.var_activo).grid(row=4, column=1, sticky="w", padx=10, pady=4)
 
         global_frame = ttk.LabelFrame(right, text="Permisos globales")
-        global_frame.grid(row=4, column=0, columnspan=2, sticky="ew", padx=10, pady=4)
+        global_frame.grid(row=5, column=0, columnspan=2, sticky="ew", padx=10, pady=4)
         ttk.Checkbutton(
             global_frame,
             text="Tramites DGT",
@@ -116,7 +126,7 @@ class UserAdminDialog(tk.Toplevel):
         ).pack(anchor="w", padx=8, pady=(0, 6))
 
         password_frame = ttk.Frame(right)
-        password_frame.grid(row=5, column=0, columnspan=2, sticky="ew", padx=10, pady=4)
+        password_frame.grid(row=6, column=0, columnspan=2, sticky="ew", padx=10, pady=4)
         password_frame.columnconfigure(1, weight=1)
         ttk.Label(password_frame, text="Nueva contraseña").grid(row=0, column=0, sticky="w")
         ttk.Entry(password_frame, textvariable=self.var_password, show="*").grid(row=0, column=1, sticky="ew", padx=(8, 0))
@@ -126,9 +136,9 @@ class UserAdminDialog(tk.Toplevel):
             variable=self.var_force_password_change,
         ).grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
 
-        ttk.Label(right, text="Permisos por empresa").grid(row=6, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 4))
+        ttk.Label(right, text="Permisos por empresa").grid(row=7, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 4))
         bulk = ttk.Frame(right)
-        bulk.grid(row=6, column=1, sticky="e", padx=10, pady=(10, 4))
+        bulk.grid(row=7, column=1, sticky="e", padx=10, pady=(10, 4))
         ttk.Button(
             bulk,
             text="Quitar todas",
@@ -145,7 +155,7 @@ class UserAdminDialog(tk.Toplevel):
             command=lambda: self._set_all_company_permissions(CompanyPermission.READ.value),
         ).pack(side="right", padx=(0, 6))
         company_wrap = ttk.Frame(right)
-        company_wrap.grid(row=7, column=0, columnspan=2, sticky="nsew", padx=10, pady=(0, 10))
+        company_wrap.grid(row=8, column=0, columnspan=2, sticky="nsew", padx=10, pady=(0, 10))
         company_wrap.columnconfigure(0, weight=1)
         company_wrap.rowconfigure(0, weight=1)
 
@@ -161,7 +171,7 @@ class UserAdminDialog(tk.Toplevel):
         canvas.bind("<Configure>", lambda e: canvas.itemconfigure(self._company_window, width=e.width))
 
         actions = ttk.Frame(right)
-        actions.grid(row=8, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
+        actions.grid(row=9, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
         ttk.Button(actions, text="Guardar usuario", style="Primary.TButton", command=lambda: self.controller.guardar()).pack(side="left")
         ttk.Button(actions, text="Cambiar contraseña", command=lambda: self.controller.cambiar_password()).pack(side="left", padx=(8, 0))
         ttk.Button(actions, text="Cerrar", command=self.destroy).pack(side="right")
@@ -178,6 +188,7 @@ class UserAdminDialog(tk.Toplevel):
                 values=(
                     row.get("username", ""),
                     row.get("nombre", ""),
+                    row.get("email_corporativo", ""),
                     row.get("rol", ""),
                     "Si" if row.get("activo") else "No",
                     row.get("empresas_asignadas", 0),
@@ -205,8 +216,14 @@ class UserAdminDialog(tk.Toplevel):
         self._current_user_id = user.get("id") if user else None
         self.var_username.set("" if not user else str(user.get("username") or ""))
         self.var_nombre.set("" if not user else str(user.get("nombre") or ""))
+        self.var_email_corporativo.set(
+            "" if not user else str(user.get("email_corporativo") or "")
+        )
         self.var_rol.set(UserRole.EMPLEADO.value if not user else str(user.get("rol") or UserRole.EMPLEADO.value))
         self.var_activo.set(True if not user else bool(user.get("activo")))
+        self.var_cuenta_emergencia.set(
+            False if not user else bool(user.get("es_cuenta_emergencia"))
+        )
         self.var_password.set("")
         self.var_force_password_change.set(False if not user else bool(user.get("must_change_password")))
         self.var_perm_tramites_dgt.set("tramites_dgt" in (global_permissions or set()))
@@ -257,10 +274,12 @@ class UserAdminDialog(tk.Toplevel):
             "id": self._current_user_id,
             "username": self.var_username.get().strip(),
             "nombre": self.var_nombre.get().strip(),
+            "email_corporativo": self.var_email_corporativo.get().strip(),
             "rol": self.var_rol.get().strip(),
             "activo": bool(self.var_activo.get()),
             "password": self.var_password.get(),
             "must_change_password": bool(self.var_force_password_change.get()),
+            "es_cuenta_emergencia": bool(self.var_cuenta_emergencia.get()),
             "company_permissions": permissions,
             "global_permissions": global_permissions,
         }

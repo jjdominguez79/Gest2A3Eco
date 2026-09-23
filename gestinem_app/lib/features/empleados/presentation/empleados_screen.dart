@@ -22,22 +22,21 @@ class EmpleadosScreen extends ConsumerWidget {
 
   Future<void> _editar(
     BuildContext context,
-    WidgetRef ref, [
-    EmpleadoDespacho? empleado,
-  ]) async {
-    final nombre = TextEditingController(text: empleado?.nombre ?? '');
-    final email = TextEditingController(text: empleado?.email ?? '');
-    final alias = TextEditingController(text: empleado?.aliasChat ?? '');
-    var rol = empleado?.rol ?? 'empleado';
-    var activo = empleado?.activo ?? true;
-    final canales = {...?empleado?.canales};
+    WidgetRef ref,
+    EmpleadoDespacho empleado,
+  ) async {
+    final nombre = TextEditingController(text: empleado.nombre);
+    final email = TextEditingController(text: empleado.email);
+    final alias = TextEditingController(text: empleado.aliasChat);
+    final rol = empleado.rol;
+    final canales = {...empleado.canales};
     var guardando = false;
 
     final guardado = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: Text(empleado == null ? 'Nuevo empleado' : 'Editar empleado'),
+          title: const Text('Configurar empleado'),
           content: SizedBox(
             width: 520,
             child: SingleChildScrollView(
@@ -46,13 +45,15 @@ class EmpleadosScreen extends ConsumerWidget {
                 children: [
                   TextField(
                     controller: nombre,
+                    readOnly: true,
                     decoration: const InputDecoration(
-                      labelText: 'Nombre completo',
+                      labelText: 'Nombre corporativo',
                     ),
                   ),
                   const SizedBox(height: 10),
                   TextField(
                     controller: email,
+                    readOnly: true,
                     keyboardType: TextInputType.emailAddress,
                     decoration: const InputDecoration(
                       labelText: 'Correo corporativo',
@@ -80,9 +81,7 @@ class EmpleadosScreen extends ConsumerWidget {
                         child: Text('Administrador'),
                       ),
                     ],
-                    onChanged: guardando
-                        ? null
-                        : (value) => setState(() => rol = value!),
+                    onChanged: null,
                   ),
                   const SizedBox(height: 14),
                   Align(
@@ -112,13 +111,11 @@ class EmpleadosScreen extends ConsumerWidget {
                         ),
                     ],
                   ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Acceso activo'),
-                    value: activo,
-                    onChanged: guardando
-                        ? null
-                        : (value) => setState(() => activo = value),
+                  const Padding(
+                    padding: EdgeInsets.only(top: 12),
+                    child: Text(
+                      'El alta, la baja, el correo y el rol se gestionan desde la aplicación de escritorio.',
+                    ),
                   ),
                 ],
               ),
@@ -144,26 +141,15 @@ class EmpleadosScreen extends ConsumerWidget {
                         final repository = ref.read(
                           empleadosRepositoryProvider,
                         );
-                        if (empleado == null) {
-                          await repository.crear(
-                            nombre: nombre.text,
-                            email: email.text,
-                            rol: rol,
-                            aliasChat: alias.text,
-                            activo: activo,
-                            canales: canales,
-                          );
-                        } else {
-                          await repository.actualizar(
-                            empleado.id,
-                            nombre: nombre.text,
-                            email: email.text,
-                            rol: rol,
-                            aliasChat: alias.text,
-                            activo: activo,
-                            canales: canales,
-                          );
-                        }
+                        await repository.actualizar(
+                          empleado.id,
+                          nombre: nombre.text,
+                          email: email.text,
+                          rol: rol,
+                          aliasChat: alias.text,
+                          activo: true,
+                          canales: canales,
+                        );
                         if (dialogContext.mounted) {
                           Navigator.pop(dialogContext, true);
                         }
@@ -401,14 +387,6 @@ class EmpleadosScreen extends ConsumerWidget {
           icon: const Icon(Icons.arrow_back),
         ),
         title: const Text('Empleados del despacho'),
-        actions: [
-          IconButton(
-            key: const Key('add-employee'),
-            tooltip: 'Nuevo empleado',
-            onPressed: () => _editar(context, ref),
-            icon: const Icon(Icons.person_add_alt_1),
-          ),
-        ],
       ),
       body: empleados.when(
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -425,9 +403,6 @@ class EmpleadosScreen extends ConsumerWidget {
               .toList(growable: false);
           final desconectados = items
               .where((item) => item.activo && !item.online)
-              .toList(growable: false);
-          final sinAcceso = items
-              .where((item) => !item.activo)
               .toList(growable: false);
           return ListView(
             padding: EdgeInsets.fromLTRB(
@@ -451,15 +426,6 @@ class EmpleadosScreen extends ConsumerWidget {
                 ref,
                 'Desconectados',
                 desconectados,
-                baseUrl,
-                token,
-                profile,
-              ),
-              ..._grupoEmpleados(
-                context,
-                ref,
-                'Acceso desactivado',
-                sinAcceso,
                 baseUrl,
                 token,
                 profile,

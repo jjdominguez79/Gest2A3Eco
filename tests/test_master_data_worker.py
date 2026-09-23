@@ -48,17 +48,23 @@ def test_worker_publica_perfil_clientes_y_serie_solo_hacia_backend(monkeypatch):
         "cp": "28001", "poblacion": "Madrid", "provincia": "Madrid",
         "pais": "ES", "telefono": "911", "email": "info@example.com",
     }])
+    monkeypatch.setattr(worker, "_load_staff", lambda: [{
+        "desktop_user_id": "2", "name": "Ana", "email": "ana@example.com",
+        "role": "empleado", "active": True,
+    }])
     monkeypatch.setattr(worker, "_load_customers", lambda _code: [{
         "tax_id": "A12345678", "legal_name": "Cliente", "active": True,
         "desktop_tercero_id": "ter-1", "desktop_subcuenta": "43000001",
     }])
 
-    assert worker.run_once() == {"companies": 1, "customers": 1}
-    assert [method for method, *_ in session.calls] == ["PUT", "POST", "POST"]
+    assert worker.run_once() == {"companies": 1, "customers": 1, "staff": 1}
+    assert [method for method, *_ in session.calls] == ["PUT", "PUT", "POST", "POST"]
 
-    profile = session.calls[0][2]["json"]
-    customers = session.calls[1][2]["json"]
-    series = session.calls[2][2]["json"]
+    snapshot = session.calls[0][2]["json"]
+    profile = session.calls[1][2]["json"]
+    customers = session.calls[2][2]["json"]
+    series = session.calls[3][2]["json"]
+    assert snapshot["staff"][0]["email"] == "ana@example.com"
     assert profile["company_code"] == "E00006"
     assert customers == {
         "organization_id": "org-1",
@@ -103,8 +109,9 @@ def test_worker_envia_la_baja_de_la_empresa_al_backend(monkeypatch):
         "poblacion": "", "provincia": "", "pais": "ES",
         "telefono": "", "email": "",
     }])
+    monkeypatch.setattr(worker, "_load_staff", lambda: [])
     monkeypatch.setattr(worker, "_load_customers", lambda _code: [])
 
     worker.run_once()
 
-    assert session.calls[0][2]["json"]["active"] is False
+    assert session.calls[1][2]["json"]["active"] is False

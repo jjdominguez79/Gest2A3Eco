@@ -138,6 +138,22 @@ def _create_mobile_code(db, staff_external_id):
     return code
 
 
+def _create_desktop_staff_code(db, staff_external_id):
+    from backend.api.messaging_models import MessagingStaffAppCode
+    from backend.api.messaging_security import hash_token, new_token, utcnow
+    from datetime import timedelta
+
+    code = new_token()
+    db.add(MessagingStaffAppCode(
+        staff_external_id=staff_external_id,
+        code_hash=hash_token(code),
+        purpose="desktop_staff",
+        expires_at=utcnow() + timedelta(minutes=2),
+    ))
+    db.commit()
+    return code
+
+
 def _exchange_desktop_code(client, code) -> dict:
     """Intercambia un codigo desktop_admin por sesion admin."""
     r = client.post("/api/v1/desktop/auth/exchange", json={"code": code})
@@ -183,6 +199,36 @@ def test_admin_exchange_ok(test_env):
     assert data["session_token"].startswith("g2a3_adm_")
     assert "expires_at" in data
     assert data["email"] == "admin@gestinem.es"
+
+
+def test_empleado_exchange_desktop_conserva_identidad_entra(test_env):
+    client, factory, _ = test_env
+    with factory() as db:
+        staff = _create_staff(
+            db, email="empleado@gestinem.es", role="empleado", name="Empleado",
+        )
+        expected_id = staff.external_id
+        expected_oid = staff.entra_oid
+        code = _create_desktop_staff_code(db, staff.external_id)
+
+    response = client.post(
+        "/api/v1/desktop/staff-auth/exchange", json={"code": code},
+    )
+    assert response.status_code == 200
+    assert response.json()["staff_id"] == expected_id
+    assert response.json()["entra_oid"] == expected_oid
+    assert response.json()["session_token"]
+
+
+def test_codigo_admin_no_se_canjea_como_empleado_desktop(test_env):
+    client, factory, _ = test_env
+    with factory() as db:
+        staff = _create_staff(db)
+        code = _create_desktop_admin_code(db, staff.external_id)
+    response = client.post(
+        "/api/v1/desktop/staff-auth/exchange", json={"code": code},
+    )
+    assert response.status_code == 400
 
 
 def test_non_admin_exchange_rejected(test_env):

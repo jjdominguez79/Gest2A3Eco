@@ -48,6 +48,8 @@ class UserAdminController:
                 global_permissions=data.get("global_permissions") or set(),
                 password=password,
                 must_change_password=bool(data.get("must_change_password")),
+                email_corporativo=data.get("email_corporativo") or "",
+                es_cuenta_emergencia=bool(data.get("es_cuenta_emergencia")),
             )
         except Exception as exc:
             self._view.show_error(str(exc))

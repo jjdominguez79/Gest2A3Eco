@@ -24,6 +24,10 @@ class UserRecord:
     rol: UserRole
     activo: bool
     must_change_password: bool = False
+    email_corporativo: str = ""
+    entra_oid: str = ""
+    es_cuenta_emergencia: bool = False
+    messaging_staff_id: str = ""
 
 
 @dataclass(slots=True)

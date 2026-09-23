@@ -697,6 +697,9 @@ CREATE TABLE IF NOT EXISTS usuarios (
   rol TEXT NOT NULL CHECK (rol IN ('admin', 'empleado', 'cliente')),
   activo INTEGER NOT NULL DEFAULT 1,
   must_change_password INTEGER NOT NULL DEFAULT 0,
+  email_corporativo TEXT NOT NULL DEFAULT '',
+  entra_oid TEXT NOT NULL DEFAULT '',
+  es_cuenta_emergencia INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -4914,8 +4917,11 @@ class GestorBase:
         now = self._utc_now()
         cur = self.conn.execute(
             """
-            INSERT INTO usuarios (username, password_hash, nombre, rol, activo, must_change_password, created_at, updated_at)
-            VALUES (?, ?, ?, 'admin', 1, 1, ?, ?)
+            INSERT INTO usuarios (
+                username, password_hash, nombre, rol, activo,
+                must_change_password, es_cuenta_emergencia, created_at, updated_at
+            )
+            VALUES (?, ?, ?, 'admin', 1, 1, 1, ?, ?)
             """,
             ("admin", password_hash, "Administrador", now, now),
         )
@@ -4946,6 +4952,36 @@ class GestorBase:
         )
         return self._row_to_dict(cur.fetchone())
 
+    def get_usuario_by_email_corporativo(self, email: str) -> dict | None:
+        cur = self.conn.execute(
+            "SELECT * FROM usuarios WHERE LOWER(email_corporativo)=LOWER(?)",
+            (str(email or "").strip(),),
+        )
+        return self._row_to_dict(cur.fetchone())
+
+    def get_usuario_by_entra_oid(self, entra_oid: str) -> dict | None:
+        cur = self.conn.execute(
+            "SELECT * FROM usuarios WHERE entra_oid=?",
+            (str(entra_oid or "").strip(),),
+        )
+        return self._row_to_dict(cur.fetchone())
+
+    def vincular_usuario_entra(self, user_id: int, entra_oid: str, email: str) -> None:
+        self.conn.execute(
+            """
+            UPDATE usuarios
+            SET entra_oid=?, email_corporativo=?, updated_at=?
+            WHERE id=?
+            """,
+            (
+                str(entra_oid or "").strip(),
+                str(email or "").strip().lower(),
+                self._utc_now(),
+                int(user_id),
+            ),
+        )
+        self.conn.commit()
+
     def upsert_usuario(self, usuario: dict) -> int:
         now = self._utc_now()
         user_id = usuario.get("id")
@@ -4963,6 +4999,9 @@ class GestorBase:
                     rol=?,
                     activo=?,
                     must_change_password=?,
+                    email_corporativo=?,
+                    entra_oid=?,
+                    es_cuenta_emergencia=?,
                     updated_at=?
                 WHERE id=?
                 """,
@@ -4973,6 +5012,17 @@ class GestorBase:
                     usuario.get("rol"),
                     1 if usuario.get("activo", True) else 0,
                     1 if usuario.get("must_change_password") else 0,
+                    str(usuario.get("email_corporativo") or "").strip().lower(),
+                    (
+                        ""
+                        if usuario.get("es_cuenta_emergencia")
+                        else str(
+                            usuario.get("entra_oid")
+                            or existing.get("entra_oid")
+                            or ""
+                        ).strip()
+                    ),
+                    1 if usuario.get("es_cuenta_emergencia") else 0,
                     now,
                     int(user_id),
                 ),
@@ -4985,8 +5035,12 @@ class GestorBase:
             raise ValueError("La contraseña es obligatoria al crear un usuario.")
         cur = self.conn.execute(
             """
-            INSERT INTO usuarios (username, password_hash, nombre, rol, activo, must_change_password, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO usuarios (
+                username, password_hash, nombre, rol, activo,
+                must_change_password, email_corporativo, entra_oid,
+                es_cuenta_emergencia, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 usuario.get("username"),
@@ -4995,6 +5049,9 @@ class GestorBase:
                 usuario.get("rol"),
                 1 if usuario.get("activo", True) else 0,
                 1 if usuario.get("must_change_password") else 0,
+                str(usuario.get("email_corporativo") or "").strip().lower(),
+                str(usuario.get("entra_oid") or "").strip(),
+                1 if usuario.get("es_cuenta_emergencia") else 0,
                 now,
                 now,
             ),

@@ -73,7 +73,12 @@ class OAuthCodeResult:
         return bool(self.code)
 
 
-def run_oauth_flow(backend_url: str, timeout: int = _TIMEOUT_SECONDS) -> OAuthCodeResult:
+def run_oauth_flow(
+    backend_url: str,
+    timeout: int = _TIMEOUT_SECONDS,
+    *,
+    purpose: str = "admin",
+) -> OAuthCodeResult:
     """
     Ejecuta el flujo OAuth completo:
     1. Inicia servidor HTTP efimero en 127.0.0.1
@@ -94,7 +99,10 @@ def run_oauth_flow(backend_url: str, timeout: int = _TIMEOUT_SECONDS) -> OAuthCo
     server.timeout = timeout
 
     port = server.server_address[1]
-    login_url = f"{backend_url.rstrip('/')}/api/v1/desktop/auth/login?port={port}"
+    login_url = (
+        f"{backend_url.rstrip('/')}/api/v1/desktop/auth/login"
+        f"?port={port}&purpose={purpose}"
+    )
 
     logger.info("Servidor OAuth escuchando en 127.0.0.1:%d", port)
 

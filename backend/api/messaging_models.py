@@ -51,6 +51,7 @@ class MessagingStaff(Base):
     name: Mapped[str] = mapped_column(String(160))
     email: Mapped[str] = mapped_column(String(254), default="", index=True)
     entra_oid: Mapped[str] = mapped_column(String(64), default="", index=True)
+    desktop_user_id: Mapped[str] = mapped_column(String(64), default="", index=True)
     chat_alias: Mapped[str] = mapped_column(String(160), default="")
     mostrar_estados_mensajes: Mapped[bool] = mapped_column(Boolean, default=True)
     mostrar_lecturas_clientes: Mapped[bool] = mapped_column(Boolean, default=True)

@@ -102,6 +102,38 @@ def test_startup_migra_destino_activo_de_dispositivos_android():
     }
 
 
+def test_snapshot_empleados_reutiliza_uuid_y_conserva_la_baja(tmp_path):
+    client = _client(tmp_path)
+    headers = {"X-API-Key": "test-secret"}
+    payload = {
+        "full_snapshot": True,
+        "staff": [{
+            "desktop_user_id": "7",
+            "name": "Ana Fiscal",
+            "email": "ana@gestinem.es",
+            "role": "empleado",
+            "active": True,
+        }],
+    }
+    created = client.put(
+        "/api/v1/messaging/client/internal/staff-snapshot",
+        headers=headers,
+        json=payload,
+    )
+    assert created.status_code == 200, created.text
+    staff_id = created.json()["staff"][0]["staff_id"]
+
+    payload["staff"][0]["active"] = False
+    disabled = client.put(
+        "/api/v1/messaging/client/internal/staff-snapshot",
+        headers=headers,
+        json=payload,
+    )
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["staff"][0]["staff_id"] == staff_id
+    assert disabled.json()["staff"][0]["active"] is False
+
+
 def test_public_app_version_exposes_release_information(tmp_path, monkeypatch):
     monkeypatch.setenv("MESSAGING_LATEST_APP_VERSION", "0.1.1")
     monkeypatch.setenv("MESSAGING_LATEST_APP_BUILD", "11")

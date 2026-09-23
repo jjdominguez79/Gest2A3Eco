@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import re
 
@@ -234,6 +234,9 @@ def startup():
             ("msg_staff", "entra_oid"): (
                 "ALTER TABLE msg_staff ADD COLUMN entra_oid VARCHAR(64) NOT NULL DEFAULT ''"
             ),
+            ("msg_staff", "desktop_user_id"): (
+                "ALTER TABLE msg_staff ADD COLUMN desktop_user_id VARCHAR(64) NOT NULL DEFAULT ''"
+            ),
             ("msg_staff", "chat_alias"): (
                 "ALTER TABLE msg_staff ADD COLUMN chat_alias VARCHAR(160) NOT NULL DEFAULT ''"
             ),
@@ -324,6 +327,13 @@ def startup():
         index_migrations = {
             "ix_msg_staff_email": "CREATE INDEX ix_msg_staff_email ON msg_staff(email)",
             "ix_msg_staff_entra_oid": "CREATE INDEX ix_msg_staff_entra_oid ON msg_staff(entra_oid)",
+            "ix_msg_staff_desktop_user_id": (
+                "CREATE INDEX ix_msg_staff_desktop_user_id ON msg_staff(desktop_user_id)"
+            ),
+            "ux_msg_staff_desktop_user_id_asignado": (
+                "CREATE UNIQUE INDEX ux_msg_staff_desktop_user_id_asignado "
+                "ON msg_staff(desktop_user_id) WHERE desktop_user_id <> ''"
+            ),
             "ux_msg_staff_entra_oid_asignado": (
                 "CREATE UNIQUE INDEX ux_msg_staff_entra_oid_asignado "
                 "ON msg_staff(entra_oid) WHERE entra_oid <> ''"
@@ -1308,15 +1318,21 @@ def _ws_to_dict(ws: Workstation) -> dict:
 
 
 @app.get("/api/v1/desktop/auth/login")
-def desktop_auth_login(port: int = Query(...), db: Session = Depends(get_db)):
+def desktop_auth_login(
+    port: int = Query(...), purpose: str = Query(default="admin"),
+    db: Session = Depends(get_db),
+):
     """
-    Inicia autenticacion Microsoft Entra para administrador de escritorio.
+    Inicia autenticacion Microsoft Entra para el escritorio.
 
     El escritorio pasa el puerto de su servidor HTTP efimero en 127.0.0.1.
-    Se reutiliza la infraestructura MSAL de staff-auth del backend.
+    ``purpose=admin`` protege la administracion de puestos y
+    ``purpose=staff`` inicia la sesion ordinaria de un empleado.
     """
     if port < 1024 or port > 65535:
         raise HTTPException(422, "Puerto fuera de rango valido (1024-65535)")
+    if purpose not in {"admin", "staff"}:
+        raise HTTPException(422, "Finalidad de acceso no valida")
 
     from backend.api.messaging_api import _staff_msal_app, _staff_redirect_uri
     from backend.api.messaging_models import MessagingStaffAuthFlow
@@ -1335,7 +1351,12 @@ def desktop_auth_login(port: int = Query(...), db: Session = Depends(get_db)):
     from datetime import timedelta
     db.add(MessagingStaffAuthFlow(
         state=state,
-        flow_json=_json.dumps({"msal": flow, "mobile": False, "desktop_port": port}),
+        flow_json=_json.dumps({
+            "msal": flow,
+            "mobile": False,
+            "desktop_port": port,
+            "desktop_purpose": purpose,
+        }),
         expires_at=_msg_utcnow() + timedelta(minutes=10),
     ))
     db.commit()
@@ -1395,6 +1416,50 @@ def desktop_auth_exchange(body: dict, db: Session = Depends(get_db)):
         "username": staff.name,
         "email": staff.email,
         "expires_at": session.expires_at.isoformat(),
+    }
+
+
+@app.post("/api/v1/desktop/staff-auth/exchange")
+def desktop_staff_auth_exchange(body: dict, db: Session = Depends(get_db)):
+    """Canjea el acceso Entra del escritorio por una sesion de empleado."""
+    from backend.api.messaging_models import (
+        MessagingStaff,
+        MessagingStaffAppCode,
+        MessagingStaffSession,
+    )
+    from backend.api.messaging_security import (
+        hash_token as _msg_hash,
+        is_expired,
+        new_token as _msg_new_token,
+        utcnow as _msg_utcnow,
+    )
+
+    code = str(body.get("code") or "").strip()
+    item = db.scalar(select(MessagingStaffAppCode).where(
+        MessagingStaffAppCode.code_hash == _msg_hash(code),
+    ))
+    if not item or item.used_at or is_expired(item.expires_at):
+        raise HTTPException(400, "Codigo de acceso no valido o caducado")
+    if getattr(item, "purpose", "mobile") != "desktop_staff":
+        raise HTTPException(400, "Codigo de acceso no valido o caducado")
+    staff = db.get(MessagingStaff, item.staff_external_id)
+    if not staff or not staff.active:
+        raise HTTPException(403, "Usuario del despacho no autorizado")
+    item.used_at = _msg_utcnow()
+    token = _msg_new_token()
+    db.add(MessagingStaffSession(
+        staff_external_id=staff.external_id,
+        token_hash=_msg_hash(token),
+        expires_at=_msg_utcnow() + timedelta(hours=12),
+    ))
+    db.commit()
+    return {
+        "session_token": token,
+        "staff_id": staff.external_id,
+        "name": staff.name,
+        "email": staff.email,
+        "entra_oid": staff.entra_oid,
+        "role": staff.role,
     }
 
 

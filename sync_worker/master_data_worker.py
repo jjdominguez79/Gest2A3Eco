@@ -1,7 +1,8 @@
 """Replica datos maestros de Gest2A3Eco hacia la plataforma de clientes.
 
 El flujo es exclusivamente PostgreSQL del escritorio -> API del backend.
-Este proceso no acepta ni aplica cambios procedentes de Flutter.
+Sincroniza empresas, clientes y empleados; no acepta ni aplica altas, bajas o
+roles procedentes de Flutter.
 """
 
 from __future__ import annotations
@@ -85,6 +86,26 @@ class MasterDataWorker:
                 """
             ).fetchall())
 
+    def _load_staff(self) -> list[dict]:
+        with psycopg.connect(self.config.postgres_dsn, row_factory=dict_row) as conn:
+            rows = conn.execute(
+                """
+                SELECT id,nombre,rol,activo,email_corporativo
+                FROM usuarios
+                WHERE rol IN ('admin','empleado')
+                  AND COALESCE(es_cuenta_emergencia,0)=0
+                  AND COALESCE(TRIM(email_corporativo),'')<>''
+                ORDER BY id
+                """
+            ).fetchall()
+        return [{
+            "desktop_user_id": str(row["id"]),
+            "name": row["nombre"] or row["email_corporativo"],
+            "email": str(row["email_corporativo"] or "").strip().lower(),
+            "role": row["rol"],
+            "active": bool(row["activo"]),
+        } for row in rows]
+
     def _load_customers(self, company_code: str) -> list[dict]:
         with psycopg.connect(self.config.postgres_dsn, row_factory=dict_row) as conn:
             rows = conn.execute(
@@ -118,6 +139,14 @@ class MasterDataWorker:
         } for row in rows if str(row["nif"] or "").strip()]
 
     def run_once(self) -> dict[str, int]:
+        staff = self._load_staff()
+        response = self.http.put(
+            self._url("/internal/staff-snapshot"),
+            headers=self._headers,
+            json={"staff": staff, "full_snapshot": True},
+            timeout=45,
+        )
+        response.raise_for_status()
         companies = self._load_companies()
         customer_count = 0
         for company in companies:
@@ -179,7 +208,11 @@ class MasterDataWorker:
             )
             response.raise_for_status()
 
-        result = {"companies": len(companies), "customers": customer_count}
+        result = {
+            "companies": len(companies),
+            "customers": customer_count,
+            "staff": len(staff),
+        }
         LOG.info("Sincronizacion maestra completada: %s", result)
         return result
 

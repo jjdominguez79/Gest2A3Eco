@@ -410,6 +410,9 @@ class GestorPostgres(GestorBase):
             ("empresas", "responsable", "TEXT"),
             ("empresas", "activo", "INTEGER"),
             ("usuarios", "must_change_password", "INTEGER NOT NULL DEFAULT 0"),
+            ("usuarios", "email_corporativo", "TEXT NOT NULL DEFAULT ''"),
+            ("usuarios", "entra_oid", "TEXT NOT NULL DEFAULT ''"),
+            ("usuarios", "es_cuenta_emergencia", "INTEGER NOT NULL DEFAULT 0"),
             ("comunicaciones", "etiqueta", "TEXT"),
             ("comunicaciones_mensajes", "tiene_adjuntos", "INTEGER NOT NULL DEFAULT 0"),
             ("comunicaciones_sin_asignar", "etiqueta", "TEXT"),
@@ -739,6 +742,16 @@ class GestorPostgres(GestorBase):
         for tabla, columna, tipo in faltantes:
             self.conn.execute(
                 f"ALTER TABLE {tabla} ADD COLUMN IF NOT EXISTS {columna} {tipo}"
+            )
+        if any(
+            tabla == "usuarios" and columna == "es_cuenta_emergencia"
+            for tabla, columna, _tipo in faltantes
+        ):
+            # La cuenta bootstrap historica queda como unico acceso local de
+            # emergencia. No se convierte implicitamente ningun otro usuario.
+            self.conn.execute(
+                "UPDATE usuarios SET es_cuenta_emergencia=1 "
+                "WHERE LOWER(username)='admin' AND rol='admin'"
             )
         if any(
             tabla == "facturas_emitidas_docs"

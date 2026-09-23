@@ -15,7 +15,10 @@ class UIMensajeria(ttk.Frame):
         self.gestor = gestor
         self.session = session
         self.client = MensajeriaRemoteClient(
-            user_id=session.user.id, user_name=session.user.nombre,
+            user_id=session.user.messaging_staff_id or session.user.id,
+            user_name=session.user.nombre,
+            user_email=session.user.email_corporativo,
+            entra_oid=session.user.entra_oid,
         )
         self.conversations = {}
         self.messages = {}

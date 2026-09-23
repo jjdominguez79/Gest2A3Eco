@@ -106,7 +106,8 @@ class StaffIn(BaseModel):
     external_id: str
     name: str
     email: str = ""
-    chat_alias: str = ""
+    entra_oid: str = ""
+    chat_alias: str | None = None
     role: Literal["admin", "empleado"] = "empleado"
     active: bool = True
     channels: list[str] | None = None
@@ -1091,7 +1092,12 @@ def put_staff(external_id: str, payload: StaffIn, db: Session = Depends(get_db))
         raise HTTPException(422, "Identificador incoherente")
     item = db.get(MessagingStaff, external_id) or MessagingStaff(external_id=external_id)
     item.name, item.email = payload.name, payload.email.strip().lower()
-    item.chat_alias = payload.chat_alias.strip()
+    if payload.entra_oid:
+        if item.entra_oid and item.entra_oid != payload.entra_oid.strip():
+            raise HTTPException(409, "El empleado esta vinculado a otra identidad de Microsoft")
+        item.entra_oid = payload.entra_oid.strip()
+    if payload.chat_alias is not None:
+        item.chat_alias = payload.chat_alias.strip()
     item.role, item.active = payload.role, payload.active
     if payload.channels is not None:
         channels = set(payload.channels)
@@ -1382,7 +1388,8 @@ def staff_auth_callback(request: Request, db: Session = Depends(get_db)):
     # ── Flujo desktop admin (branch aislado) ────────────────────────────
     desktop_port = int(stored_flow.get("desktop_port") or 0) if "msal" in stored_flow else 0
     if desktop_port:
-        if staff.role != "admin":
+        desktop_purpose = str(stored_flow.get("desktop_purpose") or "admin")
+        if desktop_purpose == "admin" and staff.role != "admin":
             from fastapi.responses import HTMLResponse as _HTML
             return _HTML(
                 "<html><body><h2>Acceso denegado</h2>"
@@ -1393,7 +1400,7 @@ def staff_auth_callback(request: Request, db: Session = Depends(get_db)):
         code = new_token()
         db.add(MessagingStaffAppCode(
             staff_external_id=staff.external_id, code_hash=hash_token(code),
-            purpose="desktop_admin",
+            purpose="desktop_admin" if desktop_purpose == "admin" else "desktop_staff",
             expires_at=utcnow() + timedelta(minutes=2),
         ))
         db.commit()
@@ -1937,6 +1944,7 @@ def staff_directory(
 ):
     rows = db.scalars(select(MessagingStaff).where(
         MessagingStaff.email != "",
+        MessagingStaff.active.is_(True),
     ).order_by(MessagingStaff.name)).all()
     return [{
         "id": row.external_id, "name": row.name, "email": row.email,
@@ -1992,6 +2000,23 @@ def update_staff_permissions(
         raise HTTPException(422, "Rol no valido")
     if staff.external_id == admin.external_id and (not payload.active or role != "admin"):
         raise HTTPException(409, "No puedes suspender ni retirar tu propio acceso de administrador")
+    if staff.desktop_user_id:
+        requested_email = (
+            _validated_staff_email(payload.email)
+            if payload.email is not None else staff.email
+        )
+        requested_name = payload.name.strip() if payload.name is not None else staff.name
+        if (
+            requested_email != staff.email
+            or requested_name != staff.name
+            or role != staff.role
+            or payload.active != staff.active
+        ):
+            raise HTTPException(
+                409,
+                "El alta, la baja, el nombre corporativo, el correo y el rol "
+                "se gestionan desde la aplicacion de escritorio",
+            )
     if staff.role == "admin" and staff.active and (not payload.active or role != "admin"):
         other_admins = int(db.scalar(select(func.count(MessagingStaff.external_id)).where(
             MessagingStaff.role == "admin", MessagingStaff.active.is_(True),

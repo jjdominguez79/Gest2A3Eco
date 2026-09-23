@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 import warnings
 import tkinter as tk
 
@@ -792,11 +793,50 @@ def main():
                 session.user.must_change_password = False
         _launch_authenticated_ui(session)
 
+    def _try_microsoft_login():
+        login_view = state.get("login_view")
+        if login_view:
+            login_view.show_error("Esperando autenticacion de Microsoft...")
+
+        def worker():
+            try:
+                from services.desktop_staff_auth_service import DesktopStaffAuthService
+
+                data = DesktopStaffAuthService().login_microsoft()
+                error = None
+            except Exception as exc:
+                data, error = None, exc
+            root.after(0, lambda: finish(data, error))
+
+        def finish(data, error):
+            current_login = state.get("login_view")
+            if error:
+                if current_login:
+                    current_login.show_error(f"No se pudo iniciar sesion con Microsoft: {error}")
+                return
+            result = auth_service.authenticate_entra(
+                email=str(data.get("email") or ""),
+                entra_oid=str(data.get("entra_oid") or ""),
+                messaging_staff_id=str(data.get("staff_id") or ""),
+            )
+            if not result.ok:
+                if current_login:
+                    current_login.show_error(result.message)
+                return
+            _launch_authenticated_ui(result.session)
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _show_login():
         nonlocal initial_admin_info
         _clear_root(root)
         _set_window_geometry(root, 980, 600, resizable=False)
-        login = UILogin(root, _try_login, logo_path=find_login_logo_path())
+        login = UILogin(
+            root,
+            _try_login,
+            logo_path=find_login_logo_path(),
+            on_microsoft_login=_try_microsoft_login,
+        )
         login.pack(fill="both", expand=True)
         state["login_view"] = login
         state["controller"] = None
