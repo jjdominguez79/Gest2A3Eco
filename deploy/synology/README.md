@@ -123,6 +123,7 @@ GRANT SELECT, INSERT, UPDATE ON TABLE mensajeria_adjuntos_entrada TO gest2a3eco_
 GRANT SELECT ON TABLE empresas TO gest2a3eco_sync;
 GRANT SELECT ON TABLE terceros TO gest2a3eco_sync;
 GRANT SELECT ON TABLE terceros_empresas TO gest2a3eco_sync;
+GRANT SELECT ON TABLE usuarios TO gest2a3eco_sync;
 ```
 
 El `invoice_worker` no se instala en Synology: requiere Windows y Microsoft

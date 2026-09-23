@@ -25,3 +25,10 @@ docker compose logs --tail=100 master-data-sync
 
 El primer emparejamiento reutiliza por correo el UUID que ya exista en
 `msg_staff`; nunca sustituye claves usadas por chats o mensajes.
+
+El usuario PostgreSQL del contenedor necesita lectura de empleados ademas de
+los permisos generales del worker:
+
+```sql
+GRANT SELECT ON TABLE usuarios TO gest2a3eco_sync;
+```
