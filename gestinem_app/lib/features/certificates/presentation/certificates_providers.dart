@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../auth/presentation/auth_controller.dart';
@@ -43,4 +45,21 @@ final staffCertificateRequestsProvider = FutureProvider.autoDispose
       return ref
           .watch(certificatesRepositoryProvider)
           .listRequests(companyCode: companyCode);
+    });
+
+typedef StaffCertificateDocumentQuery = ({
+  String companyCode,
+  String requestId,
+  bool receipt,
+});
+
+final staffCertificateDocumentProvider = FutureProvider.autoDispose
+    .family<Uint8List, StaffCertificateDocumentQuery>((ref, query) {
+      return ref
+          .watch(certificatesRepositoryProvider)
+          .downloadRequestDocument(
+            query.requestId,
+            companyCode: query.companyCode,
+            receipt: query.receipt,
+          );
     });

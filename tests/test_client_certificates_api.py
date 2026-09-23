@@ -184,6 +184,79 @@ def test_admin_app_solicita_certificado_para_cliente(monkeypatch):
         assert item.requester_id == "admin-app"
 
 
+def test_admin_app_visualiza_y_publica_certificado_revisado(monkeypatch):
+    monkeypatch.setenv("CLIENT_DOCUMENTS_ENABLED", "true")
+    client, factory, org_id, _ = _setup(monkeypatch, enabled=False)
+    headers = _staff_headers(factory)
+    created = client.post(
+        "/api/v1/messaging/client/certificates/staff/organizations/E00001/requests",
+        headers=headers,
+        json={"certificate_type": "AEAT_CENSAL", "idempotency_key": "staff-doc"},
+    ).json()
+    with factory() as db:
+        org = db.get(MessagingOrganization, org_id)
+        org.client_documents_enabled = True
+        document = ClientDocument(
+            organization_id=org_id,
+            document_type="certificado_aeat",
+            source_system="aapp_worker",
+            source_id=created["id"],
+            source_version=1,
+            display_name="Situacion censal",
+            file_name="situacion-censal.pdf",
+            content_type="application/pdf",
+            file_size=14,
+            sha256="d" * 64,
+            blob_key=f"{org_id}/situacion-censal.pdf",
+            status="draft",
+        )
+        db.add(document)
+        db.flush()
+        item = db.get(ClientCertificateRequest, created["id"])
+        item.status = "completed"
+        item.document_id = document.id
+        db.commit()
+        document_id = document.id
+
+    storage = MagicMock()
+    storage.get.return_value = b"%PDF-1.7\nprueba"
+    monkeypatch.setattr(
+        "backend.api.client_certificates_api.ClientDocumentStorage",
+        lambda: storage,
+    )
+    notifications = []
+    monkeypatch.setattr(
+        "backend.api.client_documents_api._notify_document_published",
+        lambda _db, document: notifications.append(document.id),
+    )
+    base = (
+        "/api/v1/messaging/client/certificates/staff/organizations/E00001/"
+        f"requests/{created['id']}"
+    )
+
+    listed = client.get(
+        "/api/v1/messaging/client/certificates/staff/organizations/E00001/requests",
+        headers=headers,
+    )
+    preview = client.get(f"{base}/document", headers=headers)
+    published = client.post(f"{base}/publish", headers=headers)
+    repeated = client.post(f"{base}/publish", headers=headers)
+
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["document_status"] == "draft"
+    assert preview.status_code == 200
+    assert preview.content == b"%PDF-1.7\nprueba"
+    assert preview.headers["content-disposition"] == (
+        'inline; filename="situacion-censal.pdf"'
+    )
+    assert published.status_code == 200
+    assert published.json()["document_status"] == "published"
+    assert repeated.status_code == 200
+    assert notifications == [document_id]
+    with factory() as db:
+        assert db.get(ClientDocument, document_id).status == "published"
+
+
 def test_empleado_no_puede_solicitar_certificado_para_cliente(monkeypatch):
     client, factory, _, _ = _setup(monkeypatch)
     headers = _staff_headers(factory, role="empleado", external_id="empleado-app")

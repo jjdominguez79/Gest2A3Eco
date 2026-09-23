@@ -41,7 +41,10 @@ from backend.api.client_models import (
 from backend.api import messaging_mail
 from backend.api.database import SessionLocal
 from backend.api.client_storage import ClientDocumentStorage
-from backend.api.feature_flags import require_certificates_enabled
+from backend.api.feature_flags import (
+    require_certificates_enabled,
+    require_documents_enabled,
+)
 from backend.api.messaging_models import (
     MessagingClient,
     MessagingOrganization,
@@ -863,12 +866,92 @@ def list_staff_requests(
 ):
     staff = _authenticated_staff_admin(request, db)
     org = _staff_organization(db, company_code, staff)
-    items = list(db.scalars(select(ClientCertificateRequest).where(
-        ClientCertificateRequest.organization_id == org.id,
-        ClientCertificateRequest.certificate_type.in_(tuple(CERTIFICATE_TYPES)),
-        ClientCertificateRequest.error_code != CLIENT_REMOVED_CODE,
-    ).order_by(ClientCertificateRequest.created_at.desc()).limit(limit)).all())
-    return {"items": [_serialize(item) for item in items]}
+    statement = (
+        select(ClientCertificateRequest, ClientDocument.status)
+        .outerjoin(
+            ClientDocument,
+            ClientDocument.id == ClientCertificateRequest.document_id,
+        )
+        .where(
+            ClientCertificateRequest.organization_id == org.id,
+            ClientCertificateRequest.certificate_type.in_(tuple(CERTIFICATE_TYPES)),
+            ClientCertificateRequest.error_code != CLIENT_REMOVED_CODE,
+        )
+        .order_by(ClientCertificateRequest.created_at.desc())
+        .limit(limit)
+    )
+    return {
+        "items": [
+            _serialize(item, document_status=document_status)
+            for item, document_status in db.execute(statement).all()
+        ],
+    }
+
+
+@router.get("/staff/organizations/{company_code}/requests/{request_id}/document")
+def download_staff_request_document(
+    company_code: str, request_id: str, request: Request,
+    kind: str = Query(default="certificate", pattern="^(certificate|receipt)$"),
+    db: Session = Depends(_db),
+):
+    staff = _authenticated_staff_admin(request, db)
+    org = _staff_organization(db, company_code, staff)
+    item = _staff_certificate_request(db, request_id, org)
+    document_id = (
+        item.receipt_document_id if kind == "receipt" else item.document_id
+    )
+    if not document_id:
+        raise HTTPException(status_code=404, detail="La solicitud no tiene documento")
+    document = db.get(ClientDocument, document_id)
+    if not document or document.organization_id != org.id:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    if document.status == "withdrawn":
+        raise HTTPException(status_code=410, detail="Documento retirado")
+    content = ClientDocumentStorage().get(document.blob_key)
+    safe_name = re.sub(r'[^A-Za-z0-9._-]', '_', document.file_name or "certificado.pdf")
+    return Response(
+        content=content,
+        media_type=document.content_type or "application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{safe_name}"',
+            "Content-Length": str(len(content)),
+        },
+    )
+
+
+@router.post("/staff/organizations/{company_code}/requests/{request_id}/publish")
+def publish_staff_request_document(
+    company_code: str, request_id: str, request: Request,
+    db: Session = Depends(_db),
+):
+    """Comparte con el cliente un certificado revisado por el administrador."""
+    staff = _authenticated_staff_admin(request, db)
+    org = _staff_organization(db, company_code, staff)
+    item = _staff_certificate_request(db, request_id, org, lock=True)
+    if item.status != "completed" or not item.document_id:
+        raise HTTPException(
+            status_code=409,
+            detail="La solicitud todavia no tiene un certificado definitivo",
+        )
+    document = db.get(ClientDocument, item.document_id)
+    if not document or document.organization_id != org.id:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    if document.status == "published":
+        return _serialize(item, document_status=document.status)
+    if document.status != "draft" or document.source_system != "aapp_worker":
+        raise HTTPException(
+            status_code=409,
+            detail="El documento no esta pendiente de publicacion manual",
+        )
+    require_documents_enabled(db, org.id)
+    document.status = "published"
+    document.published_at = utcnow()
+    document.updated_at = utcnow()
+    db.commit()
+    db.refresh(document)
+    from backend.api.client_documents_api import _notify_document_published
+    _notify_document_published(db, document)
+    return _serialize(item, document_status=document.status)
 
 
 @router.post("/staff/organizations/{company_code}/requests/{request_id}/cancel")

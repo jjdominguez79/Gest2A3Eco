@@ -30,6 +30,7 @@ import '../features/documents/presentation/documentation_screen.dart';
 import '../features/documents/presentation/document_detail_screen.dart';
 import '../features/documents/presentation/document_preview_screen.dart';
 import '../features/certificates/presentation/certificates_screen.dart';
+import '../features/certificates/presentation/staff_certificate_preview_screen.dart';
 import '../core/deep_links/deep_link_controller.dart';
 
 class _RouterRefreshNotifier extends ChangeNotifier {
@@ -130,7 +131,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         return '/';
       }
       if (state.matchedLocation.startsWith('/clients/') &&
-          state.matchedLocation.endsWith('/certificates') &&
+          state.matchedLocation.contains('/certificates') &&
           profile?.isAdmin != true) {
         return '/';
       }
@@ -211,6 +212,16 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, state) => CertificatesScreen(
           companyCode: state.pathParameters['companyCode']!,
           companyName: state.uri.queryParameters['name'],
+        ),
+      ),
+      GoRoute(
+        path: '/clients/:companyCode/certificates/:requestId/preview',
+        builder: (_, state) => StaffCertificatePreviewScreen(
+          companyCode: state.pathParameters['companyCode']!,
+          requestId: state.pathParameters['requestId']!,
+          documentName:
+              state.uri.queryParameters['name'] ?? 'Certificado oficial',
+          receipt: state.uri.queryParameters['kind'] == 'receipt',
         ),
       ),
       GoRoute(

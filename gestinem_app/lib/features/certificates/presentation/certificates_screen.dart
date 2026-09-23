@@ -28,6 +28,10 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
 
   Future<void> _manageRequest(CertificateRequest item, String action) async {
     if (_busyRequests.contains(item.id)) return;
+    if (action == 'view') {
+      _openDocument(item);
+      return;
+    }
     if (action == 'remove') {
       final confirmed = await showDialog<bool>(
         context: context,
@@ -58,6 +62,32 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
         return;
       }
     }
+    if (action == 'share') {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Compartir con el cliente'),
+          content: const Text(
+            'El certificado se publicará en el área documental del cliente '
+            'y se le enviará una notificación. ¿Quieres continuar?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              key: const Key('confirm-publish-certificate-request'),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Compartir'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted || _busyRequests.contains(item.id)) {
+        return;
+      }
+    }
     if (!mounted) return;
     setState(() => _busyRequests.add(item.id));
     try {
@@ -69,6 +99,11 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
           await repository.retry(item.id, companyCode: widget.companyCode);
         case 'cancel':
           await repository.cancel(item.id, companyCode: widget.companyCode);
+        case 'share':
+          await repository.publishRequestDocument(
+            item.id,
+            companyCode: widget.companyCode!,
+          );
         default:
           return;
       }
@@ -82,6 +117,8 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
                 item.submittedAt != null
                     ? 'Consulta de emisión preparada. No se presentará otra solicitud.'
                     : 'Solicitud preparada para reintentar.',
+              'share' =>
+                'Certificado compartido en el área documental del cliente.',
               _ => 'Solicitud cancelada.',
             }),
           ),
@@ -144,6 +181,18 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
     } else {
       ref.invalidate(certificateRequestsProvider);
     }
+  }
+
+  void _openDocument(CertificateRequest item) {
+    final companyCode = widget.companyCode;
+    if (companyCode == null || !item.hasDocument) return;
+    final receipt = item.documentId == null;
+    context.push(
+      Uri(
+        path: '/clients/$companyCode/certificates/${item.id}/preview',
+        queryParameters: {'name': item.name, if (receipt) 'kind': 'receipt'},
+      ).toString(),
+    );
   }
 
   @override
@@ -337,6 +386,8 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
                     ? '\nResguardo disponible en el área documental.'
                     : '\nToca para ver el documento de la solicitud.'
               : ''}'
+          '${widget.isStaffView && item.pendingShare ? '\nPendiente de compartir con el cliente.' : ''}'
+          '${widget.isStaffView && item.sharedWithClient ? '\nCompartido con el cliente.' : ''}'
           '${item.errorMessage?.isNotEmpty == true ? '\n${item.errorMessage}' : ''}',
         ),
         leading: Icon(_statusIcon(item.status)),
@@ -345,12 +396,24 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
                 dimension: 24,
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
-            : item.removable || item.retryable
+            : item.removable ||
+                  item.retryable ||
+                  (widget.isStaffView && item.hasDocument)
             ? PopupMenuButton<String>(
                 key: Key('certificate-request-actions-${item.id}'),
                 tooltip: 'Opciones de la solicitud',
                 onSelected: (action) => _manageRequest(item, action),
                 itemBuilder: (_) => [
+                  if (widget.isStaffView && item.hasDocument)
+                    const PopupMenuItem(
+                      value: 'view',
+                      child: Text('Visualizar PDF'),
+                    ),
+                  if (widget.isStaffView && item.pendingShare)
+                    const PopupMenuItem(
+                      value: 'share',
+                      child: Text('Compartir con el cliente'),
+                    ),
                   if (item.retryable)
                     PopupMenuItem(
                       value: 'retry',
@@ -373,10 +436,11 @@ class _CertificatesScreenState extends ConsumerState<CertificatesScreen> {
                 ],
               )
             : null,
-        onTap:
-            !widget.isStaffView &&
-                (item.completed ? item.documentId : item.receiptDocumentId) !=
-                    null
+        onTap: widget.isStaffView && item.hasDocument
+            ? () => _openDocument(item)
+            : !widget.isStaffView &&
+                  (item.completed ? item.documentId : item.receiptDocumentId) !=
+                      null
             ? () => context.push(
                 '/documents/${item.completed ? item.documentId : item.receiptDocumentId}',
               )

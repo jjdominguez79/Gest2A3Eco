@@ -87,7 +87,7 @@ class _DocumentPreviewScreenState extends ConsumerState<DocumentPreviewScreen> {
             ],
           ),
         ),
-        data: (data) => _PdfPreview(
+        data: (data) => PdfBytesPreview(
           key: ValueKey(_previewAttempt),
           data: data,
           onRetry: _retry,
@@ -98,8 +98,8 @@ class _DocumentPreviewScreenState extends ConsumerState<DocumentPreviewScreen> {
   }
 }
 
-class _PdfPreview extends StatefulWidget {
-  const _PdfPreview({
+class PdfBytesPreview extends StatefulWidget {
+  const PdfBytesPreview({
     super.key,
     required this.data,
     required this.onRetry,
@@ -111,10 +111,10 @@ class _PdfPreview extends StatefulWidget {
   final VoidCallback? onSave;
 
   @override
-  State<_PdfPreview> createState() => _PdfPreviewState();
+  State<PdfBytesPreview> createState() => _PdfBytesPreviewState();
 }
 
-class _PdfPreviewState extends State<_PdfPreview> {
+class _PdfBytesPreviewState extends State<PdfBytesPreview> {
   late final PdfController _controller = PdfController(
     document: PdfDocument.openData(Uint8List.fromList(widget.data)),
   );

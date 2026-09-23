@@ -63,6 +63,7 @@ class CertificateRequest {
     this.nextAttemptAt,
     this.submittedAt,
     this.resultSummary,
+    this.documentStatus,
   });
 
   final String id;
@@ -79,8 +80,12 @@ class CertificateRequest {
   final DateTime? nextAttemptAt;
   final DateTime? submittedAt;
   final String? resultSummary;
+  final String? documentStatus;
 
   bool get completed => status == 'completed';
+  bool get hasDocument => documentId != null || receiptDocumentId != null;
+  bool get pendingShare => completed && documentStatus == 'draft';
+  bool get sharedWithClient => completed && documentStatus == 'published';
   bool get cancellable => status == 'queued' && submittedAt == null;
   bool get retryable =>
       status == 'failed' ||
@@ -114,6 +119,7 @@ class CertificateRequest {
         ),
         submittedAt: DateTime.tryParse(json['submitted_at'] as String? ?? ''),
         resultSummary: json['result_summary'] as String?,
+        documentStatus: json['document_status'] as String?,
       );
 }
 

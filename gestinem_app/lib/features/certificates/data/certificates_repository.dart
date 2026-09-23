@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import '../../../core/api/api_client.dart';
 import '../domain/certificate_request.dart';
 
@@ -73,5 +75,26 @@ class CertificatesRepository {
 
   Future<void> remove(String requestId, {String? companyCode}) async {
     await _api.dio.delete('${_basePath(companyCode)}/requests/$requestId');
+  }
+
+  Future<Uint8List> downloadRequestDocument(
+    String requestId, {
+    required String companyCode,
+    bool receipt = false,
+  }) {
+    return _api.download(
+      '${_basePath(companyCode)}/requests/$requestId/document'
+      '${receipt ? '?kind=receipt' : ''}',
+    );
+  }
+
+  Future<CertificateRequest> publishRequestDocument(
+    String requestId, {
+    required String companyCode,
+  }) async {
+    final response = await _api.dio.post(
+      '${_basePath(companyCode)}/requests/$requestId/publish',
+    );
+    return CertificateRequest.fromJson(response.data as Map<String, dynamic>);
   }
 }

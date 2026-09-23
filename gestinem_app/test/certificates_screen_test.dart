@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -5,13 +7,42 @@ import 'package:dio/dio.dart';
 import 'package:gestinem/core/api/api_client.dart';
 import 'package:gestinem/features/auth/presentation/auth_controller.dart';
 import 'package:gestinem/features/certificates/domain/certificate_request.dart';
+import 'package:gestinem/features/certificates/data/certificates_repository.dart';
 import 'package:gestinem/features/certificates/presentation/certificates_providers.dart';
 import 'package:gestinem/features/certificates/presentation/certificates_screen.dart';
+import 'package:gestinem/features/certificates/presentation/staff_certificate_preview_screen.dart';
 import 'package:gestinem/features/platform/features_provider.dart';
 
 import 'test_helpers.dart';
 
 void main() {
+  testWidgets('visor staff permite reintentar si falla la descarga', (
+    tester,
+  ) async {
+    final repository = _FailingCertificatesRepository();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          certificatesRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: const MaterialApp(
+          home: StaffCertificatePreviewScreen(
+            companyCode: 'E00001',
+            requestId: 'request-1',
+            documentName: 'Situación censal',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('No se pudo cargar el PDF'), findsOneWidget);
+    expect(repository.downloads, 1);
+    await tester.tap(find.text('Reintentar'));
+    await tester.pumpAndSettle();
+    expect(repository.downloads, 2);
+  });
+
   testWidgets('admin solicita certificado desde la ficha del cliente', (
     tester,
   ) async {
@@ -81,6 +112,98 @@ void main() {
     );
     expect(adapter.lastRequest?.headers['Authorization'], 'Bearer staff-token');
     expect(consultas, 2);
+  });
+
+  testWidgets('admin revisa y comparte un certificado obtenido', (
+    tester,
+  ) async {
+    final adapter = JsonAdapter({
+      'id': 'staff-request-1',
+      'certificate_type': 'AEAT_CENSAL',
+      'certificate_name': 'Situación censal',
+      'issuing_organization': 'AEAT',
+      'status': 'completed',
+      'document_id': 'document-1',
+      'document_status': 'published',
+    });
+    var consultas = 0;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          apiClientProvider.overrideWithValue(
+            ApiClient(
+              dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
+                ..httpClientAdapter = adapter,
+              tokenProvider: () => 'staff-token',
+            ),
+          ),
+          staffCertificateStatusProvider('E00001').overrideWith(
+            (_) async =>
+                const CertificateStatus(configured: true, status: 'valid'),
+          ),
+          staffCertificateTypesProvider(
+            'E00001',
+          ).overrideWith((_) async => const []),
+          staffCertificateRequestsProvider('E00001').overrideWith((_) async {
+            consultas++;
+            return const [
+              CertificateRequest(
+                id: 'staff-request-1',
+                type: 'AEAT_CENSAL',
+                name: 'Situación censal',
+                organization: 'AEAT',
+                status: 'completed',
+                createdAt: null,
+                documentId: 'document-1',
+                documentStatus: 'draft',
+              ),
+            ];
+          }),
+        ],
+        child: const MaterialApp(
+          home: CertificatesScreen(
+            companyCode: 'E00001',
+            companyName: 'Cliente Uno',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('Pendiente de compartir con el cliente'),
+      findsOneWidget,
+    );
+    final actions = find.byKey(
+      const Key('certificate-request-actions-staff-request-1'),
+    );
+    await tester.ensureVisible(actions);
+    await tester.tap(actions);
+    await tester.pumpAndSettle();
+    expect(find.text('Visualizar PDF'), findsOneWidget);
+    expect(find.text('Compartir con el cliente'), findsOneWidget);
+    await tester.tap(find.text('Compartir con el cliente'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('se publicará en el área documental'),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byKey(const Key('confirm-publish-certificate-request')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(adapter.lastRequest?.method, 'POST');
+    expect(
+      adapter.lastRequest?.path,
+      '/client/certificates/staff/organizations/E00001/requests/'
+      'staff-request-1/publish',
+    );
+    expect(consultas, 2);
+    expect(
+      find.textContaining('Certificado compartido en el área documental'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('cliente registra solicitud AEAT y refresca el historial', (
@@ -495,6 +618,23 @@ void main() {
     expect(find.textContaining('Disponible · Negativo'), findsOneWidget);
     expect(find.textContaining('Positivo'), findsNothing);
   });
+}
+
+class _FailingCertificatesRepository extends CertificatesRepository {
+  _FailingCertificatesRepository()
+    : super(ApiClient(tokenProvider: () => 'staff-token'));
+
+  int downloads = 0;
+
+  @override
+  Future<Uint8List> downloadRequestDocument(
+    String requestId, {
+    required String companyCode,
+    bool receipt = false,
+  }) async {
+    downloads++;
+    throw Exception('Descarga fallida');
+  }
 }
 
 Future<void> _pumpRequestActions(
