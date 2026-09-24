@@ -1,6 +1,6 @@
 {
-  "version": "1.8.23",
-  "tag": "v1.8.23",
-  "changelog": "Corrige la pantalla en blanco de Notificaciones y consolida el acceso corporativo con Microsoft y la sincronización automática de empleados.",
+  "version": "1.8.24",
+  "tag": "v1.8.24",
+  "changelog": "Ocultar clientes inactivos en buzones",
   "force_update": true
 }

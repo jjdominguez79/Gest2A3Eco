@@ -1,5 +1,5 @@
-APP_VERSION = "1.8.23"
-APP_RELEASE_DATE = "2026-09-23"
+APP_VERSION = "1.8.24"
+APP_RELEASE_DATE = "2026-09-24"
 
 # URL publica donde se aloja el archivo version.json con la info de actualizaciones.
 # Se publica en GitHub Raw a partir del archivo updates/version.json del repositorio.
