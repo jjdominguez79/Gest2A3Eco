@@ -21,7 +21,7 @@
         android:name="android.permission.READ_MEDIA_AUDIO"
         tools:node="remove" />
     <application
-        android:label="Gestinem"
+        android:label="Gestinem Chat"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <meta-data

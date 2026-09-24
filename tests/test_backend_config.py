@@ -18,6 +18,8 @@ def test_settings_uses_flutter_pubspec_as_release_source(
 
     assert settings.messaging_latest_app_version == "2.3.4"
     assert settings.messaging_latest_app_build == 57
+    assert settings.messaging_android_update_enabled is False
+    assert settings.messaging_ios_update_enabled is False
 
 
 def test_settings_allows_temporary_release_override(tmp_path: Path, monkeypatch):
@@ -32,6 +34,27 @@ def test_settings_allows_temporary_release_override(tmp_path: Path, monkeypatch)
 
     assert settings.messaging_latest_app_version == "2.3.5"
     assert settings.messaging_latest_app_build == 58
+
+
+def test_settings_allows_platform_update_policies(tmp_path: Path, monkeypatch):
+    pubspec = tmp_path / "pubspec.yaml"
+    pubspec.write_text("version: 2.3.4+57\n", encoding="utf-8")
+    monkeypatch.setattr(config, "FLUTTER_PUBSPEC_PATH", pubspec)
+    monkeypatch.setenv("BACKEND_DATABASE_URL", "postgresql://example.test/database")
+    monkeypatch.setenv("MESSAGING_ANDROID_UPDATE_ENABLED", "true")
+    monkeypatch.setenv("MESSAGING_ANDROID_LATEST_APP_VERSION", "2.4.0")
+    monkeypatch.setenv("MESSAGING_ANDROID_LATEST_APP_BUILD", "60")
+    monkeypatch.setenv("MESSAGING_ANDROID_MINIMUM_APP_BUILD", "59")
+    monkeypatch.setenv("MESSAGING_IOS_STORE_URL", "https://apps.apple.com/app/id123")
+
+    settings = config.get_settings()
+
+    assert settings.messaging_android_update_enabled is True
+    assert settings.messaging_android_latest_app_version == "2.4.0"
+    assert settings.messaging_android_latest_app_build == 60
+    assert settings.messaging_android_minimum_app_build == 59
+    assert settings.messaging_ios_update_enabled is False
+    assert settings.messaging_ios_store_url == "https://apps.apple.com/app/id123"
 
 
 def test_settings_prioritizes_backend_environment_names(monkeypatch):

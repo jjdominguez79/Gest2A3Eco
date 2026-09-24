@@ -88,6 +88,16 @@ class Settings:
     messaging_latest_app_version: str
     messaging_latest_app_build: int
     messaging_minimum_app_build: int
+    messaging_android_update_enabled: bool
+    messaging_android_latest_app_version: str
+    messaging_android_latest_app_build: int
+    messaging_android_minimum_app_build: int
+    messaging_android_store_url: str
+    messaging_ios_update_enabled: bool
+    messaging_ios_latest_app_version: str
+    messaging_ios_latest_app_build: int
+    messaging_ios_minimum_app_build: int
+    messaging_ios_store_url: str
     messaging_pre_release_cleanup_enabled: bool
     azure_doc_intelligence_endpoint: str
     azure_doc_intelligence_key: str
@@ -209,6 +219,63 @@ def get_settings() -> Settings:
         messaging_minimum_app_build=max(
             1, int(os.getenv("MESSAGING_MINIMUM_APP_BUILD", "1")),
         ),
+        messaging_android_update_enabled=os.getenv(
+            "MESSAGING_ANDROID_UPDATE_ENABLED", "false",
+        ).strip().lower() in {"1", "true", "yes", "si"},
+        messaging_android_latest_app_version=os.getenv(
+            "MESSAGING_ANDROID_LATEST_APP_VERSION",
+            os.getenv("MESSAGING_LATEST_APP_VERSION", flutter_version),
+        ).strip(),
+        messaging_android_latest_app_build=max(
+            1,
+            int(
+                os.getenv(
+                    "MESSAGING_ANDROID_LATEST_APP_BUILD",
+                    os.getenv("MESSAGING_LATEST_APP_BUILD", str(flutter_build)),
+                ),
+            ),
+        ),
+        messaging_android_minimum_app_build=max(
+            1,
+            int(
+                os.getenv(
+                    "MESSAGING_ANDROID_MINIMUM_APP_BUILD",
+                    os.getenv("MESSAGING_MINIMUM_APP_BUILD", "1"),
+                ),
+            ),
+        ),
+        messaging_android_store_url=os.getenv(
+            "MESSAGING_ANDROID_STORE_URL",
+            "https://play.google.com/store/apps/details?id=es.gestinem.app",
+        ).strip(),
+        messaging_ios_update_enabled=os.getenv(
+            "MESSAGING_IOS_UPDATE_ENABLED", "false",
+        ).strip().lower() in {"1", "true", "yes", "si"},
+        messaging_ios_latest_app_version=os.getenv(
+            "MESSAGING_IOS_LATEST_APP_VERSION",
+            os.getenv("MESSAGING_LATEST_APP_VERSION", flutter_version),
+        ).strip(),
+        messaging_ios_latest_app_build=max(
+            1,
+            int(
+                os.getenv(
+                    "MESSAGING_IOS_LATEST_APP_BUILD",
+                    os.getenv("MESSAGING_LATEST_APP_BUILD", str(flutter_build)),
+                ),
+            ),
+        ),
+        messaging_ios_minimum_app_build=max(
+            1,
+            int(
+                os.getenv(
+                    "MESSAGING_IOS_MINIMUM_APP_BUILD",
+                    os.getenv("MESSAGING_MINIMUM_APP_BUILD", "1"),
+                ),
+            ),
+        ),
+        messaging_ios_store_url=os.getenv(
+            "MESSAGING_IOS_STORE_URL", "",
+        ).strip(),
         messaging_pre_release_cleanup_enabled=os.getenv(
             "MESSAGING_PRE_RELEASE_CLEANUP_ENABLED", "false",
         ).strip().lower() in {"1", "true", "yes", "si"},

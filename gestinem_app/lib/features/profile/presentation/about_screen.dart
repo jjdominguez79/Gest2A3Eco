@@ -108,7 +108,7 @@ class _AboutScreenState extends ConsumerState<AboutScreen> {
                           '(compilación ${information.package.buildNumber})',
                         ),
                       ),
-                      if (information.remote != null)
+                      if (information.remote?['enabled'] == true)
                         ListTile(
                           leading: const Icon(Icons.cloud_outlined),
                           title: const Text('Última versión disponible'),
@@ -165,6 +165,7 @@ class _VersionInformation {
 
   _VersionStatus get status {
     if (remote == null) return _VersionStatus.unknown;
+    if (remote!['enabled'] != true) return _VersionStatus.current;
     final localBuild = int.tryParse(package.buildNumber) ?? 0;
     final latestBuild = remote!['latest_build'] as int? ?? 0;
     final minimumBuild = remote!['minimum_build'] as int? ?? 0;

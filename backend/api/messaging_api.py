@@ -2689,11 +2689,32 @@ def review_profile_change_request(
 def public_app_version(platform: str = ""):
     """Version publicada que los clientes Flutter pueden comparar con la instalada."""
     settings = get_settings()
+    platform = platform.strip().lower()
+    if platform == "android":
+        enabled = settings.messaging_android_update_enabled
+        latest_version = settings.messaging_android_latest_app_version
+        latest_build = settings.messaging_android_latest_app_build
+        minimum_build = settings.messaging_android_minimum_app_build
+        store_url = settings.messaging_android_store_url
+    elif platform == "ios":
+        enabled = settings.messaging_ios_update_enabled
+        latest_version = settings.messaging_ios_latest_app_version
+        latest_build = settings.messaging_ios_latest_app_build
+        minimum_build = settings.messaging_ios_minimum_app_build
+        store_url = settings.messaging_ios_store_url
+    else:
+        enabled = False
+        latest_version = settings.messaging_latest_app_version
+        latest_build = settings.messaging_latest_app_build
+        minimum_build = settings.messaging_minimum_app_build
+        store_url = ""
     return {
-        "platform": platform.strip().lower(),
-        "latest_version": settings.messaging_latest_app_version,
-        "latest_build": settings.messaging_latest_app_build,
-        "minimum_build": settings.messaging_minimum_app_build,
+        "platform": platform,
+        "enabled": enabled,
+        "latest_version": latest_version,
+        "latest_build": latest_build,
+        "minimum_build": minimum_build,
+        "store_url": store_url,
     }
 
 

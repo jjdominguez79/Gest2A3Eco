@@ -145,9 +145,33 @@ def test_public_app_version_exposes_release_information(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.json() == {
         "platform": "windows",
+        "enabled": False,
         "latest_version": "0.1.1",
         "latest_build": 11,
         "minimum_build": 7,
+        "store_url": "",
+    }
+
+
+def test_public_app_version_exposes_android_update_policy(tmp_path, monkeypatch):
+    monkeypatch.setenv("MESSAGING_ANDROID_UPDATE_ENABLED", "true")
+    monkeypatch.setenv("MESSAGING_ANDROID_LATEST_APP_VERSION", "0.1.19")
+    monkeypatch.setenv("MESSAGING_ANDROID_LATEST_APP_BUILD", "34")
+    monkeypatch.setenv("MESSAGING_ANDROID_MINIMUM_APP_BUILD", "33")
+    response = _client(tmp_path).get(
+        "/api/v1/messaging/public/app-version?platform=android",
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "platform": "android",
+        "enabled": True,
+        "latest_version": "0.1.19",
+        "latest_build": 34,
+        "minimum_build": 33,
+        "store_url": (
+            "https://play.google.com/store/apps/details?id=es.gestinem.app"
+        ),
     }
 
 

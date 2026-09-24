@@ -3,10 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/foundation.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../core/notifications/notifications_service.dart';
 import '../core/notifications/web_permission_state.dart';
 import '../core/websocket/realtime_service.dart';
+import '../features/app_update/domain/app_update_policy.dart';
 import '../features/auth/domain/user_profile.dart';
 import '../features/auth/presentation/auth_controller.dart';
 import '../features/empleados/presentation/empleados_screen.dart';
@@ -21,21 +24,131 @@ class GestinemApp extends ConsumerStatefulWidget {
   ConsumerState<GestinemApp> createState() => _GestinemAppState();
 }
 
-class _GestinemAppState extends ConsumerState<GestinemApp> {
+class _GestinemAppState extends ConsumerState<GestinemApp>
+    with WidgetsBindingObserver {
   StreamSubscription<NotificationEvent>? _notifications;
   StreamSubscription<Map<String, dynamic>>? _realtimeEvents;
   RealtimeService? _realtime;
   String? _realtimeOwner;
   Timer? _presenceRefresh;
   String? _lastOpenedNotification;
+  bool _checkingUpdate = false;
+  bool _updateDialogVisible = false;
+  int? _dismissedOptionalBuild;
+  DateTime? _lastUpdateCheck;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _notifications = ref
         .read(notificationsServiceProvider)
         .events
         .listen(_handleNotification);
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => unawaited(_checkAppUpdate(force: true)),
+    );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_checkAppUpdate());
+    }
+  }
+
+  String? get _updatePlatform {
+    if (kIsWeb) return null;
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.android => 'android',
+      TargetPlatform.iOS => 'ios',
+      _ => null,
+    };
+  }
+
+  Future<void> _checkAppUpdate({bool force = false}) async {
+    final platform = _updatePlatform;
+    if (platform == null || _checkingUpdate || _updateDialogVisible) return;
+    final now = DateTime.now();
+    if (!force &&
+        _lastUpdateCheck != null &&
+        now.difference(_lastUpdateCheck!) < const Duration(minutes: 15)) {
+      return;
+    }
+    _checkingUpdate = true;
+    _lastUpdateCheck = now;
+    late final AppUpdatePolicy policy;
+    int installedBuild = 0;
+    try {
+      final package = await PackageInfo.fromPlatform();
+      installedBuild = int.tryParse(package.buildNumber) ?? 0;
+      final remote = await ref
+          .read(messagingRepositoryProvider)
+          .latestAppVersion(platform);
+      policy = AppUpdatePolicy.fromJson(remote);
+    } catch (_) {
+      // La comprobacion nunca debe impedir abrir la aplicacion sin conexion.
+      return;
+    } finally {
+      _checkingUpdate = false;
+    }
+    if (!mounted) return;
+    final requirement = policy.requirementFor(installedBuild);
+    if (requirement == AppUpdateRequirement.disabled ||
+        requirement == AppUpdateRequirement.current ||
+        (requirement == AppUpdateRequirement.optional &&
+            _dismissedOptionalBuild == policy.latestBuild)) {
+      return;
+    }
+    final navigator = ref.read(rootNavigatorKeyProvider).currentState;
+    if (navigator == null || !navigator.mounted) return;
+    final mandatory = requirement == AppUpdateRequirement.mandatory;
+    _updateDialogVisible = true;
+    await showDialog<void>(
+      context: navigator.context,
+      barrierDismissible: !mandatory,
+      builder: (dialogContext) => PopScope(
+        canPop: !mandatory,
+        child: AlertDialog(
+          icon: Icon(
+            mandatory ? Icons.warning_amber_rounded : Icons.system_update,
+          ),
+          title: Text(
+            mandatory ? 'Actualización necesaria' : 'Actualización disponible',
+          ),
+          content: Text(
+            mandatory
+                ? 'Debes instalar la versión ${policy.latestVersion} para '
+                      'seguir utilizando Gestinem Chat.'
+                : 'Ya está disponible la versión ${policy.latestVersion} de '
+                      'Gestinem Chat. Te recomendamos actualizarla.',
+          ),
+          actions: [
+            if (!mandatory)
+              TextButton(
+                onPressed: () {
+                  _dismissedOptionalBuild = policy.latestBuild;
+                  Navigator.of(dialogContext).pop();
+                },
+                child: const Text('Más tarde'),
+              ),
+            FilledButton.icon(
+              onPressed: () {
+                if (!mandatory) Navigator.of(dialogContext).pop();
+                unawaited(_openStore(policy.storeUrl!));
+              },
+              icon: const Icon(Icons.open_in_new),
+              label: const Text('Actualizar ahora'),
+            ),
+          ],
+        ),
+      ),
+    );
+    _updateDialogVisible = false;
+  }
+
+  Future<void> _openStore(Uri storeUrl) async {
+    await launchUrl(storeUrl, mode: LaunchMode.externalApplication);
   }
 
   void _handleNotification(NotificationEvent event) {
@@ -209,6 +322,7 @@ class _GestinemAppState extends ConsumerState<GestinemApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _notifications?.cancel();
     _realtimeEvents?.cancel();
     _realtime?.close();

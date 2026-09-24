@@ -37,6 +37,10 @@ class _RouterRefreshNotifier extends ChangeNotifier {
   void refresh() => notifyListeners();
 }
 
+final rootNavigatorKeyProvider = Provider<GlobalKey<NavigatorState>>(
+  (_) => GlobalKey<NavigatorState>(),
+);
+
 bool _isProtectedClientRoute(String location) {
   final uri = Uri.tryParse(location);
   if (uri == null || uri.hasScheme || uri.host.isNotEmpty) return false;
@@ -71,6 +75,7 @@ final routerProvider = Provider<GoRouter>((ref) {
   );
 
   return GoRouter(
+    navigatorKey: ref.watch(rootNavigatorKeyProvider),
     refreshListenable: refreshNotifier,
     redirect: (context, state) {
       final session = ref.read(sessionProvider);

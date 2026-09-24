@@ -158,7 +158,8 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
 
   @override
   Widget build(BuildContext context) {
-    final profile = ref.watch(sessionProvider).valueOrNull!.profile;
+    final profile = ref.watch(sessionProvider).valueOrNull?.profile;
+    if (profile == null) return const SizedBox.shrink();
     final conversations = ref.watch(conversationsProvider);
     if (profile.type == UserType.client) {
       return _buildClientScreen(profile, conversations);
