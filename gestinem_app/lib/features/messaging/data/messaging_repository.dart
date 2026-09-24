@@ -74,10 +74,16 @@ class MessagingRepository {
 
   Future<List<Message>> messages(
     UserProfile profile,
-    String conversationId,
-  ) async {
+    String conversationId, {
+    int limit = 100,
+    String? beforeMessageId,
+  }) async {
     final response = await _api.dio.get<List<dynamic>>(
       '/${_audience(profile)}/conversations/$conversationId/messages',
+      queryParameters: {
+        'limit': limit,
+        'before_message_id': ?beforeMessageId,
+      },
     );
     return response.data!
         .map((item) => Message.fromJson(item as Map<String, dynamic>))
@@ -371,10 +377,16 @@ class MessagingRepository {
   }
 
   /// Todos los mensajes del cliente (cross-canal) en orden cronologico.
-  Future<List<Message>> unifiedMessages({int limit = 100}) async {
+  Future<List<Message>> unifiedMessages({
+    int limit = 100,
+    String? beforeMessageId,
+  }) async {
     final response = await _api.dio.get<List<dynamic>>(
       '/client/unified-messages',
-      queryParameters: {'limit': limit},
+      queryParameters: {
+        'limit': limit,
+        'before_message_id': ?beforeMessageId,
+      },
     );
     return response.data!
         .map((item) => Message.fromJson(item as Map<String, dynamic>))

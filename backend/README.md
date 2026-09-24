@@ -270,6 +270,52 @@ usar varios workers o escalar horizontalmente debe sustituirse el bus por
 pub/sub compartido (Redis, PostgreSQL u otro equivalente), sin cambiar el
 contrato exterior.
 
+### Despliegue del Canal general
+
+La migracion `030_general_client_channel.sql` fusiona `laboral` y `fiscal` y
+se ejecuta automaticamente al arrancar el backend. Toma un bloqueo asesor de
+transaccion, conserva los identificadores de mensajes y adjuntos, crea alias
+para los IDs retirados y aborta si los conteos o las referencias conocidas no
+cuadran. Es idempotente; al repetirla no marca como leidos los mensajes creados
+despues de la primera fusion.
+
+Por su impacto, debe desplegarse con el backend detenido y sin workers de
+mensajeria escribiendo. Antes del arranque hay que crear una copia completa con
+la herramienta PostgreSQL aprobada para el entorno (por ejemplo `pg_dump`) y
+guardar estos conteos:
+
+```sql
+SELECT kind, COUNT(*) FROM msg_conversations GROUP BY kind ORDER BY kind;
+SELECT c.kind, COUNT(m.id)
+FROM msg_conversations c LEFT JOIN msg_messages m ON m.conversation_id = c.id
+GROUP BY c.kind ORDER BY c.kind;
+SELECT COUNT(*) FROM msg_attachments WHERE message_id IS NOT NULL;
+```
+
+Tras el primer arranque, validar antes de reabrir trafico:
+
+```sql
+SELECT organization_id, ARRAY_AGG(kind ORDER BY kind)
+FROM msg_conversations
+GROUP BY organization_id
+HAVING ARRAY_AGG(kind ORDER BY kind) <> ARRAY['general', 'private']::varchar[];
+
+SELECT a.old_conversation_id
+FROM msg_conversation_aliases a
+LEFT JOIN msg_conversations c ON c.id = a.conversation_id
+WHERE c.id IS NULL;
+
+SELECT COUNT(*) FROM msg_messages m
+LEFT JOIN msg_conversations c ON c.id = m.conversation_id
+WHERE c.id IS NULL;
+```
+
+Las tres consultas de incidencias deben devolver cero filas (o conteo cero), y
+el total previo de mensajes `laboral + fiscal + general` debe coincidir con el
+total posterior de `general`. La prueba destructiva controlada puede ejecutarse
+contra una base PostgreSQL aislada definiendo `TEST_POSTGRES_URL` y lanzando
+`pytest -q tests/test_general_channel_migration_pg.py`.
+
 ## Solicitudes de modificación de empresa
 
 Flutter no actualiza directamente los datos maestros. El cliente puede proponer

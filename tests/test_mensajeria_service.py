@@ -51,9 +51,9 @@ def test_busca_conversacion_por_empresa_y_canal_sin_confundir_clientes(monkeypat
     monkeypatch.setattr("utils.credential_store.get_messaging_device_token", lambda: None)
 
     conversations = [
-        {"id": "a", "company_code": "E00041", "kind": "fiscal"},
-        {"id": "b", "company_code": "E00042", "kind": "laboral"},
-        {"id": "c", "company_code": "E00042", "kind": "fiscal"},
+        {"id": "a", "company_code": "E00041", "kind": "general"},
+        {"id": "b", "company_code": "E00042", "kind": "private"},
+        {"id": "c", "company_code": "E00042", "kind": "general"},
     ]
     client = MensajeriaRemoteClient(
         user_id=1, user_name="Admin",
@@ -61,8 +61,8 @@ def test_busca_conversacion_por_empresa_y_canal_sin_confundir_clientes(monkeypat
         session=SessionStub(conversations),
     )
 
-    assert client.company_conversation("e00042", "FISCAL")["id"] == "c"
-    assert client.company_conversation("E99999", "fiscal") is None
+    assert client.company_conversation("e00042", "GENERAL")["id"] == "c"
+    assert client.company_conversation("E99999", "general") is None
 
 
 def test_privacidad_lecturas_envia_preferencias_independientes(monkeypatch):

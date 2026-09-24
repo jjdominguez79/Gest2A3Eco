@@ -93,10 +93,10 @@ void main() {
           conversationsProvider.overrideWith(
             (_) async => [
               Conversation(
-                id: 'fiscal-1',
+                id: 'general-1',
                 companyCode: 'E00001',
                 companyName: 'Empresa Uno',
-                kind: 'fiscal',
+                kind: 'general',
                 state: 'abierta',
                 unreadCount: 0,
                 updatedAt: DateTime(2026),
@@ -118,7 +118,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('fiscal-1: Hola,'), findsOneWidget);
+    expect(find.textContaining('general-1: Hola,'), findsOneWidget);
     expect(find.textContaining('cómo incorporarlo'), findsOneWidget);
   });
 }

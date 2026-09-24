@@ -14,7 +14,7 @@ void main() {
         'id': 'c1',
         'company_code': 'E1',
         'company_name': 'Empresa',
-        'kind': 'laboral',
+        'kind': 'general',
         'state': 'pendiente',
         'unread_count': 0,
         'updated_at': '2026-08-15T10:00:00Z',

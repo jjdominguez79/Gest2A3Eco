@@ -51,5 +51,10 @@ void main() {
     expect(find.textContaining(' · Desconectado'), findsOneWidget);
     expect(find.byKey(const Key('add-employee')), findsNothing);
     expect(find.byKey(const Key('employee-empleado-1')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('employee-empleado-1')));
+    await tester.pumpAndSettle();
+    expect(find.text('Canales'), findsNothing);
+    expect(find.text('Contable / Fiscal'), findsNothing);
+    expect(find.textContaining('Todo empleado activo accede'), findsOneWidget);
   });
 }

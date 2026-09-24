@@ -10,9 +10,9 @@ void main() {
 
     test('groups conversations by company code', () {
       final convs = [
-        _makeConv('E001', 'Empresa A', 'laboral'),
-        _makeConv('E001', 'Empresa A', 'fiscal'),
-        _makeConv('E002', 'Empresa B', 'fiscal'),
+        _makeConv('E001', 'Empresa A', 'general'),
+        _makeConv('E001', 'Empresa A', 'private'),
+        _makeConv('E002', 'Empresa B', 'general'),
       ];
       final groups = groupConversationsByClient(convs);
       expect(groups.length, 2);
@@ -28,27 +28,27 @@ void main() {
 
     test('sums unread counts correctly', () {
       final convs = [
-        _makeConv('E001', 'Empresa A', 'laboral', unread: 3),
-        _makeConv('E001', 'Empresa A', 'fiscal', unread: 2),
+        _makeConv('E001', 'Empresa A', 'general', unread: 3),
+        _makeConv('E001', 'Empresa A', 'private', unread: 2),
       ];
       final groups = groupConversationsByClient(convs);
       expect(groups.first.totalUnread, 5);
     });
 
     test('displayName uses companyName when available', () {
-      final convs = [_makeConv('E001', 'Mi Empresa', 'fiscal')];
+      final convs = [_makeConv('E001', 'Mi Empresa', 'general')];
       final groups = groupConversationsByClient(convs);
       expect(groups.first.displayName, 'Mi Empresa');
     });
 
     test('displayName falls back to companyCode', () {
-      final convs = [_makeConv('E001', '', 'fiscal')];
+      final convs = [_makeConv('E001', '', 'general')];
       final groups = groupConversationsByClient(convs);
       expect(groups.first.displayName, 'E001');
     });
 
     test('single channel group has one conversation', () {
-      final convs = [_makeConv('E003', 'Empresa C', 'laboral')];
+      final convs = [_makeConv('E003', 'Empresa C', 'general')];
       final groups = groupConversationsByClient(convs);
       expect(groups.length, 1);
       expect(groups.first.conversations.length, 1);
@@ -60,10 +60,10 @@ void main() {
         _makeConv(
           'E001',
           'Empresa A',
-          'fiscal',
+          'general',
           updatedAt: now.subtract(const Duration(hours: 2)),
         ),
-        _makeConv('E002', 'Empresa B', 'fiscal', updatedAt: now),
+        _makeConv('E002', 'Empresa B', 'general', updatedAt: now),
       ];
       final groups = groupConversationsByClient(convs);
       expect(groups.first.companyCode, 'E002');
@@ -142,8 +142,8 @@ void main() {
 
     test('totalUnread accumulates across conversations', () {
       final convs = [
-        _makeConv('E001', 'A', 'laboral', unread: 5),
-        _makeConv('E001', 'A', 'fiscal', unread: 3),
+        _makeConv('E001', 'A', 'general', unread: 5),
+        _makeConv('E001', 'A', 'private', unread: 3),
       ];
       final groups = groupConversationsByClient(convs);
       expect(groups.first.totalUnread, 8);
@@ -153,9 +153,8 @@ void main() {
   group('UnifiedConversation routing', () {
     test('client unread total from multiple conversations', () {
       final convs = [
-        _makeConv('E001', 'Mi Empresa', 'laboral', unread: 2),
-        _makeConv('E001', 'Mi Empresa', 'fiscal', unread: 1),
-        _makeConv('E001', 'Mi Empresa', 'private', unread: 0),
+        _makeConv('E001', 'Mi Empresa', 'general', unread: 2),
+        _makeConv('E001', 'Mi Empresa', 'private', unread: 1),
       ];
       // Los clientes NO usan groupConversationsByClient, pero verificamos
       // que todos los unreads estan presentes en la lista original
@@ -167,13 +166,12 @@ void main() {
       'groupConversationsByClient groups same client into one group with all channels',
       () {
         final convs = [
-          _makeConv('E001', 'Empresa', 'laboral', unread: 1),
-          _makeConv('E001', 'Empresa', 'fiscal', unread: 2),
-          _makeConv('E001', 'Empresa', 'private', unread: 0),
+          _makeConv('E001', 'Empresa', 'general', unread: 1),
+          _makeConv('E001', 'Empresa', 'private', unread: 2),
         ];
         final groups = groupConversationsByClient(convs);
         expect(groups.length, 1, reason: 'Staff ve 1 grupo por cliente');
-        expect(groups.first.conversations.length, 3);
+        expect(groups.first.conversations.length, 2);
         expect(groups.first.totalUnread, 3);
       },
     );

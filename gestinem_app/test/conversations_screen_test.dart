@@ -92,26 +92,16 @@ void main() {
     expect(find.byKey(const Key('inbox-section-clients')), findsOneWidget);
   });
 
-  testWidgets('cliente ve canales separados y menu documental sin buscador', (
+  testWidgets('cliente ve Canal general y Tu asesor sin buscador', (
     tester,
   ) async {
     final channels = [
       Conversation(
-        id: 'laboral',
+        id: 'general',
         companyCode: 'E00006',
         companyName: 'Cliente',
-        kind: 'laboral',
-        channelLabel: 'LA',
-        state: 'pendiente',
-        unreadCount: 0,
-        updatedAt: DateTime(2026, 8, 18),
-      ),
-      Conversation(
-        id: 'fiscal',
-        companyCode: 'E00006',
-        companyName: 'Cliente',
-        kind: 'fiscal',
-        channelLabel: 'CF',
+        kind: 'general',
+        channelLabel: 'CG',
         state: 'pendiente',
         unreadCount: 3,
         updatedAt: DateTime(2026, 8, 18),
@@ -148,11 +138,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('client-channel-laboral')), findsOneWidget);
-    expect(find.byKey(const Key('client-channel-fiscal')), findsOneWidget);
+    expect(find.byKey(const Key('client-channel-general')), findsOneWidget);
     expect(find.byKey(const Key('client-channel-private')), findsOneWidget);
-    expect(find.text('LA'), findsOneWidget);
-    expect(find.text('CF'), findsOneWidget);
+    expect(find.text('CG'), findsOneWidget);
     expect(find.text('JJ'), findsOneWidget);
     expect(find.text('3'), findsOneWidget);
     expect(find.byType(TextField), findsOneWidget);
@@ -166,10 +154,10 @@ void main() {
       findsNothing,
     );
 
-    await tester.tap(find.byKey(const Key('client-channel-fiscal')));
+    await tester.tap(find.byKey(const Key('client-channel-general')));
     await tester.pumpAndSettle();
     expect(
-      find.byKey(const ValueKey('client-conversation-fiscal')),
+      find.byKey(const ValueKey('client-conversation-general')),
       findsOneWidget,
     );
     await tester.tap(find.byIcon(Icons.menu));
@@ -346,7 +334,7 @@ void main() {
     });
   }
 
-  testWidgets('staff ve una fila por cada canal del mismo cliente', (
+  testWidgets('staff ve Canal general y Tu asesor por cliente', (
     tester,
   ) async {
     const staffProfile = UserProfile(
@@ -363,9 +351,8 @@ void main() {
 
     final rows = [
       for (final channel in const [
-        ('fiscal', 'CF'),
-        ('laboral', 'LA'),
-        ('private', 'Directo'),
+        ('general', 'CG'),
+        ('private', 'Tu asesor'),
       ])
         Conversation(
           id: 'c-${channel.$1}',
@@ -374,7 +361,7 @@ void main() {
           kind: channel.$1,
           channelLabel: channel.$2,
           state: 'pendiente',
-          unreadCount: channel.$1 == 'fiscal' ? 3 : 0,
+          unreadCount: channel.$1 == 'general' ? 3 : 0,
           updatedAt: DateTime(2026, 8, 15),
         ),
     ];
@@ -397,15 +384,13 @@ void main() {
 
     expect(find.byKey(const Key('conversation-list')), findsOneWidget);
     expect(find.text('Gestor'), findsOneWidget);
-    expect(find.text('Empresa Uno'), findsNWidgets(3));
-    expect(find.text('CF'), findsOneWidget);
-    expect(find.text('LA'), findsOneWidget);
-    expect(find.text('Directo'), findsOneWidget);
-    expect(find.byKey(const Key('conversation-c-fiscal')), findsOneWidget);
-    expect(find.byKey(const Key('conversation-c-laboral')), findsOneWidget);
+    expect(find.text('Empresa Uno'), findsNWidgets(2));
+    expect(find.text('CG'), findsOneWidget);
+    expect(find.text('Tu asesor'), findsOneWidget);
+    expect(find.byKey(const Key('conversation-c-general')), findsOneWidget);
     expect(find.byKey(const Key('conversation-c-private')), findsOneWidget);
     expect(find.text('3'), findsOneWidget);
-    expect(find.text('15/08'), findsNWidgets(3));
+    expect(find.text('15/08'), findsNWidgets(2));
   });
 
   testWidgets('staff abre Nuevo chat y busca clientes invitados', (
@@ -423,10 +408,10 @@ void main() {
       profile: staffProfile,
     );
     final target = Conversation(
-      id: 'fiscal-1',
+      id: 'general-1',
       companyCode: 'E00006',
       companyName: 'Cliente Invitado',
-      kind: 'fiscal',
+      kind: 'general',
       clientAccessStatus: 'pending',
       state: 'pendiente',
       unreadCount: 0,
@@ -470,7 +455,7 @@ void main() {
     expect(find.text('No hay clientes invitados disponibles'), findsOneWidget);
   });
 
-  testWidgets('Nuevo chat abre el canal directo por defecto', (tester) async {
+  testWidgets('Nuevo chat abre el Canal general por defecto', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1200, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     const staffProfile = UserProfile(
@@ -485,7 +470,7 @@ void main() {
       profile: staffProfile,
     );
     final targets = [
-      for (final kind in ['fiscal', 'laboral', 'private'])
+      for (final kind in ['general', 'private'])
         Conversation(
           id: kind,
           companyCode: 'E00006',
@@ -498,10 +483,10 @@ void main() {
         ),
     ];
     final adapter = JsonAdapter({
-      'id': 'private',
+      'id': 'general',
       'company_code': 'E00006',
       'company_name': 'Cliente Invitado',
-      'kind': 'private',
+      'kind': 'general',
       'client_access_status': 'pending',
       'state': 'pendiente',
       'unread_count': 0,
@@ -539,7 +524,7 @@ void main() {
     await tester.tap(find.byKey(const Key('new-chat-group-E00006')));
     await tester.pumpAndSettle();
 
-    expect(adapter.lastRequest!.path, '/staff/conversations/private/start');
+    expect(adapter.lastRequest!.path, '/staff/conversations/general/start');
   });
 
   testWidgets('Conversaciones cierra el menu aunque ya sea la ruta activa', (
@@ -593,7 +578,7 @@ void main() {
     expect(find.byKey(const Key('drawer-conversations')), findsNothing);
   });
 
-  testWidgets('empleado solo ve canales autorizados grupos y administrador', (
+  testWidgets('empleado ve Canal general, sus grupos y administrador', (
     tester,
   ) async {
     const employeeProfile = UserProfile(
@@ -602,7 +587,7 @@ void main() {
       email: 'analia@gestinem.es',
       type: UserType.staff,
       staffRole: StaffRole.empleado,
-      channels: ['fiscal'],
+      channels: [],
     );
     const employeeSession = AuthSession(
       token: 'employee-token',
@@ -610,10 +595,10 @@ void main() {
     );
     final conversations = [
       Conversation(
-        id: 'fiscal-1',
+        id: 'general-1',
         companyCode: 'E00001',
-        companyName: 'Cliente Fiscal',
-        kind: 'fiscal',
+        companyName: 'Cliente General',
+        kind: 'general',
         state: 'pendiente',
         unreadCount: 0,
         updatedAt: DateTime(2026, 8, 19),
@@ -659,7 +644,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('CF'), findsWidgets);
+    expect(find.text('CG'), findsWidgets);
     expect(find.text('LA'), findsNothing);
     expect(find.text('Todos'), findsNothing);
     expect(find.text('Equipo nóminas'), findsOneWidget);
@@ -670,7 +655,7 @@ void main() {
     expect(find.byKey(const Key('internal-thread-direct-1')), findsOneWidget);
     expect(find.text('Juan José'), findsOneWidget);
     expect(find.text('Analia'), findsOneWidget);
-    expect(find.text('Cliente Fiscal'), findsOneWidget);
+    expect(find.text('Cliente General'), findsOneWidget);
 
     await tester.tap(find.byIcon(Icons.menu));
     await tester.pumpAndSettle();

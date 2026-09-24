@@ -861,15 +861,13 @@ class _ClientChannelSelector extends StatelessWidget {
 }
 
 int _clientChannelOrder(String kind) => switch (kind) {
-  'laboral' => 0,
-  'fiscal' => 1,
-  'private' => 2,
-  _ => 3,
+  'general' => 0,
+  'private' => 1,
+  _ => 2,
 };
 
 String _clientChannelName(String kind) => switch (kind) {
-  'laboral' => 'Laboral',
-  'fiscal' => 'Fiscal',
+  'general' => 'Canal general',
   'private' => 'Tu asesor',
   _ => 'Canal',
 };
@@ -884,9 +882,9 @@ String _initials(String value) {
 }
 
 String _channelLabel(String kind) => switch (kind) {
-  'laboral' => 'Laboral',
-  'fiscal' => 'Contable / Fiscal',
-  _ => 'Directo',
+  'general' => 'Canal general',
+  'private' => 'Tu asesor',
+  _ => 'Canal',
 };
 
 String _conversationTime(DateTime? value) {
@@ -914,14 +912,14 @@ class _NewChatSheetState extends State<_NewChatSheet> {
 
   Conversation _defaultConversation(ClientGroup group) =>
       group.conversations.firstWhere(
-        (conversation) => conversation.kind == 'private',
+        (conversation) => conversation.kind == 'general',
         orElse: () => group.conversations.first,
       );
 
   List<Conversation> _orderedConversations(ClientGroup group) =>
       [...group.conversations]..sort((a, b) {
-        if (a.kind == 'private') return -1;
-        if (b.kind == 'private') return 1;
+        if (a.kind == 'general') return -1;
+        if (b.kind == 'general') return 1;
         return _channelLabel(a.kind).compareTo(_channelLabel(b.kind));
       });
 
@@ -1059,8 +1057,7 @@ class _ChannelChip extends StatelessWidget {
       );
     }
     return switch (kind) {
-      'laboral' => const _LabelChip(label: 'LA', color: Colors.blue),
-      'fiscal' => const _LabelChip(label: 'CF', color: Colors.green),
+      'general' => const _LabelChip(label: 'CG', color: Colors.green),
       _ => const _LabelChip(label: 'D', color: Colors.orange),
     };
   }

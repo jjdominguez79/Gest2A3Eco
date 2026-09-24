@@ -363,7 +363,7 @@ def sync_company_profile(
         db.flush()
         db.add_all([
             MessagingConversation(organization_id=org.id, kind=kind)
-            for kind in ("laboral", "fiscal", "private")
+            for kind in ("general", "private")
         ])
 
     # Campos sincronizables

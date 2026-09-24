@@ -118,17 +118,15 @@ class Conversation {
   String get displayChannelLabel => channelLabel.isNotEmpty
       ? channelLabel
       : switch (kind) {
-          'laboral' => 'LA',
-          'fiscal' => 'CF',
+          'general' => 'CG',
           _ => 'DP',
         };
 
   String get title => companyName.isEmpty ? _channelLabel(kind) : companyName;
 
   static String _channelLabel(String value) => switch (value) {
-    'laboral' => 'Laboral',
-    'fiscal' => 'Contable / Fiscal',
-    'private' => 'Directo',
+    'general' => 'Canal general',
+    'private' => 'Tu asesor',
     _ => value,
   };
 }

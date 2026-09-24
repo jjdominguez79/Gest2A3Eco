@@ -541,7 +541,7 @@ def test_empresa_pruebas_solo_es_visible_para_su_titular(tmp_path, monkeypatch):
     owner_conversations = client.get(
         "/api/v1/messaging/staff/conversations?active_only=false", headers=owner,
     ).json()
-    assert {row["kind"] for row in owner_conversations} == {"laboral", "fiscal", "private"}
+    assert {row["kind"] for row in owner_conversations} == {"general", "private"}
     assert client.get(
         "/api/v1/messaging/staff/conversations", headers=other,
     ).json() == []
@@ -830,7 +830,7 @@ def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatc
     conversations = client.get(
         "/api/v1/messaging/client/conversations", headers=client_auth,
     ).json()
-    general = next(row for row in conversations if row["kind"] == "fiscal")
+    general = next(row for row in conversations if row["kind"] == "general")
     sent = client.post(
         f"/api/v1/messaging/client/conversations/{general['id']}/messages",
         headers=client_auth,

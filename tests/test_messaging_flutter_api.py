@@ -31,8 +31,11 @@ from backend.api.messaging_models import (
     MessagingAttachment,
     MessagingCampaign,
     MessagingCampaignRecipient,
+    MessagingConversation,
+    MessagingConversationAlias,
     MessagingDeletionAudit,
     MessagingMessage,
+    MessagingOrganization,
     MessagingStaff,
     MessagingStaffPresenceConnection,
     MessagingStaffSession,
@@ -114,7 +117,7 @@ def _setup(tmp_path: Path, monkeypatch):
     conversation = next(
         row for row in client.get(
             "/api/v1/messaging/client/conversations", headers=auth,
-        ).json() if row["kind"] == "fiscal"
+        ).json() if row["kind"] == "general"
     )
     return client, factory, staff_headers, auth, accepted["client"]["id"], conversation["id"]
 
@@ -364,7 +367,7 @@ def test_guardar_privacidad_solo_invalida_chats_con_lecturas_y_emite_un_aviso(tm
             org = MessagingOrganization(company_code=f"E{30000 + numero}", name="Empresa sin lecturas")
             db.add(org)
             db.flush()
-            db.add(MessagingConversation(organization_id=org.id, kind="fiscal"))
+            db.add(MessagingConversation(organization_id=org.id, kind="general"))
         db.commit()
     avisos = []
     consultas = []
@@ -561,6 +564,26 @@ def test_baja_maestra_oculta_empresa_y_revoca_acceso(tmp_path, monkeypatch):
     ).json()
     restored = next(row for row in organizations if row["company_code"] == "E10001")
     assert restored["client_access_status"] == "disabled"
+
+
+def test_sync_profile_aprovisiona_solo_general_y_private(tmp_path, monkeypatch):
+    client, factory = _api(tmp_path, monkeypatch)
+
+    response = client.put(
+        "/api/v1/messaging/client/internal/sync-profile",
+        headers={"X-API-Key": "test-secret"},
+        json={"company_code": "E20001", "name": "Empresa nueva"},
+    )
+
+    assert response.status_code == 200
+    with factory() as db:
+        organization = db.scalar(select(MessagingOrganization).where(
+            MessagingOrganization.company_code == "E20001",
+        ))
+        kinds = set(db.scalars(select(MessagingConversation.kind).where(
+            MessagingConversation.organization_id == organization.id,
+        )))
+        assert kinds == {"general", "private"}
 
 
 def test_notas_de_voz_se_reproducen_y_no_entran_en_bandeja_documental(
@@ -1035,7 +1058,7 @@ def test_bandeja_staff_incluye_clientes_activos_sin_chat_previo(tmp_path, monkey
     employee_targets = client.get(
         "/api/v1/messaging/staff/conversation-targets", headers=employee,
     ).json()
-    assert {row["kind"] for row in employee_targets} == {"fiscal"}
+    assert {row["kind"] for row in employee_targets} == {"general"}
     employee_inbox = client.get(
         "/api/v1/messaging/staff/conversations", headers=employee,
     ).json()
@@ -1068,7 +1091,7 @@ def test_bandeja_staff_incluye_clientes_activos_sin_chat_previo(tmp_path, monkey
     ).json() == []
 
 
-def test_cliente_recibe_etiquetas_para_sus_tres_canales(tmp_path, monkeypatch):
+def test_cliente_recibe_etiquetas_para_general_y_asesor(tmp_path, monkeypatch):
     client, _factory, staff_headers, auth, _client_id, _conversation_id = _setup(
         tmp_path, monkeypatch,
     )
@@ -1085,14 +1108,74 @@ def test_cliente_recibe_etiquetas_para_sus_tres_canales(tmp_path, monkeypatch):
     ).json()
 
     assert {row["kind"]: row["channel_label"] for row in rows} == {
-        "laboral": "LA",
-        "fiscal": "CF",
+        "general": "CG",
         "private": "AD",
     }
     private = next(row for row in rows if row["kind"] == "private")
     assert private["channel_avatar_url"].endswith("/client/avatars/admin")
     assert len(private["channel_avatar_version"]) == 12
     assert client.get(private["channel_avatar_url"], headers=auth).status_code == 200
+
+
+def test_paginacion_devuelve_ultimos_y_cursor_estable(tmp_path, monkeypatch):
+    client, _factory, _staff_headers, auth, _client_id, conversation_id = _setup(
+        tmp_path, monkeypatch,
+    )
+    sent = []
+    for index in range(5):
+        response = client.post(
+            f"/api/v1/messaging/client/conversations/{conversation_id}/messages",
+            headers=auth,
+            data={"body": f"Mensaje {index}", "idempotency_key": f"page-{index}"},
+        )
+        assert response.status_code == 200
+        sent.append(response.json())
+
+    latest = client.get(
+        f"/api/v1/messaging/client/conversations/{conversation_id}/messages",
+        headers=auth, params={"limit": 2},
+    ).json()
+    assert [row["id"] for row in latest] == [sent[3]["id"], sent[4]["id"]]
+
+    previous = client.get(
+        f"/api/v1/messaging/client/conversations/{conversation_id}/messages",
+        headers=auth,
+        params={"limit": 2, "before_message_id": latest[0]["id"]},
+    ).json()
+    assert [row["id"] for row in previous] == [sent[1]["id"], sent[2]["id"]]
+
+    unified = client.get(
+        "/api/v1/messaging/client/unified-messages",
+        headers=auth, params={"limit": 2},
+    ).json()
+    assert [row["id"] for row in unified] == [sent[3]["id"], sent[4]["id"]]
+
+
+def test_alias_laboral_fiscal_resuelve_el_canal_general(tmp_path, monkeypatch):
+    client, factory, staff_headers, auth, _client_id, conversation_id = _setup(
+        tmp_path, monkeypatch,
+    )
+    retired_id = "canal-fiscal-retirado"
+    with factory() as db:
+        db.add(MessagingConversationAlias(
+            old_conversation_id=retired_id,
+            conversation_id=conversation_id,
+        ))
+        db.commit()
+
+    sent = client.post(
+        f"/api/v1/messaging/client/conversations/{retired_id}/messages",
+        headers=auth,
+        data={"body": "Enlace antiguo", "idempotency_key": "old-link"},
+    )
+    assert sent.status_code == 200
+    assert sent.json()["conversation_id"] == conversation_id
+    listed = client.get(
+        f"/api/v1/messaging/staff/conversations/{retired_id}/messages",
+        headers=staff_headers("employee"),
+    )
+    assert listed.status_code == 200
+    assert [row["id"] for row in listed.json()] == [sent.json()["id"]]
 
 
 def test_reply_soft_delete_hard_delete_y_permisos(tmp_path, monkeypatch):
@@ -1213,6 +1296,7 @@ def test_grupos_miembros_campana_e_idempotencia(tmp_path, monkeypatch):
         },
     )
     assert campaign.status_code == 201
+    assert campaign.json()["channel"] == "general"
     campaign_id = campaign.json()["id"]
     detail = client.get(
         f"/api/v1/messaging/staff/admin/campaigns/{campaign_id}/recipients",

@@ -78,7 +78,7 @@ def _seed(factory):
     with factory() as db:
         org = MessagingOrganization(company_code="E00001", name="Empresa Test", active=True)
         db.add(org); db.flush()
-        conv = MessagingConversation(organization_id=org.id, kind="fiscal")
+        conv = MessagingConversation(organization_id=org.id, kind="general")
         db.add(conv); db.flush()
         client = MessagingClient(
             organization_id=org.id, name="Cliente Test", email="cliente@test.es",
@@ -736,7 +736,7 @@ class TestAislamiento:
         with factory() as db:
             org2 = MessagingOrganization(company_code="E00002", name="Empresa 2")
             db.add(org2); db.flush()
-            conv2 = MessagingConversation(organization_id=org2.id, kind="fiscal")
+            conv2 = MessagingConversation(organization_id=org2.id, kind="general")
             db.add(conv2); db.commit()
         # Crear staff sin canal autorizado para la segunda organizacion
         # (En este setup simplificado el staff tiene acceso global;

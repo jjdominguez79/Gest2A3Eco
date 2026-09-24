@@ -372,7 +372,6 @@ def startup():
             "SELECT 1 FROM msg_staff_sessions AS session "
             "WHERE session.staff_external_id=staff.external_id)"
         ))
-        conn.execute(text("UPDATE msg_conversations SET kind='fiscal' WHERE kind='general'"))
         conn.execute(text(
             "UPDATE msg_organizations SET is_test=TRUE "
             "WHERE UPPER(TRIM(company_code)) IN ('E0000', 'E00000')"
@@ -414,6 +413,7 @@ def startup():
         "027_dehu_daily_sync_time.sql",
         "028_dev_notifications.sql",
         "029_dehu_activation_history.sql",
+        "030_general_client_channel.sql",
     ):
         _mig_path = Path(__file__).resolve().parent.parent / "migrations" / _mig_name
         if _mig_path.exists():
@@ -425,7 +425,7 @@ def startup():
             existing = set(db.scalars(select(messaging_models.MessagingConversation.kind).where(
                 messaging_models.MessagingConversation.organization_id == org.id,
             )))
-            for channel in ("laboral", "fiscal", "private"):
+            for channel in ("general", "private"):
                 if channel not in existing:
                     db.add(messaging_models.MessagingConversation(
                         organization_id=org.id, kind=channel,

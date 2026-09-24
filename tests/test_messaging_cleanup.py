@@ -77,7 +77,7 @@ def _organization(db, code: str, *, is_test: bool) -> tuple[MessagingOrganizatio
         email=f"{code.lower()}@example.test",
     )
     conversation = MessagingConversation(
-        organization_id=organization.id, kind="fiscal",
+        organization_id=organization.id, kind="general",
     )
     db.add_all([client, conversation])
     db.flush()

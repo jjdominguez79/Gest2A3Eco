@@ -33,10 +33,15 @@ class _UnifiedConversationScreenState
   bool _sending = false;
   String? _lastMessageMarkedRead;
   String? _messagePendingScrollId;
+  final List<Message> _olderMessages = [];
+  bool _loadingEarlier = false;
+  bool _hasEarlier = true;
+  String? _oldestMessageId;
 
   @override
   void initState() {
     super.initState();
+    _scroll.addListener(_loadEarlierWhenNeeded);
     WidgetsBinding.instance.addPostFrameCallback((_) => _markRead());
   }
 
@@ -53,6 +58,38 @@ class _UnifiedConversationScreenState
       await ref.read(messagingRepositoryProvider).markAllRead();
       ref.invalidate(unifiedConversationProvider);
     } catch (_) {}
+  }
+
+  void _loadEarlierWhenNeeded() {
+    if (!_scroll.hasClients || _loadingEarlier || !_hasEarlier) return;
+    if (_scroll.position.pixels >= _scroll.position.maxScrollExtent - 160) {
+      unawaited(_loadEarlier());
+    }
+  }
+
+  Future<void> _loadEarlier() async {
+    final before = _oldestMessageId;
+    if (before == null || _loadingEarlier || !_hasEarlier) return;
+    setState(() => _loadingEarlier = true);
+    try {
+      final page = await ref.read(messagingRepositoryProvider).unifiedMessages(
+        beforeMessageId: before,
+      );
+      if (!mounted) return;
+      final known = _olderMessages.map((message) => message.id).toSet();
+      setState(() {
+        _olderMessages.insertAll(
+          0,
+          page.where((message) => known.add(message.id)),
+        );
+        _hasEarlier = page.length == 100;
+        if (_olderMessages.isNotEmpty) {
+          _oldestMessageId = _olderMessages.first.id;
+        }
+      });
+    } finally {
+      if (mounted) setState(() => _loadingEarlier = false);
+    }
   }
 
   void _markReadWhenMessagesArrive(List<Message> messages) {
@@ -310,7 +347,20 @@ class _UnifiedConversationScreenState
                   ],
                 ),
               ),
-              data: (messages) {
+              data: (latestMessages) {
+                final byId = <String, Message>{
+                  for (final message in _olderMessages) message.id: message,
+                  for (final message in latestMessages) message.id: message,
+                };
+                final messages = byId.values.toList()
+                  ..sort((a, b) {
+                    final byDate = a.createdAt.compareTo(b.createdAt);
+                    return byDate != 0 ? byDate : a.id.compareTo(b.id);
+                  });
+                _oldestMessageId = messages.firstOrNull?.id;
+                if (_olderMessages.isEmpty && latestMessages.length < 100) {
+                  _hasEarlier = false;
+                }
                 _scrollToSentMessageWhenReady(messages);
                 if (messages.isEmpty) {
                   return const Center(
@@ -338,8 +388,14 @@ class _UnifiedConversationScreenState
                     controller: _scroll,
                     reverse: true,
                     padding: const EdgeInsets.symmetric(vertical: 14),
-                    itemCount: messages.length,
+                    itemCount: messages.length + (_loadingEarlier ? 1 : 0),
                     itemBuilder: (context, index) {
+                      if (_loadingEarlier && index == messages.length) {
+                        return const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: Center(child: CircularProgressIndicator()),
+                        );
+                      }
                       final messageIndex = messages.length - 1 - index;
                       final message = messages[messageIndex];
                       final profile = ref

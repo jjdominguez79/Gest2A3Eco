@@ -242,12 +242,21 @@ class MessagingConversation(Base):
     __table_args__ = (UniqueConstraint("organization_id", "kind"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     organization_id: Mapped[str] = mapped_column(ForeignKey("msg_organizations.id", ondelete="CASCADE"), index=True)
-    kind: Mapped[str] = mapped_column(String(16))  # laboral | fiscal | private
+    kind: Mapped[str] = mapped_column(String(16))  # general | private
     state: Mapped[str] = mapped_column(String(20), default="pendiente", index=True)
     assigned_staff_external_id: Mapped[str] = mapped_column(String(64), default="")
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, index=True)
+
+
+class MessagingConversationAlias(Base):
+    __tablename__ = "msg_conversation_aliases"
+    old_conversation_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_conversations.id", ondelete="CASCADE"), index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class MessagingMessage(Base):
@@ -404,7 +413,7 @@ class MessagingCampaign(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String(160))
     body: Mapped[str] = mapped_column(Text)
-    channel: Mapped[str] = mapped_column(String(20), default="fiscal")
+    channel: Mapped[str] = mapped_column(String(20), default="general")
     created_by: Mapped[str] = mapped_column(String(64), index=True)
     status: Mapped[str] = mapped_column(String(20), default="draft", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

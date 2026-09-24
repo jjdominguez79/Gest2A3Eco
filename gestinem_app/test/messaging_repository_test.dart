@@ -40,7 +40,7 @@ void main() {
         'id': 'conversation-1',
         'company_code': 'E00001',
         'company_name': 'Empresa Uno',
-        'kind': 'fiscal',
+        'kind': 'general',
         'state': 'pendiente',
         'unread_count': 2,
         'updated_at': '2026-08-15T10:00:00Z',
@@ -84,10 +84,16 @@ void main() {
     )..httpClientAdapter = adapter;
     final api = ApiClient(dio: dio, tokenProvider: () => testSession.token);
 
-    final rows = await MessagingRepository(api).unifiedMessages();
+    final rows = await MessagingRepository(
+      api,
+    ).unifiedMessages(limit: 25, beforeMessageId: 'message-100');
 
     expect(rows, isEmpty);
     expect(adapter.lastRequest!.path, '/client/unified-messages');
+    expect(adapter.lastRequest!.queryParameters, {
+      'limit': 25,
+      'before_message_id': 'message-100',
+    });
   });
 
   test('administrador puede desactivar el acceso de un cliente', () async {
@@ -270,7 +276,7 @@ void main() {
       'id': 'conversation-1',
       'company_code': 'E00001',
       'company_name': 'Empresa Uno',
-      'kind': 'fiscal',
+      'kind': 'general',
       'state': 'pendiente',
       'unread_count': 0,
       'updated_at': '2026-08-22T10:00:00Z',

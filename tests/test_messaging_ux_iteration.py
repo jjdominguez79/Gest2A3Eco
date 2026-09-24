@@ -261,7 +261,7 @@ class TestMarkUnread:
             session.flush()
 
             conv = MessagingConversation(
-                id=str(uuid.uuid4()), organization_id=org.id, kind="fiscal",
+                id=str(uuid.uuid4()), organization_id=org.id, kind="general",
             )
             session.add(conv)
             session.flush()
@@ -331,13 +331,13 @@ class TestUnifiedConversation:
             session.add(client)
             session.flush()
 
-            conv_laboral = MessagingConversation(
-                id=str(uuid.uuid4()), organization_id=org.id, kind="laboral",
+            conv_general = MessagingConversation(
+                id=str(uuid.uuid4()), organization_id=org.id, kind="general",
             )
-            conv_fiscal = MessagingConversation(
-                id=str(uuid.uuid4()), organization_id=org.id, kind="fiscal",
+            conv_private = MessagingConversation(
+                id=str(uuid.uuid4()), organization_id=org.id, kind="private",
             )
-            session.add_all([conv_laboral, conv_fiscal])
+            session.add_all([conv_general, conv_private])
             session.commit()
 
             # Verificar que channel_ids puede construirse
@@ -349,8 +349,7 @@ class TestUnifiedConversation:
             ).all()
 
             channel_ids = {c.kind: c.id for c in convs}
-            assert "laboral" in channel_ids
-            assert "fiscal" in channel_ids
+            assert set(channel_ids) == {"general", "private"}
 
             # Verificar unread_count inicial es 0
             total_unread = sum(
@@ -442,7 +441,7 @@ class TestAdminDeleteMessages:
 # ---------------------------------------------------------------------------
 
 class TestStaffAccessAndInternalNotifications:
-    def test_admin_ve_todos_y_empleado_solo_su_canal_activo(self, db_session):
+    def test_todo_empleado_activo_ve_general_sin_permisos_heredados(self, db_session):
         from backend.api.messaging_api import _can_access_conversation
         from backend.api.messaging_models import (
             MessagingConversation, MessagingOrganization, MessagingStaff,
@@ -463,12 +462,12 @@ class TestStaffAccessAndInternalNotifications:
         )
         db_session.add_all([org, admin, employee])
         db_session.flush()
-        conv = MessagingConversation(organization_id=org.id, kind="fiscal")
+        conv = MessagingConversation(organization_id=org.id, kind="general")
         db_session.add(conv)
         db_session.flush()
 
         assert _can_access_conversation(db_session, conv, admin)
-        assert not _can_access_conversation(db_session, conv, employee)
+        assert _can_access_conversation(db_session, conv, employee)
 
         db_session.add(MessagingStaffChannel(
             staff_external_id=employee.external_id, channel="fiscal",
@@ -478,7 +477,7 @@ class TestStaffAccessAndInternalNotifications:
 
         org.active = False
         db_session.flush()
-        assert _can_access_conversation(db_session, conv, admin)
+        assert not _can_access_conversation(db_session, conv, admin)
         assert not _can_access_conversation(db_session, conv, employee)
 
     def test_estado_de_invitacion_y_desactivacion(self, db_session):

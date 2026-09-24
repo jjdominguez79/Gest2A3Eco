@@ -83,38 +83,10 @@ class EmpleadosScreen extends ConsumerWidget {
                     ],
                     onChanged: null,
                   ),
-                  const SizedBox(height: 14),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Canales',
-                      style: Theme.of(context).textTheme.labelLarge,
-                    ),
-                  ),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      for (final item in const [
-                        ('laboral', 'Laboral'),
-                        ('fiscal', 'Contable / Fiscal'),
-                      ])
-                        FilterChip(
-                          label: Text(item.$2),
-                          selected: canales.contains(item.$1),
-                          onSelected: guardando
-                              ? null
-                              : (selected) => setState(
-                                  () => selected
-                                      ? canales.add(item.$1)
-                                      : canales.remove(item.$1),
-                                ),
-                        ),
-                    ],
-                  ),
                   const Padding(
                     padding: EdgeInsets.only(top: 12),
                     child: Text(
-                      'El alta, la baja, el correo y el rol se gestionan desde la aplicación de escritorio.',
+                      'Todo empleado activo accede al Canal general. La pertenencia a equipos se gestiona desde Gestionar grupos internos. El alta, la baja, el correo y el rol se gestionan desde la aplicación de escritorio.',
                     ),
                   ),
                 ],
@@ -305,7 +277,7 @@ class EmpleadosScreen extends ConsumerWidget {
       subtitle: Text(
         '${empleado.email}\n'
         '${empleado.rol == 'admin' ? 'Administrador' : 'Empleado'} · '
-        '${empleado.canales.isEmpty ? 'Sin canales' : empleado.canales.join(', ')} · '
+        'Canal general · '
         '${empleado.vinculado ? 'Microsoft vinculado' : 'Pendiente de primer acceso'} · '
         '${!empleado.activo
             ? 'Acceso desactivado'

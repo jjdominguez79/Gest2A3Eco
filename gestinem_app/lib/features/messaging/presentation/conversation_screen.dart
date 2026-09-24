@@ -99,6 +99,10 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   bool _initialScrollPending = true;
   bool _initialScrollScheduled = false;
   Timer? _presenceTimer;
+  final List<Message> _olderMessages = [];
+  bool _loadingEarlier = false;
+  bool _hasEarlier = true;
+  String? _oldestMessageId;
   late final NotificationsService _notificationsService;
 
   @override
@@ -106,6 +110,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     super.initState();
     _body.text = widget.initialDraft ?? '';
     _notificationsService = ref.read(notificationsServiceProvider);
+    _scroll.addListener(_loadEarlierWhenNeeded);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _activateConversation();
       _markRead();
@@ -121,6 +126,10 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       _messagePendingScrollId = null;
       _initialScrollPending = true;
       _initialScrollScheduled = false;
+      _olderMessages.clear();
+      _loadingEarlier = false;
+      _hasEarlier = true;
+      _oldestMessageId = null;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _activateConversation();
         _markRead();
@@ -150,6 +159,44 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       const Duration(seconds: 30),
       (_) => unawaited(service.setActiveTarget(type, widget.conversationId)),
     );
+  }
+
+  void _loadEarlierWhenNeeded() {
+    if (widget.internal || !_scroll.hasClients || _loadingEarlier || !_hasEarlier) {
+      return;
+    }
+    if (_scroll.position.pixels >= _scroll.position.maxScrollExtent - 160) {
+      unawaited(_loadEarlier());
+    }
+  }
+
+  Future<void> _loadEarlier() async {
+    final before = _oldestMessageId;
+    if (before == null || _loadingEarlier || !_hasEarlier) return;
+    setState(() => _loadingEarlier = true);
+    try {
+      final profile = ref.read(sessionProvider).valueOrNull?.profile;
+      if (profile == null) return;
+      final page = await ref.read(messagingRepositoryProvider).messages(
+        profile,
+        widget.conversationId,
+        beforeMessageId: before,
+      );
+      if (!mounted) return;
+      final known = _olderMessages.map((message) => message.id).toSet();
+      setState(() {
+        _olderMessages.insertAll(
+          0,
+          page.where((message) => known.add(message.id)),
+        );
+        _hasEarlier = page.length == 100;
+        if (_olderMessages.isNotEmpty) {
+          _oldestMessageId = _olderMessages.first.id;
+        }
+      });
+    } finally {
+      if (mounted) setState(() => _loadingEarlier = false);
+    }
   }
 
   Future<void> _markRead() async {
@@ -1030,7 +1077,20 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
           child: asyncMessages.when(
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (error, _) => Center(child: Text(apiErrorMessage(error))),
-            data: (messages) {
+            data: (latestMessages) {
+              final byId = <String, Message>{
+                for (final message in _olderMessages) message.id: message,
+                for (final message in latestMessages) message.id: message,
+              };
+              final messages = byId.values.toList()
+                ..sort((a, b) {
+                  final byDate = a.createdAt.compareTo(b.createdAt);
+                  return byDate != 0 ? byDate : a.id.compareTo(b.id);
+                });
+              _oldestMessageId = messages.firstOrNull?.id;
+              if (_olderMessages.isEmpty && latestMessages.length < 100) {
+                _hasEarlier = false;
+              }
               _scrollToBottomWhenOpened(messages);
               _scrollToSentMessageWhenReady(messages);
               return Scrollbar(
@@ -1040,8 +1100,14 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                   controller: _scroll,
                   reverse: true,
                   padding: const EdgeInsets.symmetric(vertical: 14),
-                  itemCount: messages.length,
+                  itemCount: messages.length + (_loadingEarlier ? 1 : 0),
                   itemBuilder: (context, index) {
+                    if (_loadingEarlier && index == messages.length) {
+                      return const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: Center(child: CircularProgressIndicator()),
+                      );
+                    }
                     final message = messages[messages.length - 1 - index];
                     final mine = messageBelongsToProfile(message, profile);
                     return MessageBubble(

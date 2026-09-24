@@ -342,12 +342,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   title: const Text('Rol'),
                   subtitle: Text(profile.staffRole!.name),
                 ),
-              if (profile.channels.isNotEmpty)
-                ListTile(
-                  leading: const Icon(Icons.category_outlined),
-                  title: const Text('Canales'),
-                  subtitle: Text(profile.channels.join(', ')),
-                ),
               ListTile(
                 leading: const Icon(Icons.info_outline),
                 title: const Text('Acerca de Gestinem'),

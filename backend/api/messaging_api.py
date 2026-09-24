@@ -18,7 +18,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -26,7 +26,7 @@ from backend.api.client_access import revoke_organization_client_access
 from backend.api.config import get_settings
 from backend.api.database import SessionLocal
 from backend.api.messaging_models import (
-    MessagingAttachment, MessagingClient, MessagingConversation, MessagingDevice, MessagingDownload,
+    MessagingAttachment, MessagingClient, MessagingConversation, MessagingConversationAlias, MessagingDevice, MessagingDownload,
     MessagingAppDevice, MessagingCampaign, MessagingCampaignRecipient,
     MessagingDeletionAudit, MessagingEvent, MessagingGroup, MessagingGroupMember,
     MessagingInvitation, MessagingMessage, MessagingMessageVersion, MessagingOrganization,
@@ -59,7 +59,10 @@ ALLOWED_SUFFIXES = {
     ".txt", ".xml", ".csv", ".xls", ".xlsx", ".doc", ".docx", ".zip",
     ".aac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".webm",
 }
-STAFF_CHANNELS = {"laboral", "fiscal"}
+CLIENT_CHANNELS = {"general", "private"}
+# Compatibilidad para convertir una sola vez los equipos internos heredados.
+# Estas filas ya no conceden acceso a conversaciones de clientes.
+LEGACY_STAFF_GROUP_CHANNELS = {"laboral", "fiscal"}
 STAFF_ROLES = {"admin", "empleado"}
 TEST_COMPANY_CODES = {"E0000", "E00000"}
 
@@ -224,7 +227,7 @@ class GroupMemberIn(BaseModel):
 class CampaignIn(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     body: str = Field(min_length=1, max_length=20000)
-    channel: str = "fiscal"
+    channel: str = "general"
     all_clients: bool = False
     group_ids: list[str] = Field(default_factory=list)
     client_ids: list[str] = Field(default_factory=list)
@@ -428,7 +431,7 @@ def _validated_client_email(value: str) -> str:
 
 
 def _set_staff_channels(db: Session, external_id: str, channels: set[str]) -> None:
-    if not channels <= STAFF_CHANNELS:
+    if not channels <= LEGACY_STAFF_GROUP_CHANNELS:
         raise HTTPException(422, "Canal no valido")
     db.query(MessagingStaffChannel).filter(
         MessagingStaffChannel.staff_external_id == external_id,
@@ -471,7 +474,7 @@ def _staff_online(db: Session, external_id: str) -> bool:
 def _ensure_staff_group_threads(db: Session) -> None:
     """Convierte los equipos fijos heredados en grupos internos configurables."""
     changed = False
-    for channel in sorted(STAFF_CHANNELS):
+    for channel in sorted(LEGACY_STAFF_GROUP_CHANNELS):
         marker = f"legacy-channel:{channel}"
         group = db.scalar(select(MessagingGroup).where(
             MessagingGroup.group_type == "staff_chat",
@@ -560,11 +563,9 @@ def _can_access_conversation(
             org.private_owner_external_id == staff.external_id
             or (not org.private_owner_external_id and staff.role == "admin")
         )
-    if staff.role == "admin":
-        return True
-    if not org.active:
-        return False
-    return conv.kind in _channels_for_staff(db, staff)
+    if conv.kind == "general":
+        return bool(staff.active and staff.role in STAFF_ROLES and org.active)
+    return False
 
 
 def _require_admin(staff: MessagingStaff = Depends(_staff)) -> MessagingStaff:
@@ -669,8 +670,13 @@ def _organization_access_state(db: Session, org: MessagingOrganization) -> dict:
     }
 
 
+def _resolve_conversation_id(db: Session, conversation_id: str) -> str:
+    alias = db.get(MessagingConversationAlias, conversation_id)
+    return alias.conversation_id if alias else conversation_id
+
+
 def _conversation_for_staff(db: Session, conversation_id: str, staff: MessagingStaff) -> MessagingConversation:
-    conv = db.get(MessagingConversation, conversation_id)
+    conv = db.get(MessagingConversation, _resolve_conversation_id(db, conversation_id))
     if not conv:
         raise HTTPException(404, "Conversacion no encontrada")
     if not _can_access_conversation(db, conv, staff):
@@ -679,8 +685,9 @@ def _conversation_for_staff(db: Session, conversation_id: str, staff: MessagingS
 
 
 def _conversation_for_client(db: Session, conversation_id: str, client: MessagingClient) -> MessagingConversation:
-    conv = db.get(MessagingConversation, conversation_id)
-    if not conv or conv.organization_id != client.organization_id:
+    conv = db.get(MessagingConversation, _resolve_conversation_id(db, conversation_id))
+    if (not conv or conv.organization_id != client.organization_id
+            or conv.kind not in CLIENT_CHANNELS):
         raise HTTPException(404, "Conversacion no encontrada")
     return conv
 
@@ -702,7 +709,7 @@ def _serialize_conversation(
     org = db.get(MessagingOrganization, conv.organization_id)
     last = db.scalar(
         select(MessagingMessage).where(MessagingMessage.conversation_id == conv.id)
-        .order_by(MessagingMessage.created_at.desc()).limit(1)
+        .order_by(MessagingMessage.created_at.desc(), MessagingMessage.id.desc()).limit(1)
     )
     active_client_count = int(db.scalar(select(func.count(MessagingClient.id)).where(
         MessagingClient.organization_id == conv.organization_id,
@@ -710,7 +717,7 @@ def _serialize_conversation(
         MessagingClient.password_hash != "",
     )) or 0)
     access = access or _organization_access_state(db, org)
-    channel_label = {"laboral": "LA", "fiscal": "CF"}.get(conv.kind, "")
+    channel_label = "CG" if conv.kind == "general" else ""
     channel_avatar_url = ""
     channel_avatar_version = ""
     if conv.kind == "private":
@@ -1002,8 +1009,9 @@ def _queue_app_pushes(
         if conv.kind == "private" or org.company_code.strip().upper() in TEST_COMPANY_CODES:
             user_ids = {org.private_owner_external_id} if org.private_owner_external_id else set()
         else:
-            user_ids = set(db.scalars(select(MessagingStaffChannel.staff_external_id).where(
-                MessagingStaffChannel.channel == conv.kind,
+            user_ids = set(db.scalars(select(MessagingStaff.external_id).where(
+                MessagingStaff.active.is_(True),
+                MessagingStaff.role.in_(STAFF_ROLES),
             )))
     if not user_ids:
         return
@@ -1054,6 +1062,12 @@ def _publish_conversation_event(db: Session, conv: MessagingConversation, event_
     staff_ids = None
     if conv.kind == "private" or (org and org.company_code.strip().upper() in TEST_COMPANY_CODES):
         staff_ids = {org.private_owner_external_id} if org and org.private_owner_external_id else set()
+    elif conv.kind == "general":
+        staff_ids = {staff.external_id for staff in db.scalars(
+            select(MessagingStaff).where(
+                MessagingStaff.active.is_(True), MessagingStaff.role.in_(STAFF_ROLES),
+            )
+        )}
     hub.publish(payload, organization_id=conv.organization_id, channel=conv.kind, staff_ids=staff_ids)
 
 
@@ -1132,7 +1146,7 @@ def put_staff(external_id: str, payload: StaffIn, db: Session = Depends(get_db))
     item.role, item.active = payload.role, payload.active
     if payload.channels is not None:
         channels = set(payload.channels)
-        if not channels <= STAFF_CHANNELS:
+        if not channels <= LEGACY_STAFF_GROUP_CHANNELS:
             raise HTTPException(422, "Canal no valido")
         db.query(MessagingStaffChannel).filter(
             MessagingStaffChannel.staff_external_id == external_id,
@@ -1165,8 +1179,7 @@ def put_organization(company_code: str, payload: OrganizationIn, db: Session = D
         item = MessagingOrganization(company_code=company_code, name=payload.name)
         db.add(item); db.flush()
         db.add_all([
-            MessagingConversation(organization_id=item.id, kind="laboral"),
-            MessagingConversation(organization_id=item.id, kind="fiscal"),
+            MessagingConversation(organization_id=item.id, kind="general"),
             MessagingConversation(organization_id=item.id, kind="private"),
         ])
     item.name = payload.name
@@ -1996,7 +2009,7 @@ def create_staff_user(
     if payload.role not in STAFF_ROLES:
         raise HTTPException(422, "Rol no valido")
     channels = set(payload.channels)
-    if not channels <= STAFF_CHANNELS:
+    if not channels <= LEGACY_STAFF_GROUP_CHANNELS:
         raise HTTPException(422, "Canal no valido")
     if db.scalar(select(MessagingStaff).where(MessagingStaff.email == email)):
         raise HTTPException(409, "Ya existe un usuario con ese email")
@@ -2789,6 +2802,7 @@ def _set_cookie(response: Response, token: str) -> None:
 def client_conversations(client: MessagingClient = Depends(_client), db: Session = Depends(get_db)):
     rows = db.scalars(select(MessagingConversation).where(
         MessagingConversation.organization_id == client.organization_id,
+        MessagingConversation.kind.in_(CLIENT_CHANNELS),
     ).order_by(MessagingConversation.kind)).all()
     result = []
     for row in rows:
@@ -2798,17 +2812,18 @@ def client_conversations(client: MessagingClient = Depends(_client), db: Session
     return result
 
 
-@router.get("/client/unified-conversation")
+@router.get("/client/unified-conversation", deprecated=True)
 def client_unified_conversation(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """Vista unificada de todas las conversaciones del cliente."""
+    """Compatibilidad: metadatos del canal general, sin mezclar el privado."""
     client = _client(db, request.headers.get("authorization", ""), request.cookies.get("msg_session", ""))
     org = db.get(MessagingOrganization, client.organization_id)
     convs = db.scalars(
         select(MessagingConversation).where(
-            MessagingConversation.organization_id == client.organization_id
+            MessagingConversation.organization_id == client.organization_id,
+            MessagingConversation.kind == "general",
         ).order_by(MessagingConversation.updated_at.desc())
     ).all()
 
@@ -2826,7 +2841,7 @@ def client_unified_conversation(
             last_msg_row = db.scalar(
                 select(MessagingMessage).where(
                     MessagingMessage.conversation_id == conv.id
-                ).order_by(MessagingMessage.created_at.desc()).limit(1)
+                ).order_by(MessagingMessage.created_at.desc(), MessagingMessage.id.desc()).limit(1)
             )
             if last_msg_row:
                 last_message = _serialize_message(db, last_msg_row, "client")
@@ -2841,28 +2856,35 @@ def client_unified_conversation(
     }
 
 
-@router.get("/client/unified-messages")
+@router.get("/client/unified-messages", deprecated=True)
 def client_unified_messages(
     request: Request,
-    limit: int = Query(default=100, le=500),
+    limit: int = Query(default=100, ge=1, le=500),
+    before_message_id: str = Query(default=""),
     db: Session = Depends(get_db),
 ):
-    """Todos los mensajes del cliente de todos los canales, ordenados cronologicamente."""
+    """Compatibilidad: mensajes del canal general, ordenados cronologicamente."""
     client = _client(db, request.headers.get("authorization", ""), request.cookies.get("msg_session", ""))
     convs = db.scalars(
         select(MessagingConversation).where(
-            MessagingConversation.organization_id == client.organization_id
+            MessagingConversation.organization_id == client.organization_id,
+            MessagingConversation.kind == "general",
         )
     ).all()
     conv_ids = [c.id for c in convs]
     if not conv_ids:
         return []
 
-    rows = db.scalars(
-        select(MessagingMessage).where(
-            MessagingMessage.conversation_id.in_(conv_ids)
-        ).order_by(MessagingMessage.created_at.asc()).limit(limit)
-    ).all()
+    stmt = select(MessagingMessage).where(MessagingMessage.conversation_id.in_(conv_ids))
+    if before_message_id:
+        before = db.get(MessagingMessage, before_message_id)
+        if not before or before.conversation_id not in conv_ids:
+            raise HTTPException(422, "before_message_id no pertenece al canal general")
+        stmt = stmt.where(tuple_(MessagingMessage.created_at, MessagingMessage.id) <
+                          tuple_(before.created_at, before.id))
+    rows = list(reversed(db.scalars(
+        stmt.order_by(MessagingMessage.created_at.desc(), MessagingMessage.id.desc()).limit(limit)
+    ).all()))
 
     result = [_serialize_message(db, row, "client") for row in rows]
     for conv in convs:
@@ -2872,7 +2894,7 @@ def client_unified_messages(
     return result
 
 
-@router.post("/client/unified-messages", status_code=201)
+@router.post("/client/unified-messages", status_code=201, deprecated=True)
 def client_send_unified(
     request: Request,
     background: BackgroundTasks,
@@ -2882,38 +2904,15 @@ def client_send_unified(
     files: list[UploadFile] = File(default=[]),
     db: Session = Depends(get_db),
 ):
-    """Envia un mensaje al canal del ultimo mensaje recibido del staff, o fiscal como fallback."""
+    """Compatibilidad: envia siempre al canal general."""
     client = _client(db, request.headers.get("authorization", ""), request.cookies.get("msg_session", ""))
     convs = db.scalars(
         select(MessagingConversation).where(
-            MessagingConversation.organization_id == client.organization_id
-        ).order_by(MessagingConversation.updated_at.desc())
-    ).all()
-
-    # Elegir conversacion: la que tenga el ultimo mensaje de staff
-    target_conv = None
-    latest_staff_msg_at = None
-
-    for conv in convs:
-        last_staff_msg = db.scalar(
-            select(MessagingMessage).where(
-                MessagingMessage.conversation_id == conv.id,
-                MessagingMessage.author_type == "staff",
-                MessagingMessage.deleted_at.is_(None),
-            ).order_by(MessagingMessage.created_at.desc()).limit(1)
+            MessagingConversation.organization_id == client.organization_id,
+            MessagingConversation.kind == "general",
         )
-        if last_staff_msg and (latest_staff_msg_at is None or last_staff_msg.created_at > latest_staff_msg_at):
-            latest_staff_msg_at = last_staff_msg.created_at
-            target_conv = conv
-
-    # Fallback: preferir canal fiscal, luego laboral, luego cualquiera
-    if target_conv is None:
-        for kind in ("fiscal", "laboral"):
-            target_conv = next((c for c in convs if c.kind == kind), None)
-            if target_conv:
-                break
-        if target_conv is None and convs:
-            target_conv = convs[0]
+    ).all()
+    target_conv = convs[0] if convs else None
 
     if target_conv is None:
         raise HTTPException(404, "No hay conversaciones disponibles")
@@ -2933,8 +2932,8 @@ def client_send_unified(
     if not body.strip() and not files:
         raise HTTPException(422, "El mensaje esta vacio")
 
-    # Validar reply_to dentro de las conversaciones del cliente
-    conv_ids = [c.id for c in convs]
+    # Validar reply_to dentro del canal general.
+    conv_ids = [target_conv.id]
     reply_id = reply_to_message_id or None
     if reply_id:
         reply_msg = db.get(MessagingMessage, reply_id)
@@ -2964,7 +2963,7 @@ def staff_conversations(
     active_only: bool | None = None,
     staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
 ):
-    stmt = select(MessagingConversation)
+    stmt = select(MessagingConversation).where(MessagingConversation.kind.in_(CLIENT_CHANNELS))
     if active_only is True:
         stmt = stmt.where(
             MessagingConversation.started_at.is_not(None) |
@@ -3000,7 +2999,9 @@ def staff_conversation_targets(
 ):
     """Canales de clientes invitados y accesibles para iniciar un chat."""
     rows = db.scalars(
-        select(MessagingConversation).order_by(MessagingConversation.updated_at.desc())
+        select(MessagingConversation).where(
+            MessagingConversation.kind.in_(CLIENT_CHANNELS)
+        ).order_by(MessagingConversation.updated_at.desc())
     ).all()
     result = []
     access_by_organization: dict[str, dict] = {}
@@ -3049,12 +3050,24 @@ def staff_start_conversation(
 
 
 @router.get("/{audience}/conversations/{conversation_id}/messages")
-def messages(audience: str, conversation_id: str, request: Request, db: Session = Depends(get_db)):
+def messages(
+    audience: str, conversation_id: str, request: Request,
+    limit: int = Query(default=100, ge=1, le=500),
+    before_message_id: str = Query(default=""),
+    db: Session = Depends(get_db),
+):
     actor = _resolve_actor(audience, request, db)
     conv = _conversation_for_client(db, conversation_id, actor) if audience == "client" else _conversation_for_staff(db, conversation_id, actor)
-    rows = db.scalars(select(MessagingMessage).where(
-        MessagingMessage.conversation_id == conv.id,
-    ).order_by(MessagingMessage.created_at.asc()).limit(500)).all()
+    stmt = select(MessagingMessage).where(MessagingMessage.conversation_id == conv.id)
+    if before_message_id:
+        before = db.get(MessagingMessage, before_message_id)
+        if not before or before.conversation_id != conv.id:
+            raise HTTPException(422, "before_message_id no pertenece a la conversacion")
+        stmt = stmt.where(tuple_(MessagingMessage.created_at, MessagingMessage.id) <
+                          tuple_(before.created_at, before.id))
+    rows = list(reversed(db.scalars(
+        stmt.order_by(MessagingMessage.created_at.desc(), MessagingMessage.id.desc()).limit(limit)
+    ).all()))
     result = [_serialize_message(db, row, audience) for row in rows]
     actor_id = actor.id if audience == "client" else actor.external_id
     _add_message_states(db, rows, result, "conversation", conv.id, audience, actor_id)
@@ -3108,7 +3121,7 @@ def mark_read(audience: str, conversation_id: str, request: Request, db: Session
     actor_id = actor.id if audience == "client" else actor.external_id
     last = db.scalar(select(MessagingMessage).where(
         MessagingMessage.conversation_id == conv.id,
-    ).order_by(MessagingMessage.created_at.desc()).limit(1))
+    ).order_by(MessagingMessage.created_at.desc(), MessagingMessage.id.desc()).limit(1))
     read = db.scalar(select(MessagingRead).where(
         MessagingRead.conversation_id == conv.id,
         MessagingRead.actor_type == audience,
@@ -3156,8 +3169,9 @@ def mark_unread(
         ).delete()
     elif audience == "staff":
         staff = _staff_from_request(db, request)
+        conv = _conversation_for_staff(db, conversation_id, staff)
         db.query(MessagingRead).filter(
-            MessagingRead.conversation_id == conversation_id,
+            MessagingRead.conversation_id == conv.id,
             MessagingRead.actor_type == "staff",
             MessagingRead.actor_id == staff.external_id,
         ).delete()
@@ -3503,8 +3517,7 @@ def sync_organizations(payload: list[OrganizationIn], db: Session = Depends(get_
             item = MessagingOrganization(company_code=code, name=row.name.strip())
             db.add(item); db.flush()
             db.add_all([
-                MessagingConversation(organization_id=item.id, kind="laboral"),
-                MessagingConversation(organization_id=item.id, kind="fiscal"),
+                MessagingConversation(organization_id=item.id, kind="general"),
                 MessagingConversation(organization_id=item.id, kind="private"),
             ])
         item.name = row.name.strip()
@@ -4004,7 +4017,7 @@ def process_campaign(campaign_id: str) -> None:
                     raise ValueError("Cliente inactivo o inexistente")
                 conv = db.scalar(select(MessagingConversation).where(
                     MessagingConversation.organization_id == client.organization_id,
-                    MessagingConversation.kind == campaign.channel,
+                    MessagingConversation.kind == "general",
                 ))
                 if not conv:
                     raise ValueError("La organizacion no dispone del canal solicitado")
@@ -4074,7 +4087,7 @@ def create_campaign(
     payload: CampaignIn, background: BackgroundTasks,
     admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
 ):
-    if payload.channel not in STAFF_CHANNELS:
+    if payload.channel not in {"general", "laboral", "fiscal"}:
         raise HTTPException(422, "Canal de campana no valido")
     if payload.scheduled_at is not None:
         if payload.scheduled_at.tzinfo is None:
@@ -4106,7 +4119,7 @@ def create_campaign(
     if existing_clients != client_ids or not client_ids:
         raise HTTPException(422, "La campana necesita destinatarios validos")
     campaign = MessagingCampaign(
-        name=payload.name.strip(), body=payload.body.strip(), channel=payload.channel,
+        name=payload.name.strip(), body=payload.body.strip(), channel="general",
         created_by=admin.external_id, status="pending",
         scheduled_at=payload.scheduled_at,
     )
@@ -4201,9 +4214,9 @@ def app_device_presence(
         raise HTTPException(422, "Tipo de destino activo no valido")
     if resolved_type == "conversation" and resolved_id:
         if audience == "client":
-            _conversation_for_client(db, resolved_id, actor)
+            resolved_id = _conversation_for_client(db, resolved_id, actor).id
         else:
-            _conversation_for_staff(db, resolved_id, actor)
+            resolved_id = _conversation_for_staff(db, resolved_id, actor).id
     elif resolved_type == "internal_thread" and resolved_id:
         if audience != "staff":
             raise HTTPException(403, "Destino interno no permitido")
@@ -4292,7 +4305,7 @@ async def messaging_websocket(websocket: WebSocket, audience: str, ticket: str =
             ))
             subscription = hub.subscribe(
                 audience="staff", actor_id=actor.external_id,
-                channels=_channels_for_staff(db, actor),
+                channels={"general"},
             )
         db.commit()
     tareas = set()

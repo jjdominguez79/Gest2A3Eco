@@ -37,7 +37,7 @@ class _DigitalCertificateCardState
         throw StateError('No hay una conversación disponible con el despacho.');
       }
       final target = conversations.firstWhere(
-        (item) => item.kind == 'fiscal',
+        (item) => item.kind == 'general',
         orElse: () => conversations.first,
       );
       if (!mounted) return;

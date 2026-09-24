@@ -25,7 +25,6 @@ class CampaignsScreen extends ConsumerWidget {
     if (!context.mounted) return;
     final name = TextEditingController();
     final body = TextEditingController();
-    var channel = 'fiscal';
     var allClients = true;
     final groupIds = <String>{};
     final clientIds = <String>{};
@@ -52,19 +51,11 @@ class CampaignsScreen extends ConsumerWidget {
                     decoration: const InputDecoration(labelText: 'Mensaje'),
                   ),
                   const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: channel,
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'fiscal',
-                        child: Text('Contable / Fiscal'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'laboral',
-                        child: Text('Laboral'),
-                      ),
-                    ],
-                    onChanged: (value) => setState(() => channel = value!),
+                  const ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: CircleAvatar(child: Text('CG')),
+                    title: Text('Canal general'),
+                    subtitle: Text('Las campañas se envían siempre por este canal.'),
                   ),
                   CheckboxListTile(
                     value: allClients,
@@ -137,7 +128,7 @@ class CampaignsScreen extends ConsumerWidget {
           .create(
             name: name.text.trim(),
             body: body.text.trim(),
-            channel: channel,
+            channel: 'general',
             allClients: allClients,
             groupIds: groupIds.toList(),
             clientIds: clientIds.toList(),
