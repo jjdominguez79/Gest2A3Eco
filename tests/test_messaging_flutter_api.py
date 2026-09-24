@@ -321,9 +321,9 @@ def test_estados_grupo_excluyen_identidad_heredada_del_autor(tmp_path, monkeypat
 
     with factory() as db:
         current = db.get(MessagingStaff, "admin")
-        current.desktop_user_id = "7"
+        current.desktop_user_id = "6"
         legacy = MessagingStaff(
-            external_id="7", name="Admin", email="", desktop_user_id="",
+            external_id="1", name="Admin", email="", desktop_user_id="",
             role="admin", active=True,
         )
         db.add(legacy)
@@ -345,7 +345,7 @@ def test_estados_grupo_excluyen_identidad_heredada_del_autor(tmp_path, monkeypat
         row["actor_id"] for row in state["estado_destinatarios"]
     }
     assert "admin" not in recipient_ids
-    assert "7" not in recipient_ids
+    assert "1" not in recipient_ids
     assert recipient_ids == {"employee"}
 
 

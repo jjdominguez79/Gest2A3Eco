@@ -1895,6 +1895,7 @@ def _staff_thread_recipient_ids(
     return set(db.scalars(select(MessagingStaff.external_id).where(
         MessagingStaff.external_id.in_(candidates),
         MessagingStaff.active.is_(True),
+        (MessagingStaff.email != "") | (MessagingStaff.entra_oid != ""),
     )))
 
 
