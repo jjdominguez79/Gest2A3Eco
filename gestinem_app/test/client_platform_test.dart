@@ -100,6 +100,13 @@ void main() {
     );
     expect(find.text('Solicitudes'), findsOneWidget);
     expect(find.text('Pendiente de revisión'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('privacy-policy-link')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.byKey(const Key('privacy-policy-link')), findsOneWidget);
+    expect(find.byKey(const Key('account-deletion-link')), findsOneWidget);
   });
 
   // -- Perfil empresarial --

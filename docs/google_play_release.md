@@ -1,13 +1,15 @@
 # Publicacion de Gestinem en Google Play
 
-Estado de preparacion: compilacion Android configurada, pero la primera version
-publica no debe enviarse hasta completar los puntos marcados como pendientes.
+Estado de publicacion (24 de septiembre de 2026): la version `0.1.18` (33) se
+ha enviado a revision de Google Play para un lanzamiento completo en Espana.
+Google Play indica que la revision suele completarse en un plazo de 7 dias,
+aunque puede tardar mas.
 
 ## Identidad de la aplicacion
 
-- Nombre: `Gestinem`
+- Nombre: `Gestinem Chat`
 - Identificador inmutable: `es.gestinem.app`
-- Version preparada: `0.1.12` (`versionCode` 27)
+- Version preparada: `0.1.18` (`versionCode` 33)
 - Backend de produccion actual:
   `https://gest2a3eco-production.up.railway.app`
 - Formato de entrega: Android App Bundle (`.aab`)
@@ -15,11 +17,11 @@ publica no debe enviarse hasta completar los puntos marcados como pendientes.
 El identificador no se debe cambiar despues de crear la aplicacion en Play
 Console. Cada entrega posterior debe aumentar el `versionCode` de `pubspec.yaml`.
 
-## 1. Clave de carga (pendiente)
+## 1. Clave de carga
 
-Crear una clave privada de carga y conservar al menos dos copias de seguridad
-fuera del repositorio. No subir el `.jks`, sus contrasenas ni
-`android/key.properties` a Git.
+La clave privada de carga ya esta configurada en este equipo. Conservar al
+menos dos copias de seguridad fuera del repositorio. No subir el `.jks`, sus
+contrasenas ni `android/key.properties` a Git.
 
 ```powershell
 keytool -genkeypair -v `
@@ -29,7 +31,7 @@ keytool -genkeypair -v `
 Copy-Item android\key.properties.example android\key.properties
 ```
 
-Completar las cuatro propiedades de `android/key.properties`. La compilacion
+Las cuatro propiedades de `android/key.properties` deben permanecer completas. La compilacion
 `release` falla expresamente si falta esta configuracion, para impedir la
 entrega accidental de un paquete sin firma. Al crear la aplicacion en Play
 Console, activar **Play App Signing** y usar este certificado como clave de
@@ -55,25 +57,34 @@ Antes del envio definitivo conviene activar `https://app.gestinem.es` y generar
 el bundle con ese dominio para no vincular la primera version publica a la URL
 temporal de Railway.
 
-## 3. Requisitos de Play Console (pendientes)
+## 3. Requisitos de Play Console
 
-- Crear la ficha con el paquete `es.gestinem.app` y activar Play App Signing.
-- Publicar una politica de privacidad en una URL publica de `gestinem.es`.
-- Completar Seguridad de los datos de acuerdo con el funcionamiento real:
-  identidad de usuario, mensajes, archivos adjuntos, avatar e identificador de
-  notificaciones; trafico cifrado; uso de Firebase Cloud Messaging y del
-  alojamiento del backend.
-- Publicar una pagina web para solicitar la eliminacion de la cuenta y enlazarla
-  desde la aplicacion. Hay que definir antes que datos se borran y cuales se
-  conservan por obligaciones legales o de seguridad.
-- Indicar en **Acceso a la aplicacion** unas credenciales de cliente de revision
-  que permitan a Google entrar sin depender de una invitacion caducada.
-- Completar clasificacion de contenido, audiencia, declaracion de anuncios y
-  datos de contacto.
-- Preparar icono de ficha de 512 x 512, grafico de funciones de 1024 x 500 y
-  capturas de telefono sin datos reales de clientes.
-- Ejecutar primero una prueba interna y despues una prueba cerrada antes de
-  solicitar produccion.
+Completado y enviado a revision:
+
+- Ficha en espanol con textos, icono, grafico de funciones y cuatro capturas.
+- Seguridad de los datos, audiencia, clasificacion, anuncios, acceso para
+  revision, contacto, pagina de eliminacion y prueba interna.
+- Politica publica en `https://www.gestinem.es/app/privacidad/` y eliminacion en
+  `https://www.gestinem.es/app/eliminar-cuenta/`.
+- App Bundle 33 publicado en prueba interna y enviado a produccion con
+  `targetSdkVersion` 36.
+- URL de privacidad de Play Console corregida de la antigua URL con error 404 a
+  `https://www.gestinem.es/app/privacidad/`.
+- Declaracion de que la aplicacion no usa el ID de publicidad; el manifiesto final no
+  contiene `com.google.android.gms.permission.AD_ID`.
+- El manifiesto final ya no contiene
+  `READ_MEDIA_IMAGES`, `READ_MEDIA_VIDEO`, `READ_MEDIA_AUDIO` ni
+  `READ_EXTERNAL_STORAGE`, porque los adjuntos usan el selector del sistema.
+- Seguridad de los datos actualizada para incluir grabaciones de voz como dato
+  opcional, recogido para la funcionalidad de la aplicacion y no compartido.
+- Produccion limitada a Espana y lanzamiento completo de la version 33 enviado
+  a revision junto con la ficha y las declaraciones pendientes.
+
+Completado fuera de Play Console:
+
+- Politica publica de WordPress corregida para indicar que la aplicacion usa
+  el microfono solamente cuando el usuario decide grabar una nota de voz, e
+  incluir las grabaciones de audio, Railway y la fecha de actualizacion.
 
 ## 4. Compatibilidad Android
 

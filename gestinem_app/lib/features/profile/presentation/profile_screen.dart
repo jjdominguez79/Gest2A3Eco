@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/config/app_config.dart';
@@ -14,6 +15,18 @@ import '../../company_profile/domain/company_profile.dart';
 import '../../company_profile/domain/profile_change_request.dart';
 import '../../company_profile/presentation/company_profile_providers.dart';
 import '../../messaging/presentation/messaging_providers.dart';
+
+Future<void> _openLegalUrl(BuildContext context, String url) async {
+  final opened = await launchUrl(
+    Uri.parse(url),
+    mode: LaunchMode.externalApplication,
+  );
+  if (!opened && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('No se pudo abrir la pagina web.')),
+    );
+  }
+}
 
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
@@ -343,6 +356,28 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   subtitle: Text(profile.staffRole!.name),
                 ),
               ListTile(
+                key: const Key('privacy-policy-link'),
+                leading: const Icon(Icons.policy_outlined),
+                title: const Text('Politica de privacidad'),
+                subtitle: const Text('Consulta como tratamos tus datos'),
+                trailing: const Icon(Icons.open_in_new),
+                onTap: () => _openLegalUrl(
+                  context,
+                  'https://www.gestinem.es/app/privacidad/',
+                ),
+              ),
+              ListTile(
+                key: const Key('account-deletion-link'),
+                leading: const Icon(Icons.person_remove_outlined),
+                title: const Text('Eliminar cuenta y datos'),
+                subtitle: const Text('Consulta como enviar una solicitud'),
+                trailing: const Icon(Icons.open_in_new),
+                onTap: () => _openLegalUrl(
+                  context,
+                  'https://www.gestinem.es/app/eliminar-cuenta/',
+                ),
+              ),
+              ListTile(
                 leading: const Icon(Icons.info_outline),
                 title: const Text('Acerca de Gestinem'),
                 subtitle: const Text('Versión y actualizaciones'),
@@ -522,6 +557,30 @@ class _ClientAreaContent extends ConsumerWidget {
                 title: const Text('Acerca de Gestinem'),
                 subtitle: const Text('Versión y actualizaciones'),
                 onTap: () => context.push('/about'),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                key: const Key('privacy-policy-link'),
+                leading: const Icon(Icons.policy_outlined),
+                title: const Text('Politica de privacidad'),
+                subtitle: const Text('Consulta como tratamos tus datos'),
+                trailing: const Icon(Icons.open_in_new),
+                onTap: () => _openLegalUrl(
+                  context,
+                  'https://www.gestinem.es/app/privacidad/',
+                ),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                key: const Key('account-deletion-link'),
+                leading: const Icon(Icons.person_remove_outlined),
+                title: const Text('Eliminar cuenta y datos'),
+                subtitle: const Text('Consulta como enviar una solicitud'),
+                trailing: const Icon(Icons.open_in_new),
+                onTap: () => _openLegalUrl(
+                  context,
+                  'https://www.gestinem.es/app/eliminar-cuenta/',
+                ),
               ),
               const Divider(height: 1),
               ListTile(
