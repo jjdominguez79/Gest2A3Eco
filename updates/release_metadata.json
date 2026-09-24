@@ -1,6 +1,6 @@
 {
-  "version": "1.8.25",
-  "tag": "v1.8.25",
-  "changelog": "Envio de certificados AEAT y Seguridad Social por email desde Gestinem",
+  "version": "1.8.26",
+  "tag": "v1.8.26",
+  "changelog": "Se añade la posibilidad de descativar empresas y borrar su certificado y los buzones configurados.",
   "force_update": true
 }
