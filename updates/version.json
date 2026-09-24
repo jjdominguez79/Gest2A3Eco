@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.8.23",
-  "minimum_required_version": "1.8.23",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.23/Setup_Gest2A3Eco_1.8.23.exe",
-  "changelog": "Corrige la pantalla en blanco de Notificaciones y consolida el acceso corporativo con Microsoft y la sincronización automática de empleados.",
+  "latest_version": "1.8.24",
+  "minimum_required_version": "1.8.24",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.24/Setup_Gest2A3Eco_1.8.24.exe",
+  "changelog": "Ocultar clientes inactivos en buzones",
   "force_update": true
 }
