@@ -1321,6 +1321,11 @@ def test_grupos_miembros_campana_e_idempotencia(tmp_path, monkeypatch):
         headers=staff_headers("employee"),
     ).json()
     staff_thread = next(row for row in staff_threads if row["title"] == "Equipo especial")
+    historical_message = client.post(
+        f"/api/v1/messaging/staff/internal/threads/{staff_thread['id']}/messages",
+        headers=admin,
+        data={"body": "Mensaje para conservar", "idempotency_key": "historical"},
+    ).json()
     assert client.delete(
         f"/api/v1/messaging/staff/admin/groups/{staff_group['id']}",
         headers=admin,
@@ -1332,6 +1337,38 @@ def test_grupos_miembros_campana_e_idempotencia(tmp_path, monkeypatch):
             headers=staff_headers("employee"),
         ).json()
     )
+    admin_groups = client.get(
+        "/api/v1/messaging/staff/groups", headers=admin,
+    ).json()
+    historical_group = next(row for row in admin_groups if row["id"] == staff_group["id"])
+    assert historical_group["active"] is False
+    assert historical_group["thread_id"] == staff_thread["id"]
+    admin_threads = client.get(
+        "/api/v1/messaging/staff/internal/threads", headers=admin,
+    ).json()
+    historical_thread = next(row for row in admin_threads if row["id"] == staff_thread["id"])
+    assert historical_thread["active"] is False
+    assert historical_thread["read_only"] is True
+    history = client.get(
+        f"/api/v1/messaging/staff/internal/threads/{staff_thread['id']}/messages",
+        headers=admin,
+    )
+    assert history.status_code == 200
+    assert [row["id"] for row in history.json()] == [historical_message["id"]]
+    assert client.post(
+        f"/api/v1/messaging/staff/internal/threads/{staff_thread['id']}/messages",
+        headers=admin,
+        data={"body": "No debe enviarse", "idempotency_key": "blocked"},
+    ).status_code == 409
+    assert client.patch(
+        f"/api/v1/messaging/staff/internal/messages/{historical_message['id']}",
+        headers=admin,
+        json={"body": "No debe editarse", "original_body": "Mensaje para conservar"},
+    ).status_code == 409
+    assert client.delete(
+        f"/api/v1/messaging/staff/internal/messages/{historical_message['id']}",
+        headers=admin,
+    ).status_code == 409
 
     campaign = client.post(
         "/api/v1/messaging/staff/admin/campaigns", headers=admin,

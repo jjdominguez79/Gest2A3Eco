@@ -424,7 +424,22 @@ class _StaffInbox extends StatelessWidget {
       final normalizedUserId = currentUserId.trim().toLowerCase();
       final groups =
           threadItems
-              .where((item) => item.kind != 'direct' && _matches(item.title))
+              .where(
+                (item) =>
+                    item.kind != 'direct' &&
+                    item.active &&
+                    _matches(item.title),
+              )
+              .toList()
+            ..sort(_compareThreads);
+      final historicalGroups =
+          threadItems
+              .where(
+                (item) =>
+                    item.kind != 'direct' &&
+                    !item.active &&
+                    _matches(item.title),
+              )
               .toList()
             ..sort(_compareThreads);
       final directThreads =
@@ -466,6 +481,21 @@ class _StaffInbox extends StatelessWidget {
               authToken: authToken,
               onTap: () => onInternal(thread.id),
             ),
+        if (historicalGroups.isNotEmpty) ...[
+          const _InboxSectionHeader(
+            key: Key('inbox-section-historical-groups'),
+            title: 'Históricos',
+            icon: Icons.history_outlined,
+          ),
+          for (final thread in historicalGroups)
+            _InternalThreadTile(
+              thread: thread,
+              selected: selectedInternal && selectedId == thread.id,
+              baseUrl: baseUrl,
+              authToken: authToken,
+              onTap: () => onInternal(thread.id),
+            ),
+        ],
         const _InboxSectionHeader(
           key: Key('inbox-section-employees'),
           title: 'Empleados',
@@ -686,7 +716,9 @@ class _InternalThreadTile extends StatelessWidget {
     ),
     title: Text(thread.title, maxLines: 1, overflow: TextOverflow.ellipsis),
     subtitle: Text(
-      thread.lastMessage?.deleted == true
+      !thread.active
+          ? 'Histórico · solo lectura'
+          : thread.lastMessage?.deleted == true
           ? 'Mensaje eliminado'
           : thread.lastMessage?.body ?? 'Sin mensajes',
       maxLines: 1,

@@ -4,12 +4,16 @@ class MessagingGroup {
     required this.name,
     required this.type,
     required this.members,
+    this.active = true,
+    this.threadId = '',
   });
 
   factory MessagingGroup.fromJson(Map<String, dynamic> json) => MessagingGroup(
     id: json['id'] as String,
     name: json['name'] as String,
     type: json['group_type'] as String,
+    active: json['active'] as bool? ?? true,
+    threadId: json['thread_id'] as String? ?? '',
     members: (json['members'] as List<dynamic>? ?? const [])
         .map((item) => GroupMember.fromJson(item as Map<String, dynamic>))
         .toList(growable: false),
@@ -19,6 +23,8 @@ class MessagingGroup {
   final String name;
   final String type;
   final List<GroupMember> members;
+  final bool active;
+  final String threadId;
 }
 
 class GroupMember {

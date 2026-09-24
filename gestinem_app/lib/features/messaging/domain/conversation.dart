@@ -179,6 +179,7 @@ class InternalThread {
     required this.channel,
     required this.title,
     required this.unreadCount,
+    this.active = true,
     this.updatedAt,
     this.counterpartAvatarUrl = '',
     this.counterpartId = '',
@@ -193,6 +194,7 @@ class InternalThread {
     channel: json['channel'] as String? ?? '',
     title: json['title'] as String? ?? 'Chat interno',
     unreadCount: json['unread_count'] as int? ?? 0,
+    active: json['active'] as bool? ?? true,
     updatedAt: DateTime.parse(json['updated_at'] as String).toLocal(),
     counterpartAvatarUrl: json['counterpart_avatar_url'] as String? ?? '',
     counterpartId: json['counterpart_id'] as String? ?? '',
@@ -208,6 +210,7 @@ class InternalThread {
   final String channel;
   final String title;
   final int unreadCount;
+  final bool active;
   final DateTime? updatedAt;
   final String counterpartAvatarUrl;
   final String counterpartId;

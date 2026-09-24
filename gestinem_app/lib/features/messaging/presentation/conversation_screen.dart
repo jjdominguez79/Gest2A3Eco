@@ -162,7 +162,10 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   }
 
   void _loadEarlierWhenNeeded() {
-    if (widget.internal || !_scroll.hasClients || _loadingEarlier || !_hasEarlier) {
+    if (widget.internal ||
+        !_scroll.hasClients ||
+        _loadingEarlier ||
+        !_hasEarlier) {
       return;
     }
     if (_scroll.position.pixels >= _scroll.position.maxScrollExtent - 160) {
@@ -177,11 +180,9 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     try {
       final profile = ref.read(sessionProvider).valueOrNull?.profile;
       if (profile == null) return;
-      final page = await ref.read(messagingRepositoryProvider).messages(
-        profile,
-        widget.conversationId,
-        beforeMessageId: before,
-      );
+      final page = await ref
+          .read(messagingRepositoryProvider)
+          .messages(profile, widget.conversationId, beforeMessageId: before);
       if (!mounted) return;
       final known = _olderMessages.map((message) => message.id).toSet();
       setState(() {
@@ -863,8 +864,16 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
 
   Future<void> _messageActions(Message message, bool mine) async {
     final profile = ref.read(sessionProvider).valueOrNull!.profile;
+    final internalThread = widget.internal
+        ? _findThread(
+            ref.read(internalThreadsProvider).valueOrNull,
+            widget.conversationId,
+          )
+        : null;
+    final historical = widget.internal && internalThread?.active == false;
     // Los mensajes con adjuntos no pueden eliminarse
     final canDelete =
+        !historical &&
         !message.deleted &&
         (mine || profile.isAdmin) &&
         (widget.internal || !message.hasAttachments);
@@ -884,13 +893,13 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                 subtitle: const Text('Ver quien lo ha leido y quien no'),
                 onTap: () => Navigator.pop(context, 'info'),
               ),
-            if (!message.deleted)
+            if (!historical && !message.deleted)
               ListTile(
                 leading: const Icon(Icons.reply),
                 title: const Text('Responder'),
                 onTap: () => Navigator.pop(context, 'reply'),
               ),
-            if (mine && !message.deleted)
+            if (!historical && mine && !message.deleted)
               ListTile(
                 key: const Key('edit-message-option'),
                 leading: const Icon(Icons.edit_outlined),
@@ -994,12 +1003,13 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     final currentConversation = conversations
         ?.where((item) => item.id == widget.conversationId)
         .firstOrNull;
-    final internalThread = widget.internal && widget.showInternalHeader
+    final internalThread = widget.internal
         ? _findThread(
             ref.watch(internalThreadsProvider).valueOrNull,
             widget.conversationId,
           )
         : null;
+    final historical = widget.internal && internalThread?.active == false;
     return Column(
       children: [
         if (widget.internal && widget.showInternalHeader)
@@ -1134,7 +1144,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                       onAttachmentHistory: profile.type == UserType.staff
                           ? _showAttachmentHistory
                           : null,
-                      onAttachmentWithdraw: profile.isAdmin
+                      onAttachmentWithdraw: profile.isAdmin && !historical
                           ? _withdrawAttachment
                           : null,
                       onVoiceLoad: _loadVoice,
@@ -1151,7 +1161,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
             },
           ),
         ),
-        if (_replyingTo != null)
+        if (!historical && _replyingTo != null)
           Material(
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
             child: ListTile(
@@ -1169,7 +1179,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
               ),
             ),
           ),
-        if (_files.isNotEmpty)
+        if (!historical && _files.isNotEmpty)
           SizedBox(
             height: 40,
             child: ListView(
@@ -1184,84 +1194,110 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                   .toList(),
             ),
           ),
-        SafeArea(
-          top: false,
-          child: Material(
-            color: Colors.white,
-            child: Padding(
-              padding: const EdgeInsets.all(10),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  if (_recording) ...[
-                    IconButton(
-                      key: const Key('cancel-voice-note'),
-                      tooltip: 'Cancelar nota de voz',
-                      onPressed: () => _stopVoiceRecording(send: false),
-                      icon: const Icon(Icons.delete_outline),
-                    ),
-                    const Icon(Icons.fiber_manual_record, color: Colors.red),
-                    const SizedBox(width: 6),
+        if (historical)
+          SafeArea(
+            top: false,
+            child: Material(
+              color: Theme.of(context).colorScheme.surfaceContainerLow,
+              child: const Padding(
+                key: Key('historical-group-notice'),
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                child: Row(
+                  children: [
+                    Icon(Icons.history_outlined),
+                    SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        'Grabando ${_recordingTime()}',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
+                        'Grupo histórico · solo lectura',
+                        style: TextStyle(fontWeight: FontWeight.w600),
                       ),
-                    ),
-                    IconButton.filled(
-                      key: const Key('send-voice-note'),
-                      tooltip: 'Detener y enviar',
-                      onPressed: () => _stopVoiceRecording(send: true),
-                      icon: const Icon(Icons.send),
-                    ),
-                  ] else ...[
-                    IconButton(
-                      key: const Key('attach-files'),
-                      onPressed: _sending ? null : _pickFiles,
-                      icon: const Icon(Icons.attach_file),
-                    ),
-                    Expanded(
-                      child: TextField(
-                        key: const Key('message-composer'),
-                        controller: _body,
-                        focusNode: _composerFocus,
-                        textCapitalization: TextCapitalization.sentences,
-                        inputFormatters: const [
-                          SentenceCapitalizationFormatter(),
-                        ],
-                        minLines: 1,
-                        maxLines: 5,
-                        decoration: const InputDecoration(
-                          hintText: 'Escribe un mensaje...',
-                          isDense: true,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      key: const Key('record-voice-note'),
-                      tooltip: 'Grabar nota de voz',
-                      onPressed: _sending ? null : _startVoiceRecording,
-                      icon: const Icon(Icons.mic_none),
-                    ),
-                    const SizedBox(width: 4),
-                    IconButton.filled(
-                      key: const Key('send-message'),
-                      onPressed: _sending
-                          ? null
-                          : () => _send(keepComposerFocus: true),
-                      icon: _sending
-                          ? const SizedBox.square(
-                              dimension: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.send),
                     ),
                   ],
-                ],
+                ),
+              ),
+            ),
+          )
+        else
+          SafeArea(
+            top: false,
+            child: Material(
+              color: Colors.white,
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    if (_recording) ...[
+                      IconButton(
+                        key: const Key('cancel-voice-note'),
+                        tooltip: 'Cancelar nota de voz',
+                        onPressed: () => _stopVoiceRecording(send: false),
+                        icon: const Icon(Icons.delete_outline),
+                      ),
+                      const Icon(Icons.fiber_manual_record, color: Colors.red),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Grabando ${_recordingTime()}',
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      IconButton.filled(
+                        key: const Key('send-voice-note'),
+                        tooltip: 'Detener y enviar',
+                        onPressed: () => _stopVoiceRecording(send: true),
+                        icon: const Icon(Icons.send),
+                      ),
+                    ] else ...[
+                      IconButton(
+                        key: const Key('attach-files'),
+                        onPressed: _sending ? null : _pickFiles,
+                        icon: const Icon(Icons.attach_file),
+                      ),
+                      Expanded(
+                        child: TextField(
+                          key: const Key('message-composer'),
+                          controller: _body,
+                          focusNode: _composerFocus,
+                          textCapitalization: TextCapitalization.sentences,
+                          inputFormatters: const [
+                            SentenceCapitalizationFormatter(),
+                          ],
+                          minLines: 1,
+                          maxLines: 5,
+                          decoration: const InputDecoration(
+                            hintText: 'Escribe un mensaje...',
+                            isDense: true,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        key: const Key('record-voice-note'),
+                        tooltip: 'Grabar nota de voz',
+                        onPressed: _sending ? null : _startVoiceRecording,
+                        icon: const Icon(Icons.mic_none),
+                      ),
+                      const SizedBox(width: 4),
+                      IconButton.filled(
+                        key: const Key('send-message'),
+                        onPressed: _sending
+                            ? null
+                            : () => _send(keepComposerFocus: true),
+                        icon: _sending
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.send),
+                      ),
+                    ],
+                  ],
+                ),
               ),
             ),
           ),
-        ),
       ],
     );
   }
@@ -1316,7 +1352,9 @@ class _InternalThreadIdentity extends ConsumerWidget {
         ? 'Cargando información…'
         : current.kind == 'direct'
         ? 'Chat directo'
-        : 'Grupo interno';
+        : current.active
+        ? 'Grupo interno'
+        : 'Grupo histórico · solo lectura';
     final apiBaseUrl = ref
         .read(apiClientProvider)
         .dio

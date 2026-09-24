@@ -519,17 +519,36 @@ def _ensure_staff_group_threads(db: Session) -> None:
         db.commit()
 
 
+def _staff_thread_group(
+    db: Session, thread: MessagingStaffThread,
+) -> MessagingGroup | None:
+    if thread.kind != "group" or not thread.key.startswith("dynamic-group:"):
+        return None
+    return db.get(MessagingGroup, thread.key.split(":", 1)[1])
+
+
+def _staff_thread_read_only(db: Session, thread: MessagingStaffThread) -> bool:
+    group = _staff_thread_group(db, thread)
+    return bool(group and not group.active)
+
+
+def _require_writable_staff_thread(db: Session, thread: MessagingStaffThread) -> None:
+    if _staff_thread_read_only(db, thread):
+        raise HTTPException(409, "El grupo es historico y solo permite consultar mensajes")
+
+
 def _can_access_staff_thread(
     db: Session, thread: MessagingStaffThread, staff: MessagingStaff,
 ) -> bool:
     if thread.kind == "group":
         if thread.key.startswith("dynamic-group:"):
-            group_id = thread.key.split(":", 1)[1]
-            group = db.get(MessagingGroup, group_id)
-            if not group or not group.active:
+            group = _staff_thread_group(db, thread)
+            if not group:
                 return False
+            if not group.active:
+                return staff.role == "admin"
             return staff.role == "admin" or bool(db.scalar(select(MessagingGroupMember.id).where(
-                MessagingGroupMember.group_id == group_id,
+                MessagingGroupMember.group_id == group.id,
                 MessagingGroupMember.member_type == "staff",
                 MessagingGroupMember.member_id == staff.external_id,
             )))
@@ -1736,8 +1755,11 @@ def _serialize_staff_thread(
         MessagingStaffThreadMessage.thread_id == thread.id,
     ).order_by(MessagingStaffThreadMessage.created_at.desc()).limit(1))
     counterpart = _staff_thread_counterpart(db, thread, staff)
+    group = _staff_thread_group(db, thread)
+    active = bool(group.active) if group else True
     return {
         "id": thread.id, "kind": thread.kind, "channel": thread.channel,
+        "active": active, "read_only": not active,
         "title": _staff_thread_title(db, thread, staff),
         "counterpart_id": counterpart.external_id if counterpart else "",
         "counterpart_name": (
@@ -1946,6 +1968,7 @@ def post_staff_thread_message(
     staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
 ):
     thread = _staff_thread(db, thread_id, staff)
+    _require_writable_staff_thread(db, thread)
     text_body = body.strip()
     if not text_body and not files:
         raise HTTPException(422, "El mensaje esta vacio")
@@ -3677,6 +3700,7 @@ def edit_internal_message(message_id: str, payload: MessageEditIn,
     if not item:
         raise HTTPException(404, "Mensaje no encontrado")
     thread = _staff_thread(db, item.thread_id, staff)
+    _require_writable_staff_thread(db, thread)
     if item.author_staff_external_id != staff.external_id:
         raise HTTPException(403, "Solo puedes editar tus propios mensajes")
     if _guardar_edicion(db, item, payload, "staff", staff.external_id, internal=True):
@@ -3767,6 +3791,7 @@ def soft_delete_internal_message(
     if not item:
         raise HTTPException(404, "Mensaje interno no encontrado")
     thread = _staff_thread(db, item.thread_id, staff)
+    _require_writable_staff_thread(db, thread)
     if staff.role != "admin" and item.author_staff_external_id != staff.external_id:
         raise HTTPException(403, "No puedes eliminar este mensaje")
     if not item.deleted_at:
@@ -3803,6 +3828,7 @@ def hard_delete_internal_message(
     if not item:
         raise HTTPException(404, "Mensaje interno no encontrado")
     thread = _staff_thread(db, item.thread_id, admin)
+    _require_writable_staff_thread(db, thread)
     attachments = list(db.scalars(select(MessagingAttachment).where(
         MessagingAttachment.internal_message_id == item.id,
     )))
@@ -3863,9 +3889,13 @@ def _serialize_group(db: Session, group: MessagingGroup) -> dict:
     members = db.scalars(select(MessagingGroupMember).where(
         MessagingGroupMember.group_id == group.id,
     ).order_by(MessagingGroupMember.created_at)).all()
+    thread = db.scalar(select(MessagingStaffThread).where(
+        MessagingStaffThread.key == f"dynamic-group:{group.id}",
+    )) if group.group_type == "staff_chat" else None
     return {
         "id": group.id, "name": group.name, "description": group.description,
         "group_type": group.group_type, "created_by": group.created_by,
+        "thread_id": thread.id if thread else "",
         "active": group.active, "created_at": group.created_at.isoformat(),
         "updated_at": group.updated_at.isoformat(),
         "members": [{
@@ -3878,15 +3908,23 @@ def _serialize_group(db: Session, group: MessagingGroup) -> dict:
 @router.get("/staff/groups")
 def list_groups(staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db)):
     _ensure_staff_group_threads(db)
-    rows = db.scalars(select(MessagingGroup).where(MessagingGroup.active.is_(True)).order_by(
-        MessagingGroup.name,
+    rows = db.scalars(select(MessagingGroup).order_by(
+        MessagingGroup.active.desc(), MessagingGroup.name,
     )).all()
-    if staff.role != "admin":
+    if staff.role == "admin":
+        rows = [
+            row for row in rows
+            if row.active or row.group_type == "staff_chat"
+        ]
+    else:
         allowed = set(db.scalars(select(MessagingGroupMember.group_id).where(
             MessagingGroupMember.member_type == "staff",
             MessagingGroupMember.member_id == staff.external_id,
         )))
-        rows = [row for row in rows if row.group_type == "staff_chat" and row.id in allowed]
+        rows = [
+            row for row in rows
+            if row.active and row.group_type == "staff_chat" and row.id in allowed
+        ]
     return [_serialize_group(db, row) for row in rows]
 
 
@@ -3924,7 +3962,7 @@ def update_group(
     db: Session = Depends(get_db),
 ):
     group = db.get(MessagingGroup, group_id)
-    if not group:
+    if not group or not group.active:
         raise HTTPException(404, "Grupo no encontrado")
     if payload.group_type != group.group_type:
         raise HTTPException(409, "No se puede cambiar el tipo de un grupo existente")
@@ -3998,6 +4036,9 @@ def remove_group_member(
     group_id: str, member_id: str, _admin: MessagingStaff = Depends(_require_admin),
     db: Session = Depends(get_db),
 ):
+    group = db.get(MessagingGroup, group_id)
+    if not group or not group.active:
+        raise HTTPException(404, "Grupo no encontrado")
     item = db.scalar(select(MessagingGroupMember).where(
         MessagingGroupMember.group_id == group_id,
         MessagingGroupMember.member_id == member_id,

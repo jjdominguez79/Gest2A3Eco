@@ -76,13 +76,52 @@ void main() {
 
     await tester.tap(find.byKey(const Key('group-actions-group-1')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Eliminar'));
+    await tester.tap(find.text('Pasar a histórico'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Eliminar grupo'), findsOneWidget);
+    expect(find.text('Pasar grupo a histórico'), findsOneWidget);
     expect(find.byKey(const Key('confirm-delete-group')), findsOneWidget);
     await tester.tap(find.text('Cancelar'));
     await tester.pumpAndSettle();
-    expect(find.text('Eliminar grupo'), findsNothing);
+    expect(find.text('Pasar grupo a histórico'), findsNothing);
+  });
+
+  testWidgets('un grupo historico se muestra sin acciones de edicion', (
+    tester,
+  ) async {
+    const profile = UserProfile(
+      id: 'admin',
+      name: 'Administrador',
+      email: 'admin@gestinem.es',
+      type: UserType.staff,
+      staffRole: StaffRole.admin,
+    );
+    const session = AuthSession(token: 'staff-token', profile: profile);
+    const group = MessagingGroup(
+      id: 'group-old',
+      name: 'Equipo Contable / Fiscal',
+      type: 'staff_chat',
+      members: [],
+      active: false,
+      threadId: 'thread-old',
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith(
+            (ref) => FakeSessionController(ref, session),
+          ),
+          groupsProvider.overrideWith((ref) async => [group]),
+        ],
+        child: const MaterialApp(home: GroupsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('HISTÓRICOS'), findsOneWidget);
+    expect(find.text('Equipo Contable / Fiscal'), findsOneWidget);
+    expect(find.textContaining('Histórico · solo lectura'), findsOneWidget);
+    expect(find.byKey(const Key('group-actions-group-old')), findsNothing);
   });
 }

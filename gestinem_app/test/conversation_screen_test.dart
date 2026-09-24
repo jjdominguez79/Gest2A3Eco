@@ -135,6 +135,54 @@ void main() {
     expect(adapter.lastRequest?.path, '/staff/internal/threads/t1/read');
   });
 
+  testWidgets('un grupo historico permite leer pero no escribir', (
+    tester,
+  ) async {
+    final adapter = JsonAdapter(<String, dynamic>{});
+    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'))
+      ..httpClientAdapter = adapter;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+          apiClientProvider.overrideWithValue(
+            ApiClient(dio: dio, tokenProvider: () => testSession.token),
+          ),
+          internalThreadsProvider.overrideWith(
+            (ref) async => const [
+              InternalThread(
+                id: 'historical-thread',
+                kind: 'group',
+                channel: '',
+                title: 'Equipo Contable / Fiscal',
+                unreadCount: 0,
+                active: false,
+              ),
+            ],
+          ),
+          internalMessagesProvider.overrideWith((ref, id) async => []),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(
+            body: ConversationView(
+              conversationId: 'historical-thread',
+              internal: true,
+              showInternalHeader: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Equipo Contable / Fiscal'), findsOneWidget);
+    expect(find.text('Grupo histórico · solo lectura'), findsNWidgets(2));
+    expect(find.byKey(const Key('historical-group-notice')), findsOneWidget);
+    expect(find.byKey(const Key('message-composer')), findsNothing);
+    expect(find.byKey(const Key('send-message')), findsNothing);
+  });
+
   testWidgets('volver desde un chat interno abre la lista de inicio', (
     tester,
   ) async {

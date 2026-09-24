@@ -210,9 +210,15 @@ class GroupsScreen extends ConsumerWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Eliminar grupo'),
+        title: Text(
+          group.type == 'staff_chat'
+              ? 'Pasar grupo a histórico'
+              : 'Eliminar grupo',
+        ),
         content: Text(
-          '¿Quieres eliminar “${group.name}”? Dejará de aparecer y sus miembros ya no podrán acceder al chat.',
+          group.type == 'staff_chat'
+              ? '“${group.name}” quedará en modo solo lectura. Sus mensajes y miembros se conservarán para consulta de administradores.'
+              : '¿Quieres eliminar “${group.name}”?',
         ),
         actions: [
           TextButton(
@@ -225,7 +231,9 @@ class GroupsScreen extends ConsumerWidget {
             style: FilledButton.styleFrom(
               backgroundColor: Theme.of(context).colorScheme.error,
             ),
-            child: const Text('Eliminar'),
+            child: Text(
+              group.type == 'staff_chat' ? 'Pasar a histórico' : 'Eliminar',
+            ),
           ),
         ],
       ),
@@ -236,9 +244,15 @@ class GroupsScreen extends ConsumerWidget {
       ref.invalidate(groupsProvider);
       ref.invalidate(internalThreadsProvider);
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Grupo eliminado')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              group.type == 'staff_chat'
+                  ? 'Grupo guardado como histórico'
+                  : 'Grupo eliminado',
+            ),
+          ),
+        );
       }
     } catch (error) {
       if (context.mounted) _showError(context, error);
@@ -261,6 +275,68 @@ class GroupsScreen extends ConsumerWidget {
       context,
     ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
   }
+
+  Widget _groupTile(
+    BuildContext context,
+    WidgetRef ref,
+    MessagingGroup group,
+    bool isAdmin,
+  ) => ListTile(
+    key: Key('group-${group.id}'),
+    leading: Icon(
+      group.active
+          ? (group.type == 'staff_chat'
+                ? Icons.forum_outlined
+                : Icons.campaign_outlined)
+          : Icons.history_outlined,
+    ),
+    title: Text(group.name),
+    subtitle: Text(
+      group.active
+          ? '${group.type == 'staff_chat' ? 'Chat interno' : 'Lista para campañas'} · '
+                '${group.members.length} miembros'
+          : 'Histórico · solo lectura · ${group.members.length} miembros',
+    ),
+    trailing: isAdmin && group.active
+        ? PopupMenuButton<String>(
+            key: Key('group-actions-${group.id}'),
+            tooltip: 'Acciones del grupo',
+            onSelected: (action) {
+              if (action == 'edit' && group.type == 'staff_chat') {
+                _configureStaffGroup(context, ref, group);
+              } else if (action == 'delete') {
+                _deleteGroup(context, ref, group);
+              }
+            },
+            itemBuilder: (_) => [
+              if (group.type == 'staff_chat')
+                const PopupMenuItem(
+                  value: 'edit',
+                  child: ListTile(
+                    leading: Icon(Icons.manage_accounts_outlined),
+                    title: Text('Editar'),
+                  ),
+                ),
+              PopupMenuItem(
+                value: 'delete',
+                child: ListTile(
+                  leading: const Icon(Icons.archive_outlined),
+                  title: Text(
+                    group.type == 'staff_chat'
+                        ? 'Pasar a histórico'
+                        : 'Eliminar',
+                  ),
+                ),
+              ),
+            ],
+          )
+        : null,
+    onTap: !group.active && group.threadId.isNotEmpty
+        ? () => context.go('/internal/${group.threadId}')
+        : isAdmin && group.active && group.type == 'staff_chat'
+        ? () => _configureStaffGroup(context, ref, group)
+        : null,
+  );
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -292,58 +368,26 @@ class GroupsScreen extends ConsumerWidget {
             ),
           ),
           ...groups.when(
-            data: (items) => items
-                .map(
-                  (group) => ListTile(
-                    leading: Icon(
-                      group.type == 'staff_chat'
-                          ? Icons.forum_outlined
-                          : Icons.campaign_outlined,
+            data: (items) {
+              final active = items.where((group) => group.active);
+              final historical = items.where(
+                (group) => !group.active && group.type == 'staff_chat',
+              );
+              return [
+                for (final group in active)
+                  _groupTile(context, ref, group, profile.isAdmin),
+                if (historical.isNotEmpty)
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 24, 16, 8),
+                    child: Text(
+                      'HISTÓRICOS',
+                      style: TextStyle(fontWeight: FontWeight.bold),
                     ),
-                    title: Text(group.name),
-                    subtitle: Text(
-                      '${group.type == 'staff_chat' ? 'Chat interno' : 'Lista para campañas'} · '
-                      '${group.members.length} miembros',
-                    ),
-                    trailing: profile.isAdmin
-                        ? PopupMenuButton<String>(
-                            key: Key('group-actions-${group.id}'),
-                            tooltip: 'Acciones del grupo',
-                            onSelected: (action) {
-                              if (action == 'edit' &&
-                                  group.type == 'staff_chat') {
-                                _configureStaffGroup(context, ref, group);
-                              } else if (action == 'delete') {
-                                _deleteGroup(context, ref, group);
-                              }
-                            },
-                            itemBuilder: (_) => [
-                              if (group.type == 'staff_chat')
-                                const PopupMenuItem(
-                                  value: 'edit',
-                                  child: ListTile(
-                                    leading: Icon(
-                                      Icons.manage_accounts_outlined,
-                                    ),
-                                    title: Text('Editar'),
-                                  ),
-                                ),
-                              const PopupMenuItem(
-                                value: 'delete',
-                                child: ListTile(
-                                  leading: Icon(Icons.delete_outline),
-                                  title: Text('Eliminar'),
-                                ),
-                              ),
-                            ],
-                          )
-                        : null,
-                    onTap: profile.isAdmin && group.type == 'staff_chat'
-                        ? () => _configureStaffGroup(context, ref, group)
-                        : null,
                   ),
-                )
-                .toList(),
+                for (final group in historical)
+                  _groupTile(context, ref, group, profile.isAdmin),
+              ];
+            },
             loading: () => [const Center(child: CircularProgressIndicator())],
             error: (_, _) => [
               const ListTile(title: Text('No se pudieron cargar los grupos')),
