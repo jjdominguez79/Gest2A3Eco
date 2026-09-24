@@ -1315,6 +1315,49 @@ def test_escritorio_reemplaza_certificado_y_elimina_el_blob_anterior(monkeypatch
         assert secret.version == 2
 
 
+def test_escritorio_elimina_certificado_de_organizacion_inactiva(monkeypatch):
+    client, factory, org_id, _headers = _setup(monkeypatch)
+    eliminados = []
+
+    class _Storage:
+        def delete(self, key):
+            eliminados.append(key)
+
+    monkeypatch.setattr(
+        "backend.api.client_certificates_api.ClientCertificateVaultStorage",
+        _Storage,
+    )
+    with factory() as db:
+        db.get(MessagingOrganization, org_id).active = False
+        db.commit()
+
+    response = client.delete(
+        "/api/v1/messaging/client/certificates/internal/certificate",
+        params={"company_code": "E00001"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert eliminados == [f"{org_id}/test.g2cert"]
+    with factory() as db:
+        secret = db.scalar(select(ClientCertificateSecret).where(
+            ClientCertificateSecret.organization_id == org_id,
+        ))
+        assert secret is None
+
+
+def test_escritorio_elimina_certificado_de_organizacion_ya_ausente(monkeypatch):
+    client, _, _, _headers = _setup(monkeypatch)
+
+    response = client.delete(
+        "/api/v1/messaging/client/certificates/internal/certificate",
+        params={"company_code": "E99999"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+
+
 def test_escritorio_lista_solicitudes_centrales_con_empresa(monkeypatch):
     client, _, _, _headers = _setup(monkeypatch)
     created = client.post(

@@ -1223,7 +1223,16 @@ def delete_internal_certificate(
     db: Session = Depends(_db),
     _auth: str = Depends(require_workstation_or_internal),
 ):
-    org = _organization_by_code(db, company_code)
+    # El borrado debe seguir disponible cuando el cliente ya esta de baja.
+    # `_organization_by_code` rechaza organizaciones inactivas, que es correcto
+    # para crear solicitudes o subir material nuevo, pero impediria retirar el
+    # certificado que ya estuviera custodiado. Si la organizacion ya no existe,
+    # la operacion tambien se considera completada de forma idempotente.
+    org = db.scalar(select(MessagingOrganization).where(
+        MessagingOrganization.company_code == company_code.strip(),
+    ))
+    if not org:
+        return {"ok": True}
     secret = db.scalar(select(ClientCertificateSecret).where(
         ClientCertificateSecret.organization_id == org.id,
     ))
