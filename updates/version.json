@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.8.25",
-  "minimum_required_version": "1.8.25",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.25/Setup_Gest2A3Eco_1.8.25.exe",
-  "changelog": "Envio de certificados AEAT y Seguridad Social por email desde Gestinem",
+  "latest_version": "1.8.26",
+  "minimum_required_version": "1.8.26",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.26/Setup_Gest2A3Eco_1.8.26.exe",
+  "changelog": "Se añade la posibilidad de descativar empresas y borrar su certificado y los buzones configurados.",
   "force_update": true
 }
