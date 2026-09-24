@@ -6873,14 +6873,18 @@ class GestorBase:
     # Estos metodos no filtran por empresa: el filtrado por permisos de
     # usuario se aplica en services/secured_gestor.py.
 
-    def listar_empresas_resumen(self) -> list[dict]:
-        cur = self.conn.execute(
+    def listar_empresas_resumen(self, solo_activas: bool = False) -> list[dict]:
+        sql = (
             "SELECT e.codigo, e.nombre, e.cif, e.ejercicio "
             "FROM empresas e "
             "WHERE e.ejercicio = ("
             "  SELECT MAX(e2.ejercicio) FROM empresas e2 WHERE e2.codigo=e.codigo"
-            ") ORDER BY e.nombre"
+            ")"
         )
+        if solo_activas:
+            sql += " AND COALESCE(e.activo, 1) <> 0"
+        sql += " ORDER BY e.nombre"
+        cur = self.conn.execute(sql)
         cols = [c[0] for c in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 

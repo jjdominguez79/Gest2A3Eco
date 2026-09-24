@@ -56,6 +56,32 @@ def test_gestor_actualiza_todos_los_ejercicios_una_vez_por_empresa():
     assert connection.commits == 1
 
 
+class _CursorEmpresas:
+    description = [("codigo",), ("nombre",), ("cif",), ("ejercicio",)]
+
+    def fetchall(self):
+        return []
+
+
+class _ConnectionEmpresas:
+    def __init__(self):
+        self.sql = ""
+
+    def execute(self, sql):
+        self.sql = sql
+        return _CursorEmpresas()
+
+
+def test_listar_empresas_resumen_puede_filtrar_solo_activas():
+    connection = _ConnectionEmpresas()
+    gestor = GestorBase.__new__(GestorBase)
+    gestor.conn = connection
+
+    assert gestor.listar_empresas_resumen(solo_activas=True) == []
+
+    assert "COALESCE(e.activo, 1) <> 0" in connection.sql
+
+
 def test_gestor_aplica_solicitud_y_logo_a_todos_los_ejercicios():
     connection = _Connection()
     gestor = GestorBase.__new__(GestorBase)

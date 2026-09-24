@@ -6,6 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from views.ui_bandeja_global import UIBandejaGlobal
+from views.ui_buzones_global import UIBuzonesGlobal
 from views.ui_config_notificaciones_global import UIConfigNotificacionesGlobal
 from views.ui_buzones import _BuzonDialog
 
@@ -77,6 +78,28 @@ def test_configuracion_diaria_exige_hora_valida():
         vista._validar(datos)
     datos["hora_sync_diaria"] = "08:45"
     vista._validar(datos)
+
+
+def test_configuracion_buzones_solicita_solo_clientes_activos():
+    gestor = SimpleNamespace(
+        listar_notif_buzones_global=Mock(return_value=[]),
+        listar_empresas_resumen=Mock(return_value=[]),
+        listar_notif_organismos=Mock(return_value=[]),
+    )
+    vista = object.__new__(UIBuzonesGlobal)
+    vista._gestor = gestor
+    vista._cache = []
+    vista._cb_cliente = Mock()
+    vista._cb_cliente.get.return_value = "Todos"
+    vista._cb_org = Mock()
+    vista._cb_org.get.return_value = "Todos"
+    vista._render = Mock()
+    vista._cargar_estados_dev = Mock()
+
+    vista.refresh()
+
+    gestor.listar_empresas_resumen.assert_called_once_with(solo_activas=True)
+    assert vista._cache == []
 
 
 def test_dialogo_legacy_no_puede_guardar_periodicidad_ni_email_particulares():

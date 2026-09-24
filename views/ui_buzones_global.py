@@ -406,7 +406,7 @@ class UIBuzonesGlobal(ttk.Frame):
     # ----------------------------------------------------------------- refresh
     def refresh(self) -> None:
         existentes = self._gestor.listar_notif_buzones_global()
-        empresas = self._gestor.listar_empresas_resumen()
+        empresas = self._gestor.listar_empresas_resumen(solo_activas=True)
         organismos = {
             str(row.get("codigo") or "").upper(): row
             for row in self._gestor.listar_notif_organismos(solo_activos=True)

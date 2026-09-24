@@ -797,8 +797,8 @@ class SecuredGestor:
     # No usan __getattr__ porque deben filtrarse por empresa segun permisos
     # del usuario (igual que listar_empresas / listar_facturas_emitidas_todas).
 
-    def listar_empresas_resumen(self):
-        rows = self._base.listar_empresas_resumen()
+    def listar_empresas_resumen(self, solo_activas: bool = False):
+        rows = self._base.listar_empresas_resumen(solo_activas=solo_activas)
         if self.security.session.is_admin():
             return rows
         return [row for row in rows if self.security.can_read_company(str(row.get("codigo") or ""))]
