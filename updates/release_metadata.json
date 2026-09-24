@@ -1,6 +1,6 @@
 {
-  "version": "1.8.24",
-  "tag": "v1.8.24",
-  "changelog": "Ocultar clientes inactivos en buzones",
+  "version": "1.8.25",
+  "tag": "v1.8.25",
+  "changelog": "Envio de certificados AEAT y Seguridad Social por email desde Gestinem",
   "force_update": true
 }

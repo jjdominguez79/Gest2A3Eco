@@ -24,6 +24,7 @@ from tkinter import messagebox, simpledialog, ttk
 from views.notificaciones_theme import *  # noqa: F401,F403
 from services.aapp.certificados import TIPOS
 from services.backend_client_service import BackendClientService
+from utils.validaciones import separar_emails
 
 
 def _label_tipo(code: str) -> str:
@@ -476,11 +477,184 @@ class UICertificadosObtenidos(ttk.Frame):
                   f"Fecha: {r.get('completed_at') or r.get('created_at') or ''}\n")
         try:
             pdf = self._descargar_pdf(r)
-            from services.email_service import open_outlook_email
-            open_outlook_email(to=destino, subject=asunto, body=cuerpo, attachments=[pdf])
         except Exception as exc:
-            messagebox.showerror("Gest2A3Eco", f"No se pudo preparar el email:\n{exc}",
+            messagebox.showerror("Gest2A3Eco", f"No se pudo descargar el certificado:\n{exc}",
                                  parent=self.winfo_toplevel())
+            return
+
+        compose = self._ask_email_compose(destino, asunto, cuerpo, pdf)
+        if not compose:
+            return
+
+        from services.backend_mail_service import BackendMailService
+        from services.graph_mail_service import GraphMailService
+        from utils.utilidades import get_packaged_resource_path
+        from views.ui_comunicaciones import construir_cuerpo_html, construir_firma_oficina
+
+        destinatarios = separar_emails(compose.get("emails"))
+        cc = separar_emails(compose.get("cc"))
+        bcc = separar_emails(compose.get("bcc"))
+        # Los certificados emplean exactamente la firma corporativa utilizada
+        # actualmente por el envio de facturas.
+        firma = construir_firma_oficina("", "Asesoria Gestinem SL")
+        cuerpo_html = construir_cuerpo_html(compose.get("cuerpo") or "", firma, "")
+        logo_path = get_packaged_resource_path("logo.png")
+        inline_attachments = (
+            [{"path": str(logo_path), "content_id": "gestinem-logo"}]
+            if "cid:gestinem-logo" in firma and logo_path.is_file() else []
+        )
+        usar_cuenta_personal = (
+            compose.get("sender_mode") == "personal" and self._puede_elegir_remitente()
+        )
+        remitente_previsto = "me" if usar_cuenta_personal else "Oficina@gestinem.es"
+        user = getattr(self._session, "user", None)
+        try:
+            if usar_cuenta_personal:
+                resultado = GraphMailService().send(
+                    sender="me", to=destinatarios, cc=cc, bcc=bcc,
+                    subject=compose["asunto"], body=cuerpo_html,
+                    attachments=[pdf], inline_attachments=inline_attachments,
+                )
+            else:
+                resultado = BackendMailService().send(
+                    to=destinatarios, cc=cc, bcc=bcc,
+                    subject=compose["asunto"], body=cuerpo_html,
+                    attachments=[pdf], inline_attachments=inline_attachments,
+                )
+        except Exception as exc:
+            self._registrar_envio_certificado(
+                r, compose, remitente_previsto, cc, cuerpo_html, pdf, user,
+                estado="error", error=str(exc),
+            )
+            messagebox.showerror(
+                "Gest2A3Eco", f"No se pudo enviar el email:\n{exc}",
+                parent=self.winfo_toplevel(),
+            )
+            return
+
+        remitente = resultado.sender or remitente_previsto
+        self._registrar_envio_certificado(
+            r, compose, remitente, cc, cuerpo_html, pdf, user,
+            estado=("aceptado_graph" if usar_cuenta_personal else "aceptado_backend"),
+            graph_message_id=resultado.message_id,
+            internet_message_id=resultado.internet_message_id,
+        )
+        messagebox.showinfo(
+            "Gest2A3Eco", "Email enviado y registrado en Comunicaciones.",
+            parent=self.winfo_toplevel(),
+        )
+
+    def _puede_elegir_remitente(self) -> bool:
+        is_admin = getattr(self._session, "is_admin", None)
+        return bool(callable(is_admin) and is_admin())
+
+    def _ask_email_compose(
+        self, destino: str, asunto: str, cuerpo: str, pdf: str,
+    ) -> dict | None:
+        dlg = tk.Toplevel(self)
+        dlg.title("Enviar certificado por email")
+        dlg.geometry("700x520")
+        dlg.minsize(600, 440)
+        dlg.transient(self.winfo_toplevel())
+        dlg.grab_set()
+        result = {"value": None}
+
+        frm = ttk.Frame(dlg, padding=16)
+        frm.pack(fill="both", expand=True)
+        frm.columnconfigure(1, weight=1)
+        frm.rowconfigure(6, weight=1)
+
+        ttk.Label(frm, text="Adjunto:").grid(row=0, column=0, sticky="e", padx=(0, 8), pady=4)
+        ttk.Label(frm, text=Path(pdf).name).grid(row=0, column=1, sticky="w", pady=4)
+
+        ttk.Label(frm, text="Remitente:").grid(row=1, column=0, sticky="e", padx=(0, 8), pady=4)
+        remitentes = [("Oficina <oficina@gestinem.es>", "oficina")]
+        if self._puede_elegir_remitente():
+            remitentes.append(("Mi cuenta de Microsoft 365", "personal"))
+        sender_label = tk.StringVar(value=remitentes[0][0])
+        ttk.Combobox(
+            frm, textvariable=sender_label, state="readonly",
+            values=[label for label, _mode in remitentes],
+        ).grid(row=1, column=1, sticky="ew", pady=4)
+
+        ttk.Label(frm, text="Para:").grid(row=2, column=0, sticky="e", padx=(0, 8), pady=4)
+        to_var = tk.StringVar(value=destino)
+        ttk.Entry(frm, textvariable=to_var).grid(row=2, column=1, sticky="ew", pady=4)
+        ttk.Label(
+            frm, text="Puedes separar varios destinatarios con ; o ,",
+            foreground="gray",
+        ).grid(row=3, column=1, sticky="w")
+
+        ttk.Label(frm, text="CC:").grid(row=4, column=0, sticky="e", padx=(0, 8), pady=4)
+        cc_var = tk.StringVar()
+        ttk.Entry(frm, textvariable=cc_var).grid(row=4, column=1, sticky="ew", pady=4)
+        ttk.Label(frm, text="BCC:").grid(row=5, column=0, sticky="e", padx=(0, 8), pady=4)
+        bcc_var = tk.StringVar()
+        ttk.Entry(frm, textvariable=bcc_var).grid(row=5, column=1, sticky="ew", pady=4)
+
+        contenido = ttk.Frame(frm)
+        contenido.grid(row=6, column=0, columnspan=2, sticky="nsew", pady=(8, 0))
+        contenido.columnconfigure(1, weight=1)
+        contenido.rowconfigure(1, weight=1)
+        ttk.Label(contenido, text="Asunto:").grid(row=0, column=0, sticky="e", padx=(0, 8), pady=4)
+        asunto_var = tk.StringVar(value=asunto)
+        ttk.Entry(contenido, textvariable=asunto_var).grid(row=0, column=1, sticky="ew", pady=4)
+        ttk.Label(contenido, text="Mensaje:").grid(row=1, column=0, sticky="ne", padx=(0, 8), pady=4)
+        cuerpo_text = tk.Text(contenido, height=10, wrap="word")
+        cuerpo_text.insert("1.0", cuerpo)
+        cuerpo_text.grid(row=1, column=1, sticky="nsew", pady=4)
+        ttk.Label(
+            contenido,
+            text="Se añadira automaticamente la misma firma corporativa que en las facturas.",
+            foreground="gray",
+        ).grid(row=2, column=1, sticky="w", pady=(2, 0))
+
+        acciones = ttk.Frame(frm)
+        acciones.grid(row=7, column=0, columnspan=2, sticky="e", pady=(14, 0))
+
+        def _enviar():
+            emails = separar_emails(to_var.get())
+            subject = asunto_var.get().strip()
+            body = cuerpo_text.get("1.0", "end").strip()
+            if not emails or not subject or not body:
+                messagebox.showwarning(
+                    "Correo", "Para, asunto y mensaje son obligatorios.", parent=dlg,
+                )
+                return
+            sender_mode = dict(remitentes).get(sender_label.get(), "oficina")
+            result["value"] = {
+                "emails": emails, "cc": cc_var.get().strip(),
+                "bcc": bcc_var.get().strip(), "asunto": subject,
+                "cuerpo": body, "sender_mode": sender_mode,
+            }
+            dlg.destroy()
+
+        ttk.Button(acciones, text="Cancelar", command=dlg.destroy).pack(side="left", padx=5)
+        ttk.Button(acciones, text="Enviar", command=_enviar).pack(side="left")
+        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+        dlg.wait_window()
+        return result["value"]
+
+    def _registrar_envio_certificado(
+        self, solicitud, compose, remitente, cc, cuerpo_html, pdf, user, *,
+        estado, error="", graph_message_id="", internet_message_id="",
+    ) -> None:
+        self._gestor.registrar_envio_comunicacion({
+            "codigo_empresa": solicitud.get("company_code"),
+            "asunto": compose["asunto"],
+            "remitente": remitente,
+            "destinatarios": separar_emails(compose.get("emails")),
+            "cc": cc,
+            "cuerpo_html": cuerpo_html,
+            "estado_envio": estado,
+            "error_envio": error,
+            "graph_message_id": graph_message_id,
+            "internet_message_id": internet_message_id,
+            "usuario_id": getattr(user, "id", None),
+            "usuario_nombre": getattr(user, "nombre", None),
+            "adjuntos": [pdf],
+            "mailbox": remitente,
+        })
 
     def _descargar_pdf(self, solicitud):
         if not (solicitud.get("document_id") or solicitud.get("receipt_document_id")):
