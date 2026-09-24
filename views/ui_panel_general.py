@@ -196,10 +196,10 @@ class UIPanelGeneral(ttk.Frame):
             decision = messagebox.askyesnocancel(
                 "Desactivar empresas",
                 f"Se van a desactivar {len(codigos)} empresa(s).\n\n"
-                "Quieres eliminar tambien sus certificados digitales y dar de baja "
-                "los buzones DEHu y DGT/DEV?\n\n"
-                "Si: retirar servicios y desactivar.\n"
-                "No: desactivar sin retirar los servicios.\n"
+                "Los buzones DEHu y DGT/DEV se daran de baja automaticamente.\n\n"
+                "Quieres eliminar tambien sus certificados digitales?\n\n"
+                "Si: eliminar certificados y desactivar.\n"
+                "No: conservar certificados y desactivar.\n"
                 "Cancelar: no realizar ningun cambio.",
                 parent=self.winfo_toplevel(),
             )
@@ -213,10 +213,9 @@ class UIPanelGeneral(ttk.Frame):
         except Exception as exc:
             messagebox.showerror("Empresas", str(exc), parent=self.winfo_toplevel())
             return
-        detalle = (
-            " Certificados eliminados y buzones dados de baja."
-            if retirar_servicios else ""
-        )
+        detalle = " Buzones dados de baja."
+        if retirar_servicios:
+            detalle += " Certificados eliminados."
         messagebox.showinfo(
             "Empresas",
             f"Empresas actualizadas: {actualizadas}.{detalle}",

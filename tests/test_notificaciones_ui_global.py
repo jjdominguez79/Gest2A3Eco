@@ -102,6 +102,56 @@ def test_configuracion_buzones_solicita_solo_clientes_activos():
     assert vista._cache == []
 
 
+def test_configuracion_buzones_mantiene_visible_buzon_de_empresa_inactiva():
+    buzon = {
+        "id": "buzon-rivas", "codigo_empresa": "E00099",
+        "empresa_nombre": "Rivas Sierra CB", "organismo_codigo": "DEHU",
+        "organismo_nombre": "DEHu", "activo": 1,
+    }
+    gestor = SimpleNamespace(
+        listar_notif_buzones_global=Mock(return_value=[buzon]),
+        listar_empresas_resumen=Mock(return_value=[]),
+        listar_notif_organismos=Mock(return_value=[]),
+    )
+    vista = object.__new__(UIBuzonesGlobal)
+    vista._gestor = gestor
+    vista._cache = []
+    vista._cb_cliente = Mock()
+    vista._cb_cliente.get.return_value = "Todos"
+    vista._cb_org = Mock()
+    vista._cb_org.get.return_value = "Todos"
+    vista._render = Mock()
+    vista._cargar_estados_dev = Mock()
+
+    vista.refresh()
+
+    assert vista._cache[0]["id"] == "buzon-rivas"
+    assert vista._cache[0]["_empresa_inactiva"] is True
+
+
+def test_buzon_global_no_se_activa_sin_certificado(monkeypatch):
+    backend = Mock()
+    monkeypatch.setattr(
+        "views.ui_buzones_global.BackendClientService", lambda: backend,
+    )
+    vista = object.__new__(UIBuzonesGlobal)
+    vista._gestor = SimpleNamespace(
+        get_notif_config_global=Mock(return_value={}),
+        get_empresa=Mock(return_value={"activo": 1, "cif": "E12345678"}),
+        listar_notif_certificados=Mock(return_value=[]),
+        upsert_notif_buzon=Mock(),
+    )
+
+    with pytest.raises(ValueError, match="certificado digital activo"):
+        vista._guardar_estado_buzon({
+            "id": "buzon-1", "codigo_empresa": "E00001",
+            "organismo_codigo": "DEHU", "organismo_id": 1,
+        }, True)
+
+    backend.save_dehu_mailbox_config.assert_not_called()
+    vista._gestor.upsert_notif_buzon.assert_not_called()
+
+
 def test_dialogo_legacy_no_puede_guardar_periodicidad_ni_email_particulares():
     vista = object.__new__(_BuzonDialog)
     vista._gestor = SimpleNamespace(
@@ -110,7 +160,7 @@ def test_dialogo_legacy_no_puede_guardar_periodicidad_ni_email_particulares():
     )
     vista._empresa = "E00001"
     vista._buzon = {}
-    vista._cert = None
+    vista._cert = {"id": "cert-1", "nif_titular": "B12345678"}
     vista._org_nombres = ["", "DEHU - DEHu"]
     vista._org_ids = [None, 1]
     vista._modo_labels = ["Solo detectar"]

@@ -3083,6 +3083,7 @@ class UIFacturasEmitidas(ttk.Frame):
         default_cc: str = "",
         default_bcc: str = "",
         attachment_paths: list[str] | None = None,
+        allow_personal_sender: bool = False,
     ) -> dict | None:
         dlg = tk.Toplevel(self)
         dlg.title("Enviar factura por email")
@@ -3144,9 +3145,15 @@ class UIFacturasEmitidas(ttk.Frame):
         sender_mode = tk.StringVar(value="oficina")
         sender_frame = ttk.Frame(frm)
         sender_frame.grid(row=1, column=1, columnspan=2, sticky="w", pady=(8, 2))
-        ttk.Label(
-            sender_frame, text="Oficina (envio seguro mediante el backend)",
+        ttk.Radiobutton(
+            sender_frame, text="Oficina <oficina@gestinem.es>",
+            variable=sender_mode, value="oficina",
         ).pack(side=tk.LEFT)
+        if allow_personal_sender:
+            ttk.Radiobutton(
+                sender_frame, text="Mi cuenta de Microsoft 365",
+                variable=sender_mode, value="personal",
+            ).pack(side=tk.LEFT, padx=(12, 0))
 
         ttk.Label(frm, text="Destinatarios:").grid(row=2, column=0, sticky="ne", padx=(0, 8), pady=(8, 2))
         dest_frm = ttk.Frame(frm)

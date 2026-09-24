@@ -362,6 +362,7 @@ def test_compartir_factura_solo_email_no_publica_en_area_cliente(
     controller._codigo = "E00436"
     controller._ejercicio = 2026
     controller._empresa_conf = {}
+    controller._is_admin = lambda: False
     controller._get_factura_by_id = lambda _id: {
         "id": "fac-1", "numero": "000025", "nif": "B39806146",
     }
@@ -383,6 +384,91 @@ def test_compartir_factura_solo_email_no_publica_en_area_cliente(
     assert envios[0]["to"] == [
         "cliente@example.com", "administracion@example.com",
     ]
+
+
+def test_compartir_factura_permite_enviar_desde_cuenta_personal(
+    monkeypatch, tmp_path,
+):
+    enviados_graph = []
+    enviados_backend = []
+    compose_kwargs = {}
+    registros = []
+
+    class GraphMailStub:
+        def send(self, **kwargs):
+            enviados_graph.append(kwargs)
+            return SimpleNamespace(
+                sender="usuario@gestinem.es",
+                message_id="msg-personal-1",
+                internet_message_id="internet-personal-1",
+            )
+
+    class BackendMailStub:
+        def send(self, **kwargs):
+            enviados_backend.append(kwargs)
+            raise AssertionError("No debe usarse el backend para el remitente personal")
+
+    monkeypatch.setattr(
+        "services.graph_mail_service.GraphMailService", GraphMailStub,
+    )
+    monkeypatch.setattr(
+        "services.backend_mail_service.BackendMailService", BackendMailStub,
+    )
+    monkeypatch.setattr(
+        "services.email_service.build_invoice_email_text",
+        lambda *_args: "Texto del email",
+    )
+
+    pdf = tmp_path / "factura.pdf"
+    pdf.write_bytes(b"%PDF-1.4 factura")
+
+    def ask_email_compose(*_args, **kwargs):
+        compose_kwargs.update(kwargs)
+        return {
+            "emails": ["cliente@example.com"],
+            "cc": "",
+            "bcc": "",
+            "asunto": "Factura A000026",
+            "cuerpo": "Texto del email",
+            "sender_mode": "personal",
+        }
+
+    view = SimpleNamespace(
+        session=SimpleNamespace(user=SimpleNamespace(id=7, nombre="Administrador")),
+        get_selected_ids=lambda: ["fac-1"],
+        ask_share_channel=lambda: "email",
+        ask_yes_no=lambda *_args: False,
+        ask_email_compose=ask_email_compose,
+        show_info=lambda *_args: None,
+        show_warning=lambda *_args: None,
+        show_error=lambda *_args: None,
+    )
+    controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
+    controller._view = view
+    controller._codigo = "E00436"
+    controller._ejercicio = 2026
+    controller._empresa_conf = {}
+    controller._is_admin = lambda: True
+    controller._get_factura_by_id = lambda _id: {
+        "id": "fac-1", "numero": "000026", "nif": "B39806146",
+    }
+    controller._ensure_write = lambda *_args: True
+    controller._resolve_app_pdf = lambda _fac: str(pdf)
+    controller._albaranes_de_factura = lambda _fac: []
+    controller._cliente_factura = lambda _fac: {"email": "cliente@example.com"}
+    controller._totales_factura = lambda _fac: {"total": 75.30}
+    controller._registrar_envio_factura = (
+        lambda *args, **kwargs: registros.append((args, kwargs))
+    )
+
+    controller.compartir_pdf()
+
+    assert compose_kwargs["allow_personal_sender"] is True
+    assert enviados_backend == []
+    assert enviados_graph[0]["sender"] == "me"
+    assert enviados_graph[0]["to"] == ["cliente@example.com"]
+    assert registros[0][0][1] == "usuario@gestinem.es"
+    assert registros[0][1]["estado"] == "aceptado_graph"
 
 
 def test_compartir_factura_email_muestra_factura_y_albaran_en_adjuntos(monkeypatch, tmp_path):
@@ -408,6 +494,7 @@ def test_compartir_factura_email_muestra_factura_y_albaran_en_adjuntos(monkeypat
     controller._view = view
     controller._codigo = "E00701"
     controller._empresa_conf = {}
+    controller._is_admin = lambda: False
     controller._get_factura_by_id = lambda _id: {"id": _id, "numero": "000058"}
     controller._ensure_write = lambda *_args: True
     controller._resolve_app_pdf = lambda _fac: str(factura_pdf)

@@ -200,8 +200,18 @@ class UIBuzonesGlobal(ttk.Frame):
         empresa = self._gestor.get_empresa(codigo) or {}
         certs = self._gestor.listar_notif_certificados(codigo, solo_activos=True)
         cert = certs[0] if certs else None
+        if activo and (row.get("_empresa_inactiva") or not empresa.get("activo", True)):
+            raise ValueError(
+                "No se puede activar un buzon de una empresa inactiva."
+            )
+        if activo and cert is None:
+            raise ValueError(
+                "No se puede activar el buzon: la empresa no tiene un "
+                "certificado digital activo configurado."
+            )
         local = dict(row)
         local.pop("_virtual", None)
+        local.pop("_empresa_inactiva", None)
         local.update({
             "id": str(uuid.uuid4()) if row.get("_virtual") else str(row.get("id") or uuid.uuid4()),
             "codigo_empresa": codigo,
@@ -256,6 +266,13 @@ class UIBuzonesGlobal(ttk.Frame):
         buzon = self._row_seleccionada()
         if not buzon:
             return
+        if buzon.get("_empresa_inactiva"):
+            messagebox.showwarning(
+                "Sincronizar buzon",
+                "No se puede sincronizar el buzon de una empresa inactiva.",
+                parent=self.winfo_toplevel(),
+            )
+            return
         if not messagebox.askyesno(
             "Sincronizar buzon",
             f"El worker consultara '{buzon.get('nombre')}' utilizando exclusivamente "
@@ -277,7 +294,10 @@ class UIBuzonesGlobal(ttk.Frame):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_sincronizar_todos(self) -> None:
-        activos = [b for b in self._cache if b.get("activo")]
+        activos = [
+            b for b in self._cache
+            if b.get("activo") and not b.get("_empresa_inactiva")
+        ]
         if not activos:
             messagebox.showinfo("Sincronizar", "No hay buzones activos que sincronizar.",
                                 parent=self.winfo_toplevel())
@@ -416,6 +436,7 @@ class UIBuzonesGlobal(ttk.Frame):
             for row in existentes
         }
         cache = []
+        claves_incluidas = set()
         for empresa in empresas:
             codigo = str(empresa.get("codigo") or "")
             for provider in ("DEHU", "DEV"):
@@ -437,6 +458,20 @@ class UIBuzonesGlobal(ttk.Frame):
                     }
                 if row is not None:
                     cache.append(row)
+                    claves_incluidas.add((codigo, provider))
+        # Conserva visibles los buzones ya existentes de empresas inactivas.
+        # Asi pueden darse de baja si proceden de una version anterior que no
+        # sincronizo automaticamente el cambio de estado de la empresa.
+        for existente in existentes:
+            clave = (
+                str(existente.get("codigo_empresa") or ""),
+                str(existente.get("organismo_codigo") or "").upper(),
+            )
+            if clave in claves_incluidas:
+                continue
+            row = dict(existente)
+            row["_empresa_inactiva"] = True
+            cache.append(row)
         self._cache = sorted(
             cache,
             key=lambda row: (
@@ -512,6 +547,8 @@ class UIBuzonesGlobal(ttk.Frame):
                 }.get(estado_dev, estado_dev.title())
             else:
                 conexion = "Configurado" if b.get("activo") else "-"
+            if b.get("_empresa_inactiva"):
+                conexion = "Empresa inactiva"
             self._tv.insert("", tk.END, values=(
                 b["id"], cliente, org, b.get("nombre", ""), b.get("tipo_buzon", ""),
                 b.get("certificado_nombre") or "", modo, ultima,

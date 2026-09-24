@@ -1258,6 +1258,37 @@ def delete_internal_certificate(
 _DEHU_PERIODICITIES = {"MANUAL", "DIARIA", "SEMANAL", "QUINCENAL", "MENSUAL"}
 
 
+def _mailbox_organization(
+    db: Session, company_code: str, *, activating: bool,
+) -> MessagingOrganization:
+    if activating:
+        return _organization_by_code(db, company_code)
+    org = _organization_by_code_for_cleanup(db, company_code)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organizacion no encontrada")
+    return org
+
+
+def _require_valid_mailbox_certificate(
+    db: Session, org: MessagingOrganization,
+) -> None:
+    secret = db.scalar(select(ClientCertificateSecret).where(
+        ClientCertificateSecret.organization_id == org.id,
+        ClientCertificateSecret.active.is_(True),
+    ))
+    state = _secret_status(secret)
+    if not state["configured"]:
+        raise HTTPException(
+            status_code=409,
+            detail="No se puede activar el buzon: certificado digital no configurado",
+        )
+    if state["status"] != "valid":
+        raise HTTPException(
+            status_code=409,
+            detail="No se puede activar el buzon: el certificado digital no esta en vigor",
+        )
+
+
 def _serialize_dehu_mailbox(item: ClientDehuMailboxConfig, org=None) -> dict:
     return {
         "organization_id": item.organization_id,
@@ -1309,7 +1340,9 @@ def upsert_internal_dehu_mailbox(
     _auth: str = Depends(require_workstation_or_internal),
 ):
     """Replica en Azure la programacion necesaria para consultar DEHu sin escritorio."""
-    org = _organization_by_code(db, company_code)
+    org = _mailbox_organization(db, company_code, activating=payload.active)
+    if payload.active:
+        _require_valid_mailbox_certificate(db, org)
     periodicity = payload.periodicity.strip().upper()
     if periodicity not in _DEHU_PERIODICITIES:
         raise HTTPException(status_code=422, detail="Periodicidad DEHu no valida")
@@ -1415,7 +1448,9 @@ def upsert_internal_dev_mailbox(
     db: Session = Depends(_db),
     _auth: str = Depends(require_workstation_or_internal),
 ):
-    org = _organization_by_code(db, company_code)
+    org = _mailbox_organization(db, company_code, activating=payload.active)
+    if payload.active:
+        _require_valid_mailbox_certificate(db, org)
     periodicity = payload.periodicity.strip().upper()
     if periodicity not in _DEHU_PERIODICITIES:
         raise HTTPException(status_code=422, detail="Periodicidad DEV no valida")

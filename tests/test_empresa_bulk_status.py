@@ -19,10 +19,44 @@ def test_empresa_service_actualiza_estado_masivo():
     gestor = _Gestor()
     service = EmpresaService(gestor)
 
-    result = service.actualizar_estado_empresas(["E00001", "E00006"], False)
+    result = service.actualizar_estado_empresas(["E00001", "E00006"], True)
 
     assert result == 2
-    assert gestor.calls == [(["E00001", "E00006"], False)]
+    assert gestor.calls == [(["E00001", "E00006"], True)]
+
+
+def test_empresa_service_desactiva_buzones_aunque_conserve_certificado(monkeypatch):
+    class _GestorBaja(_Gestor):
+        def __init__(self):
+            super().__init__()
+            self.buzones_guardados = []
+
+        def listar_notif_certificados(self, _codigo):
+            raise AssertionError("No debe eliminar certificados")
+
+        def listar_notif_buzones(self, codigo):
+            return [{"id": "dehu-1", "codigo_empresa": codigo, "activo": 1}]
+
+        def upsert_notif_buzon(self, buzon):
+            self.buzones_guardados.append(buzon)
+
+    backend = MagicMock()
+    monkeypatch.setattr(
+        "services.backend_client_service.BackendClientService",
+        lambda: backend,
+    )
+    gestor = _GestorBaja()
+
+    result = EmpresaService(gestor).actualizar_estado_empresas(
+        ["E00001"], False, retirar_servicios=False,
+    )
+
+    assert result == 1
+    backend.delete_dehu_mailbox_config.assert_called_once_with(company_code="E00001")
+    backend.delete_dev_mailbox_config.assert_called_once_with(company_code="E00001")
+    backend.delete_client_certificate.assert_not_called()
+    assert gestor.buzones_guardados[0]["activo"] == 0
+    assert gestor.calls == [(["E00001"], False)]
 
 
 def test_empresa_service_retira_certificado_y_desactiva_buzones(monkeypatch):

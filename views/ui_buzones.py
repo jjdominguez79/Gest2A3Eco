@@ -174,6 +174,20 @@ class UIBuzones(ttk.Frame):
 
     def _guardar_configuracion(self, buzon: dict) -> None:
         """Persiste la configuracion local y su programacion central."""
+        if buzon.get("activo"):
+            empresa = self._gestor.get_empresa(self._codigo) or {}
+            if not empresa.get("activo", True):
+                raise ValueError(
+                    "No se puede activar un buzon de una empresa inactiva."
+                )
+            certificados = self._gestor.listar_notif_certificados(
+                self._codigo, solo_activos=True,
+            )
+            if not certificados:
+                raise ValueError(
+                    "No se puede activar el buzon: la empresa no tiene un "
+                    "certificado digital activo configurado."
+                )
         org = self._gestor.get_notif_organismo(buzon.get("organismo_id")) or {}
         provider = str(org.get("codigo") or "DEHU").upper()
         backend = BackendClientService()
@@ -235,8 +249,6 @@ class _BuzonDialog(tk.Toplevel):
         self._organismos = gestor.listar_notif_organismos(solo_activos=True)
         # Certificado unico del cliente (si existe)
         certs = gestor.listar_notif_certificados(codigo_empresa, solo_activos=True)
-        if not certs:
-            certs = gestor.listar_notif_certificados(codigo_empresa)
         self._cert = certs[0] if certs else None
         self._build()
         self.grab_set()
@@ -314,6 +326,14 @@ class _BuzonDialog(tk.Toplevel):
         nombre = self._var_nombre.get().strip()
         if not nombre:
             messagebox.showerror("Gest2A3Eco", "El nombre del buzon es obligatorio.", parent=self)
+            return
+        if self._var_activo.get() and self._cert is None:
+            messagebox.showerror(
+                "Gest2A3Eco",
+                "No se puede activar el buzon: configura primero un "
+                "certificado digital activo para esta empresa.",
+                parent=self,
+            )
             return
 
         org_text = self._var_org.get()

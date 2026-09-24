@@ -225,14 +225,28 @@ class UINotificacionesCliente(ttk.Frame):
 
     def _cert(self):
         certs = self._gestor.listar_notif_certificados(self._codigo, solo_activos=True)
-        if not certs:
-            certs = self._gestor.listar_notif_certificados(self._codigo)
         return certs[0] if certs else None
 
     # ------------------------------------------------------------------ guardar
     def _on_guardar(self):
         opts = self._opciones()
         cert = self._cert()
+        if any(self._org_marca.values()) and cert is None:
+            messagebox.showerror(
+                "Gest2A3Eco",
+                "No se puede activar ningun buzon: configura primero un "
+                "certificado digital activo para esta empresa.",
+                parent=self.winfo_toplevel(),
+            )
+            return
+        empresa = self._gestor.get_empresa(self._codigo) or {}
+        if any(self._org_marca.values()) and not empresa.get("activo", True):
+            messagebox.showerror(
+                "Gest2A3Eco",
+                "No se pueden activar buzones de una empresa inactiva.",
+                parent=self.winfo_toplevel(),
+            )
+            return
         cert_id = cert["id"] if cert else None
         nif = (cert.get("nif_titular") if cert else None) or None
 

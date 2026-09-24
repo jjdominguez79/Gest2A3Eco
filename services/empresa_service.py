@@ -62,13 +62,21 @@ class EmpresaService:
         activo: bool,
         retirar_servicios: bool = False,
     ) -> int:
-        """Cambia el estado y, si se solicita, retira los servicios online."""
-        if not activo and retirar_servicios:
-            self._retirar_servicios_notificaciones(codigos)
+        """Cambia el estado y da de baja los buzones de empresas inactivas."""
+        if not activo:
+            self._desactivar_servicios_notificaciones(
+                codigos,
+                eliminar_certificados=retirar_servicios,
+            )
         return int(self._gestor.actualizar_estado_empresas(codigos, activo) or 0)
 
-    def _retirar_servicios_notificaciones(self, codigos: list[str]) -> None:
-        """Elimina la custodia central y desactiva la configuracion local."""
+    def _desactivar_servicios_notificaciones(
+        self,
+        codigos: list[str],
+        *,
+        eliminar_certificados: bool = False,
+    ) -> None:
+        """Da de baja los buzones y, opcionalmente, elimina certificados."""
         from services.backend_client_service import BackendClientService
 
         backend = BackendClientService()
@@ -77,16 +85,18 @@ class EmpresaService:
             if str(codigo or "").strip()
         ))
         for codigo in normalizados:
-            # Las tres operaciones remotas son idempotentes. Se ejecutan antes
-            # de cambiar el estado local para poder reintentar una baja parcial.
-            backend.delete_client_certificate(company_code=codigo)
+            # Las operaciones remotas son idempotentes. Se ejecutan antes de
+            # cambiar el estado local para poder reintentar una baja parcial.
             backend.delete_dehu_mailbox_config(company_code=codigo)
             backend.delete_dev_mailbox_config(company_code=codigo)
+            if eliminar_certificados:
+                backend.delete_client_certificate(company_code=codigo)
 
-            for certificado in self._gestor.listar_notif_certificados(codigo):
-                cert_id = certificado.get("id")
-                if cert_id:
-                    self._gestor.eliminar_notif_certificado(codigo, cert_id)
+            if eliminar_certificados:
+                for certificado in self._gestor.listar_notif_certificados(codigo):
+                    cert_id = certificado.get("id")
+                    if cert_id:
+                        self._gestor.eliminar_notif_certificado(codigo, cert_id)
             for buzon in self._gestor.listar_notif_buzones(codigo):
                 if buzon.get("activo"):
                     inactivo = dict(buzon)

@@ -1106,9 +1106,6 @@ class FacturasEmitidasController:
 
         if canal == "email":
             from services.email_service import build_invoice_email_text
-            from services.backend_mail_service import BackendMailService
-            from views.ui_comunicaciones import construir_cuerpo_html, construir_firma_oficina
-            from utils.utilidades import get_packaged_resource_path
             email_cliente = str(cliente.get("email") or "").strip()
             email_empresa = str(self._empresa_conf.get("email") or "").strip()
             tot = self._totales_factura(fac)
@@ -1118,46 +1115,13 @@ class FacturasEmitidasController:
                 email_cliente, asunto, cuerpo, pdf_path,
                 email_empresa=email_empresa,
                 attachment_paths=attachment_paths,
+                allow_personal_sender=self._is_admin(),
             )
             if not compose:
                 return
             compose = {**compose, "emails": separar_emails(compose.get("emails"))}
-
-            user = getattr(getattr(self._view, "session", None), "user", None)
-            # Las credenciales de correo pertenecen al backend. El puesto no
-            # puede autorizar de forma segura el uso de un buzon personal.
-            send_from_personal = False
-            user_name = str(getattr(user, "nombre", "") or "").strip()
-            if user_name.lower() == "administrador":
-                user_name = "Juan José Domínguez Barrero"
-            signature = (
-                construir_firma_oficina(user_name)
-                if send_from_personal
-                else construir_firma_oficina("", "Asesoria Gestinem SL")
-            )
-            email_html_body = construir_cuerpo_html(compose["cuerpo"], signature, "")
-            cc = self._split_email_addresses(compose.get("cc", ""))
-            bcc = self._split_email_addresses(compose.get("bcc", ""))
-            sender = "Oficina@gestinem.es"
-            logo_path = get_packaged_resource_path("logo.png")
-            inline_attachments = ([{"path": str(logo_path), "content_id": "gestinem-logo"}]
-                                  if "cid:gestinem-logo" in signature and logo_path.is_file() else [])
-            try:
-                result = BackendMailService().send(
-                    to=compose["emails"], cc=cc, bcc=bcc,
-                    subject=compose["asunto"], body=email_html_body,
-                    attachments=attachment_paths, inline_attachments=inline_attachments,
-                )
-            except Exception as exc:
-                self._registrar_envio_factura(compose, sender, cc, attachment_paths, email_html_body, user, estado="error", error=str(exc))
-                self._view.show_error("Gest2A3Eco", f"No se pudo enviar el email:\n{exc}")
+            if not self._enviar_email_factura(compose, attachment_paths):
                 return
-            self._registrar_envio_factura(
-                compose, result.sender or sender,
-                cc, attachment_paths, email_html_body, user,
-                estado="aceptado_backend", graph_message_id=result.message_id,
-                internet_message_id=result.internet_message_id,
-            )
             self._view.show_info("Gest2A3Eco", "Email enviado y registrado en Comunicaciones.")
 
         elif canal == "publicar":
@@ -1167,9 +1131,6 @@ class FacturasEmitidasController:
         elif canal == "email_y_publicar":
             # Primero email (reutilizar la rama email)
             from services.email_service import build_invoice_email_text
-            from services.backend_mail_service import BackendMailService
-            from views.ui_comunicaciones import construir_cuerpo_html, construir_firma_oficina
-            from utils.utilidades import get_packaged_resource_path
             email_cliente = str(cliente.get("email") or "").strip()
             email_empresa = str(self._empresa_conf.get("email") or "").strip()
             tot = self._totales_factura(fac)
@@ -1179,39 +1140,13 @@ class FacturasEmitidasController:
                 email_cliente, asunto, cuerpo, pdf_path,
                 email_empresa=email_empresa,
                 attachment_paths=attachment_paths,
+                allow_personal_sender=self._is_admin(),
             )
             if not compose:
                 return
             compose = {**compose, "emails": separar_emails(compose.get("emails"))}
-
-            user = getattr(getattr(self._view, "session", None), "user", None)
-            user_name = str(getattr(user, "nombre", "") or "").strip()
-            if user_name.lower() == "administrador":
-                user_name = "Juan José Domínguez Barrero"
-            signature = construir_firma_oficina("", "Asesoria Gestinem SL")
-            email_html_body = construir_cuerpo_html(compose["cuerpo"], signature, "")
-            cc = self._split_email_addresses(compose.get("cc", ""))
-            bcc = self._split_email_addresses(compose.get("bcc", ""))
-            sender = "Oficina@gestinem.es"
-            logo_path = get_packaged_resource_path("logo.png")
-            inline_attachments = ([{"path": str(logo_path), "content_id": "gestinem-logo"}]
-                                  if "cid:gestinem-logo" in signature and logo_path.is_file() else [])
-            try:
-                result = BackendMailService().send(
-                    to=compose["emails"], cc=cc, bcc=bcc,
-                    subject=compose["asunto"], body=email_html_body,
-                    attachments=attachment_paths, inline_attachments=inline_attachments,
-                )
-            except Exception as exc:
-                self._registrar_envio_factura(compose, sender, cc, attachment_paths, email_html_body, user, estado="error", error=str(exc))
-                self._view.show_error("Gest2A3Eco", f"No se pudo enviar el email:\n{exc}")
+            if not self._enviar_email_factura(compose, attachment_paths):
                 return
-            self._registrar_envio_factura(
-                compose, result.sender or sender,
-                cc, attachment_paths, email_html_body, user,
-                estado="aceptado_backend", graph_message_id=result.message_id,
-                internet_message_id=result.internet_message_id,
-            )
             self._view.show_info("Gest2A3Eco", "Email enviado.")
 
             # Despues publicar. El email ya enviado no se revierte si falla.
@@ -1230,6 +1165,65 @@ class FacturasEmitidasController:
     @staticmethod
     def _split_email_addresses(value) -> list[str]:
         return separar_emails(value)
+
+    def _enviar_email_factura(self, compose, attachment_paths) -> bool:
+        from services.backend_mail_service import BackendMailService
+        from services.graph_mail_service import GraphMailService
+        from utils.utilidades import get_packaged_resource_path
+        from views.ui_comunicaciones import construir_cuerpo_html, construir_firma_oficina
+
+        user = getattr(getattr(self._view, "session", None), "user", None)
+        send_from_personal = (
+            compose.get("sender_mode") == "personal" and self._is_admin()
+        )
+        user_name = str(getattr(user, "nombre", "") or "").strip()
+        if user_name.lower() == "administrador":
+            user_name = "Juan José Domínguez Barrero"
+        signature = (
+            construir_firma_oficina(user_name)
+            if send_from_personal
+            else construir_firma_oficina("", "Asesoria Gestinem SL")
+        )
+        email_html_body = construir_cuerpo_html(compose["cuerpo"], signature, "")
+        cc = self._split_email_addresses(compose.get("cc", ""))
+        bcc = self._split_email_addresses(compose.get("bcc", ""))
+        sender = "me" if send_from_personal else "Oficina@gestinem.es"
+        logo_path = get_packaged_resource_path("logo.png")
+        inline_attachments = (
+            [{"path": str(logo_path), "content_id": "gestinem-logo"}]
+            if "cid:gestinem-logo" in signature and logo_path.is_file() else []
+        )
+        try:
+            if send_from_personal:
+                result = GraphMailService().send(
+                    sender="me", to=compose["emails"], cc=cc, bcc=bcc,
+                    subject=compose["asunto"], body=email_html_body,
+                    attachments=attachment_paths,
+                    inline_attachments=inline_attachments,
+                )
+            else:
+                result = BackendMailService().send(
+                    to=compose["emails"], cc=cc, bcc=bcc,
+                    subject=compose["asunto"], body=email_html_body,
+                    attachments=attachment_paths,
+                    inline_attachments=inline_attachments,
+                )
+        except Exception as exc:
+            self._registrar_envio_factura(
+                compose, sender, cc, attachment_paths, email_html_body, user,
+                estado="error", error=str(exc),
+            )
+            self._view.show_error("Gest2A3Eco", f"No se pudo enviar el email:\n{exc}")
+            return False
+
+        self._registrar_envio_factura(
+            compose, result.sender or sender,
+            cc, attachment_paths, email_html_body, user,
+            estado=("aceptado_graph" if send_from_personal else "aceptado_backend"),
+            graph_message_id=result.message_id,
+            internet_message_id=result.internet_message_id,
+        )
+        return True
 
     def _registrar_envio_factura(
         self, compose, remitente, cc, adjuntos, cuerpo_html, user, *, estado,

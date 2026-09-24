@@ -24,7 +24,7 @@ def test_desactivar_pregunta_y_retira_servicios_si_se_confirma(monkeypatch):
     ui._change_selected_status(False)
 
     callback.assert_called_once_with(["E00001", "E00006"], False, True)
-    assert "buzones dados de baja" in modulo.messagebox.showinfo.call_args.args[1]
+    assert "buzones dados de baja" in modulo.messagebox.showinfo.call_args.args[1].lower()
     ui.refresh.assert_called_once_with()
 
 
@@ -37,6 +37,7 @@ def test_desactivar_sin_retirar_servicios_si_se_responde_no(monkeypatch):
     ui._change_selected_status(False)
 
     callback.assert_called_once_with(["E00001", "E00006"], False, False)
+    assert "buzones dados de baja" in modulo.messagebox.showinfo.call_args.args[1].lower()
 
 
 def test_desactivar_no_hace_cambios_si_se_cancela(monkeypatch):

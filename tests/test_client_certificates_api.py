@@ -1388,6 +1388,57 @@ def test_escritorio_elimina_buzones_de_organizacion_inactiva(monkeypatch):
         assert db.get(ClientDevMailboxConfig, org_id) is None
 
 
+@pytest.mark.parametrize("provider", ["dehu", "dev"])
+def test_escritorio_no_activa_buzon_sin_certificado(monkeypatch, provider):
+    client, factory, org_id, _headers = _setup(monkeypatch)
+    with factory() as db:
+        secret = db.scalar(select(ClientCertificateSecret).where(
+            ClientCertificateSecret.organization_id == org_id,
+        ))
+        db.delete(secret)
+        db.commit()
+
+    response = client.put(
+        f"/api/v1/messaging/client/certificates/internal/{provider}-mailboxes/E00001",
+        json={"active": True, "periodicity": "DIARIA"},
+    )
+
+    assert response.status_code == 409
+    assert "certificado digital no configurado" in response.json()["detail"]
+    with factory() as db:
+        model = ClientDehuMailboxConfig if provider == "dehu" else ClientDevMailboxConfig
+        assert db.get(model, org_id) is None
+
+
+def test_escritorio_permite_desactivar_buzones_de_organizacion_inactiva(monkeypatch):
+    client, factory, org_id, _headers = _setup(monkeypatch)
+    assert client.put(
+        "/api/v1/messaging/client/certificates/internal/dehu-mailboxes/E00001",
+        json={"active": True, "periodicity": "DIARIA"},
+    ).status_code == 200
+    assert client.put(
+        "/api/v1/messaging/client/certificates/internal/dev-mailboxes/E00001",
+        json={"active": True, "periodicity": "DIARIA"},
+    ).status_code == 200
+    with factory() as db:
+        db.get(MessagingOrganization, org_id).active = False
+        db.commit()
+
+    dehu = client.put(
+        "/api/v1/messaging/client/certificates/internal/dehu-mailboxes/E00001",
+        json={"active": False, "periodicity": "DIARIA"},
+    )
+    dev = client.put(
+        "/api/v1/messaging/client/certificates/internal/dev-mailboxes/E00001",
+        json={"active": False, "periodicity": "DIARIA"},
+    )
+
+    assert dehu.status_code == 200
+    assert dehu.json()["active"] is False
+    assert dev.status_code == 200
+    assert dev.json()["active"] is False
+
+
 def test_escritorio_elimina_buzones_de_organizacion_ya_ausente(monkeypatch):
     client, _, _, _headers = _setup(monkeypatch)
 
