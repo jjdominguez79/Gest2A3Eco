@@ -34,11 +34,13 @@ from backend.api.messaging_models import (
     MessagingConversation,
     MessagingConversationAlias,
     MessagingDeletionAudit,
+    MessagingGroupMember,
     MessagingMessage,
     MessagingOrganization,
     MessagingStaff,
     MessagingStaffPresenceConnection,
     MessagingStaffSession,
+    MessagingStaffThread,
     MessagingWebSocketTicket,
 )
 from backend.api.messaging_realtime import RealtimeHub
@@ -302,6 +304,49 @@ def test_estados_chat_interno_lectura_parcial_y_evento(tmp_path, monkeypatch):
     assert client.post(read_path, headers=staff_headers("employee")).status_code == 200
     assert len(events) == total
     assert client.get(path, headers=auth).status_code in {401, 403}
+
+
+def test_estados_grupo_excluyen_identidad_heredada_del_autor(tmp_path, monkeypatch):
+    client, factory, staff_headers, _auth, _client_id, _conv_id = _setup(
+        tmp_path, monkeypatch,
+    )
+    admin = staff_headers("admin")
+    threads = client.get(
+        "/api/v1/messaging/staff/internal/threads", headers=admin,
+    ).json()
+    group = next(
+        row for row in threads
+        if row["kind"] == "group" and "Fiscal" in row["title"]
+    )
+
+    with factory() as db:
+        current = db.get(MessagingStaff, "admin")
+        current.desktop_user_id = "7"
+        legacy = MessagingStaff(
+            external_id="7", name="Admin", email="", desktop_user_id="",
+            role="admin", active=True,
+        )
+        db.add(legacy)
+        thread = db.get(MessagingStaffThread, group["id"])
+        group_id = thread.key.split(":", 1)[1]
+        db.add(MessagingGroupMember(
+            group_id=group_id, member_type="staff", member_id=legacy.external_id,
+            role="owner",
+        ))
+        db.commit()
+
+    path = f"/api/v1/messaging/staff/internal/threads/{group['id']}/messages"
+    sent = client.post(path, headers=admin, data={
+        "body": "Mensaje del grupo", "idempotency_key": "group-legacy-author",
+    })
+    assert sent.status_code == 200
+    state = client.get(path, headers=admin).json()[0]
+    recipient_ids = {
+        row["actor_id"] for row in state["estado_destinatarios"]
+    }
+    assert "admin" not in recipient_ids
+    assert "7" not in recipient_ids
+    assert recipient_ids == {"employee"}
 
 
 @pytest.mark.parametrize("clientes,empleados", [(False, False), (False, True), (True, False), (True, True)])

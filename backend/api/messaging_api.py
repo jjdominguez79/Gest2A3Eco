@@ -328,20 +328,20 @@ def _primary_admin(db: Session) -> MessagingStaff | None:
 def _is_same_person(a: MessagingStaff, b: MessagingStaff) -> bool:
     """Detect whether two MessagingStaff records represent the same person.
 
-    Compares the persisted identity keys (external_id and Entra OID) in both
-    directions, then falls back to a normalized corporate email. Unlinked
-    legacy records are handled as historical-only by
+    Compares the persisted identity keys (external_id, desktop user and Entra
+    OID) in both directions, then falls back to a normalized corporate email.
+    Unlinked legacy records are handled as historical-only by
     ``_has_operational_staff_identity`` because they carry no stable identity
     with which to compare them safely.
     """
     identifiers_a = {
         value.strip().lower()
-        for value in (a.external_id, a.entra_oid)
+        for value in (a.external_id, a.desktop_user_id, a.entra_oid)
         if value and value.strip()
     }
     identifiers_b = {
         value.strip().lower()
-        for value in (b.external_id, b.entra_oid)
+        for value in (b.external_id, b.desktop_user_id, b.entra_oid)
         if value and value.strip()
     }
     if identifiers_a & identifiers_b:
@@ -907,8 +907,19 @@ def _add_message_states(db: Session, rows: list, result: list[dict], target_type
     )
     for data in result:
         data["can_view_history"] = puede_ver_historial
-    own = [(row, data) for row, data in zip(rows, result)
-           if data.get("author_type", "staff") == actor_type and data["author_id"] == actor_id]
+    observador = db.get(MessagingStaff, actor_id) if actor_type == "staff" else None
+
+    def _es_autor(data: dict) -> bool:
+        if data.get("author_type", "staff") != actor_type:
+            return False
+        if data["author_id"] == actor_id:
+            return True
+        if not observador or actor_type != "staff":
+            return False
+        autor = db.get(MessagingStaff, data["author_id"])
+        return bool(autor and _is_same_person(observador, autor))
+
+    own = [(row, data) for row, data in zip(rows, result) if _es_autor(data)]
     if not own:
         return
     if target_type == "internal_thread":
@@ -926,15 +937,32 @@ def _add_message_states(db: Session, rows: list, result: list[dict], target_type
                 MessagingStaff.active.is_(True),
             )) if _can_access_conversation(db, conv, staff)}
     recipients.discard((actor_type, actor_id))
+    # Una misma persona puede conservar una ficha historica con el antiguo ID
+    # del escritorio y otra vinculada a Entra. Ninguna de sus identidades debe
+    # figurar como destinataria de su propio mensaje.
+    recipient_staff_ids = [
+        key[1] for key in recipients if key[0] == "staff"
+    ]
+    recipient_staff = {staff.external_id: staff for staff in db.scalars(
+        select(MessagingStaff).where(MessagingStaff.external_id.in_(recipient_staff_ids))
+    )}
+    if observador:
+        recipients = {
+            key for key in recipients
+            if key[0] != "staff"
+            or not (
+                recipient_staff.get(key[1])
+                and _is_same_person(observador, recipient_staff[key[1]])
+            )
+        }
     receipts = {(receipt.actor_type, receipt.actor_id): _receipt_time(receipt.read_through_at)
                 for receipt in db.scalars(select(MessagingReceipt).where(
                     MessagingReceipt.target_type == target_type, MessagingReceipt.target_id == target_id,
                 ))}
-    observador = db.get(MessagingStaff, actor_id) if actor_type == "staff" else None
-    lectores_staff = {staff.external_id: staff for staff in db.scalars(
-        select(MessagingStaff).where(MessagingStaff.external_id.in_(
-            [key[1] for key in recipients if key[0] == "staff"]
-        )))}
+    lectores_staff = {
+        staff_id: staff for staff_id, staff in recipient_staff.items()
+        if ("staff", staff_id) in recipients
+    }
     lectores_client = {client.id: client for client in db.scalars(
         select(MessagingClient).where(MessagingClient.id.in_(
             [key[1] for key in recipients if key[0] == "client"]
