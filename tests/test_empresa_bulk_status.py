@@ -1,5 +1,9 @@
-from services.empresa_service import EmpresaService
+from unittest.mock import MagicMock
+
+import pytest
+
 from models.gestor_base import GestorBase
+from services.empresa_service import EmpresaService
 
 
 class _Gestor:
@@ -19,6 +23,67 @@ def test_empresa_service_actualiza_estado_masivo():
 
     assert result == 2
     assert gestor.calls == [(["E00001", "E00006"], False)]
+
+
+def test_empresa_service_retira_certificado_y_desactiva_buzones(monkeypatch):
+    class _GestorRetirada(_Gestor):
+        def __init__(self):
+            super().__init__()
+            self.certificados_eliminados = []
+            self.buzones_guardados = []
+
+        def listar_notif_certificados(self, codigo):
+            return [{"id": "cert-1", "codigo_empresa": codigo}]
+
+        def eliminar_notif_certificado(self, codigo, cert_id):
+            self.certificados_eliminados.append((codigo, cert_id))
+
+        def listar_notif_buzones(self, codigo):
+            return [
+                {"id": "dehu-1", "codigo_empresa": codigo, "activo": 1},
+                {"id": "dev-1", "codigo_empresa": codigo, "activo": 0},
+            ]
+
+        def upsert_notif_buzon(self, buzon):
+            self.buzones_guardados.append(buzon)
+
+    backend = MagicMock()
+    monkeypatch.setattr(
+        "services.backend_client_service.BackendClientService",
+        lambda: backend,
+    )
+    gestor = _GestorRetirada()
+
+    result = EmpresaService(gestor).actualizar_estado_empresas(
+        [" e00001 "], False, retirar_servicios=True,
+    )
+
+    assert result == 1
+    backend.delete_client_certificate.assert_called_once_with(company_code="E00001")
+    backend.delete_dehu_mailbox_config.assert_called_once_with(company_code="E00001")
+    backend.delete_dev_mailbox_config.assert_called_once_with(company_code="E00001")
+    assert gestor.certificados_eliminados == [("E00001", "cert-1")]
+    assert [(b["id"], b["activo"]) for b in gestor.buzones_guardados] == [
+        ("dehu-1", 0),
+    ]
+    assert gestor.calls == [([" e00001 "], False)]
+
+
+def test_empresa_service_no_desactiva_si_azure_no_confirma_la_retirada(monkeypatch):
+    gestor = _Gestor()
+    backend = MagicMock()
+    backend.delete_dehu_mailbox_config.side_effect = RuntimeError("Azure no disponible")
+    monkeypatch.setattr(
+        "services.backend_client_service.BackendClientService",
+        lambda: backend,
+    )
+
+    with pytest.raises(RuntimeError, match="Azure no disponible"):
+        EmpresaService(gestor).actualizar_estado_empresas(
+            ["E00001"], False, retirar_servicios=True,
+        )
+
+    assert gestor.calls == []
 
 
 class _Cursor:

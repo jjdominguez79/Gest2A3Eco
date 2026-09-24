@@ -56,9 +56,42 @@ class EmpresaService:
         out.sort(key=lambda row: (str(row.get("nombre") or "").lower(), str(row.get("codigo") or "")))
         return out
 
-    def actualizar_estado_empresas(self, codigos: list[str], activo: bool) -> int:
-        """Cambia de una vez el estado de todas las empresas seleccionadas."""
+    def actualizar_estado_empresas(
+        self,
+        codigos: list[str],
+        activo: bool,
+        retirar_servicios: bool = False,
+    ) -> int:
+        """Cambia el estado y, si se solicita, retira los servicios online."""
+        if not activo and retirar_servicios:
+            self._retirar_servicios_notificaciones(codigos)
         return int(self._gestor.actualizar_estado_empresas(codigos, activo) or 0)
+
+    def _retirar_servicios_notificaciones(self, codigos: list[str]) -> None:
+        """Elimina la custodia central y desactiva la configuracion local."""
+        from services.backend_client_service import BackendClientService
+
+        backend = BackendClientService()
+        normalizados = list(dict.fromkeys(
+            str(codigo or "").strip().upper() for codigo in codigos
+            if str(codigo or "").strip()
+        ))
+        for codigo in normalizados:
+            # Las tres operaciones remotas son idempotentes. Se ejecutan antes
+            # de cambiar el estado local para poder reintentar una baja parcial.
+            backend.delete_client_certificate(company_code=codigo)
+            backend.delete_dehu_mailbox_config(company_code=codigo)
+            backend.delete_dev_mailbox_config(company_code=codigo)
+
+            for certificado in self._gestor.listar_notif_certificados(codigo):
+                cert_id = certificado.get("id")
+                if cert_id:
+                    self._gestor.eliminar_notif_certificado(codigo, cert_id)
+            for buzon in self._gestor.listar_notif_buzones(codigo):
+                if buzon.get("activo"):
+                    inactivo = dict(buzon)
+                    inactivo["activo"] = 0
+                    self._gestor.upsert_notif_buzon(inactivo)
 
     def get_company_navigation(self, codigo: str) -> dict:
         companies = self.listar_empresas_panel()

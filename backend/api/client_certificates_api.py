@@ -469,6 +469,15 @@ def _organization_by_code(db: Session, company_code: str) -> MessagingOrganizati
     return org
 
 
+def _organization_by_code_for_cleanup(
+    db: Session, company_code: str,
+) -> MessagingOrganization | None:
+    """Localiza una organizacion aunque este inactiva para retirar servicios."""
+    return db.scalar(select(MessagingOrganization).where(
+        MessagingOrganization.company_code == company_code.strip(),
+    ))
+
+
 def _staff_organization(
     db: Session, company_code: str, staff: MessagingStaff,
 ) -> MessagingOrganization:
@@ -1228,9 +1237,7 @@ def delete_internal_certificate(
     # para crear solicitudes o subir material nuevo, pero impediria retirar el
     # certificado que ya estuviera custodiado. Si la organizacion ya no existe,
     # la operacion tambien se considera completada de forma idempotente.
-    org = db.scalar(select(MessagingOrganization).where(
-        MessagingOrganization.company_code == company_code.strip(),
-    ))
+    org = _organization_by_code_for_cleanup(db, company_code)
     if not org:
         return {"ok": True}
     secret = db.scalar(select(ClientCertificateSecret).where(
@@ -1371,7 +1378,9 @@ def delete_internal_dehu_mailbox(
     db: Session = Depends(_db),
     _auth: str = Depends(require_workstation_or_internal),
 ):
-    org = _organization_by_code(db, company_code)
+    org = _organization_by_code_for_cleanup(db, company_code)
+    if not org:
+        return {"deleted": False}
     item = db.get(ClientDehuMailboxConfig, org.id)
     if item:
         db.delete(item)
@@ -1476,7 +1485,9 @@ def delete_internal_dev_mailbox(
     db: Session = Depends(_db),
     _auth: str = Depends(require_workstation_or_internal),
 ):
-    org = _organization_by_code(db, company_code)
+    org = _organization_by_code_for_cleanup(db, company_code)
+    if not org:
+        return {"deleted": False}
     item = db.get(ClientDevMailboxConfig, org.id)
     if item:
         db.delete(item)

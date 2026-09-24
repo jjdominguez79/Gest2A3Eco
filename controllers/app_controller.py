@@ -529,8 +529,17 @@ class AppController:
             parent, self._gestor, on_back=self.open_empresas,
         ))
 
-    def _set_companies_active(self, codigos: list[str], activo: bool) -> int:
-        return self._empresa_service.actualizar_estado_empresas(codigos, activo)
+    def _set_companies_active(
+        self,
+        codigos: list[str],
+        activo: bool,
+        retirar_servicios: bool = False,
+    ) -> int:
+        return self._empresa_service.actualizar_estado_empresas(
+            codigos,
+            activo,
+            retirar_servicios=retirar_servicios,
+        )
 
     # ------------------------------------------------------------------ empresa
 

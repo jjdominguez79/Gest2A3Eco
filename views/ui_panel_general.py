@@ -183,26 +183,43 @@ class UIPanelGeneral(ttk.Frame):
             )
             return
         codigos = [str(item.get("codigo") or "") for item in seleccionadas]
-        accion = "reactivar" if activo else "desactivar"
-        consecuencia = (
-            "Volveran a estar disponibles para la aplicacion Flutter."
-            if activo
-            else "Dejaran de aparecer en la aplicacion Flutter tras la siguiente sincronizacion."
-        )
-        if not messagebox.askyesno(
-            "Empresas",
-            f"Se van a {accion} {len(codigos)} empresa(s).\n\n{consecuencia}\n\nContinuar?",
-            parent=self.winfo_toplevel(),
-        ):
-            return
+        retirar_servicios = False
+        if activo:
+            if not messagebox.askyesno(
+                "Empresas",
+                f"Se van a reactivar {len(codigos)} empresa(s).\n\n"
+                "Volveran a estar disponibles para la aplicacion Flutter.\n\nContinuar?",
+                parent=self.winfo_toplevel(),
+            ):
+                return
+        else:
+            decision = messagebox.askyesnocancel(
+                "Desactivar empresas",
+                f"Se van a desactivar {len(codigos)} empresa(s).\n\n"
+                "Quieres eliminar tambien sus certificados digitales y dar de baja "
+                "los buzones DEHu y DGT/DEV?\n\n"
+                "Si: retirar servicios y desactivar.\n"
+                "No: desactivar sin retirar los servicios.\n"
+                "Cancelar: no realizar ningun cambio.",
+                parent=self.winfo_toplevel(),
+            )
+            if decision is None:
+                return
+            retirar_servicios = bool(decision)
         try:
-            actualizadas = int(self._on_set_company_active(codigos, activo) or 0)
-        except (PermissionError, ValueError) as exc:
+            actualizadas = int(self._on_set_company_active(
+                codigos, activo, retirar_servicios,
+            ) or 0)
+        except Exception as exc:
             messagebox.showerror("Empresas", str(exc), parent=self.winfo_toplevel())
             return
+        detalle = (
+            " Certificados eliminados y buzones dados de baja."
+            if retirar_servicios else ""
+        )
         messagebox.showinfo(
             "Empresas",
-            f"Empresas actualizadas: {actualizadas}.",
+            f"Empresas actualizadas: {actualizadas}.{detalle}",
             parent=self.winfo_toplevel(),
         )
         self.refresh()

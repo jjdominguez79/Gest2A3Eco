@@ -1358,6 +1358,52 @@ def test_escritorio_elimina_certificado_de_organizacion_ya_ausente(monkeypatch):
     assert response.json() == {"ok": True}
 
 
+def test_escritorio_elimina_buzones_de_organizacion_inactiva(monkeypatch):
+    client, factory, org_id, _headers = _setup(monkeypatch)
+    assert client.put(
+        "/api/v1/messaging/client/certificates/internal/dehu-mailboxes/E00001",
+        json={"active": True, "periodicity": "DIARIA"},
+    ).status_code == 200
+    assert client.put(
+        "/api/v1/messaging/client/certificates/internal/dev-mailboxes/E00001",
+        json={"active": True, "periodicity": "DIARIA"},
+    ).status_code == 200
+    with factory() as db:
+        db.get(MessagingOrganization, org_id).active = False
+        db.commit()
+
+    dehu = client.delete(
+        "/api/v1/messaging/client/certificates/internal/dehu-mailboxes/E00001",
+    )
+    dev = client.delete(
+        "/api/v1/messaging/client/certificates/internal/dev-mailboxes/E00001",
+    )
+
+    assert dehu.status_code == 200
+    assert dehu.json() == {"deleted": True}
+    assert dev.status_code == 200
+    assert dev.json() == {"deleted": True}
+    with factory() as db:
+        assert db.get(ClientDehuMailboxConfig, org_id) is None
+        assert db.get(ClientDevMailboxConfig, org_id) is None
+
+
+def test_escritorio_elimina_buzones_de_organizacion_ya_ausente(monkeypatch):
+    client, _, _, _headers = _setup(monkeypatch)
+
+    dehu = client.delete(
+        "/api/v1/messaging/client/certificates/internal/dehu-mailboxes/E99999",
+    )
+    dev = client.delete(
+        "/api/v1/messaging/client/certificates/internal/dev-mailboxes/E99999",
+    )
+
+    assert dehu.status_code == 200
+    assert dehu.json() == {"deleted": False}
+    assert dev.status_code == 200
+    assert dev.json() == {"deleted": False}
+
+
 def test_escritorio_lista_solicitudes_centrales_con_empresa(monkeypatch):
     client, _, _, _headers = _setup(monkeypatch)
     created = client.post(
