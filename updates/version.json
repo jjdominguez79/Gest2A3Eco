@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.8.26",
-  "minimum_required_version": "1.8.26",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.26/Setup_Gest2A3Eco_1.8.26.exe",
-  "changelog": "Se añade la posibilidad de descativar empresas y borrar su certificado y los buzones configurados.",
+  "latest_version": "1.8.27",
+  "minimum_required_version": "1.8.27",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.27/Setup_Gest2A3Eco_1.8.27.exe",
+  "changelog": "Se recupera la eleccion entre el correo personal y Oficina al enviar facturas. Al desactivar una empresa se dan de baja automaticamente sus buzones DEHu y DGT/DEV, y se impide activar buzones sin un certificado digital activo.",
   "force_update": true
 }
