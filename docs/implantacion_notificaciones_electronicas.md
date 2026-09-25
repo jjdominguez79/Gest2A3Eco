@@ -60,6 +60,14 @@ Flutter ya incluye la pantalla **Certificados oficiales** para consultar la
 vigencia, crear y cancelar solicitudes, seguir su estado y abrir el documento
 resultante. El PFX y la contrasena nunca forman parte de una respuesta cliente.
 
+El catalogo incluye `TGSS_VIDA_LABORAL` como **Informe de vida laboral**. El
+worker entra por la portada oficial de Importass, se identifica como el propio
+interesado con su certificado digital y descarga el informe completo en PDF.
+La solicitud puede realizarla el despacho o el cliente; si la crea el cliente,
+el documento se publica automaticamente en su area documental. La opcion no
+usa el acceso como apoderado y esta pensada para autonomos cuyo certificado
+personal este preparado en el almacen central.
+
 ## Configuracion global, DEHu y DGT/DEV
 
 La pestana **Configuracion global** del modulo de notificaciones guarda en
@@ -160,10 +168,12 @@ la presencia de un tramite no sustituye su calibracion ni una prueba real del wo
 
 1. Ejecutar el piloto completo con `AEAT_CORRIENTE` y `TGSS_CORRIENTE`, primero
    con navegador visible y despues en el contenedor headless.
-2. Incorporar rotacion de la clave maestra y auditoria detallada de operaciones
+2. Validar `TGSS_VIDA_LABORAL` con un certificado personal de autonomo, primero
+   con navegador visible y despues en el contenedor headless.
+3. Incorporar rotacion de la clave maestra y auditoria detallada de operaciones
    sobre el almacen central.
-3. Descarga segura de documentos DEHu sin comparecencia cuando el portal lo
+4. Descarga segura de documentos DEHu sin comparecencia cuando el portal lo
    permita.
-4. Finalizacion y pruebas de cada tramite AEAT/TGSS por separado.
-5. Comparecencia DEHu con confirmacion reforzada, justificante y verificacion
+5. Finalizacion y pruebas de cada tramite AEAT/TGSS por separado.
+6. Comparecencia DEHu con confirmacion reforzada, justificante y verificacion
    posterior del estado remoto.

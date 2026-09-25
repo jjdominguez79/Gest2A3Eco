@@ -43,6 +43,7 @@ class AappBackendClient:
     def publish_pdf(self, item: dict, pdf_path: Path) -> dict:
         certificate_type = str(item["certificate_type"])
         organization = "AEAT" if certificate_type.startswith("AEAT_") else "TGSS"
+        es_informe = certificate_type == "TGSS_VIDA_LABORAL"
         clase = item.get("_document_kind") or "certificado"
         resguardo = clase != "certificado"
         obtained_at = datetime.now(timezone.utc)
@@ -63,7 +64,11 @@ class AappBackendClient:
                     ) + (item.get("certificate_name") or certificate_type),
                     "description": (
                         "Documento de la solicitud AEAT; no es el certificado definitivo"
-                        if resguardo else f"Certificado obtenido de {organization}"
+                        if resguardo
+                        else (
+                            f"{'Informe' if es_informe else 'Certificado'} "
+                            f"obtenido de {organization}"
+                        )
                     ),
                     "document_date": obtained_at.date().isoformat(),
                     "fiscal_year": str(obtained_at.year),

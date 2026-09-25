@@ -9,7 +9,8 @@ Uso (desde la raiz del proyecto):
     python Helpers/probar_certificado.py --pfx "C:\\ruta\\cliente.pfx" --password "***" \
         --tipo TGSS_CORRIENTE --naf 281234567840 --login-manual 150
 
-Tipos: TGSS_CORRIENTE, TGSS_COTIZACION, AEAT_CORRIENTE, AEAT_CENSAL, AEAT_IAE.
+Tipos: TGSS_CORRIENTE, TGSS_COTIZACION, TGSS_VIDA_LABORAL,
+AEAT_CORRIENTE, AEAT_CENSAL, AEAT_IAE.
 
 Requisitos:  pip install cryptography playwright && playwright install chromium
 """

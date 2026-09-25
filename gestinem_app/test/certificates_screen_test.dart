@@ -285,9 +285,9 @@ void main() {
           certificateTypesProvider.overrideWith(
             (_) async => const [
               CertificateType(
-                code: 'AEAT_CORRIENTE',
-                organization: 'AEAT',
-                name: 'Estar al corriente',
+                code: 'TGSS_VIDA_LABORAL',
+                organization: 'TGSS',
+                name: 'Informe de vida laboral',
               ),
             ],
           ),
@@ -302,6 +302,9 @@ void main() {
     expect(find.text('Vence: 10/09/2027'), findsOneWidget);
     expect(find.byKey(const Key('certificate-type-selector')), findsOneWidget);
     expect(find.byKey(const Key('request-certificate-button')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('certificate-type-selector')));
+    await tester.pumpAndSettle();
+    expect(find.text('TGSS · Informe de vida laboral'), findsOneWidget);
   });
 
   testWidgets('bloquea solicitud si el despacho no preparo el certificado', (

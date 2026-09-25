@@ -130,6 +130,12 @@ CERTIFICATE_TYPES = {
         "name": "Situacion de cotizacion",
         "parameters": [],
     },
+    "TGSS_VIDA_LABORAL": {
+        "code": "TGSS_VIDA_LABORAL",
+        "organization": "TGSS",
+        "name": "Informe de vida laboral",
+        "parameters": [],
+    },
     "TGSS_ART42": {
         "code": "TGSS_ART42",
         "organization": "TGSS",

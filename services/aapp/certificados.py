@@ -39,6 +39,8 @@ TIPOS = {
                        "https://sede.seg-social.gob.es/"),
     "TGSS_COTIZACION": ("TGSS", "Certificado de situacion de cotizacion",
                         "https://sede.seg-social.gob.es/"),
+    "TGSS_VIDA_LABORAL": ("TGSS", "Informe de vida laboral",
+                            "https://portal.seg-social.gob.es/"),
     "TGSS_SUBVENCIONES": ("TGSS", "Estar al corriente - Certificado subvenciones",
                           "https://sede.seg-social.gob.es/"),
     "TGSS_LICITACION": ("TGSS", "Estar al corriente - Licitacion contratos sector publico",
@@ -200,7 +202,7 @@ class SedePlaywrightProvider(ProveedorCertificado):
                     # SEDESS: replicar el camino real (evita ERR_TOO_MANY_REDIRECTS):
                     # desplegar acordeon + "Obtener Acceso" -> pestana del tramite.
                     if self.codigo_organismo == "TGSS":
-                        page = self._ss_acceso(page, ctx, opciones)
+                        page = self._ss_acceso(page, ctx, opciones, tipo)
                         try:
                             page.on("download", _on_download)
                             page.wait_for_selector(
@@ -237,11 +239,16 @@ class SedePlaywrightProvider(ProveedorCertificado):
                     if ruta_pdf:
                         if self.codigo_organismo == "AEAT":
                             return self._aeat_resultado_pdf(ruta_pdf, page, tipo)
+                        mensaje = (
+                            "Informe de vida laboral descargado."
+                            if tipo == "TGSS_VIDA_LABORAL"
+                            else "Certificado descargado."
+                        )
                         return ResultadoCertificado(
                             ok=True, tipo=tipo, estado="OBTENIDO",
                             pdf_path=ruta_pdf,
                             resultado=self._resultado_corriente(page),
-                            mensaje="Certificado descargado.",
+                            mensaje=mensaje,
                         )
                     try:
                         url_actual = self._url_diagnostico_segura(page.url)
@@ -568,10 +575,12 @@ class SedePlaywrightProvider(ProveedorCertificado):
                      "si la solicitud se presento antes de reintentar."),
         )
 
-    def _ss_acceso(self, page, ctx, opciones):
+    def _ss_acceso(self, page, ctx, opciones, tipo):
         """En 'Informes y Certificados' despliega el acordeon de 'estar al
         corriente' y pulsa 'Obtener Acceso'. Devuelve la pagina activa (la
         pestana nueva del tramite si se abre)."""
+        if tipo == "TGSS_VIDA_LABORAL":
+            return self._ss_acceso_vida_laboral(page, opciones)
         activa = page
         for sel in ("a.accordion-activator:has-text('estar al corriente')",
                     "text=Certificados de estar al corriente",
@@ -603,6 +612,56 @@ class SedePlaywrightProvider(ProveedorCertificado):
             except Exception:
                 pass
         return activa
+
+    def _ss_acceso_vida_laboral(self, page, opciones):
+        """Abre en Importass el informe propio y elige certificado digital.
+
+        La portada publica muestra primero un aviso sobre los metodos de
+        identificacion. El informe se consulta como interesado, nunca como
+        apoderado, porque el PFX custodiado pertenece al propio cliente.
+        """
+        try:
+            cookies = page.locator("button:has-text('Rechazar todas')")
+            if cookies.count() > 0 and cookies.first.is_visible():
+                cookies.first.click(timeout=3000)
+        except Exception:
+            pass
+        try:
+            consultar = page.locator(
+                "#boton-lanzamiento-operacion, "
+                "button:has-text('Consultar vida laboral')"
+            )
+            if consultar.count() == 0:
+                opciones.trace("[TGSS] Importass no mostro Consultar vida laboral")
+                return page
+            consultar.first.click(timeout=8000)
+            try:
+                page.wait_for_selector("#btn-atria-continuar", timeout=5000)
+            except Exception:
+                pass
+            identificacion = page.locator(
+                "input[name='opcion-atria'][value='si'], #atria-opcion-si"
+            )
+            if identificacion.count() > 0:
+                identificacion.first.check(timeout=3000)
+            continuar = page.locator(
+                "#btn-atria-continuar, button:has-text('Continuar')"
+            )
+            if continuar.count() == 0:
+                opciones.trace("[TGSS] Importass no mostro el paso de identificacion")
+                return page
+            continuar.first.click(timeout=8000)
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=15000)
+            except Exception:
+                pass
+            opciones.trace("[TGSS] acceso al informe de vida laboral iniciado")
+            self._ss_login_idp(page, opciones)
+        except Exception as exc:
+            opciones.trace(
+                f"[TGSS] no se pudo iniciar vida laboral: {type(exc).__name__}"
+            )
+        return page
 
     def _ss_generar_certificado(self, page, opciones, tipo):
         """En el formulario de SEDESS elige el tipo de certificado y pulsa
@@ -737,17 +796,24 @@ class SedePlaywrightProvider(ProveedorCertificado):
         return None
 
     def _descargar_boton_tgss(self, page, opciones, tipo):
-        """SPM entrega el PDF mediante Imprimir, no necesariamente un enlace.
+        """Captura el PDF de SPM o el informe generado por Importass.
 
-        Pulsar una sola vez: capturar descarga o respuesta PDF de la misma
-        pagina, un frame o una pestana nueva, sin reenviar la solicitud.
+        Se pulsa una sola vez y se captura la descarga o respuesta PDF de la
+        misma pagina, un frame o una pestana nueva, sin reenviar la solicitud.
         """
         try:
-            boton = page.locator(
+            selector = (
+                "button:has-text('Descargar vida laboral'), "
+                "a:has-text('Descargar vida laboral'), "
+                "button:has-text('Descargar informe'), "
+                "a:has-text('Descargar informe'), "
+                "a[download][href*='vida' i]"
+                if tipo == "TGSS_VIDA_LABORAL" else
                 "button[name='SPM.ACC.IMPRIMIR'], "
                 "input[name='SPM.ACC.IMPRIMIR'], "
                 "button#ENVIO_10[name='SPM.ACC.IMPRIMIR']"
             )
+            boton = page.locator(selector)
             if boton.count() == 0:
                 return None
         except Exception:
@@ -801,7 +867,11 @@ class SedePlaywrightProvider(ProveedorCertificado):
             except Exception as exc:
                 # Una navegacion convertida en descarga puede interrumpir click.
                 # No pulsar de nuevo: las capturas siguen activas.
-                opciones.trace(f"[TGSS] Imprimir: {type(exc).__name__}")
+                accion = (
+                    "Descargar vida laboral"
+                    if tipo == "TGSS_VIDA_LABORAL" else "Imprimir"
+                )
+                opciones.trace(f"[TGSS] {accion}: {type(exc).__name__}")
             fin = time.monotonic() + opciones.timeout_ms / 1000
             while not capturado["saved"] and capturado["body"] is None:
                 if time.monotonic() >= fin:
@@ -811,14 +881,25 @@ class SedePlaywrightProvider(ProveedorCertificado):
                     break
                 activa.wait_for_timeout(200)
             if capturado["saved"]:
-                opciones.trace("[TGSS] PDF descargado mediante Imprimir")
+                accion = (
+                    "Importass" if tipo == "TGSS_VIDA_LABORAL" else "Imprimir"
+                )
+                opciones.trace(f"[TGSS] PDF descargado mediante {accion}")
                 return destino
             if capturado["body"]:
                 with open(destino, "wb") as fh:
                     fh.write(capturado["body"])
-                opciones.trace("[TGSS] respuesta PDF de Imprimir guardada")
+                accion = (
+                    "Importass" if tipo == "TGSS_VIDA_LABORAL" else "Imprimir"
+                )
+                opciones.trace(f"[TGSS] respuesta PDF de {accion} guardada")
                 return destino
-            opciones.trace("[TGSS] Imprimir no entrego una descarga ni respuesta PDF valida")
+            accion = (
+                "Importass" if tipo == "TGSS_VIDA_LABORAL" else "Imprimir"
+            )
+            opciones.trace(
+                f"[TGSS] {accion} no entrego una descarga ni respuesta PDF valida"
+            )
             return None
         finally:
             contexto.remove_listener("response", respuesta)
@@ -1175,6 +1256,14 @@ SS_CERT_RADIO = {
 SS_URL_INFORMES = ("https://sede.seg-social.gob.es/wps/portal/sede/sede/Ciudadanos/"
                    "informes+y+certificados/n201736")
 
+# Portada publica de Importass. Desde aqui se conserva el contexto necesario
+# para que /wps/myportal redirija correctamente al selector de identificacion.
+SS_URL_VIDA_LABORAL = (
+    "https://portal.seg-social.gob.es/wps/portal/importass/importass/Categorias/"
+    "Vida%20laboral%20e%20informes/Informes%20sobre%20tu%20situacion%20laboral/"
+    "Informe%20de%20tu%20vida%20laboral"
+)
+
 # Entrada directa al tramite (redirector). NO se navega directamente porque da
 # ERR_TOO_MANY_REDIRECTS: se llega pulsando "Obtener Acceso" desde SS_URL_INFORMES.
 SS_URL_CORRIENTE = (
@@ -1221,8 +1310,10 @@ _TGSS_CORRIENTE_TIPOS = {
     "TGSS_SIN_DEUDA_FECHA", "TGSS_INFORME_DEUDA", "TGSS_DETALLE_DEUDA",
 }
 _tgss_urls = {t: SS_URL_INFORMES for t in _TGSS_CORRIENTE_TIPOS}
+_tgss_urls["TGSS_VIDA_LABORAL"] = SS_URL_VIDA_LABORAL
 registrar_proveedor(SedePlaywrightProvider("TGSS",
-    _TGSS_CORRIENTE_TIPOS | {"TGSS_COTIZACION"}, TIPOS["TGSS_CORRIENTE"][2],
+    _TGSS_CORRIENTE_TIPOS | {"TGSS_COTIZACION", "TGSS_VIDA_LABORAL"},
+    TIPOS["TGSS_CORRIENTE"][2],
     urls=_tgss_urls))
 
 

@@ -5,6 +5,7 @@ import pytest
 from services.aapp.certificados import (
     SS_CERT_RADIO,
     SS_URL_INFORMES,
+    SS_URL_VIDA_LABORAL,
     obtener_proveedor,
 )
 from services.aapp.base import OpcionesSync
@@ -37,6 +38,78 @@ def test_aeat_no_ofrece_certificado_al_dominio_de_tgss():
     proveedor = obtener_proveedor("AEAT_CORRIENTE")
 
     assert "https://ipce.seg-social.es" not in proveedor._origenes()
+
+
+def test_vida_laboral_usa_la_portada_oficial_de_importass():
+    proveedor = obtener_proveedor("TGSS_VIDA_LABORAL")
+
+    assert proveedor is not None
+    assert proveedor.urls["TGSS_VIDA_LABORAL"] == SS_URL_VIDA_LABORAL
+    assert "https://portal.seg-social.gob.es" in proveedor._origenes()
+
+
+class _ControlAccesoVidaLaboral:
+    def __init__(self, pagina, selector, existe):
+        self.pagina = pagina
+        self.selector = selector
+        self.existe = existe
+
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        return int(self.existe)
+
+    def is_visible(self):
+        return self.existe
+
+    def click(self, timeout=None):
+        self.pagina.clicks.append(self.selector)
+
+    def check(self, timeout=None):
+        self.pagina.checks.append(self.selector)
+
+
+class _PaginaAccesoVidaLaboral:
+    def __init__(self):
+        self.clicks = []
+        self.checks = []
+
+    def locator(self, selector):
+        existe = any(fragmento in selector for fragmento in (
+            "#boton-lanzamiento-operacion",
+            "#btn-atria-continuar",
+            "opcion-atria",
+        ))
+        return _ControlAccesoVidaLaboral(self, selector, existe)
+
+    def wait_for_selector(self, *_args, **_kwargs):
+        return None
+
+    def wait_for_load_state(self, *_args, **_kwargs):
+        return None
+
+
+def test_vida_laboral_inicia_identificacion_como_interesado(monkeypatch):
+    proveedor = obtener_proveedor("TGSS_VIDA_LABORAL")
+    pagina = _PaginaAccesoVidaLaboral()
+    login = []
+    monkeypatch.setattr(
+        proveedor,
+        "_ss_login_idp",
+        lambda page, _opciones: login.append(page),
+    )
+
+    activa = proveedor._ss_acceso(
+        pagina, None, OpcionesSync(), "TGSS_VIDA_LABORAL",
+    )
+
+    assert activa is pagina
+    assert any("boton-lanzamiento-operacion" in item for item in pagina.clicks)
+    assert any("btn-atria-continuar" in item for item in pagina.clicks)
+    assert len(pagina.checks) == 1
+    assert login == [pagina]
 
 
 class _Eventos:
@@ -116,7 +189,11 @@ class _PaginaImprimir(_Eventos):
         self.context.pages = [self]
 
     def locator(self, selector):
-        return _BotonImprimir(self, self.boton and "SPM.ACC.IMPRIMIR" in selector)
+        es_descarga = (
+            "SPM.ACC.IMPRIMIR" in selector
+            or "Descargar vida laboral" in selector
+        )
+        return _BotonImprimir(self, self.boton and es_descarga)
 
     def is_closed(self):
         return self.esperas > 0
@@ -166,6 +243,21 @@ def test_tgss_sin_imprimir_no_pulsa_otros_botones(tmp_path):
         pagina, OpcionesSync(carpeta_descargas=str(tmp_path)), "TGSS_CORRIENTE",
     ) is None
     assert pagina.clicks == 0
+
+
+def test_vida_laboral_captura_el_pdf_de_importass(tmp_path):
+    pagina = _PaginaImprimir("descarga")
+    destino = tmp_path / "vida_laboral.pdf"
+
+    obtenido = obtener_proveedor("TGSS_VIDA_LABORAL")._descargar_documento(
+        pagina,
+        OpcionesSync(ruta_pdf_destino=str(destino), timeout_ms=10),
+        "TGSS_VIDA_LABORAL",
+    )
+
+    assert obtenido == str(destino)
+    assert destino.read_bytes().startswith(b"%PDF-")
+    assert pagina.clicks == 1
 
 
 def test_diagnostico_no_muestra_sesiones_ni_tickets_de_la_sede():

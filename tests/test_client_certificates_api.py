@@ -128,6 +128,33 @@ def test_cliente_crea_y_lista_solicitud(monkeypatch):
         assert item.requester_type == "client"
 
 
+def test_cliente_puede_solicitar_informe_de_vida_laboral(monkeypatch):
+    client, _, _, headers = _setup(monkeypatch)
+
+    catalog = client.get(
+        "/api/v1/messaging/client/certificates/types", headers=headers,
+    )
+    created = client.post(
+        "/api/v1/messaging/client/certificates/requests",
+        headers=headers,
+        json={
+            "certificate_type": "TGSS_VIDA_LABORAL",
+            "idempotency_key": "vida-laboral-1",
+        },
+    )
+
+    assert catalog.status_code == 200
+    assert {
+        "code": "TGSS_VIDA_LABORAL",
+        "organization": "TGSS",
+        "name": "Informe de vida laboral",
+        "parameters": [],
+    } in catalog.json()["items"]
+    assert created.status_code == 201
+    assert created.json()["certificate_type"] == "TGSS_VIDA_LABORAL"
+    assert created.json()["certificate_name"] == "Informe de vida laboral"
+
+
 def _staff_headers(factory, *, role="admin", external_id="admin-app"):
     token = f"staff-certificate-token-{external_id}"
     with factory() as db:

@@ -234,6 +234,38 @@ def test_publicacion_automatica_solo_para_solicitudes_flutter(tmp_path):
     assert session.payloads[0]["document_date"].startswith("2026-")
 
 
+def test_publicacion_describe_vida_laboral_como_informe(tmp_path):
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"id": "doc-vida-laboral"}
+
+    class Session:
+        def __init__(self):
+            self.payload = None
+
+        def post(self, _url, **kwargs):
+            self.payload = kwargs["data"]
+            return Response()
+
+    pdf = Path(tmp_path) / "vida_laboral.pdf"
+    pdf.write_bytes(b"%PDF-1.7\ninforme")
+    session = Session()
+
+    AappBackendClient(_config(tmp_path), session=session).publish_pdf({
+        "id": "request-vida-laboral",
+        "organization_id": "org-1",
+        "certificate_type": "TGSS_VIDA_LABORAL",
+        "certificate_name": "Informe de vida laboral",
+        "requester_type": "client",
+    }, pdf)
+
+    assert session.payload["display_name"] == "Informe de vida laboral"
+    assert session.payload["description"] == "Informe obtenido de TGSS"
+
+
 def test_worker_dehu_solo_consulta_metadatos_y_elimina_pfx_temporal(monkeypatch, tmp_path):
     item = {
         "id": "request-dehu-1",
