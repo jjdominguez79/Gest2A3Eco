@@ -117,8 +117,8 @@ bash tool/build_production.sh windows
 
 El script compila Flutter release y, si encuentra Inno Setup 6, genera el instalador en `../dist_installer/`. `windows/installer/gestinem.iss` lee automáticamente la versión del ejecutable generado, evitando mantener una versión duplicada.
 
-Al publicar una version etiquetada de Gest2A3Eco, el workflow de GitHub adjunta
-tambien este instalador Windows a la misma Release.
+El instalador Windows es para distribución interna y no se adjunta a las
+Releases públicas de Gest2A3Eco. Se genera y distribuye manualmente.
 
 ## iOS
 

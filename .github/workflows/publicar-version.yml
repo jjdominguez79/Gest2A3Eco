@@ -35,12 +35,6 @@ jobs:
           # Coincide exactamente con el intérprete del entorno local de compilación (.venv).
           python-version: "3.14.2"
 
-      - name: Configurar Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
       - name: Validar tag y coherencia de versiones
         shell: pwsh
         run: |
@@ -106,33 +100,6 @@ jobs:
             throw "No se ha generado el ejecutable esperado: $exePath"
           }
 
-      - name: Validar version Flutter
-        shell: pwsh
-        run: |
-          $pubspec = Get-Content "gestinem_app\pubspec.yaml" -Raw
-          if ($pubspec -notmatch '(?m)^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+([0-9]+)\s*$') {
-            throw "gestinem_app/pubspec.yaml no contiene una version X.Y.Z+BUILD valida."
-          }
-
-          $flutterVersion = $Matches[1]
-          $flutterBuild = $Matches[2]
-          $flutterInstaller = "Gestinem-Windows-$flutterVersion.$flutterBuild.exe"
-          "FLUTTER_VERSION=$flutterVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "FLUTTER_BUILD=$flutterBuild" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "FLUTTER_INSTALLER_NAME=$flutterInstaller" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
-      - name: Validar y compilar Gestinem Flutter para Windows
-        shell: pwsh
-        working-directory: gestinem_app
-        run: |
-          flutter config --enable-windows-desktop
-          flutter pub get
-          flutter analyze
-          flutter test
-          flutter build windows --release `
-            --dart-define=API_BASE_URL=https://gest2a3eco-production.up.railway.app `
-            --dart-define=ENVIRONMENT=production
-
       - name: Instalar Inno Setup 6
         shell: pwsh
         run: |
@@ -157,11 +124,10 @@ jobs:
 
           "ISCC_PATH=$resolvedPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Generar instaladores
+      - name: Generar instalador
         shell: pwsh
         run: |
           & "$env:ISCC_PATH" "setup.iss"
-          & "$env:ISCC_PATH" "gestinem_app\windows\installer\gestinem.iss"
 
           $expectedInstaller = Join-Path $PWD ("dist_installer\" + $env:INSTALLER_NAME)
           if (-not (Test-Path $expectedInstaller)) {
@@ -172,19 +138,12 @@ jobs:
             throw "No se ha generado el instalador esperado: $expectedInstaller"
           }
 
-          $expectedFlutterInstaller = Join-Path $PWD ("dist_installer\" + $env:FLUTTER_INSTALLER_NAME)
-          if (-not (Test-Path $expectedFlutterInstaller)) {
-            throw "No se ha generado el instalador Flutter esperado: $expectedFlutterInstaller"
-          }
-
       - name: Crear GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_TITLE }}
-          files: |
-            dist_installer/${{ env.INSTALLER_NAME }}
-            dist_installer/${{ env.FLUTTER_INSTALLER_NAME }}
+          files: dist_installer/${{ env.INSTALLER_NAME }}
           body_path: release_notes.md
           draft: false
           prerelease: false

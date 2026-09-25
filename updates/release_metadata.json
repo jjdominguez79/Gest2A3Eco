@@ -1,6 +1,6 @@
 {
   "version": "1.8.28",
   "tag": "v1.8.28",
-  "changelog": "Se incorpora el informe de vida laboral TGSS, se corrige el envio desde la cuenta personal mediante el backend y se mejora la gestion de certificados y comunicaciones. La publicacion incluye tambien Gestinem 0.1.20 para Windows.",
+  "changelog": "Se incorpora el informe de vida laboral TGSS, se corrige el envio desde la cuenta personal mediante el backend y se mejora la gestion de certificados y comunicaciones.",
   "force_update": true
 }
