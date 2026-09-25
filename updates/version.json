@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.8.27",
-  "minimum_required_version": "1.8.27",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.27/Setup_Gest2A3Eco_1.8.27.exe",
-  "changelog": "Se recupera la eleccion entre el correo personal y Oficina al enviar facturas. Al desactivar una empresa se dan de baja automaticamente sus buzones DEHu y DGT/DEV, y se impide activar buzones sin un certificado digital activo.",
+  "latest_version": "1.8.28",
+  "minimum_required_version": "1.8.28",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.28/Setup_Gest2A3Eco_1.8.28.exe",
+  "changelog": "Se incorpora el informe de vida laboral TGSS, se corrige el envio desde la cuenta personal mediante el backend y se mejora la gestion de certificados y comunicaciones. La publicacion incluye tambien Gestinem 0.1.20 para Windows.",
   "force_update": true
 }
