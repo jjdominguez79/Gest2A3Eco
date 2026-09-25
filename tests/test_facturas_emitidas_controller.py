@@ -389,28 +389,19 @@ def test_compartir_factura_solo_email_no_publica_en_area_cliente(
 def test_compartir_factura_permite_enviar_desde_cuenta_personal(
     monkeypatch, tmp_path,
 ):
-    enviados_graph = []
     enviados_backend = []
     compose_kwargs = {}
     registros = []
 
-    class GraphMailStub:
+    class BackendMailStub:
         def send(self, **kwargs):
-            enviados_graph.append(kwargs)
+            enviados_backend.append(kwargs)
             return SimpleNamespace(
                 sender="usuario@gestinem.es",
                 message_id="msg-personal-1",
                 internet_message_id="internet-personal-1",
             )
 
-    class BackendMailStub:
-        def send(self, **kwargs):
-            enviados_backend.append(kwargs)
-            raise AssertionError("No debe usarse el backend para el remitente personal")
-
-    monkeypatch.setattr(
-        "services.graph_mail_service.GraphMailService", GraphMailStub,
-    )
     monkeypatch.setattr(
         "services.backend_mail_service.BackendMailService", BackendMailStub,
     )
@@ -464,11 +455,10 @@ def test_compartir_factura_permite_enviar_desde_cuenta_personal(
     controller.compartir_pdf()
 
     assert compose_kwargs["allow_personal_sender"] is True
-    assert enviados_backend == []
-    assert enviados_graph[0]["sender"] == "me"
-    assert enviados_graph[0]["to"] == ["cliente@example.com"]
+    assert enviados_backend[0]["sender_mode"] == "personal"
+    assert enviados_backend[0]["to"] == ["cliente@example.com"]
     assert registros[0][0][1] == "usuario@gestinem.es"
-    assert registros[0][1]["estado"] == "aceptado_graph"
+    assert registros[0][1]["estado"] == "aceptado_backend"
 
 
 def test_compartir_factura_email_muestra_factura_y_albaran_en_adjuntos(monkeypatch, tmp_path):

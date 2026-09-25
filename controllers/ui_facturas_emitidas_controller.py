@@ -1168,7 +1168,6 @@ class FacturasEmitidasController:
 
     def _enviar_email_factura(self, compose, attachment_paths) -> bool:
         from services.backend_mail_service import BackendMailService
-        from services.graph_mail_service import GraphMailService
         from utils.utilidades import get_packaged_resource_path
         from views.ui_comunicaciones import construir_cuerpo_html, construir_firma_oficina
 
@@ -1187,27 +1186,23 @@ class FacturasEmitidasController:
         email_html_body = construir_cuerpo_html(compose["cuerpo"], signature, "")
         cc = self._split_email_addresses(compose.get("cc", ""))
         bcc = self._split_email_addresses(compose.get("bcc", ""))
-        sender = "me" if send_from_personal else "Oficina@gestinem.es"
+        sender = (
+            str(getattr(user, "email_corporativo", "") or "").strip()
+            if send_from_personal else "Oficina@gestinem.es"
+        ) or "Cuenta personal de Microsoft 365"
         logo_path = get_packaged_resource_path("logo.png")
         inline_attachments = (
             [{"path": str(logo_path), "content_id": "gestinem-logo"}]
             if "cid:gestinem-logo" in signature and logo_path.is_file() else []
         )
         try:
-            if send_from_personal:
-                result = GraphMailService().send(
-                    sender="me", to=compose["emails"], cc=cc, bcc=bcc,
-                    subject=compose["asunto"], body=email_html_body,
-                    attachments=attachment_paths,
-                    inline_attachments=inline_attachments,
-                )
-            else:
-                result = BackendMailService().send(
-                    to=compose["emails"], cc=cc, bcc=bcc,
-                    subject=compose["asunto"], body=email_html_body,
-                    attachments=attachment_paths,
-                    inline_attachments=inline_attachments,
-                )
+            result = BackendMailService().send(
+                to=compose["emails"], cc=cc, bcc=bcc,
+                subject=compose["asunto"], body=email_html_body,
+                attachments=attachment_paths,
+                inline_attachments=inline_attachments,
+                sender_mode="personal" if send_from_personal else "office",
+            )
         except Exception as exc:
             self._registrar_envio_factura(
                 compose, sender, cc, attachment_paths, email_html_body, user,
@@ -1219,7 +1214,7 @@ class FacturasEmitidasController:
         self._registrar_envio_factura(
             compose, result.sender or sender,
             cc, attachment_paths, email_html_body, user,
-            estado=("aceptado_graph" if send_from_personal else "aceptado_backend"),
+            estado="aceptado_backend",
             graph_message_id=result.message_id,
             internet_message_id=result.internet_message_id,
         )

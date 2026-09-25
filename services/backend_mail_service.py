@@ -38,6 +38,7 @@ class BackendMailService:
         bcc: list[str] | None = None, subject: str, body: str,
         attachments: list[str] | None = None,
         inline_attachments: list[dict] | None = None,
+        sender_mode: str = "office",
     ) -> BackendMailResult:
         if not self.configured:
             raise ValueError(
@@ -63,7 +64,7 @@ class BackendMailService:
                 data={
                     "to": json.dumps(to), "cc": json.dumps(cc or []),
                     "bcc": json.dumps(bcc or []), "subject": subject,
-                    "html": body,
+                    "html": body, "sender_mode": sender_mode,
                 },
                 files=files, timeout=120,
             )

@@ -9,7 +9,6 @@ import tkinter as tk
 from html.parser import HTMLParser
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from services.graph_mail_service import GraphMailService
 from services.backend_mail_service import BackendMailService
 from services.documentos_correo_service import DocumentosCorreoService
 from utils.utilidades import (
@@ -877,16 +876,19 @@ class ComposeMailDialog(tk.Toplevel):
             return
         shared = (load_app_config().get("microsoft_graph") or {}).get("shared_mailbox") or "Oficina@gestinem.es"
         is_admin = bool(self._session and self._session.is_admin())
-        sender = "me" if is_admin and self._sender.get().startswith("Mi cuenta") else shared
-        is_shared = sender != "me"
+        send_personal = is_admin and self._sender.get().startswith("Mi cuenta")
         user = getattr(self._session, "user", None)
+        sender = (
+            str(getattr(user, "email_corporativo", "") or "").strip()
+            if send_personal else shared
+        ) or "Cuenta personal de Microsoft 365"
         signature = (
-            construir_firma_oficina(getattr(user, "nombre", ""))
-            if is_shared
-            else (
+            (
                 load_user_config().get("email_signature_html")
                 or FIRMA_PERSONAL_HTML
             )
+            if send_personal
+            else construir_firma_oficina(getattr(user, "nombre", ""))
         )
         body_html = construir_cuerpo_html(
             plain, signature, "",
@@ -896,20 +898,13 @@ class ComposeMailDialog(tk.Toplevel):
             [{"path": str(logo_path), "content_id": "gestinem-logo"}]
             if "cid:gestinem-logo" in signature and logo_path.is_file() else []
         )
-        service = GraphMailService() if sender == "me" else BackendMailService()
         try:
-            if sender == "me":
-                result = service.send(
-                    sender=sender, to=to, cc=cc, subject=subject,
-                    body=body_html, attachments=self._attachments,
-                    inline_attachments=inline_attachments,
-                )
-            else:
-                result = service.send(
-                    to=to, cc=cc, subject=subject, body=body_html,
-                    attachments=self._attachments,
-                    inline_attachments=inline_attachments,
-                )
+            result = BackendMailService().send(
+                to=to, cc=cc, subject=subject, body=body_html,
+                attachments=self._attachments,
+                inline_attachments=inline_attachments,
+                sender_mode="personal" if send_personal else "office",
+            )
         except Exception as exc:
             self._gestor.registrar_envio_comunicacion({
                 "codigo_empresa": self._codigo, "asunto": subject,
@@ -927,13 +922,13 @@ class ComposeMailDialog(tk.Toplevel):
         self._gestor.registrar_envio_comunicacion({
             "codigo_empresa": self._codigo, "asunto": subject,
             "remitente": result.sender, "destinatarios": to, "cc": cc,
-            "cuerpo_html": body_html, "estado_envio": "aceptado_graph",
+            "cuerpo_html": body_html, "estado_envio": "aceptado_backend",
             "graph_message_id": result.message_id,
             "internet_message_id": result.internet_message_id,
             "usuario_id": getattr(user, "id", None),
             "usuario_nombre": getattr(user, "nombre", None),
             "adjuntos": self._attachments,
-            "mailbox": sender,
+            "mailbox": result.sender or sender,
         })
         messagebox.showinfo("Correo", "Exchange ha aceptado el mensaje y se ha registrado.", parent=self)
         self._on_sent()
@@ -1029,13 +1024,13 @@ class ReplyMailDialog(tk.Toplevel):
         body_html = construir_cuerpo_html(plain, signature, "")
         try:
             if send_personal:
-                service = GraphMailService()
                 subject = self._message.get("asunto") or ""
                 if not subject.lower().startswith("re:"):
                     subject = f"Re: {subject}"
-                result = service.send(
-                    sender="me", to=[recipient], subject=subject, body=body_html,
+                result = BackendMailService().send(
+                    to=[recipient], subject=subject, body=body_html,
                     attachments=self._attachments,
+                    sender_mode="personal",
                 )
                 sent_mailbox = result.sender
             else:
@@ -1055,7 +1050,7 @@ class ReplyMailDialog(tk.Toplevel):
             "remitente": result.sender,
             "destinatarios": [self._message.get("remitente") or ""],
             "cc": [], "cuerpo_html": body_html,
-            "estado_envio": "aceptado_graph",
+            "estado_envio": "aceptado_backend",
             "graph_message_id": result.message_id,
             "internet_message_id": result.internet_message_id,
             "usuario_id": getattr(user, "id", None),

@@ -487,7 +487,6 @@ class UICertificadosObtenidos(ttk.Frame):
             return
 
         from services.backend_mail_service import BackendMailService
-        from services.graph_mail_service import GraphMailService
         from utils.utilidades import get_packaged_resource_path
         from views.ui_comunicaciones import construir_cuerpo_html, construir_firma_oficina
 
@@ -506,21 +505,19 @@ class UICertificadosObtenidos(ttk.Frame):
         usar_cuenta_personal = (
             compose.get("sender_mode") == "personal" and self._puede_elegir_remitente()
         )
-        remitente_previsto = "me" if usar_cuenta_personal else "Oficina@gestinem.es"
-        user = getattr(self._session, "user", None)
+        usuario_sesion = getattr(self._session, "user", None)
+        remitente_previsto = (
+            str(getattr(usuario_sesion, "email_corporativo", "") or "").strip()
+            if usar_cuenta_personal else "Oficina@gestinem.es"
+        ) or "Cuenta personal de Microsoft 365"
+        user = usuario_sesion
         try:
-            if usar_cuenta_personal:
-                resultado = GraphMailService().send(
-                    sender="me", to=destinatarios, cc=cc, bcc=bcc,
-                    subject=compose["asunto"], body=cuerpo_html,
-                    attachments=[pdf], inline_attachments=inline_attachments,
-                )
-            else:
-                resultado = BackendMailService().send(
-                    to=destinatarios, cc=cc, bcc=bcc,
-                    subject=compose["asunto"], body=cuerpo_html,
-                    attachments=[pdf], inline_attachments=inline_attachments,
-                )
+            resultado = BackendMailService().send(
+                to=destinatarios, cc=cc, bcc=bcc,
+                subject=compose["asunto"], body=cuerpo_html,
+                attachments=[pdf], inline_attachments=inline_attachments,
+                sender_mode="personal" if usar_cuenta_personal else "office",
+            )
         except Exception as exc:
             self._registrar_envio_certificado(
                 r, compose, remitente_previsto, cc, cuerpo_html, pdf, user,
@@ -535,7 +532,7 @@ class UICertificadosObtenidos(ttk.Frame):
         remitente = resultado.sender or remitente_previsto
         self._registrar_envio_certificado(
             r, compose, remitente, cc, cuerpo_html, pdf, user,
-            estado=("aceptado_graph" if usar_cuenta_personal else "aceptado_backend"),
+            estado="aceptado_backend",
             graph_message_id=resultado.message_id,
             internet_message_id=resultado.internet_message_id,
         )

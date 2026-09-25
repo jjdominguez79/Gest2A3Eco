@@ -23,7 +23,10 @@ def _vista(tmp_path, *, admin, sender_mode):
     vista._gestor = gestor
     vista._session = SimpleNamespace(
         is_admin=lambda: admin,
-        user=SimpleNamespace(id="u1", nombre="Usuario Prueba"),
+        user=SimpleNamespace(
+            id="u1", nombre="Usuario Prueba",
+            email_corporativo="jjdominguez@gestinem.es",
+        ),
     )
     solicitud = {
         "id": "sol-1",
@@ -61,12 +64,7 @@ def test_certificado_se_envia_por_backend_desde_oficina_y_se_registra(
                 internet_message_id="internet-1",
             )
 
-    class _Graph:
-        def send(self, **_kwargs):
-            raise AssertionError("Un usuario no administrador no puede elegir su cuenta")
-
     monkeypatch.setattr("services.backend_mail_service.BackendMailService", _Backend)
-    monkeypatch.setattr("services.graph_mail_service.GraphMailService", _Graph)
     monkeypatch.setattr("views.ui_certificados_obtenidos.messagebox.showinfo", lambda *_a, **_k: None)
 
     vista._on_email()
@@ -74,6 +72,7 @@ def test_certificado_se_envia_por_backend_desde_oficina_y_se_registra(
     assert enviados[0]["to"] == ["cliente@ejemplo.es", "otro@ejemplo.es"]
     assert enviados[0]["cc"] == ["copia@ejemplo.es"]
     assert enviados[0]["bcc"] == ["oculta@ejemplo.es"]
+    assert enviados[0]["sender_mode"] == "office"
     assert "Asesoria Gestinem SL" in enviados[0]["body"]
     assert gestor.registros[0]["remitente"] == "oficina@gestinem.es"
     assert gestor.registros[0]["estado_envio"] == "aceptado_backend"
@@ -85,7 +84,7 @@ def test_administrador_puede_elegir_su_cuenta_para_enviar_certificado(
     vista, gestor = _vista(tmp_path, admin=True, sender_mode="personal")
     enviados = []
 
-    class _Graph:
+    class _Backend:
         def send(self, **kwargs):
             enviados.append(kwargs)
             return SimpleNamespace(
@@ -93,17 +92,12 @@ def test_administrador_puede_elegir_su_cuenta_para_enviar_certificado(
                 internet_message_id="internet-2",
             )
 
-    class _Backend:
-        def send(self, **_kwargs):
-            raise AssertionError("Se debe usar la cuenta personal seleccionada")
-
-    monkeypatch.setattr("services.graph_mail_service.GraphMailService", _Graph)
     monkeypatch.setattr("services.backend_mail_service.BackendMailService", _Backend)
     monkeypatch.setattr("views.ui_certificados_obtenidos.messagebox.showinfo", lambda *_a, **_k: None)
 
     vista._on_email()
 
-    assert enviados[0]["sender"] == "me"
+    assert enviados[0]["sender_mode"] == "personal"
     assert "Asesoria Gestinem SL" in enviados[0]["body"]
     assert gestor.registros[0]["remitente"] == "jjdominguez@gestinem.es"
-    assert gestor.registros[0]["estado_envio"] == "aceptado_graph"
+    assert gestor.registros[0]["estado_envio"] == "aceptado_backend"

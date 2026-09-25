@@ -32,6 +32,17 @@ def default_sender() -> str:
     return str(cfg.messaging_graph_from or cfg.messaging_smtp_from or "").strip()
 
 
+def personal_sender() -> str:
+    """Buzon personal autorizado para envios iniciados desde el escritorio."""
+    cfg = get_settings()
+    return str(cfg.messaging_graph_invitation_from or "").strip()
+
+
+def personal_sender_configured() -> bool:
+    cfg = get_settings()
+    return bool(_graph_configured(cfg) and cfg.messaging_graph_invitation_from.strip())
+
+
 def _graph_configured(cfg) -> bool:
     return bool(
         cfg.messaging_graph_tenant_id

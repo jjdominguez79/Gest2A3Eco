@@ -8,7 +8,14 @@ import requests
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
 from backend.api.config import get_settings
-from backend.api.messaging_mail import configured, default_sender, graph_headers, send_mail
+from backend.api.messaging_mail import (
+    configured,
+    default_sender,
+    graph_headers,
+    personal_sender,
+    personal_sender_configured,
+    send_mail,
+)
 from backend.api.security import require_workstation_or_internal
 
 
@@ -47,6 +54,7 @@ async def _read_files(files: list[UploadFile], *, inline: bool = False) -> list[
 async def send_backend_mail(
     to: str = Form(...), cc: str = Form("[]"), bcc: str = Form("[]"),
     subject: str = Form(...), html: str = Form(...),
+    sender_mode: str = Form("office"),
     files: list[UploadFile] = File(default=[]),
     inline_files: list[UploadFile] = File(default=[]),
 ):
@@ -55,6 +63,18 @@ async def send_backend_mail(
         raise HTTPException(status_code=422, detail="Debes indicar al menos un destinatario")
     if not configured():
         raise HTTPException(status_code=503, detail="El correo no esta configurado en el backend")
+    mode = sender_mode.strip().lower()
+    if mode not in {"office", "personal"}:
+        raise HTTPException(status_code=422, detail="Remitente no valido")
+    if mode == "personal":
+        if not personal_sender_configured():
+            raise HTTPException(
+                status_code=503,
+                detail="El correo personal no esta configurado en el backend",
+            )
+        sender = personal_sender()
+    else:
+        sender = default_sender()
     attachments = await _read_files(files)
     attachments.extend(await _read_files(inline_files, inline=True))
     if sum(len(item["content"]) for item in attachments) > MAX_TOTAL_BYTES:
@@ -63,12 +83,13 @@ async def send_backend_mail(
         sent = send_mail(
             recipients, subject.strip(), html, cc=_addresses(cc, "cc"),
             bcc=_addresses(bcc, "bcc"), attachments=attachments,
+            sender=sender,
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     if not sent:
         raise HTTPException(status_code=503, detail="El backend no pudo enviar el correo")
-    return {"sent": True, "sender": default_sender()}
+    return {"sent": True, "sender": sender}
 
 
 def _graph_url(mailbox: str, message_id: str, suffix: str = "") -> str:

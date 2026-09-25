@@ -61,8 +61,29 @@ def test_envia_factura_al_backend_con_token_de_puesto(monkeypatch, tmp_path):
     assert url == "https://backend.example.test/api/v1/mail/send"
     assert request["headers"] == {"X-API-Key": "g2a3_wks_test"}
     assert json.loads(request["data"]["to"]) == ["cliente@example.test"]
+    assert request["data"]["sender_mode"] == "office"
     assert request["files"][0][0] == "files"
     assert result.sender == "oficina@gestinem.es"
+
+
+def test_envia_desde_cuenta_personal_configurada_en_backend(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "utils.credential_store.get_workstation_token", lambda: "g2a3_wks_test",
+    )
+    pdf = tmp_path / "factura.pdf"
+    pdf.write_bytes(b"%PDF")
+    session = Session()
+    service = BackendMailService(
+        {"integrations_api_url": "https://backend.example.test"}, session=session,
+    )
+
+    service.send(
+        to=["cliente@example.test"], subject="Factura",
+        body="<p>Adjunta</p>", attachments=[str(pdf)], sender_mode="personal",
+    )
+
+    _url, request = session.call
+    assert request["data"]["sender_mode"] == "personal"
 
 
 def test_consulta_adjuntos_en_backend_con_token_de_puesto(monkeypatch):
