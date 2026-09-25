@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -10,24 +9,26 @@ import 'package:gestinem/features/documents/domain/client_document.dart';
 import 'package:gestinem/features/documents/presentation/document_preview_screen.dart';
 import 'package:gestinem/features/documents/presentation/documents_providers.dart';
 import 'package:pdfx/pdfx.dart';
-import 'package:pdfx/src/renderer/interfaces/platform.dart';
 
 void main() {
   testWidgets('fallo del visor permite guardar y reintentar el mismo PDF', (
     tester,
   ) async {
-    // pdfx usa Pigeon en macOS/iOS y MethodChannel en Windows: simular la
-    // plataforma evita depender del canal nativo elegido por cada sistema.
-    final plataformaAnterior = PdfxPlatform.instance;
-    final visor = _PdfxPlatformConError();
-    PdfxPlatform.instance = visor;
-    addTearDown(() => PdfxPlatform.instance = plataformaAnterior);
+    var aperturas = 0;
+    Future<PdfDocument> abrirDocumento(Uint8List _) async {
+      aperturas++;
+      throw Exception('No se pudo abrir el PDF');
+    }
+
     final repository = _DocumentsRepository();
     await tester.pumpWidget(
       ProviderScope(
         overrides: [documentsRepositoryProvider.overrideWithValue(repository)],
-        child: const MaterialApp(
-          home: DocumentPreviewScreen(documentId: 'document-1'),
+        child: MaterialApp(
+          home: DocumentPreviewScreen(
+            documentId: 'document-1',
+            abrirDocumento: abrirDocumento,
+          ),
         ),
       ),
     );
@@ -39,11 +40,11 @@ void main() {
     );
     expect(find.widgetWithText(FilledButton, 'Guardar PDF'), findsOneWidget);
     expect(repository.descargas, 1);
-    expect(visor.aperturas, 1);
+    expect(aperturas, 1);
     await tester.tap(find.text('Reintentar'));
     await tester.pumpAndSettle();
     expect(repository.descargas, 2);
-    expect(visor.aperturas, 2);
+    expect(aperturas, 2);
     expect(
       find.textContaining('No hace falta pedir otro certificado'),
       findsOneWidget,
@@ -81,27 +82,6 @@ void main() {
       );
     },
   );
-}
-
-class _PdfxPlatformConError extends PdfxPlatform {
-  int aperturas = 0;
-
-  @override
-  Future<PdfDocument> openData(
-    FutureOr<Uint8List> data, {
-    String? password,
-  }) async {
-    aperturas++;
-    throw Exception('No se pudo abrir el PDF');
-  }
-
-  @override
-  Future<PdfDocument> openAsset(String name, {String? password}) =>
-      throw UnimplementedError();
-
-  @override
-  Future<PdfDocument> openFile(String filePath, {String? password}) =>
-      throw UnimplementedError();
 }
 
 class _DocumentsRepository extends DocumentsRepository {

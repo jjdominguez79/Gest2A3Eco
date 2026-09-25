@@ -8,10 +8,17 @@ import 'package:pdfx/pdfx.dart';
 import '../../../core/api/api_client.dart';
 import 'documents_providers.dart';
 
+typedef AbrirDocumentoPdf = Future<PdfDocument> Function(Uint8List datos);
+
 class DocumentPreviewScreen extends ConsumerStatefulWidget {
-  const DocumentPreviewScreen({super.key, required this.documentId});
+  const DocumentPreviewScreen({
+    super.key,
+    required this.documentId,
+    this.abrirDocumento,
+  });
 
   final String documentId;
+  final AbrirDocumentoPdf? abrirDocumento;
 
   @override
   ConsumerState<DocumentPreviewScreen> createState() =>
@@ -92,6 +99,7 @@ class _DocumentPreviewScreenState extends ConsumerState<DocumentPreviewScreen> {
           data: data,
           onRetry: _retry,
           onSave: _saving ? null : _savePdf,
+          abrirDocumento: widget.abrirDocumento,
         ),
       ),
     );
@@ -104,11 +112,13 @@ class PdfBytesPreview extends StatefulWidget {
     required this.data,
     required this.onRetry,
     this.onSave,
+    this.abrirDocumento,
   });
 
   final Uint8List data;
   final VoidCallback onRetry;
   final VoidCallback? onSave;
+  final AbrirDocumentoPdf? abrirDocumento;
 
   @override
   State<PdfBytesPreview> createState() => _PdfBytesPreviewState();
@@ -116,7 +126,9 @@ class PdfBytesPreview extends StatefulWidget {
 
 class _PdfBytesPreviewState extends State<PdfBytesPreview> {
   late final PdfController _controller = PdfController(
-    document: PdfDocument.openData(Uint8List.fromList(widget.data)),
+    document:
+        widget.abrirDocumento?.call(Uint8List.fromList(widget.data)) ??
+        PdfDocument.openData(Uint8List.fromList(widget.data)),
   );
 
   @override
