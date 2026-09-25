@@ -1,6 +1,6 @@
 {
-  "version": "1.8.27",
-  "tag": "v1.8.27",
-  "changelog": "Se recupera la eleccion entre el correo personal y Oficina al enviar facturas. Al desactivar una empresa se dan de baja automaticamente sus buzones DEHu y DGT/DEV, y se impide activar buzones sin un certificado digital activo.",
+  "version": "1.8.28",
+  "tag": "v1.8.28",
+  "changelog": "Se incorpora el informe de vida laboral TGSS, se corrige el envio desde la cuenta personal mediante el backend y se mejora la gestion de certificados y comunicaciones. La publicacion incluye tambien Gestinem 0.1.20 para Windows.",
   "force_update": true
 }

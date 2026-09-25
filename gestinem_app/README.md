@@ -1,6 +1,7 @@
 # Gestinem
 
-Aplicación Flutter multiplataforma de Gestinem. La versión actual se define exclusivamente en `pubspec.yaml` (actualmente `0.1.12+27`); no dupliques manualmente la versión en otros ficheros.
+Aplicación Flutter multiplataforma de Gestinem. La versión actual se define
+exclusivamente en `pubspec.yaml`; no la dupliques manualmente en otros ficheros.
 
 ## Estado de producción
 
@@ -115,6 +116,9 @@ bash tool/build_production.sh windows
 ```
 
 El script compila Flutter release y, si encuentra Inno Setup 6, genera el instalador en `../dist_installer/`. `windows/installer/gestinem.iss` lee automáticamente la versión del ejecutable generado, evitando mantener una versión duplicada.
+
+Al publicar una version etiquetada de Gest2A3Eco, el workflow de GitHub adjunta
+tambien este instalador Windows a la misma Release.
 
 ## iOS
 

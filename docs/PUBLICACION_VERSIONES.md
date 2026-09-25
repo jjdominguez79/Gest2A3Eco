@@ -111,8 +111,8 @@ El workflow necesita permisos de escritura para:
 4. compila con PyInstaller;
 5. valida `dist\Gest2A3Eco\Gest2A3Eco.exe`;
 6. instala Inno Setup 6;
-7. genera y valida `dist_installer\Setup_Gest2A3Eco_X.Y.Z.exe`;
-8. crea la GitHub Release;
+7. valida Flutter y genera los instaladores Tkinter y Flutter para Windows;
+8. crea la GitHub Release con ambos instaladores;
 9. verifica que la URL publica del asset responde;
 10. cambia a `main`;
 11. actualiza `updates/version.json`;
@@ -235,6 +235,7 @@ https://github.com/jjdominguez79/Gest2A3Eco/releases/download/vX.Y.Z/Setup_Gest2
 - `setup.iss`
 - `updates/release_metadata.json` en cada publicacion
 - `updates/version.json`
+- `gestinem_app/pubspec.yaml`, como fuente de version del instalador Flutter
 
 ## Comandos rapidos de referencia
 

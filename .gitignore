@@ -61,6 +61,7 @@ logs/
 # Paquetes de despliegue y pruebas locales; conservarlos fuera de Git.
 /tmp/
 /output/
+/artifacts/
 
 # Resultados locales de CI y pruebas de navegador
 /backend-test-results.xml
