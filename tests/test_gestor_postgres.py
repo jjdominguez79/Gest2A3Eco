@@ -450,6 +450,11 @@ class _ConexionMigracionesFalsa:
         tabla_emitidas_ocr=True,
         tabla_emitidas_ocr_lineas=True,
         tabla_emitidas_ocr_ret=True,
+        tabla_ocr_trabajos=True,
+        indice_ocr_trabajos=True,
+        indice_ocr_trabajo_archivo=True,
+        tabla_ocr_modelos=True,
+        indice_ocr_modelos=True,
     ):
         self.columnas = columnas
         self.tabla_permisos = tabla_permisos
@@ -471,6 +476,11 @@ class _ConexionMigracionesFalsa:
         self.tabla_emitidas_ocr = tabla_emitidas_ocr
         self.tabla_emitidas_ocr_lineas = tabla_emitidas_ocr_lineas
         self.tabla_emitidas_ocr_ret = tabla_emitidas_ocr_ret
+        self.tabla_ocr_trabajos = tabla_ocr_trabajos
+        self.indice_ocr_trabajos = indice_ocr_trabajos
+        self.indice_ocr_trabajo_archivo = indice_ocr_trabajo_archivo
+        self.tabla_ocr_modelos = tabla_ocr_modelos
+        self.indice_ocr_modelos = indice_ocr_modelos
         self.sentencias = []
         self.commit_count = 0
 
@@ -548,6 +558,22 @@ class _ConexionMigracionesFalsa:
                 "tabla_emitidas_ocr_ret": (
                     "facturas_emitidas_ocr_retenciones"
                     if self.tabla_emitidas_ocr_ret else None
+                ),
+                "tabla_ocr_trabajos": (
+                    "ocr_trabajos" if self.tabla_ocr_trabajos else None
+                ),
+                "indice_ocr_trabajos": (
+                    "idx_ocr_trabajos_estado" if self.indice_ocr_trabajos else None
+                ),
+                "indice_ocr_trabajo_archivo": (
+                    "idx_ocr_trabajo_archivo_activo"
+                    if self.indice_ocr_trabajo_archivo else None
+                ),
+                "tabla_ocr_modelos": (
+                    "ocr_modelos_locales" if self.tabla_ocr_modelos else None
+                ),
+                "indice_ocr_modelos": (
+                    "idx_ocr_modelos_empresa" if self.indice_ocr_modelos else None
                 ),
             })
         return _Resultado()

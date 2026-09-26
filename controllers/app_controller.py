@@ -17,6 +17,7 @@ LOG = logging.getLogger(__name__)
 MAIL_NOTIFICATION_INTERVAL_MS = 30_000
 ATTACHMENT_NOTIFICATION_INTERVAL_MS = 30_000
 CLIENT_PUBLICATION_INTERVAL_MS = 60_000
+OCR_BACKGROUND_INTERVAL_MS = 10_000
 
 
 class AppController:
@@ -48,6 +49,9 @@ class AppController:
         self._client_publication_running = False
         self._client_publication_scheduled = False
         self._client_publication_stopped = False
+        self._ocr_background_running = False
+        self._ocr_background_scheduled = False
+        self._ocr_background_stopped = False
         self._content.bind("<Destroy>", self._on_content_destroy, add="+")
 
     @property
@@ -64,6 +68,62 @@ class AppController:
         self._schedule_mail_poll(1_500)
         self._schedule_attachment_poll(2_000)
         self._schedule_client_publications(3_000)
+        self._schedule_ocr_background(1_000)
+
+    def _schedule_ocr_background(self, delay_ms=OCR_BACKGROUND_INTERVAL_MS):
+        role = str(getattr(self._session.role, "value", self._session.role)).lower()
+        if (
+            self._ocr_background_stopped
+            or self._ocr_background_scheduled
+            or role not in {"admin", "empleado"}
+        ):
+            return
+        try:
+            self._content.after(delay_ms, self._start_ocr_background)
+            self._ocr_background_scheduled = True
+        except tk.TclError:
+            pass
+
+    def _start_ocr_background(self):
+        self._ocr_background_scheduled = False
+        if self._ocr_background_stopped:
+            return
+        if self._ocr_background_running:
+            self._schedule_ocr_background()
+            return
+        self._ocr_background_running = True
+
+        def worker():
+            try:
+                from services.ocr.background_service import OcrBackgroundService
+                resultados = OcrBackgroundService(self._gestor).procesar_pendientes(
+                    limite=2,
+                )
+                error = None
+            except Exception as exc:
+                resultados, error = [], exc
+            try:
+                self._content.after(
+                    0, self._finish_ocr_background, resultados, error,
+                )
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_ocr_background(self, resultados, error):
+        self._ocr_background_running = False
+        if self._ocr_background_stopped:
+            return
+        if error is not None:
+            LOG.warning("No se pudo procesar la cola OCR: %s", error)
+        elif resultados:
+            completados = sum(r.estado == "completado" for r in resultados)
+            LOG.info(
+                "Cola OCR: %s completados de %s trabajos procesados.",
+                completados, len(resultados),
+            )
+        self._schedule_ocr_background()
 
     def _schedule_client_publications(
         self, delay_ms=CLIENT_PUBLICATION_INTERVAL_MS,
@@ -392,6 +452,7 @@ class AppController:
             self._mail_poll_stopped = True
             self._attachment_poll_stopped = True
             self._client_publication_stopped = True
+            self._ocr_background_stopped = True
 
     def open_buzon(self):
         """Abre el buzon global de comunicaciones bajo demanda."""

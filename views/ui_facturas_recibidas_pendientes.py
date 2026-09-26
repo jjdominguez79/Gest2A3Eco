@@ -22,6 +22,7 @@ class UIFacturasRecibidasPendientes(ttk.Frame):
         self._rows: list[dict] = []
         self._visible: list[dict] = []
         self._by_id: dict[str, dict] = {}
+        self._ocr_refresh_after = None
         self._empresa = tk.StringVar(value="Todas")
         self._ejercicio = tk.StringVar(value="Todos")
         self._estado = tk.StringVar(value="Pendientes")
@@ -148,6 +149,25 @@ class UIFacturasRecibidasPendientes(ttk.Frame):
         if self._ejercicio.get() not in self._ejercicio_combo.cget("values"):
             self._ejercicio.set("Todos")
         self.apply_filters()
+        self._programar_refresco_ocr()
+
+    def _programar_refresco_ocr(self):
+        if self._ocr_refresh_after is not None:
+            try:
+                self.after_cancel(self._ocr_refresh_after)
+            except tk.TclError:
+                pass
+            self._ocr_refresh_after = None
+        if any(
+            str(row.get("estado_trabajo_ocr") or "") in {"pendiente", "procesando"}
+            for row in self._rows
+        ):
+            self._ocr_refresh_after = self.after(3_000, self._refrescar_estado_ocr)
+
+    def _refrescar_estado_ocr(self):
+        self._ocr_refresh_after = None
+        if self.winfo_exists():
+            self.refresh()
 
     def apply_filters(self):
         self._visible = self.filter_rows(
@@ -260,9 +280,9 @@ class UIFacturasRecibidasPendientes(ttk.Frame):
         if not selected:
             return
         self._run_background(
-            "Analizando con OCR...",
+            "Encolando para OCR...",
             lambda: self._service.enviar_a_ocr(selected, usuario=self._username()),
-            "OCR finalizado",
+            "OCR en segundo plano",
         )
 
     def _capture_a3_entries(self):
@@ -316,25 +336,39 @@ class UIFacturasRecibidasPendientes(ttk.Frame):
         )
 
     def _run_background(self, progress_text, operation, title):
-        self.winfo_toplevel().configure(cursor="watch")
+        root = self.winfo_toplevel()
+        root.configure(cursor="watch")
         self._summary.configure(text=progress_text)
 
         def worker():
             try:
                 result = operation()
-                self.after(0, self._finish_background, title, result, None)
+                try:
+                    root.after(
+                        0, self._finish_background, title, result, None,
+                    )
+                except (RuntimeError, tk.TclError):
+                    pass
             except Exception as exc:
-                self.after(0, self._finish_background, title, None, exc)
+                try:
+                    root.after(
+                        0, self._finish_background, title, None, exc,
+                    )
+                except (RuntimeError, tk.TclError):
+                    pass
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _finish_background(self, title, result, error):
+        if not self.winfo_exists():
+            return
         self.winfo_toplevel().configure(cursor="")
         self.refresh()
         if error:
             messagebox.showerror(title, str(error), parent=self)
             return
-        lines = [f"Completadas: {len(result.completados)}"]
+        etiqueta = "Encoladas" if title == "OCR en segundo plano" else "Completadas"
+        lines = [f"{etiqueta}: {len(result.completados)}"]
         if title == "Captura de asientos" and result.completados:
             lines.append("\n".join(result.completados[:8]))
         if result.omitidos:
@@ -357,6 +391,13 @@ class UIFacturasRecibidasPendientes(ttk.Frame):
 
     @classmethod
     def _ocr_state_label(cls, row: dict) -> str:
+        estado_trabajo = str(row.get("estado_trabajo_ocr") or "").strip().lower()
+        if estado_trabajo == "pendiente":
+            return "En cola"
+        if estado_trabajo == "procesando":
+            return "Procesando"
+        if estado_trabajo == "error" and not row.get("ocr_documento_id"):
+            return "Error de proceso"
         if not row.get("ocr_documento_id"):
             return "Sin analizar"
         estado = str(row.get("estado_documento_ocr") or "").strip().lower()

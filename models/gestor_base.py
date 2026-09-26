@@ -1360,6 +1360,49 @@ class GestorBase:
             );
             CREATE INDEX IF NOT EXISTS idx_ocr_aprendizaje_empresa
                 ON ocr_aprendizaje_ejemplos(empresa_id, estado, proveedor_nif);
+
+            CREATE TABLE IF NOT EXISTS ocr_trabajos (
+                id                    TEXT PRIMARY KEY,
+                empresa_id            TEXT NOT NULL,
+                ejercicio             INTEGER NOT NULL,
+                ruta_origen           TEXT NOT NULL,
+                tipo_documento        TEXT NOT NULL DEFAULT 'factura_recibida',
+                documento_archivo_id  TEXT,
+                documento_ocr_id      TEXT,
+                usuario               TEXT,
+                estado                TEXT NOT NULL DEFAULT 'pendiente',
+                intentos              INTEGER NOT NULL DEFAULT 0,
+                max_intentos          INTEGER NOT NULL DEFAULT 3,
+                creado_at             TEXT NOT NULL,
+                iniciado_at           TEXT,
+                actualizado_at        TEXT NOT NULL,
+                siguiente_intento     TEXT,
+                finalizado_at         TEXT,
+                error                 TEXT,
+                resultado_json        TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_ocr_trabajos_estado
+                ON ocr_trabajos(estado, siguiente_intento, creado_at);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_ocr_trabajo_archivo_activo
+                ON ocr_trabajos(documento_archivo_id)
+                WHERE documento_archivo_id IS NOT NULL
+                  AND estado IN ('pendiente','procesando');
+
+            CREATE TABLE IF NOT EXISTS ocr_modelos_locales (
+                id               TEXT PRIMARY KEY,
+                empresa_id       TEXT NOT NULL,
+                tipo_documento   TEXT NOT NULL,
+                tercero_nif      TEXT NOT NULL,
+                version          INTEGER NOT NULL DEFAULT 1,
+                ejemplos         INTEGER NOT NULL DEFAULT 0,
+                campos_json      TEXT NOT NULL DEFAULT '{}',
+                metricas_json    TEXT NOT NULL DEFAULT '{}',
+                estado           TEXT NOT NULL DEFAULT 'activo',
+                entrenado_at     TEXT NOT NULL,
+                UNIQUE(empresa_id, tipo_documento, tercero_nif)
+            );
+            CREATE INDEX IF NOT EXISTS idx_ocr_modelos_empresa
+                ON ocr_modelos_locales(empresa_id, tipo_documento, estado);
         """)
         self._ensure_column("facturas_recibidas_ocr", "fecha_contable", "TEXT")
         self._ensure_column("facturas_recibidas_ocr", "pagada", "INTEGER DEFAULT 0")
@@ -3745,7 +3788,9 @@ class GestorBase:
                             NULLIF(fro.fecha_factura,''),NULLIF(d.fecha_contable,''))
                      AS fecha_captura,
                    COALESCE(NULLIF(o.estado,''),'') AS estado_documento_ocr,
-                   COALESCE(NULLIF(fd.estado_contable,''),'') AS estado_contable_ocr
+                   COALESCE(NULLIF(fd.estado_contable,''),'') AS estado_contable_ocr,
+                   COALESCE(NULLIF(t.estado,''),'') AS estado_trabajo_ocr,
+                   COALESCE(NULLIF(t.error,''),'') AS error_trabajo_ocr
             FROM documentos_archivo d
             JOIN categorias_documentales c ON c.id=d.categoria_id
             LEFT JOIN empresas e
@@ -3754,6 +3799,11 @@ class GestorBase:
             LEFT JOIN facturas_recibidas_docs fd ON fd.id=d.ocr_documento_id
             LEFT JOIN facturas_recibidas_ocr fro
               ON fro.documento_id=d.ocr_documento_id
+            LEFT JOIN ocr_trabajos t ON t.id=(
+              SELECT t2.id FROM ocr_trabajos t2
+              WHERE t2.documento_archivo_id=d.id
+              ORDER BY t2.creado_at DESC LIMIT 1
+            )
             WHERE d.categoria_id='facturas_recibidas'
             ORDER BY
               CASE WHEN COALESCE(d.estado_contable,'pendiente')='pendiente'
@@ -6320,7 +6370,200 @@ class GestorBase:
                 clave = str(fila["proveedor_nif"] or "Sin NIF")
                 por_proveedor[clave] = por_proveedor.get(clave, 0) + int(fila["total"] or 0)
         return {"pendientes": pendientes, "por_proveedor": por_proveedor}
+
+    def listar_ejemplos_aprendizaje_ocr_todos(self, empresa_id: str) -> list[dict]:
+        cur = self.conn.execute(
+            "SELECT * FROM ocr_aprendizaje_ejemplos "
+            "WHERE empresa_id=? ORDER BY fecha_validacion,id",
+            (str(empresa_id),),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    # ocr_modelos_locales -----------------------------------------------------
+
+    def upsert_modelo_ocr_local(self, modelo: dict) -> str:
+        modelo_id = str(modelo.get("id") or uuid.uuid4())
+        self.conn.execute(
+            """
+            INSERT INTO ocr_modelos_locales
+              (id,empresa_id,tipo_documento,tercero_nif,version,ejemplos,
+               campos_json,metricas_json,estado,entrenado_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(empresa_id,tipo_documento,tercero_nif) DO UPDATE SET
+              version=ocr_modelos_locales.version+1,
+              ejemplos=excluded.ejemplos,
+              campos_json=excluded.campos_json,
+              metricas_json=excluded.metricas_json,
+              estado=excluded.estado,
+              entrenado_at=excluded.entrenado_at
+            """,
+            (
+                modelo_id, str(modelo["empresa_id"]),
+                str(modelo.get("tipo_documento") or "factura_recibida"),
+                str(modelo.get("tercero_nif") or ""),
+                int(modelo.get("version") or 1), int(modelo.get("ejemplos") or 0),
+                str(modelo.get("campos_json") or "{}"),
+                str(modelo.get("metricas_json") or "{}"),
+                str(modelo.get("estado") or "activo"),
+                str(modelo.get("entrenado_at") or datetime.now().isoformat(timespec="seconds")),
+            ),
+        )
         self.conn.commit()
+        row = self.conn.execute(
+            "SELECT id FROM ocr_modelos_locales WHERE empresa_id=? "
+            "AND tipo_documento=? AND tercero_nif=?",
+            (
+                str(modelo["empresa_id"]),
+                str(modelo.get("tipo_documento") or "factura_recibida"),
+                str(modelo.get("tercero_nif") or ""),
+            ),
+        ).fetchone()
+        return str(row["id"] if isinstance(row, dict) else row[0])
+
+    def listar_modelos_ocr_locales(
+        self, empresa_id: str, tipo_documento: str = "factura_recibida",
+    ) -> list[dict]:
+        cur = self.conn.execute(
+            "SELECT * FROM ocr_modelos_locales WHERE empresa_id=? "
+            "AND tipo_documento=? AND estado='activo' ORDER BY tercero_nif",
+            (str(empresa_id), str(tipo_documento)),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    # ocr_trabajos ------------------------------------------------------------
+
+    def encolar_trabajo_ocr(self, trabajo: dict) -> tuple[str, bool]:
+        """Encola de forma idempotente. Devuelve ``(id, creado)``."""
+        archivo_id = str(trabajo.get("documento_archivo_id") or "")
+        if archivo_id:
+            row = self.conn.execute(
+                "SELECT id FROM ocr_trabajos WHERE documento_archivo_id=? "
+                "AND estado IN ('pendiente','procesando') ORDER BY creado_at DESC LIMIT 1",
+                (archivo_id,),
+            ).fetchone()
+            if row:
+                return str(row["id"] if isinstance(row, dict) else row[0]), False
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        trabajo_id = str(trabajo.get("id") or uuid.uuid4())
+        cur = self.conn.execute(
+            """
+            INSERT INTO ocr_trabajos
+              (id,empresa_id,ejercicio,ruta_origen,tipo_documento,
+               documento_archivo_id,documento_ocr_id,usuario,estado,intentos,
+               max_intentos,creado_at,actualizado_at,siguiente_intento,error,
+               resultado_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT DO NOTHING
+            """,
+            (
+                trabajo_id, str(trabajo["empresa_id"]), int(trabajo["ejercicio"]),
+                str(trabajo["ruta_origen"]),
+                str(trabajo.get("tipo_documento") or "factura_recibida"),
+                archivo_id or None, trabajo.get("documento_ocr_id"),
+                str(trabajo.get("usuario") or ""), "pendiente", 0,
+                int(trabajo.get("max_intentos") or 3), now, now, now, "", "",
+            ),
+        )
+        self.conn.commit()
+        if cur.rowcount == 0 and archivo_id:
+            row = self.conn.execute(
+                "SELECT id FROM ocr_trabajos WHERE documento_archivo_id=? "
+                "AND estado IN ('pendiente','procesando') "
+                "ORDER BY creado_at DESC LIMIT 1", (archivo_id,),
+            ).fetchone()
+            if row:
+                return str(row["id"] if isinstance(row, dict) else row[0]), False
+        return trabajo_id, True
+
+    def reclamar_trabajo_ocr(self, *, bloqueo_minutos: int = 15) -> dict | None:
+        """Reclama un trabajo y recupera antes los abandonados por otro proceso."""
+        from datetime import timedelta
+
+        now_dt = datetime.now().astimezone()
+        now = now_dt.isoformat(timespec="seconds")
+        limite = (now_dt - timedelta(minutes=bloqueo_minutos)).isoformat(timespec="seconds")
+        self.conn.execute(
+            "UPDATE ocr_trabajos SET estado='pendiente',actualizado_at=?,"
+            "siguiente_intento=?,error=CASE WHEN COALESCE(error,'')='' "
+            "THEN 'Trabajo recuperado tras una interrupcion.' ELSE error END "
+            "WHERE estado='procesando' AND actualizado_at<?",
+            (now, now, limite),
+        )
+        row = self.conn.execute(
+            "SELECT * FROM ocr_trabajos WHERE estado='pendiente' "
+            "AND (siguiente_intento IS NULL OR siguiente_intento<=?) "
+            "ORDER BY creado_at LIMIT 1", (now,),
+        ).fetchone()
+        if not row:
+            self.conn.commit()
+            return None
+        datos = dict(row)
+        cur = self.conn.execute(
+            "UPDATE ocr_trabajos SET estado='procesando',intentos=intentos+1,"
+            "iniciado_at=?,actualizado_at=? WHERE id=? AND estado='pendiente'",
+            (now, now, str(datos["id"])),
+        )
+        self.conn.commit()
+        if cur.rowcount != 1:
+            return None
+        datos["estado"] = "procesando"
+        datos["intentos"] = int(datos.get("intentos") or 0) + 1
+        datos["iniciado_at"] = now
+        return datos
+
+    def finalizar_trabajo_ocr(
+        self, trabajo_id: str, resultado: dict, documento_ocr_id: str = "",
+    ) -> None:
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        self.conn.execute(
+            "UPDATE ocr_trabajos SET estado='completado',documento_ocr_id=?,"
+            "resultado_json=?,error='',actualizado_at=?,finalizado_at=? WHERE id=?",
+            (
+                documento_ocr_id or None,
+                json.dumps(resultado or {}, ensure_ascii=True, default=str),
+                now, now, str(trabajo_id),
+            ),
+        )
+        self.conn.commit()
+
+    def fallar_trabajo_ocr(
+        self, trabajo_id: str, error: str, *, documento_ocr_id: str = "",
+        reintento_segundos: int = 30,
+    ) -> str:
+        from datetime import timedelta
+
+        row = self.conn.execute(
+            "SELECT intentos,max_intentos FROM ocr_trabajos WHERE id=?",
+            (str(trabajo_id),),
+        ).fetchone()
+        intentos = int((row or {}).get("intentos") or 0) if isinstance(row, dict) else int(row[0] or 0)
+        max_intentos = int((row or {}).get("max_intentos") or 3) if isinstance(row, dict) else int(row[1] or 3)
+        now_dt = datetime.now().astimezone()
+        now = now_dt.isoformat(timespec="seconds")
+        estado = "pendiente" if intentos < max_intentos else "error"
+        siguiente = (
+            now_dt + timedelta(seconds=max(0, int(reintento_segundos)))
+        ).isoformat(timespec="seconds") if estado == "pendiente" else None
+        self.conn.execute(
+            "UPDATE ocr_trabajos SET estado=?,documento_ocr_id=COALESCE(NULLIF(?,''),documento_ocr_id),"
+            "error=?,actualizado_at=?,siguiente_intento=?,finalizado_at=? WHERE id=?",
+            (
+                estado, documento_ocr_id, str(error)[:2000], now, siguiente,
+                now if estado == "error" else None, str(trabajo_id),
+            ),
+        )
+        self.conn.commit()
+        return estado
+
+    def resumen_trabajos_ocr(self, empresa_id: str | None = None) -> dict:
+        sql = "SELECT estado,COUNT(*) AS total FROM ocr_trabajos"
+        params: tuple = ()
+        if empresa_id:
+            sql += " WHERE empresa_id=?"
+            params = (str(empresa_id),)
+        sql += " GROUP BY estado"
+        rows = self.conn.execute(sql, params).fetchall()
+        return {str(row["estado"]): int(row["total"] or 0) for row in rows}
 
     # ── Notificaciones Electronicas ──────────────────────────────────────────
 

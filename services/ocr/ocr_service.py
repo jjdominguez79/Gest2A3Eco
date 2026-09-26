@@ -170,6 +170,7 @@ class OcrService:
 
         # 5. Intentar extraccion con cadena de motores
         result = self._ejecutar_motores(path)
+        result = self._aplicar_aprendizaje_local(path, result)
 
         # 6. Actualizar documento con resultado
         doc_payload.update({
@@ -217,6 +218,7 @@ class OcrService:
         self._gestor.upsert_documento_ocr(doc_payload)
         self._notificar_progreso(progress_callback, doc_payload)
         result = self._ejecutar_motores(path)
+        result = self._aplicar_aprendizaje_local(path, result)
         doc_payload.update({
             "estado": result.estado_sugerido.value,
             "fecha_procesado": _now(),
@@ -508,6 +510,17 @@ class OcrService:
             "fecha_correccion": _now(),
             "usuario":         self._usuario,
         })
+
+    def _aplicar_aprendizaje_local(self, path: Path, result: OcrInvoiceResult) -> OcrInvoiceResult:
+        """Aplica, sin bloquear el OCR base, las plantillas ya entrenadas."""
+        try:
+            from services.ocr.aprendizaje_service import AprendizajeOcrService
+            return AprendizajeOcrService(
+                self._gestor, self._empresa,
+            ).aplicar_modelo_local(path, result, self._tipo_documento)
+        except Exception as exc:
+            logger.warning("[OcrService] No se pudo aplicar el modelo local: %s", exc)
+            return result
 
     # ── Configuracion ─────────────────────────────────────────────────────────
 

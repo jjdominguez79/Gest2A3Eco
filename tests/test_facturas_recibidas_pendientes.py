@@ -172,11 +172,15 @@ def test_impresion_multiple_registra_solo_archivos_enviados(tmp_path):
     assert gestor.printed == [(["doc-1", "doc-2"], "Empleado")]
 
 
-def test_ocr_omite_documentos_ya_analizados(monkeypatch):
+def test_ocr_encola_y_omite_documentos_ya_analizados(monkeypatch, tmp_path):
+    nueva = tmp_path / "nueva.pdf"
+    nueva.write_bytes(b"%PDF-1")
     gestor = _GestorService({
         "new": {
             "id": "new", "categoria_id": "facturas_recibidas",
             "nombre_original": "nueva.pdf", "ocr_documento_id": None,
+            "codigo_empresa": "E00001", "ejercicio": 2026,
+            "ruta": str(nueva),
         },
         "old": {
             "id": "old", "categoria_id": "facturas_recibidas",
@@ -185,23 +189,28 @@ def test_ocr_omite_documentos_ya_analizados(monkeypatch):
     })
     processed = []
 
-    class _Documental:
+    class _Cola:
         def __init__(self, _gestor):
             pass
 
-        def enviar_a_ocr(self, document_id, usuario):
-            processed.append((document_id, usuario))
+        def encolar(self, **datos):
+            processed.append(datos)
+            return "job-1", True
 
     monkeypatch.setattr(
-        "services.facturas_recibidas_pendientes_service.GestionDocumentalService",
-        _Documental,
+        "services.facturas_recibidas_pendientes_service.OcrBackgroundService",
+        _Cola,
     )
 
     result = FacturasRecibidasPendientesService(gestor).enviar_a_ocr(
         ["new", "old"], usuario="Empleado",
     )
 
-    assert processed == [("new", "Empleado")]
+    assert processed == [{
+        "empresa_id": "E00001", "ejercicio": 2026,
+        "ruta_origen": str(nueva), "documento_archivo_id": "new",
+        "usuario": "Empleado",
+    }]
     assert result.completados == ["nueva.pdf"]
     assert result.omitidos == ["anterior.pdf"]
 

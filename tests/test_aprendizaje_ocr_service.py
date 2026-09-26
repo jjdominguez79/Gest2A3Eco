@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 from services.ocr.aprendizaje_service import AprendizajeOcrService
 
@@ -92,3 +93,59 @@ def test_registrar_factura_emitida_separa_emisor_cliente_y_lineas():
         {"Base": 200.0, "CuotaIva": 42.0, "TipoIva": 21.0}
     ]
     assert row["proveedor_nif"] == "B22222222"
+
+
+class GestorModelo:
+    def __init__(self):
+        self.modelos = []
+
+    def listar_ejemplos_aprendizaje_ocr_todos(self, empresa_id):
+        assert empresa_id == "E00001"
+        return [{
+            "id": 1, "empresa_id": empresa_id, "proveedor_nif": "B12345678",
+            "origen_path": "factura.pdf",
+            "datos_validados_json": json.dumps({"TipoDocumento": "factura_recibida"}),
+            "marcas_json": json.dumps({
+                "NumeroFactura": {"page": 0, "x": 150, "y": 300, "width": 180, "height": 30},
+            }),
+        }]
+
+    def upsert_modelo_ocr_local(self, modelo):
+        modelo = dict(modelo)
+        modelo["version"] = 1
+        self.modelos.append(modelo)
+        return modelo["id"]
+
+    def listar_modelos_ocr_locales(self, empresa_id, tipo_documento):
+        return self.modelos
+
+
+def test_entrenamiento_local_normaliza_marcas_y_las_aplica(monkeypatch):
+    gestor = GestorModelo()
+    service = AprendizajeOcrService(gestor, "E00001")
+    monkeypatch.setattr(
+        service, "_dimensiones_paginas", lambda _path: {0: (900.0, 1200.0)},
+    )
+
+    resumen = service.entrenar_modelos_locales()
+
+    assert resumen == {"modelos_entrenados": 1, "ejemplos_revisados": 1}
+    campos = json.loads(gestor.modelos[0]["campos_json"])
+    assert campos["NumeroFactura"]["x"] == round(150 / 900, 6)
+
+    monkeypatch.setattr(
+        service, "_extraer_campos", lambda _path, _campos: {"NumeroFactura": "F-2026-15"},
+    )
+    resultado = SimpleNamespace(
+        proveedor_nif="B12345678", texto="", numero_factura="",
+        proveedor_nombre="", cliente_nif="", cliente_nombre="",
+        fecha_factura="", fecha_vencimiento="", base_total=0.0,
+        iva_total=0.0, total=0.0, raw_json={}, motor="azure_backend",
+        confianza=0.6,
+    )
+
+    service.aplicar_modelo_local("factura.pdf", resultado)
+
+    assert resultado.numero_factura == "F-2026-15"
+    assert resultado.motor == "azure_backend+modelo_local_v1"
+    assert resultado.raw_json["modelo_local"]["tercero_nif"] == "B12345678"

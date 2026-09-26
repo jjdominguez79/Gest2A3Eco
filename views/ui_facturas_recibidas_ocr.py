@@ -1162,8 +1162,14 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         cfg = load_app_config()
         resumen = AprendizajeOcrService(self._gestor, self._codigo).resumen()
         pendientes = int(resumen.get("pendientes") or 0)
+        modelos_locales = int(resumen.get("modelos_locales") or 0)
+        ejemplos_modelo = int(resumen.get("ejemplos_modelo_local") or 0)
         proveedores = resumen.get("por_proveedor") or {}
-        lineas = [f"Ejemplos validados pendientes de entrenamiento: {pendientes}"]
+        lineas = [
+            f"Ejemplos pendientes de exportar a Azure: {pendientes}",
+            f"Modelos locales activos: {modelos_locales}",
+            f"Ejemplos usados por modelos locales: {ejemplos_modelo}",
+        ]
         if proveedores:
             lineas.append("")
             lineas.append("Por tercero (proveedor o cliente, segun el documento):")
@@ -1171,13 +1177,28 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         lineas.extend([
             "",
             "Cada factura validada se incorpora automaticamente a esta cola.",
-            "La exportacion y el reentrenamiento se realizan despues de revisar una muestra suficiente.",
+            "Las zonas marcadas entrenan automaticamente el modelo local del proveedor.",
+            "La exportacion a Azure sigue siendo explicita y separada.",
         ])
         dialog = tk.Toplevel(self.winfo_toplevel())
         dialog.title("Aprendizaje OCR")
         dialog.transient(self.winfo_toplevel())
         ttk.Label(dialog, text="\n".join(lineas), justify="left", wraplength=600).pack(padx=14, pady=14)
         actions = ttk.Frame(dialog); actions.pack(fill="x", padx=14, pady=(0, 14))
+        def entrenar_local():
+            try:
+                resultado = AprendizajeOcrService(
+                    self._gestor, self._codigo,
+                ).entrenar_modelos_locales()
+                messagebox.showinfo(
+                    "Aprendizaje OCR",
+                    f"Modelos entrenados: {resultado['modelos_entrenados']}\n"
+                    f"Ejemplos revisados: {resultado['ejemplos_revisados']}",
+                    parent=dialog,
+                )
+                dialog.destroy()
+            except Exception as exc:
+                messagebox.showerror("Aprendizaje OCR", str(exc), parent=dialog)
         def exportar():
             try:
                 from utils.credential_store import get_azure_storage_conn
@@ -1193,7 +1214,8 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                 dialog.destroy()
             except Exception as exc:
                 messagebox.showerror("Aprendizaje OCR", str(exc), parent=dialog)
-        ttk.Button(actions, text="Exportar pendientes a Azure", command=exportar).pack(side="left")
+        ttk.Button(actions, text="Entrenar modelo local", command=entrenar_local).pack(side="left")
+        ttk.Button(actions, text="Exportar a Azure", command=exportar).pack(side="left", padx=6)
         ttk.Button(actions, text="Cerrar", command=dialog.destroy).pack(side="right")
 
     def _inicializar_catalogo_iva(self):

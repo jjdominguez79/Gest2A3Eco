@@ -577,6 +577,11 @@ class GestorPostgres(GestorBase):
               to_regclass('public.facturas_emitidas_ocr') AS tabla_emitidas_ocr,
               to_regclass('public.facturas_emitidas_ocr_lineas_iva') AS tabla_emitidas_ocr_lineas,
               to_regclass('public.facturas_emitidas_ocr_retenciones') AS tabla_emitidas_ocr_ret
+              ,to_regclass('public.ocr_trabajos') AS tabla_ocr_trabajos
+              ,to_regclass('public.idx_ocr_trabajos_estado') AS indice_ocr_trabajos
+              ,to_regclass('public.idx_ocr_trabajo_archivo_activo') AS indice_ocr_trabajo_archivo
+              ,to_regclass('public.ocr_modelos_locales') AS tabla_ocr_modelos
+              ,to_regclass('public.idx_ocr_modelos_empresa') AS indice_ocr_modelos
             """
         ).fetchone()
         tabla_permisos_existe = bool(objetos and objetos["tabla_permisos"])
@@ -602,6 +607,13 @@ class GestorPostgres(GestorBase):
         tabla_emitidas_ocr_existe = bool(objetos and objetos.get("tabla_emitidas_ocr"))
         tabla_emitidas_ocr_lineas_existe = bool(objetos and objetos.get("tabla_emitidas_ocr_lineas"))
         tabla_emitidas_ocr_ret_existe = bool(objetos and objetos.get("tabla_emitidas_ocr_ret"))
+        tabla_ocr_trabajos_existe = bool(objetos and objetos.get("tabla_ocr_trabajos"))
+        indice_ocr_trabajos_existe = bool(objetos and objetos.get("indice_ocr_trabajos"))
+        indice_ocr_trabajo_archivo_existe = bool(
+            objetos and objetos.get("indice_ocr_trabajo_archivo")
+        )
+        tabla_ocr_modelos_existe = bool(objetos and objetos.get("tabla_ocr_modelos"))
+        indice_ocr_modelos_existe = bool(objetos and objetos.get("indice_ocr_modelos"))
         tablas_faltantes = {
             tabla
             for tabla, existe in (
@@ -637,11 +649,59 @@ class GestorPostgres(GestorBase):
             and tabla_emitidas_ocr_existe
             and tabla_emitidas_ocr_lineas_existe
             and tabla_emitidas_ocr_ret_existe
+            and tabla_ocr_trabajos_existe
+            and indice_ocr_trabajos_existe
+            and indice_ocr_trabajo_archivo_existe
+            and tabla_ocr_modelos_existe
+            and indice_ocr_modelos_existe
         ):
             self._seed_categorias_documentales()
             self.conn.commit()
             return
 
+        if not tabla_ocr_trabajos_existe:
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ocr_trabajos (
+                  id TEXT PRIMARY KEY,empresa_id TEXT NOT NULL,ejercicio INTEGER NOT NULL,
+                  ruta_origen TEXT NOT NULL,tipo_documento TEXT NOT NULL DEFAULT 'factura_recibida',
+                  documento_archivo_id TEXT,documento_ocr_id TEXT,usuario TEXT,
+                  estado TEXT NOT NULL DEFAULT 'pendiente',intentos INTEGER NOT NULL DEFAULT 0,
+                  max_intentos INTEGER NOT NULL DEFAULT 3,creado_at TEXT NOT NULL,
+                  iniciado_at TEXT,actualizado_at TEXT NOT NULL,siguiente_intento TEXT,
+                  finalizado_at TEXT,error TEXT,resultado_json TEXT
+                )
+                """
+            )
+        if not indice_ocr_trabajo_archivo_existe:
+            self.conn.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS idx_ocr_trabajo_archivo_activo
+                   ON ocr_trabajos(documento_archivo_id)
+                   WHERE documento_archivo_id IS NOT NULL
+                     AND estado IN ('pendiente','procesando')"""
+            )
+        if not indice_ocr_trabajos_existe:
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ocr_trabajos_estado "
+                "ON ocr_trabajos(estado,siguiente_intento,creado_at)"
+            )
+        if not tabla_ocr_modelos_existe:
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ocr_modelos_locales (
+                  id TEXT PRIMARY KEY,empresa_id TEXT NOT NULL,tipo_documento TEXT NOT NULL,
+                  tercero_nif TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1,
+                  ejemplos INTEGER NOT NULL DEFAULT 0,campos_json TEXT NOT NULL DEFAULT '{}',
+                  metricas_json TEXT NOT NULL DEFAULT '{}',estado TEXT NOT NULL DEFAULT 'activo',
+                  entrenado_at TEXT NOT NULL,UNIQUE(empresa_id,tipo_documento,tercero_nif)
+                )
+                """
+            )
+        if not indice_ocr_modelos_existe:
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ocr_modelos_empresa "
+                "ON ocr_modelos_locales(empresa_id,tipo_documento,estado)"
+            )
         if not tabla_firma_solicitudes_existe:
             self.conn.execute(
                 """

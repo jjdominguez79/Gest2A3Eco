@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from services.gestion_documental_service import GestionDocumentalService
 from services.import_a3_empresa import leer_numero_asiento_desde_a3
+from services.ocr.background_service import OcrBackgroundService
 
 
 @dataclass
@@ -58,7 +58,7 @@ class FacturasRecibidasPendientesService:
         self, documento_ids: list[str], *, usuario: str = "",
     ) -> ResultadoLoteFacturas:
         resultado = ResultadoLoteFacturas()
-        documental = GestionDocumentalService(self._gestor)
+        cola = OcrBackgroundService(self._gestor)
         for documento_id in dict.fromkeys(documento_ids or []):
             documento = self._factura(documento_id)
             if not documento:
@@ -69,8 +69,17 @@ class FacturasRecibidasPendientesService:
                 resultado.omitidos.append(nombre)
                 continue
             try:
-                documental.enviar_a_ocr(str(documento_id), usuario)
-                resultado.completados.append(nombre)
+                _trabajo_id, creado = cola.encolar(
+                    empresa_id=str(documento["codigo_empresa"]),
+                    ejercicio=int(documento["ejercicio"]),
+                    ruta_origen=str(documento["ruta"]),
+                    documento_archivo_id=str(documento_id),
+                    usuario=usuario,
+                )
+                if creado:
+                    resultado.completados.append(nombre)
+                else:
+                    resultado.omitidos.append(f"{nombre}: ya estaba en cola")
             except Exception as exc:
                 resultado.errores.append(f"{nombre}: {exc}")
         return resultado
