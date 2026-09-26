@@ -55,8 +55,34 @@ class UIBandejaGlobal(ttk.Frame):
         self._selected_id: str | None = None
         self._cache: list[dict] = []
         self._importando_central = False
+        self._destruida = False
         self._build()
         self.refresh()
+
+    def destroy(self) -> None:
+        """Impide que trabajos en segundo plano actualicen widgets ya cerrados."""
+        self._destruida = True
+        super().destroy()
+
+    def _vista_activa(self) -> bool:
+        if getattr(self, "_destruida", False):
+            return False
+        try:
+            return bool(self.winfo_exists())
+        except (tk.TclError, RuntimeError):
+            return False
+
+    def _programar_en_ui(self, callback) -> None:
+        """Programa un callback solo mientras esta instancia siga montada."""
+        try:
+            self.after(0, self._ejecutar_si_activa, callback)
+        except (tk.TclError, RuntimeError):
+            # La navegacion puede destruir la pestana mientras termina el hilo.
+            pass
+
+    def _ejecutar_si_activa(self, callback) -> None:
+        if self._vista_activa():
+            callback()
 
     # ------------------------------------------------------------------ build
 
@@ -472,7 +498,9 @@ class UIBandejaGlobal(ttk.Frame):
                 resultado = ComunicadorNotificacionesCliente(self._gestor).comunicar(items)
             except Exception as exc:
                 resultado = ResultadoComunicacion(total=len(items), errores=[str(exc)])
-            self.after(0, lambda: self._publicacion_cliente_fin(resultado))
+            self._programar_en_ui(
+                lambda: self._publicacion_cliente_fin(resultado),
+            )
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -598,15 +626,13 @@ class UIBandejaGlobal(ttk.Frame):
                     )
                 else:
                     result = importar_bandeja_central(self._gestor)
-                self.after(
-                    0,
+                self._programar_en_ui(
                     lambda: self._importacion_fin(
                         result, None, mostrar_resultado=mostrar_resultado,
                     ),
                 )
             except Exception as exc:
-                self.after(
-                    0,
+                self._programar_en_ui(
                     lambda error=exc: self._importacion_fin(
                         None, error, mostrar_resultado=mostrar_resultado,
                     ),
@@ -615,6 +641,8 @@ class UIBandejaGlobal(ttk.Frame):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _importacion_fin(self, result, error=None, *, mostrar_resultado: bool = True) -> None:
+        if not self._vista_activa():
+            return
         self._importando_central = False
         self._btn_importar.configure(state="normal", text="Actualizar desde DEHu")
         if error is not None:

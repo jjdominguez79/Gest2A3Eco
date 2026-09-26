@@ -67,7 +67,7 @@ class UIGestionDocumental(ttk.Frame):
         for key, title, width in (
             ("fecha", "Fecha", 165), ("categoria", "Categoria", 175),
             ("nombre", "Documento", 360), ("origen", "Origen", 100),
-            ("remitente", "Remitente", 220), ("estado", "Estado", 120),
+            ("remitente", "Remitente", 220), ("estado", "Estado", 230),
         ):
             self._tree.heading(key, text=title)
             self._tree.column(key, width=width, anchor="w")
@@ -105,11 +105,31 @@ class UIGestionDocumental(ttk.Frame):
             self._tree.insert("", "end", iid=row["id"], values=(
                 row.get("created_at") or "", row.get("categoria_nombre") or "",
                 row.get("nombre_original") or "", row.get("origen") or "",
-                row.get("correo_remitente") or "", row.get("estado") or "",
+                row.get("correo_remitente") or "",
+                self._estado_documental_label(row),
             ))
         self._summary.configure(text=f"Documentos: {len(self._rows)}")
         pending = self._pending_messaging_rows()
         self._messaging_button.configure(text=f"Adjuntos de mensajeria ({len(pending)})")
+
+    @staticmethod
+    def _estado_documental_label(row: dict) -> str:
+        """Describe el circuito contable sin mostrar codigos internos."""
+        estado_contable = str(row.get("estado_contable") or "").strip().lower()
+        metodo = str(row.get("metodo_contabilizacion") or "").strip().lower()
+        estado_ocr = str(row.get("estado_documento_ocr") or "").strip().lower()
+        estado_contable_ocr = str(row.get("estado_contable_ocr") or "").strip().lower()
+        if estado_contable == "contabilizada_manual" or metodo == "manual_a3_papel":
+            return "Manual en A3 (papel)"
+        if estado_contable == "contabilizada":
+            if metodo == "ocr_suenlace" or row.get("ocr_documento_id"):
+                return "OCR/SUENLACE · contabilizada en A3"
+            return "Contabilizada en A3"
+        if estado_ocr == "contabilizada" or estado_contable_ocr == "contabilizada":
+            return "OCR/SUENLACE · pendiente de asiento A3"
+        if row.get("ocr_documento_id"):
+            return "En OCR"
+        return str(row.get("estado") or "Archivado").replace("_", " ").capitalize()
 
     def _pending_messaging_rows(self):
         return [

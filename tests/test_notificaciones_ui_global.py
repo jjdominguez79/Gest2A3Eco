@@ -49,6 +49,20 @@ def test_bandeja_seleccion_multiple_y_acciones_individuales(root, tmp_path):
     assert vista._es_publicable(items[0]) is False
 
 
+def test_importacion_dehu_ignora_callback_si_la_vista_ya_fue_destruida():
+    vista = object.__new__(UIBandejaGlobal)
+    vista._destruida = True
+    vista._importando_central = True
+    vista._btn_importar = Mock()
+    vista.refresh = Mock()
+
+    vista._importacion_fin(SimpleNamespace(total=0, nuevas=0, actualizadas=0, omitidas=0))
+
+    vista._btn_importar.configure.assert_not_called()
+    vista.refresh.assert_not_called()
+    assert vista._importando_central is True
+
+
 def test_configuracion_global_edita_plantilla_independiente(root):
     gestor = SimpleNamespace(get_notif_config_global=Mock(return_value={
         "periodicidad_sync": "SEMANAL", "avisar_cliente_email": True,

@@ -77,6 +77,50 @@ class SecuredGestor:
         self.security.ensure_company_read(codigo_empresa)
         return self._base.listar_documentos_archivo(codigo_empresa, ejercicio, categoria_id)
 
+    def listar_facturas_recibidas_pendientes_global(self):
+        rows = self._base.listar_facturas_recibidas_pendientes_global()
+        if self.security.session.is_admin():
+            return rows
+        return [
+            row for row in rows
+            if self.security.can_read_company(str(row.get("codigo_empresa") or ""))
+        ]
+
+    def get_factura_recibida_archivo_para_captura(self, documento_id: str):
+        row = self._base.get_factura_recibida_archivo_para_captura(documento_id)
+        if row:
+            self.security.ensure_company_read(str(row.get("codigo_empresa") or ""))
+        return row
+
+    def cambiar_estado_contable_documentos(self, documento_ids, estado, **kwargs):
+        for documento_id in documento_ids or []:
+            row = self._base.get_documento_archivo(str(documento_id))
+            if not row:
+                raise ValueError("Documento no encontrado.")
+            self.security.ensure_company_write(str(row.get("codigo_empresa") or ""))
+        return self._base.cambiar_estado_contable_documentos(
+            documento_ids, estado, **kwargs,
+        )
+
+    def registrar_impresion_documentos(self, documento_ids, usuario: str = ""):
+        for documento_id in documento_ids or []:
+            row = self._base.get_documento_archivo(str(documento_id))
+            if not row:
+                raise ValueError("Documento no encontrado.")
+            self.security.ensure_company_read(str(row.get("codigo_empresa") or ""))
+        return self._base.registrar_impresion_documentos(documento_ids, usuario)
+
+    def actualizar_asiento_documento_archivo(
+        self, documento_id: str, numero_asiento: str,
+    ):
+        row = self._base.get_documento_archivo(str(documento_id))
+        if not row:
+            raise ValueError("Documento no encontrado.")
+        self.security.ensure_company_write(str(row.get("codigo_empresa") or ""))
+        return self._base.actualizar_asiento_documento_archivo(
+            documento_id, numero_asiento,
+        )
+
     def reconciliar_documentos_archivo_ocr(self, codigo_empresa: str):
         self.security.ensure_company_write(codigo_empresa)
         return self._base.reconciliar_documentos_archivo_ocr(codigo_empresa)

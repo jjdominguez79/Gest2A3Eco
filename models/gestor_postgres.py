@@ -453,6 +453,22 @@ class GestorPostgres(GestorBase):
             ("comunicaciones", "etiqueta", "TEXT"),
             ("comunicaciones_mensajes", "tiene_adjuntos", "INTEGER NOT NULL DEFAULT 0"),
             ("comunicaciones_sin_asignar", "etiqueta", "TEXT"),
+            (
+                "documentos_archivo", "estado_contable",
+                "TEXT NOT NULL DEFAULT 'pendiente'",
+            ),
+            ("documentos_archivo", "metodo_contabilizacion", "TEXT"),
+            ("documentos_archivo", "contabilizada_manualmente_at", "TEXT"),
+            ("documentos_archivo", "contabilizada_manualmente_por", "TEXT"),
+            ("documentos_archivo", "fecha_contable", "TEXT"),
+            ("documentos_archivo", "numero_asiento", "TEXT"),
+            ("documentos_archivo", "observaciones_contables", "TEXT"),
+            ("documentos_archivo", "ultima_impresion_at", "TEXT"),
+            ("documentos_archivo", "ultima_impresion_por", "TEXT"),
+            (
+                "documentos_archivo", "veces_impresa",
+                "INTEGER NOT NULL DEFAULT 0",
+            ),
             ("facturas_recibidas_ocr", "tipo_operacion_iva", "TEXT"),
             ("facturas_recibidas_ocr", "fecha_contable", "TEXT"),
             ("facturas_recibidas_ocr", "pagada", "INTEGER NOT NULL DEFAULT 0"),
@@ -528,7 +544,8 @@ class GestorPostgres(GestorBase):
                 WHERE table_schema=current_schema()
                   AND table_name IN (
                     'empresas', 'usuarios', 'comunicaciones', 'comunicaciones_mensajes',
-                    'comunicaciones_sin_asignar', 'facturas_recibidas_ocr',
+                    'comunicaciones_sin_asignar', 'documentos_archivo',
+                    'facturas_recibidas_ocr',
                     'facturas_recibidas_docs'
                     , 'ocr_aprendizaje_ejemplos', 'facturas_emitidas_docs',
                     'albaranes_emitidas_docs',
@@ -889,6 +906,13 @@ class GestorPostgres(GestorBase):
                   comunicacion_id TEXT,mensaje_id TEXT,graph_message_id TEXT,
                   graph_attachment_id TEXT,correo_remitente TEXT,correo_asunto TEXT,
                   estado TEXT NOT NULL DEFAULT 'archivado',ocr_documento_id TEXT,
+                  estado_contable TEXT NOT NULL DEFAULT 'pendiente',
+                  metodo_contabilizacion TEXT,
+                  contabilizada_manualmente_at TEXT,
+                  contabilizada_manualmente_por TEXT,fecha_contable TEXT,
+                  numero_asiento TEXT,observaciones_contables TEXT,
+                  ultima_impresion_at TEXT,ultima_impresion_por TEXT,
+                  veces_impresa INTEGER NOT NULL DEFAULT 0,
                   creado_por TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
                   UNIQUE(codigo_empresa,hash_archivo)
                 )
@@ -909,6 +933,17 @@ class GestorPostgres(GestorBase):
                 )
                 """
             )
+        self.conn.execute(
+            "UPDATE documentos_archivo SET metodo_contabilizacion="
+            "CASE "
+            "WHEN estado_contable='contabilizada_manual' THEN 'manual_a3_papel' "
+            "WHEN estado_contable='contabilizada' "
+            " AND ocr_documento_id IS NOT NULL "
+            " AND TRIM(ocr_documento_id)<>'' THEN 'ocr_suenlace' "
+            "ELSE metodo_contabilizacion END "
+            "WHERE metodo_contabilizacion IS NULL "
+            "OR TRIM(metodo_contabilizacion)=''"
+        )
         self._seed_categorias_documentales()
         self.conn.commit()
 
