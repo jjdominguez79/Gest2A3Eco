@@ -30,6 +30,33 @@ def _clave_responsable(value: str) -> str:
     return "".join(ch for ch in _normalizar_texto(value) if ch.isalnum())
 
 
+def _etiqueta_buzon(item: dict) -> str:
+    """Muestra el canal funcional sin perder el buzon Graph real."""
+    payload = {}
+    try:
+        payload = json.loads(item.get("payload_json") or "{}")
+    except (TypeError, ValueError):
+        pass
+    label = str(payload.get("mailbox_label") or "").strip()
+    if label:
+        return label
+    recipients = payload.get("destinatarios") or []
+    if not recipients:
+        try:
+            recipients = json.loads(item.get("destinatarios_json") or "[]")
+        except (TypeError, ValueError):
+            recipients = []
+    if any(
+        str(value or "").strip().lower() == "documentacion@gestinem.es"
+        for value in recipients
+    ):
+        return "Documentacion"
+    mailbox = str(item.get("mailbox") or "").strip()
+    if mailbox.lower() == "oficina@gestinem.es":
+        return "Oficina"
+    return mailbox
+
+
 def _buscar_usuario_responsable(company: dict, users: dict) -> dict | None:
     """Devuelve el usuario que coincide con empresas.responsable, si existe."""
     responsable = _normalizar_texto(company.get("responsable"))
@@ -457,6 +484,21 @@ class UIComunicacionesGlobal(ttk.Frame):
             discarded_tab = ttk.Frame(tabs, padding=8)
             tabs.add(discarded_tab, text="Descartados")
 
+        pending_filters = ttk.Frame(pending_tab)
+        pending_filters.pack(fill="x", pady=(0, 8))
+        ttk.Label(pending_filters, text="Canal").pack(side="left")
+        self._pending_mailbox_filter = tk.StringVar(value="Todos")
+        pending_mailbox_combo = ttk.Combobox(
+            pending_filters,
+            textvariable=self._pending_mailbox_filter,
+            state="readonly",
+            width=20,
+            values=("Todos", "Oficina", "Documentacion"),
+        )
+        pending_mailbox_combo.pack(side="left", padx=(5, 0))
+        pending_mailbox_combo.bind(
+            "<<ComboboxSelected>>", lambda _event: self._filter_pending(),
+        )
         self._pending_tree = self._tree(
             pending_tab,
             (("fecha", "Fecha", 170), ("buzon", "Buzon", 180),
@@ -702,22 +744,11 @@ class UIComunicacionesGlobal(ttk.Frame):
         self._users = {f"{item.get('nombre')} [{item.get('username')}]": item for item in users}
         self._user_combo["values"] = sorted(self._users)
 
-        self._pending_tree.delete(*self._pending_tree.get_children())
         self._pending = {}
         for item in data["pending"]:
             graph_id = item["graph_message_id"]
-            try:
-                payload = json.loads(item.get("payload_json") or "{}")
-            except (TypeError, ValueError):
-                payload = {}
             self._pending[graph_id] = item
-            self._pending_tree.insert("", "end", iid=graph_id, values=(
-                item.get("fecha") or "", item.get("mailbox") or "",
-                item.get("remitente") or "", item.get("asunto") or "",
-                "Si" if payload.get("tiene_adjuntos") else "",
-                item.get("etiqueta") or "",
-                item.get("sugerencia_nombre") or "",
-            ))
+        self._filter_pending()
 
         self._mine_tree.delete(*self._mine_tree.get_children())
         self._mine = {}
@@ -760,6 +791,28 @@ class UIComunicacionesGlobal(ttk.Frame):
                 self._discarded_tree, selections["discarded"],
             )
 
+    def _filter_pending(self):
+        selected_filter = (
+            self._pending_mailbox_filter.get()
+            if hasattr(self, "_pending_mailbox_filter") else "Todos"
+        )
+        self._pending_tree.delete(*self._pending_tree.get_children())
+        for graph_id, item in self._pending.items():
+            mailbox_label = _etiqueta_buzon(item)
+            if selected_filter != "Todos" and mailbox_label != selected_filter:
+                continue
+            try:
+                payload = json.loads(item.get("payload_json") or "{}")
+            except (TypeError, ValueError):
+                payload = {}
+            self._pending_tree.insert("", "end", iid=graph_id, values=(
+                item.get("fecha") or "", mailbox_label,
+                item.get("remitente") or "", item.get("asunto") or "",
+                "Si" if payload.get("tiene_adjuntos") else "",
+                item.get("etiqueta") or "",
+                item.get("sugerencia_nombre") or "",
+            ))
+
     @staticmethod
     def _restore_selection(tree, selected):
         existing = [iid for iid in selected if tree.exists(iid)]
@@ -782,7 +835,7 @@ class UIComunicacionesGlobal(ttk.Frame):
             iid = f"queue::{graph_id}"
             self._discarded[iid] = item
             self._discarded_tree.insert("", "end", iid=iid, values=(
-                item.get("fecha") or "", item.get("mailbox") or "",
+                item.get("fecha") or "", _etiqueta_buzon(item),
                 item.get("remitente") or "", item.get("asunto") or "",
                 item.get("descartado_por") or "", item.get("motivo_descarte") or "",
             ))
@@ -790,7 +843,7 @@ class UIComunicacionesGlobal(ttk.Frame):
             iid = f"comm::{item['id']}"
             self._discarded[iid] = item
             self._discarded_tree.insert("", "end", iid=iid, values=(
-                item.get("fecha") or "", item.get("mailbox") or "",
+                item.get("fecha") or "", _etiqueta_buzon(item),
                 item.get("remitente") or "", item.get("asunto") or "",
                 item.get("descartado_por") or "", item.get("motivo_descarte") or "",
             ))
@@ -813,7 +866,10 @@ class UIComunicacionesGlobal(ttk.Frame):
         statuses = sorted({str(item.get("estado") or "pendiente") for item in self._supervision.values()})
         users = sorted({str(item.get("responsable_nombre") or "") for item in self._supervision.values() if item.get("responsable_nombre")})
         companies = sorted({str(item.get("cliente_nombre") or item.get("codigo_empresa") or "") for item in self._supervision.values()})
-        mailboxes = sorted({str(item.get("mailbox") or "") for item in self._supervision.values() if item.get("mailbox")})
+        mailboxes = sorted({
+            _etiqueta_buzon(item) for item in self._supervision.values()
+            if item.get("mailbox")
+        })
         self._sup_status_combo["values"] = ["Todos", *statuses]
         self._sup_user_combo["values"] = ["Todos", *users]
         self._sup_company_combo["values"] = ["Todos", *companies]
@@ -829,7 +885,7 @@ class UIComunicacionesGlobal(ttk.Frame):
             status = str(item.get("estado") or "pendiente")
             user = str(item.get("responsable_nombre") or "")
             company = str(item.get("cliente_nombre") or item.get("codigo_empresa") or "")
-            mailbox = str(item.get("mailbox") or "")
+            mailbox = _etiqueta_buzon(item)
             if self._sup_status.get() != "Todos" and status != self._sup_status.get():
                 continue
             if self._sup_user.get() != "Todos" and user != self._sup_user.get():

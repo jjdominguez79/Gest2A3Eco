@@ -12,6 +12,8 @@ services:
       GRAPH_TENANT_ID: "99d74b8f-e9cc-4cae-903f-d123bc7abc8a"
       GRAPH_CLIENT_ID: "cfa49b8f-5009-4618-a4a5-1c5e03cef13a"
       GRAPH_MAILBOX: "oficina@gestinem.es"
+      GRAPH_MAIL_SOURCES: >-
+        [{"mailbox":"oficina@gestinem.es","label":"Oficina"},{"mailbox":"jjdominguez@gestinem.es","recipient_filter":"documentacion@gestinem.es","label":"Documentacion"}]
       GRAPH_CERTIFICATE_FILE: "/run/secrets/graph_certificate"
       GRAPH_CERTIFICATE_PASSWORD_FILE: "/run/secrets/graph_certificate_password"
       POSTGRES_HOST: "192.168.0.18"

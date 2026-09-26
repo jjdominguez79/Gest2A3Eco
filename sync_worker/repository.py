@@ -12,7 +12,10 @@ class ComunicacionesRepository:
     def __init__(self, dsn: str):
         self._dsn = dsn
 
-    def sync_messages(self, mailbox: str, messages: list[dict], delta_link: str) -> tuple[int, int]:
+    def sync_messages(
+        self, mailbox: str, messages: list[dict], delta_link: str,
+        *, label: str = "",
+    ) -> tuple[int, int]:
         inserted = duplicates = 0
         with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
             with conn.transaction():
@@ -20,7 +23,7 @@ class ComunicacionesRepository:
                 # evita que dos instancias escriban simultaneamente el mismo buzon.
                 conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"mail-sync:{mailbox}",))
                 for raw in messages:
-                    data = self._normalize(raw, mailbox)
+                    data = self._normalize(raw, mailbox, label=label)
                     suggestion = self._find_company(conn, data["remitente"])
                     cursor = conn.execute(
                         """
@@ -122,7 +125,7 @@ class ComunicacionesRepository:
         return next(iter(matches.values())) if len(matches) == 1 else None
 
     @staticmethod
-    def _normalize(raw: dict, mailbox: str) -> dict:
+    def _normalize(raw: dict, mailbox: str, *, label: str = "") -> dict:
         def address(value: dict | None) -> str:
             return str(((value or {}).get("emailAddress") or {}).get("address") or "").strip()
 
@@ -131,6 +134,7 @@ class ComunicacionesRepository:
             "graph_conversation_id": str(raw.get("conversationId") or ""),
             "internet_message_id": str(raw.get("internetMessageId") or ""),
             "mailbox": mailbox,
+            "mailbox_label": str(label or "").strip(),
             "remitente": address(raw.get("from")),
             "destinatarios": [address(item) for item in raw.get("toRecipients") or [] if address(item)],
             "cc": [address(item) for item in raw.get("ccRecipients") or [] if address(item)],

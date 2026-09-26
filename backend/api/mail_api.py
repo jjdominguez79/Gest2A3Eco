@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import re
 from urllib.parse import quote
 
 import requests
@@ -110,10 +112,21 @@ def _graph_request_error(response, operation: str) -> HTTPException:
     )
 
 
-def _validate_mailbox(mailbox: str) -> str:
+def _validate_mailbox(mailbox: str, *, include_read_only: bool = False) -> str:
     configured_mailbox = default_sender()
     mailbox = str(mailbox or "").strip()
-    if not configured_mailbox or mailbox.lower() != configured_mailbox.lower():
+    allowed = set()
+    if include_read_only:
+        allowed = {
+            value.strip().lower()
+            for value in re.split(
+                r"[,;]", os.getenv("MESSAGING_GRAPH_READ_MAILBOXES", ""),
+            )
+            if value.strip()
+        }
+    if configured_mailbox:
+        allowed.add(configured_mailbox.strip().lower())
+    if not mailbox or mailbox.lower() not in allowed:
         raise HTTPException(status_code=403, detail="Buzon de Microsoft 365 no autorizado")
     return mailbox
 
@@ -174,7 +187,7 @@ def _add_reply_attachment(
 def list_backend_attachments(
     mailbox: str = Query(min_length=3), message_id: str = Query(min_length=1),
 ):
-    mailbox = _validate_mailbox(mailbox)
+    mailbox = _validate_mailbox(mailbox, include_read_only=True)
     try:
         response = requests.get(
             _graph_url(
@@ -202,7 +215,7 @@ def download_backend_attachment(
     mailbox: str = Query(min_length=3), message_id: str = Query(min_length=1),
     attachment_id: str = Query(min_length=1),
 ):
-    mailbox = _validate_mailbox(mailbox)
+    mailbox = _validate_mailbox(mailbox, include_read_only=True)
     try:
         response = requests.get(
             _graph_url(

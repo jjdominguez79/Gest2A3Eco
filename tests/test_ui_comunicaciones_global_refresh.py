@@ -6,6 +6,7 @@ from controllers.app_controller import AppController
 from views.ui_comunicaciones_global import (
     UIComunicacionesGlobal,
     _buscar_usuario_responsable,
+    _etiqueta_buzon,
 )
 
 
@@ -110,6 +111,20 @@ def test_responsable_a3_no_se_asigna_si_el_alias_es_ambiguo():
     )
 
     assert result is None
+
+
+def test_etiqueta_buzon_usa_canal_documentacion_del_worker():
+    assert _etiqueta_buzon({
+        "mailbox": "jjdominguez@gestinem.es",
+        "payload_json": '{"mailbox_label":"Documentacion"}',
+    }) == "Documentacion"
+
+
+def test_etiqueta_buzon_reconoce_alias_en_mensaje_asignado():
+    assert _etiqueta_buzon({
+        "mailbox": "jjdominguez@gestinem.es",
+        "destinatarios_json": '["documentacion@gestinem.es"]',
+    }) == "Documentacion"
 
 
 class VariableStub:
@@ -217,6 +232,45 @@ def test_apply_refresh_no_oculta_correos_por_configuracion_local():
 
     assert set(view._pending_tree.rows) == {"entrada"}
     assert set(view._mine_tree.rows) == {"asignado", "pending::sin-cliente"}
+
+
+def test_filtro_entrada_muestra_solo_el_canal_documentacion():
+    view = object.__new__(UIComunicacionesGlobal)
+    view._pending_tree = TreeStub()
+    view._pending_mailbox_filter = VariableStub("Documentacion")
+    view._pending = {
+        "office": {
+            "graph_message_id": "office",
+            "mailbox": "oficina@gestinem.es",
+            "payload_json": '{"mailbox_label":"Oficina"}',
+        },
+        "docs": {
+            "graph_message_id": "docs",
+            "mailbox": "jjdominguez@gestinem.es",
+            "payload_json": '{"mailbox_label":"Documentacion"}',
+        },
+    }
+
+    UIComunicacionesGlobal._filter_pending(view)
+
+    assert set(view._pending_tree.rows) == {"docs"}
+
+
+def test_filtro_entrada_todos_muestra_ambos_canales():
+    view = object.__new__(UIComunicacionesGlobal)
+    view._pending_tree = TreeStub()
+    view._pending_mailbox_filter = VariableStub("Todos")
+    view._pending = {
+        "office": {"mailbox": "oficina@gestinem.es", "payload_json": "{}"},
+        "docs": {
+            "mailbox": "jjdominguez@gestinem.es",
+            "payload_json": '{"mailbox_label":"Documentacion"}',
+        },
+    }
+
+    UIComunicacionesGlobal._filter_pending(view)
+
+    assert set(view._pending_tree.rows) == {"office", "docs"}
 
 
 def test_contadores_no_se_filtran_con_buzon_local(monkeypatch):

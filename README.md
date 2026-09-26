@@ -122,10 +122,13 @@ La distribucion es:
   cliente Flutter hasta que el worker los verifica y copia al repositorio
   compartido.
 
-Los correos de `oficina@gestinem.es` llegan mediante Microsoft Graph y el
-contenedor `mail-sync`. Se guardan en PostgreSQL sin descargar masivamente sus
-adjuntos; el usuario decide cuales incorpora al repositorio documental. El
-worker `messaging-sync` atiende por separado los adjuntos enviados desde Flutter.
+Los correos de `oficina@gestinem.es` y los dirigidos al alias
+`documentacion@gestinem.es` de `jjdominguez@gestinem.es` llegan mediante
+Microsoft Graph y el contenedor `mail-sync`. La cuenta personal se filtra por
+destinatario: no se importa el resto de su correo. Los mensajes se guardan en
+PostgreSQL sin descargar masivamente sus adjuntos; el usuario decide cuales
+incorpora al repositorio documental. El worker `messaging-sync` atiende por
+separado los adjuntos enviados desde Flutter.
 
 ## Compilacion y publicacion
 

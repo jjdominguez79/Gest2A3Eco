@@ -50,6 +50,7 @@ def test_endpoint_adjuntos_usa_graph_del_backend(monkeypatch):
 
 def test_endpoint_adjuntos_rechaza_otro_buzon(monkeypatch):
     monkeypatch.setattr(mail_api, "default_sender", lambda: "oficina@gestinem.es")
+    monkeypatch.delenv("MESSAGING_GRAPH_READ_MAILBOXES", raising=False)
 
     with pytest.raises(HTTPException) as exc:
         mail_api.list_backend_attachments(
@@ -58,3 +59,32 @@ def test_endpoint_adjuntos_rechaza_otro_buzon(monkeypatch):
 
     assert exc.value.status_code == 403
 
+
+def test_endpoint_adjuntos_admite_buzon_de_lectura_configurado(monkeypatch):
+    monkeypatch.setattr(mail_api, "default_sender", lambda: "oficina@gestinem.es")
+    monkeypatch.setenv(
+        "MESSAGING_GRAPH_READ_MAILBOXES", "jjdominguez@gestinem.es",
+    )
+    monkeypatch.setattr(mail_api, "get_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        mail_api, "graph_headers", lambda _cfg: {"Authorization": "Bearer backend"},
+    )
+    monkeypatch.setattr(mail_api.requests, "get", lambda *_args, **_kwargs: Response())
+
+    result = mail_api.list_backend_attachments(
+        mailbox="jjdominguez@gestinem.es", message_id="message-1",
+    )
+
+    assert [item["id"] for item in result] == ["att-1"]
+
+
+def test_buzon_adicional_no_se_autoriza_como_remitente(monkeypatch):
+    monkeypatch.setattr(mail_api, "default_sender", lambda: "oficina@gestinem.es")
+    monkeypatch.setenv(
+        "MESSAGING_GRAPH_READ_MAILBOXES", "jjdominguez@gestinem.es",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        mail_api._validate_mailbox("jjdominguez@gestinem.es")
+
+    assert exc.value.status_code == 403
