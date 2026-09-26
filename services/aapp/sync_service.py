@@ -14,13 +14,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import traceback
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 
 from .base import OpcionesSync, obtener_conector
 from .cert_store import CertStore, CertError
-from utils.estados_dehu import es_pendiente_dehu
+from utils.estados_dehu import es_pendiente_dehu, normalizar_estado_dehu
 
 # Importar conectores para que se registren (efecto de import).
 from . import dehu_playwright  # noqa: F401  (registra ConectorDEHU)
@@ -59,7 +61,17 @@ class ResultadoGlobal:
 class ResultadoImportacionCentral:
     total: int = 0
     nuevas: int = 0
+    actualizadas: int = 0
     omitidas: int = 0
+
+
+@dataclass
+class ResultadoActualizacionDehu(ResultadoImportacionCentral):
+    encoladas: int = 0
+    completadas: int = 0
+    fallidas: int = 0
+    pendientes: int = 0
+    errores: list[str] = field(default_factory=list)
 
 
 def _bandeja_id(codigo_empresa: str, organismo_codigo: str, referencia: str) -> str:
@@ -270,7 +282,156 @@ def importar_bandeja_central(
         })
         if existing is None:
             result.nuevas += 1
+        elif normalizar_estado_dehu(existing.get("estado")) != normalizar_estado_dehu(
+            remote.get("status")
+        ):
+            result.actualizadas += 1
     return result
+
+
+def actualizar_bandeja_desde_dehu(
+    gestor, *, company_code: str = "", backend=None,
+    timeout_seconds: float = 240, poll_interval: float = 2,
+) -> ResultadoActualizacionDehu:
+    """Solicita una lectura real de DEHu y despues importa su resultado.
+
+    Al abrir la pantalla se sigue usando :func:`importar_bandeja_central`, que
+    es una recarga barata. Esta funcion queda reservada para la pulsacion
+    manual: encola el worker, espera sus solicitudes y solo entonces refresca
+    la replica local. Nunca acepta avisos ni solicita documentos.
+    """
+    if backend is None:
+        from services.backend_client_service import BackendClientService
+        backend = BackendClientService()
+
+    company_code = str(company_code or "").strip()
+    buzones = [
+        row for row in gestor.listar_notif_buzones_global()
+        if str(row.get("organismo_codigo") or "").upper() == "DEHU"
+        and int(row.get("activo", 1) or 0)
+        and (not company_code or str(row.get("codigo_empresa") or "") == company_code)
+    ]
+    por_empresa = {}
+    for buzon in buzones:
+        codigo = str(buzon.get("codigo_empresa") or "").strip()
+        if codigo:
+            por_empresa.setdefault(codigo, buzon)
+
+    solicitudes: dict[str, str] = {}
+    errores: list[str] = []
+    for codigo, buzon in por_empresa.items():
+        try:
+            empresa = gestor.get_empresa(codigo) or {}
+            solicitud = backend.create_certificate_request(
+                company_code=codigo,
+                certificate_type="DEHU_SYNC",
+                parameters={
+                    "company_code": codigo,
+                    "tax_id": empresa.get("cif") or "",
+                    "mailbox_id": buzon.get("id") or "",
+                    "mailbox_name": buzon.get("nombre") or "DEHu",
+                    "download_mode": "SOLO_DETECTAR",
+                },
+                idempotency_key=f"desktop-dehu-{uuid.uuid4().hex}",
+            )
+            request_id = str(solicitud.get("id") or "")
+            if request_id:
+                solicitudes[request_id] = codigo
+            else:
+                errores.append(f"{codigo}: el backend no devolvio el identificador")
+        except Exception as exc:
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            activa = None
+            if status_code == 409:
+                try:
+                    activa = next((
+                        row for row in backend.list_certificate_requests(
+                            company_code=codigo, limit=50,
+                        )
+                        if row.get("certificate_type") == "DEHU_SYNC"
+                        and str(row.get("status") or "").lower() in {
+                            "queued", "processing", "needs_action", "awaiting_issuance",
+                        }
+                    ), None)
+                except Exception:
+                    activa = None
+            if activa and activa.get("id"):
+                estado_activo = str(activa.get("status") or "").lower()
+                if (
+                    estado_activo == "needs_action"
+                    or (
+                        estado_activo in {"queued", "awaiting_issuance"}
+                        and activa.get("next_attempt_at")
+                    )
+                ):
+                    # Una pulsacion manual significa "consultar ahora". Si el
+                    # worker habia aplazado un fallo transitorio, adelantar el
+                    # mismo registro en vez de crear otro o esperar el backoff.
+                    activa = backend.retry_certificate_request(str(activa["id"]))
+                solicitudes[str(activa["id"])] = codigo
+            else:
+                errores.append(f"{codigo}: {exc}")
+
+    estados: dict[str, str] = {}
+    detalles: dict[str, dict] = {}
+    limite = time.monotonic() + max(0.0, float(timeout_seconds))
+    while solicitudes:
+        try:
+            recientes = backend.list_certificate_requests(
+                company_code=company_code, limit=500,
+            )
+            estados = {
+                str(row.get("id") or ""): str(row.get("status") or "").lower()
+                for row in recientes
+                if str(row.get("id") or "") in solicitudes
+            }
+            detalles = {
+                str(row.get("id") or ""): row
+                for row in recientes
+                if str(row.get("id") or "") in solicitudes
+            }
+        except Exception as exc:
+            errores.append(f"No se pudo comprobar el resultado: {exc}")
+            break
+        ejecutandose = {
+            request_id for request_id in solicitudes
+            if estados.get(request_id, "queued") in {
+                "queued", "processing", "awaiting_issuance",
+            }
+        }
+        if not ejecutandose or time.monotonic() >= limite:
+            break
+        time.sleep(max(0.05, float(poll_interval)))
+
+    importacion = importar_bandeja_central(
+        gestor, company_code=company_code, backend=backend,
+    )
+    completadas = sum(
+        1 for request_id in solicitudes if estados.get(request_id) == "completed"
+    )
+    fallidas = sum(
+        1 for request_id in solicitudes
+        if estados.get(request_id) in {"failed", "needs_action", "cancelled"}
+    )
+    pendientes = len(solicitudes) - completadas - fallidas
+    for request_id, codigo in solicitudes.items():
+        detalle = detalles.get(request_id) or {}
+        if estados.get(request_id) in {"queued", "awaiting_issuance"} and detalle.get("error_message"):
+            mensaje_error = str(detalle["error_message"]).splitlines()[0][:500]
+            errores.append(
+                f"{codigo}: consulta pendiente de reintento: {mensaje_error}"
+            )
+    return ResultadoActualizacionDehu(
+        total=importacion.total,
+        nuevas=importacion.nuevas,
+        actualizadas=importacion.actualizadas,
+        omitidas=importacion.omitidas,
+        encoladas=len(solicitudes),
+        completadas=completadas,
+        fallidas=fallidas,
+        pendientes=pendientes,
+        errores=errores,
+    )
 
 
 def _notification_year(item: dict) -> int:

@@ -13,6 +13,7 @@ import uuid
 
 from services.backend_client_service import BackendClientService
 from views.notificaciones_theme import *  # noqa: F401,F403
+from views.treeview_sort import OrdenadorTreeview
 from views.ui_buzones import LABELS_MODO_DESCARGA
 
 
@@ -115,6 +116,9 @@ class UIBuzonesGlobal(ttk.Frame):
         for key, header, width, anchor in self._COLS:
             self._tv.heading(key, text=header)
             self._tv.column(key, width=width, anchor=anchor, stretch=(key == "nombre"))
+        self._ordenador = OrdenadorTreeview(
+            self._tv, ((key, header) for key, header, _width, _anchor in self._COLS),
+        )
         self._tv.tag_configure("activo",   foreground=_SUCCESS)
         self._tv.tag_configure("inactivo", foreground=_SUB)
         sb_v = ttk.Scrollbar(wrapper, orient="vertical",   command=self._tv.yview)
@@ -555,6 +559,7 @@ class UIBuzonesGlobal(ttk.Frame):
                 "Si" if b.get("activo") else "No", conexion,
             ), tags=(tag,))
             rows_mostradas += 1
+        self._ordenador.reaplicar()
 
         self._lbl_count.configure(text=f"{rows_mostradas} buzon{'es' if rows_mostradas != 1 else ''}")
         self._lbl_status.configure(

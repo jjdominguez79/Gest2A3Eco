@@ -12,6 +12,7 @@ from datetime import date, datetime
 from tkinter import messagebox, ttk
 
 from views.notificaciones_theme import *  # noqa: F401,F403
+from views.treeview_sort import OrdenadorTreeview
 
 ESTADOS = ["", "PENDIENTE", "ACEPTADA", "RECHAZADA", "LEIDA", "REALIZADA", "VENCIDA"]
 LABEL_ESTADO = {
@@ -166,6 +167,9 @@ class UIBandejaNotificaciones(ttk.Frame):
         for key, header, width, anchor in self._COLS:
             self._tv.heading(key, text=header)
             self._tv.column(key, width=width, anchor=anchor, stretch=(key == "asunto"))
+        self._ordenador = OrdenadorTreeview(
+            self._tv, ((key, header) for key, header, _width, _anchor in self._COLS),
+        )
         for estado in (value for value in ESTADOS if value):
             self._tv.tag_configure(estado, foreground=COLOR_ESTADO[estado])
         self._tv.tag_configure("URGENTE", foreground="#dc2626", font=("Segoe UI", 9, "bold"))
@@ -343,6 +347,7 @@ class UIBandejaNotificaciones(ttk.Frame):
                 f_disp, f_venc,
                 LABEL_ESTADO.get(estado, estado),
             ), tags=(tag,))
+        self._ordenador.reaplicar()
 
         # Estadisticas
         pendientes = sum(1 for r in rows if r.get("estado") == "PENDIENTE")

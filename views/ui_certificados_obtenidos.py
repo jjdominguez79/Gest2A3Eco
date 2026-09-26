@@ -22,6 +22,7 @@ from pathlib import Path
 from tkinter import messagebox, simpledialog, ttk
 
 from views.notificaciones_theme import *  # noqa: F401,F403
+from views.treeview_sort import OrdenadorTreeview
 from services.aapp.certificados import TIPOS
 from services.backend_client_service import BackendClientService
 from utils.validaciones import separar_emails
@@ -158,6 +159,9 @@ class UICertificadosObtenidos(ttk.Frame):
         for key, header, width, anchor in self._COLS:
             self._tv.heading(key, text=header)
             self._tv.column(key, width=width, anchor=anchor, stretch=(key == "tipo"))
+        self._ordenador = OrdenadorTreeview(
+            self._tv, ((key, header) for key, header, _width, _anchor in self._COLS),
+        )
         self._tv.tag_configure("OBTENIDO",  foreground=_SUCCESS)
         self._tv.tag_configure("PENDIENTE", foreground=_WARNING)
         self._tv.tag_configure("REQUIERE REVISION", foreground="#d97706")
@@ -820,6 +824,7 @@ class UICertificadosObtenidos(ttk.Frame):
                     else "-"
                 ),
             ), tags=(estado,))
+        self._ordenador.reaplicar()
         n = len(self._cache)
         obt = sum(1 for r in self._cache if r.get("status") == "completed")
         texto = f"{n} solicitud(es) centrales  |  Obtenidos: {obt}"

@@ -22,6 +22,7 @@ from tkinter import messagebox, ttk
 
 from services.backend_client_service import BackendClientService
 from views.notificaciones_theme import *  # noqa: F401,F403
+from views.treeview_sort import OrdenadorTreeview
 from views.ui_certificados import UICertificados
 from views.ui_buzones import PERIODICIDADES, LABELS_MODO_DESCARGA
 
@@ -113,14 +114,18 @@ class UINotificacionesCliente(ttk.Frame):
         self._tv = ttk.Treeview(cont, columns=cols, show="headings", selectmode="browse")
         self._tv.column("_id", width=0, stretch=False)
         self._tv.heading("_id", text="")
-        for key, txt, w, anc in (
+        columnas = (
             ("marca", "", 40, "center"),
             ("organismo", "Administracion / Organismo", 210, "w"),
             ("descripcion", "Descripcion", 230, "w"),
             ("pend", "Pend.", 55, "center"),
-        ):
+        )
+        for key, txt, w, anc in columnas:
             self._tv.heading(key, text=txt)
             self._tv.column(key, width=w, anchor=anc, stretch=(key == "descripcion"))
+        self._ordenador = OrdenadorTreeview(
+            self._tv, ((key, txt) for key, txt, _width, _anchor in columnas),
+        )
         self._tv.tag_configure("marcado", background="#eef6ff")
         sb = ttk.Scrollbar(cont, orient="vertical", command=self._tv.yview)
         self._tv.configure(yscrollcommand=sb.set)
@@ -174,6 +179,7 @@ class UINotificacionesCliente(ttk.Frame):
                 org.get("descripcion", "") or "",
                 counts.get(oid, 0) or "",
             ), tags=("marcado",) if marcado else ())
+        self._ordenador.reaplicar()
 
         config_global = self._gestor.get_notif_config_global()
         empresa = self._gestor.get_empresa(self._codigo) or {}
@@ -210,6 +216,7 @@ class UINotificacionesCliente(ttk.Frame):
         self._org_marca[oid] = nuevo
         self._tv.set(it, "marca", _MARCADO if nuevo else _SIN_MARCAR)
         self._tv.item(it, tags=("marcado",) if nuevo else ())
+        self._ordenador.reaplicar()
 
     # ------------------------------------------------------------------ helpers
     def _opciones(self):

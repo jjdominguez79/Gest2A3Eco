@@ -19,6 +19,7 @@ from datetime import date, datetime
 from tkinter import messagebox, simpledialog, ttk
 
 from views.notificaciones_theme import *  # noqa: F401,F403
+from views.treeview_sort import OrdenadorTreeview
 from views.ui_bandeja_notificaciones import (
     ESTADOS,
     LABEL_ESTADO,
@@ -201,6 +202,9 @@ class UIBandejaGlobal(ttk.Frame):
         for key, header, width, anchor in self._COLS:
             self._tv.heading(key, text=header)
             self._tv.column(key, width=width, anchor=anchor, stretch=(key == "asunto"))
+        self._ordenador = OrdenadorTreeview(
+            self._tv, ((key, header) for key, header, _width, _anchor in self._COLS),
+        )
         for estado in (value for value in ESTADOS if value):
             self._tv.tag_configure(estado, foreground=COLOR_ESTADO[estado])
         self._tv.tag_configure("URGENTE", foreground="#dc2626", font=("Segoe UI", 9, "bold"))
@@ -550,22 +554,50 @@ class UIBandejaGlobal(ttk.Frame):
     # ----------------------------------------------------------------- refresh
 
     def _on_importar_central(self) -> None:
-        self._consultar_central(mostrar_resultado=True)
+        self._consultar_central(
+            mostrar_resultado=True,
+            solicitar_sync=True,
+            company_code=self._codigo_empresa_actualizacion(),
+        )
+
+    def _codigo_empresa_actualizacion(self) -> str:
+        """Limita la consulta al cliente filtrado o a la fila seleccionada."""
+        cliente = str(self._var_cliente.get() or "")
+        if cliente and cliente != "Todos":
+            for row in self._cache:
+                if str(row.get("empresa_nombre") or row.get("codigo_empresa") or "") == cliente:
+                    return str(row.get("codigo_empresa") or "")
+        item = self._row_by_id(self._selected_id) if self._selected_id else None
+        return str((item or {}).get("codigo_empresa") or "")
 
     def refresh_desde_central(self) -> None:
         """Importa silenciosamente la bandeja central y refresca la vista."""
         self._consultar_central(mostrar_resultado=False)
 
-    def _consultar_central(self, *, mostrar_resultado: bool) -> None:
+    def _consultar_central(
+        self, *, mostrar_resultado: bool, solicitar_sync: bool = False,
+        company_code: str = "",
+    ) -> None:
         if self._importando_central:
             return
         self._importando_central = True
-        self._btn_importar.configure(state="disabled", text="Consultando...")
+        self._btn_importar.configure(
+            state="disabled",
+            text="Consultando DEHu..." if solicitar_sync else "Recargando...",
+        )
 
         def _worker():
             try:
-                from services.aapp.sync_service import importar_bandeja_central
-                result = importar_bandeja_central(self._gestor)
+                from services.aapp.sync_service import (
+                    actualizar_bandeja_desde_dehu,
+                    importar_bandeja_central,
+                )
+                if solicitar_sync:
+                    result = actualizar_bandeja_desde_dehu(
+                        self._gestor, company_code=company_code,
+                    )
+                else:
+                    result = importar_bandeja_central(self._gestor)
                 self.after(
                     0,
                     lambda: self._importacion_fin(
@@ -593,10 +625,28 @@ class UIBandejaGlobal(ttk.Frame):
             return
         self.refresh()
         if mostrar_resultado:
+            detalle_sync = ""
+            if hasattr(result, "encoladas"):
+                detalle_sync = (
+                    f"Consultas DEHu solicitadas: {result.encoladas}\n"
+                    f"Finalizadas: {result.completadas}\n"
+                    f"Fallidas: {result.fallidas}\n"
+                    f"Aun en curso: {result.pendientes}\n"
+                )
+                if result.errores:
+                    detalle_sync += "\n" + "\n".join(result.errores[:5]) + "\n"
+            if getattr(result, "pendientes", 0):
+                titulo = "Consulta DEHu en curso"
+            elif getattr(result, "fallidas", 0) or getattr(result, "errores", []):
+                titulo = "Consulta DEHu con incidencias"
+            else:
+                titulo = "Bandeja DEHu actualizada"
             messagebox.showinfo(
-                "Bandeja DEHu actualizada",
-                f"Notificaciones centrales: {result.total}\n"
+                titulo,
+                detalle_sync
+                + f"Notificaciones centrales: {result.total}\n"
                 f"Nuevas en el escritorio: {result.nuevas}\n"
+                f"Estados actualizados: {result.actualizadas}\n"
                 f"Omitidas por falta de buzon local: {result.omitidas}",
                 parent=self.winfo_toplevel(),
             )
@@ -655,6 +705,7 @@ class UIBandejaGlobal(ttk.Frame):
                 LABEL_ESTADO.get(estado, estado),
                 r.get("responsable") or "",
             ), tags=(tag,))
+        self._ordenador.reaplicar()
 
         pendientes = sum(1 for r in rows if r.get("estado") == "PENDIENTE")
         urgentes = sum(1 for r in rows

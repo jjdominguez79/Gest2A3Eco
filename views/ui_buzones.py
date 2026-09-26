@@ -15,6 +15,7 @@ import uuid
 
 from services.backend_client_service import BackendClientService
 from views.notificaciones_theme import *  # noqa: F401,F403
+from views.treeview_sort import OrdenadorTreeview
 
 try:
     from views.ui_certificados import _vigencia
@@ -96,6 +97,9 @@ class UIBuzones(ttk.Frame):
         for key, header, width, anchor in self._COLS:
             self._tv.heading(key, text=header)
             self._tv.column(key, width=width, anchor=anchor, stretch=(key == "nombre"))
+        self._ordenador = OrdenadorTreeview(
+            self._tv, ((key, header) for key, header, _width, _anchor in self._COLS),
+        )
         self._tv.tag_configure("activo",   foreground=_SUCCESS)
         self._tv.tag_configure("inactivo", foreground=_SUB)
         sb_v = ttk.Scrollbar(wrapper, orient="vertical",   command=self._tv.yview)
@@ -224,6 +228,7 @@ class UIBuzones(ttk.Frame):
                 r.get("tipo_buzon", ""), r.get("nif_titular", "") or "",
                 cert, modo, ultima, estado,
             ), tags=(tag,))
+        self._ordenador.reaplicar()
         n = len(rows)
         self._lbl_count.configure(text=f"{n} buzon{'es' if n != 1 else ''}")
         self._lbl_status.configure(
