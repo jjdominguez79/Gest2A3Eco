@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.8.28",
-  "minimum_required_version": "1.8.28",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.8.28/Setup_Gest2A3Eco_1.8.28.exe",
-  "changelog": "Se incorpora el informe de vida laboral TGSS, se corrige el envio desde la cuenta personal mediante el backend y se mejora la gestion de certificados y comunicaciones.",
+  "latest_version": "1.9.0",
+  "minimum_required_version": "1.9.0",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.9.0/Setup_Gest2A3Eco_1.9.0.exe",
+  "changelog": "Se incorpora el control trazable de facturas recibidas, diferenciando la contabilizacion manual en A3 del flujo OCR/SUENLACE. Se anade una cola OCR persistente con reintentos, recuperacion tras reinicios y aprendizaje por proveedor. Tambien se corrige la actualizacion desde DEHu y se permite ordenar las tablas de notificaciones por cualquier columna.",
   "force_update": true
 }
