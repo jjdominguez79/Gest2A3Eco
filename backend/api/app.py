@@ -414,6 +414,7 @@ def startup():
         "028_dev_notifications.sql",
         "029_dehu_activation_history.sql",
         "030_general_client_channel.sql",
+        "031_invitation_content.sql",
     ):
         _mig_path = Path(__file__).resolve().parent.parent / "migrations" / _mig_name
         if _mig_path.exists():

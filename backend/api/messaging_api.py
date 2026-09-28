@@ -29,7 +29,7 @@ from backend.api.messaging_models import (
     MessagingAttachment, MessagingClient, MessagingConversation, MessagingConversationAlias, MessagingDevice, MessagingDownload,
     MessagingAppDevice, MessagingCampaign, MessagingCampaignRecipient,
     MessagingDeletionAudit, MessagingEvent, MessagingGroup, MessagingGroupMember,
-    MessagingInvitation, MessagingMessage, MessagingMessageVersion, MessagingOrganization,
+    MessagingInvitation, MessagingInvitationContent, MessagingMessage, MessagingMessageVersion, MessagingOrganization,
     MessagingPasswordReset, MessagingPresence, MessagingRead, MessagingReceipt, MessagingSession, MessagingStaff,
     MessagingProfileChangeRequest,
     MessagingStaffAuthFlow, MessagingStaffChannel, MessagingStaffSession,
@@ -37,14 +37,18 @@ from backend.api.messaging_models import (
     MessagingStaffPresenceConnection, MessagingStaffThreadRead, MessagingWebSocketTicket,
 )
 from backend.api.messaging_mail import (
-    configured as mail_configured, send_invitation, send_message_notice,
-    send_password_reset,
+    DEFAULT_INVITATION_EMAIL_CONTENT, INVITATION_MANUAL_PATH,
+    InvitationEmailContent, configured as mail_configured,
+    invitation_manual_url, render_invitation, send_invitation,
+    send_message_notice, send_password_reset,
 )
 from backend.api.messaging_security import (
     hash_password, hash_token, invitation_expiry, new_token, session_expiry,
     is_expired, utcnow, verify_password,
 )
-from backend.api.messaging_storage import MessagingStorage, safe_name
+from backend.api.messaging_storage import (
+    InvitationContentStorage, MessagingStorage, safe_name,
+)
 from backend.api.messaging_firebase import configured as fcm_configured, send_fcm, FcmResult
 from backend.api.messaging_realtime import hub
 from backend.api.security import require_internal_key, require_workstation_or_internal
@@ -53,6 +57,7 @@ from backend.api.security import require_internal_key, require_workstation_or_in
 router = APIRouter(prefix="/api/v1/messaging", tags=["messaging"])
 MAX_ATTACHMENT = 50 * 1024 * 1024
 MAX_AVATAR = 5 * 1024 * 1024
+MAX_INVITATION_MANUAL = 15 * 1024 * 1024
 INTERVALO_PRESENCIA_WS = 25
 ALLOWED_SUFFIXES = {
     ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".tif", ".tiff",
@@ -125,6 +130,16 @@ class InviteIn(BaseModel):
 
 class BatchInviteIn(BaseModel):
     invitations: list[InviteIn] = Field(min_length=1, max_length=200)
+
+
+class InvitationContentIn(BaseModel):
+    subject: str = Field(min_length=1, max_length=300)
+    intro_text: str = Field(min_length=1, max_length=20000)
+    closing_text: str = Field(min_length=1, max_length=20000)
+
+
+class InvitationTestIn(BaseModel):
+    email: str = Field(default="", max_length=254)
 
 
 class ProfileChangeReviewIn(BaseModel):
@@ -591,6 +606,108 @@ def _require_admin(staff: MessagingStaff = Depends(_staff)) -> MessagingStaff:
     if staff.role != "admin":
         raise HTTPException(403, "Se requiere un administrador de mensajeria")
     return staff
+
+
+def _active_invitation_content(db: Session) -> MessagingInvitationContent | None:
+    return db.scalar(select(MessagingInvitationContent).where(
+        MessagingInvitationContent.status == "published",
+    ).order_by(MessagingInvitationContent.version.desc()))
+
+
+def _draft_invitation_content(db: Session) -> MessagingInvitationContent | None:
+    return db.scalar(select(MessagingInvitationContent).where(
+        MessagingInvitationContent.status == "draft",
+    ).order_by(MessagingInvitationContent.created_at.desc()))
+
+
+def _invitation_content_snapshot(
+    item: MessagingInvitationContent | None,
+) -> InvitationEmailContent:
+    if not item:
+        return DEFAULT_INVITATION_EMAIL_CONTENT
+    return InvitationEmailContent(
+        subject=item.subject,
+        intro_text=item.intro_text,
+        closing_text=item.closing_text,
+        version=item.version,
+    )
+
+
+def _invitation_content_json(
+    item: MessagingInvitationContent | None, *, status: str = "published",
+) -> dict:
+    if item:
+        return {
+            "id": item.id,
+            "version": item.version,
+            "status": item.status,
+            "subject": item.subject,
+            "intro_text": item.intro_text,
+            "closing_text": item.closing_text,
+            "manual_name": item.manual_name or "Manual_Mensajeria_Gestinem.pdf",
+            "manual_size": item.manual_size,
+            "manual_sha256": item.manual_sha256,
+            "has_custom_manual": bool(item.manual_storage_key),
+            "created_by": item.created_by,
+            "created_at": item.created_at.isoformat(),
+            "published_by": item.published_by,
+            "published_at": item.published_at.isoformat() if item.published_at else None,
+            "manual_url": invitation_manual_url(),
+        }
+    default = DEFAULT_INVITATION_EMAIL_CONTENT
+    return {
+        "id": "default",
+        "version": 0,
+        "status": status,
+        "subject": default.subject,
+        "intro_text": default.intro_text,
+        "closing_text": default.closing_text,
+        "manual_name": INVITATION_MANUAL_PATH.name,
+        "manual_size": INVITATION_MANUAL_PATH.stat().st_size if INVITATION_MANUAL_PATH.exists() else 0,
+        "manual_sha256": "",
+        "has_custom_manual": False,
+        "created_by": "system",
+        "created_at": None,
+        "published_by": "system",
+        "published_at": None,
+        "manual_url": invitation_manual_url(),
+    }
+
+
+def _ensure_invitation_draft(
+    db: Session, admin: MessagingStaff,
+) -> MessagingInvitationContent:
+    draft = _draft_invitation_content(db)
+    if draft:
+        return draft
+    active = _active_invitation_content(db)
+    source = _invitation_content_snapshot(active)
+    draft = MessagingInvitationContent(
+        version=0,
+        status="draft",
+        subject=source.subject,
+        intro_text=source.intro_text,
+        closing_text=source.closing_text,
+        manual_storage_key=active.manual_storage_key if active else "",
+        manual_name=(active.manual_name if active else INVITATION_MANUAL_PATH.name),
+        manual_sha256=active.manual_sha256 if active else "",
+        manual_size=active.manual_size if active else 0,
+        created_by=admin.external_id,
+    )
+    db.add(draft)
+    db.flush()
+    return draft
+
+
+def _validate_invitation_content(payload: InvitationContentIn) -> None:
+    allowed = {"nombre_cliente", "horas_caducidad"}
+    values = "\n".join((payload.subject, payload.intro_text, payload.closing_text))
+    unknown = set(re.findall(r"\{\{\s*([^{}]+?)\s*\}\}", values)) - allowed
+    if unknown:
+        raise HTTPException(
+            422,
+            "Variables no admitidas: " + ", ".join(sorted(unknown)),
+        )
 
 
 def _puede_ver_historial(staff: MessagingStaff | None) -> bool:
@@ -1247,7 +1364,7 @@ def put_organization(company_code: str, payload: OrganizationIn, db: Session = D
 def create_invitation(payload: InviteIn, background: BackgroundTasks, db: Session = Depends(get_db)):
     client, invitation, token = _prepare_invitation(payload, db)
     db.commit()
-    return _invitation_result(payload, client, invitation, token, background)
+    return _invitation_result(payload, client, invitation, token, background, db)
 
 
 def _prepare_invitation(
@@ -1278,13 +1395,20 @@ def _prepare_invitation(
 
 def _invitation_result(
     payload: InviteIn, client: MessagingClient, invitation: MessagingInvitation,
-    token: str, background: BackgroundTasks,
+    token: str, background: BackgroundTasks, db: Session,
 ) -> dict:
     app_url = _app_deep_link("invite", token)
     url = _public_app_link("invite", token)
     email_queued = payload.send_email and mail_configured()
     if email_queued:
-        background.add_task(send_invitation, client.email, client.name, url)
+        background.add_task(
+            send_invitation,
+            client.email,
+            client.name,
+            url,
+            content=_invitation_content_snapshot(_active_invitation_content(db)),
+            manual_url=invitation_manual_url(),
+        )
     return {
         "invitation_id": invitation.id,
         "url": url,
@@ -1317,6 +1441,39 @@ def _public_app_link(action: str, token: str) -> str:
 def public_app_link(action: Literal["invite", "reset"], token: str = Query(min_length=1)):
     """Redirige enlaces conservados a la ruta web equivalente de Gestinem."""
     return RedirectResponse(_public_app_link(action, token), status_code=307)
+
+
+@router.get("/public/client-manual")
+def public_client_manual(db: Session = Depends(get_db)):
+    """Sirve siempre la version publicada del manual desde una URL estable."""
+    active = _active_invitation_content(db)
+    if active and active.manual_storage_key:
+        try:
+            content = InvitationContentStorage().get(active.manual_storage_key)
+        except Exception as exc:
+            raise HTTPException(503, "El manual no esta disponible temporalmente") from exc
+        digest = hashlib.sha256(content).hexdigest()
+        if active.manual_sha256 and digest != active.manual_sha256:
+            raise HTTPException(503, "No se pudo verificar la integridad del manual")
+        name = active.manual_name or INVITATION_MANUAL_PATH.name
+        version = active.version
+    else:
+        if not INVITATION_MANUAL_PATH.is_file():
+            raise HTTPException(404, "Manual no configurado")
+        content = INVITATION_MANUAL_PATH.read_bytes()
+        digest = hashlib.sha256(content).hexdigest()
+        name = INVITATION_MANUAL_PATH.name
+        version = 0
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{safe_name(name)}"',
+            "Cache-Control": "no-cache, max-age=0",
+            "ETag": f'"{digest}"',
+            "X-Content-Version": str(version),
+        },
+    )
 
 
 @router.get("/public/auth-done")
@@ -2403,6 +2560,196 @@ def staff_put_organization(
     return put_organization(company_code, payload, db)
 
 
+@router.get("/staff/admin/invitation-content")
+def staff_get_invitation_content(
+    _admin: MessagingStaff = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    active = _active_invitation_content(db)
+    draft = _draft_invitation_content(db)
+    return {
+        "active": _invitation_content_json(active),
+        "draft": _invitation_content_json(draft, status="draft") if draft else None,
+        "manual_url": invitation_manual_url(),
+        "allowed_variables": ["{{nombre_cliente}}", "{{horas_caducidad}}"],
+    }
+
+
+@router.put("/staff/admin/invitation-content/draft")
+def staff_put_invitation_content_draft(
+    payload: InvitationContentIn,
+    admin: MessagingStaff = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    _validate_invitation_content(payload)
+    draft = _ensure_invitation_draft(db, admin)
+    draft.subject = payload.subject.strip()
+    draft.intro_text = payload.intro_text.strip()
+    draft.closing_text = payload.closing_text.strip()
+    draft.created_by = admin.external_id
+    db.add(draft)
+    db.commit()
+    db.refresh(draft)
+    return _invitation_content_json(draft)
+
+
+@router.put("/staff/admin/invitation-content/manual")
+def staff_put_invitation_manual(
+    manual: UploadFile = File(...),
+    admin: MessagingStaff = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    name = safe_name(manual.filename or INVITATION_MANUAL_PATH.name)
+    if Path(name).suffix.lower() != ".pdf":
+        raise HTTPException(422, "El manual debe ser un archivo PDF")
+    content = manual.file.read(MAX_INVITATION_MANUAL + 1)
+    if len(content) > MAX_INVITATION_MANUAL:
+        raise HTTPException(413, "El manual supera el limite de 15 MB")
+    if not content.startswith(b"%PDF-"):
+        raise HTTPException(422, "El archivo no contiene un PDF valido")
+
+    draft = _ensure_invitation_draft(db, admin)
+    old_key = draft.manual_storage_key
+    storage = InvitationContentStorage()
+    new_key = storage.put(content, name)
+    try:
+        draft.manual_storage_key = new_key
+        draft.manual_name = name
+        draft.manual_sha256 = hashlib.sha256(content).hexdigest()
+        draft.manual_size = len(content)
+        draft.created_by = admin.external_id
+        db.add(draft)
+        db.commit()
+        db.refresh(draft)
+    except Exception:
+        db.rollback()
+        storage.delete(new_key)
+        raise
+
+    if old_key and old_key != new_key:
+        references = db.scalar(select(func.count()).select_from(
+            MessagingInvitationContent,
+        ).where(MessagingInvitationContent.manual_storage_key == old_key)) or 0
+        if not references:
+            storage.delete(old_key)
+    return _invitation_content_json(draft)
+
+
+@router.post("/staff/admin/invitation-content/preview")
+def staff_preview_invitation_content(
+    payload: InvitationContentIn,
+    _admin: MessagingStaff = Depends(_require_admin),
+):
+    _validate_invitation_content(payload)
+    subject, html, text_content = render_invitation(
+        "Cliente de prueba",
+        _public_app_link("invite", "VISTA-PREVIA"),
+        content=InvitationEmailContent(
+            subject=payload.subject.strip(),
+            intro_text=payload.intro_text.strip(),
+            closing_text=payload.closing_text.strip(),
+            version=0,
+        ),
+        manual_url=invitation_manual_url(),
+    )
+    return {"subject": subject, "html": html, "text": text_content}
+
+
+@router.post("/staff/admin/invitation-content/publish")
+def staff_publish_invitation_content(
+    admin: MessagingStaff = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    draft = _draft_invitation_content(db)
+    if not draft:
+        raise HTTPException(409, "No hay cambios pendientes de publicar")
+    if not draft.manual_storage_key and not INVITATION_MANUAL_PATH.is_file():
+        raise HTTPException(409, "Debes subir un manual antes de publicar")
+    current_version = db.scalar(select(func.max(MessagingInvitationContent.version))) or 0
+    db.query(MessagingInvitationContent).filter(
+        MessagingInvitationContent.status == "published",
+    ).update({MessagingInvitationContent.status: "archived"}, synchronize_session=False)
+    draft.version = current_version + 1
+    draft.status = "published"
+    draft.published_by = admin.external_id
+    draft.published_at = utcnow()
+    db.add(draft)
+    db.commit()
+    db.refresh(draft)
+    return _invitation_content_json(draft)
+
+
+@router.get("/staff/admin/invitation-content/history")
+def staff_invitation_content_history(
+    _admin: MessagingStaff = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    rows = db.scalars(select(MessagingInvitationContent).where(
+        MessagingInvitationContent.status.in_({"published", "archived"}),
+    ).order_by(MessagingInvitationContent.version.desc())).all()
+    return [_invitation_content_json(item) for item in rows]
+
+
+@router.post("/staff/admin/invitation-content/history/{content_id}/restore")
+def staff_restore_invitation_content(
+    content_id: str,
+    admin: MessagingStaff = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    source = db.get(MessagingInvitationContent, content_id)
+    if not source or source.status not in {"published", "archived"}:
+        raise HTTPException(404, "Version de invitacion no encontrada")
+    draft = _ensure_invitation_draft(db, admin)
+    old_key = draft.manual_storage_key
+    draft.subject = source.subject
+    draft.intro_text = source.intro_text
+    draft.closing_text = source.closing_text
+    draft.manual_storage_key = source.manual_storage_key
+    draft.manual_name = source.manual_name
+    draft.manual_sha256 = source.manual_sha256
+    draft.manual_size = source.manual_size
+    draft.created_by = admin.external_id
+    db.add(draft)
+    db.commit()
+    db.refresh(draft)
+    if old_key and old_key != source.manual_storage_key:
+        references = db.scalar(select(func.count()).select_from(
+            MessagingInvitationContent,
+        ).where(MessagingInvitationContent.manual_storage_key == old_key)) or 0
+        if not references:
+            InvitationContentStorage().delete(old_key)
+    return _invitation_content_json(draft)
+
+
+@router.post("/staff/admin/invitation-content/test")
+def staff_test_invitation_content(
+    payload: InvitationTestIn,
+    admin: MessagingStaff = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    if not mail_configured():
+        raise HTTPException(409, "El envio de correo no esta configurado")
+    email = _validated_client_email(payload.email or admin.email)
+    selected = _draft_invitation_content(db) or _active_invitation_content(db)
+    snapshot = _invitation_content_snapshot(selected)
+    test_content = InvitationEmailContent(
+        subject=f"[PRUEBA] {snapshot.subject}",
+        intro_text=snapshot.intro_text,
+        closing_text=snapshot.closing_text,
+        version=snapshot.version,
+    )
+    sent = send_invitation(
+        email,
+        admin.name or "Cliente de prueba",
+        _public_app_link("invite", "CORREO-DE-PRUEBA"),
+        content=test_content,
+        manual_url=invitation_manual_url(),
+    )
+    if not sent:
+        raise HTTPException(503, "No se pudo enviar el correo de prueba")
+    return {"ok": True, "email": email}
+
+
 @router.post("/staff/admin/invitations")
 def staff_create_invitation(
     payload: InviteIn, background: BackgroundTasks,
@@ -2445,7 +2792,7 @@ def staff_create_invitations_batch(
 
     db.commit()
     invitations = [
-        _invitation_result(item, client, invitation, token, background)
+        _invitation_result(item, client, invitation, token, background, db)
         for item, client, invitation, token in prepared
     ]
     return {

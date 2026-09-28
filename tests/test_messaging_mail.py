@@ -26,6 +26,7 @@ def _settings(**overrides):
         "messaging_smtp_password": "",
         "messaging_smtp_from": "",
         "messaging_smtp_use_tls": True,
+        "messaging_public_base_url": "https://api.example.test",
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -116,9 +117,10 @@ def test_invitacion_usa_remitente_personal_configurado(monkeypatch):
     assert 'href="https://example.test/invite"' in html
     assert "https://example.test/invite" in html
     assert "acceder a Gestinem directamente desde" in html
-    attachments = calls[1][1]["json"]["message"]["attachments"]
-    assert attachments[0]["name"] == "Manual_Mensajeria_Gestinem.pdf"
-    assert base64.b64decode(attachments[0]["contentBytes"]).startswith(b"%PDF")
+    message = calls[1][1]["json"]["message"]
+    assert message["attachments"] == []
+    assert "https://api.example.test/api/v1/messaging/public/client-manual" in html
+    assert "Consultar el manual de Gestinem" in html
 
 
 def test_invitacion_incluye_enlace_en_html_y_texto_plano(monkeypatch):
@@ -136,7 +138,9 @@ def test_invitacion_incluye_enlace_en_html_y_texto_plano(monkeypatch):
     assert url in captured["html"]
     assert url in captured["text"]
     assert captured["sender"] == "jjdominguez@gestinem.es"
-    assert captured["attachments"][0]["name"] == "Manual_Mensajeria_Gestinem.pdf"
+    assert "attachments" not in captured
+    assert "https://api.example.test/api/v1/messaging/public/client-manual" in captured["html"]
+    assert "https://api.example.test/api/v1/messaging/public/client-manual" in captured["text"]
 
 
 def test_invitacion_version_1_incluye_comunicado_aprobado(monkeypatch):

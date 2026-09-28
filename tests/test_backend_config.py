@@ -89,3 +89,18 @@ def test_settings_accepts_legacy_dgt_core_names_during_migration(monkeypatch):
     assert settings.internal_api_key == "legacy-key"
     assert settings.public_base_url == "https://legacy.example.test"
     assert settings.messaging_public_base_url == "https://legacy.example.test"
+
+
+def test_invitation_content_uses_permanent_separate_container(monkeypatch):
+    monkeypatch.setenv("BACKEND_DATABASE_URL", "postgresql://example.test/database")
+    monkeypatch.setenv("MESSAGING_AZURE_CONNECTION_STRING", "UseDevelopmentStorage=true")
+    monkeypatch.setenv("MESSAGING_CONTENT_AZURE_CONNECTION_STRING", "")
+    monkeypatch.delenv("MESSAGING_CONTENT_AZURE_CONTAINER", raising=False)
+
+    settings = config.get_settings()
+
+    assert settings.messaging_content_azure_connection_string == (
+        "UseDevelopmentStorage=true"
+    )
+    assert settings.messaging_content_azure_container == "mensajeria-contenido"
+    assert settings.messaging_content_azure_container != settings.messaging_azure_container

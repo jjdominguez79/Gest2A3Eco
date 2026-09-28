@@ -342,7 +342,7 @@ def test_cuenta_cliente_prueba_genera_enlace_sin_enviar_email(tmp_path, monkeypa
     monkeypatch.setattr(messaging_api, "mail_configured", lambda: True)
     monkeypatch.setattr(
         messaging_api, "send_invitation",
-        lambda email, name, url: sent.append((email, name, url)),
+        lambda email, name, url, **_kwargs: sent.append((email, name, url)),
     )
 
     invitation = client.post(
@@ -402,7 +402,7 @@ def test_admin_envia_invitaciones_en_lote(tmp_path, monkeypatch):
     monkeypatch.setattr(messaging_api, "mail_configured", lambda: True)
     monkeypatch.setattr(
         messaging_api, "send_invitation",
-        lambda email, name, url: sent.append((email, name, url)),
+        lambda email, name, url, **_kwargs: sent.append((email, name, url)),
     )
     response = client.post(
         "/api/v1/messaging/staff/admin/invitations/batch",

@@ -1190,6 +1190,13 @@ class _AppDrawer extends ConsumerWidget {
               title: const Text('Clientes'),
               onTap: () => _navigate(context, '/clients'),
             ),
+          if (profile.isAdmin)
+            ListTile(
+              key: const Key('drawer-invitation-content'),
+              leading: const Icon(Icons.forward_to_inbox_outlined),
+              title: const Text('Invitación y manual'),
+              onTap: () => _navigate(context, '/invitation-content'),
+            ),
           if (profile.type == UserType.client) ...[
             ListTile(
               key: const Key('drawer-documentation'),

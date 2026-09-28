@@ -271,6 +271,106 @@ void main() {
     });
   });
 
+  test('administrador carga y guarda el contenido de invitacion', () async {
+    final contentAdapter = JsonAdapter({
+      'active': {
+        'id': 'default',
+        'version': 0,
+        'status': 'published',
+        'subject': 'Invitacion',
+        'intro_text': 'Hola {{nombre_cliente}}',
+        'closing_text': 'Hasta pronto',
+        'manual_name': 'Manual.pdf',
+        'manual_size': 123,
+        'has_custom_manual': false,
+        'manual_url': 'https://api.example.test/manual',
+      },
+      'draft': null,
+      'manual_url': 'https://api.example.test/manual',
+      'allowed_variables': ['{{nombre_cliente}}'],
+    });
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+    )..httpClientAdapter = contentAdapter;
+    final repository = MessagingRepository(
+      ApiClient(dio: dio, tokenProvider: () => testSession.token),
+    );
+
+    final configuration = await repository.invitationContent();
+
+    expect(configuration.active.subject, 'Invitacion');
+    expect(configuration.draft, isNull);
+    expect(configuration.allowedVariables, ['{{nombre_cliente}}']);
+    expect(contentAdapter.lastRequest!.path, '/staff/admin/invitation-content');
+
+    final saveAdapter = JsonAdapter({
+      'id': 'draft-1',
+      'version': 0,
+      'status': 'draft',
+      'subject': 'Nuevo asunto',
+      'intro_text': 'Nueva entrada',
+      'closing_text': 'Nuevo cierre',
+      'manual_name': 'Manual.pdf',
+      'manual_size': 123,
+      'has_custom_manual': false,
+      'manual_url': 'https://api.example.test/manual',
+    });
+    dio.httpClientAdapter = saveAdapter;
+    final draft = await repository.saveInvitationDraft(
+      subject: 'Nuevo asunto',
+      introText: 'Nueva entrada',
+      closingText: 'Nuevo cierre',
+    );
+
+    expect(draft.status, 'draft');
+    expect(
+      saveAdapter.lastRequest!.path,
+      '/staff/admin/invitation-content/draft',
+    );
+    expect(saveAdapter.lastRequest!.data, {
+      'subject': 'Nuevo asunto',
+      'intro_text': 'Nueva entrada',
+      'closing_text': 'Nuevo cierre',
+    });
+  });
+
+  test(
+    'administrador sube el manual como PDF sin adjuntarlo al correo',
+    () async {
+      final adapter = JsonAdapter({
+        'id': 'draft-1',
+        'version': 0,
+        'status': 'draft',
+        'subject': 'Invitacion',
+        'intro_text': 'Entrada',
+        'closing_text': 'Cierre',
+        'manual_name': 'manual.pdf',
+        'manual_size': 12,
+        'has_custom_manual': true,
+        'manual_url': 'https://api.example.test/manual',
+      });
+      final dio = Dio(
+        BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+      )..httpClientAdapter = adapter;
+      final repository = MessagingRepository(
+        ApiClient(dio: dio, tokenProvider: () => testSession.token),
+      );
+
+      final uploaded = await repository.uploadInvitationManual(
+        _TestPlatformFile('manual.pdf', '%PDF-1.7'.codeUnits),
+      );
+
+      expect(uploaded.hasCustomManual, isTrue);
+      expect(
+        adapter.lastRequest!.path,
+        '/staff/admin/invitation-content/manual',
+      );
+      final form = adapter.lastRequest!.data as FormData;
+      expect(form.files.single.key, 'manual');
+      expect(form.files.single.value.filename, 'manual.pdf');
+    },
+  );
+
   test('staff carga candidatos e inicia una conversacion', () async {
     final payload = {
       'id': 'conversation-1',

@@ -72,7 +72,7 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
       builder: (dialogContext) => AlertDialog(
         title: const Text('Enviar invitaciones'),
         content: Text(
-          'Se enviará una invitación personal y el manual de Gestinem a '
+          'Se enviará una invitación personal con acceso al manual de Gestinem a '
           '${rows.length} ${rows.length == 1 ? 'cliente' : 'clientes'}.',
         ),
         actions: [
@@ -107,7 +107,7 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
         SnackBar(
           content: Text(
             queued == rows.length
-                ? 'Se han preparado $queued invitaciones con el manual adjunto.'
+                ? 'Se han preparado $queued invitaciones con enlace al manual.'
                 : 'Invitaciones creadas: ${rows.length}. Correos preparados: $queued.',
           ),
         ),

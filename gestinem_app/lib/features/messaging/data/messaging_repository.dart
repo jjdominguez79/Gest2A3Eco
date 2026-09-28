@@ -9,6 +9,7 @@ import '../../../core/api/api_client.dart';
 import '../../auth/domain/user_profile.dart';
 import '../domain/client_organization.dart';
 import '../domain/conversation.dart';
+import '../domain/invitation_content.dart';
 import '../domain/message.dart';
 
 class MessagingRepository {
@@ -80,10 +81,7 @@ class MessagingRepository {
   }) async {
     final response = await _api.dio.get<List<dynamic>>(
       '/${_audience(profile)}/conversations/$conversationId/messages',
-      queryParameters: {
-        'limit': limit,
-        'before_message_id': ?beforeMessageId,
-      },
+      queryParameters: {'limit': limit, 'before_message_id': ?beforeMessageId},
     );
     return response.data!
         .map((item) => Message.fromJson(item as Map<String, dynamic>))
@@ -182,6 +180,92 @@ class MessagingRepository {
       },
     );
     return response.data!;
+  }
+
+  Future<InvitationContentConfiguration> invitationContent() async {
+    final response = await _api.dio.get<Map<String, dynamic>>(
+      '/staff/admin/invitation-content',
+    );
+    return InvitationContentConfiguration.fromJson(response.data!);
+  }
+
+  Future<InvitationContentVersion> saveInvitationDraft({
+    required String subject,
+    required String introText,
+    required String closingText,
+  }) async {
+    final response = await _api.dio.put<Map<String, dynamic>>(
+      '/staff/admin/invitation-content/draft',
+      data: {
+        'subject': subject,
+        'intro_text': introText,
+        'closing_text': closingText,
+      },
+    );
+    return InvitationContentVersion.fromJson(response.data!);
+  }
+
+  Future<InvitationContentVersion> uploadInvitationManual(
+    PlatformFile file,
+  ) async {
+    final bytes = await file.readAsBytes();
+    final response = await _api.dio.put<Map<String, dynamic>>(
+      '/staff/admin/invitation-content/manual',
+      data: FormData.fromMap({
+        'manual': MultipartFile.fromBytes(bytes, filename: file.name),
+      }),
+    );
+    return InvitationContentVersion.fromJson(response.data!);
+  }
+
+  Future<Map<String, dynamic>> previewInvitationContent({
+    required String subject,
+    required String introText,
+    required String closingText,
+  }) async {
+    final response = await _api.dio.post<Map<String, dynamic>>(
+      '/staff/admin/invitation-content/preview',
+      data: {
+        'subject': subject,
+        'intro_text': introText,
+        'closing_text': closingText,
+      },
+    );
+    return response.data!;
+  }
+
+  Future<InvitationContentVersion> publishInvitationContent() async {
+    final response = await _api.dio.post<Map<String, dynamic>>(
+      '/staff/admin/invitation-content/publish',
+    );
+    return InvitationContentVersion.fromJson(response.data!);
+  }
+
+  Future<List<InvitationContentVersion>> invitationContentHistory() async {
+    final response = await _api.dio.get<List<dynamic>>(
+      '/staff/admin/invitation-content/history',
+    );
+    return response.data!
+        .map(
+          (item) =>
+              InvitationContentVersion.fromJson(item as Map<String, dynamic>),
+        )
+        .toList(growable: false);
+  }
+
+  Future<InvitationContentVersion> restoreInvitationContent(String id) async {
+    final response = await _api.dio.post<Map<String, dynamic>>(
+      '/staff/admin/invitation-content/history/$id/restore',
+    );
+    return InvitationContentVersion.fromJson(response.data!);
+  }
+
+  Future<String> sendInvitationTest({String email = ''}) async {
+    final response = await _api.dio.post<Map<String, dynamic>>(
+      '/staff/admin/invitation-content/test',
+      data: {'email': email},
+    );
+    return response.data?['email'] as String? ?? email;
   }
 
   Future<List<Organization>> organizations() async {
@@ -383,10 +467,7 @@ class MessagingRepository {
   }) async {
     final response = await _api.dio.get<List<dynamic>>(
       '/client/unified-messages',
-      queryParameters: {
-        'limit': limit,
-        'before_message_id': ?beforeMessageId,
-      },
+      queryParameters: {'limit': limit, 'before_message_id': ?beforeMessageId},
     );
     return response.data!
         .map((item) => Message.fromJson(item as Map<String, dynamic>))

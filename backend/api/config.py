@@ -60,6 +60,9 @@ class Settings:
     messaging_storage_dir: str
     messaging_azure_connection_string: str
     messaging_azure_container: str
+    messaging_content_storage_dir: str
+    messaging_content_azure_connection_string: str
+    messaging_content_azure_container: str
     messaging_attachment_days: int
     messaging_graph_tenant_id: str
     messaging_graph_client_id: str
@@ -169,6 +172,15 @@ def get_settings() -> Settings:
         messaging_storage_dir=os.getenv("MESSAGING_STORAGE_DIR", "./messaging_private_storage"),
         messaging_azure_connection_string=os.getenv("MESSAGING_AZURE_CONNECTION_STRING", ""),
         messaging_azure_container=os.getenv("MESSAGING_AZURE_CONTAINER", "mensajeria-temporal"),
+        messaging_content_storage_dir=os.getenv(
+            "MESSAGING_CONTENT_STORAGE_DIR", "./messaging_content_storage",
+        ),
+        messaging_content_azure_connection_string=os.getenv(
+            "MESSAGING_CONTENT_AZURE_CONNECTION_STRING", "",
+        ).strip() or os.getenv("MESSAGING_AZURE_CONNECTION_STRING", ""),
+        messaging_content_azure_container=os.getenv(
+            "MESSAGING_CONTENT_AZURE_CONTAINER", "mensajeria-contenido",
+        ),
         messaging_attachment_days=max(15, int(os.getenv("MESSAGING_ATTACHMENT_DAYS", "30"))),
         messaging_graph_tenant_id=os.getenv("MESSAGING_GRAPH_TENANT_ID", ""),
         messaging_graph_client_id=os.getenv("MESSAGING_GRAPH_CLIENT_ID", ""),

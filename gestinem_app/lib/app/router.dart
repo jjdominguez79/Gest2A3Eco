@@ -16,6 +16,7 @@ import '../features/messaging/presentation/conversations_screen.dart';
 import '../features/messaging/presentation/client_detail_screen.dart';
 import '../features/messaging/presentation/clients_screen.dart';
 import '../features/messaging/presentation/invite_client_screen.dart';
+import '../features/messaging/presentation/invitation_content_screen.dart';
 import '../features/invoicing/presentation/customer_form_screen.dart';
 import '../features/invoicing/presentation/customer_list_screen.dart';
 import '../features/invoicing/presentation/invoice_detail_screen.dart';
@@ -135,6 +136,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (state.matchedLocation == '/groups' && profile?.isAdmin != true) {
         return '/';
       }
+      if (state.matchedLocation == '/invitation-content' &&
+          profile?.isAdmin != true) {
+        return '/';
+      }
       if (state.matchedLocation.startsWith('/clients/') &&
           state.matchedLocation.contains('/certificates') &&
           profile?.isAdmin != true) {
@@ -212,6 +217,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/campaigns', builder: (_, _) => const CampaignsScreen()),
       GoRoute(path: '/employees', builder: (_, _) => const EmpleadosScreen()),
       GoRoute(path: '/clients', builder: (_, _) => const ClientsScreen()),
+      GoRoute(
+        path: '/invitation-content',
+        builder: (_, _) => const InvitationContentScreen(),
+      ),
       GoRoute(
         path: '/clients/:companyCode/certificates',
         builder: (_, state) => CertificatesScreen(

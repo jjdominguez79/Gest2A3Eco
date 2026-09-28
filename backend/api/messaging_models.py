@@ -180,6 +180,28 @@ class MessagingInvitation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class MessagingInvitationContent(Base):
+    """Version administrable del correo de invitacion y su manual."""
+
+    __tablename__ = "msg_invitation_content"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    version: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="draft", index=True)
+    subject: Mapped[str] = mapped_column(String(300))
+    intro_text: Mapped[str] = mapped_column(Text)
+    closing_text: Mapped[str] = mapped_column(Text)
+    manual_storage_key: Mapped[str] = mapped_column(String(500), default="")
+    manual_name: Mapped[str] = mapped_column(String(255), default="")
+    manual_sha256: Mapped[str] = mapped_column(String(64), default="")
+    manual_size: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow,
+    )
+    published_by: Mapped[str] = mapped_column(String(64), default="")
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class MessagingPasswordReset(Base):
     __tablename__ = "msg_password_resets"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)

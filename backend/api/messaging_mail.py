@@ -3,6 +3,8 @@ from __future__ import annotations
 import smtplib
 import ssl
 import base64
+import re
+from dataclasses import dataclass
 from email.message import EmailMessage
 from html import escape
 from pathlib import Path
@@ -20,6 +22,47 @@ INVITATION_EMAIL_VERSION = 1
 INVITATION_EMAIL_SUBJECT = (
     "Nueva aplicación Gestinem y canales de comunicación desde el 1 de octubre"
 )
+INVITATION_EMAIL_INTRO = """Hola {{nombre_cliente}},
+
+Gestinem pone a tu disposición una nueva aplicación para facilitar y mejorar la comunicación con el despacho.
+
+Su objetivo principal es reforzar la privacidad de las comunicaciones y permitir el envío de documentos que contengan información personal o confidencial dentro de un entorno privado y seguro.
+
+Además, las consultas y solicitudes generales enviadas mediante la aplicación podrán ser atendidas por el personal autorizado del despacho, independientemente del día o la hora en que se reciban. De esta forma evitaremos que un mensaje o una petición quede pendiente porque la persona que revisa habitualmente el teléfono de WhatsApp no se encuentre disponible en ese momento.
+
+La aplicación se mejorará progresivamente para ofrecer a nuestros clientes una plataforma de facturación ágil y gratuita. También permitirá solicitar certificados de la Seguridad Social y de la Agencia Tributaria, consultar y obtener copias de sus impuestos y acceder a otros documentos y servicios del despacho en cualquier momento.
+
+Las aplicaciones para Android y Apple se encuentran actualmente en fase de publicación y todavía no están disponibles en sus respectivas tiendas. Mientras finaliza este proceso, puedes acceder a Gestinem directamente desde el navegador de tu móvil, tableta u ordenador, sin necesidad de instalar ninguna aplicación."""
+INVITATION_EMAIL_CLOSING = """El enlace de activación es personal y estará disponible durante {{horas_caducidad}} horas.
+
+Te informamos también de que, a partir del 1 de octubre de 2026, la cuenta de WhatsApp del despacho quedará desactivada. Desde esa fecha no se atenderán comunicaciones enviadas por WhatsApp.
+
+Las comunicaciones deberán realizarse mediante la aplicación Gestinem o a través de las siguientes direcciones:
+
+- oficina@gestinem.es: consultas y comunicaciones con el departamento contable y fiscal.
+- laboral@gestinem.es: consultas y comunicaciones relacionadas con el ámbito laboral.
+- documentacion@gestinem.es: envío de la documentación correspondiente a los trimestres, como se viene haciendo hasta ahora.
+
+También tendrás siempre la posibilidad de contactar directamente conmigo, como responsable del despacho, mediante mi correo electrónico personal o enviándome un mensaje privado desde la aplicación. Los mensajes privados únicamente serán accesibles para su destinatario.
+
+En el enlace al manual encontrarás los pasos necesarios para activar tu cuenta y comenzar a utilizar Gestinem desde el navegador.
+
+Gracias por tu colaboración.
+
+Un saludo,
+Gestinem
+Gestión Fiscal, Contable y Laboral"""
+
+
+@dataclass(frozen=True)
+class InvitationEmailContent:
+    subject: str = INVITATION_EMAIL_SUBJECT
+    intro_text: str = INVITATION_EMAIL_INTRO
+    closing_text: str = INVITATION_EMAIL_CLOSING
+    version: int = INVITATION_EMAIL_VERSION
+
+
+DEFAULT_INVITATION_EMAIL_CONTENT = InvitationEmailContent()
 
 
 def configured() -> bool:
@@ -202,100 +245,89 @@ def _send_mail_smtp(
     return True
 
 
-def send_invitation(to: str, name: str, url: str) -> bool:
-    cfg = get_settings()
-    manual = {
-        "name": "Manual_Mensajeria_Gestinem.pdf",
-        "content_type": "application/pdf",
-        "content": INVITATION_MANUAL_PATH.read_bytes(),
-    }
-    return send_mail(
-        to, INVITATION_EMAIL_SUBJECT,
-        f"<p>Hola {escape(name)},</p>"
-        "<p>Gestinem pone a tu disposición una nueva aplicación para facilitar y "
-        "mejorar la comunicación con el despacho.</p>"
-        "<p>Su objetivo principal es reforzar la privacidad de las comunicaciones y "
-        "permitir el envío de documentos que contengan información personal o "
-        "confidencial dentro de un entorno privado y seguro.</p>"
-        "<p>Además, las consultas y solicitudes generales enviadas mediante la "
-        "aplicación podrán ser atendidas por el personal autorizado del despacho, "
-        "independientemente del día o la hora en que se reciban. De esta forma "
-        "evitaremos que un mensaje o una petición quede pendiente porque la persona "
-        "que revisa habitualmente el teléfono de WhatsApp no se encuentre disponible "
-        "en ese momento.</p>"
-        "<p>La aplicación se mejorará progresivamente para ofrecer a nuestros clientes "
-        "una plataforma de facturación ágil y gratuita. También permitirá solicitar "
-        "certificados de la Seguridad Social y de la Agencia Tributaria, consultar y "
-        "obtener copias de sus impuestos y acceder a otros documentos y servicios del "
-        "despacho en cualquier momento.</p>"
-        "<p>Las aplicaciones para Android y Apple se encuentran actualmente en fase "
-        "de publicación y todavía no están disponibles en sus respectivas tiendas. "
-        "Mientras finaliza este proceso, puedes acceder a Gestinem directamente desde "
-        "el navegador de tu móvil, tableta u ordenador, sin necesidad de instalar "
-        "ninguna aplicación.</p>"
-        f"<p><a href=\"{escape(url)}\" style=\"display:inline-block;padding:12px 20px;"
+def invitation_manual_url() -> str:
+    base = get_settings().messaging_public_base_url.rstrip("/")
+    return f"{base}/api/v1/messaging/public/client-manual"
+
+
+def _invitation_values(value: str, name: str) -> str:
+    return (
+        value.replace("{{nombre_cliente}}", name)
+        .replace("{{horas_caducidad}}", "72")
+    )
+
+
+def _editable_text_html(value: str) -> str:
+    """Convierte texto administrable a HTML seguro con listas sencillas."""
+    blocks: list[str] = []
+    for raw_block in re.split(r"\n\s*\n", value.strip()):
+        lines = [line.strip() for line in raw_block.splitlines() if line.strip()]
+        if not lines:
+            continue
+        if all(line.startswith("- ") for line in lines):
+            blocks.append(
+                "<ul>" + "".join(
+                    f"<li>{escape(line[2:].strip())}</li>" for line in lines
+                ) + "</ul>"
+            )
+        else:
+            blocks.append("<p>" + "<br>".join(escape(line) for line in lines) + "</p>")
+    return "".join(blocks)
+
+
+def render_invitation(
+    name: str,
+    url: str,
+    *,
+    content: InvitationEmailContent | None = None,
+    manual_url: str = "",
+) -> tuple[str, str, str]:
+    selected = content or DEFAULT_INVITATION_EMAIL_CONTENT
+    manual_url = manual_url or invitation_manual_url()
+    subject = _invitation_values(selected.subject, name).strip()
+    intro = _invitation_values(selected.intro_text, name)
+    closing = _invitation_values(selected.closing_text, name)
+    safe_url = escape(url, quote=True)
+    safe_manual_url = escape(manual_url, quote=True)
+    html = (
+        _editable_text_html(intro)
+        + f'<p><a href="{safe_url}" style="display:inline-block;padding:12px 20px;'
         "background:#0759af;color:#ffffff;text-decoration:none;border-radius:6px;"
-        "font-weight:bold\">Activar mi cuenta y acceder a Gestinem</a></p>"
-        f"<p>Si el botón no funciona, copia y pega este enlace en tu navegador:<br>"
+        'font-weight:bold">Activar mi cuenta y acceder a Gestinem</a></p>'
+        + f"<p>Si el botón no funciona, copia y pega este enlace en tu navegador:<br>"
         f"{escape(url)}</p>"
-        "<p>Este enlace es personal y estará disponible durante 72 horas.</p>"
-        "<p>Te informamos también de que, a partir del <strong>1 de octubre de "
-        "2026</strong>, la cuenta de WhatsApp del despacho quedará desactivada. Desde "
-        "esa fecha no se atenderán comunicaciones enviadas por WhatsApp.</p>"
-        "<p>Las comunicaciones deberán realizarse mediante la aplicación Gestinem o a "
-        "través de las siguientes direcciones:</p>"
-        "<ul>"
-        "<li><strong>oficina@gestinem.es:</strong> consultas y comunicaciones con el "
-        "departamento contable y fiscal.</li>"
-        "<li><strong>laboral@gestinem.es:</strong> consultas y comunicaciones "
-        "relacionadas con el ámbito laboral.</li>"
-        "<li><strong>documentacion@gestinem.es:</strong> envío de la documentación "
-        "correspondiente a los trimestres, como se viene haciendo hasta ahora.</li>"
-        "</ul>"
-        "<p>También tendrás siempre la posibilidad de contactar directamente conmigo, "
-        "como responsable del despacho, mediante mi correo electrónico personal o "
-        "enviándome un mensaje privado desde la aplicación. Los mensajes privados "
-        "únicamente serán accesibles para su destinatario.</p>"
-        "<p>Adjuntamos a este correo el manual de acceso y utilización de Gestinem, "
-        "donde encontrarás los pasos necesarios para activar tu cuenta y comenzar a "
-        "utilizarla desde el navegador.</p>"
-        "<p>Gracias por tu colaboración.</p>"
-        "<p>Un saludo,<br><strong>Gestinem</strong><br>Gestión Fiscal, Contable y "
-        "Laboral</p>",
+        + f'<p><a href="{safe_manual_url}" style="display:inline-block;padding:10px 18px;'
+        "border:1px solid #0759af;color:#0759af;text-decoration:none;border-radius:6px;"
+        'font-weight:bold">Consultar el manual de Gestinem</a></p>'
+        + _editable_text_html(closing)
+    )
+    text = (
+        f"{intro.strip()}\n\n"
+        f"Activa tu cuenta y accede a Gestinem desde este enlace:\n{url}\n\n"
+        f"Consulta el manual actualizado de Gestinem:\n{manual_url}\n\n"
+        f"{closing.strip()}"
+    )
+    return subject, html, text
+
+
+def send_invitation(
+    to: str,
+    name: str,
+    url: str,
+    *,
+    content: InvitationEmailContent | None = None,
+    manual_url: str = "",
+) -> bool:
+    cfg = get_settings()
+    subject, html, text = render_invitation(
+        name, url, content=content, manual_url=manual_url,
+    )
+    return send_mail(
+        to,
+        subject,
+        html,
         sender=cfg.messaging_graph_invitation_from,
-        attachments=[manual],
-        text=(
-            f"Hola {name},\n\n"
-            "Gestinem pone a tu disposición una nueva aplicación para facilitar y "
-            "mejorar la comunicación con el despacho.\n\n"
-            "Su objetivo principal es reforzar la privacidad de las comunicaciones y "
-            "permitir el envío de documentos con información personal o confidencial "
-            "dentro de un entorno privado y seguro. Las solicitudes generales podrán "
-            "ser atendidas por el personal autorizado del despacho, con independencia "
-            "del día o la hora en que se reciban.\n\n"
-            "La aplicación se mejorará progresivamente para ofrecer una plataforma de "
-            "facturación ágil y gratuita, solicitar certificados de la Seguridad "
-            "Social y de la Agencia Tributaria, obtener copias de impuestos y acceder "
-            "a otros documentos y servicios en cualquier momento.\n\n"
-            "Las aplicaciones para Android y Apple están en fase de publicación y aún "
-            "no están disponibles en sus respectivas tiendas. Mientras tanto, puedes "
-            "acceder desde el navegador de tu móvil, tableta u ordenador, sin instalar "
-            "ninguna aplicación.\n\n"
-            f"Activa tu cuenta y accede a Gestinem desde este enlace:\n{url}\n\n"
-            "El enlace es personal y estará disponible durante 72 horas.\n\n"
-            "A partir del 1 de octubre de 2026, la cuenta de WhatsApp del despacho "
-            "quedará desactivada y no se atenderán comunicaciones por esa vía.\n\n"
-            "Canales de correo:\n"
-            "- oficina@gestinem.es: departamento contable y fiscal.\n"
-            "- laboral@gestinem.es: ámbito laboral.\n"
-            "- documentacion@gestinem.es: documentación de los trimestres.\n\n"
-            "También podrás contactar directamente conmigo mediante mi correo "
-            "electrónico personal o un mensaje privado desde la aplicación. Los "
-            "mensajes privados únicamente serán accesibles para su destinatario.\n\n"
-            "Adjuntamos el manual de acceso y utilización de Gestinem.\n\n"
-            "Gracias por tu colaboración.\n\n"
-            "Un saludo,\nGestinem\nGestión Fiscal, Contable y Laboral"
-        ),
+        text=text,
     )
 
 

@@ -944,7 +944,7 @@ def test_invitacion_https_entrega_deep_link_y_token_a_accept_invite(tmp_path, mo
     monkeypatch.setattr(messaging_api, "mail_configured", lambda: True)
     monkeypatch.setattr(
         messaging_api, "send_invitation",
-        lambda email, name, url: sent.append((email, name, url)),
+        lambda email, name, url, **_kwargs: sent.append((email, name, url)),
     )
 
     response = client.post(

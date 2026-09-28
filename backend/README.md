@@ -107,6 +107,11 @@ Railway despues de verificar el primer despliegue con los nombres nuevos.
 - `MESSAGING_STORAGE_DIR`: almacenamiento local de desarrollo.
 - `MESSAGING_AZURE_CONNECTION_STRING` y `MESSAGING_AZURE_CONTAINER`:
   almacenamiento temporal privado de adjuntos en produccion.
+- `MESSAGING_CONTENT_AZURE_CONNECTION_STRING` y
+  `MESSAGING_CONTENT_AZURE_CONTAINER`: almacenamiento permanente del manual
+  administrable. La conexion reutiliza `MESSAGING_AZURE_CONNECTION_STRING` si
+  no se indica otra; el contenedor predeterminado es `mensajeria-contenido`.
+- `MESSAGING_CONTENT_STORAGE_DIR`: respaldo local exclusivo de desarrollo.
 - `MESSAGING_ATTACHMENT_DAYS`: retencion temporal, minimo 15 y 30 por defecto.
 - `MESSAGING_GRAPH_*`: credenciales Graph y buzones de envio.
 
