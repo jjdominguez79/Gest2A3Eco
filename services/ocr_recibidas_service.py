@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from procesos.facturas_recibidas import generar_recibidas_suenlace
+from services.estado_facturas_recibidas import EXPORTADA_A3, estado_efectivo
 
 
 def resolve_recibidas_template(gestor, codigo: str, ejercicio: int) -> dict:
@@ -145,13 +146,21 @@ def generate_suenlace_for_docs(gestor, codigo: str, ejercicio: int, docs: list[d
     )
 
 
-def mark_docs_as_generated(gestor, docs: list[dict], *, estado_contable: str = "contabilizada", fecha_generacion: str | None = None) -> None:
+def mark_docs_as_generated(
+    gestor, docs: list[dict], *, estado_contable: str = EXPORTADA_A3,
+    fecha_generacion: str | None = None,
+) -> None:
+    """Marca la exportacion sin confundirla con el asiento confirmado en A3."""
     timestamp = fecha_generacion or datetime.now().strftime("%Y-%m-%d %H:%M")
     for doc in docs:
         payload = dict(doc)
         payload["generada"] = True
         payload["fecha_generacion"] = timestamp
-        payload["estado_contable"] = estado_contable
+        payload["estado_contable"] = estado_efectivo(
+            estado=estado_contable,
+            generada=True,
+            numero_asiento=payload.get("numero_asiento"),
+        )
         gestor.upsert_factura_recibida_doc(payload)
         # El documento de la bandeja OCR comparte el mismo identificador que
         # su proyeccion contable. Mantener ambas tablas sincronizadas hace que
@@ -159,7 +168,7 @@ def mark_docs_as_generated(gestor, docs: list[dict], *, estado_contable: str = "
         try:
             documento_ocr = gestor.get_documento_ocr(str(payload.get("id") or ""))
             if documento_ocr:
-                documento_ocr["estado"] = estado_contable
+                documento_ocr["estado"] = payload["estado_contable"]
                 gestor.upsert_documento_ocr(documento_ocr)
         except Exception:
             # La proyeccion contable debe seguir siendo util aunque se use una

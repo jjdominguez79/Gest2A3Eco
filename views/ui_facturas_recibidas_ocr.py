@@ -136,6 +136,7 @@ BANDEJAS = [
     ("error",                  "Errores"),
     ("pendiente_revision",     "Pte. revision"),
     ("pendiente_contabilizar", "Pte. contabilizar"),
+    ("exportada_a3",           "Exportadas a A3"),
     ("contabilizada",          "Contabilizadas"),
 ]
 
@@ -367,7 +368,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                     "Documento bloqueado. Para corregirlo, devuelvelo desde Contabilidad."
                 )
             ).pack(side="left", padx=2)
-        elif estado == "contabilizada":
+        elif estado == "exportada_a3":
             ttk.Label(
                 bar, text="Exportada a suenlace.dat. Importala en A3 y captura el asiento para confirmarla."
             ).pack(side="left", padx=2)
@@ -375,6 +376,10 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                 bar, text="Capturar asiento de A3", style="Primary.TButton",
                 command=self._capturar_asiento_a3,
             ).pack(side="left", padx=6)
+        elif estado == "contabilizada":
+            ttk.Label(
+                bar, text="Asiento confirmado en A3ECO."
+            ).pack(side="left", padx=2)
 
     def _build_editor(self, parent: ttk.Frame):
         """Panel fiscal inspirado en el flujo de validacion de la referencia."""
@@ -1566,7 +1571,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             self._ajustar_preview_al_documento()
 
         ventana.after_idle(ajustar_paneles_iniciales)
-        if estado_revision in ("pendiente_contabilizar", "contabilizada"):
+        if estado_revision in ("pendiente_contabilizar", "exportada_a3", "contabilizada"):
             self._btn_revision_guardar.configure(state="disabled")
             self._btn_revision_validar.configure(state="disabled")
             self._btn_revision_reprocesar.configure(state="disabled")
@@ -2326,7 +2331,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         """Lee desde A3 el numero de asiento de las facturas exportadas."""
         from services.import_a3_empresa import leer_numero_asiento_desde_a3
 
-        tv = self._tvs.get("contabilizada")
+        tv = self._tvs.get("exportada_a3")
         seleccionados = list(tv.selection()) if tv else []
         if not seleccionados:
             messagebox.showwarning(
@@ -2341,7 +2346,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         actualizadas, no_encontradas = [], []
         for documento_id in seleccionados:
             doc = self._gestor.get_factura_recibida_doc(documento_id)
-            if not doc or doc.get("estado_contable") != "contabilizada":
+            if not doc or doc.get("estado_contable") not in {"exportada_a3", "contabilizada"}:
                 no_encontradas.append(str((doc or {}).get("numero_factura") or documento_id))
                 continue
             numero = str(doc.get("numero_factura") or "").strip()[:10]

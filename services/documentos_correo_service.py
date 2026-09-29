@@ -1,4 +1,4 @@
-"""Entrada manual de adjuntos de Microsoft 365 a la captura documental."""
+"""Consulta de adjuntos de Microsoft 365 y entrada al archivo documental."""
 from __future__ import annotations
 
 import base64
@@ -11,8 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from services.backend_mail_service import BackendMailService
-from services.ocr.ocr_service import OcrService
-from utils.utilidades import get_default_received_documents_dir
+from services.gestion_documental_service import GestionDocumentalService
 
 
 SUPPORTED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
@@ -131,55 +130,45 @@ class DocumentosCorreoService:
         self, *, codigo_empresa: str, ejercicio: int, mensaje_id: str,
         mailbox: str, graph_message_id: str, attachment_ids: list[str], usuario: str = "",
     ) -> ImportSummary:
-        summary = ImportSummary()
-        ocr = OcrService(self._gestor, codigo_empresa, ejercicio, usuario=usuario)
-        for attachment_id in dict.fromkeys(attachment_ids):
-            try:
-                item = self._graph.download_attachment(
-                    mailbox=mailbox, message_id=graph_message_id,
-                    attachment_id=attachment_id,
-                )
-                name = str(item.get("name") or "adjunto").strip() or "adjunto"
-                suffix = Path(name).suffix.lower()
-                if suffix not in SUPPORTED_EXTENSIONS:
-                    summary.unsupported.append(name)
-                    continue
-                content = base64.b64decode(item["contentBytes"], validate=True)
-                digest = hashlib.sha256(content).hexdigest()
-                if self._gestor.buscar_documento_ocr_por_hash(codigo_empresa, digest):
-                    summary.duplicates.append(name)
-                    continue
-                destination = self._destination(codigo_empresa, ejercicio, name)
-                destination.write_bytes(content)
-                result = ocr.procesar_archivo(str(destination))
-                if result.get("estado") == "duplicado":
-                    destination.unlink(missing_ok=True)
-                    summary.duplicates.append(name)
-                    continue
-                self._gestor.registrar_adjunto_comunicacion(
-                    mensaje_id, destination, int(item.get("size") or len(content)),
-                )
-                summary.imported.append(name)
-            except Exception as exc:
-                summary.errors.append(f"{attachment_id}: {exc}")
-        return summary
+        """Archiva la seleccion y deja que el archivo documental encole el OCR.
 
-    @staticmethod
-    def _destination(codigo_empresa: str, ejercicio: int, filename: str) -> Path:
-        safe = DocumentosCorreoService._safe_filename(filename)
-        digits = "".join(ch for ch in str(codigo_empresa) if ch.isdigit())
-        company = f"E{digits.zfill(5)[:5]}"
-        directory = (
-            get_default_received_documents_dir() / company
-            / str(ejercicio) / "Facturas_recibidas"
+        Esta fachada se conserva para las pantallas de Comunicaciones, pero ya
+        no mantiene un segundo repositorio ni ejecuta un flujo OCR paralelo.
+        """
+        selected = set(dict.fromkeys(str(value) for value in attachment_ids))
+        attachments = self.listar_adjuntos(
+            mailbox=mailbox, graph_message_id=graph_message_id,
         )
-        directory.mkdir(parents=True, exist_ok=True)
-        candidate = directory / safe
-        index = 2
-        while candidate.exists():
-            candidate = directory / f"{Path(safe).stem}_{index}{Path(safe).suffix}"
-            index += 1
-        return candidate
+        decisions = []
+        unsupported = []
+        for item in attachments:
+            attachment_id = str(item.get("id") or "")
+            if attachment_id not in selected:
+                continue
+            name = str(item.get("name") or "adjunto").strip() or "adjunto"
+            if Path(name).suffix.lower() not in SUPPORTED_EXTENSIONS:
+                unsupported.append(name)
+                continue
+            decisions.append({
+                "attachment_id": attachment_id,
+                "name": name,
+                "categoria_id": "facturas_recibidas",
+            })
+
+        archived = GestionDocumentalService(
+            self._gestor, graph=self._graph,
+        ).archivar_adjuntos_correo(
+            codigo_empresa=codigo_empresa, ejercicio=ejercicio,
+            mailbox=mailbox, graph_message_id=graph_message_id,
+            remitente="", asunto="", decisiones=decisions, usuario=usuario,
+            comunicacion_id=mensaje_id,
+        )
+        return ImportSummary(
+            imported=archived.saved,
+            duplicates=archived.duplicates,
+            unsupported=unsupported,
+            errors=archived.errors,
+        )
 
     @staticmethod
     def _safe_filename(filename: str) -> str:

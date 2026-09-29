@@ -28,14 +28,16 @@ class ComunicacionesRepository:
                     cursor = conn.execute(
                         """
                         INSERT INTO comunicaciones_sin_asignar
-                          (graph_message_id,mailbox,remitente,asunto,fecha,cuerpo_html,
+                          (graph_message_id,mailbox,etiqueta,remitente,asunto,fecha,cuerpo_html,
                            payload_json,sugerencia_codigo_empresa,sugerencia_nombre,
                            responsable_usuario_id,responsable_nombre,created_at)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,NULL,%s)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,NULL,%s)
                         ON CONFLICT DO NOTHING
                         """,
                         (
-                            data["graph_message_id"], mailbox, data["remitente"],
+                            data["graph_message_id"], mailbox,
+                            data.get("mailbox_label") or label or None,
+                            data["remitente"],
                             data["asunto"], data["fecha"], data["cuerpo_html"],
                             json.dumps(data, ensure_ascii=False),
                             (suggestion or {}).get("codigo"),

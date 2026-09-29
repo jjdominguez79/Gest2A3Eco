@@ -25,6 +25,10 @@ El repositorio documental permanece en
 `/volume1/Doc_Compartidos/Gest2A3Eco`, visible desde Windows como
 `\\GestinemMain\Doc_Compartidos\Gest2A3Eco`.
 
+`gest2a3eco-mail-sync` lee los buzones compartidos `oficina@gestinem.es` y
+`documentacion@gestinem.es` como fuentes separadas. Ambos aparecen en
+`GRAPH_MAIL_SOURCES` y mantienen su propio cursor delta.
+
 ## Generar los paquetes
 
 Desde la raiz del repositorio, en PowerShell:

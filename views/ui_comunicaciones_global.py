@@ -179,14 +179,15 @@ class ReassignCommunicationDialog(tk.Toplevel):
 
 
 class AttachmentSelectionDialog(tk.Toplevel):
-    """Seleccion multiple de adjuntos antes de incorporarlos al OCR."""
-    def __init__(self, parent, attachments: list[dict], on_save):
+    """Seleccion multiple antes de archivar y, si procede, encolar OCR."""
+    def __init__(self, parent, attachments: list[dict], on_save=None):
         super().__init__(parent)
         self.title("Adjuntos del correo")
         self.transient(parent.winfo_toplevel())
         self.grab_set()
         self._attachments = attachments
         self._on_save = on_save
+        self.result: list[str] | None = None
         self._selected = {str(item.get("id")): tk.BooleanVar(value=True) for item in attachments}
         frame = ttk.Frame(self, padding=12)
         frame.pack(fill="both", expand=True)
@@ -206,7 +207,9 @@ class AttachmentSelectionDialog(tk.Toplevel):
         if not selected:
             messagebox.showwarning("Documentacion", "Marca al menos un adjunto.", parent=self)
             return
-        self._on_save(selected)
+        self.result = selected
+        if callable(self._on_save):
+            self._on_save(selected)
         self.destroy()
 
 
@@ -1774,7 +1777,7 @@ class UIComunicacionesGlobal(ttk.Frame):
 
     def _show_import_summary(self, summary):
         self.winfo_toplevel().configure(cursor="")
-        parts = [f"Incorporados a OCR: {len(summary.imported)}"]
+        parts = [f"Incorporados a Documentacion/OCR: {len(summary.imported)}"]
         if summary.duplicates:
             parts.append(f"Duplicados omitidos: {len(summary.duplicates)}")
         if summary.unsupported:

@@ -2,7 +2,7 @@
 
 **Estado:** operativo.
 
-**Ultima revision contra el codigo:** 2026-08-18.
+**Ultima revision contra el codigo:** 2026-09-29.
 
 ## Flujo funcional
 
@@ -16,6 +16,9 @@ PDF o imagen, seleccionado o arrastrado
   -> revision manual de cabecera, IVA y retenciones
   -> validacion y proyeccion a Contabilidad
   -> generacion de suenlace.dat desde Contabilidad
+  -> estado exportada_a3
+  -> captura del numero de asiento A3
+  -> estado contabilizada
 ```
 
 La pantalla OCR no genera directamente `suenlace.dat`. Una factura validada se
@@ -79,7 +82,15 @@ Contabilidad.
 
 `facturas_recibidas_docs` y `facturas_emitidas_docs` son las proyecciones
 consumidas por Contabilidad y por el generador A3. No deben utilizarse como
-modelo OCR primario.
+modelo OCR primario. Cuando existe un archivo definitivo,
+`documentos_archivo` es la fuente funcional y
+`facturas_recibidas_docs.documento_archivo_id` conserva el enlace inverso. Una
+migracion idempotente reconcilia asientos y exportaciones historicas.
+
+Los documentos pueden proceder de los dos buzones compartidos, mensajeria
+Flutter o carga manual. Tras clasificarse usan el mismo archivo, hash y cola OCR
+durable. La especificacion completa esta en
+[`circuito_documentos_recibidos.md`](circuito_documentos_recibidos.md).
 
 ## Configuracion
 

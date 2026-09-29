@@ -36,6 +36,8 @@ class ControlFacturasGlobalController:
                 return "Pendiente revision"
             if row.get("estado_contable") == "pendiente_contabilizar":
                 return "Pendiente contabilizar"
+            if row.get("estado_contable") == "exportada_a3":
+                return "Exportada a A3 · sin asiento"
             if row.get("estado_contable") == "contabilizada":
                 return "Contabilizada"
         estado = str(row.get("estado_contable") or "").strip().lower()

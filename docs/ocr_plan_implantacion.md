@@ -2,7 +2,7 @@
 
 **Inicio del plan:** 2026-06-09.
 
-**Estado revisado:** 2026-08-18.
+**Estado revisado:** 2026-09-29.
 
 **Nota:** este documento conserva la evolucion del modulo. La descripcion
 operativa vigente esta en [`ocr_estado_actual.md`](ocr_estado_actual.md).
@@ -70,7 +70,11 @@ Documento
 El entrenamiento y la publicacion de modelos siguen siendo tareas controladas
 en Azure Studio; las correcciones no modifican automaticamente el modelo.
 
-## Trabajo pendiente
+## Evolucion opcional
+
+El circuito funcional descrito en este plan esta implantado. Las siguientes
+lineas son mejoras de producto futuras, no deuda necesaria para operar el flujo
+actual:
 
 - Medir precision por proveedor, tipo de documento, motor y campo.
 - Ampliar la extraccion de lineas de articulo y monedas cuando el flujo contable

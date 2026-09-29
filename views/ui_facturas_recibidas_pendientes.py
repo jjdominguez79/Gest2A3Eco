@@ -11,6 +11,7 @@ from tkinter import messagebox, ttk
 from services.facturas_recibidas_pendientes_service import (
     FacturasRecibidasPendientesService,
 )
+from services.estado_facturas_recibidas import etiqueta_estado
 
 
 class UIFacturasRecibidasPendientes(ttk.Frame):
@@ -385,9 +386,15 @@ class UIFacturasRecibidasPendientes(ttk.Frame):
 
     @staticmethod
     def _exportada_desde_ocr(row: dict) -> bool:
-        return str(row.get("estado_documento_ocr") or "").lower() == "contabilizada" or str(
-            row.get("estado_contable_ocr") or ""
-        ).lower() == "contabilizada"
+        estados = {
+            str(row.get("estado_documento_ocr") or "").lower(),
+            str(row.get("estado_contable_ocr") or "").lower(),
+            str(row.get("estado_contable") or "").lower(),
+        }
+        return bool(estados & {"exportada", "exportada_a3"}) or (
+            "contabilizada" in estados
+            and not str(row.get("numero_asiento") or "").strip()
+        )
 
     @classmethod
     def _ocr_state_label(cls, row: dict) -> str:
@@ -418,16 +425,10 @@ class UIFacturasRecibidasPendientes(ttk.Frame):
     def _accounting_state_label(
         value, *, metodo: str = "", exportada_ocr: bool = False,
     ) -> str:
-        metodo = str(metodo or "").strip().lower()
-        if value == "contabilizada":
-            if metodo == "ocr_suenlace":
-                return "OCR/SUENLACE · asiento confirmado en A3"
-            return "Asiento confirmado en A3"
-        if value == "contabilizada_manual":
-            return "Manual en A3 (papel)"
-        if exportada_ocr:
-            return "OCR/SUENLACE · pendiente de asiento A3"
-        return "Pendiente de contabilizar"
+        estado = "exportada_a3" if exportada_ocr else str(value or "")
+        if estado == "pendiente":
+            return "Pendiente de contabilizar"
+        return etiqueta_estado(estado, metodo=metodo)
 
 
 class ContabilizacionManualDialog(tk.Toplevel):

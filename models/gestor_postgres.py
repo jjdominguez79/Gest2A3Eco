@@ -458,6 +458,7 @@ class GestorPostgres(GestorBase):
                 "TEXT NOT NULL DEFAULT 'pendiente'",
             ),
             ("documentos_archivo", "metodo_contabilizacion", "TEXT"),
+            ("documentos_archivo", "buzon_origen", "TEXT"),
             ("documentos_archivo", "contabilizada_manualmente_at", "TEXT"),
             ("documentos_archivo", "contabilizada_manualmente_por", "TEXT"),
             ("documentos_archivo", "fecha_contable", "TEXT"),
@@ -477,6 +478,7 @@ class GestorPostgres(GestorBase):
             ("facturas_recibidas_docs", "pagada", "INTEGER NOT NULL DEFAULT 0"),
             ("facturas_recibidas_docs", "suplidos", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
             ("facturas_recibidas_docs", "cuenta_suplidos", "TEXT"),
+            ("facturas_recibidas_docs", "documento_archivo_id", "TEXT"),
             ("facturas_emitidas_ocr", "subcuenta_cliente", "TEXT"),
             ("facturas_emitidas_ocr", "cuenta_ingreso", "TEXT"),
             ("facturas_emitidas_ocr", "cuenta_iva", "TEXT"),
@@ -582,6 +584,7 @@ class GestorPostgres(GestorBase):
               ,to_regclass('public.idx_ocr_trabajo_archivo_activo') AS indice_ocr_trabajo_archivo
               ,to_regclass('public.ocr_modelos_locales') AS tabla_ocr_modelos
               ,to_regclass('public.idx_ocr_modelos_empresa') AS indice_ocr_modelos
+              ,to_regclass('public.idx_facturas_recibidas_docs_archivo') AS indice_recibidas_archivo
             """
         ).fetchone()
         tabla_permisos_existe = bool(objetos and objetos["tabla_permisos"])
@@ -614,6 +617,9 @@ class GestorPostgres(GestorBase):
         )
         tabla_ocr_modelos_existe = bool(objetos and objetos.get("tabla_ocr_modelos"))
         indice_ocr_modelos_existe = bool(objetos and objetos.get("indice_ocr_modelos"))
+        indice_recibidas_archivo_existe = bool(
+            objetos and objetos.get("indice_recibidas_archivo")
+        )
         tablas_faltantes = {
             tabla
             for tabla, existe in (
@@ -665,8 +671,10 @@ class GestorPostgres(GestorBase):
             and indice_ocr_trabajo_archivo_existe
             and tabla_ocr_modelos_existe
             and indice_ocr_modelos_existe
+            and indice_recibidas_archivo_existe
         ):
             self._seed_categorias_documentales()
+            self._backfill_estado_facturas_recibidas()
             self.conn.commit()
             return
 
@@ -868,6 +876,12 @@ class GestorPostgres(GestorBase):
             self.conn.execute(
                 f"ALTER TABLE {tabla} ADD COLUMN IF NOT EXISTS {columna} {tipo}"
             )
+        if not indice_recibidas_archivo_existe:
+            self.conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_facturas_recibidas_docs_archivo "
+                "ON facturas_recibidas_docs(documento_archivo_id) "
+                "WHERE documento_archivo_id IS NOT NULL"
+            )
         self.conn.execute(
             "UPDATE empresas SET logo_path=NULL "
             "WHERE LOWER(TRIM(COALESCE(logo_path,''))) IN ('none','null')"
@@ -982,6 +996,7 @@ class GestorPostgres(GestorBase):
                   categoria_id TEXT NOT NULL,nombre_original TEXT NOT NULL,
                   nombre_archivo TEXT NOT NULL,ruta TEXT NOT NULL,hash_archivo TEXT NOT NULL,
                   tamano INTEGER,mime_type TEXT,origen TEXT NOT NULL DEFAULT 'correo',
+                  buzon_origen TEXT,
                   comunicacion_id TEXT,mensaje_id TEXT,graph_message_id TEXT,
                   graph_attachment_id TEXT,correo_remitente TEXT,correo_asunto TEXT,
                   estado TEXT NOT NULL DEFAULT 'archivado',ocr_documento_id TEXT,
@@ -1024,7 +1039,52 @@ class GestorPostgres(GestorBase):
             "OR TRIM(metodo_contabilizacion)=''"
         )
         self._seed_categorias_documentales()
+        self._backfill_estado_facturas_recibidas()
         self.conn.commit()
+
+    def _backfill_estado_facturas_recibidas(self) -> None:
+        """Migra de forma idempotente el estado duplicado de OCR al archivo."""
+        now = self._utc_now()
+        self.conn.execute(
+            """
+            UPDATE facturas_recibidas_docs fd
+               SET documento_archivo_id=d.id
+              FROM documentos_archivo d
+             WHERE d.ocr_documento_id=fd.id
+               AND d.codigo_empresa=fd.codigo_empresa
+               AND (fd.documento_archivo_id IS NULL
+                    OR TRIM(fd.documento_archivo_id)='')
+            """
+        )
+        self.conn.execute(
+            """
+            UPDATE documentos_archivo d
+               SET estado_contable=CASE
+                     WHEN NULLIF(TRIM(fd.numero_asiento),'') IS NOT NULL
+                       OR NULLIF(TRIM(d.numero_asiento),'') IS NOT NULL
+                       THEN 'contabilizada'
+                     WHEN COALESCE(fd.generada,0)<>0
+                       THEN 'exportada_a3'
+                     WHEN fd.estado_contable='pendiente_contabilizar'
+                       THEN 'pendiente_contabilizar'
+                     ELSE d.estado_contable END,
+                   metodo_contabilizacion=CASE
+                     WHEN COALESCE(fd.generada,0)<>0
+                       OR NULLIF(TRIM(fd.numero_asiento),'') IS NOT NULL
+                       OR NULLIF(TRIM(d.numero_asiento),'') IS NOT NULL
+                     THEN 'ocr_suenlace' ELSE d.metodo_contabilizacion END,
+                   numero_asiento=COALESCE(
+                     NULLIF(TRIM(fd.numero_asiento),''),d.numero_asiento
+                   ),
+                   fecha_contable=COALESCE(NULLIF(fd.fecha_asiento,''),d.fecha_contable),
+                   updated_at=%s
+              FROM facturas_recibidas_docs fd
+             WHERE d.ocr_documento_id=fd.id
+               AND d.codigo_empresa=fd.codigo_empresa
+               AND d.estado_contable<>'contabilizada_manual'
+            """,
+            (now,),
+        )
 
     def _asegurar_esquema_notificaciones_global(self) -> None:
         row = self.conn.execute(

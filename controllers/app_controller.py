@@ -249,8 +249,22 @@ class AppController:
 
         def worker():
             try:
-                rows = self._gestor.listar_adjuntos_mensajeria({"solo_pendientes": True})
-                nuevos = [row for row in rows if not row.get("aviso_mostrado")]
+                if hasattr(self._gestor, "listar_entradas_documentales"):
+                    rows = self._gestor.listar_entradas_documentales(
+                        "", solo_pendientes=True,
+                    )
+                    # Los correos ya tienen su aviso propio. Evitar duplicarlo
+                    # aqui, manteniendo el contador global realmente unificado.
+                    nuevos = [
+                        row for row in rows
+                        if row.get("canal") == "mensajeria"
+                        and not row.get("aviso_mostrado")
+                    ]
+                else:
+                    rows = self._gestor.listar_adjuntos_mensajeria(
+                        {"solo_pendientes": True},
+                    )
+                    nuevos = [row for row in rows if not row.get("aviso_mostrado")]
                 error = None
             except Exception as exc:
                 rows, nuevos, error = [], [], exc
@@ -268,7 +282,7 @@ class AppController:
         if self._attachment_poll_stopped:
             return
         if error is not None:
-            LOG.warning("No se pudieron comprobar adjuntos de mensajeria: %s", error)
+            LOG.warning("No se pudo comprobar la entrada documental: %s", error)
         else:
             if self._attachment_status_callback is not None:
                 try:
@@ -311,7 +325,9 @@ class AppController:
                 details.append(f"Y {count - 3} mas...")
             for row in rows:
                 try:
-                    self._gestor.marcar_aviso_adjunto_mensajeria(row["id"])
+                    self._gestor.marcar_aviso_adjunto_mensajeria(
+                        str(row.get("entrada_id") or row["id"]),
+                    )
                 except Exception as exc:
                     LOG.warning(
                         "No se pudo marcar el aviso del adjunto %s: %s",
@@ -492,7 +508,7 @@ class AppController:
         self._show(self.build_comunicaciones_global)
 
     def open_adjuntos_mensajeria(self):
-        """Abre la bandeja global de documentos recibidos por mensajeria."""
+        """Abre la bandeja unica de entradas documentales."""
         from views.ui_adjuntos_mensajeria import UIAdjuntosMensajeria
 
         self._show(lambda parent: UIAdjuntosMensajeria(
@@ -501,6 +517,7 @@ class AppController:
             on_ir_gestion_documental=self._open_messaging_document_management,
             on_count_changed=self._attachment_status_callback,
             usuario_activo=str(getattr(self._session.user, "nombre", "") or ""),
+            usuario_id=int(getattr(self._session.user, "id", 0) or 0),
         ))
 
     def _open_messaging_document_management(self, codigo_empresa: str):

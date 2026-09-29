@@ -127,8 +127,16 @@ Los correos de `oficina@gestinem.es` y del buzon compartido
 `mail-sync`. La aplicacion de sincronizacion solo tiene permiso de lectura sobre
 esos dos buzones y no puede acceder al correo personal. Los mensajes se guardan
 en PostgreSQL sin descargar masivamente sus adjuntos; el usuario decide cuales
-incorpora al repositorio documental. El worker `messaging-sync` atiende por
-separado los adjuntos enviados desde Flutter.
+incorpora al repositorio documental. El worker `messaging-sync` descarga los
+adjuntos enviados desde Flutter. Correo y mensajeria aparecen en una unica
+bandeja de entradas pendientes y, tras clasificarse, convergen en
+`documentos_archivo`, con la misma deduplicacion y el mismo circuito OCR.
+
+Para facturas recibidas, `documentos_archivo` es la fuente funcional del estado.
+Generar `suenlace.dat` deja la factura como `exportada_a3`; solo la captura de un
+numero de asiento la convierte en `contabilizada`. El diseño y el backfill de
+datos historicos se describen en
+[`docs/circuito_documentos_recibidos.md`](docs/circuito_documentos_recibidos.md).
 
 ## Compilacion y publicacion
 

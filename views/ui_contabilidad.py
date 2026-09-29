@@ -60,10 +60,10 @@ class UIContabilidad(ttk.Frame):
         wrap = ttk.Frame(parent)
         wrap.pack(fill="both", expand=True, padx=10, pady=8)
         wrap.columnconfigure(1, weight=1)
-        wrap.rowconfigure(1, weight=1)
+        wrap.rowconfigure(2, weight=1)
 
         bar = ttk.Frame(wrap)
-        bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 2))
         ttk.Button(bar, text="Generar asiento", style="Primary.TButton", command=self.controller.generar_asiento).pack(side=tk.LEFT)
         ttk.Button(bar, text="Editar asiento", command=self.controller.editar_asiento).pack(side=tk.LEFT, padx=(6, 0))
         ttk.Button(bar, text="Exportar suenlace.dat", command=self.controller.exportar_suenlace).pack(side=tk.LEFT, padx=6)
@@ -72,9 +72,17 @@ class UIContabilidad(ttk.Frame):
             command=self.controller.devolver_a_ocr,
         ).pack(side=tk.LEFT, padx=(0, 6))
 
-        ttk.Label(bar, text="Mostrar").pack(side=tk.LEFT, padx=(14, 4))
+        bar2 = ttk.Frame(wrap)
+        bar2.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+        ttk.Label(
+            bar2,
+            text="Ctrl+clic / Shift+clic para seleccion multiple",
+            foreground="#888", font=("Segoe UI", 8),
+        ).pack(side=tk.LEFT)
+        ttk.Separator(bar2, orient="vertical").pack(side=tk.LEFT, fill="y", padx=8)
+        ttk.Label(bar2, text="Mostrar").pack(side=tk.LEFT, padx=(0, 4))
         self.cmb_filtro_recibidas = ttk.Combobox(
-            bar, values=("Pendientes", "Contabilizadas", "Todas"),
+            bar2, values=("Pendientes", "Exportadas a A3", "Contabilizadas", "Todas"),
             state="readonly", width=15,
         )
         self.cmb_filtro_recibidas.set("Pendientes")
@@ -98,11 +106,11 @@ class UIContabilidad(ttk.Frame):
         ):
             self.tv.heading(col, text=txt)
             self.tv.column(col, width=width, anchor="w")
-        self.tv.grid(row=1, column=0, sticky="nsw", padx=(0, 10))
+        self.tv.grid(row=2, column=0, sticky="nsw", padx=(0, 10))
         self.tv.bind("<<TreeviewSelect>>", lambda _e: self._on_select())
 
         right = ttk.Frame(wrap)
-        right.grid(row=1, column=1, sticky="nsew")
+        right.grid(row=2, column=1, sticky="nsew")
         right.columnconfigure(0, weight=1)
         right.rowconfigure(1, weight=1)
 
@@ -461,7 +469,7 @@ class UIContabilidad(ttk.Frame):
         self._docs = [
             doc for doc in (docs or [])
             if str(doc.get("estado_contable") or "") in {
-                "pendiente_contabilizar", "contabilizada",
+                "pendiente_contabilizar", "exportada_a3", "contabilizada",
             }
         ]
         self._aplicar_filtro_recibidas()
@@ -470,8 +478,12 @@ class UIContabilidad(ttk.Frame):
         self.tv.delete(*self.tv.get_children())
         filtro = self.cmb_filtro_recibidas.get()
         for doc in self._docs:
-            contabilizada = doc.get("estado_contable") == "contabilizada"
-            if filtro == "Pendientes" and contabilizada:
+            estado = str(doc.get("estado_contable") or "")
+            contabilizada = estado == "contabilizada"
+            exportada = estado == "exportada_a3"
+            if filtro == "Pendientes" and (contabilizada or exportada):
+                continue
+            if filtro == "Exportadas a A3" and not exportada:
                 continue
             if filtro == "Contabilizadas" and not contabilizada:
                 continue

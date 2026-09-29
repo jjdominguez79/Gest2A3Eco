@@ -6,6 +6,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from services.terceros_empresa_fiscal_service import validate_tercero_empresa_rel
+from services.estado_facturas_recibidas import (
+    CONTABILIZADA,
+    EXPORTADA_A3,
+    estado_efectivo,
+)
 from utils.validaciones import (
     inferir_pais_desde_identificacion,
     normalizar_codigo_empresa_a3,
@@ -147,6 +152,7 @@ CREATE TABLE IF NOT EXISTS facturas_recibidas (
 );
 CREATE TABLE IF NOT EXISTS facturas_recibidas_docs (
   id TEXT PRIMARY KEY,
+  documento_archivo_id TEXT,
   codigo_empresa TEXT NOT NULL,
   ejercicio INTEGER NOT NULL,
   tercero_id TEXT,
@@ -190,6 +196,9 @@ CREATE TABLE IF NOT EXISTS facturas_recibidas_docs (
 );
 CREATE INDEX IF NOT EXISTS idx_facturas_recibidas_docs_empresa
   ON facturas_recibidas_docs(codigo_empresa, ejercicio, fecha_asiento);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_facturas_recibidas_docs_archivo
+  ON facturas_recibidas_docs(documento_archivo_id)
+  WHERE documento_archivo_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS asientos_contables (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   documento_id TEXT NOT NULL,
@@ -480,6 +489,7 @@ CREATE TABLE IF NOT EXISTS documentos_archivo (
   tamano INTEGER,
   mime_type TEXT,
   origen TEXT NOT NULL DEFAULT 'correo',
+  buzon_origen TEXT,
   comunicacion_id TEXT,
   mensaje_id TEXT,
   graph_message_id TEXT,
@@ -3715,9 +3725,14 @@ class GestorBase:
         return [self._row_to_dict(row) for row in rows]
 
     def reconciliar_documentos_archivo_ocr(self, codigo_empresa: str) -> int:
-        """Libera vinculos OCR cuyo documento de trabajo ya fue eliminado."""
+        """Repara enlaces y proyecta el estado OCR sobre la fuente documental.
+
+        Tambien actua como backfill para instalaciones anteriores: una factura
+        con numero de asiento en OCR pasa a contabilizada en el archivo; una
+        factura solamente generada queda como exportada a A3.
+        """
         now = datetime.now().astimezone().isoformat(timespec="seconds")
-        cursor = self.conn.execute(
+        liberados = self.conn.execute(
             "UPDATE documentos_archivo SET ocr_documento_id=NULL,"
             "estado='archivado',updated_at=? "
             "WHERE codigo_empresa=? AND ocr_documento_id IS NOT NULL "
@@ -3725,8 +3740,53 @@ class GestorBase:
             "WHERE o.id=documentos_archivo.ocr_documento_id)",
             (now, codigo_empresa),
         )
+        # Consolida la clave explicita en la proyeccion contable.
+        self.conn.execute(
+            "UPDATE facturas_recibidas_docs SET documento_archivo_id=("
+            "SELECT d.id FROM documentos_archivo d "
+            "WHERE d.codigo_empresa=facturas_recibidas_docs.codigo_empresa "
+            "AND d.ocr_documento_id=facturas_recibidas_docs.id LIMIT 1) "
+            "WHERE codigo_empresa=? AND (documento_archivo_id IS NULL "
+            "OR TRIM(documento_archivo_id)='')",
+            (codigo_empresa,),
+        )
+        # El numero de asiento es la evidencia de contabilizacion. Esta regla
+        # corrige el caso historico observado en Gestinem: OCR tenia asiento y
+        # Gestion documental seguia pendiente.
+        self.conn.execute(
+            """
+            UPDATE documentos_archivo AS d
+               SET estado_contable=CASE
+                     WHEN (fd.numero_asiento IS NOT NULL
+                           AND TRIM(fd.numero_asiento)<>'')
+                       OR (d.numero_asiento IS NOT NULL
+                           AND TRIM(d.numero_asiento)<>'') THEN 'contabilizada'
+                     WHEN COALESCE(fd.generada,0)<>0 THEN 'exportada_a3'
+                     WHEN fd.estado_contable='pendiente_contabilizar'
+                          THEN 'pendiente_contabilizar'
+                     ELSE d.estado_contable END,
+                   metodo_contabilizacion=CASE
+                     WHEN COALESCE(fd.generada,0)<>0
+                       OR (fd.numero_asiento IS NOT NULL
+                           AND TRIM(fd.numero_asiento)<>'')
+                       OR (d.numero_asiento IS NOT NULL
+                           AND TRIM(d.numero_asiento)<>'')
+                     THEN 'ocr_suenlace' ELSE d.metodo_contabilizacion END,
+                   numero_asiento=CASE
+                     WHEN fd.numero_asiento IS NOT NULL
+                          AND TRIM(fd.numero_asiento)<>'' THEN fd.numero_asiento
+                     ELSE d.numero_asiento END,
+                   fecha_contable=COALESCE(NULLIF(fd.fecha_asiento,''),d.fecha_contable),
+                   updated_at=?
+              FROM facturas_recibidas_docs fd
+             WHERE d.codigo_empresa=?
+               AND d.ocr_documento_id=fd.id
+               AND d.estado_contable<>'contabilizada_manual'
+            """,
+            (now, codigo_empresa),
+        )
         self.conn.commit()
-        return max(0, int(cursor.rowcount or 0))
+        return max(0, int(liberados.rowcount or 0))
 
     def get_documento_archivo(self, documento_id: str) -> dict | None:
         row = self.conn.execute(
@@ -3743,21 +3803,22 @@ class GestorBase:
             """
             INSERT INTO documentos_archivo
               (id,codigo_empresa,ejercicio,categoria_id,nombre_original,
-               nombre_archivo,ruta,hash_archivo,tamano,mime_type,origen,
+               nombre_archivo,ruta,hash_archivo,tamano,mime_type,origen,buzon_origen,
                comunicacion_id,mensaje_id,graph_message_id,graph_attachment_id,
                correo_remitente,correo_asunto,estado,ocr_documento_id,
                estado_contable,contabilizada_manualmente_at,
                contabilizada_manualmente_por,fecha_contable,numero_asiento,
                observaciones_contables,ultima_impresion_at,ultima_impresion_por,
                veces_impresa,creado_por,created_at,updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 documento_id, datos["codigo_empresa"], int(datos["ejercicio"]),
                 datos["categoria_id"], datos["nombre_original"],
                 datos["nombre_archivo"], datos["ruta"], datos["hash_archivo"],
                 datos.get("tamano"), datos.get("mime_type"),
-                datos.get("origen") or "correo", datos.get("comunicacion_id"),
+                datos.get("origen") or "correo", datos.get("buzon_origen"),
+                datos.get("comunicacion_id"),
                 datos.get("mensaje_id"), datos.get("graph_message_id"),
                 datos.get("graph_attachment_id"), datos.get("correo_remitente"),
                 datos.get("correo_asunto"), datos.get("estado") or "archivado",
@@ -3802,6 +3863,11 @@ class GestorBase:
             "UPDATE documentos_archivo SET ocr_documento_id=?,estado='en_ocr',"
             "updated_at=? WHERE id=?", (ocr_documento_id, now, documento_id),
         )
+        self.conn.execute(
+            "UPDATE facturas_recibidas_docs SET documento_archivo_id=?,updated_at=? "
+            "WHERE id=?",
+            (documento_id, now, ocr_documento_id),
+        )
         self.conn.commit()
 
     def listar_facturas_recibidas_pendientes_global(self) -> list[dict]:
@@ -3845,6 +3911,65 @@ class GestorBase:
             """
         ).fetchall()
         return [self._row_to_dict(row) for row in rows]
+
+    def listar_entradas_documentales(
+        self, codigo_empresa: str = "", *, solo_pendientes: bool = True,
+    ) -> list[dict]:
+        """Vista unica de entradas aun no clasificadas, cualquiera que sea el canal."""
+        result: list[dict] = []
+        filtro = {"solo_pendientes": solo_pendientes}
+        if codigo_empresa:
+            filtro["codigo_empresa"] = codigo_empresa
+        for row in self.listar_adjuntos_mensajeria(filtro):
+            item = dict(row)
+            item.update({
+                "id": f"mensajeria:{row['id']}",
+                "entrada_id": str(row["id"]),
+                "canal": "mensajeria",
+                "origen_label": "Mensajeria de clientes",
+                "fecha": row.get("created_at") or "",
+            })
+            result.append(item)
+
+        clauses = ["descartado=0", "estado<>'gestionado'"]
+        params: list = []
+        if codigo_empresa:
+            clauses.append("sugerencia_codigo_empresa=?")
+            params.append(str(codigo_empresa))
+        else:
+            # Los correos sin cliente siguen en Comunicaciones, donde primero
+            # debe resolverse su empresa. La bandeja documental solo muestra
+            # entradas que ya pueden clasificarse sin inventar ese dato.
+            clauses.append("sugerencia_codigo_empresa IS NOT NULL")
+            clauses.append("TRIM(sugerencia_codigo_empresa)<>''")
+        rows = self.conn.execute(
+            "SELECT * FROM comunicaciones_sin_asignar WHERE "
+            + " AND ".join(clauses) + " ORDER BY fecha DESC",
+            tuple(params),
+        ).fetchall()
+        for raw in rows:
+            row = self._row_to_dict(raw)
+            try:
+                payload = json.loads(row.get("payload_json") or "{}")
+            except (TypeError, ValueError):
+                payload = {}
+            if not bool(payload.get("tiene_adjuntos")):
+                continue
+            mailbox = str(row.get("mailbox") or "").strip().lower()
+            label = "Documentacion" if mailbox.startswith("documentacion@") else "Oficina"
+            result.append({
+                **row,
+                "id": f"correo:{row['graph_message_id']}",
+                "entrada_id": str(row["graph_message_id"]),
+                "codigo_empresa": row.get("sugerencia_codigo_empresa") or "",
+                "empresa_nombre": row.get("sugerencia_nombre") or "",
+                "nombre_original": row.get("asunto") or "(Sin asunto)",
+                "canal": "correo",
+                "origen_label": f"Correo {label}",
+                "fecha": row.get("fecha") or row.get("created_at") or "",
+            })
+        result.sort(key=lambda item: str(item.get("fecha") or ""), reverse=True)
+        return result
 
     def get_factura_recibida_archivo_para_captura(
         self, documento_id: str,
@@ -3917,6 +4042,32 @@ class GestorBase:
                 """,
                 (now, *ids),
             )
+            # Si procedian de OCR, anular tambien la exportacion tecnica para
+            # que ninguna proyeccion vuelva a imponer el estado anterior.
+            self.conn.execute(
+                f"""
+                UPDATE facturas_recibidas_docs
+                   SET estado_contable='pendiente_contabilizar',generada=0,
+                       fecha_generacion=NULL,numero_asiento=NULL,updated_at=?
+                 WHERE id IN (
+                   SELECT ocr_documento_id FROM documentos_archivo
+                    WHERE id IN ({placeholders})
+                      AND ocr_documento_id IS NOT NULL
+                 )
+                """,
+                (now, *ids),
+            )
+            self.conn.execute(
+                f"""
+                UPDATE documentos_ocr SET estado='pendiente_contabilizar'
+                 WHERE id IN (
+                   SELECT ocr_documento_id FROM documentos_archivo
+                    WHERE id IN ({placeholders})
+                      AND ocr_documento_id IS NOT NULL
+                 )
+                """,
+                tuple(ids),
+            )
         self.conn.commit()
         return max(0, int(cursor.rowcount or 0))
 
@@ -3965,15 +4116,9 @@ class GestorBase:
         )
         ocr_documento_id = str(documento.get("ocr_documento_id") or "").strip()
         if ocr_documento_id:
-            self.conn.execute(
-                "UPDATE facturas_recibidas_docs SET numero_asiento=?,updated_at=? "
-                "WHERE id=? AND codigo_empresa=?",
-                (numero, now, ocr_documento_id, documento["codigo_empresa"]),
-            )
-            self.conn.execute(
-                "UPDATE asientos_contables SET numero_asiento=?,updated_at=? "
-                "WHERE documento_id=? AND codigo_empresa=?",
-                (numero, now, ocr_documento_id, documento["codigo_empresa"]),
+            self._confirmar_asiento_proyecciones_ocr(
+                str(documento["codigo_empresa"]), ocr_documento_id, numero,
+                documento_archivo_id=str(documento_id), now=now,
             )
         self.conn.commit()
         return bool(cursor.rowcount)
@@ -4494,6 +4639,8 @@ class GestorBase:
             base_sql += " AND d.estado_ocr = 'procesado' AND (d.estado_validacion IS NULL OR d.estado_validacion = 'pendiente')"
         elif estado == "pendiente_contabilizar":
             base_sql += " AND d.estado_validacion = 'validada' AND d.estado_contable = 'pendiente_contabilizar'"
+        elif estado == "exportada_a3":
+            base_sql += " AND d.estado_contable = 'exportada_a3'"
         elif estado == "contabilizada":
             base_sql += " AND d.estado_contable = 'contabilizada'"
         base_sql += " ORDER BY d.updated_at DESC"
@@ -4518,18 +4665,63 @@ class GestorBase:
         """Guarda el asiento recuperado de A3 en factura y asiento propuesto."""
         now = self._utc_now()
         numero = str(numero_asiento or "").strip()
-        cursor = self.conn.execute(
-            "UPDATE facturas_recibidas_docs SET numero_asiento=?,updated_at=? "
-            "WHERE id=? AND codigo_empresa=?",
-            (numero, now, str(documento_id), str(codigo_empresa)),
+        if not numero:
+            return False
+        cursor = self._confirmar_asiento_proyecciones_ocr(
+            str(codigo_empresa), str(documento_id), numero, now=now,
         )
         self.conn.execute(
-            "UPDATE asientos_contables SET numero_asiento=?,updated_at=? "
-            "WHERE documento_id=? AND codigo_empresa=?",
-            (numero, now, str(documento_id), str(codigo_empresa)),
+            """
+            UPDATE documentos_archivo
+               SET estado_contable='contabilizada',
+                   metodo_contabilizacion='ocr_suenlace',numero_asiento=?,
+                   fecha_contable=COALESCE(fecha_contable,(
+                     SELECT fecha_asiento FROM facturas_recibidas_docs
+                      WHERE id=? AND codigo_empresa=?
+                   )),updated_at=?
+             WHERE codigo_empresa=? AND categoria_id='facturas_recibidas'
+               AND (ocr_documento_id=? OR id=(
+                 SELECT documento_archivo_id FROM facturas_recibidas_docs
+                  WHERE id=? AND codigo_empresa=?
+               ))
+            """,
+            (
+                numero, str(documento_id), str(codigo_empresa), now,
+                str(codigo_empresa), str(documento_id), str(documento_id),
+                str(codigo_empresa),
+            ),
         )
         self.conn.commit()
         return bool(cursor.rowcount)
+
+    def _confirmar_asiento_proyecciones_ocr(
+        self, codigo_empresa: str, documento_ocr_id: str,
+        numero_asiento: str, *, documento_archivo_id: str = "", now: str = "",
+    ):
+        """Actualiza juntas las tres proyecciones tecnicas de una factura OCR."""
+        timestamp = now or self._utc_now()
+        cursor = self.conn.execute(
+            "UPDATE facturas_recibidas_docs SET numero_asiento=?,"
+            "estado_contable='contabilizada',generada=1,"
+            "documento_archivo_id=COALESCE(NULLIF(?,''),documento_archivo_id),"
+            "updated_at=? WHERE id=? AND codigo_empresa=?",
+            (
+                numero_asiento, documento_archivo_id, timestamp,
+                documento_ocr_id, codigo_empresa,
+            ),
+        )
+        self.conn.execute(
+            "UPDATE asientos_contables SET numero_asiento=?,"
+            "estado='contabilizado',updated_at=? "
+            "WHERE documento_id=? AND codigo_empresa=?",
+            (numero_asiento, timestamp, documento_ocr_id, codigo_empresa),
+        )
+        self.conn.execute(
+            "UPDATE documentos_ocr SET estado='contabilizada' "
+            "WHERE id=? AND empresa_id=? AND ?<>''",
+            (documento_ocr_id, codigo_empresa, numero_asiento),
+        )
+        return cursor
 
     def devolver_facturas_recibidas_a_ocr(
         self, codigo_empresa: str, ids: list,
@@ -4569,6 +4761,13 @@ class GestorBase:
                     "observaciones=? WHERE documento_id=? AND empresa_id=?",
                     (motivo, documento_id, codigo_empresa),
                 )
+                self.conn.execute(
+                    "UPDATE documentos_archivo SET estado_contable='pendiente',"
+                    "metodo_contabilizacion=NULL,numero_asiento=NULL,updated_at=? "
+                    "WHERE codigo_empresa=? AND ocr_documento_id=? "
+                    "AND estado_contable<>'contabilizada_manual'",
+                    (self._utc_now(), codigo_empresa, documento_id),
+                )
                 resultado["ocr"] += 1
             self.conn.commit()
         except Exception:
@@ -4580,6 +4779,11 @@ class GestorBase:
         now = self._utc_now()
         doc_id = str(doc.get("id") or int(time.time() * 1000))
         doc["id"] = doc_id
+        doc["estado_contable"] = estado_efectivo(
+            estado=doc.get("estado_contable"),
+            generada=doc.get("generada"),
+            numero_asiento=doc.get("numero_asiento"),
+        )
         doc["proveedor_tipo_operacion_iva"] = (
             doc.get("proveedor_tipo_operacion_iva") or "INTERIOR_DEDUCIBLE"
         )
@@ -5287,6 +5491,33 @@ class GestorBase:
                 int(user_id),
             ),
         )
+        archivo_id = str(doc.get("documento_archivo_id") or "").strip()
+        if not archivo_id:
+            row = self.conn.execute(
+                "SELECT id FROM documentos_archivo WHERE codigo_empresa=? "
+                "AND ocr_documento_id=? LIMIT 1",
+                (doc.get("codigo_empresa"), doc_id),
+            ).fetchone()
+            archivo_id = str((self._row_to_dict(row) or {}).get("id") or "")
+        if archivo_id:
+            self.conn.execute(
+                "UPDATE facturas_recibidas_docs SET documento_archivo_id=? "
+                "WHERE id=? AND codigo_empresa=?",
+                (archivo_id, doc_id, doc.get("codigo_empresa")),
+            )
+            estado = str(doc.get("estado_contable") or "pendiente")
+            metodo = "ocr_suenlace" if estado in {EXPORTADA_A3, CONTABILIZADA} else None
+            self.conn.execute(
+                "UPDATE documentos_archivo SET estado_contable=?,"
+                "metodo_contabilizacion=COALESCE(?,metodo_contabilizacion),"
+                "numero_asiento=COALESCE(NULLIF(?,''),numero_asiento),"
+                "fecha_contable=COALESCE(NULLIF(?,''),fecha_contable),updated_at=? "
+                "WHERE id=? AND estado_contable<>'contabilizada_manual'",
+                (
+                    estado, metodo, str(doc.get("numero_asiento") or ""),
+                    str(doc.get("fecha_asiento") or ""), now, archivo_id,
+                ),
+            )
         self.conn.commit()
 
     def upsert_usuario(self, usuario: dict) -> int:

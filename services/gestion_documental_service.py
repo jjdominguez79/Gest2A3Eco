@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import mimetypes
 import re
 import shutil
@@ -12,6 +13,7 @@ from pathlib import Path
 
 from services.backend_mail_service import BackendMailService
 from services.ocr.ocr_service import OcrService
+from services.ocr.background_service import OcrBackgroundService
 from utils.utilidades import get_document_repository_dir
 
 
@@ -32,10 +34,13 @@ CARPETAS_DOCUMENTALES = {
     "OTROS": "Otros",
 }
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class ArchiveSummary:
     saved: list[str] = field(default_factory=list)
+    document_ids: list[str] = field(default_factory=list)
     ocr_document_ids: list[str] = field(default_factory=list)
     ignored: list[str] = field(default_factory=list)
     duplicates: list[str] = field(default_factory=list)
@@ -56,7 +61,7 @@ class GestionDocumentalService:
     def archivar_adjuntos_correo(
         self, *, codigo_empresa: str, ejercicio: int, mailbox: str,
         graph_message_id: str, remitente: str, asunto: str,
-        decisiones: list[dict], usuario: str = "",
+        decisiones: list[dict], usuario: str = "", comunicacion_id: str = "",
     ) -> ArchiveSummary:
         summary = ArchiveSummary()
         categorias = {item["id"]: item for item in self.categorias()}
@@ -89,6 +94,7 @@ class GestionDocumentalService:
                 ).fetchone()
                 if duplicate:
                     summary.duplicates.append(name)
+                    summary.document_ids.append(str(duplicate["id"]))
                     self._gestor.registrar_decision_adjunto({
                         "graph_message_id": graph_message_id,
                         "graph_attachment_id": attachment_id, "nombre": name,
@@ -110,7 +116,9 @@ class GestionDocumentalService:
                         "ruta": str(destination), "hash_archivo": digest,
                         "tamano": len(content),
                         "mime_type": item.get("contentType") or mimetypes.guess_type(name)[0],
-                        "origen": "correo", "graph_message_id": graph_message_id,
+                        "origen": "correo", "buzon_origen": mailbox,
+                        "comunicacion_id": comunicacion_id or None,
+                        "graph_message_id": graph_message_id,
                         "graph_attachment_id": attachment_id,
                         "correo_remitente": remitente, "correo_asunto": asunto,
                         "creado_por": usuario,
@@ -125,11 +133,95 @@ class GestionDocumentalService:
                     "documento_id": document_id,
                 })
                 summary.saved.append(name)
+                summary.document_ids.append(document_id)
                 if bool(category.get("permite_ocr")):
                     summary.ocr_document_ids.append(document_id)
+                    self._encolar_ocr(document_id, usuario=usuario)
             except Exception as exc:
                 summary.errors.append(f"{name}: {exc}")
         return summary
+
+    def clasificar_entrada_documental(
+        self, entrada: dict, *, ejercicio: int, categoria_id: str,
+        usuario: str = "", usuario_id: int = 0,
+        attachment_ids: list[str] | None = None,
+    ) -> ArchiveSummary:
+        """Clasifica una entrada de correo o mensajeria con el mismo flujo."""
+        canal = str(entrada.get("canal") or "mensajeria").strip().lower()
+        if canal == "correo":
+            graph_id = str(
+                entrada.get("graph_message_id")
+                or entrada.get("entrada_id")
+                or ""
+            )
+            mailbox = str(entrada.get("mailbox") or "")
+            attachments = self.listar_adjuntos_entrada_correo(entrada)
+            seleccionados = (
+                {str(value) for value in attachment_ids}
+                if attachment_ids is not None else None
+            )
+            decisions = [
+                {
+                    "attachment_id": attachment.get("id"),
+                    "name": attachment.get("name") or "Adjunto",
+                    "categoria_id": categoria_id,
+                }
+                for attachment in attachments
+                if seleccionados is None
+                or str(attachment.get("id") or "") in seleccionados
+            ]
+            if not decisions:
+                raise ValueError("El correo ya no contiene adjuntos disponibles.")
+            summary = self.archivar_adjuntos_correo(
+                codigo_empresa=str(entrada.get("codigo_empresa") or ""),
+                ejercicio=int(ejercicio), mailbox=mailbox,
+                graph_message_id=graph_id,
+                remitente=str(entrada.get("remitente") or ""),
+                asunto=str(entrada.get("asunto") or ""),
+                decisiones=decisions, usuario=usuario,
+            )
+            if summary.errors:
+                raise RuntimeError("\n".join(summary.errors))
+            assigned = self._gestor.asignar_comunicacion_pendiente(
+                graph_id, str(entrada.get("codigo_empresa") or ""),
+                int(usuario_id), usuario or "sistema",
+            )
+            if not assigned:
+                raise RuntimeError("El correo ya no esta pendiente de asignacion.")
+            self._gestor.vincular_documentos_graph_comunicacion(graph_id)
+            return summary
+
+        entrada_id = str(entrada.get("entrada_id") or entrada.get("id") or "")
+        categoria = next(
+            (item for item in self.categorias() if item["id"] == categoria_id),
+            {"nombre": categoria_id},
+        )
+        document_id = self.archivar_adjunto_mensajeria(
+            entrada, ejercicio=int(ejercicio), categoria_id=categoria_id,
+            usuario=usuario,
+        )
+        self._gestor.actualizar_adjunto_mensajeria_entrada(
+            entrada_id, "archivado", documento_id=document_id,
+        )
+        self._gestor.marcar_adjunto_mensajeria_revisado(
+            entrada_id, revisado_por=usuario or "sistema",
+            clasificacion=str(categoria.get("nombre") or categoria_id),
+            documento_id=document_id,
+        )
+        return ArchiveSummary(
+            saved=[str(entrada.get("nombre_original") or "Documento")],
+            document_ids=[document_id],
+        )
+
+    def listar_adjuntos_entrada_correo(self, entrada: dict) -> list[dict]:
+        return self._graph.list_attachments(
+            mailbox=str(entrada.get("mailbox") or ""),
+            message_id=str(
+                entrada.get("graph_message_id")
+                or entrada.get("entrada_id")
+                or ""
+            ),
+        )
 
     def importar_archivo(
         self, *, codigo_empresa: str, ejercicio: int, categoria_id: str,
@@ -154,7 +246,7 @@ class GestionDocumentalService:
         destination = folder / filename
         shutil.copy2(source, destination)
         try:
-            return self._gestor.registrar_documento_archivo({
+            document_id = self._gestor.registrar_documento_archivo({
                 "codigo_empresa": codigo_empresa, "ejercicio": ejercicio,
                 "categoria_id": categoria_id, "nombre_original": source.name,
                 "nombre_archivo": filename, "ruta": str(destination),
@@ -162,6 +254,9 @@ class GestionDocumentalService:
                 "mime_type": mimetypes.guess_type(source.name)[0],
                 "origen": "manual", "creado_por": usuario,
             })
+            if bool(category.get("permite_ocr")):
+                self._encolar_ocr(document_id, usuario=usuario)
+            return document_id
         except Exception:
             destination.unlink(missing_ok=True)
             raise
@@ -208,7 +303,31 @@ class GestionDocumentalService:
             destination.unlink(missing_ok=True)
             raise
         source.unlink(missing_ok=True)
+        if bool(category.get("permite_ocr")):
+            self._encolar_ocr(document_id, usuario=usuario)
         return document_id
+
+    def _encolar_ocr(self, documento_id: str, *, usuario: str = "") -> bool:
+        """Envia facturas al OCR durable desde cualquier canal de entrada."""
+        if not hasattr(self._gestor, "encolar_trabajo_ocr"):
+            return False
+        document = self._gestor.get_documento_archivo(documento_id)
+        if not document or document.get("ocr_documento_id"):
+            return False
+        try:
+            _job_id, created = OcrBackgroundService(self._gestor).encolar(
+                empresa_id=str(document["codigo_empresa"]),
+                ejercicio=int(document["ejercicio"]),
+                ruta_origen=str(document["ruta"]),
+                documento_archivo_id=str(documento_id),
+                usuario=usuario,
+            )
+            return bool(created)
+        except Exception as exc:
+            # El documento ya esta a salvo en el archivo. El fallo queda
+            # visible y puede reintentarse desde Gestion documental.
+            logger.warning("No se pudo encolar %s para OCR: %s", documento_id, exc)
+            return False
 
     def enviar_a_ocr(self, documento_id: str, usuario: str = "") -> dict:
         document = self._gestor.get_documento_archivo(documento_id)

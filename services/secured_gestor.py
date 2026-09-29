@@ -77,6 +77,22 @@ class SecuredGestor:
         self.security.ensure_company_read(codigo_empresa)
         return self._base.listar_documentos_archivo(codigo_empresa, ejercicio, categoria_id)
 
+    def listar_entradas_documentales(
+        self, codigo_empresa: str = "", *, solo_pendientes: bool = True,
+    ):
+        if codigo_empresa:
+            self.security.ensure_company_read(codigo_empresa)
+        rows = self._base.listar_entradas_documentales(
+            codigo_empresa, solo_pendientes=solo_pendientes,
+        )
+        if self.security.session.is_admin():
+            return rows
+        return [
+            row for row in rows
+            if row.get("codigo_empresa")
+            and self.security.can_read_company(str(row["codigo_empresa"]))
+        ]
+
     def listar_facturas_recibidas_pendientes_global(self):
         rows = self._base.listar_facturas_recibidas_pendientes_global()
         if self.security.session.is_admin():

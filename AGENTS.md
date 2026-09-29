@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Guidance for coding agents working in this repository. Verified against the
-repository on 2026-09-03.
+repository on 2026-09-29.
 
 ## Project Overview
 
@@ -14,6 +14,12 @@ The repository also contains a FastAPI backend and two Synology workers. The
 backend owns provider secrets and serves DGT, OCR, SignRequest, Dataprius and
 messaging API flows. The workers synchronize Microsoft Graph mail and messaging
 attachments without requiring the desktop application to be open.
+
+The mail worker reads both shared mailboxes, `oficina@gestinem.es` and
+`documentacion@gestinem.es`, with independent Graph delta cursors. Classified
+mail attachments, Flutter messaging attachments and manual uploads converge in
+`documentos_archivo`. For received invoices this table is the functional source
+of truth; OCR and accounting tables are synchronized projections.
 
 `gestinem_app/` es la aplicacion Flutter para clientes y empleados. Se publica
 como web en `https://app.gestinem.es` y tambien tiene destinos Android, iOS y

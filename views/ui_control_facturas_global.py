@@ -16,7 +16,8 @@ class UIControlFacturasGlobal(ttk.Frame):
         "Sin enlace": lambda r: not r["generada"],
         "Sin asiento": lambda r: not str(r.get("numero_asiento") or "").strip(),
         "Enlazadas sin asiento": lambda r: r["generada"] and not str(r.get("numero_asiento") or "").strip(),
-        "En contabilidad": lambda r: r.get("estado_contable") in {"pendiente", "pendiente_contabilizar"},
+        "En contabilidad": lambda r: r.get("estado_contable") in {"pendiente", "pendiente_contabilizar", "exportada_a3"},
+        "Exportadas a A3": lambda r: r.get("estado_contable") == "exportada_a3",
         "Contabilizadas sin asiento": lambda r: r.get("estado_contable") == "contabilizada" and not str(r.get("numero_asiento") or "").strip(),
         "Incidencias OCR": lambda r: r.get("tipo") == "recibida" and (r.get("estado_ocr") in {"error", "pendiente", "procesando"} or r.get("estado_validacion") == "pendiente"),
     }

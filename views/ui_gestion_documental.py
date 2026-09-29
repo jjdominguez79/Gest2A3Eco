@@ -8,6 +8,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from services.gestion_documental_service import GestionDocumentalService
+from services.estado_facturas_recibidas import etiqueta_estado
 from services.firma.firma_service import FirmaService
 from services.firma.provider import build_firma_provider
 from utils.utilidades import load_app_config
@@ -42,7 +43,7 @@ class UIGestionDocumental(ttk.Frame):
         ).pack(side="left")
         ttk.Button(top, text="Incorporar archivo", command=self._add_file).pack(side="right")
         self._messaging_button = ttk.Button(
-            top, text="Adjuntos de mensajeria", command=self._open_messaging_incoming,
+            top, text="Entradas pendientes", command=self._open_messaging_incoming,
         )
         self._messaging_button.pack(side="right", padx=(0, 6))
         filters = ttk.Frame(self)
@@ -98,19 +99,36 @@ class UIGestionDocumental(ttk.Frame):
         for row in rows:
             searchable = " ".join(str(row.get(key) or "") for key in (
                 "nombre_original", "categoria_nombre", "correo_remitente", "correo_asunto",
+                "buzon_origen", "origen",
             )).lower()
             if query and query not in searchable:
                 continue
             self._rows[row["id"]] = row
             self._tree.insert("", "end", iid=row["id"], values=(
                 row.get("created_at") or "", row.get("categoria_nombre") or "",
-                row.get("nombre_original") or "", row.get("origen") or "",
+                row.get("nombre_original") or "", self._origen_label(row),
                 row.get("correo_remitente") or "",
                 self._estado_documental_label(row),
             ))
         self._summary.configure(text=f"Documentos: {len(self._rows)}")
         pending = self._pending_messaging_rows()
-        self._messaging_button.configure(text=f"Adjuntos de mensajeria ({len(pending)})")
+        self._messaging_button.configure(text=f"Entradas pendientes ({len(pending)})")
+
+    @staticmethod
+    def _origen_label(row: dict) -> str:
+        origen = str(row.get("origen") or "").strip().lower()
+        mailbox = str(row.get("buzon_origen") or "").strip().lower()
+        if origen == "correo":
+            if mailbox.startswith("documentacion@"):
+                return "Correo · Documentacion"
+            if mailbox.startswith("oficina@"):
+                return "Correo · Oficina"
+            return "Correo"
+        if origen == "chat":
+            return "Mensajeria"
+        if origen == "manual":
+            return "Carga manual"
+        return origen.replace("_", " ").title() or "Archivo"
 
     @staticmethod
     def _estado_documental_label(row: dict) -> str:
@@ -120,11 +138,13 @@ class UIGestionDocumental(ttk.Frame):
         estado_ocr = str(row.get("estado_documento_ocr") or "").strip().lower()
         estado_contable_ocr = str(row.get("estado_contable_ocr") or "").strip().lower()
         if estado_contable == "contabilizada_manual" or metodo == "manual_a3_papel":
-            return "Manual en A3 (papel)"
+            return etiqueta_estado(estado_contable, metodo=metodo)
         if estado_contable == "contabilizada":
             if metodo == "ocr_suenlace" or row.get("ocr_documento_id"):
-                return "OCR/SUENLACE · contabilizada en A3"
+                return etiqueta_estado(estado_contable, metodo="ocr_suenlace")
             return "Contabilizada en A3"
+        if estado_contable == "exportada_a3":
+            return etiqueta_estado(estado_contable, metodo=metodo)
         if estado_ocr == "contabilizada" or estado_contable_ocr == "contabilizada":
             return "OCR/SUENLACE · pendiente de asiento A3"
         if row.get("ocr_documento_id"):
@@ -132,8 +152,13 @@ class UIGestionDocumental(ttk.Frame):
         return str(row.get("estado") or "Archivado").replace("_", " ").capitalize()
 
     def _pending_messaging_rows(self):
+        if hasattr(self._gestor, "listar_entradas_documentales"):
+            return self._gestor.listar_entradas_documentales(
+                self._codigo, solo_pendientes=True,
+            )
         return [
-            row for row in self._gestor.listar_adjuntos_mensajeria_entrada()
+            {**row, "canal": "mensajeria", "entrada_id": row.get("id")}
+            for row in self._gestor.listar_adjuntos_mensajeria_entrada()
             if str(row.get("codigo_empresa") or "") == str(self._codigo)
         ]
 
@@ -141,19 +166,19 @@ class UIGestionDocumental(ttk.Frame):
         rows = self._pending_messaging_rows()
         if not rows:
             messagebox.showinfo(
-                "Adjuntos de mensajeria", "No hay documentos pendientes para este cliente.", parent=self,
+                "Entradas pendientes", "No hay documentos pendientes para este cliente.", parent=self,
             )
             return
         dialog = tk.Toplevel(self)
-        dialog.title("Adjuntos de mensajeria pendientes")
-        dialog.geometry("850x420")
+        dialog.title("Bandeja de entrada documental")
+        dialog.geometry("980x440")
         dialog.transient(self.winfo_toplevel())
         tree = ttk.Treeview(
-            dialog, columns=("fecha", "archivo", "remitente"), show="headings",
+            dialog, columns=("fecha", "canal", "archivo", "remitente"), show="headings",
         )
         for key, title, width in (
-            ("fecha", "Recibido", 180), ("archivo", "Documento", 420),
-            ("remitente", "Enviado por", 210),
+            ("fecha", "Recibido", 165), ("canal", "Origen", 145),
+            ("archivo", "Documento", 390), ("remitente", "Enviado por", 210),
         ):
             tree.heading(key, text=title)
             tree.column(key, width=width, anchor="w")
@@ -161,7 +186,9 @@ class UIGestionDocumental(ttk.Frame):
         current = {row["id"]: row for row in rows}
         for row in rows:
             tree.insert("", "end", iid=row["id"], values=(
-                row.get("created_at") or "", row.get("nombre_original") or "",
+                row.get("fecha") or row.get("created_at") or "",
+                row.get("origen_label") or "Mensajeria",
+                row.get("nombre_original") or "",
                 row.get("remitente") or "Cliente",
             ))
 
@@ -171,7 +198,13 @@ class UIGestionDocumental(ttk.Frame):
 
         def open_file():
             item = selected()
-            if item and Path(item["ruta_entrada"]).is_file():
+            if item and item.get("canal") == "correo":
+                messagebox.showinfo(
+                    "Correo recibido",
+                    "Clasifica la entrada para seleccionar y archivar sus adjuntos.",
+                    parent=dialog,
+                )
+            elif item and Path(str(item.get("ruta_entrada") or "")).is_file():
                 os.startfile(item["ruta_entrada"])
 
         def classify():
@@ -183,27 +216,37 @@ class UIGestionDocumental(ttk.Frame):
             if not category_dialog.result:
                 return
             category = next(row for row in self._categories if row["nombre"] == category_dialog.result)
+            attachment_ids = None
+            if item.get("canal") == "correo":
+                try:
+                    attachments = self._service.listar_adjuntos_entrada_correo(item)
+                except Exception as exc:
+                    messagebox.showerror(
+                        "Bandeja de entrada",
+                        f"No se pudieron consultar los adjuntos:\n{exc}",
+                        parent=dialog,
+                    )
+                    return
+                from views.ui_comunicaciones_global import AttachmentSelectionDialog
+                selector = AttachmentSelectionDialog(dialog, attachments)
+                dialog.wait_window(selector)
+                attachment_ids = selector.result
+                if not attachment_ids:
+                    return
             try:
-                document_id = self._service.archivar_adjunto_mensajeria(
-                    item, ejercicio=self._ejercicio, categoria_id=category["id"],
-                    usuario=getattr(getattr(self._session, "user", None), "nombre", ""),
-                )
-                self._gestor.actualizar_adjunto_mensajeria_entrada(
-                    item["id"], "archivado", documento_id=document_id,
-                )
-                self._gestor.marcar_adjunto_mensajeria_revisado(
-                    item["id"],
-                    revisado_por=getattr(
-                        getattr(self._session, "user", None), "nombre", "",
-                    ) or "sistema",
-                    clasificacion=category["nombre"],
-                    documento_id=document_id,
+                user = getattr(self._session, "user", None)
+                username = str(getattr(user, "nombre", "") or "sistema")
+                self._service.clasificar_entrada_documental(
+                    item, ejercicio=self._ejercicio,
+                    categoria_id=category["id"], usuario=username,
+                    usuario_id=int(getattr(user, "id", 0)),
+                    attachment_ids=attachment_ids,
                 )
                 tree.delete(item["id"])
                 current.pop(item["id"], None)
                 self._refresh()
             except Exception as exc:
-                messagebox.showerror("Adjuntos de mensajeria", str(exc), parent=dialog)
+                messagebox.showerror("Bandeja de entrada", str(exc), parent=dialog)
 
         actions = ttk.Frame(dialog)
         actions.pack(fill="x", padx=10, pady=(0, 10))

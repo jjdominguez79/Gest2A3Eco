@@ -8,6 +8,7 @@ from services.ocr_recibidas_service import (
     resolve_recibidas_template,
 )
 from services.documentos_recibidos_a3_service import preparar_documentos_para_suenlace
+from services.estado_facturas_recibidas import CONTABILIZADA, EXPORTADA_A3
 from services.import_a3_empresa import leer_numero_asiento_desde_a3
 
 
@@ -50,80 +51,119 @@ class UIContabilidadController:
         self._view.load_document(doc, asiento)
 
     def generar_asiento(self):
-        doc = self._current_doc()
-        if not doc:
-            self._view.show_warning("Gest2A3Eco", "Selecciona un documento.")
+        seleccionados = self._selected_received_ids()
+        if not seleccionados:
+            self._view.show_warning("Gest2A3Eco", "Selecciona al menos un documento.")
             return
-        # Documentos OCR antiguos pueden haberse proyectado antes de que se
-        # copiara la relacion contable del proveedor. Recuperarla aqui evita
-        # que se regeneren 400/629/472 genericas cuando el maestro ya tiene
-        # subcuentas configuradas.
-        tercero_id = str(doc.get("tercero_id") or "").strip()
-        if tercero_id:
-            try:
-                relacion = self._gestor.get_tercero_empresa(
-                    self._codigo, tercero_id, self._ejercicio,
-                ) or {}
-                changed = False
-                for campo, rel_campo in (
-                    ("cuenta_proveedor", "subcuenta_proveedor"),
-                    ("cuenta_gasto", "subcuenta_gasto"),
-                ):
-                    if not str(doc.get(campo) or "").strip() and str(relacion.get(rel_campo) or "").strip():
-                        doc[campo] = relacion[rel_campo]
-                        changed = True
-                if changed:
-                    self._gestor.upsert_factura_recibida_doc(doc)
-            except Exception:
-                pass
         plantilla = self._resolve_plantilla()
         empresa = self._gestor.get_empresa(self._codigo, self._ejercicio) or {}
-        row = self._doc_to_row(doc)
-        conf = {
-            "digitos_plan": int(empresa.get("digitos_plan") or 8),
-            "cuenta_proveedor_prefijo": plantilla.get("cuenta_proveedor_prefijo") or "400",
-            "cuenta_gasto_por_defecto": doc.get("cuenta_gasto") or plantilla.get("cuenta_gasto_por_defecto") or "62900000",
-            "cuenta_iva_soportado_defecto": doc.get("cuenta_iva") or plantilla.get("cuenta_iva_soportado_defecto") or "47200000",
-            "cuenta_proveedor_por_defecto": doc.get("cuenta_proveedor") or "",
-            "cuenta_suplidos": doc.get("cuenta_suplidos") or "55509999",
-        }
-        lineas = generar_asiento_recibida(row, conf)
+        generados, errores = [], []
+        for documento_id in seleccionados:
+            doc = self._gestor.get_factura_recibida_doc(documento_id)
+            if not doc:
+                continue
+            try:
+                self._generar_asiento_documento(doc, plantilla, empresa)
+                generados.append(str(doc.get("numero_factura") or documento_id))
+            except Exception as exc:
+                errores.append(f"{doc.get('numero_factura') or documento_id}: {exc}")
+        self.refresh(select_id=self._selected_id)
+        if errores:
+            self._view.show_warning(
+                "Gest2A3Eco",
+                f"{len(generados)} asiento(s) generado(s).\n"
+                f"Errores ({len(errores)}):\n" + "\n".join(errores),
+            )
+        else:
+            self._view.show_info(
+                "Gest2A3Eco",
+                f"{len(generados)} asiento(s) generado(s) y guardado(s).",
+            )
+
+    def _generar_asiento_documento(
+        self, doc: dict, plantilla: dict, empresa: dict,
+    ) -> None:
+        self._completar_cuentas_desde_tercero(doc)
+        lineas = generar_asiento_recibida(
+            doc_to_row(doc), self._configuracion_asiento(doc, plantilla, empresa),
+        )
         payload_lineas = [
             {
-                "fecha": ln.fecha,
-                "subcuenta": ln.subcuenta,
-                "dh": ln.dh,
-                "importe": float(ln.importe),
-                "concepto": ln.concepto,
+                "fecha": linea.fecha,
+                "subcuenta": linea.subcuenta,
+                "dh": linea.dh,
+                "importe": float(linea.importe),
+                "concepto": linea.concepto,
             }
-            for ln in lineas
+            for linea in lineas
         ]
-        total_debe = round(sum(x["importe"] for x in payload_lineas if x["dh"] == "D"), 2)
-        total_haber = round(sum(x["importe"] for x in payload_lineas if x["dh"] == "H"), 2)
         numero_asiento = str(doc.get("numero_asiento") or "").strip()
         fecha_asiento = doc.get("fecha_asiento") or doc.get("fecha_factura")
-        self._gestor.upsert_asiento_contable(
-            {
-                "documento_id": doc.get("id"),
-                "codigo_empresa": self._codigo,
-                "ejercicio": self._ejercicio,
-                "fecha_asiento": fecha_asiento,
-                "numero_asiento": numero_asiento,
-                "descripcion": doc.get("descripcion") or f"Factura {doc.get('numero_factura') or ''}".strip(),
-                "estado": "borrador",
-                "total_debe": total_debe,
-                "total_haber": total_haber,
-                "lineas": payload_lineas,
-            }
-        )
-        # Generar el borrador no equivale a contabilizar la factura.  Marcarla
-        # como contabilizada aqui hacia que desapareciese de la bandeja de
-        # pendientes aunque aun no se hubiese exportado a A3ECO.
+        self._gestor.upsert_asiento_contable({
+            "documento_id": doc.get("id"),
+            "codigo_empresa": self._codigo,
+            "ejercicio": self._ejercicio,
+            "fecha_asiento": fecha_asiento,
+            "numero_asiento": numero_asiento,
+            "descripcion": doc.get("descripcion")
+            or f"Factura {doc.get('numero_factura') or ''}".strip(),
+            "estado": "borrador",
+            "total_debe": self._total_por_naturaleza(payload_lineas, "D"),
+            "total_haber": self._total_por_naturaleza(payload_lineas, "H"),
+            "lineas": payload_lineas,
+        })
+        # Generar el borrador no equivale a contabilizar la factura.
         doc["numero_asiento"] = numero_asiento
         doc["fecha_asiento"] = fecha_asiento
         self._gestor.upsert_factura_recibida_doc(doc)
-        self.refresh(select_id=self._selected_id)
-        self._view.show_info("Gest2A3Eco", "Asiento generado y guardado.")
+
+    def _completar_cuentas_desde_tercero(self, doc: dict) -> None:
+        """Recupera subcuentas maestras ausentes en proyecciones OCR antiguas."""
+        tercero_id = str(doc.get("tercero_id") or "").strip()
+        if not tercero_id:
+            return
+        relacion = self._gestor.get_tercero_empresa(
+            self._codigo, tercero_id, self._ejercicio,
+        ) or {}
+        cambiado = False
+        for campo, campo_relacion in (
+            ("cuenta_proveedor", "subcuenta_proveedor"),
+            ("cuenta_gasto", "subcuenta_gasto"),
+        ):
+            valor = str(relacion.get(campo_relacion) or "").strip()
+            if not str(doc.get(campo) or "").strip() and valor:
+                doc[campo] = valor
+                cambiado = True
+        if cambiado:
+            self._gestor.upsert_factura_recibida_doc(doc)
+
+    @staticmethod
+    def _configuracion_asiento(doc: dict, plantilla: dict, empresa: dict) -> dict:
+        return {
+            "digitos_plan": int(empresa.get("digitos_plan") or 8),
+            "cuenta_proveedor_prefijo": (
+                plantilla.get("cuenta_proveedor_prefijo") or "400"
+            ),
+            "cuenta_gasto_por_defecto": (
+                doc.get("cuenta_gasto")
+                or plantilla.get("cuenta_gasto_por_defecto")
+                or "62900000"
+            ),
+            "cuenta_iva_soportado_defecto": (
+                doc.get("cuenta_iva")
+                or plantilla.get("cuenta_iva_soportado_defecto")
+                or "47200000"
+            ),
+            "cuenta_proveedor_por_defecto": doc.get("cuenta_proveedor") or "",
+            "cuenta_suplidos": doc.get("cuenta_suplidos") or "55509999",
+        }
+
+    @staticmethod
+    def _total_por_naturaleza(lineas: list[dict], naturaleza: str) -> float:
+        return round(
+            sum(linea["importe"] for linea in lineas if linea["dh"] == naturaleza),
+            2,
+        )
 
     def editar_asiento(self):
         doc = self._current_doc()
@@ -142,8 +182,8 @@ class UIContabilidadController:
         self._view.edit_document_asiento(doc, asiento, catalogo)
 
     def guardar_asiento_editado(self, doc: dict, asiento: dict, lineas: list[dict]):
-        total_debe = round(sum(x["importe"] for x in lineas if x["dh"] == "D"), 2)
-        total_haber = round(sum(x["importe"] for x in lineas if x["dh"] == "H"), 2)
+        total_debe = self._total_por_naturaleza(lineas, "D")
+        total_haber = self._total_por_naturaleza(lineas, "H")
         self._gestor.upsert_asiento_contable({
             "documento_id": doc.get("id"),
             "codigo_empresa": self._codigo,
@@ -171,28 +211,42 @@ class UIContabilidadController:
         self._view.show_info("Gest2A3Eco", "Asiento actualizado.")
 
     def exportar_suenlace(self):
-        doc = self._current_doc()
-        if not doc:
-            self._view.show_warning("Gest2A3Eco", "Selecciona un documento.")
+        seleccionados = self._view.get_selected_received_ids()
+        if not seleccionados:
+            self._view.show_warning("Gest2A3Eco", "Selecciona al menos un documento.")
             return
-        if bool(doc.get("generada")) or str(doc.get("estado_contable") or "").strip().lower() == "contabilizada":
+        docs_a_exportar = []
+        ya_contabilizadas = []
+        for documento_id in seleccionados:
+            doc = self._gestor.get_factura_recibida_doc(documento_id)
+            if not doc:
+                continue
+            estado = str(doc.get("estado_contable") or "").strip().lower()
+            if bool(doc.get("generada")) or estado in {EXPORTADA_A3, CONTABILIZADA}:
+                ya_contabilizadas.append(str(doc.get("numero_factura") or documento_id))
+            else:
+                docs_a_exportar.append(doc)
+        if ya_contabilizadas:
+            nombres = ", ".join(ya_contabilizadas[:5])
+            if len(ya_contabilizadas) > 5:
+                nombres += f" y {len(ya_contabilizadas) - 5} mas"
             self._view.show_warning(
                 "Gest2A3Eco",
-                "Esta factura ya tiene un suenlace generado. "
-                "Captura primero el numero de asiento desde A3 para verificar si ya esta contabilizada.",
+                f"Las siguientes facturas ya tienen suenlace generado y se omitiran:\n{nombres}\n\n"
+                "Captura primero el numero de asiento desde A3 para verificar si ya estan contabilizadas.",
             )
+        if not docs_a_exportar:
             return
         try:
-            docs = preparar_documentos_para_suenlace(
-                self._gestor, self._codigo, self._ejercicio, [doc],
+            docs_preparados = preparar_documentos_para_suenlace(
+                self._gestor, self._codigo, self._ejercicio, docs_a_exportar,
             )
         except Exception as exc:
             self._view.show_error("Gest2A3Eco", f"No se pudo preparar el PDF para A3ECO:\n{exc}")
             return
-        doc = docs[0]
-        regs = generate_suenlace_for_docs(self._gestor, self._codigo, self._ejercicio, [doc])
+        regs = generate_suenlace_for_docs(self._gestor, self._codigo, self._ejercicio, docs_preparados)
         if not regs:
-            self._view.show_warning("Gest2A3Eco", "No se generaron registros para el documento seleccionado.")
+            self._view.show_warning("Gest2A3Eco", "No se generaron registros para los documentos seleccionados.")
             return
         save_path = self._view.ask_save_path(f"{self._codigo}.dat")
         if not save_path:
@@ -224,16 +278,20 @@ class UIContabilidadController:
             return
         with open(save_path, "wb") as f:
             f.write(b"".join(bloques))
-        doc["numero_asiento"] = doc.get("numero_asiento") or ""
-        doc["fecha_asiento"] = doc.get("fecha_asiento") or doc.get("fecha_factura") or ""
-        self._gestor.upsert_factura_recibida_doc(doc)
-        mark_docs_as_generated(self._gestor, [doc], estado_contable="contabilizada")
-        # La factura ya no debe quedar seleccionada ni visible en Pendientes;
-        # se mostrara en OCR/Contabilidad como contabilizada tras refrescar.
+        for doc in docs_preparados:
+            doc["numero_asiento"] = doc.get("numero_asiento") or ""
+            doc["fecha_asiento"] = doc.get("fecha_asiento") or doc.get("fecha_factura") or ""
+            self._gestor.upsert_factura_recibida_doc(doc)
+        mark_docs_as_generated(
+            self._gestor, docs_preparados, estado_contable=EXPORTADA_A3,
+        )
         self._selected_id = None
         self.refresh(select_id="__clear_selection__")
         self._view.clear_preview()
-        self._view.show_info("Gest2A3Eco", f"Fichero generado:\n{save_path}")
+        self._view.show_info(
+            "Gest2A3Eco",
+            f"{len(docs_preparados)} factura(s) exportadas.\nFichero generado:\n{save_path}",
+        )
 
     def devolver_a_ocr(self):
         """Retira de Contabilidad y devuelve a Errores OCR para corregir."""
@@ -250,7 +308,9 @@ class UIContabilidadController:
                 bloqueadas.append(documento_id)
                 continue
             permitidas.append(documento_id)
-            if doc.get("generada") or doc.get("estado_contable") == "contabilizada":
+            if doc.get("generada") or doc.get("estado_contable") in {
+                EXPORTADA_A3, CONTABILIZADA,
+            }:
                 enlazadas.append(documento_id)
         if bloqueadas:
             self._view.show_warning(
@@ -287,14 +347,16 @@ class UIContabilidadController:
         seleccionados = self._view.get_selected_received_ids()
         if not seleccionados:
             self._view.show_warning(
-                "Gest2A3Eco", "Selecciona al menos una factura contabilizada."
+                "Gest2A3Eco", "Selecciona al menos una factura exportada a A3."
             )
             return
         actualizadas, sin_asiento = [], []
         codigo_a3 = self._codigo_empresa_a3()
         for documento_id in seleccionados:
             doc = self._gestor.get_factura_recibida_doc(documento_id)
-            if not doc or doc.get("estado_contable") != "contabilizada":
+            if not doc or doc.get("estado_contable") not in {
+                EXPORTADA_A3, CONTABILIZADA,
+            }:
                 sin_asiento.append(
                     str((doc or {}).get("numero_factura") or documento_id)
                 )
@@ -349,5 +411,8 @@ class UIContabilidadController:
     def _resolve_plantilla(self):
         return resolve_recibidas_template(self._gestor, self._codigo, self._ejercicio)
 
-    def _doc_to_row(self, doc: dict):
-        return doc_to_row(doc)
+    def _selected_received_ids(self) -> list[str]:
+        getter = getattr(self._view, "get_selected_received_ids", None)
+        if callable(getter):
+            return getter()
+        return [self._selected_id] if self._selected_id else []

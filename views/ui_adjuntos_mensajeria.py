@@ -1,8 +1,8 @@
-"""Bandeja global de adjuntos recibidos por mensajeria.
+"""Bandeja global de entradas documentales pendientes.
 
-Muestra los archivos que los clientes han enviado al despacho a traves de
-la aplicacion Flutter. Los datos proceden de la tabla local
-mensajeria_adjuntos_entrada, que el worker del NAS mantiene actualizada.
+Reune los correos con adjuntos de los buzones compartidos y los archivos
+enviados por clientes desde Flutter. Ambos canales se clasifican hacia el
+mismo archivo documental y el mismo circuito OCR.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ def _fmt_fecha(iso: str | None) -> str:
 
 
 class UIAdjuntosMensajeria(ttk.Frame):
-    """Panel embebible: bandeja global de adjuntos de mensajeria."""
+    """Panel compatible que unifica correo y mensajeria en una sola bandeja."""
 
     def __init__(
         self,
@@ -60,6 +60,7 @@ class UIAdjuntosMensajeria(ttk.Frame):
         on_ir_gestion_documental=None,
         on_count_changed=None,
         usuario_activo: str = "",
+        usuario_id: int = 0,
         codigo_empresa_filtro: str | None = None,
     ):
         super().__init__(parent)
@@ -67,6 +68,7 @@ class UIAdjuntosMensajeria(ttk.Frame):
         self._on_ir_gestion = on_ir_gestion_documental
         self._on_count_changed = on_count_changed
         self._usuario = usuario_activo
+        self._usuario_id = int(usuario_id or 0)
         self._filtro_empresa = codigo_empresa_filtro
         self._cache: list[dict] = []
         self._selected_id: str | None = None
@@ -103,8 +105,8 @@ class UIAdjuntosMensajeria(ttk.Frame):
         self._lbl_contador.pack(side=tk.RIGHT, padx=6)
 
         # Tabla
-        cols = ("fecha", "empresa", "remitente", "nombre_original", "estado", "tamano")
-        headers = ("Fecha", "Empresa", "Remitente", "Nombre del archivo", "Estado", "Tama\u00f1o")
+        cols = ("fecha", "empresa", "canal", "remitente", "nombre_original", "estado", "tamano")
+        headers = ("Fecha", "Empresa", "Origen", "Remitente", "Documento", "Estado", "Tama\u00f1o")
         self._tree = ttk.Treeview(self, columns=cols, show="headings", selectmode="browse")
         for col, header in zip(cols, headers):
             self._tree.heading(col, text=header)
@@ -128,10 +130,18 @@ class UIAdjuntosMensajeria(ttk.Frame):
                     "codigo_empresa": self._filtro_empresa,
                     "solo_pendientes": solo_pendientes,
                 }
-                datos = self._gestor.listar_adjuntos_mensajeria(filtro)
-                pendientes = self._gestor.contar_adjuntos_mensajeria_pendientes(
-                    self._filtro_empresa,
-                )
+                if hasattr(self._gestor, "listar_entradas_documentales"):
+                    datos = self._gestor.listar_entradas_documentales(
+                        self._filtro_empresa or "", solo_pendientes=solo_pendientes,
+                    )
+                    pendientes = len(self._gestor.listar_entradas_documentales(
+                        self._filtro_empresa or "", solo_pendientes=True,
+                    ))
+                else:
+                    datos = self._gestor.listar_adjuntos_mensajeria(filtro)
+                    pendientes = self._gestor.contar_adjuntos_mensajeria_pendientes(
+                        self._filtro_empresa,
+                    )
                 error = None
             except Exception as exc:
                 datos, pendientes, error = [], 0, exc
@@ -146,8 +156,9 @@ class UIAdjuntosMensajeria(ttk.Frame):
         for d in datos:
             tags = ("pendiente",) if not d.get("revisado") else ()
             self._tree.insert("", "end", iid=d["id"], tags=tags, values=(
-                _fmt_fecha(d.get("created_at")),
+                _fmt_fecha(d.get("fecha") or d.get("created_at")),
                 d.get("codigo_empresa", ""),
+                d.get("origen_label") or d.get("canal") or "Mensajeria",
                 d.get("remitente", ""),
                 d.get("nombre_original", ""),
                 _LABEL_ESTADO.get(d.get("estado", ""), d.get("estado", "")),
@@ -188,6 +199,12 @@ class UIAdjuntosMensajeria(ttk.Frame):
             messagebox.showinfo("Sin seleccion", "Selecciona un adjunto de la lista.")
             return
         ruta = item.get("ruta_entrada", "")
+        if item.get("canal") == "correo":
+            messagebox.showinfo(
+                "Correo recibido",
+                "Clasifica la entrada para archivar sus adjuntos.", parent=self,
+            )
+            return
         if not ruta or not os.path.exists(ruta):
             messagebox.showwarning("Archivo no disponible", f"El archivo no se encuentra en:\n{ruta}")
             return
@@ -239,17 +256,27 @@ class UIAdjuntosMensajeria(ttk.Frame):
                 "Clasificar", "No se encontro un ejercicio para este cliente.", parent=self,
             )
             return
+        attachment_ids = None
+        if item.get("canal") == "correo":
+            try:
+                attachments = self._service.listar_adjuntos_entrada_correo(item)
+            except Exception as exc:
+                messagebox.showerror(
+                    "Clasificar", f"No se pudieron consultar los adjuntos:\n{exc}",
+                    parent=self,
+                )
+                return
+            from views.ui_comunicaciones_global import AttachmentSelectionDialog
+            selector = AttachmentSelectionDialog(self, attachments)
+            self.wait_window(selector)
+            attachment_ids = selector.result
+            if not attachment_ids:
+                return
         try:
-            documento_id = self._service.archivar_adjunto_mensajeria(
+            self._service.clasificar_entrada_documental(
                 item, ejercicio=ejercicio, categoria_id=categoria["id"],
-                usuario=self._usuario or "sistema",
-            )
-            self._gestor.actualizar_adjunto_mensajeria_entrada(
-                item["id"], "archivado", documento_id=documento_id,
-            )
-            self._gestor.marcar_adjunto_mensajeria_revisado(
-                item["id"], revisado_por=self._usuario or "sistema",
-                clasificacion=categoria["nombre"], documento_id=documento_id,
+                usuario=self._usuario or "sistema", usuario_id=self._usuario_id,
+                attachment_ids=attachment_ids,
             )
             self.recargar()
             messagebox.showinfo(
@@ -266,11 +293,19 @@ class UIAdjuntosMensajeria(ttk.Frame):
         if item.get("revisado"):
             messagebox.showinfo("Ya revisado", "Este adjunto ya ha sido marcado como revisado.")
             return
+        if item.get("canal") == "correo":
+            messagebox.showinfo(
+                "Correo recibido",
+                "Los correos se gestionan clasificando sus adjuntos; no se marcan "
+                "como revisados sin decidir sobre ellos.", parent=self,
+            )
+            return
         if not messagebox.askyesno("Confirmar", "Marcar este adjunto como revisado?"):
             return
         try:
             self._gestor.marcar_adjunto_mensajeria_revisado(
-                item["id"], revisado_por=self._usuario or "sistema",
+                str(item.get("entrada_id") or item["id"]),
+                revisado_por=self._usuario or "sistema",
             )
             self.recargar()
         except Exception as exc:
@@ -284,6 +319,13 @@ class UIAdjuntosMensajeria(ttk.Frame):
         if item.get("revisado"):
             messagebox.showinfo("Ya procesado", "Este adjunto ya fue procesado.")
             return
+        if item.get("canal") == "correo":
+            messagebox.showinfo(
+                "Correo recibido",
+                "Descarta el correo desde Comunicaciones para conservar la auditoria.",
+                parent=self,
+            )
+            return
         if not messagebox.askyesno(
             "No guardar",
             "Registrar que se ha decidido NO guardar este adjunto?\n"
@@ -292,7 +334,8 @@ class UIAdjuntosMensajeria(ttk.Frame):
             return
         try:
             self._gestor.no_guardar_adjunto_mensajeria(
-                item["id"], revisado_por=self._usuario or "sistema",
+                str(item.get("entrada_id") or item["id"]),
+                revisado_por=self._usuario or "sistema",
             )
             ruta = Path(str(item.get("ruta_entrada") or ""))
             if ruta.is_file():
@@ -310,8 +353,12 @@ class UIAdjuntosMensajeria(ttk.Frame):
             messagebox.showerror("Error", f"No se pudo registrar la decision:\n{exc}")
 
     def obtener_contador_pendientes(self) -> int:
-        """Devuelve el numero de adjuntos no revisados (para mostrar en la navegacion)."""
+        """Devuelve el numero total de entradas documentales pendientes."""
         try:
+            if hasattr(self._gestor, "listar_entradas_documentales"):
+                return len(self._gestor.listar_entradas_documentales(
+                    self._filtro_empresa or "", solo_pendientes=True,
+                ))
             return self._gestor.contar_adjuntos_mensajeria_pendientes(self._filtro_empresa)
         except Exception:
             return 0

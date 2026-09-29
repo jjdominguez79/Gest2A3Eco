@@ -455,6 +455,7 @@ class _ConexionMigracionesFalsa:
         indice_ocr_trabajo_archivo=True,
         tabla_ocr_modelos=True,
         indice_ocr_modelos=True,
+        indice_recibidas_archivo=True,
     ):
         self.columnas = columnas
         self.tabla_permisos = tabla_permisos
@@ -481,6 +482,7 @@ class _ConexionMigracionesFalsa:
         self.indice_ocr_trabajo_archivo = indice_ocr_trabajo_archivo
         self.tabla_ocr_modelos = tabla_ocr_modelos
         self.indice_ocr_modelos = indice_ocr_modelos
+        self.indice_recibidas_archivo = indice_recibidas_archivo
         self.sentencias = []
         self.commit_count = 0
 
@@ -575,6 +577,10 @@ class _ConexionMigracionesFalsa:
                 "indice_ocr_modelos": (
                     "idx_ocr_modelos_empresa" if self.indice_ocr_modelos else None
                 ),
+                "indice_recibidas_archivo": (
+                    "idx_facturas_recibidas_docs_archivo"
+                    if self.indice_recibidas_archivo else None
+                ),
             })
         return _Resultado()
 
@@ -609,8 +615,10 @@ _COLUMNAS_ESENCIALES = {
     ("facturas_recibidas_docs", "pagada"),
     ("facturas_recibidas_docs", "suplidos"),
     ("facturas_recibidas_docs", "cuenta_suplidos"),
+    ("facturas_recibidas_docs", "documento_archivo_id"),
     ("documentos_archivo", "estado_contable"),
     ("documentos_archivo", "metodo_contabilizacion"),
+    ("documentos_archivo", "buzon_origen"),
     ("documentos_archivo", "contabilizada_manualmente_at"),
     ("documentos_archivo", "contabilizada_manualmente_por"),
     ("documentos_archivo", "fecha_contable"),

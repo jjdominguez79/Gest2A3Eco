@@ -4,6 +4,7 @@ from models.gestor_base import SCHEMA, GestorBase
 from services.facturas_recibidas_pendientes_service import (
     FacturasRecibidasPendientesService,
 )
+from services.ocr_recibidas_service import mark_docs_as_generated
 from views.ui_facturas_recibidas_pendientes import UIFacturasRecibidasPendientes
 from views.ui_gestion_documental import UIGestionDocumental
 
@@ -36,6 +37,8 @@ def test_schema_separa_estado_contable_e_impresion_del_ocr():
     assert "metodo_contabilizacion TEXT" in SCHEMA
     assert "contabilizada_manualmente_at TEXT" in SCHEMA
     assert "veces_impresa INTEGER NOT NULL DEFAULT 0" in SCHEMA
+    assert "documento_archivo_id TEXT" in SCHEMA
+    assert "buzon_origen TEXT" in SCHEMA
 
 
 def test_registro_documental_inicializa_estado_contable_pendiente():
@@ -116,6 +119,45 @@ def test_asiento_capturado_actualiza_archivo_y_proyeccion_ocr():
     assert "UPDATE asientos_contables" in statements[2]
     assert all("05/00042" in params for _sql, params in connection.calls)
     assert connection.commits == 1
+
+
+def test_captura_desde_ocr_actualiza_la_fuente_documental():
+    connection = _Connection()
+    gestor = _gestor_with_connection(connection)
+
+    changed = gestor.actualizar_numero_asiento_factura_recibida(
+        "E00001", "ocr-1", "05/00042",
+    )
+
+    statements = [sql for sql, _params in connection.calls]
+    assert changed is True
+    assert "estado_contable='contabilizada'" in statements[0]
+    assert any("UPDATE documentos_archivo" in sql for sql in statements)
+    assert any("ocr_documento_id" in sql for sql in statements)
+
+
+def test_generar_suenlace_deja_la_factura_exportada_hasta_tener_asiento():
+    class Gestor:
+        def __init__(self):
+            self.saved = None
+
+        def upsert_factura_recibida_doc(self, payload):
+            self.saved = dict(payload)
+
+        def get_documento_ocr(self, _document_id):
+            return None
+
+        def get_asiento_contable_por_documento(self, _document_id):
+            return None
+
+    gestor = Gestor()
+    mark_docs_as_generated(gestor, [{
+        "id": "ocr-1", "estado_contable": "pendiente_contabilizar",
+        "numero_asiento": "",
+    }])
+
+    assert gestor.saved["generada"] is True
+    assert gestor.saved["estado_contable"] == "exportada_a3"
 
 
 class _GestorService:
@@ -311,4 +353,4 @@ def test_gestion_documental_muestra_via_de_contabilizacion():
         "estado_contable": "contabilizada",
         "metodo_contabilizacion": "ocr_suenlace",
         "ocr_documento_id": "ocr-1",
-    }) == "OCR/SUENLACE · contabilizada en A3"
+    }) == "OCR/SUENLACE · asiento confirmado en A3"
