@@ -513,7 +513,8 @@ class UIContabilidad(ttk.Frame):
                 )
         iid = str(doc.get("id"))
         if iid in self.tv.get_children():
-            self.tv.selection_set(iid)
+            if iid not in self.tv.selection():
+                self.tv.selection_set(iid)
             self.tv.focus(iid)
 
     def clear_preview(self):
