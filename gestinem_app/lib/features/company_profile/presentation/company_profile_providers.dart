@@ -19,3 +19,17 @@ final profileChangeRequestsProvider =
     FutureProvider.autoDispose<List<ProfileChangeRequest>>((ref) {
       return ref.watch(companyProfileRepositoryProvider).getChangeRequests();
     });
+
+final staffCompanyProfileProvider = FutureProvider.autoDispose
+    .family<CompanyProfile, String>((ref, companyCode) {
+      return ref
+          .watch(companyProfileRepositoryProvider)
+          .getStaffProfile(companyCode);
+    });
+
+final staffProfileChangeRequestsProvider = FutureProvider.autoDispose
+    .family<List<ProfileChangeRequest>, String>((ref, companyCode) {
+      return ref
+          .watch(companyProfileRepositoryProvider)
+          .getStaffChangeRequests(companyCode);
+    });

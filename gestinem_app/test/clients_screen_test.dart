@@ -5,6 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gestinem/core/api/api_client.dart';
 import 'package:gestinem/features/auth/domain/user_profile.dart';
 import 'package:gestinem/features/auth/presentation/auth_controller.dart';
+import 'package:gestinem/features/company_profile/domain/company_profile.dart';
+import 'package:gestinem/features/company_profile/domain/profile_change_request.dart';
+import 'package:gestinem/features/company_profile/presentation/company_profile_providers.dart';
 import 'package:gestinem/features/messaging/domain/client_organization.dart';
 import 'package:gestinem/features/messaging/presentation/client_detail_screen.dart';
 import 'package:gestinem/features/messaging/presentation/clients_screen.dart';
@@ -176,6 +179,38 @@ void main() {
       contactEmail: 'ana@example.test',
       invitationExpiresAt: expiresAt,
     );
+    const company = CompanyProfile(
+      companyCode: 'E00002',
+      name: 'Cliente pendiente',
+      legalName: 'CLIENTE PENDIENTE SL',
+      taxId: 'B12345678',
+      address: 'CALLE MAYOR 1',
+      postalCode: '28001',
+      city: 'MADRID',
+      province: 'MADRID',
+      country: 'ES',
+      phone: '910 000 000',
+      email: 'empresa@example.test',
+      profileSyncedAt: '2026-08-29T10:30:00+00:00',
+      users: [
+        CompanyProfileUser(
+          id: 'client-1',
+          name: 'Ana Cliente',
+          email: 'ana@example.test',
+          accessAccepted: true,
+        ),
+      ],
+    );
+    final requests = [
+      ProfileChangeRequest(
+        id: 'request-1',
+        status: 'applied',
+        changes: const {'phone': '910 000 000'},
+        currentValues: const {'phone': '900 000 000'},
+        createdAt: DateTime(2026, 8, 28, 9),
+        reviewNote: 'Comprobado en A3',
+      ),
+    ];
     final api = ApiClient(
       dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
         ..httpClientAdapter = JsonAdapter(<Object>[]),
@@ -192,6 +227,12 @@ void main() {
           orgFeaturesProvider(
             'E00002',
           ).overrideWith((ref) async => const OrganizationFeatures()),
+          staffCompanyProfileProvider(
+            'E00002',
+          ).overrideWith((ref) async => company),
+          staffProfileChangeRequestsProvider(
+            'E00002',
+          ).overrideWith((ref) async => requests),
         ],
         child: const MaterialApp(
           home: MediaQuery(
@@ -205,8 +246,27 @@ void main() {
 
     final listView = tester.widget<ListView>(find.byType(ListView));
     expect(listView.padding?.resolve(TextDirection.ltr).bottom, 52);
-    expect(find.text('Ana Cliente'), findsOneWidget);
-    expect(find.text('ana@example.test'), findsOneWidget);
+    expect(find.text('Ana Cliente'), findsWidgets);
+    expect(find.text('ana@example.test'), findsWidgets);
+    expect(find.byKey(const Key('staff-company-logo')), findsOneWidget);
+    expect(find.text('CLIENTE PENDIENTE SL'), findsOneWidget);
+    expect(find.text('B12345678'), findsOneWidget);
+    expect(find.text('Logotipo no configurado'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('client-profile-request-request-1')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Aplicada'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('client-profile-request-request-1')));
+    await tester.pumpAndSettle();
+    expect(find.text('900 000 000 → 910 000 000'), findsOneWidget);
+    expect(find.text('Revisión: Comprobado en A3'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('client-open-direct')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.byKey(const Key('client-open-direct')), findsOneWidget);
     expect(
       find.byKey(const Key('client-request-certificates')),

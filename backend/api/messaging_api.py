@@ -2429,6 +2429,86 @@ def staff_organizations(
     return result
 
 
+def _organization_for_admin(
+    db: Session, admin: MessagingStaff, company_code: str,
+) -> MessagingOrganization:
+    org = _organization(db, company_code)
+    if (
+        org.company_code.strip().upper() in TEST_COMPANY_CODES
+        and org.private_owner_external_id != admin.external_id
+    ):
+        raise HTTPException(403, "Cliente de pruebas privado")
+    return org
+
+
+@router.get("/staff/admin/organizations/{company_code}/profile")
+def staff_organization_profile(
+    company_code: str,
+    admin: MessagingStaff = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """Devuelve al administrador la misma ficha publicada en Mi area."""
+    org = _organization_for_admin(db, admin, company_code)
+    users = db.scalars(
+        select(MessagingClient)
+        .where(MessagingClient.organization_id == org.id)
+        .order_by(MessagingClient.created_at, MessagingClient.name)
+    ).all()
+    profile = {
+        "company_code": org.company_code,
+        "name": org.name,
+        "legal_name": org.legal_name or org.name,
+        "tax_id": org.tax_id,
+        "address": org.address,
+        "postal_code": org.postal_code,
+        "city": org.city,
+        "province": org.province,
+        "country": org.country,
+        "phone": org.phone,
+        "email": org.email,
+        "logo_url": (
+            f"/api/v1/messaging/staff/admin/organizations/{org.company_code}/logo"
+            if org.logo_storage_key else ""
+        ),
+        "active": org.active,
+        "profile_synced_at": (
+            org.profile_synced_at.isoformat() if org.profile_synced_at else None
+        ),
+        "users": [
+            {
+                "id": user.id,
+                "name": user.name,
+                "email": user.email,
+                "active": user.active,
+                "access_accepted": bool(user.password_hash),
+            }
+            for user in users
+        ],
+    }
+    return {key: value for key, value in profile.items() if value not in ("", None)}
+
+
+@router.get("/staff/admin/organizations/{company_code}/logo")
+def staff_organization_logo(
+    company_code: str,
+    admin: MessagingStaff = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """Entrega al administrador el logotipo empresarial publicado."""
+    org = _organization_for_admin(db, admin, company_code)
+    if not org.logo_storage_key:
+        raise HTTPException(404, "Logotipo no configurado")
+    try:
+        content = MessagingStorage().get(org.logo_storage_key)
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
+        raise HTTPException(404, "Logotipo no disponible") from exc
+    return Response(
+        content=content,
+        media_type=org.logo_content_type or "image/png",
+        headers={"Cache-Control": "private, max-age=300"},
+    )
+
+
 @router.patch("/staff/admin/organizations/{company_code}/client-access")
 def set_client_access(
     company_code: str, payload: ClientAccessIn,
@@ -2989,10 +3069,14 @@ def client_profile_change_requests(
 @router.get("/staff/admin/profile-change-requests")
 def staff_profile_change_requests(
     status: str = Query(default="pending"),
-    _admin: MessagingStaff = Depends(_require_admin),
+    company_code: str = Query(default=""),
+    admin: MessagingStaff = Depends(_require_admin),
     db: Session = Depends(get_db),
 ):
     stmt = select(MessagingProfileChangeRequest)
+    if company_code.strip():
+        org = _organization_for_admin(db, admin, company_code)
+        stmt = stmt.where(MessagingProfileChangeRequest.organization_id == org.id)
     if status:
         stmt = stmt.where(MessagingProfileChangeRequest.status == status)
     rows = db.scalars(stmt.order_by(MessagingProfileChangeRequest.created_at.desc())).all()

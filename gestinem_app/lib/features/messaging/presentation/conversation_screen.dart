@@ -17,6 +17,7 @@ import '../../auth/domain/user_profile.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../domain/conversation.dart';
 import '../domain/message.dart';
+import 'emoji_picker.dart';
 import 'message_bubble.dart';
 import 'message_edit_dialogs.dart';
 import 'messaging_providers.dart';
@@ -120,8 +121,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   }
 
   KeyEventResult _handleComposerKey(FocusNode _, KeyEvent event) {
-    final sendWithEnter =
-        ref.read(sendWithEnterProvider).valueOrNull ?? false;
+    final sendWithEnter = ref.read(sendWithEnterProvider).valueOrNull ?? false;
     if (!sendWithEnter ||
         event is! KeyDownEvent ||
         event.logicalKey != LogicalKeyboardKey.enter ||
@@ -1270,6 +1270,12 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                         onPressed: _sending ? null : _pickFiles,
                         icon: const Icon(Icons.attach_file),
                       ),
+                      BotonSelectorEmoticonos(
+                        key: const Key('emoji-picker'),
+                        controller: _body,
+                        focusNode: _composerFocus,
+                        enabled: !_sending,
+                      ),
                       Expanded(
                         child: TextField(
                           key: const Key('message-composer'),
@@ -1281,9 +1287,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                               ? TextInputAction.send
                               : TextInputAction.newline,
                           onSubmitted: sendWithEnter
-                              ? (_) => unawaited(
-                                  _send(keepComposerFocus: true),
-                                )
+                              ? (_) => unawaited(_send(keepComposerFocus: true))
                               : null,
                           inputFormatters: const [
                             SentenceCapitalizationFormatter(),

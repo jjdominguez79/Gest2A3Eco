@@ -124,7 +124,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('HISTÓRICOS'), findsOneWidget);
+    expect(find.byKey(const Key('historical-groups-archive')), findsOneWidget);
+    expect(find.text('Archivo de grupos históricos'), findsOneWidget);
     expect(find.text('Equipo Contable / Fiscal'), findsOneWidget);
     expect(find.textContaining('Histórico · solo lectura'), findsOneWidget);
     expect(find.byKey(const Key('group-actions-group-old')), findsNothing);

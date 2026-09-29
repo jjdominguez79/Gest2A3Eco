@@ -31,6 +31,41 @@ class _FakeNotifications extends NotificationsService {
 }
 
 void main() {
+  test('el despacho carga la ficha publicada del cliente', () async {
+    final adapter = JsonAdapter({
+      'company_code': 'E00006',
+      'name': 'Empresa prueba',
+      'legal_name': 'EMPRESA PRUEBA SL',
+      'logo_url': '/api/v1/messaging/staff/admin/organizations/E00006/logo',
+      'users': [
+        {
+          'id': 'client-1',
+          'name': 'Ana Cliente',
+          'email': 'ana@example.test',
+          'active': true,
+          'access_accepted': true,
+        },
+      ],
+    });
+    final api = ApiClient(
+      dio: Dio(BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'))
+        ..httpClientAdapter = adapter,
+      tokenProvider: () => 'staff-token',
+    );
+
+    final profile = await CompanyProfileRepository(
+      api,
+    ).getStaffProfile('E00006');
+
+    expect(
+      adapter.lastRequest!.path,
+      '/staff/admin/organizations/E00006/profile',
+    );
+    expect(profile.legalName, 'EMPRESA PRUEBA SL');
+    expect(profile.users.single.email, 'ana@example.test');
+    expect(profile.users.single.accessAccepted, isTrue);
+  });
+
   test('envia la solicitud de cambios como formulario estructurado', () async {
     final adapter = JsonAdapter({'id': 'request-1', 'status': 'pending'});
     final api = ApiClient(
@@ -357,7 +392,7 @@ void main() {
       await tester.tap(find.byIcon(Icons.menu));
       await tester.pumpAndSettle();
 
-      expect(find.text('Gestionar grupos internos'), findsOneWidget);
+      expect(find.text('Grupos internos y archivo'), findsOneWidget);
       expect(find.byKey(const Key('drawer-clients')), findsOneWidget);
       expect(find.text('Empleados'), findsWidgets);
       expect(find.text('Mi empresa'), findsNothing);

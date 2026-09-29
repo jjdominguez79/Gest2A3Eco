@@ -91,6 +91,10 @@ void main() {
       final composerKey = tipo == 'unificado'
           ? 'unified-message-composer'
           : 'message-composer';
+      final emojiPickerKey = tipo == 'unificado'
+          ? 'unified-emoji-picker'
+          : 'emoji-picker';
+      expect(find.byKey(Key(emojiPickerKey)), findsOneWidget);
       await tester.enterText(find.byKey(Key(composerKey)), 'Uno\nDos\nTres');
       await tester.pumpAndSettle();
       _comprobarFinal(tester, listKey, 't1');

@@ -3,6 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
+import '../../../core/widgets/authenticated_avatar.dart';
+import '../../auth/presentation/auth_controller.dart';
+import '../../company_profile/domain/company_profile.dart';
+import '../../company_profile/domain/profile_change_request.dart';
+import '../../company_profile/presentation/company_profile_providers.dart';
 import '../domain/client_organization.dart';
 import 'clients_screen.dart';
 import 'messaging_providers.dart';
@@ -223,6 +228,10 @@ class _ClientDetailScreenState extends ConsumerState<ClientDetailScreen> {
                 ),
               ),
               const SizedBox(height: 12),
+              _PublishedClientAreaCard(client: client),
+              const SizedBox(height: 12),
+              _ClientProfileRequestsCard(companyCode: client.companyCode),
+              const SizedBox(height: 12),
               Card(
                 child: Column(
                   children: [
@@ -347,6 +356,381 @@ class _ClientDetailScreenState extends ConsumerState<ClientDetailScreen> {
 String _formatDate(DateTime value) =>
     '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year} '
     '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+
+class _PublishedClientAreaCard extends ConsumerWidget {
+  const _PublishedClientAreaCard({required this.client});
+
+  final ClientOrganization client;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final profile = ref.watch(staffCompanyProfileProvider(client.companyCode));
+    return Card(
+      key: const Key('client-published-profile'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.visibility_outlined),
+            title: const Text('Información publicada en Mi área'),
+            subtitle: const Text(
+              'Estos son los datos que puede consultar el cliente.',
+            ),
+            trailing: IconButton(
+              key: const Key('refresh-client-profile'),
+              tooltip: 'Actualizar información',
+              onPressed: () {
+                ref.invalidate(staffCompanyProfileProvider(client.companyCode));
+                ref.invalidate(
+                  staffProfileChangeRequestsProvider(client.companyCode),
+                );
+              },
+              icon: const Icon(Icons.refresh),
+            ),
+          ),
+          profile.when(
+            loading: () => const Padding(
+              padding: EdgeInsets.all(20),
+              child: Center(child: CircularProgressIndicator()),
+            ),
+            error: (error, _) => Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+              child: Text(apiErrorMessage(error)),
+            ),
+            data: (company) =>
+                _PublishedClientAreaContent(client: client, company: company),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PublishedClientAreaContent extends ConsumerWidget {
+  const _PublishedClientAreaContent({
+    required this.client,
+    required this.company,
+  });
+
+  final ClientOrganization client;
+  final CompanyProfile company;
+
+  String _value(String? value) =>
+      value?.trim().isNotEmpty == true ? value!.trim() : 'Sin informar';
+
+  String get _location => [
+    company.postalCode,
+    company.city,
+    company.province,
+    company.country,
+  ].whereType<String>().where((value) => value.trim().isNotEmpty).join(' · ');
+
+  String get _initials {
+    final name = company.legalName ?? company.name;
+    final result = name
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .take(2)
+        .map((part) => part[0])
+        .join()
+        .toUpperCase();
+    return result.isEmpty ? '?' : result;
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final baseUrl = ref
+        .read(apiClientProvider)
+        .dio
+        .options
+        .baseUrl
+        .replaceAll(RegExp(r'/api/v1/messaging/?$'), '');
+    final token = ref.read(sessionProvider).valueOrNull?.token ?? '';
+    final users = company.users;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Center(
+            child: AuthenticatedAvatar(
+              key: const Key('staff-company-logo'),
+              radius: 46,
+              baseUrl: baseUrl,
+              authToken: token,
+              imagePath: company.logoUrl ?? '',
+              fallbackText: _initials,
+              cacheVersion: company.profileSyncedAt ?? company.name,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            company.logoUrl?.isNotEmpty == true
+                ? 'Logotipo publicado'
+                : 'Logotipo no configurado',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 16),
+          Text('Empresa', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          _ProfileRow(label: 'Nombre', value: _value(company.name)),
+          _ProfileRow(label: 'Razón social', value: _value(company.legalName)),
+          _ProfileRow(label: 'NIF/CIF', value: _value(company.taxId)),
+          _ProfileRow(label: 'Dirección', value: _value(company.address)),
+          _ProfileRow(label: 'Localidad', value: _value(_location)),
+          _ProfileRow(label: 'Teléfono', value: _value(company.phone)),
+          _ProfileRow(label: 'Correo', value: _value(company.email)),
+          if (company.profileSyncedAt != null) ...[
+            const SizedBox(height: 4),
+            _ProfileRow(
+              label: 'Última sincronización',
+              value: _profileDate(company.profileSyncedAt!),
+            ),
+          ],
+          const Divider(height: 28),
+          Text(
+            'Usuarios con acceso',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 6),
+          if (users.isEmpty)
+            if (client.contactName.isEmpty && client.contactEmail.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text('No hay usuarios registrados.'),
+              )
+            else
+              _ProfileUserTile(
+                name: client.contactName,
+                email: client.contactEmail,
+                active: client.accessActive,
+                accepted: client.hasAcceptedAccess,
+              )
+          else
+            for (final user in users)
+              _ProfileUserTile(
+                name: user.name,
+                email: user.email,
+                active: user.active,
+                accepted: user.accessAccepted,
+              ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileRow extends StatelessWidget {
+  const _ProfileRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 150,
+          child: Text(
+            label,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        Expanded(child: Text(value)),
+      ],
+    ),
+  );
+}
+
+class _ProfileUserTile extends StatelessWidget {
+  const _ProfileUserTile({
+    required this.name,
+    required this.email,
+    required this.active,
+    required this.accepted,
+  });
+
+  final String name;
+  final String email;
+  final bool active;
+  final bool accepted;
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+    contentPadding: EdgeInsets.zero,
+    leading: const Icon(Icons.person_outline),
+    title: Text(name.trim().isEmpty ? 'Usuario sin nombre' : name),
+    subtitle: Text(email.trim().isEmpty ? 'Correo no informado' : email),
+    trailing: Chip(
+      label: Text(
+        !active
+            ? 'Inactivo'
+            : accepted
+            ? 'Activo'
+            : 'Pendiente',
+      ),
+    ),
+  );
+}
+
+class _ClientProfileRequestsCard extends ConsumerWidget {
+  const _ClientProfileRequestsCard({required this.companyCode});
+
+  final String companyCode;
+
+  static const _labels = <String, String>{
+    'legal_name': 'Razón social',
+    'tax_id': 'NIF/CIF',
+    'address': 'Dirección',
+    'postal_code': 'Código postal',
+    'city': 'Localidad',
+    'province': 'Provincia',
+    'country': 'País',
+    'phone': 'Teléfono',
+    'email': 'Correo',
+    'bank_accounts': 'Cuentas bancarias',
+  };
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final requests = ref.watch(staffProfileChangeRequestsProvider(companyCode));
+    return Card(
+      key: const Key('client-profile-requests'),
+      child: Column(
+        children: [
+          const ListTile(
+            leading: Icon(Icons.manage_history_outlined),
+            title: Text('Solicitudes de modificación'),
+            subtitle: Text('Historial enviado desde el área del cliente'),
+          ),
+          requests.when(
+            loading: () => const Padding(
+              padding: EdgeInsets.all(20),
+              child: LinearProgressIndicator(),
+            ),
+            error: (error, _) => Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+              child: Text(apiErrorMessage(error)),
+            ),
+            data: (items) {
+              if (items.isEmpty) {
+                return const Padding(
+                  padding: EdgeInsets.fromLTRB(20, 0, 20, 20),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('No hay solicitudes de modificación.'),
+                  ),
+                );
+              }
+              return Column(
+                children: [
+                  for (final request in items)
+                    _ProfileRequestTile(request: request, labels: _labels),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileRequestTile extends StatelessWidget {
+  const _ProfileRequestTile({required this.request, required this.labels});
+
+  final ProfileChangeRequest request;
+  final Map<String, String> labels;
+
+  String _displayValue(Object? value) {
+    if (value is List) return value.join(', ');
+    final text = value?.toString().trim() ?? '';
+    return text.isEmpty ? 'Sin informar' : text;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final status = switch (request.status) {
+      'applied' => ('Aplicada', Icons.check_circle_outline),
+      'rejected' => ('Rechazada', Icons.cancel_outlined),
+      _ => ('Pendiente', Icons.schedule_outlined),
+    };
+    return ExpansionTile(
+      key: Key('client-profile-request-${request.id}'),
+      leading: Icon(status.$2),
+      title: Text(status.$1),
+      subtitle: Text(
+        request.createdAt == null
+            ? 'Fecha no disponible'
+            : _formatDate(request.createdAt!.toLocal()),
+      ),
+      childrenPadding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+      children: [
+        if (request.changes.isEmpty)
+          const Align(
+            alignment: Alignment.centerLeft,
+            child: Text('Solicitud de cambio de logotipo'),
+          )
+        else
+          for (final entry in request.changes.entries)
+            _ProfileChangeRow(
+              label: labels[entry.key] ?? entry.key,
+              previous: _displayValue(request.currentValues[entry.key]),
+              proposed: _displayValue(entry.value),
+            ),
+        if (request.notes.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text('Observaciones: ${request.notes}'),
+          ),
+        ],
+        if (request.reviewNote.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text('Revisión: ${request.reviewNote}'),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ProfileChangeRow extends StatelessWidget {
+  const _ProfileChangeRow({
+    required this.label,
+    required this.previous,
+    required this.proposed,
+  });
+
+  final String label;
+  final String previous;
+  final String proposed;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 5),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(width: 130, child: Text(label)),
+        Expanded(child: Text('$previous → $proposed')),
+      ],
+    ),
+  );
+}
+
+String _profileDate(String value) {
+  final parsed = DateTime.tryParse(value)?.toLocal();
+  return parsed == null ? value : _formatDate(parsed);
+}
 
 class _FeaturesCard extends ConsumerWidget {
   const _FeaturesCard({

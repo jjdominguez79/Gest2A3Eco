@@ -5,6 +5,9 @@ class ProfileChangeRequest {
     required this.changes,
     required this.createdAt,
     this.reviewNote = '',
+    this.currentValues = const {},
+    this.notes = '',
+    this.reviewedAt,
   });
 
   final String id;
@@ -12,6 +15,9 @@ class ProfileChangeRequest {
   final Map<String, dynamic> changes;
   final DateTime? createdAt;
   final String reviewNote;
+  final Map<String, dynamic> currentValues;
+  final String notes;
+  final DateTime? reviewedAt;
 
   bool get isPending => status == 'pending';
 
@@ -24,6 +30,11 @@ class ProfileChangeRequest {
       ),
       createdAt: DateTime.tryParse(json['created_at'] as String? ?? ''),
       reviewNote: json['review_note'] as String? ?? '',
+      currentValues: Map<String, dynamic>.from(
+        json['current_values'] as Map<String, dynamic>? ?? const {},
+      ),
+      notes: json['notes'] as String? ?? '',
+      reviewedAt: DateTime.tryParse(json['reviewed_at'] as String? ?? ''),
     );
   }
 }

@@ -1,6 +1,6 @@
 {
-  "version": "1.9.0",
-  "tag": "v1.9.0",
-  "changelog": "Se incorpora el control trazable de facturas recibidas, diferenciando la contabilizacion manual en A3 del flujo OCR/SUENLACE. Se anade una cola OCR persistente con reintentos, recuperacion tras reinicios y aprendizaje por proveedor. Tambien se corrige la actualizacion desde DEHu y se permite ordenar las tablas de notificaciones por cualquier columna.",
+  "version": "1.9.1",
+  "tag": "v1.9.1",
+  "changelog": "Se corrige el acceso web del personal con Microsoft para evitar que el codigo temporal se consuma dos veces. El chat incorpora selector de emoticonos. La ficha del cliente permite verificar la informacion publicada, el logotipo, los usuarios y el historial de solicitudes de cambio. Los grupos historicos se trasladan a un archivo separado de la bandeja principal.",
   "force_update": true
 }

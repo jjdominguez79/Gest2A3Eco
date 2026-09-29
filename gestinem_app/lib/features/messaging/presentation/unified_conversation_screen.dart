@@ -12,6 +12,7 @@ import '../../../core/files/archivo_descargado.dart';
 import '../../../core/text/sentence_capitalization_formatter.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../domain/message.dart';
+import 'emoji_picker.dart';
 import 'message_bubble.dart';
 import 'message_edit_dialogs.dart';
 import 'messaging_providers.dart';
@@ -63,8 +64,7 @@ class _UnifiedConversationScreenState
   }
 
   KeyEventResult _handleComposerKey(FocusNode _, KeyEvent event) {
-    final sendWithEnter =
-        ref.read(sendWithEnterProvider).valueOrNull ?? false;
+    final sendWithEnter = ref.read(sendWithEnterProvider).valueOrNull ?? false;
     if (!sendWithEnter ||
         event is! KeyDownEvent ||
         event.logicalKey != LogicalKeyboardKey.enter ||
@@ -87,9 +87,9 @@ class _UnifiedConversationScreenState
     if (before == null || _loadingEarlier || !_hasEarlier) return;
     setState(() => _loadingEarlier = true);
     try {
-      final page = await ref.read(messagingRepositoryProvider).unifiedMessages(
-        beforeMessageId: before,
-      );
+      final page = await ref
+          .read(messagingRepositoryProvider)
+          .unifiedMessages(beforeMessageId: before);
       if (!mounted) return;
       final known = _olderMessages.map((message) => message.id).toSet();
       setState(() {
@@ -505,6 +505,12 @@ class _UnifiedConversationScreenState
                     IconButton(
                       onPressed: _sending ? null : _pickFiles,
                       icon: const Icon(Icons.attach_file),
+                    ),
+                    BotonSelectorEmoticonos(
+                      key: const Key('unified-emoji-picker'),
+                      controller: _body,
+                      focusNode: _composerFocus,
+                      enabled: !_sending,
                     ),
                     Expanded(
                       child: TextField(

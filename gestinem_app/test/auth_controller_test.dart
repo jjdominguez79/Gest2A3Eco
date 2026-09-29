@@ -34,9 +34,11 @@ class _ExchangeAuthRepository extends AuthRepository {
   _ExchangeAuthRepository() : super(Dio());
 
   String? exchangedCode;
+  int exchangeCalls = 0;
 
   @override
   Future<AuthSession> exchangeStaffCode(String code) async {
+    exchangeCalls++;
     exchangedCode = code;
     return const AuthSession(
       token: 'staff-token',
@@ -128,28 +130,9 @@ void main() {
       await container.read(sessionProvider.notifier).restore();
 
       expect(repository.exchangedCode, callbackCode);
+      expect(repository.exchangeCalls, 1);
       expect(container.read(sessionProvider).valueOrNull?.token, 'staff-token');
       expect(storage.value?.profile.type, UserType.staff);
     },
   );
-
-  test('canjea el callback entregado por el router web', () async {
-    final storage = _MemorySessionStorage(null);
-    final repository = _ExchangeAuthRepository();
-    final container = ProviderContainer(
-      overrides: [
-        sessionStorageProvider.overrideWithValue(storage),
-        authRepositoryProvider.overrideWithValue(repository),
-        sessionProvider.overrideWith((ref) => SessionController(ref)),
-      ],
-    );
-    addTearDown(container.dispose);
-
-    await container
-        .read(sessionProvider.notifier)
-        .completeStaffCallback('codigo-entregado-por-router');
-
-    expect(repository.exchangedCode, 'codigo-entregado-por-router');
-    expect(container.read(sessionProvider).valueOrNull?.token, 'staff-token');
-  });
 }

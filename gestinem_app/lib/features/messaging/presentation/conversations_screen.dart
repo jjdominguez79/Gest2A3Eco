@@ -435,16 +435,6 @@ class _StaffInbox extends StatelessWidget {
               )
               .toList()
             ..sort(_compareThreads);
-      final historicalGroups =
-          threadItems
-              .where(
-                (item) =>
-                    item.kind != 'direct' &&
-                    !item.active &&
-                    _matches(item.title),
-              )
-              .toList()
-            ..sort(_compareThreads);
       final directThreads =
           threadItems
               .where(
@@ -484,21 +474,6 @@ class _StaffInbox extends StatelessWidget {
               authToken: authToken,
               onTap: () => onInternal(thread.id),
             ),
-        if (historicalGroups.isNotEmpty) ...[
-          const _InboxSectionHeader(
-            key: Key('inbox-section-historical-groups'),
-            title: 'Históricos',
-            icon: Icons.history_outlined,
-          ),
-          for (final thread in historicalGroups)
-            _InternalThreadTile(
-              thread: thread,
-              selected: selectedInternal && selectedId == thread.id,
-              baseUrl: baseUrl,
-              authToken: authToken,
-              onTap: () => onInternal(thread.id),
-            ),
-        ],
         const _InboxSectionHeader(
           key: Key('inbox-section-employees'),
           title: 'Empleados',
@@ -1180,10 +1155,15 @@ class _AppDrawer extends ConsumerWidget {
             title: const Text('Conversaciones'),
             onTap: () => _navigate(context, '/'),
           ),
-          if (profile.isAdmin)
+          if (profile.type == UserType.staff)
             ListTile(
+              key: const Key('drawer-groups'),
               leading: const Icon(Icons.groups_outlined),
-              title: const Text('Gestionar grupos internos'),
+              title: Text(
+                profile.isAdmin
+                    ? 'Grupos internos y archivo'
+                    : 'Grupos internos',
+              ),
               onTap: () => _navigate(context, '/groups'),
             ),
           if (profile.isAdmin)

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/auth/presentation/auth_controller.dart';
+import '../features/auth/domain/user_profile.dart';
 import '../features/platform/features_provider.dart';
 import '../features/auth/presentation/accept_invite_screen.dart';
 import '../features/auth/presentation/forgot_password_screen.dart';
@@ -128,12 +129,14 @@ final routerProvider = Provider<GoRouter>((ref) {
 
       if (state.matchedLocation == '/login' ||
           state.matchedLocation == '/splash' ||
+          state.matchedLocation == '/auth/callback' ||
           state.matchedLocation == '/accept-invite' ||
           state.matchedLocation == '/reset-password') {
         return '/';
       }
       final profile = session.valueOrNull?.profile;
-      if (state.matchedLocation == '/groups' && profile?.isAdmin != true) {
+      if (state.matchedLocation == '/groups' &&
+          profile?.type != UserType.staff) {
         return '/';
       }
       if (state.matchedLocation == '/invitation-content' &&
@@ -192,12 +195,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           token: state.uri.queryParameters['token'] ?? '',
         ),
       ),
-      GoRoute(
-        path: '/auth/callback',
-        builder: (_, state) => _StaffAuthCallbackScreen(
-          code: state.uri.queryParameters['code'] ?? '',
-        ),
-      ),
+      GoRoute(path: '/auth/callback', builder: (_, _) => const _SplashScreen()),
       GoRoute(path: '/', builder: (_, _) => const ConversationsScreen()),
       GoRoute(
         path: '/conversation/:id',
@@ -320,38 +318,4 @@ class _SplashScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) =>
       const Scaffold(body: Center(child: CircularProgressIndicator()));
-}
-
-class _StaffAuthCallbackScreen extends ConsumerStatefulWidget {
-  const _StaffAuthCallbackScreen({required this.code});
-
-  final String code;
-
-  @override
-  ConsumerState<_StaffAuthCallbackScreen> createState() =>
-      _StaffAuthCallbackScreenState();
-}
-
-class _StaffAuthCallbackScreenState
-    extends ConsumerState<_StaffAuthCallbackScreen> {
-  @override
-  void initState() {
-    super.initState();
-    Future.microtask(_completeCallback);
-  }
-
-  Future<void> _completeCallback() async {
-    while (mounted && ref.read(sessionProvider).isLoading) {
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-    }
-    if (!mounted) return;
-    if (widget.code.isEmpty) {
-      context.go('/login');
-      return;
-    }
-    await ref.read(sessionProvider.notifier).completeStaffCallback(widget.code);
-  }
-
-  @override
-  Widget build(BuildContext context) => const _SplashScreen();
 }

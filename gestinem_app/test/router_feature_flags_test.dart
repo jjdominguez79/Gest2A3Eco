@@ -308,6 +308,39 @@ void main() {
       );
     });
 
+    testWidgets(
+      'Callback OAuth ya canjeado redirige sin volver a consumir el codigo',
+      (tester) async {
+        late GoRouter router;
+        addTearDown(_suppressBuildErrors());
+
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              sessionProvider.overrideWith(
+                (ref) => FakeSessionController(ref, testSession),
+              ),
+              platformFeaturesProvider.overrideWith(
+                (_) async => const PlatformFeatures(),
+              ),
+            ],
+            child: Consumer(
+              builder: (context, ref, _) {
+                router = ref.watch(routerProvider);
+                return MaterialApp.router(routerConfig: router);
+              },
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        router.go('/auth/callback?code=codigo-ya-canjeado');
+        await tester.pump();
+
+        expect(router.routerDelegate.currentConfiguration.uri.path, '/');
+      },
+    );
+
     // Test 8 — ?next= preserva la ruta destino al resolver el splash
     testWidgets(
       'Ruta con ?next= se resuelve al terminar la carga de features',

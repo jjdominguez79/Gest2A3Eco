@@ -573,6 +573,24 @@ def test_cliente_solicita_cambios_de_empresa_sin_modificar_el_maestro(tmp_path):
         files={"logo": ("E10013.png", logo.getvalue(), "image/png")},
     )
     assert synchronized.status_code == 200
+    staff_profile = client.get(
+        "/api/v1/messaging/staff/admin/organizations/E10013/profile",
+        headers=admin_headers,
+    )
+    assert staff_profile.status_code == 200
+    assert staff_profile.json()["company_code"] == "E10013"
+    assert staff_profile.json()["users"][0]["email"] == "ana.cambios@example.test"
+    assert staff_profile.json()["logo_url"].endswith("/E10013/logo")
+    staff_logo = client.get(staff_profile.json()["logo_url"], headers=admin_headers)
+    assert staff_logo.status_code == 200
+    assert staff_logo.content == logo.getvalue()
+    staff_requests = client.get(
+        "/api/v1/messaging/staff/admin/profile-change-requests",
+        headers=admin_headers,
+        params={"status": "", "company_code": "E10013"},
+    )
+    assert staff_requests.status_code == 200
+    assert [row["id"] for row in staff_requests.json()] == [data["id"]]
     profile = client.get(
         "/api/v1/messaging/client/company-profile", headers=auth,
     )

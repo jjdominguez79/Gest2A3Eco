@@ -63,6 +63,14 @@ void main() {
           title: 'Chat interno largo $index',
           unreadCount: 0,
         ),
+      const InternalThread(
+        id: 'thread-historical',
+        kind: 'group',
+        channel: '',
+        title: 'Grupo histórico oculto',
+        unreadCount: 0,
+        active: false,
+      ),
     ];
 
     await tester.pumpWidget(
@@ -90,6 +98,14 @@ void main() {
     expect(find.byKey(const Key('inbox-section-groups')), findsOneWidget);
     expect(find.byKey(const Key('inbox-section-employees')), findsOneWidget);
     expect(find.byKey(const Key('inbox-section-clients')), findsOneWidget);
+    expect(
+      find.byKey(const Key('inbox-section-historical-groups')),
+      findsNothing,
+    );
+    expect(find.text('Grupo histórico oculto'), findsNothing);
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('drawer-groups')), findsOneWidget);
   });
 
   testWidgets('cliente ve Canal general y Tu asesor sin buscador', (

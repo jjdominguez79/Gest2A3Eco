@@ -149,17 +149,6 @@ class SessionController extends StateNotifier<AsyncValue<AuthSession?>> {
     });
   }
 
-  Future<void> completeStaffCallback(String code) async {
-    state = const AsyncLoading();
-    state = await AsyncValue.guard(() async {
-      final session = await ref
-          .read(authRepositoryProvider)
-          .exchangeStaffCode(code);
-      await ref.read(sessionStorageProvider).write(session);
-      return session;
-    });
-  }
-
   Future<void> logout() async {
     final session = state.valueOrNull;
     if (session != null) {

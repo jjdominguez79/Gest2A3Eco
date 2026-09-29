@@ -391,9 +391,7 @@ class GroupsScreen extends ConsumerWidget {
                 child: ListTile(
                   leading: const Icon(Icons.add_a_photo_outlined),
                   title: Text(
-                    group.avatarConfigured
-                        ? 'Cambiar avatar'
-                        : 'Añadir avatar',
+                    group.avatarConfigured ? 'Cambiar avatar' : 'Añadir avatar',
                   ),
                 ),
               ),
@@ -419,10 +417,10 @@ class GroupsScreen extends ConsumerWidget {
             ],
           )
         : null,
-    onTap: !group.active && group.threadId.isNotEmpty
-        ? () => context.go('/internal/${group.threadId}')
-        : isAdmin && group.active && group.type == 'staff_chat'
-        ? () => _configureStaffGroup(context, ref, group)
+    onTap: group.type == 'staff_chat' && group.threadId.isNotEmpty
+        ? group.active && isAdmin
+              ? () => _configureStaffGroup(context, ref, group)
+              : () => context.go('/internal/${group.threadId}')
         : null,
   );
 
@@ -436,7 +434,7 @@ class GroupsScreen extends ConsumerWidget {
           onPressed: () => context.go('/'),
           icon: const Icon(Icons.arrow_back),
         ),
-        title: const Text('Gestionar grupos internos'),
+        title: const Text('Grupos internos y archivo'),
         actions: [
           if (profile.isAdmin)
             IconButton(
@@ -465,11 +463,15 @@ class GroupsScreen extends ConsumerWidget {
                 for (final group in active)
                   _groupTile(context, ref, group, profile.isAdmin),
                 if (historical.isNotEmpty)
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(16, 24, 16, 8),
-                    child: Text(
-                      'HISTÓRICOS',
-                      style: TextStyle(fontWeight: FontWeight.bold),
+                  const Card(
+                    margin: EdgeInsets.fromLTRB(12, 24, 12, 8),
+                    child: ListTile(
+                      key: Key('historical-groups-archive'),
+                      leading: Icon(Icons.inventory_2_outlined),
+                      title: Text('Archivo de grupos históricos'),
+                      subtitle: Text(
+                        'Conversaciones cerradas disponibles en modo de solo lectura.',
+                      ),
                     ),
                   ),
                 for (final group in historical)

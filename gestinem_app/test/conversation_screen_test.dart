@@ -132,6 +132,7 @@ void main() {
       'Consulta sobre certificado digital',
     );
     expect(find.byKey(const Key('record-voice-note')), findsOneWidget);
+    expect(find.byKey(const Key('emoji-picker')), findsOneWidget);
     expect(find.byKey(const Key('send-message')), findsOneWidget);
     await tester.enterText(
       find.byKey(const Key('message-composer')),
