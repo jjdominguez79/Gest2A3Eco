@@ -2571,7 +2571,7 @@ class UIFacturasEmitidas(ttk.Frame):
                 if self.grab_current() is not None:
                     self._programar_actualizacion_facturas()
                     return
-            except tk.TclError:
+            except (tk.TclError, KeyError):
                 return
 
         self._facturas_refresh_running = True
