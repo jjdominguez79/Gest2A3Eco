@@ -24,6 +24,13 @@ from sync_worker.config import _required, _secret
 
 
 LOG = logging.getLogger("gest2a3eco.master_data_sync")
+_EMPTY_DATABASE_VALUES = {"", "none", "null"}
+
+
+def _optional_database_text(value) -> str:
+    """Normaliza nulos reales y textos legacy que representan ausencia."""
+    text = str(value or "").strip()
+    return "" if text.lower() in _EMPTY_DATABASE_VALUES else text
 
 
 @dataclass(frozen=True)
@@ -144,7 +151,7 @@ class MasterDataWorker:
 
     def _logo_path(self, company: dict) -> Path | None:
         """Resuelve una ruta Windows de BD dentro del montaje del NAS."""
-        raw = str(company.get("logo_path") or "").strip()
+        raw = _optional_database_text(company.get("logo_path"))
         candidates: list[Path] = []
         if raw:
             direct = Path(raw)
@@ -164,7 +171,7 @@ class MasterDataWorker:
     def _sync_company_logo(self, company: dict, remote_hash: str) -> int:
         code = str(company.get("codigo") or "").strip().upper()
         path = self._logo_path(company)
-        configured_path = str(company.get("logo_path") or "").strip()
+        configured_path = _optional_database_text(company.get("logo_path"))
         if path:
             content = path.read_bytes()
             digest = hashlib.sha256(content).hexdigest()

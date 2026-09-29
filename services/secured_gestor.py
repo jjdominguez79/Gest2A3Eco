@@ -657,6 +657,13 @@ class SecuredGestor:
                 self.security.ensure_company_write(codigo)
         return self._base.actualizar_estado_empresas(codigos, activo)
 
+    def completar_responsables_empresas(self, responsables_por_nif: dict[str, str]):
+        if not self.security.can_manage_company_catalog():
+            raise PermissionError(
+                "Solo administradores y empleados pueden actualizar responsables."
+            )
+        return self._base.completar_responsables_empresas(responsables_por_nif)
+
     def aplicar_cambios_empresa_solicitados(
         self, codigo: str, cambios: dict, logo_path: str | None = None,
     ):

@@ -155,6 +155,31 @@ def test_gestor_actualiza_todos_los_ejercicios_una_vez_por_empresa():
     assert connection.commits == 1
 
 
+def test_gestor_completa_solo_responsables_ausentes():
+    connection = _Connection()
+    gestor = GestorBase.__new__(GestorBase)
+    gestor.conn = connection
+    gestor.listar_empresas = lambda: [
+        {"codigo": "E00001", "cif": "B12345678", "responsable": ""},
+        {"codigo": "E00001", "cif": "B12345678", "responsable": None},
+        {"codigo": "E00002", "cif": "A87654321", "responsable": "Asignado"},
+    ]
+
+    result = gestor.completar_responsables_empresas({
+        "B-12345678": "Responsable A3",
+        "A87654321": "Otro responsable",
+    })
+
+    assert result == 1
+    assert connection.executed == [(
+        "UPDATE empresas SET responsable=? WHERE codigo=? "
+        "AND (responsable IS NULL OR TRIM(responsable)='' "
+        "OR LOWER(TRIM(responsable)) IN ('none','null'))",
+        ("Responsable A3", "E00001"),
+    )]
+    assert connection.commits == 1
+
+
 class _CursorEmpresas:
     description = [("codigo",), ("nombre",), ("cif",), ("ejercicio",)]
 

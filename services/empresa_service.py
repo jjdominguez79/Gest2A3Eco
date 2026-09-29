@@ -70,6 +70,19 @@ class EmpresaService:
             )
         return int(self._gestor.actualizar_estado_empresas(codigos, activo) or 0)
 
+    def importar_responsables_pendientes_desde_a3(self) -> dict[str, int]:
+        """Completa desde A3ENTORNO los responsables aun no asignados."""
+        from services.import_a3_empresa import importar_responsables_a3eco
+
+        responsables = importar_responsables_a3eco()
+        actualizadas = int(
+            self._gestor.completar_responsables_empresas(responsables) or 0
+        )
+        return {
+            "responsables_detectados": len(responsables),
+            "empresas_actualizadas": actualizadas,
+        }
+
     def _desactivar_servicios_notificaciones(
         self,
         codigos: list[str],

@@ -628,6 +628,17 @@ class GestorPostgres(GestorBase):
             if (tabla, columna) not in existentes and tabla not in tablas_faltantes
         ]
 
+        if ("empresas", "logo_path") in existentes:
+            self.conn.execute(
+                "UPDATE empresas SET logo_path=NULL "
+                "WHERE LOWER(TRIM(COALESCE(logo_path,''))) IN ('none','null')"
+            )
+        if ("empresas", "responsable") in existentes:
+            self.conn.execute(
+                "UPDATE empresas SET responsable='' "
+                "WHERE LOWER(TRIM(COALESCE(responsable,''))) IN ('none','null')"
+            )
+
         if (
             not faltantes
             and tabla_permisos_existe
@@ -857,6 +868,14 @@ class GestorPostgres(GestorBase):
             self.conn.execute(
                 f"ALTER TABLE {tabla} ADD COLUMN IF NOT EXISTS {columna} {tipo}"
             )
+        self.conn.execute(
+            "UPDATE empresas SET logo_path=NULL "
+            "WHERE LOWER(TRIM(COALESCE(logo_path,''))) IN ('none','null')"
+        )
+        self.conn.execute(
+            "UPDATE empresas SET responsable='' "
+            "WHERE LOWER(TRIM(COALESCE(responsable,''))) IN ('none','null')"
+        )
         if any(
             tabla == "usuarios" and columna == "es_cuenta_emergencia"
             for tabla, columna, _tipo in faltantes

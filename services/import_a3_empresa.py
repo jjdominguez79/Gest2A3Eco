@@ -224,21 +224,34 @@ def _leer_responsable_entorno(
     nif_objetivo = _normalizar_nif_a3(cif)
     if not nif_objetivo:
         return ""
+    return _leer_responsables_entorno_masivo(
+        cli_path, respo_path, usr_path, aplicacion,
+    ).get(nif_objetivo, "")
+
+
+def _leer_responsables_entorno_masivo(
+    cli_path: Path,
+    respo_path: Path,
+    usr_path: Path,
+    aplicacion: str = "ECO",
+) -> dict[str, str]:
+    """Lee en una sola pasada todos los responsables de una aplicacion A3."""
     try:
         cli_data = cli_path.read_bytes()
         respo_data = respo_path.read_bytes()
         usr_data = usr_path.read_bytes()
     except OSError:
-        return ""
+        return {}
 
-    cliente_ids: set[int] = set()
+    clientes: dict[int, str] = {}
     for offset in range(_ISAM_HEADER, len(cli_data) - _ASECLI_REC_SIZE + 1, _ASECLI_REC_SIZE):
         rec = cli_data[offset: offset + _ASECLI_REC_SIZE]
         nif = _normalizar_nif_a3(rec[_ASECLI_NIF].decode(_A3_ENCODING, errors="ignore"))
-        if nif == nif_objetivo:
-            cliente_ids.add(int.from_bytes(rec[_ASECLI_ID], "big"))
-    if not cliente_ids:
-        return ""
+        cliente_id = int.from_bytes(rec[_ASECLI_ID], "big")
+        if nif and cliente_id:
+            clientes[cliente_id] = nif
+    if not clientes:
+        return {}
 
     app_objetivo = str(aplicacion or "ECO").strip().upper()
     usuarios: dict[int, str] = {}
@@ -251,7 +264,7 @@ def _leer_responsable_entorno(
         if usuario_id and nombre:
             usuarios[usuario_id] = " ".join(nombre.split())
 
-    candidatos: list[tuple[int, int, str]] = []
+    candidatos: dict[str, tuple[int, int, str]] = {}
     for offset in range(
         _ISAM_HEADER,
         len(respo_data) - _ASERESPO_REC_SIZE + 1,
@@ -263,16 +276,17 @@ def _leer_responsable_entorno(
         cliente_id = int.from_bytes(rec[_ASERESPO_CLIENT_ID], "big")
         app = rec[_ASERESPO_APP].decode(_A3_ENCODING, errors="ignore").strip().upper()
         usuario_id = int.from_bytes(rec[_ASERESPO_USUARIO_ID], "big")
-        if cliente_id not in cliente_ids or app != app_objetivo or usuario_id not in usuarios:
+        nif = clientes.get(cliente_id)
+        if not nif or app != app_objetivo or usuario_id not in usuarios:
             continue
         orden = int.from_bytes(rec[_ASERESPO_ORDEN], "big")
         # A3 puede guardar varios roles ECO. El de menor orden es el
         # responsable principal que muestra la ficha de la aplicacion.
-        candidatos.append((orden, usuario_id, usuarios[usuario_id]))
-    if not candidatos:
-        return ""
-    candidatos.sort(key=lambda item: (item[0], item[1]))
-    return candidatos[0][2]
+        candidato = (orden, usuario_id, usuarios[usuario_id])
+        actual = candidatos.get(nif)
+        if actual is None or candidato[:2] < actual[:2]:
+            candidatos[nif] = candidato
+    return {nif: candidato[2] for nif, candidato in candidatos.items()}
 
 
 def _buscar_responsable_a3eco(cif: str) -> tuple[str, "Path | None"]:
@@ -310,6 +324,44 @@ def importar_responsable_a3eco(cif: str) -> str:
         raise ValueError("La empresa no tiene CIF/NIF; no se puede buscar su responsable en A3.")
     responsable, _path = _buscar_responsable_a3eco(cif_norm)
     return responsable
+
+
+def importar_responsables_a3eco() -> dict[str, str]:
+    """Importa masivamente responsables ECO, con GES como respaldo.
+
+    Los ficheros de A3ENTORNO se leen una sola vez por ubicacion, de modo que
+    se puede completar todo el catalogo sin abrirlos de nuevo por empresa.
+    """
+    rutas = [
+        (cli_path, respo_path, usr_path)
+        for cli_path, respo_path, usr_path in _candidate_entorno_responsable_paths()
+        if cli_path.exists() and respo_path.exists() and usr_path.exists()
+    ]
+    responsables: dict[str, str] = {}
+    fingerprints: set[tuple[tuple[int, int], ...]] = set()
+    rutas_unicas: list[tuple[Path, Path, Path]] = []
+    for ruta in rutas:
+        try:
+            fingerprint = tuple(
+                (path.stat().st_size, path.stat().st_mtime_ns) for path in ruta
+            )
+        except OSError:
+            continue
+        if fingerprint in fingerprints:
+            continue
+        fingerprints.add(fingerprint)
+        rutas_unicas.append(ruta)
+
+    # La asignacion ECO es prioritaria en todas las ubicaciones; GES solo
+    # completa clientes historicos sin una asignacion especifica de ECO.
+    for aplicacion in ("ECO", "GES"):
+        for cli_path, respo_path, usr_path in rutas_unicas:
+            encontrados = _leer_responsables_entorno_masivo(
+                cli_path, respo_path, usr_path, aplicacion,
+            )
+            for nif, responsable in encontrados.items():
+                responsables.setdefault(nif, responsable)
+    return responsables
 
 
 def _candidate_paths(codigo: str) -> list[Path]:

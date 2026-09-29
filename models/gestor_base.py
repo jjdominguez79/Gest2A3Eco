@@ -1846,6 +1846,39 @@ class GestorBase:
         self.conn.commit()
         return actualizadas
 
+    def completar_responsables_empresas(
+        self, responsables_por_nif: dict[str, str],
+    ) -> int:
+        """Completa responsables ausentes sin sobrescribir asignaciones validas."""
+        responsables = {
+            normalizar_nif_cif(nif): str(nombre or "").strip()
+            for nif, nombre in (responsables_por_nif or {}).items()
+            if normalizar_nif_cif(nif) and str(nombre or "").strip()
+        }
+        if not responsables:
+            return 0
+
+        codigos: dict[str, str] = {}
+        for empresa in self.listar_empresas():
+            actual = str(empresa.get("responsable") or "").strip()
+            if actual and actual.lower() not in {"none", "null"}:
+                continue
+            codigo = normalizar_codigo_empresa_a3(empresa.get("codigo"))
+            responsable = responsables.get(normalizar_nif_cif(empresa.get("cif")))
+            if codigo and responsable:
+                codigos[codigo] = responsable
+
+        for codigo, responsable in codigos.items():
+            self.conn.execute(
+                "UPDATE empresas SET responsable=? WHERE codigo=? "
+                "AND (responsable IS NULL OR TRIM(responsable)='' "
+                "OR LOWER(TRIM(responsable)) IN ('none','null'))",
+                (responsable, codigo),
+            )
+        if codigos:
+            self.conn.commit()
+        return len(codigos)
+
     def aplicar_cambios_empresa_solicitados(
         self,
         codigo: str,

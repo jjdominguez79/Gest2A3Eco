@@ -161,3 +161,37 @@ def test_worker_publica_logo_desde_assets_compartidos(monkeypatch, tmp_path):
     )
     assert upload[2]["data"] == {"company_code": "E00006"}
     assert upload[2]["files"]["logo"] == ("E00006.png", b"logo-maestro")
+
+
+def test_worker_trata_none_textual_como_logo_ausente(tmp_path):
+    session = _Session()
+    worker = MasterDataWorker(
+        MasterDataConfig(
+            api_url="https://backend.example",
+            api_token="secret",
+            postgres_dsn="postgresql://desktop",
+            interval_seconds=300,
+            online_series_code="APP",
+            repository_dir=tmp_path,
+        ),
+        session=session,
+    )
+
+    changed = worker._sync_company_logo(
+        {"codigo": "E00006", "logo_path": "None"},
+        remote_hash="hash-remoto",
+    )
+
+    assert changed == 1
+    assert session.calls == [(
+        "DELETE",
+        "https://backend.example/api/v1/messaging/client/internal/company-logo",
+        {
+            "headers": {
+                "X-API-Key": "secret",
+                "Connection": "close",
+            },
+            "params": {"company_code": "E00006"},
+            "timeout": 30,
+        },
+    )]

@@ -52,6 +52,7 @@ class AppController:
         self._ocr_background_running = False
         self._ocr_background_scheduled = False
         self._ocr_background_stopped = False
+        self._responsables_sync_running = False
         self._content.bind("<Destroy>", self._on_content_destroy, add="+")
 
     @property
@@ -69,6 +70,38 @@ class AppController:
         self._schedule_attachment_poll(2_000)
         self._schedule_client_publications(3_000)
         self._schedule_ocr_background(1_000)
+        self._content.after(5_000, self._start_responsables_sync)
+
+    def _start_responsables_sync(self):
+        """Completa en segundo plano responsables vacios desde A3ENTORNO."""
+        role = str(getattr(self._session.role, "value", self._session.role)).lower()
+        if self._responsables_sync_running or role not in {"admin", "empleado"}:
+            return
+        self._responsables_sync_running = True
+
+        def worker():
+            try:
+                result = self._empresa_service.importar_responsables_pendientes_desde_a3()
+                error = None
+            except Exception as exc:
+                result, error = {}, exc
+            try:
+                self._content.after(0, self._finish_responsables_sync, result, error)
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_responsables_sync(self, result, error):
+        self._responsables_sync_running = False
+        if error is not None:
+            LOG.warning("No se pudieron importar responsables desde A3: %s", error)
+            return
+        LOG.info(
+            "Responsables A3 sincronizados: %s detectados, %s empresas actualizadas.",
+            result.get("responsables_detectados", 0),
+            result.get("empresas_actualizadas", 0),
+        )
 
     def _schedule_ocr_background(self, delay_ms=OCR_BACKGROUND_INTERVAL_MS):
         role = str(getattr(self._session.role, "value", self._session.role)).lower()
