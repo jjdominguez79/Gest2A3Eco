@@ -1,6 +1,6 @@
 {
-  "version": "1.9.1",
-  "tag": "v1.9.1",
-  "changelog": "Se corrige el acceso web del personal con Microsoft para evitar que el codigo temporal se consuma dos veces. El chat incorpora selector de emoticonos. La ficha del cliente permite verificar la informacion publicada, el logotipo, los usuarios y el historial de solicitudes de cambio. Los grupos historicos se trasladan a un archivo separado de la bandeja principal.",
+  "version": "1.9.2",
+  "tag": "v1.9.2",
+  "changelog": "Se unifica el circuito de facturas recibidas, reuniendo correo, mensajeria y carga manual en una bandeja comun y usando el archivo documental como fuente de verdad. Se separan la contabilizacion y la exportacion a A3, se corrige la seleccion multiple de facturas y se mejora la identificacion de clientes y avisos automaticos en las conversaciones. La publicacion incluye Gestinem 0.1.23 para web y Windows.",
   "force_update": true
 }
