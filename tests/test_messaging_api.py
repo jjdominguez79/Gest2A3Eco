@@ -553,10 +553,14 @@ def test_cliente_solicita_cambios_de_empresa_sin_modificar_el_maestro(tmp_path):
         f"/api/v1/messaging/client/conversations/{private_conversation['id']}/messages",
         headers=auth,
     ).json()
-    assert any(
-        "aprobada y aplicada" in message["body"]
+    automatic_message = next(
+        message
         for message in messages
+        if "aprobada y aplicada" in message["body"]
     )
+    assert automatic_message["author_type"] == "system"
+    assert automatic_message["author_id"] == "gestinem"
+    assert automatic_message["author_name"] == "Gestinem"
     assert client.get(
         f"/api/v1/messaging/client/internal/profile-change-requests/{data['id']}/logo",
         headers=internal,
@@ -573,6 +577,28 @@ def test_cliente_solicita_cambios_de_empresa_sin_modificar_el_maestro(tmp_path):
         files={"logo": ("E10013.png", logo.getvalue(), "image/png")},
     )
     assert synchronized.status_code == 200
+    staff_conversations = client.get(
+        "/api/v1/messaging/staff/conversations", headers=admin_headers,
+    ).json()
+    conversation_with_logo = next(
+        row for row in staff_conversations if row["company_code"] == "E10013"
+    )
+    assert conversation_with_logo["channel_avatar_url"].endswith(
+        "/staff/organizations/E10013/logo"
+    )
+    assert client.get(
+        conversation_with_logo["channel_avatar_url"], headers=admin_headers,
+    ).content == logo.getvalue()
+    staff_messages = client.get(
+        f"/api/v1/messaging/staff/conversations/{private_conversation['id']}/messages",
+        headers=admin_headers,
+    ).json()
+    client_message = next(
+        message for message in staff_messages if message["author_type"] == "client"
+    )
+    assert client_message["author_avatar_url"].endswith(
+        "/staff/organizations/E10013/logo"
+    )
     staff_profile = client.get(
         "/api/v1/messaging/staff/admin/organizations/E10013/profile",
         headers=admin_headers,

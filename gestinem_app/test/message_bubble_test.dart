@@ -128,4 +128,29 @@ void main() {
     expect(find.byKey(const Key('deleted-message')), findsOneWidget);
     expect(find.text('Mensaje eliminado'), findsOneWidget);
   });
+
+  testWidgets('aviso automatico se muestra centrado como mensaje de sistema', (
+    tester,
+  ) async {
+    final message = Message(
+      id: 'system-1',
+      conversationId: 'c1',
+      authorType: 'system',
+      authorId: 'gestinem',
+      authorName: 'Gestinem',
+      authorAvatarUrl: '',
+      body: 'Los cambios se han aplicado.',
+      createdAt: DateTime(2026, 9, 29, 10, 10),
+      deleted: false,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: MessageBubble(message: message, mine: false)),
+      ),
+    );
+
+    expect(find.text('Aviso de Gestinem'), findsOneWidget);
+    expect(find.text('Los cambios se han aplicado.'), findsOneWidget);
+    expect(find.byType(CircleAvatar), findsNothing);
+  });
 }

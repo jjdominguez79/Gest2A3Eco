@@ -36,21 +36,32 @@ class ConversationScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final profile = ref.watch(sessionProvider).valueOrNull?.profile;
     final thread = internal
         ? _findThread(
             ref.watch(internalThreadsProvider).valueOrNull,
             conversationId,
           )
         : null;
+    final conversation = internal
+        ? null
+        : _findConversation(
+            ref.watch(conversationsProvider).valueOrNull,
+            conversationId,
+          );
     return Scaffold(
       appBar: AppBar(
+        toolbarHeight: 64,
         leading: IconButton(
           onPressed: () => context.go('/'),
           icon: const Icon(Icons.arrow_back),
         ),
         title: internal
             ? _InternalThreadIdentity(thread: thread)
-            : const Text('Conversación'),
+            : _ClientConversationIdentity(
+                conversation: conversation,
+                isStaff: profile?.type == UserType.staff,
+              ),
       ),
       body: ConversationView(
         conversationId: conversationId,
@@ -1013,12 +1024,6 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
         ? ref.watch(internalMessagesProvider(widget.conversationId))
         : ref.watch(messagesProvider(widget.conversationId));
     asyncMessages.whenData(_markReadWhenMessagesArrive);
-    final conversations = widget.internal
-        ? null
-        : ref.watch(conversationsProvider).valueOrNull;
-    final currentConversation = conversations
-        ?.where((item) => item.id == widget.conversationId)
-        .firstOrNull;
     final internalThread = widget.internal
         ? _findThread(
             ref.watch(internalThreadsProvider).valueOrNull,
@@ -1039,44 +1044,6 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                   thread: internalThread,
                   avatarRadius: 20,
                 ),
-              ),
-            ),
-          ),
-        if (!widget.internal &&
-            profile.type.name == 'staff' &&
-            currentConversation != null)
-          Material(
-            color: Theme.of(context).colorScheme.surfaceContainerLow,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-              child: Row(
-                children: [
-                  const Text('Estado: '),
-                  DropdownButton<String>(
-                    value: currentConversation.state,
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'pendiente',
-                        child: Text('Pendiente'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'en_curso',
-                        child: Text('En curso'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'resuelta',
-                        child: Text('Resuelta'),
-                      ),
-                    ],
-                    onChanged: (value) async {
-                      if (value == null) return;
-                      await ref
-                          .read(messagingRepositoryProvider)
-                          .changeState(widget.conversationId, value);
-                      ref.invalidate(conversationsProvider);
-                    },
-                  ),
-                ],
               ),
             ),
           ),
@@ -1164,10 +1131,14 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                           ? _withdrawAttachment
                           : null,
                       onVoiceLoad: _loadVoice,
-                      onTap: message.deleted && !message.canViewHistory
+                      onTap:
+                          message.authorType == 'system' ||
+                              (message.deleted && !message.canViewHistory)
                           ? null
                           : () => _messageActions(message, mine),
-                      onLongPress: message.deleted && !message.canViewHistory
+                      onLongPress:
+                          message.authorType == 'system' ||
+                              (message.deleted && !message.canViewHistory)
                           ? null
                           : () => _messageActions(message, mine),
                     );
@@ -1365,6 +1336,77 @@ InternalThread? _findThread(List<InternalThread>? threads, String id) {
     if (thread.id == id) return thread;
   }
   return null;
+}
+
+Conversation? _findConversation(List<Conversation>? conversations, String id) {
+  if (conversations == null) return null;
+  for (final conversation in conversations) {
+    if (conversation.id == id) return conversation;
+  }
+  return null;
+}
+
+class _ClientConversationIdentity extends ConsumerWidget {
+  const _ClientConversationIdentity({
+    required this.conversation,
+    required this.isStaff,
+  });
+
+  final Conversation? conversation;
+  final bool isStaff;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final current = conversation;
+    final title = current == null
+        ? 'Conversación'
+        : isStaff
+        ? current.title
+        : 'Gestinem';
+    final subtitle = current == null
+        ? 'Cargando información…'
+        : switch (current.kind) {
+            'general' => 'Canal general',
+            'private' => isStaff ? 'Chat privado contigo' : 'Tu asesor',
+            _ => 'Conversación',
+          };
+    final apiBaseUrl = ref
+        .read(apiClientProvider)
+        .dio
+        .options
+        .baseUrl
+        .replaceAll(RegExp(r'/api/v1/messaging/?$'), '');
+    final authToken = ref.read(sessionProvider).valueOrNull?.token ?? '';
+    return Row(
+      children: [
+        AuthenticatedAvatar(
+          radius: 18,
+          baseUrl: apiBaseUrl,
+          authToken: authToken,
+          imagePath: current?.channelAvatarUrl ?? '',
+          fallbackText: current?.displayChannelLabel ?? '?',
+          cacheVersion: current?.channelAvatarVersion ?? '',
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+              Text(
+                subtitle,
+                key: const Key('conversation-channel-kind'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _InternalThreadIdentity extends ConsumerWidget {

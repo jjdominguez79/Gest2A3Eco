@@ -321,8 +321,6 @@ def internal_review_profile_change_request(
         item,
         status=status,
         note=item.review_note,
-        reviewer_id=item.reviewed_by,
-        reviewer_name="Gestinem",
     )
     release_profile_change_logo(db, item)
     db.refresh(item)

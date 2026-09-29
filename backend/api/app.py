@@ -420,6 +420,7 @@ def startup():
         "030_general_client_channel.sql",
         "031_invitation_content.sql",
         "032_group_avatars.sql",
+        "033_profile_change_system_messages.sql",
     ):
         _mig_path = Path(__file__).resolve().parent.parent / "migrations" / _mig_name
         if _mig_path.exists():

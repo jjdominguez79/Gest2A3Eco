@@ -433,8 +433,65 @@ class MessageBubble extends StatelessWidget {
     return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')} $h:$m';
   }
 
+  Widget _systemMessage(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: Container(
+            key: Key('message-${message.id}'),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: colors.tertiaryContainer,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.info_outline,
+                      size: 17,
+                      color: colors.onTertiaryContainer,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Aviso de Gestinem',
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: colors.onTertiaryContainer,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  message.body,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: colors.onTertiaryContainer),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _timeLabel(message.createdAt),
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: colors.onTertiaryContainer.withValues(alpha: .72),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (message.authorType == 'system') return _systemMessage(context);
     final colors = Theme.of(context).colorScheme;
     final bubbleColor = mine
         ? colors.primaryContainer

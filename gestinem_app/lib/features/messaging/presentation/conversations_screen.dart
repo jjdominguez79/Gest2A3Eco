@@ -547,6 +547,8 @@ class _StaffInbox extends StatelessWidget {
               child: _ClientConversationTile(
                 conversation: conversation,
                 selected: !selectedInternal && selectedId == conversation.id,
+                baseUrl: baseUrl,
+                authToken: authToken,
                 onTap: () => onConversation(conversation.id),
               ),
             ),
@@ -713,10 +715,14 @@ class _ClientConversationTile extends StatelessWidget {
   const _ClientConversationTile({
     required this.conversation,
     required this.selected,
+    required this.baseUrl,
+    required this.authToken,
     required this.onTap,
   });
   final Conversation conversation;
   final bool selected;
+  final String baseUrl;
+  final String authToken;
   final VoidCallback onTap;
 
   @override
@@ -724,7 +730,14 @@ class _ClientConversationTile extends StatelessWidget {
     key: Key('conversation-${conversation.id}'),
     selected: selected,
     onTap: onTap,
-    leading: CircleAvatar(child: Text(_initials(conversation.title))),
+    leading: AuthenticatedAvatar(
+      radius: 22,
+      baseUrl: baseUrl,
+      authToken: authToken,
+      imagePath: conversation.channelAvatarUrl,
+      fallbackText: _initials(conversation.title),
+      cacheVersion: conversation.channelAvatarVersion,
+    ),
     title: Text(
       conversation.title,
       maxLines: 1,

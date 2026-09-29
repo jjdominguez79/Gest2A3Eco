@@ -109,8 +109,7 @@ void main() {
         ),
       ),
     );
-    await tester.pump();
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(find.text('Analía Pérez'), findsOneWidget);
     expect(find.text('Chat directo'), findsOneWidget);
@@ -241,6 +240,60 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Lista de inicio'), findsOneWidget);
+  });
+
+  testWidgets('cabecera identifica el chat privado y no muestra estado', (
+    tester,
+  ) async {
+    const staffProfile = UserProfile(
+      id: 'staff-1',
+      name: 'Ana Gestora',
+      email: 'ana@example.test',
+      type: UserType.staff,
+      staffRole: StaffRole.admin,
+    );
+    const staffSession = AuthSession(
+      token: 'staff-token',
+      profile: staffProfile,
+    );
+    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'))
+      ..httpClientAdapter = JsonAdapter(<String, dynamic>{});
+    final conversation = Conversation(
+      id: 'client-private',
+      companyCode: 'E00001',
+      companyName: 'Cliente con logotipo',
+      kind: 'private',
+      channelLabel: 'CL',
+      channelAvatarUrl: '/api/v1/messaging/staff/organizations/E00001/logo',
+      channelAvatarVersion: 'logo-v1',
+      state: 'pendiente',
+      unreadCount: 0,
+      updatedAt: DateTime(2026, 9, 29),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith(
+            (ref) => FakeSessionController(ref, staffSession),
+          ),
+          apiClientProvider.overrideWithValue(
+            ApiClient(dio: dio, tokenProvider: () => staffSession.token),
+          ),
+          conversationsProvider.overrideWith((ref) async => [conversation]),
+          messagesProvider.overrideWith((ref, id) async => []),
+        ],
+        child: const MaterialApp(
+          home: ConversationScreen(conversationId: 'client-private'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Cliente con logotipo'), findsOneWidget);
+    expect(find.text('Chat privado contigo'), findsOneWidget);
+    expect(find.text('Estado: '), findsNothing);
+    expect(find.text('Pendiente'), findsNothing);
   });
 
   testWidgets('al abrir una conversacion muestra los mensajes del final', (

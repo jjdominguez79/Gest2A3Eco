@@ -856,7 +856,17 @@ def _serialize_conversation(
     channel_label = "CG" if conv.kind == "general" else ""
     channel_avatar_url = ""
     channel_avatar_version = ""
-    if conv.kind == "private":
+    if audience == "staff" and org.logo_storage_key:
+        words = [word for word in org.name.split() if word]
+        channel_label = (
+            "".join(word[0] for word in words[:2]).upper()
+            or org.company_code[:2].upper()
+        )
+        channel_avatar_url = (
+            f"/api/v1/messaging/staff/organizations/{org.company_code}/logo"
+        )
+        channel_avatar_version = org.logo_sha256[:12]
+    elif conv.kind == "private":
         owner_id = org.private_owner_external_id or conv.assigned_staff_external_id
         owner = db.get(MessagingStaff, owner_id) if owner_id else None
         owner_name = (owner.chat_alias.strip() or owner.name.strip()) if owner else ""
@@ -968,6 +978,19 @@ def _serialize_message(db: Session, item: MessagingMessage, audience: str = "") 
             author_name = author.chat_alias.strip() or item.author_name
             if author.avatar_storage_key and audience in {"client", "staff"}:
                 author_avatar_url = f"/api/v1/messaging/{audience}/avatars/{author.external_id}"
+    elif item.author_type == "client":
+        author = db.get(MessagingClient, item.author_id)
+        organization = (
+            db.get(MessagingOrganization, author.organization_id) if author else None
+        )
+        if organization and organization.logo_storage_key:
+            if audience == "staff":
+                author_avatar_url = (
+                    "/api/v1/messaging/staff/organizations/"
+                    f"{organization.company_code}/logo"
+                )
+            elif audience == "client":
+                author_avatar_url = "/api/v1/messaging/client/company-logo"
     reply = db.get(MessagingMessage, item.reply_to_message_id) if item.reply_to_message_id else None
     reply_data = None
     if reply:
@@ -1151,6 +1174,8 @@ def _unread_count(db: Session, conv: MessagingConversation, actor_type: str, act
         MessagingMessage.conversation_id == conv.id,
         MessagingMessage.author_type != actor_type,
     )
+    if actor_type == "staff":
+        stmt = stmt.where(MessagingMessage.author_type != "system")
     if read:
         stmt = stmt.where(MessagingMessage.created_at > read.read_at)
     return int(db.scalar(stmt) or 0)
@@ -3099,8 +3124,6 @@ def notify_profile_change_review(
     *,
     status: str,
     note: str,
-    reviewer_id: str,
-    reviewer_name: str = "Gestinem",
 ) -> MessagingMessage:
     """Confirma al cliente la resolucion dentro de su conversacion privada."""
     conv = db.scalar(select(MessagingConversation).where(
@@ -3127,9 +3150,9 @@ def notify_profile_change_review(
     message = _create_message(
         db,
         conv,
-        actor_type="staff",
-        actor_id=reviewer_id or "gestinem",
-        actor_name=reviewer_name.strip() or "Gestinem",
+        actor_type="system",
+        actor_id="gestinem",
+        actor_name="Gestinem",
         body=body,
         idempotency_key=f"profile-change-review-{item.id}-{status}",
         files=[],
@@ -3190,8 +3213,6 @@ def review_profile_change_request(
         item,
         status=payload.status,
         note=item.review_note,
-        reviewer_id=admin.external_id,
-        reviewer_name=admin.chat_alias.strip() or admin.name,
     )
     release_profile_change_logo(db, item)
     db.refresh(item)
@@ -3697,6 +3718,34 @@ def staff_avatar(
         content=MessagingStorage().get(staff.avatar_storage_key),
         media_type=staff.avatar_content_type or "image/webp",
         headers={"Cache-Control": "private, no-cache"},
+    )
+
+
+@router.get("/staff/organizations/{company_code}/logo")
+def staff_organization_conversation_logo(
+    company_code: str,
+    staff: MessagingStaff = Depends(_staff),
+    db: Session = Depends(get_db),
+):
+    """Entrega el logotipo solo al personal con acceso a ese cliente."""
+    organization = db.scalar(select(MessagingOrganization).where(
+        MessagingOrganization.company_code == company_code,
+    ))
+    if not organization or not organization.active or not organization.logo_storage_key:
+        raise HTTPException(404, "Logotipo no disponible")
+    conversations = db.scalars(select(MessagingConversation).where(
+        MessagingConversation.organization_id == organization.id,
+        MessagingConversation.kind.in_(CLIENT_CHANNELS),
+    )).all()
+    if not any(
+        _can_access_conversation(db, conversation, staff)
+        for conversation in conversations
+    ):
+        raise HTTPException(403, "Logotipo no autorizado")
+    return Response(
+        content=MessagingStorage().get(organization.logo_storage_key),
+        media_type=organization.logo_content_type or "image/png",
+        headers={"Cache-Control": "private, max-age=300"},
     )
 
 
