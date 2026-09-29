@@ -39,6 +39,7 @@ class MessagingOrganization(Base):
     email: Mapped[str] = mapped_column(String(254), default="")
     logo_storage_key: Mapped[str] = mapped_column(String(500), default="")
     logo_content_type: Mapped[str] = mapped_column(String(120), default="")
+    logo_sha256: Mapped[str] = mapped_column(String(64), default="")
     profile_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     client_invoicing_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     client_documents_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -415,6 +416,8 @@ class MessagingGroup(Base):
     group_type: Mapped[str] = mapped_column(String(20), index=True)  # staff_chat | client_list
     created_by: Mapped[str] = mapped_column(String(64), index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    avatar_storage_key: Mapped[str] = mapped_column(String(500), default="")
+    avatar_content_type: Mapped[str] = mapped_column(String(120), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

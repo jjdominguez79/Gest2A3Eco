@@ -4,8 +4,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/api/api_client.dart';
+import '../../../core/config/app_config.dart';
 import '../../../core/notifications/notifications_service.dart';
 import '../../../core/widgets/authenticated_avatar.dart';
 import '../../auth/domain/user_profile.dart';
@@ -694,7 +696,7 @@ class _InternalThreadTile extends StatelessWidget {
           authToken: authToken,
           imagePath: thread.counterpartAvatarUrl,
           fallbackText: _initials(thread.title),
-          cacheVersion: thread.id,
+          cacheVersion: thread.counterpartAvatarVersion,
         ),
         if (thread.kind == 'direct')
           Positioned(
@@ -1144,6 +1146,19 @@ class _AppDrawer extends ConsumerWidget {
     }
   }
 
+  Future<void> _abrirManual(BuildContext context) async {
+    Navigator.of(context).pop();
+    final opened = await launchUrl(
+      Uri.parse('${appConfig.apiBaseUrl}/public/client-manual'),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!opened && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo abrir el manual.')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final featuresAsync = profile.type == UserType.client
@@ -1224,6 +1239,13 @@ class _AppDrawer extends ConsumerWidget {
               title: const Text('Perfil'),
               onTap: () => _navigate(context, '/profile'),
             ),
+          ListTile(
+            key: const Key('drawer-user-manual'),
+            leading: const Icon(Icons.menu_book_outlined),
+            title: const Text('Manual de Gestinem'),
+            trailing: const Icon(Icons.open_in_new),
+            onTap: () => _abrirManual(context),
+          ),
           ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('Acerca de Gestinem'),

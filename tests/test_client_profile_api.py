@@ -26,7 +26,7 @@ class _FakeOrg:
             address="Calle Mayor 1", postal_code="28001", city="Madrid",
             province="Madrid", country="ES", phone="912345678",
             email="info@empresa.es", profile_synced_at=None,
-            logo_storage_key="", logo_content_type="",
+            logo_storage_key="", logo_content_type="", logo_sha256="",
             private_owner_external_id="",
             client_invoicing_enabled=False, client_documents_enabled=False,
         )

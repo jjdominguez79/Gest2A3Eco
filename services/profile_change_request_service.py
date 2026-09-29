@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import mimetypes
 from io import BytesIO
 from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
 
 from services.backend_client_service import BackendClientService
-from utils.utilidades import get_document_repository_dir
+from services.company_logo_service import save_company_logo
 
 
 class ProfileChangeRequestService:
@@ -27,9 +28,22 @@ class ProfileChangeRequestService:
 
         logo_path = None
         if item.get("has_logo"):
-            content, filename, content_type = (
-                self._backend.download_profile_change_logo(request_id)
-            )
+            try:
+                content, filename, content_type = (
+                    self._backend.download_profile_change_logo(request_id)
+                )
+            except Exception as download_error:
+                local = self._local_logo_for_request(item)
+                if not local:
+                    raise download_error
+                local_path = Path(str(local.get("ruta_entrada") or ""))
+                content = local_path.read_bytes()
+                filename = str(local.get("nombre_original") or local_path.name)
+                content_type = str(
+                    local.get("mime_type")
+                    or mimetypes.guess_type(filename)[0]
+                    or "image/png"
+                )
             logo_path = self._save_company_logo(
                 company_code, content, filename, content_type,
             )
@@ -41,11 +55,39 @@ class ProfileChangeRequestService:
         )
         if not updated:
             raise ValueError(f"No existe la empresa {company_code} en el escritorio.")
-        return self._backend.review_profile_change_request(
+        result = self._backend.review_profile_change_request(
             request_id,
             status="applied",
             note="Actualizado manualmente en A3 y aplicado desde Gest2A3Eco.",
         )
+        self._discard_local_incoming_copy(item)
+        return result
+
+    def _local_logo_for_request(self, item: dict) -> dict | None:
+        message_id = str(item.get("message_id") or "")
+        if not message_id:
+            return None
+        local = self._gestor.get_adjunto_mensajeria_por_mensaje(message_id)
+        if not local:
+            return None
+        path = Path(str(local.get("ruta_entrada") or ""))
+        mime_type = str(local.get("mime_type") or "").lower()
+        return local if path.is_file() and mime_type.startswith("image/") else None
+
+    def _discard_local_incoming_copy(self, item: dict) -> None:
+        """Retira la descarga temporal una vez creada la copia maestra."""
+        local = self._local_logo_for_request(item)
+        if not local:
+            return
+        try:
+            self._gestor.no_guardar_adjunto_mensajeria(
+                str(local.get("id") or ""), revisado_por="sistema",
+            )
+            Path(str(local.get("ruta_entrada") or "")).unlink(missing_ok=True)
+        except Exception:
+            # La solicitud ya esta aplicada; un fallo de limpieza no debe
+            # revertir los datos maestros ni la confirmacion al cliente.
+            return
 
     def reject(self, item: dict, note: str) -> dict:
         return self._backend.review_profile_change_request(
@@ -67,22 +109,4 @@ class ProfileChangeRequestService:
         except (UnidentifiedImageError, OSError) as exc:
             raise ValueError("El logotipo recibido no es una imagen valida.") from exc
 
-        suffix = Path(filename or "").suffix.lower()
-        allowed = {".png", ".jpg", ".jpeg", ".webp"}
-        if suffix not in allowed:
-            suffix = {
-                "image/jpeg": ".jpg",
-                "image/webp": ".webp",
-            }.get(str(content_type).split(";", 1)[0].lower(), ".png")
-        folder = (
-            get_document_repository_dir()
-            / "Empresas"
-            / company_code
-            / "Configuracion"
-        )
-        folder.mkdir(parents=True, exist_ok=True)
-        target = folder / f"logotipo_empresa{suffix}"
-        temporary = folder / f".logotipo_empresa{suffix}.tmp"
-        temporary.write_bytes(content)
-        temporary.replace(target)
-        return target
+        return save_company_logo(company_code, content)

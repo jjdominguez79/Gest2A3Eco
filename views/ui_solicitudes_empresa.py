@@ -146,7 +146,9 @@ class UISolicitudesEmpresa(ttk.Frame):
             return
         messagebox.showinfo(
             "Solicitudes",
-            "Solicitud aplicada correctamente en Gest2A3Eco y confirmada al cliente.",
+            "Solicitud aplicada correctamente en la ficha de Gest2A3Eco y "
+            "confirmada al cliente. El worker publicara los datos y el "
+            "logotipo en Flutter en su siguiente sincronizacion.",
             parent=self.winfo_toplevel(),
         )
         self.refresh()

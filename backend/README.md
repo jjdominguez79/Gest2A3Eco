@@ -330,6 +330,8 @@ guarda una instantánea de los valores vigentes y crea un mensaje en el canal
 privado, por lo que el personal recibe el aviso FCM habitual. El logotipo se
 adjunta al mensaje y lo recoge el worker de adjuntos existente. Las solicitudes
 permanecen `pending` hasta que un administrador las marca `applied` o `rejected`.
-Al aprobar una solicitud con imagen, esa imagen pasa a ser el logotipo
-corporativo visible en Flutter. Los restantes cambios no modifican
-automaticamente PostgreSQL del escritorio.
+El escritorio aplica la solicitud a la ficha y guarda el logotipo maestro en
+`assets/logos` dentro del repositorio compartido. El worker de datos maestros
+proyecta posteriormente la ficha y una copia del logotipo al backend para que
+Flutter los muestre. PostgreSQL del escritorio y el repositorio compartido son
+la fuente de verdad; Azure contiene solo la copia publicada para Flutter.

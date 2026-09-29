@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:record/record.dart';
 
@@ -78,7 +79,7 @@ class ConversationView extends ConsumerStatefulWidget {
 
 class _ConversationViewState extends ConsumerState<ConversationView> {
   final _body = TextEditingController();
-  final _composerFocus = FocusNode();
+  late final FocusNode _composerFocus;
   final _scroll = ScrollController(keepScrollOffset: false);
   List<PlatformFile> _files = [];
   Message? _replyingTo;
@@ -108,6 +109,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   @override
   void initState() {
     super.initState();
+    _composerFocus = FocusNode(onKeyEvent: _handleComposerKey);
     _body.text = widget.initialDraft ?? '';
     _notificationsService = ref.read(notificationsServiceProvider);
     _scroll.addListener(_loadEarlierWhenNeeded);
@@ -115,6 +117,19 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       _activateConversation();
       _markRead();
     });
+  }
+
+  KeyEventResult _handleComposerKey(FocusNode _, KeyEvent event) {
+    final sendWithEnter =
+        ref.read(sendWithEnterProvider).valueOrNull ?? false;
+    if (!sendWithEnter ||
+        event is! KeyDownEvent ||
+        event.logicalKey != LogicalKeyboardKey.enter ||
+        HardwareKeyboard.instance.isShiftPressed) {
+      return KeyEventResult.ignored;
+    }
+    unawaited(_send(keepComposerFocus: true));
+    return KeyEventResult.handled;
   }
 
   @override
@@ -992,6 +1007,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
 
   @override
   Widget build(BuildContext context) {
+    final sendWithEnter = ref.watch(sendWithEnterProvider).valueOrNull ?? false;
     final profile = ref.watch(sessionProvider).valueOrNull!.profile;
     final asyncMessages = widget.internal
         ? ref.watch(internalMessagesProvider(widget.conversationId))
@@ -1260,6 +1276,15 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                           controller: _body,
                           focusNode: _composerFocus,
                           textCapitalization: TextCapitalization.sentences,
+                          keyboardType: TextInputType.multiline,
+                          textInputAction: sendWithEnter
+                              ? TextInputAction.send
+                              : TextInputAction.newline,
+                          onSubmitted: sendWithEnter
+                              ? (_) => unawaited(
+                                  _send(keepComposerFocus: true),
+                                )
+                              : null,
                           inputFormatters: const [
                             SentenceCapitalizationFormatter(),
                           ],
@@ -1372,20 +1397,14 @@ class _InternalThreadIdentity extends ConsumerWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (current?.kind == 'direct')
-          AuthenticatedAvatar(
-            radius: avatarRadius,
-            baseUrl: apiBaseUrl,
-            authToken: authToken,
-            imagePath: current?.counterpartAvatarUrl ?? '',
-            fallbackText: initials.isEmpty ? '?' : initials,
-            cacheVersion: current?.id ?? '',
-          )
-        else
-          CircleAvatar(
-            radius: avatarRadius,
-            child: const Icon(Icons.groups_outlined),
-          ),
+        AuthenticatedAvatar(
+          radius: avatarRadius,
+          baseUrl: apiBaseUrl,
+          authToken: authToken,
+          imagePath: current?.counterpartAvatarUrl ?? '',
+          fallbackText: initials.isEmpty ? '?' : initials,
+          cacheVersion: current?.counterpartAvatarVersion ?? '',
+        ),
         const SizedBox(width: 10),
         Flexible(
           child: Column(

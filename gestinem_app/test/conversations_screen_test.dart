@@ -164,6 +164,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('drawer-documentation')), findsOneWidget);
     expect(find.byKey(const Key('drawer-profile')), findsOneWidget);
+    expect(find.byKey(const Key('drawer-user-manual')), findsOneWidget);
   });
 
   testWidgets('cliente abre documentacion desde menu y puede volver', (
@@ -324,7 +325,8 @@ void main() {
           )
           .toList();
       expect(opciones.last.key, const Key('drawer-logout'));
-      await tester.ensureVisible(find.byKey(const Key('drawer-logout')));
+      await tester.drag(find.byType(Drawer), const Offset(0, -160));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('drawer-logout')));
       await tester.pumpAndSettle();
       expect(controlador.cierres, 1);
@@ -334,9 +336,7 @@ void main() {
     });
   }
 
-  testWidgets('staff ve Canal general y Tu asesor por cliente', (
-    tester,
-  ) async {
+  testWidgets('staff ve Canal general y Tu asesor por cliente', (tester) async {
     const staffProfile = UserProfile(
       id: 'staff-1',
       name: 'Gestor',
@@ -350,10 +350,7 @@ void main() {
     );
 
     final rows = [
-      for (final channel in const [
-        ('general', 'CG'),
-        ('private', 'Tu asesor'),
-      ])
+      for (final channel in const [('general', 'CG'), ('private', 'Tu asesor')])
         Conversation(
           id: 'c-${channel.$1}',
           companyCode: 'E00001',

@@ -10,6 +10,7 @@ from services.import_a3_empresa import (
     importar_responsable_a3eco,
     listar_empresas_a3,
 )
+from services.company_logo_service import delete_company_logo, import_company_logo
 from services.maestro_contable_empresa_service import MaestroContableEmpresaService
 from utils.validaciones import normalizar_codigo_empresa_a3, normalizar_codigo_pais, normalizar_nif_cif
 from views.ui_buzones import UIBuzones
@@ -214,7 +215,7 @@ class UIConfiguracionEmpresa(ttk.Frame):
         ttk.Entry(row_responsable, textvariable=self.var_responsable).grid(row=0, column=0, sticky="ew")
         ttk.Button(row_responsable, text="Importar responsable",
                    command=self._update_responsable_from_a3).grid(row=0, column=1, padx=(4, 0))
-        ttk.Label(tab, text="Logo (JPG)").grid(row=9, column=0, sticky="w", pady=4)
+        ttk.Label(tab, text="Logotipo").grid(row=9, column=0, sticky="w", pady=4)
         row_logo = ttk.Frame(tab)
         row_logo.grid(row=9, column=1, columnspan=3, sticky="ew", pady=4)
         row_logo.columnconfigure(0, weight=1)
@@ -514,12 +515,21 @@ class UIConfiguracionEmpresa(ttk.Frame):
                 if codigo_anterior_raw
                 else ""
             )
+            logo_anterior = str(self._empresa.get("logo_path") or "").strip()
             if codigo_anterior and codigo != codigo_anterior:
                 self._gestor.cambiar_codigo_empresa(codigo_anterior, codigo)
                 self._codigo = codigo
                 self._codigo_para_ccc = codigo
                 self._empresa["codigo"] = codigo
             self._sync_bank_items_from_records()
+            logo_path = self.var_logo.get().strip()
+            if logo_path:
+                logo_path = str(import_company_logo(codigo, logo_path))
+                self.var_logo.set(logo_path)
+                if codigo_anterior and codigo_anterior != codigo:
+                    delete_company_logo(codigo_anterior)
+            elif logo_anterior:
+                delete_company_logo(codigo_anterior or codigo)
             logo_w_txt = self.var_logo_w.get().strip()
             logo_h_txt = self.var_logo_h.get().strip()
             base = {
@@ -537,7 +547,7 @@ class UIConfiguracionEmpresa(ttk.Frame):
                 "telefono": self.var_tel.get().strip(),
                 "email": self.var_mail.get().strip(),
                 "responsable": self.var_responsable.get().strip(),
-                "logo_path": self.var_logo.get().strip(),
+                "logo_path": logo_path,
                 "logo_max_width_mm": _to_float_es(logo_w_txt) if logo_w_txt else None,
                 "logo_max_height_mm": _to_float_es(logo_h_txt) if logo_h_txt else None,
                 "activo": bool(self.var_activo.get()),
@@ -1069,8 +1079,11 @@ class UIConfiguracionEmpresa(ttk.Frame):
 
     def _choose_logo(self):
         path = filedialog.askopenfilename(
-            title="Seleccionar logo (JPG)",
-            filetypes=[("JPEG", "*.jpg;*.jpeg"), ("Todos", "*.*")],
+            title="Seleccionar logotipo",
+            filetypes=[
+                ("Imagen", "*.png;*.jpg;*.jpeg;*.webp"),
+                ("Todos", "*.*"),
+            ],
         )
         if path:
             self.var_logo.set(path)

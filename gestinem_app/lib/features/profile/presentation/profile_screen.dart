@@ -355,6 +355,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   title: const Text('Rol'),
                   subtitle: Text(profile.staffRole!.name),
                 ),
+              const _SendWithEnterSwitch(),
               ListTile(
                 key: const Key('privacy-policy-link'),
                 leading: const Icon(Icons.policy_outlined),
@@ -559,6 +560,8 @@ class _ClientAreaContent extends ConsumerWidget {
                 onTap: () => context.push('/about'),
               ),
               const Divider(height: 1),
+              const _SendWithEnterSwitch(),
+              const Divider(height: 1),
               ListTile(
                 key: const Key('privacy-policy-link'),
                 leading: const Icon(Icons.policy_outlined),
@@ -613,6 +616,37 @@ class _ClientAreaContent extends ConsumerWidget {
         .map((part) => part[0])
         .join()
         .toUpperCase();
+  }
+}
+
+class _SendWithEnterSwitch extends ConsumerWidget {
+  const _SendWithEnterSwitch();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final preference = ref.watch(sendWithEnterProvider);
+    return SwitchListTile(
+      key: const Key('send-with-enter-switch'),
+      secondary: const Icon(Icons.keyboard_return_outlined),
+      title: const Text('Enviar con Intro'),
+      subtitle: const Text(
+        'Al activarlo, Intro envia el mensaje y Mayus+Intro crea una linea nueva.',
+      ),
+      value: preference.valueOrNull ?? false,
+      onChanged: preference.isLoading
+          ? null
+          : (enabled) async {
+              try {
+                await setSendWithEnter(ref, enabled);
+              } catch (error) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(apiErrorMessage(error))),
+                  );
+                }
+              }
+            },
+    );
   }
 }
 

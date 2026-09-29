@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../auth/presentation/auth_controller.dart';
 import '../../../core/websocket/realtime_service.dart';
+import '../../../core/storage/composer_preferences_storage.dart';
 import '../../profile/data/profile_repository.dart';
 import '../data/messaging_repository.dart';
 import '../domain/client_organization.dart';
@@ -19,6 +20,27 @@ final realtimeServiceProvider = Provider<RealtimeService>(
 final profileRepositoryProvider = Provider<ProfileRepository>((ref) {
   return ProfileRepository(ref.watch(apiClientProvider));
 });
+
+final composerPreferencesStorageProvider = Provider<ComposerPreferencesStorage>(
+  (_) => ComposerPreferencesStorage(),
+);
+
+final sendWithEnterProvider = FutureProvider<bool>((ref) {
+  final profile = ref.watch(sessionProvider).valueOrNull!.profile;
+  final userKey = '${profile.type.name}.${profile.id}';
+  return ref
+      .watch(composerPreferencesStorageProvider)
+      .readSendWithEnter(userKey);
+});
+
+Future<void> setSendWithEnter(WidgetRef ref, bool enabled) async {
+  final profile = ref.read(sessionProvider).valueOrNull!.profile;
+  final userKey = '${profile.type.name}.${profile.id}';
+  await ref
+      .read(composerPreferencesStorageProvider)
+      .writeSendWithEnter(userKey, enabled);
+  ref.invalidate(sendWithEnterProvider);
+}
 
 final conversationsProvider = FutureProvider.autoDispose<List<Conversation>>((
   ref,

@@ -182,6 +182,7 @@ class InternalThread {
     this.active = true,
     this.updatedAt,
     this.counterpartAvatarUrl = '',
+    this.counterpartAvatarVersion = '',
     this.counterpartId = '',
     this.counterpartActive = true,
     this.counterpartOnline = false,
@@ -197,6 +198,8 @@ class InternalThread {
     active: json['active'] as bool? ?? true,
     updatedAt: DateTime.parse(json['updated_at'] as String).toLocal(),
     counterpartAvatarUrl: json['counterpart_avatar_url'] as String? ?? '',
+    counterpartAvatarVersion:
+        json['counterpart_avatar_version'] as String? ?? '',
     counterpartId: json['counterpart_id'] as String? ?? '',
     counterpartActive: json['counterpart_active'] as bool? ?? true,
     counterpartOnline: json['counterpart_online'] as bool? ?? false,
@@ -213,6 +216,7 @@ class InternalThread {
   final bool active;
   final DateTime? updatedAt;
   final String counterpartAvatarUrl;
+  final String counterpartAvatarVersion;
   final String counterpartId;
   final bool counterpartActive;
   final bool counterpartOnline;

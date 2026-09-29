@@ -95,6 +95,7 @@ void main() {
           internalMessagesProvider.overrideWith(
             (ref, id) async => [message, ownMessage],
           ),
+          sendWithEnterProvider.overrideWith((ref) async => true),
         ],
         child: const MaterialApp(
           home: Scaffold(
@@ -117,6 +118,12 @@ void main() {
     expect(find.text('Mensaje propio'), findsOneWidget);
     expect(find.textContaining('Leido'), findsNothing);
     expect(find.byKey(const Key('message-composer')), findsOneWidget);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('message-composer')))
+          .textInputAction,
+      TextInputAction.send,
+    );
     expect(
       tester
           .widget<TextField>(find.byKey(const Key('message-composer')))

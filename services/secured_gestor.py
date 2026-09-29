@@ -162,6 +162,12 @@ class SecuredGestor:
             self.security.ensure_company_read(str(row.get("codigo_empresa") or ""))
         return row
 
+    def get_adjunto_mensajeria_por_mensaje(self, mensaje_remoto_id: str):
+        row = self._base.get_adjunto_mensajeria_por_mensaje(mensaje_remoto_id)
+        if row:
+            self.security.ensure_company_read(str(row.get("codigo_empresa") or ""))
+        return row
+
     def marcar_aviso_adjunto_mensajeria(self, adjunto_id: str) -> None:
         row = self.get_adjunto_mensajeria(adjunto_id)
         if row:

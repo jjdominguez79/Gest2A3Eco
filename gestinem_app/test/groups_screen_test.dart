@@ -59,6 +59,9 @@ void main() {
       name: 'Grupo General',
       type: 'staff_chat',
       members: [],
+      avatarConfigured: true,
+      avatarUrl: '/api/v1/messaging/staff/groups/group-1/avatar',
+      avatarVersion: 'version-1',
     );
 
     await tester.pumpWidget(
@@ -76,6 +79,8 @@ void main() {
 
     await tester.tap(find.byKey(const Key('group-actions-group-1')));
     await tester.pumpAndSettle();
+    expect(find.text('Cambiar avatar'), findsOneWidget);
+    expect(find.text('Eliminar avatar'), findsOneWidget);
     await tester.tap(find.text('Pasar a histórico'));
     await tester.pumpAndSettle();
 

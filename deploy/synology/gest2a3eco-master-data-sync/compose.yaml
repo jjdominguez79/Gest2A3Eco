@@ -13,11 +13,14 @@ services:
       CLIENT_MASTER_SYNC_TOKEN_FILE: "/run/secrets/client_master_sync_token"
       CLIENT_MASTER_SYNC_INTERVAL_SECONDS: "300"
       CLIENT_ONLINE_SERIES_CODE: "APP"
+      DOCUMENT_REPOSITORY_DIR: "/data/gest2a3eco"
       POSTGRES_HOST: "192.168.0.18"
       POSTGRES_PORT: "5433"
       POSTGRES_DB: "gest2a3eco"
       POSTGRES_USER: "gest2a3eco_sync"
       POSTGRES_PASSWORD_FILE: "/run/secrets/postgres_password"
+    volumes:
+      - "/volume1/Doc_Compartidos/Gest2A3Eco:/data/gest2a3eco:ro"
     secrets:
       - client_master_sync_token
       - postgres_password

@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/config/app_config.dart';
@@ -26,7 +27,7 @@ class UnifiedConversationScreen extends ConsumerStatefulWidget {
 class _UnifiedConversationScreenState
     extends ConsumerState<UnifiedConversationScreen> {
   final _body = TextEditingController();
-  final _composerFocus = FocusNode();
+  late final FocusNode _composerFocus;
   final _scroll = ScrollController(keepScrollOffset: false);
   List<PlatformFile> _files = [];
   Message? _replyingTo;
@@ -41,6 +42,7 @@ class _UnifiedConversationScreenState
   @override
   void initState() {
     super.initState();
+    _composerFocus = FocusNode(onKeyEvent: _handleComposerKey);
     _scroll.addListener(_loadEarlierWhenNeeded);
     WidgetsBinding.instance.addPostFrameCallback((_) => _markRead());
   }
@@ -58,6 +60,19 @@ class _UnifiedConversationScreenState
       await ref.read(messagingRepositoryProvider).markAllRead();
       ref.invalidate(unifiedConversationProvider);
     } catch (_) {}
+  }
+
+  KeyEventResult _handleComposerKey(FocusNode _, KeyEvent event) {
+    final sendWithEnter =
+        ref.read(sendWithEnterProvider).valueOrNull ?? false;
+    if (!sendWithEnter ||
+        event is! KeyDownEvent ||
+        event.logicalKey != LogicalKeyboardKey.enter ||
+        HardwareKeyboard.instance.isShiftPressed) {
+      return KeyEventResult.ignored;
+    }
+    unawaited(_send());
+    return KeyEventResult.handled;
   }
 
   void _loadEarlierWhenNeeded() {
@@ -302,6 +317,7 @@ class _UnifiedConversationScreenState
 
   @override
   Widget build(BuildContext context) {
+    final sendWithEnter = ref.watch(sendWithEnterProvider).valueOrNull ?? false;
     final asyncMessages = ref.watch(unifiedMessagesProvider);
     asyncMessages.whenData(_markReadWhenMessagesArrive);
     final baseUrl = appConfig.apiBaseUrl.replaceAll('/api/v1/messaging', '');
@@ -496,6 +512,13 @@ class _UnifiedConversationScreenState
                         controller: _body,
                         focusNode: _composerFocus,
                         textCapitalization: TextCapitalization.sentences,
+                        keyboardType: TextInputType.multiline,
+                        textInputAction: sendWithEnter
+                            ? TextInputAction.send
+                            : TextInputAction.newline,
+                        onSubmitted: sendWithEnter
+                            ? (_) => unawaited(_send())
+                            : null,
                         inputFormatters: const [
                           SentenceCapitalizationFormatter(),
                         ],

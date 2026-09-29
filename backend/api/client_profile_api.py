@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import uuid
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, HTTPException, Request, Response, UploadFile
+from PIL import Image, UnidentifiedImageError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -25,10 +28,11 @@ from backend.api.messaging_models import (
     MessagingStaffSession,
 )
 from backend.api.messaging_security import hash_token, is_expired, utcnow
-from backend.api.messaging_storage import MessagingStorage
+from backend.api.messaging_storage import MessagingStorage, safe_name
 from backend.api.security import require_master_sync_or_workstation_internal
 
 router = APIRouter(prefix="/api/v1/messaging/client", tags=["client-profile"])
+_MAX_PROFILE_LOGO = 5 * 1024 * 1024
 
 
 def _db():
@@ -124,11 +128,11 @@ def _internal_change_request_data(
             select(MessagingAttachment).where(
                 MessagingAttachment.message_id == item.message_id,
                 MessagingAttachment.content_type.like("image/%"),
-                MessagingAttachment.storage_deleted_at.is_(None),
             ).order_by(MessagingAttachment.created_at.desc())
         )
     return {
         "id": item.id,
+        "message_id": item.message_id,
         "company_code": org.company_code if org else "",
         "company_name": org.name if org else "",
         "changes": json.loads(item.changes_json or "{}"),
@@ -194,9 +198,90 @@ def internal_profile_change_request_logo(
     )
 
 
+@router.put("/internal/company-logo")
+def internal_sync_company_logo(
+    company_code: str = Form(...),
+    logo: UploadFile = File(...),
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_master_sync_or_workstation_internal),
+):
+    """Publica en Flutter la copia derivada del logotipo maestro del NAS."""
+    code = company_code.strip().upper()
+    org = db.scalar(select(MessagingOrganization).where(
+        MessagingOrganization.company_code == code,
+    ))
+    if not org:
+        raise HTTPException(status_code=404, detail="Empresa no encontrada")
+    content = logo.file.read(_MAX_PROFILE_LOGO + 1)
+    if not content:
+        raise HTTPException(status_code=422, detail="El archivo de logotipo esta vacio")
+    if len(content) > _MAX_PROFILE_LOGO:
+        raise HTTPException(status_code=413, detail="El logotipo supera 5 MB")
+    try:
+        with Image.open(io.BytesIO(content)) as image:
+            image.verify()
+            image_format = str(image.format or "").upper()
+    except (UnidentifiedImageError, OSError) as exc:
+        raise HTTPException(status_code=415, detail="El logotipo no es una imagen valida") from exc
+    content_type = {
+        "JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp",
+    }.get(image_format)
+    if not content_type:
+        raise HTTPException(status_code=415, detail="El logotipo debe ser PNG, JPG o WEBP")
+    digest = hashlib.sha256(content).hexdigest()
+    if org.logo_storage_key and org.logo_sha256 == digest:
+        return {"ok": True, "changed": False, "logo_sha256": digest}
+
+    storage = MessagingStorage()
+    filename = safe_name(logo.filename or f"{code}.png")
+    new_key = storage.put(content, filename)
+    old_key = org.logo_storage_key
+    try:
+        org.logo_storage_key = new_key
+        org.logo_content_type = content_type
+        org.logo_sha256 = digest
+        db.commit()
+    except Exception:
+        storage.delete(new_key)
+        raise
+    if old_key and old_key != new_key:
+        try:
+            storage.delete(old_key)
+        except Exception:
+            pass
+    return {"ok": True, "changed": True, "logo_sha256": digest}
+
+
+@router.delete("/internal/company-logo")
+def internal_remove_company_logo(
+    company_code: str,
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_master_sync_or_workstation_internal),
+):
+    """Retira de Flutter un logotipo eliminado de la ficha maestra."""
+    code = company_code.strip().upper()
+    org = db.scalar(select(MessagingOrganization).where(
+        MessagingOrganization.company_code == code,
+    ))
+    if not org:
+        raise HTTPException(status_code=404, detail="Empresa no encontrada")
+    old_key = org.logo_storage_key
+    org.logo_storage_key = ""
+    org.logo_content_type = ""
+    org.logo_sha256 = ""
+    db.commit()
+    if old_key:
+        try:
+            MessagingStorage().delete(old_key)
+        except Exception:
+            pass
+    return {"ok": True, "changed": bool(old_key)}
+
+
 @router.patch("/internal/profile-change-requests/{request_id}")
 def internal_review_profile_change_request(
     request_id: str,
+    background: BackgroundTasks,
     payload: dict = Body(...),
     db: Session = Depends(_db),
     reviewer: str = Depends(require_master_sync_or_workstation_internal),
@@ -213,20 +298,34 @@ def internal_review_profile_change_request(
     item.review_note = str(payload.get("note") or "").strip()[:2000]
     item.reviewed_by = str(reviewer or "desktop")[:64]
     item.reviewed_at = utcnow()
-    if status == "applied" and item.message_id:
+    if item.message_id:
         logo = db.scalar(
             select(MessagingAttachment).where(
                 MessagingAttachment.message_id == item.message_id,
                 MessagingAttachment.content_type.like("image/%"),
-                MessagingAttachment.storage_deleted_at.is_(None),
             ).order_by(MessagingAttachment.created_at.desc())
         )
-        org = db.get(MessagingOrganization, item.organization_id)
-        if logo and org:
-            org.logo_storage_key = logo.storage_key
-            org.logo_content_type = logo.content_type
-            logo.expires_at = None
-    db.commit()
+        if logo and not logo.local_confirmed_at:
+            # Si se aplico, el escritorio ya creo la copia maestra; si se
+            # rechazo, tampoco debe aparecer luego como documento pendiente.
+            logo.local_confirmed_at = utcnow()
+    # Importacion diferida para no crear un ciclo durante el arranque de FastAPI.
+    from backend.api.messaging_api import (
+        notify_profile_change_review,
+        release_profile_change_logo,
+    )
+
+    notify_profile_change_review(
+        db,
+        background,
+        item,
+        status=status,
+        note=item.review_note,
+        reviewer_id=item.reviewed_by,
+        reviewer_name="Gestinem",
+    )
+    release_profile_change_logo(db, item)
+    db.refresh(item)
     return _internal_change_request_data(db, item)
 
 
@@ -403,4 +502,5 @@ def sync_company_profile(
         "changed": changed,
         "company_code": company_code,
         "organization_id": org.id,
+        "logo_sha256": org.logo_sha256,
     }

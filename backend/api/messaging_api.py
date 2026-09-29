@@ -1914,6 +1914,14 @@ def _serialize_staff_thread(
     counterpart = _staff_thread_counterpart(db, thread, staff)
     group = _staff_thread_group(db, thread)
     active = bool(group.active) if group else True
+    group_avatar_url = (
+        f"/api/v1/messaging/staff/groups/{group.id}/avatar"
+        if group and group.avatar_storage_key else ""
+    )
+    avatar_storage_key = (
+        counterpart.avatar_storage_key if counterpart else
+        group.avatar_storage_key if group else ""
+    )
     return {
         "id": thread.id, "kind": thread.kind, "channel": thread.channel,
         "active": active, "read_only": not active,
@@ -1925,6 +1933,10 @@ def _serialize_staff_thread(
         "counterpart_avatar_url": (
             f"/api/v1/messaging/staff/avatars/{counterpart.external_id}"
             if counterpart and counterpart.avatar_storage_key else ""
+        ) or group_avatar_url,
+        "counterpart_avatar_version": (
+            hashlib.sha256(avatar_storage_key.encode("utf-8")).hexdigest()[:12]
+            if avatar_storage_key else ""
         ),
         "counterpart_online": _staff_online(db, counterpart.external_id) if counterpart else False,
         "counterpart_active": bool(counterpart and counterpart.active),
@@ -2996,10 +3008,86 @@ def staff_profile_change_requests(
     return result
 
 
+def notify_profile_change_review(
+    db: Session,
+    background: BackgroundTasks,
+    item: MessagingProfileChangeRequest,
+    *,
+    status: str,
+    note: str,
+    reviewer_id: str,
+    reviewer_name: str = "Gestinem",
+) -> MessagingMessage:
+    """Confirma al cliente la resolucion dentro de su conversacion privada."""
+    conv = db.scalar(select(MessagingConversation).where(
+        MessagingConversation.organization_id == item.organization_id,
+        MessagingConversation.kind == "private",
+    ))
+    if not conv:
+        conv = MessagingConversation(
+            organization_id=item.organization_id,
+            kind="private",
+        )
+        db.add(conv)
+        db.flush()
+    if status == "applied":
+        body = (
+            "Tu solicitud para modificar los datos de la empresa ha sido "
+            "aprobada y aplicada. Los cambios se sincronizaran con la "
+            "aplicacion en breve."
+        )
+    else:
+        body = "Tu solicitud para modificar los datos de la empresa ha sido rechazada."
+        if note:
+            body += f"\n\nMotivo: {note.strip()}"
+    message = _create_message(
+        db,
+        conv,
+        actor_type="staff",
+        actor_id=reviewer_id or "gestinem",
+        actor_name=reviewer_name.strip() or "Gestinem",
+        body=body,
+        idempotency_key=f"profile-change-review-{item.id}-{status}",
+        files=[],
+    )
+    _queue_app_pushes(db, background, conv, "client", message.id)
+    return message
+
+
+def release_profile_change_logo(
+    db: Session,
+    item: MessagingProfileChangeRequest,
+) -> None:
+    """Retira la copia temporal cuando la solicitud ya esta resuelta."""
+    if not item.message_id:
+        return
+    logo = db.scalar(select(MessagingAttachment).where(
+        MessagingAttachment.message_id == item.message_id,
+        MessagingAttachment.content_type.like("image/%"),
+    ).order_by(MessagingAttachment.created_at.desc()))
+    if not logo:
+        return
+    # Si el worker aun no termino la copia local, su confirmacion posterior
+    # vera que la solicitud ya no esta pendiente y eliminara el blob.
+    logo.expires_at = utcnow()
+    db.commit()
+    if not logo.local_confirmed_at or logo.storage_deleted_at:
+        return
+    try:
+        MessagingStorage().delete(logo.storage_key)
+    except Exception:
+        # Queda marcado como caducado para que la limpieza de arranque lo
+        # reintente sin impedir la confirmacion enviada al cliente.
+        return
+    logo.storage_deleted_at = utcnow()
+    db.commit()
+
+
 @router.patch("/staff/admin/profile-change-requests/{request_id}")
 def review_profile_change_request(
     request_id: str,
     payload: ProfileChangeReviewIn,
+    background: BackgroundTasks,
     admin: MessagingStaff = Depends(_require_admin),
     db: Session = Depends(get_db),
 ):
@@ -3012,23 +3100,17 @@ def review_profile_change_request(
     item.review_note = payload.note.strip()
     item.reviewed_by = admin.external_id
     item.reviewed_at = utcnow()
-    if payload.status == "applied" and item.message_id:
-        logo = db.scalar(
-            select(MessagingAttachment).where(
-                MessagingAttachment.message_id == item.message_id,
-                MessagingAttachment.content_type.like("image/%"),
-                MessagingAttachment.storage_deleted_at.is_(None),
-            ).order_by(MessagingAttachment.created_at.desc())
-        )
-        if logo:
-            organization = db.get(MessagingOrganization, item.organization_id)
-            if organization:
-                organization.logo_storage_key = logo.storage_key
-                organization.logo_content_type = logo.content_type
-                # El logotipo aprobado es identidad corporativa permanente, no
-                # un adjunto temporal sujeto a la limpieza periodica.
-                logo.expires_at = None
-    db.commit()
+    notify_profile_change_review(
+        db,
+        background,
+        item,
+        status=payload.status,
+        note=item.review_note,
+        reviewer_id=admin.external_id,
+        reviewer_name=admin.chat_alias.strip() or admin.name,
+    )
+    release_profile_change_logo(db, item)
+    db.refresh(item)
     return _serialize_profile_change_request(item)
 
 
@@ -3716,10 +3798,15 @@ def confirm_local(attachment_id: str, workstation: str = Form(...), sha256: str 
     # Confirmar primero la recepcion local evita redescargas si el borrado cloud
     # funciona pero se pierde la conexion antes de confirmar la transaccion.
     item.local_confirmed_at = utcnow(); item.claim_expires_at = None; db.commit()
+    if _requires_cloud_retention(db, item):
+        return {"ok": True, "storage_cleanup_pending": False, "storage_retained": True}
     cleanup_pending = False
     try:
         MessagingStorage().delete(item.storage_key)
-        item.storage_deleted_at = utcnow(); item.storage_key = ""; db.commit()
+        # La clave es unica y se conserva para auditoria. Vaciarla provocaba
+        # colisiones al confirmar mas de un adjunto y dejaba la BD apuntando a
+        # blobs que ya se habian eliminado correctamente.
+        item.storage_deleted_at = utcnow(); db.commit()
     except Exception:
         cleanup_pending = True
     return {"ok": True, "storage_cleanup_pending": cleanup_pending}
@@ -3728,6 +3815,22 @@ def confirm_local(attachment_id: str, workstation: str = Form(...), sha256: str 
 def hmac_compare(left: str, right: str) -> bool:
     import hmac
     return hmac.compare_digest(str(left), str(right))
+
+
+def _requires_cloud_retention(db: Session, item: MessagingAttachment) -> bool:
+    """Conserva adjuntos necesarios como identidad corporativa."""
+    if not item.storage_key or not str(item.content_type or "").lower().startswith("image/"):
+        return False
+    if db.scalar(select(MessagingOrganization.id).where(
+        MessagingOrganization.logo_storage_key == item.storage_key,
+    )):
+        return True
+    if not item.message_id:
+        return False
+    return bool(db.scalar(select(MessagingProfileChangeRequest.id).where(
+        MessagingProfileChangeRequest.message_id == item.message_id,
+        MessagingProfileChangeRequest.status == "pending",
+    )))
 
 
 @router.get("/client/attachments/{attachment_id}")
@@ -3989,11 +4092,12 @@ def sync_confirm_attachment(
     item.local_confirmed_at = utcnow()
     item.claim_expires_at = None
     db.commit()
+    if _requires_cloud_retention(db, item):
+        return {"ok": True, "storage_cleanup_pending": False, "storage_retained": True}
     cleanup_pending = False
     try:
         MessagingStorage().delete(item.storage_key)
         item.storage_deleted_at = utcnow()
-        item.storage_key = ""
         db.commit()
     except Exception:
         cleanup_pending = True
@@ -4264,6 +4368,15 @@ def _serialize_group(db: Session, group: MessagingGroup) -> dict:
         "id": group.id, "name": group.name, "description": group.description,
         "group_type": group.group_type, "created_by": group.created_by,
         "thread_id": thread.id if thread else "",
+        "avatar_configured": bool(group.avatar_storage_key),
+        "avatar_url": (
+            f"/api/v1/messaging/staff/groups/{group.id}/avatar"
+            if group.avatar_storage_key else ""
+        ),
+        "avatar_version": (
+            hashlib.sha256(group.avatar_storage_key.encode("utf-8")).hexdigest()[:12]
+            if group.avatar_storage_key else ""
+        ),
         "active": group.active, "created_at": group.created_at.isoformat(),
         "updated_at": group.updated_at.isoformat(),
         "members": [{
@@ -4364,6 +4477,86 @@ def delete_group(
         ))),
     )
     return Response(status_code=204)
+
+
+@router.get("/staff/groups/{group_id}/avatar")
+def group_avatar(
+    group_id: str, staff: MessagingStaff = Depends(_staff),
+    db: Session = Depends(get_db),
+):
+    group = db.get(MessagingGroup, group_id)
+    if not group or not group.avatar_storage_key:
+        raise HTTPException(404, "Avatar de grupo no disponible")
+    if staff.role != "admin":
+        member = db.scalar(select(MessagingGroupMember.id).where(
+            MessagingGroupMember.group_id == group.id,
+            MessagingGroupMember.member_type == "staff",
+            MessagingGroupMember.member_id == staff.external_id,
+        ))
+        if not member or group.group_type != "staff_chat" or not group.active:
+            raise HTTPException(403, "Avatar de grupo no autorizado")
+    return Response(
+        content=MessagingStorage().get(group.avatar_storage_key),
+        media_type=group.avatar_content_type or "image/webp",
+        headers={"Cache-Control": "private, no-cache"},
+    )
+
+
+@router.put("/staff/admin/groups/{group_id}/avatar")
+def update_group_avatar(
+    group_id: str, avatar: UploadFile = File(...),
+    _admin: MessagingStaff = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    group = db.get(MessagingGroup, group_id)
+    if not group or not group.active:
+        raise HTTPException(404, "Grupo no encontrado")
+    content = _normalized_avatar(avatar)
+    storage = MessagingStorage()
+    old_key = group.avatar_storage_key
+    group.avatar_storage_key = storage.put(content, f"grupo-{group.id}.webp")
+    group.avatar_content_type = "image/webp"
+    group.updated_at = utcnow()
+    db.commit()
+    if old_key:
+        try:
+            storage.delete(old_key)
+        except Exception:
+            pass
+    hub.publish(
+        {"type": "group.updated", "group_id": group.id},
+        staff_ids=set(db.scalars(select(MessagingStaff.external_id).where(
+            MessagingStaff.active.is_(True),
+        ))),
+    )
+    return _serialize_group(db, group)
+
+
+@router.delete("/staff/admin/groups/{group_id}/avatar")
+def delete_group_avatar(
+    group_id: str, _admin: MessagingStaff = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    group = db.get(MessagingGroup, group_id)
+    if not group or not group.active:
+        raise HTTPException(404, "Grupo no encontrado")
+    old_key = group.avatar_storage_key
+    group.avatar_storage_key = ""
+    group.avatar_content_type = ""
+    group.updated_at = utcnow()
+    db.commit()
+    if old_key:
+        try:
+            MessagingStorage().delete(old_key)
+        except Exception:
+            pass
+    hub.publish(
+        {"type": "group.updated", "group_id": group.id},
+        staff_ids=set(db.scalars(select(MessagingStaff.external_id).where(
+            MessagingStaff.active.is_(True),
+        ))),
+    )
+    return {"ok": True}
 
 
 @router.post("/staff/admin/groups/{group_id}/members", status_code=201)
@@ -4894,6 +5087,8 @@ def cleanup_expired_attachments() -> int:
         )).all()
         storage = MessagingStorage()
         for item in rows:
+            if _requires_cloud_retention(db, item):
+                continue
             try:
                 storage.delete(item.storage_key)
             except Exception:

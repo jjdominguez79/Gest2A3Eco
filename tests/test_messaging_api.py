@@ -69,6 +69,7 @@ def test_startup_migra_columnas_de_plataforma_cliente_automaticamente():
         "email",
         "logo_storage_key",
         "logo_content_type",
+        "logo_sha256",
         "profile_synced_at",
         "client_invoicing_enabled",
         "client_documents_enabled",
@@ -491,6 +492,28 @@ def test_cliente_solicita_cambios_de_empresa_sin_modificar_el_maestro(tmp_path):
     assert data["changes"]["address"] == "CALLE NUEVA 2"
     assert data["changes"]["bank_accounts"] == ["ES1234567890"]
     assert data["message_id"]
+    sync_headers = {"X-Sync-Token": "sync-secret"}
+    pending = client.get(
+        "/api/v1/messaging/sync/attachments/pending", headers=sync_headers,
+    ).json()
+    logo_attachment = next(row for row in pending if row["message_id"] == data["message_id"])
+    assert client.post(
+        f"/api/v1/messaging/sync/attachments/{logo_attachment['id']}/claim",
+        headers=sync_headers, data={"worker": "synology"},
+    ).status_code == 200
+    confirmed = client.post(
+        f"/api/v1/messaging/sync/attachments/{logo_attachment['id']}/confirm",
+        headers=sync_headers,
+        data={"worker": "synology", "sha256": logo_attachment["sha256"]},
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.json()["storage_retained"] is True
+    internal_logo = client.get(
+        f"/api/v1/messaging/client/internal/profile-change-requests/{data['id']}/logo",
+        headers=internal,
+    )
+    assert internal_logo.status_code == 200
+    assert internal_logo.content == logo.getvalue()
     rows = client.get(
         "/api/v1/messaging/client/profile-change-requests", headers=auth,
     ).json()
@@ -520,15 +543,65 @@ def test_cliente_solicita_cambios_de_empresa_sin_modificar_el_maestro(tmp_path):
         json={"status": "applied", "note": "Logotipo comprobado"},
     )
     assert reviewed.status_code == 200
+    private_conversation = next(
+        row for row in client.get(
+            "/api/v1/messaging/client/conversations", headers=auth,
+        ).json()
+        if row["kind"] == "private"
+    )
+    messages = client.get(
+        f"/api/v1/messaging/client/conversations/{private_conversation['id']}/messages",
+        headers=auth,
+    ).json()
+    assert any(
+        "aprobada y aplicada" in message["body"]
+        for message in messages
+    )
+    assert client.get(
+        f"/api/v1/messaging/client/internal/profile-change-requests/{data['id']}/logo",
+        headers=internal,
+    ).status_code == 404
     profile = client.get(
         "/api/v1/messaging/client/company-profile", headers=auth,
     )
     assert profile.status_code == 200
+    assert "logo_url" not in profile.json()
+    synchronized = client.put(
+        "/api/v1/messaging/client/internal/company-logo",
+        headers=internal,
+        data={"company_code": "E10013"},
+        files={"logo": ("E10013.png", logo.getvalue(), "image/png")},
+    )
+    assert synchronized.status_code == 200
+    profile = client.get(
+        "/api/v1/messaging/client/company-profile", headers=auth,
+    )
     assert profile.json()["logo_url"] == "/api/v1/messaging/client/company-logo"
     approved_logo = client.get(
         "/api/v1/messaging/client/company-logo", headers=auth,
     )
     assert approved_logo.status_code == 200
+
+    second = client.post(
+        "/api/v1/messaging/client/profile-change-requests",
+        headers=auth,
+        data={"changes_json": json.dumps({"phone": "942 000 000"})},
+    ).json()
+    rejected = client.patch(
+        f"/api/v1/messaging/client/internal/profile-change-requests/{second['id']}",
+        headers=internal,
+        json={"status": "rejected", "note": "Falta documentacion"},
+    )
+    assert rejected.status_code == 200
+    messages = client.get(
+        f"/api/v1/messaging/client/conversations/{private_conversation['id']}/messages",
+        headers=auth,
+    ).json()
+    assert any(
+        "ha sido rechazada" in message["body"]
+        and "Falta documentacion" in message["body"]
+        for message in messages
+    )
     assert approved_logo.headers["content-type"] == "image/png"
     assert approved_logo.content == logo.getvalue()
 
@@ -781,12 +854,40 @@ def test_chats_internos_privados_y_grupos_respetan_permisos(tmp_path):
     )
     assert renamed.status_code == 200
     assert renamed.json()["name"] == "Equipo Personas"
+    group_avatar = BytesIO()
+    Image.new("RGB", (120, 80), "#9b59b6").save(group_avatar, format="PNG")
+    avatar_updated = client.put(
+        f"/api/v1/messaging/staff/admin/groups/{labor_config['id']}/avatar",
+        headers=auth("admin"),
+        files={"avatar": ("equipo.png", group_avatar.getvalue(), "image/png")},
+    )
+    assert avatar_updated.status_code == 200
+    assert avatar_updated.json()["avatar_configured"] is True
+    assert avatar_updated.json()["avatar_version"]
+    assert client.get(
+        f"/api/v1/messaging/staff/groups/{labor_config['id']}/avatar",
+        headers=auth("labor"),
+    ).status_code == 200
+    assert client.get(
+        f"/api/v1/messaging/staff/groups/{labor_config['id']}/avatar",
+        headers=auth("fiscal"),
+    ).status_code == 403
     assert any(
         row["title"] == "Equipo Personas"
         for row in client.get(
             "/api/v1/messaging/staff/internal/threads", headers=auth("admin"),
         ).json()
     )
+    renamed_thread = next(
+        row for row in client.get(
+            "/api/v1/messaging/staff/internal/threads", headers=auth("admin"),
+        ).json()
+        if row["id"] == labor_group["id"]
+    )
+    assert renamed_thread["counterpart_avatar_url"].endswith(
+        f"/staff/groups/{labor_config['id']}/avatar"
+    )
+    assert renamed_thread["counterpart_avatar_version"]
     sent_group = client.post(
         f"/api/v1/messaging/staff/internal/threads/{labor_group['id']}/messages",
         headers=auth("admin"),
@@ -805,6 +906,14 @@ def test_chats_internos_privados_y_grupos_respetan_permisos(tmp_path):
         f"/api/v1/messaging/staff/internal/threads/{labor_group['id']}/read",
         headers=auth("labor"),
     ).status_code == 200
+    assert client.delete(
+        f"/api/v1/messaging/staff/admin/groups/{labor_config['id']}/avatar",
+        headers=auth("admin"),
+    ).status_code == 200
+    assert client.get(
+        f"/api/v1/messaging/staff/groups/{labor_config['id']}/avatar",
+        headers=auth("admin"),
+    ).status_code == 404
 
     reply = client.post(
         f"/api/v1/messaging/staff/internal/threads/{direct_id}/messages",

@@ -4143,6 +4143,16 @@ class GestorBase:
         ).fetchone()
         return self._row_to_dict(row) if row else None
 
+    def get_adjunto_mensajeria_por_mensaje(self, mensaje_remoto_id: str) -> dict | None:
+        """Localiza la copia de una imagen recibida en un mensaje."""
+        row = self.conn.execute(
+            "SELECT * FROM mensajeria_adjuntos_entrada "
+            "WHERE mensaje_remoto_id=? AND mime_type LIKE 'image/%' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (str(mensaje_remoto_id),),
+        ).fetchone()
+        return self._row_to_dict(row) if row else None
+
     def listar_adjuntos_mensajeria_entrada(self, estado: str = "pendiente_clasificar") -> list[dict]:
         rows = self.conn.execute(
             "SELECT * FROM mensajeria_adjuntos_entrada WHERE estado=? "

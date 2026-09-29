@@ -158,6 +158,10 @@ CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS = {
         "ALTER TABLE msg_organizations "
         "ADD COLUMN logo_content_type VARCHAR(120) NOT NULL DEFAULT ''"
     ),
+    ("msg_organizations", "logo_sha256"): (
+        "ALTER TABLE msg_organizations "
+        "ADD COLUMN logo_sha256 VARCHAR(64) NOT NULL DEFAULT ''"
+    ),
     ("msg_organizations", "profile_synced_at"): (
         "ALTER TABLE msg_organizations ADD COLUMN profile_synced_at TIMESTAMPTZ"
     ),
@@ -415,6 +419,7 @@ def startup():
         "029_dehu_activation_history.sql",
         "030_general_client_channel.sql",
         "031_invitation_content.sql",
+        "032_group_avatars.sql",
     ):
         _mig_path = Path(__file__).resolve().parent.parent / "migrations" / _mig_name
         if _mig_path.exists():

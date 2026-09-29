@@ -1357,6 +1357,16 @@ class GestorPostgres(GestorBase):
         ).fetchone()
         return dict(row) if row else None
 
+    def get_adjunto_mensajeria_por_mensaje(self, mensaje_remoto_id: str) -> dict | None:
+        """Localiza la copia NAS de una imagen recibida en un mensaje."""
+        row = self.conn.execute(
+            "SELECT * FROM mensajeria_adjuntos_entrada "
+            "WHERE mensaje_remoto_id = %s AND mime_type LIKE 'image/%%' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (str(mensaje_remoto_id),),
+        ).fetchone()
+        return dict(row) if row else None
+
     def marcar_adjunto_mensajeria_revisado(
         self,
         adjunto_id: str,

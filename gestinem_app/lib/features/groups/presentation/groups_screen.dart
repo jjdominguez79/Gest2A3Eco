@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -259,6 +260,70 @@ class GroupsScreen extends ConsumerWidget {
     }
   }
 
+  Future<void> _changeGroupAvatar(
+    BuildContext context,
+    WidgetRef ref,
+    MessagingGroup group,
+  ) async {
+    try {
+      final files = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['jpg', 'jpeg', 'png', 'webp'],
+      );
+      if (files.isEmpty) return;
+      await ref
+          .read(groupsRepositoryProvider)
+          .updateAvatar(group.id, files.first);
+      ref.invalidate(groupsProvider);
+      ref.invalidate(internalThreadsProvider);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Avatar del grupo actualizado')),
+        );
+      }
+    } catch (error) {
+      if (context.mounted) _showError(context, error);
+    }
+  }
+
+  Future<void> _deleteGroupAvatar(
+    BuildContext context,
+    WidgetRef ref,
+    MessagingGroup group,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Eliminar avatar'),
+        content: Text('¿Quieres eliminar el avatar de “${group.name}”?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const Key('confirm-delete-group-avatar'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await ref.read(groupsRepositoryProvider).deleteAvatar(group.id);
+      ref.invalidate(groupsProvider);
+      ref.invalidate(internalThreadsProvider);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Avatar del grupo eliminado')),
+        );
+      }
+    } catch (error) {
+      if (context.mounted) _showError(context, error);
+    }
+  }
+
   AuthenticatedAvatar _employeeAvatar(
     WidgetRef ref,
     EmpleadoDespacho employee,
@@ -283,12 +348,12 @@ class GroupsScreen extends ConsumerWidget {
     bool isAdmin,
   ) => ListTile(
     key: Key('group-${group.id}'),
-    leading: Icon(
-      group.active
-          ? (group.type == 'staff_chat'
-                ? Icons.forum_outlined
-                : Icons.campaign_outlined)
-          : Icons.history_outlined,
+    leading: AuthenticatedAvatar(
+      baseUrl: _baseUrl(ref),
+      authToken: ref.read(sessionProvider).valueOrNull?.token ?? '',
+      imagePath: group.avatarUrl,
+      fallbackText: _initials(group.name),
+      cacheVersion: group.avatarVersion,
     ),
     title: Text(group.name),
     subtitle: Text(
@@ -304,6 +369,10 @@ class GroupsScreen extends ConsumerWidget {
             onSelected: (action) {
               if (action == 'edit' && group.type == 'staff_chat') {
                 _configureStaffGroup(context, ref, group);
+              } else if (action == 'avatar') {
+                _changeGroupAvatar(context, ref, group);
+              } else if (action == 'delete-avatar') {
+                _deleteGroupAvatar(context, ref, group);
               } else if (action == 'delete') {
                 _deleteGroup(context, ref, group);
               }
@@ -315,6 +384,25 @@ class GroupsScreen extends ConsumerWidget {
                   child: ListTile(
                     leading: Icon(Icons.manage_accounts_outlined),
                     title: Text('Editar'),
+                  ),
+                ),
+              PopupMenuItem(
+                value: 'avatar',
+                child: ListTile(
+                  leading: const Icon(Icons.add_a_photo_outlined),
+                  title: Text(
+                    group.avatarConfigured
+                        ? 'Cambiar avatar'
+                        : 'Añadir avatar',
+                  ),
+                ),
+              ),
+              if (group.avatarConfigured)
+                const PopupMenuItem(
+                  value: 'delete-avatar',
+                  child: ListTile(
+                    leading: Icon(Icons.no_photography_outlined),
+                    title: Text('Eliminar avatar'),
                   ),
                 ),
               PopupMenuItem(

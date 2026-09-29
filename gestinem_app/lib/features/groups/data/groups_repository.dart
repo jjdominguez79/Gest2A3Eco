@@ -1,4 +1,8 @@
+import 'package:dio/dio.dart';
+import 'package:file_picker/file_picker.dart';
+
 import '../../../core/api/api_client.dart';
+import '../../../core/images/avatar_image.dart';
 import '../domain/group.dart';
 
 class GroupsRepository {
@@ -53,4 +57,21 @@ class GroupsRepository {
 
   Future<void> delete(String groupId) =>
       _api.dio.delete<void>('/staff/admin/groups/$groupId');
+
+  Future<MessagingGroup> updateAvatar(
+    String groupId,
+    PlatformFile file,
+  ) async {
+    final bytes = await prepararAvatar(file);
+    final response = await _api.dio.put<Map<String, dynamic>>(
+      '/staff/admin/groups/$groupId/avatar',
+      data: FormData.fromMap({
+        'avatar': MultipartFile.fromBytes(bytes, filename: 'grupo.jpg'),
+      }),
+    );
+    return MessagingGroup.fromJson(response.data!);
+  }
+
+  Future<void> deleteAvatar(String groupId) =>
+      _api.dio.delete<void>('/staff/admin/groups/$groupId/avatar');
 }

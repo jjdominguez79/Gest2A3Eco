@@ -8,11 +8,12 @@ roles procedentes de Flutter.
 from __future__ import annotations
 
 import logging
+import hashlib
 import os
 import signal
 import threading
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import psycopg
 import requests
@@ -32,6 +33,7 @@ class MasterDataConfig:
     postgres_dsn: str
     interval_seconds: int
     online_series_code: str
+    repository_dir: Path
 
     @classmethod
     def from_environment(cls) -> "MasterDataConfig":
@@ -55,6 +57,7 @@ class MasterDataConfig:
                 os.environ.get("CLIENT_ONLINE_SERIES_CODE", "APP").strip().upper()
                 or "APP"
             )[:10],
+            repository_dir=Path(_required("DOCUMENT_REPOSITORY_DIR")),
         )
 
 
@@ -76,7 +79,8 @@ class MasterDataWorker:
             return list(conn.execute(
                 """
                 SELECT e.codigo,e.ejercicio,e.nombre,e.activo,e.cif,e.direccion,
-                       e.cp,e.poblacion,e.provincia,e.pais,e.telefono,e.email
+                       e.cp,e.poblacion,e.provincia,e.pais,e.telefono,e.email,
+                       e.logo_path
                 FROM empresas e
                 JOIN (
                   SELECT codigo,MAX(ejercicio) ejercicio
@@ -138,6 +142,60 @@ class MasterDataWorker:
             "desktop_subcuenta": row["subcuenta_cliente"] or "",
         } for row in rows if str(row["nif"] or "").strip()]
 
+    def _logo_path(self, company: dict) -> Path | None:
+        """Resuelve una ruta Windows de BD dentro del montaje del NAS."""
+        raw = str(company.get("logo_path") or "").strip()
+        candidates: list[Path] = []
+        if raw:
+            direct = Path(raw)
+            candidates.append(direct)
+            candidates.append(
+                self.config.repository_dir / "assets" / "logos"
+                / PureWindowsPath(raw).name
+            )
+        else:
+            code = str(company.get("codigo") or "").strip().upper()
+            for suffix in (".png", ".jpg", ".jpeg", ".webp"):
+                candidates.append(
+                    self.config.repository_dir / "assets" / "logos" / f"{code}{suffix}"
+                )
+        return next((path for path in candidates if path.is_file()), None)
+
+    def _sync_company_logo(self, company: dict, remote_hash: str) -> int:
+        code = str(company.get("codigo") or "").strip().upper()
+        path = self._logo_path(company)
+        configured_path = str(company.get("logo_path") or "").strip()
+        if path:
+            content = path.read_bytes()
+            digest = hashlib.sha256(content).hexdigest()
+            if digest == str(remote_hash or ""):
+                return 0
+            response = self.http.put(
+                self._url("/internal/company-logo"),
+                headers=self._headers,
+                data={"company_code": code},
+                files={"logo": (path.name, content)},
+                timeout=60,
+            )
+            response.raise_for_status()
+            return 1
+        if configured_path:
+            LOG.warning(
+                "No se encuentra el logotipo maestro de %s: %s",
+                code, configured_path,
+            )
+            return 0
+        if remote_hash:
+            response = self.http.delete(
+                self._url("/internal/company-logo"),
+                headers=self._headers,
+                params={"company_code": code},
+                timeout=30,
+            )
+            response.raise_for_status()
+            return 1
+        return 0
+
     def run_once(self) -> dict[str, int]:
         staff = self._load_staff()
         response = self.http.put(
@@ -149,6 +207,7 @@ class MasterDataWorker:
         response.raise_for_status()
         companies = self._load_companies()
         customer_count = 0
+        logo_count = 0
         for company in companies:
             code = str(company["codigo"] or "").strip().upper()
             if not code:
@@ -176,9 +235,13 @@ class MasterDataWorker:
                 timeout=30,
             )
             response.raise_for_status()
-            org_id = str(response.json().get("organization_id") or "")
+            profile_result = response.json()
+            org_id = str(profile_result.get("organization_id") or "")
             if not org_id:
                 raise RuntimeError(f"El backend no devolvio organization_id para {code}")
+            logo_count += self._sync_company_logo(
+                company, str(profile_result.get("logo_sha256") or ""),
+            )
 
             customers = self._load_customers(code)
             response = self.http.post(
@@ -212,6 +275,7 @@ class MasterDataWorker:
             "companies": len(companies),
             "customers": customer_count,
             "staff": len(staff),
+            "logos": logo_count,
         }
         LOG.info("Sincronizacion maestra completada: %s", result)
         return result

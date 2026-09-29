@@ -1,6 +1,7 @@
 """Pruebas del worker unidireccional de datos maestros."""
 
 from types import SimpleNamespace
+from pathlib import Path
 
 from backend.api import security
 from sync_worker.master_data_worker import MasterDataConfig, MasterDataWorker
@@ -29,6 +30,10 @@ class _Session:
         self.calls.append(("POST", url, kwargs))
         return _Response()
 
+    def delete(self, url, **kwargs):
+        self.calls.append(("DELETE", url, kwargs))
+        return _Response()
+
 
 def test_worker_publica_perfil_clientes_y_serie_solo_hacia_backend(monkeypatch):
     session = _Session()
@@ -39,6 +44,7 @@ def test_worker_publica_perfil_clientes_y_serie_solo_hacia_backend(monkeypatch):
             postgres_dsn="postgresql://desktop",
             interval_seconds=300,
             online_series_code="APP",
+            repository_dir=Path("Z:/repositorio-inexistente"),
         ),
         session=session,
     )
@@ -57,7 +63,9 @@ def test_worker_publica_perfil_clientes_y_serie_solo_hacia_backend(monkeypatch):
         "desktop_tercero_id": "ter-1", "desktop_subcuenta": "43000001",
     }])
 
-    assert worker.run_once() == {"companies": 1, "customers": 1, "staff": 1}
+    assert worker.run_once() == {
+        "companies": 1, "customers": 1, "staff": 1, "logos": 0,
+    }
     assert [method for method, *_ in session.calls] == ["PUT", "PUT", "POST", "POST"]
 
     snapshot = session.calls[0][2]["json"]
@@ -100,6 +108,7 @@ def test_worker_envia_la_baja_de_la_empresa_al_backend(monkeypatch):
             postgres_dsn="postgresql://desktop",
             interval_seconds=300,
             online_series_code="APP",
+            repository_dir=Path("Z:/repositorio-inexistente"),
         ),
         session=session,
     )
@@ -115,3 +124,40 @@ def test_worker_envia_la_baja_de_la_empresa_al_backend(monkeypatch):
     worker.run_once()
 
     assert session.calls[1][2]["json"]["active"] is False
+
+
+def test_worker_publica_logo_desde_assets_compartidos(monkeypatch, tmp_path):
+    logos = tmp_path / "assets" / "logos"
+    logos.mkdir(parents=True)
+    logo = logos / "E00006.png"
+    logo.write_bytes(b"logo-maestro")
+    session = _Session()
+    worker = MasterDataWorker(
+        MasterDataConfig(
+            api_url="https://backend.example",
+            api_token="secret",
+            postgres_dsn="postgresql://desktop",
+            interval_seconds=300,
+            online_series_code="APP",
+            repository_dir=tmp_path,
+        ),
+        session=session,
+    )
+    monkeypatch.setattr(worker, "_load_staff", lambda: [])
+    monkeypatch.setattr(worker, "_load_customers", lambda _code: [])
+    monkeypatch.setattr(worker, "_load_companies", lambda: [{
+        "codigo": "E00006", "ejercicio": 2026, "nombre": "Empresa Demo",
+        "activo": True, "cif": "B12345678", "direccion": "", "cp": "",
+        "poblacion": "", "provincia": "", "pais": "ES", "telefono": "",
+        "email": "", "logo_path": r"\\GestinemMain\Doc_Compartidos\Gest2A3Eco\assets\logos\E00006.png",
+    }])
+
+    result = worker.run_once()
+
+    assert result["logos"] == 1
+    upload = next(
+        call for call in session.calls
+        if call[0] == "PUT" and call[1].endswith("/internal/company-logo")
+    )
+    assert upload[2]["data"] == {"company_code": "E00006"}
+    assert upload[2]["files"]["logo"] == ("E00006.png", b"logo-maestro")

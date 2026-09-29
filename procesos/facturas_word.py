@@ -9,7 +9,7 @@ from docxtpl import DocxTemplate, InlineImage
 from docx.shared import Mm
 from docx.image.image import Image as DocxImage
 from xml.sax.saxutils import escape as _xml_escape
-from utils.utilidades import aplicar_descuento_total_lineas
+from utils.utilidades import aplicar_descuento_total_lineas, get_document_repository_dir
 
 
 def build_context_emitida(empresa_conf: dict, fac: dict, cliente: dict, totales: dict) -> Dict[str, Any]:
@@ -350,9 +350,13 @@ def _resolve_logo_path(path: str, codigo: str | None = None) -> str:
         p = Path(raw)
         if p.exists():
             return str(p)
-        alt = base_dir / "assets" / "logos" / p.name
-        if alt.exists():
-            return str(alt)
+        for logos_dir in (
+            get_document_repository_dir() / "assets" / "logos",
+            base_dir / "assets" / "logos",
+        ):
+            alt = logos_dir / p.name
+            if alt.exists():
+                return str(alt)
     if code:
         raw = str(code).strip()
         digits = "".join(ch for ch in raw if ch.isdigit())
@@ -376,10 +380,14 @@ def _resolve_logo_path(path: str, codigo: str | None = None) -> str:
             if name in seen:
                 continue
             seen.add(name)
-            for ext in [".jpg", ".jpeg", ".png"]:
-                candidate = base_dir / "assets" / "logos" / f"{name}{ext}"
-                if candidate.exists():
-                    return str(candidate)
+            for ext in [".jpg", ".jpeg", ".png", ".webp"]:
+                for logos_dir in (
+                    get_document_repository_dir() / "assets" / "logos",
+                    base_dir / "assets" / "logos",
+                ):
+                    candidate = logos_dir / f"{name}{ext}"
+                    if candidate.exists():
+                        return str(candidate)
     return raw
 
 

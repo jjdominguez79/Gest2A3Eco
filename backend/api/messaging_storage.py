@@ -44,7 +44,16 @@ class MessagingStorage:
 
     def get(self, key: str) -> bytes:
         if self._container is not None:
-            return self._container.download_blob(key).readall()
+            try:
+                return self._container.download_blob(key).readall()
+            except Exception as exc:
+                try:
+                    from azure.core.exceptions import ResourceNotFoundError
+                    if isinstance(exc, ResourceNotFoundError):
+                        raise FileNotFoundError(key) from exc
+                except ImportError:
+                    pass
+                raise RuntimeError(f"Error al leer el blob de almacenamiento: {exc}") from exc
         root = Path(self.cfg.messaging_storage_dir).resolve()
         path = (root / key).resolve()
         if root not in path.parents:
@@ -97,7 +106,16 @@ class InvitationContentStorage:
 
     def get(self, key: str) -> bytes:
         if self._container is not None:
-            return self._container.download_blob(key).readall()
+            try:
+                return self._container.download_blob(key).readall()
+            except Exception as exc:
+                try:
+                    from azure.core.exceptions import ResourceNotFoundError
+                    if isinstance(exc, ResourceNotFoundError):
+                        raise FileNotFoundError(key) from exc
+                except ImportError:
+                    pass
+                raise RuntimeError(f"Error al leer el blob de contenido: {exc}") from exc
         root = Path(self.cfg.messaging_content_storage_dir).resolve()
         path = (root / key).resolve()
         if root not in path.parents:
