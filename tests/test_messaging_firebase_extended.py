@@ -25,7 +25,7 @@ def _patch_messaging(fake_messaging):
     try:
         import firebase_admin as _fb
         # Instalado: parcheamos el atributo del modulo real.
-        with patch.object(_fb, 'messaging', fake_messaging):
+        with patch.object(_fb, 'messaging', fake_messaging, create=True):
             yield
     except ModuleNotFoundError:
         # No instalado: inyectamos un modulo fake en sys.modules.
