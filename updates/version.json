@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.9.2",
-  "minimum_required_version": "1.9.2",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.9.2/Setup_Gest2A3Eco_1.9.2.exe",
-  "changelog": "Se unifica el circuito de facturas recibidas, reuniendo correo, mensajeria y carga manual en una bandeja comun y usando el archivo documental como fuente de verdad. Se separan la contabilizacion y la exportacion a A3, se corrige la seleccion multiple de facturas y se mejora la identificacion de clientes y avisos automaticos en las conversaciones. La publicacion incluye Gestinem 0.1.23 para web y Windows.",
+  "latest_version": "1.9.3",
+  "minimum_required_version": "1.9.3",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.9.3/Setup_Gest2A3Eco_1.9.3.exe",
+  "changelog": "Se corrige el error en el login.",
   "force_update": true
 }
