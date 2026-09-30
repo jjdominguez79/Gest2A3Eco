@@ -4905,6 +4905,33 @@ class GestorBase:
                 now,
             ),
         )
+        archivo_id = str(doc.get("documento_archivo_id") or "").strip()
+        if not archivo_id:
+            row = self.conn.execute(
+                "SELECT id FROM documentos_archivo WHERE codigo_empresa=? "
+                "AND ocr_documento_id=? LIMIT 1",
+                (doc.get("codigo_empresa"), doc_id),
+            ).fetchone()
+            archivo_id = str((self._row_to_dict(row) or {}).get("id") or "")
+        if archivo_id:
+            self.conn.execute(
+                "UPDATE facturas_recibidas_docs SET documento_archivo_id=? "
+                "WHERE id=? AND codigo_empresa=?",
+                (archivo_id, doc_id, doc.get("codigo_empresa")),
+            )
+            estado = str(doc.get("estado_contable") or "pendiente")
+            metodo = "ocr_suenlace" if estado in {EXPORTADA_A3, CONTABILIZADA} else None
+            self.conn.execute(
+                "UPDATE documentos_archivo SET estado_contable=?,"
+                "metodo_contabilizacion=COALESCE(?,metodo_contabilizacion),"
+                "numero_asiento=COALESCE(NULLIF(?,''),numero_asiento),"
+                "fecha_contable=COALESCE(NULLIF(?,''),fecha_contable),updated_at=? "
+                "WHERE id=? AND estado_contable<>'contabilizada_manual'",
+                (
+                    estado, metodo, str(doc.get("numero_asiento") or ""),
+                    str(doc.get("fecha_asiento") or ""), now, archivo_id,
+                ),
+            )
         self.conn.commit()
         return doc_id
 
@@ -5491,33 +5518,6 @@ class GestorBase:
                 int(user_id),
             ),
         )
-        archivo_id = str(doc.get("documento_archivo_id") or "").strip()
-        if not archivo_id:
-            row = self.conn.execute(
-                "SELECT id FROM documentos_archivo WHERE codigo_empresa=? "
-                "AND ocr_documento_id=? LIMIT 1",
-                (doc.get("codigo_empresa"), doc_id),
-            ).fetchone()
-            archivo_id = str((self._row_to_dict(row) or {}).get("id") or "")
-        if archivo_id:
-            self.conn.execute(
-                "UPDATE facturas_recibidas_docs SET documento_archivo_id=? "
-                "WHERE id=? AND codigo_empresa=?",
-                (archivo_id, doc_id, doc.get("codigo_empresa")),
-            )
-            estado = str(doc.get("estado_contable") or "pendiente")
-            metodo = "ocr_suenlace" if estado in {EXPORTADA_A3, CONTABILIZADA} else None
-            self.conn.execute(
-                "UPDATE documentos_archivo SET estado_contable=?,"
-                "metodo_contabilizacion=COALESCE(?,metodo_contabilizacion),"
-                "numero_asiento=COALESCE(NULLIF(?,''),numero_asiento),"
-                "fecha_contable=COALESCE(NULLIF(?,''),fecha_contable),updated_at=? "
-                "WHERE id=? AND estado_contable<>'contabilizada_manual'",
-                (
-                    estado, metodo, str(doc.get("numero_asiento") or ""),
-                    str(doc.get("fecha_asiento") or ""), now, archivo_id,
-                ),
-            )
         self.conn.commit()
 
     def upsert_usuario(self, usuario: dict) -> int:

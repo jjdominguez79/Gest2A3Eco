@@ -823,11 +823,20 @@ def main():
                 if current_login:
                     current_login.show_error(f"No se pudo iniciar sesion con Microsoft: {error}")
                 return
-            result = auth_service.authenticate_entra(
-                email=str(data.get("email") or ""),
-                entra_oid=str(data.get("entra_oid") or ""),
-                messaging_staff_id=str(data.get("staff_id") or ""),
-            )
+            try:
+                result = auth_service.authenticate_entra(
+                    email=str(data.get("email") or ""),
+                    entra_oid=str(data.get("entra_oid") or ""),
+                    messaging_staff_id=str(data.get("staff_id") or ""),
+                )
+            except Exception as exc:
+                log_exception("Error completando el acceso Microsoft del escritorio.", exc)
+                if current_login:
+                    current_login.show_error(
+                        "Microsoft valido la cuenta, pero no se pudo abrir la sesion. "
+                        "Reintentalo o contacta con soporte."
+                    )
+                return
             if not result.ok:
                 if current_login:
                     current_login.show_error(result.message)

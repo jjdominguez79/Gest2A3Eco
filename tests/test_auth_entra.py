@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from models.gestor_base import GestorBase
 from services.auth_service import AuthService, PasswordHasher
 from services.desktop_staff_auth_service import DesktopStaffAuthService
 
@@ -49,6 +50,34 @@ class _GestorUsuarios:
         return []
 
 
+class _ConexionUsuarios:
+    def __init__(self, gestor):
+        self.gestor = gestor
+        self.commits = 0
+
+    def execute(self, sql, params):
+        if "UPDATE usuarios" not in sql:
+            raise AssertionError(sql)
+        entra_oid, email, _updated_at, user_id = params
+        self.gestor.rows[int(user_id)]["entra_oid"] = entra_oid
+        self.gestor.rows[int(user_id)]["email_corporativo"] = email
+
+    def commit(self):
+        self.commits += 1
+
+
+class _GestorUsuariosConVinculoReal(_GestorUsuarios):
+    vincular_usuario_entra = GestorBase.vincular_usuario_entra
+
+    def __init__(self):
+        super().__init__()
+        self.conn = _ConexionUsuarios(self)
+
+    @staticmethod
+    def _utc_now():
+        return "2026-09-30T09:30:00"
+
+
 def test_solo_admin_emergencia_puede_usar_password_local():
     service = AuthService(_GestorUsuarios())
     assert service.authenticate("admin", "emergencia-segura").ok
@@ -68,6 +97,20 @@ def test_entra_vincula_oid_y_conserva_staff_id_del_backend():
     assert result.ok
     assert gestor.rows[2]["entra_oid"] == "oid-ana"
     assert result.session.user.messaging_staff_id == "staff-uuid-ana"
+
+
+def test_entra_completa_el_login_con_el_vinculo_real_del_gestor():
+    gestor = _GestorUsuariosConVinculoReal()
+
+    result = AuthService(gestor).authenticate_entra(
+        email="ANA@GESTINEM.ES",
+        entra_oid="oid-ana",
+        messaging_staff_id="staff-uuid-ana",
+    )
+
+    assert result.ok
+    assert result.session.user.entra_oid == "oid-ana"
+    assert gestor.conn.commits == 1
 
 
 def test_login_principal_expone_acceso_microsoft():

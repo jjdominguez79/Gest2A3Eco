@@ -41,6 +41,25 @@ def test_schema_separa_estado_contable_e_impresion_del_ocr():
     assert "buzon_origen TEXT" in SCHEMA
 
 
+def test_upsert_factura_recibida_sincroniza_su_documento_archivado():
+    connection = _Connection()
+    gestor = _gestor_with_connection(connection)
+
+    gestor.upsert_factura_recibida_doc({
+        "id": "ocr-1",
+        "documento_archivo_id": "archivo-1",
+        "codigo_empresa": "E00001",
+        "ejercicio": 2026,
+        "estado_contable": "pendiente_contabilizar",
+        "numero_asiento": "",
+    })
+
+    statements = [sql for sql, _params in connection.calls]
+    assert any("UPDATE facturas_recibidas_docs SET documento_archivo_id" in sql for sql in statements)
+    assert any("UPDATE documentos_archivo SET estado_contable" in sql for sql in statements)
+    assert connection.commits == 1
+
+
 def test_registro_documental_inicializa_estado_contable_pendiente():
     connection = _Connection()
     gestor = _gestor_with_connection(connection)
