@@ -42,6 +42,7 @@ from backend.api import messaging_mail
 from backend.api.database import SessionLocal
 from backend.api.client_storage import ClientDocumentStorage
 from backend.api.feature_flags import (
+    is_documents_enabled,
     require_certificates_enabled,
     require_documents_enabled,
 )
@@ -1088,6 +1089,9 @@ def list_internal_requests(
         serialized = _serialize(request_item, document_status=document_status)
         serialized["company_code"] = organization.company_code
         serialized["company_name"] = organization.name
+        serialized["client_documents_enabled"] = bool(
+            organization.active and is_documents_enabled(organization)
+        )
         serialized["document_fiscal_year"] = document_fiscal_year
         serialized["document_date"] = (
             document_date.isoformat() if document_date else None

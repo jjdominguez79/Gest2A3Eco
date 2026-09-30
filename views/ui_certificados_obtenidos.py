@@ -50,6 +50,14 @@ def _label_cliente(empresa: dict) -> str:
     return " - ".join(partes)
 
 
+def _label_area_cliente(solicitud: dict) -> str:
+    """Describe si el area documental admite publicaciones para el cliente."""
+    estado = solicitud.get("client_documents_enabled")
+    if estado is None:
+        return "Sin datos"
+    return "Activa" if estado else "No activa"
+
+
 class UICertificadosObtenidos(ttk.Frame):
     """Pestana global de solicitud/obtencion de certificados."""
 
@@ -62,6 +70,7 @@ class UICertificadosObtenidos(ttk.Frame):
         ("f_sol",     "Solicitado",  120, "center"),
         ("f_obt",     "Obtenido",    120, "center"),
         ("pdf",       "PDF",          50, "center"),
+        ("area",      "Area cliente", 90, "center"),
         ("flutter",   "Flutter",      75, "center"),
     ]
 
@@ -240,6 +249,7 @@ class UICertificadosObtenidos(ttk.Frame):
             and r.get("status") == "completed"
             and r.get("document_id")
             and r.get("document_status") == "draft"
+            and r.get("client_documents_enabled") is not False
         )
         self._btn_publicar.configure(state="normal" if publicable else "disabled")
         reintentable = bool(r and r.get("status") in {"needs_action", "failed", "awaiting_issuance"})
@@ -681,6 +691,14 @@ class UICertificadosObtenidos(ttk.Frame):
             or not solicitud.get("document_id")
         ):
             return
+        if solicitud.get("client_documents_enabled") is False:
+            messagebox.showwarning(
+                "Area cliente no activa",
+                "No se puede publicar porque el area documental de este cliente "
+                "no esta activa.",
+                parent=self.winfo_toplevel(),
+            )
+            return
         if not messagebox.askyesno(
             "Enviar a documentos",
             "El certificado se publicara en el area documental del cliente y se le "
@@ -816,6 +834,7 @@ class UICertificadosObtenidos(ttk.Frame):
                 (r.get("created_at") or "")[:16].replace("T", " "),
                 (r.get("completed_at") or "")[:16].replace("T", " "),
                 "Si" if r.get("document_id") else "Resguardo" if r.get("receipt_document_id") else "-",
+                _label_area_cliente(r),
                 (
                     "Publicado"
                     if r.get("document_status") == "published"

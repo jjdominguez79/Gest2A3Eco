@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 from services.backend_client_service import BackendClientService
 
@@ -139,6 +140,26 @@ def test_list_certificate_requests_uses_internal_backend(monkeypatch):
     request = session.get.call_args
     assert request.kwargs["params"] == {"limit": 50, "company_code": "E00006"}
     assert request.kwargs["headers"] == {"X-API-Key": "g2a3_wks_test"}
+
+
+def test_publish_certificate_request_reports_backend_detail(monkeypatch):
+    listed = MagicMock()
+    listed.json.return_value = {
+        "items": [{"id": "sol-1", "document_id": "doc-1"}],
+    }
+    rejected = MagicMock()
+    rejected.json.return_value = {
+        "detail": "Area documental no habilitada para esta organizacion",
+    }
+    rejected.raise_for_status.side_effect = requests.HTTPError(
+        "403 Client Error", response=rejected,
+    )
+    session = MagicMock()
+    session.get.return_value = listed
+    session.post.return_value = rejected
+
+    with pytest.raises(ValueError, match="Area documental no habilitada"):
+        _service(monkeypatch, session).publish_certificate_request_document("sol-1")
 
 
 def test_retry_certificate_request_uses_internal_backend(monkeypatch):

@@ -1,4 +1,8 @@
-from views.ui_certificados_obtenidos import _label_cliente, _normalizar_busqueda
+from views.ui_certificados_obtenidos import (
+    _label_area_cliente,
+    _label_cliente,
+    _normalizar_busqueda,
+)
 
 
 def test_label_cliente_prioriza_nombre_y_permite_identificarlo():
@@ -12,3 +16,9 @@ def test_busqueda_ignora_mayusculas_y_acentos():
 
     assert "alvarez" in _normalizar_busqueda(label)
     assert "b12345678" in _normalizar_busqueda(label)
+
+
+def test_label_area_cliente_distingue_activa_inactiva_y_backend_antiguo():
+    assert _label_area_cliente({"client_documents_enabled": True}) == "Activa"
+    assert _label_area_cliente({"client_documents_enabled": False}) == "No activa"
+    assert _label_area_cliente({}) == "Sin datos"

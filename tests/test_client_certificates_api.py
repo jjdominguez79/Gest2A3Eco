@@ -1483,7 +1483,11 @@ def test_escritorio_elimina_buzones_de_organizacion_ya_ausente(monkeypatch):
 
 
 def test_escritorio_lista_solicitudes_centrales_con_empresa(monkeypatch):
-    client, _, _, _headers = _setup(monkeypatch)
+    monkeypatch.setenv("CLIENT_DOCUMENTS_ENABLED", "true")
+    client, factory, org_id, _headers = _setup(monkeypatch)
+    with factory() as db:
+        db.get(MessagingOrganization, org_id).client_documents_enabled = True
+        db.commit()
     created = client.post(
         "/api/v1/messaging/client/certificates/internal/requests",
         params={"company_code": "E00001"},
@@ -1502,6 +1506,25 @@ def test_escritorio_lista_solicitudes_centrales_con_empresa(monkeypatch):
     assert item["id"] == created.json()["id"]
     assert item["company_code"] == "E00001"
     assert item["company_name"] == "Cliente Uno"
+    assert item["client_documents_enabled"] is True
+
+
+def test_escritorio_indica_area_cliente_no_activa(monkeypatch):
+    monkeypatch.setenv("CLIENT_DOCUMENTS_ENABLED", "true")
+    client, _, _, _headers = _setup(monkeypatch)
+    created = client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={"certificate_type": "AEAT_CENSAL"},
+    )
+
+    response = client.get(
+        "/api/v1/messaging/client/certificates/internal/requests",
+    )
+
+    assert created.status_code == 201
+    assert response.status_code == 200
+    assert response.json()["items"][0]["client_documents_enabled"] is False
 
 
 def test_escritorio_reintenta_solicitud_sin_crear_duplicado(monkeypatch):

@@ -425,8 +425,10 @@ class BackendClientService:
     def publish_certificate_request_document(self, request_id: str) -> dict:
         """Hace visible en Flutter el PDF obtenido por una solicitud de escritorio."""
         self._ensure_configured()
-        requests = self.list_certificate_requests(limit=500)
-        item = next((row for row in requests if row.get("id") == request_id), None)
+        certificate_requests = self.list_certificate_requests(limit=500)
+        item = next((
+            row for row in certificate_requests if row.get("id") == request_id
+        ), None)
         if not item or not item.get("document_id"):
             raise ValueError("La solicitud no tiene un documento disponible")
         url = (
@@ -434,5 +436,14 @@ class BackendClientService:
             f"{item['document_id']}/publish"
         )
         response = self.http.post(url, headers=self._headers(), timeout=30)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            try:
+                detail = response.json().get("detail")
+            except (TypeError, ValueError, AttributeError):
+                detail = ""
+            if detail:
+                raise ValueError(str(detail)) from exc
+            raise
         return response.json()
