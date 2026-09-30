@@ -856,16 +856,20 @@ def _serialize_conversation(
     channel_label = "CG" if conv.kind == "general" else ""
     channel_avatar_url = ""
     channel_avatar_version = ""
-    if audience == "staff" and org.logo_storage_key:
-        words = [word for word in org.name.split() if word]
-        channel_label = (
-            "".join(word[0] for word in words[:2]).upper()
-            or org.company_code[:2].upper()
-        )
-        channel_avatar_url = (
-            f"/api/v1/messaging/staff/organizations/{org.company_code}/logo"
-        )
-        channel_avatar_version = org.logo_sha256[:12]
+    if audience == "staff":
+        # En la bandeja del despacho cada fila representa a un cliente. Si la
+        # empresa no tiene logotipo, debe mostrarse el fallback con sus
+        # iniciales, nunca la foto del asesor asignado al canal privado.
+        if org.logo_storage_key:
+            words = [word for word in org.name.split() if word]
+            channel_label = (
+                "".join(word[0] for word in words[:2]).upper()
+                or org.company_code[:2].upper()
+            )
+            channel_avatar_url = (
+                f"/api/v1/messaging/staff/organizations/{org.company_code}/logo"
+            )
+            channel_avatar_version = org.logo_sha256[:12]
     elif conv.kind == "private":
         owner_id = org.private_owner_external_id or conv.assigned_staff_external_id
         owner = db.get(MessagingStaff, owner_id) if owner_id else None

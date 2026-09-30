@@ -1162,6 +1162,28 @@ def test_cliente_recibe_etiquetas_para_general_y_asesor(tmp_path, monkeypatch):
     assert client.get(private["channel_avatar_url"], headers=auth).status_code == 200
 
 
+def test_bandeja_staff_no_usa_avatar_asesor_para_cliente(tmp_path, monkeypatch):
+    client, _factory, staff_headers, _auth, _client_id, _conversation_id = _setup(
+        tmp_path, monkeypatch,
+    )
+    avatar = BytesIO()
+    Image.new("RGB", (100, 100), "#145a86").save(avatar, format="PNG")
+    admin = staff_headers("admin")
+    assert client.put(
+        "/api/v1/messaging/staff/admin/directory/admin/avatar",
+        headers=admin,
+        files={"avatar": ("admin.png", avatar.getvalue(), "image/png")},
+    ).status_code == 200
+
+    rows = client.get(
+        "/api/v1/messaging/staff/conversations", headers=admin,
+    ).json()
+
+    assert {row["kind"] for row in rows} == {"general", "private"}
+    assert all(row["channel_avatar_url"] == "" for row in rows)
+    assert all(row["channel_avatar_version"] == "" for row in rows)
+
+
 def test_paginacion_devuelve_ultimos_y_cursor_estable(tmp_path, monkeypatch):
     client, _factory, _staff_headers, auth, _client_id, conversation_id = _setup(
         tmp_path, monkeypatch,
