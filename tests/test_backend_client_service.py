@@ -142,6 +142,23 @@ def test_list_certificate_requests_uses_internal_backend(monkeypatch):
     assert request.kwargs["headers"] == {"X-API-Key": "g2a3_wks_test"}
 
 
+def test_list_dehu_mailbox_configs_uses_internal_backend(monkeypatch):
+    response = MagicMock()
+    response.json.return_value = {
+        "items": [{"company_code": "E00006", "last_sync_at": "2026-09-30T08:15:00"}],
+    }
+    session = MagicMock()
+    session.get.return_value = response
+
+    result = _service(monkeypatch, session).list_dehu_mailbox_configs()
+
+    assert result[0]["company_code"] == "E00006"
+    request = session.get.call_args
+    assert request.args[0].endswith("/internal/dehu-mailboxes")
+    assert request.kwargs["headers"] == {"X-API-Key": "g2a3_wks_test"}
+    response.raise_for_status.assert_called_once_with()
+
+
 def test_publish_certificate_request_reports_backend_detail(monkeypatch):
     listed = MagicMock()
     listed.json.return_value = {

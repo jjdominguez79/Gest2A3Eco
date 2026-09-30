@@ -311,6 +311,15 @@ class BackendClientService:
         response.raise_for_status()
         return response.json()
 
+    def list_dehu_mailbox_configs(self) -> list[dict]:
+        self._ensure_configured()
+        response = self.http.get(
+            f"{self.base_url}/api/v1/messaging/client/certificates/internal/dehu-mailboxes",
+            headers=self._headers(), timeout=30,
+        )
+        response.raise_for_status()
+        return list(response.json().get("items") or [])
+
     def delete_dehu_mailbox_config(self, *, company_code: str) -> dict:
         self._ensure_configured()
         response = requests.delete(

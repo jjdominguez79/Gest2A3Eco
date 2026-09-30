@@ -143,6 +143,50 @@ def test_configuracion_buzones_mantiene_visible_buzon_de_empresa_inactiva():
     assert vista._cache[0]["_empresa_inactiva"] is True
 
 
+def test_configuracion_buzones_muestra_solo_activos_por_defecto_y_fecha_remota(
+    root, monkeypatch,
+):
+    gestor = SimpleNamespace(
+        listar_notif_buzones_global=Mock(return_value=[
+            {
+                "id": "dehu-1", "codigo_empresa": "E00001",
+                "empresa_nombre": "Cliente Uno", "organismo_codigo": "DEHU",
+                "organismo_nombre": "DEHu", "nombre": "DEHu", "activo": 1,
+            },
+            {
+                "id": "dev-1", "codigo_empresa": "E00001",
+                "empresa_nombre": "Cliente Uno", "organismo_codigo": "DEV",
+                "organismo_nombre": "DGT / DEV", "nombre": "DGT / DEV", "activo": 0,
+            },
+        ]),
+        listar_empresas_resumen=Mock(return_value=[{
+            "codigo": "E00001", "nombre": "Cliente Uno", "cif": "B12345678",
+        }]),
+        listar_notif_organismos=Mock(return_value=[]),
+    )
+    backend = Mock()
+    backend.list_dehu_mailbox_configs.return_value = []
+    backend.list_dev_mailbox_configs.return_value = []
+    monkeypatch.setattr(
+        "views.ui_buzones_global.BackendClientService", lambda: backend,
+    )
+
+    vista = UIBuzonesGlobal(root, gestor)
+
+    assert vista._var_mostrar_todos.get() is False
+    assert len(vista._tv.get_children()) == 1
+    vista._estados_buzones_fin({
+        "E00001": {"last_sync_at": "2026-09-30T08:15:00+00:00"},
+    }, {})
+    fila = vista._tv.get_children()[0]
+    assert vista._tv.set(fila, "ultima_consulta") == "2026-09-30 08:15"
+
+    vista._var_mostrar_todos.set(True)
+    vista._render()
+
+    assert len(vista._tv.get_children()) == 2
+
+
 def test_buzon_global_no_se_activa_sin_certificado(monkeypatch):
     backend = Mock()
     monkeypatch.setattr(

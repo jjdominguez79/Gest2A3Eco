@@ -1415,6 +1415,41 @@ def test_escritorio_elimina_buzones_de_organizacion_inactiva(monkeypatch):
         assert db.get(ClientDevMailboxConfig, org_id) is None
 
 
+@pytest.mark.parametrize(
+    ("provider", "certificate_type"),
+    [("dehu", "DEHU_SYNC"), ("dev", "DEV_SYNC")],
+)
+def test_listado_buzones_incluye_ultima_sincronizacion(
+    monkeypatch, provider, certificate_type,
+):
+    client, factory, org_id, _headers = _setup(monkeypatch)
+    assert client.put(
+        f"/api/v1/messaging/client/certificates/internal/{provider}-mailboxes/E00001",
+        json={"active": True, "periodicity": "MANUAL"},
+    ).status_code == 200
+    fecha_sync = datetime(2026, 9, 30, 8, 15, tzinfo=timezone.utc)
+    with factory() as db:
+        db.add(ClientCertificateRequest(
+            organization_id=org_id,
+            requester_type="staff",
+            requester_id="desktop",
+            certificate_type=certificate_type,
+            idempotency_key=f"ultima-sync-{provider}",
+            status="completed",
+            completed_at=fecha_sync,
+        ))
+        db.commit()
+
+    response = client.get(
+        f"/api/v1/messaging/client/certificates/internal/{provider}-mailboxes",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["last_sync_at"].startswith(
+        "2026-09-30T08:15:00"
+    )
+
+
 @pytest.mark.parametrize("provider", ["dehu", "dev"])
 def test_escritorio_no_activa_buzon_sin_certificado(monkeypatch, provider):
     client, factory, org_id, _headers = _setup(monkeypatch)

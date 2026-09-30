@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -1299,7 +1299,9 @@ def _require_valid_mailbox_certificate(
         )
 
 
-def _serialize_dehu_mailbox(item: ClientDehuMailboxConfig, org=None) -> dict:
+def _serialize_dehu_mailbox(
+    item: ClientDehuMailboxConfig, org=None, last_sync_at: datetime | None = None,
+) -> dict:
     return {
         "organization_id": item.organization_id,
         "company_code": getattr(org, "company_code", ""),
@@ -1316,6 +1318,7 @@ def _serialize_dehu_mailbox(item: ClientDehuMailboxConfig, org=None) -> dict:
             item.last_enqueued_at.isoformat() if item.last_enqueued_at else None
         ),
         "last_request_id": item.last_request_id,
+        "last_sync_at": last_sync_at.isoformat() if last_sync_at else None,
     }
 
 
@@ -1407,12 +1410,36 @@ def list_internal_dehu_mailboxes(
     db: Session = Depends(_db),
     _auth: str = Depends(require_workstation_or_internal),
 ):
+    ultima_sync = (
+        select(
+            ClientCertificateRequest.organization_id.label("organization_id"),
+            func.max(ClientCertificateRequest.completed_at).label("last_sync_at"),
+        )
+        .where(
+            ClientCertificateRequest.certificate_type == "DEHU_SYNC",
+            ClientCertificateRequest.completed_at.is_not(None),
+        )
+        .group_by(ClientCertificateRequest.organization_id)
+        .subquery()
+    )
     rows = db.execute(
-        select(ClientDehuMailboxConfig, MessagingOrganization)
+        select(
+            ClientDehuMailboxConfig, MessagingOrganization,
+            ultima_sync.c.last_sync_at,
+        )
         .join(MessagingOrganization, MessagingOrganization.id == ClientDehuMailboxConfig.organization_id)
+        .outerjoin(
+            ultima_sync,
+            ultima_sync.c.organization_id == ClientDehuMailboxConfig.organization_id,
+        )
         .order_by(MessagingOrganization.name)
     ).all()
-    return {"items": [_serialize_dehu_mailbox(item, org) for item, org in rows]}
+    return {
+        "items": [
+            _serialize_dehu_mailbox(item, org, last_sync_at)
+            for item, org, last_sync_at in rows
+        ],
+    }
 
 
 @router.delete("/internal/dehu-mailboxes/{company_code}")
@@ -1431,7 +1458,9 @@ def delete_internal_dehu_mailbox(
     return {"deleted": bool(item)}
 
 
-def _serialize_dev_mailbox(item: ClientDevMailboxConfig, org=None) -> dict:
+def _serialize_dev_mailbox(
+    item: ClientDevMailboxConfig, org=None, last_sync_at: datetime | None = None,
+) -> dict:
     return {
         "organization_id": item.organization_id,
         "company_code": getattr(org, "company_code", ""),
@@ -1448,6 +1477,7 @@ def _serialize_dev_mailbox(item: ClientDevMailboxConfig, org=None) -> dict:
         "next_sync_at": item.next_sync_at.isoformat() if item.next_sync_at else None,
         "last_enqueued_at": item.last_enqueued_at.isoformat() if item.last_enqueued_at else None,
         "last_request_id": item.last_request_id,
+        "last_sync_at": last_sync_at.isoformat() if last_sync_at else None,
     }
 
 
@@ -1516,12 +1546,36 @@ def list_internal_dev_mailboxes(
     db: Session = Depends(_db),
     _auth: str = Depends(require_workstation_or_internal),
 ):
+    ultima_sync = (
+        select(
+            ClientCertificateRequest.organization_id.label("organization_id"),
+            func.max(ClientCertificateRequest.completed_at).label("last_sync_at"),
+        )
+        .where(
+            ClientCertificateRequest.certificate_type == "DEV_SYNC",
+            ClientCertificateRequest.completed_at.is_not(None),
+        )
+        .group_by(ClientCertificateRequest.organization_id)
+        .subquery()
+    )
     rows = db.execute(
-        select(ClientDevMailboxConfig, MessagingOrganization)
+        select(
+            ClientDevMailboxConfig, MessagingOrganization,
+            ultima_sync.c.last_sync_at,
+        )
         .join(MessagingOrganization, MessagingOrganization.id == ClientDevMailboxConfig.organization_id)
+        .outerjoin(
+            ultima_sync,
+            ultima_sync.c.organization_id == ClientDevMailboxConfig.organization_id,
+        )
         .order_by(MessagingOrganization.name)
     ).all()
-    return {"items": [_serialize_dev_mailbox(item, org) for item, org in rows]}
+    return {
+        "items": [
+            _serialize_dev_mailbox(item, org, last_sync_at)
+            for item, org, last_sync_at in rows
+        ],
+    }
 
 
 @router.delete("/internal/dev-mailboxes/{company_code}")

@@ -27,7 +27,7 @@ class UIBuzonesGlobal(ttk.Frame):
         ("tipo_buzon",      "Tipo",              70, "center"),
         ("certificado",     "Certificado",      140, "w"),
         ("modo_descarga",   "Modo de consulta",  140, "center"),
-        ("ultima_consulta", "Ultima consulta",  120, "center"),
+        ("ultima_consulta", "Ultima sincronizacion", 145, "center"),
         ("activo",          "Activo",            60, "center"),
         ("conexion",        "Conexion",         115, "center"),
     ]
@@ -37,6 +37,7 @@ class UIBuzonesGlobal(ttk.Frame):
         self._gestor  = gestor
         self._session = session
         self._cache: list[dict] = []
+        self._dehu_status: dict[str, dict] = {}
         self._dev_status: dict[str, dict] = {}
         self._cargando_dev_status = False
         self._build()
@@ -74,8 +75,8 @@ class UIBuzonesGlobal(ttk.Frame):
         self._cb_org.pack(side="left", padx=(0, 10))
         self._cb_org.bind("<<ComboboxSelected>>", lambda _e: self._render())
 
-        self._var_solo_activos = tk.BooleanVar(value=False)
-        ttk.Checkbutton(fb, text="Solo activos", variable=self._var_solo_activos,
+        self._var_mostrar_todos = tk.BooleanVar(value=False)
+        ttk.Checkbutton(fb, text="Mostrar todos los buzones", variable=self._var_mostrar_todos,
                         command=self._render).pack(side="left", padx=(0, 10))
 
         self._lbl_count = tk.Label(fb, text="", bg="#e2e8f0", fg=_SUB, font=("Segoe UI", 9))
@@ -503,25 +504,46 @@ class UIBuzonesGlobal(ttk.Frame):
         import threading
 
         def _worker():
+            estados_dehu = None
+            estados_dev = None
             try:
-                rows = BackendClientService().list_dev_mailbox_configs()
-                estados = {str(row.get("company_code") or ""): row for row in rows}
-                self.after(0, lambda: self._estados_dev_fin(estados))
+                backend = BackendClientService()
+                rows = backend.list_dehu_mailbox_configs()
+                estados_dehu = {
+                    str(row.get("company_code") or ""): row for row in rows
+                }
             except Exception:
-                self.after(0, lambda: self._estados_dev_fin(None))
+                pass
+            try:
+                backend = BackendClientService()
+                rows = backend.list_dev_mailbox_configs()
+                estados_dev = {
+                    str(row.get("company_code") or ""): row for row in rows
+                }
+            except Exception:
+                pass
+            self.after(
+                0,
+                lambda: self._estados_buzones_fin(estados_dehu, estados_dev),
+            )
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _estados_dev_fin(self, estados: dict | None) -> None:
+    def _estados_buzones_fin(
+        self, estados_dehu: dict | None, estados_dev: dict | None,
+    ) -> None:
         self._cargando_dev_status = False
-        if estados is not None:
-            self._dev_status = estados
+        if estados_dehu is not None:
+            self._dehu_status = estados_dehu
+        if estados_dev is not None:
+            self._dev_status = estados_dev
+        if estados_dehu is not None or estados_dev is not None:
             self._render()
 
     def _render(self) -> None:
         cliente_lbl = self._var_cliente.get()
         org_lbl = self._var_org.get()
-        solo_activos = self._var_solo_activos.get()
+        mostrar_todos = self._var_mostrar_todos.get()
 
         self._tv.delete(*self._tv.get_children())
         rows_mostradas = 0
@@ -532,17 +554,25 @@ class UIBuzonesGlobal(ttk.Frame):
             org = b.get("organismo_nombre") or b.get("organismo_codigo") or ""
             if org_lbl not in ("", "Todos") and org != org_lbl:
                 continue
-            if solo_activos and not b.get("activo"):
+            if not mostrar_todos and not b.get("activo"):
                 continue
             tag = "activo" if b.get("activo") else "inactivo"
             modo = LABELS_MODO_DESCARGA["SOLO_DETECTAR"]
-            ultima = (b.get("ultima_consulta") or "")[:16].replace("T", " ")
             provider = str(b.get("organismo_codigo") or "").upper()
+            estados_provider = (
+                self._dev_status if provider == "DEV" else self._dehu_status
+            )
+            estado_backend = estados_provider.get(
+                str(b.get("codigo_empresa") or ""), {},
+            )
+            ultima = (
+                estado_backend.get("last_sync_at")
+                or b.get("ultima_consulta")
+                or ""
+            )[:16].replace("T", " ")
             if provider == "DEV":
                 estado_dev = str(
-                    self._dev_status.get(str(b.get("codigo_empresa") or ""), {}).get(
-                        "registration_status", "PENDIENTE",
-                    )
+                    estado_backend.get("registration_status", "PENDIENTE")
                 ).upper()
                 conexion = {
                     "ACTIVO": "Conectado",
