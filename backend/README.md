@@ -172,7 +172,10 @@ temporalmente en Azure Blob en produccion, pero su destino depende del flujo:
 
 - Los documentos que envia un cliente al despacho los reclama el worker
   Synology, verifica su SHA-256 y los copia al repositorio documental
-  compartido. Solo despues de confirmar esa copia el backend elimina el blob.
+  compartido. Despues de confirmar esa copia, el blob privado permanece
+  disponible para el cliente que lo envio durante 48 horas y se elimina al
+  vencer ese plazo. La duracion se configura con
+  `MESSAGING_INCOMING_ATTACHMENT_HOURS` (48 por defecto).
 - Los documentos enviados por el despacho a un cliente y los adjuntos de chats
   internos no los recoge el worker ni se copian automaticamente al repositorio
   documental. Permanecen descargables en el blob hasta su fecha de caducidad

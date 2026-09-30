@@ -543,7 +543,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     }
   }
 
-  /// Descarga un adjunto saliente (solo cliente) y confirma al backend.
+  /// Descarga un adjunto disponible y confirma los enviados por el despacho.
   Future<void> _download(Attachment attachment) async {
     final apertura = prepararAperturaArchivoDescargado();
     final repository = ref.read(messagingRepositoryProvider);

@@ -3,7 +3,7 @@
 /// Verifica:
 /// - Parseo de todos los campos nuevos de Attachment y Message
 /// - Tarjeta entrante no descargable para personal
-/// - Tarjeta saliente descargable solo para cliente y antes de caducar
+/// - Tarjetas descargables para el destinatario o remitente autorizado
 /// - Estados: pendiente, disponible, caducado, retirado, guardado_por_asesoria
 /// - Ocultacion de "Eliminar" en mensajes con adjuntos
 /// - Confirmacion de descarga
@@ -250,23 +250,32 @@ void main() {
       expect(find.textContaining('retirado'), findsOneWidget);
     });
 
-    testWidgets('adjunto entrante del propio cliente no es descargable', (
+    testWidgets('adjunto entrante del propio cliente es descargable', (
       tester,
     ) async {
+      var tapped = false;
       await tester.pumpWidget(
         _wrap(
           AttachmentCard(
             attachment: _att(
               direction: 'incoming',
-              status: 'recibido_por_gestinem',
-              available: false,
+              status: 'guardado_por_asesoria',
+              available: true,
+              expiresAt: DateTime(2026, 10, 2),
             ),
             isStaff: false,
+            onDownload: () => tapped = true,
           ),
         ),
       );
-      expect(find.byKey(const Key('download-att-1')), findsNothing);
-      expect(find.textContaining('Gestinem'), findsOneWidget);
+      expect(find.byKey(const Key('download-att-1')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('download-att-1')));
+      expect(tapped, isTrue);
+      expect(find.textContaining('asesoria'), findsOneWidget);
+      expect(
+        find.textContaining('Disponible hasta 02/10/2026'),
+        findsOneWidget,
+      );
     });
   });
 

@@ -64,6 +64,7 @@ class Settings:
     messaging_content_azure_connection_string: str
     messaging_content_azure_container: str
     messaging_attachment_days: int
+    messaging_incoming_attachment_hours: int
     messaging_graph_tenant_id: str
     messaging_graph_client_id: str
     messaging_graph_client_secret: str
@@ -182,6 +183,9 @@ def get_settings() -> Settings:
             "MESSAGING_CONTENT_AZURE_CONTAINER", "mensajeria-contenido",
         ),
         messaging_attachment_days=max(15, int(os.getenv("MESSAGING_ATTACHMENT_DAYS", "30"))),
+        messaging_incoming_attachment_hours=max(
+            1, int(os.getenv("MESSAGING_INCOMING_ATTACHMENT_HOURS", "48")),
+        ),
         messaging_graph_tenant_id=os.getenv("MESSAGING_GRAPH_TENANT_ID", ""),
         messaging_graph_client_id=os.getenv("MESSAGING_GRAPH_CLIENT_ID", ""),
         messaging_graph_client_secret=os.getenv("MESSAGING_GRAPH_CLIENT_SECRET", ""),

@@ -840,7 +840,7 @@ def _event(db: Session, conv: MessagingConversation, event_type: str,
 
 def _serialize_conversation(
     db: Session, conv: MessagingConversation, audience: str = "staff",
-    access: dict | None = None,
+    access: dict | None = None, viewer_id: str = "",
 ) -> dict:
     org = db.get(MessagingOrganization, conv.organization_id)
     last = db.scalar(
@@ -900,7 +900,10 @@ def _serialize_conversation(
         "assigned_staff_external_id": conv.assigned_staff_external_id,
         "started_at": conv.started_at.isoformat() if conv.started_at else None,
         "updated_at": conv.updated_at.isoformat(),
-        "last_message": _serialize_message(db, last) if last else None,
+        "last_message": (
+            _serialize_message(db, last, audience, viewer_id=viewer_id)
+            if last else None
+        ),
     }
 
 
@@ -926,7 +929,10 @@ def _attachment_download_summary(db: Session, attachment_id: str) -> dict:
     }
 
 
-def _serialize_attachment(db: Session, a: MessagingAttachment, audience: str) -> dict:
+def _serialize_attachment(
+    db: Session, a: MessagingAttachment, audience: str, *,
+    message: MessagingMessage | None = None, viewer_id: str = "",
+) -> dict:
     withdrawn = bool(a.withdrawn_at)
     expired = bool(a.expires_at and is_expired(a.expires_at))
 
@@ -961,8 +967,14 @@ def _serialize_attachment(db: Session, a: MessagingAttachment, audience: str) ->
         if a.direction == "incoming":
             # El cliente subio el archivo: puede ver su propio sha256
             base["sha256"] = a.sha256
+        own_incoming = bool(
+            a.direction == "incoming"
+            and message
+            and message.author_type == "client"
+            and message.author_id == viewer_id
+        )
         base["available"] = (
-            a.direction == "outgoing"
+            (a.direction == "outgoing" or own_incoming)
             and not withdrawn
             and not expired
             and not a.storage_deleted_at
@@ -972,7 +984,9 @@ def _serialize_attachment(db: Session, a: MessagingAttachment, audience: str) ->
     return base
 
 
-def _serialize_message(db: Session, item: MessagingMessage, audience: str = "") -> dict:
+def _serialize_message(
+    db: Session, item: MessagingMessage, audience: str = "", *, viewer_id: str = "",
+) -> dict:
     attachments = [] if item.deleted_at else list(db.scalars(select(MessagingAttachment).where(MessagingAttachment.message_id == item.id)))
     author_name = item.author_name
     author_avatar_url = ""
@@ -1019,7 +1033,12 @@ def _serialize_message(db: Session, item: MessagingMessage, audience: str = "") 
         "has_attachments": has_attachments,
         "reply_to": reply_data,
         "created_at": item.created_at.isoformat(),
-        "attachments": [_serialize_attachment(db, a, audience) for a in attachments],
+        "attachments": [
+            _serialize_attachment(
+                db, a, audience, message=item, viewer_id=viewer_id,
+            )
+            for a in attachments
+        ],
     }
 
 
@@ -3417,7 +3436,7 @@ def client_conversations(client: MessagingClient = Depends(_client), db: Session
     ).order_by(MessagingConversation.kind)).all()
     result = []
     for row in rows:
-        item = _serialize_conversation(db, row, "client")
+        item = _serialize_conversation(db, row, "client", viewer_id=client.id)
         item["unread_count"] = _unread_count(db, row, "client", client.id)
         result.append(item)
     return result
@@ -3455,7 +3474,9 @@ def client_unified_conversation(
                 ).order_by(MessagingMessage.created_at.desc(), MessagingMessage.id.desc()).limit(1)
             )
             if last_msg_row:
-                last_message = _serialize_message(db, last_msg_row, "client")
+                last_message = _serialize_message(
+                    db, last_msg_row, "client", viewer_id=client.id,
+                )
 
     return {
         "organization_name": org.name if org else "",
@@ -3497,7 +3518,10 @@ def client_unified_messages(
         stmt.order_by(MessagingMessage.created_at.desc(), MessagingMessage.id.desc()).limit(limit)
     ).all()))
 
-    result = [_serialize_message(db, row, "client") for row in rows]
+    result = [
+        _serialize_message(db, row, "client", viewer_id=client.id)
+        for row in rows
+    ]
     for conv in convs:
         selected = [(row, data) for row, data in zip(rows, result) if row.conversation_id == conv.id]
         _add_message_states(db, [row for row, _ in selected], [data for _, data in selected],
@@ -3538,7 +3562,7 @@ def client_send_unified(
         )
     )
     if existing:
-        return _serialize_message(db, existing, "client")
+        return _serialize_message(db, existing, "client", viewer_id=client.id)
 
     if not body.strip() and not files:
         raise HTTPException(422, "El mensaje esta vacio")
@@ -3566,7 +3590,7 @@ def client_send_unified(
     if mail_configured():
         pass  # notificacion de email manejada en post_message
 
-    return _serialize_message(db, item, "client")
+    return _serialize_message(db, item, "client", viewer_id=client.id)
 
 
 @router.get("/staff/conversations")
@@ -3679,8 +3703,11 @@ def messages(
     rows = list(reversed(db.scalars(
         stmt.order_by(MessagingMessage.created_at.desc(), MessagingMessage.id.desc()).limit(limit)
     ).all()))
-    result = [_serialize_message(db, row, audience) for row in rows]
     actor_id = actor.id if audience == "client" else actor.external_id
+    result = [
+        _serialize_message(db, row, audience, viewer_id=actor_id)
+        for row in rows
+    ]
     _add_message_states(db, rows, result, "conversation", conv.id, audience, actor_id)
     return result
 
@@ -3853,7 +3880,8 @@ def post_message(
                 background.add_task(
                     send_message_notice, recipient.email, recipient.name,
                 )
-    return _serialize_message(db, item, audience)
+    actor_id = actor.id if audience == "client" else actor.external_id
+    return _serialize_message(db, item, audience, viewer_id=actor_id)
 
 
 @router.patch("/staff/conversations/{conversation_id}")
@@ -3932,26 +3960,30 @@ def confirm_local(attachment_id: str, workstation: str = Form(...), sha256: str 
         raise HTTPException(409, "Confirmacion no valida")
     message = db.get(MessagingMessage, item.message_id)
     _conversation_for_staff(db, message.conversation_id, staff)
-    # Confirmar primero la recepcion local evita redescargas si el borrado cloud
-    # funciona pero se pierde la conexion antes de confirmar la transaccion.
-    item.local_confirmed_at = utcnow(); item.claim_expires_at = None; db.commit()
-    if _requires_cloud_retention(db, item):
-        return {"ok": True, "storage_cleanup_pending": False, "storage_retained": True}
-    cleanup_pending = False
-    try:
-        MessagingStorage().delete(item.storage_key)
-        # La clave es unica y se conserva para auditoria. Vaciarla provocaba
-        # colisiones al confirmar mas de un adjunto y dejaba la BD apuntando a
-        # blobs que ya se habian eliminado correctamente.
-        item.storage_deleted_at = utcnow(); db.commit()
-    except Exception:
-        cleanup_pending = True
-    return {"ok": True, "storage_cleanup_pending": cleanup_pending}
+    _confirm_incoming_local_copy(item)
+    db.commit()
+    return {
+        "ok": True,
+        "storage_cleanup_pending": False,
+        "storage_retained": True,
+        "expires_at": item.expires_at.isoformat() if item.expires_at else None,
+    }
 
 
 def hmac_compare(left: str, right: str) -> bool:
     import hmac
     return hmac.compare_digest(str(left), str(right))
+
+
+def _confirm_incoming_local_copy(item: MessagingAttachment) -> None:
+    """Inicia la ventana cloud una vez garantizada la copia documental local."""
+    confirmed_at = utcnow()
+    item.local_confirmed_at = confirmed_at
+    item.claim_expires_at = None
+    if not _is_voice_attachment(item):
+        item.expires_at = confirmed_at + timedelta(
+            hours=get_settings().messaging_incoming_attachment_hours,
+        )
 
 
 def _requires_cloud_retention(db: Session, item: MessagingAttachment) -> bool:
@@ -3979,13 +4011,12 @@ def client_download(attachment_id: str, request: Request, client: MessagingClien
     if not message or message.deleted_at:
         raise HTTPException(404, "Adjunto no disponible")
     _conversation_for_client(db, message.conversation_id, client)
-    own_voice_note = bool(
+    own_incoming = bool(
         item.direction == "incoming"
-        and _is_voice_attachment(item)
         and message.author_type == "client"
         and message.author_id == client.id
     )
-    if item.direction == "incoming" and not own_voice_note:
+    if item.direction == "incoming" and not own_incoming:
         raise HTTPException(404, "Adjunto no disponible")
     if item.withdrawn_at:
         raise HTTPException(410, "Documento retirado por el despacho")
@@ -3995,11 +4026,14 @@ def client_download(attachment_id: str, request: Request, client: MessagingClien
         raise HTTPException(410, "Adjunto caducado")
     content = MessagingStorage().get(item.storage_key)
     valid = hmac_compare(hashlib.sha256(content).hexdigest(), item.sha256)
-    if own_voice_note:
+    if own_incoming:
         if not valid:
             raise HTTPException(500, "La integridad del adjunto no es valida")
         return Response(content, media_type=item.content_type, headers={
-            "Content-Disposition": f'inline; filename="{safe_name(item.name)}"',
+            "Content-Disposition": (
+                f'{"inline" if _is_voice_attachment(item) else "attachment"}; '
+                f'filename="{safe_name(item.name)}"'
+            ),
         })
     dl = MessagingDownload(
         attachment_id=item.id, client_id=client.id,
@@ -4226,19 +4260,14 @@ def sync_confirm_attachment(
     item = db.get(MessagingAttachment, attachment_id)
     if not item or item.claimed_by != worker or not hmac_compare(item.sha256, sha256):
         raise HTTPException(409, "Confirmacion no valida")
-    item.local_confirmed_at = utcnow()
-    item.claim_expires_at = None
+    _confirm_incoming_local_copy(item)
     db.commit()
-    if _requires_cloud_retention(db, item):
-        return {"ok": True, "storage_cleanup_pending": False, "storage_retained": True}
-    cleanup_pending = False
-    try:
-        MessagingStorage().delete(item.storage_key)
-        item.storage_deleted_at = utcnow()
-        db.commit()
-    except Exception:
-        cleanup_pending = True
-    return {"ok": True, "storage_cleanup_pending": cleanup_pending}
+    return {
+        "ok": True,
+        "storage_cleanup_pending": False,
+        "storage_retained": True,
+        "expires_at": item.expires_at.isoformat() if item.expires_at else None,
+    }
 
 
 def _guardar_edicion(db: Session, item, payload: MessageEditIn,
@@ -4297,7 +4326,7 @@ def edit_message(audience: str, message_id: str, request: Request,
         _event(db, conv, "message_edited")
         db.commit()
         _publish_conversation_event(db, conv, "message.edited", message_id=item.id)
-    return _serialize_message(db, item, audience)
+    return _serialize_message(db, item, audience, viewer_id=actor_id)
 
 
 @router.patch("/staff/internal/messages/{message_id}")
@@ -4363,7 +4392,7 @@ def soft_delete_message(
     if not is_admin and not (item.author_type == audience and item.author_id == actor_id):
         raise HTTPException(403, "No puedes eliminar este mensaje")
     if item.deleted_at:
-        return _serialize_message(db, item, audience)
+        return _serialize_message(db, item, audience, viewer_id=actor_id)
     attachment_count = int(db.scalar(select(func.count(MessagingAttachment.id)).where(
         MessagingAttachment.message_id == item.id,
     )) or 0)
@@ -4388,7 +4417,7 @@ def soft_delete_message(
     _event(db, conv, "message_deleted")
     db.commit()
     _publish_conversation_event(db, conv, "message.deleted", message_id=item.id)
-    return _serialize_message(db, item, audience)
+    return _serialize_message(db, item, audience, viewer_id=actor_id)
 
 
 @router.delete("/staff/internal/messages/{message_id}")
@@ -5208,7 +5237,7 @@ async def events(audience: str, request: Request, after: int = 0, db: Session = 
 
 
 def cleanup_expired_attachments() -> int:
-    """Elimina copias cloud de salida caducadas conservando metadatos y auditoria."""
+    """Elimina copias cloud caducadas conservando metadatos y auditoria."""
     removed = 0
     with SessionLocal() as db:
         rows = db.scalars(select(MessagingAttachment).where(
@@ -5217,11 +5246,21 @@ def cleanup_expired_attachments() -> int:
             MessagingAttachment.expires_at.is_not(None),
             MessagingAttachment.expires_at <= utcnow(),
         )).all()
-        rows += db.scalars(select(MessagingAttachment).where(
+        incoming = db.scalars(select(MessagingAttachment).where(
             MessagingAttachment.direction == "incoming",
             MessagingAttachment.local_confirmed_at.is_not(None),
             MessagingAttachment.storage_deleted_at.is_(None),
         )).all()
+        retention = timedelta(
+            hours=get_settings().messaging_incoming_attachment_hours,
+        )
+        for item in incoming:
+            # Compatibilidad con confirmaciones anteriores al despliegue de la
+            # ventana de 48 horas: se calcula desde su confirmacion original.
+            if item.expires_at is None:
+                item.expires_at = item.local_confirmed_at + retention
+            if is_expired(item.expires_at):
+                rows.append(item)
         storage = MessagingStorage()
         for item in rows:
             if _requires_cloud_retention(db, item):

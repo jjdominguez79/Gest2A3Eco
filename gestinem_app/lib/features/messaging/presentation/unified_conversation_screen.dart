@@ -217,7 +217,7 @@ class _UnifiedConversationScreenState
     }
   }
 
-  /// Descarga un adjunto saliente y confirma al backend tras guardar.
+  /// Descarga un adjunto disponible y confirma los enviados por el despacho.
   Future<void> _download(Attachment attachment) async {
     final apertura = prepararAperturaArchivoDescargado();
     final repository = ref.read(messagingRepositoryProvider);

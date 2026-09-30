@@ -32,7 +32,9 @@ class AttachmentCard extends StatelessWidget {
   String _statusLabel() {
     switch (attachment.status) {
       case 'guardado_por_asesoria':
-        return 'Guardado por la asesoria';
+        return attachment.available && attachment.expiresAt != null
+            ? 'Guardado por la asesoria · Disponible hasta ${_fmtDate(attachment.expiresAt!)}'
+            : 'Guardado por la asesoria';
       case 'recibido_por_gestinem':
         return 'Recibido por Gestinem';
       case 'retirado':

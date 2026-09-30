@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 import json
 import re
@@ -475,6 +476,39 @@ def startup():
         # La limpieza no debe impedir que el servicio arranque; se reintentara
         # en el siguiente despliegue/arranque.
         pass
+
+
+_attachment_cleanup_task: asyncio.Task | None = None
+
+
+async def _attachment_cleanup_loop() -> None:
+    """Retira cada hora las copias temporales que superaron su caducidad."""
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            await asyncio.to_thread(cleanup_expired_attachments)
+        except Exception:
+            # La siguiente ejecucion reintentara sin afectar a la API.
+            pass
+
+
+@app.on_event("startup")
+async def start_attachment_cleanup_loop() -> None:
+    global _attachment_cleanup_task
+    _attachment_cleanup_task = asyncio.create_task(_attachment_cleanup_loop())
+
+
+@app.on_event("shutdown")
+async def stop_attachment_cleanup_loop() -> None:
+    global _attachment_cleanup_task
+    if _attachment_cleanup_task is None:
+        return
+    _attachment_cleanup_task.cancel()
+    try:
+        await _attachment_cleanup_task
+    except asyncio.CancelledError:
+        pass
+    _attachment_cleanup_task = None
 
 
 def get_db():

@@ -56,6 +56,7 @@ def _make_client(tmp_path):
     os.environ["MESSAGING_STAFF_ALLOWED_DOMAIN"] = "gestinem.es"
     os.environ["MESSAGING_STAFF_ADMIN_EMAILS"] = "admin@gestinem.es"
     os.environ["MESSAGING_ATTACHMENT_DAYS"] = "30"
+    os.environ["MESSAGING_INCOMING_ATTACHMENT_HOURS"] = "48"
     engine = create_engine(
         "sqlite+pysqlite://", connect_args={"check_same_thread": False},
         poolclass=StaticPool,
@@ -216,20 +217,109 @@ class TestAdminNoPuedeBorrarMensajesConAdjuntos:
         assert resp.status_code == 409
 
 
-# ── Cliente no puede descargar adjuntos entrantes ─────────────────────────────
+# ── Acceso temporal del remitente a adjuntos entrantes ────────────────────────
 
-class TestClienteNoDescargaAdjuntosEntrantes:
-    def test_descarga_entrante_rechazada(self, tmp_path):
+class TestClienteDescargaSusAdjuntosEntrantes:
+    @staticmethod
+    def _enviar_y_confirmar(client, seeds):
+        content = b"documento entrante"
+        sent = client.post(
+            f"/api/v1/messaging/client/conversations/{seeds['conv_id']}/messages",
+            headers=_auth_client(seeds["client_token"]),
+            data={"body": "doc", "idempotency_key": str(uuid.uuid4())},
+            files={"files": ("entrada.pdf", io.BytesIO(content), "application/pdf")},
+        )
+        assert sent.status_code in (200, 201)
+        attachment = sent.json()["attachments"][0]
+        sync_headers = {"X-Sync-Token": "sync-secret"}
+        assert client.post(
+            f"/api/v1/messaging/sync/attachments/{attachment['id']}/claim",
+            headers=sync_headers, data={"worker": "synology"},
+        ).status_code == 200
+        confirmed = client.post(
+            f"/api/v1/messaging/sync/attachments/{attachment['id']}/confirm",
+            headers=sync_headers,
+            data={"worker": "synology", "sha256": attachment["sha256"]},
+        )
+        assert confirmed.status_code == 200
+        return sent.json()["id"], attachment["id"], content, confirmed.json()
+
+    def test_remitente_puede_descargar_durante_48_horas(self, tmp_path):
         client, factory = _make_client(tmp_path)
         seeds = _seed(factory)
-        _, att_id, _, _ = _create_message_with_attachment(
-            factory, seeds, direction="incoming",
+        message_id, attachment_id, content, confirmed = self._enviar_y_confirmar(
+            client, seeds,
         )
-        resp = client.get(
-            f"/api/v1/messaging/client/attachments/{att_id}",
+
+        expires_at = datetime.fromisoformat(confirmed["expires_at"])
+        assert timedelta(hours=47, minutes=59) < expires_at - _utcnow()
+        assert expires_at - _utcnow() <= timedelta(hours=48)
+        messages = client.get(
+            f"/api/v1/messaging/client/conversations/{seeds['conv_id']}/messages",
+            headers=_auth_client(seeds["client_token"]),
+        ).json()
+        message = next(row for row in messages if row["id"] == message_id)
+        assert message["attachments"][0]["available"] is True
+
+        downloaded = client.get(
+            f"/api/v1/messaging/client/attachments/{attachment_id}",
             headers=_auth_client(seeds["client_token"]),
         )
-        assert resp.status_code in (404, 410)
+        assert downloaded.status_code == 200
+        assert downloaded.content == content
+        assert "X-Download-Id" not in downloaded.headers
+
+    def test_otro_cliente_de_la_empresa_no_puede_descargarlo(self, tmp_path):
+        client, factory = _make_client(tmp_path)
+        seeds = _seed(factory)
+        message_id, attachment_id, _, _ = self._enviar_y_confirmar(client, seeds)
+        with factory() as db:
+            other = MessagingClient(
+                organization_id=seeds["org_id"], name="Otro cliente",
+                email="otro@test.es", active=True,
+            )
+            from backend.api.messaging_security import hash_password
+            other.password_hash = hash_password("password")
+            db.add(other); db.flush()
+            token = new_token()
+            db.add(MessagingSession(
+                client_id=other.id, token_hash=hash_token(token),
+                expires_at=session_expiry(),
+            ))
+            db.commit()
+
+        messages = client.get(
+            f"/api/v1/messaging/client/conversations/{seeds['conv_id']}/messages",
+            headers=_auth_client(token),
+        ).json()
+        message = next(row for row in messages if row["id"] == message_id)
+        assert message["attachments"][0]["available"] is False
+        denied = client.get(
+            f"/api/v1/messaging/client/attachments/{attachment_id}",
+            headers=_auth_client(token),
+        )
+        assert denied.status_code == 404
+
+    def test_caducado_se_elimina_y_deja_de_descargarse(
+        self, tmp_path, monkeypatch,
+    ):
+        client, factory = _make_client(tmp_path)
+        seeds = _seed(factory)
+        _, attachment_id, _, _ = self._enviar_y_confirmar(client, seeds)
+        with factory() as db:
+            attachment = db.get(MessagingAttachment, attachment_id)
+            attachment.expires_at = _utcnow() - timedelta(seconds=1)
+            db.commit()
+
+        monkeypatch.setattr(messaging_api, "SessionLocal", factory)
+        assert messaging_api.cleanup_expired_attachments() == 1
+        with factory() as db:
+            assert db.get(MessagingAttachment, attachment_id).storage_deleted_at
+        expired = client.get(
+            f"/api/v1/messaging/client/attachments/{attachment_id}",
+            headers=_auth_client(seeds["client_token"]),
+        )
+        assert expired.status_code == 410
 
 
 # ── Caducidad a 30 dias ───────────────────────────────────────────────────────

@@ -58,10 +58,11 @@ class Attachment {
   /// 'disponible' | 'caducado' | 'retirado' | 'recibido_por_gestinem' | 'guardado_por_asesoria'
   final String status;
 
-  /// Solo para cliente: true si el adjunto saliente aun puede descargarse
+  /// Solo para cliente: true si el adjunto puede descargarse todavia.
+  /// Los entrantes solo se habilitan al cliente que los envio.
   final bool available;
 
-  /// Fecha de caducidad (adjuntos salientes)
+  /// Fecha de caducidad de la copia temporal en la nube.
   final DateTime? expiresAt;
 
   /// Confirmado por el NAS (adjuntos entrantes)
