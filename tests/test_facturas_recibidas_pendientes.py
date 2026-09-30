@@ -5,6 +5,7 @@ from services.facturas_recibidas_pendientes_service import (
     FacturasRecibidasPendientesService,
 )
 from services.ocr_recibidas_service import mark_docs_as_generated
+from services.estado_facturas_recibidas import estado_efectivo
 from views.ui_facturas_recibidas_pendientes import UIFacturasRecibidasPendientes
 from views.ui_gestion_documental import UIGestionDocumental
 
@@ -102,7 +103,22 @@ def test_marca_facturas_como_contabilizadas_manualmente():
     assert "categoria_id='facturas_recibidas'" in sql
     assert "Empleado" in params
     assert "2026-09-26" in params
+    assert any(
+        "UPDATE facturas_recibidas_docs" in statement
+        and "estado_contable='contabilizada_manual'" in statement
+        for statement, _params in connection.calls
+    )
+    assert any(
+        "UPDATE documentos_ocr SET estado='contabilizada'" in statement
+        for statement, _params in connection.calls
+    )
     assert connection.commits == 1
+
+
+def test_estado_manual_con_asiento_no_se_convierte_en_ocr_suenlace():
+    assert estado_efectivo(
+        estado="contabilizada_manual", numero_asiento="05/00042",
+    ) == "contabilizada_manual"
 
 
 def test_devolver_a_pendientes_limpia_datos_contables():
@@ -284,6 +300,7 @@ def test_captura_asientos_a3_para_varias_empresas():
             "nombre_original": "factura.pdf", "numero_factura_captura": "F-24",
             "descripcion_captura": "Su Fra Nº. F-24",
             "fecha_captura": "2026-05-15",
+            "estado_contable": "exportada_a3",
         },
         "doc-2": {
             "id": "doc-2", "categoria_id": "facturas_recibidas",
@@ -305,6 +322,37 @@ def test_captura_asientos_a3_para_varias_empresas():
     assert gestor.captured_entries == [("doc-1", "05/00042")]
     assert result.completados == ["F-24 -> asiento 05/00042"]
     assert result.omitidos == ["sin-ocr.pdf: faltan datos OCR de la factura"]
+
+
+def test_captura_asiento_manual_conserva_la_via_y_la_evidencia_de_a3():
+    gestor = _GestorService({
+        "doc-1": {
+            "id": "doc-1", "categoria_id": "facturas_recibidas",
+            "codigo_empresa": "E00123", "ejercicio": 2026,
+            "nombre_original": "factura.pdf", "numero_factura_captura": "F-24",
+            "descripcion_captura": "Su Fra Nº. F-24",
+            "fecha_captura": "2026-05-15",
+            "estado_contable": "pendiente",
+        },
+    })
+    service = FacturasRecibidasPendientesService(
+        gestor, buscar_asiento=lambda *_args, **_kwargs: "05/00042",
+    )
+
+    result = service.capturar_asientos(["doc-1"], usuario="Empleado")
+
+    assert result.completados == ["F-24 -> asiento 05/00042"]
+    assert gestor.captured_entries == []
+    assert gestor.state_changes == [(
+        ["doc-1"],
+        "contabilizada_manual",
+        {
+            "usuario": "Empleado",
+            "fecha_contable": "",
+            "numero_asiento": "05/00042",
+            "observaciones": "Asiento capturado automaticamente en A3ECO",
+        },
+    )]
 
 
 def test_filtro_global_combina_estado_empresa_y_busqueda():

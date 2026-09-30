@@ -103,8 +103,10 @@ class FacturasRecibidasPendientesService:
             documento_ids, "pendiente",
         )
 
-    def capturar_asientos(self, documento_ids: list[str]) -> ResultadoLoteFacturas:
-        """Localiza en A3ECO los asientos de facturas OCR seleccionadas."""
+    def capturar_asientos(
+        self, documento_ids: list[str], *, usuario: str = "",
+    ) -> ResultadoLoteFacturas:
+        """Confirma el asiento real de A3 y conserva la via de contabilizacion."""
         resultado = ResultadoLoteFacturas()
         for documento_id in dict.fromkeys(documento_ids or []):
             try:
@@ -136,15 +138,34 @@ class FacturasRecibidasPendientesService:
                 if not asiento:
                     resultado.omitidos.append(f"{numero}: no encontrada en A3ECO")
                     continue
-                if not self._gestor.actualizar_asiento_documento_archivo(
-                    str(documento_id), str(asiento),
-                ):
+                if self._exportada_por_suenlace(documento):
+                    guardado = self._gestor.actualizar_asiento_documento_archivo(
+                        str(documento_id), str(asiento),
+                    )
+                else:
+                    guardado = self._gestor.cambiar_estado_contable_documentos(
+                        [str(documento_id)],
+                        "contabilizada_manual",
+                        usuario=usuario,
+                        # La busqueda confirma el asiento, pero no devuelve su fecha.
+                        # No grabar como fecha contable la fecha OCR de la factura.
+                        fecha_contable="",
+                        numero_asiento=str(asiento),
+                        observaciones="Asiento capturado automaticamente en A3ECO",
+                    )
+                if not guardado:
                     resultado.errores.append(f"{numero}: no se pudo guardar el asiento")
                     continue
                 resultado.completados.append(f"{numero} -> asiento {asiento}")
             except Exception as exc:
                 resultado.errores.append(f"{numero or nombre}: {exc}")
         return resultado
+
+    @staticmethod
+    def _exportada_por_suenlace(documento: dict) -> bool:
+        estado = str(documento.get("estado_contable") or "").strip().lower()
+        metodo = str(documento.get("metodo_contabilizacion") or "").strip().lower()
+        return estado == "exportada_a3" or metodo == "ocr_suenlace"
 
     def _factura(self, documento_id: str) -> dict | None:
         documento = self._gestor.get_documento_archivo(str(documento_id))

@@ -43,8 +43,8 @@ class UIFacturasRecibidasPendientes(ttk.Frame):
         ttk.Label(
             titles,
             text=(
-                "En Pendientes permanecen hasta confirmar el asiento generado por "
-                "OCR/SUENLACE o registrar su contabilizacion manual en A3."
+                "En Pendientes permanecen hasta confirmar el asiento real de A3, "
+                "tanto si se genero por OCR/SUENLACE como si se contabilizo a mano."
             ),
         ).pack(anchor="w", pady=(2, 0))
         ttk.Button(header, text="Actualizar", command=self.refresh).pack(side="right")
@@ -119,11 +119,11 @@ class UIFacturasRecibidasPendientes(ttk.Frame):
             command=self._ocr_selected,
         ).pack(side="left", padx=6)
         ttk.Button(
-            actions, text="Capturar asiento de A3",
+            actions, text="Confirmar asiento en A3",
             command=self._capture_a3_entries,
         ).pack(side="left", padx=6)
         ttk.Button(
-            actions, text="Registrar manual en A3 (papel)",
+            actions, text="Registrar asiento manualmente",
             command=self._mark_manual,
         ).pack(side="left", padx=6)
         ttk.Button(
@@ -292,13 +292,25 @@ class UIFacturasRecibidasPendientes(ttk.Frame):
             return
         self._run_background(
             "Buscando asientos en A3ECO...",
-            lambda: self._service.capturar_asientos(selected),
+            lambda: self._service.capturar_asientos(
+                selected, usuario=self._username(),
+            ),
             "Captura de asientos",
         )
 
     def _mark_manual(self):
         selected = self._selected_ids()
         if not selected:
+            return
+        if len(selected) != 1:
+            messagebox.showwarning(
+                "Facturas recibidas",
+                (
+                    "El registro manual de respaldo solo admite una factura cada vez, "
+                    "para evitar asignar el mismo asiento a varias facturas."
+                ),
+                parent=self,
+            )
             return
         dialog = ContabilizacionManualDialog(self, len(selected))
         self.wait_window(dialog)
@@ -450,7 +462,7 @@ class ContabilizacionManualDialog(tk.Toplevel):
         self._observaciones = tk.StringVar()
         for row, (label, variable) in enumerate((
             ("Fecha contable", self._fecha),
-            ("Numero de asiento (opcional)", self._asiento),
+            ("Numero de asiento", self._asiento),
             ("Observaciones (opcional)", self._observaciones),
         ), start=1):
             ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", pady=4)
@@ -466,6 +478,7 @@ class ContabilizacionManualDialog(tk.Toplevel):
 
     def _accept(self):
         raw_date = self._fecha.get().strip()
+        numero_asiento = self._asiento.get().strip()
         try:
             if raw_date:
                 date.fromisoformat(raw_date)
@@ -475,9 +488,16 @@ class ContabilizacionManualDialog(tk.Toplevel):
                 parent=self,
             )
             return
+        if not numero_asiento:
+            messagebox.showwarning(
+                "Contabilizacion manual",
+                "Indica el numero de asiento confirmado en A3.",
+                parent=self,
+            )
+            return
         self.result = {
             "fecha_contable": raw_date,
-            "numero_asiento": self._asiento.get().strip(),
+            "numero_asiento": numero_asiento,
             "observaciones": self._observaciones.get().strip(),
         }
         self.destroy()

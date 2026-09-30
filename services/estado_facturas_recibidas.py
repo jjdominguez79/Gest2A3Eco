@@ -29,6 +29,8 @@ def estado_efectivo(*, estado: str = "", generada=False, numero_asiento="") -> s
     asiento. ``generada`` sin asiento significa exclusivamente exportada.
     """
     value = str(estado or "").strip().lower()
+    if value == CONTABILIZADA_MANUAL:
+        return CONTABILIZADA_MANUAL
     if str(numero_asiento or "").strip():
         return CONTABILIZADA
     if bool(generada) or value in {"exportada", EXPORTADA_A3}:

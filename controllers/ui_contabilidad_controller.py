@@ -8,7 +8,11 @@ from services.ocr_recibidas_service import (
     resolve_recibidas_template,
 )
 from services.documentos_recibidos_a3_service import preparar_documentos_para_suenlace
-from services.estado_facturas_recibidas import CONTABILIZADA, EXPORTADA_A3
+from services.estado_facturas_recibidas import (
+    CONTABILIZADA,
+    CONTABILIZADA_MANUAL,
+    EXPORTADA_A3,
+)
 from services.import_a3_empresa import leer_numero_asiento_desde_a3
 
 
@@ -222,7 +226,9 @@ class UIContabilidadController:
             if not doc:
                 continue
             estado = str(doc.get("estado_contable") or "").strip().lower()
-            if bool(doc.get("generada")) or estado in {EXPORTADA_A3, CONTABILIZADA}:
+            if bool(doc.get("generada")) or estado in {
+                EXPORTADA_A3, CONTABILIZADA, CONTABILIZADA_MANUAL,
+            }:
                 ya_contabilizadas.append(str(doc.get("numero_factura") or documento_id))
             else:
                 docs_a_exportar.append(doc)

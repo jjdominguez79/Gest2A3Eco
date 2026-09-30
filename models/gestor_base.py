@@ -4028,6 +4028,39 @@ class GestorBase:
                     numero_asiento or None, observaciones or None, now, *ids,
                 ),
             )
+            # La pantalla de Contabilidad/OCR consulta su proyeccion propia.
+            # Reflejar alli la confirmacion manual para que no siga pendiente
+            # ni pueda exportarse despues por SUENLACE.
+            self.conn.execute(
+                f"""
+                UPDATE facturas_recibidas_docs
+                   SET estado_contable='contabilizada_manual',
+                       numero_asiento=?,fecha_contabilizacion=?,updated_at=?
+                 WHERE documento_archivo_id IN ({placeholders})
+                    OR id IN (
+                       SELECT ocr_documento_id FROM documentos_archivo
+                        WHERE id IN ({placeholders})
+                          AND ocr_documento_id IS NOT NULL
+                    )
+                """,
+                (
+                    numero_asiento or None, now, now, *ids, *ids,
+                ),
+            )
+            self.conn.execute(
+                f"""
+                UPDATE documentos_ocr SET estado='contabilizada'
+                 WHERE id IN (
+                    SELECT ocr_documento_id FROM documentos_archivo
+                     WHERE id IN ({placeholders})
+                       AND ocr_documento_id IS NOT NULL
+                    UNION
+                    SELECT id FROM facturas_recibidas_docs
+                     WHERE documento_archivo_id IN ({placeholders})
+                 )
+                """,
+                (*ids, *ids),
+            )
         else:
             cursor = self.conn.execute(
                 f"""
@@ -4931,6 +4964,26 @@ class GestorBase:
                     estado, metodo, str(doc.get("numero_asiento") or ""),
                     str(doc.get("fecha_asiento") or ""), now, archivo_id,
                 ),
+            )
+            # El OCR puede terminar despues de que el usuario haya confirmado
+            # la contabilizacion manual. En ese caso la fuente documental manda.
+            self.conn.execute(
+                "UPDATE facturas_recibidas_docs SET "
+                "estado_contable='contabilizada_manual',"
+                "numero_asiento=COALESCE((SELECT numero_asiento "
+                "FROM documentos_archivo WHERE id=?),numero_asiento),"
+                "fecha_contabilizacion=COALESCE((SELECT contabilizada_manualmente_at "
+                "FROM documentos_archivo WHERE id=?),fecha_contabilizacion),"
+                "updated_at=? WHERE id=? AND EXISTS ("
+                "SELECT 1 FROM documentos_archivo WHERE id=? "
+                "AND estado_contable='contabilizada_manual')",
+                (archivo_id, archivo_id, now, doc_id, archivo_id),
+            )
+            self.conn.execute(
+                "UPDATE documentos_ocr SET estado='contabilizada' "
+                "WHERE id=? AND EXISTS (SELECT 1 FROM documentos_archivo "
+                "WHERE id=? AND estado_contable='contabilizada_manual')",
+                (doc_id, archivo_id),
             )
         self.conn.commit()
         return doc_id

@@ -470,6 +470,7 @@ class UIContabilidad(ttk.Frame):
             doc for doc in (docs or [])
             if str(doc.get("estado_contable") or "") in {
                 "pendiente_contabilizar", "exportada_a3", "contabilizada",
+                "contabilizada_manual",
             }
         ]
         self._aplicar_filtro_recibidas()
@@ -479,7 +480,7 @@ class UIContabilidad(ttk.Frame):
         filtro = self.cmb_filtro_recibidas.get()
         for doc in self._docs:
             estado = str(doc.get("estado_contable") or "")
-            contabilizada = estado == "contabilizada"
+            contabilizada = estado in {"contabilizada", "contabilizada_manual"}
             exportada = estado == "exportada_a3"
             if filtro == "Pendientes" and (contabilizada or exportada):
                 continue
@@ -493,7 +494,11 @@ class UIContabilidad(ttk.Frame):
                 values=(
                     doc.get("proveedor_nombre", ""),
                     doc.get("numero_factura", ""),
-                    doc.get("estado_contable", ""),
+                    (
+                        "Manual en A3"
+                        if estado == "contabilizada_manual"
+                        else doc.get("estado_contable", "")
+                    ),
                     self._fmt_num(doc.get("total", 0)),
                 ),
             )

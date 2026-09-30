@@ -378,7 +378,10 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             ).pack(side="left", padx=6)
         elif estado == "contabilizada":
             ttk.Label(
-                bar, text="Asiento confirmado en A3ECO."
+                bar, text=(
+                    "Asiento confirmado en A3ECO, por SUENLACE o "
+                    "contabilizacion manual."
+                )
             ).pack(side="left", padx=2)
 
     def _build_editor(self, parent: ttk.Frame):
