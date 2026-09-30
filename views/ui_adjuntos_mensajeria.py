@@ -99,7 +99,6 @@ class UIAdjuntosMensajeria(ttk.Frame):
         ttk.Button(bar, text="Ir a Gestion documental", command=self._ir_gestion).pack(side=tk.LEFT, padx=2)
         ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4)
         ttk.Button(bar, text="Clasificar", command=self._clasificar).pack(side=tk.LEFT, padx=2)
-        ttk.Button(bar, text="Marcar revisado", command=self._marcar_revisado).pack(side=tk.LEFT, padx=2)
         ttk.Button(bar, text="No guardar", command=self._no_guardar).pack(side=tk.LEFT, padx=2)
         self._lbl_contador = ttk.Label(bar, text="")
         self._lbl_contador.pack(side=tk.RIGHT, padx=6)
@@ -284,32 +283,6 @@ class UIAdjuntosMensajeria(ttk.Frame):
             )
         except Exception as exc:
             messagebox.showerror("Clasificar", str(exc), parent=self)
-
-    def _marcar_revisado(self) -> None:
-        item = self._item_seleccionado()
-        if not item:
-            messagebox.showinfo("Sin seleccion", "Selecciona un adjunto de la lista.")
-            return
-        if item.get("revisado"):
-            messagebox.showinfo("Ya revisado", "Este adjunto ya ha sido marcado como revisado.")
-            return
-        if item.get("canal") == "correo":
-            messagebox.showinfo(
-                "Correo recibido",
-                "Los correos se gestionan clasificando sus adjuntos; no se marcan "
-                "como revisados sin decidir sobre ellos.", parent=self,
-            )
-            return
-        if not messagebox.askyesno("Confirmar", "Marcar este adjunto como revisado?"):
-            return
-        try:
-            self._gestor.marcar_adjunto_mensajeria_revisado(
-                str(item.get("entrada_id") or item["id"]),
-                revisado_por=self._usuario or "sistema",
-            )
-            self.recargar()
-        except Exception as exc:
-            messagebox.showerror("Error", f"No se pudo marcar como revisado:\n{exc}")
 
     def _no_guardar(self) -> None:
         item = self._item_seleccionado()

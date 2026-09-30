@@ -57,6 +57,14 @@ def _etiqueta_buzon(item: dict) -> str:
     return mailbox
 
 
+def _actualizar_filtro_buzon(combo, variable, buzones) -> None:
+    """Actualiza opciones y evita conservar un filtro que ya no existe."""
+    valores = ["Todos", *buzones]
+    combo["values"] = valores
+    if variable.get() not in valores:
+        variable.set("Todos")
+
+
 def _buscar_usuario_responsable(company: dict, users: dict) -> dict | None:
     """Devuelve el usuario que coincide con empresas.responsable, si existe."""
     responsable = _normalizar_texto(company.get("responsable"))
@@ -489,7 +497,7 @@ class UIComunicacionesGlobal(ttk.Frame):
 
         pending_filters = ttk.Frame(pending_tab)
         pending_filters.pack(fill="x", pady=(0, 8))
-        ttk.Label(pending_filters, text="Canal").pack(side="left")
+        ttk.Label(pending_filters, text="Buzon").pack(side="left")
         self._pending_mailbox_filter = tk.StringVar(value="Todos")
         pending_mailbox_combo = ttk.Combobox(
             pending_filters,
@@ -558,9 +566,25 @@ class UIComunicacionesGlobal(ttk.Frame):
         self._pending_tree.bind("<<TreeviewSelect>>", self._on_pending_selection)
         self._pending_tree.bind("<Double-1>", lambda _event: self._pending_detail())
 
+        mine_filters = ttk.Frame(mine_tab)
+        mine_filters.pack(fill="x", pady=(0, 8))
+        ttk.Label(mine_filters, text="Buzon").pack(side="left")
+        self._mine_mailbox_filter = tk.StringVar(value="Todos")
+        self._mine_mailbox_combo = ttk.Combobox(
+            mine_filters,
+            textvariable=self._mine_mailbox_filter,
+            state="readonly",
+            width=20,
+            values=("Todos",),
+        )
+        self._mine_mailbox_combo.pack(side="left", padx=(5, 0))
+        self._mine_mailbox_combo.bind(
+            "<<ComboboxSelected>>", lambda _event: self._filter_mine(),
+        )
         self._mine_tree = self._tree(
             mine_tab,
-            (("fecha", "Ultima actividad", 170), ("cliente", "Cliente", 220),
+            (("fecha", "Ultima actividad", 170), ("buzon", "Buzon", 150),
+             ("cliente", "Cliente", 220),
              ("etiqueta", "Etiqueta", 150), ("asunto", "Asunto", 320),
              ("remitente", "Remitente", 210),
              ("estado", "Estado", 110)),
@@ -601,6 +625,21 @@ class UIComunicacionesGlobal(ttk.Frame):
             self._build_discarded(discarded_tab)
 
     def _build_discarded(self, parent):
+        filters = ttk.Frame(parent)
+        filters.pack(fill="x", pady=(0, 8))
+        ttk.Label(filters, text="Buzon").pack(side="left")
+        self._discarded_mailbox_filter = tk.StringVar(value="Todos")
+        self._discarded_mailbox_combo = ttk.Combobox(
+            filters,
+            textvariable=self._discarded_mailbox_filter,
+            state="readonly",
+            width=20,
+            values=("Todos",),
+        )
+        self._discarded_mailbox_combo.pack(side="left", padx=(5, 0))
+        self._discarded_mailbox_combo.bind(
+            "<<ComboboxSelected>>", lambda _event: self._filter_discarded(),
+        )
         self._discarded_tree = self._tree(
             parent,
             (("fecha", "Fecha", 170), ("buzon", "Buzon", 180),
@@ -753,30 +792,25 @@ class UIComunicacionesGlobal(ttk.Frame):
             self._pending[graph_id] = item
         self._filter_pending()
 
-        self._mine_tree.delete(*self._mine_tree.get_children())
         self._mine = {}
         for item in data["mine"]:
             comm_id = item["id"]
             self._mine[comm_id] = item
-            company = companies.get(str(item.get("codigo_empresa") or ""), {})
-            self._mine_tree.insert("", "end", iid=comm_id, values=(
-                item.get("ultima_fecha") or "",
-                item.get("cliente_nombre") or company.get("nombre") or item.get("codigo_empresa"),
-                item.get("etiqueta") or "",
-                item.get("asunto") or "", item.get("ultimo_remitente") or "",
-                item.get("estado") or "pendiente",
-            ))
         for item in data["mine_pending"]:
             iid = f"pending::{item['graph_message_id']}"
             item["_pending_client"] = True
             self._mine[iid] = item
-            self._mine_tree.insert("", "end", iid=iid, values=(
-                item.get("fecha") or "",
-                "Sin cliente" if item.get("sin_cliente_confirmado") else "Sin asignar",
-                item.get("etiqueta") or "",
-                item.get("asunto") or "", item.get("remitente") or "",
-                item.get("estado") or "pendiente",
-            ))
+        mine_mailboxes = sorted({
+            _etiqueta_buzon(item) for item in self._mine.values()
+            if _etiqueta_buzon(item)
+        })
+        if hasattr(self, "_mine_mailbox_combo"):
+            _actualizar_filtro_buzon(
+                self._mine_mailbox_combo,
+                self._mine_mailbox_filter,
+                mine_mailboxes,
+            )
+        self._filter_mine(companies)
         if self._session.is_admin():
             self._refresh_supervision(
                 data["supervision"], data["supervision_unassigned"],
@@ -816,6 +850,44 @@ class UIComunicacionesGlobal(ttk.Frame):
                 item.get("sugerencia_nombre") or "",
             ))
 
+    def _filter_mine(self, companies=None):
+        selected_filter = (
+            self._mine_mailbox_filter.get()
+            if hasattr(self, "_mine_mailbox_filter") else "Todos"
+        )
+        if companies is None:
+            companies = {
+                str(company.get("codigo") or ""): company
+                for company in self._companies.values()
+            }
+        self._mine_tree.delete(*self._mine_tree.get_children())
+        for iid, item in self._mine.items():
+            mailbox_label = _etiqueta_buzon(item)
+            if selected_filter != "Todos" and mailbox_label != selected_filter:
+                continue
+            pending_client = bool(item.get("_pending_client"))
+            company = companies.get(str(item.get("codigo_empresa") or ""), {})
+            date = (
+                item.get("fecha") if pending_client else item.get("ultima_fecha")
+            ) or ""
+            sender = (
+                item.get("remitente")
+                if pending_client else item.get("ultimo_remitente")
+            ) or ""
+            client = (
+                "Sin cliente" if item.get("sin_cliente_confirmado") else "Sin asignar"
+            ) if pending_client else (
+                item.get("cliente_nombre") or company.get("nombre")
+                or item.get("codigo_empresa")
+            )
+            self._mine_tree.insert("", "end", iid=iid, values=(
+                date, mailbox_label, client,
+                item.get("etiqueta") or "",
+                item.get("asunto") or "",
+                sender,
+                item.get("estado") or "pendiente",
+            ))
+
     @staticmethod
     def _restore_selection(tree, selected):
         existing = [iid for iid in selected if tree.exists(iid)]
@@ -823,7 +895,6 @@ class UIComunicacionesGlobal(ttk.Frame):
             tree.selection_set(existing)
 
     def _refresh_discarded(self, discarded=None, conversations=None):
-        self._discarded_tree.delete(*self._discarded_tree.get_children())
         self._discarded = {}
         discarded = (
             self._gestor.listar_comunicaciones_descartadas()
@@ -837,16 +908,33 @@ class UIComunicacionesGlobal(ttk.Frame):
             graph_id = item["graph_message_id"]
             iid = f"queue::{graph_id}"
             self._discarded[iid] = item
-            self._discarded_tree.insert("", "end", iid=iid, values=(
-                item.get("fecha") or "", _etiqueta_buzon(item),
-                item.get("remitente") or "", item.get("asunto") or "",
-                item.get("descartado_por") or "", item.get("motivo_descarte") or "",
-            ))
         for item in conversations:
             iid = f"comm::{item['id']}"
             self._discarded[iid] = item
+        mailboxes = sorted({
+            _etiqueta_buzon(item) for item in self._discarded.values()
+            if _etiqueta_buzon(item)
+        })
+        if hasattr(self, "_discarded_mailbox_combo"):
+            _actualizar_filtro_buzon(
+                self._discarded_mailbox_combo,
+                self._discarded_mailbox_filter,
+                mailboxes,
+            )
+        self._filter_discarded()
+
+    def _filter_discarded(self):
+        selected_filter = (
+            self._discarded_mailbox_filter.get()
+            if hasattr(self, "_discarded_mailbox_filter") else "Todos"
+        )
+        self._discarded_tree.delete(*self._discarded_tree.get_children())
+        for iid, item in self._discarded.items():
+            mailbox_label = _etiqueta_buzon(item)
+            if selected_filter != "Todos" and mailbox_label != selected_filter:
+                continue
             self._discarded_tree.insert("", "end", iid=iid, values=(
-                item.get("fecha") or "", _etiqueta_buzon(item),
+                item.get("fecha") or "", mailbox_label,
                 item.get("remitente") or "", item.get("asunto") or "",
                 item.get("descartado_por") or "", item.get("motivo_descarte") or "",
             ))

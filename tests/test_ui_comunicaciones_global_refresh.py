@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from controllers.app_controller import AppController
 from views.ui_comunicaciones_global import (
     UIComunicacionesGlobal,
+    _actualizar_filtro_buzon,
     _buscar_usuario_responsable,
     _etiqueta_buzon,
 )
@@ -136,6 +137,16 @@ class VariableStub:
 
     def set(self, value):
         self.value = value
+
+
+def test_filtro_buzon_vuelve_a_todos_si_desaparece_la_opcion_seleccionada():
+    combo = {}
+    variable = VariableStub("Documentacion")
+
+    _actualizar_filtro_buzon(combo, variable, ["Oficina"])
+
+    assert combo["values"] == ["Todos", "Oficina"]
+    assert variable.get() == "Todos"
 
 
 def test_filtrar_unico_cliente_recalcula_su_responsable():
@@ -271,6 +282,51 @@ def test_filtro_entrada_todos_muestra_ambos_canales():
     UIComunicacionesGlobal._filter_pending(view)
 
     assert set(view._pending_tree.rows) == {"office", "docs"}
+
+
+def test_filtro_mi_buzon_muestra_solo_documentacion():
+    view = object.__new__(UIComunicacionesGlobal)
+    view._mine_tree = TreeStub()
+    view._mine_mailbox_filter = VariableStub("Documentacion")
+    view._companies = {}
+    view._mine = {
+        "office": {
+            "id": "office",
+            "mailbox": "oficina@gestinem.es",
+            "payload_json": '{"mailbox_label":"Oficina"}',
+        },
+        "docs": {
+            "id": "docs",
+            "mailbox": "documentacion@gestinem.es",
+            "payload_json": '{"mailbox_label":"Documentacion"}',
+        },
+    }
+
+    UIComunicacionesGlobal._filter_mine(view)
+
+    assert set(view._mine_tree.rows) == {"docs"}
+    assert view._mine_tree.rows["docs"][1] == "Documentacion"
+
+
+def test_filtro_descartados_muestra_solo_oficina():
+    view = object.__new__(UIComunicacionesGlobal)
+    view._discarded_tree = TreeStub()
+    view._discarded_mailbox_filter = VariableStub("Oficina")
+    view._discarded = {
+        "office": {
+            "mailbox": "oficina@gestinem.es",
+            "payload_json": '{"mailbox_label":"Oficina"}',
+        },
+        "docs": {
+            "mailbox": "documentacion@gestinem.es",
+            "payload_json": '{"mailbox_label":"Documentacion"}',
+        },
+    }
+
+    UIComunicacionesGlobal._filter_discarded(view)
+
+    assert set(view._discarded_tree.rows) == {"office"}
+    assert view._discarded_tree.rows["office"][1] == "Oficina"
 
 
 def test_contadores_no_se_filtran_con_buzon_local(monkeypatch):
