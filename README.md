@@ -148,9 +148,28 @@ La build empaqueta codigo, recursos, plantillas versionables y
 `config.example.json`; no debe incluir configuracion local, secretos ni
 documentos generados. La publicacion completa de una version se realiza con:
 
+Desde PowerShell:
+
 ```powershell
 .\publicar_version.ps1
 ```
+
+Desde Bash en Windows (Git Bash, Warp u otro terminal Bash), ejecuta el script
+mediante PowerShell 7 desde la raiz del repositorio:
+
+```bash
+pwsh -NoProfile -File ./publicar_version.ps1
+```
+
+Si `pwsh` no esta instalado o no se encuentra en `PATH`, utiliza Windows
+PowerShell:
+
+```bash
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./publicar_version.ps1
+```
+
+El archivo es un script de PowerShell, aunque el comando se lance desde Bash;
+por tanto, no debe ejecutarse como `bash publicar_version.ps1`.
 
 El procedimiento y la recuperacion ante errores se describen en
 [`docs/PUBLICACION_VERSIONES.md`](docs/PUBLICACION_VERSIONES.md).
