@@ -1,4 +1,4 @@
-APP_VERSION = "1.9.3"
+APP_VERSION = "1.9.4"
 APP_RELEASE_DATE = "2026-09-30"
 
 # URL publica donde se aloja el archivo version.json con la info de actualizaciones.

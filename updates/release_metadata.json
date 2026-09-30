@@ -1,6 +1,6 @@
 {
-  "version": "1.9.3",
-  "tag": "v1.9.3",
-  "changelog": "Se corrige el error en el login.",
+  "version": "1.9.4",
+  "tag": "v1.9.4",
+  "changelog": "Correcciones varias en los listados de facturas.",
   "force_update": true
 }
