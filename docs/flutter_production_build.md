@@ -1,48 +1,127 @@
-# Builds y despliegues de producción — Gestinem Flutter
+# Publicar Gestinem Flutter
 
-Esta es la guía operativa. Si dudas, sigue los pasos en orden y no improvises parámetros.
+Esta es la guía operativa única para Web, Android, Windows, iOS y macOS. Todos
+los comandos se ejecutan desde `gestinem_app`.
 
-## 1. Antes de publicar
+## Qué comando necesito
+
+| Objetivo | Bash / Warp | PowerShell | Resultado |
+|---|---|---|---|
+| Publicar la web | `bash tool/build_production.sh web` | `.\tool\build_production.ps1 web` | Publica `https://app.gestinem.es` |
+| Preparar Google Play | `bash tool/build_production.sh android` | `.\tool\build_production.ps1 android` | Genera el AAB firmado |
+| Preparar APK manual | `bash tool/build_production.sh apk` | `.\tool\build_production.ps1 apk` | Genera el APK firmado |
+| Publicar instalador Windows | `bash tool/build_production.sh windows` | `.\tool\build_production.ps1 windows` | Genera y copia el instalador compartido |
+| Preparar App Store | `bash tool/build_production.sh ios` | `.\tool\build_production.ps1 ios` | Genera el IPA en un Mac |
+| Preparar macOS | `bash tool/build_production.sh macos` | `.\tool\build_production.ps1 macos` | Genera la aplicación en un Mac |
+
+Para desarrollar o revisar la interfaz web no publiques: abre el proyecto en
+Flutter, selecciona Chrome y pulsa F5. El comando `web` de esta guía siempre
+publica una versión de producción.
+
+## PowerShell y Bash son equivalentes
+
+Hay dos ficheros porque PowerShell y Bash tienen sintaxis distinta, pero ofrecen
+los mismos comandos y comprobaciones:
+
+- PowerShell: `tool/build_production.ps1`
+- Bash, Warp, Git Bash o macOS: `tool/build_production.sh`
+
+El script Bash no llama internamente a PowerShell. En Warp sobre Windows utiliza
+Git Bash/MSYS, por lo que puede ejecutarse directamente con `bash`.
+
+## Antes de generar una versión
 
 Desde la raíz del repositorio:
 
 ```bash
 git switch main
 git pull
-git status
 cd gestinem_app
+git status
 ```
 
-`git status` debe indicar que no hay cambios pendientes. Los scripts de producción se detienen si detectan otra rama o cambios sin guardar.
+`git status` debe estar limpio. Los scripts se detienen si hay cambios sin
+guardar o si la rama no es `main`.
 
-## 2. Subir versión
-
-La única fuente de versión es `gestinem_app/pubspec.yaml`:
+La versión se cambia únicamente en `pubspec.yaml`:
 
 ```yaml
-version: 0.1.3+15
+version: 0.1.24+39
 ```
 
-Para una nueva compilación de la misma versión funcional, incrementa el número posterior a `+`, por ejemplo `0.1.3+16`. Para una nueva versión funcional puedes usar, por ejemplo, `0.1.4+16`.
+- Antes del `+` está la versión visible.
+- Después del `+` está el número de compilación.
+- Google Play exige que cada nuevo número de compilación sea superior al anterior.
 
-Google Play exige que cada nuevo `versionCode` (el número después de `+`) sea superior al anterior. Después del cambio, haz commit y vuelve a comprobar que el árbol está limpio antes del build.
+Después de cambiarla, crea el commit correspondiente. El script no permite
+publicar con ese cambio todavía sin guardar.
 
-## 3. Qué hace la automatización
+## Comprobaciones automáticas
 
-Hay dos entradas equivalentes:
+Todos los comandos ejecutan primero:
 
-- Bash/Warp: `tool/build_production.sh`
-- PowerShell: `tool/build_production.ps1`
+1. comprobación de rama y estado de Git;
+2. `flutter pub get`;
+3. `flutter analyze`;
+4. `flutter test`;
+5. compilación release con el backend de producción;
+6. comprobación de que el artefacto esperado existe.
 
-Por defecto comprueban `main`, comprueban que Git esté limpio, ejecutan `flutter pub get`, `flutter analyze` y `flutter test`, y compilan con `ENVIRONMENT=production` y `API_BASE_URL=https://gest2a3eco-production.up.railway.app`.
+El backend predeterminado es
+`https://gest2a3eco-production.up.railway.app`; no hace falta escribirlo en cada
+publicación.
 
-No necesitas escribir la URL de Railway cada vez.
+## Web: publicar app.gestinem.es
 
-## 4. Android — Google Play
+### Preparación del equipo, solo la primera vez
 
-Comprueba que en el equipo existen `android/key.properties` y el `.jks` privado de carga. No se suben a Git.
+```bash
+npm install -g firebase-tools
+firebase login
+firebase projects:list
+railway login
+railway status
+```
 
-Bash/Warp:
+Firebase debe mostrar el proyecto `gest2a3eco` y Railway debe estar vinculado al
+proyecto `Gest2A3Eco · Servicios Online`, entorno `production`, servicio
+`Gest2A3Eco`. No ejecutes `firebase init`: el repositorio ya contiene la
+configuración correcta.
+
+### Publicar desde Bash / Warp
+
+```bash
+bash tool/build_production.sh web
+```
+
+### Publicar desde PowerShell
+
+```powershell
+.\tool\build_production.ps1 web
+```
+
+El comando realiza todo el proceso:
+
+1. obtiene de Railway `MESSAGING_VAPID_PUBLIC_KEY` sin mostrar el resto de variables;
+2. compila Flutter Web con esa clave pública;
+3. configura el service worker dentro de `build/web`;
+4. comprueba que no quedan valores pendientes y que VAPID está en el build;
+5. publica Firebase Hosting;
+6. confirma `https://app.gestinem.es`.
+
+La clave VAPID pública debe formar parte de la aplicación web. Las credenciales
+Firebase Admin y cualquier clave privada permanecen exclusivamente en Railway.
+
+No existe otro script de despliegue Firebase ni un comando separado de
+“compilar sin publicar”. Para revisar durante el desarrollo usa F5 con Chrome.
+La integración continua sí puede compilar sin publicar para verificar el código.
+
+## Android: Google Play
+
+El equipo debe tener `android/key.properties` y el `.jks` privado de carga. No se
+suben a Git.
+
+Bash / Warp:
 
 ```bash
 bash tool/build_production.sh android
@@ -54,67 +133,30 @@ PowerShell:
 .\tool\build_production.ps1 android
 ```
 
-Sube a Google Play Console únicamente `build/app/outputs/bundle/release/app-release.aab`.
+Resultado:
+`build/app/outputs/bundle/release/app-release.aab`.
 
-## 5. Android — APK manual
+El script no puede completar la publicación en Google Play Console: al terminar,
+sube ese AAB a la versión correspondiente de Play Console.
+
+Para una instalación manual fuera de Google Play usa `apk`:
 
 ```bash
 bash tool/build_production.sh apk
 ```
 
-O:
-
 ```powershell
 .\tool\build_production.ps1 apk
 ```
 
-Resultado: `build/app/outputs/flutter-apk/app-release.apk`. El APK es para instalación manual/pruebas; para Play Store usa AAB.
+Resultado: `build/app/outputs/flutter-apk/app-release.apk`.
 
-## 6. Web — comprobar sin publicar
+## Windows: instalador compartido
 
-```bash
-bash tool/build_production.sh web
-```
+Debe ejecutarse desde Windows y requiere Flutter para Windows, Visual Studio o
+Build Tools e Inno Setup 6.
 
-O:
-
-```powershell
-.\tool\build_production.ps1 web
-```
-
-Resultado: `build/web/`. No modifica la web pública.
-
-## 7. Web — publicar app.gestinem.es
-
-La primera vez en un equipo:
-
-```bash
-npm install -g firebase-tools
-firebase login
-firebase projects:list
-```
-
-Debe aparecer el proyecto `gest2a3eco`. No ejecutes `firebase init`.
-
-Bash/Warp:
-
-```bash
-bash tool/build_production.sh web-deploy
-```
-
-PowerShell:
-
-```powershell
-.\tool\build_production.ps1 web-deploy
-```
-
-Después comprueba `https://app.gestinem.es`.
-
-## 8. Windows
-
-Debe hacerse desde Windows. Puedes usar indistintamente Warp/Bash o PowerShell.
-
-Bash/Warp (Git Bash/MSYS):
+Bash / Warp:
 
 ```bash
 bash tool/build_production.sh windows
@@ -126,57 +168,62 @@ PowerShell:
 .\tool\build_production.ps1 windows
 ```
 
-Ambos compilan `build/windows/x64/runner/Release/` y buscan Inno Setup 6 en su ruta estándar. Si está disponible, generan automáticamente el instalador en `../dist_installer/`.
+El comando:
 
-El instalador obtiene la versión del propio `gestinem.exe`; no hay que editar manualmente `gestinem.iss` al cambiar la versión.
+1. compila la aplicación Windows release;
+2. genera `dist_installer/Gestinem-Windows-<versión>.exe`;
+3. verifica el instalador;
+4. lo copia de forma segura a
+   `\\GestinemMain\Doc_Compartidos\Gest2A3Eco`;
+5. compara el SHA-256 del original y de la copia.
 
-## 9. iPhone/iPad
+Si Inno Setup o la carpeta compartida no están disponibles, el comando termina
+con error y explica qué falta. No comunica éxito dejando únicamente el EXE suelto.
 
-Solo desde Mac. La primera vez, o si cambia la firma:
+## iPhone y iPad
 
-```bash
-open ios/Runner.xcworkspace
-```
+Solo se puede generar desde macOS con Xcode. Antes del primer envío abre
+`ios/Runner.xcworkspace` y comprueba en `Signing & Capabilities` el Team y el
+identificador `es.gestinem.app`.
 
-En Xcode comprueba `Runner` > `Signing & Capabilities`, selecciona el Team correcto y verifica `es.gestinem.app`.
+Bash:
 
 ```bash
 bash tool/build_production.sh ios
 ```
 
-Resultado: `build/ios/ipa/`. Sube el IPA a TestFlight/App Store Connect mediante las herramientas de Apple.
+PowerShell 7 en macOS:
 
-## 10. macOS
+```powershell
+.\tool\build_production.ps1 ios
+```
 
-Solo desde Mac:
+El IPA queda en `build/ios/ipa/`. Después se sube a App Store Connect mediante
+Transporter o Xcode.
+
+## macOS
+
+Bash:
 
 ```bash
 bash tool/build_production.sh macos
 ```
 
-Resultado: `build/macos/Build/Products/Release/`.
-
-La compilación local no equivale a una distribución pública. Para entregar la app fuera de los equipos de prueba hay que configurar firma Developer ID, notarización Apple y DMG/PKG.
-
-## 11. Compilar todo lo posible en el equipo
-
-Bash:
-
-```bash
-bash tool/build_production.sh all
-```
-
-PowerShell:
+PowerShell 7 en macOS:
 
 ```powershell
-.\tool\build_production.ps1 all
+.\tool\build_production.ps1 macos
 ```
 
-`all` genera los artefactos compatibles con el sistema operativo actual pero no publica Firebase. La publicación web debe hacerse explícitamente con `web-deploy`.
+La aplicación queda en `build/macos/Build/Products/Release/`. Para distribuirla
+fuera de los equipos de prueba todavía son necesarias la firma Developer ID, la
+notarización y el empaquetado DMG o PKG.
 
-## 12. Opciones avanzadas
+## Opciones avanzadas
 
-Cambiar temporalmente el backend:
+Estas opciones son equivalentes entre terminales, aunque su sintaxis cambia.
+
+### Cambiar temporalmente el backend
 
 ```bash
 API_BASE_URL=https://api.gestinem.es bash tool/build_production.sh web
@@ -186,34 +233,75 @@ API_BASE_URL=https://api.gestinem.es bash tool/build_production.sh web
 .\tool\build_production.ps1 web -ApiBaseUrl https://api.gestinem.es
 ```
 
-Omitir analyze/test, solo para diagnóstico:
+### Proporcionar VAPID manualmente
+
+Normalmente no es necesario porque se obtiene de Railway.
 
 ```bash
-SKIP_CHECKS=1 bash tool/build_production.sh web
+FIREBASE_WEB_VAPID_KEY='<clave-publica>' bash tool/build_production.sh web
 ```
 
 ```powershell
-.\tool\build_production.ps1 web -SkipChecks
+.\tool\build_production.ps1 web -VapidKey '<clave-publica>'
 ```
 
-Permitir otra rama de forma consciente:
+### Cambiar la carpeta compartida de Windows
 
 ```bash
-ALLOW_NON_MAIN=1 bash tool/build_production.sh web
+SHARED_INSTALLER_DIRECTORY='//servidor/carpeta' bash tool/build_production.sh windows
 ```
 
 ```powershell
-.\tool\build_production.ps1 web -AllowNonMain
+.\tool\build_production.ps1 windows -SharedInstallerDirectory '\\servidor\carpeta'
 ```
 
-## 13. Checklist final
+### Diagnóstico excepcional
 
-- Rama `main` actualizada.
-- Árbol Git limpio.
-- Versión incrementada en `pubspec.yaml` y commit realizado.
-- `flutter analyze` correcto.
-- `flutter test` correcto.
-- Android firmado con la clave de carga correcta.
-- Artefacto correcto: AAB para Play, IPA para Apple, instalador para Windows.
-- Web comprobada tras el despliegue.
-- Nunca subir `.jks`, `key.properties` ni credenciales Firebase Admin a Git.
+Omitir pruebas:
+
+```bash
+SKIP_CHECKS=1 bash tool/build_production.sh android
+```
+
+```powershell
+.\tool\build_production.ps1 android -SkipChecks
+```
+
+Permitir otra rama:
+
+```bash
+ALLOW_NON_MAIN=1 bash tool/build_production.sh android
+```
+
+```powershell
+.\tool\build_production.ps1 android -AllowNonMain
+```
+
+No uses estas excepciones para una publicación definitiva.
+
+## Errores habituales
+
+- **Hay cambios sin guardar**: crea el commit de la versión y vuelve a ejecutar.
+- **Firebase no está autenticado**: ejecuta `firebase login`.
+- **Railway no está vinculado**: ejecuta `railway login`, `railway link` y
+  `railway status` desde el repositorio.
+- **Falta VAPID**: comprueba `MESSAGING_VAPID_PUBLIC_KEY` en el servicio Railway.
+- **Bash no encuentra Flutter o Firebase**: cierra y vuelve a abrir Warp después
+  de instalarlos para actualizar `PATH`.
+- **Falta `android/key.properties`**: restaura la configuración privada de firma.
+- **Falta Inno Setup**: instala Inno Setup 6 en Windows.
+- **No se accede a Documentos compartidos**: comprueba la conexión con
+  `\\GestinemMain\Doc_Compartidos\Gest2A3Eco`.
+
+## Checklist final
+
+- Rama `main` actualizada y árbol Git limpio.
+- Versión y número de compilación incrementados en `pubspec.yaml`.
+- El script terminó con un mensaje `OK`.
+- Web: abre `https://app.gestinem.es` y fuerza una actualización si el navegador
+  conserva caché antigua.
+- Android: sube el AAB, no el APK, a Google Play.
+- Windows: comprueba que el instalador aparece en Documentos compartidos.
+- iOS: sube el IPA a App Store Connect.
+- Nunca subas `.jks`, `key.properties`, credenciales Firebase Admin ni claves
+  privadas a Git.

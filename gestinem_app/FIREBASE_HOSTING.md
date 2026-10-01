@@ -1,81 +1,70 @@
-# Firebase Hosting para Gestinem Flutter Web
+# Firebase Hosting y notificaciones web
 
-La aplicacion web se publica como contenido estatico en Firebase Hosting. El
-backend FastAPI, PostgreSQL y los WebSocket permanecen en Railway.
+La web de Gestinem se publica en Firebase Hosting y utiliza el backend FastAPI
+de Railway. La guía operativa completa está en
+[`../docs/flutter_production_build.md`](../docs/flutter_production_build.md).
 
-## Primera configuracion del equipo
+## Comando único de publicación
 
-Instalar Firebase CLI y autenticar la cuenta que tiene acceso al proyecto
-`gest2a3eco`:
+Desde `gestinem_app`, en Bash o Warp:
+
+```bash
+bash tool/build_production.sh web
+```
+
+En PowerShell:
 
 ```powershell
+.\tool\build_production.ps1 web
+```
+
+Ambos comandos hacen lo mismo: pruebas, build release, configuración FCM,
+validación y publicación en `https://app.gestinem.es`. No hay que ejecutar un
+segundo script de Firebase ni compilar la web manualmente.
+
+Para revisar cambios durante el desarrollo selecciona Chrome en Flutter y pulsa
+F5. Eso no modifica la web pública.
+
+## Preparación inicial del equipo
+
+```bash
 npm install -g firebase-tools
 firebase login
 firebase projects:list
+railway login
+railway status
 ```
 
-No ejecutar `firebase init hosting`: los ficheros `firebase.json` y
-`.firebaserc` de este directorio ya contienen la configuracion del proyecto. Un
-nuevo `firebase init` podria sobrescribirla.
+Firebase debe mostrar `gest2a3eco`. Railway debe estar vinculado al proyecto de
+producción y al servicio `Gest2A3Eco`. No ejecutes `firebase init`, porque
+`firebase.json` y `.firebaserc` ya están configurados.
 
-## Compilar y desplegar
+## VAPID y Firebase Cloud Messaging
 
-Desde `gestinem_app`:
+El script obtiene automáticamente de Railway la variable
+`MESSAGING_VAPID_PUBLIC_KEY` y la incorpora al build Flutter. También completa
+la configuración pública de `firebase-messaging-sw.js` a partir de
+`lib/firebase_options.dart`.
 
-```powershell
-.\tool\deploy_firebase.ps1
-```
+Antes de publicar comprueba que:
 
-El script compila la version web contra el backend piloto de Railway y publica
-solo Firebase Hosting. Para utilizar otro backend:
+- la clave VAPID está presente en el JavaScript compilado;
+- el service worker no conserva marcadores `PENDIENTE_FIREBASE_*`;
+- Firebase CLI está autenticado.
 
-```powershell
-.\tool\deploy_firebase.ps1 -ApiBaseUrl "https://api.gestinem.es"
-```
+La clave VAPID pública no es un secreto y necesariamente llega al navegador. En
+cambio, `MESSAGING_FIREBASE_CREDENTIALS_JSON`, claves privadas y credenciales
+de proveedores permanecen en Railway y nunca se incluyen en Flutter.
 
-Para validar unicamente la compilacion:
+## Separación de responsabilidades
 
-```powershell
-.\tool\deploy_firebase.ps1 -BuildOnly
-```
+- Firebase Hosting sirve los archivos estáticos de Flutter.
+- Firebase Cloud Messaging entrega las notificaciones push.
+- Railway ejecuta FastAPI, registra tokens y envía notificaciones mediante
+  Firebase Admin.
+- `MESSAGING_CORS_ORIGINS` debe autorizar `https://app.gestinem.es`,
+  `https://gest2a3eco.web.app` y `https://gest2a3eco.firebaseapp.com` mientras
+  estos dos últimos dominios continúen en uso.
 
-Tras el primer despliegue, Firebase mostrara las direcciones:
-
-- `https://gest2a3eco.web.app`
-- `https://gest2a3eco.firebaseapp.com`
-
-## Configuracion de Railway
-
-La web se sirve desde un origen diferente al backend. Anadir a
-`MESSAGING_CORS_ORIGINS` en Railway todos los origenes autorizados, separados
-por comas y sin barra final. Durante el piloto:
-
-```text
-https://gest2a3eco.web.app,https://gest2a3eco.firebaseapp.com
-```
-
-El origen definitivo `https://app.gestinem.es` tambien debe estar autorizado.
-No retirar los dominios predeterminados hasta comprobar que ningun usuario los
-utiliza.
-
-## Dominio personalizado
-
-El frontend usa `app.gestinem.es`, asociado al sitio Firebase `gest2a3eco`. En
-la zona DNS de Raiola el CNAME es:
-
-```text
-app.gestinem.es.  CNAME  gest2a3eco.web.app.
-```
-
-El backend permanece en `https://gest2a3eco-production.up.railway.app` hasta
-que se configure un dominio API independiente, por ejemplo `api.gestinem.es`.
-
-Firebase emite y renueva automaticamente el certificado TLS. No se guardan
-claves privadas ni credenciales de Firebase en este repositorio.
-
-## Notificaciones web
-
-Firebase Hosting y Firebase Cloud Messaging son configuraciones independientes.
-Publicar la web no activa por si solo las notificaciones del navegador. Para
-ello siguen siendo necesarios la aplicacion web de Firebase, la clave publica
-VAPID y `web/firebase-messaging-sw.js`.
+El dominio público es `https://app.gestinem.es`; los dominios `web.app` y
+`firebaseapp.com` son direcciones técnicas del mismo Hosting.

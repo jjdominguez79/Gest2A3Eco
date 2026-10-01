@@ -128,9 +128,10 @@ la compilacion web recibe la clave publica de Firebase y publica
 ## Despliegue
 
 El backend se construye con `backend/Dockerfile`. La imagen incluye el manual
-PDF que se adjunta a las invitaciones. Flutter Web se compila y despliega con
-`gestinem_app/tool/deploy_firebase.ps1`; FastAPI y PostgreSQL permanecen en
-Railway.
+PDF que se adjunta a las invitaciones. Flutter Web se valida y publica con
+`gestinem_app/tool/build_production.sh web` desde Bash/Warp o con
+`gestinem_app/tool/build_production.ps1 web` desde PowerShell; FastAPI y
+PostgreSQL permanecen en Railway.
 
 Los adjuntos se almacenan temporalmente en Azure Blob. El worker Synology los
 reclama, verifica SHA-256, copia al repositorio documental compartido y confirma

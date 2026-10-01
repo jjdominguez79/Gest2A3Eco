@@ -35,37 +35,32 @@ flutter test
 
 `API_BASE_URL` es la raíz del backend, sin `/api/v1/messaging`.
 
-## Builds de producción automatizados
+## Generar y publicar versiones
 
-La forma recomendada de compilar es usar los scripts de `tool/`. Ambos usan por defecto el backend de producción y ejecutan `flutter pub get`, `flutter analyze` y `flutter test` antes del build.
+La guía operativa única está en
+[`../docs/flutter_production_build.md`](../docs/flutter_production_build.md).
+Los dos scripts son entradas equivalentes para terminales distintos:
 
-### Bash / Warp / macOS / Git Bash
+- Bash, Warp, Git Bash y macOS: `tool/build_production.sh`.
+- PowerShell: `tool/build_production.ps1`.
 
-```bash
-bash tool/build_production.sh android
-bash tool/build_production.sh apk
-bash tool/build_production.sh web
-bash tool/build_production.sh web-deploy
-bash tool/build_production.sh windows
-bash tool/build_production.sh ios
-bash tool/build_production.sh macos
-bash tool/build_production.sh all
-```
+Desde `gestinem_app`, elige una plataforma:
 
-### PowerShell
+| Plataforma | Bash / Warp | PowerShell |
+|---|---|---|
+| Web, publicación completa | `bash tool/build_production.sh web` | `.\tool\build_production.ps1 web` |
+| Android, AAB para Play | `bash tool/build_production.sh android` | `.\tool\build_production.ps1 android` |
+| Android, APK manual | `bash tool/build_production.sh apk` | `.\tool\build_production.ps1 apk` |
+| Windows, instalador compartido | `bash tool/build_production.sh windows` | `.\tool\build_production.ps1 windows` |
+| iOS, IPA | `bash tool/build_production.sh ios` | `.\tool\build_production.ps1 ios` |
+| macOS, aplicación | `bash tool/build_production.sh macos` | `.\tool\build_production.ps1 macos` |
 
-```powershell
-.\tool\build_production.ps1 android
-.\tool\build_production.ps1 apk
-.\tool\build_production.ps1 web
-.\tool\build_production.ps1 web-deploy
-.\tool\build_production.ps1 windows
-.\tool\build_production.ps1 ios
-.\tool\build_production.ps1 macos
-.\tool\build_production.ps1 all
-```
+No existe un segundo procedimiento para Firebase. El comando `web` obtiene
+VAPID de Railway, compila, valida y publica Firebase Hosting. Para desarrollar
+o revisar la web selecciona Chrome en Flutter y pulsa F5.
 
-Los scripts bloquean por defecto un build si no estás en `main` o si existen cambios sin guardar. Consulta `../docs/flutter_production_build.md` para la guía paso a paso y las opciones avanzadas.
+Los scripts exigen `main` y un árbol Git limpio, y ejecutan `flutter pub get`,
+`flutter analyze` y `flutter test` antes de producir el artefacto.
 
 ## Android
 
@@ -89,19 +84,18 @@ El build Gradle release falla deliberadamente si falta la configuración de firm
 
 ## Web / Firebase Hosting
 
-Compilar sin publicar:
-
 ```bash
 bash tool/build_production.sh web
 ```
 
-Compilar y publicar:
-
-```bash
-bash tool/build_production.sh web-deploy
+```powershell
+.\tool\build_production.ps1 web
 ```
 
-En PowerShell pueden usarse los equivalentes de `build_production.ps1` o el script específico `tool/deploy_firebase.ps1`. No ejecutes `firebase init hosting`: `firebase.json` y `.firebaserc` ya están configurados.
+Ambos publican `https://app.gestinem.es` con la configuración de notificaciones
+web. No ejecutes `firebase init`: `firebase.json` y `.firebaserc` ya están
+configurados. Consulta [`FIREBASE_HOSTING.md`](FIREBASE_HOSTING.md) para los
+requisitos iniciales de Firebase CLI y Railway CLI.
 
 ## Windows
 
@@ -115,10 +109,16 @@ bash tool/build_production.sh windows
 .\tool\build_production.ps1 windows
 ```
 
-El script compila Flutter release y, si encuentra Inno Setup 6, genera el instalador en `../dist_installer/`. `windows/installer/gestinem.iss` lee automáticamente la versión del ejecutable generado, evitando mantener una versión duplicada.
+El script compila Flutter release, exige Inno Setup 6, genera el instalador en
+`../dist_installer/` y copia ese mismo instalador versionado a
+`\\GestinemMain\Doc_Compartidos\Gest2A3Eco`, comprobando su SHA-256 antes de
+confirmar la publicación. `windows/installer/gestinem.iss` lee automáticamente
+la versión del ejecutable generado.
+
+El destino compartido puede cambiarse con el parámetro PowerShell `-SharedInstallerDirectory` o con la variable `SHARED_INSTALLER_DIRECTORY` al usar Bash. Si no se indica, también se respeta `GEST2A3ECO_DOCUMENT_REPOSITORY_DIR` antes de aplicar la ruta predeterminada.
 
 El instalador Windows es para distribución interna y no se adjunta a las
-Releases públicas de Gest2A3Eco. Se genera y distribuye manualmente.
+Releases públicas de Gest2A3Eco.
 
 ## iOS
 
@@ -140,7 +140,11 @@ El `.app` queda en `build/macos/Build/Products/Release/`. Para distribución ext
 
 ## Firebase y notificaciones
 
-FCM se usa en Android. El backend usa por separado una cuenta de servicio privada mediante `MESSAGING_FIREBASE_CREDENTIALS` o `MESSAGING_FIREBASE_CREDENTIALS_JSON`; ese JSON nunca se incluye en Flutter.
+FCM se usa en Android y Web. Durante la publicación web, la clave pública VAPID
+se obtiene de `MESSAGING_VAPID_PUBLIC_KEY` en Railway. El backend usa por
+separado una cuenta de servicio privada mediante
+`MESSAGING_FIREBASE_CREDENTIALS` o `MESSAGING_FIREBASE_CREDENTIALS_JSON`; ese
+JSON nunca se incluye en Flutter.
 
 En Windows, REST y WebSocket funcionan con la aplicación abierta, pero Firebase Messaging no ofrece push de producción. El instalador registra el protocolo `es.gestinem.app://` necesario para acceso Microsoft y enlaces seguros.
 

@@ -1,7 +1,7 @@
 ﻿// Service worker para Firebase Cloud Messaging en Flutter Web.
 //
-// IMPORTANTE: Los valores PENDIENTE_* se sustituyen por tool/deploy_firebase.ps1
-// antes de ejecutar "flutter build web". No rellenar manualmente.
+// IMPORTANTE: tool/build_production.ps1 y tool/build_production.sh sustituyen
+// los valores PENDIENTE_* únicamente en build/web. No rellenar manualmente.
 //
 // Convivencia con flutter_service_worker.js:
 //   - Este SW solo gestiona mensajes FCM y clics de notificacion.
