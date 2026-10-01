@@ -32,6 +32,12 @@ _COL_ANCHO = {
     "tamano": 70,
 }
 
+_ORIGENES_FILTRO = (
+    "Correo Oficina",
+    "Correo Documentacion",
+    "Mensajeria",
+)
+
 def _fmt_tamano(bytes_: int | None) -> str:
     if not bytes_:
         return ""
@@ -48,6 +54,28 @@ def _fmt_fecha(iso: str | None) -> str:
         return iso[:16].replace("T", " ")
     except Exception:
         return str(iso)
+
+
+def _etiqueta_origen(item: dict) -> str:
+    return str(
+        item.get("origen_label") or item.get("canal") or "Mensajeria"
+    )
+
+
+def _origen_para_filtro(item: dict) -> str:
+    etiqueta = _etiqueta_origen(item)
+    canal = str(item.get("canal") or "").strip().casefold()
+    if etiqueta.casefold().startswith("mensajeria") or canal in {
+        "mensajeria", "chat",
+    }:
+        return "Mensajeria"
+    return etiqueta
+
+
+def _opciones_origen(datos: list[dict]) -> tuple[str, ...]:
+    disponibles = {_origen_para_filtro(item) for item in datos}
+    extras = sorted(disponibles.difference(_ORIGENES_FILTRO))
+    return ("Todos", *_ORIGENES_FILTRO, *extras)
 
 
 class UIAdjuntosMensajeria(ttk.Frame):
@@ -93,9 +121,21 @@ class UIAdjuntosMensajeria(ttk.Frame):
         )
         estado.pack(side=tk.LEFT, padx=(0, 8))
         estado.bind("<<ComboboxSelected>>", lambda _event: self.recargar())
+        ttk.Label(bar, text="Origen").pack(side=tk.LEFT, padx=(2, 4))
+        self._origen_filtro = tk.StringVar(value="Todos")
+        self._origen_combo = ttk.Combobox(
+            bar, textvariable=self._origen_filtro, state="readonly", width=22,
+            values=("Todos", *_ORIGENES_FILTRO),
+        )
+        self._origen_combo.pack(side=tk.LEFT, padx=(0, 8))
+        self._origen_combo.bind(
+            "<<ComboboxSelected>>", lambda _event: self._aplicar_filtro_origen(),
+        )
         ttk.Button(bar, text="Actualizar", command=self.recargar).pack(side=tk.LEFT, padx=2)
         ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4)
-        ttk.Button(bar, text="Abrir archivo", command=self._abrir_archivo).pack(side=tk.LEFT, padx=2)
+        ttk.Button(
+            bar, text="Revisar adjuntos", command=self._abrir_archivo,
+        ).pack(side=tk.LEFT, padx=2)
         ttk.Button(bar, text="Ir a Gestion documental", command=self._ir_gestion).pack(side=tk.LEFT, padx=2)
         ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4)
         ttk.Button(bar, text="Clasificar", command=self._clasificar).pack(side=tk.LEFT, padx=2)
@@ -148,26 +188,12 @@ class UIAdjuntosMensajeria(ttk.Frame):
         threading.Thread(target=_bg, daemon=True).start()
 
     def _actualizar_ui(self, datos: list[dict], pendientes: int, error=None) -> None:
-        prev = self._selected_id
         self._cache = datos
-        for item in self._tree.get_children():
-            self._tree.delete(item)
-        for d in datos:
-            tags = ("pendiente",) if not d.get("revisado") else ()
-            self._tree.insert("", "end", iid=d["id"], tags=tags, values=(
-                _fmt_fecha(d.get("fecha") or d.get("created_at")),
-                d.get("codigo_empresa", ""),
-                d.get("origen_label") or d.get("canal") or "Mensajeria",
-                d.get("remitente", ""),
-                d.get("nombre_original", ""),
-                _LABEL_ESTADO.get(d.get("estado", ""), d.get("estado", "")),
-                _fmt_tamano(d.get("tamano")),
-            ))
-        if prev and self._tree.exists(prev):
-            self._tree.selection_set(prev)
-            self._selected_id = prev
-        else:
-            self._selected_id = None
+        valores_origen = _opciones_origen(datos)
+        self._origen_combo["values"] = valores_origen
+        if self._origen_filtro.get() not in valores_origen:
+            self._origen_filtro.set("Todos")
+        self._aplicar_filtro_origen()
         txt = f"Pendientes: {pendientes}" if pendientes else "Sin pendientes"
         self._lbl_contador.configure(text=txt)
         if self._on_count_changed:
@@ -178,6 +204,36 @@ class UIAdjuntosMensajeria(ttk.Frame):
                 f"No se pudo actualizar la bandeja:\n{error}",
                 parent=self,
             )
+
+    @staticmethod
+    def _filtrar_por_origen(datos: list[dict], origen: str) -> list[dict]:
+        if not origen or origen == "Todos":
+            return list(datos)
+        return [item for item in datos if _origen_para_filtro(item) == origen]
+
+    def _aplicar_filtro_origen(self) -> None:
+        prev = self._selected_id
+        datos = self._filtrar_por_origen(
+            self._cache, self._origen_filtro.get(),
+        )
+        for item in self._tree.get_children():
+            self._tree.delete(item)
+        for d in datos:
+            tags = ("pendiente",) if not d.get("revisado") else ()
+            self._tree.insert("", "end", iid=d["id"], tags=tags, values=(
+                _fmt_fecha(d.get("fecha") or d.get("created_at")),
+                d.get("codigo_empresa", ""),
+                _etiqueta_origen(d),
+                d.get("remitente", ""),
+                d.get("nombre_original", ""),
+                _LABEL_ESTADO.get(d.get("estado", ""), d.get("estado", "")),
+                _fmt_tamano(d.get("tamano")),
+            ))
+        if prev and self._tree.exists(prev):
+            self._tree.selection_set(prev)
+            self._selected_id = prev
+        else:
+            self._selected_id = None
 
     # ── Seleccion ─────────────────────────────────────────────────────────────
 
@@ -195,14 +251,11 @@ class UIAdjuntosMensajeria(ttk.Frame):
     def _abrir_archivo(self) -> None:
         item = self._item_seleccionado()
         if not item:
-            messagebox.showinfo("Sin seleccion", "Selecciona un adjunto de la lista.")
+            messagebox.showinfo("Sin seleccion", "Selecciona una entrada de la lista.")
             return
         ruta = item.get("ruta_entrada", "")
         if item.get("canal") == "correo":
-            messagebox.showinfo(
-                "Correo recibido",
-                "Clasifica la entrada para archivar sus adjuntos.", parent=self,
-            )
+            self._revisar_adjuntos_correo(item)
             return
         if not ruta or not os.path.exists(ruta):
             messagebox.showwarning("Archivo no disponible", f"El archivo no se encuentra en:\n{ruta}")
@@ -214,6 +267,103 @@ class UIAdjuntosMensajeria(ttk.Frame):
                 subprocess.Popen(["explorer", "/select,", ruta])
             except Exception as exc:
                 messagebox.showerror("Error", f"No se pudo abrir el archivo:\n{exc}")
+
+    def _revisar_adjuntos_correo(self, item: dict) -> None:
+        """Consulta los adjuntos sin archivarlos y muestra la lista de revision."""
+        self.winfo_toplevel().configure(cursor="watch")
+
+        def _bg():
+            try:
+                attachments = self._service.listar_adjuntos_entrada_correo(item)
+                error = None
+            except Exception as exc:
+                attachments, error = [], exc
+            try:
+                self.after(
+                    0, self._mostrar_adjuntos_correo,
+                    item, attachments, error,
+                )
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=_bg, daemon=True).start()
+
+    def _mostrar_adjuntos_correo(
+        self, item: dict, attachments: list[dict], error=None,
+    ) -> None:
+        self.winfo_toplevel().configure(cursor="")
+        if error is not None:
+            messagebox.showerror(
+                "Revisar adjuntos",
+                f"No se pudieron consultar los adjuntos:\n{error}",
+                parent=self,
+            )
+            return
+        if not attachments:
+            messagebox.showinfo(
+                "Revisar adjuntos",
+                "El correo no tiene adjuntos descargables.",
+                parent=self,
+            )
+            return
+
+        # Se reutiliza el visor seguro del buzon: solo descarga una copia
+        # temporal cuando el usuario abre un adjunto y no archiva nada.
+        from views.ui_comunicaciones_global import AttachmentPreviewDialog
+
+        AttachmentPreviewDialog(
+            self,
+            attachments,
+            on_open=lambda attachment_id: self._abrir_adjunto_correo(
+                item, attachment_id,
+            ),
+        )
+
+    def _abrir_adjunto_correo(self, item: dict, attachment_id: str) -> None:
+        self.winfo_toplevel().configure(cursor="watch")
+
+        def _bg():
+            try:
+                from services.documentos_correo_service import DocumentosCorreoService
+
+                path = DocumentosCorreoService(
+                    self._gestor,
+                ).descargar_adjunto_temporal(
+                    mailbox=str(item.get("mailbox") or ""),
+                    graph_message_id=str(
+                        item.get("graph_message_id")
+                        or item.get("entrada_id")
+                        or ""
+                    ),
+                    attachment_id=attachment_id,
+                )
+                error = None
+            except Exception as exc:
+                path, error = None, exc
+            try:
+                self.after(0, self._finalizar_apertura_adjunto, path, error)
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=_bg, daemon=True).start()
+
+    def _finalizar_apertura_adjunto(self, path, error=None) -> None:
+        self.winfo_toplevel().configure(cursor="")
+        if error is not None:
+            messagebox.showerror(
+                "Revisar adjuntos",
+                f"No se pudo abrir el adjunto:\n{error}",
+                parent=self,
+            )
+            return
+        try:
+            os.startfile(str(path))
+        except Exception as exc:
+            messagebox.showerror(
+                "Revisar adjuntos",
+                f"Windows no pudo abrir el archivo:\n{exc}",
+                parent=self,
+            )
 
     def _ir_gestion(self) -> None:
         item = self._item_seleccionado()

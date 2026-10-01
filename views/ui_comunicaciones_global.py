@@ -239,8 +239,8 @@ class AttachmentPreviewDialog(tk.Toplevel):
         ttk.Label(
             frame,
             text=(
-                "Abre una copia temporal para identificar el cliente. "
-                "El adjunto no se guardara en Documentacion hasta que lo asignes."
+                "Abre una copia temporal para revisar el contenido. "
+                "El adjunto no se guardara en Documentacion hasta que lo clasifiques."
             ),
             wraplength=640,
         ).pack(anchor="w", pady=(0, 8))
@@ -269,9 +269,10 @@ class AttachmentPreviewDialog(tk.Toplevel):
         ttk.Button(
             actions, text="Abrir adjunto", command=self._open,
         ).pack(side="right", padx=(0, 7))
-        ttk.Button(
-            actions, text="Ver contenido ZIP", command=self._inspect,
-        ).pack(side="right", padx=(0, 7))
+        if self._on_inspect:
+            ttk.Button(
+                actions, text="Ver contenido ZIP", command=self._inspect,
+            ).pack(side="right", padx=(0, 7))
         if self._attachments:
             first = next(iter(self._attachments))
             self._tree.selection_set(first)
