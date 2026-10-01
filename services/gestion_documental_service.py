@@ -261,6 +261,28 @@ class GestionDocumentalService:
             destination.unlink(missing_ok=True)
             raise
 
+    def importar_archivos(
+        self, *, codigo_empresa: str, ejercicio: int, categoria_id: str,
+        sources: list[str | Path], usuario: str = "",
+    ) -> ArchiveSummary:
+        """Incorpora un lote y conserva los errores individuales del resto."""
+        summary = ArchiveSummary()
+        for source in sources:
+            path = Path(source)
+            try:
+                document_id = self.importar_archivo(
+                    codigo_empresa=codigo_empresa,
+                    ejercicio=ejercicio,
+                    categoria_id=categoria_id,
+                    source=path,
+                    usuario=usuario,
+                )
+                summary.saved.append(path.name)
+                summary.document_ids.append(document_id)
+            except Exception as exc:
+                summary.errors.append(f"{path.name}: {exc}")
+        return summary
+
     def archivar_adjunto_mensajeria(
         self, adjunto: dict, *, ejercicio: int, categoria_id: str,
         usuario: str = "",

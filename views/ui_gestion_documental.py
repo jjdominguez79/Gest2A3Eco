@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 import tkinter as tk
 from pathlib import Path
@@ -13,6 +14,290 @@ from services.firma.firma_service import FirmaService
 from services.firma.provider import build_firma_provider
 from utils.utilidades import load_app_config
 from views.ui_firma_dialog import UIFirmaDialog
+
+
+class _MultipleImportDialog(tk.Toplevel):
+    """Prepara un lote de documentos mediante seleccion o arrastre."""
+
+    def __init__(self, parent, categories: list[dict], on_import):
+        super().__init__(parent)
+        self.title("Incorporar documentos")
+        self.geometry("860x540")
+        self.minsize(700, 440)
+        self.transient(parent.winfo_toplevel())
+        self._app_root = parent.winfo_toplevel()
+        self._categories = {item["nombre"]: item for item in categories}
+        self._on_import = on_import
+        self._paths: dict[str, Path] = {}
+        self._path_keys: set[str] = set()
+        self._next_id = 1
+        self._busy = False
+        self._build()
+        self._setup_drag_and_drop()
+        self.protocol("WM_DELETE_WINDOW", self._close)
+
+    def _build(self):
+        frame = ttk.Frame(self, padding=14)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame,
+            text="Incorporar varios documentos",
+            font=("Segoe UI", 14, "bold"),
+        ).pack(anchor="w")
+        ttk.Label(
+            frame,
+            text=(
+                "Todos los archivos del lote se guardaran en la categoria "
+                "seleccionada. Puedes revisar la lista antes de incorporarlos."
+            ),
+            wraplength=810,
+        ).pack(anchor="w", pady=(2, 10))
+
+        self._drop_zone = ttk.Label(
+            frame,
+            text=(
+                "Arrastra aqui uno o varios documentos\n"
+                "o haz clic para seleccionarlos"
+            ),
+            anchor="center",
+            justify="center",
+            relief="groove",
+            padding=22,
+            cursor="hand2",
+        )
+        self._drop_zone.pack(fill="x", pady=(0, 10))
+        self._drop_zone.bind("<Button-1>", lambda _event: self._select_files())
+
+        table = ttk.Frame(frame)
+        table.pack(fill="both", expand=True)
+        self._tree = ttk.Treeview(
+            table,
+            columns=("archivo", "carpeta", "tamano"),
+            show="headings",
+            selectmode="extended",
+        )
+        for key, title, width, anchor in (
+            ("archivo", "Documento", 330, "w"),
+            ("carpeta", "Carpeta de origen", 360, "w"),
+            ("tamano", "Tamano", 90, "e"),
+        ):
+            self._tree.heading(key, text=title)
+            self._tree.column(key, width=width, anchor=anchor)
+        scrollbar = ttk.Scrollbar(table, orient="vertical", command=self._tree.yview)
+        self._tree.configure(yscrollcommand=scrollbar.set)
+        self._tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        list_actions = ttk.Frame(frame)
+        list_actions.pack(fill="x", pady=(8, 0))
+        self._add_button = ttk.Button(
+            list_actions, text="Anadir archivos...", command=self._select_files,
+        )
+        self._add_button.pack(side="left")
+        self._remove_button = ttk.Button(
+            list_actions, text="Quitar seleccionados", command=self._remove_selected,
+        )
+        self._remove_button.pack(side="left", padx=6)
+        self._clear_button = ttk.Button(
+            list_actions, text="Vaciar lista", command=self._clear,
+        )
+        self._clear_button.pack(side="left")
+        self._summary = ttk.Label(list_actions, text="0 documentos")
+        self._summary.pack(side="right")
+
+        bottom = ttk.Frame(frame)
+        bottom.pack(fill="x", pady=(12, 0))
+        ttk.Label(bottom, text="Categoria").pack(side="left")
+        first = next(iter(self._categories), "")
+        self._category = tk.StringVar(value=first)
+        self._category_combo = ttk.Combobox(
+            bottom,
+            textvariable=self._category,
+            values=list(self._categories),
+            state="readonly",
+            width=30,
+        )
+        self._category_combo.pack(side="left", padx=(6, 12))
+        self._status = ttk.Label(bottom, text="")
+        self._status.pack(side="left", fill="x", expand=True)
+        ttk.Button(bottom, text="Cancelar", command=self._close).pack(side="right")
+        self._import_button = ttk.Button(
+            bottom, text="Incorporar documentos", command=self._start_import,
+        )
+        self._import_button.pack(side="right", padx=(0, 7))
+
+    @staticmethod
+    def _path_key(path: Path) -> str:
+        return os.path.normcase(os.path.abspath(str(path)))
+
+    def _select_files(self):
+        paths = filedialog.askopenfilenames(
+            parent=self,
+            title="Seleccionar documentos",
+            filetypes=(("Todos los archivos", "*.*"),),
+        )
+        if paths:
+            self._add_paths(paths)
+
+    def _add_paths(self, paths) -> int:
+        added = 0
+        ignored = 0
+        for raw in paths:
+            path = Path(str(raw)).expanduser()
+            if not path.is_file():
+                ignored += 1
+                continue
+            key = self._path_key(path)
+            if key in self._path_keys:
+                continue
+            try:
+                size = path.stat().st_size
+            except OSError:
+                ignored += 1
+                continue
+            iid = f"archivo-{self._next_id}"
+            self._next_id += 1
+            self._paths[iid] = path
+            self._path_keys.add(key)
+            self._tree.insert("", "end", iid=iid, values=(
+                path.name, str(path.parent), self._format_size(size),
+            ))
+            added += 1
+        self._update_summary()
+        if ignored:
+            self._status.configure(
+                text=f"Se ignoraron {ignored} elementos que no eran archivos.",
+            )
+        elif added:
+            self._status.configure(text="")
+        return added
+
+    @staticmethod
+    def _format_size(size: int) -> str:
+        if size >= 1_048_576:
+            return f"{size / 1_048_576:.1f} MB"
+        if size >= 1_024:
+            return f"{size / 1_024:.1f} KB"
+        return f"{size} B"
+
+    def _remove_selected(self):
+        for iid in self._tree.selection():
+            path = self._paths.pop(iid, None)
+            if path is not None:
+                self._path_keys.discard(self._path_key(path))
+            self._tree.delete(iid)
+        self._update_summary()
+
+    def _clear(self):
+        self._tree.delete(*self._tree.get_children())
+        self._paths.clear()
+        self._path_keys.clear()
+        self._update_summary()
+
+    def _update_summary(self):
+        total = sum(
+            path.stat().st_size for path in self._paths.values()
+            if path.is_file()
+        )
+        self._summary.configure(
+            text=f"{len(self._paths)} documentos · {self._format_size(total)}",
+        )
+
+    def _setup_drag_and_drop(self):
+        if getattr(self._app_root, "_dnd_available", True) is False:
+            self._drop_zone.configure(
+                text="Haz clic aqui para seleccionar uno o varios documentos",
+            )
+            return
+        try:
+            from tkinterdnd2 import DND_FILES
+
+            registered = 0
+            last_error = None
+            for target in (self._drop_zone, self._tree, self):
+                try:
+                    target.drop_target_register(DND_FILES)
+                    target.dnd_bind("<<Drop>>", self._on_drop)
+                    target.dnd_bind("<<DragEnter>>", self._on_drag_enter)
+                    target.dnd_bind("<<DragLeave>>", self._on_drag_leave)
+                    registered += 1
+                except Exception as exc:
+                    last_error = exc
+            if not registered:
+                raise RuntimeError(str(last_error or "Arrastre no disponible"))
+        except Exception:
+            self._drop_zone.configure(
+                text="Haz clic aqui para seleccionar uno o varios documentos",
+            )
+
+    def _on_drag_enter(self, event):
+        self._drop_zone.configure(text="Suelta los documentos para anadirlos")
+        return getattr(event, "action", "copy")
+
+    def _on_drag_leave(self, event):
+        self._restore_drop_text()
+        return getattr(event, "action", "copy")
+
+    def _on_drop(self, event):
+        self._restore_drop_text()
+        try:
+            paths = list(self.tk.splitlist(event.data))
+        except (tk.TclError, TypeError):
+            paths = [
+                match.group(1) or match.group(2)
+                for match in re.finditer(r"\{([^}]+)\}|(\S+)", str(event.data or ""))
+            ]
+        if not self._add_paths(paths):
+            self._status.configure(
+                text="No se anadio ningun archivo nuevo.",
+            )
+        return getattr(event, "action", "copy")
+
+    def _restore_drop_text(self):
+        self._drop_zone.configure(
+            text=(
+                "Arrastra aqui uno o varios documentos\n"
+                "o haz clic para seleccionarlos"
+            ),
+        )
+
+    def _start_import(self):
+        category = self._categories.get(self._category.get())
+        if not self._paths:
+            messagebox.showwarning(
+                "Incorporar documentos", "Anade al menos un archivo.", parent=self,
+            )
+            return
+        if not category:
+            messagebox.showwarning(
+                "Incorporar documentos", "Selecciona una categoria.", parent=self,
+            )
+            return
+        self.set_busy(True)
+        self._on_import(list(self._paths.values()), category["id"], self)
+
+    def set_busy(self, busy: bool):
+        self._busy = busy
+        state = "disabled" if busy else "normal"
+        for button in (
+            self._add_button, self._remove_button,
+            self._clear_button, self._import_button,
+        ):
+            button.configure(state=state)
+        self._category_combo.configure(state="disabled" if busy else "readonly")
+        self._status.configure(
+            text="Incorporando documentos..." if busy else "",
+        )
+
+    def _close(self):
+        if self._busy:
+            messagebox.showinfo(
+                "Incorporar documentos",
+                "Espera a que termine la incorporacion en curso.",
+                parent=self,
+            )
+            return
+        self.destroy()
 
 
 class UIGestionDocumental(ttk.Frame):
@@ -41,7 +326,9 @@ class UIGestionDocumental(ttk.Frame):
             top, text=f"Gestion documental — {self._nombre} ({self._codigo})",
             font=("Segoe UI", 16, "bold"),
         ).pack(side="left")
-        ttk.Button(top, text="Incorporar archivo", command=self._add_file).pack(side="right")
+        ttk.Button(
+            top, text="Incorporar documentos", command=self._add_file,
+        ).pack(side="right")
         self._messaging_button = ttk.Button(
             top, text="Entradas pendientes", command=self._open_messaging_incoming,
         )
@@ -264,24 +551,56 @@ class UIGestionDocumental(ttk.Frame):
             messagebox.showerror("Gestion documental", str(exc), parent=self)
 
     def _add_file(self):
-        path = filedialog.askopenfilename(parent=self, title="Incorporar documento")
-        if not path:
-            return
-        choices = [item["nombre"] for item in self._categories]
-        dialog = _CategoryDialog(self, choices)
-        self.wait_window(dialog)
-        if not dialog.result:
-            return
-        category = next(item for item in self._categories if item["nombre"] == dialog.result)
-        try:
-            self._service.importar_archivo(
-                codigo_empresa=self._codigo, ejercicio=self._ejercicio,
-                categoria_id=category["id"], source=path,
-                usuario=getattr(getattr(self._session, "user", None), "nombre", ""),
+        _MultipleImportDialog(self, self._categories, self._import_files)
+
+    def _import_files(self, paths: list[Path], category_id: str, dialog) -> None:
+        self.winfo_toplevel().configure(cursor="watch")
+
+        def worker():
+            try:
+                summary = self._service.importar_archivos(
+                    codigo_empresa=self._codigo,
+                    ejercicio=self._ejercicio,
+                    categoria_id=category_id,
+                    sources=paths,
+                    usuario=getattr(
+                        getattr(self._session, "user", None), "nombre", "",
+                    ),
+                )
+                error = None
+            except Exception as exc:
+                summary, error = None, exc
+            try:
+                self.after(0, self._finish_import_files, dialog, summary, error)
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_import_files(self, dialog, summary, error=None):
+        self.winfo_toplevel().configure(cursor="")
+        if error is not None:
+            if dialog.winfo_exists():
+                dialog.set_busy(False)
+            messagebox.showerror(
+                "Gestion documental",
+                f"No se pudo incorporar el lote:\n{error}",
+                parent=dialog if dialog.winfo_exists() else self,
             )
-            self._refresh()
-        except Exception as exc:
-            messagebox.showerror("Gestion documental", str(exc), parent=self)
+            return
+        self._refresh()
+        if dialog.winfo_exists():
+            dialog.destroy()
+        text = f"Documentos incorporados: {len(summary.saved)}"
+        if summary.errors:
+            text += "\n\nNo se pudieron incorporar:\n- " + "\n- ".join(
+                summary.errors[:8]
+            )
+            if len(summary.errors) > 8:
+                text += f"\n- ... y {len(summary.errors) - 8} mas"
+            messagebox.showwarning("Gestion documental", text, parent=self)
+        else:
+            messagebox.showinfo("Gestion documental", text, parent=self)
 
     def _send_ocr(self):
         selected = list(self._tree.selection())

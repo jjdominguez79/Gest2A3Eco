@@ -1,5 +1,6 @@
 import hashlib
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from services.documentos_correo_service import DocumentosCorreoService
 from services.gestion_documental_service import GestionDocumentalService
@@ -161,3 +162,27 @@ def test_importacion_desde_comunicaciones_reutiliza_el_archivo_documental(
     assert summary.imported == ["factura.pdf"]
     assert gestor.saved["comunicacion_id"] == "mensaje-1"
     assert gestor.saved["buzon_origen"] == "documentacion@gestinem.es"
+
+
+def test_importacion_multiple_conserva_exitos_y_errores_individuales(tmp_path):
+    first = tmp_path / "primero.pdf"
+    second = tmp_path / "segundo.pdf"
+    first.write_bytes(b"primero")
+    second.write_bytes(b"segundo")
+    service = object.__new__(GestionDocumentalService)
+    service.importar_archivo = MagicMock(
+        side_effect=["doc-1", ValueError("documento duplicado")],
+    )
+
+    summary = service.importar_archivos(
+        codigo_empresa="E00001",
+        ejercicio=2026,
+        categoria_id="fiscal",
+        sources=[first, second],
+        usuario="Empleado",
+    )
+
+    assert summary.saved == ["primero.pdf"]
+    assert summary.document_ids == ["doc-1"]
+    assert summary.errors == ["segundo.pdf: documento duplicado"]
+    assert service.importar_archivo.call_count == 2
