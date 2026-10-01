@@ -229,6 +229,9 @@ CREATE TABLE IF NOT EXISTS facturas_emitidas_docs (
   numero TEXT,
   numero_largo_sii TEXT,
   numero_asiento TEXT,
+  ultimo_asiento_reiniciado TEXT,
+  reinicio_contable_at TEXT,
+  reinicio_contable_motivo TEXT,
   fecha_asiento TEXT,
   fecha_expedicion TEXT,
   fecha_operacion TEXT,
@@ -850,6 +853,9 @@ class GestorBase:
         self._ensure_column("facturas_emitidas_docs", "plantilla_word", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "plantilla_emitidas", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "numero_asiento", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "ultimo_asiento_reiniciado", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "reinicio_contable_at", "TEXT")
+        self._ensure_column("facturas_emitidas_docs", "reinicio_contable_motivo", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "pdf_path", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "pdf_ref", "TEXT")
         self._ensure_column("facturas_emitidas_docs", "pdf_path_a3", "TEXT")
@@ -2906,6 +2912,76 @@ class GestorBase:
                     "generada=0, fecha_generacion='' WHERE id=? AND codigo_empresa=?",
                     (factura_id, codigo_empresa),
                 )
+                if origen == "ocr":
+                    documento_id = str(item.get("ocr_documento_id") or factura_id)
+                    self.conn.execute(
+                        "UPDATE documentos_ocr SET estado='error', error_ocr=? "
+                        "WHERE id=? AND empresa_id=?",
+                        (motivo, documento_id, codigo_empresa),
+                    )
+                    self.conn.execute(
+                        "UPDATE facturas_emitidas_ocr SET estado_validacion='pendiente', "
+                        "observaciones=? WHERE documento_id=? AND empresa_id=?",
+                        (motivo, documento_id, codigo_empresa),
+                    )
+                    resultado["ocr"] += 1
+                else:
+                    resultado["facturacion"] += 1
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return resultado
+
+    def reiniciar_facturas_emitidas_con_asiento(
+        self, codigo_empresa: str, ejercicio: int, ids: list,
+        motivo: str,
+    ) -> dict:
+        """Elimina el vinculo contable y devuelve emitidas a su origen.
+
+        Esta operacion no modifica los ficheros contables de A3ECO. Solo debe
+        utilizarse despues de eliminar o corregir alli el asiento confirmado.
+        Se invalida tambien la referencia del PDF enlazado para que una futura
+        generacion de ``suenlace.dat`` cree un enlace nuevo y no reutilice el
+        documento anterior.
+        """
+        ids = [str(item) for item in (ids or []) if str(item)]
+        resultado = {"facturacion": 0, "ocr": 0, "sin_asiento": []}
+        if not ids:
+            return resultado
+
+        qmarks = ",".join("?" for _ in ids)
+        rows = self.conn.execute(
+            f"SELECT id, origen_factura, ocr_documento_id, numero_asiento "
+            f"FROM facturas_emitidas_docs "
+            f"WHERE codigo_empresa=? AND ejercicio=? AND id IN ({qmarks})",
+            (codigo_empresa, _ej_val(ejercicio), *ids),
+        ).fetchall()
+        try:
+            for row in rows:
+                item = self._row_to_dict(row)
+                factura_id = str(item.get("id") or "")
+                if not str(item.get("numero_asiento") or "").strip():
+                    resultado["sin_asiento"].append(factura_id)
+                    continue
+
+                reinicio_at = self._utc_now()
+                self.conn.execute(
+                    "UPDATE facturas_emitidas_docs SET estado_contable=NULL, "
+                    "generada=0, fecha_generacion='', numero_asiento='', "
+                    "ultimo_asiento_reiniciado=?, reinicio_contable_at=?, "
+                    "reinicio_contable_motivo=?, pdf_ref='', pdf_path_a3='', "
+                    "updated_at=? "
+                    "WHERE id=? AND codigo_empresa=? AND ejercicio=?",
+                    (
+                        str(item.get("numero_asiento") or "").strip(),
+                        reinicio_at, motivo, reinicio_at,
+                        factura_id, codigo_empresa,
+                        _ej_val(ejercicio),
+                    ),
+                )
+
+                origen = str(item.get("origen_factura") or "facturacion").lower()
                 if origen == "ocr":
                     documento_id = str(item.get("ocr_documento_id") or factura_id)
                     self.conn.execute(

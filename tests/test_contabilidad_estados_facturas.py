@@ -83,6 +83,44 @@ def test_devolver_emitidas_respeta_origen_y_bloquea_las_con_asiento():
     assert conexion.commits == 1
 
 
+def test_reiniciar_emitidas_elimina_vinculo_y_respeta_origen():
+    conexion = _Conexion([
+        {
+            "id": "fac-1", "origen_factura": "facturacion",
+            "ocr_documento_id": None, "numero_asiento": "08/00042",
+        },
+        {
+            "id": "ocr-1", "origen_factura": "ocr",
+            "ocr_documento_id": "doc-1", "numero_asiento": "08/00043",
+        },
+        {
+            "id": "fac-2", "origen_factura": "facturacion",
+            "ocr_documento_id": None, "numero_asiento": "",
+        },
+    ])
+    gestor = _gestor_con_conexion(conexion)
+
+    resultado = gestor.reiniciar_facturas_emitidas_con_asiento(
+        "E00001", 2026, ["fac-1", "ocr-1", "fac-2"],
+        "Correccion excepcional de conceptos",
+    )
+
+    assert resultado == {
+        "facturacion": 1, "ocr": 1, "sin_asiento": ["fac-2"],
+    }
+    sql = "\n".join(sentencia for sentencia, _params in conexion.sentencias)
+    assert "estado_contable=NULL" in sql
+    assert "numero_asiento=''" in sql
+    assert "generada=0" in sql
+    assert "ultimo_asiento_reiniciado=?" in sql
+    assert "reinicio_contable_motivo=?" in sql
+    assert "pdf_ref=''" in sql
+    assert "pdf_path_a3=''" in sql
+    assert "UPDATE documentos_ocr SET estado='error'" in sql
+    assert "UPDATE facturas_emitidas_ocr SET estado_validacion='pendiente'" in sql
+    assert conexion.commits == 1
+
+
 def test_devolver_recibida_a_ocr_reabre_revision_y_anula_suenlace():
     conexion = _Conexion([
         {"id": "doc-1", "numero_asiento": ""},

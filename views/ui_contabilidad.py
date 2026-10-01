@@ -160,6 +160,18 @@ class UIContabilidad(ttk.Frame):
             command=self.emitidas_ctrl.marcar_con_asiento_como_generadas,
         ).pack(side=tk.LEFT)
 
+        bar_excepcional = ttk.Frame(left)
+        bar_excepcional.pack(fill="x", pady=(2, 2))
+        ttk.Label(
+            bar_excepcional,
+            text="Correcciones excepcionales:",
+            foreground="#991b1b",
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            bar_excepcional, text="Desvincular asiento y reiniciar",
+            command=self.emitidas_ctrl.eliminar_asiento_y_reiniciar,
+        ).pack(side=tk.LEFT, padx=(6, 0))
+
         bar2 = ttk.Frame(left)
         bar2.pack(fill="x", pady=(2, 4))
         ttk.Label(
@@ -454,6 +466,14 @@ class UIContabilidad(ttk.Frame):
 
     def ask_return_reason(self, title: str, message: str) -> str | None:
         return simpledialog.askstring(title, message, parent=self.winfo_toplevel())
+
+    def ask_admin_password(self, title: str, message: str) -> str | None:
+        return simpledialog.askstring(
+            title,
+            message,
+            show="*",
+            parent=self.winfo_toplevel(),
+        )
 
     def ask_save_dat_path(self, initialfile: str) -> str:
         return filedialog.asksaveasfilename(

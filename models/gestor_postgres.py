@@ -485,6 +485,9 @@ class GestorPostgres(GestorBase):
             ("ocr_aprendizaje_ejemplos", "marcas_json", "TEXT NOT NULL DEFAULT '{}'"),
             ("facturas_emitidas_docs", "updated_at", "TEXT"),
             ("facturas_emitidas_docs", "pdf_generated_at", "TEXT"),
+            ("facturas_emitidas_docs", "ultimo_asiento_reiniciado", "TEXT"),
+            ("facturas_emitidas_docs", "reinicio_contable_at", "TEXT"),
+            ("facturas_emitidas_docs", "reinicio_contable_motivo", "TEXT"),
             (
                 "facturas_emitidas_docs", "area_cliente_estado",
                 "TEXT NOT NULL DEFAULT ''",

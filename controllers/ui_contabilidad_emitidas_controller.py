@@ -223,6 +223,91 @@ class UIContabilidadEmitidasController:
             f"{reseteadas} factura(s) reseteadas a 'No generado'.",
         )
 
+    def eliminar_asiento_y_reiniciar(self):
+        """Desvincula excepcionalmente un asiento y devuelve la factura a origen."""
+        sel = self._view.get_selected_emitida_ids()
+        if not sel:
+            self._view.show_warning(
+                "Gest2A3Eco",
+                "Selecciona al menos una factura con asiento confirmado.",
+            )
+            return
+
+        docs_map = {str(d.get("id")): d for d in (self._view._emitidas_docs or [])}
+        con_asiento = [
+            fid for fid in sel
+            if str((docs_map.get(fid) or {}).get("numero_asiento") or "").strip()
+        ]
+        if not con_asiento:
+            self._view.show_warning(
+                "Gest2A3Eco",
+                "Las facturas seleccionadas no tienen un asiento confirmado.",
+            )
+            return
+
+        if not self._view.ask_yes_no(
+            "Eliminar vínculo de asiento y reiniciar",
+            f"Se van a reiniciar {len(con_asiento)} factura(s).\n\n"
+            "Se borrará de Gest2A3Eco el número de asiento, se anulará la marca "
+            "de suenlace y la factura volverá a su módulo de origen.\n\n"
+            "Esta acción NO elimina el asiento dentro de A3ECO. Antes debes "
+            "haberlo eliminado o corregido allí.\n\n"
+            "¿Continuar?",
+        ):
+            return
+
+        motivo = self._view.ask_return_reason(
+            "Motivo del reinicio excepcional",
+            "Indica el motivo. Es obligatorio para continuar.",
+        )
+        if motivo is None:
+            return
+        motivo = motivo.strip()
+        if not motivo:
+            self._view.show_warning(
+                "Gest2A3Eco",
+                "Debes indicar un motivo para realizar el reinicio excepcional.",
+            )
+            return
+
+        from utils.credential_store import get_desmarcar_password
+        expected = get_desmarcar_password() or ""
+        if not expected:
+            self._view.show_warning(
+                "Gest2A3Eco",
+                "No hay contraseña administrativa configurada.\n"
+                "Configúrala en Configuración > Configurar monedas.",
+            )
+            return
+        provided = self._view.ask_admin_password(
+            "Reinicio excepcional",
+            "Contraseña administrativa:",
+        )
+        if provided is None:
+            return
+        if str(provided).strip() != expected:
+            self._view.show_error("Gest2A3Eco", "Contraseña incorrecta.")
+            return
+
+        resultado = self._gestor.reiniciar_facturas_emitidas_con_asiento(
+            self._codigo, self._ejercicio, con_asiento, motivo,
+        )
+        self.refresh()
+
+        partes = []
+        if resultado.get("facturacion"):
+            partes.append(
+                f"{resultado['facturacion']} factura(s) devuelta(s) a Facturación."
+            )
+        if resultado.get("ocr"):
+            partes.append(f"{resultado['ocr']} factura(s) devuelta(s) a Errores OCR.")
+        if resultado.get("sin_asiento"):
+            partes.append(
+                f"{len(resultado['sin_asiento'])} factura(s) ya no tenían asiento."
+            )
+        partes.append("Ya puedes corregir la factura en su modulo de origen.")
+        self._view.show_info("Gest2A3Eco", "\n".join(partes))
+
     def on_seleccionar(self, fac_id: str):
         """Calcula y muestra el asiento de la factura seleccionada en el panel derecho."""
         result = self.preparar_asiento_seleccionada(fac_id)
