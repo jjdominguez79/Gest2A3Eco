@@ -31,7 +31,8 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
   RealtimeService? _realtime;
   String? _realtimeOwner;
   Timer? _presenceRefresh;
-  String? _lastOpenedNotification;
+  final NotificationOpenGuard _notificationOpenGuard =
+      NotificationOpenGuard();
   bool _checkingUpdate = false;
   bool _updateDialogVisible = false;
   int? _dismissedOptionalBuild;
@@ -157,9 +158,7 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
       ref.invalidate(documentsProvider);
       ref.invalidate(documentDetailProvider(documentId));
       if (event.opened && ref.read(sessionProvider).valueOrNull != null) {
-        final target = 'document:$documentId';
-        if (_lastOpenedNotification == target) return;
-        _lastOpenedNotification = target;
+        if (!_notificationOpenGuard.shouldHandle(event)) return;
         ref.read(routerProvider).go('/documents/$documentId');
       }
       return;
@@ -172,12 +171,8 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
     }
     final threadId = event.threadId;
     if (event.opened) {
-      final target = threadId != null && threadId.isNotEmpty
-          ? 'internal:$threadId'
-          : 'conversation:${event.conversationId}';
-      if (_lastOpenedNotification == target) return;
       if (ref.read(sessionProvider).valueOrNull == null) return;
-      _lastOpenedNotification = target;
+      if (!_notificationOpenGuard.shouldHandle(event)) return;
     }
     if (threadId != null && threadId.isNotEmpty) {
       ref.invalidate(internalThreadsProvider);
@@ -316,6 +311,7 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
             targetId: threadId != null && threadId.isNotEmpty
                 ? threadId
                 : conversationId ?? '',
+            notificationId: event['message_id']?.toString(),
           ),
     );
   }

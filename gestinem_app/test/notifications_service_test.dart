@@ -40,6 +40,7 @@ void main() {
         opened: false,
         threadId: 'thread-456',
         documentId: 'doc-789',
+        notificationId: 'message-012',
         title: 'Titulo',
         body: 'Cuerpo',
       );
@@ -47,6 +48,7 @@ void main() {
       expect(event.conversationId, 'conv-123');
       expect(event.threadId, 'thread-456');
       expect(event.documentId, 'doc-789');
+      expect(event.notificationId, 'message-012');
       expect(event.opened, isFalse);
       expect(event.title, 'Titulo');
       expect(event.body, 'Cuerpo');
@@ -96,6 +98,46 @@ void main() {
         'internal_thread',
       );
       expect(notificationTargetId({'thread_id': 'thread-456'}), 'thread-456');
+    });
+
+    test('solo descarta la entrega duplicada del mismo aviso', () {
+      final guard = NotificationOpenGuard();
+      final first = NotificationEvent(
+        conversationId: 'conv-123',
+        opened: true,
+        notificationId: 'message-1',
+      );
+      final sameMessage = NotificationEvent(
+        conversationId: 'conv-123',
+        opened: true,
+        notificationId: 'message-1',
+      );
+      final nextMessage = NotificationEvent(
+        conversationId: 'conv-123',
+        opened: true,
+        notificationId: 'message-2',
+      );
+
+      expect(guard.shouldHandle(first), isTrue);
+      expect(guard.shouldHandle(first), isFalse);
+      expect(guard.shouldHandle(sameMessage), isFalse);
+      expect(guard.shouldHandle(nextMessage), isTrue);
+    });
+
+    test('avisos posteriores sin id pueden reabrir el mismo chat', () {
+      final guard = NotificationOpenGuard();
+      final first = NotificationEvent(
+        conversationId: 'conv-123',
+        opened: true,
+      );
+      final later = NotificationEvent(
+        conversationId: 'conv-123',
+        opened: true,
+      );
+
+      expect(guard.shouldHandle(first), isTrue);
+      expect(guard.shouldHandle(first), isFalse);
+      expect(guard.shouldHandle(later), isTrue);
     });
   });
 

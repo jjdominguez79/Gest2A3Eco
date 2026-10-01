@@ -135,6 +135,7 @@ class NotificationEvent {
     required this.opened,
     this.threadId,
     this.documentId,
+    this.notificationId,
     this.title,
     this.body,
   });
@@ -142,9 +143,29 @@ class NotificationEvent {
   final String conversationId;
   final String? threadId;
   final String? documentId;
+  final String? notificationId;
   final bool opened;
   final String? title;
   final String? body;
+}
+
+/// Evita procesar dos veces el mismo clic entregado por el stream y por el
+/// evento pendiente de arranque, sin bloquear avisos posteriores del mismo chat.
+class NotificationOpenGuard {
+  NotificationEvent? _lastEvent;
+  String? _lastNotificationId;
+
+  bool shouldHandle(NotificationEvent event) {
+    final notificationId = event.notificationId?.trim() ?? '';
+    if (identical(_lastEvent, event) ||
+        (notificationId.isNotEmpty &&
+            notificationId == _lastNotificationId)) {
+      return false;
+    }
+    _lastEvent = event;
+    _lastNotificationId = notificationId.isEmpty ? null : notificationId;
+    return true;
+  }
 }
 
 class NotificationsService {
@@ -307,12 +328,15 @@ class NotificationsService {
     required String body,
     required String targetType,
     required String targetId,
+    String? notificationId,
   }) async {
     if (!_desktop.supported || targetId.isEmpty) return;
     try {
       final data = <String, dynamic>{
         'target_type': targetType,
         'target_id': targetId,
+        if (notificationId != null && notificationId.isNotEmpty)
+          'message_id': notificationId,
         'title': title,
         'body': body,
       };
@@ -449,6 +473,7 @@ class NotificationsService {
     _emitData(
       message.data,
       opened: opened,
+      notificationId: message.messageId,
       title: message.notification?.title,
       body: message.notification?.body,
     );
@@ -457,6 +482,7 @@ class NotificationsService {
   void _emitData(
     Map<String, dynamic> data, {
     required bool opened,
+    String? notificationId,
     String? title,
     String? body,
   }) {
@@ -474,6 +500,8 @@ class NotificationsService {
       conversationId: conversationId,
       threadId: threadId,
       documentId: documentId,
+      notificationId:
+          data['message_id']?.toString() ?? notificationId,
       opened: opened,
       title: title ?? data['title']?.toString(),
       body: body ?? data['body']?.toString(),
