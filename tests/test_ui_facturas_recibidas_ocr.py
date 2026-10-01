@@ -1,6 +1,8 @@
 from views.ui_facturas_recibidas_ocr import (
     IVA_TIPOS_CATALOGO,
     UIFacturasRecibidasOcr,
+    _codigo_selector,
+    _filtrar_valores,
     _normalizar_confianza,
     _resumen_fiscal,
     _totales_coherentes,
@@ -85,3 +87,22 @@ def test_zoom_para_ajustar_muestra_pagina_completa():
 
 def test_zoom_para_ajustar_no_amplia_mas_del_limite():
     assert _zoom_para_ajustar(100, 100, 2000, 2000) == 3.0
+
+
+def test_filtro_selectores_admite_acentos_mayusculas_y_varias_palabras():
+    valores = (
+        "40000008 - ELISA DE GREGORIO GARCIA",
+        "41000002 - Proveedor genérico",
+    )
+
+    assert _filtrar_valores(valores, "elisa garcía") == (valores[0],)
+    assert _filtrar_valores(valores, "410 generico") == (valores[1],)
+    assert _filtrar_valores(valores, "") == valores
+
+
+def test_codigo_selector_acepta_etiqueta_o_codigo_escrito():
+    opciones = {"40000008 - ELISA DE GREGORIO GARCIA": "40000008"}
+
+    assert _codigo_selector(next(iter(opciones)), opciones) == "40000008"
+    assert _codigo_selector("40000008", opciones) == "40000008"
+    assert _codigo_selector("4000", opciones) == ""

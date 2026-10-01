@@ -44,6 +44,52 @@ CAMPO_SUBCUENTA = {
 
 class TercerosOcrService:
 
+    def listar_candidatos_empresa(
+        self,
+        gestor,
+        codigo: str,
+        ejercicio: int,
+        tipos: list[str] | tuple[str, ...] | None = None,
+    ) -> list[dict]:
+        """Lista terceros utilizables por OCR desde el maestro contable y legacy.
+
+        El selector y la resolucion automatica deben consultar la misma fuente.
+        De lo contrario una subcuenta importada desde A3 puede resolverse por NIF,
+        pero no aparecer en el desplegable de la revision.
+        """
+        tipos_busqueda = tipos or ("proveedor", "acreedor", "cliente", "deudor")
+        candidatos = [
+            self._normalizar_candidato_facturacion(t)
+            for t in gestor.listar_subcuentas_facturacion(
+                codigo,
+                tipos_busqueda,
+                activo=True,
+            )
+        ]
+        legacy = list(gestor.listar_terceros_por_empresa(codigo, ejercicio) or [])
+        vistos = {
+            (
+                _norm_nif(t.get("nif")),
+                _norm_nombre(t.get("nombre") or ""),
+                str(t.get("subcuenta_proveedor") or t.get("subcuenta_cliente") or "").strip(),
+            )
+            for t in candidatos
+        }
+        for tercero in legacy:
+            clave = (
+                _norm_nif(tercero.get("nif")),
+                _norm_nombre(tercero.get("nombre") or ""),
+                str(
+                    tercero.get("subcuenta_proveedor")
+                    or tercero.get("subcuenta_cliente")
+                    or ""
+                ).strip(),
+            )
+            if clave not in vistos:
+                candidatos.append(tercero)
+                vistos.add(clave)
+        return candidatos
+
     # ── Busqueda ──────────────────────────────────────────────────────────────
 
     def resolver_tercero(
@@ -62,33 +108,9 @@ class TercerosOcrService:
         nif_norm = _norm_nif(nif)
         nombre_norm = _norm_nombre(nombre)
 
-        empresa_terceros = [
-            self._normalizar_candidato_facturacion(t)
-            for t in gestor.listar_subcuentas_facturacion(
-                codigo,
-                ["proveedor", "acreedor", "cliente", "deudor"],
-                activo=True,
-            )
-        ]
-        legacy_terceros = list(gestor.listar_terceros_por_empresa(codigo, ejercicio) or [])
-        if legacy_terceros:
-            seen = {
-                (
-                    _norm_nif(t.get("nif")),
-                    _norm_nombre(t.get("nombre") or ""),
-                    str(t.get("subcuenta_proveedor") or t.get("subcuenta_cliente") or "").strip(),
-                )
-                for t in empresa_terceros
-            }
-            for t in legacy_terceros:
-                key = (
-                    _norm_nif(t.get("nif")),
-                    _norm_nombre(t.get("nombre") or ""),
-                    str(t.get("subcuenta_proveedor") or t.get("subcuenta_cliente") or "").strip(),
-                )
-                if key not in seen:
-                    empresa_terceros.append(t)
-                    seen.add(key)
+        empresa_terceros = self.listar_candidatos_empresa(
+            gestor, codigo, ejercicio,
+        )
 
         # 1. NIF exacto en terceros de la empresa
         if nif_norm:
