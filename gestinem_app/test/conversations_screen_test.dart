@@ -352,7 +352,7 @@ void main() {
     });
   }
 
-  testWidgets('staff ve Canal general y Tu asesor por cliente', (tester) async {
+  testWidgets('staff ve General y Privado por cliente', (tester) async {
     const staffProfile = UserProfile(
       id: 'staff-1',
       name: 'Gestor',
@@ -366,11 +366,11 @@ void main() {
     );
 
     final rows = [
-      for (final channel in const [('general', 'CG'), ('private', 'Tu asesor')])
+      for (final channel in const [('general', 'EG'), ('private', 'EG')])
         Conversation(
           id: 'c-${channel.$1}',
           companyCode: 'E00001',
-          companyName: 'Empresa Uno',
+          companyName: 'Enrique Gonzalez Leal',
           kind: channel.$1,
           channelLabel: channel.$2,
           state: 'pendiente',
@@ -397,9 +397,9 @@ void main() {
 
     expect(find.byKey(const Key('conversation-list')), findsOneWidget);
     expect(find.text('Gestor'), findsOneWidget);
-    expect(find.text('Empresa Uno'), findsNWidgets(2));
-    expect(find.text('CG'), findsOneWidget);
-    expect(find.text('Tu asesor'), findsOneWidget);
+    expect(find.text('Enrique Gonzalez Leal'), findsNWidgets(2));
+    expect(find.text('General'), findsOneWidget);
+    expect(find.text('Privado'), findsOneWidget);
     expect(find.byKey(const Key('conversation-c-general')), findsOneWidget);
     expect(find.byKey(const Key('conversation-c-private')), findsOneWidget);
     expect(find.text('3'), findsOneWidget);

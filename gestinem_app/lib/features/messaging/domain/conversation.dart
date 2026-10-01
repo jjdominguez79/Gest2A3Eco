@@ -122,6 +122,12 @@ class Conversation {
           _ => 'DP',
         };
 
+  String get displayChannelKind => switch (kind) {
+    'general' => 'General',
+    'private' => 'Privado',
+    _ => 'Canal',
+  };
+
   String get title => companyName.isEmpty ? _channelLabel(kind) : companyName;
 
   static String _channelLabel(String value) => switch (value) {

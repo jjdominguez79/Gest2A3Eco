@@ -747,7 +747,7 @@ class _ClientConversationTile extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          conversation.displayChannelLabel,
+          conversation.displayChannelKind,
           style: Theme.of(context).textTheme.labelSmall?.copyWith(
             color: Theme.of(context).colorScheme.primary,
             fontWeight: FontWeight.w700,

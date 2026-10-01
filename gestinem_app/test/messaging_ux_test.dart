@@ -151,6 +151,33 @@ void main() {
   });
 
   group('UnifiedConversation routing', () {
+    test('el tipo de canal no se confunde con las iniciales del avatar', () {
+      final general = Conversation(
+        id: 'general',
+        companyCode: 'E001',
+        companyName: 'Enrique Gonzalez Leal',
+        kind: 'general',
+        channelLabel: 'EG',
+        state: 'pendiente',
+        unreadCount: 0,
+        updatedAt: DateTime(2026, 10, 1),
+      );
+      final private = Conversation(
+        id: 'private',
+        companyCode: 'E001',
+        companyName: 'Enrique Gonzalez Leal',
+        kind: 'private',
+        channelLabel: 'EG',
+        state: 'pendiente',
+        unreadCount: 0,
+        updatedAt: DateTime(2026, 10, 1),
+      );
+
+      expect(general.displayChannelKind, 'General');
+      expect(private.displayChannelKind, 'Privado');
+      expect(general.displayChannelLabel, 'EG');
+    });
+
     test('client unread total from multiple conversations', () {
       final convs = [
         _makeConv('E001', 'Mi Empresa', 'general', unread: 2),
