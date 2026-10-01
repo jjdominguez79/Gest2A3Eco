@@ -944,7 +944,7 @@ def _leer_subcuentas_binario(cu_path: Path, ndig: int) -> list[dict]:
     En los registros de subcuenta (bytes 1-3 != 0x000000):
       bytes 1-3 : cuenta padre en PGC (4 digitos, p.ej. 4300 para Clientes)
       bytes 4-7 : indice secuencial * 10^(ndig-4)
-                  (p.ej. 10000 -> cliente #1, 20000 -> cliente #2 para ndig=8)
+                  (p.ej. 0 -> subcuenta #0, 10000 -> #1 para ndig=8)
 
     Formula: full_account = b13 * 10^(ndig-4) + code4 // 10^(ndig-4)
     Ejemplo (ndig=8): b13=4300, code4=10000 -> 4300*10000 + 1 = 43000001
@@ -963,7 +963,10 @@ def _leer_subcuentas_binario(cu_path: Path, ndig: int) -> list[dict]:
         if rec[0] in _ISAM_ACTIVE and rec[1:4] != b'\x00\x00\x00':
             b13 = int.from_bytes(rec[1:4], "big")
             code4 = int.from_bytes(rec[4:8], "big")
-            if b13 > 0 and code4 > 0 and code4 % multiplier == 0:
+            # El indice cero es valido. A3 lo usa, por ejemplo, para guardar
+            # 62300000 como cuenta padre 6230 + indice 0. Excluirlo hacia que
+            # desaparecieran del plan todas las subcuentas terminadas en ceros.
+            if b13 > 0 and code4 % multiplier == 0:
                 sequential = code4 // multiplier
                 full_account = b13 * multiplier + sequential
                 full_str = str(full_account)
