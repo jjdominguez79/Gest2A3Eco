@@ -932,11 +932,16 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                 title: const Text('Editar mensaje'),
                 onTap: () => Navigator.pop(context, 'edit'),
               ),
-            if (message.canViewHistory && message.editedAt != null)
+            if (message.canViewHistory &&
+                (message.editedAt != null || message.deleted))
               ListTile(
                 key: const Key('message-history-option'),
                 leading: const Icon(Icons.history),
-                title: const Text('Versiones anteriores'),
+                title: Text(
+                  message.deleted
+                      ? 'Ver contenido eliminado'
+                      : 'Versiones anteriores',
+                ),
                 onTap: () => Navigator.pop(context, 'history'),
               ),
             if (canDelete)
@@ -982,6 +987,9 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
         () => ref
             .read(messagingRepositoryProvider)
             .messageHistory(message.id, internal: widget.internal),
+        titulo: message.deleted
+            ? 'Contenido del mensaje eliminado'
+            : 'Versiones anteriores',
       );
     } else if (action == 'delete') {
       final confirmed = await showDialog<bool>(

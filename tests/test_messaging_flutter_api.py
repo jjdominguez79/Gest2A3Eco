@@ -36,6 +36,7 @@ from backend.api.messaging_models import (
     MessagingDeletionAudit,
     MessagingGroupMember,
     MessagingMessage,
+    MessagingMessageVersion,
     MessagingOrganization,
     MessagingStaff,
     MessagingStaffPresenceConnection,
@@ -207,7 +208,68 @@ def test_edicion_interna_historial_y_eventos_no_filtran_versiones(tmp_path, monk
     publico = client.get(listado, headers=staff_headers("employee"))
     assert publico.json()[0]["edited_at"] and "Interno privado" not in publico.text
     assert client.delete(ruta, headers=staff_headers("employee")).status_code == 200
-    assert client.get(ruta + "/history", headers=staff_headers("admin")).json() == versiones
+    tras_borrado = client.get(
+        ruta + "/history", headers=staff_headers("admin"),
+    ).json()
+    assert [v["body"] for v in tras_borrado] == [
+        "Interno privado", "Interno actual",
+    ]
+
+
+@pytest.mark.parametrize("internal", [False, True])
+def test_borrado_conserva_ultimo_texto_solo_para_propietario(
+    tmp_path, monkeypatch, internal,
+):
+    monkeypatch.setenv("MESSAGING_HISTORY_OWNER_EMAIL", "admin@gestinem.es")
+    client, factory, staff_headers, _auth, _, conv_id = _setup(tmp_path, monkeypatch)
+    if internal:
+        thread = client.post(
+            "/api/v1/messaging/staff/internal/direct/employee",
+            headers=staff_headers("admin"),
+        ).json()
+        listado = f"/api/v1/messaging/staff/internal/threads/{thread['id']}/messages"
+        ruta = "/api/v1/messaging/staff/internal/messages"
+    else:
+        listado = f"/api/v1/messaging/staff/conversations/{conv_id}/messages"
+        ruta = "/api/v1/messaging/staff/messages"
+
+    mensaje = client.post(
+        listado,
+        headers=staff_headers("employee"),
+        data={"body": "Texto eliminado privado", "idempotency_key": f"deleted-{internal}"},
+    ).json()
+    eliminado = client.delete(
+        f"{ruta}/{mensaje['id']}", headers=staff_headers("employee"),
+    )
+    assert eliminado.status_code == 200
+    assert eliminado.json()["body"] == ""
+
+    historial = f"{ruta}/{mensaje['id']}/history"
+    assert client.get(historial, headers=staff_headers("employee")).status_code == 403
+    privado = client.get(historial, headers=staff_headers("admin"))
+    assert privado.status_code == 200
+    assert [version["body"] for version in privado.json()] == [
+        "Texto eliminado privado",
+    ]
+
+    # Los borrados anteriores al despliegue no tienen aun una version
+    # persistida, pero el propietario debe poder recuperar su cuerpo conservado.
+    with factory() as db:
+        versiones = list(db.scalars(select(MessagingMessageVersion)))
+        assert [version.body for version in versiones] == [
+            "Texto eliminado privado",
+        ]
+        for version in versiones:
+            db.delete(version)
+        db.commit()
+    legado = client.get(historial, headers=staff_headers("admin"))
+    assert [version["body"] for version in legado.json()] == [
+        "Texto eliminado privado",
+    ]
+
+    publico = client.get(listado, headers=staff_headers("employee"))
+    assert "Texto eliminado privado" not in publico.text
+    assert publico.json()[0]["deleted"] is True
 
 
 def test_edicion_no_cambia_adjuntos_y_cita_usa_texto_actual(tmp_path, monkeypatch):

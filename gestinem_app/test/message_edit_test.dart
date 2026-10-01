@@ -235,6 +235,67 @@ void main() {
     },
   );
 
+  testWidgets(
+    'mensaje eliminado ofrece ver su contenido solo con permiso del servidor',
+    (tester) async {
+      final json = mensajeJson()
+        ..['author_id'] = 'employee'
+        ..['author_type'] = 'staff'
+        ..['body'] = ''
+        ..['deleted'] = true
+        ..['edited_at'] = null
+        ..['can_view_history'] = true;
+      final mensaje = Message.fromJson(json);
+      final adapter = JsonAdapter([
+        {
+          'body': 'Texto eliminado privado',
+          'created_at': '2026-09-18T10:00:00Z',
+          'replaced_at': '2026-09-18T11:00:00Z',
+        },
+      ]);
+      final dio = Dio(BaseOptions(baseUrl: 'https://example.test'))
+        ..httpClientAdapter = adapter;
+      const perfil = UserProfile(
+        id: 'admin',
+        name: 'Propietario',
+        email: 'admin@gestinem.es',
+        type: UserType.staff,
+        staffRole: StaffRole.admin,
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionProvider.overrideWith(
+              (ref) => FakeSessionController(
+                ref,
+                const AuthSession(token: 'test', profile: perfil),
+              ),
+            ),
+            apiClientProvider.overrideWithValue(
+              ApiClient(dio: dio, tokenProvider: () => 'test'),
+            ),
+            internalMessagesProvider.overrideWith((ref, id) async => [mensaje]),
+            internalThreadsProvider.overrideWith((ref) async => []),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(
+              body: ConversationView(conversationId: 'grupo', internal: true),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.longPress(find.text('Mensaje eliminado'));
+      await tester.pumpAndSettle();
+      expect(find.text('Ver contenido eliminado'), findsOneWidget);
+      await tester.tap(find.text('Ver contenido eliminado'));
+      await tester.pumpAndSettle();
+      expect(find.text('Contenido del mensaje eliminado'), findsOneWidget);
+      expect(find.text('Texto eliminado privado'), findsOneWidget);
+      expect(adapter.lastRequest!.path, '/staff/internal/messages/m1/history');
+    },
+  );
+
   testWidgets('dialogo rechaza vacio y mantiene texto si falla guardado', (
     tester,
   ) async {

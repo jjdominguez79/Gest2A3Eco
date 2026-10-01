@@ -99,17 +99,19 @@ class _DialogoEdicionState extends State<_DialogoEdicion> {
 
 Future<void> verHistorialMensaje(
   BuildContext context,
-  Future<List<MessageVersion>> Function() cargar,
-) {
+  Future<List<MessageVersion>> Function() cargar, {
+  String titulo = 'Versiones anteriores',
+}) {
   return showDialog<void>(
     context: context,
-    builder: (_) => _DialogoHistorial(cargar: cargar),
+    builder: (_) => _DialogoHistorial(cargar: cargar, titulo: titulo),
   );
 }
 
 class _DialogoHistorial extends StatefulWidget {
-  const _DialogoHistorial({required this.cargar});
+  const _DialogoHistorial({required this.cargar, required this.titulo});
   final Future<List<MessageVersion>> Function() cargar;
+  final String titulo;
 
   @override
   State<_DialogoHistorial> createState() => _DialogoHistorialState();
@@ -120,7 +122,7 @@ class _DialogoHistorialState extends State<_DialogoHistorial> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Versiones anteriores'),
+    title: Text(widget.titulo),
     content: SizedBox(
       width: 480,
       height: 360,

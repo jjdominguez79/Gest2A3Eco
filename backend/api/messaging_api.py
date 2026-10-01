@@ -4294,17 +4294,42 @@ def _guardar_edicion(db: Session, item, payload: MessageEditIn,
     return True
 
 
-def _versiones_anteriores(db: Session, message_id: str, *, internal: bool = False) -> list[dict]:
+def _guardar_version_borrada(db: Session, item, actor_type: str,
+                             actor_id: str, *, internal: bool = False) -> datetime:
+    """Conserva el ultimo texto solo en el historial privado antes del borrado."""
+    ahora = utcnow()
+    db.add(MessagingMessageVersion(
+        message_id=None if internal else item.id,
+        internal_message_id=item.id if internal else None,
+        body=item.body, version_created_at=item.edited_at or item.created_at,
+        replaced_at=ahora, edited_by=actor_id, edited_by_type=actor_type,
+    ))
+    return ahora
+
+
+def _versiones_anteriores(db: Session, item, *, internal: bool = False) -> list[dict]:
     columna = (MessagingMessageVersion.internal_message_id if internal
                else MessagingMessageVersion.message_id)
     versiones = db.scalars(select(MessagingMessageVersion).where(
-        columna == message_id,
+        columna == item.id,
     ).order_by(MessagingMessageVersion.id)).all()
-    return [{
+    resultado = [{
         "id": version.id, "body": version.body,
         "created_at": version.version_created_at.isoformat(),
         "replaced_at": version.replaced_at.isoformat(),
     } for version in versiones]
+    # Compatibilidad con mensajes borrados antes de guardar la ultima version:
+    # el cuerpo nunca se sirve en el listado publico, solo por este endpoint
+    # protegido para el propietario del historial.
+    if item.deleted_at and not any(
+        version.replaced_at == item.deleted_at for version in versiones
+    ):
+        resultado.append({
+            "id": None, "body": item.body,
+            "created_at": (item.edited_at or item.created_at).isoformat(),
+            "replaced_at": item.deleted_at.isoformat(),
+        })
+    return resultado
 
 
 @router.patch("/{audience}/messages/{message_id}")
@@ -4360,7 +4385,7 @@ def message_history(message_id: str, response: Response, staff: MessagingStaff =
         raise HTTPException(404, "Mensaje no encontrado")
     _conversation_for_staff(db, item.conversation_id, staff)
     response.headers["Cache-Control"] = "no-store"
-    return _versiones_anteriores(db, item.id)
+    return _versiones_anteriores(db, item)
 
 
 @router.get("/staff/internal/messages/{message_id}/history")
@@ -4371,7 +4396,7 @@ def internal_message_history(message_id: str, response: Response, staff: Messagi
         raise HTTPException(404, "Mensaje no encontrado")
     _staff_thread(db, item.thread_id, staff)
     response.headers["Cache-Control"] = "no-store"
-    return _versiones_anteriores(db, item.id, internal=True)
+    return _versiones_anteriores(db, item, internal=True)
 
 
 @router.delete("/{audience}/messages/{message_id}")
@@ -4380,7 +4405,9 @@ def soft_delete_message(
     payload: MessageDeleteIn | None = None, db: Session = Depends(get_db),
 ):
     actor = _resolve_actor(audience, request, db)
-    item = db.get(MessagingMessage, message_id)
+    item = db.scalar(select(MessagingMessage).where(
+        MessagingMessage.id == message_id,
+    ).with_for_update())
     if not item:
         raise HTTPException(404, "Mensaje no encontrado")
     conv = (
@@ -4403,7 +4430,9 @@ def soft_delete_message(
             "Usa 'Retirar documento' para adjuntos salientes.",
         )
     reason = (payload.reason if payload else "").strip()
-    item.deleted_at = utcnow()
+    item.deleted_at = _guardar_version_borrada(
+        db, item, audience, actor_id,
+    )
     item.deleted_by = actor_id
     item.deleted_by_type = audience
     item.delete_reason = reason
@@ -4425,7 +4454,9 @@ def soft_delete_internal_message(
     message_id: str, payload: MessageDeleteIn | None = None,
     staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
 ):
-    item = db.get(MessagingStaffThreadMessage, message_id)
+    item = db.scalar(select(MessagingStaffThreadMessage).where(
+        MessagingStaffThreadMessage.id == message_id,
+    ).with_for_update())
     if not item:
         raise HTTPException(404, "Mensaje interno no encontrado")
     thread = _staff_thread(db, item.thread_id, staff)
@@ -4434,7 +4465,10 @@ def soft_delete_internal_message(
         raise HTTPException(403, "No puedes eliminar este mensaje")
     if not item.deleted_at:
         reason = (payload.reason if payload else "").strip()
-        item.deleted_at, item.deleted_by = utcnow(), staff.external_id
+        item.deleted_at = _guardar_version_borrada(
+            db, item, "staff", staff.external_id, internal=True,
+        )
+        item.deleted_by = staff.external_id
         item.deleted_by_type, item.delete_reason = "staff", reason
         db.add(MessagingDeletionAudit(
             message_id=item.id, conversation_id=thread.id,
