@@ -35,6 +35,9 @@ class AppUpdatePolicy {
   final int minimumBuild;
   final Uri? storeUrl;
 
+  bool requiresMinimumBuild(int installedBuild) =>
+      enabled && installedBuild < minimumBuild;
+
   AppUpdateRequirement requirementFor(int installedBuild) {
     if (!enabled || storeUrl == null) return AppUpdateRequirement.disabled;
     if (installedBuild < minimumBuild) {

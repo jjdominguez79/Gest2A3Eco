@@ -50,4 +50,21 @@ void main() {
       AppUpdateRequirement.disabled,
     );
   });
+
+  test('la version minima se puede aplicar sin mantener latest_build', () {
+    final updatePolicy = policy(
+      latestBuild: 1,
+      minimumBuild: 40,
+      storeUrl: '',
+    );
+
+    expect(updatePolicy.requiresMinimumBuild(39), isTrue);
+    expect(updatePolicy.requiresMinimumBuild(40), isFalse);
+  });
+
+  test('el interruptor remoto desactiva tambien la version minima', () {
+    final updatePolicy = policy(enabled: false, minimumBuild: 40);
+
+    expect(updatePolicy.requiresMinimumBuild(39), isFalse);
+  });
 }

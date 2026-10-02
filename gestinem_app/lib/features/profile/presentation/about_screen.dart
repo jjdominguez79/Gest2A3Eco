@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:in_app_update/in_app_update.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../../core/config/app_config.dart';
@@ -25,13 +26,25 @@ class _AboutScreenState extends ConsumerState<AboutScreen> {
 
   Future<_VersionInformation> _loadInformation() async {
     final package = await PackageInfo.fromPlatform();
+    AppUpdateInfo? playUpdate;
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        playUpdate = await InAppUpdate.checkForUpdate();
+      } catch (_) {
+        // Solo funciona con instalaciones realizadas desde Google Play.
+      }
+    }
     try {
       final remote = await ref
           .read(messagingRepositoryProvider)
           .latestAppVersion(_platformName);
-      return _VersionInformation(package: package, remote: remote);
+      return _VersionInformation(
+        package: package,
+        remote: remote,
+        playUpdate: playUpdate,
+      );
     } catch (_) {
-      return _VersionInformation(package: package);
+      return _VersionInformation(package: package, playUpdate: playUpdate);
     }
   }
 
@@ -108,7 +121,16 @@ class _AboutScreenState extends ConsumerState<AboutScreen> {
                           '(compilación ${information.package.buildNumber})',
                         ),
                       ),
-                      if (information.remote?['enabled'] == true)
+                      if (information.playAvailableBuild != null)
+                        ListTile(
+                          leading: const Icon(Icons.shop_outlined),
+                          title: const Text('Actualización en Google Play'),
+                          subtitle: Text(
+                            'Compilación ${information.playAvailableBuild}',
+                          ),
+                        )
+                      else if (_platformName != 'android' &&
+                          information.remote?['enabled'] == true)
                         ListTile(
                           leading: const Icon(Icons.cloud_outlined),
                           title: const Text('Última versión disponible'),
@@ -133,8 +155,9 @@ class _AboutScreenState extends ConsumerState<AboutScreen> {
                 const SizedBox(height: 16),
                 const Text(
                   'Cuando exista una nueva versión, esta pantalla lo indicará. '
-                  'En Windows, el instalador debe solicitarse al despacho; en '
-                  'móvil, la actualización se distribuirá desde la tienda.',
+                  'En Android, Google Play la detectará automáticamente al '
+                  'abrir la aplicación. En Windows, el instalador debe '
+                  'solicitarse al despacho.',
                   textAlign: TextAlign.center,
                 ),
               ],
@@ -158,15 +181,37 @@ String get _platformName => kIsWeb
       };
 
 class _VersionInformation {
-  const _VersionInformation({required this.package, this.remote});
+  const _VersionInformation({
+    required this.package,
+    this.remote,
+    this.playUpdate,
+  });
 
   final PackageInfo package;
   final Map<String, dynamic>? remote;
+  final AppUpdateInfo? playUpdate;
+
+  int? get playAvailableBuild {
+    final update = playUpdate;
+    if (update == null || !_playUpdateAvailable(update)) return null;
+    return update.availableVersionCode;
+  }
 
   _VersionStatus get status {
+    final localBuild = int.tryParse(package.buildNumber) ?? 0;
+    if (_platformName == 'android') {
+      final updateEnabled = remote?['enabled'] == true;
+      final minimumBuild = remote?['minimum_build'] as int? ?? 0;
+      if (updateEnabled && localBuild < minimumBuild) {
+        return _VersionStatus.required;
+      }
+      if (playUpdate == null) return _VersionStatus.unknown;
+      return _playUpdateAvailable(playUpdate!)
+          ? _VersionStatus.available
+          : _VersionStatus.current;
+    }
     if (remote == null) return _VersionStatus.unknown;
     if (remote!['enabled'] != true) return _VersionStatus.current;
-    final localBuild = int.tryParse(package.buildNumber) ?? 0;
     final latestBuild = remote!['latest_build'] as int? ?? 0;
     final minimumBuild = remote!['minimum_build'] as int? ?? 0;
     if (localBuild < minimumBuild) return _VersionStatus.required;
@@ -174,6 +219,11 @@ class _VersionInformation {
     return _VersionStatus.current;
   }
 }
+
+bool _playUpdateAvailable(AppUpdateInfo update) =>
+    update.updateAvailability == UpdateAvailability.updateAvailable ||
+    update.updateAvailability ==
+        UpdateAvailability.developerTriggeredUpdateInProgress;
 
 enum _VersionStatus {
   current,

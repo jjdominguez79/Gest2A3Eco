@@ -46,7 +46,7 @@ guardar o si la rama no es `main`.
 La versión se cambia únicamente en `pubspec.yaml`:
 
 ```yaml
-version: 0.1.24+39
+version: 0.1.25+40
 ```
 
 - Antes del `+` está la versión visible.

@@ -1,8 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter/foundation.dart';
+import 'package:in_app_update/in_app_update.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -26,13 +27,16 @@ class GestinemApp extends ConsumerStatefulWidget {
 
 class _GestinemAppState extends ConsumerState<GestinemApp>
     with WidgetsBindingObserver {
+  static final Uri _androidStoreUrl = Uri.parse(
+    'https://play.google.com/store/apps/details?id=es.gestinem.app',
+  );
+
   StreamSubscription<NotificationEvent>? _notifications;
   StreamSubscription<Map<String, dynamic>>? _realtimeEvents;
   RealtimeService? _realtime;
   String? _realtimeOwner;
   Timer? _presenceRefresh;
-  final NotificationOpenGuard _notificationOpenGuard =
-      NotificationOpenGuard();
+  final NotificationOpenGuard _notificationOpenGuard = NotificationOpenGuard();
   bool _checkingUpdate = false;
   bool _updateDialogVisible = false;
   int? _dismissedOptionalBuild;
@@ -78,21 +82,128 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
     }
     _checkingUpdate = true;
     _lastUpdateCheck = now;
-    late final AppUpdatePolicy policy;
-    int installedBuild = 0;
     try {
-      final package = await PackageInfo.fromPlatform();
-      installedBuild = int.tryParse(package.buildNumber) ?? 0;
-      final remote = await ref
-          .read(messagingRepositoryProvider)
-          .latestAppVersion(platform);
-      policy = AppUpdatePolicy.fromJson(remote);
+      if (platform == 'android') {
+        await _checkAndroidPlayUpdate();
+      } else {
+        await _checkPolicyUpdate(platform);
+      }
     } catch (_) {
-      // La comprobacion nunca debe impedir abrir la aplicacion sin conexion.
-      return;
+      // Una comprobacion fallida nunca debe impedir abrir la aplicacion.
     } finally {
       _checkingUpdate = false;
     }
+  }
+
+  Future<AppUpdatePolicy?> _loadUpdatePolicy(String platform) async {
+    try {
+      final remote = await ref
+          .read(messagingRepositoryProvider)
+          .latestAppVersion(platform);
+      return AppUpdatePolicy.fromJson(remote);
+    } catch (_) {
+      // Google Play puede seguir comprobando actualizaciones aunque el backend
+      // no este disponible. La politica remota solo decide si son obligatorias.
+      return null;
+    }
+  }
+
+  Future<void> _checkAndroidPlayUpdate() async {
+    final package = await PackageInfo.fromPlatform();
+    final installedBuild = int.tryParse(package.buildNumber) ?? 0;
+    final policy = await _loadUpdatePolicy('android');
+    final mandatory = policy?.requiresMinimumBuild(installedBuild) ?? false;
+    final storeUrl = policy?.storeUrl ?? _androidStoreUrl;
+
+    AppUpdateInfo update;
+    try {
+      update = await InAppUpdate.checkForUpdate();
+    } catch (_) {
+      if (mandatory && mounted) {
+        await _showUpdateDialog(mandatory: true, storeUrl: storeUrl);
+      }
+      return;
+    }
+
+    if (!mounted) return;
+    if (update.installStatus == InstallStatus.downloaded) {
+      try {
+        await InAppUpdate.completeFlexibleUpdate();
+      } catch (_) {
+        await _showUpdateDialog(
+          mandatory: mandatory,
+          storeUrl: storeUrl,
+          availableBuild: update.availableVersionCode,
+        );
+      }
+      return;
+    }
+
+    final updateAvailable =
+        update.updateAvailability == UpdateAvailability.updateAvailable ||
+        update.updateAvailability ==
+            UpdateAvailability.developerTriggeredUpdateInProgress;
+    if (!updateAvailable) {
+      if (mandatory) {
+        await _showUpdateDialog(mandatory: true, storeUrl: storeUrl);
+      }
+      return;
+    }
+
+    final immediateInProgress =
+        update.updateAvailability ==
+        UpdateAvailability.developerTriggeredUpdateInProgress;
+    if ((mandatory || immediateInProgress) && update.immediateUpdateAllowed) {
+      try {
+        final result = await InAppUpdate.performImmediateUpdate();
+        if (result == AppUpdateResult.success || !mounted) return;
+      } catch (_) {
+        if (!mounted) return;
+      }
+      await _showUpdateDialog(
+        mandatory: mandatory || immediateInProgress,
+        storeUrl: storeUrl,
+        availableBuild: update.availableVersionCode,
+      );
+      return;
+    }
+
+    if (!mandatory && update.flexibleUpdateAllowed) {
+      try {
+        final result = await InAppUpdate.startFlexibleUpdate();
+        if (result == AppUpdateResult.success) {
+          await InAppUpdate.completeFlexibleUpdate();
+        } else if (result == AppUpdateResult.inAppUpdateFailed && mounted) {
+          await _showUpdateDialog(
+            mandatory: false,
+            storeUrl: storeUrl,
+            availableBuild: update.availableVersionCode,
+          );
+        }
+      } catch (_) {
+        if (mounted) {
+          await _showUpdateDialog(
+            mandatory: false,
+            storeUrl: storeUrl,
+            availableBuild: update.availableVersionCode,
+          );
+        }
+      }
+      return;
+    }
+
+    await _showUpdateDialog(
+      mandatory: mandatory,
+      storeUrl: storeUrl,
+      availableBuild: update.availableVersionCode,
+    );
+  }
+
+  Future<void> _checkPolicyUpdate(String platform) async {
+    final policy = await _loadUpdatePolicy(platform);
+    if (policy == null) return;
+    final package = await PackageInfo.fromPlatform();
+    final installedBuild = int.tryParse(package.buildNumber) ?? 0;
     if (!mounted) return;
     final requirement = policy.requirementFor(installedBuild);
     if (requirement == AppUpdateRequirement.disabled ||
@@ -101,9 +212,30 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
             _dismissedOptionalBuild == policy.latestBuild)) {
       return;
     }
+    final mandatory = requirement == AppUpdateRequirement.mandatory;
+    await _showUpdateDialog(
+      mandatory: mandatory,
+      storeUrl: policy.storeUrl!,
+      latestVersion: policy.latestVersion,
+      dismissedBuild: policy.latestBuild,
+    );
+  }
+
+  Future<void> _showUpdateDialog({
+    required bool mandatory,
+    required Uri storeUrl,
+    String? latestVersion,
+    int? availableBuild,
+    int? dismissedBuild,
+  }) async {
+    if (_updateDialogVisible) return;
     final navigator = ref.read(rootNavigatorKeyProvider).currentState;
     if (navigator == null || !navigator.mounted) return;
-    final mandatory = requirement == AppUpdateRequirement.mandatory;
+    final versionDescription = latestVersion != null && latestVersion.isNotEmpty
+        ? 'la versión $latestVersion'
+        : availableBuild != null
+        ? 'la compilación $availableBuild'
+        : 'la actualización disponible';
     _updateDialogVisible = true;
     await showDialog<void>(
       context: navigator.context,
@@ -119,16 +251,16 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
           ),
           content: Text(
             mandatory
-                ? 'Debes instalar la versión ${policy.latestVersion} para '
+                ? 'Debes instalar $versionDescription para '
                       'seguir utilizando Gestinem Chat.'
-                : 'Ya está disponible la versión ${policy.latestVersion} de '
+                : 'Ya está disponible $versionDescription de '
                       'Gestinem Chat. Te recomendamos actualizarla.',
           ),
           actions: [
             if (!mandatory)
               TextButton(
                 onPressed: () {
-                  _dismissedOptionalBuild = policy.latestBuild;
+                  _dismissedOptionalBuild = dismissedBuild ?? availableBuild;
                   Navigator.of(dialogContext).pop();
                 },
                 child: const Text('Más tarde'),
@@ -136,7 +268,7 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
             FilledButton.icon(
               onPressed: () {
                 if (!mandatory) Navigator.of(dialogContext).pop();
-                unawaited(_openStore(policy.storeUrl!));
+                unawaited(_openStore(storeUrl));
               },
               icon: const Icon(Icons.open_in_new),
               label: const Text('Actualizar ahora'),

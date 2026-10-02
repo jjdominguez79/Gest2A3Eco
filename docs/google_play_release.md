@@ -50,6 +50,52 @@ build/app/outputs/bundle/release/app-release.aab
 Sube ese fichero a Google Play Console. El APK generado mediante el comando
 `apk` sirve para instalación manual, no para Play Store.
 
+## Actualizaciones dentro de la aplicación
+
+Desde la compilación 40, el cliente Android consulta directamente a Google
+Play al abrirse y al volver al primer plano:
+
+- una actualización normal usa el flujo flexible de Google Play;
+- una actualización obligatoria usa el flujo inmediato y bloqueante;
+- si Play Core no puede iniciar el flujo, se ofrece la ficha pública como
+  alternativa.
+
+No hay que actualizar `MESSAGING_ANDROID_LATEST_APP_VERSION` ni
+`MESSAGING_ANDROID_LATEST_APP_BUILD` en cada publicación. Google Play determina
+la versión disponible a partir del `versionCode` publicado.
+
+El backend se conserva únicamente como interruptor de emergencia. Mantén:
+
+```text
+MESSAGING_ANDROID_UPDATE_ENABLED=true
+MESSAGING_ANDROID_MINIMUM_APP_BUILD=1
+MESSAGING_ANDROID_STORE_URL=https://play.google.com/store/apps/details?id=es.gestinem.app
+```
+
+Solo aumenta `MESSAGING_ANDROID_MINIMUM_APP_BUILD` cuando una versión antigua
+deba dejar de funcionar. Hazlo después de que la compilación mínima esté
+disponible al 100 % en producción; de lo contrario podrías bloquear a usuarios
+que todavía no pueden recibirla.
+
+### Migración inicial a la compilación 40
+
+Las compilaciones 39 e inferiores aún usan el aviso antiguo. Para conducirlas
+a la primera versión con Play In-App Updates, configura una última vez:
+
+```text
+MESSAGING_ANDROID_UPDATE_ENABLED=true
+MESSAGING_ANDROID_LATEST_APP_VERSION=0.1.25
+MESSAGING_ANDROID_LATEST_APP_BUILD=40
+MESSAGING_ANDROID_MINIMUM_APP_BUILD=40
+```
+
+Activa esos valores solo cuando la compilación 40 ya esté publicada al 100 %.
+Las versiones 40 y posteriores no dependerán de `LATEST_APP_VERSION` ni de
+`LATEST_APP_BUILD` para descubrir nuevas actualizaciones.
+
+El flujo nativo únicamente puede probarse en un dispositivo con la aplicación
+instalada desde Google Play; no funciona con una instalación local por APK.
+
 ## Comprobaciones en Play Console
 
 - El `versionCode` debe ser superior al de todas las entregas anteriores.
