@@ -250,6 +250,8 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
       ref.invalidate(internalMessagesProvider);
     }
     if (event['type'] == 'document.published') {
+      final session = ref.read(sessionProvider).valueOrNull;
+      if (session?.profile.type != UserType.client) return;
       final documentId = event['document_id']?.toString() ?? '';
       if (documentId.isEmpty) return;
       ref.invalidate(documentsProvider);

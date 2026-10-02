@@ -520,6 +520,31 @@ def test_aviso_privacidad_llega_una_vez_y_solo_a_destinatarios_seleccionados():
     asyncio.run(comprobar())
 
 
+def test_aviso_documental_solo_llega_al_cliente_titular():
+    async def comprobar():
+        bus = RealtimeHub()
+        titular = bus.subscribe(
+            audience="client", actor_id="titular", organization_id="empresa",
+        )
+        cliente_ajeno = bus.subscribe(
+            audience="client", actor_id="ajeno", organization_id="otra",
+        )
+        empleado = bus.subscribe(audience="staff", actor_id="empleado")
+
+        bus.publish(
+            {"type": "document.published"},
+            organization_id="empresa",
+            staff_ids=set(),
+        )
+        await asyncio.sleep(0)
+
+        assert titular.queue.get_nowait() == {"type": "document.published"}
+        assert cliente_ajeno.queue.empty()
+        assert empleado.queue.empty()
+
+    asyncio.run(comprobar())
+
+
 def test_privacidad_se_aplica_a_lecturas_historicas_sin_borrarlas(tmp_path, monkeypatch):
     client, _factory, staff_headers, auth, _client_id, conv_id = _setup(tmp_path, monkeypatch)
     admin = staff_headers("admin")

@@ -162,7 +162,14 @@ def _notify_document_published(db: Session, doc: ClientDocument) -> None:
         # Windows no registra tokens FCM: recibe los avisos por el WebSocket
         # de la sesion cliente y muestra una notificacion nativa en el EXE.
         from backend.api.messaging_realtime import hub
-        hub.publish(payload, organization_id=doc.organization_id)
+        # El documento pertenece al area privada del cliente. Limitar tambien
+        # de forma explicita la rama de personal: sin ``staff_ids`` el hub
+        # interpreta un evento sin canal como visible para todo el despacho.
+        hub.publish(
+            payload,
+            organization_id=doc.organization_id,
+            staff_ids=set(),
+        )
 
         client_ids = list(db.scalars(select(MessagingClient.id).where(
             MessagingClient.organization_id == doc.organization_id,

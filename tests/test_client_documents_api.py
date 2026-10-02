@@ -552,6 +552,7 @@ def test_notificacion_documental_incluye_destino_directo(monkeypatch):
     assert payloads[0][1]["type"] == "document.published"
     assert realtime[0][0]["document_id"] == "doc-1"
     assert realtime[0][1]["organization_id"] == "org-1"
+    assert realtime[0][1]["staff_ids"] == set()
 
 
 @pytest.mark.parametrize(
