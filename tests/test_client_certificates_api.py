@@ -1544,6 +1544,30 @@ def test_escritorio_lista_solicitudes_centrales_con_empresa(monkeypatch):
     assert item["client_documents_enabled"] is True
 
 
+def test_escritorio_puede_listar_solo_certificados_sin_operaciones_internas(monkeypatch):
+    client, _, _, _headers = _setup(monkeypatch)
+    certificate = client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={"certificate_type": "AEAT_CENSAL"},
+    ).json()
+    internal = client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={"certificate_type": "DEHU_SYNC"},
+    ).json()
+
+    response = client.get(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"certificate_only": True},
+    )
+
+    ids = {item["id"] for item in response.json()["items"]}
+    assert response.status_code == 200
+    assert certificate["id"] in ids
+    assert internal["id"] not in ids
+
+
 def test_escritorio_indica_area_cliente_no_activa(monkeypatch):
     monkeypatch.setenv("CLIENT_DOCUMENTS_ENABLED", "true")
     client, _, _, _headers = _setup(monkeypatch)

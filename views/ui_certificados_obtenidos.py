@@ -58,6 +58,21 @@ def _label_area_cliente(solicitud: dict) -> str:
     return "Activa" if estado else "No activa"
 
 
+def _combinar_solicitudes(*grupos: list[dict]) -> list[dict]:
+    """Une listados conservando el orden y evitando solicitudes duplicadas."""
+    resultado = []
+    vistos = set()
+    for grupo in grupos:
+        for solicitud in grupo:
+            solicitud_id = str(solicitud.get("id") or "")
+            if solicitud_id and solicitud_id in vistos:
+                continue
+            if solicitud_id:
+                vistos.add(solicitud_id)
+            resultado.append(solicitud)
+    return resultado
+
+
 class UICertificadosObtenidos(ttk.Frame):
     """Pestana global de solicitud/obtencion de certificados."""
 
@@ -276,12 +291,83 @@ class UICertificadosObtenidos(ttk.Frame):
         if not tipo:
             messagebox.showinfo("Gest2A3Eco", "Selecciona un tipo de certificado.", parent=self.winfo_toplevel())
             return
+        self._btn_solicitar.configure(state="disabled")
+        self._lbl_status.configure(text="Comprobando solicitudes anteriores del cliente...")
+        self._mostrar_progreso("Comprobando el certificado y las solicitudes anteriores...")
+
+        def _worker():
+            try:
+                backend = BackendClientService()
+                estado = backend.get_client_certificate_status(company_code=cod)
+                solicitudes = backend.list_certificate_requests(
+                    company_code=cod, limit=500,
+                )
+                self.after(
+                    0,
+                    lambda: self._preparar_solicitud_fin(
+                        cod, tipo, estado, solicitudes, None,
+                    ),
+                )
+            except Exception as exc:
+                self.after(
+                    0,
+                    lambda error=exc: self._preparar_solicitud_fin(
+                        cod, tipo, {}, [], error,
+                    ),
+                )
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _preparar_solicitud_fin(self, cod, tipo, estado, solicitudes, error=None):
+        """Resuelve duplicados con el historial completo del cliente."""
+        self._cerrar_progreso()
+        if error is not None:
+            self._btn_solicitar.configure(state="normal")
+            messagebox.showerror(
+                "No se pudo comprobar", str(error), parent=self.winfo_toplevel(),
+            )
+            self.refresh()
+            return
+        if not estado.get("configured"):
+            self._btn_solicitar.configure(state="normal")
+            messagebox.showerror(
+                "Certificado no configurado",
+                "El cliente no tiene un certificado custodiado en Azure. "
+                "Configuralo antes de crear la solicitud.",
+                parent=self.winfo_toplevel(),
+            )
+            return
+        if estado.get("status") != "valid":
+            self._btn_solicitar.configure(state="normal")
+            messagebox.showerror(
+                "Certificado no vigente",
+                "El certificado digital del cliente no esta en vigor. "
+                "Revisalo antes de crear la solicitud.",
+                parent=self.winfo_toplevel(),
+            )
+            return
         anterior = next((
-            r for r in self._cache
+            r for r in solicitudes
             if r.get("company_code") == cod
             and r.get("certificate_type") == tipo
             and r.get("status") in {"needs_action", "failed", "awaiting_issuance"}
         ), None)
+        activa = next((
+            r for r in solicitudes
+            if r.get("company_code") == cod
+            and r.get("certificate_type") == tipo
+            and r.get("status") in {"queued", "processing"}
+        ), None)
+        if activa:
+            self._btn_solicitar.configure(state="normal")
+            messagebox.showinfo(
+                "Solicitud ya en curso",
+                "Ya existe una solicitud de este certificado pendiente o en proceso. "
+                "Pulsa Actualizar para consultar su estado.",
+                parent=self.winfo_toplevel(),
+            )
+            self.refresh()
+            return
         accion = "Reintentar" if anterior else "Solicitar"
         detalle = (
             "Comprueba antes en la sede AEAT si la solicitud llego a presentarse. "
@@ -295,24 +381,19 @@ class UICertificadosObtenidos(ttk.Frame):
         if not messagebox.askyesno(f"{accion} certificado",
                                    f"{accion} '{_label_tipo(tipo)}' para el cliente {cod}?\n\n"
                                    f"{detalle}", parent=self.winfo_toplevel()):
+            self._btn_solicitar.configure(state="normal")
             return
         corregir = bool(anterior and tipo == "AEAT_CONTRATISTAS" and not anterior.get("submitted_at"))
         parametros = dict(anterior.get("parameters") or {}) if anterior else None
         if not anterior or corregir:
             parametros = self._pedir_parametros(tipo, parametros)
             if parametros is None:
+                self._btn_solicitar.configure(state="normal")
                 return
-        self._btn_solicitar.configure(state="disabled")
 
         def _worker():
             try:
                 backend = BackendClientService()
-                estado = backend.get_client_certificate_status(company_code=cod)
-                if not estado.get("configured"):
-                    raise ValueError(
-                        "El cliente no tiene un certificado custodiado en Azure. "
-                        "Configuralo antes de crear la solicitud."
-                    )
                 if anterior:
                     result = backend.retry_certificate_request(
                         anterior["id"], parameters=parametros if corregir else None,
@@ -796,10 +877,19 @@ class UICertificadosObtenidos(ttk.Frame):
             self._var_cliente.set(self._todas_empresas[0])
 
         self._lbl_status.configure(text="Consultando solicitudes centrales...")
+        codigo_seleccionado = self._cliente_sel()
 
         def _worker():
             try:
-                items = BackendClientService().list_certificate_requests(limit=500)
+                backend = BackendClientService()
+                items = backend.list_certificate_requests(
+                    limit=500, certificate_only=True,
+                )
+                if codigo_seleccionado:
+                    items_cliente = backend.list_certificate_requests(
+                        company_code=codigo_seleccionado, limit=500,
+                    )
+                    items = _combinar_solicitudes(items, items_cliente)
                 self.after(0, lambda: self._refresh_fin(items, None))
             except Exception as exc:
                 self.after(0, lambda error=exc: self._refresh_fin([], error))

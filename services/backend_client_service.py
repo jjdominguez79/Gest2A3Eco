@@ -15,6 +15,14 @@ import requests
 from utils.utilidades import load_app_config
 
 
+class BackendAPIError(ValueError):
+    """Error funcional devuelto por el backend, conservando la respuesta HTTP."""
+
+    def __init__(self, message: str, *, response=None):
+        super().__init__(message)
+        self.response = response
+
+
 class BackendClientService:
     """Comunica el escritorio con el backend para el area de clientes."""
 
@@ -40,6 +48,25 @@ class BackendClientService:
                 "La plataforma de clientes no esta configurada: revisa la URL "
                 "de integraciones y el token de este puesto."
             )
+
+    @staticmethod
+    def _raise_for_status(response) -> None:
+        """Muestra el detalle funcional del backend en lugar de la URL tecnica."""
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            try:
+                detail = response.json().get("detail")
+            except (TypeError, ValueError, AttributeError):
+                detail = ""
+            if detail:
+                if isinstance(detail, list):
+                    detail = "; ".join(
+                        str(item.get("msg") or item) if isinstance(item, dict) else str(item)
+                        for item in detail
+                    )
+                raise BackendAPIError(str(detail), response=response) from exc
+            raise
 
     # ----- Publicacion documental -----
 
@@ -210,7 +237,7 @@ class BackendClientService:
             params={"company_code": company_code},
             timeout=30,
         )
-        response.raise_for_status()
+        self._raise_for_status(response)
         return response.json()
 
     def delete_client_certificate(self, *, company_code: str) -> dict:
@@ -248,11 +275,12 @@ class BackendClientService:
             json=payload,
             timeout=30,
         )
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         return resp.json()
 
     def list_certificate_requests(
         self, *, company_code: str = "", limit: int = 200,
+        certificate_only: bool = False,
     ) -> list[dict]:
         """Lista solicitudes centrales creadas por escritorio o Flutter."""
         self._ensure_configured()
@@ -260,13 +288,15 @@ class BackendClientService:
         params = {"limit": limit}
         if company_code:
             params["company_code"] = company_code
+        if certificate_only:
+            params["certificate_only"] = True
         response = self.http.get(
             url,
             headers=self._headers(),
             params=params,
             timeout=30,
         )
-        response.raise_for_status()
+        self._raise_for_status(response)
         return list(response.json().get("items") or [])
 
     def list_dehu_notifications(
@@ -398,7 +428,7 @@ class BackendClientService:
         )
         kwargs = {"json": {"parameters": parameters}} if parameters is not None else {}
         response = self.http.post(url, headers=self._headers(), timeout=30, **kwargs)
-        response.raise_for_status()
+        self._raise_for_status(response)
         return response.json()
 
     def delete_certificate_request(self, request_id: str) -> dict:
@@ -409,7 +439,7 @@ class BackendClientService:
             f"requests/{request_id}"
         )
         response = self.http.delete(url, headers=self._headers(), timeout=30)
-        response.raise_for_status()
+        self._raise_for_status(response)
         return response.json()
 
     def download_certificate_request_document(

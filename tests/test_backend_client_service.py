@@ -102,6 +102,27 @@ def test_create_certificate_request_uses_internal_backend(monkeypatch):
     assert request.kwargs["headers"] == {"X-API-Key": "g2a3_wks_test"}
 
 
+def test_create_certificate_request_reports_backend_detail(monkeypatch):
+    rejected = MagicMock()
+    rejected.status_code = 409
+    rejected.json.return_value = {
+        "detail": "Ya existe una solicitud activa de este certificado",
+    }
+    rejected.raise_for_status.side_effect = requests.HTTPError(
+        "409 Client Error", response=rejected,
+    )
+    session = MagicMock()
+    session.post.return_value = rejected
+
+    with pytest.raises(ValueError, match="Ya existe una solicitud activa") as error:
+        _service(monkeypatch, session).create_certificate_request(
+            company_code="E00686",
+            certificate_type="AEAT_CONTRATISTAS",
+        )
+
+    assert error.value.response.status_code == 409
+
+
 def test_upload_client_certificate_uses_multipart(monkeypatch, tmp_path):
     pfx = tmp_path / "cliente.pfx"
     pfx.write_bytes(b"pfx-test")
@@ -140,6 +161,22 @@ def test_list_certificate_requests_uses_internal_backend(monkeypatch):
     request = session.get.call_args
     assert request.kwargs["params"] == {"limit": 50, "company_code": "E00006"}
     assert request.kwargs["headers"] == {"X-API-Key": "g2a3_wks_test"}
+
+
+def test_list_certificate_requests_can_exclude_internal_operations(monkeypatch):
+    response = MagicMock()
+    response.json.return_value = {"items": []}
+    session = MagicMock()
+    session.get.return_value = response
+
+    _service(monkeypatch, session).list_certificate_requests(
+        limit=500, certificate_only=True,
+    )
+
+    assert session.get.call_args.kwargs["params"] == {
+        "limit": 500,
+        "certificate_only": True,
+    }
 
 
 def test_list_dehu_mailbox_configs_uses_internal_backend(monkeypatch):

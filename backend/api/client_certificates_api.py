@@ -1051,6 +1051,7 @@ def create_internal_request(
 @router.get("/internal/requests")
 def list_internal_requests(
     company_code: str = "",
+    certificate_only: bool = False,
     limit: int = Query(default=200, ge=1, le=500),
     db: Session = Depends(_db),
     _auth: str = Depends(require_workstation_or_internal),
@@ -1077,6 +1078,10 @@ def list_internal_requests(
     if company_code.strip():
         statement = statement.where(
             MessagingOrganization.company_code == company_code.strip(),
+        )
+    if certificate_only:
+        statement = statement.where(
+            ClientCertificateRequest.certificate_type.in_(tuple(CERTIFICATE_TYPES)),
         )
     items = []
     for (
