@@ -92,7 +92,9 @@ Railway despues de verificar el primer despliegue con los nombres nuevos.
 - `AZURE_DOC_INTELLIGENCE_ENDPOINT`, `AZURE_DOC_INTELLIGENCE_KEY` y
   `AZURE_DOC_INTELLIGENCE_MODEL_ID`.
 - `AZURE_OCR_TRAINING_CONNECTION_STRING` y
-  `AZURE_OCR_TRAINING_CONTAINER` para exportaciones de aprendizaje.
+  `AZURE_OCR_TRAINING_CONTAINER` para exportaciones de aprendizaje. El
+  escritorio las envia mediante `POST /api/v1/ocr/training/examples` usando
+  su `WorkstationToken`; no accede directamente al Blob.
 - `SIGNREQUEST_TOKEN`, `SIGNREQUEST_FROM_EMAIL`,
   `SIGNREQUEST_GESTOR_EMAIL`, `SIGNREQUEST_GESTOR_TELEFONO` y
   `SIGNREQUEST_BASE_URL`.

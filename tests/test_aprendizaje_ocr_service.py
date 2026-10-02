@@ -149,3 +149,66 @@ def test_entrenamiento_local_normaliza_marcas_y_las_aplica(monkeypatch):
     assert resultado.numero_factura == "F-2026-15"
     assert resultado.motor == "azure_backend+modelo_local_v1"
     assert resultado.raw_json["modelo_local"]["tercero_nif"] == "B12345678"
+
+
+class _RespuestaBackend:
+    status_code = 200
+    text = ""
+
+    @staticmethod
+    def json():
+        return {
+            "container": "facturas-entrenamiento",
+            "blob": "gest2a3eco/E00001/1_factura.pdf",
+        }
+
+
+def test_exportacion_aprendizaje_usa_backend_y_workstation_token(monkeypatch, tmp_path):
+    documento = tmp_path / "factura.pdf"
+    documento.write_bytes(b"%PDF-1.4 ejemplo")
+
+    class GestorExportacion:
+        def __init__(self):
+            self.ejemplo = {
+                "id": 1,
+                "empresa_id": "E00001",
+                "documento_id": "doc-1",
+                "factura_id": "fac-1",
+                "origen_path": str(documento),
+                "datos_validados_json": json.dumps({"NumeroFactura": "F-1"}),
+                "marcas_json": json.dumps({"NumeroFactura": {"x": 1}}),
+                "estado": "pendiente",
+                "fecha_validacion": "2026-10-02 10:00:00",
+            }
+
+        def listar_ejemplos_aprendizaje_ocr(self, empresa_id, estado):
+            assert (empresa_id, estado) == ("E00001", "pendiente")
+            return [self.ejemplo]
+
+        def upsert_ejemplo_aprendizaje_ocr(self, ejemplo):
+            self.ejemplo.update(ejemplo)
+            return 1
+
+    llamada = {}
+
+    def fake_post(url, *, headers, data, files, timeout):
+        llamada.update({
+            "url": url, "headers": headers, "data": data,
+            "filename": files["file"][0], "timeout": timeout,
+        })
+        return _RespuestaBackend()
+
+    monkeypatch.setattr("requests.post", fake_post)
+    gestor = GestorExportacion()
+    resultado = AprendizajeOcrService(gestor, "E00001").exportar_via_backend(
+        base_url="https://backend.example/",
+        api_key="g2a3_wks_prueba",
+    )
+
+    assert resultado == {"subidos": 1, "omitidos": 0, "errores": []}
+    assert llamada["url"] == "https://backend.example/api/v1/ocr/training/examples"
+    assert llamada["headers"] == {"X-API-Key": "g2a3_wks_prueba"}
+    assert llamada["data"]["empresa_id"] == "E00001"
+    assert llamada["filename"] == "factura.pdf"
+    assert gestor.ejemplo["estado"] == "exportado"
+    assert gestor.ejemplo["modelo_destino"] == "facturas-entrenamiento"

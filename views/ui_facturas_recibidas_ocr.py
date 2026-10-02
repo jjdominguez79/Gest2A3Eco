@@ -1366,16 +1366,29 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                 messagebox.showerror("Aprendizaje OCR", str(exc), parent=dialog)
         def exportar():
             try:
-                from utils.credential_store import get_azure_storage_conn
-                _conn_str = (
-                    get_azure_storage_conn()
-                    or os.getenv("GEST2A3ECO_AZURE_STORAGE_CONNECTION_STRING", "")
+                from utils.credential_store import get_workstation_token
+                resultado = AprendizajeOcrService(
+                    self._gestor, self._codigo,
+                ).exportar_via_backend(
+                    base_url=str(cfg.get("integrations_api_url") or ""),
+                    api_key=(
+                        get_workstation_token()
+                        or os.getenv("GEST2A3ECO_WORKSTATION_TOKEN", "")
+                    ),
                 )
-                resultado = AprendizajeOcrService(self._gestor, self._codigo).exportar_a_blob(
-                    connection_string=_conn_str,
-                    container=str(cfg.get("azure_ocr_training_container") or "facturas-entrenamiento"),
+                detalle_errores = ""
+                if resultado.get("errores"):
+                    detalle_errores = "\n\nIncidencias:\n- " + "\n- ".join(
+                        resultado["errores"][:5]
+                    )
+                messagebox.showinfo(
+                    "Aprendizaje OCR",
+                    f"Documentos subidos: {resultado['subidos']}\n"
+                    f"Omitidos: {resultado['omitidos']}\n\n"
+                    "Ahora revisa y etiqueta los documentos en "
+                    f"Document Intelligence Studio.{detalle_errores}",
+                    parent=dialog,
                 )
-                messagebox.showinfo("Aprendizaje OCR", f"Documentos subidos: {resultado['subidos']}\nOmitidos: {resultado['omitidos']}\n\nAhora revisa y etiqueta los PDF en Document Intelligence Studio.", parent=dialog)
                 dialog.destroy()
             except Exception as exc:
                 messagebox.showerror("Aprendizaje OCR", str(exc), parent=dialog)

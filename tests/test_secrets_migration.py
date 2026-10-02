@@ -174,6 +174,69 @@ def test_ocr_endpoint_con_azure_mock_devuelve_resultado(monkeypatch):
     assert "AZURE" not in response_text
 
 
+def test_ocr_training_endpoint_delega_el_blob_en_backend(monkeypatch):
+    """El puesto envia el ejemplo; solo el backend conoce el Blob de Azure."""
+    monkeypatch.setenv("DGT_DATABASE_URL", "postgresql+psycopg://u:p@h:5432/db")
+    monkeypatch.setenv("DGT_INTERNAL_API_KEY", "test-internal-key")
+
+    llamada = {}
+
+    class StoragePrueba:
+        def upload_example(self, **kwargs):
+            llamada.update(kwargs)
+            return {
+                "container": "facturas-entrenamiento",
+                "blob": "gest2a3eco/E00001/7_factura.pdf",
+                "metadata_blob": "gest2a3eco/E00001/_metadata/7.json",
+            }
+
+    import backend.api.ocr_training_service as training_module
+    monkeypatch.setattr(training_module, "OcrTrainingStorage", StoragePrueba)
+
+    from fastapi.testclient import TestClient
+    from backend.api.app import app
+
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post(
+        "/api/v1/ocr/training/examples",
+        headers={"X-API-Key": "test-internal-key"},
+        data={
+            "empresa_id": "E00001",
+            "ejemplo_id": "7",
+            "metadata_json": '{"factura_id":"fac-1"}',
+        },
+        files={"file": ("factura.pdf", b"%PDF-1.4", "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["container"] == "facturas-entrenamiento"
+    assert llamada["empresa_id"] == "E00001"
+    assert llamada["ejemplo_id"] == "7"
+    assert llamada["metadata"] == {"factura_id": "fac-1"}
+    assert llamada["content"] == b"%PDF-1.4"
+
+
+def test_ocr_training_endpoint_sin_blob_configurado_devuelve_503(monkeypatch):
+    monkeypatch.setenv("DGT_DATABASE_URL", "postgresql+psycopg://u:p@h:5432/db")
+    monkeypatch.setenv("DGT_INTERNAL_API_KEY", "test-internal-key")
+    monkeypatch.delenv("AZURE_OCR_TRAINING_CONNECTION_STRING", raising=False)
+
+    from fastapi.testclient import TestClient
+    from backend.api.app import app
+
+    response = TestClient(app, raise_server_exceptions=False).post(
+        "/api/v1/ocr/training/examples",
+        headers={"X-API-Key": "test-internal-key"},
+        data={"empresa_id": "E00001", "ejemplo_id": "7", "metadata_json": "{}"},
+        files={"file": ("factura.pdf", b"%PDF-1.4", "application/pdf")},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "El almacenamiento de aprendizaje OCR no esta configurado."
+    )
+
+
 def test_integrations_status_incluye_campo_ocr(monkeypatch):
     """GET /api/v1/integrations/status debe incluir el campo 'ocr'."""
     monkeypatch.setenv("DGT_DATABASE_URL", "postgresql+psycopg://u:p@h:5432/db")
@@ -192,6 +255,7 @@ def test_integrations_status_incluye_campo_ocr(monkeypatch):
     data = response.json()
     assert "ocr" in data
     assert data["ocr"] is True
+    assert "ocr_training" in data
 
 
 # ── Workstation auth ──────────────────────────────────────────────────────────

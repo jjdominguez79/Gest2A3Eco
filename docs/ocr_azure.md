@@ -75,14 +75,19 @@ El motor tambien reconoce los nombres del modelo personalizado:
 
 Las correcciones hechas en la aplicacion se auditan, pero no reentrenan Azure
 automaticamente. Cuando una factura se valida,
-`services/ocr/aprendizaje_service.py` puede registrar una copia privada y sus
-datos estructurados en `ocr_aprendizaje_ejemplos`. El conjunto puede exportarse
-a un contenedor Blob de entrenamiento configurado mediante:
+`services/ocr/aprendizaje_service.py` registra sus datos estructurados y la
+ruta del original en `ocr_aprendizaje_ejemplos`. Al solicitar la exportacion,
+el escritorio envia cada ejemplo al backend autenticandose con el
+`WorkstationToken`; solo el backend accede al contenedor Blob configurado con:
 
 ```text
 AZURE_OCR_TRAINING_CONNECTION_STRING
 AZURE_OCR_TRAINING_CONTAINER
 ```
+
+El escritorio no carga, conserva ni usa la cadena de conexion Azure. El
+endpoint `POST /api/v1/ocr/training/examples` sube el documento y sus metadatos
+al Blob. Esta operacion prepara el conjunto, pero no inicia un entrenamiento.
 
 El entrenamiento sigue realizandose en Azure Document Intelligence Studio:
 

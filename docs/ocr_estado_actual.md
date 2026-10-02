@@ -39,8 +39,10 @@ emitidas sirve para documentos externos entregados por el cliente.
 - `services/ocr_contabilidad_service.py`: proyeccion contable de recibidas.
 - `services/ocr_emitidas_contabilidad_service.py`: proyeccion de emitidas
   externas al modulo de Contabilidad.
-- `services/ocr/aprendizaje_service.py`: ejemplos validados y exportacion privada
-  a Azure Blob para entrenamiento.
+- `services/ocr/aprendizaje_service.py`: ejemplos validados y envio autenticado
+  al backend para preparar el entrenamiento.
+- `backend/api/ocr_training_service.py`: acceso privado del backend al Blob de
+  aprendizaje; ninguna credencial Azure llega al escritorio.
 - `views/ui_facturas_recibidas_ocr.py`: captura, revision y validacion.
 
 La antigua ruta `services/ocr_service.py`, `services/ocr_provider.py`,

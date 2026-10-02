@@ -9,7 +9,7 @@ Servicios registrados:
   - Gest2A3Eco/WorkstationToken    token de autenticacion del puesto
   - Gest2A3Eco/IntegrationsApiKey  clave de API del backend de integraciones
   - Gest2A3Eco/AzureDocIntelligence clave legacy de Azure (solo para eliminarla)
-  - Gest2A3Eco/AzureStorage        cadena de conexion Azure Storage
+  - Gest2A3Eco/AzureStorage        cadena legacy de Azure (solo para eliminarla)
   - Gest2A3Eco/MessagingApiKey     clave de API de mensajeria
   - Gest2A3Eco/MessagingDevice     token de dispositivo de mensajeria
   - Gest2A3Eco/AdminPassword       contrasena de administrador inicial
@@ -292,20 +292,10 @@ def delete_azure_doc_key() -> None:
     _delete_single(SERVICE_AZURE_DOC_KEY, USERNAME_AZURE_DOC_KEY)
 
 
-# ── Azure Storage connection string ──────────────────────────────────────────
-
-def store_azure_storage_conn(conn: str) -> bool:
-    """Guarda la cadena de conexion de Azure Storage."""
-    return _store_single(SERVICE_AZURE_STORAGE, USERNAME_AZURE_STORAGE, conn)
-
-
-def get_azure_storage_conn() -> str | None:
-    """Recupera la cadena de conexion de Azure Storage."""
-    return _get_single(SERVICE_AZURE_STORAGE, USERNAME_AZURE_STORAGE)
-
+# ── Azure Storage connection string legacy ─────────────────────────────────--
 
 def delete_azure_storage_conn() -> None:
-    """Elimina la cadena de conexion de Azure Storage."""
+    """Elimina una cadena Azure dejada por versiones antiguas del escritorio."""
     _delete_single(SERVICE_AZURE_STORAGE, USERNAME_AZURE_STORAGE)
 
 

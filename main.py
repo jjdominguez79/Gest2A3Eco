@@ -477,11 +477,10 @@ def main():
 
     from utils.credential_store import (
         store_workstation_token,
-        store_azure_storage_conn,
         store_messaging_device_token,
         store_admin_password, store_desmarcar_password,
         delete_integrations_api_key, delete_azure_doc_key,
-        delete_messaging_api_key,
+        delete_azure_storage_conn, delete_messaging_api_key,
     )
 
     def _migrar_secreto(config_key: str, store_fn, label: str) -> bool:
@@ -523,7 +522,6 @@ def main():
     _any_migrated = False
     for _cfg_key, _store_fn, _label in [
         ("workstation_token",               store_workstation_token,     "workstation_token"),
-        ("azure_storage_connection_string", store_azure_storage_conn,    "azure_storage_connection_string"),
         ("messaging_device_token",         store_messaging_device_token, "messaging_device_token"),
         ("admin_password",                 store_admin_password,         "admin_password"),
         ("initial_admin_password",         store_admin_password,         "initial_admin_password"),
@@ -539,6 +537,7 @@ def main():
         ("integrations_api_key",       "integrations_api_key"),
         ("dgt_api_key",                "dgt_api_key"),
         ("azure_doc_intelligence_key", "azure_doc_intelligence_key"),
+        ("azure_storage_connection_string", "azure_storage_connection_string"),
     ]:
         if _limpiar_secreto_legacy(_legacy_key, _legacy_label):
             _any_migrated = True
@@ -550,6 +549,10 @@ def main():
         pass
     try:
         delete_azure_doc_key()
+    except Exception:
+        pass
+    try:
+        delete_azure_storage_conn()
     except Exception:
         pass
 

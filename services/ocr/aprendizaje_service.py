@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 import json
-import os
+import mimetypes
 import re
-import shutil
 import statistics
 import uuid
 from pathlib import Path
@@ -328,61 +327,71 @@ class AprendizajeOcrService:
         except ValueError:
             return None
 
-    def exportar_a_blob(self, *, connection_string: str, container: str, prefijo: str = "gest2a3eco") -> dict:
-        """Sube documentos validados y un manifiesto auditable al contenedor.
-
-        Document Intelligence Studio permite revisar/etiquetar estos PDF desde
-        el mismo contenedor. No marca campos silenciosamente en produccion.
-        """
-        if (not connection_string or connection_string.startswith("CADENA_DE_CONEXION")
-                or not container):
+    def exportar_via_backend(
+        self, *, base_url: str, api_key: str, timeout: int = 120,
+    ) -> dict:
+        """Envia ejemplos al backend, unico propietario de las claves Azure."""
+        base_url = str(base_url or "").strip().rstrip("/")
+        api_key = str(api_key or "").strip()
+        if not base_url or not api_key:
             raise ValueError(
-                "Falta azure_storage_connection_string en config.local.json. "
-                "Debe ser la cadena real de la cuenta gest2a3ocrtrain260805, no el texto de ejemplo."
+                "Faltan integrations_api_url o el WorkstationToken del puesto."
             )
-        try:
-            from azure.storage.blob import BlobServiceClient, ContentSettings
-        except ImportError as exc:
-            raise RuntimeError("Instala azure-storage-blob para exportar el aprendizaje a Azure.") from exc
         ejemplos = self._gestor.listar_ejemplos_aprendizaje_ocr(self._empresa_id, "pendiente")
         if not ejemplos:
-            return {"subidos": 0, "omitidos": 0, "manifiesto": ""}
-        cliente = BlobServiceClient.from_connection_string(connection_string)
-        cont = cliente.get_container_client(container)
-        try:
-            cont.create_container()
-        except Exception as exc:
-            # El contenedor ya existe: las versiones antiguas del SDK no
-            # admiten exist_ok en create_container().
-            if ("ContainerAlreadyExists" not in str(exc)
-                    and "ResourceExistsError" not in type(exc).__name__
-                    and "already exists" not in str(exc).lower()):
-                raise
-        manifiesto = []
+            return {"subidos": 0, "omitidos": 0, "errores": []}
+
+        import requests
+
         subidos = 0
+        omitidos = 0
+        errores = []
         for ejemplo in ejemplos:
             origen = Path(str(ejemplo.get("origen_path") or ""))
             if not origen.is_file():
+                omitidos += 1
+                errores.append(f"Ejemplo {ejemplo.get('id')}: no se encuentra el documento.")
                 continue
-            nombre = re.sub(r"[^A-Za-z0-9_.-]+", "_", origen.name)
-            blob_name = f"{prefijo}/{self._empresa_id}/{ejemplo['id']}_{nombre}"
-            with origen.open("rb") as fh:
-                cont.upload_blob(blob_name, fh, overwrite=True, content_settings=ContentSettings(content_type="application/pdf"))
-            manifiesto.append({
-                "ejemplo_id": ejemplo["id"], "documento_id": ejemplo.get("documento_id"),
-                "blob": blob_name, "campos": json.loads(ejemplo.get("datos_validados_json") or "{}"),
+            metadata = {
+                "documento_id": ejemplo.get("documento_id"),
+                "factura_id": ejemplo.get("factura_id"),
+                "campos": json.loads(ejemplo.get("datos_validados_json") or "{}"),
                 "marcas": json.loads(ejemplo.get("marcas_json") or "{}"),
-            })
-            subidos += 1
-        manifest_name = f"{prefijo}/{self._empresa_id}/manifest.jsonl"
-        datos = "".join(json.dumps(fila, ensure_ascii=True) + "\n" for fila in manifiesto).encode("utf-8")
-        cont.upload_blob(manifest_name, datos, overwrite=True, content_settings=ContentSettings(content_type="application/json"))
-        ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        for ejemplo in ejemplos:
-            if any(int(f["ejemplo_id"]) == int(ejemplo["id"]) for f in manifiesto):
+                "fecha_validacion": ejemplo.get("fecha_validacion"),
+            }
+            content_type = mimetypes.guess_type(origen.name)[0] or "application/octet-stream"
+            try:
+                with origen.open("rb") as fh:
+                    response = requests.post(
+                        f"{base_url}/api/v1/ocr/training/examples",
+                        headers={"X-API-Key": api_key},
+                        data={
+                            "empresa_id": self._empresa_id,
+                            "ejemplo_id": str(ejemplo["id"]),
+                            "metadata_json": json.dumps(metadata, ensure_ascii=True),
+                        },
+                        files={"file": (origen.name, fh, content_type)},
+                        timeout=timeout,
+                    )
+                if response.status_code >= 400:
+                    try:
+                        detalle = response.json().get("detail", response.text)
+                    except Exception:
+                        detalle = response.text
+                    raise RuntimeError(
+                        f"Backend OCR error {response.status_code}: {detalle}"
+                    )
+                resultado = response.json()
                 ejemplo["estado"] = "exportado"
-                ejemplo["modelo_destino"] = container
-                ejemplo["fecha_exportacion"] = ahora
-                ejemplo["notas"] = "Exportado a Azure Blob; pendiente de etiquetado/entrenamiento en Studio."
+                ejemplo["modelo_destino"] = str(resultado.get("container") or "")
+                ejemplo["fecha_exportacion"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                ejemplo["notas"] = (
+                    "Exportado por el backend a Azure Blob; pendiente de "
+                    "etiquetado/entrenamiento en Studio."
+                )
                 self._gestor.upsert_ejemplo_aprendizaje_ocr(ejemplo)
-        return {"subidos": subidos, "omitidos": len(ejemplos) - subidos, "manifiesto": manifest_name}
+                subidos += 1
+            except Exception as exc:
+                omitidos += 1
+                errores.append(f"Ejemplo {ejemplo.get('id')}: {exc}")
+        return {"subidos": subidos, "omitidos": omitidos, "errores": errores}

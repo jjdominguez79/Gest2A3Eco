@@ -92,10 +92,11 @@ Los servicios activos definidos por `utils/credential_store.py` incluyen:
 | `Gest2A3Eco/MessagingDevice` | Token del dispositivo de mensajeria |
 | `Gest2A3Eco/DesmarcarGeneradas` | Credencial de la operacion protegida |
 
-La antigua entrada `Gest2A3Eco/AzureDocIntelligence` solo se conserva como
-identificador para borrar credenciales dejadas por versiones anteriores. Azure
-Storage sigue usandose en la exportacion controlada de ejemplos de aprendizaje.
-El OCR se delega siempre al backend y su clave nunca se carga en el escritorio.
+Las antiguas entradas `Gest2A3Eco/AzureDocIntelligence` y
+`Gest2A3Eco/AzureStorage` solo se conservan como identificadores para borrar
+credenciales dejadas por versiones anteriores. Tanto el analisis OCR como la
+exportacion al Blob de aprendizaje se delegan al backend; ninguna clave Azure
+se carga en el escritorio.
 
 Para provisionar interactivamente un puesto:
 

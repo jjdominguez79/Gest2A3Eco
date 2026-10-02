@@ -83,10 +83,14 @@ def test_normalize_elimina_configuracion_ocr_local_legacy():
         "ocr_motor_activo": "azure",
         "azure_doc_intelligence_endpoint": "https://azure.example.com",
         "azure_doc_intelligence_model_id": "modelo-antiguo",
+        "azure_storage_connection_string": "DefaultEndpointsProtocol=https;...",
+        "azure_ocr_training_container": "facturas-antiguas",
     })
     assert "ocr_motor_activo" not in cfg
     assert "azure_doc_intelligence_endpoint" not in cfg
     assert "azure_doc_intelligence_model_id" not in cfg
+    assert "azure_storage_connection_string" not in cfg
+    assert "azure_ocr_training_container" not in cfg
 
 
 # ===========================================================================

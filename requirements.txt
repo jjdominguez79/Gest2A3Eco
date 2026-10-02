@@ -10,7 +10,6 @@ tkinterdnd2
 pywin32
 requests
 msal
-azure-storage-blob
 packaging
 cryptography
 psycopg[binary]

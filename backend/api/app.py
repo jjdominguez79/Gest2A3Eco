@@ -595,6 +595,10 @@ def integrations_status():
         "firma_gestor_email": cfg.signrequest_gestor_email or cfg.signrequest_from_email,
         "firma_gestor_telefono": cfg.signrequest_gestor_telefono,
         "ocr": bool(cfg.azure_doc_intelligence_key),
+        "ocr_training": bool(
+            cfg.azure_ocr_training_connection_string
+            and cfg.azure_ocr_training_container
+        ),
     }
 
 
@@ -621,6 +625,50 @@ async def ocr_analyze_invoice(
         raise HTTPException(503, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(502, "Error en el servicio OCR") from exc
+
+
+@app.post("/api/v1/ocr/training/examples", dependencies=[workstation_or_internal])
+async def ocr_upload_training_example(
+    empresa_id: str = Form(...),
+    ejemplo_id: str = Form(...),
+    metadata_json: str = Form("{}"),
+    file: UploadFile = File(...),
+):
+    """Sube un ejemplo validado al Blob de entrenamiento gestionado por Railway."""
+    if not empresa_id.strip() or not ejemplo_id.strip():
+        raise HTTPException(400, "Empresa y ejemplo son obligatorios")
+    if len(metadata_json.encode("utf-8")) > 1024 * 1024:
+        raise HTTPException(413, "Los metadatos de aprendizaje superan 1 MB")
+    content = await file.read()
+    if len(content) > _MAX_OCR_BYTES:
+        raise HTTPException(413, "El fichero supera el limite de 20 MB")
+    ct = (file.content_type or "").split(";")[0].strip().lower()
+    ext = Path(file.filename or "").suffix.lower()
+    if ct not in _ALLOWED_OCR_MIMETYPES and ext not in {
+        ".pdf", ".jpg", ".jpeg", ".png", ".tif", ".tiff",
+    }:
+        raise HTTPException(415, "Tipo de fichero no admitido para aprendizaje OCR")
+    try:
+        metadata = json.loads(metadata_json or "{}")
+        if not isinstance(metadata, dict):
+            raise ValueError("Los metadatos deben ser un objeto JSON.")
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(400, "Metadatos de aprendizaje OCR no validos") from exc
+    try:
+        from backend.api.ocr_training_service import OcrTrainingStorage
+
+        return OcrTrainingStorage().upload_example(
+            content=content,
+            filename=file.filename or "documento.pdf",
+            content_type=ct or "application/octet-stream",
+            empresa_id=empresa_id,
+            ejemplo_id=ejemplo_id,
+            metadata=metadata,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, "Error al exportar el ejemplo OCR") from exc
 
 
 @app.post("/api/v1/integrations/signrequest/send", dependencies=[workstation_or_internal])

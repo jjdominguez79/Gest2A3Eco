@@ -218,6 +218,8 @@ def _normalize_config(data: dict) -> dict:
     out.pop("ocr_motor_activo", None)
     out.pop("azure_doc_intelligence_endpoint", None)
     out.pop("azure_doc_intelligence_model_id", None)
+    out.pop("azure_storage_connection_string", None)
+    out.pop("azure_ocr_training_container", None)
     # URL del backend de produccion Railway. Se aplica cuando el campo esta
     # vacio (instalacion nueva o legacy sin configurar). Un valor ya existente
     # no se sobreescribe, de modo que puestos con URL personalizada no se ven
