@@ -89,14 +89,22 @@ publicación accidental.
 Equivalente Bash:
 
 ```bash
-GOOGLE_PLAY_CREDENTIALS_PATH=/credenciales/gestinem-play.json \
-PLAY_UPLOAD=1 PLAY_TRACK=production \
-bash tool/build_production.sh android
+bash tool/build_production.sh android \
+  --upload-play \
+  --play-track production \
+  --play-credentials /credenciales/gestinem-play.json
 
-GOOGLE_PLAY_CREDENTIALS_PATH=/credenciales/gestinem-play.json \
-PLAY_UPLOAD=1 PLAY_TRACK=production PLAY_SUBMIT_REVIEW=1 \
-bash tool/build_production.sh android
+bash tool/build_production.sh android \
+  --upload-play \
+  --play-track production \
+  --submit-play-review \
+  --play-credentials /credenciales/gestinem-play.json
 ```
+
+Las variables `PLAY_UPLOAD`, `PLAY_TRACK`, `PLAY_SUBMIT_REVIEW` y
+`GOOGLE_PLAY_CREDENTIALS_PATH` siguen admitidas para CI y compatibilidad.
+El script también acepta los nombres PowerShell `-UploadPlay`, `-PlayTrack`,
+`-SubmitPlayReview` y `-PlayCredentialsPath` cuando se invoca desde Bash.
 
 La credencial nunca debe guardarse en el repositorio. Para CI es preferible una
 credencial temporal obtenida mediante Workload Identity Federation.

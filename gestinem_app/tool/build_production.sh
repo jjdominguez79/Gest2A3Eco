@@ -4,7 +4,7 @@ set -euo pipefail
 API_BASE_URL="${API_BASE_URL:-https://gest2a3eco-production.up.railway.app}"
 ENVIRONMENT="${ENVIRONMENT:-production}"
 FIREBASE_WEB_VAPID_KEY="${FIREBASE_WEB_VAPID_KEY:-}"
-PLATFORM="${1:-}"
+PLATFORM=""
 SKIP_CHECKS="${SKIP_CHECKS:-0}"
 ALLOW_NON_MAIN="${ALLOW_NON_MAIN:-0}"
 SHARED_INSTALLER_DIRECTORY="${SHARED_INSTALLER_DIRECTORY:-${GEST2A3ECO_DOCUMENT_REPOSITORY_DIR:-//GestinemMain/Doc_Compartidos/Gest2A3Eco}}"
@@ -15,7 +15,7 @@ GOOGLE_PLAY_CREDENTIALS_PATH="${GOOGLE_PLAY_CREDENTIALS_PATH:-}"
 
 usage() {
   cat <<'EOF'
-Uso: bash tool/build_production.sh <android|apk|web|windows|ios|macos>
+Uso: bash tool/build_production.sh <android|apk|web|windows|ios|macos> [opciones]
 
 Comandos:
   android   genera el AAB firmado para Google Play
@@ -24,6 +24,20 @@ Comandos:
   windows   genera el instalador y lo copia a Documentos compartidos
   ios       genera el IPA para App Store Connect (solo macOS)
   macos     genera la aplicación macOS (solo macOS)
+
+Opciones Android:
+  --upload-play, -UploadPlay
+      Sube el AAB generado a Google Play.
+  --play-track <pista>, -PlayTrack <pista>
+      Pista: internal, alpha, beta o production.
+  --submit-play-review, -SubmitPlayReview
+      Envía los cambios de Google Play a revisión.
+  --play-credentials <ruta>, -PlayCredentialsPath <ruta>
+      Credencial JSON de Google Play situada fuera del repositorio.
+
+Opciones generales:
+  --skip-checks, -SkipChecks
+  --allow-non-main, -AllowNonMain
 
 Variables opcionales:
   API_BASE_URL=https://api.gestinem.es
@@ -38,7 +52,51 @@ Variables opcionales:
 EOF
 }
 
-[[ -n "$PLATFORM" ]] || { usage; exit 2; }
+if [[ "${1:-}" == '--help' || "${1:-}" == '-h' ]]; then
+  usage
+  exit 0
+fi
+
+[[ $# -gt 0 ]] || { usage; exit 2; }
+PLATFORM="$1"
+shift
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --upload-play|-UploadPlay)
+      PLAY_UPLOAD=1
+      shift
+      ;;
+    --play-track|-PlayTrack)
+      [[ $# -ge 2 ]] || { echo "ERROR: $1 requiere una pista."; exit 2; }
+      PLAY_TRACK="$2"
+      shift 2
+      ;;
+    --submit-play-review|-SubmitPlayReview)
+      PLAY_SUBMIT_REVIEW=1
+      shift
+      ;;
+    --play-credentials|-PlayCredentialsPath)
+      [[ $# -ge 2 ]] || { echo "ERROR: $1 requiere una ruta."; exit 2; }
+      GOOGLE_PLAY_CREDENTIALS_PATH="$2"
+      shift 2
+      ;;
+    --skip-checks|-SkipChecks)
+      SKIP_CHECKS=1
+      shift
+      ;;
+    --allow-non-main|-AllowNonMain)
+      ALLOW_NON_MAIN=1
+      shift
+      ;;
+    *)
+      echo "ERROR: opción no reconocida: $1"
+      usage
+      exit 2
+      ;;
+  esac
+done
+
 case "$PLATFORM" in
   android|apk|web|windows|ios|macos) ;;
   *) usage; exit 2 ;;
