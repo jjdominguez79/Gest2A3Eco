@@ -1,6 +1,7 @@
 from controllers.ui_control_facturas_global_controller import (
     ControlFacturasGlobalController,
 )
+from models.gestor_base import GestorBase
 from models.auth import CompanyPermission, UserRecord, UserRole, UserSession
 from services.auth_service import AuthorizationService
 from services.empresa_service import EmpresaService
@@ -39,6 +40,27 @@ class _Gestor:
         ]
 
 
+def test_control_recibidas_parte_del_archivo_definitivo():
+    class Cursor:
+        def fetchall(self):
+            return []
+
+    class Connection:
+        def execute(self, sql, params=()):
+            self.sql = " ".join(sql.split())
+            self.params = params
+            return Cursor()
+
+    connection = Connection()
+    gestor = object.__new__(GestorBase)
+    gestor.conn = connection
+
+    assert gestor.listar_control_facturas_global(["E00001"]) == []
+    assert "FROM documentos_archivo a" in connection.sql
+    assert "a.categoria_id='facturas_recibidas'" in connection.sql
+    assert "a.id AS documento_archivo_id" in connection.sql
+
+
 class _GestorEmpresas:
     security = None
 
@@ -75,6 +97,21 @@ def test_control_incorpora_responsable_de_la_empresa():
     assert nombres == {"E00001": "Alfa", "E00002": "Beta"}
     assert rows[0]["responsable"] == "Ana"
     assert rows[1]["responsable"] == ""
+
+
+def test_control_abre_cada_factura_en_su_etapa_del_flujo():
+    destino = ControlFacturasGlobalController._modulo_destino
+
+    assert destino({"tipo": "emitida"}) == "facturacion"
+    assert destino({"tipo": "recibida", "ocr_documento_id": ""}) == "gestion_documental"
+    assert destino({
+        "tipo": "recibida", "ocr_documento_id": "ocr-1",
+        "estado_contable": "pendiente",
+    }) == "ocr"
+    assert destino({
+        "tipo": "recibida", "ocr_documento_id": "ocr-1",
+        "estado_contable": "pendiente_contabilizar",
+    }) == "contabilidad"
 
 
 def _row(codigo, ejercicio, responsable, tipo="emitida", **extra):

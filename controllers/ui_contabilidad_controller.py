@@ -14,6 +14,9 @@ from services.estado_facturas_recibidas import (
     EXPORTADA_A3,
 )
 from services.import_a3_empresa import leer_numero_asiento_desde_a3
+from services.impresion_facturas_recibidas_service import (
+    ImpresionFacturasRecibidasService,
+)
 
 
 class UIContabilidadController:
@@ -23,6 +26,7 @@ class UIContabilidadController:
         self._ejercicio = ejercicio
         self._view = view
         self._selected_id = None
+        self._impresion = ImpresionFacturasRecibidasService(gestor)
 
     def refresh(self, select_id: str | None = None):
         refresh_async = getattr(self._view, "refresh_async", None)
@@ -299,6 +303,42 @@ class UIContabilidadController:
             f"{len(docs_preparados)} factura(s) exportadas.\nFichero generado:\n{save_path}",
         )
 
+    def imprimir_facturas(self):
+        seleccionados = self._selected_received_ids()
+        if not seleccionados:
+            self._view.show_warning(
+                "Gest2A3Eco", "Selecciona al menos una factura para imprimir.",
+            )
+            return
+        documento_ids = []
+        sin_archivo = []
+        for documento_id in seleccionados:
+            doc = self._gestor.get_factura_recibida_doc(documento_id) or {}
+            archivo_id = str(doc.get("documento_archivo_id") or "").strip()
+            if archivo_id:
+                documento_ids.append(archivo_id)
+            else:
+                sin_archivo.append(str(doc.get("numero_factura") or documento_id))
+        resultado = self._impresion.imprimir(
+            documento_ids, usuario=self._usuario_actual(),
+        )
+        if resultado.impresas:
+            self.refresh(select_id=seleccionados[0])
+        partes = []
+        if resultado.impresas:
+            partes.append(f"Enviadas a imprimir: {len(resultado.impresas)}")
+        omitidas = [*sin_archivo, *resultado.omitidas]
+        if omitidas:
+            partes.append("Sin archivo imprimible:\n- " + "\n- ".join(omitidas[:8]))
+        if resultado.errores:
+            partes.append("Errores:\n- " + "\n- ".join(resultado.errores[:8]))
+        if resultado.impresas and not resultado.errores and not omitidas:
+            self._view.show_info("Imprimir facturas", "\n\n".join(partes))
+        else:
+            self._view.show_warning(
+                "Imprimir facturas", "\n\n".join(partes) or "No se imprimio ninguna factura.",
+            )
+
     def devolver_a_ocr(self):
         """Retira de Contabilidad y devuelve a Errores OCR para corregir."""
         seleccionados = self._view.get_selected_received_ids()
@@ -353,7 +393,8 @@ class UIContabilidadController:
         seleccionados = self._view.get_selected_received_ids()
         if not seleccionados:
             self._view.show_warning(
-                "Gest2A3Eco", "Selecciona al menos una factura exportada a A3."
+                "Gest2A3Eco",
+                "Selecciona al menos una factura contabilizada o pendiente.",
             )
             return
         actualizadas, sin_asiento = [], []
@@ -361,7 +402,7 @@ class UIContabilidadController:
         for documento_id in seleccionados:
             doc = self._gestor.get_factura_recibida_doc(documento_id)
             if not doc or doc.get("estado_contable") not in {
-                EXPORTADA_A3, CONTABILIZADA,
+                "pendiente_contabilizar", EXPORTADA_A3, CONTABILIZADA,
             }:
                 sin_asiento.append(
                     str((doc or {}).get("numero_factura") or documento_id)
@@ -377,19 +418,35 @@ class UIContabilidadController:
             asiento = leer_numero_asiento_desde_a3(
                 codigo_a3, int(self._ejercicio), numero, descripcion, mes=mes,
             )
-            if asiento and self._gestor.actualizar_numero_asiento_factura_recibida(
-                self._codigo, documento_id, asiento,
-            ):
-                actualizadas.append(f"{numero} -> asiento {asiento}")
-            else:
-                sin_asiento.append(numero or documento_id)
+            if asiento:
+                if doc.get("estado_contable") == "pendiente_contabilizar":
+                    archivo_id = str(doc.get("documento_archivo_id") or "").strip()
+                    guardado = bool(archivo_id) and bool(
+                        self._gestor.cambiar_estado_contable_documentos(
+                            [archivo_id],
+                            CONTABILIZADA_MANUAL,
+                            usuario=self._usuario_actual(),
+                            fecha_contable="",
+                            numero_asiento=str(asiento),
+                            observaciones="Asiento capturado automaticamente en A3ECO",
+                        )
+                    )
+                else:
+                    guardado = self._gestor.actualizar_numero_asiento_factura_recibida(
+                        self._codigo, documento_id, asiento,
+                    )
+                if guardado:
+                    actualizadas.append(f"{numero} -> asiento {asiento}")
+                    continue
+            sin_asiento.append(numero or documento_id)
         self.refresh(select_id=seleccionados[0] if actualizadas else None)
         partes = []
         if actualizadas:
             partes.append("Asientos capturados:\n" + "\n".join(actualizadas))
         if sin_asiento:
             partes.append(
-                "No encontradas en A3ECO (importa primero el suenlace):\n"
+                "No encontradas en A3ECO (importa el suenlace o contabiliza "
+                "manualmente antes de comprobar):\n"
                 + "\n".join(sin_asiento)
             )
         self._view.show_info("Gest2A3Eco", "\n\n".join(partes) or "Sin cambios.")
@@ -397,6 +454,10 @@ class UIContabilidadController:
     def _codigo_empresa_a3(self) -> str:
         digits = "".join(ch for ch in str(self._codigo or "") if ch.isdigit())
         return f"E{(digits.zfill(5) if digits else '00000')[:5]}"
+
+    def _usuario_actual(self) -> str:
+        session = getattr(self._view, "session", None)
+        return str(getattr(getattr(session, "user", None), "nombre", "") or "")
 
     @staticmethod
     def _month_from_date(value) -> int | None:

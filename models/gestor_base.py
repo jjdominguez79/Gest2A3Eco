@@ -3131,23 +3131,60 @@ class GestorBase:
                 COALESCE(generada, 0) AS generada, COALESCE(fecha_generacion, '') AS fecha_generacion,
                 COALESCE(numero_asiento, '') AS numero_asiento,
                 '' AS estado_validacion, '' AS estado_ocr, lineas_json,
-                COALESCE(borrador, 0) AS borrador, NULL AS total
+                COALESCE(borrador, 0) AS borrador, NULL AS total,
+                NULL AS documento_archivo_id, 0 AS veces_impresa,
+                NULL AS ocr_documento_id
             FROM facturas_emitidas_docs
             WHERE codigo_empresa IN ({marks}) AND COALESCE(borrador, 0)=0
             UNION ALL
             SELECT
-                'recibida' AS tipo, id, codigo_empresa, ejercicio,
-                COALESCE(numero_factura, '') AS numero_factura,
-                COALESCE(fecha_factura, fecha_asiento, '') AS fecha,
-                COALESCE(proveedor_nombre, '') AS tercero, COALESCE(proveedor_nif, '') AS nif,
-                COALESCE(descripcion, '') AS descripcion, estado_contable,
-                COALESCE(generada, 0) AS generada, COALESCE(fecha_generacion, '') AS fecha_generacion,
-                COALESCE(numero_asiento, '') AS numero_asiento,
-                COALESCE(estado_validacion, '') AS estado_validacion,
-                COALESCE(estado_ocr, '') AS estado_ocr, NULL AS lineas_json,
-                0 AS borrador, total
-            FROM facturas_recibidas_docs
-            WHERE codigo_empresa IN ({marks})
+                'recibida' AS tipo, COALESCE(d.id,a.id) AS id,
+                a.codigo_empresa, a.ejercicio,
+                COALESCE(NULLIF(d.numero_factura,''),
+                         NULLIF(f.numero_factura,''),'') AS numero_factura,
+                COALESCE(NULLIF(d.fecha_factura,''),NULLIF(d.fecha_asiento,''),
+                         NULLIF(f.fecha_factura,''),a.created_at,'') AS fecha,
+                COALESCE(NULLIF(d.proveedor_nombre,''),
+                         NULLIF(f.nombre_proveedor,''),
+                         NULLIF(a.correo_remitente,''),'') AS tercero,
+                COALESCE(NULLIF(d.proveedor_nif,''),
+                         NULLIF(f.nif_proveedor,''),'') AS nif,
+                COALESCE(NULLIF(d.descripcion,''),
+                         NULLIF(a.correo_asunto,''),'') AS descripcion,
+                COALESCE(NULLIF(a.estado_contable,''),
+                         NULLIF(d.estado_contable,''),'pendiente') AS estado_contable,
+                CASE
+                  WHEN COALESCE(d.generada,0)<>0
+                    OR a.estado_contable IN ('exportada_a3','contabilizada')
+                  THEN 1 ELSE 0
+                END AS generada,
+                COALESCE(d.fecha_generacion, '') AS fecha_generacion,
+                COALESCE(NULLIF(a.numero_asiento,''),
+                         NULLIF(d.numero_asiento,''),'') AS numero_asiento,
+                COALESCE(NULLIF(d.estado_validacion,''),
+                         NULLIF(f.estado_validacion,''),'') AS estado_validacion,
+                COALESCE(NULLIF(d.estado_ocr,''),NULLIF(o.estado,''),
+                         NULLIF(t.estado,''),
+                         CASE WHEN a.ocr_documento_id IS NULL
+                              THEN 'pendiente' ELSE '' END) AS estado_ocr,
+                NULL AS lineas_json, 0 AS borrador,
+                COALESCE(d.total,f.total_factura),
+                a.id AS documento_archivo_id,
+                COALESCE(a.veces_impresa, 0) AS veces_impresa,
+                a.ocr_documento_id
+            FROM documentos_archivo a
+            LEFT JOIN documentos_ocr o ON o.id=a.ocr_documento_id
+            LEFT JOIN ocr_trabajos t ON t.id=(
+              SELECT t2.id FROM ocr_trabajos t2
+              WHERE t2.documento_archivo_id=a.id
+              ORDER BY t2.creado_at DESC LIMIT 1
+            )
+            LEFT JOIN facturas_recibidas_ocr f
+              ON f.documento_id=a.ocr_documento_id
+            LEFT JOIN facturas_recibidas_docs d
+              ON d.documento_archivo_id=a.id
+            WHERE a.categoria_id='facturas_recibidas'
+              AND a.codigo_empresa IN ({marks})
             ORDER BY fecha DESC, codigo_empresa, numero_factura
         """
         cur = self.conn.execute(sql, tuple(codigos) * 2)
@@ -4712,9 +4749,12 @@ class GestorBase:
     def listar_facturas_recibidas_docs(self, codigo_empresa: str, ejercicio: int):
         cur = self.conn.execute(
             """
-            SELECT d.*, a.id AS asiento_id, a.estado AS asiento_estado, a.total_debe, a.total_haber
+            SELECT d.*, a.id AS asiento_id, a.estado AS asiento_estado,
+                   a.total_debe, a.total_haber,
+                   COALESCE(ar.veces_impresa,0) AS veces_impresa
             FROM facturas_recibidas_docs d
             LEFT JOIN asientos_contables a ON a.documento_id = d.id
+            LEFT JOIN documentos_archivo ar ON ar.id=d.documento_archivo_id
             WHERE d.codigo_empresa=? AND d.ejercicio=?
             ORDER BY d.fecha_asiento DESC, d.updated_at DESC
             """,

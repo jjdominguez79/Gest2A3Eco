@@ -5,13 +5,20 @@ import os
 import re
 import threading
 import tkinter as tk
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from services.facturas_recibidas_manual_service import (
+    FacturasRecibidasManualService,
+)
 from services.gestion_documental_service import GestionDocumentalService
 from services.estado_facturas_recibidas import etiqueta_estado
 from services.firma.firma_service import FirmaService
 from services.firma.provider import build_firma_provider
+from services.impresion_facturas_recibidas_service import (
+    ImpresionFacturasRecibidasService,
+)
 from utils.utilidades import load_app_config
 from views.ui_firma_dialog import UIFirmaDialog
 
@@ -312,6 +319,8 @@ class UIGestionDocumental(ttk.Frame):
         self._nombre = nombre
         self._session = session
         self._service = GestionDocumentalService(gestor)
+        self._impresion_facturas = ImpresionFacturasRecibidasService(gestor)
+        self._facturas_manuales = FacturasRecibidasManualService(gestor)
         self._rows = {}
         self._categories = self._service.categorias()
         self._build()
@@ -349,13 +358,19 @@ class UIGestionDocumental(ttk.Frame):
         entry.pack(side="left", padx=5)
         self._search.trace_add("write", lambda *_: self._refresh())
         self._tree = ttk.Treeview(
-            self, columns=("fecha", "categoria", "nombre", "origen", "remitente", "estado"),
+            self,
+            columns=(
+                "fecha", "categoria", "nombre", "origen", "remitente",
+                "estado", "asiento", "impresiones",
+            ),
             show="headings", selectmode="extended",
         )
         for key, title, width in (
             ("fecha", "Fecha", 165), ("categoria", "Categoria", 175),
             ("nombre", "Documento", 360), ("origen", "Origen", 100),
             ("remitente", "Remitente", 220), ("estado", "Estado", 230),
+            ("asiento", "Asiento", 95),
+            ("impresiones", "Impresas", 72),
         ):
             self._tree.heading(key, text=title)
             self._tree.column(key, width=width, anchor="w")
@@ -364,6 +379,14 @@ class UIGestionDocumental(ttk.Frame):
         actions = ttk.Frame(self)
         actions.pack(fill="x", pady=(8, 0))
         ttk.Button(actions, text="Abrir", command=self._open).pack(side="left")
+        ttk.Button(
+            actions, text="Imprimir facturas",
+            command=self._print_received_invoices,
+        ).pack(side="left", padx=(6, 0))
+        ttk.Button(
+            actions, text="Comprobar asiento en A3",
+            command=self._capture_received_invoice,
+        ).pack(side="left", padx=6)
         ttk.Button(actions, text="Enviar a OCR de facturas", command=self._send_ocr).pack(side="left", padx=6)
         security = getattr(self._gestor, "security", None)
         if security is None or security.can_manage_firmas():
@@ -396,6 +419,16 @@ class UIGestionDocumental(ttk.Frame):
                 row.get("nombre_original") or "", self._origen_label(row),
                 row.get("correo_remitente") or "",
                 self._estado_documental_label(row),
+                (
+                    row.get("numero_asiento") or ""
+                    if row.get("categoria_id") == "facturas_recibidas"
+                    else ""
+                ),
+                (
+                    int(row.get("veces_impresa") or 0)
+                    if row.get("categoria_id") == "facturas_recibidas"
+                    else ""
+                ),
             ))
         self._summary.configure(text=f"Documentos: {len(self._rows)}")
         pending = self._pending_messaging_rows()
@@ -549,6 +582,120 @@ class UIGestionDocumental(ttk.Frame):
             os.startfile(str(self._rows[selected[0]]["ruta"]))
         except Exception as exc:
             messagebox.showerror("Gestion documental", str(exc), parent=self)
+
+    def _selected_received_invoice_ids(self) -> list[str]:
+        return [
+            str(document_id)
+            for document_id in self._tree.selection()
+            if self._rows.get(document_id, {}).get("categoria_id")
+            == "facturas_recibidas"
+        ]
+
+    def _print_received_invoices(self):
+        selected = self._selected_received_invoice_ids()
+        if not selected:
+            messagebox.showwarning(
+                "Imprimir facturas",
+                "Selecciona al menos un documento de Facturas recibidas.",
+                parent=self,
+            )
+            return
+        self.winfo_toplevel().configure(cursor="watch")
+
+        def worker():
+            try:
+                resultado = self._impresion_facturas.imprimir(
+                    selected, usuario=self._username(),
+                )
+                error = None
+            except Exception as exc:
+                resultado, error = None, exc
+            self.after(0, self._finish_print_received_invoices, resultado, error)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_print_received_invoices(self, resultado, error):
+        self.winfo_toplevel().configure(cursor="")
+        if error is not None:
+            messagebox.showerror("Imprimir facturas", str(error), parent=self)
+            return
+        self._refresh()
+        partes = []
+        if resultado.impresas:
+            partes.append(f"Enviadas a imprimir: {len(resultado.impresas)}")
+        if resultado.omitidas:
+            partes.append("Omitidas:\n- " + "\n- ".join(resultado.omitidas[:8]))
+        if resultado.errores:
+            partes.append("Errores:\n- " + "\n- ".join(resultado.errores[:8]))
+        texto = "\n\n".join(partes) or "No se imprimio ninguna factura."
+        if resultado.impresas and not resultado.omitidas and not resultado.errores:
+            messagebox.showinfo("Imprimir facturas", texto, parent=self)
+        else:
+            messagebox.showwarning("Imprimir facturas", texto, parent=self)
+
+    def _capture_received_invoice(self):
+        selected = self._selected_received_invoice_ids()
+        if len(selected) != 1:
+            messagebox.showwarning(
+                "Comprobar asiento en A3",
+                "Selecciona una unica factura recibida.",
+                parent=self,
+            )
+            return
+        try:
+            datos = self._facturas_manuales.datos_captura(selected[0])
+        except Exception as exc:
+            messagebox.showerror("Comprobar asiento en A3", str(exc), parent=self)
+            return
+        if not datos:
+            messagebox.showerror(
+                "Comprobar asiento en A3",
+                "No se pudo cargar la factura archivada.",
+                parent=self,
+            )
+            return
+        dialog = _DatosCapturaA3Dialog(self, datos)
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        self.winfo_toplevel().configure(cursor="watch")
+
+        def worker():
+            try:
+                resultado = self._facturas_manuales.capturar_asiento(
+                    selected[0], usuario=self._username(), **dialog.result,
+                )
+                error = None
+            except Exception as exc:
+                resultado, error = None, exc
+            self.after(0, self._finish_capture_received_invoice, resultado, error)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_capture_received_invoice(self, resultado, error):
+        self.winfo_toplevel().configure(cursor="")
+        if error is not None:
+            messagebox.showerror("Comprobar asiento en A3", str(error), parent=self)
+            return
+        self._refresh()
+        if resultado.encontrado:
+            messagebox.showinfo(
+                "Comprobar asiento en A3",
+                f"Factura {resultado.numero_factura}: asiento "
+                f"{resultado.numero_asiento} confirmado.",
+                parent=self,
+            )
+        else:
+            messagebox.showwarning(
+                "Comprobar asiento en A3",
+                f"No se encontro en A3ECO la factura {resultado.numero_factura}.",
+                parent=self,
+            )
+
+    def _username(self) -> str:
+        return str(
+            getattr(getattr(self._session, "user", None), "nombre", "") or ""
+        )
 
     def _add_file(self):
         _MultipleImportDialog(self, self._categories, self._import_files)
@@ -746,3 +893,92 @@ class _CategoryDialog(tk.Toplevel):
     def _accept(self):
         self.result = self._value.get()
         self.destroy()
+
+
+class _DatosCapturaA3Dialog(tk.Toplevel):
+    """Solicita las claves de busqueda que una recibida sin OCR no posee."""
+
+    def __init__(self, parent, documento: dict):
+        super().__init__(parent)
+        self.title("Localizar factura recibida en A3ECO")
+        self.transient(parent.winfo_toplevel())
+        self.grab_set()
+        self.resizable(False, False)
+        self.result = None
+        frame = ttk.Frame(self, padding=14)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame,
+            text="Datos para localizar el asiento en A3ECO",
+            font=("Segoe UI", 11, "bold"),
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        ttk.Label(
+            frame,
+            text=(
+                "No es necesario validar el OCR. Indica el numero utilizado "
+                "al contabilizar la factura."
+            ),
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        self._numero = tk.StringVar(
+            value=str(documento.get("numero_factura_captura") or ""),
+        )
+        self._fecha = tk.StringVar(
+            value=str(documento.get("fecha_captura") or "")[:10],
+        )
+        self._descripcion = tk.StringVar(
+            value=str(documento.get("descripcion_captura") or ""),
+        )
+        for row, (label, variable) in enumerate((
+            ("Numero de factura", self._numero),
+            ("Fecha para la busqueda", self._fecha),
+            ("Concepto en A3 (opcional)", self._descripcion),
+        ), start=2):
+            ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", pady=4)
+            ttk.Entry(frame, textvariable=variable, width=45).grid(
+                row=row, column=1, sticky="ew", padx=(8, 0), pady=4,
+            )
+        ttk.Label(
+            frame, text="Formatos de fecha: AAAA-MM-DD o DD/MM/AAAA",
+            foreground="#64748b",
+        ).grid(row=5, column=1, sticky="w")
+        actions = ttk.Frame(frame)
+        actions.grid(row=6, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        ttk.Button(actions, text="Cancelar", command=self.destroy).pack(side="left")
+        ttk.Button(actions, text="Buscar en A3", command=self._accept).pack(
+            side="left", padx=(6, 0),
+        )
+
+    def _accept(self):
+        numero = self._numero.get().strip()
+        fecha = self._fecha.get().strip()
+        if not numero:
+            messagebox.showwarning(
+                "Comprobar asiento en A3",
+                "Indica el numero de factura.",
+                parent=self,
+            )
+            return
+        if fecha and not any(
+            self._valid_date(fecha, fmt)
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y")
+        ):
+            messagebox.showwarning(
+                "Comprobar asiento en A3",
+                "La fecha debe tener formato AAAA-MM-DD o DD/MM/AAAA.",
+                parent=self,
+            )
+            return
+        self.result = {
+            "numero_factura": numero,
+            "fecha_factura": fecha,
+            "descripcion": self._descripcion.get().strip(),
+        }
+        self.destroy()
+
+    @staticmethod
+    def _valid_date(value: str, fmt: str) -> bool:
+        try:
+            datetime.strptime(value, fmt)
+            return True
+        except ValueError:
+            return False

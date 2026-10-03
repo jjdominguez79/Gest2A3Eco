@@ -560,23 +560,6 @@ class AppController:
             on_open_empresa=self.open_company_module,
         ))
 
-    def open_facturas_recibidas_pendientes(self):
-        from views.ui_facturas_recibidas_pendientes import (
-            UIFacturasRecibidasPendientes,
-        )
-        try:
-            self.authorization.ensure_control_facturas()
-        except PermissionError as exc:
-            messagebox.showerror(
-                "Facturas recibidas",
-                str(exc),
-                parent=self._content.winfo_toplevel(),
-            )
-            return
-        self._show(lambda parent: UIFacturasRecibidasPendientes(
-            parent, self._gestor, self._session,
-        ))
-
     def open_firmas_global(self):
         from views.ui_firmas_global import UIFirmasGlobal
         try:

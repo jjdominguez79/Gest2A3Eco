@@ -1,12 +1,14 @@
 from pathlib import Path
 
 from models.gestor_base import SCHEMA, GestorBase
-from services.facturas_recibidas_pendientes_service import (
-    FacturasRecibidasPendientesService,
+from services.facturas_recibidas_manual_service import (
+    FacturasRecibidasManualService,
+)
+from services.impresion_facturas_recibidas_service import (
+    ImpresionFacturasRecibidasService,
 )
 from services.ocr_recibidas_service import mark_docs_as_generated
 from services.estado_facturas_recibidas import estado_efectivo
-from views.ui_facturas_recibidas_pendientes import UIFacturasRecibidasPendientes
 from views.ui_gestion_documental import UIGestionDocumental
 
 
@@ -199,8 +201,6 @@ class _GestorService:
     def __init__(self, documents):
         self.documents = documents
         self.printed = []
-        self.state_changes = []
-        self.captured_entries = []
 
     def get_documento_archivo(self, document_id):
         return self.documents.get(document_id)
@@ -208,18 +208,6 @@ class _GestorService:
     def registrar_impresion_documentos(self, document_ids, usuario):
         self.printed.append((list(document_ids), usuario))
         return len(document_ids)
-
-    def cambiar_estado_contable_documentos(self, ids, state, **kwargs):
-        self.state_changes.append((list(ids), state, kwargs))
-        return len(ids)
-
-    def get_factura_recibida_archivo_para_captura(self, document_id):
-        return self.documents.get(document_id)
-
-    def actualizar_asiento_documento_archivo(self, document_id, entry_number):
-        self.captured_entries.append((document_id, entry_number))
-        return True
-
 
 def test_impresion_multiple_registra_solo_archivos_enviados(tmp_path):
     first = tmp_path / "factura-1.pdf"
@@ -237,178 +225,88 @@ def test_impresion_multiple_registra_solo_archivos_enviados(tmp_path):
         },
     })
     sent = []
-    service = FacturasRecibidasPendientesService(
+    service = ImpresionFacturasRecibidasService(
         gestor, imprimir_archivo=lambda path: sent.append(Path(path).name),
     )
 
     result = service.imprimir(["doc-1", "doc-2"], usuario="Empleado")
 
     assert sent == ["factura-1.pdf", "factura-2.pdf"]
-    assert result.completados == ["factura-1.pdf", "factura-2.pdf"]
+    assert result.impresas == ["factura-1.pdf", "factura-2.pdf"]
     assert result.errores == []
     assert gestor.printed == [(["doc-1", "doc-2"], "Empleado")]
 
 
-def test_ocr_encola_y_omite_documentos_ya_analizados(monkeypatch, tmp_path):
-    nueva = tmp_path / "nueva.pdf"
-    nueva.write_bytes(b"%PDF-1")
-    gestor = _GestorService({
-        "new": {
-            "id": "new", "categoria_id": "facturas_recibidas",
-            "nombre_original": "nueva.pdf", "ocr_documento_id": None,
-            "codigo_empresa": "E00001", "ejercicio": 2026,
-            "ruta": str(nueva),
-        },
-        "old": {
-            "id": "old", "categoria_id": "facturas_recibidas",
-            "nombre_original": "anterior.pdf", "ocr_documento_id": "ocr-1",
-        },
-    })
-    processed = []
+def test_captura_asiento_manual_sin_ocr_usando_datos_introducidos():
+    class Gestor:
+        def get_factura_recibida_archivo_para_captura(self, _documento_id):
+            return {
+                "id": "archivo-1",
+                "codigo_empresa": "E00123",
+                "ejercicio": 2026,
+                "estado_contable": "pendiente",
+                "metodo_contabilizacion": "",
+                "ocr_documento_id": None,
+            }
 
-    class _Cola:
-        def __init__(self, _gestor):
-            pass
+        def cambiar_estado_contable_documentos(self, ids, estado, **kwargs):
+            self.cambio = (ids, estado, kwargs)
+            return 1
 
-        def encolar(self, **datos):
-            processed.append(datos)
-            return "job-1", True
+    busquedas = []
 
-    monkeypatch.setattr(
-        "services.facturas_recibidas_pendientes_service.OcrBackgroundService",
-        _Cola,
+    def buscar(codigo, ejercicio, numero, descripcion, *, mes=None):
+        busquedas.append((codigo, ejercicio, numero, descripcion, mes))
+        return "5/00042"
+
+    gestor = Gestor()
+    resultado = FacturasRecibidasManualService(
+        gestor, buscar_asiento=buscar,
+    ).capturar_asiento(
+        "archivo-1",
+        numero_factura="F-2026-15",
+        fecha_factura="2026-05-20",
+        descripcion="Compra material",
+        usuario="Empleado",
     )
 
-    result = FacturasRecibidasPendientesService(gestor).enviar_a_ocr(
-        ["new", "old"], usuario="Empleado",
-    )
-
-    assert processed == [{
-        "empresa_id": "E00001", "ejercicio": 2026,
-        "ruta_origen": str(nueva), "documento_archivo_id": "new",
-        "usuario": "Empleado",
-    }]
-    assert result.completados == ["nueva.pdf"]
-    assert result.omitidos == ["anterior.pdf"]
-
-
-def test_captura_asientos_a3_para_varias_empresas():
-    gestor = _GestorService({
-        "doc-1": {
-            "id": "doc-1", "categoria_id": "facturas_recibidas",
-            "codigo_empresa": "E00123", "ejercicio": 2026,
-            "nombre_original": "factura.pdf", "numero_factura_captura": "F-24",
-            "descripcion_captura": "Su Fra Nº. F-24",
-            "fecha_captura": "2026-05-15",
-            "estado_contable": "exportada_a3",
-        },
-        "doc-2": {
-            "id": "doc-2", "categoria_id": "facturas_recibidas",
-            "codigo_empresa": "E00999", "ejercicio": 2025,
-            "nombre_original": "sin-ocr.pdf", "numero_factura_captura": "",
-        },
-    })
-    searches = []
-
-    def find_entry(company, year, number, description, *, mes=None):
-        searches.append((company, year, number, description, mes))
-        return "05/00042"
-
-    result = FacturasRecibidasPendientesService(
-        gestor, buscar_asiento=find_entry,
-    ).capturar_asientos(["doc-1", "doc-2"])
-
-    assert searches == [("E00123", 2026, "F-24", "Su Fra Nº. F-24", 5)]
-    assert gestor.captured_entries == [("doc-1", "05/00042")]
-    assert result.completados == ["F-24 -> asiento 05/00042"]
-    assert result.omitidos == ["sin-ocr.pdf: faltan datos OCR de la factura"]
-
-
-def test_captura_asiento_manual_conserva_la_via_y_la_evidencia_de_a3():
-    gestor = _GestorService({
-        "doc-1": {
-            "id": "doc-1", "categoria_id": "facturas_recibidas",
-            "codigo_empresa": "E00123", "ejercicio": 2026,
-            "nombre_original": "factura.pdf", "numero_factura_captura": "F-24",
-            "descripcion_captura": "Su Fra Nº. F-24",
-            "fecha_captura": "2026-05-15",
-            "estado_contable": "pendiente",
-        },
-    })
-    service = FacturasRecibidasPendientesService(
-        gestor, buscar_asiento=lambda *_args, **_kwargs: "05/00042",
-    )
-
-    result = service.capturar_asientos(["doc-1"], usuario="Empleado")
-
-    assert result.completados == ["F-24 -> asiento 05/00042"]
-    assert gestor.captured_entries == []
-    assert gestor.state_changes == [(
-        ["doc-1"],
+    assert busquedas == [
+        ("E00123", 2026, "F-2026-15", "Compra material", 5),
+    ]
+    assert resultado.encontrado is True
+    assert resultado.numero_asiento == "5/00042"
+    assert gestor.cambio == (
+        ["archivo-1"],
         "contabilizada_manual",
         {
             "usuario": "Empleado",
             "fecha_contable": "",
-            "numero_asiento": "05/00042",
+            "numero_asiento": "5/00042",
             "observaciones": "Asiento capturado automaticamente en A3ECO",
         },
-    )]
-
-
-def test_filtro_global_combina_estado_empresa_y_busqueda():
-    rows = [
-        {
-            "id": "one", "codigo_empresa": "E00001", "ejercicio": 2026,
-            "empresa_nombre": "Cliente Uno", "nombre_original": "Luz.pdf",
-            "estado_contable": "pendiente",
-        },
-        {
-            "id": "two", "codigo_empresa": "E00002", "ejercicio": 2026,
-            "empresa_nombre": "Cliente Dos", "nombre_original": "Agua.pdf",
-            "estado_contable": "contabilizada_manual",
-        },
-        {
-            "id": "three", "codigo_empresa": "E00001", "ejercicio": 2026,
-            "empresa_nombre": "Cliente Uno", "nombre_original": "Gas.pdf",
-            "estado_contable": "contabilizada", "numero_factura_captura": "G-3",
-        },
-    ]
-
-    filtered = UIFacturasRecibidasPendientes.filter_rows(
-        rows,
-        empresa="E00001 - Cliente Uno",
-        estado="Pendientes",
-        texto="luz",
     )
 
-    assert [row["id"] for row in filtered] == ["one"]
 
-    captured = UIFacturasRecibidasPendientes.filter_rows(
-        rows, estado="Contabilizadas por OCR/SUENLACE", texto="G-3",
-    )
-    assert [row["id"] for row in captured] == ["three"]
+def test_captura_archivada_exportada_conserva_la_via_suenlace():
+    class Gestor:
+        def get_factura_recibida_archivo_para_captura(self, _documento_id):
+            return {
+                "id": "archivo-1", "codigo_empresa": "E00123",
+                "ejercicio": 2026, "estado_contable": "exportada_a3",
+                "metodo_contabilizacion": "ocr_suenlace",
+            }
 
+        def actualizar_asiento_documento_archivo(self, documento_id, asiento):
+            self.actualizado = (documento_id, asiento)
+            return True
 
-def test_estado_distingue_exportacion_ocr_de_asiento_confirmado():
-    exportada = {
-        "ocr_documento_id": "ocr-1",
-        "estado_documento_ocr": "contabilizada",
-        "estado_contable": "pendiente",
-        "metodo_contabilizacion": "",
-    }
+    gestor = Gestor()
+    resultado = FacturasRecibidasManualService(
+        gestor, buscar_asiento=lambda *_args, **_kwargs: "5/00043",
+    ).capturar_asiento("archivo-1", numero_factura="F-16")
 
-    assert UIFacturasRecibidasPendientes._ocr_state_label(exportada) == "Exportada para A3"
-    assert UIFacturasRecibidasPendientes._accounting_state_label(
-        exportada["estado_contable"],
-        metodo=exportada["metodo_contabilizacion"],
-        exportada_ocr=UIFacturasRecibidasPendientes._exportada_desde_ocr(exportada),
-    ) == "OCR/SUENLACE · pendiente de asiento A3"
-    assert UIFacturasRecibidasPendientes._accounting_state_label(
-        "contabilizada", metodo="ocr_suenlace",
-    ) == "OCR/SUENLACE · asiento confirmado en A3"
-    assert UIFacturasRecibidasPendientes._accounting_state_label(
-        "contabilizada_manual", metodo="manual_a3_papel",
-    ) == "Manual en A3 (papel)"
+    assert resultado.encontrado is True
+    assert gestor.actualizado == ("archivo-1", "5/00043")
 
 
 def test_gestion_documental_muestra_via_de_contabilizacion():
@@ -421,3 +319,10 @@ def test_gestion_documental_muestra_via_de_contabilizacion():
         "metodo_contabilizacion": "ocr_suenlace",
         "ocr_documento_id": "ocr-1",
     }) == "OCR/SUENLACE · asiento confirmado en A3"
+
+
+def test_gestion_documental_muestra_columna_de_asiento():
+    contenido = Path("views/ui_gestion_documental.py").read_text(encoding="utf-8")
+
+    assert '("asiento", "Asiento", 95)' in contenido
+    assert 'row.get("numero_asiento") or ""' in contenido

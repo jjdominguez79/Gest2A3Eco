@@ -48,7 +48,7 @@ Generar `suenlace.dat` nunca equivale a contabilizar. La transicion a
 
 ## Sincronizacion del asiento
 
-La captura desde Control de facturas, Contabilidad u OCR actualiza en una sola
+La captura desde Contabilidad u OCR actualiza en una sola
 transaccion:
 
 - `facturas_recibidas_docs.numero_asiento` y su estado;
@@ -57,3 +57,13 @@ transaccion:
 - `documentos_archivo.numero_asiento`, estado y metodo de contabilizacion.
 
 Por ello todas las pantallas muestran el mismo resultado al refrescar.
+
+La impresion de facturas recibidas esta disponible en Gestion documental desde
+el momento del archivo y tambien en Contabilidad despues de validar el OCR.
+Siempre utiliza el PDF definitivo y registra el numero de impresiones. Control
+global de facturas es solo una vista de seguimiento y no modifica las facturas.
+
+El circuito manual no exige validar el OCR. Desde Gestion documental se puede
+indicar numero de factura, fecha de busqueda y concepto para localizarla en A3.
+"Comprobar asiento en A3" la cierra como contabilizada manual cuando encuentra
+su numero de asiento. Si el OCR termina mas tarde, respeta esa contabilizacion.

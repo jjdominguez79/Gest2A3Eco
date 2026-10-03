@@ -54,7 +54,7 @@ class UIControlFacturasGlobal(ttk.Frame):
             heading,
             text=(
                 "Supervisa el circuito contable de todas las empresas "
-                "desde una unica bandeja."
+                "desde una unica bandeja de consulta."
             ),
             style="SubHeader.TLabel",
         ).pack(anchor="w", pady=(2, 0))
@@ -187,6 +187,7 @@ class UIControlFacturasGlobal(ttk.Frame):
             "total",
             "estado",
             "enlace",
+            "impresiones",
             "asiento",
         )
         self.tv = ttk.Treeview(wrap, columns=columns, show="headings")
@@ -201,6 +202,7 @@ class UIControlFacturasGlobal(ttk.Frame):
             ("total", "Total", 100, "e"),
             ("estado", "Situacion", 150, "w"),
             ("enlace", "Enlace", 100, "center"),
+            ("impresiones", "Impresas", 72, "center"),
             ("asiento", "Nº asiento", 90, "center"),
         )
         for key, title, width, anchor in headers:
@@ -217,7 +219,7 @@ class UIControlFacturasGlobal(ttk.Frame):
         self.lbl_summary.pack(side=tk.LEFT)
         ttk.Button(
             bottom,
-            text="Abrir modulo de la factura",
+            text="Ver en su modulo",
             style="Primary.TButton",
             command=self.open_selected,
         ).pack(side=tk.RIGHT)
@@ -304,7 +306,10 @@ class UIControlFacturasGlobal(ttk.Frame):
         for index, row in enumerate(self._visible):
             iid = str(index)
             self._by_id[iid] = row
-            enlace = "Generado" if row["generada"] else "Pendiente"
+            if row.get("estado_contable") == "contabilizada_manual":
+                enlace = "No aplica"
+            else:
+                enlace = "Generado" if row["generada"] else "Pendiente"
             self.tv.insert(
                 "",
                 "end",
@@ -320,6 +325,7 @@ class UIControlFacturasGlobal(ttk.Frame):
                     self._format_amount(row["total_calculado"]),
                     row["estado_etiqueta"],
                     enlace,
+                    int(row.get("veces_impresa") or 0) if row["tipo"] == "recibida" else "",
                     row.get("numero_asiento", ""),
                 ),
             )
@@ -409,7 +415,13 @@ class UIControlFacturasGlobal(ttk.Frame):
             return
         row = self._by_id.get(str(selected[0]))
         if row:
-            self._on_open_empresa(row["codigo_empresa"], int(row["ejercicio"]), "facturacion" if row["tipo"] == "emitida" else "contabilidad")
+            self._on_open_empresa(
+                row["codigo_empresa"],
+                int(row["ejercicio"]),
+                row.get("modulo_destino") or (
+                    "facturacion" if row["tipo"] == "emitida" else "contabilidad"
+                ),
+            )
 
     def export_csv(self):
         path = filedialog.asksaveasfilename(title="Exportar control global", defaultextension=".csv", filetypes=[("CSV", "*.csv")])
@@ -417,6 +429,6 @@ class UIControlFacturasGlobal(ttk.Frame):
             return
         with open(path, "w", newline="", encoding="utf-8-sig") as fh:
             writer = csv.writer(fh, delimiter=";")
-            writer.writerow(["Empresa", "Responsable", "Ejercicio", "Tipo", "Factura", "Fecha", "Tercero", "NIF", "Total", "Situacion", "Enlace", "Fecha enlace", "Nº asiento"])
+            writer.writerow(["Empresa", "Responsable", "Ejercicio", "Tipo", "Factura", "Fecha", "Tercero", "NIF", "Total", "Situacion", "Enlace", "Fecha enlace", "Impresiones", "Nº asiento"])
             for row in self._visible:
-                writer.writerow([row["empresa_nombre"], row.get("responsable", ""), row.get("ejercicio", ""), row["tipo"], row.get("numero_factura", ""), row.get("fecha", ""), row.get("tercero", ""), row.get("nif", ""), f"{row['total_calculado']:.2f}", row["estado_etiqueta"], "Generado" if row["generada"] else "Pendiente", row.get("fecha_generacion", ""), row.get("numero_asiento", "")])
+                writer.writerow([row["empresa_nombre"], row.get("responsable", ""), row.get("ejercicio", ""), row["tipo"], row.get("numero_factura", ""), row.get("fecha", ""), row.get("tercero", ""), row.get("nif", ""), f"{row['total_calculado']:.2f}", row["estado_etiqueta"], "Generado" if row["generada"] else "Pendiente", row.get("fecha_generacion", ""), row.get("veces_impresa", "") if row["tipo"] == "recibida" else "", row.get("numero_asiento", "")])

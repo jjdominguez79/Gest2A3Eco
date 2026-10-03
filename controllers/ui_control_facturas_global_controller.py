@@ -25,7 +25,21 @@ class ControlFacturasGlobalController:
             row["generada"] = bool(row.get("generada"))
             row["total_calculado"] = self._total(row)
             row["estado_etiqueta"] = self._estado(row)
+            row["modulo_destino"] = self._modulo_destino(row)
         return rows, nombres
+
+    @staticmethod
+    def _modulo_destino(row: dict) -> str:
+        if row.get("tipo") == "emitida":
+            return "facturacion"
+        if not str(row.get("ocr_documento_id") or "").strip():
+            return "gestion_documental"
+        if str(row.get("estado_contable") or "").strip().lower() in {
+            "pendiente_contabilizar", "exportada_a3", "contabilizada",
+            "contabilizada_manual",
+        }:
+            return "contabilidad"
+        return "ocr"
 
     @staticmethod
     def _estado(row: dict) -> str:
@@ -40,6 +54,8 @@ class ControlFacturasGlobalController:
                 return "Exportada a A3 · sin asiento"
             if row.get("estado_contable") == "contabilizada":
                 return "Contabilizada"
+            if row.get("estado_contable") == "contabilizada_manual":
+                return "Contabilizada manualmente en A3"
         estado = str(row.get("estado_contable") or "").strip().lower()
         if estado == "pendiente":
             return "En contabilidad"

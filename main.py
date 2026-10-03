@@ -91,7 +91,6 @@ def _build_header(
     on_open_users=None,
     on_open_terceros=None,
     on_open_control_facturas=None,
-    on_open_facturas_pendientes=None,
     on_open_firmas=None,
     on_open_adjuntos_mensajeria=None,
     on_open_notificaciones=None,
@@ -347,10 +346,6 @@ def _build_header(
         _hbtn("Terceros", on_open_terceros)
 
     documentos_menu = []
-    if on_open_facturas_pendientes:
-        documentos_menu.append(
-            ("Facturas recibidas pendientes", on_open_facturas_pendientes),
-        )
     if on_open_control_facturas:
         documentos_menu.append(
             ("Control global de facturas", on_open_control_facturas),
@@ -743,11 +738,6 @@ def main():
             on_open_terceros=controller.open_terceros,
             on_open_control_facturas=(
                 controller.open_control_facturas_global
-                if controller.authorization.can_view_control_facturas()
-                else None
-            ),
-            on_open_facturas_pendientes=(
-                controller.open_facturas_recibidas_pendientes
                 if controller.authorization.can_view_control_facturas()
                 else None
             ),
