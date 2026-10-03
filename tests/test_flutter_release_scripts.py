@@ -43,6 +43,27 @@ def test_ambos_windows_publican_copia_verificada() -> None:
     assert "sha256sum" in bash
 
 
+def test_ambos_android_permiten_subida_segura_a_google_play() -> None:
+    powershell = _leer(TOOL / "build_production.ps1")
+    bash = _leer(TOOL / "build_production.sh")
+
+    assert "UploadPlay" in powershell
+    assert "PlayTrack" in powershell
+    assert "SubmitPlayReview" in powershell
+    assert "GOOGLE_PLAY_CREDENTIALS_PATH" in powershell
+    assert "--changes_not_sent_for_review" in powershell
+    assert "--skip_upload_metadata" in powershell
+    assert "debe estar fuera del repositorio" in powershell
+
+    assert "PLAY_UPLOAD" in bash
+    assert "PLAY_TRACK" in bash
+    assert "PLAY_SUBMIT_REVIEW" in bash
+    assert "GOOGLE_PLAY_CREDENTIALS_PATH" in bash
+    assert "--changes_not_sent_for_review" in bash
+    assert "--skip_upload_metadata" in bash
+    assert "debe estar fuera del repositorio" in bash
+
+
 def test_documentacion_no_referencia_los_comandos_retirados() -> None:
     documents = (
         ROOT / "docs" / "flutter_production_build.md",

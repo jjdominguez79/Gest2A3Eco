@@ -92,6 +92,9 @@ plantillas/.notif_key
 *.key
 *.crt
 *.cer
+# Credenciales de automatizacion de Google Play (siempre fuera del repositorio)
+google-play*.json
+play-store-credentials*.json
 
 # Local AI / analysis workspace files
 CLAUDE.md

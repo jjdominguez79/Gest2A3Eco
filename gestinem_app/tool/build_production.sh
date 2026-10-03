@@ -8,6 +8,10 @@ PLATFORM="${1:-}"
 SKIP_CHECKS="${SKIP_CHECKS:-0}"
 ALLOW_NON_MAIN="${ALLOW_NON_MAIN:-0}"
 SHARED_INSTALLER_DIRECTORY="${SHARED_INSTALLER_DIRECTORY:-${GEST2A3ECO_DOCUMENT_REPOSITORY_DIR:-//GestinemMain/Doc_Compartidos/Gest2A3Eco}}"
+PLAY_UPLOAD="${PLAY_UPLOAD:-0}"
+PLAY_TRACK="${PLAY_TRACK:-internal}"
+PLAY_SUBMIT_REVIEW="${PLAY_SUBMIT_REVIEW:-0}"
+GOOGLE_PLAY_CREDENTIALS_PATH="${GOOGLE_PLAY_CREDENTIALS_PATH:-}"
 
 usage() {
   cat <<'EOF'
@@ -25,6 +29,10 @@ Variables opcionales:
   API_BASE_URL=https://api.gestinem.es
   FIREBASE_WEB_VAPID_KEY=<clave-publica>  evita consultar Railway
   SHARED_INSTALLER_DIRECTORY=//servidor/carpeta
+  PLAY_UPLOAD=1                           sube el AAB generado a Google Play
+  PLAY_TRACK=production                   pista: internal, alpha, beta o production
+  PLAY_SUBMIT_REVIEW=1                    envía los cambios a revisión
+  GOOGLE_PLAY_CREDENTIALS_PATH=/ruta/credencial.json (fuera del repositorio)
   SKIP_CHECKS=1                            omite analyze/test (diagnóstico)
   ALLOW_NON_MAIN=1                         permite otra rama (diagnóstico)
 EOF
@@ -35,6 +43,19 @@ case "$PLATFORM" in
   android|apk|web|windows|ios|macos) ;;
   *) usage; exit 2 ;;
 esac
+
+case "$PLAY_TRACK" in
+  internal|alpha|beta|production) ;;
+  *) echo "ERROR: PLAY_TRACK no válido: $PLAY_TRACK"; exit 2 ;;
+esac
+if [[ "$PLAY_SUBMIT_REVIEW" == '1' && "$PLAY_UPLOAD" != '1' ]]; then
+  echo 'ERROR: PLAY_SUBMIT_REVIEW=1 requiere PLAY_UPLOAD=1.'
+  exit 2
+fi
+if [[ "$PLAY_UPLOAD" == '1' && "$PLATFORM" != 'android' ]]; then
+  echo 'ERROR: PLAY_UPLOAD=1 solo se puede usar con android.'
+  exit 2
+fi
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$APP_DIR"
@@ -78,6 +99,57 @@ assert_file() {
 
 assert_android_signing() {
   assert_file 'android/key.properties' 'android/key.properties para firmar Android'
+}
+
+publish_android_bundle() {
+  local bundle_path="$1"
+  command -v fastlane >/dev/null || {
+    echo 'ERROR: instala Fastlane: https://docs.fastlane.tools/getting-started/android/setup/'
+    return 1
+  }
+  [[ -n "$GOOGLE_PLAY_CREDENTIALS_PATH" ]] || {
+    echo 'ERROR: falta GOOGLE_PLAY_CREDENTIALS_PATH.'
+    return 1
+  }
+  [[ -f "$GOOGLE_PLAY_CREDENTIALS_PATH" ]] || {
+    echo "ERROR: no existe la credencial de Google Play: $GOOGLE_PLAY_CREDENTIALS_PATH"
+    return 1
+  }
+
+  local credentials_path repository_prefix
+  credentials_path="$(cd "$(dirname "$GOOGLE_PLAY_CREDENTIALS_PATH")" && pwd)/$(basename "$GOOGLE_PLAY_CREDENTIALS_PATH")"
+  repository_prefix="$(cd "$APP_DIR/.." && pwd)/"
+  case "$credentials_path" in
+    "$repository_prefix"*)
+      echo "ERROR: la credencial de Google Play debe estar fuera del repositorio: $credentials_path"
+      return 1
+      ;;
+  esac
+
+  local arguments=(
+    supply
+    --aab "$bundle_path"
+    --package_name es.gestinem.app
+    --track "$PLAY_TRACK"
+    --release_status completed
+    --json_key "$credentials_path"
+    --skip_upload_metadata true
+    --skip_upload_changelogs true
+    --skip_upload_images true
+    --skip_upload_screenshots true
+    --timeout 600
+  )
+  if [[ "$PLAY_SUBMIT_REVIEW" != '1' ]]; then
+    arguments+=(--changes_not_sent_for_review true)
+  fi
+
+  echo "Subiendo AAB a Google Play (pista: $PLAY_TRACK)..."
+  fastlane "${arguments[@]}"
+  if [[ "$PLAY_SUBMIT_REVIEW" == '1' ]]; then
+    echo "OK: entrega de Google Play enviada a revisión en la pista $PLAY_TRACK."
+  else
+    echo "OK: AAB subido a la pista $PLAY_TRACK y pendiente de enviar a revisión."
+  fi
 }
 
 get_firebase_web_option() {
@@ -240,7 +312,12 @@ case "$PLATFORM" in
     assert_android_signing
     flutter build appbundle --release "${DEFINES[@]}"
     assert_file 'build/app/outputs/bundle/release/app-release.aab' 'el AAB Android'
-    echo 'OK: sube build/app/outputs/bundle/release/app-release.aab a Google Play Console.'
+    if [[ "$PLAY_UPLOAD" == '1' ]]; then
+      publish_android_bundle 'build/app/outputs/bundle/release/app-release.aab'
+    else
+      echo 'OK: AAB disponible en build/app/outputs/bundle/release/app-release.aab'
+      echo 'Para subirlo: usa PLAY_UPLOAD=1, PLAY_TRACK=<pista> y, opcionalmente, PLAY_SUBMIT_REVIEW=1.'
+    fi
     ;;
   apk)
     assert_android_signing

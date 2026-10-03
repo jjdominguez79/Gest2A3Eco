@@ -50,6 +50,57 @@ build/app/outputs/bundle/release/app-release.aab
 Sube ese fichero a Google Play Console. El APK generado mediante el comando
 `apk` sirve para instalación manual, no para Play Store.
 
+## Subida automatizada
+
+El script puede generar el AAB y subirlo mediante Fastlane, sin modificar la
+ficha, las capturas ni otros metadatos de Google Play. Sin opciones de subida,
+el comportamiento sigue siendo únicamente generar el fichero local.
+
+La configuración inicial requiere:
+
+1. activar Google Play Developer API en el proyecto de Google Cloud vinculado;
+2. crear una cuenta de servicio;
+3. autorizarla para esta aplicación en Usuarios y permisos de Play Console;
+4. instalar Fastlane;
+5. guardar la credencial fuera del repositorio y definir su ruta:
+
+```powershell
+$env:GOOGLE_PLAY_CREDENTIALS_PATH = 'C:\credenciales\gestinem-play.json'
+```
+
+Para subir una entrega a producción dejándola pendiente de envío a revisión:
+
+```powershell
+.\tool\build_production.ps1 android -UploadPlay -PlayTrack production
+```
+
+Para subirla a producción y enviarla directamente a revisión:
+
+```powershell
+.\tool\build_production.ps1 android -UploadPlay -PlayTrack production -SubmitPlayReview
+```
+
+Elige uno de los dos comandos para cada `versionCode`: Google Play no permite
+subir dos veces la misma compilación. `-SubmitPlayReview` requiere
+`-UploadPlay`. Las pistas admitidas son `internal`, `alpha`, `beta` y
+`production`; la predeterminada es `internal` para reducir el riesgo de una
+publicación accidental.
+
+Equivalente Bash:
+
+```bash
+GOOGLE_PLAY_CREDENTIALS_PATH=/credenciales/gestinem-play.json \
+PLAY_UPLOAD=1 PLAY_TRACK=production \
+bash tool/build_production.sh android
+
+GOOGLE_PLAY_CREDENTIALS_PATH=/credenciales/gestinem-play.json \
+PLAY_UPLOAD=1 PLAY_TRACK=production PLAY_SUBMIT_REVIEW=1 \
+bash tool/build_production.sh android
+```
+
+La credencial nunca debe guardarse en el repositorio. Para CI es preferible una
+credencial temporal obtenida mediante Workload Identity Federation.
+
 ## Actualizaciones dentro de la aplicación
 
 Desde la compilación 40, el cliente Android consulta directamente a Google

@@ -136,8 +136,23 @@ PowerShell:
 Resultado:
 `build/app/outputs/bundle/release/app-release.aab`.
 
-El script no puede completar la publicación en Google Play Console: al terminar,
-sube ese AAB a la versión correspondiente de Play Console.
+Sin opciones adicionales, el script solo genera el AAB. También puede subirlo a
+Google Play mediante Fastlane. Para dejar una entrega de producción pendiente
+de enviar a revisión:
+
+```powershell
+$env:GOOGLE_PLAY_CREDENTIALS_PATH = 'C:\credenciales\gestinem-play.json'
+.\tool\build_production.ps1 android -UploadPlay -PlayTrack production
+```
+
+Para subirla y enviarla directamente a revisión:
+
+```powershell
+.\tool\build_production.ps1 android -UploadPlay -PlayTrack production -SubmitPlayReview
+```
+
+La configuración inicial, los permisos y el equivalente Bash están descritos
+en [`google_play_release.md`](google_play_release.md).
 
 Para una instalación manual fuera de Google Play usa `apk`:
 

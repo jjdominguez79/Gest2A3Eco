@@ -7,6 +7,11 @@ param(
     [string]$Environment = 'production',
     [string]$VapidKey = $env:FIREBASE_WEB_VAPID_KEY,
     [string]$SharedInstallerDirectory = '',
+    [switch]$UploadPlay,
+    [ValidateSet('internal','alpha','beta','production')]
+    [string]$PlayTrack = 'internal',
+    [switch]$SubmitPlayReview,
+    [string]$PlayCredentialsPath = $env:GOOGLE_PLAY_CREDENTIALS_PATH,
     [switch]$SkipChecks,
     [switch]$AllowNonMain
 )
@@ -32,10 +37,31 @@ function Assert-NotEmpty([string]$Value, [string]$Description) {
     }
 }
 
+function Resolve-ExternalFile([string]$Path, [string]$Description) {
+    Assert-NotEmpty $Path $Description
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "No existe $Description`: $Path"
+    }
+    $resolved = (Resolve-Path -LiteralPath $Path).Path
+    $repositoryDirectory = Split-Path -Parent $appDirectory
+    $repositoryPrefix = $repositoryDirectory.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    if ($resolved.StartsWith($repositoryPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "$Description debe estar fuera del repositorio: $resolved"
+    }
+    return $resolved
+}
+
 Push-Location -LiteralPath $appDirectory
 try {
     Assert-Command 'git' 'Instala Git y vuelve a abrir el terminal.'
     Assert-Command 'flutter' 'Instala Flutter y añádelo a PATH.'
+
+    if ($SubmitPlayReview -and -not $UploadPlay) {
+        throw '-SubmitPlayReview requiere -UploadPlay.'
+    }
+    if ($UploadPlay -and $Platform -ne 'android') {
+        throw '-UploadPlay solo se puede usar con la plataforma android.'
+    }
 
     # Compatible con Windows PowerShell 5.1 y PowerShell 7+.
     $runningOnWindows = ($env:OS -eq 'Windows_NT')
@@ -84,6 +110,42 @@ try {
 
     function Assert-AndroidSigning {
         Assert-File 'android/key.properties' 'android/key.properties para firmar Android'
+    }
+
+    function Publish-AndroidBundle([string]$BundlePath) {
+        Assert-Command 'fastlane' 'Instala Fastlane: https://docs.fastlane.tools/getting-started/android/setup/'
+        $credentialsPath = Resolve-ExternalFile `
+            $PlayCredentialsPath `
+            'la credencial de servicio de Google Play'
+        $resolvedBundlePath = (Resolve-Path -LiteralPath $BundlePath).Path
+
+        $arguments = @(
+            'supply',
+            '--aab', $resolvedBundlePath,
+            '--package_name', 'es.gestinem.app',
+            '--track', $PlayTrack,
+            '--release_status', 'completed',
+            '--json_key', $credentialsPath,
+            '--skip_upload_metadata', 'true',
+            '--skip_upload_changelogs', 'true',
+            '--skip_upload_images', 'true',
+            '--skip_upload_screenshots', 'true',
+            '--timeout', '600'
+        )
+        if (-not $SubmitPlayReview) {
+            $arguments += @('--changes_not_sent_for_review', 'true')
+        }
+
+        Write-Host "Subiendo AAB a Google Play (pista: $PlayTrack)..."
+        & fastlane @arguments
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Google Play no aceptó la entrega del AAB.'
+        }
+        if ($SubmitPlayReview) {
+            Write-Host "OK: entrega de Google Play enviada a revisión en la pista $PlayTrack."
+        } else {
+            Write-Host "OK: AAB subido a la pista $PlayTrack y pendiente de enviar a revisión."
+        }
     }
 
     function Get-FirebaseWebOption([string]$Name) {
@@ -246,8 +308,14 @@ try {
             Assert-AndroidSigning
             & flutter build appbundle --release @defines
             if ($LASTEXITCODE -ne 0) { throw 'Falló el AAB Android.' }
-            Assert-File 'build/app/outputs/bundle/release/app-release.aab' 'el AAB Android'
-            Write-Host 'OK: sube build/app/outputs/bundle/release/app-release.aab a Google Play Console.'
+            $bundlePath = 'build/app/outputs/bundle/release/app-release.aab'
+            Assert-File $bundlePath 'el AAB Android'
+            if ($UploadPlay) {
+                Publish-AndroidBundle $bundlePath
+            } else {
+                Write-Host "OK: AAB disponible en $bundlePath"
+                Write-Host 'Para subirlo: añade -UploadPlay -PlayTrack <pista> y, opcionalmente, -SubmitPlayReview.'
+            }
         }
         'apk' {
             Assert-AndroidSigning
