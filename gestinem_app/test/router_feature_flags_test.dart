@@ -10,6 +10,8 @@ import 'package:gestinem/app/router.dart';
 import 'package:gestinem/features/documents/domain/client_document.dart';
 import 'package:gestinem/features/documents/presentation/documents_providers.dart';
 import 'package:gestinem/features/invoicing/presentation/invoicing_providers.dart';
+import 'package:gestinem/features/subvenciones/domain/subvencion.dart';
+import 'package:gestinem/features/subvenciones/presentation/subvenciones_providers.dart';
 
 import 'test_helpers.dart';
 
@@ -392,5 +394,67 @@ void main() {
         );
       },
     );
+
+    testWidgets('subvenciones exige su feature flag', (tester) async {
+      late GoRouter router;
+      addTearDown(_suppressBuildErrors());
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionProvider.overrideWith(
+              (ref) => FakeSessionController(ref, testSession),
+            ),
+            platformFeaturesProvider.overrideWith(
+              (_) async => const PlatformFeatures(subsidies: false),
+            ),
+          ],
+          child: Consumer(
+            builder: (context, ref, _) {
+              router = ref.watch(routerProvider);
+              return MaterialApp.router(routerConfig: router);
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      router.go('/subvenciones');
+      await tester.pump();
+      expect(router.routerDelegate.currentConfiguration.uri.path, '/');
+    });
+
+    testWidgets('subvenciones activadas permiten abrir el catalogo', (
+      tester,
+    ) async {
+      late GoRouter router;
+      addTearDown(_suppressBuildErrors());
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionProvider.overrideWith(
+              (ref) => FakeSessionController(ref, testSession),
+            ),
+            platformFeaturesProvider.overrideWith(
+              (_) async => const PlatformFeatures(subsidies: true),
+            ),
+            subvencionesProvider.overrideWith(
+              (_) async => const ListaSubvenciones(total: 0, elementos: []),
+            ),
+          ],
+          child: Consumer(
+            builder: (context, ref, _) {
+              router = ref.watch(routerProvider);
+              return MaterialApp.router(routerConfig: router);
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      router.go('/subvenciones');
+      await tester.pumpAndSettle();
+      expect(
+        router.routerDelegate.currentConfiguration.uri.path,
+        '/subvenciones',
+      );
+    });
   });
 }

@@ -15,6 +15,7 @@ import '../features/auth/domain/user_profile.dart';
 import '../features/auth/presentation/auth_controller.dart';
 import '../features/empleados/presentation/empleados_screen.dart';
 import '../features/documents/presentation/documents_providers.dart';
+import '../features/subvenciones/presentation/subvenciones_providers.dart';
 import '../features/messaging/presentation/messaging_providers.dart';
 import 'router.dart';
 
@@ -285,6 +286,16 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
   }
 
   void _handleNotification(NotificationEvent event) {
+    final subvencionId = event.subvencionId;
+    if (subvencionId != null && subvencionId.isNotEmpty) {
+      ref.invalidate(subvencionesProvider);
+      ref.invalidate(subvencionProvider(subvencionId));
+      if (event.opened && ref.read(sessionProvider).valueOrNull != null) {
+        if (!_notificationOpenGuard.shouldHandle(event)) return;
+        ref.read(routerProvider).go('/subvenciones/$subvencionId');
+      }
+      return;
+    }
     final documentId = event.documentId;
     if (documentId != null && documentId.isNotEmpty) {
       ref.invalidate(documentsProvider);

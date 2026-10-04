@@ -44,6 +44,7 @@ def _restore_global_feature_flags():
         "CLIENT_DOCUMENTS_ENABLED",
         "CLIENT_INVOICING_ENABLED",
         "CLIENT_CERTIFICATES_ENABLED",
+        "CLIENT_SUBSIDIES_ENABLED",
     )
     original = {name: os.environ.get(name) for name in names}
     yield
@@ -64,6 +65,7 @@ def _setup():
     os.environ["CLIENT_DOCUMENTS_ENABLED"] = "false"
     os.environ["CLIENT_INVOICING_ENABLED"] = "false"
     os.environ["CLIENT_CERTIFICATES_ENABLED"] = "false"
+    os.environ["CLIENT_SUBSIDIES_ENABLED"] = "false"
 
     engine = create_engine(
         "sqlite+pysqlite://",
@@ -106,6 +108,7 @@ def _setup():
         org2.client_documents_enabled = True
         org2.client_invoicing_enabled = True
         org2.client_certificates_enabled = True
+        org2.client_subsidies_enabled = True
         db.commit()
         org1 = db.scalars(
             select(MessagingOrganization).where(
@@ -251,6 +254,7 @@ class TestAdminAuthorization:
         assert data["company_code"] == "ORG01"
         assert "client_documents_enabled" in data
         assert "client_certificates_enabled" in data
+        assert "client_subsidies_enabled" in data
         assert "effective_documents" in data
 
     def test_empleado_no_puede_ver_features(self):
@@ -284,6 +288,19 @@ class TestAdminAuthorization:
         assert resp.status_code == 200
         data = resp.json()
         assert data["client_certificates_enabled"] is True
+        assert data["changes"] == 1
+
+    def test_admin_puede_habilitar_ayudas(self):
+        client, _, admin_h, _, _, _ = _setup()
+        response = client.patch(
+            "/api/v1/messaging/staff/admin/organizations/ORG01/features",
+            headers=admin_h,
+            json={"client_subsidies_enabled": True},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["client_subsidies_enabled"] is True
         assert data["changes"] == 1
 
     def test_empleado_no_puede_modificar_features(self):

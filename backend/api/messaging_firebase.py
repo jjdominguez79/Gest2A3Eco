@@ -88,12 +88,17 @@ def send_fcm(push_token: str, payload: dict, *, platform: str = 'android') -> Fc
             conversation_id = data.get('conversation_id', '')
             thread_id = data.get('thread_id', '')
             document_id = data.get('document_id', '')
+            subvencion_id = data.get('subvencion_id', '') or (
+                data.get('target_id', '') if data.get('target_type') == 'subvencion' else ''
+            )
             if conversation_id:
                 link = f'{web_app_url}/#/conversation/{conversation_id}'
             elif thread_id:
                 link = f'{web_app_url}/#/internal/{thread_id}'
             elif document_id:
                 link = f'{web_app_url}/#/documents/{document_id}'
+            elif subvencion_id:
+                link = f'{web_app_url}/#/subvenciones/{subvencion_id}'
             else:
                 link = f'{web_app_url}/'
             webpush = messaging.WebpushConfig(
@@ -113,7 +118,10 @@ def send_fcm(push_token: str, payload: dict, *, platform: str = 'android') -> Fc
             # conserva siempre el destino exacto.
             data['title'] = title
             data['body'] = body
-            target_id = data.get('target_id') or data.get('conversation_id') or data.get('thread_id')
+            target_id = (
+                data.get('target_id') or data.get('conversation_id')
+                or data.get('thread_id') or data.get('subvencion_id')
+            )
             target_type = data.get('target_type', 'message')
             android = messaging.AndroidConfig(
                 priority='high',

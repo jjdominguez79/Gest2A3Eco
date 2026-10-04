@@ -59,12 +59,14 @@ from backend.api.integrations import DatapriusBackend, ProviderError, SignReques
 from backend.api.validation import validar_parte
 from backend.api import messaging_models  # noqa: F401 - registra tablas SQLAlchemy
 from backend.api import client_models  # noqa: F401 - registra tablas area cliente
+from backend.api import subvenciones_models  # noqa: F401 - registra tablas de ayudas
 from backend.api.messaging_api import cleanup_expired_attachments, router as messaging_router
 from backend.api.mail_api import router as mail_router
 from backend.api.client_profile_api import router as client_profile_router
 from backend.api.client_documents_api import router as client_documents_router
 from backend.api.client_invoices_api import router as client_invoices_router
 from backend.api.client_certificates_api import router as client_certificates_router
+from backend.api.subvenciones_api import router as subvenciones_router
 
 app = FastAPI(title="Gestinem Integraciones API", version="1.1.0")
 
@@ -112,6 +114,7 @@ app.include_router(client_profile_router)
 app.include_router(client_documents_router)
 app.include_router(client_invoices_router)
 app.include_router(client_certificates_router)
+app.include_router(subvenciones_router)
 
 
 CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS = {
@@ -177,6 +180,10 @@ CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS = {
     ("msg_organizations", "client_certificates_enabled"): (
         "ALTER TABLE msg_organizations "
         "ADD COLUMN client_certificates_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+    ),
+    ("msg_organizations", "client_subsidies_enabled"): (
+        "ALTER TABLE msg_organizations "
+        "ADD COLUMN client_subsidies_enabled BOOLEAN NOT NULL DEFAULT FALSE"
     ),
 }
 
@@ -422,6 +429,7 @@ def startup():
         "031_invitation_content.sql",
         "032_group_avatars.sql",
         "033_profile_change_system_messages.sql",
+        "034_subvenciones.sql",
     ):
         _mig_path = Path(__file__).resolve().parent.parent / "migrations" / _mig_name
         if _mig_path.exists():

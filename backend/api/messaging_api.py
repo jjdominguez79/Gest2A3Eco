@@ -215,6 +215,7 @@ class ClientFeaturesIn(BaseModel):
     client_documents_enabled: bool | None = None
     client_invoicing_enabled: bool | None = None
     client_certificates_enabled: bool | None = None
+    client_subsidies_enabled: bool | None = None
 
 
 class MessageEditIn(BaseModel):
@@ -2594,6 +2595,7 @@ def get_organization_features(
         is_certificates_enabled,
         is_documents_enabled,
         is_invoicing_enabled,
+        is_subsidies_enabled,
     )
     return {
         "company_code": org.company_code,
@@ -2603,9 +2605,13 @@ def get_organization_features(
         "client_certificates_enabled": bool(
             getattr(org, "client_certificates_enabled", False)
         ),
+        "client_subsidies_enabled": bool(
+            getattr(org, "client_subsidies_enabled", False)
+        ),
         "effective_documents": is_documents_enabled(org),
         "effective_invoicing": is_invoicing_enabled(org),
         "effective_certificates": is_certificates_enabled(org),
+        "effective_subsidies": is_subsidies_enabled(org),
     }
 
 
@@ -2658,6 +2664,19 @@ def set_organization_features(
                 changed_by=admin.email or admin.name,
             ))
 
+    if payload.client_subsidies_enabled is not None:
+        old_val = bool(getattr(org, "client_subsidies_enabled", False))
+        new_val = payload.client_subsidies_enabled
+        if old_val != new_val:
+            org.client_subsidies_enabled = new_val
+            changes.append(ClientFeatureFlagAudit(
+                organization_id=org.id,
+                flag_name="client_subsidies_enabled",
+                old_value=old_val,
+                new_value=new_val,
+                changed_by=admin.email or admin.name,
+            ))
+
     for audit in changes:
         db.add(audit)
     db.commit()
@@ -2666,6 +2685,7 @@ def set_organization_features(
         is_certificates_enabled,
         is_documents_enabled,
         is_invoicing_enabled,
+        is_subsidies_enabled,
     )
     return {
         "company_code": org.company_code,
@@ -2675,9 +2695,13 @@ def set_organization_features(
         "client_certificates_enabled": bool(
             getattr(org, "client_certificates_enabled", False)
         ),
+        "client_subsidies_enabled": bool(
+            getattr(org, "client_subsidies_enabled", False)
+        ),
         "effective_documents": is_documents_enabled(org),
         "effective_invoicing": is_invoicing_enabled(org),
         "effective_certificates": is_certificates_enabled(org),
+        "effective_subsidies": is_subsidies_enabled(org),
         "changes": len(changes),
     }
 

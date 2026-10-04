@@ -20,6 +20,8 @@ class OrganizationFeatures {
     this.effectiveInvoicing = false,
     this.certificates = false,
     this.effectiveCertificates = false,
+    this.subsidies = false,
+    this.effectiveSubsidies = false,
   });
 
   final bool documents;
@@ -28,6 +30,8 @@ class OrganizationFeatures {
   final bool effectiveInvoicing;
   final bool certificates;
   final bool effectiveCertificates;
+  final bool subsidies;
+  final bool effectiveSubsidies;
 }
 
 /// Provider para las feature flags de una organizacion concreta (vista admin).
@@ -42,6 +46,8 @@ final orgFeaturesProvider = FutureProvider.autoDispose
         effectiveInvoicing: json['effective_invoicing'] as bool? ?? false,
         certificates: json['client_certificates_enabled'] as bool? ?? false,
         effectiveCertificates: json['effective_certificates'] as bool? ?? false,
+        subsidies: json['client_subsidies_enabled'] as bool? ?? false,
+        effectiveSubsidies: json['effective_subsidies'] as bool? ?? false,
       );
     });
 
@@ -798,6 +804,21 @@ class _FeaturesCard extends ConsumerWidget {
                           v,
                           confirm: v,
                         ),
+                ),
+                SwitchListTile(
+                  secondary: const Icon(Icons.savings_outlined),
+                  title: const Text('Ayudas y subvenciones'),
+                  subtitle: Text(
+                    features.effectiveSubsidies
+                        ? 'Disponible para el cliente'
+                        : features.subsidies
+                        ? 'Configurada; falta la activación global'
+                        : 'No disponible para el cliente',
+                  ),
+                  value: features.subsidies,
+                  onChanged: busy
+                      ? null
+                      : (v) => onToggle('client_subsidies_enabled', v),
                 ),
                 const ListTile(
                   leading: Icon(Icons.receipt_long_outlined),

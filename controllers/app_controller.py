@@ -912,6 +912,18 @@ class AppController:
             )
         )
 
+    def open_subvenciones_global(self):
+        from views.ui_subvenciones_global import UISubvencionesGlobal
+
+        if not self._session.is_admin():
+            messagebox.showerror(
+                "Ayudas y subvenciones",
+                "Solo un administrador puede gestionar este servicio.",
+                parent=self._content.winfo_toplevel(),
+            )
+            return
+        self._show(lambda parent: UISubvencionesGlobal(parent))
+
     def open_tramites_dgt(self):
         from views.ui_tramites_dgt import UITramitesDgt
 

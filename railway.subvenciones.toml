@@ -1,0 +1,9 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "backend/Dockerfile"
+watchPatterns = ["backend/**", "gestinem_app/pubspec.yaml"]
+
+[deploy]
+startCommand = "python -m backend.api.subvenciones_job"
+cronSchedule = "15 5 * * *"
+restartPolicyType = "NEVER"

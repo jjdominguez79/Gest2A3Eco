@@ -299,3 +299,39 @@ def test_review_profile_change_request_uses_internal_route(monkeypatch):
         "status": "applied", "note": "Confirmado",
     }
     response.raise_for_status.assert_called_once_with()
+
+
+def test_subvenciones_dashboard_uses_workstation_backend(monkeypatch):
+    response = MagicMock()
+    response.json.return_value = {"totales": {"vigentes": 12}}
+    session = MagicMock()
+    session.get.return_value = response
+
+    result = _service(monkeypatch, session).get_subvenciones_dashboard()
+
+    assert result["totales"]["vigentes"] == 12
+    request = session.get.call_args
+    assert request.args[0].endswith("/client/subvenciones/internal/dashboard")
+    assert request.kwargs["headers"] == {"X-API-Key": "g2a3_wks_test"}
+
+
+def test_subvenciones_config_and_company_are_written(monkeypatch):
+    response = MagicMock()
+    response.json.return_value = {"ok": True}
+    session = MagicMock()
+    session.put.return_value = response
+    session.patch.return_value = response
+    service = _service(monkeypatch, session)
+
+    service.update_subvenciones_config(servicio=True, avisos=True, ia=False)
+    assert session.put.call_args.kwargs["json"] == {
+        "servicio_activo": True,
+        "avisos_activos": True,
+        "resumenes_ia_activos": False,
+    }
+
+    service.set_subvenciones_organization("E00006", True)
+    assert session.patch.call_args.args[0].endswith(
+        "/client/subvenciones/internal/organizaciones/E00006"
+    )
+    assert session.patch.call_args.kwargs["json"] == {"activa": True}

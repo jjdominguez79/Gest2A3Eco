@@ -37,6 +37,14 @@ def is_certificates_enabled(org: MessagingOrganization) -> bool:
     )
 
 
+def is_subsidies_enabled(org: MessagingOrganization) -> bool:
+    """Comprueba si el area de ayudas esta activa para la organizacion."""
+    settings = get_settings()
+    return bool(settings.client_subsidies_enabled) and bool(
+        getattr(org, "client_subsidies_enabled", False)
+    )
+
+
 def require_documents_enabled(
     db: Session, org_id: str
 ) -> MessagingOrganization:
@@ -78,5 +86,20 @@ def require_certificates_enabled(
         raise HTTPException(
             status_code=403,
             detail="Solicitud de certificados no habilitada para esta organizacion",
+        )
+    return org
+
+
+def require_subsidies_enabled(
+    db: Session, org_id: str,
+) -> MessagingOrganization:
+    """Exige que el area de ayudas este habilitada para la organizacion."""
+    org = db.get(MessagingOrganization, org_id)
+    if not org or not org.active:
+        raise HTTPException(status_code=404, detail="Organizacion no encontrada")
+    if not is_subsidies_enabled(org):
+        raise HTTPException(
+            status_code=403,
+            detail="Ayudas y subvenciones no habilitadas para esta organizacion",
         )
     return org

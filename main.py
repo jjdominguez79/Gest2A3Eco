@@ -94,6 +94,7 @@ def _build_header(
     on_open_firmas=None,
     on_open_adjuntos_mensajeria=None,
     on_open_notificaciones=None,
+    on_open_subvenciones=None,
     on_open_tramites_dgt=None,
     on_logout=None,
     db_label: str | None = None,
@@ -360,6 +361,8 @@ def _build_header(
         gestiones_menu.append(
             ("Notificaciones y certificados", on_open_notificaciones),
         )
+    if on_open_subvenciones:
+        gestiones_menu.append(("Ayudas y subvenciones", on_open_subvenciones))
     if on_open_tramites_dgt:
         gestiones_menu.append(("Trámites DGT", on_open_tramites_dgt))
     if gestiones_menu:
@@ -748,6 +751,9 @@ def main():
             ),
             on_open_adjuntos_mensajeria=controller.open_adjuntos_mensajeria,
             on_open_notificaciones=controller.open_notificaciones_global,
+            on_open_subvenciones=(
+                controller.open_subvenciones_global if session.is_admin() else None
+            ),
             on_open_tramites_dgt=(
                 controller.open_tramites_dgt
                 if controller.authorization.can_manage_tramites_dgt()

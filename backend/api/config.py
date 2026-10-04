@@ -118,6 +118,7 @@ class Settings:
     client_invoicing_enabled: bool
     # Autoservicio de certificados AEAT/TGSS
     client_certificates_enabled: bool
+    client_subsidies_enabled: bool
     client_certificates_master_key: str
     client_certificates_azure_connection_string: str
     client_certificates_azure_container: str
@@ -318,6 +319,9 @@ def get_settings() -> Settings:
         ).strip().lower() in {"1", "true", "yes", "si"},
         client_certificates_enabled=os.getenv(
             "CLIENT_CERTIFICATES_ENABLED", "false",
+        ).strip().lower() in {"1", "true", "yes", "si"},
+        client_subsidies_enabled=os.getenv(
+            "CLIENT_SUBSIDIES_ENABLED", "false",
         ).strip().lower() in {"1", "true", "yes", "si"},
         client_certificates_master_key=os.getenv(
             "CLIENT_CERTIFICATES_MASTER_KEY", "",

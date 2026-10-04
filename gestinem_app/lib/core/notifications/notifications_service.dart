@@ -135,6 +135,7 @@ class NotificationEvent {
     required this.opened,
     this.threadId,
     this.documentId,
+    this.subvencionId,
     this.notificationId,
     this.title,
     this.body,
@@ -143,6 +144,7 @@ class NotificationEvent {
   final String conversationId;
   final String? threadId;
   final String? documentId;
+  final String? subvencionId;
   final String? notificationId;
   final bool opened;
   final String? title;
@@ -158,8 +160,7 @@ class NotificationOpenGuard {
   bool shouldHandle(NotificationEvent event) {
     final notificationId = event.notificationId?.trim() ?? '';
     if (identical(_lastEvent, event) ||
-        (notificationId.isNotEmpty &&
-            notificationId == _lastNotificationId)) {
+        (notificationId.isNotEmpty && notificationId == _lastNotificationId)) {
       return false;
     }
     _lastEvent = event;
@@ -438,6 +439,7 @@ class NotificationsService {
     final targetType = notificationTargetType(data);
     final targetId = notificationTargetId(data);
     try {
+      if (targetType == 'subvencion') return true;
       if (targetType == 'document') {
         final response = await api.dio.get<Map<String, dynamic>>(
           '/client/documents/$targetId',
@@ -491,17 +493,19 @@ class NotificationsService {
     final conversationId = targetType == 'conversation' ? targetId : '';
     final threadId = targetType == 'internal_thread' ? targetId : null;
     final documentId = targetType == 'document' ? targetId : null;
+    final subvencionId = targetType == 'subvencion' ? targetId : null;
     if (conversationId.isEmpty &&
         (threadId == null || threadId.isEmpty) &&
-        (documentId == null || documentId.isEmpty)) {
+        (documentId == null || documentId.isEmpty) &&
+        (subvencionId == null || subvencionId.isEmpty)) {
       return;
     }
     final event = NotificationEvent(
       conversationId: conversationId,
       threadId: threadId,
       documentId: documentId,
-      notificationId:
-          data['message_id']?.toString() ?? notificationId,
+      subvencionId: subvencionId,
+      notificationId: data['message_id']?.toString() ?? notificationId,
       opened: opened,
       title: title ?? data['title']?.toString(),
       body: body ?? data['body']?.toString(),

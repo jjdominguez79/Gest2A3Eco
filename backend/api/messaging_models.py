@@ -44,6 +44,7 @@ class MessagingOrganization(Base):
     client_invoicing_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     client_documents_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     client_certificates_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    client_subsidies_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class MessagingStaff(Base):

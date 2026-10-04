@@ -486,3 +486,92 @@ class BackendClientService:
                 raise ValueError(str(detail)) from exc
             raise
         return response.json()
+
+    # ----- Ayudas y subvenciones -----
+
+    def _subvenciones_url(self, suffix: str = "") -> str:
+        self._ensure_configured()
+        base = f"{self.base_url}/api/v1/messaging/client/subvenciones/internal"
+        return f"{base}/{suffix.lstrip('/')}" if suffix else base
+
+    def get_subvenciones_dashboard(self) -> dict:
+        response = self.http.get(
+            self._subvenciones_url("dashboard"),
+            headers=self._headers(), timeout=30,
+        )
+        self._raise_for_status(response)
+        return response.json()
+
+    def update_subvenciones_config(
+        self, *, servicio: bool, avisos: bool, ia: bool,
+    ) -> dict:
+        response = self.http.put(
+            self._subvenciones_url("configuracion"),
+            headers=self._headers(),
+            json={
+                "servicio_activo": servicio,
+                "avisos_activos": avisos,
+                "resumenes_ia_activos": ia,
+            },
+            timeout=30,
+        )
+        self._raise_for_status(response)
+        return response.json()
+
+    def sync_subvenciones(self) -> dict:
+        response = self.http.post(
+            self._subvenciones_url("sincronizar"),
+            headers=self._headers(), timeout=30,
+        )
+        self._raise_for_status(response)
+        return response.json()
+
+    def list_subvenciones(self, query: str = "", limit: int = 500) -> list[dict]:
+        response = self.http.get(
+            self._subvenciones_url("convocatorias"),
+            headers=self._headers(), params={"q": query, "limit": limit}, timeout=60,
+        )
+        self._raise_for_status(response)
+        return list(response.json() or [])
+
+    def update_subvencion(self, codigo: str, **changes) -> dict:
+        response = self.http.patch(
+            self._subvenciones_url(f"convocatorias/{codigo}"),
+            headers=self._headers(), json=changes, timeout=30,
+        )
+        self._raise_for_status(response)
+        return response.json()
+
+    def list_subvenciones_subscriptions(self) -> list[dict]:
+        response = self.http.get(
+            self._subvenciones_url("suscripciones"),
+            headers=self._headers(), timeout=60,
+        )
+        self._raise_for_status(response)
+        return list(response.json() or [])
+
+    def list_subvenciones_deliveries(self, limit: int = 500) -> list[dict]:
+        response = self.http.get(
+            self._subvenciones_url("envios"),
+            headers=self._headers(), params={"limit": limit}, timeout=60,
+        )
+        self._raise_for_status(response)
+        return list(response.json() or [])
+
+    def list_subvenciones_organizations(self) -> list[dict]:
+        response = self.http.get(
+            self._subvenciones_url("organizaciones"),
+            headers=self._headers(), timeout=60,
+        )
+        self._raise_for_status(response)
+        return list(response.json() or [])
+
+    def set_subvenciones_organization(
+        self, company_code: str, active: bool,
+    ) -> dict:
+        response = self.http.patch(
+            self._subvenciones_url(f"organizaciones/{company_code}"),
+            headers=self._headers(), json={"activa": active}, timeout=30,
+        )
+        self._raise_for_status(response)
+        return response.json()

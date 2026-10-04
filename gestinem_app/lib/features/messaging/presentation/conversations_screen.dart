@@ -1219,6 +1219,13 @@ class _AppDrawer extends ConsumerWidget {
                 title: const Text('Facturaci\u00f3n'),
                 onTap: () => _navigate(context, '/invoicing'),
               ),
+            if (features.subsidies)
+              ListTile(
+                key: const Key('drawer-subvenciones'),
+                leading: const Icon(Icons.savings_outlined),
+                title: const Text('Ayudas y subvenciones'),
+                onTap: () => _navigate(context, '/subvenciones'),
+              ),
             ListTile(
               key: const Key('drawer-profile'),
               leading: const Icon(Icons.account_circle_outlined),

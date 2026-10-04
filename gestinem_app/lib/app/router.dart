@@ -33,6 +33,9 @@ import '../features/documents/presentation/document_detail_screen.dart';
 import '../features/documents/presentation/document_preview_screen.dart';
 import '../features/certificates/presentation/certificates_screen.dart';
 import '../features/certificates/presentation/staff_certificate_preview_screen.dart';
+import '../features/subvenciones/presentation/subvencion_detail_screen.dart';
+import '../features/subvenciones/presentation/subvenciones_preferences_screen.dart';
+import '../features/subvenciones/presentation/subvenciones_screen.dart';
 import '../core/deep_links/deep_link_controller.dart';
 
 class _RouterRefreshNotifier extends ChangeNotifier {
@@ -50,6 +53,8 @@ bool _isProtectedClientRoute(String location) {
   return path == '/documents' ||
       path.startsWith('/documents/') ||
       path == '/certificates' ||
+      path == '/subvenciones' ||
+      path.startsWith('/subvenciones/') ||
       path == '/invoicing' ||
       path.startsWith('/invoicing/');
 }
@@ -124,6 +129,9 @@ final routerProvider = Provider<GoRouter>((ref) {
         if (nextPath.startsWith('/certificates') && !features.certificates) {
           return '/';
         }
+        if (nextPath.startsWith('/subvenciones') && !features.subsidies) {
+          return '/';
+        }
         return next;
       }
 
@@ -152,7 +160,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       // Proteger rutas de documentos e invoicing con observacion reactiva.
       if (state.matchedLocation.startsWith('/documents') ||
           state.matchedLocation.startsWith('/invoicing') ||
-          state.matchedLocation.startsWith('/certificates')) {
+          state.matchedLocation.startsWith('/certificates') ||
+          state.matchedLocation.startsWith('/subvenciones')) {
         // Mientras cargan: mostrar splash preservando la ruta destino.
         if (featuresAsync.isLoading) {
           final encoded = Uri.encodeComponent(state.uri.toString());
@@ -172,6 +181,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         }
         if (state.matchedLocation.startsWith('/certificates') &&
             !features.certificates) {
+          return '/';
+        }
+        if (state.matchedLocation.startsWith('/subvenciones') &&
+            !features.subsidies) {
           return '/';
         }
       }
@@ -261,6 +274,19 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/certificates',
         builder: (_, _) => const CertificatesScreen(),
+      ),
+      GoRoute(
+        path: '/subvenciones',
+        builder: (_, _) => const SubvencionesScreen(),
+      ),
+      GoRoute(
+        path: '/subvenciones/preferencias',
+        builder: (_, _) => const SubvencionesPreferencesScreen(),
+      ),
+      GoRoute(
+        path: '/subvenciones/:codigo',
+        builder: (_, state) =>
+            SubvencionDetailScreen(codigo: state.pathParameters['codigo']!),
       ),
       GoRoute(
         path: '/documents/folder/:folder',

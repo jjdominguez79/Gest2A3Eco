@@ -339,12 +339,14 @@ def get_client_features(request: Request, db: Session = Depends(_db)):
         is_certificates_enabled,
         is_documents_enabled,
         is_invoicing_enabled,
+        is_subsidies_enabled,
     )
     return {
         "company_profile": True,
         "documents": is_documents_enabled(org),
         "invoicing": is_invoicing_enabled(org),
         "certificates": is_certificates_enabled(org),
+        "subsidies": is_subsidies_enabled(org),
     }
 
 
