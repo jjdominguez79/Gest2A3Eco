@@ -145,7 +145,8 @@ class _SubvencionesPreferencesScreenState
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16),
                 child: Text(
-                  'Puedes seguir tantas comunidades, provincias y municipios como necesites.',
+                  'Puedes seguir tantas comunidades, provincias y municipios como necesites. '
+                  'Para encontrar un municipio, escribe al menos dos letras.',
                 ),
               ),
               if (_seleccion.isNotEmpty)
@@ -173,6 +174,8 @@ class _SubvencionesPreferencesScreenState
                   decoration: const InputDecoration(
                     prefixIcon: Icon(Icons.search),
                     hintText: 'Buscar territorio',
+                    helperText:
+                        'La búsqueda incluye todos los municipios de España.',
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -234,14 +237,17 @@ class _Territorios extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final needle = consulta.trim().toLowerCase();
-    final visible = items
-        .where((e) => needle.isEmpty || e.nombre.toLowerCase().contains(needle))
-        .take(100)
-        .toList();
+    final visible = items.take(200).toList();
     if (visible.isEmpty) {
-      return const Padding(
+      return Padding(
         padding: EdgeInsets.all(20),
-        child: Center(child: Text('No se encontraron territorios.')),
+        child: Center(
+          child: Text(
+            needle.length < 2
+                ? 'Escribe al menos dos letras para buscar un municipio.'
+                : 'No se encontraron territorios.',
+          ),
+        ),
       );
     }
     return Column(

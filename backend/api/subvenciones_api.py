@@ -31,6 +31,8 @@ from backend.api.subvenciones_service import (
     PROVINCIAS,
     SubvencionesService,
     coincide_cliente,
+    municipios_ine,
+    municipios_ine_por_codigo,
     slug,
     territorio_organizacion,
 )
@@ -228,13 +230,24 @@ def _validate_subscription(value: SuscripcionIn) -> tuple[str, str, str]:
     if level == "PROVINCIAL" and not code.startswith("ES"):
         raise HTTPException(422, "Provincia no valida")
     if level == "MUNICIPAL":
-        ccaa_code, separator, municipality = code.partition(":")
-        municipality = slug(municipality if separator else (code or name))
-        if separator and ccaa_code not in CCAA:
-            raise HTTPException(422, "Comunidad del municipio no valida")
-        code = f"{ccaa_code}:{municipality}" if separator else municipality
-        if not municipality:
-            raise HTTPException(422, "Municipio no valido")
+        if code.startswith("INE:"):
+            municipality = municipios_ine_por_codigo().get(code.removeprefix("INE:"))
+            if not municipality:
+                raise HTTPException(422, "Municipio no valido")
+            name = f"{municipality['nombre']} ({municipality['provincia']})"
+        else:
+            ccaa_code, separator, municipality_name = code.partition(":")
+            municipality_name = slug(
+                municipality_name if separator else (code or name),
+            )
+            if separator and ccaa_code not in CCAA:
+                raise HTTPException(422, "Comunidad del municipio no valida")
+            code = (
+                f"{ccaa_code}:{municipality_name}"
+                if separator else municipality_name
+            )
+            if not municipality_name:
+                raise HTTPException(422, "Municipio no valido")
     if not name:
         raise HTTPException(422, "El territorio necesita nombre")
     return level, code, name
@@ -266,39 +279,33 @@ def guardar_preferencias(payload: PreferenciasIn, request: Request, db: Session 
 @router.get("/territorios")
 def territorios(request: Request, q: str = Query("", max_length=100), db: Session = Depends(_db)):
     client = _authenticated_client(request, db)
-    org = _org_for_client(db, client)
+    _org_for_client(db, client)
     result = [
         {"nivel": "AUTONOMICA", "codigo": code, "nombre": name}
         for code, name in CCAA.items()
     ]
-    provinces: dict[str, str] = dict(PROVINCIAS)
-    municipalities: dict[str, str] = {}
-    for call in db.scalars(select(SubvencionConvocatoria).where(SubvencionConvocatoria.visible.is_(True))).all():
-        for code in call.provincias_json or []:
-            provinces.setdefault(code, code)
-        if call.municipio_slug:
-            ccaa_code = (call.ccaa_json or [""])[0]
-            code = f"{ccaa_code}:{call.municipio_slug}" if ccaa_code else call.municipio_slug
-            region = CCAA.get(ccaa_code, "")
-            municipalities[code] = (
-                f"{call.municipio_nombre} ({region})" if region else call.municipio_nombre
-            )
-    home = territorio_organizacion(org)
-    if home["provincia"]:
-        provinces[home["provincia"]] = home["provincia_nombre"]
-    if home["municipio_slug"]:
-        code = (
-            f"{home['ccaa']}:{home['municipio_slug']}"
-            if home["ccaa"] else home["municipio_slug"]
-        )
-        municipalities[code] = (
-            f"{home['municipio']} ({home['ccaa_nombre']})"
-            if home["ccaa_nombre"] else home["municipio"]
-        )
-    result.extend({"nivel": "PROVINCIAL", "codigo": k, "nombre": v} for k, v in sorted(provinces.items(), key=lambda x: x[1]))
-    result.extend({"nivel": "MUNICIPAL", "codigo": k, "nombre": v} for k, v in sorted(municipalities.items(), key=lambda x: x[1]))
-    needle = q.strip().casefold()
-    return [item for item in result if not needle or needle in item["nombre"].casefold()][:200]
+    result.extend(
+        {"nivel": "PROVINCIAL", "codigo": code, "nombre": name}
+        for code, name in sorted(PROVINCIAS.items(), key=lambda item: item[1])
+    )
+    query = q.strip()
+    if len(query) >= 2:
+        for municipality in municipios_ine():
+            name = municipality["nombre"]
+            province = municipality["provincia"]
+            result.append({
+                "nivel": "MUNICIPAL",
+                "codigo": f"INE:{municipality['codigo_ine']}",
+                "nombre": f"{name} ({province})",
+            })
+    needle = query.casefold()
+    normalized_needle = slug(query)
+    return [
+        item for item in result
+        if not needle
+        or needle in item["nombre"].casefold()
+        or normalized_needle in slug(item["nombre"])
+    ][:200]
 
 
 @router.get("/{codigo}")

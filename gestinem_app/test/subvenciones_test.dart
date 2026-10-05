@@ -5,6 +5,7 @@ import 'package:gestinem/core/notifications/notifications_service.dart';
 import 'package:gestinem/features/platform/features_provider.dart';
 import 'package:gestinem/features/subvenciones/domain/subvencion.dart';
 import 'package:gestinem/features/subvenciones/presentation/subvenciones_providers.dart';
+import 'package:gestinem/features/subvenciones/presentation/subvenciones_preferences_screen.dart';
 import 'package:gestinem/features/subvenciones/presentation/subvenciones_screen.dart';
 
 void main() {
@@ -106,5 +107,42 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Configurar territorios y avisos'), findsOneWidget);
+  });
+
+  testWidgets('explica que el buscador incluye todos los municipios', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          preferenciasSubvencionesProvider.overrideWith(
+            (ref) async => const PreferenciasSubvenciones(
+              notificacionesActivas: false,
+              incluirNacionales: true,
+              usarTerritorioEmpresa: true,
+              territorioEmpresa: {},
+              suscripciones: [],
+            ),
+          ),
+          territoriosSubvencionesProvider.overrideWith(
+            (ref) async => const [
+              TerritorioSubvencion(
+                nivel: 'PROVINCIAL',
+                codigo: 'ES130',
+                nombre: 'Cantabria',
+              ),
+            ],
+          ),
+        ],
+        child: const MaterialApp(home: SubvencionesPreferencesScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('La búsqueda incluye todos los municipios de España.'),
+      findsOneWidget,
+    );
+    expect(find.text('Cantabria'), findsOneWidget);
   });
 }

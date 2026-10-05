@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import io
 import json
@@ -12,6 +13,8 @@ import time
 import unicodedata
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
+from functools import lru_cache
+from pathlib import Path
 
 import httpx
 from sqlalchemy import func, or_, select, text
@@ -39,6 +42,8 @@ BDNS_FICHA = "https://www.infosubvenciones.es/bdnstrans/GE/es/convocatorias"
 _LOCK_ID = 73190618
 _NUTS = re.compile(r"^\s*(ES\d{0,3})\b")
 _PROVINCIALES = ("DIPUTACI", "CABILDO", "CONSELL INSULAR", "CONSELL DE ")
+_ARTICULO_FINAL = re.compile(r"^(.*),\s+(el|la|los|las|a|o)$", re.IGNORECASE)
+_MUNICIPIOS_CSV = Path(__file__).with_name("data") / "municipios_ine_2026.csv"
 
 CCAA = {
     "ES11": "Galicia", "ES12": "Principado de Asturias", "ES13": "Cantabria",
@@ -68,7 +73,7 @@ _CP_TERRITORIO = {
     "01": ("ES21", "ES211", "Araba/Alava"), "02": ("ES42", "ES421", "Albacete"),
     "03": ("ES52", "ES521", "Alicante"), "04": ("ES61", "ES611", "Almeria"),
     "05": ("ES41", "ES411", "Avila"), "06": ("ES43", "ES431", "Badajoz"),
-    "07": ("ES53", "ES530", "Illes Balears"), "08": ("ES51", "ES511", "Barcelona"),
+    "07": ("ES53", "ES531,ES532,ES533", "Illes Balears"), "08": ("ES51", "ES511", "Barcelona"),
     "09": ("ES41", "ES412", "Burgos"), "10": ("ES43", "ES432", "Caceres"),
     "11": ("ES61", "ES612", "Cadiz"), "12": ("ES52", "ES522", "Castellon"),
     "13": ("ES42", "ES422", "Ciudad Real"), "14": ("ES61", "ES613", "Cordoba"),
@@ -116,6 +121,41 @@ def slug(value: str | None) -> str:
         "", normalized,
     )
     return re.sub(r"[^a-z0-9]+", "-", normalized).strip("-")
+
+
+def nombre_municipio_presentable(value: str) -> str:
+    name = str(value or "").strip()
+    match = _ARTICULO_FINAL.match(name)
+    if not match:
+        return name
+    article = match.group(2)
+    article = article[:1].upper() + article[1:]
+    return f"{article} {match.group(1)}"
+
+
+def aliases_municipio_ine(value: str) -> frozenset[str]:
+    names = {value, nombre_municipio_presentable(value)}
+    for part in value.split("/"):
+        names.add(part)
+        names.add(nombre_municipio_presentable(part))
+    return frozenset(slug(name) for name in names if name)
+
+
+@lru_cache(maxsize=1)
+def municipios_ine() -> tuple[dict[str, str], ...]:
+    with _MUNICIPIOS_CSV.open(encoding="utf-8", newline="") as source:
+        return tuple({
+            "codigo_ine": row["codigo_ine"],
+            "ccaa": row["ccaa"],
+            "provincia": row["provincia"],
+            "nombre": nombre_municipio_presentable(row["nombre"]),
+            "nombre_oficial": row["nombre"],
+        } for row in csv.DictReader(source))
+
+
+@lru_cache(maxsize=1)
+def municipios_ine_por_codigo() -> dict[str, dict[str, str]]:
+    return {item["codigo_ine"]: item for item in municipios_ine()}
 
 
 def territorio_organizacion(org: MessagingOrganization) -> dict:
@@ -295,6 +335,20 @@ def _matches_scope(call: SubvencionConvocatoria, level: str, code: str) -> bool:
             and selected[0][:4] in (call.ccaa_json or [])
         )
     if level == "MUNICIPAL":
+        if code.startswith("INE:"):
+            municipality = municipios_ine_por_codigo().get(code.removeprefix("INE:"))
+            if not municipality:
+                return False
+            ccaa_matches = (
+                not call.ccaa_json or municipality["ccaa"] in call.ccaa_json
+            )
+            return (
+                call.ambito == "LOCAL" and not call.es_provincial
+                and call.municipio_slug in aliases_municipio_ine(
+                    municipality["nombre_oficial"],
+                )
+                and ccaa_matches
+            )
         ccaa_code, separator, municipality = code.partition(":")
         municipality = municipality if separator else code
         if not municipality:

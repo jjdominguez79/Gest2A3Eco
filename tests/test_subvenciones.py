@@ -38,9 +38,11 @@ from backend.api.subvenciones_models import (
 )
 from backend.api.subvenciones_service import (
     BdnsClient,
+    PROVINCIAS,
     SubvencionesService,
     clasificar,
     coincide_cliente,
+    municipios_ine,
     normalizar,
     territorio_organizacion,
 )
@@ -159,6 +161,29 @@ def test_coincidencia_por_domicilio_y_suscripciones_adicionales():
         client_id="client", nivel="PROVINCIAL", codigo="ES300", nombre="Madrid",
     )
     assert coincide_cliente(provincial, org, preferences, [madrid]) is True
+
+    alicante = _call(
+        ambito="LOCAL", ccaa_json=["ES52"], municipio_nombre="Alicante",
+        municipio_slug="alicante",
+    )
+    official_municipality = SubvencionSuscripcion(
+        client_id="client", nivel="MUNICIPAL", codigo="INE:03014",
+        nombre="Alacant/Alicante (Alicante/Alacant)",
+    )
+    assert coincide_cliente(
+        alicante, org, preferences, [official_municipality],
+    ) is True
+
+
+def test_catalogo_territorial_oficial_es_completo_y_nombra_islas():
+    municipalities = municipios_ine()
+    assert len(municipalities) == 8132
+    assert any(
+        item["codigo_ine"] == "39075" and item["nombre"] == "Santander"
+        for item in municipalities
+    )
+    assert PROVINCIAS["ES531,ES532,ES533"] == "Illes Balears"
+    assert PROVINCIAS["ES703,ES706,ES707,ES709"] == "Santa Cruz de Tenerife"
 
 
 def test_aviso_push_es_idempotente(monkeypatch):
@@ -305,6 +330,24 @@ def test_api_cliente_guarda_territorios_y_filtra_para_mi(monkeypatch):
     assert saved.json()["suscripciones"][0]["codigo"] == "ES52"
 
     internal_headers = {"X-API-Key": "internal-test-secret"}
+    territories = api.get(
+        "/api/v1/messaging/client/subvenciones/territorios",
+        headers=headers,
+    )
+    assert territories.status_code == 200
+    assert len(territories.json()) == len(subvenciones_api.CCAA) + len(PROVINCIAS)
+    assert all(item["nivel"] != "MUNICIPAL" for item in territories.json())
+    assert all(not item["nombre"].startswith("ES") for item in territories.json())
+    municipality_results = api.get(
+        "/api/v1/messaging/client/subvenciones/territorios",
+        headers=headers,
+        params={"q": "Santander"},
+    )
+    assert {
+        (item["codigo"], item["nombre"]) for item in municipality_results.json()
+        if item["nivel"] == "MUNICIPAL"
+    } == {("INE:39075", "Santander (Cantabria)")}
+
     subscriptions = api.get(
         "/api/v1/messaging/client/subvenciones/internal/suscripciones",
         headers=internal_headers,
