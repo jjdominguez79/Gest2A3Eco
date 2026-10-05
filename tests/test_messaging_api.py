@@ -74,6 +74,7 @@ def test_startup_migra_columnas_de_plataforma_cliente_automaticamente():
         "client_invoicing_enabled",
         "client_documents_enabled",
         "client_certificates_enabled",
+        "client_subsidies_enabled",
     }
 
     assert {

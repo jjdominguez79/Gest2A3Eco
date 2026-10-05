@@ -1,4 +1,4 @@
-"""Ingesta BDNS, clasificacion territorial, resumen y avisos de ayudas."""
+"""Ingesta multifuente, clasificacion territorial, resumen y avisos de ayudas."""
 
 from __future__ import annotations
 
@@ -35,6 +35,7 @@ from backend.api.subvenciones_models import (
     SubvencionPreferencia,
     SubvencionSuscripcion,
 )
+from backend.api.subvenciones_boletines import BoeClient, BoletinesAutonomicosClient
 
 LOG = logging.getLogger(__name__)
 BDNS_API = "https://www.infosubvenciones.es/bdnstrans/api"
@@ -289,6 +290,10 @@ def normalizar(detalle: dict) -> dict:
     encoded = json.dumps(raw, ensure_ascii=False, sort_keys=True, default=str).encode()
     return {
         "codigo_bdns": str(detalle.get("codigoBDNS") or detalle.get("numeroConvocatoria") or "").strip(),
+        "fuente": "BDNS",
+        "fuente_nombre": "Base de Datos Nacional de Subvenciones",
+        "codigo_fuente": str(detalle.get("codigoBDNS") or detalle.get("numeroConvocatoria") or "").strip(),
+        "naturaleza": "convocatoria",
         "titulo": str(detalle.get("descripcion") or "").strip(),
         "organo_nivel1": str(organo.get("nivel1") or ""),
         "organo_nivel2": str(organo.get("nivel2") or ""),
@@ -526,10 +531,14 @@ def _apply(call: SubvencionConvocatoria, values: dict) -> None:
 class SubvencionesService:
     def __init__(
         self, db: Session, *, bdns: BdnsClient | None = None,
+        boe: BoeClient | None = None,
+        boletines: BoletinesAutonomicosClient | None = None,
         summarizer: Resumidor | None = None,
     ):
         self.db = db
         self.bdns = bdns or BdnsClient()
+        self.boe = boe or BoeClient()
+        self.boletines = boletines or BoletinesAutonomicosClient()
         self.summarizer = summarizer or Resumidor()
 
     def _config(self) -> SubvencionConfiguracion:
@@ -573,9 +582,82 @@ class SubvencionesService:
                 return True
         return False
 
+    def _guardar(self, values: dict, run: SubvencionEjecucion) -> SubvencionConvocatoria | None:
+        code = str(values.get("codigo_bdns") or "").strip()
+        if not code:
+            return None
+        call = self.db.scalar(select(SubvencionConvocatoria).where(
+            SubvencionConvocatoria.codigo_bdns == code,
+        ))
+        if call and call.hash_fuente == values["hash_fuente"]:
+            return None
+        if call is None:
+            call = SubvencionConvocatoria(
+                codigo_bdns=code, titulo=values["titulo"], ambito=values["ambito"],
+            )
+            self.db.add(call)
+            run.nuevas += 1
+        else:
+            run.actualizadas += 1
+        _apply(call, values)
+        # Los boletines ya incorporan una extracción determinista que permite
+        # publicar y alertar aunque el proveedor de IA no esté configurado.
+        if values.get("resumen_estado") != "ok":
+            call.resumen_estado = "pendiente"
+            call.hash_resumen = ""
+        self.db.commit()
+        return call
+
+    def _combinar_fuente(self, item: dict, run: SubvencionEjecucion) -> None:
+        code = str(item.get("merge_bdns") or "")
+        call = self.db.scalar(select(SubvencionConvocatoria).where(
+            SubvencionConvocatoria.codigo_bdns == code,
+        ))
+        if call is None:
+            run.detalle = (run.detalle + f"\n{item.get('source')}: BDNS {code} aún no importada")[-8000:]
+            return
+        links = list(call.enlaces_json or [])
+        existing = {str(link.get("url") or "") for link in links if isinstance(link, dict)}
+        for link in item.get("links") or []:
+            if link.get("url") not in existing:
+                links.append(link)
+        sources = list((call.raw_json or {}).get("fuentes_boletin") or [])
+        marker = {
+            "fuente": item.get("source"), "codigo": item.get("source_code"),
+        }
+        if marker not in sources:
+            sources.append(marker)
+        raw = dict(call.raw_json or {})
+        raw["fuentes_boletin"] = sources
+        call.enlaces_json = links
+        call.raw_json = raw
+        run.actualizadas += 1
+        self.db.commit()
+
+    def _ingerir_registros(
+        self, records: list[dict], run: SubvencionEjecucion,
+    ) -> list[SubvencionConvocatoria]:
+        changed: list[SubvencionConvocatoria] = []
+        run.leidas += len(records)
+        for values in records:
+            try:
+                if values.get("merge_bdns"):
+                    self._combinar_fuente(values, run)
+                    continue
+                call = self._guardar(values, run)
+                if call is not None:
+                    changed.append(call)
+            except Exception as exc:
+                code = values.get("codigo_bdns") or values.get("source_code") or "sin código"
+                LOG.exception("No se pudo importar la ayuda %s", code)
+                run.detalle = (run.detalle + f"\n{code}: {exc}")[-8000:]
+                self.db.rollback()
+        return changed
+
     def ingerir(self, run: SubvencionEjecucion, today: date) -> list[SubvencionConvocatoria]:
+        since = self._since(today)
         page_size = max(10, min(500, int(os.getenv("SUBSIDIES_BDNS_PAGE_SIZE", "100"))))
-        rows = self.bdns.listar_desde(self._since(today), page_size=page_size)
+        rows = self.bdns.listar_desde(since, page_size=page_size)
         run.leidas = len(rows)
         changed: list[SubvencionConvocatoria] = []
         for row in rows:
@@ -587,25 +669,30 @@ class SubvencionesService:
                 values = normalizar(detail)
                 if not values["codigo_bdns"]:
                     continue
-                call = self.db.scalar(select(SubvencionConvocatoria).where(
-                    SubvencionConvocatoria.codigo_bdns == values["codigo_bdns"],
-                ))
-                if call and call.hash_fuente == values["hash_fuente"]:
-                    continue
-                if call is None:
-                    call = SubvencionConvocatoria(codigo_bdns=code, titulo=values["titulo"], ambito=values["ambito"])
-                    self.db.add(call)
-                    run.nuevas += 1
-                else:
-                    run.actualizadas += 1
-                _apply(call, values)
-                call.resumen_estado = "pendiente"
-                call.hash_resumen = ""
-                self.db.commit()
-                changed.append(call)
+                call = self._guardar(values, run)
+                if call is not None:
+                    changed.append(call)
             except Exception as exc:
                 LOG.exception("No se pudo importar la convocatoria %s", code)
                 run.detalle = (run.detalle + f"\n{code}: {exc}")[-8000:]
+                self.db.rollback()
+        if os.getenv("SUBSIDIES_BOE_ENABLED", "true").strip().lower() not in {"0", "false", "no"}:
+            try:
+                changed.extend(self._ingerir_registros(
+                    self.boe.listar_desde(since, today), run,
+                ))
+            except Exception as exc:
+                LOG.exception("Fallo en la ingesta BOE")
+                run.detalle = (run.detalle + f"\nBOE: {exc}")[-8000:]
+                self.db.rollback()
+        if os.getenv("SUBSIDIES_REGIONAL_BULLETINS_ENABLED", "true").strip().lower() not in {"0", "false", "no"}:
+            try:
+                changed.extend(self._ingerir_registros(
+                    self.boletines.listar_desde(since), run,
+                ))
+            except Exception as exc:
+                LOG.exception("Fallo en la ingesta de boletines autonómicos")
+                run.detalle = (run.detalle + f"\nBoletines autonómicos: {exc}")[-8000:]
                 self.db.rollback()
         return changed
 

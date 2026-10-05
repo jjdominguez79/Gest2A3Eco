@@ -34,7 +34,14 @@ class SubvencionConvocatoria(Base):
     __tablename__ = "sub_convocatorias"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    codigo_bdns: Mapped[str] = mapped_column(String(24), unique=True, index=True)
+    # ``codigo_bdns`` se conserva como identificador interno por compatibilidad
+    # con las rutas ya publicadas. Para registros BOE/BOC contiene una clave
+    # estable generada desde el identificador del boletin.
+    codigo_bdns: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    fuente: Mapped[str] = mapped_column(String(24), default="BDNS", index=True)
+    fuente_nombre: Mapped[str] = mapped_column(String(180), default="Base de Datos Nacional de Subvenciones")
+    codigo_fuente: Mapped[str] = mapped_column(String(160), default="", index=True)
+    naturaleza: Mapped[str] = mapped_column(String(32), default="convocatoria", index=True)
     titulo: Mapped[str] = mapped_column(Text)
     organo_nivel1: Mapped[str] = mapped_column(String(80), default="")
     organo_nivel2: Mapped[str] = mapped_column(String(250), default="")

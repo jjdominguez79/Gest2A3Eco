@@ -430,6 +430,7 @@ def startup():
         "032_group_avatars.sql",
         "033_profile_change_system_messages.sql",
         "034_subvenciones.sql",
+        "035_subvenciones_boletines.sql",
     ):
         _mig_path = Path(__file__).resolve().parent.parent / "migrations" / _mig_name
         if _mig_path.exists():
