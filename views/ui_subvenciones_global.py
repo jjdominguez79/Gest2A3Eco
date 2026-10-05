@@ -101,8 +101,33 @@ class UISubvencionesGlobal(ttk.Frame):
         search.pack(side="left", padx=6)
         search.bind("<Return>", lambda _event: self._load_calls())
         ttk.Button(toolbar, text="Buscar", command=self._load_calls).pack(side="left")
+        ttk.Label(toolbar, text="Estado:").pack(side="left", padx=(14, 4))
+        self.calls_status_var = tk.StringVar(value="En vigor")
+        status = ttk.Combobox(
+            toolbar,
+            textvariable=self.calls_status_var,
+            values=("En vigor", "Finalizadas", "Todas"),
+            state="readonly",
+            width=12,
+        )
+        status.pack(side="left")
+        status.bind("<<ComboboxSelected>>", lambda _event: self._load_calls())
+        ttk.Label(toolbar, text="Visibilidad:").pack(side="left", padx=(14, 4))
+        self.calls_visibility_var = tk.StringVar(value="Visibles")
+        visibility = ttk.Combobox(
+            toolbar,
+            textvariable=self.calls_visibility_var,
+            values=("Visibles", "Ocultas", "Todas"),
+            state="readonly",
+            width=10,
+        )
+        visibility.pack(side="left")
+        visibility.bind("<<ComboboxSelected>>", lambda _event: self._load_calls())
         ttk.Button(
-            toolbar, text="Mostrar / ocultar", command=self._toggle_visibility,
+            toolbar, text="Mostrar", command=lambda: self._set_visibility(True),
+        ).pack(side="right", padx=4)
+        ttk.Button(
+            toolbar, text="Ocultar", command=lambda: self._set_visibility(False),
         ).pack(side="right", padx=4)
         ttk.Button(
             toolbar, text="Marcar revisada", command=self._mark_reviewed,
@@ -113,7 +138,7 @@ class UISubvencionesGlobal(ttk.Frame):
         self.calls_tree = self._tree(tab, (
             ("codigo", "BDNS", 90), ("fecha", "Publicación", 100),
             ("ambito", "Ámbito", 95), ("titulo", "Título", 560),
-            ("fin", "Fin", 100), ("visible", "Visible", 70),
+            ("fin", "Fin", 130), ("visible", "Visible", 70),
             ("revisada", "Revisada", 75), ("resumen", "Resumen", 90),
         ))
 
@@ -319,16 +344,30 @@ class UISubvencionesGlobal(ttk.Frame):
 
     def _load_calls(self) -> None:
         query = self.query_var.get().strip()
+        status = {
+            "En vigor": "en_vigor",
+            "Finalizadas": "finalizadas",
+            "Todas": "todas",
+        }[self.calls_status_var.get()]
+        visibility = {
+            "Visibles": "visibles",
+            "Ocultas": "ocultas",
+            "Todas": "todas",
+        }[self.calls_visibility_var.get()]
         self._run(
             "Cargando convocatorias...",
-            lambda: self.service.list_subvenciones(query), self._show_calls,
+            lambda: self.service.list_subvenciones(
+                query, estado=status, visibilidad=visibility,
+            ),
+            self._show_calls,
         )
 
     def _show_calls(self, items: list[dict]) -> None:
         self._replace(self.calls_tree, [
             (str(item.get("codigo_bdns")), (
                 item.get("codigo_bdns", ""), item.get("fecha_publicacion", ""),
-                item.get("ambito", ""), item.get("titulo", ""), item.get("fecha_fin", ""),
+                item.get("ambito", ""), item.get("titulo", ""),
+                fecha_fin_presentable(item.get("fecha_fin")),
                 _yes(item.get("visible")), _yes(item.get("revisada")),
                 item.get("resumen_estado", ""),
             )) for item in items
@@ -354,15 +393,8 @@ class UISubvencionesGlobal(ttk.Frame):
             lambda _result: self._load_calls(),
         )
 
-    def _toggle_visibility(self) -> None:
-        selected = self._selected_call()
-        if selected:
-            code, state = selected
-            self._run(
-                "Guardando convocatoria...",
-                lambda: self.service.update_subvencion(code, visible=not state["visible"]),
-                lambda _result: self._load_calls(),
-            )
+    def _set_visibility(self, visible: bool) -> None:
+        self._patch_call(visible=visible)
 
     def _mark_reviewed(self) -> None:
         self._patch_call(revisada=True)
@@ -535,6 +567,10 @@ class UISubvencionesGlobal(ttk.Frame):
 
 def _yes(value) -> str:
     return "Sí" if bool(value) else "No"
+
+
+def fecha_fin_presentable(value) -> str:
+    return str(value) if value else "Sin fecha indicada"
 
 
 def _preference_value(value) -> str:

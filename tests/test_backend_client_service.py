@@ -315,6 +315,28 @@ def test_subvenciones_dashboard_uses_workstation_backend(monkeypatch):
     assert request.kwargs["headers"] == {"X-API-Key": "g2a3_wks_test"}
 
 
+def test_subvenciones_list_sends_admin_filters(monkeypatch):
+    response = MagicMock()
+    response.json.return_value = []
+    session = MagicMock()
+    session.get.return_value = response
+
+    result = _service(monkeypatch, session).list_subvenciones(
+        "comercio", estado="finalizadas", visibilidad="ocultas",
+    )
+
+    assert result == []
+    request = session.get.call_args
+    assert request.args[0].endswith("/client/subvenciones/internal/convocatorias")
+    assert request.kwargs["params"] == {
+        "q": "comercio",
+        "estado": "finalizadas",
+        "visibilidad": "ocultas",
+        "limit": 5000,
+    }
+    assert request.kwargs["headers"] == {"X-API-Key": "g2a3_wks_test"}
+
+
 def test_subvenciones_config_and_company_are_written(monkeypatch):
     response = MagicMock()
     response.json.return_value = {"ok": True}

@@ -263,6 +263,11 @@ def test_api_cliente_guarda_territorios_y_filtra_para_mi(monkeypatch):
         db.add_all([
             _call(codigo_bdns="MAD", ccaa_json=["ES30"]),
             _call(codigo_bdns="VAL", ccaa_json=["ES52"]),
+            _call(codigo_bdns="OCULTA", visible=False),
+            _call(
+                codigo_bdns="FINALIZADA", abierto=False,
+                fecha_fin=date.today() - timedelta(days=1),
+            ),
         ])
         db.commit()
 
@@ -313,6 +318,37 @@ def test_api_cliente_guarda_territorios_y_filtra_para_mi(monkeypatch):
     )
     assert dashboard.status_code == 200
     assert dashboard.json()["totales"]["suscriptores"] == 1
+
+    current_calls = api.get(
+        "/api/v1/messaging/client/subvenciones/internal/convocatorias",
+        headers=internal_headers,
+    )
+    assert current_calls.status_code == 200
+    assert {item["codigo_bdns"] for item in current_calls.json()} == {"MAD", "VAL"}
+    hidden_calls = api.get(
+        "/api/v1/messaging/client/subvenciones/internal/convocatorias",
+        headers=internal_headers,
+        params={"visibilidad": "ocultas"},
+    )
+    assert [item["codigo_bdns"] for item in hidden_calls.json()] == ["OCULTA"]
+    finished_calls = api.get(
+        "/api/v1/messaging/client/subvenciones/internal/convocatorias",
+        headers=internal_headers,
+        params={"estado": "finalizadas", "visibilidad": "todas"},
+    )
+    assert [item["codigo_bdns"] for item in finished_calls.json()] == ["FINALIZADA"]
+    restored = api.patch(
+        "/api/v1/messaging/client/subvenciones/internal/convocatorias/OCULTA",
+        headers=internal_headers,
+        json={"visible": True},
+    )
+    assert restored.status_code == 200
+    assert restored.json()["visible"] is True
+    current_calls = api.get(
+        "/api/v1/messaging/client/subvenciones/internal/convocatorias",
+        headers=internal_headers,
+    )
+    assert "OCULTA" in {item["codigo_bdns"] for item in current_calls.json()}
 
     response = api.get(
         "/api/v1/messaging/client/subvenciones", headers=headers,

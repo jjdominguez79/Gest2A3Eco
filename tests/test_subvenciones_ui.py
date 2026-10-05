@@ -1,6 +1,6 @@
 """Pruebas de la operativa masiva del panel de subvenciones."""
 
-from views.ui_subvenciones_global import filtrar_organizaciones
+from views.ui_subvenciones_global import fecha_fin_presentable, filtrar_organizaciones
 
 
 ORGANIZACIONES = [
@@ -41,3 +41,9 @@ def test_filtra_empresas_por_estado_y_usuarios():
     assert [x["codigo_empresa"] for x in filtrar_organizaciones(
         ORGANIZACIONES, status="Sin usuarios",
     )] == ["E00001"]
+
+
+def test_fecha_fin_sin_valor_es_presentable():
+    assert fecha_fin_presentable(None) == "Sin fecha indicada"
+    assert fecha_fin_presentable("") == "Sin fecha indicada"
+    assert fecha_fin_presentable("2026-10-16") == "2026-10-16"

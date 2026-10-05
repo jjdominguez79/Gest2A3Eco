@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from datetime import date
+from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -389,12 +390,33 @@ def sincronizar(background: BackgroundTasks):
 
 @router.get("/internal/convocatorias", dependencies=[Depends(require_workstation_or_internal)])
 def convocatorias_internas(
-    q: str = Query("", max_length=120), limit: int = Query(200, ge=1, le=1000),
+    q: str = Query("", max_length=120),
+    estado: Literal["en_vigor", "finalizadas", "todas"] = "en_vigor",
+    visibilidad: Literal["visibles", "ocultas", "todas"] = "visibles",
+    limit: int = Query(5000, ge=1, le=5000),
     db: Session = Depends(_db),
 ):
     stmt = select(SubvencionConvocatoria)
     if q.strip():
         stmt = stmt.where(SubvencionConvocatoria.titulo.ilike(f"%{q.strip()}%"))
+    today = date.today()
+    if estado == "en_vigor":
+        stmt = stmt.where(
+            SubvencionConvocatoria.abierto.is_not(False),
+            or_(
+                SubvencionConvocatoria.fecha_fin.is_(None),
+                SubvencionConvocatoria.fecha_fin >= today,
+            ),
+        )
+    elif estado == "finalizadas":
+        stmt = stmt.where(or_(
+            SubvencionConvocatoria.abierto.is_(False),
+            SubvencionConvocatoria.fecha_fin < today,
+        ))
+    if visibilidad == "visibles":
+        stmt = stmt.where(SubvencionConvocatoria.visible.is_(True))
+    elif visibilidad == "ocultas":
+        stmt = stmt.where(SubvencionConvocatoria.visible.is_(False))
     rows = db.scalars(stmt.order_by(SubvencionConvocatoria.fecha_recepcion.desc()).limit(limit)).all()
     return [{**_summary(x), "visible": x.visible, "resumen_estado": x.resumen_estado} for x in rows]
 

@@ -526,10 +526,24 @@ class BackendClientService:
         self._raise_for_status(response)
         return response.json()
 
-    def list_subvenciones(self, query: str = "", limit: int = 500) -> list[dict]:
+    def list_subvenciones(
+        self,
+        query: str = "",
+        *,
+        estado: str = "en_vigor",
+        visibilidad: str = "visibles",
+        limit: int = 5000,
+    ) -> list[dict]:
         response = self.http.get(
             self._subvenciones_url("convocatorias"),
-            headers=self._headers(), params={"q": query, "limit": limit}, timeout=60,
+            headers=self._headers(),
+            params={
+                "q": query,
+                "estado": estado,
+                "visibilidad": visibilidad,
+                "limit": limit,
+            },
+            timeout=60,
         )
         self._raise_for_status(response)
         return list(response.json() or [])
