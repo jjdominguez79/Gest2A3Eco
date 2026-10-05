@@ -12,6 +12,10 @@ class Subvencion {
     required this.beneficiariosOficiales,
     required this.sectores,
     required this.instrumentos,
+    this.fuente = 'BDNS',
+    this.fuenteNombre = 'Base de Datos Nacional de Subvenciones',
+    this.codigoFuente,
+    this.naturaleza = 'convocatoria',
     this.municipio,
     this.fechaPublicacion,
     this.fechaInicio,
@@ -28,6 +32,10 @@ class Subvencion {
   });
 
   final String codigo;
+  final String fuente;
+  final String fuenteNombre;
+  final String? codigoFuente;
+  final String naturaleza;
   final String titulo;
   final String organo;
   final String ambito;
@@ -61,7 +69,14 @@ class Subvencion {
     DateTime? fecha(String key) =>
         DateTime.tryParse(json[key]?.toString() ?? '');
     return Subvencion(
-      codigo: json['codigo_bdns']?.toString() ?? '',
+      codigo:
+          json['codigo']?.toString() ?? json['codigo_bdns']?.toString() ?? '',
+      fuente: json['fuente']?.toString() ?? 'BDNS',
+      fuenteNombre:
+          json['fuente_nombre']?.toString() ??
+          'Base de Datos Nacional de Subvenciones',
+      codigoFuente: json['codigo_fuente']?.toString(),
+      naturaleza: json['naturaleza']?.toString() ?? 'convocatoria',
       titulo: json['titulo']?.toString() ?? '',
       organo: json['organo']?.toString() ?? '',
       ambito: json['ambito']?.toString() ?? '',

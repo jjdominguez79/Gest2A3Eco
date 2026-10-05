@@ -133,14 +133,30 @@ class _FichaDatos extends StatelessWidget {
   Widget build(BuildContext context) {
     final rows = <(IconData, String, String)>[
       (Icons.account_balance_outlined, 'Organismo', item.organo),
+      (Icons.source_outlined, 'Fuente oficial', item.fuenteNombre),
       (Icons.public, 'Ámbito', item.ambito),
+      (
+        Icons.category_outlined,
+        'Tipo',
+        switch (item.naturaleza) {
+          'ayuda_directa' => 'Ayuda directa',
+          'bases_reguladoras' => 'Bases reguladoras',
+          _ => 'Convocatoria',
+        },
+      ),
+      if (item.fechaInicio != null)
+        (Icons.event_available, 'Inicio de plazo', _fecha(item.fechaInicio!)),
       if (item.fechaFin != null)
         (Icons.event, 'Fin de plazo', _fecha(item.fechaFin!)),
       if (item.plazoTexto?.isNotEmpty == true)
         (Icons.event_note, 'Plazo', item.plazoTexto!),
       if (item.presupuesto != null)
         (Icons.euro, 'Presupuesto', _euros(item.presupuesto!)),
-      (Icons.tag, 'Código BDNS', item.codigo),
+      (
+        Icons.tag,
+        item.fuente == 'BDNS' ? 'Código BDNS' : 'Referencia oficial',
+        item.codigoFuente ?? item.codigo,
+      ),
     ].where((row) => row.$3.isNotEmpty).toList();
     return Card(
       child: Padding(

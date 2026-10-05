@@ -1,4 +1,4 @@
-"""Panel central de ayudas BDNS, suscripciones y avisos a clientes."""
+"""Panel central de ayudas multifuente, suscripciones y avisos a clientes."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ class UISubvencionesGlobal(ttk.Frame):
         ).pack(side="left")
         ttk.Label(
             header,
-            text="BDNS · catálogo para clientes · suscripciones territoriales",
+            text="BOE · boletines autonómicos · BDNS · alertas territoriales",
             foreground="#5B6573",
         ).pack(side="left", padx=14)
         self.status_var = tk.StringVar(value="Conectando con el servicio...")
@@ -136,7 +136,8 @@ class UISubvencionesGlobal(ttk.Frame):
             toolbar, text="Rehacer resumen", command=self._redo_summary,
         ).pack(side="right", padx=4)
         self.calls_tree = self._tree(tab, (
-            ("codigo", "BDNS", 90), ("fecha", "Publicación", 100),
+            ("codigo", "Referencia", 150), ("fuente", "Fuente", 85),
+            ("fecha", "Publicación", 100),
             ("ambito", "Ámbito", 95), ("titulo", "Título", 560),
             ("fin", "Fin", 130), ("visible", "Visible", 70),
             ("revisada", "Revisada", 75), ("resumen", "Resumen", 90),
@@ -224,7 +225,8 @@ class UISubvencionesGlobal(ttk.Frame):
         self.deliveries_tree = self._tree(tab, (
             ("fecha", "Fecha", 140), ("estado", "Estado", 100),
             ("usuario", "Usuario", 170), ("email", "Email", 220),
-            ("codigo", "BDNS", 90), ("titulo", "Convocatoria", 420),
+            ("codigo", "Referencia", 150), ("fuente", "Fuente", 85),
+            ("titulo", "Convocatoria", 420),
             ("dispositivos", "Dispositivos", 90), ("error", "Último error", 280),
         ))
 
@@ -235,7 +237,7 @@ class UISubvencionesGlobal(ttk.Frame):
         self.alerts_active_var = tk.BooleanVar(value=False)
         self.ai_active_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
-            tab, text="Sincronización BDNS activa", variable=self.service_active_var,
+            tab, text="Sincronización de boletines y BDNS activa", variable=self.service_active_var,
         ).pack(anchor="w", pady=5)
         ttk.Checkbutton(
             tab, text="Enviar notificaciones a clientes suscritos",
@@ -269,8 +271,8 @@ class UISubvencionesGlobal(ttk.Frame):
         ttk.Label(
             tab,
             text=(
-                "Los datos se obtienen de la BDNS. Los resúmenes son orientativos y la "
-                "convocatoria oficial siempre prevalece. El proceso programado se ejecuta "
+                "Los datos se obtienen del BOE, diarios autonómicos y la BDNS. Los resúmenes "
+                "son orientativos y la publicación oficial siempre prevalece. El proceso se ejecuta "
                 "en Railway, aunque el escritorio esté cerrado."
             ),
             foreground="#5B6573", wraplength=900, justify="left",
@@ -365,7 +367,8 @@ class UISubvencionesGlobal(ttk.Frame):
     def _show_calls(self, items: list[dict]) -> None:
         self._replace(self.calls_tree, [
             (str(item.get("codigo_bdns")), (
-                item.get("codigo_bdns", ""), item.get("fecha_publicacion", ""),
+                item.get("codigo_fuente") or item.get("codigo_bdns", ""),
+                item.get("fuente", ""), item.get("fecha_publicacion", ""),
                 item.get("ambito", ""), item.get("titulo", ""),
                 fecha_fin_presentable(item.get("fecha_fin")),
                 _yes(item.get("visible")), _yes(item.get("revisada")),
@@ -380,7 +383,7 @@ class UISubvencionesGlobal(ttk.Frame):
             return None
         iid = selection[0]
         values = self.calls_tree.item(iid, "values")
-        return iid, {"visible": values[5] == "Sí", "revisada": values[6] == "Sí"}
+        return iid, {"visible": values[6] == "Sí", "revisada": values[7] == "Sí"}
 
     def _patch_call(self, **changes) -> None:
         selected = self._selected_call()
@@ -521,7 +524,8 @@ class UISubvencionesGlobal(ttk.Frame):
             (str(item.get("id")), (
                 _date(item.get("enviada_at")), item.get("estado", ""),
                 item.get("usuario", ""), item.get("email", ""),
-                item.get("codigo_bdns", ""), item.get("titulo", ""),
+                item.get("codigo", item.get("codigo_bdns", "")),
+                item.get("fuente", ""), item.get("titulo", ""),
                 item.get("dispositivos_enviados", 0), item.get("ultimo_error", ""),
             )) for item in items
         ])

@@ -272,6 +272,8 @@ class _TarjetaSubvencion extends StatelessWidget {
               Row(
                 children: [
                   _Ambito(ambito: item.ambito),
+                  const SizedBox(width: 6),
+                  _Fuente(fuente: item.fuente),
                   const Spacer(),
                   if (item.fechaFin != null)
                     Text(
@@ -335,6 +337,28 @@ class _Ambito extends StatelessWidget {
       ambito,
       style: TextStyle(
         color: Theme.of(context).colorScheme.onPrimaryContainer,
+        fontSize: 11,
+        fontWeight: FontWeight.w700,
+      ),
+    ),
+  );
+}
+
+class _Fuente extends StatelessWidget {
+  const _Fuente({required this.fuente});
+  final String fuente;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.secondaryContainer,
+      borderRadius: BorderRadius.circular(20),
+    ),
+    child: Text(
+      fuente,
+      style: TextStyle(
+        color: Theme.of(context).colorScheme.onSecondaryContainer,
         fontSize: 11,
         fontWeight: FontWeight.w700,
       ),

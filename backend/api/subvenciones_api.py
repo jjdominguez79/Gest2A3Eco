@@ -113,7 +113,12 @@ def _summary(call: SubvencionConvocatoria) -> dict:
     summary = call.resumen_json or {}
     organ = " · ".join(x for x in (call.organo_nivel2, call.organo_nivel3) if x)
     return {
+        "codigo": call.codigo_bdns,
         "codigo_bdns": call.codigo_bdns,
+        "fuente": call.fuente,
+        "fuente_nombre": call.fuente_nombre,
+        "codigo_fuente": call.codigo_fuente or call.codigo_bdns,
+        "naturaleza": call.naturaleza,
         "titulo": call.titulo,
         "organo": organ or call.organo_nivel1,
         "ambito": call.ambito,
@@ -363,6 +368,12 @@ def dashboard(db: Session = Depends(_db)):
             "fallos_entrega": db.scalar(select(func.count()).select_from(SubvencionEntrega).where(
                 SubvencionEntrega.estado == "fallido",
             )) or 0,
+            "fuentes": {
+                str(source): count for source, count in db.execute(
+                    select(SubvencionConvocatoria.fuente, func.count())
+                    .group_by(SubvencionConvocatoria.fuente)
+                ).all()
+            },
         },
         "ultima_ejecucion": None if not last else {
             "id": last.id, "inicio": last.inicio, "fin": last.fin, "estado": last.estado,
@@ -483,7 +494,9 @@ def envios_internos(limit: int = Query(300, ge=1, le=1000), db: Session = Depend
         call = db.get(SubvencionConvocatoria, item.convocatoria_id)
         result.append({
             "id": item.id, "usuario": client.name if client else "", "email": client.email if client else "",
+            "codigo": call.codigo_bdns if call else "",
             "codigo_bdns": call.codigo_bdns if call else "", "titulo": call.titulo if call else "",
+            "fuente": call.fuente if call else "",
             "estado": item.estado, "intentos": item.intentos,
             "dispositivos_enviados": item.dispositivos_enviados,
             "ultimo_error": item.ultimo_error, "enviada_at": item.enviada_at,

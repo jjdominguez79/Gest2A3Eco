@@ -46,6 +46,7 @@ from backend.api.subvenciones_service import (
     normalizar,
     territorio_organizacion,
 )
+from backend.api.subvenciones_boletines import BoeClient, _feed_entries
 
 
 def _call(**changes) -> SubvencionConvocatoria:
@@ -98,6 +99,45 @@ def test_normaliza_convocatoria_y_conserva_fuentes():
     assert result["beneficiarios_json"] == ["Pymes"]
     assert any(link["tipo"] == "documento" for link in result["enlaces_json"])
     assert len(result["hash_fuente"]) == 64
+
+
+def test_boe_descompone_una_norma_en_ayudas_sin_publicar_suplementos():
+    xml = b"""<?xml version='1.0' encoding='UTF-8'?>
+    <documento><metadatos>
+      <identificador>BOE-A-2026-20265</identificador>
+      <departamento>Jefatura del Estado</departamento>
+      <titulo>Real Decreto-ley 25/2026, de 29 de septiembre.</titulo>
+      <fecha_publicacion>20260930</fecha_publicacion>
+      <url_pdf>https://boe.es/prueba.pdf</url_pdf>
+    </metadatos><texto>
+      <p class='articulo'>Articulo 28. Ayuda extraordinaria para el gasoleo profesional.</p>
+      <p class='parrafo'>Se prorroga para los meses de octubre, noviembre y diciembre de 2026 la ayuda para titulares de vehiculos.</p>
+      <p class='articulo'>Articulo 29. Suplemento de credito para financiar las ayudas.</p>
+      <p class='parrafo'>Se aprueba un suplemento de credito.</p>
+      <p class='articulo'>Articulo 30. Ayuda directa para profesionales del transporte.</p>
+      <p class='parrafo'>Seran beneficiarios los autonomos y sociedades. La solicitud se presentara entre el 1 de noviembre de 2026 y el 31 de diciembre de 2026.</p>
+    </texto></documento>"""
+    records = BoeClient()._parse_document(xml, {
+        "identificador": "BOE-A-2026-20265",
+        "titulo": "Real Decreto-ley 25/2026",
+    })
+    assert [item["codigo_bdns"] for item in records] == [
+        "BOE-A-2026-20265-28", "BOE-A-2026-20265-30",
+    ]
+    assert records[0]["fecha_fin"] == date(2026, 12, 31)
+    assert records[1]["fecha_inicio"] == date(2026, 11, 1)
+    assert records[1]["naturaleza"] == "ayuda_directa"
+
+
+def test_feed_oficial_acepta_rss_y_atom():
+    rss = b"""<rss><channel><item><title>Extracto de convocatoria de ayudas</title>
+      <link>https://boletin.example/1</link><pubDate>Mon, 05 Oct 2026 +0200</pubDate>
+      <description>Plazo de presentacion</description></item></channel></rss>"""
+    atom = b"""<feed xmlns='http://www.w3.org/2005/Atom'><entry>
+      <title>Subvencion directa</title><link href='https://boletin.example/2'/>
+      <updated>2026-10-05</updated></entry></feed>"""
+    assert list(_feed_entries(rss))[0]["published"] == date(2026, 10, 5)
+    assert list(_feed_entries(atom))[0]["link"] == "https://boletin.example/2"
 
 
 def test_bdns_pagina_sin_filtro_inestable_y_corta_por_fecha():
