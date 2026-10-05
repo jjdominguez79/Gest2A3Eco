@@ -89,7 +89,24 @@ CREATE TABLE IF NOT EXISTS sub_configuracion (
     updated_by VARCHAR(160) NOT NULL DEFAULT '',
     actualizada_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-INSERT INTO sub_configuracion (id) VALUES ('global') ON CONFLICT (id) DO NOTHING;
+-- SQLAlchemy puede haber creado esta tabla antes de ejecutar la migracion. Sus
+-- valores ``default`` son del lado de Python, por lo que PostgreSQL no dispone
+-- necesariamente de valores por defecto para las columnas NOT NULL.
+INSERT INTO sub_configuracion (
+    id,
+    servicio_activo,
+    avisos_activos,
+    resumenes_ia_activos,
+    updated_by,
+    actualizada_at
+) VALUES (
+    'global',
+    TRUE,
+    FALSE,
+    FALSE,
+    '',
+    NOW()
+) ON CONFLICT (id) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS sub_entregas (
     id VARCHAR(36) PRIMARY KEY,
