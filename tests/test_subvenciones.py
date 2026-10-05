@@ -204,15 +204,26 @@ def test_ingesta_boe_no_depende_de_disponibilidad_bdns(monkeypatch):
         def listar_desde(self, since, page_size=100):
             raise RuntimeError("BDNS no disponible")
 
-    boe = SimpleNamespace(listar_desde=lambda since, today: [{
-        "codigo_bdns": "BOE-INDEPENDIENTE",
-        "source_code": "BOE-INDEPENDIENTE",
-        "titulo": "Ayuda publicada en BOE",
-        "ambito": "ESTATAL",
-        "hash_fuente": "c" * 64,
-        "fuente": "BOE",
-    }])
+    fechas_boe = []
+
+    def listar_boe(since, today):
+        fechas_boe.append(since)
+        return [{
+            "codigo_bdns": "BOE-INDEPENDIENTE",
+            "source_code": "BOE-INDEPENDIENTE",
+            "titulo": "Ayuda publicada en BOE",
+            "ambito": "ESTATAL",
+            "hash_fuente": "c" * 64,
+            "fuente": "BOE",
+        }]
+
+    boe = SimpleNamespace(listar_desde=listar_boe)
     with factory() as db:
+        db.add(SubvencionEjecucion(
+            estado="ok",
+            fin=datetime.now(timezone.utc) - timedelta(days=1),
+        ))
+        db.commit()
         run = SubvencionEjecucion()
         db.add(run)
         db.commit()
@@ -224,6 +235,7 @@ def test_ingesta_boe_no_depende_de_disponibilidad_bdns(monkeypatch):
             SubvencionConvocatoria.codigo_bdns == "BOE-INDEPENDIENTE",
         )) is not None
         assert "BDNS no disponible" in run.detalle
+        assert fechas_boe == [date.today() - timedelta(days=14)]
 
 
 def test_bdns_pagina_sin_filtro_inestable_y_corta_por_fecha():

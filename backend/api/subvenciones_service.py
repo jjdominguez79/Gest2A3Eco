@@ -681,6 +681,10 @@ class SubvencionesService:
 
     def ingerir(self, run: SubvencionEjecucion, today: date) -> list[SubvencionConvocatoria]:
         since = self._since(today)
+        bulletin_days = max(
+            3, int(os.getenv("SUBSIDIES_BULLETIN_LOOKBACK_DAYS", "14")),
+        )
+        bulletin_since = min(since, today - timedelta(days=bulletin_days))
         changed: list[SubvencionConvocatoria] = []
         # Los boletines son la fuente que aporta convocatorias que pueden no
         # aparecer en BDNS. Se procesan primero y de forma independiente para
@@ -688,7 +692,7 @@ class SubvencionesService:
         if os.getenv("SUBSIDIES_BOE_ENABLED", "true").strip().lower() not in {"0", "false", "no"}:
             try:
                 changed.extend(self._ingerir_registros(
-                    self.boe.listar_desde(since, today), run,
+                    self.boe.listar_desde(bulletin_since, today), run,
                 ))
             except Exception as exc:
                 LOG.exception("Fallo en la ingesta BOE")
@@ -697,7 +701,7 @@ class SubvencionesService:
         if os.getenv("SUBSIDIES_REGIONAL_BULLETINS_ENABLED", "true").strip().lower() not in {"0", "false", "no"}:
             try:
                 changed.extend(self._ingerir_registros(
-                    self.boletines.listar_desde(since), run,
+                    self.boletines.listar_desde(bulletin_since), run,
                 ))
             except Exception as exc:
                 LOG.exception("Fallo en la ingesta de boletines autonómicos")
