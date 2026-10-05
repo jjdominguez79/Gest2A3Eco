@@ -61,7 +61,9 @@ class SubvencionConvocatoria(Base):
     abierto: Mapped[bool | None] = mapped_column(Boolean)
     presupuesto: Mapped[float | None] = mapped_column(Float)
     tipo_convocatoria: Mapped[str] = mapped_column(String(250), default="")
-    finalidad: Mapped[str] = mapped_column(String(350), default="")
+    # En los boletines oficiales la finalidad puede contener varios apartados
+    # completos. No debe truncarse ni impedir la importacion del resto del dia.
+    finalidad: Mapped[str] = mapped_column(Text, default="")
     beneficiarios_json: Mapped[list] = mapped_column(JSON, default=list)
     sectores_json: Mapped[list] = mapped_column(JSON, default=list)
     instrumentos_json: Mapped[list] = mapped_column(JSON, default=list)

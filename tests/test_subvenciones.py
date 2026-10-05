@@ -140,6 +140,56 @@ def test_feed_oficial_acepta_rss_y_atom():
     assert list(_feed_entries(atom))[0]["link"] == "https://boletin.example/2"
 
 
+def test_boletines_aceptan_finalidad_extensa_y_continuan_tras_error(monkeypatch):
+    engine = create_engine(
+        "sqlite+pysqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    with factory() as db:
+        run = SubvencionEjecucion()
+        db.add(run)
+        db.commit()
+        service = SubvencionesService(db, bdns=SimpleNamespace())
+        original = service._guardar
+        first = True
+
+        def guardar_con_fallo(values, current_run):
+            nonlocal first
+            if first:
+                first = False
+                db.add_all([
+                    _call(codigo_bdns="COLISION"),
+                    _call(codigo_bdns="COLISION"),
+                ])
+                db.flush()
+            return original(values, current_run)
+
+        monkeypatch.setattr(service, "_guardar", guardar_con_fallo)
+        finalidad = "Finalidad oficial extensa. " * 100
+        changed = service._ingerir_registros([
+            {
+                "codigo_bdns": "FALLA", "source_code": "FALLA",
+                "titulo": "Registro defectuoso", "ambito": "ESTATAL",
+                "hash_fuente": "a" * 64,
+            },
+            {
+                "codigo_bdns": "BOE-LARGO", "source_code": "BOE-LARGO",
+                "titulo": "Ayuda con finalidad extensa", "ambito": "ESTATAL",
+                "hash_fuente": "b" * 64, "finalidad": finalidad,
+            },
+        ], run)
+
+        assert [item.codigo_bdns for item in changed] == ["BOE-LARGO"]
+        stored = db.scalar(select(SubvencionConvocatoria).where(
+            SubvencionConvocatoria.codigo_bdns == "BOE-LARGO",
+        ))
+        assert stored.finalidad == finalidad
+        assert "FALLA" in run.detalle
+
+
 def test_bdns_pagina_sin_filtro_inestable_y_corta_por_fecha():
     class Response:
         content = b""

@@ -650,8 +650,8 @@ class SubvencionesService:
             except Exception as exc:
                 code = values.get("codigo_bdns") or values.get("source_code") or "sin código"
                 LOG.exception("No se pudo importar la ayuda %s", code)
-                run.detalle = (run.detalle + f"\n{code}: {exc}")[-8000:]
                 self.db.rollback()
+                run.detalle = (run.detalle + f"\n{code}: {exc}")[-8000:]
         return changed
 
     def ingerir(self, run: SubvencionEjecucion, today: date) -> list[SubvencionConvocatoria]:
@@ -674,8 +674,8 @@ class SubvencionesService:
                     changed.append(call)
             except Exception as exc:
                 LOG.exception("No se pudo importar la convocatoria %s", code)
-                run.detalle = (run.detalle + f"\n{code}: {exc}")[-8000:]
                 self.db.rollback()
+                run.detalle = (run.detalle + f"\n{code}: {exc}")[-8000:]
         if os.getenv("SUBSIDIES_BOE_ENABLED", "true").strip().lower() not in {"0", "false", "no"}:
             try:
                 changed.extend(self._ingerir_registros(
