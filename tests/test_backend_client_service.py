@@ -335,3 +335,12 @@ def test_subvenciones_config_and_company_are_written(monkeypatch):
         "/client/subvenciones/internal/organizaciones/E00006"
     )
     assert session.patch.call_args.kwargs["json"] == {"activa": True}
+
+    service.set_subvenciones_organizations(["E00006", "E00007"], False)
+    assert session.patch.call_args.args[0].endswith(
+        "/client/subvenciones/internal/organizaciones"
+    )
+    assert session.patch.call_args.kwargs["json"] == {
+        "codigos": ["E00006", "E00007"],
+        "activa": False,
+    }

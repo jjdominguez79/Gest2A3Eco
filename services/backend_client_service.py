@@ -575,3 +575,15 @@ class BackendClientService:
         )
         self._raise_for_status(response)
         return response.json()
+
+    def set_subvenciones_organizations(
+        self, company_codes: list[str], active: bool,
+    ) -> dict:
+        response = self.http.patch(
+            self._subvenciones_url("organizaciones"),
+            headers=self._headers(),
+            json={"codigos": company_codes, "activa": active},
+            timeout=60,
+        )
+        self._raise_for_status(response)
+        return response.json()

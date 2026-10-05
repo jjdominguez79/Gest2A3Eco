@@ -102,6 +102,41 @@ class _SubvencionesScreenState extends ConsumerState<SubvencionesScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    Card(
+                      margin: EdgeInsets.zero,
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Personaliza tus ayudas',
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            const SizedBox(height: 4),
+                            const Text(
+                              'Elige territorios y decide si quieres recibir avisos de nuevas convocatorias.',
+                            ),
+                            const SizedBox(height: 10),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: FilledButton.tonalIcon(
+                                key: const Key(
+                                  'configurar-preferencias-subvenciones',
+                                ),
+                                onPressed: () =>
+                                    context.push('/subvenciones/preferencias'),
+                                icon: const Icon(Icons.tune),
+                                label: const Text(
+                                  'Configurar territorios y avisos',
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                     SegmentedButton<bool>(
                       segments: const [
                         ButtonSegment(

@@ -82,6 +82,11 @@ class OrganizacionPatch(BaseModel):
     activa: bool
 
 
+class OrganizacionesBulkPatch(BaseModel):
+    codigos: list[str] = Field(min_length=1, max_length=500)
+    activa: bool
+
+
 def _preference(db: Session, client_id: str, *, create: bool = False) -> SubvencionPreferencia | None:
     item = db.get(SubvencionPreferencia, client_id)
     if item is None and create:
@@ -332,9 +337,21 @@ def dashboard(db: Session = Depends(_db)):
                 SubvencionConvocatoria.abierto.is_not(False),
                 or_(SubvencionConvocatoria.fecha_fin.is_(None), SubvencionConvocatoria.fecha_fin >= date.today()),
             )) or 0,
-            "suscriptores": db.scalar(select(func.count()).select_from(SubvencionPreferencia).where(
-                SubvencionPreferencia.notificaciones_activas.is_(True),
-            )) or 0,
+            "suscriptores": db.scalar(
+                select(func.count())
+                .select_from(SubvencionPreferencia)
+                .join(MessagingClient, MessagingClient.id == SubvencionPreferencia.client_id)
+                .join(
+                    MessagingOrganization,
+                    MessagingOrganization.id == MessagingClient.organization_id,
+                )
+                .where(
+                    SubvencionPreferencia.notificaciones_activas.is_(True),
+                    MessagingClient.active.is_(True),
+                    MessagingOrganization.active.is_(True),
+                    MessagingOrganization.client_subsidies_enabled.is_(True),
+                )
+            ) or 0,
             "fallos_entrega": db.scalar(select(func.count()).select_from(SubvencionEntrega).where(
                 SubvencionEntrega.estado == "fallido",
             )) or 0,
@@ -401,15 +418,28 @@ def editar_convocatoria(codigo: str, payload: ConvocatoriaPatch, db: Session = D
 @router.get("/internal/suscripciones", dependencies=[Depends(require_workstation_or_internal)])
 def suscripciones_internas(db: Session = Depends(_db)):
     rows = []
-    for client in db.scalars(select(MessagingClient).order_by(MessagingClient.email)).all():
-        org = db.get(MessagingOrganization, client.organization_id)
+    clients = db.execute(
+        select(MessagingClient, MessagingOrganization)
+        .join(
+            MessagingOrganization,
+            MessagingOrganization.id == MessagingClient.organization_id,
+        )
+        .where(
+            MessagingClient.active.is_(True),
+            MessagingOrganization.active.is_(True),
+            MessagingOrganization.client_subsidies_enabled.is_(True),
+        )
+        .order_by(MessagingOrganization.company_code, MessagingClient.email)
+    ).all()
+    for client, org in clients:
         preference = _preference(db, client.id)
         rows.append({
             "client_id": client.id, "usuario": client.name, "email": client.email,
-            "empresa": org.name if org else "", "codigo_empresa": org.company_code if org else "",
+            "empresa": org.name, "codigo_empresa": org.company_code,
+            "configurada": preference is not None,
             "notificaciones_activas": bool(preference and preference.notificaciones_activas),
-            "incluir_nacionales": True if preference is None else preference.incluir_nacionales,
-            "usar_territorio_empresa": True if preference is None else preference.usar_territorio_empresa,
+            "incluir_nacionales": None if preference is None else preference.incluir_nacionales,
+            "usar_territorio_empresa": None if preference is None else preference.usar_territorio_empresa,
             "territorios": [x.nombre for x in _subscriptions(db, client.id)],
         })
     return rows
@@ -484,3 +514,40 @@ def editar_organizacion(
         "activa": bool(org.client_subsidies_enabled),
         "efectiva": is_subsidies_enabled(org),
     }
+
+
+@router.patch(
+    "/internal/organizaciones",
+)
+def editar_organizaciones(
+    payload: OrganizacionesBulkPatch,
+    actor: str = Depends(require_workstation_or_internal),
+    db: Session = Depends(_db),
+):
+    codes = list(dict.fromkeys(code.strip() for code in payload.codigos if code.strip()))
+    if not codes:
+        raise HTTPException(422, "Seleccione al menos una empresa")
+    organizations = db.scalars(select(MessagingOrganization).where(
+        MessagingOrganization.company_code.in_(codes),
+    )).all()
+    by_code = {item.company_code: item for item in organizations}
+    missing = [code for code in codes if code not in by_code]
+    if missing:
+        raise HTTPException(404, f"Empresas no encontradas: {', '.join(missing[:10])}")
+    changed = 0
+    for code in codes:
+        org = by_code[code]
+        previous = bool(getattr(org, "client_subsidies_enabled", False))
+        if previous == payload.activa:
+            continue
+        org.client_subsidies_enabled = payload.activa
+        db.add(ClientFeatureFlagAudit(
+            organization_id=org.id,
+            flag_name="client_subsidies_enabled",
+            old_value=previous,
+            new_value=payload.activa,
+            changed_by=actor,
+        ))
+        changed += 1
+    db.commit()
+    return {"ok": True, "seleccionadas": len(codes), "actualizadas": changed}

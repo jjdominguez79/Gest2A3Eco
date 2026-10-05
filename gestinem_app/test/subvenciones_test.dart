@@ -101,5 +101,10 @@ void main() {
     expect(find.text('Ayuda para digitalizar pymes'), findsOneWidget);
     expect(find.text('1 convocatorias vigentes'), findsOneWidget);
     expect(find.byKey(const Key('subvenciones-preferencias')), findsOneWidget);
+    expect(
+      find.byKey(const Key('configurar-preferencias-subvenciones')),
+      findsOneWidget,
+    );
+    expect(find.text('Configurar territorios y avisos'), findsOneWidget);
   });
 }

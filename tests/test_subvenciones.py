@@ -245,6 +245,16 @@ def test_api_cliente_guarda_territorios_y_filtra_para_mi(monkeypatch):
         )
         db.add(client)
         db.flush()
+        hidden_org = MessagingOrganization(
+            company_code="E00003", name="Empresa sin ayudas", active=True,
+            client_subsidies_enabled=False,
+        )
+        db.add(hidden_org)
+        db.flush()
+        db.add(MessagingClient(
+            organization_id=hidden_org.id, name="Cliente oculto",
+            email="oculto@example.com", active=True,
+        ))
         db.add(MessagingSession(
             client_id=client.id,
             token_hash=hash_token(token),
@@ -289,6 +299,21 @@ def test_api_cliente_guarda_territorios_y_filtra_para_mi(monkeypatch):
     assert saved.status_code == 200
     assert saved.json()["suscripciones"][0]["codigo"] == "ES52"
 
+    internal_headers = {"X-API-Key": "internal-test-secret"}
+    subscriptions = api.get(
+        "/api/v1/messaging/client/subvenciones/internal/suscripciones",
+        headers=internal_headers,
+    )
+    assert subscriptions.status_code == 200
+    assert [item["codigo_empresa"] for item in subscriptions.json()] == ["E00002"]
+    assert subscriptions.json()[0]["configurada"] is True
+    dashboard = api.get(
+        "/api/v1/messaging/client/subvenciones/internal/dashboard",
+        headers=internal_headers,
+    )
+    assert dashboard.status_code == 200
+    assert dashboard.json()["totales"]["suscriptores"] == 1
+
     response = api.get(
         "/api/v1/messaging/client/subvenciones", headers=headers,
         params={"para_mi": True},
@@ -302,14 +327,28 @@ def test_api_cliente_guarda_territorios_y_filtra_para_mi(monkeypatch):
 
     changed = api.patch(
         "/api/v1/messaging/client/subvenciones/internal/organizaciones/E00002",
-        headers={"X-API-Key": "internal-test-secret"},
+        headers=internal_headers,
         json={"activa": False},
     )
     assert changed.status_code == 200
     assert changed.json()["activa"] is False
+    dashboard = api.get(
+        "/api/v1/messaging/client/subvenciones/internal/dashboard",
+        headers=internal_headers,
+    )
+    assert dashboard.json()["totales"]["suscriptores"] == 0
+    bulk = api.patch(
+        "/api/v1/messaging/client/subvenciones/internal/organizaciones",
+        headers=internal_headers,
+        json={"codigos": ["E00002", "E00003"], "activa": True},
+    )
+    assert bulk.status_code == 200
+    assert bulk.json() == {"ok": True, "seleccionadas": 2, "actualizadas": 2}
     with factory() as db:
         audit = db.scalar(select(ClientFeatureFlagAudit).where(
             ClientFeatureFlagAudit.flag_name == "client_subsidies_enabled",
+            ClientFeatureFlagAudit.old_value.is_(True),
+            ClientFeatureFlagAudit.new_value.is_(False),
         ))
         assert audit is not None
         assert audit.old_value is True and audit.new_value is False

@@ -18,6 +18,7 @@ class UISubvencionesGlobal(ttk.Frame):
         self.service = service or BackendClientService()
         self._busy = False
         self._config_loaded = False
+        self._organization_items: list[dict] = []
         self._build()
         self.after_idle(self.refresh)
 
@@ -68,11 +69,14 @@ class UISubvencionesGlobal(ttk.Frame):
         self._build_settings_tab()
         self.notebook.bind("<<NotebookTabChanged>>", self._tab_changed)
 
-    def _tree(self, parent, columns: tuple[tuple[str, str, int], ...]) -> ttk.Treeview:
+    def _tree(
+        self, parent, columns: tuple[tuple[str, str, int], ...],
+        *, selectmode: str = "browse",
+    ) -> ttk.Treeview:
         wrapper = ttk.Frame(parent)
         wrapper.pack(fill="both", expand=True, padx=8, pady=8)
         names = tuple(item[0] for item in columns)
-        tree = ttk.Treeview(wrapper, columns=names, show="headings", selectmode="browse")
+        tree = ttk.Treeview(wrapper, columns=names, show="headings", selectmode=selectmode)
         for name, title, width in columns:
             tree.heading(name, text=title)
             tree.column(name, width=width, minwidth=70, stretch=name in {"titulo", "empresa"})
@@ -121,23 +125,70 @@ class UISubvencionesGlobal(ttk.Frame):
         ttk.Label(
             toolbar,
             text="Active la función solo para las empresas que deban verla en Flutter.",
-        ).pack(side="left")
+        ).grid(row=0, column=0, columnspan=6, sticky="w", pady=(0, 8))
+        self.organization_count_var = tk.StringVar(value="")
+        ttk.Label(
+            toolbar, textvariable=self.organization_count_var, foreground="#5B6573",
+        ).grid(row=0, column=6, sticky="e", pady=(0, 8))
+        toolbar.columnconfigure(2, weight=1)
+        ttk.Label(toolbar, text="Buscar:").grid(row=1, column=0, sticky="w")
+        self.organization_query_var = tk.StringVar()
+        organization_search = ttk.Entry(
+            toolbar, textvariable=self.organization_query_var, width=38,
+        )
+        organization_search.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(6, 14))
+        organization_search.bind("<KeyRelease>", lambda _event: self._apply_organization_filters())
+        ttk.Label(toolbar, text="Estado:").grid(row=1, column=3, sticky="w")
+        self.organization_status_var = tk.StringVar(value="Todas")
+        status = ttk.Combobox(
+            toolbar,
+            textvariable=self.organization_status_var,
+            values=("Todas", "Activadas", "Desactivadas", "Con usuarios", "Sin usuarios"),
+            state="readonly", width=16,
+        )
+        status.grid(row=1, column=4, sticky="w", padx=6)
+        status.bind("<<ComboboxSelected>>", lambda _event: self._apply_organization_filters())
         ttk.Button(
-            toolbar, text="Cambiar activación", command=self._toggle_organization,
-        ).pack(side="right")
+            toolbar, text="Seleccionar visibles", command=self._select_visible_organizations,
+        ).grid(row=1, column=5, padx=(14, 4))
+        ttk.Button(
+            toolbar, text="Activar selección",
+            command=lambda: self._set_selected_organizations(True),
+        ).grid(row=1, column=6, padx=4)
+        ttk.Button(
+            toolbar, text="Desactivar selección",
+            command=lambda: self._set_selected_organizations(False),
+        ).grid(row=1, column=7, padx=(4, 0))
         self.organizations_tree = self._tree(tab, (
             ("codigo", "Código", 90), ("empresa", "Empresa", 330),
             ("territorio", "Territorio", 260), ("usuarios", "Usuarios", 80),
             ("activa", "Configurada", 90), ("efectiva", "Disponible", 90),
-        ))
+        ), selectmode="extended")
         self.organizations_tree.bind("<Double-1>", lambda _event: self._toggle_organization())
+        self.organizations_tree.bind(
+            "<<TreeviewSelect>>", lambda _event: self._update_organization_count(),
+        )
 
     def _build_subscriptions_tab(self) -> None:
         tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="Suscripciones")
+        self.notebook.add(tab, text="Preferencias clientes")
+        header = ttk.Frame(tab, padding=(8, 8, 8, 0))
+        header.pack(fill="x")
+        ttk.Label(
+            header,
+            text=(
+                "Solo se muestran usuarios de empresas habilitadas. “Sin configurar” "
+                "significa que el cliente todavía no ha guardado sus preferencias."
+            ),
+        ).pack(side="left")
+        self.subscription_count_var = tk.StringVar(value="")
+        ttk.Label(
+            header, textvariable=self.subscription_count_var, foreground="#5B6573",
+        ).pack(side="right")
         self.subscriptions_tree = self._tree(tab, (
             ("codigo", "Empresa", 90), ("empresa", "Razón social", 260),
             ("usuario", "Usuario", 180), ("email", "Email", 240),
+            ("estado", "Preferencias", 110),
             ("avisos", "Avisos", 70), ("nacional", "España", 70),
             ("domicilio", "Domicilio", 80), ("territorios", "Otros territorios", 380),
         ))
@@ -326,6 +377,15 @@ class UISubvencionesGlobal(ttk.Frame):
         )
 
     def _show_organizations(self, items: list[dict]) -> None:
+        self._organization_items = list(items)
+        self._apply_organization_filters()
+
+    def _apply_organization_filters(self) -> None:
+        items = filtrar_organizaciones(
+            self._organization_items,
+            self.organization_query_var.get(),
+            self.organization_status_var.get(),
+        )
         rows = []
         for item in items:
             territory = item.get("territorio") or {}
@@ -340,11 +400,51 @@ class UISubvencionesGlobal(ttk.Frame):
                 _yes(item.get("efectiva")),
             )))
         self._replace(self.organizations_tree, rows)
+        self._update_organization_count()
+
+    def _update_organization_count(self) -> None:
+        visible = len(self.organizations_tree.get_children())
+        selected = len(self.organizations_tree.selection())
+        total = len(self._organization_items)
+        suffix = f" · {selected} seleccionadas" if selected else ""
+        self.organization_count_var.set(f"Mostrando {visible} de {total}{suffix}")
+
+    def _select_visible_organizations(self) -> None:
+        visible = self.organizations_tree.get_children()
+        self.organizations_tree.selection_set(visible)
+        self._update_organization_count()
+
+    def _set_selected_organizations(self, active: bool) -> None:
+        selection = list(self.organizations_tree.selection())
+        if not selection:
+            messagebox.showinfo(
+                "Empresas", "Seleccione una o varias empresas.", parent=self,
+            )
+            return
+        action = "activar" if active else "desactivar"
+        if not messagebox.askyesno(
+            "Empresas",
+            f"¿Desea {action} ayudas y subvenciones para {len(selection)} empresa(s)?",
+            parent=self,
+        ):
+            return
+        self._run(
+            f"Guardando {len(selection)} empresas...",
+            lambda: self.service.set_subvenciones_organizations(selection, active),
+            lambda _result: self._load_organizations(),
+        )
 
     def _toggle_organization(self) -> None:
         selection = self.organizations_tree.selection()
         if not selection:
             messagebox.showinfo("Empresas", "Seleccione una empresa.", parent=self)
+            return
+        if len(selection) > 1:
+            messagebox.showinfo(
+                "Empresas",
+                "Para varias empresas use Activar selección o Desactivar selección.",
+                parent=self,
+            )
             return
         code = selection[0]
         active = self.organizations_tree.item(code, "values")[4] == "Sí"
@@ -361,13 +461,19 @@ class UISubvencionesGlobal(ttk.Frame):
         )
 
     def _show_subscriptions(self, items: list[dict]) -> None:
+        configured = sum(bool(item.get("configurada")) for item in items)
+        with_alerts = sum(bool(item.get("notificaciones_activas")) for item in items)
+        self.subscription_count_var.set(
+            f"{len(items)} usuarios · {configured} configurados · {with_alerts} con avisos"
+        )
         self._replace(self.subscriptions_tree, [
             (str(item.get("client_id")), (
                 item.get("codigo_empresa", ""), item.get("empresa", ""),
                 item.get("usuario", ""), item.get("email", ""),
+                "Configuradas" if item.get("configurada") else "Sin configurar",
                 _yes(item.get("notificaciones_activas")),
-                _yes(item.get("incluir_nacionales")),
-                _yes(item.get("usar_territorio_empresa")),
+                _preference_value(item.get("incluir_nacionales")),
+                _preference_value(item.get("usar_territorio_empresa")),
                 ", ".join(item.get("territorios") or []),
             )) for item in items
         ])
@@ -429,6 +535,42 @@ class UISubvencionesGlobal(ttk.Frame):
 
 def _yes(value) -> str:
     return "Sí" if bool(value) else "No"
+
+
+def _preference_value(value) -> str:
+    if value is None:
+        return "—"
+    return _yes(value)
+
+
+def filtrar_organizaciones(
+    items: list[dict], query: str = "", status: str = "Todas",
+) -> list[dict]:
+    needle = query.strip().casefold()
+    result = []
+    for item in items:
+        territory = item.get("territorio") or {}
+        searchable = " ".join((
+            str(item.get("codigo_empresa") or ""),
+            str(item.get("empresa") or ""),
+            str(territory.get("municipio") or ""),
+            str(territory.get("provincia_nombre") or ""),
+            str(territory.get("ccaa_nombre") or ""),
+        )).casefold()
+        if needle and needle not in searchable:
+            continue
+        active = bool(item.get("activa"))
+        users = int(item.get("usuarios_activos") or 0)
+        if status == "Activadas" and not active:
+            continue
+        if status == "Desactivadas" and active:
+            continue
+        if status == "Con usuarios" and users <= 0:
+            continue
+        if status == "Sin usuarios" and users > 0:
+            continue
+        result.append(item)
+    return result
 
 
 def _date(value) -> str:
