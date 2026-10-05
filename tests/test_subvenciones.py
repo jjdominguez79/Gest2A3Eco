@@ -190,6 +190,42 @@ def test_boletines_aceptan_finalidad_extensa_y_continuan_tras_error(monkeypatch)
         assert "FALLA" in run.detalle
 
 
+def test_ingesta_boe_no_depende_de_disponibilidad_bdns(monkeypatch):
+    monkeypatch.setenv("SUBSIDIES_REGIONAL_BULLETINS_ENABLED", "false")
+    engine = create_engine(
+        "sqlite+pysqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    class BdnsCaida:
+        def listar_desde(self, since, page_size=100):
+            raise RuntimeError("BDNS no disponible")
+
+    boe = SimpleNamespace(listar_desde=lambda since, today: [{
+        "codigo_bdns": "BOE-INDEPENDIENTE",
+        "source_code": "BOE-INDEPENDIENTE",
+        "titulo": "Ayuda publicada en BOE",
+        "ambito": "ESTATAL",
+        "hash_fuente": "c" * 64,
+        "fuente": "BOE",
+    }])
+    with factory() as db:
+        run = SubvencionEjecucion()
+        db.add(run)
+        db.commit()
+        service = SubvencionesService(db, bdns=BdnsCaida(), boe=boe)
+        changed = service.ingerir(run, date.today())
+
+        assert [item.codigo_bdns for item in changed] == ["BOE-INDEPENDIENTE"]
+        assert db.scalar(select(SubvencionConvocatoria).where(
+            SubvencionConvocatoria.codigo_bdns == "BOE-INDEPENDIENTE",
+        )) is not None
+        assert "BDNS no disponible" in run.detalle
+
+
 def test_bdns_pagina_sin_filtro_inestable_y_corta_por_fecha():
     class Response:
         content = b""

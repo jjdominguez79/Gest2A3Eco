@@ -654,11 +654,12 @@ class SubvencionesService:
                 run.detalle = (run.detalle + f"\n{code}: {exc}")[-8000:]
         return changed
 
-    def ingerir(self, run: SubvencionEjecucion, today: date) -> list[SubvencionConvocatoria]:
-        since = self._since(today)
+    def _ingerir_bdns(
+        self, since: date, run: SubvencionEjecucion,
+    ) -> list[SubvencionConvocatoria]:
         page_size = max(10, min(500, int(os.getenv("SUBSIDIES_BDNS_PAGE_SIZE", "100"))))
         rows = self.bdns.listar_desde(since, page_size=page_size)
-        run.leidas = len(rows)
+        run.leidas += len(rows)
         changed: list[SubvencionConvocatoria] = []
         for row in rows:
             code = str(row.get("numeroConvocatoria") or "").strip()
@@ -676,6 +677,14 @@ class SubvencionesService:
                 LOG.exception("No se pudo importar la convocatoria %s", code)
                 self.db.rollback()
                 run.detalle = (run.detalle + f"\n{code}: {exc}")[-8000:]
+        return changed
+
+    def ingerir(self, run: SubvencionEjecucion, today: date) -> list[SubvencionConvocatoria]:
+        since = self._since(today)
+        changed: list[SubvencionConvocatoria] = []
+        # Los boletines son la fuente que aporta convocatorias que pueden no
+        # aparecer en BDNS. Se procesan primero y de forma independiente para
+        # que una caida o lentitud de BDNS no bloquee el servicio de alertas.
         if os.getenv("SUBSIDIES_BOE_ENABLED", "true").strip().lower() not in {"0", "false", "no"}:
             try:
                 changed.extend(self._ingerir_registros(
@@ -683,8 +692,8 @@ class SubvencionesService:
                 ))
             except Exception as exc:
                 LOG.exception("Fallo en la ingesta BOE")
-                run.detalle = (run.detalle + f"\nBOE: {exc}")[-8000:]
                 self.db.rollback()
+                run.detalle = (run.detalle + f"\nBOE: {exc}")[-8000:]
         if os.getenv("SUBSIDIES_REGIONAL_BULLETINS_ENABLED", "true").strip().lower() not in {"0", "false", "no"}:
             try:
                 changed.extend(self._ingerir_registros(
@@ -692,8 +701,14 @@ class SubvencionesService:
                 ))
             except Exception as exc:
                 LOG.exception("Fallo en la ingesta de boletines autonómicos")
-                run.detalle = (run.detalle + f"\nBoletines autonómicos: {exc}")[-8000:]
                 self.db.rollback()
+                run.detalle = (run.detalle + f"\nBoletines autonómicos: {exc}")[-8000:]
+        try:
+            changed.extend(self._ingerir_bdns(since, run))
+        except Exception as exc:
+            LOG.exception("Fallo en la ingesta BDNS")
+            self.db.rollback()
+            run.detalle = (run.detalle + f"\nBDNS: {exc}")[-8000:]
         return changed
 
     def resumir(self, run: SubvencionEjecucion, limit: int = 100) -> None:
