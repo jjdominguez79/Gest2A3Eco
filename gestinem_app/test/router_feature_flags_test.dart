@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:gestinem/features/auth/presentation/auth_controller.dart';
+import 'package:gestinem/features/auth/domain/user_profile.dart';
 import 'package:gestinem/features/platform/features_provider.dart';
 import 'package:gestinem/app/router.dart';
 import 'package:gestinem/features/documents/domain/client_document.dart';
@@ -12,8 +13,20 @@ import 'package:gestinem/features/documents/presentation/documents_providers.dar
 import 'package:gestinem/features/invoicing/presentation/invoicing_providers.dart';
 import 'package:gestinem/features/subvenciones/domain/subvencion.dart';
 import 'package:gestinem/features/subvenciones/presentation/subvenciones_providers.dart';
+import 'package:gestinem/features/subvenciones/presentation/subvenciones_admin_providers.dart';
 
 import 'test_helpers.dart';
+
+const adminSession = AuthSession(
+  token: 'admin-token',
+  profile: UserProfile(
+    id: 'admin-1',
+    name: 'Administrador',
+    email: 'admin@example.test',
+    type: UserType.staff,
+    staffRole: StaffRole.admin,
+  ),
+);
 
 // ---------------------------------------------------------------------------
 // Los tests instancian el routerProvider REAL via ProviderScope con overrides.
@@ -455,6 +468,83 @@ void main() {
         router.routerDelegate.currentConfiguration.uri.path,
         '/subvenciones',
       );
+    });
+
+    testWidgets('el area de ayudas administrativa exige rol admin', (
+      tester,
+    ) async {
+      late GoRouter router;
+      addTearDown(_suppressBuildErrors());
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionProvider.overrideWith(
+              (ref) => FakeSessionController(ref, testSession),
+            ),
+            platformFeaturesProvider.overrideWith(
+              (_) async => const PlatformFeatures(),
+            ),
+          ],
+          child: Consumer(
+            builder: (context, ref, _) {
+              router = ref.watch(routerProvider);
+              return MaterialApp.router(routerConfig: router);
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      router.go('/admin/subvenciones');
+      await tester.pumpAndSettle();
+      expect(router.routerDelegate.currentConfiguration.uri.path, '/');
+    });
+
+    testWidgets('el administrador puede abrir la base de datos de ayudas', (
+      tester,
+    ) async {
+      late GoRouter router;
+      addTearDown(_suppressBuildErrors());
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionProvider.overrideWith(
+              (ref) => FakeSessionController(ref, adminSession),
+            ),
+            platformFeaturesProvider.overrideWith(
+              (_) async => const PlatformFeatures(),
+            ),
+            dashboardSubvencionesAdminProvider.overrideWith(
+              (_) async => const DashboardSubvencionesAdmin(
+                convocatorias: 0,
+                vigentes: 0,
+                ocultas: 0,
+                revisadas: 0,
+                suscriptores: 0,
+                fallosEntrega: 0,
+                fuentes: {},
+                estadoUltimaEjecucion: 'ok',
+              ),
+            ),
+            listaSubvencionesAdminProvider.overrideWith(
+              (_) async => const ListaSubvenciones(total: 0, elementos: []),
+            ),
+          ],
+          child: Consumer(
+            builder: (context, ref, _) {
+              router = ref.watch(routerProvider);
+              return MaterialApp.router(routerConfig: router);
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      router.go('/admin/subvenciones');
+      await tester.pumpAndSettle();
+      expect(
+        router.routerDelegate.currentConfiguration.uri.path,
+        '/admin/subvenciones',
+      );
+      expect(find.text('Base de datos de ayudas'), findsOneWidget);
     });
   });
 }

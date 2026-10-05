@@ -1200,6 +1200,13 @@ class _AppDrawer extends ConsumerWidget {
             ),
           if (profile.isAdmin)
             ListTile(
+              key: const Key('drawer-admin-subvenciones'),
+              leading: const Icon(Icons.savings_outlined),
+              title: const Text('Base de datos de ayudas'),
+              onTap: () => _navigate(context, '/admin/subvenciones'),
+            ),
+          if (profile.isAdmin)
+            ListTile(
               key: const Key('drawer-invitation-content'),
               leading: const Icon(Icons.forward_to_inbox_outlined),
               title: const Text('Invitación y manual'),

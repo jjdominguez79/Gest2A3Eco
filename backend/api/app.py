@@ -66,7 +66,10 @@ from backend.api.client_profile_api import router as client_profile_router
 from backend.api.client_documents_api import router as client_documents_router
 from backend.api.client_invoices_api import router as client_invoices_router
 from backend.api.client_certificates_api import router as client_certificates_router
-from backend.api.subvenciones_api import router as subvenciones_router
+from backend.api.subvenciones_api import (
+    admin_router as subvenciones_admin_router,
+    router as subvenciones_router,
+)
 
 app = FastAPI(title="Gestinem Integraciones API", version="1.1.0")
 
@@ -115,6 +118,7 @@ app.include_router(client_documents_router)
 app.include_router(client_invoices_router)
 app.include_router(client_certificates_router)
 app.include_router(subvenciones_router)
+app.include_router(subvenciones_admin_router)
 
 
 CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS = {

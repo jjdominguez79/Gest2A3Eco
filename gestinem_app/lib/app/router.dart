@@ -35,6 +35,7 @@ import '../features/certificates/presentation/certificates_screen.dart';
 import '../features/certificates/presentation/staff_certificate_preview_screen.dart';
 import '../features/subvenciones/presentation/subvencion_detail_screen.dart';
 import '../features/subvenciones/presentation/subvenciones_preferences_screen.dart';
+import '../features/subvenciones/presentation/subvenciones_admin_screen.dart';
 import '../features/subvenciones/presentation/subvenciones_screen.dart';
 import '../core/deep_links/deep_link_controller.dart';
 
@@ -151,6 +152,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           profile?.isAdmin != true) {
         return '/';
       }
+      if (state.matchedLocation.startsWith('/admin/') &&
+          profile?.isAdmin != true) {
+        return '/';
+      }
       if (state.matchedLocation.startsWith('/clients/') &&
           state.matchedLocation.contains('/certificates') &&
           profile?.isAdmin != true) {
@@ -227,6 +232,17 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/groups', builder: (_, _) => const GroupsScreen()),
       GoRoute(path: '/campaigns', builder: (_, _) => const CampaignsScreen()),
       GoRoute(path: '/employees', builder: (_, _) => const EmpleadosScreen()),
+      GoRoute(
+        path: '/admin/subvenciones',
+        builder: (_, _) => const SubvencionesAdminScreen(),
+      ),
+      GoRoute(
+        path: '/admin/subvenciones/:codigo',
+        builder: (_, state) => SubvencionDetailScreen(
+          codigo: state.pathParameters['codigo']!,
+          administracion: true,
+        ),
+      ),
       GoRoute(path: '/clients', builder: (_, _) => const ClientsScreen()),
       GoRoute(
         path: '/invitation-content',

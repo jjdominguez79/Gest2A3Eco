@@ -29,6 +29,9 @@ class Subvencion {
     this.tipoConvocatoria,
     this.avisoLegal,
     this.mrr = false,
+    this.visible = true,
+    this.revisada = false,
+    this.resumenEstado = '',
   });
 
   final String codigo;
@@ -60,6 +63,9 @@ class Subvencion {
   final List<EnlaceSubvencion> enlaces;
   final String? avisoLegal;
   final bool mrr;
+  final bool visible;
+  final bool revisada;
+  final String resumenEstado;
 
   factory Subvencion.fromJson(Map<String, dynamic> json) {
     List<String> strings(String key) =>
@@ -106,6 +112,56 @@ class Subvencion {
           .toList(),
       avisoLegal: json['aviso_legal']?.toString(),
       mrr: json['mrr'] as bool? ?? false,
+      visible: json['visible'] as bool? ?? true,
+      revisada: json['revisada'] as bool? ?? false,
+      resumenEstado: json['resumen_estado']?.toString() ?? '',
+    );
+  }
+}
+
+class DashboardSubvencionesAdmin {
+  const DashboardSubvencionesAdmin({
+    required this.convocatorias,
+    required this.vigentes,
+    required this.ocultas,
+    required this.revisadas,
+    required this.suscriptores,
+    required this.fallosEntrega,
+    required this.fuentes,
+    required this.estadoUltimaEjecucion,
+    this.finUltimaEjecucion,
+  });
+
+  final int convocatorias;
+  final int vigentes;
+  final int ocultas;
+  final int revisadas;
+  final int suscriptores;
+  final int fallosEntrega;
+  final Map<String, int> fuentes;
+  final String estadoUltimaEjecucion;
+  final DateTime? finUltimaEjecucion;
+
+  factory DashboardSubvencionesAdmin.fromJson(Map<String, dynamic> json) {
+    final totals = json['totales'] is Map
+        ? Map<String, dynamic>.from(json['totales'] as Map)
+        : const <String, dynamic>{};
+    final last = json['ultima_ejecucion'] is Map
+        ? Map<String, dynamic>.from(json['ultima_ejecucion'] as Map)
+        : const <String, dynamic>{};
+    final sources = totals['fuentes'] is Map
+        ? Map<String, dynamic>.from(totals['fuentes'] as Map)
+        : const <String, dynamic>{};
+    return DashboardSubvencionesAdmin(
+      convocatorias: totals['convocatorias'] as int? ?? 0,
+      vigentes: totals['vigentes'] as int? ?? 0,
+      ocultas: totals['ocultas'] as int? ?? 0,
+      revisadas: totals['revisadas'] as int? ?? 0,
+      suscriptores: totals['suscriptores'] as int? ?? 0,
+      fallosEntrega: totals['fallos_entrega'] as int? ?? 0,
+      fuentes: sources.map((key, value) => MapEntry(key, value as int? ?? 0)),
+      estadoUltimaEjecucion: last['estado']?.toString() ?? '',
+      finUltimaEjecucion: DateTime.tryParse(last['fin']?.toString() ?? ''),
     );
   }
 }

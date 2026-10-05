@@ -4,17 +4,29 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/api/api_client.dart';
 import '../domain/subvencion.dart';
+import 'subvenciones_admin_providers.dart';
 import 'subvenciones_providers.dart';
 
 class SubvencionDetailScreen extends ConsumerWidget {
-  const SubvencionDetailScreen({super.key, required this.codigo});
+  const SubvencionDetailScreen({
+    super.key,
+    required this.codigo,
+    this.administracion = false,
+  });
   final String codigo;
+  final bool administracion;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final detail = ref.watch(subvencionProvider(codigo));
+    final AsyncValue<Subvencion> detail = administracion
+        ? ref.watch(subvencionAdminProvider(codigo))
+        : ref.watch(subvencionProvider(codigo));
     return Scaffold(
-      appBar: AppBar(title: const Text('Detalle de la ayuda')),
+      appBar: AppBar(
+        title: Text(
+          administracion ? 'Revisión de la ayuda' : 'Detalle de la ayuda',
+        ),
+      ),
       body: detail.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, _) => Center(
@@ -32,6 +44,10 @@ class SubvencionDetailScreen extends ConsumerWidget {
                 context,
               ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
             ),
+            if (administracion) ...[
+              const SizedBox(height: 12),
+              _ControlesAdministracion(item: item),
+            ],
             const SizedBox(height: 12),
             _FichaDatos(item: item),
             if (item.resumen != null) ...[
@@ -123,6 +139,99 @@ class SubvencionDetailScreen extends ConsumerWidget {
       );
     }
   }
+}
+
+class _ControlesAdministracion extends ConsumerWidget {
+  const _ControlesAdministracion({required this.item});
+  final Subvencion item;
+
+  Future<void> _editar(
+    BuildContext context,
+    WidgetRef ref, {
+    bool? visible,
+    bool? revisada,
+    bool rehacerResumen = false,
+  }) async {
+    try {
+      await ref
+          .read(subvencionesAdminRepositoryProvider)
+          .editar(
+            item.codigo,
+            visible: visible,
+            revisada: revisada,
+            rehacerResumen: rehacerResumen,
+          );
+      ref.invalidate(subvencionAdminProvider(item.codigo));
+      ref.invalidate(listaSubvencionesAdminProvider);
+      ref.invalidate(dashboardSubvencionesAdminProvider);
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Ayuda actualizada.')));
+      }
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => Card(
+    color: Theme.of(
+      context,
+    ).colorScheme.primaryContainer.withValues(alpha: 0.45),
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Controles de administración',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.tonalIcon(
+                key: const Key('admin-subvencion-revisada'),
+                onPressed: () =>
+                    _editar(context, ref, revisada: !item.revisada),
+                icon: Icon(
+                  item.revisada ? Icons.undo : Icons.fact_check_outlined,
+                ),
+                label: Text(
+                  item.revisada ? 'Marcar pendiente' : 'Marcar revisada',
+                ),
+              ),
+              FilledButton.tonalIcon(
+                key: const Key('admin-subvencion-visible'),
+                onPressed: () => _editar(context, ref, visible: !item.visible),
+                icon: Icon(
+                  item.visible ? Icons.visibility_off : Icons.visibility,
+                ),
+                label: Text(item.visible ? 'Ocultar' : 'Mostrar'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _editar(context, ref, rehacerResumen: true),
+                icon: const Icon(Icons.auto_awesome_outlined),
+                label: const Text('Rehacer resumen'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '${item.visible ? 'Visible para clientes' : 'Oculta para clientes'} · '
+            '${item.revisada ? 'Revisada' : 'Pendiente de revisión'}',
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _FichaDatos extends StatelessWidget {

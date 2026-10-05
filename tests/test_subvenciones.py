@@ -25,6 +25,8 @@ from backend.api.messaging_models import (
     MessagingClient,
     MessagingOrganization,
     MessagingSession,
+    MessagingStaff,
+    MessagingStaffSession,
 )
 from backend.api.messaging_security import hash_token
 from backend.api import subvenciones_api
@@ -569,3 +571,90 @@ def test_api_cliente_guarda_territorios_y_filtra_para_mi(monkeypatch):
         ))
         assert audit is not None
         assert audit.old_value is True and audit.new_value is False
+
+
+def test_api_administrador_flutter_gestiona_catalogo():
+    engine = create_engine(
+        "sqlite+pysqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    admin_token = "sesion-admin-subvenciones"
+    employee_token = "sesion-empleado-subvenciones"
+    with factory() as db:
+        db.add_all([
+            MessagingStaff(
+                external_id="admin-1", name="Administrador",
+                email="admin@example.test", role="admin", active=True,
+            ),
+            MessagingStaff(
+                external_id="employee-1", name="Empleado",
+                email="employee@example.test", role="empleado", active=True,
+            ),
+            _call(
+                codigo_bdns="BOE-ADMIN-1", titulo="Ayuda transporte",
+                visible=True, revisada=False,
+            ),
+            _call(
+                codigo_bdns="BDNS-OCULTA", titulo="Ayuda oculta",
+                visible=False, revisada=True,
+            ),
+        ])
+        db.flush()
+        db.add_all([
+            MessagingStaffSession(
+                staff_external_id="admin-1", token_hash=hash_token(admin_token),
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            ),
+            MessagingStaffSession(
+                staff_external_id="employee-1",
+                token_hash=hash_token(employee_token),
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            ),
+        ])
+        db.commit()
+
+    app = FastAPI()
+    app.include_router(subvenciones_api.admin_router)
+
+    def override_db():
+        with factory() as db:
+            yield db
+
+    app.dependency_overrides[subvenciones_api._db] = override_db
+    api = TestClient(app)
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    dashboard = api.get(
+        "/api/v1/messaging/staff/admin/subvenciones/dashboard",
+        headers=admin_headers,
+    )
+    assert dashboard.status_code == 200
+    assert dashboard.json()["totales"]["convocatorias"] == 2
+    assert dashboard.json()["totales"]["ocultas"] == 1
+
+    listing = api.get(
+        "/api/v1/messaging/staff/admin/subvenciones",
+        headers=admin_headers,
+        params={"q": "BOE-ADMIN", "estado": "todas", "visibilidad": "todas"},
+    )
+    assert listing.status_code == 200
+    assert listing.json()["total"] == 1
+    assert listing.json()["elementos"][0]["codigo"] == "BOE-ADMIN-1"
+
+    changed = api.patch(
+        "/api/v1/messaging/staff/admin/subvenciones/BOE-ADMIN-1",
+        headers=admin_headers,
+        json={"visible": False, "revisada": True},
+    )
+    assert changed.status_code == 200
+    assert changed.json()["visible"] is False
+    assert changed.json()["revisada"] is True
+
+    denied = api.get(
+        "/api/v1/messaging/staff/admin/subvenciones/dashboard",
+        headers={"Authorization": f"Bearer {employee_token}"},
+    )
+    assert denied.status_code == 403

@@ -16,7 +16,13 @@ from backend.api.client_models import ClientFeatureFlagAudit
 from backend.api.config import get_settings
 from backend.api.database import SessionLocal
 from backend.api.feature_flags import is_subsidies_enabled, require_subsidies_enabled
-from backend.api.messaging_models import MessagingClient, MessagingOrganization
+from backend.api.messaging_models import (
+    MessagingClient,
+    MessagingOrganization,
+    MessagingStaff,
+    MessagingStaffSession,
+)
+from backend.api.messaging_security import hash_token, is_expired
 from backend.api.security import require_workstation_or_internal
 from backend.api.subvenciones_models import (
     SubvencionConfiguracion,
@@ -42,8 +48,14 @@ router = APIRouter(
     tags=["client-subsidies"],
 )
 
+admin_router = APIRouter(
+    prefix="/api/v1/messaging/staff/admin/subvenciones",
+    tags=["staff-admin-subsidies"],
+)
+
 AVISO_LEGAL = (
-    "Informacion orientativa obtenida de la Base de Datos Nacional de Subvenciones. "
+    "Informacion orientativa obtenida de la Base de Datos Nacional de Subvenciones "
+    "y de boletines oficiales. "
     "No sustituye al texto oficial, que prevalece en caso de discrepancia."
 )
 
@@ -54,6 +66,27 @@ def _db():
         yield db
     finally:
         db.close()
+
+
+def _authenticated_staff_admin(
+    request: Request, db: Session = Depends(_db),
+) -> MessagingStaff:
+    """Autoriza exclusivamente sesiones Flutter de administradores."""
+    token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    token = token or request.cookies.get("msg_staff_session", "")
+    if not token:
+        raise HTTPException(401, "No autenticado")
+    session = db.scalar(select(MessagingStaffSession).where(
+        MessagingStaffSession.token_hash == hash_token(token),
+    ))
+    if not session or session.revoked_at or is_expired(session.expires_at):
+        raise HTTPException(401, "Sesion del despacho caducada")
+    staff = db.get(MessagingStaff, session.staff_external_id)
+    if not staff or not staff.active:
+        raise HTTPException(403, "Usuario del despacho no autorizado")
+    if staff.role != "admin":
+        raise HTTPException(403, "Se requiere acceso de administrador")
+    return staff
 
 
 class SuscripcionIn(BaseModel):
@@ -331,8 +364,7 @@ def _run_background() -> None:
         SubvencionesService(db).ejecutar()
 
 
-@router.get("/internal/dashboard", dependencies=[Depends(require_workstation_or_internal)])
-def dashboard(db: Session = Depends(_db)):
+def _dashboard_data(db: Session) -> dict:
     config = db.get(SubvencionConfiguracion, "global")
     last = db.scalar(select(SubvencionEjecucion).order_by(SubvencionEjecucion.id.desc()).limit(1))
     return {
@@ -381,6 +413,152 @@ def dashboard(db: Session = Depends(_db)):
             "resumidas": last.resumidas, "avisos_enviados": last.avisos_enviados,
             "detalle": last.detalle,
         },
+    }
+
+
+@router.get("/internal/dashboard", dependencies=[Depends(require_workstation_or_internal)])
+def dashboard(db: Session = Depends(_db)):
+    return _dashboard_data(db)
+
+
+def _admin_convocatorias_stmt(
+    *, q: str, estado: str, visibilidad: str, fuente: str,
+):
+    stmt = select(SubvencionConvocatoria)
+    needle = q.strip()
+    if needle:
+        pattern = f"%{needle}%"
+        stmt = stmt.where(or_(
+            SubvencionConvocatoria.titulo.ilike(pattern),
+            SubvencionConvocatoria.codigo_bdns.ilike(pattern),
+            SubvencionConvocatoria.codigo_fuente.ilike(pattern),
+            SubvencionConvocatoria.organo_nivel2.ilike(pattern),
+            SubvencionConvocatoria.organo_nivel3.ilike(pattern),
+        ))
+    today = date.today()
+    if estado == "en_vigor":
+        stmt = stmt.where(
+            SubvencionConvocatoria.abierto.is_not(False),
+            or_(
+                SubvencionConvocatoria.fecha_fin.is_(None),
+                SubvencionConvocatoria.fecha_fin >= today,
+            ),
+        )
+    elif estado == "finalizadas":
+        stmt = stmt.where(or_(
+            SubvencionConvocatoria.abierto.is_(False),
+            SubvencionConvocatoria.fecha_fin < today,
+        ))
+    if visibilidad == "visibles":
+        stmt = stmt.where(SubvencionConvocatoria.visible.is_(True))
+    elif visibilidad == "ocultas":
+        stmt = stmt.where(SubvencionConvocatoria.visible.is_(False))
+    if fuente.strip():
+        stmt = stmt.where(SubvencionConvocatoria.fuente == fuente.strip().upper())
+    return stmt
+
+
+@admin_router.get("/dashboard")
+def admin_dashboard(
+    _admin: MessagingStaff = Depends(_authenticated_staff_admin),
+    db: Session = Depends(_db),
+):
+    result = _dashboard_data(db)
+    result["totales"].update({
+        "ocultas": db.scalar(select(func.count()).select_from(SubvencionConvocatoria).where(
+            SubvencionConvocatoria.visible.is_(False),
+        )) or 0,
+        "revisadas": db.scalar(select(func.count()).select_from(SubvencionConvocatoria).where(
+            SubvencionConvocatoria.revisada.is_(True),
+        )) or 0,
+    })
+    return result
+
+
+@admin_router.get("")
+def admin_convocatorias(
+    q: str = Query("", max_length=120),
+    estado: Literal["en_vigor", "finalizadas", "todas"] = "en_vigor",
+    visibilidad: Literal["visibles", "ocultas", "todas"] = "visibles",
+    fuente: str = Query("", max_length=24),
+    pagina: int = Query(0, ge=0),
+    tamano: int = Query(50, ge=1, le=100),
+    _admin: MessagingStaff = Depends(_authenticated_staff_admin),
+    db: Session = Depends(_db),
+):
+    stmt = _admin_convocatorias_stmt(
+        q=q, estado=estado, visibilidad=visibilidad, fuente=fuente,
+    )
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = db.scalars(stmt.order_by(
+        SubvencionConvocatoria.fecha_recepcion.desc(),
+        SubvencionConvocatoria.codigo_bdns.desc(),
+    ).offset(pagina * tamano).limit(tamano)).all()
+    return {
+        "total": total,
+        "pagina": pagina,
+        "tamano": tamano,
+        "elementos": [{
+            **_summary(item),
+            "visible": item.visible,
+            "resumen_estado": item.resumen_estado,
+        } for item in rows],
+    }
+
+
+@admin_router.post("/sincronizar", status_code=202)
+def admin_sincronizar(
+    background: BackgroundTasks,
+    _admin: MessagingStaff = Depends(_authenticated_staff_admin),
+):
+    background.add_task(_run_background)
+    return {"lanzada": True}
+
+
+@admin_router.get("/{codigo}")
+def admin_detalle(
+    codigo: str,
+    _admin: MessagingStaff = Depends(_authenticated_staff_admin),
+    db: Session = Depends(_db),
+):
+    call = db.scalar(select(SubvencionConvocatoria).where(
+        SubvencionConvocatoria.codigo_bdns == codigo,
+    ))
+    if not call:
+        raise HTTPException(404, "Convocatoria no encontrada")
+    return {
+        **_detail(call),
+        "visible": call.visible,
+        "revisada": call.revisada,
+        "resumen_estado": call.resumen_estado,
+    }
+
+
+@admin_router.patch("/{codigo}")
+def admin_editar_convocatoria(
+    codigo: str,
+    payload: ConvocatoriaPatch,
+    _admin: MessagingStaff = Depends(_authenticated_staff_admin),
+    db: Session = Depends(_db),
+):
+    call = db.scalar(select(SubvencionConvocatoria).where(
+        SubvencionConvocatoria.codigo_bdns == codigo,
+    ))
+    if not call:
+        raise HTTPException(404, "Convocatoria no encontrada")
+    if payload.visible is not None:
+        call.visible = payload.visible
+    if payload.revisada is not None:
+        call.revisada = payload.revisada
+    if payload.rehacer_resumen:
+        call.resumen_estado = "pendiente"
+        call.hash_resumen = ""
+    db.commit()
+    return {
+        **_detail(call),
+        "visible": call.visible,
+        "revisada": call.revisada,
+        "resumen_estado": call.resumen_estado,
     }
 
 

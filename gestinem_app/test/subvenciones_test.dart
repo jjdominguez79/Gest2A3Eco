@@ -5,6 +5,8 @@ import 'package:gestinem/core/notifications/notifications_service.dart';
 import 'package:gestinem/features/platform/features_provider.dart';
 import 'package:gestinem/features/subvenciones/domain/subvencion.dart';
 import 'package:gestinem/features/subvenciones/presentation/subvenciones_providers.dart';
+import 'package:gestinem/features/subvenciones/presentation/subvenciones_admin_providers.dart';
+import 'package:gestinem/features/subvenciones/presentation/subvenciones_admin_screen.dart';
 import 'package:gestinem/features/subvenciones/presentation/subvenciones_preferences_screen.dart';
 import 'package:gestinem/features/subvenciones/presentation/subvenciones_screen.dart';
 
@@ -49,6 +51,26 @@ void main() {
 
     expect(preferences.notificacionesActivas, isTrue);
     expect(preferences.suscripciones.single.clave, 'AUTONOMICA:ES52');
+  });
+
+  test('interpreta el resumen administrativo del catalogo', () {
+    final dashboard = DashboardSubvencionesAdmin.fromJson({
+      'totales': {
+        'convocatorias': 2992,
+        'vigentes': 230,
+        'ocultas': 4,
+        'revisadas': 25,
+        'suscriptores': 1,
+        'fallos_entrega': 0,
+        'fuentes': {'BDNS': 2939, 'BOE': 13},
+      },
+      'ultima_ejecucion': {'estado': 'ok', 'fin': '2026-10-05T20:16:49Z'},
+    });
+
+    expect(dashboard.convocatorias, 2992);
+    expect(dashboard.ocultas, 4);
+    expect(dashboard.fuentes['BOE'], 13);
+    expect(dashboard.estadoUltimaEjecucion, 'ok');
   });
 
   test('expone la funcion y el destino de notificacion de subvenciones', () {
@@ -144,5 +166,58 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Cantabria'), findsOneWidget);
+  });
+
+  testWidgets('muestra la base de datos para el administrador', (tester) async {
+    const item = Subvencion(
+      codigo: 'BOE-A-2026-20265-30',
+      titulo: 'Ayuda para profesionales del transporte',
+      organo: 'Jefatura del Estado',
+      ambito: 'ESTATAL',
+      alcanceNacional: true,
+      ccaa: [],
+      provincias: [],
+      etiquetas: [],
+      enlaces: [],
+      beneficiariosOficiales: [],
+      sectores: ['transporte'],
+      instrumentos: [],
+      fuente: 'BOE',
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardSubvencionesAdminProvider.overrideWith(
+            (ref) async => const DashboardSubvencionesAdmin(
+              convocatorias: 2992,
+              vigentes: 230,
+              ocultas: 4,
+              revisadas: 25,
+              suscriptores: 1,
+              fallosEntrega: 0,
+              fuentes: {'BDNS': 2939, 'BOE': 13},
+              estadoUltimaEjecucion: 'ok',
+            ),
+          ),
+          listaSubvencionesAdminProvider.overrideWith(
+            (ref) async => const ListaSubvenciones(total: 1, elementos: [item]),
+          ),
+        ],
+        child: const MaterialApp(home: SubvencionesAdminScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Base de datos de ayudas'), findsOneWidget);
+    expect(
+      find.text('Ayuda para profesionales del transporte'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('admin-subvenciones-buscar')), findsOneWidget);
+    expect(
+      find.byKey(const Key('admin-subvenciones-sincronizar')),
+      findsOneWidget,
+    );
+    expect(find.text('2992'), findsOneWidget);
   });
 }
