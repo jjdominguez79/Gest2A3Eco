@@ -1,6 +1,6 @@
 {
-  "version": "1.9.4",
-  "tag": "v1.9.4",
-  "changelog": "Correcciones varias en los listados de facturas.",
+  "version": "1.9.5",
+  "tag": "v1.9.5",
+  "changelog": "Se añade la funcionalidad de las ayudas y se mejora la revision OCR.",
   "force_update": true
 }
