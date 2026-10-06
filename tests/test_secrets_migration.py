@@ -186,8 +186,8 @@ def test_ocr_training_endpoint_delega_el_blob_en_backend(monkeypatch):
             llamada.update(kwargs)
             return {
                 "container": "facturas-entrenamiento",
-                "blob": "gest2a3eco/E00001/7_factura.pdf",
-                "metadata_blob": "gest2a3eco/E00001/_metadata/7.json",
+                "blob": "gest2a3eco_E00001_7_factura.pdf",
+                "metadata_blob": "_metadata/gest2a3eco_E00001_7.json",
             }
 
     import backend.api.ocr_training_service as training_module

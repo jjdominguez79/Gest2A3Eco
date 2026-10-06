@@ -159,7 +159,7 @@ class _RespuestaBackend:
     def json():
         return {
             "container": "facturas-entrenamiento",
-            "blob": "gest2a3eco/E00001/1_factura.pdf",
+            "blob": "gest2a3eco_E00001_1_factura.pdf",
         }
 
 

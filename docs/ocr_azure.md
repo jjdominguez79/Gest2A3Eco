@@ -87,7 +87,11 @@ AZURE_OCR_TRAINING_CONTAINER
 
 El escritorio no carga, conserva ni usa la cadena de conexion Azure. El
 endpoint `POST /api/v1/ocr/training/examples` sube el documento y sus metadatos
-al Blob. Esta operacion prepara el conjunto, pero no inicia un entrenamiento.
+al Blob. Los documentos se guardan en la raiz del contenedor con el prefijo
+`gest2a3eco_<empresa>_<ejemplo>_` para que el proyecto de Document Intelligence
+Studio configurado sin ruta de carpeta los muestre junto al conjunto existente.
+Los metadatos internos se conservan bajo `_metadata/`. Esta operacion prepara
+el conjunto, pero no inicia un entrenamiento.
 
 El entrenamiento sigue realizandose en Azure Document Intelligence Studio:
 

@@ -13,6 +13,18 @@ def _segmento_seguro(value: str, fallback: str) -> str:
     return limpio[:120] or fallback
 
 
+def _nombres_blobs(empresa_id: str, ejemplo_id: str, filename: str) -> tuple[str, str]:
+    """Genera nombres unicos visibles desde la raiz del proyecto de Studio."""
+    empresa = _segmento_seguro(empresa_id, "empresa")
+    ejemplo = _segmento_seguro(ejemplo_id, "ejemplo")
+    nombre = _segmento_seguro(
+        Path(filename or "documento.pdf").name,
+        "documento.pdf",
+    )
+    identificador = f"gest2a3eco_{empresa}_{ejemplo}"
+    return f"{identificador}_{nombre}", f"_metadata/{identificador}.json"
+
+
 class OcrTrainingStorage:
     """Publica ejemplos en el Blob privado configurado solo en el backend."""
 
@@ -45,12 +57,11 @@ class OcrTrainingStorage:
     ) -> dict:
         from azure.storage.blob import ContentSettings
 
-        empresa = _segmento_seguro(empresa_id, "empresa")
-        ejemplo = _segmento_seguro(ejemplo_id, "ejemplo")
-        nombre = _segmento_seguro(Path(filename or "documento.pdf").name, "documento.pdf")
-        prefijo = f"gest2a3eco/{empresa}"
-        blob_name = f"{prefijo}/{ejemplo}_{nombre}"
-        metadata_name = f"{prefijo}/_metadata/{ejemplo}.json"
+        blob_name, metadata_name = _nombres_blobs(
+            empresa_id,
+            ejemplo_id,
+            filename,
+        )
 
         self._container.upload_blob(
             blob_name,
