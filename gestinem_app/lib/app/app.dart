@@ -479,9 +479,9 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
 
     if (!mounted || !kIsWeb) return;
 
-    if (service.permissionState == NotificationPermissionState.authorized) {
-      ref.read(webNotifPermissionProvider.notifier).markGranted();
-    }
+    ref
+        .read(webNotifPermissionProvider.notifier)
+        .syncRegistration(service.permissionState);
   }
 
   @override

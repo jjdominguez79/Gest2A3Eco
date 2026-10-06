@@ -17,6 +17,7 @@ from backend.api.config import get_settings
 from backend.api.database import SessionLocal
 from backend.api.feature_flags import is_subsidies_enabled, require_subsidies_enabled
 from backend.api.messaging_models import (
+    MessagingAppDevice,
     MessagingClient,
     MessagingOrganization,
     MessagingStaff,
@@ -66,6 +67,21 @@ def _db():
         yield db
     finally:
         db.close()
+
+
+def _active_device_counts(db: Session, client_ids) -> dict[str, int]:
+    ids = list(dict.fromkeys(client_ids))
+    if not ids:
+        return {}
+    return dict(db.execute(
+        select(MessagingAppDevice.user_id, func.count(MessagingAppDevice.id))
+        .where(
+            MessagingAppDevice.user_type == "client",
+            MessagingAppDevice.active.is_(True),
+            MessagingAppDevice.user_id.in_(ids),
+        )
+        .group_by(MessagingAppDevice.user_id)
+    ).all())
 
 
 def _authenticated_staff_admin(
@@ -649,6 +665,9 @@ def suscripciones_internas(db: Session = Depends(_db)):
         )
         .order_by(MessagingOrganization.company_code, MessagingClient.email)
     ).all()
+    device_counts = _active_device_counts(
+        db, (client.id for client, _org in clients),
+    )
     for client, org in clients:
         preference = _preference(db, client.id)
         rows.append({
@@ -656,6 +675,7 @@ def suscripciones_internas(db: Session = Depends(_db)):
             "empresa": org.name, "codigo_empresa": org.company_code,
             "configurada": preference is not None,
             "notificaciones_activas": bool(preference and preference.notificaciones_activas),
+            "dispositivos_activos": device_counts.get(client.id, 0),
             "incluir_nacionales": None if preference is None else preference.incluir_nacionales,
             "usar_territorio_empresa": None if preference is None else preference.usar_territorio_empresa,
             "territorios": [x.nombre for x in _subscriptions(db, client.id)],
@@ -666,6 +686,7 @@ def suscripciones_internas(db: Session = Depends(_db)):
 @router.get("/internal/envios", dependencies=[Depends(require_workstation_or_internal)])
 def envios_internos(limit: int = Query(300, ge=1, le=1000), db: Session = Depends(_db)):
     rows = db.scalars(select(SubvencionEntrega).order_by(SubvencionEntrega.actualizada_at.desc()).limit(limit)).all()
+    device_counts = _active_device_counts(db, (item.client_id for item in rows))
     result = []
     for item in rows:
         client = db.get(MessagingClient, item.client_id)
@@ -676,6 +697,7 @@ def envios_internos(limit: int = Query(300, ge=1, le=1000), db: Session = Depend
             "codigo_bdns": call.codigo_bdns if call else "", "titulo": call.titulo if call else "",
             "fuente": call.fuente if call else "",
             "estado": item.estado, "intentos": item.intentos,
+            "dispositivos_activos": device_counts.get(item.client_id, 0),
             "dispositivos_enviados": item.dispositivos_enviados,
             "ultimo_error": item.ultimo_error, "enviada_at": item.enviada_at,
         })

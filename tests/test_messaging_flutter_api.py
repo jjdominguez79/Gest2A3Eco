@@ -28,6 +28,7 @@ from backend.api.client_profile_api import (
 from backend.api.database import Base
 from backend.api.messaging_api import get_db, router
 from backend.api.messaging_models import (
+    MessagingAppDevice,
     MessagingAttachment,
     MessagingCampaign,
     MessagingCampaignRecipient,
@@ -1657,7 +1658,7 @@ def test_enums_de_entrada_rechazan_valores_desconocidos(tmp_path, monkeypatch):
 
 
 def test_dispositivo_fcm_mockeado_y_websocket(tmp_path, monkeypatch):
-    client, _factory, staff_headers, auth, _client_id, conversation_id = _setup(tmp_path, monkeypatch)
+    client, factory, staff_headers, auth, _client_id, conversation_id = _setup(tmp_path, monkeypatch)
     monkeypatch.setattr(messaging_api, "fcm_configured", lambda: True)
     delivered = []
     monkeypatch.setattr(
@@ -1673,6 +1674,24 @@ def test_dispositivo_fcm_mockeado_y_websocket(tmp_path, monkeypatch):
     )
     assert registered.status_code == 200
     assert registered.json()["fcm_configured"] is True
+    device_id = registered.json()["id"]
+    assert client.delete(
+        f"/api/v1/messaging/client/app-devices/{device_id}", headers=auth,
+    ).status_code == 204
+    reactivated = client.put(
+        "/api/v1/messaging/client/app-devices", headers=auth,
+        json={
+            "platform": "android",
+            "push_token": "fcm-token-abcdefghijklmnopqrstuvwxyz",
+            "device_name": "Pixel", "app_version": "0.1.0",
+        },
+    )
+    assert reactivated.status_code == 200
+    assert reactivated.json()["id"] == device_id
+    with factory() as db:
+        devices = db.scalars(select(MessagingAppDevice)).all()
+        assert len(devices) == 1
+        assert devices[0].active is True
     sent = client.post(
         f"/api/v1/messaging/staff/conversations/{conversation_id}/messages",
         headers=staff_headers("admin"),

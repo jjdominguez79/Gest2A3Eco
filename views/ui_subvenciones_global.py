@@ -216,6 +216,7 @@ class UISubvencionesGlobal(ttk.Frame):
             ("usuario", "Usuario", 180), ("email", "Email", 240),
             ("estado", "Preferencias", 110),
             ("avisos", "Avisos", 70), ("nacional", "España", 70),
+            ("dispositivos", "Dispositivos", 85),
             ("domicilio", "Domicilio", 80), ("territorios", "Otros territorios", 380),
         ))
 
@@ -227,7 +228,8 @@ class UISubvencionesGlobal(ttk.Frame):
             ("usuario", "Usuario", 170), ("email", "Email", 220),
             ("codigo", "Referencia", 150), ("fuente", "Fuente", 85),
             ("titulo", "Convocatoria", 420),
-            ("dispositivos", "Dispositivos", 90), ("error", "Último error", 280),
+            ("activos", "Activos", 70), ("enviados", "Enviados", 75),
+            ("error", "Último error", 280),
         ))
 
     def _build_settings_tab(self) -> None:
@@ -508,6 +510,7 @@ class UISubvencionesGlobal(ttk.Frame):
                 "Configuradas" if item.get("configurada") else "Sin configurar",
                 _yes(item.get("notificaciones_activas")),
                 _preference_value(item.get("incluir_nacionales")),
+                item.get("dispositivos_activos", 0),
                 _preference_value(item.get("usar_territorio_empresa")),
                 ", ".join(item.get("territorios") or []),
             )) for item in items
@@ -526,6 +529,7 @@ class UISubvencionesGlobal(ttk.Frame):
                 item.get("usuario", ""), item.get("email", ""),
                 item.get("codigo", item.get("codigo_bdns", "")),
                 item.get("fuente", ""), item.get("titulo", ""),
+                item.get("dispositivos_activos", 0),
                 item.get("dispositivos_enviados", 0), item.get("ultimo_error", ""),
             )) for item in items
         ])

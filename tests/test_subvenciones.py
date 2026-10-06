@@ -425,13 +425,29 @@ def test_api_cliente_guarda_territorios_y_filtra_para_mi(monkeypatch):
             token_hash=hash_token(token),
             expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
         ))
+        mad_call = _call(codigo_bdns="MAD", ccaa_json=["ES30"])
         db.add_all([
-            _call(codigo_bdns="MAD", ccaa_json=["ES30"]),
+            mad_call,
             _call(codigo_bdns="VAL", ccaa_json=["ES52"]),
             _call(codigo_bdns="OCULTA", visible=False),
             _call(
                 codigo_bdns="FINALIZADA", abierto=False,
                 fecha_fin=date.today() - timedelta(days=1),
+            ),
+        ])
+        db.flush()
+        db.add_all([
+            MessagingAppDevice(
+                user_type="client", user_id=client.id, platform="web",
+                push_token="token-web-activo-suficientemente-largo", active=True,
+            ),
+            MessagingAppDevice(
+                user_type="client", user_id=client.id, platform="android",
+                push_token="token-android-inactivo-suficientemente-largo", active=False,
+            ),
+            SubvencionEntrega(
+                client_id=client.id, convocatoria_id=mad_call.id,
+                estado="sin_dispositivo", dispositivos_enviados=0,
             ),
         ])
         db.commit()
@@ -495,6 +511,14 @@ def test_api_cliente_guarda_territorios_y_filtra_para_mi(monkeypatch):
     assert subscriptions.status_code == 200
     assert [item["codigo_empresa"] for item in subscriptions.json()] == ["E00002"]
     assert subscriptions.json()[0]["configurada"] is True
+    assert subscriptions.json()[0]["dispositivos_activos"] == 1
+    deliveries = api.get(
+        "/api/v1/messaging/client/subvenciones/internal/envios",
+        headers=internal_headers,
+    )
+    assert deliveries.status_code == 200
+    assert deliveries.json()[0]["dispositivos_activos"] == 1
+    assert deliveries.json()[0]["dispositivos_enviados"] == 0
     dashboard = api.get(
         "/api/v1/messaging/client/subvenciones/internal/dashboard",
         headers=internal_headers,

@@ -129,6 +129,24 @@ enum NotificationPermissionState {
   configError,
 }
 
+@visibleForTesting
+String requirePushToken(String? token) {
+  final value = token?.trim() ?? '';
+  if (value.isEmpty) {
+    throw StateError('Firebase no devolvio un token para este dispositivo');
+  }
+  return value;
+}
+
+@visibleForTesting
+String requireDeviceRegistrationId(Object? deviceId) {
+  final value = deviceId?.toString().trim() ?? '';
+  if (value.isEmpty) {
+    throw StateError('El servidor no confirmo el registro del dispositivo');
+  }
+  return value;
+}
+
 class NotificationEvent {
   const NotificationEvent({
     required this.conversationId,
@@ -259,26 +277,39 @@ class NotificationsService {
           await _registerWebToken(session, api, messaging);
           _permissionState = NotificationPermissionState.authorized;
           _fcmConfigured = true;
+          await _listenTokenRefresh(session, api, messaging);
+        } else if (settings.authorizationStatus == AuthorizationStatus.denied) {
+          _permissionState = NotificationPermissionState.denied;
+          _fcmConfigured = false;
+        } else {
+          _permissionState = NotificationPermissionState.available;
+          _fcmConfigured = false;
         }
       } else {
         // Android / iOS / macOS: flujo habitual.
         await _configureLocalNotifications();
-        await messaging.requestPermission();
-        final token = await messaging.getToken();
-        if (token != null) {
-          await _register(session, api, token);
-          _permissionState = NotificationPermissionState.authorized;
-          _fcmConfigured = true;
+        final settings = await messaging.requestPermission();
+        if (settings.authorizationStatus == AuthorizationStatus.denied) {
+          _permissionState = NotificationPermissionState.denied;
+          _fcmConfigured = false;
+          _owner = _ownerFor(session);
+          return;
         }
+        final token = requirePushToken(await messaging.getToken());
+        await _register(session, api, token);
+        _permissionState = NotificationPermissionState.authorized;
+        _fcmConfigured = true;
+        await _listenTokenRefresh(session, api, messaging);
       }
 
       _owner = _ownerFor(session);
-      await _tokenRefresh?.cancel();
-      _tokenRefresh = messaging.onTokenRefresh.listen(
-        (refreshed) => unawaited(_register(session, api, refreshed)),
-      );
     } catch (error, stackTrace) {
       // Firebase es opcional en desarrollo.
+      _permissionState = NotificationPermissionState.configError;
+      _fcmConfigured = false;
+      // Evita repetir automaticamente el mismo fallo en cada reconstruccion.
+      // El banner web conserva una accion explicita para reintentarlo.
+      if (kIsWeb) _owner = _ownerFor(session);
       debugPrint(
         'No se pudieron activar las notificaciones: $error\n$stackTrace',
       );
@@ -306,14 +337,12 @@ class NotificationsService {
       final settings = await messaging.requestPermission();
       if (settings.authorizationStatus != AuthorizationStatus.authorized) {
         _permissionState = NotificationPermissionState.denied;
+        _fcmConfigured = false;
         return false;
       }
       await _registerWebToken(session, api, messaging);
       _owner = _ownerFor(session);
-      await _tokenRefresh?.cancel();
-      _tokenRefresh = messaging.onTokenRefresh.listen(
-        (refreshed) => unawaited(_register(session, api, refreshed)),
-      );
+      await _listenTokenRefresh(session, api, messaging);
       _permissionState = NotificationPermissionState.authorized;
       _fcmConfigured = true;
       return true;
@@ -466,9 +495,43 @@ class NotificationsService {
     ApiClient api,
     FirebaseMessaging messaging,
   ) async {
-    final vapidKey = _kVapidKey.isNotEmpty ? _kVapidKey : null;
-    final token = await messaging.getToken(vapidKey: vapidKey);
-    if (token != null) await _register(session, api, token);
+    if (_kVapidKey.isEmpty) {
+      throw StateError('Falta la clave publica VAPID');
+    }
+    final token = requirePushToken(
+      await messaging.getToken(vapidKey: _kVapidKey),
+    );
+    await _register(session, api, token);
+  }
+
+  Future<void> _listenTokenRefresh(
+    AuthSession session,
+    ApiClient api,
+    FirebaseMessaging messaging,
+  ) async {
+    await _tokenRefresh?.cancel();
+    _tokenRefresh = messaging.onTokenRefresh.listen(
+      (token) => unawaited(_registerRefreshedToken(session, api, token)),
+    );
+  }
+
+  Future<void> _registerRefreshedToken(
+    AuthSession session,
+    ApiClient api,
+    String token,
+  ) async {
+    try {
+      await _register(session, api, requirePushToken(token));
+      _permissionState = NotificationPermissionState.authorized;
+      _fcmConfigured = true;
+    } catch (error, stackTrace) {
+      _permissionState = NotificationPermissionState.configError;
+      _fcmConfigured = false;
+      debugPrint(
+        'No se pudo renovar el registro de notificaciones: '
+        '$error\n$stackTrace',
+      );
+    }
   }
 
   void _emit(RemoteMessage message, {required bool opened}) {
@@ -582,7 +645,7 @@ class NotificationsService {
         'app_version': '${packageInfo.version}+${packageInfo.buildNumber}',
       },
     );
-    _deviceId = response.data?['id'] as String?;
+    _deviceId = requireDeviceRegistrationId(response.data?['id']);
   }
 
   String _ownerFor(AuthSession session) =>

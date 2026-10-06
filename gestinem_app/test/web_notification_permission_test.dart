@@ -16,6 +16,11 @@ class _FakeNotificationsService extends NotificationsService {
   bool initializeCalled = false;
   bool activateCalled = false;
   bool activateResult = true;
+  NotificationPermissionState activateState =
+      NotificationPermissionState.authorized;
+
+  @override
+  NotificationPermissionState get permissionState => activateState;
 
   @override
   Future<void> initialize(AuthSession session, ApiClient api) async {
@@ -105,7 +110,9 @@ void main() {
     );
 
     test('activate llega a denied cuando el servicio devuelve false', () async {
-      final svc = _FakeNotificationsService()..activateResult = false;
+      final svc = _FakeNotificationsService()
+        ..activateResult = false
+        ..activateState = NotificationPermissionState.denied;
       final container = _makeContainer(svc);
       addTearDown(container.dispose);
 
@@ -119,6 +126,27 @@ void main() {
         NotificationPermissionState.denied,
       );
     });
+
+    test(
+      'activate muestra error si hay permiso pero falla el registro',
+      () async {
+        final svc = _FakeNotificationsService()
+          ..activateResult = false
+          ..activateState = NotificationPermissionState.configError;
+        final container = _makeContainer(svc);
+        addTearDown(container.dispose);
+
+        final api = container.read(apiClientProvider);
+        await container
+            .read(webNotifPermissionProvider.notifier)
+            .activate(testSession, api);
+
+        expect(
+          container.read(webNotifPermissionProvider),
+          NotificationPermissionState.configError,
+        );
+      },
+    );
 
     test(
       'activate llega a configError si el servicio lanza excepcion',
@@ -211,7 +239,9 @@ void main() {
     test(
       'permiso denegado: activate devuelve false y estado es denied',
       () async {
-        final svc = _FakeNotificationsService()..activateResult = false;
+        final svc = _FakeNotificationsService()
+          ..activateResult = false
+          ..activateState = NotificationPermissionState.denied;
         final container = _makeContainer(svc);
         addTearDown(container.dispose);
 

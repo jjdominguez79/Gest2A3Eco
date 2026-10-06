@@ -100,6 +100,21 @@ void main() {
       expect(notificationTargetId({'thread_id': 'thread-456'}), 'thread-456');
     });
 
+    test('rechaza un token FCM ausente', () {
+      expect(() => requirePushToken(null), throwsStateError);
+      expect(() => requirePushToken('  '), throwsStateError);
+    });
+
+    test('normaliza un token FCM valido', () {
+      expect(requirePushToken(' token-valido '), 'token-valido');
+    });
+
+    test('exige confirmacion del servidor al registrar dispositivo', () {
+      expect(() => requireDeviceRegistrationId(null), throwsStateError);
+      expect(() => requireDeviceRegistrationId(''), throwsStateError);
+      expect(requireDeviceRegistrationId(' device-1 '), 'device-1');
+    });
+
     test('solo descarta la entrega duplicada del mismo aviso', () {
       final guard = NotificationOpenGuard();
       final first = NotificationEvent(
@@ -126,14 +141,8 @@ void main() {
 
     test('avisos posteriores sin id pueden reabrir el mismo chat', () {
       final guard = NotificationOpenGuard();
-      final first = NotificationEvent(
-        conversationId: 'conv-123',
-        opened: true,
-      );
-      final later = NotificationEvent(
-        conversationId: 'conv-123',
-        opened: true,
-      );
+      final first = NotificationEvent(conversationId: 'conv-123', opened: true);
+      final later = NotificationEvent(conversationId: 'conv-123', opened: true);
 
       expect(guard.shouldHandle(first), isTrue);
       expect(guard.shouldHandle(first), isFalse);

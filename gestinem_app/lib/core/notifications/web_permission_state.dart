@@ -35,7 +35,11 @@ class WebNotifPermissionNotifier
     try {
       final settings = await FirebaseMessaging.instance
           .getNotificationSettings();
-      state = _fromStatus(settings.authorizationStatus);
+      // El permiso del navegador no demuestra que exista un token FCM ni que
+      // el backend lo haya registrado. Solo el servicio puede marcar authorized.
+      state = settings.authorizationStatus == AuthorizationStatus.denied
+          ? NotificationPermissionState.denied
+          : NotificationPermissionState.available;
     } catch (_) {
       // Firebase no esta inicializado todavia o las credenciales son invalidas.
       // Permanecemos en [available] para mostrar el boton de activacion.
@@ -57,7 +61,11 @@ class WebNotifPermissionNotifier
       final granted = await svc.activateWebNotifications(session, api);
       state = granted
           ? NotificationPermissionState.authorized
-          : NotificationPermissionState.denied;
+          : switch (svc.permissionState) {
+              NotificationPermissionState.denied =>
+                NotificationPermissionState.denied,
+              _ => NotificationPermissionState.configError,
+            };
     } catch (_) {
       state = NotificationPermissionState.configError;
     }
@@ -68,11 +76,8 @@ class WebNotifPermissionNotifier
     state = NotificationPermissionState.authorized;
   }
 
-  static NotificationPermissionState _fromStatus(AuthorizationStatus status) =>
-      switch (status) {
-        AuthorizationStatus.authorized =>
-          NotificationPermissionState.authorized,
-        AuthorizationStatus.denied => NotificationPermissionState.denied,
-        _ => NotificationPermissionState.available,
-      };
+  /// Sincroniza el resultado real de token + alta en el backend.
+  void syncRegistration(NotificationPermissionState value) {
+    state = value;
+  }
 }

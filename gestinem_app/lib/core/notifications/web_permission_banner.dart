@@ -28,12 +28,7 @@ class WebNotificationPermissionBanner extends ConsumerWidget {
         color: Colors.blue.shade50,
       ),
       NotificationPermissionState.denied => _DeniedBanner(),
-      NotificationPermissionState.configError => _StatusBanner(
-        icon: Icons.warning_amber_rounded,
-        message:
-            'Notificaciones no disponibles: configuracion de Firebase incompleta.',
-        color: Colors.orange.shade50,
-      ),
+      NotificationPermissionState.configError => const _RetryBanner(),
     };
   }
 }
@@ -75,6 +70,30 @@ class _DeniedBanner extends StatelessWidget {
           'Notificaciones bloqueadas. Para habilitarlas: '
           'haz clic en el icono de candado junto a la URL \u2192 Notificaciones \u2192 Permitir.',
       action: null,
+    );
+  }
+}
+
+class _RetryBanner extends ConsumerWidget {
+  const _RetryBanner();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final session = ref.read(sessionProvider).valueOrNull;
+    final api = ref.read(apiClientProvider);
+    return _BannerShell(
+      color: Colors.orange.shade50,
+      icon: Icons.warning_amber_rounded,
+      message:
+          'El navegador permite avisos, pero este dispositivo no pudo registrarse.',
+      action: TextButton(
+        onPressed: session == null
+            ? null
+            : () => ref
+                  .read(webNotifPermissionProvider.notifier)
+                  .activate(session, api),
+        child: const Text('Reintentar'),
+      ),
     );
   }
 }
