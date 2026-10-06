@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.9.4",
-  "minimum_required_version": "1.9.4",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.9.4/Setup_Gest2A3Eco_1.9.4.exe",
-  "changelog": "Correcciones varias en los listados de facturas.",
+  "latest_version": "1.9.5",
+  "minimum_required_version": "1.9.5",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.9.5/Setup_Gest2A3Eco_1.9.5.exe",
+  "changelog": "Se añade la funcionalidad de las ayudas y se mejora la revision OCR.",
   "force_update": true
 }
