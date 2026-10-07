@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../core/notifications/notifications_service.dart';
 import '../core/notifications/web_permission_state.dart';
+import '../core/notifications/windows_taskbar_badge.dart';
 import '../core/websocket/realtime_service.dart';
 import '../features/app_update/domain/app_update_policy.dart';
 import '../features/auth/domain/user_profile.dart';
@@ -42,6 +43,8 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
   bool _updateDialogVisible = false;
   int? _dismissedOptionalBuild;
   DateTime? _lastUpdateCheck;
+  int? _scheduledTaskbarBadgeCount;
+  int? _appliedTaskbarBadgeCount;
 
   @override
   void initState() {
@@ -497,6 +500,20 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
         .syncRegistration(service.permissionState);
   }
 
+  void _scheduleTaskbarBadge(int count) {
+    if (_scheduledTaskbarBadgeCount == count ||
+        _appliedTaskbarBadgeCount == count) {
+      return;
+    }
+    _scheduledTaskbarBadgeCount = count;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _scheduledTaskbarBadgeCount != count) return;
+      _scheduledTaskbarBadgeCount = null;
+      _appliedTaskbarBadgeCount = count;
+      unawaited(ref.read(windowsTaskbarBadgeProvider).setCount(count));
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = ref.watch(sessionProvider).valueOrNull;
@@ -509,6 +526,11 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
     } else {
       _stopRealtime();
     }
+    final pendingMessages = session == null
+        ? const AsyncData<int>(0)
+        : ref.watch(pendingMessagesCountProvider);
+    final pendingCount = pendingMessages.valueOrNull;
+    if (pendingCount != null) _scheduleTaskbarBadge(pendingCount);
     return MaterialApp.router(
       title: 'Gestinem',
       debugShowCheckedModeBanner: false,

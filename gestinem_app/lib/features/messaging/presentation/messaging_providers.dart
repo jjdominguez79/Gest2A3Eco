@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../auth/domain/user_profile.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../../../core/websocket/realtime_service.dart';
 import '../../../core/storage/composer_preferences_storage.dart';
@@ -69,6 +70,28 @@ final internalThreadsProvider =
     FutureProvider.autoDispose<List<InternalThread>>((ref) {
       return ref.watch(messagingRepositoryProvider).internalThreads();
     });
+
+/// Numero total que debe mostrarse en el icono de la barra de tareas.
+///
+/// Para empleados suma los canales de clientes y los chats internos. Para
+/// clientes solo existen sus conversaciones con Gestinem.
+final pendingMessagesCountProvider = FutureProvider.autoDispose<int>((
+  ref,
+) async {
+  final session = ref.watch(sessionProvider).valueOrNull;
+  if (session == null) return 0;
+
+  final conversations = await ref.watch(conversationsProvider.future);
+  var total = conversations.fold<int>(
+    0,
+    (sum, conversation) => sum + conversation.unreadCount,
+  );
+  if (session.profile.type == UserType.staff) {
+    final threads = await ref.watch(internalThreadsProvider.future);
+    total += threads.fold<int>(0, (sum, thread) => sum + thread.unreadCount);
+  }
+  return total;
+});
 
 final internalMessagesProvider = FutureProvider.autoDispose
     .family<List<Message>, String>((ref, id) {
