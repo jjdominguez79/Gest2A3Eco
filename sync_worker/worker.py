@@ -85,6 +85,10 @@ class MailSyncWorker:
             return
         try:
             pending_ids = list_ids(source.mailbox)
+            LOG.info(
+                "Iniciando conciliacion de leidos de %s: candidatos=%d",
+                source.mailbox, len(pending_ids),
+            )
             read_ids = get_read(mailbox=source.mailbox, message_ids=pending_ids)
             updated = mark_managed(source.mailbox, read_ids)
         except Exception as exc:

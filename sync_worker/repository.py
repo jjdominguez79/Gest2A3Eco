@@ -105,7 +105,7 @@ class ComunicacionesRepository:
         return inserted, duplicates
 
     def list_unmanaged_message_ids(self, mailbox: str) -> list[str]:
-        """Lista correos pendientes cuyo estado debe contrastarse con Outlook."""
+        """Lista correos pendientes visibles en la bandeja documental."""
         with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
             rows = conn.execute(
                 """
@@ -113,22 +113,14 @@ class ComunicacionesRepository:
                 FROM comunicaciones_sin_asignar
                 WHERE LOWER(mailbox)=LOWER(%s) AND descartado=0
                   AND estado<>'gestionado'
-                UNION
-                SELECT ultimo.graph_message_id
-                FROM comunicaciones c
-                JOIN LATERAL (
-                  SELECT m.graph_message_id,m.mailbox
-                  FROM comunicaciones_mensajes m
-                  WHERE m.comunicacion_id=c.id
-                    AND m.direccion='entrante'
-                    AND COALESCE(m.graph_message_id,'')<>''
-                  ORDER BY m.fecha DESC
-                  LIMIT 1
-                ) ultimo ON TRUE
-                WHERE c.descartado=0 AND c.estado<>'gestionado'
-                  AND LOWER(ultimo.mailbox)=LOWER(%s)
+                  AND sugerencia_codigo_empresa IS NOT NULL
+                  AND TRIM(sugerencia_codigo_empresa)<>''
+                  AND COALESCE(
+                    (payload_json::jsonb->>'tiene_adjuntos')::boolean,
+                    FALSE
+                  )
                 """,
-                (mailbox, mailbox),
+                (mailbox,),
             ).fetchall()
         return [str(row["graph_message_id"]) for row in rows]
 
