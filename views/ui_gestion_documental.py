@@ -21,6 +21,7 @@ from services.impresion_facturas_recibidas_service import (
 )
 from utils.utilidades import load_app_config
 from views.ui_firma_dialog import UIFirmaDialog
+from views.ui_previsualizacion_impresion import seleccionar_paginas_impresion
 
 
 class _MultipleImportDialog(tk.Toplevel):
@@ -380,6 +381,9 @@ class UIGestionDocumental(ttk.Frame):
         actions.pack(fill="x", pady=(8, 0))
         ttk.Button(actions, text="Abrir", command=self._open).pack(side="left")
         ttk.Button(
+            actions, text="Cambiar categoria", command=self._change_category,
+        ).pack(side="left", padx=(6, 0))
+        ttk.Button(
             actions, text="Imprimir facturas",
             command=self._print_received_invoices,
         ).pack(side="left", padx=(6, 0))
@@ -600,12 +604,24 @@ class UIGestionDocumental(ttk.Frame):
                 parent=self,
             )
             return
+        try:
+            paginas = seleccionar_paginas_impresion(
+                self, [self._rows[document_id] for document_id in selected],
+            )
+        except Exception as exc:
+            messagebox.showerror(
+                "Previsualizar facturas", str(exc), parent=self,
+            )
+            return
+        if paginas is None:
+            return
         self.winfo_toplevel().configure(cursor="watch")
 
         def worker():
             try:
                 resultado = self._impresion_facturas.imprimir(
                     selected, usuario=self._username(),
+                    paginas_por_documento=paginas,
                 )
                 error = None
             except Exception as exc:
@@ -632,6 +648,66 @@ class UIGestionDocumental(ttk.Frame):
             messagebox.showinfo("Imprimir facturas", texto, parent=self)
         else:
             messagebox.showwarning("Imprimir facturas", texto, parent=self)
+
+    def _change_category(self):
+        selected = list(self._tree.selection())
+        if not selected:
+            messagebox.showwarning(
+                "Cambiar categoria", "Selecciona al menos un documento.", parent=self,
+            )
+            return
+        dialog = _CategoryDialog(self, [row["nombre"] for row in self._categories])
+        self.wait_window(dialog)
+        if not dialog.result:
+            return
+        category = next(
+            row for row in self._categories if row["nombre"] == dialog.result
+        )
+        cambia_desde_facturas = any(
+            self._rows[document_id].get("categoria_id") == "facturas_recibidas"
+            for document_id in selected
+        ) and category["id"] != "facturas_recibidas"
+        detalle = (
+            "\n\nLos documentos que salgan de Facturas recibidas se retiraran "
+            "del circuito OCR. Si ya fueron exportados o contabilizados, el "
+            "cambio se bloqueara."
+            if cambia_desde_facturas else ""
+        )
+        if not messagebox.askyesno(
+            "Cambiar categoria",
+            f"Mover {len(selected)} documento(s) a {category['nombre']}?{detalle}",
+            parent=self,
+        ):
+            return
+        self.winfo_toplevel().configure(cursor="watch")
+
+        def worker():
+            cambiados = 0
+            errores = []
+            for document_id in selected:
+                try:
+                    if self._service.reclasificar_documento(
+                        document_id, category["id"], usuario=self._username(),
+                    ):
+                        cambiados += 1
+                except Exception as exc:
+                    nombre = self._rows.get(document_id, {}).get(
+                        "nombre_original", document_id,
+                    )
+                    errores.append(f"{nombre}: {exc}")
+            self.after(0, self._finish_change_category, cambiados, errores)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_change_category(self, cambiados: int, errores: list[str]):
+        self.winfo_toplevel().configure(cursor="")
+        self._refresh()
+        texto = f"Documentos reclasificados: {cambiados}"
+        if errores:
+            texto += "\n\nNo se pudieron reclasificar:\n- " + "\n- ".join(errores[:8])
+            messagebox.showwarning("Cambiar categoria", texto, parent=self)
+        else:
+            messagebox.showinfo("Cambiar categoria", texto, parent=self)
 
     def _capture_received_invoice(self):
         selected = self._selected_received_invoice_ids()

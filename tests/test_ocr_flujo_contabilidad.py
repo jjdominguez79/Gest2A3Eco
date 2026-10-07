@@ -152,6 +152,57 @@ def test_impresion_desde_contabilidad_usa_el_archivo_definitivo():
     assert "Enviadas a imprimir: 1" in view.message
 
 
+def test_impresion_desde_contabilidad_respeta_paginas_elegidas():
+    class Gestor:
+        def get_factura_recibida_doc(self, _doc_id):
+            return {"documento_archivo_id": "archivo-1", "numero_factura": "F-25"}
+
+        def get_documento_archivo(self, _archivo_id):
+            return {
+                "id": "archivo-1", "ruta": "factura.pdf",
+                "nombre_original": "factura.pdf",
+            }
+
+    class View:
+        session = SimpleNamespace(user=SimpleNamespace(nombre="Empleado"))
+
+        def get_selected_received_ids(self):
+            return ["ocr-1"]
+
+        def seleccionar_paginas_impresion(self, documentos):
+            self.previsualizados = documentos
+            return {"archivo-1": [2]}
+
+        def show_info(self, _title, message):
+            self.message = message
+
+        def show_warning(self, *_args):
+            raise AssertionError("No se esperaba aviso")
+
+        def show_error(self, *_args):
+            raise AssertionError("No se esperaba error")
+
+    class Impresion:
+        def imprimir(
+            self, documento_ids, *, usuario="", paginas_por_documento=None,
+        ):
+            self.llamada = (documento_ids, usuario, paginas_por_documento)
+            return SimpleNamespace(impresas=["factura.pdf"], omitidas=[], errores=[])
+
+    view = View()
+    controller = UIContabilidadController(Gestor(), "E00570", 2026, view)
+    impresion = Impresion()
+    controller._impresion = impresion
+    controller.refresh = lambda select_id=None: None
+
+    controller.imprimir_facturas()
+
+    assert [item["id"] for item in view.previsualizados] == ["archivo-1"]
+    assert impresion.llamada == (
+        ["archivo-1"], "Empleado", {"archivo-1": [2]},
+    )
+
+
 def test_generar_asiento_no_marca_la_factura_como_contabilizada(monkeypatch):
     doc = {
         "id": "doc-1", "codigo_empresa": "E00570", "ejercicio": 2026,

@@ -235,6 +235,28 @@ def download_backend_attachment(
     return item
 
 
+@router.patch(
+    "/read",
+    dependencies=[Depends(require_workstation_or_internal)],
+)
+def mark_backend_message_read(
+    mailbox: str = Query(min_length=3), message_id: str = Query(min_length=1),
+):
+    """Marca como leido un mensaje del buzon compartido autorizado."""
+    mailbox = _validate_mailbox(mailbox, include_read_only=True)
+    try:
+        response = requests.patch(
+            _graph_url(mailbox, message_id),
+            headers={**graph_headers(get_settings()), "Content-Type": "application/json"},
+            json={"isRead": True}, timeout=45,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if response.status_code not in (200, 202, 204):
+        raise _graph_request_error(response, "marcar el mensaje como leido")
+    return {"marked_read": True}
+
+
 @router.post(
     "/reply",
     dependencies=[Depends(require_workstation_or_internal)],

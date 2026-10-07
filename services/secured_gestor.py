@@ -79,11 +79,13 @@ class SecuredGestor:
 
     def listar_entradas_documentales(
         self, codigo_empresa: str = "", *, solo_pendientes: bool = True,
+        solo_archivadas: bool = False,
     ):
         if codigo_empresa:
             self.security.ensure_company_read(codigo_empresa)
         rows = self._base.listar_entradas_documentales(
             codigo_empresa, solo_pendientes=solo_pendientes,
+            solo_archivadas=solo_archivadas,
         )
         if self.security.session.is_admin():
             return rows
@@ -150,6 +152,19 @@ class SecuredGestor:
     def registrar_documento_archivo(self, datos: dict):
         self.security.ensure_company_write(datos.get("codigo_empresa"))
         return self._base.registrar_documento_archivo(datos)
+
+    def reclasificar_documento_archivo(
+        self, documento_id: str, categoria_id: str, *, ruta: str,
+        nombre_archivo: str,
+    ):
+        row = self._base.get_documento_archivo(str(documento_id))
+        if not row:
+            raise ValueError("Documento no encontrado.")
+        self.security.ensure_company_write(str(row.get("codigo_empresa") or ""))
+        return self._base.reclasificar_documento_archivo(
+            documento_id, categoria_id, ruta=ruta,
+            nombre_archivo=nombre_archivo,
+        )
 
     # ── Adjuntos recibidos por mensajeria ──────────────────────────────────
 

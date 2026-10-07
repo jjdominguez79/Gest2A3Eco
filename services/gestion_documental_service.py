@@ -45,6 +45,7 @@ class ArchiveSummary:
     ignored: list[str] = field(default_factory=list)
     duplicates: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 class GestionDocumentalService:
@@ -189,6 +190,17 @@ class GestionDocumentalService:
             if not assigned:
                 raise RuntimeError("El correo ya no esta pendiente de asignacion.")
             self._gestor.vincular_documentos_graph_comunicacion(graph_id)
+            try:
+                self._graph.mark_as_read(mailbox=mailbox, message_id=graph_id)
+            except Exception as exc:
+                logger.warning(
+                    "No se pudo marcar como leido el correo %s de %s: %s",
+                    graph_id, mailbox, exc,
+                )
+                summary.warnings.append(
+                    "El correo se ha archivado, pero Outlook no pudo marcarlo "
+                    f"como leido: {exc}"
+                )
             return summary
 
         entrada_id = str(entrada.get("entrada_id") or entrada.get("id") or "")
@@ -282,6 +294,54 @@ class GestionDocumentalService:
             except Exception as exc:
                 summary.errors.append(f"{path.name}: {exc}")
         return summary
+
+    def reclasificar_documento(
+        self, documento_id: str, categoria_id: str, *, usuario: str = "",
+    ) -> bool:
+        documento = self._gestor.get_documento_archivo(str(documento_id))
+        if not documento:
+            raise ValueError("Documento no encontrado.")
+        categoria = next(
+            (item for item in self.categorias() if item["id"] == categoria_id),
+            None,
+        )
+        if not categoria:
+            raise ValueError("La categoria de destino no existe o no esta activa.")
+        if str(documento.get("categoria_id") or "") == str(categoria_id):
+            return False
+
+        origen = Path(str(documento.get("ruta") or ""))
+        if not origen.is_file():
+            raise FileNotFoundError(f"El archivo no se encuentra en: {origen}")
+        carpeta = self._category_directory(
+            str(documento["codigo_empresa"]), int(documento["ejercicio"]),
+            str(categoria["carpeta"]),
+        )
+        carpeta.mkdir(parents=True, exist_ok=True)
+        nombre = self._available_filename(
+            carpeta,
+            str(documento.get("nombre_archivo") or documento.get("nombre_original")),
+        )
+        destino = carpeta / nombre
+        shutil.move(str(origen), str(destino))
+        try:
+            cambiado = self._gestor.reclasificar_documento_archivo(
+                str(documento_id), str(categoria_id), ruta=str(destino),
+                nombre_archivo=nombre,
+            )
+        except Exception:
+            try:
+                if destino.exists() and not origen.exists():
+                    origen.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(destino), str(origen))
+            except OSError:
+                logger.exception(
+                    "No se pudo devolver %s tras fallar su reclasificacion", destino,
+                )
+            raise
+        if cambiado and bool(categoria.get("permite_ocr")):
+            self._encolar_ocr(str(documento_id), usuario=usuario)
+        return bool(cambiado)
 
     def archivar_adjunto_mensajeria(
         self, adjunto: dict, *, ejercicio: int, categoria_id: str,

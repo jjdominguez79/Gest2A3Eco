@@ -18,6 +18,7 @@ from services.gestion_documental_service import GestionDocumentalService
 
 _LABEL_ESTADO = {
     "pendiente_clasificar": "Pendiente",
+    "archivado": "Archivado",
     "revisado": "Revisado",
     "no_guardar": "No guardar",
     "error": "Error",
@@ -117,7 +118,7 @@ class UIAdjuntosMensajeria(ttk.Frame):
         self._estado_filtro = tk.StringVar(value="Pendientes")
         estado = ttk.Combobox(
             bar, textvariable=self._estado_filtro, state="readonly", width=13,
-            values=("Pendientes", "Todos"),
+            values=("Pendientes", "Archivadas", "Todos"),
         )
         estado.pack(side=tk.LEFT, padx=(0, 8))
         estado.bind("<<ComboboxSelected>>", lambda _event: self.recargar())
@@ -162,16 +163,21 @@ class UIAdjuntosMensajeria(ttk.Frame):
 
     def recargar(self) -> None:
         """Recarga la lista desde PostgreSQL."""
-        solo_pendientes = self._estado_filtro.get() == "Pendientes"
+        estado_filtro = self._estado_filtro.get()
+        solo_pendientes = estado_filtro == "Pendientes"
+        solo_archivadas = estado_filtro == "Archivadas"
         def _bg():
             try:
                 filtro = {
                     "codigo_empresa": self._filtro_empresa,
                     "solo_pendientes": solo_pendientes,
+                    "estado": "archivado" if solo_archivadas else "",
                 }
                 if hasattr(self._gestor, "listar_entradas_documentales"):
                     datos = self._gestor.listar_entradas_documentales(
-                        self._filtro_empresa or "", solo_pendientes=solo_pendientes,
+                        self._filtro_empresa or "",
+                        solo_pendientes=solo_pendientes,
+                        solo_archivadas=solo_archivadas,
                     )
                     pendientes = len(self._gestor.listar_entradas_documentales(
                         self._filtro_empresa or "", solo_pendientes=True,
@@ -422,15 +428,23 @@ class UIAdjuntosMensajeria(ttk.Frame):
             if not attachment_ids:
                 return
         try:
-            self._service.clasificar_entrada_documental(
+            summary = self._service.clasificar_entrada_documental(
                 item, ejercicio=ejercicio, categoria_id=categoria["id"],
                 usuario=self._usuario or "sistema", usuario_id=self._usuario_id,
                 attachment_ids=attachment_ids,
             )
             self.recargar()
-            messagebox.showinfo(
-                "Clasificar", "Documento incorporado a Gestion documental.", parent=self,
-            )
+            if summary.warnings:
+                messagebox.showwarning(
+                    "Clasificar",
+                    "Documento incorporado a Gestion documental.\n\n"
+                    + "\n".join(summary.warnings),
+                    parent=self,
+                )
+            else:
+                messagebox.showinfo(
+                    "Clasificar", "Documento incorporado a Gestion documental.", parent=self,
+                )
         except Exception as exc:
             messagebox.showerror("Clasificar", str(exc), parent=self)
 

@@ -47,6 +47,9 @@ class _GraphCorreo:
             "contentType": "application/pdf",
         }
 
+    def mark_as_read(self, *, mailbox, message_id):
+        self.marcado_leido = (mailbox, message_id)
+
 
 class _GestorCorreo(_Gestor):
     def __init__(self):
@@ -141,6 +144,36 @@ def test_clasificar_correo_usa_la_misma_bandeja_y_conserva_el_buzon(
     assert gestor.saved["buzon_origen"] == "oficina@gestinem.es"
     assert gestor.asignacion == ("graph-1", "E00001", 17, "Empleado")
     assert gestor.vinculado == "graph-1"
+    assert graph.marcado_leido == ("oficina@gestinem.es", "graph-1")
+    assert summary.warnings == []
+
+
+def test_clasificar_correo_no_revierte_el_archivo_si_outlook_falla(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setattr(
+        "services.gestion_documental_service.get_document_repository_dir",
+        lambda: tmp_path / "repo",
+    )
+    gestor = _GestorCorreo()
+    graph = _GraphCorreo()
+    graph.mark_as_read = MagicMock(side_effect=RuntimeError("Graph no disponible"))
+
+    summary = GestionDocumentalService(gestor, graph=graph).clasificar_entrada_documental(
+        {
+            "canal": "correo", "graph_message_id": "graph-1",
+            "mailbox": "documentacion@gestinem.es", "codigo_empresa": "E00001",
+            "remitente": "proveedor@example.com", "asunto": "Factura",
+        },
+        ejercicio=2026, categoria_id="facturas_recibidas",
+        usuario="Empleado", usuario_id=17,
+    )
+
+    assert summary.document_ids == ["doc-correo-1"]
+    assert summary.warnings == [
+        "El correo se ha archivado, pero Outlook no pudo marcarlo como leido: "
+        "Graph no disponible"
+    ]
 
 
 def test_importacion_desde_comunicaciones_reutiliza_el_archivo_documental(

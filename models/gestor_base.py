@@ -4027,10 +4027,14 @@ class GestorBase:
 
     def listar_entradas_documentales(
         self, codigo_empresa: str = "", *, solo_pendientes: bool = True,
+        solo_archivadas: bool = False,
     ) -> list[dict]:
-        """Vista unica de entradas aun no clasificadas, cualquiera que sea el canal."""
+        """Vista unica de entradas documentales pendientes o ya archivadas."""
         result: list[dict] = []
-        filtro = {"solo_pendientes": solo_pendientes}
+        filtro = {
+            "solo_pendientes": solo_pendientes,
+            "estado": "archivado" if solo_archivadas else "",
+        }
         if codigo_empresa:
             filtro["codigo_empresa"] = codigo_empresa
         for row in self.listar_adjuntos_mensajeria(filtro):
@@ -4044,43 +4048,87 @@ class GestorBase:
             })
             result.append(item)
 
-        clauses = ["descartado=0", "estado<>'gestionado'"]
-        params: list = []
-        if codigo_empresa:
-            clauses.append("sugerencia_codigo_empresa=?")
-            params.append(str(codigo_empresa))
-        else:
-            # Los correos sin cliente siguen en Comunicaciones, donde primero
-            # debe resolverse su empresa. La bandeja documental solo muestra
-            # entradas que ya pueden clasificarse sin inventar ese dato.
-            clauses.append("sugerencia_codigo_empresa IS NOT NULL")
-            clauses.append("TRIM(sugerencia_codigo_empresa)<>''")
-        rows = self.conn.execute(
-            "SELECT * FROM comunicaciones_sin_asignar WHERE "
-            + " AND ".join(clauses) + " ORDER BY fecha DESC",
-            tuple(params),
-        ).fetchall()
-        for raw in rows:
-            row = self._row_to_dict(raw)
-            try:
-                payload = json.loads(row.get("payload_json") or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            if not bool(payload.get("tiene_adjuntos")):
-                continue
-            mailbox = str(row.get("mailbox") or "").strip().lower()
-            label = "Documentacion" if mailbox.startswith("documentacion@") else "Oficina"
-            result.append({
-                **row,
-                "id": f"correo:{row['graph_message_id']}",
-                "entrada_id": str(row["graph_message_id"]),
-                "codigo_empresa": row.get("sugerencia_codigo_empresa") or "",
-                "empresa_nombre": row.get("sugerencia_nombre") or "",
-                "nombre_original": row.get("asunto") or "(Sin asunto)",
-                "canal": "correo",
-                "origen_label": f"Correo {label}",
-                "fecha": row.get("fecha") or row.get("created_at") or "",
-            })
+        if not solo_archivadas:
+            clauses = ["descartado=0", "estado<>'gestionado'"]
+            params: list = []
+            if codigo_empresa:
+                clauses.append("sugerencia_codigo_empresa=?")
+                params.append(str(codigo_empresa))
+            else:
+                # Los correos sin cliente siguen en Comunicaciones, donde primero
+                # debe resolverse su empresa. La bandeja documental solo muestra
+                # entradas que ya pueden clasificarse sin inventar ese dato.
+                clauses.append("sugerencia_codigo_empresa IS NOT NULL")
+                clauses.append("TRIM(sugerencia_codigo_empresa)<>''")
+            rows = self.conn.execute(
+                "SELECT * FROM comunicaciones_sin_asignar WHERE "
+                + " AND ".join(clauses) + " ORDER BY fecha DESC",
+                tuple(params),
+            ).fetchall()
+            for raw in rows:
+                row = self._row_to_dict(raw)
+                try:
+                    payload = json.loads(row.get("payload_json") or "{}")
+                except (TypeError, ValueError):
+                    payload = {}
+                if not bool(payload.get("tiene_adjuntos")):
+                    continue
+                mailbox = str(row.get("mailbox") or "").strip().lower()
+                label = "Documentacion" if mailbox.startswith("documentacion@") else "Oficina"
+                result.append({
+                    **row,
+                    "id": f"correo:{row['graph_message_id']}",
+                    "entrada_id": str(row["graph_message_id"]),
+                    "codigo_empresa": row.get("sugerencia_codigo_empresa") or "",
+                    "empresa_nombre": row.get("sugerencia_nombre") or "",
+                    "nombre_original": row.get("asunto") or "(Sin asunto)",
+                    "canal": "correo",
+                    "origen_label": f"Correo {label}",
+                    "fecha": row.get("fecha") or row.get("created_at") or "",
+                })
+
+        if not solo_pendientes:
+            clauses = [
+                "d.origen='correo'",
+                "d.graph_message_id IS NOT NULL",
+                "TRIM(d.graph_message_id)<>''",
+            ]
+            params = []
+            if codigo_empresa:
+                clauses.append("d.codigo_empresa=?")
+                params.append(str(codigo_empresa))
+            rows = self.conn.execute(
+                """
+                SELECT d.graph_message_id,d.buzon_origen AS mailbox,
+                       d.codigo_empresa,
+                       MAX(d.correo_remitente) AS remitente,
+                       MAX(d.correo_asunto) AS asunto,
+                       COALESCE(MAX(m.fecha),MAX(d.created_at)) AS fecha,
+                       COALESCE(SUM(d.tamano),0) AS tamano
+                FROM documentos_archivo d
+                LEFT JOIN comunicaciones_mensajes m ON m.id=d.mensaje_id
+                WHERE """ + " AND ".join(clauses) + """
+                GROUP BY d.graph_message_id,d.buzon_origen,d.codigo_empresa
+                ORDER BY COALESCE(MAX(m.fecha),MAX(d.created_at)) DESC
+                LIMIT 500
+                """,
+                tuple(params),
+            ).fetchall()
+            for raw in rows:
+                row = self._row_to_dict(raw)
+                mailbox = str(row.get("mailbox") or "").strip().lower()
+                label = "Documentacion" if mailbox.startswith("documentacion@") else "Oficina"
+                graph_id = str(row.get("graph_message_id") or "")
+                result.append({
+                    **row,
+                    "id": f"correo_archivado:{mailbox}:{graph_id}",
+                    "entrada_id": graph_id,
+                    "nombre_original": row.get("asunto") or "(Sin asunto)",
+                    "canal": "correo",
+                    "origen_label": f"Correo {label}",
+                    "estado": "archivado",
+                    "revisado": True,
+                })
         result.sort(key=lambda item: str(item.get("fecha") or ""), reverse=True)
         return result
 
@@ -4111,6 +4159,144 @@ class GestorBase:
             (str(documento_id),),
         ).fetchone()
         return self._row_to_dict(row) if row else None
+
+    def reclasificar_documento_archivo(
+        self, documento_id: str, categoria_id: str, *, ruta: str,
+        nombre_archivo: str,
+    ) -> bool:
+        """Cambia la categoria y retira proyecciones OCR incompatibles."""
+        documento = self.get_documento_archivo(str(documento_id))
+        if not documento:
+            raise ValueError("Documento no encontrado.")
+        categoria = self.conn.execute(
+            "SELECT * FROM categorias_documentales WHERE id=? AND activa=1",
+            (str(categoria_id),),
+        ).fetchone()
+        if not categoria:
+            raise ValueError("La categoria de destino no existe o no esta activa.")
+        categoria = self._row_to_dict(categoria)
+        if str(documento.get("categoria_id") or "") == str(categoria_id):
+            return False
+
+        sale_de_ocr = bool(documento.get("permite_ocr")) and not bool(
+            categoria.get("permite_ocr")
+        )
+        ocr_id = str(documento.get("ocr_documento_id") or "").strip()
+        if sale_de_ocr:
+            estado_contable = str(documento.get("estado_contable") or "").strip()
+            if (
+                str(documento.get("numero_asiento") or "").strip()
+                or estado_contable in {
+                    "exportada_a3", "contabilizada", "contabilizada_manual",
+                }
+            ):
+                raise ValueError(
+                    "La factura ya fue exportada o contabilizada. Revierte antes "
+                    "su estado contable para poder cambiarla de categoria."
+                )
+            procesando = self.conn.execute(
+                "SELECT id FROM ocr_trabajos WHERE documento_archivo_id=? "
+                "AND estado='procesando' LIMIT 1",
+                (str(documento_id),),
+            ).fetchone()
+            if procesando:
+                raise ValueError(
+                    "El OCR esta procesando este documento. Espera a que termine "
+                    "antes de cambiarlo de categoria."
+                )
+            proyeccion = self.conn.execute(
+                "SELECT id,numero_asiento,generada,estado_contable "
+                "FROM facturas_recibidas_docs "
+                "WHERE id=? OR documento_archivo_id=? LIMIT 1",
+                (ocr_id or "__sin_ocr__", str(documento_id)),
+            ).fetchone()
+            if proyeccion:
+                proyeccion = self._row_to_dict(proyeccion)
+                estado_proyeccion = str(
+                    proyeccion.get("estado_contable") or ""
+                ).strip()
+                if (
+                    str(proyeccion.get("numero_asiento") or "").strip()
+                    or bool(proyeccion.get("generada"))
+                    or estado_proyeccion in {"exportada_a3", "contabilizada"}
+                ):
+                    raise ValueError(
+                        "La factura ya tiene datos contables o fue exportada a A3. "
+                        "No se puede reclasificar sin revertirlos antes."
+                    )
+
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        with self.conn:
+            if sale_de_ocr:
+                self.conn.execute(
+                    "UPDATE ocr_trabajos SET estado='cancelado',"
+                    "documento_archivo_id=NULL,actualizado_at=?,finalizado_at=? "
+                    "WHERE documento_archivo_id=? AND estado='pendiente'",
+                    (now, now, str(documento_id)),
+                )
+                # Repetir la comprobacion dentro de la transaccion cierra la
+                # carrera con el consumidor OCR: o cancelamos antes de que lo
+                # reclame, o detectamos que ya esta procesando y revertimos.
+                procesando = self.conn.execute(
+                    "SELECT id FROM ocr_trabajos WHERE documento_archivo_id=? "
+                    "AND estado='procesando' LIMIT 1",
+                    (str(documento_id),),
+                ).fetchone()
+                if procesando:
+                    raise ValueError(
+                        "El OCR esta procesando este documento. Espera a que termine "
+                        "antes de cambiarlo de categoria."
+                    )
+                self.conn.execute(
+                    "UPDATE ocr_trabajos SET documento_archivo_id=NULL "
+                    "WHERE documento_archivo_id=?",
+                    (str(documento_id),),
+                )
+                self.conn.execute(
+                    "DELETE FROM facturas_recibidas_docs "
+                    "WHERE id=? OR documento_archivo_id=?",
+                    (ocr_id or "__sin_ocr__", str(documento_id)),
+                )
+                if ocr_id:
+                    self.conn.execute(
+                        "DELETE FROM facturas_recibidas_ocr_lineas_iva "
+                        "WHERE factura_id IN (SELECT id FROM facturas_recibidas_ocr "
+                        "WHERE documento_id=?)", (ocr_id,),
+                    )
+                    self.conn.execute(
+                        "DELETE FROM facturas_recibidas_ocr_retenciones "
+                        "WHERE factura_id IN (SELECT id FROM facturas_recibidas_ocr "
+                        "WHERE documento_id=?)", (ocr_id,),
+                    )
+                    self.conn.execute(
+                        "DELETE FROM facturas_recibidas_ocr WHERE documento_id=?",
+                        (ocr_id,),
+                    )
+                    self.conn.execute(
+                        "DELETE FROM documentos_ocr WHERE id=?", (ocr_id,),
+                    )
+            self.conn.execute(
+                "UPDATE documentos_archivo SET categoria_id=?,ruta=?,"
+                "nombre_archivo=?,estado='archivado',"
+                "ocr_documento_id=CASE WHEN ? THEN NULL ELSE ocr_documento_id END,"
+                "estado_contable=CASE WHEN ? THEN 'pendiente' ELSE estado_contable END,"
+                "metodo_contabilizacion=CASE WHEN ? THEN NULL ELSE metodo_contabilizacion END,"
+                "fecha_contable=CASE WHEN ? THEN NULL ELSE fecha_contable END,"
+                "numero_asiento=CASE WHEN ? THEN NULL ELSE numero_asiento END,"
+                "observaciones_contables=CASE WHEN ? THEN NULL ELSE observaciones_contables END,"
+                "updated_at=? WHERE id=?",
+                (
+                    str(categoria_id), str(ruta), str(nombre_archivo),
+                    sale_de_ocr, sale_de_ocr, sale_de_ocr, sale_de_ocr,
+                    sale_de_ocr, sale_de_ocr, now, str(documento_id),
+                ),
+            )
+            self.conn.execute(
+                "UPDATE comunicaciones_adjuntos_decisiones SET categoria_id=? "
+                "WHERE documento_id=?",
+                (str(categoria_id), str(documento_id)),
+            )
+        return True
 
     def cambiar_estado_contable_documentos(
         self, documento_ids: list[str], estado: str, *, usuario: str = "",

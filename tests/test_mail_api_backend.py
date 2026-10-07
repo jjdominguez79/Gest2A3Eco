@@ -88,3 +88,28 @@ def test_buzon_adicional_no_se_autoriza_como_remitente(monkeypatch):
         mail_api._validate_mailbox("jjdominguez@gestinem.es")
 
     assert exc.value.status_code == 403
+
+
+def test_endpoint_marca_mensaje_como_leido_en_graph(monkeypatch):
+    calls = []
+    monkeypatch.setattr(mail_api, "default_sender", lambda: "oficina@gestinem.es")
+    monkeypatch.setenv(
+        "MESSAGING_GRAPH_READ_MAILBOXES", "documentacion@gestinem.es",
+    )
+    monkeypatch.setattr(mail_api, "get_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        mail_api, "graph_headers", lambda _cfg: {"Authorization": "Bearer backend"},
+    )
+    monkeypatch.setattr(
+        mail_api.requests, "patch",
+        lambda url, **kwargs: calls.append((url, kwargs)) or Response(),
+    )
+
+    result = mail_api.mark_backend_message_read(
+        mailbox="documentacion@gestinem.es", message_id="id/con/barra",
+    )
+
+    assert result == {"marked_read": True}
+    assert "id%2Fcon%2Fbarra" in calls[0][0]
+    assert calls[0][1]["json"] == {"isRead": True}
+    assert calls[0][1]["headers"]["Content-Type"] == "application/json"

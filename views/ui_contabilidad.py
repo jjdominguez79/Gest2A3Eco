@@ -4,6 +4,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from controllers.ui_contabilidad_controller import UIContabilidadController
 from controllers.ui_contabilidad_emitidas_controller import UIContabilidadEmitidasController
+from views.ui_previsualizacion_impresion import seleccionar_paginas_impresion
 
 _ESTADO_LABELS = {
     "pendiente": "Pendiente",
@@ -590,6 +591,9 @@ class UIContabilidad(ttk.Frame):
 
     def show_error(self, title, message):
         messagebox.showerror(title, message)
+
+    def seleccionar_paginas_impresion(self, documentos: list[dict]):
+        return seleccionar_paginas_impresion(self, documentos)
 
     def _on_select(self):
         sel = self.tv.selection()

@@ -40,6 +40,10 @@ class ReadSession:
 
         return ReadResponse()
 
+    def patch(self, url, **kwargs):
+        self.call = (url, kwargs)
+        return self.get(url, **kwargs)
+
 
 def test_envia_factura_al_backend_con_token_de_puesto(monkeypatch, tmp_path):
     monkeypatch.setattr(
@@ -106,3 +110,24 @@ def test_consulta_adjuntos_en_backend_con_token_de_puesto(monkeypatch):
         "mailbox": "oficina@gestinem.es", "message_id": "id/con/barra",
     }
     assert result[0]["id"] == "att-1"
+
+
+def test_marca_correo_leido_en_backend_con_token_de_puesto(monkeypatch):
+    monkeypatch.setattr(
+        "utils.credential_store.get_workstation_token", lambda: "g2a3_wks_test",
+    )
+    session = ReadSession({"marked_read": True})
+    service = BackendMailService(
+        {"integrations_api_url": "https://backend.example.test"}, session=session,
+    )
+
+    service.mark_as_read(
+        mailbox="documentacion@gestinem.es", message_id="id/con/barra",
+    )
+
+    url, request = session.call
+    assert url.endswith("/api/v1/mail/read")
+    assert request["headers"] == {"X-API-Key": "g2a3_wks_test"}
+    assert request["params"] == {
+        "mailbox": "documentacion@gestinem.es", "message_id": "id/con/barra",
+    }

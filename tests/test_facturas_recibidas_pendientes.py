@@ -237,6 +237,67 @@ def test_impresion_multiple_registra_solo_archivos_enviados(tmp_path):
     assert gestor.printed == [(["doc-1", "doc-2"], "Empleado")]
 
 
+def test_impresion_genera_pdf_solo_con_paginas_seleccionadas(tmp_path):
+    import fitz
+
+    source = tmp_path / "factura.pdf"
+    with fitz.open() as pdf:
+        for numero in range(1, 4):
+            pagina = pdf.new_page()
+            pagina.insert_text((72, 72), f"Pagina {numero}")
+        pdf.save(source)
+    gestor = _GestorService({
+        "doc-1": {
+            "id": "doc-1", "categoria_id": "facturas_recibidas",
+            "ruta": str(source), "nombre_original": source.name,
+        },
+    })
+    enviados = []
+
+    def imprimir(path):
+        with fitz.open(str(path)) as pdf:
+            enviados.append((Path(path), len(pdf), pdf[0].get_text()))
+
+    service = ImpresionFacturasRecibidasService(
+        gestor, imprimir_archivo=imprimir,
+        directorio_temporal=tmp_path / "impresion",
+    )
+
+    result = service.imprimir(
+        ["doc-1"], usuario="Empleado",
+        paginas_por_documento={"doc-1": [3, 1]},
+    )
+
+    assert result.impresas == ["factura.pdf"]
+    assert enviados[0][0] != source
+    assert enviados[0][1] == 2
+    assert "Pagina 1" in enviados[0][2]
+    assert gestor.printed == [(["doc-1"], "Empleado")]
+
+
+def test_impresion_no_registra_documento_sin_paginas_seleccionadas(tmp_path):
+    source = tmp_path / "factura.pdf"
+    source.write_bytes(b"%PDF")
+    gestor = _GestorService({
+        "doc-1": {
+            "id": "doc-1", "categoria_id": "facturas_recibidas",
+            "ruta": str(source), "nombre_original": source.name,
+        },
+    })
+    service = ImpresionFacturasRecibidasService(
+        gestor, imprimir_archivo=lambda _path: None,
+        directorio_temporal=tmp_path / "impresion",
+    )
+
+    result = service.imprimir(
+        ["doc-1"], paginas_por_documento={"doc-1": []},
+    )
+
+    assert result.impresas == []
+    assert result.omitidas == ["factura.pdf: sin paginas seleccionadas"]
+    assert gestor.printed == []
+
+
 def test_captura_asiento_manual_sin_ocr_usando_datos_introducidos():
     class Gestor:
         def get_factura_recibida_archivo_para_captura(self, _documento_id):

@@ -102,6 +102,16 @@ class BackendMailService:
         )
         return self._json_response(response)
 
+    def mark_as_read(self, *, mailbox: str, message_id: str) -> None:
+        """Marca el mensaje como leido en Microsoft 365 mediante el backend."""
+        self._ensure_configured()
+        response = self.http.patch(
+            f"{self.base_url}/api/v1/mail/read",
+            headers={"X-API-Key": self.token},
+            params={"mailbox": mailbox, "message_id": message_id}, timeout=60,
+        )
+        self._json_response(response)
+
     def reply(
         self, *, mailbox: str, message_id: str, body: str,
         attachments: list[str] | None = None,

@@ -319,8 +319,28 @@ class UIContabilidadController:
                 documento_ids.append(archivo_id)
             else:
                 sin_archivo.append(str(doc.get("numero_factura") or documento_id))
+        paginas = None
+        seleccionar_paginas = getattr(
+            self._view, "seleccionar_paginas_impresion", None,
+        )
+        if callable(seleccionar_paginas) and documento_ids:
+            documentos_archivo = [
+                archivo
+                for archivo_id in documento_ids
+                if (archivo := self._gestor.get_documento_archivo(archivo_id))
+            ]
+            try:
+                paginas = seleccionar_paginas(documentos_archivo)
+            except Exception as exc:
+                self._view.show_error("Previsualizar facturas", str(exc))
+                return
+            if paginas is None:
+                return
+        argumentos_impresion = {"usuario": self._usuario_actual()}
+        if paginas is not None:
+            argumentos_impresion["paginas_por_documento"] = paginas
         resultado = self._impresion.imprimir(
-            documento_ids, usuario=self._usuario_actual(),
+            documento_ids, **argumentos_impresion,
         )
         if resultado.impresas:
             self.refresh(select_id=seleccionados[0])
