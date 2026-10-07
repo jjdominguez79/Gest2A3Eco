@@ -540,10 +540,10 @@ class UIGestionDocumental(ttk.Frame):
             if not category_dialog.result:
                 return
             category = next(row for row in self._categories if row["nombre"] == category_dialog.result)
-            attachment_ids = None
+            selecciones_adjuntos = None
             if item.get("canal") == "correo":
                 try:
-                    attachments = self._service.listar_adjuntos_entrada_correo(item)
+                    opciones = self._service.listar_opciones_clasificacion_correo(item)
                 except Exception as exc:
                     messagebox.showerror(
                         "Bandeja de entrada",
@@ -551,11 +551,11 @@ class UIGestionDocumental(ttk.Frame):
                         parent=dialog,
                     )
                     return
-                from views.ui_comunicaciones_global import AttachmentSelectionDialog
-                selector = AttachmentSelectionDialog(dialog, attachments)
+                from views.ui_comunicaciones_global import AttachmentContentSelectionDialog
+                selector = AttachmentContentSelectionDialog(dialog, opciones)
                 dialog.wait_window(selector)
-                attachment_ids = selector.result
-                if not attachment_ids:
+                selecciones_adjuntos = selector.result
+                if not selecciones_adjuntos:
                     return
             try:
                 user = getattr(self._session, "user", None)
@@ -564,7 +564,7 @@ class UIGestionDocumental(ttk.Frame):
                     item, ejercicio=self._ejercicio,
                     categoria_id=category["id"], usuario=username,
                     usuario_id=int(getattr(user, "id", 0)),
-                    attachment_ids=attachment_ids,
+                    selecciones_adjuntos=selecciones_adjuntos,
                 )
                 tree.delete(item["id"])
                 current.pop(item["id"], None)

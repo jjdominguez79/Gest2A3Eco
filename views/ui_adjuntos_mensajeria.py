@@ -26,7 +26,10 @@ _LABEL_ESTADO = {
 
 _COL_ANCHO = {
     "fecha": 135,
-    "empresa": 90,
+    "empresa": 78,
+    "empresa_nombre": 180,
+    "responsable": 125,
+    "canal": 145,
     "remitente": 120,
     "nombre_original": 200,
     "estado": 90,
@@ -154,8 +157,14 @@ class UIAdjuntosMensajeria(ttk.Frame):
         self._lbl_contador.pack(side=tk.RIGHT, padx=6)
 
         # Tabla
-        cols = ("fecha", "empresa", "canal", "remitente", "nombre_original", "estado", "tamano")
-        headers = ("Fecha", "Empresa", "Origen", "Remitente", "Documento", "Estado", "Tama\u00f1o")
+        cols = (
+            "fecha", "empresa", "empresa_nombre", "responsable", "canal",
+            "remitente", "nombre_original", "estado", "tamano",
+        )
+        headers = (
+            "Fecha", "Codigo", "Cliente", "Responsable", "Origen",
+            "Remitente", "Documento", "Estado", "Tama\u00f1o",
+        )
         self._tree = ttk.Treeview(self, columns=cols, show="headings", selectmode="browse")
         for col, header in zip(cols, headers):
             self._tree.heading(col, text=header)
@@ -256,6 +265,8 @@ class UIAdjuntosMensajeria(ttk.Frame):
             self._tree.insert("", "end", iid=d["id"], tags=tags, values=(
                 _fmt_fecha(d.get("fecha") or d.get("created_at")),
                 d.get("codigo_empresa", ""),
+                d.get("empresa_nombre", ""),
+                d.get("responsable", ""),
                 _etiqueta_origen(d),
                 d.get("remitente", ""),
                 d.get("nombre_original", ""),
@@ -438,27 +449,27 @@ class UIAdjuntosMensajeria(ttk.Frame):
                 "Clasificar", "No se encontro un ejercicio para este cliente.", parent=self,
             )
             return
-        attachment_ids = None
+        selecciones_adjuntos = None
         if item.get("canal") == "correo":
             try:
-                attachments = self._service.listar_adjuntos_entrada_correo(item)
+                opciones = self._service.listar_opciones_clasificacion_correo(item)
             except Exception as exc:
                 messagebox.showerror(
                     "Clasificar", f"No se pudieron consultar los adjuntos:\n{exc}",
                     parent=self,
                 )
                 return
-            from views.ui_comunicaciones_global import AttachmentSelectionDialog
-            selector = AttachmentSelectionDialog(self, attachments)
+            from views.ui_comunicaciones_global import AttachmentContentSelectionDialog
+            selector = AttachmentContentSelectionDialog(self, opciones)
             self.wait_window(selector)
-            attachment_ids = selector.result
-            if not attachment_ids:
+            selecciones_adjuntos = selector.result
+            if not selecciones_adjuntos:
                 return
         try:
             summary = self._service.clasificar_entrada_documental(
                 item, ejercicio=ejercicio, categoria_id=categoria["id"],
                 usuario=self._usuario or "sistema", usuario_id=self._usuario_id,
-                attachment_ids=attachment_ids,
+                selecciones_adjuntos=selecciones_adjuntos,
             )
             self.recargar()
             if summary.warnings:
@@ -484,11 +495,28 @@ class UIAdjuntosMensajeria(ttk.Frame):
             messagebox.showinfo("Ya procesado", "Este adjunto ya fue procesado.")
             return
         if item.get("canal") == "correo":
-            messagebox.showinfo(
-                "Correo recibido",
-                "Descarta el correo desde Comunicaciones para conservar la auditoria.",
+            if not messagebox.askyesno(
+                "No guardar",
+                "Registrar que no se guardara ningun adjunto de este correo?\n"
+                "El correo se marcara como gestionado y leido en Outlook.",
                 parent=self,
-            )
+            ):
+                return
+            try:
+                summary = self._service.no_guardar_entrada_correo(
+                    item, usuario=self._usuario or "sistema",
+                    usuario_id=self._usuario_id,
+                )
+                self.recargar()
+                if summary.warnings:
+                    messagebox.showwarning(
+                        "No guardar", "\n".join(summary.warnings), parent=self,
+                    )
+            except Exception as exc:
+                messagebox.showerror(
+                    "No guardar", f"No se pudo cerrar el correo:\n{exc}",
+                    parent=self,
+                )
             return
         if not messagebox.askyesno(
             "No guardar",

@@ -75,3 +75,68 @@ def test_filtro_pendientes_no_consulta_el_archivo_documental():
     gestor.listar_entradas_documentales("", solo_pendientes=True)
 
     assert all("FROM documentos_archivo d" not in sql for sql, _ in gestor.conn.calls)
+
+
+class _CommunicationsConn:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def execute(self, _sql, _params=()):
+        return _Result(self.rows)
+
+
+def test_comunicaciones_excluye_correos_identificados_con_adjuntos():
+    gestor = object.__new__(GestorBase)
+    gestor.conn = _CommunicationsConn([
+        {
+            "graph_message_id": "documental",
+            "sugerencia_codigo_empresa": "E00001",
+            "payload_json": '{"tiene_adjuntos": true}',
+        },
+        {
+            "graph_message_id": "sin-cliente",
+            "sugerencia_codigo_empresa": "",
+            "payload_json": '{"tiene_adjuntos": true}',
+        },
+        {
+            "graph_message_id": "sin-adjuntos",
+            "sugerencia_codigo_empresa": "E00002",
+            "payload_json": '{"tiene_adjuntos": false}',
+        },
+    ])
+
+    rows = gestor.listar_comunicaciones_sin_asignar()
+
+    assert [row["graph_message_id"] for row in rows] == [
+        "sin-cliente", "sin-adjuntos",
+    ]
+
+
+class _DocumentalConn:
+    def execute(self, sql, _params=()):
+        if "FROM empresas" in sql:
+            return _Result([{
+                "codigo": "E00001", "nombre": "Cliente Uno",
+                "responsable": "Maria", "ejercicio": 2026,
+            }])
+        if "FROM comunicaciones_sin_asignar" in sql:
+            return _Result([{
+                "graph_message_id": "graph-1",
+                "mailbox": "documentacion@gestinem.es",
+                "sugerencia_codigo_empresa": "E00001",
+                "sugerencia_nombre": "",
+                "payload_json": '{"tiene_adjuntos": true}',
+                "asunto": "Factura", "fecha": "2026-10-07T10:00:00",
+            }])
+        return _Result([])
+
+
+def test_entrada_documental_incluye_nombre_cliente_y_responsable():
+    gestor = object.__new__(GestorBase)
+    gestor.conn = _DocumentalConn()
+    gestor.listar_adjuntos_mensajeria = lambda _filtro=None: []
+
+    rows = gestor.listar_entradas_documentales("", solo_pendientes=True)
+
+    assert rows[0]["empresa_nombre"] == "Cliente Uno"
+    assert rows[0]["responsable"] == "Maria"

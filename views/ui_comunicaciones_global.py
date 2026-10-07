@@ -221,6 +221,104 @@ class AttachmentSelectionDialog(tk.Toplevel):
         self.destroy()
 
 
+class AttachmentContentSelectionDialog(tk.Toplevel):
+    """Selecciona adjuntos normales o documentos internos de un ZIP."""
+
+    def __init__(self, parent, options: list[dict]):
+        super().__init__(parent)
+        self.title("Documentos que se van a clasificar")
+        self.geometry("760x520")
+        self.minsize(620, 360)
+        self.transient(parent.winfo_toplevel())
+        self.grab_set()
+        self._options = {str(item["key"]): item for item in options}
+        self._selected = {
+            key: tk.BooleanVar(value=True) for key in self._options
+        }
+        self.result: list[dict] | None = None
+
+        frame = ttk.Frame(self, padding=12)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame,
+            text=(
+                "Marca los documentos que quieres clasificar. Los archivos ZIP "
+                "se muestran desplegados y el ZIP original no se archiva."
+            ),
+            wraplength=720,
+        ).pack(anchor="w", pady=(0, 8))
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill="x", pady=(0, 6))
+        ttk.Button(
+            buttons, text="Seleccionar todos",
+            command=lambda: self._marcar_todos(True),
+        ).pack(side="left")
+        ttk.Button(
+            buttons, text="Ninguno",
+            command=lambda: self._marcar_todos(False),
+        ).pack(side="left", padx=6)
+
+        container = ttk.Frame(frame)
+        container.pack(fill="both", expand=True)
+        canvas = tk.Canvas(container, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(
+            container, orient="vertical", command=canvas.yview,
+        )
+        list_frame = ttk.Frame(canvas)
+        window_id = canvas.create_window((0, 0), window=list_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        list_frame.bind(
+            "<Configure>",
+            lambda _event: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        canvas.bind(
+            "<Configure>",
+            lambda event: canvas.itemconfigure(window_id, width=event.width),
+        )
+
+        for key, item in self._options.items():
+            display_name = str(
+                item.get("display_name") or item.get("name") or "Documento"
+            )
+            origin = str(item.get("origen") or "Adjunto del correo")
+            size = int(item.get("size") or 0)
+            text = f"{display_name}   ({size / 1024:.1f} KB)\n{origin}"
+            ttk.Checkbutton(
+                list_frame, text=text, variable=self._selected[key],
+            ).pack(anchor="w", fill="x", pady=3)
+
+        actions = ttk.Frame(frame)
+        actions.pack(fill="x", pady=(10, 0))
+        ttk.Button(actions, text="Cancelar", command=self.destroy).pack(side="right")
+        ttk.Button(
+            actions, text="Clasificar seleccionados", command=self._save,
+        ).pack(side="right", padx=(0, 7))
+
+    def _marcar_todos(self, selected: bool) -> None:
+        for value in self._selected.values():
+            value.set(selected)
+
+    def _save(self) -> None:
+        selected = [
+            self._options[key]
+            for key, value in self._selected.items()
+            if value.get()
+        ]
+        if not selected:
+            messagebox.showwarning(
+                "Documentacion", "Marca al menos un documento.", parent=self,
+            )
+            return
+        self.result = [
+            {**item, "seleccionado": bool(self._selected[key].get())}
+            for key, item in self._options.items()
+        ]
+        self.destroy()
+
+
 class AttachmentPreviewDialog(tk.Toplevel):
     """Lista adjuntos y permite abrir una copia temporal sin asignar el correo."""
 

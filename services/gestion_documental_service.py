@@ -3,13 +3,15 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import logging
 import mimetypes
 import re
 import shutil
 import uuid
+import zipfile
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from services.backend_mail_service import BackendMailService
 from services.ocr.ocr_service import OcrService
@@ -35,6 +37,9 @@ CARPETAS_DOCUMENTALES = {
 }
 
 logger = logging.getLogger(__name__)
+
+MAX_MIEMBROS_ZIP = 500
+MAX_TAMANO_DESCOMPRIMIDO_ZIP = 200 * 1024 * 1024
 
 
 @dataclass
@@ -66,14 +71,19 @@ class GestionDocumentalService:
     ) -> ArchiveSummary:
         summary = ArchiveSummary()
         categorias = {item["id"]: item for item in self.categorias()}
+        descargas: dict[str, tuple[dict, bytes]] = {}
         for decision in decisiones:
             attachment_id = str(decision.get("attachment_id") or "")
             name = str(decision.get("name") or "Adjunto")
+            member_name = str(decision.get("archive_member") or "")
+            decision_attachment_id = str(
+                decision.get("decision_attachment_id") or attachment_id
+            )
             category_id = str(decision.get("categoria_id") or "")
             if not category_id:
                 self._gestor.registrar_decision_adjunto({
                     "graph_message_id": graph_message_id,
-                    "graph_attachment_id": attachment_id,
+                    "graph_attachment_id": decision_attachment_id,
                     "nombre": name, "accion": "no_guardar",
                 })
                 summary.ignored.append(name)
@@ -83,11 +93,23 @@ class GestionDocumentalService:
                 summary.errors.append(f"{name}: categoria no valida")
                 continue
             try:
-                item = self._graph.download_attachment(
-                    mailbox=mailbox, message_id=graph_message_id,
-                    attachment_id=attachment_id,
-                )
-                content = base64.b64decode(item.get("contentBytes") or "", validate=True)
+                if attachment_id not in descargas:
+                    item = self._graph.download_attachment(
+                        mailbox=mailbox, message_id=graph_message_id,
+                        attachment_id=attachment_id,
+                    )
+                    contenido_adjunto = base64.b64decode(
+                        item.get("contentBytes") or "", validate=True,
+                    )
+                    descargas[attachment_id] = (item, contenido_adjunto)
+                item, contenido_adjunto = descargas[attachment_id]
+                content = contenido_adjunto
+                if member_name:
+                    content = self._extraer_miembro_zip(
+                        contenido_adjunto,
+                        member_name,
+                        int(decision.get("archive_member_index") or 0),
+                    )
                 digest = hashlib.sha256(content).hexdigest()
                 duplicate = self._gestor.conn.execute(
                     "SELECT id FROM documentos_archivo WHERE codigo_empresa=? "
@@ -98,7 +120,7 @@ class GestionDocumentalService:
                     summary.document_ids.append(str(duplicate["id"]))
                     self._gestor.registrar_decision_adjunto({
                         "graph_message_id": graph_message_id,
-                        "graph_attachment_id": attachment_id, "nombre": name,
+                        "graph_attachment_id": decision_attachment_id, "nombre": name,
                         "accion": "duplicado", "categoria_id": category_id,
                         "documento_id": duplicate["id"],
                     })
@@ -108,6 +130,11 @@ class GestionDocumentalService:
                 )
                 filename = self._available_filename(folder, name)
                 destination = folder / filename
+                mime_type = (
+                    mimetypes.guess_type(name)[0]
+                    if member_name else
+                    item.get("contentType") or mimetypes.guess_type(name)[0]
+                )
                 destination.write_bytes(content)
                 try:
                     document_id = self._gestor.registrar_documento_archivo({
@@ -116,11 +143,11 @@ class GestionDocumentalService:
                         "nombre_original": name, "nombre_archivo": filename,
                         "ruta": str(destination), "hash_archivo": digest,
                         "tamano": len(content),
-                        "mime_type": item.get("contentType") or mimetypes.guess_type(name)[0],
+                        "mime_type": mime_type,
                         "origen": "correo", "buzon_origen": mailbox,
                         "comunicacion_id": comunicacion_id or None,
                         "graph_message_id": graph_message_id,
-                        "graph_attachment_id": attachment_id,
+                        "graph_attachment_id": decision_attachment_id,
                         "correo_remitente": remitente, "correo_asunto": asunto,
                         "creado_por": usuario,
                     })
@@ -129,7 +156,7 @@ class GestionDocumentalService:
                     raise
                 self._gestor.registrar_decision_adjunto({
                     "graph_message_id": graph_message_id,
-                    "graph_attachment_id": attachment_id, "nombre": name,
+                    "graph_attachment_id": decision_attachment_id, "nombre": name,
                     "accion": "guardado", "categoria_id": category_id,
                     "documento_id": document_id,
                 })
@@ -146,6 +173,7 @@ class GestionDocumentalService:
         self, entrada: dict, *, ejercicio: int, categoria_id: str,
         usuario: str = "", usuario_id: int = 0,
         attachment_ids: list[str] | None = None,
+        selecciones_adjuntos: list[dict] | None = None,
     ) -> ArchiveSummary:
         """Clasifica una entrada de correo o mensajeria con el mismo flujo."""
         canal = str(entrada.get("canal") or "mensajeria").strip().lower()
@@ -156,21 +184,33 @@ class GestionDocumentalService:
                 or ""
             )
             mailbox = str(entrada.get("mailbox") or "")
-            attachments = self.listar_adjuntos_entrada_correo(entrada)
-            seleccionados = (
-                {str(value) for value in attachment_ids}
-                if attachment_ids is not None else None
-            )
-            decisions = [
-                {
-                    "attachment_id": attachment.get("id"),
-                    "name": attachment.get("name") or "Adjunto",
-                    "categoria_id": categoria_id,
-                }
-                for attachment in attachments
-                if seleccionados is None
-                or str(attachment.get("id") or "") in seleccionados
-            ]
+            if selecciones_adjuntos is not None:
+                decisions = [
+                    {
+                        **seleccion,
+                        "categoria_id": (
+                            categoria_id
+                            if seleccion.get("seleccionado", True) else ""
+                        ),
+                    }
+                    for seleccion in selecciones_adjuntos
+                ]
+            else:
+                attachments = self.listar_adjuntos_entrada_correo(entrada)
+                seleccionados = (
+                    {str(value) for value in attachment_ids}
+                    if attachment_ids is not None else None
+                )
+                decisions = [
+                    {
+                        "attachment_id": attachment.get("id"),
+                        "name": attachment.get("name") or "Adjunto",
+                        "categoria_id": categoria_id,
+                    }
+                    for attachment in attachments
+                    if seleccionados is None
+                    or str(attachment.get("id") or "") in seleccionados
+                ]
             if not decisions:
                 raise ValueError("El correo ya no contiene adjuntos disponibles.")
             summary = self.archivar_adjuntos_correo(
@@ -240,6 +280,159 @@ class GestionDocumentalService:
                 or ""
             ),
         )
+
+    def no_guardar_entrada_correo(
+        self, entrada: dict, *, usuario: str = "", usuario_id: int = 0,
+    ) -> ArchiveSummary:
+        """Cierra un correo documental sin archivar sus adjuntos."""
+        graph_id = str(
+            entrada.get("graph_message_id")
+            or entrada.get("entrada_id")
+            or ""
+        )
+        mailbox = str(entrada.get("mailbox") or "")
+        summary = ArchiveSummary()
+        for attachment in self.listar_adjuntos_entrada_correo(entrada):
+            attachment_id = str(attachment.get("id") or "")
+            name = str(attachment.get("name") or "Adjunto")
+            self._gestor.registrar_decision_adjunto({
+                "graph_message_id": graph_id,
+                "graph_attachment_id": attachment_id,
+                "nombre": name,
+                "accion": "no_guardar",
+            })
+            summary.ignored.append(name)
+        assigned = self._gestor.asignar_comunicacion_pendiente(
+            graph_id, str(entrada.get("codigo_empresa") or ""),
+            int(usuario_id), usuario or "sistema",
+        )
+        if not assigned:
+            raise RuntimeError("El correo ya no esta pendiente de asignacion.")
+        self._gestor.cambiar_estado_comunicacion(
+            assigned[0], "gestionado", int(usuario_id),
+        )
+        try:
+            self._graph.mark_as_read(mailbox=mailbox, message_id=graph_id)
+        except Exception as exc:
+            logger.warning(
+                "No se pudo marcar como leido el correo %s de %s: %s",
+                graph_id, mailbox, exc,
+            )
+            summary.warnings.append(
+                "El correo se ha cerrado, pero Outlook no pudo marcarlo "
+                f"como leido: {exc}"
+            )
+        return summary
+
+    def listar_opciones_clasificacion_correo(self, entrada: dict) -> list[dict]:
+        """Despliega los ZIP para seleccionar documentos, no el contenedor."""
+        mailbox = str(entrada.get("mailbox") or "")
+        graph_id = str(
+            entrada.get("graph_message_id")
+            or entrada.get("entrada_id")
+            or ""
+        )
+        opciones: list[dict] = []
+        for attachment in self.listar_adjuntos_entrada_correo(entrada):
+            attachment_id = str(attachment.get("id") or "")
+            name = str(attachment.get("name") or "Adjunto").strip() or "Adjunto"
+            if Path(name).suffix.lower() != ".zip":
+                opciones.append({
+                    "key": f"adjunto:{attachment_id}",
+                    "attachment_id": attachment_id,
+                    "name": name,
+                    "size": int(attachment.get("size") or 0),
+                    "origen": "Adjunto del correo",
+                })
+                continue
+            item = self._graph.download_attachment(
+                mailbox=mailbox, message_id=graph_id,
+                attachment_id=attachment_id,
+            )
+            try:
+                content = base64.b64decode(
+                    item.get("contentBytes") or "", validate=True,
+                )
+                members = self._listar_miembros_zip(content)
+            except Exception as exc:
+                raise ValueError(
+                    f"No se pudo revisar el contenido de {name}: {exc}"
+                ) from exc
+            if not members:
+                raise ValueError(f"El archivo {name} no contiene documentos.")
+            for member in members:
+                member_name = str(member["name"])
+                member_index = int(member["index"])
+                token = hashlib.sha256(
+                    f"{member_index}:{member_name}".encode("utf-8")
+                ).hexdigest()[:16]
+                opciones.append({
+                    "key": f"zip:{attachment_id}:{token}",
+                    "attachment_id": attachment_id,
+                    "decision_attachment_id": f"{attachment_id}::zip::{token}",
+                    "archive_member": member_name,
+                    "archive_member_index": member_index,
+                    "archive_name": name,
+                    "name": PurePosixPath(member_name).name,
+                    "display_name": member_name,
+                    "size": int(member["size"]),
+                    "origen": f"Dentro de {name}",
+                })
+        return opciones
+
+    @classmethod
+    def _listar_miembros_zip(cls, content: bytes) -> list[dict]:
+        with zipfile.ZipFile(io.BytesIO(content)) as bundle:
+            members = bundle.infolist()
+            if len(members) > MAX_MIEMBROS_ZIP:
+                raise ValueError("el ZIP contiene mas de 500 elementos")
+            total = 0
+            result = []
+            for index, info in enumerate(members):
+                name = str(info.filename or "").replace("\\", "/")
+                if not name or name.endswith("/"):
+                    continue
+                cls._validar_nombre_miembro_zip(name)
+                if info.flag_bits & 0x1:
+                    raise ValueError("el ZIP contiene archivos protegidos con contrasena")
+                total += int(info.file_size or 0)
+                if total > MAX_TAMANO_DESCOMPRIMIDO_ZIP:
+                    raise ValueError("el contenido del ZIP supera 200 MB")
+                result.append({
+                    "name": name,
+                    "size": int(info.file_size or 0),
+                    "index": index,
+                })
+            return result
+
+    @classmethod
+    def _extraer_miembro_zip(
+        cls, content: bytes, member_name: str, member_index: int,
+    ) -> bytes:
+        cls._validar_nombre_miembro_zip(member_name)
+        with zipfile.ZipFile(io.BytesIO(content)) as bundle:
+            members = bundle.infolist()
+            if member_index < 0 or member_index >= len(members):
+                raise ValueError("el documento ya no existe dentro del ZIP")
+            info = members[member_index]
+            current_name = str(info.filename or "").replace("\\", "/")
+            if current_name != member_name or info.is_dir():
+                raise ValueError("el contenido del ZIP ha cambiado")
+            if int(info.file_size or 0) > MAX_TAMANO_DESCOMPRIMIDO_ZIP:
+                raise ValueError("el documento del ZIP supera 200 MB")
+            return bundle.read(info)
+
+    @staticmethod
+    def _validar_nombre_miembro_zip(name: str) -> None:
+        normalized = str(name or "").replace("\\", "/")
+        parts = normalized.split("/")
+        if (
+            not normalized
+            or normalized.startswith("/")
+            or any(part in {"", ".", ".."} for part in parts)
+            or (parts and parts[0].endswith(":"))
+        ):
+            raise ValueError("el ZIP contiene una ruta no segura")
 
     def importar_archivo(
         self, *, codigo_empresa: str, ejercicio: int, categoria_id: str,

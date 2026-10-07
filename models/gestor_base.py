@@ -36,6 +36,24 @@ def _codigo_empresa_a3(v) -> str:
     return f"E{digits.zfill(5)}"
 
 
+def _es_entrada_documental_identificada(row: dict) -> bool:
+    """Indica si un correo ya pertenece a la bandeja documental.
+
+    Comunicaciones conserva los mensajes que todavia necesitan identificar al
+    cliente. En cuanto el worker aporta cliente y adjuntos, la entrada se
+    gestiona exclusivamente desde Documentos recibidos.
+    """
+    codigo = str(row.get("sugerencia_codigo_empresa") or "").strip()
+    if not codigo:
+        return False
+    try:
+        payload = json.loads(row.get("payload_json") or "{}")
+    except (TypeError, ValueError):
+        return False
+    valor = payload.get("tiene_adjuntos")
+    return valor is True or str(valor).strip().lower() in {"1", "true", "si", "yes"}
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS empresas (
   codigo TEXT NOT NULL,
@@ -4031,6 +4049,16 @@ class GestorBase:
     ) -> list[dict]:
         """Vista unica de entradas documentales pendientes o ya archivadas."""
         result: list[dict] = []
+        empresas_por_codigo: dict[str, dict] = {}
+        empresas = self.conn.execute(
+            "SELECT codigo,nombre,responsable,ejercicio FROM empresas "
+            "ORDER BY codigo,ejercicio DESC"
+        ).fetchall()
+        for raw in empresas:
+            empresa = self._row_to_dict(raw)
+            codigo = str(empresa.get("codigo") or "").strip()
+            if codigo and codigo not in empresas_por_codigo:
+                empresas_por_codigo[codigo] = empresa
         filtro = {
             "solo_pendientes": solo_pendientes,
             "estado": "archivado" if solo_archivadas else "",
@@ -4129,6 +4157,17 @@ class GestorBase:
                     "estado": "archivado",
                     "revisado": True,
                 })
+        for item in result:
+            empresa = empresas_por_codigo.get(
+                str(item.get("codigo_empresa") or "").strip(),
+                {},
+            )
+            item["empresa_nombre"] = (
+                item.get("empresa_nombre")
+                or empresa.get("nombre")
+                or ""
+            )
+            item["responsable"] = empresa.get("responsable") or ""
         result.sort(key=lambda item: str(item.get("fecha") or ""), reverse=True)
         return result
 
@@ -8762,7 +8801,13 @@ class GestorBase:
         rows = self.conn.execute(
             f"SELECT * FROM comunicaciones_sin_asignar WHERE {where} ORDER BY fecha DESC"
         ).fetchall()
-        return [self._row_to_dict(row) for row in rows]
+        result = [self._row_to_dict(row) for row in rows]
+        if not incluir_gestionados:
+            result = [
+                row for row in result
+                if not _es_entrada_documental_identificada(row)
+            ]
+        return result
 
     def obtener_nuevos_avisos_correo(
         self, usuario_id: int, mailbox: str,

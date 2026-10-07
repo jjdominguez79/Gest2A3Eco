@@ -1,4 +1,7 @@
+import base64
 import hashlib
+import io
+import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -49,6 +52,27 @@ class _GraphCorreo:
 
     def mark_as_read(self, *, mailbox, message_id):
         self.marcado_leido = (mailbox, message_id)
+
+
+class _GraphCorreoZip(_GraphCorreo):
+    def __init__(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as bundle:
+            bundle.writestr("facturas/factura-uno.pdf", b"%PDF-uno")
+            bundle.writestr("facturas/factura-dos.pdf", b"%PDF-dos")
+        self.content = base64.b64encode(buffer.getvalue()).decode("ascii")
+
+    def list_attachments(self, *, mailbox, message_id):
+        self.listado = (mailbox, message_id)
+        return [{"id": "zip-1", "name": "facturas.zip", "size": 500}]
+
+    def download_attachment(self, *, mailbox, message_id, attachment_id):
+        self.descarga = (mailbox, message_id, attachment_id)
+        return {
+            "name": "facturas.zip",
+            "contentBytes": self.content,
+            "contentType": "application/zip",
+        }
 
 
 class _GestorCorreo(_Gestor):
@@ -179,6 +203,64 @@ def test_clasificar_correo_no_revierte_el_archivo_si_outlook_falla(
         "El correo se ha archivado, pero Outlook no pudo marcarlo como leido: "
         "Graph no disponible"
     ]
+
+
+def test_zip_se_despliega_y_solo_archiva_el_documento_seleccionado(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setattr(
+        "services.gestion_documental_service.get_document_repository_dir",
+        lambda: tmp_path / "repo",
+    )
+    gestor = _GestorCorreo()
+    graph = _GraphCorreoZip()
+    entrada = {
+        "canal": "correo", "graph_message_id": "graph-zip",
+        "mailbox": "documentacion@gestinem.es", "codigo_empresa": "E00001",
+        "remitente": "proveedor@example.com", "asunto": "Facturas en ZIP",
+    }
+    service = GestionDocumentalService(gestor, graph=graph)
+
+    opciones = service.listar_opciones_clasificacion_correo(entrada)
+
+    assert [item["display_name"] for item in opciones] == [
+        "facturas/factura-uno.pdf", "facturas/factura-dos.pdf",
+    ]
+    summary = service.clasificar_entrada_documental(
+        entrada, ejercicio=2026, categoria_id="facturas_recibidas",
+        usuario="Empleado", usuario_id=17,
+        selecciones_adjuntos=[
+            {**opciones[0], "seleccionado": False},
+            {**opciones[1], "seleccionado": True},
+        ],
+    )
+
+    assert summary.saved == ["factura-dos.pdf"]
+    assert Path(gestor.saved["ruta"]).read_bytes() == b"%PDF-dos"
+    assert gestor.saved["mime_type"] == "application/pdf"
+    assert gestor.saved["graph_attachment_id"].startswith("zip-1::zip::")
+    assert gestor.decisiones[0]["nombre"] == "factura-uno.pdf"
+    assert gestor.decisiones[0]["accion"] == "no_guardar"
+
+
+def test_no_guardar_correo_documental_lo_cierra_y_marca_leido():
+    gestor = _GestorCorreo()
+    graph = _GraphCorreo()
+    entrada = {
+        "canal": "correo", "graph_message_id": "graph-1",
+        "mailbox": "documentacion@gestinem.es", "codigo_empresa": "E00001",
+    }
+
+    summary = GestionDocumentalService(
+        gestor, graph=graph,
+    ).no_guardar_entrada_correo(
+        entrada, usuario="Empleado", usuario_id=17,
+    )
+
+    assert summary.ignored == ["factura.pdf"]
+    assert gestor.decisiones[0]["accion"] == "no_guardar"
+    assert gestor.estado_comunicacion == ("comunicacion-1", "gestionado", 17)
+    assert graph.marcado_leido == ("documentacion@gestinem.es", "graph-1")
 
 
 def test_importacion_desde_comunicaciones_reutiliza_el_archivo_documental(
