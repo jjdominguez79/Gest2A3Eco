@@ -188,6 +188,72 @@ class MessageRecipientStatus {
   final DateTime? readAt;
 }
 
+class SharedContact {
+  const SharedContact({
+    this.id = '',
+    required this.name,
+    this.phone = '',
+    this.email = '',
+    this.organization = '',
+  });
+
+  factory SharedContact.fromJson(Map<String, dynamic> json) => SharedContact(
+    id: json['id'] as String? ?? '',
+    name: json['name'] as String? ?? '',
+    phone: json['phone'] as String? ?? '',
+    email: json['email'] as String? ?? '',
+    organization: json['organization'] as String? ?? '',
+  );
+
+  final String id;
+  final String name;
+  final String phone;
+  final String email;
+  final String organization;
+}
+
+class MessageReaction {
+  const MessageReaction({
+    required this.emoji,
+    required this.count,
+    required this.mine,
+    this.names = const [],
+  });
+
+  factory MessageReaction.fromJson(Map<String, dynamic> json) =>
+      MessageReaction(
+        emoji: json['emoji'] as String? ?? '',
+        count: json['count'] as int? ?? 0,
+        mine: json['mine'] as bool? ?? false,
+        names: (json['names'] as List<dynamic>? ?? const [])
+            .map((value) => value.toString())
+            .toList(growable: false),
+      );
+
+  final String emoji;
+  final int count;
+  final bool mine;
+  final List<String> names;
+}
+
+class MessageMention {
+  const MessageMention({
+    required this.staffId,
+    required this.name,
+    required this.mine,
+  });
+
+  factory MessageMention.fromJson(Map<String, dynamic> json) => MessageMention(
+    staffId: json['staff_id'] as String? ?? '',
+    name: json['name'] as String? ?? '',
+    mine: json['mine'] as bool? ?? false,
+  );
+
+  final String staffId;
+  final String name;
+  final bool mine;
+}
+
 class Message {
   const Message({
     required this.id,
@@ -206,6 +272,9 @@ class Message {
     this.lecturas = 0,
     this.destinatarios = 0,
     this.recipientStatuses = const [],
+    this.sharedContacts = const [],
+    this.reactions = const [],
+    this.mentions = const [],
     this.editedAt,
     this.canViewHistory = false,
   });
@@ -241,6 +310,15 @@ class Message {
     attachments: (json['attachments'] as List<dynamic>? ?? const [])
         .map((item) => Attachment.fromJson(item as Map<String, dynamic>))
         .toList(growable: false),
+    sharedContacts: (json['shared_contacts'] as List<dynamic>? ?? const [])
+        .map((item) => SharedContact.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false),
+    reactions: (json['reactions'] as List<dynamic>? ?? const [])
+        .map((item) => MessageReaction.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false),
+    mentions: (json['mentions'] as List<dynamic>? ?? const [])
+        .map((item) => MessageMention.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false),
   );
 
   final String id;
@@ -264,6 +342,18 @@ class Message {
   final int lecturas;
   final int destinatarios;
   final List<MessageRecipientStatus> recipientStatuses;
+  final List<SharedContact> sharedContacts;
+  final List<MessageReaction> reactions;
+  final List<MessageMention> mentions;
+
+  bool get mentionsMe => mentions.any((mention) => mention.mine);
+
+  String get ownReaction =>
+      reactions
+          .where((reaction) => reaction.mine)
+          .map((reaction) => reaction.emoji)
+          .firstOrNull ??
+      '';
 
   String get etiquetaEstado => switch (estadoEnvio) {
     'read' => destinatarios > 1 ? 'Leido por todos' : 'Leido',

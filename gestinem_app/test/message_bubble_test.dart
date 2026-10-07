@@ -153,4 +153,92 @@ void main() {
     expect(find.text('Los cambios se han aplicado.'), findsOneWidget);
     expect(find.byType(CircleAvatar), findsNothing);
   });
+
+  testWidgets('muestra contacto estructurado y reacciones interactivas', (
+    tester,
+  ) async {
+    String? selectedReaction;
+    final message = Message(
+      id: 'contact-1',
+      conversationId: 'c1',
+      authorType: 'client',
+      authorId: 'client-1',
+      authorName: 'Maria',
+      authorAvatarUrl: '',
+      body: 'Contacto compartido: Ana Garcia · 600123123',
+      createdAt: DateTime(2026),
+      deleted: false,
+      sharedContacts: const [
+        SharedContact(
+          id: 'shared-1',
+          name: 'Ana Garcia',
+          organization: 'Ejemplo SL',
+          phone: '600123123',
+          email: 'ana@example.test',
+        ),
+      ],
+      reactions: const [
+        MessageReaction(
+          emoji: '👍',
+          count: 2,
+          mine: true,
+          names: ['Maria', 'Ana'],
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MessageBubble(
+            message: message,
+            mine: true,
+            onReactionTap: (emoji) => selectedReaction = emoji,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Ana Garcia'), findsOneWidget);
+    expect(find.text('Ejemplo SL'), findsOneWidget);
+    expect(find.text('600123123'), findsOneWidget);
+    expect(find.text('ana@example.test'), findsOneWidget);
+    expect(
+      find.text('Contacto compartido: Ana Garcia · 600123123'),
+      findsNothing,
+    );
+    expect(find.text('👍 2'), findsOneWidget);
+    await tester.tap(find.text('👍 2'));
+    expect(selectedReaction, '👍');
+  });
+
+  testWidgets('destaca claramente una mencion dirigida al usuario', (
+    tester,
+  ) async {
+    final message = Message(
+      id: 'mention-1',
+      conversationId: 'group-1',
+      authorType: 'staff',
+      authorId: 'staff-1',
+      authorName: 'Ana',
+      authorAvatarUrl: '',
+      body: '@Beatriz revisa este expediente',
+      createdAt: DateTime(2026, 10, 7),
+      deleted: false,
+      mentions: const [
+        MessageMention(staffId: 'staff-2', name: 'Beatriz', mine: true),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: MessageBubble(message: message, mine: false)),
+      ),
+    );
+
+    expect(find.byKey(const Key('mentions-mention-1')), findsOneWidget);
+    expect(find.text('Para ti · @Beatriz'), findsOneWidget);
+    final container = tester.widget<Container>(
+      find.byKey(const Key('message-mention-1')),
+    );
+    expect((container.decoration! as BoxDecoration).border, isNotNull);
+  });
 }

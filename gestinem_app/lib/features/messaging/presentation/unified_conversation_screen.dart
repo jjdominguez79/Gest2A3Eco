@@ -16,6 +16,9 @@ import 'emoji_picker.dart';
 import 'message_bubble.dart';
 import 'message_edit_dialogs.dart';
 import 'messaging_providers.dart';
+import 'shared_contact_dialog.dart';
+
+const _messageReactions = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
 class UnifiedConversationScreen extends ConsumerStatefulWidget {
   const UnifiedConversationScreen({super.key});
@@ -137,6 +140,65 @@ class _UnifiedConversationScreenState
       type: FileType.custom,
     );
     if (result.isNotEmpty) setState(() => _files = result);
+  }
+
+  Future<void> _attachmentActions() async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.description_outlined),
+              title: const Text('Documento o imagen'),
+              onTap: () => Navigator.pop(context, 'file'),
+            ),
+            ListTile(
+              key: const Key('unified-share-contact-option'),
+              leading: const Icon(Icons.contact_phone_outlined),
+              title: const Text('Contacto'),
+              subtitle: const Text('Compartir nombre, teléfono o email'),
+              onTap: () => Navigator.pop(context, 'contact'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (action == 'file') {
+      await _pickFiles();
+    } else if (action == 'contact') {
+      final contact = await showSharedContactDialog(context);
+      if (contact != null) await _sendContact(contact);
+    }
+  }
+
+  Future<void> _sendContact(SharedContact contact) async {
+    if (_sending) return;
+    setState(() => _sending = true);
+    try {
+      final sentMessage = await ref
+          .read(messagingRepositoryProvider)
+          .sendUnified(
+            '',
+            const [],
+            replyToMessageId: _replyingTo?.id,
+            contact: contact,
+          );
+      if (!mounted) return;
+      _messagePendingScrollId = sentMessage.id;
+      setState(() => _replyingTo = null);
+      ref.invalidate(unifiedMessagesProvider);
+      ref.invalidate(unifiedConversationProvider);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
   }
 
   Future<void> _send() async {
@@ -285,12 +347,36 @@ class _UnifiedConversationScreenState
       builder: (ctx) => SafeArea(
         child: Wrap(
           children: [
+            if (!message.deleted)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    for (final emoji in _messageReactions)
+                      IconButton(
+                        tooltip: message.ownReaction == emoji
+                            ? 'Quitar reacción'
+                            : 'Reaccionar con $emoji',
+                        style: message.ownReaction == emoji
+                            ? IconButton.styleFrom(
+                                backgroundColor: Theme.of(
+                                  context,
+                                ).colorScheme.secondaryContainer,
+                              )
+                            : null,
+                        onPressed: () => Navigator.pop(ctx, 'reaction:$emoji'),
+                        icon: Text(emoji, style: const TextStyle(fontSize: 23)),
+                      ),
+                  ],
+                ),
+              ),
             ListTile(
               leading: const Icon(Icons.reply),
               title: const Text('Responder'),
               onTap: () => Navigator.pop(ctx, 'reply'),
             ),
-            if (mine && !message.deleted)
+            if (mine && !message.deleted && message.sharedContacts.isEmpty)
               ListTile(
                 key: const Key('edit-message-option'),
                 leading: const Icon(Icons.edit_outlined),
@@ -302,8 +388,11 @@ class _UnifiedConversationScreenState
       ),
     );
     if (!mounted) return;
-    if (action == 'reply') setState(() => _replyingTo = message);
-    if (action == 'edit') {
+    if (action?.startsWith('reaction:') == true) {
+      await _reactToMessage(message, action!.substring('reaction:'.length));
+    } else if (action == 'reply') {
+      setState(() => _replyingTo = message);
+    } else if (action == 'edit') {
       final repository = ref.read(messagingRepositoryProvider);
       final cambiado = await editarMensaje(context, message, (texto) async {
         await repository.edit(profile, message, texto);
@@ -312,6 +401,25 @@ class _UnifiedConversationScreenState
       if (_replyingTo?.id == message.id) setState(() => _replyingTo = null);
       ref.invalidate(unifiedMessagesProvider);
       ref.invalidate(unifiedConversationProvider);
+    }
+  }
+
+  Future<void> _reactToMessage(Message message, String emoji) async {
+    final profile = ref.read(sessionProvider).valueOrNull!.profile;
+    final selected = message.ownReaction == emoji ? '' : emoji;
+    try {
+      await ref
+          .read(messagingRepositoryProvider)
+          .setReaction(profile, message, selected);
+      if (!mounted) return;
+      ref.invalidate(unifiedMessagesProvider);
+      ref.invalidate(unifiedConversationProvider);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
+      }
     }
   }
 
@@ -444,6 +552,9 @@ class _UnifiedConversationScreenState
                                     message.replyTo!.id,
                                   ),
                             onAttachmentTap: _download,
+                            onReactionTap: message.deleted
+                                ? null
+                                : (emoji) => _reactToMessage(message, emoji),
                             onTap: message.deleted
                                 ? null
                                 : () => _messageActions(message),
@@ -503,7 +614,7 @@ class _UnifiedConversationScreenState
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     IconButton(
-                      onPressed: _sending ? null : _pickFiles,
+                      onPressed: _sending ? null : _attachmentActions,
                       icon: const Icon(Icons.attach_file),
                     ),
                     BotonSelectorEmoticonos(

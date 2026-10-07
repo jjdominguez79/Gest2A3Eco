@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.api.database import Base
@@ -132,6 +132,22 @@ class MessagingStaffThreadMessage(Base):
     delete_reason: Mapped[str] = mapped_column(String(500), default="")
     idempotency_key: Mapped[str] = mapped_column(String(80))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class MessagingStaffThreadMention(Base):
+    __tablename__ = "msg_staff_thread_mentions"
+    __table_args__ = (
+        UniqueConstraint("internal_message_id", "mentioned_staff_external_id"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    internal_message_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_staff_thread_messages.id", ondelete="CASCADE"), index=True,
+    )
+    mentioned_staff_external_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_staff.external_id", ondelete="CASCADE"), index=True,
+    )
+    display_name: Mapped[str] = mapped_column(String(160))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class MessagingStaffThreadRead(Base):
@@ -327,6 +343,71 @@ class MessagingMessageVersion(Base):
     replaced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     edited_by: Mapped[str] = mapped_column(String(64))
     edited_by_type: Mapped[str] = mapped_column(String(16))
+
+
+class MessagingSharedContact(Base):
+    """Tarjeta de contacto compartida en un mensaje externo o interno."""
+
+    __tablename__ = "msg_shared_contacts"
+    __table_args__ = (
+        CheckConstraint(
+            "(message_id IS NOT NULL AND internal_message_id IS NULL) OR "
+            "(message_id IS NULL AND internal_message_id IS NOT NULL)",
+            name="ck_msg_shared_contacts_single_parent",
+        ),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("msg_messages.id", ondelete="CASCADE"), index=True,
+    )
+    internal_message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("msg_staff_thread_messages.id", ondelete="CASCADE"), index=True,
+    )
+    name: Mapped[str] = mapped_column(String(160))
+    phone: Mapped[str] = mapped_column(String(40), default="")
+    email: Mapped[str] = mapped_column(String(254), default="")
+    organization: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MessagingMessageReaction(Base):
+    """Una unica reaccion activa de cada participante por mensaje."""
+
+    __tablename__ = "msg_message_reactions"
+    __table_args__ = (
+        CheckConstraint(
+            "(message_id IS NOT NULL AND internal_message_id IS NULL) OR "
+            "(message_id IS NULL AND internal_message_id IS NOT NULL)",
+            name="ck_msg_message_reactions_single_parent",
+        ),
+        Index(
+            "uq_msg_reaction_external_actor",
+            "message_id", "actor_type", "actor_id",
+            unique=True,
+            postgresql_where=text("message_id IS NOT NULL"),
+            sqlite_where=text("message_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_msg_reaction_internal_actor",
+            "internal_message_id", "actor_type", "actor_id",
+            unique=True,
+            postgresql_where=text("internal_message_id IS NOT NULL"),
+            sqlite_where=text("internal_message_id IS NOT NULL"),
+        ),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("msg_messages.id", ondelete="CASCADE"), index=True,
+    )
+    internal_message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("msg_staff_thread_messages.id", ondelete="CASCADE"), index=True,
+    )
+    actor_type: Mapped[str] = mapped_column(String(16))
+    actor_id: Mapped[str] = mapped_column(String(64))
+    actor_name: Mapped[str] = mapped_column(String(160))
+    emoji: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class MessagingAttachment(Base):

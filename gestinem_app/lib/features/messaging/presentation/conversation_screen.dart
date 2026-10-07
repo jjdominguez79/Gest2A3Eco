@@ -21,7 +21,10 @@ import 'emoji_picker.dart';
 import 'message_bubble.dart';
 import 'message_edit_dialogs.dart';
 import 'messaging_providers.dart';
+import 'shared_contact_dialog.dart';
 import 'voice_recording.dart';
+
+const _messageReactions = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
 class ConversationScreen extends ConsumerWidget {
   const ConversationScreen({
@@ -94,6 +97,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   late final FocusNode _composerFocus;
   final _scroll = ScrollController(keepScrollOffset: false);
   List<PlatformFile> _files = [];
+  final Map<String, InternalThreadMember> _mentions = {};
   Message? _replyingTo;
   bool _sending = false;
   final AudioRecorder _recorder = AudioRecorder();
@@ -116,6 +120,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   bool _loadingEarlier = false;
   bool _hasEarlier = true;
   String? _oldestMessageId;
+  bool _mentionPickerOpen = false;
   late final NotificationsService _notificationsService;
 
   @override
@@ -156,6 +161,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       _loadingEarlier = false;
       _hasEarlier = true;
       _oldestMessageId = null;
+      _mentions.clear();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _activateConversation();
         _markRead();
@@ -294,6 +300,185 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       result = [?file];
     }
     if (result.isNotEmpty) setState(() => _files = result);
+  }
+
+  Future<void> _attachmentActions() async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              key: const Key('attach-document-option'),
+              leading: const Icon(Icons.description_outlined),
+              title: const Text('Documento o imagen'),
+              onTap: () => Navigator.pop(context, 'file'),
+            ),
+            ListTile(
+              key: const Key('share-contact-option'),
+              leading: const Icon(Icons.contact_phone_outlined),
+              title: const Text('Contacto'),
+              subtitle: const Text('Compartir nombre, teléfono o email'),
+              onTap: () => Navigator.pop(context, 'contact'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (action == 'file') {
+      await _pickFiles();
+    } else if (action == 'contact') {
+      final contact = await showSharedContactDialog(context);
+      if (contact != null) await _sendContact(contact);
+    }
+  }
+
+  Future<void> _showMentionPicker(
+    InternalThread thread, {
+    bool replaceTypedAt = false,
+  }) async {
+    if (_mentionPickerOpen) return;
+    final profile = ref.read(sessionProvider).valueOrNull?.profile;
+    final members = thread.members
+        .where((member) => member.id != profile?.id)
+        .toList(growable: false);
+    if (members.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No hay otros miembros que etiquetar')),
+      );
+      return;
+    }
+    _mentionPickerOpen = true;
+    final selected = await showModalBottomSheet<InternalThreadMember>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(
+              leading: Icon(Icons.alternate_email),
+              title: Text('Etiquetar a alguien'),
+              subtitle: Text('Recibirá un aviso específico de la mención'),
+            ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  for (final member in members)
+                    ListTile(
+                      key: Key('mention-member-${member.id}'),
+                      leading: CircleAvatar(
+                        child: Text(
+                          member.name.trim().isEmpty
+                              ? '?'
+                              : member.name.trim()[0].toUpperCase(),
+                        ),
+                      ),
+                      title: Text(member.name),
+                      trailing: _mentions.containsKey(member.id)
+                          ? const Icon(Icons.check)
+                          : null,
+                      onTap: () => Navigator.pop(context, member),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    _mentionPickerOpen = false;
+    if (!mounted || selected == null) return;
+    final value = _body.value;
+    var start = value.selection.isValid
+        ? value.selection.start
+        : value.text.length;
+    var end = value.selection.isValid ? value.selection.end : value.text.length;
+    if (replaceTypedAt && start > 0 && value.text[start - 1] == '@') {
+      start -= 1;
+    }
+    final prefix = start > 0 && !RegExp(r'\s').hasMatch(value.text[start - 1])
+        ? ' '
+        : '';
+    final token = '$prefix@${selected.name} ';
+    final text = value.text.replaceRange(start, end, token);
+    final cursor = start + token.length;
+    _body.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: cursor),
+    );
+    setState(() => _mentions[selected.id] = selected);
+    _composerFocus.requestFocus();
+  }
+
+  void _handleComposerChanged(String value, InternalThread? thread) {
+    if (_mentions.isNotEmpty) {
+      final removed = _mentions.values
+          .where((member) => !value.contains('@${member.name}'))
+          .map((member) => member.id)
+          .toList(growable: false);
+      if (removed.isNotEmpty) {
+        setState(() {
+          for (final id in removed) {
+            _mentions.remove(id);
+          }
+        });
+      }
+    }
+    if (thread?.kind == 'group' && value.endsWith('@')) {
+      unawaited(_showMentionPicker(thread!, replaceTypedAt: true));
+    }
+  }
+
+  Future<void> _sendContact(SharedContact contact) async {
+    if (_sending) return;
+    setState(() => _sending = true);
+    try {
+      final repository = ref.read(messagingRepositoryProvider);
+      final Message sentMessage;
+      if (widget.internal) {
+        sentMessage = await repository.sendInternal(
+          widget.conversationId,
+          '',
+          const [],
+          replyToMessageId: _replyingTo?.id,
+          mentionIds: _mentions.keys.toList(growable: false),
+          contact: contact,
+        );
+      } else {
+        final profile = ref.read(sessionProvider).valueOrNull!.profile;
+        sentMessage = await repository.send(
+          profile,
+          widget.conversationId,
+          '',
+          const [],
+          replyToMessageId: _replyingTo?.id,
+          contact: contact,
+        );
+      }
+      if (!mounted) return;
+      _messagePendingScrollId = sentMessage.id;
+      setState(() {
+        _replyingTo = null;
+        _mentions.clear();
+      });
+      if (widget.internal) {
+        ref.invalidate(internalMessagesProvider(widget.conversationId));
+        ref.invalidate(internalThreadsProvider);
+      } else {
+        ref.invalidate(messagesProvider(widget.conversationId));
+        ref.invalidate(conversationsProvider);
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
   }
 
   Future<void> _startVoiceRecording() async {
@@ -437,6 +622,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
           _body.text,
           _files,
           replyToMessageId: _replyingTo?.id,
+          mentionIds: _mentions.keys.toList(growable: false),
         );
       } else {
         final profile = ref.read(sessionProvider).valueOrNull!.profile;
@@ -454,6 +640,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       _body.clear();
       setState(() {
         _files = [];
+        _mentions.clear();
         _replyingTo = null;
       });
       if (widget.internal) {
@@ -908,6 +1095,32 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       builder: (context) => SafeArea(
         child: Wrap(
           children: [
+            if (!historical && !message.deleted)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    for (final emoji in _messageReactions)
+                      IconButton(
+                        key: Key('message-reaction-$emoji'),
+                        tooltip: message.ownReaction == emoji
+                            ? 'Quitar reacción'
+                            : 'Reaccionar con $emoji',
+                        style: message.ownReaction == emoji
+                            ? IconButton.styleFrom(
+                                backgroundColor: Theme.of(
+                                  context,
+                                ).colorScheme.secondaryContainer,
+                              )
+                            : null,
+                        onPressed: () =>
+                            Navigator.pop(context, 'reaction:$emoji'),
+                        icon: Text(emoji, style: const TextStyle(fontSize: 23)),
+                      ),
+                  ],
+                ),
+              ),
             if (mine &&
                 profile.type == UserType.staff &&
                 !message.deleted &&
@@ -925,7 +1138,10 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                 title: const Text('Responder'),
                 onTap: () => Navigator.pop(context, 'reply'),
               ),
-            if (!historical && mine && !message.deleted)
+            if (!historical &&
+                mine &&
+                !message.deleted &&
+                message.sharedContacts.isEmpty)
               ListTile(
                 key: const Key('edit-message-option'),
                 leading: const Icon(Icons.edit_outlined),
@@ -958,7 +1174,9 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
       ),
     );
     if (!mounted) return;
-    if (action == 'info') {
+    if (action?.startsWith('reaction:') == true) {
+      await _reactToMessage(message, action!.substring('reaction:'.length));
+    } else if (action == 'info') {
       await _showMessageInfo(message);
     } else if (action == 'reply') {
       setState(() => _replyingTo = message);
@@ -1020,6 +1238,30 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
         await repository.softDelete(profile, message.id);
         ref.invalidate(messagesProvider(widget.conversationId));
         ref.invalidate(conversationsProvider);
+      }
+    }
+  }
+
+  Future<void> _reactToMessage(Message message, String emoji) async {
+    final profile = ref.read(sessionProvider).valueOrNull!.profile;
+    final selected = message.ownReaction == emoji ? '' : emoji;
+    try {
+      await ref
+          .read(messagingRepositoryProvider)
+          .setReaction(profile, message, selected, internal: widget.internal);
+      if (!mounted) return;
+      if (widget.internal) {
+        ref.invalidate(internalMessagesProvider(widget.conversationId));
+        ref.invalidate(internalThreadsProvider);
+      } else {
+        ref.invalidate(messagesProvider(widget.conversationId));
+        ref.invalidate(conversationsProvider);
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
       }
     }
   }
@@ -1139,6 +1381,9 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                           ? _withdrawAttachment
                           : null,
                       onVoiceLoad: _loadVoice,
+                      onReactionTap: historical || message.deleted
+                          ? null
+                          : (emoji) => _reactToMessage(message, emoji),
                       onTap:
                           message.authorType == 'system' ||
                               (message.deleted && !message.canViewHistory)
@@ -1187,6 +1432,31 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                     ),
                   )
                   .toList(),
+            ),
+          ),
+        if (!historical && _mentions.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Wrap(
+                key: const Key('selected-mentions'),
+                spacing: 6,
+                runSpacing: 4,
+                children: [
+                  for (final member in _mentions.values)
+                    InputChip(
+                      label: Text('@${member.name}'),
+                      avatar: const Icon(Icons.alternate_email, size: 17),
+                      onDeleted: () => setState(() {
+                        _mentions.remove(member.id);
+                        _body.text = _body.text
+                            .replaceFirst('@${member.name} ', '')
+                            .replaceFirst('@${member.name}', '');
+                      }),
+                    ),
+                ],
+              ),
             ),
           ),
         if (historical)
@@ -1246,7 +1516,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                     ] else ...[
                       IconButton(
                         key: const Key('attach-files'),
-                        onPressed: _sending ? null : _pickFiles,
+                        onPressed: _sending ? null : _attachmentActions,
                         icon: const Icon(Icons.attach_file),
                       ),
                       BotonSelectorEmoticonos(
@@ -1255,6 +1525,15 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                         focusNode: _composerFocus,
                         enabled: !_sending,
                       ),
+                      if (internalThread?.kind == 'group')
+                        IconButton(
+                          key: const Key('mention-member'),
+                          tooltip: 'Etiquetar a alguien',
+                          onPressed: _sending
+                              ? null
+                              : () => _showMentionPicker(internalThread!),
+                          icon: const Icon(Icons.alternate_email),
+                        ),
                       Expanded(
                         child: TextField(
                           key: const Key('message-composer'),
@@ -1268,6 +1547,8 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                           onSubmitted: sendWithEnter
                               ? (_) => unawaited(_send(keepComposerFocus: true))
                               : null,
+                          onChanged: (value) =>
+                              _handleComposerChanged(value, internalThread),
                           inputFormatters: const [
                             SentenceCapitalizationFormatter(),
                           ],

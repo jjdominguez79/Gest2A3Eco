@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -94,6 +95,7 @@ class MessagingRepository {
     String body,
     List<PlatformFile> files, {
     String? replyToMessageId,
+    SharedContact? contact,
   }) async {
     final uploads = <MultipartFile>[];
     for (final file in files) {
@@ -110,6 +112,7 @@ class MessagingRepository {
     if (replyToMessageId != null) {
       fields['reply_to_message_id'] = replyToMessageId;
     }
+    _addContactFields(fields, contact);
     final form = FormData.fromMap(fields);
     final response = await _api.dio.post<Map<String, dynamic>>(
       '/${_audience(profile)}/conversations/$conversationId/messages',
@@ -427,6 +430,8 @@ class MessagingRepository {
     String body,
     List<PlatformFile> files, {
     String? replyToMessageId,
+    SharedContact? contact,
+    List<String> mentionIds = const [],
   }) async {
     final uploads = <MultipartFile>[];
     for (final file in files) {
@@ -442,6 +447,10 @@ class MessagingRepository {
     if (replyToMessageId != null) {
       fields['reply_to_message_id'] = replyToMessageId;
     }
+    if (mentionIds.isNotEmpty) {
+      fields['mention_ids'] = jsonEncode(mentionIds);
+    }
+    _addContactFields(fields, contact);
     final response = await _api.dio.post<Map<String, dynamic>>(
       '/staff/internal/threads/$threadId/messages',
       data: FormData.fromMap(fields),
@@ -479,6 +488,7 @@ class MessagingRepository {
     String body,
     List<PlatformFile> files, {
     String? replyToMessageId,
+    SharedContact? contact,
   }) async {
     final uploads = <MultipartFile>[];
     for (final file in files) {
@@ -494,6 +504,7 @@ class MessagingRepository {
     if (replyToMessageId != null) {
       fields['reply_to_message_id'] = replyToMessageId;
     }
+    _addContactFields(fields, contact);
     final form = FormData.fromMap(fields);
     final response = await _api.dio.post<Map<String, dynamic>>(
       '/client/unified-messages',
@@ -511,5 +522,31 @@ class MessagingRepository {
         await _api.dio.post<void>('/client/conversations/$id/read');
       } catch (_) {}
     }
+  }
+
+  Future<Message> setReaction(
+    UserProfile profile,
+    Message message,
+    String emoji, {
+    bool internal = false,
+  }) async {
+    final path = internal
+        ? '/staff/internal/messages/${message.id}/reaction'
+        : '/${_audience(profile)}/messages/${message.id}/reaction';
+    final response = await _api.dio.put<Map<String, dynamic>>(
+      path,
+      data: {'emoji': emoji},
+    );
+    return Message.fromJson(response.data!);
+  }
+
+  void _addContactFields(Map<String, dynamic> fields, SharedContact? contact) {
+    if (contact == null) return;
+    fields.addAll({
+      'contact_name': contact.name,
+      'contact_phone': contact.phone,
+      'contact_email': contact.email,
+      'contact_organization': contact.organization,
+    });
   }
 }

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from datetime import timedelta
 from io import BytesIO
@@ -37,12 +38,15 @@ from backend.api.messaging_models import (
     MessagingDeletionAudit,
     MessagingGroupMember,
     MessagingMessage,
+    MessagingMessageReaction,
     MessagingMessageVersion,
     MessagingOrganization,
+    MessagingSharedContact,
     MessagingStaff,
     MessagingStaffPresenceConnection,
     MessagingStaffSession,
     MessagingStaffThread,
+    MessagingStaffThreadMention,
     MessagingWebSocketTicket,
 )
 from backend.api.messaging_realtime import RealtimeHub
@@ -124,6 +128,219 @@ def _setup(tmp_path: Path, monkeypatch):
         ).json() if row["kind"] == "general"
     )
     return client, factory, staff_headers, auth, accepted["client"]["id"], conversation["id"]
+
+
+def test_contacto_compartido_y_reacciones_en_chat_cliente(tmp_path, monkeypatch):
+    client, factory, staff_headers, auth, _, conv_id = _setup(tmp_path, monkeypatch)
+    path = f"/api/v1/messaging/client/conversations/{conv_id}/messages"
+    sent = client.post(path, headers=auth, data={
+        "idempotency_key": "shared-contact-1",
+        "contact_name": "Ana Garcia",
+        "contact_phone": "+34 600 123 123",
+        "contact_email": "ANA@EXAMPLE.TEST",
+        "contact_organization": "Ejemplo SL",
+    })
+    assert sent.status_code == 200
+    message = sent.json()
+    assert message["body"].startswith("Contacto compartido: Ana Garcia")
+    assert message["shared_contacts"] == [{
+        "id": message["shared_contacts"][0]["id"],
+        "name": "Ana Garcia",
+        "phone": "+34 600 123 123",
+        "email": "ana@example.test",
+        "organization": "Ejemplo SL",
+    }]
+    assert message["reactions"] == []
+
+    reaction_path = f"/api/v1/messaging/staff/messages/{message['id']}/reaction"
+    staff_reaction = client.put(
+        reaction_path,
+        headers=staff_headers("employee"),
+        json={"emoji": "👍"},
+    )
+    assert staff_reaction.status_code == 200
+    assert staff_reaction.json()["reactions"] == [{
+        "emoji": "👍", "count": 1, "mine": True, "names": ["Employee"],
+    }]
+
+    client_reaction_path = (
+        f"/api/v1/messaging/client/messages/{message['id']}/reaction"
+    )
+    assert client.put(
+        client_reaction_path, headers=auth, json={"emoji": "👍"},
+    ).status_code == 200
+    listed = client.get(path, headers=auth).json()[0]
+    assert listed["reactions"][0]["count"] == 2
+    assert listed["reactions"][0]["mine"] is True
+    assert set(listed["reactions"][0]["names"]) == {"Employee", "Maria"}
+
+    changed = client.put(
+        client_reaction_path, headers=auth, json={"emoji": "❤️"},
+    )
+    assert [row["emoji"] for row in changed.json()["reactions"]] == ["👍", "❤️"]
+    removed = client.put(client_reaction_path, headers=auth, json={"emoji": ""})
+    assert removed.json()["reactions"] == [{
+        "emoji": "👍", "count": 1, "mine": False, "names": ["Employee"],
+    }]
+    assert client.put(
+        client_reaction_path, headers=auth, json={"emoji": "💥"},
+    ).status_code == 422
+
+    with factory() as db:
+        assert db.scalar(select(func.count(MessagingSharedContact.id))) == 1
+        assert db.scalar(select(func.count(MessagingMessageReaction.id))) == 1
+
+
+def test_contacto_compartido_y_reaccion_en_chat_interno(tmp_path, monkeypatch):
+    client, _, staff_headers, _, _, _ = _setup(tmp_path, monkeypatch)
+    thread = client.post(
+        "/api/v1/messaging/staff/internal/direct/employee",
+        headers=staff_headers("admin"),
+    ).json()
+    path = f"/api/v1/messaging/staff/internal/threads/{thread['id']}/messages"
+    sent = client.post(path, headers=staff_headers("admin"), data={
+        "idempotency_key": "internal-contact-1",
+        "contact_name": "Soporte Gestinem",
+        "contact_email": "soporte@gestinem.es",
+    })
+    assert sent.status_code == 200
+    assert sent.json()["shared_contacts"][0]["name"] == "Soporte Gestinem"
+
+    reaction_path = (
+        f"/api/v1/messaging/staff/internal/messages/{sent.json()['id']}/reaction"
+    )
+    reacted = client.put(
+        reaction_path,
+        headers=staff_headers("employee"),
+        json={"emoji": "🙏"},
+    )
+    assert reacted.status_code == 200
+    assert reacted.json()["reactions"] == [{
+        "emoji": "🙏", "count": 1, "mine": True, "names": ["Employee"],
+    }]
+    assert client.get(path, headers=staff_headers("admin")).json()[0][
+        "reactions"
+    ][0]["mine"] is False
+
+
+def test_mencion_estructurada_en_grupo_identifica_y_avisa_al_destinatario(
+    tmp_path, monkeypatch,
+):
+    client, factory, staff_headers, _, _, _ = _setup(tmp_path, monkeypatch)
+    admin = staff_headers("admin")
+    group = client.post(
+        "/api/v1/messaging/staff/admin/groups", headers=admin,
+        json={"name": "Equipo de pruebas", "group_type": "staff_chat"},
+    ).json()
+    assert client.post(
+        f"/api/v1/messaging/staff/admin/groups/{group['id']}/members",
+        headers=admin,
+        json={"member_type": "staff", "member_id": "employee"},
+    ).status_code == 201
+
+    threads = client.get(
+        "/api/v1/messaging/staff/internal/threads", headers=admin,
+    ).json()
+    thread = next(row for row in threads if row["title"] == "Equipo de pruebas")
+    assert {(row["id"], row["name"]) for row in thread["members"]} == {
+        ("admin", "Admin"), ("employee", "Employee"),
+    }
+
+    delivered = []
+    monkeypatch.setattr(messaging_api, "fcm_configured", lambda: True)
+    monkeypatch.setattr(
+        messaging_api, "send_fcm",
+        lambda token, payload, platform=None: (
+            delivered.append((token, payload))
+            or messaging_api.FcmResult(success=True, permanent_failure=False)
+        ),
+    )
+    assert client.put(
+        "/api/v1/messaging/staff/app-devices",
+        headers=staff_headers("employee"),
+        json={
+            "platform": "android",
+            "push_token": "mention-token-abcdefghijklmnopqrstuvwxyz",
+        },
+    ).status_code == 200
+    published = []
+    monkeypatch.setattr(
+        messaging_api.hub, "publish",
+        lambda payload, **kwargs: published.append((payload, kwargs)),
+    )
+    path = f"/api/v1/messaging/staff/internal/threads/{thread['id']}/messages"
+    sent = client.post(path, headers=admin, data={
+        "body": "@Employee revisa este expediente",
+        "idempotency_key": "mention-employee",
+        "mention_ids": json.dumps(["employee"]),
+    })
+    assert sent.status_code == 200
+    assert sent.json()["mentions"] == [{
+        "staff_id": "employee", "name": "Employee", "mine": False,
+    }]
+    received = client.get(path, headers=staff_headers("employee")).json()[0]
+    assert received["mentions"] == [{
+        "staff_id": "employee", "name": "Employee", "mine": True,
+    }]
+    event = next(item for item, _ in published if item["type"] == "message.created")
+    assert event["mentioned_staff_ids"] == ["employee"]
+    assert delivered[0][1]["title"] == "Admin te ha mencionado"
+    assert delivered[0][1]["mentioned"] == "true"
+    with factory() as db:
+        mention = db.scalar(select(MessagingStaffThreadMention))
+        assert mention.internal_message_id == sent.json()["id"]
+        assert mention.mentioned_staff_external_id == "employee"
+
+
+def test_mencion_rechaza_chats_directos_y_personas_ajenas_al_grupo(
+    tmp_path, monkeypatch,
+):
+    client, _, staff_headers, _, _, _ = _setup(tmp_path, monkeypatch)
+    admin = staff_headers("admin")
+    direct = client.post(
+        "/api/v1/messaging/staff/internal/direct/employee", headers=admin,
+    ).json()
+    direct_path = (
+        f"/api/v1/messaging/staff/internal/threads/{direct['id']}/messages"
+    )
+    assert client.post(direct_path, headers=admin, data={
+        "body": "@Employee hola", "mention_ids": json.dumps(["employee"]),
+    }).status_code == 422
+
+    group = client.post(
+        "/api/v1/messaging/staff/admin/groups", headers=admin,
+        json={"name": "Grupo sin empleado", "group_type": "staff_chat"},
+    ).json()
+    thread = next(
+        row for row in client.get(
+            "/api/v1/messaging/staff/internal/threads", headers=admin,
+        ).json()
+        if row["title"] == "Grupo sin empleado"
+    )
+    group_path = (
+        f"/api/v1/messaging/staff/internal/threads/{thread['id']}/messages"
+    )
+    assert client.post(group_path, headers=admin, data={
+        "body": "@Employee hola", "mention_ids": json.dumps(["employee"]),
+    }).status_code == 422
+
+
+@pytest.mark.parametrize("missing", ["name", "details"])
+def test_contacto_compartido_requiere_nombre_y_via_de_contacto(
+    tmp_path, monkeypatch, missing,
+):
+    client, _, _, auth, _, conv_id = _setup(tmp_path, monkeypatch)
+    data = {
+        "idempotency_key": f"invalid-contact-{missing}",
+        "contact_name": "" if missing == "name" else "Contacto",
+        "contact_phone": "" if missing == "details" else "600123123",
+    }
+    response = client.post(
+        f"/api/v1/messaging/client/conversations/{conv_id}/messages",
+        headers=auth,
+        data=data,
+    )
+    assert response.status_code == 422
 
 
 @pytest.mark.parametrize("autor", ["client", "staff"])

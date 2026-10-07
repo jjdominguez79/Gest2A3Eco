@@ -442,14 +442,27 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
     }
     final authorName = event['author_name']?.toString().trim() ?? '';
     final preview = event['preview']?.toString().trim() ?? '';
+    final mentionedIds =
+        (event['mentioned_staff_ids'] as List<dynamic>? ?? const [])
+            .map((value) => value.toString())
+            .toSet();
+    final mentioned = mentionedIds.contains(session.profile.id);
     unawaited(
       ref
           .read(notificationsServiceProvider)
           .showDesktop(
-            title: authorName.isEmpty
-                ? 'Nuevo mensaje en Gestinem'
-                : 'Nuevo mensaje de $authorName',
-            body: preview.isEmpty ? 'Tienes un nuevo mensaje' : preview,
+            title: mentioned
+                ? (authorName.isEmpty
+                      ? 'Te han mencionado en Gestinem'
+                      : '$authorName te ha mencionado')
+                : (authorName.isEmpty
+                      ? 'Nuevo mensaje en Gestinem'
+                      : 'Nuevo mensaje de $authorName'),
+            body: mentioned
+                ? (preview.isEmpty
+                      ? 'Te han etiquetado en un mensaje del grupo'
+                      : preview)
+                : (preview.isEmpty ? 'Tienes un nuevo mensaje' : preview),
             targetType: threadId != null && threadId.isNotEmpty
                 ? 'internal_thread'
                 : 'conversation',

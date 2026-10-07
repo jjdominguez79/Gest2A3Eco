@@ -29,11 +29,11 @@ from backend.api.messaging_models import (
     MessagingAttachment, MessagingClient, MessagingConversation, MessagingConversationAlias, MessagingDevice, MessagingDownload,
     MessagingAppDevice, MessagingCampaign, MessagingCampaignRecipient,
     MessagingDeletionAudit, MessagingEvent, MessagingGroup, MessagingGroupMember,
-    MessagingInvitation, MessagingInvitationContent, MessagingMessage, MessagingMessageVersion, MessagingOrganization,
+    MessagingInvitation, MessagingInvitationContent, MessagingMessage, MessagingMessageReaction, MessagingMessageVersion, MessagingOrganization,
     MessagingPasswordReset, MessagingPresence, MessagingRead, MessagingReceipt, MessagingSession, MessagingStaff,
     MessagingProfileChangeRequest,
     MessagingStaffAuthFlow, MessagingStaffChannel, MessagingStaffSession,
-    MessagingStaffAppCode, MessagingStaffThread, MessagingStaffThreadMessage,
+    MessagingSharedContact, MessagingStaffAppCode, MessagingStaffThread, MessagingStaffThreadMention, MessagingStaffThreadMessage,
     MessagingStaffPresenceConnection, MessagingStaffThreadRead, MessagingWebSocketTicket,
 )
 from backend.api.messaging_mail import (
@@ -70,6 +70,7 @@ CLIENT_CHANNELS = {"general", "private"}
 LEGACY_STAFF_GROUP_CHANNELS = {"laboral", "fiscal"}
 STAFF_ROLES = {"admin", "empleado"}
 TEST_COMPANY_CODES = {"E0000", "E00000"}
+ALLOWED_REACTIONS = ("👍", "❤️", "😂", "😮", "😢", "🙏")
 
 
 def _is_voice_attachment(item: MessagingAttachment) -> bool:
@@ -225,6 +226,10 @@ class MessageEditIn(BaseModel):
 
 class MessageDeleteIn(BaseModel):
     reason: str = Field(default="", max_length=500)
+
+
+class MessageReactionIn(BaseModel):
+    emoji: str = Field(default="", max_length=16)
 
 
 class GroupIn(BaseModel):
@@ -985,10 +990,111 @@ def _serialize_attachment(
     return base
 
 
+def _shared_contact_from_form(
+    name: str, phone: str, email: str, organization: str,
+) -> dict | None:
+    values = {
+        "name": name.strip(),
+        "phone": phone.strip(),
+        "email": email.strip().lower(),
+        "organization": organization.strip(),
+    }
+    if not any(values.values()):
+        return None
+    if not values["name"]:
+        raise HTTPException(422, "El contacto necesita un nombre")
+    if not values["phone"] and not values["email"]:
+        raise HTTPException(422, "El contacto necesita telefono o email")
+    limits = {"name": 160, "phone": 40, "email": 254, "organization": 200}
+    if any(len(values[key]) > limit for key, limit in limits.items()):
+        raise HTTPException(422, "Los datos del contacto son demasiado largos")
+    if values["email"] and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", values["email"]):
+        raise HTTPException(422, "El email del contacto no es valido")
+    return values
+
+
+def _contact_fallback(contact: dict) -> str:
+    details = [value for value in (contact["phone"], contact["email"]) if value]
+    return f"Contacto compartido: {contact['name']}" + (
+        f" · {' · '.join(details)}" if details else ""
+    )
+
+
+def _save_shared_contact(
+    db: Session, contact: dict | None, *, message_id: str | None = None,
+    internal_message_id: str | None = None,
+) -> None:
+    if contact is None:
+        return
+    db.add(MessagingSharedContact(
+        message_id=message_id,
+        internal_message_id=internal_message_id,
+        name=contact["name"],
+        phone=contact["phone"],
+        email=contact["email"],
+        organization=contact["organization"],
+    ))
+
+
+def _serialize_shared_contacts(
+    db: Session, *, message_id: str | None = None,
+    internal_message_id: str | None = None,
+) -> list[dict]:
+    column = (
+        MessagingSharedContact.message_id if message_id is not None
+        else MessagingSharedContact.internal_message_id
+    )
+    parent_id = message_id if message_id is not None else internal_message_id
+    rows = db.scalars(select(MessagingSharedContact).where(
+        column == parent_id,
+    ).order_by(MessagingSharedContact.created_at, MessagingSharedContact.id)).all()
+    return [{
+        "id": row.id,
+        "name": row.name,
+        "phone": row.phone,
+        "email": row.email,
+        "organization": row.organization,
+    } for row in rows]
+
+
+def _serialize_reactions(
+    db: Session, *, actor_type: str, actor_id: str,
+    message_id: str | None = None, internal_message_id: str | None = None,
+) -> list[dict]:
+    column = (
+        MessagingMessageReaction.message_id if message_id is not None
+        else MessagingMessageReaction.internal_message_id
+    )
+    parent_id = message_id if message_id is not None else internal_message_id
+    rows = db.scalars(select(MessagingMessageReaction).where(
+        column == parent_id,
+    ).order_by(MessagingMessageReaction.created_at, MessagingMessageReaction.id)).all()
+    grouped: dict[str, list[MessagingMessageReaction]] = {}
+    for row in rows:
+        grouped.setdefault(row.emoji, []).append(row)
+    ordered = [emoji for emoji in ALLOWED_REACTIONS if emoji in grouped]
+    ordered.extend(emoji for emoji in grouped if emoji not in ordered)
+    return [{
+        "emoji": emoji,
+        "count": len(grouped[emoji]),
+        "mine": any(
+            row.actor_type == actor_type and row.actor_id == actor_id
+            for row in grouped[emoji]
+        ),
+        "names": [row.actor_name for row in grouped[emoji]],
+    } for emoji in ordered]
+
+
 def _serialize_message(
     db: Session, item: MessagingMessage, audience: str = "", *, viewer_id: str = "",
 ) -> dict:
     attachments = [] if item.deleted_at else list(db.scalars(select(MessagingAttachment).where(MessagingAttachment.message_id == item.id)))
+    shared_contacts = [] if item.deleted_at else _serialize_shared_contacts(
+        db, message_id=item.id,
+    )
+    reactions = [] if item.deleted_at else _serialize_reactions(
+        db, message_id=item.id, actor_type=audience, actor_id=viewer_id,
+    )
     author_name = item.author_name
     author_avatar_url = ""
     if item.author_type == "staff":
@@ -1034,6 +1140,8 @@ def _serialize_message(
         "has_attachments": has_attachments,
         "reply_to": reply_data,
         "created_at": item.created_at.isoformat(),
+        "shared_contacts": shared_contacts,
+        "reactions": reactions,
         "attachments": [
             _serialize_attachment(
                 db, a, audience, message=item, viewer_id=viewer_id,
@@ -1287,7 +1395,7 @@ def _publish_conversation_event(db: Session, conv: MessagingConversation, event_
 def _create_message(
     db: Session, conv: MessagingConversation, *, actor_type: str, actor_id: str,
     actor_name: str, body: str, idempotency_key: str, files: list[UploadFile],
-    reply_to_message_id: str | None = None,
+    reply_to_message_id: str | None = None, shared_contact: dict | None = None,
 ) -> MessagingMessage:
     existing = db.scalar(select(MessagingMessage).where(
         MessagingMessage.conversation_id == conv.id,
@@ -1300,13 +1408,15 @@ def _create_message(
         reply_to = db.get(MessagingMessage, reply_to_message_id)
         if not reply_to or reply_to.conversation_id != conv.id:
             raise HTTPException(422, "El mensaje respondido no pertenece a la conversacion")
+    text_body = body.strip() or (_contact_fallback(shared_contact) if shared_contact else "")
     message = MessagingMessage(
         conversation_id=conv.id, author_type=actor_type, author_id=actor_id,
-        author_name=actor_name, body=body.strip(), idempotency_key=idempotency_key,
+        author_name=actor_name, body=text_body, idempotency_key=idempotency_key,
         reply_to_message_id=reply_to.id if reply_to else None,
     )
     db.add(message)
     db.flush()
+    _save_shared_contact(db, shared_contact, message_id=message.id)
     storage = MessagingStorage() if files else None
     for upload in files:
         content = upload.file.read(MAX_ATTACHMENT + 1)
@@ -1879,7 +1989,9 @@ def upload_own_avatar(
     return {"ok": True, "avatar_url": f"/api/v1/messaging/staff/avatars/{staff.external_id}"}
 
 
-def _serialize_staff_thread_message(db: Session, item: MessagingStaffThreadMessage) -> dict:
+def _serialize_staff_thread_message(
+    db: Session, item: MessagingStaffThreadMessage, *, viewer_id: str = "",
+) -> dict:
     author = db.get(MessagingStaff, item.author_staff_external_id)
     reply = db.get(MessagingStaffThreadMessage, item.reply_to_message_id) if item.reply_to_message_id else None
     attachments = [] if item.deleted_at else list(db.scalars(
@@ -1887,6 +1999,20 @@ def _serialize_staff_thread_message(db: Session, item: MessagingStaffThreadMessa
             MessagingAttachment.internal_message_id == item.id,
         )
     ))
+    shared_contacts = [] if item.deleted_at else _serialize_shared_contacts(
+        db, internal_message_id=item.id,
+    )
+    reactions = [] if item.deleted_at else _serialize_reactions(
+        db, internal_message_id=item.id, actor_type="staff", actor_id=viewer_id,
+    )
+    mentions = [] if item.deleted_at else list(db.scalars(select(
+        MessagingStaffThreadMention,
+    ).where(
+        MessagingStaffThreadMention.internal_message_id == item.id,
+    ).order_by(
+        MessagingStaffThreadMention.created_at,
+        MessagingStaffThreadMention.id,
+    )))
     return {
         "id": item.id, "thread_id": item.thread_id,
         "author_id": item.author_staff_external_id,
@@ -1902,6 +2028,13 @@ def _serialize_staff_thread_message(db: Session, item: MessagingStaffThreadMessa
         "has_attachments": bool(db.scalar(select(func.count(MessagingAttachment.id)).where(
             MessagingAttachment.internal_message_id == item.id,
         ))),
+        "shared_contacts": shared_contacts,
+        "reactions": reactions,
+        "mentions": [{
+            "staff_id": mention.mentioned_staff_external_id,
+            "name": mention.display_name,
+            "mine": mention.mentioned_staff_external_id == viewer_id,
+        } for mention in mentions],
         "attachments": [_serialize_attachment(db, attachment, "internal") for attachment in attachments],
         "reply_to": ({
             "id": reply.id, "author_name": reply.author_name,
@@ -1971,6 +2104,17 @@ def _serialize_staff_thread(
         counterpart.avatar_storage_key if counterpart else
         group.avatar_storage_key if group else ""
     )
+    members = []
+    if group:
+        member_ids = list(db.scalars(select(MessagingGroupMember.member_id).where(
+            MessagingGroupMember.group_id == group.id,
+            MessagingGroupMember.member_type == "staff",
+        )))
+        if member_ids:
+            members = list(db.scalars(select(MessagingStaff).where(
+                MessagingStaff.external_id.in_(member_ids),
+                MessagingStaff.active.is_(True),
+            ).order_by(MessagingStaff.name, MessagingStaff.external_id)))
     return {
         "id": thread.id, "kind": thread.kind, "channel": thread.channel,
         "active": active, "read_only": not active,
@@ -1989,6 +2133,14 @@ def _serialize_staff_thread(
         ),
         "counterpart_online": _staff_online(db, counterpart.external_id) if counterpart else False,
         "counterpart_active": bool(counterpart and counterpart.active),
+        "members": [{
+            "id": member.external_id,
+            "name": member.chat_alias.strip() or member.name,
+            "avatar_url": (
+                f"/api/v1/messaging/staff/avatars/{member.external_id}"
+                if member.avatar_storage_key else ""
+            ),
+        } for member in members],
         "unread_count": _staff_thread_unread(db, thread, staff),
         "updated_at": thread.updated_at.isoformat(),
         "last_message": _serialize_staff_thread_message(db, last) if last else None,
@@ -2050,7 +2202,10 @@ def staff_thread_messages(
     rows = db.scalars(select(MessagingStaffThreadMessage).where(
         MessagingStaffThreadMessage.thread_id == thread.id,
     ).order_by(MessagingStaffThreadMessage.created_at).limit(500)).all()
-    result = [_serialize_staff_thread_message(db, row) for row in rows]
+    result = [
+        _serialize_staff_thread_message(db, row, viewer_id=staff.external_id)
+        for row in rows
+    ]
     _add_message_states(db, rows, result, "internal_thread", thread.id, "staff", staff.external_id)
     return result
 
@@ -2142,6 +2297,7 @@ def _staff_thread_recipient_ids(
 def _queue_internal_pushes(
     db: Session, background: BackgroundTasks, thread: MessagingStaffThread,
     sender: MessagingStaff, message_id: str = "",
+    mentioned_staff_ids: set[str] | None = None,
 ) -> None:
     """Envia FCM solo a los miembros autorizados del chat interno."""
     if not fcm_configured():
@@ -2154,9 +2310,8 @@ def _queue_internal_pushes(
         MessagingAppDevice.user_id.in_(recipients),
         MessagingAppDevice.active.is_(True),
     )).all()
-    payload = {
-        "title": f"Nuevo mensaje de {sender.chat_alias.strip() or sender.name}",
-        "body": "Tienes un nuevo mensaje interno",
+    mentioned_staff_ids = mentioned_staff_ids or set()
+    base_payload = {
         "event": "internal_message",
         "conversation_id": "",
         "thread_id": thread.id,
@@ -2165,6 +2320,20 @@ def _queue_internal_pushes(
         "message_id": message_id,
     }
     for device in devices:
+        mentioned = device.user_id in mentioned_staff_ids
+        payload = {
+            **base_payload,
+            "title": (
+                f"{sender.chat_alias.strip() or sender.name} te ha mencionado"
+                if mentioned else
+                f"Nuevo mensaje de {sender.chat_alias.strip() or sender.name}"
+            ),
+            "body": (
+                "Te han etiquetado en un mensaje del grupo"
+                if mentioned else "Tienes un nuevo mensaje interno"
+            ),
+            "mentioned": "true" if mentioned else "false",
+        }
         viewing = (
             device.active_target_type == "internal_thread"
             and device.active_target_id == thread.id
@@ -2177,18 +2346,55 @@ def _queue_internal_pushes(
             )
 
 
+def _validated_internal_mentions(
+    db: Session, thread: MessagingStaffThread, raw_ids: str,
+    sender: MessagingStaff,
+) -> list[MessagingStaff]:
+    if not raw_ids.strip():
+        return []
+    try:
+        values = json.loads(raw_ids)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "Las menciones no tienen un formato valido") from exc
+    if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+        raise HTTPException(422, "Las menciones no tienen un formato valido")
+    mention_ids = {value.strip() for value in values if value.strip()}
+    if len(mention_ids) > 50:
+        raise HTTPException(422, "Hay demasiadas menciones en el mensaje")
+    if not mention_ids:
+        return []
+    if thread.kind != "group":
+        raise HTTPException(422, "Solo se puede mencionar en un grupo")
+    allowed = _staff_thread_recipient_ids(db, thread) - {sender.external_id}
+    if not mention_ids <= allowed:
+        raise HTTPException(422, "Solo se puede mencionar a miembros activos del grupo")
+    rows = list(db.scalars(select(MessagingStaff).where(
+        MessagingStaff.external_id.in_(mention_ids),
+        MessagingStaff.active.is_(True),
+    ).order_by(MessagingStaff.name, MessagingStaff.external_id)))
+    if {row.external_id for row in rows} != mention_ids:
+        raise HTTPException(422, "No se ha encontrado algun miembro mencionado")
+    return rows
+
+
 @router.post("/staff/internal/threads/{thread_id}/messages")
 def post_staff_thread_message(
     thread_id: str, background: BackgroundTasks,
     body: str = Form(default=""), idempotency_key: str = Form(default=""),
     reply_to_message_id: str = Form(default=""),
+    contact_name: str = Form(default=""), contact_phone: str = Form(default=""),
+    contact_email: str = Form(default=""), contact_organization: str = Form(default=""),
+    mention_ids: str = Form(default=""),
     files: list[UploadFile] = File(default=[]),
     staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
 ):
     thread = _staff_thread(db, thread_id, staff)
     _require_writable_staff_thread(db, thread)
     text_body = body.strip()
-    if not text_body and not files:
+    shared_contact = _shared_contact_from_form(
+        contact_name, contact_phone, contact_email, contact_organization,
+    )
+    if not text_body and not files and shared_contact is None:
         raise HTTPException(422, "El mensaje esta vacio")
     if len(text_body) > 10000:
         raise HTTPException(422, "El mensaje es demasiado largo")
@@ -2198,7 +2404,10 @@ def post_staff_thread_message(
         MessagingStaffThreadMessage.idempotency_key == key,
     ))
     if existing:
-        return _serialize_staff_thread_message(db, existing)
+        return _serialize_staff_thread_message(
+            db, existing, viewer_id=staff.external_id,
+        )
+    mentioned_staff = _validated_internal_mentions(db, thread, mention_ids, staff)
     reply = None
     if reply_to_message_id:
         reply = db.get(MessagingStaffThreadMessage, reply_to_message_id)
@@ -2207,12 +2416,20 @@ def post_staff_thread_message(
     item = MessagingStaffThreadMessage(
         thread_id=thread.id, author_staff_external_id=staff.external_id,
         author_name=staff.chat_alias.strip() or staff.name,
-        body=text_body, idempotency_key=key,
+        body=text_body or (_contact_fallback(shared_contact) if shared_contact else ""),
+        idempotency_key=key,
         reply_to_message_id=reply.id if reply else None,
     )
     thread.updated_at = utcnow()
     db.add(item)
     db.flush()
+    for mentioned in mentioned_staff:
+        db.add(MessagingStaffThreadMention(
+            internal_message_id=item.id,
+            mentioned_staff_external_id=mentioned.external_id,
+            display_name=mentioned.chat_alias.strip() or mentioned.name,
+        ))
+    _save_shared_contact(db, shared_contact, internal_message_id=item.id)
     storage = MessagingStorage() if files else None
     for upload in files:
         content = upload.file.read(MAX_ATTACHMENT + 1)
@@ -2235,7 +2452,11 @@ def post_staff_thread_message(
     ))
     db.commit()
     db.refresh(item)
-    _queue_internal_pushes(db, background, thread, staff, item.id)
+    mentioned_ids = {row.external_id for row in mentioned_staff}
+    _queue_internal_pushes(
+        db, background, thread, staff, item.id,
+        mentioned_staff_ids=mentioned_ids,
+    )
     recipients = _staff_thread_recipient_ids(db, thread)
     hub.publish(
         {
@@ -2246,10 +2467,11 @@ def post_staff_thread_message(
             "author_id": staff.external_id,
             "author_name": staff.chat_alias.strip() or staff.name,
             "preview": item.body[:160],
+            "mentioned_staff_ids": sorted(mentioned_ids),
         },
         staff_ids=recipients,
     )
-    return _serialize_staff_thread_message(db, item)
+    return _serialize_staff_thread_message(db, item, viewer_id=staff.external_id)
 
 
 @router.get("/staff/admin/directory")
@@ -3560,6 +3782,8 @@ def client_send_unified(
     body: str = Form(default=""),
     idempotency_key: str = Form(default=""),
     reply_to_message_id: str | None = Form(default=None),
+    contact_name: str = Form(default=""), contact_phone: str = Form(default=""),
+    contact_email: str = Form(default=""), contact_organization: str = Form(default=""),
     files: list[UploadFile] = File(default=[]),
     db: Session = Depends(get_db),
 ):
@@ -3588,7 +3812,10 @@ def client_send_unified(
     if existing:
         return _serialize_message(db, existing, "client", viewer_id=client.id)
 
-    if not body.strip() and not files:
+    shared_contact = _shared_contact_from_form(
+        contact_name, contact_phone, contact_email, contact_organization,
+    )
+    if not body.strip() and not files and shared_contact is None:
         raise HTTPException(422, "El mensaje esta vacio")
 
     # Validar reply_to dentro del canal general.
@@ -3608,6 +3835,7 @@ def client_send_unified(
         idempotency_key=key,
         files=files,
         reply_to_message_id=reply_id,
+        shared_contact=shared_contact,
     )
     _queue_app_pushes(db, background, target_conv, "staff", item.id)
 
@@ -3876,11 +4104,16 @@ def post_message(
     background: BackgroundTasks,
     body: str = Form(default=""), idempotency_key: str = Form(default=""),
     reply_to_message_id: str = Form(default=""),
+    contact_name: str = Form(default=""), contact_phone: str = Form(default=""),
+    contact_email: str = Form(default=""), contact_organization: str = Form(default=""),
     files: list[UploadFile] = File(default=[]), db: Session = Depends(get_db),
 ):
     actor = _resolve_actor(audience, request, db)
     conv = _conversation_for_client(db, conversation_id, actor) if audience == "client" else _conversation_for_staff(db, conversation_id, actor)
-    if not body.strip() and not files:
+    shared_contact = _shared_contact_from_form(
+        contact_name, contact_phone, contact_email, contact_organization,
+    )
+    if not body.strip() and not files and shared_contact is None:
         raise HTTPException(422, "El mensaje esta vacio")
     key = idempotency_key.strip() or str(uuid.uuid4())
     item = _create_message(
@@ -3888,6 +4121,7 @@ def post_message(
         actor_name=(actor.chat_alias.strip() or actor.name) if audience == "staff" else actor.name,
         body=body, idempotency_key=key, files=files,
         reply_to_message_id=reply_to_message_id or None,
+        shared_contact=shared_contact,
     )
     if audience == "client":
         _queue_app_pushes(db, background, conv, "staff", item.id)
@@ -3906,6 +4140,102 @@ def post_message(
                 )
     actor_id = actor.id if audience == "client" else actor.external_id
     return _serialize_message(db, item, audience, viewer_id=actor_id)
+
+
+def _set_message_reaction(
+    db: Session, payload: MessageReactionIn, *, actor_type: str,
+    actor_id: str, actor_name: str, message_id: str | None = None,
+    internal_message_id: str | None = None,
+) -> None:
+    emoji = payload.emoji.strip()
+    if emoji and emoji not in ALLOWED_REACTIONS:
+        raise HTTPException(422, "Reaccion no permitida")
+    conditions = [
+        MessagingMessageReaction.actor_type == actor_type,
+        MessagingMessageReaction.actor_id == actor_id,
+    ]
+    if message_id is not None:
+        conditions.append(MessagingMessageReaction.message_id == message_id)
+    else:
+        conditions.append(
+            MessagingMessageReaction.internal_message_id == internal_message_id,
+        )
+    current = db.scalar(select(MessagingMessageReaction).where(*conditions))
+    if not emoji:
+        if current:
+            db.delete(current)
+        return
+    if current:
+        current.emoji = emoji
+        current.actor_name = actor_name
+        current.updated_at = utcnow()
+    else:
+        db.add(MessagingMessageReaction(
+            message_id=message_id,
+            internal_message_id=internal_message_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            actor_name=actor_name,
+            emoji=emoji,
+        ))
+
+
+@router.put("/{audience}/messages/{message_id}/reaction")
+def react_to_message(
+    audience: str, message_id: str, payload: MessageReactionIn,
+    request: Request, db: Session = Depends(get_db),
+):
+    actor = _resolve_actor(audience, request, db)
+    item = db.get(MessagingMessage, message_id)
+    if not item:
+        raise HTTPException(404, "Mensaje no encontrado")
+    conv = (
+        _conversation_for_client(db, item.conversation_id, actor)
+        if audience == "client"
+        else _conversation_for_staff(db, item.conversation_id, actor)
+    )
+    if item.deleted_at:
+        raise HTTPException(409, "No se puede reaccionar a un mensaje eliminado")
+    actor_id = actor.id if audience == "client" else actor.external_id
+    actor_name = (
+        actor.name if audience == "client" else actor.chat_alias.strip() or actor.name
+    )
+    _set_message_reaction(
+        db, payload, actor_type=audience, actor_id=actor_id,
+        actor_name=actor_name, message_id=item.id,
+    )
+    db.commit()
+    _publish_conversation_event(
+        db, conv, "message.reaction", message_id=item.id,
+    )
+    return _serialize_message(db, item, audience, viewer_id=actor_id)
+
+
+@router.put("/staff/internal/messages/{message_id}/reaction")
+def react_to_internal_message(
+    message_id: str, payload: MessageReactionIn,
+    staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
+):
+    item = db.get(MessagingStaffThreadMessage, message_id)
+    if not item:
+        raise HTTPException(404, "Mensaje no encontrado")
+    thread = _staff_thread(db, item.thread_id, staff)
+    _require_writable_staff_thread(db, thread)
+    if item.deleted_at:
+        raise HTTPException(409, "No se puede reaccionar a un mensaje eliminado")
+    _set_message_reaction(
+        db, payload, actor_type="staff", actor_id=staff.external_id,
+        actor_name=staff.chat_alias.strip() or staff.name,
+        internal_message_id=item.id,
+    )
+    db.commit()
+    hub.publish(
+        {"type": "message.reaction", "thread_id": thread.id, "message_id": item.id},
+        staff_ids=_staff_thread_recipient_ids(db, thread),
+    )
+    return _serialize_staff_thread_message(
+        db, item, viewer_id=staff.external_id,
+    )
 
 
 @router.patch("/staff/conversations/{conversation_id}")

@@ -190,6 +190,74 @@ void main() {
     expect(find.byKey(const Key('send-message')), findsNothing);
   });
 
+  testWidgets('permite etiquetar a un miembro desde un chat de grupo', (
+    tester,
+  ) async {
+    const profile = UserProfile(
+      id: 'admin',
+      name: 'Administradora',
+      email: 'admin@gestinem.es',
+      type: UserType.staff,
+      staffRole: StaffRole.admin,
+    );
+    const session = AuthSession(token: 'staff-token', profile: profile);
+    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'))
+      ..httpClientAdapter = JsonAdapter(<String, dynamic>{});
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith(
+            (ref) => FakeSessionController(ref, session),
+          ),
+          apiClientProvider.overrideWithValue(
+            ApiClient(dio: dio, tokenProvider: () => session.token),
+          ),
+          internalThreadsProvider.overrideWith(
+            (ref) async => const [
+              InternalThread(
+                id: 'group-thread',
+                kind: 'group',
+                channel: '',
+                title: 'Equipo fiscal',
+                unreadCount: 0,
+                members: [
+                  InternalThreadMember(id: 'admin', name: 'Administradora'),
+                  InternalThreadMember(id: 'employee', name: 'Beatriz'),
+                ],
+              ),
+            ],
+          ),
+          internalMessagesProvider.overrideWith((ref, id) async => []),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(
+            body: ConversationView(
+              conversationId: 'group-thread',
+              internal: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('mention-member')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('mention-member')));
+    await tester.pumpAndSettle();
+    expect(find.text('Etiquetar a alguien'), findsOneWidget);
+    expect(find.byKey(const Key('mention-member-admin')), findsNothing);
+    await tester.tap(find.byKey(const Key('mention-member-employee')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('selected-mentions')), findsOneWidget);
+    expect(find.text('@Beatriz'), findsOneWidget);
+    final composer = tester.widget<TextField>(
+      find.byKey(const Key('message-composer')),
+    );
+    expect(composer.controller!.text, '@Beatriz ');
+  });
+
   testWidgets('volver desde un chat interno abre la lista de inicio', (
     tester,
   ) async {

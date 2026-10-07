@@ -529,6 +529,39 @@ void main() {
     expect(threads.single.counterpartActive, isFalse);
   });
 
+  test('envia identificadores estructurados al mencionar miembros', () async {
+    final adapter = JsonAdapter({
+      'id': 'message-mention',
+      'thread_id': 'thread-1',
+      'author_id': 'admin',
+      'author_name': 'Admin',
+      'body': '@Beatriz revisa esto',
+      'deleted': false,
+      'created_at': '2026-10-07T10:00:00Z',
+      'mentions': [
+        {'staff_id': 'employee', 'name': 'Beatriz', 'mine': false},
+      ],
+    });
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+    )..httpClientAdapter = adapter;
+
+    final message =
+        await MessagingRepository(
+          ApiClient(dio: dio, tokenProvider: () => 'token'),
+        ).sendInternal(
+          'thread-1',
+          '@Beatriz revisa esto',
+          const [],
+          mentionIds: const ['employee'],
+        );
+
+    final form = adapter.lastRequest!.data as FormData;
+    final fields = Map<String, String>.fromEntries(form.fields);
+    expect(fields['mention_ids'], '["employee"]');
+    expect(message.mentions.single.staffId, 'employee');
+  });
+
   test('descarga interna usa endpoint protegido de staff', () async {
     final adapter = JsonAdapter(<String, dynamic>{});
     final dio = Dio(

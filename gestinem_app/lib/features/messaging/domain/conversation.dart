@@ -192,6 +192,7 @@ class InternalThread {
     this.counterpartId = '',
     this.counterpartActive = true,
     this.counterpartOnline = false,
+    this.members = const [],
     this.lastMessage,
   });
 
@@ -209,6 +210,11 @@ class InternalThread {
     counterpartId: json['counterpart_id'] as String? ?? '',
     counterpartActive: json['counterpart_active'] as bool? ?? true,
     counterpartOnline: json['counterpart_online'] as bool? ?? false,
+    members: (json['members'] as List<dynamic>? ?? const [])
+        .map(
+          (item) => InternalThreadMember.fromJson(item as Map<String, dynamic>),
+        )
+        .toList(growable: false),
     lastMessage: json['last_message'] is Map<String, dynamic>
         ? Message.fromJson(json['last_message'] as Map<String, dynamic>)
         : null,
@@ -226,5 +232,25 @@ class InternalThread {
   final String counterpartId;
   final bool counterpartActive;
   final bool counterpartOnline;
+  final List<InternalThreadMember> members;
   final Message? lastMessage;
+}
+
+class InternalThreadMember {
+  const InternalThreadMember({
+    required this.id,
+    required this.name,
+    this.avatarUrl = '',
+  });
+
+  factory InternalThreadMember.fromJson(Map<String, dynamic> json) =>
+      InternalThreadMember(
+        id: json['id'] as String? ?? '',
+        name: json['name'] as String? ?? '',
+        avatarUrl: json['avatar_url'] as String? ?? '',
+      );
+
+  final String id;
+  final String name;
+  final String avatarUrl;
 }

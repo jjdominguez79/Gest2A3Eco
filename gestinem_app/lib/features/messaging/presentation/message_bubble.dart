@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/widgets/authenticated_avatar.dart';
 import '../domain/message.dart';
@@ -350,6 +351,82 @@ class _VoiceNoteCardState extends State<VoiceNoteCard> {
   }
 }
 
+class _SharedContactCard extends StatelessWidget {
+  const _SharedContactCard({required this.contact});
+
+  final SharedContact contact;
+
+  Future<void> _call() => launchUrl(Uri(scheme: 'tel', path: contact.phone));
+
+  Future<void> _email() =>
+      launchUrl(Uri(scheme: 'mailto', path: contact.email));
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      key: Key('shared-contact-${contact.id}'),
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: colors.surface.withValues(alpha: .72),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: colors.outlineVariant),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            backgroundColor: colors.secondaryContainer,
+            child: const Icon(Icons.person_outline),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  contact.name,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                if (contact.organization.isNotEmpty)
+                  Text(
+                    contact.organization,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                if (contact.phone.isNotEmpty)
+                  Text(
+                    contact.phone,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                if (contact.email.isNotEmpty)
+                  Text(
+                    contact.email,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+              ],
+            ),
+          ),
+          if (contact.phone.isNotEmpty)
+            IconButton(
+              tooltip: 'Llamar',
+              onPressed: _call,
+              icon: const Icon(Icons.call_outlined),
+            ),
+          if (contact.email.isNotEmpty)
+            IconButton(
+              tooltip: 'Enviar email',
+              onPressed: _email,
+              icon: const Icon(Icons.email_outlined),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class MessageBubble extends StatelessWidget {
   const MessageBubble({
     super.key,
@@ -366,6 +443,7 @@ class MessageBubble extends StatelessWidget {
     this.onAttachmentHistory,
     this.onAttachmentWithdraw,
     this.onVoiceLoad,
+    this.onReactionTap,
     this.onTap,
     this.onLongPress,
   });
@@ -388,6 +466,7 @@ class MessageBubble extends StatelessWidget {
   final void Function(Attachment attachment)? onAttachmentHistory;
   final void Function(Attachment attachment)? onAttachmentWithdraw;
   final Future<Uint8List> Function(Attachment attachment)? onVoiceLoad;
+  final ValueChanged<String>? onReactionTap;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
 
@@ -523,6 +602,9 @@ class MessageBubble extends StatelessWidget {
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
                   color: bubbleColor,
+                  border: message.mentionsMe
+                      ? Border.all(color: colors.tertiary, width: 2)
+                      : null,
                   borderRadius: BorderRadius.only(
                     topLeft: const Radius.circular(14),
                     topRight: const Radius.circular(14),
@@ -596,6 +678,40 @@ class MessageBubble extends StatelessWidget {
                       ),
                     ],
                     const SizedBox(height: 4),
+                    if (!message.deleted && message.mentions.isNotEmpty) ...[
+                      Wrap(
+                        key: Key('mentions-${message.id}'),
+                        spacing: 5,
+                        runSpacing: 4,
+                        children: [
+                          for (final mention in message.mentions)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: mention.mine
+                                    ? colors.tertiaryContainer
+                                    : colors.secondaryContainer,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                mention.mine
+                                    ? 'Para ti · @${mention.name}'
+                                    : '@${mention.name}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: mention.mine
+                                      ? FontWeight.w700
+                                      : FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                    ],
                     if (message.deleted)
                       const Row(
                         key: Key('deleted-message'),
@@ -612,8 +728,11 @@ class MessageBubble extends StatelessWidget {
                           ),
                         ],
                       )
-                    else if (message.body.isNotEmpty)
+                    else if (message.body.isNotEmpty &&
+                        message.sharedContacts.isEmpty)
                       Text(message.body),
+                    for (final contact in message.sharedContacts)
+                      _SharedContactCard(contact: contact),
                     for (final att in message.attachments)
                       if (att.isVoiceNote && onVoiceLoad != null)
                         VoiceNoteCard(
@@ -655,6 +774,47 @@ class MessageBubble extends StatelessWidget {
                         ),
                       ),
                     ),
+                    if (message.reactions.isNotEmpty) ...[
+                      const SizedBox(height: 5),
+                      Wrap(
+                        spacing: 5,
+                        runSpacing: 4,
+                        children: [
+                          for (final reaction in message.reactions)
+                            Tooltip(
+                              message: reaction.names.join(', '),
+                              child: InkWell(
+                                key: Key(
+                                  'reaction-${message.id}-${reaction.emoji}',
+                                ),
+                                borderRadius: BorderRadius.circular(14),
+                                onTap: onReactionTap == null
+                                    ? null
+                                    : () => onReactionTap!(reaction.emoji),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 7,
+                                    vertical: 3,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: reaction.mine
+                                        ? colors.secondaryContainer
+                                        : colors.surfaceContainerHighest,
+                                    borderRadius: BorderRadius.circular(14),
+                                    border: reaction.mine
+                                        ? Border.all(color: colors.secondary)
+                                        : null,
+                                  ),
+                                  child: Text(
+                                    '${reaction.emoji} ${reaction.count}',
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
