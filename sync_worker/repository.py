@@ -52,6 +52,11 @@ class ComunicacionesRepository:
                            responsable_usuario_id,responsable_nombre,estado,created_at)
                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,NULL,%s,%s)
                         ON CONFLICT (graph_message_id) DO UPDATE SET
+                          mailbox=excluded.mailbox,
+                          etiqueta=COALESCE(
+                            excluded.etiqueta,
+                            comunicaciones_sin_asignar.etiqueta
+                          ),
                           payload_json=excluded.payload_json,
                           estado=CASE
                             WHEN excluded.estado='gestionado' THEN 'gestionado'
@@ -95,6 +100,18 @@ class ComunicacionesRepository:
     def list_unmanaged_message_ids(self, mailbox: str) -> list[str]:
         """Lista correos pendientes visibles en la bandeja documental."""
         with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
+            # Versiones antiguas del escritorio podian crear primero la fila
+            # con mailbox vacio. El payload del worker conserva el buzon real;
+            # se repara antes de conciliar con el estado leido de Graph.
+            conn.execute(
+                """
+                UPDATE comunicaciones_sin_asignar
+                SET mailbox=%s
+                WHERE TRIM(COALESCE(mailbox,''))=''
+                  AND LOWER(COALESCE(payload_json::jsonb->>'mailbox',''))=LOWER(%s)
+                """,
+                (mailbox, mailbox),
+            )
             rows = conn.execute(
                 """
                 SELECT graph_message_id

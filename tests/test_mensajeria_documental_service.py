@@ -142,6 +142,20 @@ def test_gestion_documental_usa_backend_para_adjuntos_de_correo(monkeypatch):
     assert service._graph is backend
 
 
+def test_adjuntos_recuperan_el_buzon_desde_payload_heredado():
+    graph = _GraphCorreo()
+    service = GestionDocumentalService(_GestorCorreo(), graph=graph)
+
+    attachments = service.listar_adjuntos_entrada_correo({
+        "graph_message_id": "graph-legacy",
+        "mailbox": "",
+        "payload_json": '{"mailbox": "oficina@gestinem.es"}',
+    })
+
+    assert attachments == [{"id": "adj-1", "name": "factura.pdf"}]
+    assert graph.listado == ("oficina@gestinem.es", "graph-legacy")
+
+
 def test_clasificar_correo_usa_la_misma_bandeja_y_conserva_el_buzon(
     tmp_path, monkeypatch,
 ):

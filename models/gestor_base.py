@@ -4101,7 +4101,15 @@ class GestorBase:
                     payload = {}
                 if not bool(payload.get("tiene_adjuntos")):
                     continue
-                mailbox = str(row.get("mailbox") or "").strip().lower()
+                mailbox = str(
+                    row.get("mailbox") or payload.get("mailbox") or ""
+                ).strip().lower()
+                if not mailbox:
+                    etiqueta_buzon = str(row.get("etiqueta") or "").casefold()
+                    if "documentacion" in etiqueta_buzon:
+                        mailbox = "documentacion@gestinem.es"
+                    elif "oficina" in etiqueta_buzon:
+                        mailbox = "oficina@gestinem.es"
                 label = "Documentacion" if mailbox.startswith("documentacion@") else "Oficina"
                 result.append({
                     **row,
@@ -4109,6 +4117,7 @@ class GestorBase:
                     "entrada_id": str(row["graph_message_id"]),
                     "codigo_empresa": row.get("sugerencia_codigo_empresa") or "",
                     "empresa_nombre": row.get("sugerencia_nombre") or "",
+                    "mailbox": mailbox,
                     "nombre_original": row.get("asunto") or "(Sin asunto)",
                     "canal": "correo",
                     "origen_label": f"Correo {label}",

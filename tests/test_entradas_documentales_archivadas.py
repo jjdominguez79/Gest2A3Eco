@@ -125,7 +125,11 @@ class _DocumentalConn:
                 "mailbox": "documentacion@gestinem.es",
                 "sugerencia_codigo_empresa": "E00001",
                 "sugerencia_nombre": "",
-                "payload_json": '{"tiene_adjuntos": true}',
+                "mailbox": "",
+                "payload_json": (
+                    '{"tiene_adjuntos": true, '
+                    '"mailbox": "documentacion@gestinem.es"}'
+                ),
                 "asunto": "Factura", "fecha": "2026-10-07T10:00:00",
             }])
         return _Result([])
@@ -140,3 +144,4 @@ def test_entrada_documental_incluye_nombre_cliente_y_responsable():
 
     assert rows[0]["empresa_nombre"] == "Cliente Uno"
     assert rows[0]["responsable"] == "Maria"
+    assert rows[0]["mailbox"] == "documentacion@gestinem.es"

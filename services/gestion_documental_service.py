@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import json
 import logging
 import mimetypes
 import re
@@ -63,6 +64,31 @@ class GestionDocumentalService:
 
     def categorias(self) -> list[dict]:
         return self._gestor.listar_categorias_documentales()
+
+    @staticmethod
+    def _mailbox_entrada(entrada: dict) -> str:
+        mailbox = str(entrada.get("mailbox") or "").strip().lower()
+        if not mailbox:
+            try:
+                payload = json.loads(entrada.get("payload_json") or "{}")
+            except (TypeError, ValueError):
+                payload = {}
+            mailbox = str(payload.get("mailbox") or "").strip().lower()
+        if not mailbox:
+            origen = " ".join((
+                str(entrada.get("etiqueta") or ""),
+                str(entrada.get("origen_label") or ""),
+            )).casefold()
+            if "documentacion" in origen:
+                mailbox = "documentacion@gestinem.es"
+            elif "oficina" in origen:
+                mailbox = "oficina@gestinem.es"
+        if "@" not in mailbox:
+            raise ValueError(
+                "No se ha podido identificar el buzon de origen del correo. "
+                "Pulsa Actualizar y vuelve a intentarlo."
+            )
+        return mailbox
 
     def archivar_adjuntos_correo(
         self, *, codigo_empresa: str, ejercicio: int, mailbox: str,
@@ -183,7 +209,7 @@ class GestionDocumentalService:
                 or entrada.get("entrada_id")
                 or ""
             )
-            mailbox = str(entrada.get("mailbox") or "")
+            mailbox = self._mailbox_entrada(entrada)
             if selecciones_adjuntos is not None:
                 decisions = [
                     {
@@ -273,7 +299,7 @@ class GestionDocumentalService:
 
     def listar_adjuntos_entrada_correo(self, entrada: dict) -> list[dict]:
         return self._graph.list_attachments(
-            mailbox=str(entrada.get("mailbox") or ""),
+            mailbox=self._mailbox_entrada(entrada),
             message_id=str(
                 entrada.get("graph_message_id")
                 or entrada.get("entrada_id")
@@ -290,7 +316,7 @@ class GestionDocumentalService:
             or entrada.get("entrada_id")
             or ""
         )
-        mailbox = str(entrada.get("mailbox") or "")
+        mailbox = self._mailbox_entrada(entrada)
         summary = ArchiveSummary()
         for attachment in self.listar_adjuntos_entrada_correo(entrada):
             attachment_id = str(attachment.get("id") or "")
@@ -326,7 +352,7 @@ class GestionDocumentalService:
 
     def listar_opciones_clasificacion_correo(self, entrada: dict) -> list[dict]:
         """Despliega los ZIP para seleccionar documentos, no el contenedor."""
-        mailbox = str(entrada.get("mailbox") or "")
+        mailbox = self._mailbox_entrada(entrada)
         graph_id = str(
             entrada.get("graph_message_id")
             or entrada.get("entrada_id")
