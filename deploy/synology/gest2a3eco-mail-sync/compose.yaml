@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: gest2a3eco-mail-sync-mail-sync:documental-v2
     container_name: gest2a3eco-mail-sync
     restart: unless-stopped
     read_only: true

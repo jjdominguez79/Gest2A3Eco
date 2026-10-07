@@ -34,18 +34,6 @@ class ComunicacionesRepository:
                         (data["graph_message_id"],),
                     ).fetchone()
                     if existing:
-                        if data["leido"]:
-                            conn.execute(
-                                """
-                                UPDATE comunicaciones
-                                SET estado='gestionado',updated_at=%s
-                                WHERE id=%s AND estado<>'gestionado'
-                                """,
-                                (
-                                    datetime.now().astimezone().isoformat(timespec="seconds"),
-                                    existing["comunicacion_id"],
-                                ),
-                            )
                         duplicates += 1
                         continue
                     queued = conn.execute(
@@ -125,39 +113,22 @@ class ComunicacionesRepository:
         return [str(row["graph_message_id"]) for row in rows]
 
     def mark_messages_managed(self, mailbox: str, message_ids: set[str]) -> int:
-        """Marca como gestionados los correos que ya estan leidos en Outlook."""
+        """Marca como gestionados los correos de la bandeja documental."""
         ids = sorted({str(value or "").strip() for value in message_ids if value})
         if not ids:
             return 0
-        now = datetime.now().astimezone().isoformat(timespec="seconds")
         with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
-            with conn.transaction():
-                pending = conn.execute(
-                    """
-                    UPDATE comunicaciones_sin_asignar
-                    SET estado='gestionado'
-                    WHERE LOWER(mailbox)=LOWER(%s)
-                      AND graph_message_id=ANY(%s)
-                      AND estado<>'gestionado'
-                    """,
-                    (mailbox, ids),
-                ).rowcount
-                assigned = conn.execute(
-                    """
-                    UPDATE comunicaciones c
-                    SET estado='gestionado',updated_at=%s
-                    WHERE c.descartado=0 AND c.estado<>'gestionado'
-                      AND EXISTS (
-                        SELECT 1
-                        FROM comunicaciones_mensajes m
-                        WHERE m.comunicacion_id=c.id
-                          AND LOWER(m.mailbox)=LOWER(%s)
-                          AND m.graph_message_id=ANY(%s)
-                      )
-                    """,
-                    (now, mailbox, ids),
-                ).rowcount
-        return int(pending or 0) + int(assigned or 0)
+            pending = conn.execute(
+                """
+                UPDATE comunicaciones_sin_asignar
+                SET estado='gestionado'
+                WHERE LOWER(mailbox)=LOWER(%s)
+                  AND graph_message_id=ANY(%s)
+                  AND estado<>'gestionado'
+                """,
+                (mailbox, ids),
+            ).rowcount
+        return int(pending or 0)
 
     def get_delta(self, mailbox: str) -> str:
         with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
