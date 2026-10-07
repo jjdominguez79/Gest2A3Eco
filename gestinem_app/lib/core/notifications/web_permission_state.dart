@@ -37,9 +37,7 @@ class WebNotifPermissionNotifier
           .getNotificationSettings();
       // El permiso del navegador no demuestra que exista un token FCM ni que
       // el backend lo haya registrado. Solo el servicio puede marcar authorized.
-      state = settings.authorizationStatus == AuthorizationStatus.denied
-          ? NotificationPermissionState.denied
-          : NotificationPermissionState.available;
+      applyDetectedBrowserPermission(settings.authorizationStatus);
     } catch (_) {
       // Firebase no esta inicializado todavia o las credenciales son invalidas.
       // Permanecemos en [available] para mostrar el boton de activacion.
@@ -79,5 +77,17 @@ class WebNotifPermissionNotifier
   /// Sincroniza el resultado real de token + alta en el backend.
   void syncRegistration(NotificationPermissionState value) {
     state = value;
+  }
+
+  /// Aplica la lectura inicial solo si no ha comenzado otra operacion.
+  ///
+  /// La consulta al navegador es asincrona y puede terminar despues de que el
+  /// token ya se haya registrado. En ese caso no debe sobrescribir authorized.
+  @visibleForTesting
+  void applyDetectedBrowserPermission(AuthorizationStatus status) {
+    if (state != NotificationPermissionState.available) return;
+    state = status == AuthorizationStatus.denied
+        ? NotificationPermissionState.denied
+        : NotificationPermissionState.available;
   }
 }

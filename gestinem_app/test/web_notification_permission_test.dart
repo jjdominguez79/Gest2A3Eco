@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:gestinem/core/api/api_client.dart';
 import 'package:gestinem/core/notifications/notifications_service.dart';
 import 'package:gestinem/core/notifications/web_permission_state.dart';
@@ -192,6 +193,20 @@ void main() {
       addTearDown(container.dispose);
 
       container.read(webNotifPermissionProvider.notifier).markGranted();
+
+      expect(
+        container.read(webNotifPermissionProvider),
+        NotificationPermissionState.authorized,
+      );
+    });
+
+    test('la deteccion inicial no pisa un registro ya confirmado', () {
+      final container = _makeContainer(_FakeNotificationsService());
+      addTearDown(container.dispose);
+      final notifier = container.read(webNotifPermissionProvider.notifier);
+
+      notifier.markGranted();
+      notifier.applyDetectedBrowserPermission(AuthorizationStatus.denied);
 
       expect(
         container.read(webNotifPermissionProvider),

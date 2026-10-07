@@ -27,7 +27,7 @@ class WebNotificationPermissionBanner extends ConsumerWidget {
         message: 'Activando notificaciones\u2026',
         color: Colors.blue.shade50,
       ),
-      NotificationPermissionState.denied => _DeniedBanner(),
+      NotificationPermissionState.denied => const _DeniedBanner(),
       NotificationPermissionState.configError => const _RetryBanner(),
     };
   }
@@ -60,16 +60,27 @@ class _ActivateBanner extends ConsumerWidget {
   }
 }
 
-class _DeniedBanner extends StatelessWidget {
+class _DeniedBanner extends ConsumerWidget {
+  const _DeniedBanner();
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final session = ref.read(sessionProvider).valueOrNull;
+    final api = ref.read(apiClientProvider);
     return _BannerShell(
       color: Colors.red.shade50,
       icon: Icons.notifications_off,
       message:
           'Notificaciones bloqueadas. Para habilitarlas: '
           'haz clic en el icono de candado junto a la URL \u2192 Notificaciones \u2192 Permitir.',
-      action: null,
+      action: TextButton(
+        onPressed: session == null
+            ? null
+            : () => ref
+                  .read(webNotifPermissionProvider.notifier)
+                  .activate(session, api),
+        child: const Text('Comprobar de nuevo'),
+      ),
     );
   }
 }

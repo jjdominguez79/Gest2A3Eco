@@ -1,6 +1,6 @@
 {
-  "version": "1.9.5",
-  "tag": "v1.9.5",
-  "changelog": "Se añade la funcionalidad de las ayudas y se mejora la revision OCR.",
+  "version": "1.9.6",
+  "tag": "v1.9.6",
+  "changelog": "Se pueden previsualizar las facturas antes de imprimir.",
   "force_update": true
 }
