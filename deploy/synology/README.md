@@ -123,6 +123,7 @@ El usuario tecnico necesita, como minimo:
 ```sql
 GRANT SELECT, INSERT, UPDATE ON TABLE comunicaciones_sin_asignar TO gest2a3eco_sync;
 GRANT SELECT, INSERT, UPDATE ON TABLE comunicaciones_sync TO gest2a3eco_sync;
+GRANT SELECT ON TABLE comunicaciones_mensajes TO gest2a3eco_sync;
 GRANT SELECT, INSERT, UPDATE ON TABLE mensajeria_adjuntos_entrada TO gest2a3eco_sync;
 GRANT SELECT ON TABLE empresas TO gest2a3eco_sync;
 GRANT SELECT ON TABLE terceros TO gest2a3eco_sync;
