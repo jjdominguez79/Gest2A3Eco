@@ -67,10 +67,13 @@ class _GestorCorreo(_Gestor):
         self, graph_id, codigo_empresa, usuario_id, usuario,
     ):
         self.asignacion = (graph_id, codigo_empresa, usuario_id, usuario)
-        return True
+        return ("comunicacion-1", "mensaje-1")
 
     def vincular_documentos_graph_comunicacion(self, graph_id):
         self.vinculado = graph_id
+
+    def cambiar_estado_comunicacion(self, comunicacion_id, estado, usuario_id):
+        self.estado_comunicacion = (comunicacion_id, estado, usuario_id)
 
 
 def test_adjunto_chat_se_archiva_como_factura_y_elimina_entrada(tmp_path, monkeypatch):
@@ -144,6 +147,7 @@ def test_clasificar_correo_usa_la_misma_bandeja_y_conserva_el_buzon(
     assert gestor.saved["buzon_origen"] == "oficina@gestinem.es"
     assert gestor.asignacion == ("graph-1", "E00001", 17, "Empleado")
     assert gestor.vinculado == "graph-1"
+    assert gestor.estado_comunicacion == ("comunicacion-1", "gestionado", 17)
     assert graph.marcado_leido == ("oficina@gestinem.es", "graph-1")
     assert summary.warnings == []
 
@@ -170,6 +174,7 @@ def test_clasificar_correo_no_revierte_el_archivo_si_outlook_falla(
     )
 
     assert summary.document_ids == ["doc-correo-1"]
+    assert gestor.estado_comunicacion == ("comunicacion-1", "gestionado", 17)
     assert summary.warnings == [
         "El correo se ha archivado, pero Outlook no pudo marcarlo como leido: "
         "Graph no disponible"

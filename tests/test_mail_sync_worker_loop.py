@@ -113,3 +113,37 @@ def test_sincroniza_documentacion_sin_importar_correo_personal():
     ]
     assert [item["id"] for item in worker.repository.calls[1][1]] == ["docs-1"]
     assert worker.repository.calls[1][2] == {"label": "Documentacion"}
+
+
+class ReconciliationRepositoryStub(RepositoryStub):
+    def __init__(self):
+        super().__init__(delta="delta-anterior")
+        self.marked = []
+
+    def list_unmanaged_message_ids(self, mailbox):
+        assert mailbox == "oficina@gestinem.es"
+        return ["read-1", "unread-1"]
+
+    def mark_messages_managed(self, mailbox, message_ids):
+        self.marked.append((mailbox, message_ids))
+        return len(message_ids)
+
+
+class ReconciliationGraphStub(GraphStub):
+    def get_read_message_ids(self, *, mailbox, message_ids):
+        assert mailbox == "oficina@gestinem.es"
+        assert message_ids == ["read-1", "unread-1"]
+        return {"read-1"}
+
+
+def test_regulariza_pendientes_leidos_una_vez_por_intervalo():
+    worker = worker_stub(delta="delta-anterior")
+    worker.repository = ReconciliationRepositoryStub()
+    worker.graph = ReconciliationGraphStub()
+
+    worker.run_once()
+    worker.run_once()
+
+    assert worker.repository.marked == [
+        ("oficina@gestinem.es", {"read-1"}),
+    ]

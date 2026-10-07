@@ -1,6 +1,10 @@
 from unittest.mock import MagicMock
 
-from views.ui_adjuntos_mensajeria import UIAdjuntosMensajeria, _opciones_origen
+from views.ui_adjuntos_mensajeria import (
+    UIAdjuntosMensajeria,
+    _opciones_origen,
+    _resumen_pendientes_por_origen,
+)
 
 
 def _vista_sin_tk(item):
@@ -78,3 +82,18 @@ def test_filtro_mensajeria_agrupa_etiquetas_nuevas_y_antiguas():
     )
 
     assert [item["id"] for item in filtrados] == ["nuevo", "antiguo"]
+
+
+def test_resumen_pendientes_muestra_cada_buzon_y_mensajeria():
+    datos = [
+        {"origen_label": "Correo Oficina", "canal": "correo"},
+        {"origen_label": "Correo Documentacion", "canal": "correo"},
+        {"origen_label": "Correo Documentacion", "canal": "correo"},
+        {"origen_label": "Mensajeria de clientes", "canal": "mensajeria"},
+    ]
+
+    assert _resumen_pendientes_por_origen(datos) == {
+        "Correo Oficina": 1,
+        "Correo Documentacion": 2,
+        "Mensajeria": 1,
+    }

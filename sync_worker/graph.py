@@ -91,6 +91,66 @@ class GraphApplicationMailClient:
             raise RuntimeError("Microsoft Graph no devolvio el delta de sincronizacion.")
         return GraphSyncResult(messages=messages, delta_link=final_delta)
 
+    def get_read_message_ids(
+        self, *, mailbox: str, message_ids: list[str],
+    ) -> set[str]:
+        """Devuelve los identificadores que Microsoft 365 marca como leidos.
+
+        Graph limita ``$batch`` a 20 peticiones. Los identificadores son los
+        inmutables obtenidos durante la sincronizacion, por lo que siguen
+        siendo validos aunque el usuario haya movido el correo de carpeta.
+        """
+        unique_ids = list(dict.fromkeys(
+            str(message_id or "").strip() for message_id in message_ids
+            if str(message_id or "").strip()
+        ))
+        if not unique_ids:
+            return set()
+        headers = {
+            "Authorization": f"Bearer {self._token()}",
+            "Content-Type": "application/json",
+        }
+        read_ids: set[str] = set()
+        encoded_mailbox = quote(mailbox, safe="")
+        for start in range(0, len(unique_ids), 20):
+            chunk = unique_ids[start:start + 20]
+            request_ids = {str(index): message_id for index, message_id in enumerate(chunk)}
+            response = self._session.post(
+                f"{GRAPH_ROOT}/$batch",
+                headers=headers,
+                json={"requests": [
+                    {
+                        "id": request_id,
+                        "method": "GET",
+                        "url": (
+                            f"/users/{encoded_mailbox}/messages/"
+                            f"{quote(message_id, safe='')}?$select=isRead"
+                        ),
+                        "headers": {"Prefer": 'IdType="ImmutableId"'},
+                    }
+                    for request_id, message_id in request_ids.items()
+                ]},
+                timeout=45,
+            )
+            if response.status_code != 200:
+                raise RuntimeError(self._error(response))
+            for item in response.json().get("responses", []):
+                request_id = str(item.get("id") or "")
+                status = int(item.get("status") or 0)
+                if status == 404:
+                    # El mensaje puede haberse eliminado definitivamente.
+                    continue
+                if status < 200 or status >= 300:
+                    detail = (item.get("body") or {}).get("error", {})
+                    raise RuntimeError(
+                        detail.get("message") or f"Graph batch HTTP {status}"
+                    )
+                if (item.get("body") or {}).get("isRead") is True:
+                    message_id = request_ids.get(request_id)
+                    if message_id:
+                        read_ids.add(message_id)
+        return read_ids
+
     @staticmethod
     def _error(response) -> str:
         try:

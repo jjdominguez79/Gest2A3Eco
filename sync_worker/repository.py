@@ -24,15 +24,51 @@ class ComunicacionesRepository:
                 conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"mail-sync:{mailbox}",))
                 for raw in messages:
                     data = self._normalize(raw, mailbox, label=label)
-                    suggestion = self._find_company(conn, data["remitente"])
+                    existing = conn.execute(
+                        """
+                        SELECT comunicacion_id
+                        FROM comunicaciones_mensajes
+                        WHERE graph_message_id=%s
+                        LIMIT 1
+                        """,
+                        (data["graph_message_id"],),
+                    ).fetchone()
+                    if existing:
+                        if data["leido"]:
+                            conn.execute(
+                                """
+                                UPDATE comunicaciones
+                                SET estado='gestionado',updated_at=%s
+                                WHERE id=%s AND estado<>'gestionado'
+                                """,
+                                (
+                                    datetime.now().astimezone().isoformat(timespec="seconds"),
+                                    existing["comunicacion_id"],
+                                ),
+                            )
+                        duplicates += 1
+                        continue
+                    queued = conn.execute(
+                        "SELECT 1 FROM comunicaciones_sin_asignar "
+                        "WHERE graph_message_id=%s",
+                        (data["graph_message_id"],),
+                    ).fetchone()
+                    suggestion = None if queued else self._find_company(
+                        conn, data["remitente"],
+                    )
                     cursor = conn.execute(
                         """
                         INSERT INTO comunicaciones_sin_asignar
                           (graph_message_id,mailbox,etiqueta,remitente,asunto,fecha,cuerpo_html,
                            payload_json,sugerencia_codigo_empresa,sugerencia_nombre,
-                           responsable_usuario_id,responsable_nombre,created_at)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,NULL,%s)
-                        ON CONFLICT DO NOTHING
+                           responsable_usuario_id,responsable_nombre,estado,created_at)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,NULL,%s,%s)
+                        ON CONFLICT (graph_message_id) DO UPDATE SET
+                          payload_json=excluded.payload_json,
+                          estado=CASE
+                            WHEN excluded.estado='gestionado' THEN 'gestionado'
+                            ELSE comunicaciones_sin_asignar.estado
+                          END
                         """,
                         (
                             data["graph_message_id"], mailbox,
@@ -42,13 +78,14 @@ class ComunicacionesRepository:
                             json.dumps(data, ensure_ascii=False),
                             (suggestion or {}).get("codigo"),
                             (suggestion or {}).get("nombre"),
+                            "gestionado" if data["leido"] else "pendiente",
                             datetime.now().astimezone().isoformat(timespec="seconds"),
                         ),
                     )
-                    if cursor.rowcount:
-                        inserted += 1
-                    else:
+                    if queued:
                         duplicates += 1
+                    elif cursor.rowcount:
+                        inserted += 1
                 conn.execute(
                     """
                     INSERT INTO comunicaciones_sync
@@ -66,6 +103,69 @@ class ComunicacionesRepository:
                     ),
                 )
         return inserted, duplicates
+
+    def list_unmanaged_message_ids(self, mailbox: str) -> list[str]:
+        """Lista correos pendientes cuyo estado debe contrastarse con Outlook."""
+        with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
+            rows = conn.execute(
+                """
+                SELECT graph_message_id
+                FROM comunicaciones_sin_asignar
+                WHERE LOWER(mailbox)=LOWER(%s) AND descartado=0
+                  AND estado<>'gestionado'
+                UNION
+                SELECT ultimo.graph_message_id
+                FROM comunicaciones c
+                JOIN LATERAL (
+                  SELECT m.graph_message_id,m.mailbox
+                  FROM comunicaciones_mensajes m
+                  WHERE m.comunicacion_id=c.id
+                    AND m.direccion='entrante'
+                    AND COALESCE(m.graph_message_id,'')<>''
+                  ORDER BY m.fecha DESC
+                  LIMIT 1
+                ) ultimo ON TRUE
+                WHERE c.descartado=0 AND c.estado<>'gestionado'
+                  AND LOWER(ultimo.mailbox)=LOWER(%s)
+                """,
+                (mailbox, mailbox),
+            ).fetchall()
+        return [str(row["graph_message_id"]) for row in rows]
+
+    def mark_messages_managed(self, mailbox: str, message_ids: set[str]) -> int:
+        """Marca como gestionados los correos que ya estan leidos en Outlook."""
+        ids = sorted({str(value or "").strip() for value in message_ids if value})
+        if not ids:
+            return 0
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
+            with conn.transaction():
+                pending = conn.execute(
+                    """
+                    UPDATE comunicaciones_sin_asignar
+                    SET estado='gestionado'
+                    WHERE LOWER(mailbox)=LOWER(%s)
+                      AND graph_message_id=ANY(%s)
+                      AND estado<>'gestionado'
+                    """,
+                    (mailbox, ids),
+                ).rowcount
+                assigned = conn.execute(
+                    """
+                    UPDATE comunicaciones c
+                    SET estado='gestionado',updated_at=%s
+                    WHERE c.descartado=0 AND c.estado<>'gestionado'
+                      AND EXISTS (
+                        SELECT 1
+                        FROM comunicaciones_mensajes m
+                        WHERE m.comunicacion_id=c.id
+                          AND LOWER(m.mailbox)=LOWER(%s)
+                          AND m.graph_message_id=ANY(%s)
+                      )
+                    """,
+                    (now, mailbox, ids),
+                ).rowcount
+        return int(pending or 0) + int(assigned or 0)
 
     def get_delta(self, mailbox: str) -> str:
         with psycopg.connect(self._dsn, row_factory=dict_row) as conn:

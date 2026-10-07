@@ -190,6 +190,12 @@ class GestionDocumentalService:
             if not assigned:
                 raise RuntimeError("El correo ya no esta pendiente de asignacion.")
             self._gestor.vincular_documentos_graph_comunicacion(graph_id)
+            # La clasificacion documental completa la gestion funcional del
+            # correo. Outlook se actualiza a continuacion, pero un fallo de
+            # red no debe volver a dejarlo pendiente en Comunicaciones.
+            self._gestor.cambiar_estado_comunicacion(
+                assigned[0], "gestionado", int(usuario_id),
+            )
             try:
                 self._graph.mark_as_read(mailbox=mailbox, message_id=graph_id)
             except Exception as exc:

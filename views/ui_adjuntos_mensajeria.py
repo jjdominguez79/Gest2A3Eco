@@ -79,6 +79,15 @@ def _opciones_origen(datos: list[dict]) -> tuple[str, ...]:
     return ("Todos", *_ORIGENES_FILTRO, *extras)
 
 
+def _resumen_pendientes_por_origen(datos: list[dict]) -> dict[str, int]:
+    """Cuenta la cola documental pendiente con las mismas reglas del filtro."""
+    resumen = {origen: 0 for origen in _ORIGENES_FILTRO}
+    for item in datos:
+        origen = _origen_para_filtro(item)
+        resumen[origen] = resumen.get(origen, 0) + 1
+    return resumen
+
+
 class UIAdjuntosMensajeria(ttk.Frame):
     """Panel compatible que unifica correo y mensajeria en una sola bandeja."""
 
@@ -179,28 +188,46 @@ class UIAdjuntosMensajeria(ttk.Frame):
                         solo_pendientes=solo_pendientes,
                         solo_archivadas=solo_archivadas,
                     )
-                    pendientes = len(self._gestor.listar_entradas_documentales(
-                        self._filtro_empresa or "", solo_pendientes=True,
-                    ))
+                    datos_pendientes = (
+                        datos if solo_pendientes else
+                        self._gestor.listar_entradas_documentales(
+                            self._filtro_empresa or "", solo_pendientes=True,
+                        )
+                    )
+                    pendientes = len(datos_pendientes)
                 else:
                     datos = self._gestor.listar_adjuntos_mensajeria(filtro)
                     pendientes = self._gestor.contar_adjuntos_mensajeria_pendientes(
                         self._filtro_empresa,
                     )
+                    datos_pendientes = datos if solo_pendientes else []
+                resumen = _resumen_pendientes_por_origen(datos_pendientes)
                 error = None
             except Exception as exc:
-                datos, pendientes, error = [], 0, exc
-            self.after(0, lambda: self._actualizar_ui(datos, pendientes, error))
+                datos, pendientes, resumen, error = [], 0, {}, exc
+            self.after(
+                0,
+                lambda: self._actualizar_ui(datos, pendientes, resumen, error),
+            )
         threading.Thread(target=_bg, daemon=True).start()
 
-    def _actualizar_ui(self, datos: list[dict], pendientes: int, error=None) -> None:
+    def _actualizar_ui(
+        self, datos: list[dict], pendientes: int,
+        resumen: dict[str, int] | None = None, error=None,
+    ) -> None:
         self._cache = datos
         valores_origen = _opciones_origen(datos)
         self._origen_combo["values"] = valores_origen
         if self._origen_filtro.get() not in valores_origen:
             self._origen_filtro.set("Todos")
         self._aplicar_filtro_origen()
-        txt = f"Pendientes: {pendientes}" if pendientes else "Sin pendientes"
+        resumen = resumen or {}
+        txt = (
+            f"Pendientes: {pendientes}  |  "
+            f"Oficina: {resumen.get('Correo Oficina', 0)}  |  "
+            f"Documentacion: {resumen.get('Correo Documentacion', 0)}  |  "
+            f"Mensajeria: {resumen.get('Mensajeria', 0)}"
+        )
         self._lbl_contador.configure(text=txt)
         if self._on_count_changed:
             self._on_count_changed(pendientes)

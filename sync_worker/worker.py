@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import signal
 import threading
+import time
 
 from sync_worker.config import MailSource, WorkerConfig
 from sync_worker.graph import GraphApplicationMailClient
@@ -10,6 +11,7 @@ from sync_worker.repository import ComunicacionesRepository
 
 
 LOG = logging.getLogger("gest2a3eco.mail_sync")
+READ_RECONCILIATION_INTERVAL_SECONDS = 300
 
 
 class MailSyncWorker:
@@ -23,6 +25,7 @@ class MailSyncWorker:
         )
         self.repository = ComunicacionesRepository(config.postgres_dsn)
         self.stop_event = threading.Event()
+        self._read_reconciled_at: dict[str, float] = {}
 
     @staticmethod
     def _matches_recipient(message: dict, recipient_filter: str) -> bool:
@@ -65,6 +68,36 @@ class MailSyncWorker:
         LOG.info(
             "Sincronizacion de %s completada: recibidos=%d nuevos=%d duplicados=%d",
             source.mailbox, len(messages), inserted, duplicates,
+        )
+        self._reconcile_read_messages(source)
+
+    def _reconcile_read_messages(self, source: MailSource) -> None:
+        """Regulariza pendientes historicos que ya estan leidos en Outlook."""
+        list_ids = getattr(self.repository, "list_unmanaged_message_ids", None)
+        get_read = getattr(self.graph, "get_read_message_ids", None)
+        mark_managed = getattr(self.repository, "mark_messages_managed", None)
+        if not all(callable(method) for method in (list_ids, get_read, mark_managed)):
+            return
+        now = time.monotonic()
+        last_runs = getattr(self, "_read_reconciled_at", {})
+        last_run = last_runs.get(source.sync_key)
+        if last_run is not None and now - last_run < READ_RECONCILIATION_INTERVAL_SECONDS:
+            return
+        try:
+            pending_ids = list_ids(source.mailbox)
+            read_ids = get_read(mailbox=source.mailbox, message_ids=pending_ids)
+            updated = mark_managed(source.mailbox, read_ids)
+        except Exception as exc:
+            LOG.warning(
+                "No se pudo conciliar el estado leido de %s: %s",
+                source.mailbox, exc,
+            )
+            return
+        last_runs[source.sync_key] = now
+        self._read_reconciled_at = last_runs
+        LOG.info(
+            "Conciliacion de leidos de %s: revisados=%d gestionados=%d",
+            source.mailbox, len(pending_ids), updated,
         )
 
     def run_once(self) -> None:
