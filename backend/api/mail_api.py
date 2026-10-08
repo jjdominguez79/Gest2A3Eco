@@ -112,6 +112,17 @@ def _graph_request_error(response, operation: str) -> HTTPException:
     )
 
 
+def _graph_item_headers(*, json_content: bool = False) -> dict[str, str]:
+    """Cabeceras para operar con los identificadores inmutables del worker."""
+    headers = {
+        **graph_headers(get_settings()),
+        "Prefer": 'IdType="ImmutableId"',
+    }
+    if json_content:
+        headers["Content-Type"] = "application/json"
+    return headers
+
+
 def _validate_mailbox(mailbox: str, *, include_read_only: bool = False) -> str:
     configured_mailbox = default_sender()
     mailbox = str(mailbox or "").strip()
@@ -194,7 +205,7 @@ def list_backend_attachments(
                 mailbox, message_id,
                 "/attachments?$select=id,name,size,contentType,isInline",
             ),
-            headers=graph_headers(get_settings()), timeout=45,
+            headers=_graph_item_headers(), timeout=45,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -222,7 +233,7 @@ def download_backend_attachment(
                 mailbox, message_id,
                 f"/attachments/{quote(attachment_id, safe='')}",
             ),
-            headers=graph_headers(get_settings()), timeout=60,
+            headers=_graph_item_headers(), timeout=60,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -247,7 +258,7 @@ def mark_backend_message_read(
     try:
         response = requests.patch(
             _graph_url(mailbox, message_id),
-            headers={**graph_headers(get_settings()), "Content-Type": "application/json"},
+            headers=_graph_item_headers(json_content=True),
             json={"isRead": True}, timeout=45,
         )
     except RuntimeError as exc:
@@ -270,8 +281,7 @@ async def reply_backend_mail(
     if sum(len(item["content"]) for item in attachments) > MAX_TOTAL_BYTES:
         raise HTTPException(status_code=413, detail="Los adjuntos superan el limite de 20 MB")
     try:
-        headers = graph_headers(get_settings())
-        json_headers = {**headers, "Content-Type": "application/json"}
+        json_headers = _graph_item_headers(json_content=True)
         created = requests.post(
             _graph_url(mailbox, message_id, "/createReply"),
             headers=json_headers, json={}, timeout=45,

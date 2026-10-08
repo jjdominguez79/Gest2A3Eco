@@ -45,7 +45,10 @@ def test_endpoint_adjuntos_usa_graph_del_backend(monkeypatch):
 
     assert [item["id"] for item in result] == ["att-1"]
     assert "id%2Fcon%2Fbarra/attachments" in calls[0][0]
-    assert calls[0][1]["headers"] == {"Authorization": "Bearer backend"}
+    assert calls[0][1]["headers"] == {
+        "Authorization": "Bearer backend",
+        "Prefer": 'IdType="ImmutableId"',
+    }
 
 
 def test_endpoint_adjuntos_rechaza_otro_buzon(monkeypatch):
@@ -113,3 +116,4 @@ def test_endpoint_marca_mensaje_como_leido_en_graph(monkeypatch):
     assert "id%2Fcon%2Fbarra" in calls[0][0]
     assert calls[0][1]["json"] == {"isRead": True}
     assert calls[0][1]["headers"]["Content-Type"] == "application/json"
+    assert calls[0][1]["headers"]["Prefer"] == 'IdType="ImmutableId"'

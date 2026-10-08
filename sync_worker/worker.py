@@ -72,7 +72,7 @@ class MailSyncWorker:
         self._reconcile_read_messages(source)
 
     def _reconcile_read_messages(self, source: MailSource) -> None:
-        """Regulariza pendientes historicos que ya estan leidos en Outlook."""
+        """Regulariza pendientes ya leidos o eliminados en Outlook."""
         list_ids = getattr(self.repository, "list_unmanaged_message_ids", None)
         get_read = getattr(self.graph, "get_read_message_ids", None)
         mark_managed = getattr(self.repository, "mark_messages_managed", None)

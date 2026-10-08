@@ -126,3 +126,35 @@ def test_consulta_estados_leidos_en_lotes_de_veinte():
     assert len(client._session.calls) == 2
     first_request = client._session.calls[0][1]["json"]["requests"][0]
     assert first_request["headers"]["Prefer"] == 'IdType="ImmutableId"'
+
+
+class _BatchSessionWithMissing:
+    def post(self, _url, **kwargs):
+        responses = []
+        for request in kwargs["json"]["requests"]:
+            if request["id"] == "1":
+                responses.append({
+                    "id": request["id"],
+                    "status": 404,
+                    "body": {"error": {"message": "Item not found"}},
+                })
+            else:
+                responses.append({
+                    "id": request["id"],
+                    "status": 200,
+                    "body": {"isRead": False},
+                })
+        return _Response({"responses": responses})
+
+
+def test_considera_gestionado_un_mensaje_que_ya_no_existe_en_graph():
+    client = object.__new__(GraphApplicationMailClient)
+    client._session = _BatchSessionWithMissing()
+    client._token = lambda: "token"
+
+    result = client.get_read_message_ids(
+        mailbox="oficina@gestinem.es",
+        message_ids=["unread-1", "deleted-1"],
+    )
+
+    assert result == {"deleted-1"}

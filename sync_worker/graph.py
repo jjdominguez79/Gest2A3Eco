@@ -94,11 +94,14 @@ class GraphApplicationMailClient:
     def get_read_message_ids(
         self, *, mailbox: str, message_ids: list[str],
     ) -> set[str]:
-        """Devuelve los identificadores que Microsoft 365 marca como leidos.
+        """Devuelve los identificadores que ya no requieren gestion.
 
         Graph limita ``$batch`` a 20 peticiones. Los identificadores son los
         inmutables obtenidos durante la sincronizacion, por lo que siguen
         siendo validos aunque el usuario haya movido el correo de carpeta.
+        Un 404 significa que el mensaje ya no existe en el buzon (por ejemplo,
+        porque se elimino definitivamente) y tampoco debe seguir apareciendo
+        como pendiente en la bandeja documental.
         """
         unique_ids = list(dict.fromkeys(
             str(message_id or "").strip() for message_id in message_ids
@@ -138,7 +141,9 @@ class GraphApplicationMailClient:
                 request_id = str(item.get("id") or "")
                 status = int(item.get("status") or 0)
                 if status == 404:
-                    # El mensaje puede haberse eliminado definitivamente.
+                    message_id = request_ids.get(request_id)
+                    if message_id:
+                        read_ids.add(message_id)
                     continue
                 if status < 200 or status >= 300:
                     detail = (item.get("body") or {}).get("error", {})
