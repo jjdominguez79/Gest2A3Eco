@@ -18,7 +18,7 @@ from backend.api.config import get_settings
 INVITATION_MANUAL_PATH = (
     Path(__file__).resolve().parents[2] / "docs" / "Manual_Mensajeria_Gestinem.pdf"
 )
-INVITATION_EMAIL_VERSION = 1
+INVITATION_EMAIL_VERSION = 2
 INVITATION_EMAIL_SUBJECT = (
     "Nueva aplicación Gestinem y canales de comunicación desde el 1 de octubre"
 )
@@ -32,7 +32,7 @@ Además, las consultas y solicitudes generales enviadas mediante la aplicación 
 
 La aplicación se mejorará progresivamente para ofrecer a nuestros clientes una plataforma de facturación ágil y gratuita. También permitirá solicitar certificados de la Seguridad Social y de la Agencia Tributaria, consultar y obtener copias de sus impuestos y acceder a otros documentos y servicios del despacho en cualquier momento.
 
-Las aplicaciones para Android y Apple se encuentran actualmente en fase de publicación y todavía no están disponibles en sus respectivas tiendas. Mientras finaliza este proceso, puedes acceder a Gestinem directamente desde el navegador de tu móvil, tableta u ordenador, sin necesidad de instalar ninguna aplicación."""
+Gestinem Chat ya está disponible para Android en Google Play. También puedes acceder a Gestinem directamente desde el navegador de tu móvil, tableta u ordenador, sin necesidad de instalar ninguna aplicación. La versión para iPhone y iPad está en revisión por Apple y se publicará en App Store cuando sea aprobada."""
 INVITATION_EMAIL_CLOSING = """El enlace de activación es personal y estará disponible durante {{horas_caducidad}} horas.
 
 Te informamos también de que, a partir del 1 de octubre de 2026, la cuenta de WhatsApp del despacho quedará desactivada. Desde esa fecha no se atenderán comunicaciones enviadas por WhatsApp.
@@ -45,7 +45,7 @@ Las comunicaciones deberán realizarse mediante la aplicación Gestinem o a trav
 
 También tendrás siempre la posibilidad de contactar directamente conmigo, como responsable del despacho, mediante mi correo electrónico personal o enviándome un mensaje privado desde la aplicación. Los mensajes privados únicamente serán accesibles para su destinatario.
 
-En el enlace al manual encontrarás los pasos necesarios para activar tu cuenta y comenzar a utilizar Gestinem desde el navegador.
+En el enlace al manual encontrarás los pasos necesarios para activar tu cuenta y comenzar a utilizar Gestinem desde Android o desde el navegador.
 
 Gracias por tu colaboración.
 

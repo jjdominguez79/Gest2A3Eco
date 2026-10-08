@@ -104,11 +104,12 @@ la compilacion web recibe la clave publica de Firebase y publica
   puede activar su cuenta y usar Gestinem directamente desde el navegador.
 - La respuesta de la API conserva tambien el deep link nativo
   `es.gestinem.app://auth/invite?token=...` para las versiones de tienda.
-- Cada invitacion adjunta `Manual_Mensajeria_Gestinem.pdf` y explica que las
-  aplicaciones Android y Apple estan en fase de publicacion y todavia no estan
-  disponibles en sus tiendas. La plantilla aprobada del comunicado es la
-  version 1 (`INVITATION_EMAIL_VERSION = 1`).
-- La version 1 explica la privacidad del canal, la atencion compartida de las
+- Cada invitacion enlaza `Manual_Mensajeria_Gestinem.pdf` y explica que Gestinem
+  Chat ya esta disponible en Google Play, que tambien puede utilizarse desde el
+  navegador y que la version para iPhone y iPad esta en revision por Apple. La
+  plantilla aprobada del comunicado es la version 2
+  (`INVITATION_EMAIL_VERSION = 2`).
+- La version 2 explica la privacidad del canal, la atencion compartida de las
   solicitudes generales, la evolucion prevista de los servicios y los canales
   validos desde el 1 de octubre de 2026.
 - La recuperacion de contrasena abre la ruta web equivalente y conserva su deep

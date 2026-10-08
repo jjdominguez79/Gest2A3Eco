@@ -143,7 +143,7 @@ def test_invitacion_incluye_enlace_en_html_y_texto_plano(monkeypatch):
     assert "https://api.example.test/api/v1/messaging/public/client-manual" in captured["text"]
 
 
-def test_invitacion_version_1_incluye_comunicado_aprobado(monkeypatch):
+def test_invitacion_version_2_incluye_comunicado_aprobado(monkeypatch):
     captured = {}
 
     def fake_send_mail(to, subject, html, **kwargs):
@@ -153,7 +153,7 @@ def test_invitacion_version_1_incluye_comunicado_aprobado(monkeypatch):
     monkeypatch.setattr(messaging_mail, "get_settings", _settings)
     monkeypatch.setattr(messaging_mail, "send_mail", fake_send_mail)
 
-    assert messaging_mail.INVITATION_EMAIL_VERSION == 1
+    assert messaging_mail.INVITATION_EMAIL_VERSION == 2
     assert messaging_mail.send_invitation(
         "ana@example.test", "Ana", "https://example.test/invite"
     )
@@ -164,7 +164,8 @@ def test_invitacion_version_1_incluye_comunicado_aprobado(monkeypatch):
     for expected in (
         "privacidad de las comunicaciones",
         "plataforma de facturación ágil y gratuita",
-        "Android y Apple",
+        "disponible para Android en Google Play",
+        "versión para iPhone y iPad está en revisión por Apple",
         "1 de octubre de 2026",
         "oficina@gestinem.es",
         "laboral@gestinem.es",
