@@ -81,6 +81,83 @@ void insertarEmoji(TextEditingController controller, String emoji) {
   );
 }
 
+Future<void> mostrarSelectorEmoticonos(
+  BuildContext context, {
+  required TextEditingController controller,
+  required FocusNode focusNode,
+}) async {
+  focusNode.unfocus();
+  await showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    builder: (sheetContext) => SafeArea(
+      top: false,
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520, maxHeight: 360),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 8, 8),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Emoticonos',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      key: const Key('close-emoji-picker'),
+                      tooltip: 'Cerrar',
+                      onPressed: () => Navigator.of(sheetContext).pop(),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: GridView.builder(
+                  key: const Key('emoji-grid'),
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 54,
+                    mainAxisSpacing: 4,
+                    crossAxisSpacing: 4,
+                  ),
+                  itemCount: emoticonosChat.length,
+                  itemBuilder: (_, index) {
+                    final emoji = emoticonosChat[index];
+                    return Semantics(
+                      label: 'Insertar emoticono',
+                      button: true,
+                      child: InkWell(
+                        key: Key('emoji-option-$index'),
+                        borderRadius: BorderRadius.circular(8),
+                        onTap: () => insertarEmoji(controller, emoji),
+                        child: Center(
+                          child: Text(
+                            emoji,
+                            style: const TextStyle(fontSize: 27),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+  if (context.mounted) focusNode.requestFocus();
+}
+
 class BotonSelectorEmoticonos extends StatelessWidget {
   const BotonSelectorEmoticonos({
     super.key,
@@ -93,84 +170,16 @@ class BotonSelectorEmoticonos extends StatelessWidget {
   final FocusNode focusNode;
   final bool enabled;
 
-  Future<void> _open(BuildContext context) async {
-    focusNode.unfocus();
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        top: false,
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520, maxHeight: 360),
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 8, 8),
-                  child: Row(
-                    children: [
-                      const Expanded(
-                        child: Text(
-                          'Emoticonos',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        key: const Key('close-emoji-picker'),
-                        tooltip: 'Cerrar',
-                        onPressed: () => Navigator.of(sheetContext).pop(),
-                        icon: const Icon(Icons.close),
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: GridView.builder(
-                    key: const Key('emoji-grid'),
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
-                    gridDelegate:
-                        const SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: 54,
-                          mainAxisSpacing: 4,
-                          crossAxisSpacing: 4,
-                        ),
-                    itemCount: emoticonosChat.length,
-                    itemBuilder: (_, index) {
-                      final emoji = emoticonosChat[index];
-                      return Semantics(
-                        label: 'Insertar emoticono',
-                        button: true,
-                        child: InkWell(
-                          key: Key('emoji-option-$index'),
-                          borderRadius: BorderRadius.circular(8),
-                          onTap: () => insertarEmoji(controller, emoji),
-                          child: Center(
-                            child: Text(
-                              emoji,
-                              style: const TextStyle(fontSize: 27),
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-    if (context.mounted) focusNode.requestFocus();
-  }
-
   @override
   Widget build(BuildContext context) => IconButton(
     tooltip: 'Añadir emoticono',
-    onPressed: enabled ? () => _open(context) : null,
+    onPressed: enabled
+        ? () => mostrarSelectorEmoticonos(
+            context,
+            controller: controller,
+            focusNode: focusNode,
+          )
+        : null,
     icon: const Icon(Icons.sentiment_satisfied_alt_outlined),
   );
 }

@@ -142,6 +142,72 @@ void main() {
     expect(adapter.lastRequest?.path, '/staff/internal/threads/t1/read');
   });
 
+  testWidgets('en movil agrupa las acciones del compositor en un boton mas', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'))
+      ..httpClientAdapter = JsonAdapter(<String, dynamic>{});
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+          apiClientProvider.overrideWithValue(
+            ApiClient(dio: dio, tokenProvider: () => testSession.token),
+          ),
+          internalThreadsProvider.overrideWith(
+            (ref) async => const [
+              InternalThread(
+                id: 'group-thread',
+                kind: 'group',
+                channel: '',
+                title: 'Equipo',
+                unreadCount: 0,
+              ),
+            ],
+          ),
+          internalMessagesProvider.overrideWith((ref, id) async => []),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(
+            body: ConversationView(
+              conversationId: 'group-thread',
+              internal: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('composer-more-actions')), findsOneWidget);
+    expect(find.byKey(const Key('attach-files')), findsNothing);
+    expect(find.byKey(const Key('emoji-picker')), findsNothing);
+    expect(find.byKey(const Key('mention-member')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('composer-more-actions')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('compact-attach-document-option')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('compact-share-contact-option')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('compact-emoji-option')), findsOneWidget);
+    expect(find.byKey(const Key('compact-mention-option')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('compact-emoji-option')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('emoji-grid')), findsOneWidget);
+  });
+
   testWidgets('un grupo historico permite leer pero no escribir', (
     tester,
   ) async {

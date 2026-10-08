@@ -19,6 +19,7 @@ import 'messaging_providers.dart';
 import 'shared_contact_dialog.dart';
 
 const _messageReactions = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+const _compactComposerBreakpoint = 600.0;
 
 class UnifiedConversationScreen extends ConsumerStatefulWidget {
   const UnifiedConversationScreen({super.key});
@@ -170,6 +171,58 @@ class _UnifiedConversationScreenState
     } else if (action == 'contact') {
       final contact = await showSharedContactDialog(context);
       if (contact != null) await _sendContact(contact);
+    }
+  }
+
+  Future<void> _compactComposerActions() async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        top: false,
+        child: Wrap(
+          children: [
+            ListTile(
+              key: const Key('unified-compact-attach-document-option'),
+              leading: const Icon(Icons.description_outlined),
+              title: const Text('Documento o imagen'),
+              onTap: () => Navigator.pop(context, 'file'),
+            ),
+            ListTile(
+              key: const Key('unified-compact-share-contact-option'),
+              leading: const Icon(Icons.contact_phone_outlined),
+              title: const Text('Contacto'),
+              subtitle: const Text('Compartir nombre, teléfono o email'),
+              onTap: () => Navigator.pop(context, 'contact'),
+            ),
+            ListTile(
+              key: const Key('unified-compact-emoji-option'),
+              leading: const Icon(Icons.sentiment_satisfied_alt_outlined),
+              title: const Text('Emoticono'),
+              onTap: () => Navigator.pop(context, 'emoji'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    switch (action) {
+      case 'file':
+        await _pickFiles();
+        return;
+      case 'contact':
+        final contact = await showSharedContactDialog(context);
+        if (contact != null) await _sendContact(contact);
+        return;
+      case 'emoji':
+        await mostrarSelectorEmoticonos(
+          context,
+          controller: _body,
+          focusNode: _composerFocus,
+        );
+        return;
+      default:
+        return;
     }
   }
 
@@ -426,6 +479,8 @@ class _UnifiedConversationScreenState
   @override
   Widget build(BuildContext context) {
     final sendWithEnter = ref.watch(sendWithEnterProvider).valueOrNull ?? false;
+    final compactComposer =
+        MediaQuery.sizeOf(context).width < _compactComposerBreakpoint;
     final asyncMessages = ref.watch(unifiedMessagesProvider);
     asyncMessages.whenData(_markReadWhenMessagesArrive);
     final baseUrl = appConfig.apiBaseUrl.replaceAll('/api/v1/messaging', '');
@@ -613,16 +668,25 @@ class _UnifiedConversationScreenState
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    IconButton(
-                      onPressed: _sending ? null : _attachmentActions,
-                      icon: const Icon(Icons.attach_file),
-                    ),
-                    BotonSelectorEmoticonos(
-                      key: const Key('unified-emoji-picker'),
-                      controller: _body,
-                      focusNode: _composerFocus,
-                      enabled: !_sending,
-                    ),
+                    if (compactComposer)
+                      IconButton(
+                        key: const Key('unified-composer-more-actions'),
+                        tooltip: 'Más opciones',
+                        onPressed: _sending ? null : _compactComposerActions,
+                        icon: const Icon(Icons.add),
+                      ),
+                    if (!compactComposer) ...[
+                      IconButton(
+                        onPressed: _sending ? null : _attachmentActions,
+                        icon: const Icon(Icons.attach_file),
+                      ),
+                      BotonSelectorEmoticonos(
+                        key: const Key('unified-emoji-picker'),
+                        controller: _body,
+                        focusNode: _composerFocus,
+                        enabled: !_sending,
+                      ),
+                    ],
                     Expanded(
                       child: TextField(
                         key: const Key('unified-message-composer'),

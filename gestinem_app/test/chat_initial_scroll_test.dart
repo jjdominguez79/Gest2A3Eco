@@ -45,6 +45,53 @@ void _comprobarFinal(WidgetTester tester, String listKey, String id) {
 }
 
 void main() {
+  testWidgets('la conversacion unificada usa el menu compacto en movil', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'))
+      ..httpClientAdapter = JsonAdapter(<String, dynamic>{});
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+          apiClientProvider.overrideWithValue(
+            ApiClient(dio: dio, tokenProvider: () => testSession.token),
+          ),
+          unifiedConversationProvider.overrideWith((ref) async => {}),
+          unifiedMessagesProvider.overrideWith((ref) async => []),
+        ],
+        child: const MaterialApp(home: UnifiedConversationScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('unified-composer-more-actions')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('unified-emoji-picker')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('unified-composer-more-actions')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('unified-compact-attach-document-option')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('unified-compact-share-contact-option')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('unified-compact-emoji-option')),
+      findsOneWidget,
+    );
+  });
+
   for (final tipo in ['interno', 'cliente', 'unificado']) {
     testWidgets('$tipo abre al final con carga tardia y alturas variables', (
       tester,

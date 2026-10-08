@@ -25,6 +25,7 @@ import 'shared_contact_dialog.dart';
 import 'voice_recording.dart';
 
 const _messageReactions = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+const _compactComposerBreakpoint = 600.0;
 
 class ConversationScreen extends ConsumerWidget {
   const ConversationScreen({
@@ -331,6 +332,68 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     } else if (action == 'contact') {
       final contact = await showSharedContactDialog(context);
       if (contact != null) await _sendContact(contact);
+    }
+  }
+
+  Future<void> _compactComposerActions(InternalThread? thread) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        top: false,
+        child: Wrap(
+          children: [
+            ListTile(
+              key: const Key('compact-attach-document-option'),
+              leading: const Icon(Icons.description_outlined),
+              title: const Text('Documento o imagen'),
+              onTap: () => Navigator.pop(context, 'file'),
+            ),
+            ListTile(
+              key: const Key('compact-share-contact-option'),
+              leading: const Icon(Icons.contact_phone_outlined),
+              title: const Text('Contacto'),
+              subtitle: const Text('Compartir nombre, teléfono o email'),
+              onTap: () => Navigator.pop(context, 'contact'),
+            ),
+            ListTile(
+              key: const Key('compact-emoji-option'),
+              leading: const Icon(Icons.sentiment_satisfied_alt_outlined),
+              title: const Text('Emoticono'),
+              onTap: () => Navigator.pop(context, 'emoji'),
+            ),
+            if (thread?.kind == 'group')
+              ListTile(
+                key: const Key('compact-mention-option'),
+                leading: const Icon(Icons.alternate_email),
+                title: const Text('Etiquetar a alguien'),
+                onTap: () => Navigator.pop(context, 'mention'),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    switch (action) {
+      case 'file':
+        await _pickFiles();
+        return;
+      case 'contact':
+        final contact = await showSharedContactDialog(context);
+        if (contact != null) await _sendContact(contact);
+        return;
+      case 'emoji':
+        await mostrarSelectorEmoticonos(
+          context,
+          controller: _body,
+          focusNode: _composerFocus,
+        );
+        return;
+      case 'mention':
+        if (thread != null) await _showMentionPicker(thread);
+        return;
+      default:
+        return;
     }
   }
 
@@ -1269,6 +1332,8 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   @override
   Widget build(BuildContext context) {
     final sendWithEnter = ref.watch(sendWithEnterProvider).valueOrNull ?? false;
+    final compactComposer =
+        MediaQuery.sizeOf(context).width < _compactComposerBreakpoint;
     final profile = ref.watch(sessionProvider).valueOrNull!.profile;
     final asyncMessages = widget.internal
         ? ref.watch(internalMessagesProvider(widget.conversationId))
@@ -1514,26 +1579,37 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                         icon: const Icon(Icons.send),
                       ),
                     ] else ...[
-                      IconButton(
-                        key: const Key('attach-files'),
-                        onPressed: _sending ? null : _attachmentActions,
-                        icon: const Icon(Icons.attach_file),
-                      ),
-                      BotonSelectorEmoticonos(
-                        key: const Key('emoji-picker'),
-                        controller: _body,
-                        focusNode: _composerFocus,
-                        enabled: !_sending,
-                      ),
-                      if (internalThread?.kind == 'group')
+                      if (compactComposer)
                         IconButton(
-                          key: const Key('mention-member'),
-                          tooltip: 'Etiquetar a alguien',
+                          key: const Key('composer-more-actions'),
+                          tooltip: 'Más opciones',
                           onPressed: _sending
                               ? null
-                              : () => _showMentionPicker(internalThread!),
-                          icon: const Icon(Icons.alternate_email),
+                              : () => _compactComposerActions(internalThread),
+                          icon: const Icon(Icons.add),
                         ),
+                      if (!compactComposer) ...[
+                        IconButton(
+                          key: const Key('attach-files'),
+                          onPressed: _sending ? null : _attachmentActions,
+                          icon: const Icon(Icons.attach_file),
+                        ),
+                        BotonSelectorEmoticonos(
+                          key: const Key('emoji-picker'),
+                          controller: _body,
+                          focusNode: _composerFocus,
+                          enabled: !_sending,
+                        ),
+                        if (internalThread?.kind == 'group')
+                          IconButton(
+                            key: const Key('mention-member'),
+                            tooltip: 'Etiquetar a alguien',
+                            onPressed: _sending
+                                ? null
+                                : () => _showMentionPicker(internalThread!),
+                            icon: const Icon(Icons.alternate_email),
+                          ),
+                      ],
                       Expanded(
                         child: TextField(
                           key: const Key('message-composer'),
