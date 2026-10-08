@@ -2,6 +2,7 @@ from unittest.mock import MagicMock
 
 from views.ui_adjuntos_mensajeria import (
     UIAdjuntosMensajeria,
+    _consultar_bandeja_documental,
     _opciones_origen,
     _resumen_pendientes_por_origen,
 )
@@ -97,3 +98,56 @@ def test_resumen_pendientes_muestra_cada_buzon_y_mensajeria():
         "Correo Documentacion": 2,
         "Mensajeria": 1,
     }
+
+
+def test_recarga_documental_usa_sesion_nueva_y_la_cierra():
+    class _Lector:
+        def __init__(self):
+            self.cerrado = False
+
+        def listar_entradas_documentales(
+            self, _codigo, *, solo_pendientes=False, solo_archivadas=False,
+        ):
+            assert solo_pendientes is True
+            assert solo_archivadas is False
+            return [{
+                "id": "correo:nuevo",
+                "origen_label": "Correo Oficina",
+                "canal": "correo",
+            }]
+
+        def cerrar(self):
+            self.cerrado = True
+
+    class _Gestor:
+        def __init__(self):
+            self.lector = _Lector()
+
+        def crear_sesion_lectura(self):
+            return self.lector
+
+        def listar_entradas_documentales(self, *_args, **_kwargs):
+            raise AssertionError("No debe reutilizar la conexion operativa")
+
+    gestor = _Gestor()
+
+    datos, pendientes, resumen = _consultar_bandeja_documental(
+        gestor, None, solo_pendientes=True, solo_archivadas=False,
+    )
+
+    assert [item["id"] for item in datos] == ["correo:nuevo"]
+    assert pendientes == 1
+    assert resumen["Correo Oficina"] == 1
+    assert gestor.lector.cerrado is True
+
+
+def test_recarga_atrasada_no_reemplaza_datos_mas_recientes():
+    vista = object.__new__(UIAdjuntosMensajeria)
+    vista._refresh_generation = 2
+    vista._cache = [{"id": "actual"}]
+
+    UIAdjuntosMensajeria._actualizar_ui(
+        vista, [{"id": "obsoleto"}], 1, generation=1,
+    )
+
+    assert vista._cache == [{"id": "actual"}]

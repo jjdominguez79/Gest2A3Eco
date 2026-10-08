@@ -91,6 +91,56 @@ def _resumen_pendientes_por_origen(datos: list[dict]) -> dict[str, int]:
     return resumen
 
 
+def _consultar_bandeja_documental(
+    gestor, codigo_empresa: str | None, *,
+    solo_pendientes: bool, solo_archivadas: bool,
+) -> tuple[list[dict], int, dict[str, int]]:
+    """Lee la bandeja en una conexion nueva para evitar datos obsoletos."""
+    lector = gestor
+    crear_lector = getattr(gestor, "crear_sesion_lectura", None)
+    if callable(crear_lector):
+        lector = crear_lector()
+    try:
+        filtro = {
+            "codigo_empresa": codigo_empresa,
+            "solo_pendientes": solo_pendientes,
+            "estado": "archivado" if solo_archivadas else "",
+        }
+        if hasattr(lector, "listar_entradas_documentales"):
+            datos = lector.listar_entradas_documentales(
+                codigo_empresa or "",
+                solo_pendientes=solo_pendientes,
+                solo_archivadas=solo_archivadas,
+            )
+            datos_pendientes = (
+                datos if solo_pendientes else
+                lector.listar_entradas_documentales(
+                    codigo_empresa or "", solo_pendientes=True,
+                )
+            )
+            pendientes = len(datos_pendientes)
+        else:
+            datos = lector.listar_adjuntos_mensajeria(filtro)
+            pendientes = lector.contar_adjuntos_mensajeria_pendientes(
+                codigo_empresa,
+            )
+            datos_pendientes = datos if solo_pendientes else []
+        return (
+            datos,
+            pendientes,
+            _resumen_pendientes_por_origen(datos_pendientes),
+        )
+    finally:
+        if lector is not gestor:
+            cerrar = getattr(lector, "cerrar", None)
+            if callable(cerrar):
+                cerrar()
+            else:
+                conn = getattr(lector, "conn", None)
+                if conn is not None:
+                    conn.close()
+
+
 class UIAdjuntosMensajeria(ttk.Frame):
     """Panel compatible que unifica correo y mensajeria en una sola bandeja."""
 
@@ -113,6 +163,7 @@ class UIAdjuntosMensajeria(ttk.Frame):
         self._filtro_empresa = codigo_empresa_filtro
         self._cache: list[dict] = []
         self._selected_id: str | None = None
+        self._refresh_generation = 0
         self._service = GestionDocumentalService(gestor)
         self._build_ui()
         self.recargar()
@@ -181,49 +232,37 @@ class UIAdjuntosMensajeria(ttk.Frame):
 
     def recargar(self) -> None:
         """Recarga la lista desde PostgreSQL."""
+        self._refresh_generation += 1
+        generation = self._refresh_generation
         estado_filtro = self._estado_filtro.get()
         solo_pendientes = estado_filtro == "Pendientes"
         solo_archivadas = estado_filtro == "Archivadas"
         def _bg():
             try:
-                filtro = {
-                    "codigo_empresa": self._filtro_empresa,
-                    "solo_pendientes": solo_pendientes,
-                    "estado": "archivado" if solo_archivadas else "",
-                }
-                if hasattr(self._gestor, "listar_entradas_documentales"):
-                    datos = self._gestor.listar_entradas_documentales(
-                        self._filtro_empresa or "",
-                        solo_pendientes=solo_pendientes,
-                        solo_archivadas=solo_archivadas,
-                    )
-                    datos_pendientes = (
-                        datos if solo_pendientes else
-                        self._gestor.listar_entradas_documentales(
-                            self._filtro_empresa or "", solo_pendientes=True,
-                        )
-                    )
-                    pendientes = len(datos_pendientes)
-                else:
-                    datos = self._gestor.listar_adjuntos_mensajeria(filtro)
-                    pendientes = self._gestor.contar_adjuntos_mensajeria_pendientes(
-                        self._filtro_empresa,
-                    )
-                    datos_pendientes = datos if solo_pendientes else []
-                resumen = _resumen_pendientes_por_origen(datos_pendientes)
+                datos, pendientes, resumen = _consultar_bandeja_documental(
+                    self._gestor,
+                    self._filtro_empresa,
+                    solo_pendientes=solo_pendientes,
+                    solo_archivadas=solo_archivadas,
+                )
                 error = None
             except Exception as exc:
                 datos, pendientes, resumen, error = [], 0, {}, exc
             self.after(
                 0,
-                lambda: self._actualizar_ui(datos, pendientes, resumen, error),
+                lambda: self._actualizar_ui(
+                    datos, pendientes, resumen, error, generation,
+                ),
             )
         threading.Thread(target=_bg, daemon=True).start()
 
     def _actualizar_ui(
         self, datos: list[dict], pendientes: int,
         resumen: dict[str, int] | None = None, error=None,
+        generation: int | None = None,
     ) -> None:
+        if generation is not None and generation != self._refresh_generation:
+            return
         self._cache = datos
         valores_origen = _opciones_origen(datos)
         self._origen_combo["values"] = valores_origen
