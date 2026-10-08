@@ -1603,7 +1603,11 @@ def public_app_link(action: Literal["invite", "reset"], token: str = Query(min_l
 
 
 @router.get("/public/client-manual")
-def public_client_manual(db: Session = Depends(get_db)):
+def public_client_manual(
+    request: Request,
+    v: str | None = Query(default=None, max_length=64),
+    db: Session = Depends(get_db),
+):
     """Sirve siempre la version publicada del manual desde una URL estable."""
     active = _active_invitation_content(db)
     if active and active.manual_storage_key:
@@ -1623,12 +1627,25 @@ def public_client_manual(db: Session = Depends(get_db)):
         digest = hashlib.sha256(content).hexdigest()
         name = INVITATION_MANUAL_PATH.name
         version = 0
+    fingerprint = digest[:12]
+    if v != fingerprint:
+        return RedirectResponse(
+            str(request.url.include_query_params(v=fingerprint)),
+            status_code=307,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
     return Response(
         content=content,
         media_type="application/pdf",
         headers={
             "Content-Disposition": f'inline; filename="{safe_name(name)}"',
-            "Cache-Control": "no-cache, max-age=0",
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
             "ETag": f'"{digest}"',
             "X-Content-Version": str(version),
         },

@@ -1,3 +1,4 @@
+import hashlib
 import os
 from pathlib import Path
 
@@ -108,6 +109,10 @@ def test_admin_publica_correo_y_manual_sin_desplegar(tmp_path, monkeypatch):
     manual = client.get("/api/v1/messaging/public/client-manual")
     assert manual.status_code == 200
     assert manual.content == pdf
+    assert manual.history[0].status_code == 307
+    assert manual.url.query.decode() == f"v={hashlib.sha256(pdf).hexdigest()[:12]}"
+    assert manual.headers["cache-control"].startswith("no-store")
+    assert manual.headers["pragma"] == "no-cache"
     assert manual.headers["x-content-version"] == "1"
     assert manual.headers["content-type"].startswith("application/pdf")
 
