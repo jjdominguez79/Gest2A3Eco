@@ -28,6 +28,17 @@ const adminSession = AuthSession(
   ),
 );
 
+const employeeSession = AuthSession(
+  token: 'employee-token',
+  profile: UserProfile(
+    id: 'employee-1',
+    name: 'Empleado',
+    email: 'employee@example.test',
+    type: UserType.staff,
+    staffRole: StaffRole.empleado,
+  ),
+);
+
 // ---------------------------------------------------------------------------
 // Los tests instancian el routerProvider REAL via ProviderScope con overrides.
 // No se copia la logica de redireccion en funciones auxiliares de test.
@@ -495,6 +506,33 @@ void main() {
       );
       await tester.pumpAndSettle();
       router.go('/admin/subvenciones');
+      await tester.pumpAndSettle();
+      expect(router.routerDelegate.currentConfiguration.uri.path, '/');
+    });
+
+    testWidgets('un empleado no puede abrir las difusiones', (tester) async {
+      late GoRouter router;
+      addTearDown(_suppressBuildErrors());
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionProvider.overrideWith(
+              (ref) => FakeSessionController(ref, employeeSession),
+            ),
+            platformFeaturesProvider.overrideWith(
+              (_) async => const PlatformFeatures(),
+            ),
+          ],
+          child: Consumer(
+            builder: (context, ref, _) {
+              router = ref.watch(routerProvider);
+              return MaterialApp.router(routerConfig: router);
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      router.go('/campaigns');
       await tester.pumpAndSettle();
       expect(router.routerDelegate.currentConfiguration.uri.path, '/');
     });

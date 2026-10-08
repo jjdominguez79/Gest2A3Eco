@@ -392,7 +392,8 @@ void main() {
       await tester.tap(find.byIcon(Icons.menu));
       await tester.pumpAndSettle();
 
-      expect(find.text('Grupos internos y archivo'), findsOneWidget);
+      expect(find.text('Grupos y listas de clientes'), findsOneWidget);
+      expect(find.byKey(const Key('drawer-broadcasts')), findsOneWidget);
       expect(find.byKey(const Key('drawer-clients')), findsOneWidget);
       expect(find.text('Empleados'), findsWidgets);
       expect(find.text('Mi empresa'), findsNothing);

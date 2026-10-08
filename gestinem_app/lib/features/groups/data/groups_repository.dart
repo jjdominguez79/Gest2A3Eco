@@ -55,13 +55,21 @@ class GroupsRepository {
   Future<void> removeMember(String groupId, String memberId) =>
       _api.dio.delete<void>('/staff/admin/groups/$groupId/members/$memberId');
 
+  Future<MessagingGroup> replaceClientMembers(
+    String groupId,
+    Set<String> clientIds,
+  ) async {
+    final response = await _api.dio.put<Map<String, dynamic>>(
+      '/staff/admin/groups/$groupId/client-members',
+      data: {'client_ids': clientIds.toList(growable: false)},
+    );
+    return MessagingGroup.fromJson(response.data!);
+  }
+
   Future<void> delete(String groupId) =>
       _api.dio.delete<void>('/staff/admin/groups/$groupId');
 
-  Future<MessagingGroup> updateAvatar(
-    String groupId,
-    PlatformFile file,
-  ) async {
+  Future<MessagingGroup> updateAvatar(String groupId, PlatformFile file) async {
     final bytes = await prepararAvatar(file);
     final response = await _api.dio.put<Map<String, dynamic>>(
       '/staff/admin/groups/$groupId/avatar',

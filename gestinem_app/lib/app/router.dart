@@ -152,6 +152,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           profile?.isAdmin != true) {
         return '/';
       }
+      if ({'/campaigns', '/clients'}.contains(state.matchedLocation) &&
+          profile?.isAdmin != true) {
+        return '/';
+      }
       if (state.matchedLocation.startsWith('/admin/') &&
           profile?.isAdmin != true) {
         return '/';

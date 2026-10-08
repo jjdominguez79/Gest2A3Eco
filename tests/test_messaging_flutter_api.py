@@ -1722,6 +1722,42 @@ def test_grupos_miembros_campana_e_idempotencia(tmp_path, monkeypatch):
         )) == 1
 
 
+def test_lista_clientes_reemplaza_miembros_y_es_solo_para_admin(tmp_path, monkeypatch):
+    client, factory, staff_headers, _auth, client_id, _conversation_id = _setup(
+        tmp_path, monkeypatch,
+    )
+    admin = staff_headers("admin")
+    group = client.post(
+        "/api/v1/messaging/staff/admin/groups",
+        headers=admin,
+        json={"name": "Clientes mensuales", "group_type": "client_list"},
+    ).json()
+    path = f"/api/v1/messaging/staff/admin/groups/{group['id']}/client-members"
+
+    forbidden = client.put(
+        path,
+        headers=staff_headers("employee"),
+        json={"client_ids": [client_id]},
+    )
+    assert forbidden.status_code == 403
+
+    updated = client.put(path, headers=admin, json={"client_ids": [client_id]})
+    assert updated.status_code == 200
+    assert [member["member_id"] for member in updated.json()["members"]] == [client_id]
+
+    invalid = client.put(path, headers=admin, json={"client_ids": ["missing-client"]})
+    assert invalid.status_code == 422
+    with factory() as db:
+        members = list(db.scalars(select(MessagingGroupMember).where(
+            MessagingGroupMember.group_id == group["id"],
+        )))
+        assert [member.member_id for member in members] == [client_id]
+
+    emptied = client.put(path, headers=admin, json={"client_ids": []})
+    assert emptied.status_code == 200
+    assert emptied.json()["members"] == []
+
+
 def test_campana_futura_se_rechaza_y_pasada_se_envia(tmp_path, monkeypatch):
     client, factory, staff_headers, _auth, client_id, _conversation_id = _setup(tmp_path, monkeypatch)
     admin = staff_headers("admin")

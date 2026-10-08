@@ -22,14 +22,22 @@ class CampaignClientTarget {
     required this.id,
     required this.name,
     required this.company,
+    this.email = '',
+    this.companyCode = '',
   });
   factory CampaignClientTarget.fromJson(Map<String, dynamic> json) =>
       CampaignClientTarget(
         id: json['id'] as String,
         name: json['name'] as String? ?? '',
         company: json['company_name'] as String? ?? '',
+        email: json['email'] as String? ?? '',
+        companyCode: json['company_code'] as String? ?? '',
       );
   final String id;
   final String name;
   final String company;
+  final String email;
+  final String companyCode;
+
+  String get displayName => name.isEmpty ? company : name;
 }

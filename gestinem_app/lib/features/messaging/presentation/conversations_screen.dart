@@ -1174,15 +1174,16 @@ class _AppDrawer extends ConsumerWidget {
               leading: const Icon(Icons.groups_outlined),
               title: Text(
                 profile.isAdmin
-                    ? 'Grupos internos y archivo'
+                    ? 'Grupos y listas de clientes'
                     : 'Grupos internos',
               ),
               onTap: () => _navigate(context, '/groups'),
             ),
           if (profile.isAdmin)
             ListTile(
+              key: const Key('drawer-broadcasts'),
               leading: const Icon(Icons.campaign_outlined),
-              title: const Text('Campa\u00f1as'),
+              title: const Text('Difusiones'),
               onTap: () => _navigate(context, '/campaigns'),
             ),
           if (profile.isAdmin)

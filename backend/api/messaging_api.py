@@ -245,6 +245,10 @@ class GroupMemberIn(BaseModel):
     role: Literal["owner", "member"] = "member"
 
 
+class ClientListMembersIn(BaseModel):
+    client_ids: list[str] = Field(default_factory=list)
+
+
 class CampaignIn(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     body: str = Field(min_length=1, max_length=20000)
@@ -5160,6 +5164,46 @@ def add_group_member(
     group.updated_at = utcnow()
     db.commit()
     hub.publish({"type": "group.updated", "group_id": group.id}, staff_ids={payload.member_id, admin.external_id})
+    return _serialize_group(db, group)
+
+
+@router.put("/staff/admin/groups/{group_id}/client-members")
+def replace_client_list_members(
+    group_id: str, payload: ClientListMembersIn,
+    admin: MessagingStaff = Depends(_require_admin), db: Session = Depends(get_db),
+):
+    """Sustituye de forma atomica los clientes de una lista de difusion."""
+    group = db.get(MessagingGroup, group_id)
+    if not group or not group.active or group.group_type != "client_list":
+        raise HTTPException(404, "Lista de clientes no encontrada")
+    client_ids = set(payload.client_ids)
+    existing_clients = set(db.scalars(select(MessagingClient.id).where(
+        MessagingClient.id.in_(client_ids),
+        MessagingClient.active.is_(True),
+    ))) if client_ids else set()
+    if existing_clients != client_ids:
+        raise HTTPException(422, "La lista contiene clientes no validos o inactivos")
+
+    current = list(db.scalars(select(MessagingGroupMember).where(
+        MessagingGroupMember.group_id == group.id,
+        MessagingGroupMember.member_type == "client",
+    )))
+    current_by_id = {item.member_id: item for item in current}
+    for client_id in client_ids - set(current_by_id):
+        db.add(MessagingGroupMember(
+            group_id=group.id,
+            member_type="client",
+            member_id=client_id,
+            role="member",
+        ))
+    for client_id in set(current_by_id) - client_ids:
+        db.delete(current_by_id[client_id])
+    group.updated_at = utcnow()
+    db.commit()
+    hub.publish(
+        {"type": "group.updated", "group_id": group.id},
+        staff_ids={admin.external_id},
+    )
     return _serialize_group(db, group)
 
 
