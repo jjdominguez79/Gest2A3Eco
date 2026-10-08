@@ -1630,7 +1630,7 @@ def public_client_manual(
     fingerprint = digest[:12]
     if v != fingerprint:
         return RedirectResponse(
-            str(request.url.include_query_params(v=fingerprint)),
+            f"{request.url.path}?{urlencode({'v': fingerprint})}",
             status_code=307,
             headers={
                 "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
