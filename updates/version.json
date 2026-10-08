@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.9.6",
-  "minimum_required_version": "1.9.6",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.9.6/Setup_Gest2A3Eco_1.9.6.exe",
-  "changelog": "Se pueden previsualizar las facturas antes de imprimir.",
+  "latest_version": "1.9.7",
+  "minimum_required_version": "1.9.7",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.9.7/Setup_Gest2A3Eco_1.9.7.exe",
+  "changelog": "Añadidas menciones a usuarios en las conversaciones.\nIncorporado el envío de contactos y las reacciones con emojis.\nNuevo indicador de mensajes pendientes en la barra de tareas de Windows.\nMejorado el registro y la renovación de las notificaciones.\nCorregida la activación de notificaciones en la versión web.\nMejoras generales de estabilidad y rendimiento.",
   "force_update": true
 }
