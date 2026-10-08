@@ -1,6 +1,6 @@
 {
-  "version": "1.9.7",
-  "tag": "v1.9.7",
-  "changelog": "Añadidas menciones a usuarios en las conversaciones.\nIncorporado el envío de contactos y las reacciones con emojis.\nNuevo indicador de mensajes pendientes en la barra de tareas de Windows.\nMejorado el registro y la renovación de las notificaciones.\nCorregida la activación de notificaciones en la versión web.\nMejoras generales de estabilidad y rendimiento.",
+  "version": "1.9.8",
+  "tag": "v1.9.8",
+  "changelog": "Problemas en la actualizacion del buzon de documentacion.",
   "force_update": true
 }
