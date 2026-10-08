@@ -16,6 +16,8 @@ class ClientsScreen extends ConsumerStatefulWidget {
 }
 
 class _ClientsScreenState extends ConsumerState<ClientsScreen> {
+  static const _maxBulkInvitations = 200;
+
   final _search = TextEditingController();
   final Set<String> _selected = {};
   String _status = 'all';
@@ -58,6 +60,11 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
       );
       return;
     }
+    if (!_selected.contains(row.companyCode) &&
+        _selected.length >= _maxBulkInvitations) {
+      _showSelectionLimit();
+      return;
+    }
     setState(() {
       if (!_selected.add(row.companyCode)) {
         _selected.remove(row.companyCode);
@@ -65,8 +72,30 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
     });
   }
 
+  void _selectVisible(List<ClientOrganization> rows) {
+    final remaining = _maxBulkInvitations - _selected.length;
+    final pending = rows
+        .where((row) => !_selected.contains(row.companyCode))
+        .map((row) => row.companyCode)
+        .toList(growable: false);
+    setState(() => _selected.addAll(pending.take(remaining)));
+    if (pending.length > remaining) _showSelectionLimit();
+  }
+
+  void _showSelectionLimit() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Solo se pueden seleccionar 200 clientes por envío.'),
+      ),
+    );
+  }
+
   Future<void> _sendBulk(List<ClientOrganization> rows) async {
     if (rows.isEmpty || _bulkSending) return;
+    if (rows.length > _maxBulkInvitations) {
+      _showSelectionLimit();
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -258,13 +287,7 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
                                 key: const Key('clients-select-visible'),
                                 onPressed: selectable.isEmpty
                                     ? null
-                                    : () => setState(
-                                        () => _selected.addAll(
-                                          selectable.map(
-                                            (row) => row.companyCode,
-                                          ),
-                                        ),
-                                      ),
+                                    : () => _selectVisible(selectable),
                                 child: const Text('Seleccionar visibles'),
                               ),
                               const Spacer(),
@@ -301,6 +324,13 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
                           itemBuilder: (context, index) {
                             final row = filtered[index];
                             final canInvite = _canBulkInvite(row);
+                            final isSelected = _selected.contains(
+                              row.companyCode,
+                            );
+                            final canChangeSelection =
+                                canInvite &&
+                                (isSelected ||
+                                    _selected.length < _maxBulkInvitations);
                             final unavailableReason = _unavailableReason(row);
                             return ListTile(
                               key: Key('client-${row.companyCode}'),
@@ -310,10 +340,8 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
                                       key: Key(
                                         'client-select-${row.companyCode}',
                                       ),
-                                      value: _selected.contains(
-                                        row.companyCode,
-                                      ),
-                                      onChanged: canInvite
+                                      value: isSelected,
+                                      onChanged: canChangeSelection
                                           ? (_) => _toggleSelected(row)
                                           : null,
                                     )

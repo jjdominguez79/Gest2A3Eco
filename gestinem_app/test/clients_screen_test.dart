@@ -161,6 +161,66 @@ void main() {
     },
   );
 
+  testWidgets('seleccion masiva no supera 200 clientes', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final rows = List.generate(
+      201,
+      (index) => ClientOrganization(
+        companyCode: 'E${index.toString().padLeft(5, '0')}',
+        name: 'Cliente ${index.toString().padLeft(3, '0')}',
+        active: true,
+        accessStatus: 'not_invited',
+        accessActive: false,
+        hasAcceptedAccess: false,
+        clientCount: 0,
+        organizationEmail: 'cliente$index@example.test',
+      ),
+    );
+    final api = ApiClient(
+      dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
+        ..httpClientAdapter = JsonAdapter(<Object>[]),
+      tokenProvider: () => session.token,
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith(
+            (ref) => FakeSessionController(ref, session),
+          ),
+          apiClientProvider.overrideWithValue(api),
+          clientOrganizationsProvider.overrideWith((ref) async => rows),
+        ],
+        child: const MaterialApp(home: ClientsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('clients-bulk-invite-button')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('clients-select-visible')));
+    await tester.pump();
+
+    expect(find.text('200 seleccionados'), findsOneWidget);
+    expect(find.text('Enviar (200)'), findsOneWidget);
+    expect(
+      find.text('Solo se pueden seleccionar 200 clientes por envío.'),
+      findsOneWidget,
+    );
+
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('client-select-E00200')),
+      500,
+      scrollable: find.descendant(
+        of: find.byKey(const Key('clients-list')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    final lastCheckbox = find.byKey(const Key('client-select-E00200'));
+    expect(tester.widget<Checkbox>(lastCheckbox).value, isFalse);
+    expect(tester.widget<Checkbox>(lastCheckbox).onChanged, isNull);
+  });
+
   testWidgets('Ficha pendiente muestra contacto, chat y retirada', (
     tester,
   ) async {
