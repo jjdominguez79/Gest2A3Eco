@@ -42,4 +42,34 @@ void main() {
     expect(adapter.lastRequest?.headers['Authorization'], 'Bearer saved-token');
     expect(profile.avatarUrl, '/api/v1/messaging/staff/avatars/staff-1');
   });
+
+  test('accede como personal de revision mediante contraseña', () async {
+    final adapter = JsonAdapter({
+      'token': 'review-token',
+      'staff': {
+        'id': 'review-1',
+        'name': 'Personal de revision',
+        'email': 'stores.staff.review@gestinem.es',
+        'role': 'empleado',
+        'channels': <String>[],
+      },
+    });
+    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'))
+      ..httpClientAdapter = adapter;
+    final repository = AuthRepository(dio);
+
+    final session = await repository.loginStaffWithPassword(
+      ' stores.staff.review@gestinem.es ',
+      'clave-segura',
+    );
+
+    expect(adapter.lastRequest?.path, '/staff-auth/review-login');
+    expect(adapter.lastRequest?.data, {
+      'email': 'stores.staff.review@gestinem.es',
+      'password': 'clave-segura',
+    });
+    expect(session.profile.type, UserType.staff);
+    expect(session.profile.staffRole, StaffRole.empleado);
+    expect(session.token, 'review-token');
+  });
 }

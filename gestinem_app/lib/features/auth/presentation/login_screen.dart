@@ -31,6 +31,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         .loginClient(_email.text, _password.text);
   }
 
+  Future<void> _staffPasswordLogin() async {
+    if (!_formKey.currentState!.validate()) return;
+    await ref
+        .read(sessionProvider.notifier)
+        .loginStaffWithPassword(_email.text, _password.text);
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(sessionProvider);
@@ -137,7 +144,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           : () =>
                                 ref.read(sessionProvider.notifier).loginStaff(),
                       icon: const Icon(Icons.business_center_outlined),
-                      label: const Text('Personal del despacho'),
+                      label: const Text('Personal del despacho (Microsoft)'),
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      key: const Key('staff-password-login-button'),
+                      onPressed: state.isLoading ? null : _staffPasswordLogin,
+                      icon: const Icon(Icons.password_outlined),
+                      label: const Text('Personal con contraseña'),
                     ),
                     const SizedBox(height: 12),
                     TextButton(

@@ -2064,6 +2064,90 @@ def test_login_staff_app_usa_codigo_un_solo_uso(tmp_path, monkeypatch):
     ).status_code == 400
 
 
+def test_login_personal_revision_solo_ve_empresa_ficticia(tmp_path, monkeypatch):
+    client, factory = _api(tmp_path, monkeypatch)
+    internal = {"X-API-Key": "test-secret"}
+    assert client.put(
+        "/api/v1/messaging/internal/organizations/E00000",
+        headers=internal,
+        json={"company_code": "E00000", "name": "Empresa de pruebas"},
+    ).status_code == 200
+    assert client.put(
+        "/api/v1/messaging/internal/organizations/E10001",
+        headers=internal,
+        json={"company_code": "E10001", "name": "Cliente real"},
+    ).status_code == 200
+    provisioned = client.put(
+        "/api/v1/messaging/internal/review-staff",
+        headers=internal,
+        json={
+            "name": "Personal de revision",
+            "email": "stores.staff.review@gestinem.es",
+            "password": "Contrasena-de-prueba-2026",
+            "company_code": "E00000",
+        },
+    )
+    assert provisioned.status_code == 200
+
+    denied = client.post(
+        "/api/v1/messaging/staff-auth/review-login",
+        json={
+            "email": "stores.staff.review@gestinem.es",
+            "password": "incorrecta",
+        },
+    )
+    assert denied.status_code == 401
+    login = client.post(
+        "/api/v1/messaging/staff-auth/review-login",
+        json={
+            "email": "STORES.STAFF.REVIEW@GESTINEM.ES",
+            "password": "Contrasena-de-prueba-2026",
+        },
+    )
+    assert login.status_code == 200
+    assert login.json()["staff"]["role"] == "empleado"
+
+    conversations = client.get(
+        "/api/v1/messaging/staff/conversations?active_only=false",
+        headers={"Authorization": f"Bearer {login.json()['token']}"},
+    )
+    assert conversations.status_code == 200
+    company_codes = {row["company_code"] for row in conversations.json()}
+    with factory() as db:
+        demo = db.scalar(select(MessagingOrganization).where(
+            MessagingOrganization.company_code == "E00000",
+        ))
+        real = db.scalar(select(MessagingOrganization).where(
+            MessagingOrganization.company_code == "E10001",
+        ))
+        assert demo is not None and real is not None
+        assert company_codes == {"E00000"}
+        staff = db.get(MessagingStaff, provisioned.json()["staff_id"])
+        assert staff is not None and staff.review_only is True
+        assert demo.private_owner_external_id == staff.external_id
+
+
+def test_aprovisionar_revision_rechaza_empresa_real(tmp_path, monkeypatch):
+    client, _factory = _api(tmp_path, monkeypatch)
+    internal = {"X-API-Key": "test-secret"}
+    assert client.put(
+        "/api/v1/messaging/internal/organizations/E10001",
+        headers=internal,
+        json={"company_code": "E10001", "name": "Cliente real"},
+    ).status_code == 200
+    response = client.put(
+        "/api/v1/messaging/internal/review-staff",
+        headers=internal,
+        json={
+            "name": "Personal de revision",
+            "email": "stores.staff.review@gestinem.es",
+            "password": "Contrasena-de-prueba-2026",
+            "company_code": "E10001",
+        },
+    )
+    assert response.status_code == 422
+
+
 # ---------------------------------------------------------------------------
 # Validacion de web_redirect en staff-auth/login
 # ---------------------------------------------------------------------------

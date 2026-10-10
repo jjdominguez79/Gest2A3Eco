@@ -265,6 +265,12 @@ def startup():
             ("msg_staff", "avatar_content_type"): (
                 "ALTER TABLE msg_staff ADD COLUMN avatar_content_type VARCHAR(120) NOT NULL DEFAULT ''"
             ),
+            ("msg_staff", "password_hash"): (
+                "ALTER TABLE msg_staff ADD COLUMN password_hash VARCHAR(300) NOT NULL DEFAULT ''"
+            ),
+            ("msg_staff", "review_only"): (
+                "ALTER TABLE msg_staff ADD COLUMN review_only BOOLEAN NOT NULL DEFAULT FALSE"
+            ),
             ("msg_messages", "reply_to_message_id"): (
                 "ALTER TABLE msg_messages ADD COLUMN reply_to_message_id VARCHAR(36) "
                 "REFERENCES msg_messages(id) ON DELETE SET NULL"

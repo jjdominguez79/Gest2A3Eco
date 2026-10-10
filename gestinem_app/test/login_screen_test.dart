@@ -24,5 +24,9 @@ void main() {
     expect(find.byKey(const Key('login-password')), findsOneWidget);
     expect(find.byKey(const Key('client-login-button')), findsOneWidget);
     expect(find.byKey(const Key('staff-login-button')), findsOneWidget);
+    expect(
+      find.byKey(const Key('staff-password-login-button')),
+      findsOneWidget,
+    );
   });
 }

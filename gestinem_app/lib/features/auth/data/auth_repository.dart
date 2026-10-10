@@ -71,7 +71,10 @@ class AuthRepository {
     final loginUrl = Uri.parse(
       '${appConfig.apiBaseUrl}/staff-auth/login?app=true',
     );
-    if (!await launchUrl(loginUrl, mode: LaunchMode.externalApplication)) {
+    final launchMode = defaultTargetPlatform == TargetPlatform.iOS
+        ? LaunchMode.inAppBrowserView
+        : LaunchMode.externalApplication;
+    if (!await launchUrl(loginUrl, mode: launchMode)) {
       throw StateError('No se pudo abrir el acceso de Microsoft.');
     }
     await finishExternalAuthHandoff();
@@ -81,6 +84,24 @@ class AuthRepository {
       throw StateError('Microsoft no devolvió un código de acceso.');
     }
     return exchangeStaffCode(code);
+  }
+
+  Future<AuthSession> loginStaffWithPassword(
+    String email,
+    String password,
+  ) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/staff-auth/review-login',
+      data: {'email': email.trim(), 'password': password},
+    );
+    final data = response.data!;
+    return AuthSession(
+      token: data['token'] as String,
+      profile: UserProfile.fromJson(
+        data['staff'] as Map<String, dynamic>,
+        UserType.staff,
+      ),
+    );
   }
 
   Future<AuthSession> exchangeStaffCode(String code) async {

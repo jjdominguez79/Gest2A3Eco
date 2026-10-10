@@ -122,6 +122,13 @@ class StaffIn(BaseModel):
     channels: list[str] | None = None
 
 
+class ReviewStaffIn(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=12, max_length=200)
+    company_code: str = Field(default="E00000", min_length=1, max_length=32)
+
+
 class InviteIn(BaseModel):
     company_code: str
     name: str
@@ -565,6 +572,8 @@ def _require_writable_staff_thread(db: Session, thread: MessagingStaffThread) ->
 def _can_access_staff_thread(
     db: Session, thread: MessagingStaffThread, staff: MessagingStaff,
 ) -> bool:
+    if staff.review_only:
+        return False
     if thread.kind == "group":
         if thread.key.startswith("dynamic-group:"):
             group = _staff_thread_group(db, thread)
@@ -600,6 +609,11 @@ def _can_access_conversation(
     org = db.get(MessagingOrganization, conv.organization_id)
     if not org:
         return False
+    if staff.review_only:
+        return bool(
+            staff.active and org.active and org.is_test
+            and org.private_owner_external_id == staff.external_id
+        )
     if org.company_code.strip().upper() in TEST_COMPANY_CODES:
         return bool(org.private_owner_external_id == staff.external_id)
     if conv.kind == "private":
@@ -1486,6 +1500,54 @@ def put_staff(external_id: str, payload: StaffIn, db: Session = Depends(get_db))
     return {"ok": True}
 
 
+@router.put(
+    "/internal/review-staff",
+    dependencies=[Depends(require_internal_key)],
+)
+def put_review_staff(payload: ReviewStaffIn, db: Session = Depends(get_db)):
+    """Crea una cuenta de revision confinada a una empresa de pruebas."""
+    email = payload.email.strip().lower()
+    company_code = payload.company_code.strip().upper()
+    organization = db.scalar(select(MessagingOrganization).where(
+        func.upper(MessagingOrganization.company_code) == company_code,
+    ))
+    if (
+        not organization
+        or not organization.active
+        or not organization.is_test
+        or company_code not in TEST_COMPANY_CODES
+    ):
+        raise HTTPException(422, "La empresa de revision no es una empresa de pruebas valida")
+    staff = db.scalar(select(MessagingStaff).where(
+        func.lower(MessagingStaff.email) == email,
+    ))
+    if staff and not staff.review_only:
+        raise HTTPException(409, "El correo ya pertenece a otro usuario del despacho")
+    if not staff:
+        external_id = f"review-{hashlib.sha256(email.encode('utf-8')).hexdigest()[:24]}"
+        staff = MessagingStaff(external_id=external_id)
+    staff.name = payload.name.strip()
+    staff.email = email
+    staff.password_hash = hash_password(payload.password)
+    staff.review_only = True
+    staff.role = "empleado"
+    staff.active = True
+    staff.entra_oid = ""
+    organization.private_owner_external_id = staff.external_id
+    db.add(staff)
+    db.query(MessagingStaffSession).filter(
+        MessagingStaffSession.staff_external_id == staff.external_id,
+        MessagingStaffSession.revoked_at.is_(None),
+    ).update({"revoked_at": utcnow()}, synchronize_session=False)
+    db.commit()
+    return {
+        "ok": True,
+        "staff_id": staff.external_id,
+        "email": staff.email,
+        "company_code": organization.company_code,
+    }
+
+
 @router.post("/internal/devices/{device_id}", dependencies=[Depends(require_workstation_or_internal)])
 def enroll_device(device_id: str, db: Session = Depends(get_db)):
     token = new_token()
@@ -1718,6 +1780,30 @@ def _staff_redirect_uri() -> str:
     return f"{get_settings().messaging_public_base_url}/api/v1/messaging/staff-auth/callback"
 
 
+def _staff_auth_response(
+    db: Session, staff: MessagingStaff, token: str,
+) -> dict:
+    return {
+        "token": token,
+        "staff": {
+            "id": staff.external_id,
+            "name": staff.chat_alias.strip() or staff.name,
+            "email": staff.email,
+            "role": staff.role,
+            "mostrar_estados_mensajes": (
+                staff.role == "admin" or staff.mostrar_estados_mensajes
+            ),
+            "mostrar_lecturas_clientes": staff.mostrar_lecturas_clientes,
+            "mostrar_lecturas_empleados": staff.mostrar_lecturas_empleados,
+            "avatar_url": (
+                f"/api/v1/messaging/staff/avatars/{staff.external_id}"
+                if staff.avatar_storage_key else ""
+            ),
+            "channels": sorted(_channels_for_staff(db, staff)),
+        },
+    }
+
+
 def _web_redirect_scheme_allowed(url: str) -> bool:
     """HTTPS siempre permitido; HTTP solo para localhost/127.0.0.1."""
     parsed = urlparse(url)
@@ -1883,23 +1969,30 @@ def staff_app_exchange(payload: StaffAppCodeIn, db: Session = Depends(get_db)):
         expires_at=utcnow() + timedelta(days=30),
     ))
     db.commit()
-    return {
-        "token": token,
-        "staff": {
-            "id": staff.external_id,
-            "name": staff.chat_alias.strip() or staff.name,
-            "email": staff.email,
-            "role": staff.role,
-            "mostrar_estados_mensajes": staff.role == "admin" or staff.mostrar_estados_mensajes,
-            "mostrar_lecturas_clientes": staff.mostrar_lecturas_clientes,
-            "mostrar_lecturas_empleados": staff.mostrar_lecturas_empleados,
-            "avatar_url": (
-                f"/api/v1/messaging/staff/avatars/{staff.external_id}"
-                if staff.avatar_storage_key else ""
-            ),
-            "channels": sorted(_channels_for_staff(db, staff)),
-        },
-    }
+    return _staff_auth_response(db, staff, token)
+
+
+@router.post("/staff-auth/review-login")
+def staff_review_login(payload: LoginIn, db: Session = Depends(get_db)):
+    """Acceso con contraseña limitado a cuentas aisladas de demostracion."""
+    email = payload.email.strip().lower()
+    staff = db.scalar(select(MessagingStaff).where(
+        func.lower(MessagingStaff.email) == email,
+    ))
+    if (
+        not staff or not staff.active or not staff.review_only
+        or not staff.password_hash
+        or not verify_password(payload.password, staff.password_hash)
+    ):
+        raise HTTPException(401, "Credenciales de personal no validas")
+    token = new_token()
+    db.add(MessagingStaffSession(
+        staff_external_id=staff.external_id,
+        token_hash=hash_token(token),
+        expires_at=session_expiry(),
+    ))
+    db.commit()
+    return _staff_auth_response(db, staff, token)
 
 
 @router.post("/staff-auth/logout")

@@ -60,6 +60,8 @@ class MessagingStaff(Base):
     mostrar_lecturas_empleados: Mapped[bool] = mapped_column(Boolean, default=True)
     avatar_storage_key: Mapped[str] = mapped_column(String(500), default="")
     avatar_content_type: Mapped[str] = mapped_column(String(120), default="")
+    password_hash: Mapped[str] = mapped_column(String(300), default="")
+    review_only: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     role: Mapped[str] = mapped_column(String(32), default="empleado")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
