@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.9.8",
-  "minimum_required_version": "1.9.8",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.9.8/Setup_Gest2A3Eco_1.9.8.exe",
-  "changelog": "Problemas en la actualizacion del buzon de documentacion.",
+  "latest_version": "1.9.9",
+  "minimum_required_version": "1.9.9",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.9.9/Setup_Gest2A3Eco_1.9.9.exe",
+  "changelog": "Mejoras en facturas emitidas\n\n- Renovado el listado de facturas con información más completa: tipo de operación, base imponible, IVA, retención y total.\n- Añadido un resumen de importes filtrados, separado por moneda.\n- Nuevas opciones «Ver factura» y «Ver asiento», también accesibles con doble clic y siempre en modo de solo lectura.\n- Identificación visual más clara de borradores, facturas enviadas a Contabilidad, generadas y contabilizadas.\n- Las facturas enviadas a Contabilidad quedan protegidas frente a modificaciones o eliminaciones accidentales.\n- Nueva confirmación al guardar facturas con un tipo de operación distinto del habitual o en una moneda diferente del euro.\n- Corregido el campo Asiento en facturas manuales y generadas desde albaranes: cuando no existe asiento se muestra vacío, nunca «None», y cuando existe se muestra correctamente su número.\n- Añadidas mejoras internas y pruebas para reforzar la seguridad y estabilidad del proceso de facturación.",
   "force_update": true
 }
