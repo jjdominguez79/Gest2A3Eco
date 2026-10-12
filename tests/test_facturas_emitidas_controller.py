@@ -16,6 +16,47 @@ def test_numero_factura_contable_tolera_campos_vacios():
     assert controller._numero_factura_contable({"serie": "A", "numero": ""}) == "A"
 
 
+def test_factura_desde_albaran_guarda_asiento_nulo():
+    guardadas = []
+    albaran = {
+        "id": "alb-1",
+        "ejercicio": int(module.datetime.now().strftime("%Y")),
+        "serie": "A",
+        "numero": "000042",
+        "nif": "B39806146",
+        "nombre": "Cliente prueba",
+        "moneda_codigo": "EUR",
+        "moneda_simbolo": "€",
+    }
+    view = SimpleNamespace(
+        get_selected_albaran_ids=lambda: ["alb-1"],
+        show_warning=lambda *_args: None,
+        show_info=lambda *_args: None,
+    )
+    gestor = SimpleNamespace(
+        upsert_factura_emitida=lambda factura: (
+            guardadas.append(factura.copy()) or "fac-1"
+        ),
+        marcar_albaranes_facturados=lambda *_args: None,
+    )
+    controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
+    controller._view = view
+    controller._gestor = gestor
+    controller._codigo = "E00001"
+    controller._ejercicio = albaran["ejercicio"]
+    controller._ensure_write = lambda: True
+    controller._get_albaran_by_id = lambda _aid: albaran
+    controller._descripcion_factura_desde_albaranes = lambda _items: "Albaran"
+    controller._build_factura_lineas_desde_albaranes = lambda _items: []
+    controller._default_plantilla_emitidas_name = lambda _ejercicio: ""
+    controller.refresh_facturas = lambda: None
+    controller.refresh_albaranes = lambda: None
+
+    controller.facturar_albaranes()
+
+    assert guardadas[0]["numero_asiento"] is None
+
+
 def test_observacion_rectificativa_referencia_factura_y_fecha_originales():
     controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
 
@@ -459,6 +500,152 @@ def test_compartir_factura_permite_enviar_desde_cuenta_personal(
     assert enviados_backend[0]["to"] == ["cliente@example.com"]
     assert registros[0][0][1] == "usuario@gestinem.es"
     assert registros[0][1]["estado"] == "aceptado_backend"
+
+
+def test_listado_y_pie_suman_importes_fiscales_persistidos_por_moneda(monkeypatch):
+    monkeypatch.setattr(module, "load_monedas", lambda: [
+        {"codigo": "EUR", "simbolo": "€"},
+        {"codigo": "USD", "simbolo": "$"},
+    ])
+    filas = []
+    pie = []
+    filtro_cliente = [""]
+    view = SimpleNamespace(
+        clear_facturas=lambda: None,
+        get_facturas_serie_filter=lambda: None,
+        get_facturas_cliente_filter=lambda: filtro_cliente[0],
+        get_facturas_estado_filter=lambda: None,
+        insert_factura_row=lambda fac, totales: filas.append((fac["id"], totales)),
+        auto_sort_facturas=lambda: None,
+        set_facturas_totales=lambda resumen, cantidad: pie.append((resumen, cantidad)),
+    )
+    controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
+    controller._view = view
+    controller._allow_all_years = False
+    controller._facturas_cache = [
+        {
+            "id": "fac-eur",
+            "nombre": "Acme SL",
+            "moneda_codigo": "EUR",
+            "moneda_simbolo": "€",
+            "lineas": [
+                {"base": 100, "pct_iva": 21, "cuota_iva": 21, "cuota_re": 0},
+                {"base": 50, "pct_iva": 10, "cuota_iva": 5, "cuota_re": 0},
+            ],
+            "retencion_aplica": True,
+            "retencion_base": 150,
+            "retencion_pct": 10,
+            "retencion_importe": 15,
+        },
+        {
+            "id": "fac-usd",
+            "nombre": "Otra SA",
+            "moneda_codigo": "USD",
+            "moneda_simbolo": "$",
+            "lineas": [
+                {"base": 80, "pct_iva": 0, "cuota_iva": 0, "cuota_re": 0},
+            ],
+            "retencion_aplica": False,
+        },
+        {
+            "id": "fac-legacy-eur",
+            "nombre": "Cliente antiguo",
+            "lineas": [
+                {"base": 20, "pct_iva": 21, "cuota_iva": 4.2, "cuota_re": 0},
+            ],
+            "retencion_aplica": False,
+        },
+    ]
+
+    controller.apply_facturas_filter()
+
+    assert filas[0][1] == {
+        "base": 150.0,
+        "iva": 26.0,
+        "re": 0.0,
+        "suplidos": 0.0,
+        "ret": -15.0,
+        "total": 161.0,
+    }
+    assert pie[0][1] == 3
+    assert pie[0][0]["EUR"]["facturas"] == 2
+    assert pie[0][0]["EUR"]["base"] == 170.0
+    assert pie[0][0]["EUR"]["iva"] == 30.2
+    assert pie[0][0]["EUR"]["ret"] == -15.0
+    assert pie[0][0]["EUR"]["total"] == 185.2
+    assert pie[0][0]["USD"]["total"] == 80.0
+
+    filas.clear()
+    filtro_cliente[0] = "acme"
+    controller.apply_facturas_filter()
+
+    assert [fid for fid, _totales in filas] == ["fac-eur"]
+    assert pie[-1][1] == 1
+    assert set(pie[-1][0]) == {"EUR"}
+
+
+def test_ver_factura_abre_ficha_completa_en_solo_lectura():
+    llamadas = []
+    controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
+    controller._view = SimpleNamespace(
+        get_selected_ids=lambda: ["fac-1"],
+        open_factura_dialog=lambda fac, **kwargs: llamadas.append((fac, kwargs)),
+    )
+    controller._get_factura_by_id = lambda _fid: {
+        "id": "fac-1", "estado_contable": "contabilizada", "numero_asiento": "42",
+    }
+
+    controller.ver_factura()
+
+    assert llamadas == [({
+        "id": "fac-1", "estado_contable": "contabilizada", "numero_asiento": "42",
+    }, {"solo_lectura": True})]
+
+
+def test_metadatos_no_regraban_factura_contabilizada():
+    guardadas = []
+    controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
+    controller._gestor = SimpleNamespace(
+        upsert_factura_emitida=lambda fac: guardadas.append(fac),
+    )
+    controller._can_write = lambda: True
+
+    controller._persist_factura_if_allowed({
+        "id": "fac-1", "estado_contable": "contabilizada", "pdf_path": "factura.pdf",
+    })
+
+    assert guardadas == []
+
+
+def test_ver_asiento_desde_facturacion_es_siempre_solo_lectura(monkeypatch):
+    llamadas = []
+
+    class DialogStub:
+        def __init__(self, parent, **kwargs):
+            llamadas.append((parent, kwargs))
+
+    monkeypatch.setattr(
+        "views.ui_asiento_emitida_dialog.AsientoEmitidaDialog", DialogStub,
+    )
+    view = SimpleNamespace(
+        get_selected_ids=lambda: ["fac-1"],
+        winfo_toplevel=lambda: "ventana",
+    )
+    controller = FacturasEmitidasController.__new__(FacturasEmitidasController)
+    controller._view = view
+    controller._gestor = object()
+    controller._codigo = "E00001"
+    controller._empresa_conf = {"digitos_plan": 8}
+    controller._get_factura_by_id = lambda _fid: {
+        "id": "fac-1", "numero_asiento": "42",
+    }
+    controller._plantilla_emitidas_for_factura = lambda *_args: {}
+
+    controller.ver_asiento_factura()
+
+    assert llamadas[0][0] == "ventana"
+    assert llamadas[0][1]["solo_lectura"] is True
+    assert "on_save" not in llamadas[0][1]
 
 
 def test_compartir_factura_email_muestra_factura_y_albaran_en_adjuntos(monkeypatch, tmp_path):

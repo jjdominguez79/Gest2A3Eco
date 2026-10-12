@@ -236,6 +236,27 @@ class FacturaDialogController:
         except Exception:
             pass
 
+    def _confirmar_datos_no_habituales(self) -> bool:
+        """Pide confirmacion si tipo de operacion o moneda no son habituales."""
+        tipo_operacion = str(self._view.get_tipo_operacion() or "").strip()
+        moneda_codigo = str(self._view.get_moneda()[0] or "").strip().upper()
+        advertencias = []
+        if tipo_operacion != "01":
+            get_label = getattr(self._view, "get_tipo_operacion_label", None)
+            etiqueta = get_label() if callable(get_label) else ""
+            detalle = f"{tipo_operacion} - {etiqueta}" if etiqueta else tipo_operacion
+            advertencias.append(f"Tipo de operacion: {detalle}")
+        if moneda_codigo != "EUR":
+            advertencias.append(f"Moneda: {moneda_codigo or 'sin indicar'}")
+        if not advertencias:
+            return True
+        confirmar = getattr(
+            self._view, "confirmar_campos_no_habituales", None,
+        )
+        if callable(confirmar):
+            return bool(confirmar(advertencias))
+        return False
+
     def ok_borrador(self):
         """Guarda como borrador sin asignar numero."""
         if self._view.get_retencion_aplica():
@@ -243,6 +264,8 @@ class FacturaDialogController:
         lineas = self._view.get_lineas()
         if not lineas:
             self._view.show_error("Gest2A3Eco", "Anade al menos una linea.")
+            return
+        if not self._confirmar_datos_no_habituales():
             return
         fecha_common = self._view.get_fecha_exp()
         t_sel = self._get_selected_tercero()
@@ -254,7 +277,7 @@ class FacturaDialogController:
             "tercero_id": tercero_id,
             "serie": self._view.get_serie(),
             "numero": "",
-            "numero_asiento": self._view.get_numero_asiento(),
+            "numero_asiento": self._view.get_numero_asiento() or None,
             "numero_largo_sii": self._factura.get("numero_largo_sii", ""),
             "fecha_asiento": fecha_common,
             "fecha_expedicion": fecha_common,
@@ -317,6 +340,8 @@ class FacturaDialogController:
         sc = self._view.get_subcuenta().strip()
         if sc:
             validar_subcuenta_longitud(sc, self._ndig, "subcuenta cliente")
+        if not self._confirmar_datos_no_habituales():
+            return
         t_sel = self._get_selected_tercero()
         tercero_id = (t_sel.get("tercero_global_id") or t_sel.get("id")) if t_sel else None
         result = {
@@ -326,7 +351,7 @@ class FacturaDialogController:
             "tercero_id": tercero_id,
             "serie": self._view.get_serie(),
             "numero": self._view.get_numero_factura(),
-            "numero_asiento": self._view.get_numero_asiento(),
+            "numero_asiento": self._view.get_numero_asiento() or None,
             "numero_largo_sii": self._factura.get("numero_largo_sii", ""),
             "fecha_asiento": fecha_common,
             "fecha_expedicion": fecha_common,

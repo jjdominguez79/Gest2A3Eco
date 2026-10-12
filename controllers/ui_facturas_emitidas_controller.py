@@ -202,6 +202,20 @@ class FacturasEmitidasController:
         serie_filter   = self._view.get_facturas_serie_filter()
         cliente_filter = self._view.get_facturas_cliente_filter()
         estado_filter  = self._view.get_facturas_estado_filter()
+        monedas = list(load_monedas() or [])
+        moneda_default = monedas[0] if monedas else {}
+        moneda_por_codigo = {
+            str(item.get("codigo") or "").strip().upper(): item
+            for item in monedas
+            if str(item.get("codigo") or "").strip()
+        }
+        moneda_por_simbolo = {
+            str(item.get("simbolo") or "").strip(): item
+            for item in monedas
+            if str(item.get("simbolo") or "").strip()
+        }
+        resumen_por_moneda = {}
+        visibles = 0
         for fac in self._facturas_cache:
             if year_filter is not None:
                 if self._year_from_factura(fac) != year_filter:
@@ -216,6 +230,8 @@ class FacturasEmitidasController:
                     continue
             if estado_filter is not None:
                 ec = (fac.get("estado_contable") or "").strip().lower()
+                if str(fac.get("numero_asiento") or "").strip():
+                    ec = "contabilizada"
                 # "pendiente" → sin estado contable (null/vacio en BD)
                 # "contabilidad" → estado_contable='pendiente'
                 # "generado" → suenlace generado/contabilizada
@@ -225,9 +241,41 @@ class FacturasEmitidasController:
                     continue
                 elif estado_filter == "generado" and ec not in {"generado", "contabilizada"}:
                     continue
-            total = self._compute_total(fac)
-            self._view.insert_factura_row(fac, total)
+            totales = self._totales_factura(fac)
+            self._view.insert_factura_row(fac, totales)
+            visibles += 1
+            codigo_moneda = str(fac.get("moneda_codigo") or "").strip().upper()
+            simbolo_moneda = str(fac.get("moneda_simbolo") or "").strip()
+            catalogo_moneda = (
+                moneda_por_codigo.get(codigo_moneda)
+                or moneda_por_simbolo.get(simbolo_moneda)
+                or moneda_default
+            )
+            codigo_moneda = codigo_moneda or str(
+                catalogo_moneda.get("codigo") or ""
+            ).strip().upper()
+            simbolo_moneda = simbolo_moneda or str(
+                catalogo_moneda.get("simbolo") or ""
+            ).strip()
+            clave_moneda = codigo_moneda or simbolo_moneda or "SIN_MONEDA"
+            acumulado = resumen_por_moneda.setdefault(clave_moneda, {
+                "codigo": codigo_moneda,
+                "simbolo": simbolo_moneda,
+                "facturas": 0,
+                "base": 0.0,
+                "iva": 0.0,
+                "ret": 0.0,
+                "total": 0.0,
+            })
+            acumulado["facturas"] += 1
+            for campo in ("base", "iva", "ret", "total"):
+                acumulado[campo] = self._round2(
+                    acumulado[campo] + self._to_float(totales.get(campo))
+                )
         self._view.auto_sort_facturas()
+        set_totales = getattr(self._view, "set_facturas_totales", None)
+        if callable(set_totales):
+            set_totales(resumen_por_moneda, visibles)
 
     def refresh_albaranes(self):
         self._view.clear_albaranes()
@@ -359,14 +407,30 @@ class FacturasEmitidasController:
         else:
             self._view.show_info("Gest2A3Eco", "Las facturas seleccionadas no son borradores.")
 
+    @staticmethod
+    def _factura_bloqueada(fac: dict) -> bool:
+        estado = str(fac.get("estado_contable") or "").strip().lower()
+        return bool(
+            estado in {"pendiente", "generado", "contabilizada"}
+            or str(fac.get("numero_asiento") or "").strip()
+        )
+
+    @staticmethod
+    def _factura_contabilizada(fac: dict) -> bool:
+        estado = str(fac.get("estado_contable") or "").strip().lower()
+        return bool(
+            estado in {"generado", "contabilizada"}
+            or str(fac.get("numero_asiento") or "").strip()
+        )
+
     def _check_not_generada(self, fac: dict) -> bool:
         """Devuelve True si se puede proceder. Si está generada pide contraseña."""
-        estado_contable = str(fac.get("estado_contable") or "").strip().lower()
-        if estado_contable in {"pendiente", "generado", "contabilizada"}:
+        if self._factura_bloqueada(fac):
             self._view.show_warning(
                 "Gest2A3Eco",
                 "La factura esta bloqueada porque se encuentra en Contabilidad.\n"
-                "Devuelvela desde el modulo de Contabilidad para poder modificarla.",
+                "Puedes consultarla con 'Ver factura'. Para modificarla, "
+                "devuelvela antes desde el modulo de Contabilidad.",
             )
             return False
         if not fac.get("generada"):
@@ -408,6 +472,22 @@ class FacturasEmitidasController:
         current_serie_orig = [""]
 
         def _do_save(result):
+            factura_id = str(result.get("id") or "").strip()
+            if factura_id:
+                actual = next(
+                    (
+                        item for item in self._listar_facturas_base()
+                        if str(item.get("id")) == factura_id
+                    ),
+                    None,
+                )
+                if actual and self._factura_bloqueada(actual):
+                    self._view.show_warning(
+                        "Gest2A3Eco",
+                        "La factura ha pasado a Contabilidad y ya no puede guardarse. "
+                        "Se mantiene sin cambios.",
+                    )
+                    return False
             era_bor = current_era_borrador[0]
             serie_o = current_serie_orig[0]
             no_save = result.pop("_no_save", False)
@@ -431,6 +511,7 @@ class FacturasEmitidasController:
                 result["borrador"] = 1 if es_borrador else 0
                 self._gestor.upsert_factura_emitida(result)
             self.refresh_facturas()
+            return True
 
         while True:
             if idx < 0 or idx >= len(all_ids):
@@ -462,6 +543,17 @@ class FacturasEmitidasController:
                 idx += 1
             else:
                 break
+
+    def ver_factura(self):
+        """Abre la ficha completa sin permitir ninguna modificacion."""
+        sel = self._view.get_selected_ids()
+        if not sel:
+            self._view.show_info("Gest2A3Eco", "Selecciona una factura.")
+            return
+        fac = self._get_factura_by_id(sel[0])
+        if not fac:
+            return
+        self._view.open_factura_dialog(fac, solo_lectura=True)
 
     def copiar(self):
         if not self._ensure_write():
@@ -588,7 +680,12 @@ class FacturasEmitidasController:
             if not fac:
                 continue
             eje = fac.get("ejercicio") if fac.get("ejercicio") is not None else self._ejercicio
-            self._gestor.eliminar_factura_emitida(self._codigo, fid, eje)
+            try:
+                self._gestor.eliminar_factura_emitida(self._codigo, fid, eje)
+            except ValueError as exc:
+                self._view.show_warning("Gest2A3Eco", str(exc))
+                self.refresh_facturas()
+                return
         self.refresh_facturas()
         self.refresh_albaranes()
 
@@ -646,12 +743,22 @@ class FacturasEmitidasController:
         sel = self._view.get_selected_ids()
         if not sel:
             self._view.set_detalle_lineas([])
+            actualizar = getattr(
+                self._view, "actualizar_estado_acciones_factura", None,
+            )
+            if callable(actualizar):
+                actualizar(None)
             return
         fac = self._get_factura_by_id(sel[0])
         if not fac:
             self._view.set_detalle_lineas([])
             return
         self._view.set_detalle_lineas(fac.get("lineas", []), fac.get("moneda_simbolo", ""))
+        actualizar = getattr(
+            self._view, "actualizar_estado_acciones_factura", None,
+        )
+        if callable(actualizar):
+            actualizar(fac)
 
     def albaran_seleccionado(self):
         sel = self._view.get_selected_albaran_ids()
@@ -813,6 +920,7 @@ class FacturasEmitidasController:
             "serie": serie_fac,
             "numero": numero_fac,
             "numero_largo_sii": "",
+            "numero_asiento": None,
             "fecha_asiento": fecha,
             "fecha_expedicion": fecha,
             "fecha_operacion": fecha,
@@ -1517,7 +1625,7 @@ class FacturasEmitidasController:
             gestor=self._gestor,
             codigo_empresa=self._codigo,
             ndig=ndig,
-            on_save=lambda _f: self.refresh_facturas(),
+            solo_lectura=True,
         )
 
     def _get_factura_by_id(self, fid):
@@ -2187,7 +2295,7 @@ class FacturasEmitidasController:
         return emp
 
     def _persist_factura_if_allowed(self, factura: dict) -> None:
-        if not self._can_write():
+        if not self._can_write() or self._factura_contabilizada(factura):
             return
         self._gestor.upsert_factura_emitida(factura)
 

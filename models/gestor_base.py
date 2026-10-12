@@ -3211,6 +3211,12 @@ class GestorBase:
     def _normalizar_campos_factura_emitida(self, factura: dict):
         if not str(factura.get("tipo_operacion") or "").strip():
             factura["tipo_operacion"] = "01"
+        numero_asiento = factura.get("numero_asiento")
+        if numero_asiento is not None:
+            numero_asiento = str(numero_asiento).strip()
+            if numero_asiento.lower() == "none":
+                numero_asiento = ""
+        factura["numero_asiento"] = numero_asiento or None
 
     def listar_ejercicios_facturas_emitidas(self, codigo_empresa: str):
         cur = self.conn.execute(
@@ -3491,10 +3497,20 @@ class GestorBase:
                 "WHERE codigo_empresa=? AND ejercicio=? AND factura_id=?",
                 (codigo_empresa, ejercicio_key, factura_id),
             )
-            self.conn.execute(
-                "DELETE FROM facturas_emitidas_docs WHERE codigo_empresa=? AND ejercicio=? AND id=?",
+            cur = self.conn.execute(
+                "DELETE FROM facturas_emitidas_docs "
+                "WHERE codigo_empresa=? AND ejercicio=? AND id=? "
+                "AND COALESCE(estado_contable,'') NOT IN "
+                "('pendiente','generado','contabilizada') "
+                "AND COALESCE(TRIM(numero_asiento),'')='' "
+                "AND COALESCE(generada,0)=0",
                 (codigo_empresa, ejercicio_key, factura_id),
             )
+            if not cur.rowcount:
+                raise ValueError(
+                    "La factura no existe o esta bloqueada por Contabilidad; "
+                    "no se puede eliminar."
+                )
             self.conn.commit()
         except Exception:
             self.conn.rollback()

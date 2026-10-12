@@ -220,6 +220,7 @@ class AsientoEmitidaDialog(tk.Toplevel):
       codigo_empresa — codigo de empresa activa
       ndig          — digitos del plan contable
       on_save       — callable(fac_modificada) llamado si el usuario guarda cambios
+      solo_lectura  — muestra el asiento sin permitir editarlo ni guardarlo
     """
 
     def __init__(
@@ -232,9 +233,14 @@ class AsientoEmitidaDialog(tk.Toplevel):
         codigo_empresa: str,
         ndig: int = 8,
         on_save=None,
+        solo_lectura: bool = False,
     ):
         super().__init__(parent)
-        self.title(f"Asiento contable — Fra. {fac.get('serie', '')}{fac.get('numero', '')}")
+        self._solo_lectura = bool(solo_lectura)
+        sufijo = " — Solo lectura" if self._solo_lectura else ""
+        self.title(
+            f"Asiento contable — Fra. {fac.get('serie', '')}{fac.get('numero', '')}{sufijo}"
+        )
         self.resizable(True, True)
         self.grab_set()
 
@@ -281,16 +287,22 @@ class AsientoEmitidaDialog(tk.Toplevel):
         nombre = str(fac.get("nombre") or "").strip()
         numero = f"{fac.get('serie', '')}{fac.get('numero', '')}".strip()
         fecha  = str(fac.get("fecha_asiento") or fac.get("fecha_expedicion") or "").strip()
+        numero_asiento = str(fac.get("numero_asiento") or "").strip()
+        asiento_txt = f"   Asiento: {numero_asiento}" if numero_asiento else ""
         tk.Label(
             hdr,
-            text=f"Factura: {numero}   Fecha: {fecha}   Cliente: {nombre}",
+            text=f"Factura: {numero}   Fecha: {fecha}{asiento_txt}   Cliente: {nombre}",
             bg="#f0f9ff", fg="#0369a1",
             font=("Segoe UI", 9, "bold"),
         ).pack(anchor="w")
         tk.Label(
             hdr,
-            text="  Doble clic sobre una celda de Subcuenta para editarla. "
-                 "Las subcuentas se validan contra el maestro de la empresa.",
+            text=(
+                "  Consulta de solo lectura. El asiento no se modificara."
+                if self._solo_lectura
+                else "  Doble clic sobre una celda de Subcuenta para editarla. "
+                     "Las subcuentas se validan contra el maestro de la empresa."
+            ),
             bg="#f0f9ff", fg="#64748b",
             font=("Segoe UI", 8),
         ).pack(anchor="w", pady=(2, 0))
@@ -323,7 +335,8 @@ class AsientoEmitidaDialog(tk.Toplevel):
         self.tv.tag_configure("debe",  background="#eff6ff")
         self.tv.tag_configure("haber", background="#f0fdf4")
         self.tv.tag_configure("error", background="#fef2f2", foreground="#991b1b")
-        self.tv.bind("<Double-Button-1>", self._on_double_click)
+        if not self._solo_lectura:
+            self.tv.bind("<Double-Button-1>", self._on_double_click)
 
         # Balance
         bal_frame = tk.Frame(self, bg="#f8fafc")
@@ -339,10 +352,13 @@ class AsientoEmitidaDialog(tk.Toplevel):
         # Botones
         btns = tk.Frame(self)
         btns.pack(fill="x", padx=12, pady=(4, 12))
-        ttk.Button(
+        self.btn_guardar = ttk.Button(
             btns, text="Guardar cambios", style="Primary.TButton",
             command=self._guardar,
-        ).pack(side="left", padx=(0, 8))
+        )
+        self.btn_guardar.pack(side="left", padx=(0, 8))
+        if self._solo_lectura:
+            self.btn_guardar.configure(state="disabled")
         ttk.Button(btns, text="Copiar al portapapeles", command=self._copiar).pack(side="left", padx=(0, 8))
         ttk.Button(btns, text="Cerrar", command=self.destroy).pack(side="left")
         self.lbl_msg = tk.Label(btns, text="", fg="#16a34a", font=("Segoe UI", 8))
@@ -560,6 +576,8 @@ class AsientoEmitidaDialog(tk.Toplevel):
 
     def _guardar(self):
         """Persiste todas las subcuentas modificadas de vuelta en la factura."""
+        if self._solo_lectura:
+            return
         self._cerrar_editor()
         upd = dict(self._fac)
         changed = []

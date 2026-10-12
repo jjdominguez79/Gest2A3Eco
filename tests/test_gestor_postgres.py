@@ -306,6 +306,7 @@ def test_upsert_factura_emitida_con_id_textual_confirma_transaccion():
         "ejercicio": 2026,
         "serie": "A",
         "numero": "000009",
+        "numero_asiento": "",
         "fecha_asiento": "30/07/2026",
         "nombre": "Cliente prueba",
         "borrador": 0,
@@ -321,6 +322,17 @@ def test_upsert_factura_emitida_con_id_textual_confirma_transaccion():
     assert "INSERT INTO facturas_emitidas_docs" in insert_sql
     assert "ON CONFLICT(id) DO UPDATE" in insert_sql
     assert params[0:3] == ("factura-empleado-809", "E00809", 2026)
+    assert params[7] is None
+    assert factura["numero_asiento"] is None
+
+
+def test_normalizar_factura_emitida_conserva_numero_asiento_real():
+    gestor = object.__new__(GestorPostgres)
+    factura = {"numero_asiento": " 08/00042 "}
+
+    gestor._normalizar_campos_factura_emitida(factura)
+
+    assert factura["numero_asiento"] == "08/00042"
 
 
 def test_cola_area_cliente_no_duplica_el_mismo_pdf_publicado():

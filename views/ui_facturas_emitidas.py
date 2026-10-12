@@ -94,6 +94,13 @@ TIPOS_OPERACION_EMITIDAS = [
     ("08", "08: No sujetas o inversion de sujeto pasivo con derecho a deduccion"),
     ("09", "09: Otras operaciones exentas con derecho a deduccion"),
 ]
+
+
+def _codigo_tipo_operacion(factura: dict) -> str:
+    codigo = str(factura.get("tipo_operacion") or "01").strip()
+    return codigo.zfill(2) if codigo.isdigit() else codigo
+
+
 MODELOS_FISCALES_EMITIDAS = [
     ("", "Sin modelo asignado"),
     ("01", "01: 347, subclave A-B, Compras-Ventas"),
@@ -1081,20 +1088,22 @@ class FacturaDialog(tk.Toplevel):
         nav_index=None,
         nav_total=None,
         on_save=None,
+        solo_lectura=False,
     ):
         super().__init__(parent)
-        self.title(titulo)
+        self._solo_lectura = bool(solo_lectura)
+        self.title(f"{titulo} - Solo lectura" if self._solo_lectura else titulo)
         self._titulo = titulo
         self.resizable(True, True)
         try:
             screen_w = self.winfo_screenwidth()
             screen_h = self.winfo_screenheight()
-            dialog_w = max(1080, int(screen_w * 0.72))
-            dialog_h = max(820, int(screen_h * 0.82))
-            dialog_w = min(dialog_w, max(900, screen_w - 80))
-            dialog_h = min(dialog_h, max(700, screen_h - 80))
+            dialog_w = max(860, min(980, int(screen_w * 0.62)))
+            dialog_h = max(740, min(860, int(screen_h * 0.82)))
+            dialog_w = min(dialog_w, max(820, screen_w - 80))
+            dialog_h = min(dialog_h, max(680, screen_h - 80))
             self.geometry(f"{dialog_w}x{dialog_h}")
-            self.minsize(980, 720)
+            self.minsize(820, 680)
         except Exception:
             pass
         self.result = None
@@ -1154,7 +1163,7 @@ class FacturaDialog(tk.Toplevel):
         today = date.today().strftime("%d/%m/%Y")
         self.var_serie = tk.StringVar(value=f.get("serie", ""))
         self.var_numero = tk.StringVar(value=f.get("numero", ""))
-        self.var_numero_asiento = tk.StringVar(value=f.get("numero_asiento", ""))
+        self.var_numero_asiento = tk.StringVar(value=f.get("numero_asiento") or "")
         self.var_fecha_asiento = tk.StringVar(value=to_fecha_ui(f.get("fecha_asiento", today)))
         self.var_fecha_exp = tk.StringVar(value=to_fecha_ui(f.get("fecha_expedicion", f.get("fecha_asiento", today))))
         self.var_fecha_op = tk.StringVar(value=to_fecha_ui(f.get("fecha_operacion", today)) if f.get("fecha_operacion") else "")
@@ -1263,6 +1272,25 @@ class FacturaDialog(tk.Toplevel):
             self.var_cuenta_banco.set(self._cuentas_banco[0])
 
         row = 0
+        if self._solo_lectura:
+            asiento = str(f.get("numero_asiento") or "").strip()
+            estado_contable = str(f.get("estado_contable") or "").strip().lower()
+            estado = (
+                "Factura contabilizada"
+                if asiento or estado_contable in {"generado", "contabilizada"}
+                else "Factura"
+            )
+            if asiento:
+                estado += f" - Asiento {asiento}"
+            ttk.Label(
+                frm,
+                text=f"{estado}. Consulta de solo lectura: no se guardara ningun cambio.",
+                foreground="#166534",
+                font=("Segoe UI", 9, "bold"),
+            ).grid(
+                row=row, column=0, columnspan=3, sticky="ew", padx=4, pady=(0, 8),
+            )
+            row += 1
         ttk.Label(frm, text="Seleccione Cliente").grid(row=row, column=0, sticky="w", padx=4, pady=3)
         self.var_tercero = tk.StringVar()
         self._all_tercero_values: list = []
@@ -1456,26 +1484,36 @@ class FacturaDialog(tk.Toplevel):
         self.var_line_obs = tk.BooleanVar(value=False)
         editor = ttk.Frame(frm)
         editor.grid(row=row, column=0, columnspan=3, sticky="ew", padx=4)
-        editor.columnconfigure(13, weight=1)
+        editor.columnconfigure(3, weight=1)
         ttk.Label(editor, text="Concepto").grid(row=0, column=0, padx=4, pady=2, sticky="w")
-        ttk.Entry(editor, textvariable=self.line_vars["concepto"], width=26).grid(row=0, column=1, padx=4, pady=2)
-        ttk.Label(editor, text="Unidades").grid(row=0, column=2, padx=4, pady=2, sticky="w")
+        ttk.Entry(
+            editor, textvariable=self.line_vars["concepto"], width=28,
+        ).grid(row=0, column=1, columnspan=3, padx=4, pady=2, sticky="ew")
+        ttk.Label(editor, text="Unidades").grid(row=0, column=4, padx=4, pady=2, sticky="w")
         self.entry_unidades = ttk.Entry(editor, textvariable=self.line_vars["unidades"], width=10)
-        self.entry_unidades.grid(row=0, column=3, padx=4, pady=2)
-        ttk.Label(editor, text="Precio").grid(row=0, column=4, padx=4, pady=2, sticky="w")
+        self.entry_unidades.grid(row=0, column=5, padx=4, pady=2)
+        ttk.Label(editor, text="Precio").grid(row=0, column=6, padx=4, pady=2, sticky="w")
         self.entry_precio = ttk.Entry(editor, textvariable=self.line_vars["precio"], width=10)
-        self.entry_precio.grid(row=0, column=5, padx=4, pady=2)
-        ttk.Label(editor, text="Desc.").grid(row=0, column=6, padx=4, pady=2, sticky="w")
+        self.entry_precio.grid(row=0, column=7, padx=4, pady=2)
+        ttk.Checkbutton(
+            editor, text="Observación", variable=self.var_line_obs,
+            command=self._on_line_obs_toggle,
+        ).grid(row=0, column=8, padx=6)
+        ttk.Label(editor, text="Descuento").grid(row=1, column=0, padx=4, pady=2, sticky="w")
         self.cb_desc_tipo = ttk.Combobox(editor, textvariable=self.line_vars["desc_tipo"], values=["", "%", "€"], width=4, state="readonly")
-        self.cb_desc_tipo.grid(row=0, column=7, padx=4, pady=2)
+        self.cb_desc_tipo.grid(row=1, column=1, padx=4, pady=2, sticky="w")
         self.entry_desc_val = ttk.Entry(editor, textvariable=self.line_vars["desc_val"], width=8)
-        self.entry_desc_val.grid(row=0, column=8, padx=4, pady=2)
-        ttk.Label(editor, text="IVA %").grid(row=0, column=9, padx=4, pady=2, sticky="w")
+        self.entry_desc_val.grid(row=1, column=2, padx=4, pady=2, sticky="w")
+        ttk.Label(editor, text="IVA %").grid(row=1, column=4, padx=4, pady=2, sticky="e")
         self.cb_iva = ttk.Combobox(editor, textvariable=self.line_vars["iva"], values=[str(x) for x in IVA_OPCIONES], width=6, state="readonly")
-        self.cb_iva.grid(row=0, column=10, padx=4, pady=2)
-        ttk.Checkbutton(editor, text="Observacion", variable=self.var_line_obs, command=self._on_line_obs_toggle).grid(row=0, column=11, padx=6)
-        ttk.Button(editor, text="Añadir/Actualizar", style="Primary.TButton", command=self._add_update_linea).grid(row=0, column=12, padx=6)
-        ttk.Button(editor, text="Limpiar", command=self._clear_line_editor).grid(row=0, column=13, padx=4)
+        self.cb_iva.grid(row=1, column=5, padx=4, pady=2, sticky="w")
+        ttk.Button(
+            editor, text="Añadir/Actualizar", style="Primary.TButton",
+            command=self._add_update_linea,
+        ).grid(row=1, column=6, columnspan=2, padx=6, sticky="e")
+        ttk.Button(
+            editor, text="Limpiar", command=self._clear_line_editor,
+        ).grid(row=1, column=8, padx=4, sticky="w")
         row += 1
 
         self.tv = ttk.Treeview(
@@ -1556,9 +1594,20 @@ class FacturaDialog(tk.Toplevel):
             )
             self._btn_nav_next.pack(side=tk.LEFT, padx=2)
         _lbl_guardar = "Guardar albaran" if "albaran" in self._titulo.lower() else "Guardar factura"
-        ttk.Button(btns, text=_lbl_guardar, style="Primary.TButton", command=self._ok).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btns, text="Guardar borrador", command=self._ok_borrador).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btns, text="Cancelar", command=self.destroy).pack(side=tk.LEFT, padx=4)
+        self.btn_guardar = ttk.Button(
+            btns, text=_lbl_guardar, style="Primary.TButton", command=self._ok,
+        )
+        self.btn_guardar.pack(side=tk.LEFT, padx=4)
+        self.btn_guardar_borrador = ttk.Button(
+            btns, text="Guardar borrador", command=self._ok_borrador,
+        )
+        self.btn_guardar_borrador.pack(side=tk.LEFT, padx=4)
+        self.btn_cerrar = ttk.Button(
+            btns,
+            text="Cerrar" if self._solo_lectura else "Cancelar",
+            command=self.destroy,
+        )
+        self.btn_cerrar.pack(side=tk.LEFT, padx=4)
 
         self._load_terceros()
         self._preselect_tercero(f.get("tercero_id"))
@@ -1574,13 +1623,38 @@ class FacturaDialog(tk.Toplevel):
             self.controller.apply_retencion_header()
         self._refresh_totales()
         self._update_line_obs_state()
+        if self._solo_lectura:
+            self._aplicar_solo_lectura(frm)
 
         self.grab_set()
         self.transient(parent)
         _center_window(self, parent)
         # Activar seguimiento de cambios despues de que la UI este lista
-        self.after(0, self._setup_dirty_tracking)
+        if not self._solo_lectura:
+            self.after(0, self._setup_dirty_tracking)
         self.wait_window(self)
+
+    def _aplicar_solo_lectura(self, parent):
+        """Desactiva toda accion de edicion y conserva consulta/scroll/cierre."""
+        editables = (
+            ttk.Entry,
+            ttk.Combobox,
+            ttk.Checkbutton,
+            ttk.Button,
+            tk.Entry,
+            tk.Checkbutton,
+            tk.Button,
+        )
+        pendientes = list(parent.winfo_children())
+        while pendientes:
+            widget = pendientes.pop()
+            pendientes.extend(widget.winfo_children())
+            if widget is self.btn_cerrar or not isinstance(widget, editables):
+                continue
+            try:
+                widget.configure(state="disabled")
+            except tk.TclError:
+                pass
 
     def _parse_cuentas_banco(self):
         emp = self.gestor.get_empresa(self.codigo, self.ejercicio) or {}
@@ -1697,12 +1771,16 @@ class FacturaDialog(tk.Toplevel):
     # ── Guardar y navegacion ──────────────────────────────────────────────────
 
     def _ok(self):
+        if self._solo_lectura:
+            return
         self.controller.ok()
         # Si llegamos aqui sin que el dialogo se haya cerrado, la validacion
         # fallo; limpiar el pendiente de navegacion para no contaminarlo.
         self._nav_pending = None
 
     def _ok_borrador(self):
+        if self._solo_lectura:
+            return
         self.controller.ok_borrador()
         self._nav_pending = None
 
@@ -2124,6 +2202,9 @@ class FacturaDialog(tk.Toplevel):
         label = self.var_tipo_operacion.get()
         return self._tipo_operacion_by_label.get(label, "01")
 
+    def get_tipo_operacion_label(self):
+        return self.var_tipo_operacion.get().strip()
+
     def get_modelo_fiscal(self):
         label = self.var_modelo_fiscal.get()
         return self._modelo_fiscal_by_label.get(label, "")
@@ -2170,12 +2251,72 @@ class FacturaDialog(tk.Toplevel):
     def show_error(self, title, message):
         messagebox.showerror(title, message)
 
+    def confirmar_campos_no_habituales(self, advertencias: list[str]) -> bool:
+        """Confirma tipo de operacion/moneda antes de guardar la factura."""
+        dlg = tk.Toplevel(self)
+        dlg.title("Confirmar datos fiscales")
+        dlg.resizable(False, False)
+        resultado = {"confirmar": False}
+
+        contenido = ttk.Frame(dlg, padding=18)
+        contenido.pack(fill="both", expand=True)
+        ttk.Label(
+            contenido,
+            text="Revisa estos datos antes de guardar la factura:",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(anchor="w", pady=(0, 10))
+        ttk.Label(
+            contenido,
+            text="\n".join(f"• {item}" for item in advertencias),
+            foreground="#9a3412",
+            justify="left",
+            font=("Segoe UI", 10),
+        ).pack(anchor="w", pady=(0, 10))
+        ttk.Label(
+            contenido,
+            text=(
+                "Estos valores no son los habituales (operación 01 y moneda EUR).\n"
+                "Confirma que son correctos o vuelve a la factura para corregirlos."
+            ),
+            justify="left",
+            wraplength=520,
+        ).pack(anchor="w", pady=(0, 14))
+
+        botones = ttk.Frame(contenido)
+        botones.pack(fill="x")
+
+        def _confirmar():
+            resultado["confirmar"] = True
+            dlg.destroy()
+
+        ttk.Button(
+            botones,
+            text="Confirmar",
+            style="Primary.TButton",
+            command=_confirmar,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(
+            botones, text="Corregir", command=dlg.destroy,
+        ).pack(side=tk.LEFT)
+
+        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+        dlg.bind("<Escape>", lambda _event: dlg.destroy())
+        dlg.transient(self)
+        dlg.grab_set()
+        _center_window(dlg, self)
+        dlg.wait_window()
+        return resultado["confirmar"]
+
     def set_result_and_close(self, result):
+        if self._solo_lectura:
+            return
         if self._nav_pending:
             result["_nav"] = self._nav_pending
         # Modo guardar-y-seguir: hay callback on_save y no es navegacion
         if self._on_save and not result.get("_nav"):
-            self._on_save(result)
+            guardado = self._on_save(result)
+            if guardado is False:
+                return
             self._dirty = False
             self._show_save_feedback()
             return  # No cerrar el dialogo
@@ -2284,12 +2425,15 @@ class UIFacturasEmitidas(ttk.Frame):
         top2.pack(fill="x", pady=(4, 0))
         can_write = getattr(getattr(self.gestor, "security", None), "can_write_company", lambda _c: True)(self.codigo)
         is_cliente = bool(self.session and self.session.role.value == "cliente")
+        self._can_write_facturas = bool(can_write and not is_cliente)
         self.btn_fact_nueva = ttk.Button(top, text="Nueva", style="Primary.TButton", command=self._nueva)
         self.btn_fact_nueva.pack(side=tk.LEFT, padx=(0, 8))
         self.btn_fact_nueva_rect = ttk.Button(top, text="Nueva Rectif.", command=self._nueva_rectificativa)
         self.btn_fact_nueva_rect.pack(side=tk.LEFT, padx=8)
         self.btn_fact_editar = ttk.Button(top, text="Editar", command=self._editar)
         self.btn_fact_editar.pack(side=tk.LEFT, padx=8)
+        self.btn_fact_ver = ttk.Button(top, text="Ver factura", command=self._ver_factura)
+        self.btn_fact_ver.pack(side=tk.LEFT, padx=8)
         self.btn_fact_copiar = ttk.Button(top, text="Copiar", command=self._copiar)
         self.btn_fact_copiar.pack(side=tk.LEFT, padx=8)
         self.btn_fact_rectificar = ttk.Button(top, text="Rectificar", command=self._rectificar)
@@ -2302,6 +2446,7 @@ class UIFacturasEmitidas(ttk.Frame):
         self.btn_fact_desmarcar.pack(side=tk.LEFT, padx=8)
         ttk.Button(top2, text="Exportar PDF", command=self._export_pdf).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(top2, text="Abrir PDF", command=self._abrir_pdf).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top2, text="Ver asiento", command=self._ver_asiento).pack(side=tk.LEFT, padx=8)
         ttk.Button(top2, text="Compartir PDF", command=self._compartir_pdf).pack(side=tk.LEFT, padx=8)
         ttk.Button(
             top2,
@@ -2358,33 +2503,52 @@ class UIFacturasEmitidas(ttk.Frame):
 
         self.tv = ttk.Treeview(
             parent,
-            columns=("marcar", "ejercicio", "serie", "numero", "asiento", "cont_estado", "fecha", "cliente", "total", "enviado", "fecha_envio", "area_cliente", "facturae_estado"),
+            columns=(
+                "marcar", "ejercicio", "serie", "numero", "asiento",
+                "cont_estado", "tipo_operacion", "fecha", "cliente", "base", "iva",
+                "retencion", "total", "enviado", "fecha_envio",
+                "area_cliente", "facturae_estado",
+            ),
             show="headings",
             selectmode="extended",
             height=12,
         )
         cols = [
-            ("marcar", "Generar", 70, "center"),
-            ("ejercicio", "Ejercicio", 90, "center"),
-            ("serie", "Serie", 70, "center"),
-            ("numero", "Numero", 110, "w"),
-            ("asiento", "Asiento", 100, "w"),
-            ("cont_estado", "Estado", 100, "center"),
-            ("fecha", "Fecha", 100, "w"),
-            ("cliente", "Cliente", 240, "w"),
-            ("total", "Total", 100, "e"),
-            ("enviado", "Enviado", 90, "center"),
-            ("fecha_envio", "Fecha envio", 110, "w"),
-            ("area_cliente", "Area cliente", 120, "center"),
-            ("facturae_estado", "Facturae", 120, "center"),
+            ("marcar", "Generar", 55, "center"),
+            ("ejercicio", "Ej.", 55, "center"),
+            ("serie", "Serie", 45, "center"),
+            ("numero", "Número", 75, "w"),
+            ("asiento", "Asiento", 70, "w"),
+            ("cont_estado", "Estado", 80, "center"),
+            ("tipo_operacion", "Tipo op.", 65, "center"),
+            ("fecha", "Fecha", 80, "w"),
+            ("cliente", "Cliente", 160, "w"),
+            ("base", "Base imponible", 85, "e"),
+            ("iva", "IVA", 75, "e"),
+            ("retencion", "Retención", 85, "e"),
+            ("total", "Total", 85, "e"),
+            ("enviado", "Enviado", 60, "center"),
+            ("fecha_envio", "Fecha envío", 85, "w"),
+            ("area_cliente", "Área cliente", 85, "center"),
+            ("facturae_estado", "Facturae", 85, "center"),
         ]
         for c, h, w, align in cols:
             self.tv.heading(c, text=h, command=lambda col=c: self._sort_facturas(col))
-            self.tv.column(c, width=w, anchor=align)
-        self.tv.pack(fill="both", expand=True, padx=10, pady=8)
+            self.tv.column(c, width=w, minwidth=40, anchor=align, stretch=False)
+        self.tv.pack(fill="both", expand=True, padx=10, pady=(8, 0))
+        scroll_facturas_x = ttk.Scrollbar(
+            parent, orient="horizontal", command=self.tv.xview,
+        )
+        scroll_facturas_x.pack(fill="x", padx=10, pady=(0, 8))
+        self.tv.configure(xscrollcommand=scroll_facturas_x.set)
         self.tv.tag_configure("borrador", foreground="#888888", font=("", 9, "italic"))
+        self.tv.tag_configure("contabilidad", foreground="#9a6700")
+        self.tv.tag_configure("generado", foreground="#075985")
+        self.tv.tag_configure("contabilizada", foreground="#166534", font=("", 9, "bold"))
+        self.tv.tag_configure("enlazada", foreground="#075985")
         self.tv.bind("<<TreeviewSelect>>", lambda e: self._on_factura_select())
         self.tv.bind("<Button-1>", self._on_factura_click, add="+")
+        self.tv.bind("<Double-Button-1>", self._on_factura_double_click, add="+")
 
         detalle = ttk.LabelFrame(parent, text="Detalle de factura")
         detalle.pack(fill="x", padx=10, pady=(0, 6))
@@ -2409,6 +2573,31 @@ class UIFacturasEmitidas(ttk.Frame):
             self.tv_detalle.column(c, width=90 if c == "concepto" else 70, anchor="e" if c != "concepto" else "w")
         self.tv_detalle.pack(fill="x", expand=True, padx=6, pady=4)
 
+        totales_pie = ttk.LabelFrame(
+            parent, text="Totales del listado filtrado",
+        )
+        totales_pie.pack(fill="x", padx=10, pady=(0, 4))
+        self.tv_facturas_totales = ttk.Treeview(
+            totales_pie,
+            columns=("moneda", "facturas", "base", "iva", "retencion", "total"),
+            show="headings",
+            height=1,
+            selectmode="none",
+        )
+        for columna, texto, ancho, anclaje in (
+            ("moneda", "Moneda", 90, "center"),
+            ("facturas", "Facturas", 70, "center"),
+            ("base", "Base imponible", 130, "e"),
+            ("iva", "IVA", 110, "e"),
+            ("retencion", "Retención", 110, "e"),
+            ("total", "Total", 130, "e"),
+        ):
+            self.tv_facturas_totales.heading(columna, text=texto)
+            self.tv_facturas_totales.column(
+                columna, width=ancho, minwidth=60, anchor=anclaje,
+            )
+        self.tv_facturas_totales.pack(fill="x", padx=6, pady=4)
+
         bottom = ttk.Frame(parent)
         bottom.pack(fill="x", padx=10, pady=6)
         self.btn_enviar_contabilidad = ttk.Button(bottom, text="Enviar a contabilidad", command=self._enviar_a_contabilidad)
@@ -2428,6 +2617,7 @@ class UIFacturasEmitidas(ttk.Frame):
             self.btn_desmarcar_facturas.configure(state="disabled")
             self.btn_enviar_contabilidad.configure(state="disabled")
             self.btn_capturar_asiento.configure(state="disabled")
+        self.actualizar_estado_acciones_factura(None)
 
     def _build_albaranes_tab(self, parent):
         top = ttk.Frame(parent)
@@ -2653,12 +2843,15 @@ class UIFacturasEmitidas(ttk.Frame):
     def clear_facturas(self):
         self.tv.delete(*self.tv.get_children())
         self.tv_detalle.delete(*self.tv_detalle.get_children())
+        self.actualizar_estado_acciones_factura(None)
 
     def clear_albaranes(self):
         self.tv_albaranes.delete(*self.tv_albaranes.get_children())
         self.tv_alb_detalle.delete(*self.tv_alb_detalle.get_children())
 
-    def insert_factura_row(self, fac: dict, total: float):
+    def insert_factura_row(self, fac: dict, totales):
+        if not isinstance(totales, dict):
+            totales = {"base": 0.0, "iva": 0.0, "ret": 0.0, "total": totales}
         sym = fac.get("moneda_simbolo") or self._default_moneda_simbolo
         fid = str(fac.get("id"))
         es_borrador = bool(fac.get("borrador"))
@@ -2668,21 +2861,43 @@ class UIFacturasEmitidas(ttk.Frame):
         if serie_val and numero_raw.upper().startswith(serie_val.upper()):
             numero_raw = numero_raw[len(serie_val):]
         numero_display = "BORRADOR" if es_borrador else numero_raw
+        estado = str(fac.get("estado_contable") or "").strip().lower()
+        estado_display = (
+            "Contabilizada"
+            if str(fac.get("numero_asiento") or "").strip()
+            else _ESTADO_LABELS.get(estado, "Pendiente")
+        )
+        if es_borrador:
+            tags = ("borrador",)
+        elif str(fac.get("numero_asiento") or "").strip() or estado == "contabilizada":
+            tags = ("contabilizada",)
+        elif estado == "generado":
+            tags = ("generado",)
+        elif estado == "pendiente":
+            tags = ("contabilidad",)
+        elif fac.get("generada"):
+            tags = ("enlazada",)
+        else:
+            tags = ()
         self.tv.insert(
             "",
             tk.END,
             iid=fid,
-            tags=("borrador",) if es_borrador else (),
+            tags=tags,
             values=(
                 "Si" if fid in self._marked_factura_ids else "",
                 fac.get("ejercicio", ""),
                 serie_val,
                 numero_display,
-                fac.get("numero_asiento", ""),
-                _ESTADO_LABELS.get(fac.get("estado_contable") or "", "Pendiente"),
+                fac.get("numero_asiento") or "",
+                estado_display,
+                _codigo_tipo_operacion(fac),
                 to_fecha_ui_or_blank(fac.get("fecha_asiento", "")),
                 fac.get("nombre", ""),
-                fmt2s(total, sym),
+                fmt2s(totales.get("base", 0.0), sym),
+                fmt2s(totales.get("iva", 0.0), sym),
+                fmt2s(totales.get("ret", 0.0), sym),
+                fmt2s(totales.get("total", 0.0), sym),
                 "Si" if fac.get("enviado") else "No",
                 fac.get("fecha_envio", ""),
                 _texto_estado_area_cliente(fac),
@@ -2735,7 +2950,7 @@ class UIFacturasEmitidas(ttk.Frame):
                 return int(val)
             except Exception:
                 return -1
-        if col == "total":
+        if col in {"base", "iva", "retencion", "total"}:
             return to_float(val)
         if col == "fecha":
             return parse_date_ui(val) if val else date.min
@@ -2789,6 +3004,34 @@ class UIFacturasEmitidas(ttk.Frame):
         items.sort(key=lambda x: x[0])
         for idx, (_, iid) in enumerate(items):
             self.tv_albaranes.move(iid, "", idx)
+
+    def set_facturas_totales(self, resumen_por_moneda, cantidad: int):
+        self.tv_facturas_totales.delete(
+            *self.tv_facturas_totales.get_children(),
+        )
+        for clave in sorted(resumen_por_moneda, key=lambda item: item or ""):
+            valores = resumen_por_moneda[clave]
+            simbolo = valores.get("simbolo") or self._default_moneda_simbolo
+            codigo = valores.get("codigo") or clave
+            self.tv_facturas_totales.insert(
+                "",
+                tk.END,
+                values=(
+                    codigo if codigo != "SIN_MONEDA" else "Sin moneda",
+                    valores.get("facturas", 0),
+                    fmt2s(valores.get("base", 0.0), simbolo),
+                    fmt2s(valores.get("iva", 0.0), simbolo),
+                    fmt2s(valores.get("ret", 0.0), simbolo),
+                    fmt2s(valores.get("total", 0.0), simbolo),
+                ),
+            )
+        if not resumen_por_moneda:
+            self.tv_facturas_totales.insert(
+                "", tk.END, values=("Sin resultados", 0, "", "", "", ""),
+            )
+        self.tv_facturas_totales.configure(
+            height=min(max(len(resumen_por_moneda), 1), 3),
+        )
 
     def _export_facturas_excel(self):
         dlg = _ExportExcelDialog(self, "Exportar facturas a Excel")
@@ -2930,7 +3173,10 @@ class UIFacturasEmitidas(ttk.Frame):
         focus = self.tv_albaranes.focus()
         return [focus] if focus else []
 
-    def open_factura_dialog(self, factura, numero_sugerido="", nav_index=None, nav_total=None, on_save=None):
+    def open_factura_dialog(
+        self, factura, numero_sugerido="", nav_index=None, nav_total=None,
+        on_save=None, solo_lectura=False,
+    ):
         ejercicio = self.ejercicio
         if self.allow_all_years and factura.get("ejercicio") is not None:
             ejercicio = factura.get("ejercicio")
@@ -2950,8 +3196,32 @@ class UIFacturasEmitidas(ttk.Frame):
             nav_index=nav_index,
             nav_total=nav_total,
             on_save=on_save,
+            solo_lectura=solo_lectura,
         )
         return dlg.result
+
+    def actualizar_estado_acciones_factura(self, fac):
+        seleccionada = bool(fac)
+        estado = str((fac or {}).get("estado_contable") or "").strip().lower()
+        bloqueada_contabilidad = bool(
+            estado in {"pendiente", "generado", "contabilizada"}
+            or str((fac or {}).get("numero_asiento") or "").strip()
+        )
+        self.btn_fact_ver.configure(state="normal" if seleccionada else "disabled")
+        editable = (
+            seleccionada and self._can_write_facturas
+            and not bloqueada_contabilidad
+        )
+        eliminable = editable and not bool((fac or {}).get("generada"))
+        self.btn_fact_editar.configure(state="normal" if editable else "disabled")
+        self.btn_fact_eliminar.configure(
+            state="normal" if eliminable else "disabled"
+        )
+        self.btn_fact_confirmar.configure(
+            state="normal"
+            if editable and bool((fac or {}).get("borrador"))
+            else "disabled"
+        )
 
     def get_all_factura_ids(self) -> list[str]:
         """IDs de todas las facturas visibles en el treeview, en orden de pantalla."""
@@ -3419,6 +3689,12 @@ class UIFacturasEmitidas(ttk.Frame):
     def _editar(self):
         self.controller.editar()
 
+    def _ver_factura(self):
+        self.controller.ver_factura()
+
+    def _ver_asiento(self):
+        self.controller.ver_asiento_factura()
+
     def _copiar(self):
         self.controller.copiar()
 
@@ -3457,6 +3733,18 @@ class UIFacturasEmitidas(ttk.Frame):
 
     def _on_factura_select(self):
         self.controller.factura_seleccionada()
+
+    def _on_factura_double_click(self, event):
+        if self.tv.identify("region", event.x, event.y) != "cell":
+            return
+        if self.tv.identify_column(event.x) == "#1":
+            return
+        row = self.tv.identify_row(event.y)
+        if not row:
+            return
+        self.tv.selection_set(row)
+        self.tv.focus(row)
+        self.controller.ver_factura()
 
     def _on_albaran_select(self):
         self.controller.albaran_seleccionado()

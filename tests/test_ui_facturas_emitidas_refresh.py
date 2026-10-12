@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from views.ui_facturas_emitidas import (
     UIFacturasEmitidas,
+    _codigo_tipo_operacion,
     _texto_estado_area_cliente,
 )
 
@@ -19,6 +20,37 @@ def test_area_cliente_conserva_los_estados_de_publicacion():
     assert _texto_estado_area_cliente({"area_cliente_estado": "publicada"}) == "Publicada"
     assert _texto_estado_area_cliente({"area_cliente_estado": "bloqueada"}) == "Bloqueada"
     assert _texto_estado_area_cliente({"area_cliente_estado": "error"}) == "Reintentando"
+
+
+def test_tipo_operacion_del_listado_normaliza_codigo_y_legacy():
+    assert _codigo_tipo_operacion({"tipo_operacion": "02"}) == "02"
+    assert _codigo_tipo_operacion({"tipo_operacion": "2"}) == "02"
+    assert _codigo_tipo_operacion({"tipo_operacion": ""}) == "01"
+
+
+def test_listado_muestra_asiento_vacio_para_none_y_numero_real_si_existe():
+    class Tree:
+        def __init__(self):
+            self.rows = []
+
+        def insert(self, _parent, _position, **kwargs):
+            self.rows.append(kwargs["values"])
+
+    view = object.__new__(UIFacturasEmitidas)
+    view.tv = Tree()
+    view._marked_factura_ids = set()
+    view._default_moneda_simbolo = "€"
+    totales = {"base": 0, "iva": 0, "ret": 0, "total": 0}
+
+    UIFacturasEmitidas.insert_factura_row(
+        view, {"id": "fac-1", "numero_asiento": None}, totales,
+    )
+    UIFacturasEmitidas.insert_factura_row(
+        view, {"id": "fac-2", "numero_asiento": "08/00042"}, totales,
+    )
+
+    assert view.tv.rows[0][4] == ""
+    assert view.tv.rows[1][4] == "08/00042"
 
 
 def test_fin_actualizacion_aplica_cambios_preservando_estado_y_reprograma():
@@ -122,3 +154,92 @@ def test_restaurar_estado_conserva_seleccion_foco_scroll_y_marcadas_existentes()
     assert view.tv.focused == "fac-2"
     assert view.tv.scroll == 0.45
     assert view._marked_factura_ids == {"fac-1"}
+
+
+def test_acciones_bloquean_contabilizada_pero_permiten_verla():
+    class Button:
+        def __init__(self):
+            self.state = None
+
+        def configure(self, **kwargs):
+            self.state = kwargs.get("state")
+
+    view = object.__new__(UIFacturasEmitidas)
+    view._can_write_facturas = True
+    view.btn_fact_ver = Button()
+    view.btn_fact_editar = Button()
+    view.btn_fact_eliminar = Button()
+    view.btn_fact_confirmar = Button()
+
+    UIFacturasEmitidas.actualizar_estado_acciones_factura(view, {
+        "id": "fac-1",
+        "estado_contable": "contabilizada",
+        "numero_asiento": "42",
+    })
+
+    assert view.btn_fact_ver.state == "normal"
+    assert view.btn_fact_editar.state == "disabled"
+    assert view.btn_fact_eliminar.state == "disabled"
+
+
+def test_factura_generada_fuera_de_contabilidad_conserva_edicion_con_clave():
+    class Button:
+        def __init__(self):
+            self.state = None
+
+        def configure(self, **kwargs):
+            self.state = kwargs.get("state")
+
+    view = object.__new__(UIFacturasEmitidas)
+    view._can_write_facturas = True
+    view.btn_fact_ver = Button()
+    view.btn_fact_editar = Button()
+    view.btn_fact_eliminar = Button()
+    view.btn_fact_confirmar = Button()
+
+    UIFacturasEmitidas.actualizar_estado_acciones_factura(view, {
+        "id": "fac-generada", "generada": True,
+    })
+
+    assert view.btn_fact_editar.state == "normal"
+    assert view.btn_fact_eliminar.state == "disabled"
+
+
+def test_totales_filtrados_se_presentan_en_filas_por_moneda():
+    class Tree:
+        def __init__(self):
+            self.rows = []
+            self.height = None
+
+        def get_children(self):
+            return tuple(range(len(self.rows)))
+
+        def delete(self, *_items):
+            self.rows.clear()
+
+        def insert(self, _parent, _position, *, values):
+            self.rows.append(values)
+
+        def configure(self, **kwargs):
+            self.height = kwargs.get("height")
+
+    view = object.__new__(UIFacturasEmitidas)
+    view._default_moneda_simbolo = "€"
+    view.tv_facturas_totales = Tree()
+
+    UIFacturasEmitidas.set_facturas_totales(view, {
+        "EUR": {
+            "codigo": "EUR",
+            "simbolo": "€",
+            "facturas": 9,
+            "base": 24493.20,
+            "iva": 5143.58,
+            "ret": -244.94,
+            "total": 29391.84,
+        },
+    }, 9)
+
+    assert view.tv_facturas_totales.rows == [
+        ("EUR", 9, "24.493,20 €", "5.143,58 €", "-244,94 €", "29.391,84 €"),
+    ]
+    assert view.tv_facturas_totales.height == 1
