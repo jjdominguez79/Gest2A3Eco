@@ -9,6 +9,7 @@ import 'package:go_router/go_router.dart';
 import 'package:gestinem/features/auth/domain/user_profile.dart';
 import 'package:gestinem/features/auth/presentation/auth_controller.dart';
 import 'package:gestinem/features/messaging/domain/conversation.dart';
+import 'package:gestinem/features/messaging/domain/internal_task.dart';
 import 'package:gestinem/features/messaging/domain/message.dart';
 import 'package:gestinem/features/messaging/presentation/conversation_screen.dart';
 import 'package:gestinem/features/messaging/presentation/messaging_providers.dart';
@@ -140,6 +141,83 @@ void main() {
     expect(find.text('Hola. Segundo mensaje'), findsOneWidget);
     await tester.pumpAndSettle();
     expect(adapter.lastRequest?.path, '/staff/internal/threads/t1/read');
+  });
+
+  testWidgets('chat interno abre el panel y muestra sus tareas', (
+    tester,
+  ) async {
+    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'))
+      ..httpClientAdapter = JsonAdapter(<String, dynamic>{});
+    final createdAt = DateTime(2026, 10, 13, 9, 30);
+    final task = InternalTask(
+      id: 'task-1',
+      threadId: 'thread-1',
+      title: 'Preparar modelos trimestrales',
+      details: 'Revisar los borradores antes de presentar.',
+      createdByStaffId: 'staff-1',
+      createdByName: 'Ana',
+      createdAt: createdAt,
+      updatedAt: createdAt,
+      completed: false,
+      completedCount: 1,
+      assigneeCount: 2,
+      canComplete: false,
+      myCompleted: false,
+      assignments: const [
+        InternalTaskAssignment(
+          staffId: 'staff-1',
+          name: 'Ana',
+          completed: true,
+        ),
+        InternalTaskAssignment(
+          staffId: 'staff-2',
+          name: 'Luis',
+          completed: false,
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+          apiClientProvider.overrideWithValue(
+            ApiClient(dio: dio, tokenProvider: () => testSession.token),
+          ),
+          internalThreadsProvider.overrideWith(
+            (ref) async => const [
+              InternalThread(
+                id: 'thread-1',
+                kind: 'group',
+                channel: '',
+                title: 'Equipo Fiscal',
+                unreadCount: 0,
+              ),
+            ],
+          ),
+          internalMessagesProvider.overrideWith((ref, id) async => []),
+          internalTasksProvider.overrideWith((ref, id) async => [task]),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(
+            body: ConversationView(
+              conversationId: 'thread-1',
+              internal: true,
+              showInternalHeader: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('internal-tasks-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tareas del chat'), findsOneWidget);
+    expect(find.text('Preparar modelos trimestrales'), findsOneWidget);
+    expect(find.text('1 de 2 completadas'), findsOneWidget);
+    expect(find.text('Ana'), findsWidgets);
+    expect(find.text('Luis'), findsOneWidget);
   });
 
   testWidgets('en movil agrupa las acciones del compositor en un boton mas', (

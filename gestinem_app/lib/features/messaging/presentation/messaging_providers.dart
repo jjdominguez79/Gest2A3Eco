@@ -8,6 +8,7 @@ import '../../profile/data/profile_repository.dart';
 import '../data/messaging_repository.dart';
 import '../domain/client_organization.dart';
 import '../domain/conversation.dart';
+import '../domain/internal_task.dart';
 import '../domain/message.dart';
 
 final messagingRepositoryProvider = Provider<MessagingRepository>((ref) {
@@ -96,6 +97,11 @@ final pendingMessagesCountProvider = FutureProvider.autoDispose<int>((
 final internalMessagesProvider = FutureProvider.autoDispose
     .family<List<Message>, String>((ref, id) {
       return ref.watch(messagingRepositoryProvider).internalMessages(id);
+    });
+
+final internalTasksProvider = FutureProvider.autoDispose
+    .family<List<InternalTask>, String>((ref, id) {
+      return ref.watch(messagingRepositoryProvider).internalTasks(id);
     });
 
 /// Todas las organizaciones con su estado de acceso (solo admin).

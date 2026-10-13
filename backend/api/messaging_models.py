@@ -166,6 +166,43 @@ class MessagingStaffThreadRead(Base):
     read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class MessagingStaffTask(Base):
+    """Tarea operativa vinculada a un chat interno."""
+
+    __tablename__ = "msg_staff_tasks"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    thread_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_staff_threads.id", ondelete="CASCADE"), index=True,
+    )
+    title: Mapped[str] = mapped_column(String(500))
+    details: Mapped[str] = mapped_column(Text, default="")
+    created_by_staff_external_id: Mapped[str] = mapped_column(String(64), index=True)
+    created_by_name: Mapped[str] = mapped_column(String(160))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, index=True,
+    )
+
+
+class MessagingStaffTaskAssignment(Base):
+    """Estado individual de una tarea para cada responsable."""
+
+    __tablename__ = "msg_staff_task_assignments"
+    __table_args__ = (UniqueConstraint("task_id", "staff_external_id"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    task_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_staff_tasks.id", ondelete="CASCADE"), index=True,
+    )
+    staff_external_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_staff.external_id", ondelete="CASCADE"), index=True,
+    )
+    assigned_name: Mapped[str] = mapped_column(String(160))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    completed_by_staff_external_id: Mapped[str] = mapped_column(String(64), default="")
+    completed_by_name: Mapped[str] = mapped_column(String(160), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class MessagingDevice(Base):
     __tablename__ = "msg_devices"
     id: Mapped[str] = mapped_column(String(120), primary_key=True)

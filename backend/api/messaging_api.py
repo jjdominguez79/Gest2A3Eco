@@ -34,7 +34,8 @@ from backend.api.messaging_models import (
     MessagingProfileChangeRequest,
     MessagingStaffAuthFlow, MessagingStaffChannel, MessagingStaffSession,
     MessagingSharedContact, MessagingStaffAppCode, MessagingStaffThread, MessagingStaffThreadMention, MessagingStaffThreadMessage,
-    MessagingStaffPresenceConnection, MessagingStaffThreadRead, MessagingWebSocketTicket,
+    MessagingStaffPresenceConnection, MessagingStaffTask, MessagingStaffTaskAssignment,
+    MessagingStaffThreadRead, MessagingWebSocketTicket,
 )
 from backend.api.messaging_mail import (
     DEFAULT_INVITATION_EMAIL_CONTENT, INVITATION_MANUAL_PATH,
@@ -237,6 +238,17 @@ class MessageDeleteIn(BaseModel):
 
 class MessageReactionIn(BaseModel):
     emoji: str = Field(default="", max_length=16)
+
+
+class StaffTaskIn(BaseModel):
+    title: str = Field(min_length=1, max_length=500)
+    details: str = Field(default="", max_length=5000)
+    assignee_ids: list[str] = Field(default_factory=list, max_length=100)
+    assign_all: bool = False
+
+
+class StaffTaskCompletionIn(BaseModel):
+    completed: bool
 
 
 class GroupIn(BaseModel):
@@ -2406,6 +2418,200 @@ def _staff_thread_recipient_ids(
         MessagingStaff.active.is_(True),
         (MessagingStaff.email != "") | (MessagingStaff.entra_oid != ""),
     )))
+
+
+def _serialize_staff_task(
+    db: Session, task: MessagingStaffTask, viewer_id: str,
+) -> dict:
+    assignments = list(db.scalars(select(MessagingStaffTaskAssignment).where(
+        MessagingStaffTaskAssignment.task_id == task.id,
+    ).order_by(
+        MessagingStaffTaskAssignment.completed_at.is_not(None),
+        MessagingStaffTaskAssignment.assigned_name,
+        MessagingStaffTaskAssignment.staff_external_id,
+    )))
+    staff_by_id = {
+        row.external_id: row
+        for row in db.scalars(select(MessagingStaff).where(
+            MessagingStaff.external_id.in_({item.staff_external_id for item in assignments}),
+        ))
+    } if assignments else {}
+    completed_count = sum(item.completed_at is not None for item in assignments)
+    return {
+        "id": task.id,
+        "thread_id": task.thread_id,
+        "title": task.title,
+        "details": task.details,
+        "created_by_staff_external_id": task.created_by_staff_external_id,
+        "created_by_name": task.created_by_name,
+        "created_at": task.created_at.isoformat(),
+        "updated_at": task.updated_at.isoformat(),
+        "completed": bool(assignments) and completed_count == len(assignments),
+        "completed_count": completed_count,
+        "assignee_count": len(assignments),
+        "can_complete": any(item.staff_external_id == viewer_id for item in assignments),
+        "my_completed": any(
+            item.staff_external_id == viewer_id and item.completed_at is not None
+            for item in assignments
+        ),
+        "assignments": [{
+            "staff_id": item.staff_external_id,
+            "name": (
+                staff_by_id[item.staff_external_id].chat_alias.strip()
+                or staff_by_id[item.staff_external_id].name
+            ) if item.staff_external_id in staff_by_id else item.assigned_name,
+            "completed": item.completed_at is not None,
+            "completed_at": item.completed_at.isoformat() if item.completed_at else None,
+            "completed_by_name": item.completed_by_name,
+        } for item in assignments],
+    }
+
+
+def _add_staff_task_event(
+    db: Session, thread: MessagingStaffThread,
+) -> None:
+    db.add(MessagingEvent(
+        organization_id="", conversation_id=thread.id, event_type="internal_task",
+    ))
+
+
+def _queue_internal_task_pushes(
+    db: Session, background: BackgroundTasks, thread: MessagingStaffThread,
+    creator: MessagingStaff, title: str, assignee_ids: set[str], task_id: str,
+) -> None:
+    if not fcm_configured():
+        return
+    recipients = assignee_ids - {creator.external_id}
+    if not recipients:
+        return
+    devices = db.scalars(select(MessagingAppDevice).where(
+        MessagingAppDevice.user_type == "staff",
+        MessagingAppDevice.user_id.in_(recipients),
+        MessagingAppDevice.active.is_(True),
+    )).all()
+    creator_name = creator.chat_alias.strip() or creator.name
+    for device in devices:
+        payload = {
+            "event": "internal_task",
+            "title": f"Nueva tarea de {creator_name}",
+            "body": title[:160],
+            "conversation_id": "",
+            "thread_id": thread.id,
+            "task_id": task_id,
+            "target_type": "internal_thread",
+            "target_id": thread.id,
+        }
+        background.add_task(
+            _send_push_and_handle,
+            device.push_token, payload, device.platform, device.id,
+        )
+
+
+@router.get("/staff/internal/threads/{thread_id}/tasks")
+def list_staff_tasks(
+    thread_id: str, staff: MessagingStaff = Depends(_staff),
+    db: Session = Depends(get_db),
+):
+    thread = _staff_thread(db, thread_id, staff)
+    rows = list(db.scalars(select(MessagingStaffTask).where(
+        MessagingStaffTask.thread_id == thread.id,
+    ).order_by(
+        MessagingStaffTask.created_at.desc(), MessagingStaffTask.id,
+    ).limit(500)))
+    return [_serialize_staff_task(db, row, staff.external_id) for row in rows]
+
+
+@router.post("/staff/internal/threads/{thread_id}/tasks", status_code=201)
+def create_staff_task(
+    thread_id: str, data: StaffTaskIn, background: BackgroundTasks,
+    staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
+):
+    thread = _staff_thread(db, thread_id, staff)
+    _require_writable_staff_thread(db, thread)
+    allowed_ids = _staff_thread_recipient_ids(db, thread)
+    requested_ids = allowed_ids if data.assign_all else {
+        value.strip() for value in data.assignee_ids if value.strip()
+    }
+    if not requested_ids:
+        raise HTTPException(422, "Selecciona al menos un responsable")
+    if not requested_ids <= allowed_ids:
+        raise HTTPException(422, "Solo se puede asignar la tarea a miembros activos del chat")
+    assignees = list(db.scalars(select(MessagingStaff).where(
+        MessagingStaff.external_id.in_(requested_ids),
+        MessagingStaff.active.is_(True),
+    ).order_by(MessagingStaff.name, MessagingStaff.external_id)))
+    if {row.external_id for row in assignees} != requested_ids:
+        raise HTTPException(422, "No se ha encontrado algun responsable")
+    title = data.title.strip()
+    if not title:
+        raise HTTPException(422, "El titulo de la tarea esta vacio")
+    item = MessagingStaffTask(
+        thread_id=thread.id,
+        title=title,
+        details=data.details.strip(),
+        created_by_staff_external_id=staff.external_id,
+        created_by_name=staff.chat_alias.strip() or staff.name,
+    )
+    db.add(item)
+    db.flush()
+    for assignee in assignees:
+        db.add(MessagingStaffTaskAssignment(
+            task_id=item.id,
+            staff_external_id=assignee.external_id,
+            assigned_name=assignee.chat_alias.strip() or assignee.name,
+        ))
+    db.flush()
+    _add_staff_task_event(db, thread)
+    recipients = _staff_thread_recipient_ids(db, thread)
+    db.commit()
+    db.refresh(item)
+    hub.publish({
+        "type": "task.created",
+        "thread_id": thread.id,
+        "task_id": item.id,
+        "author_id": staff.external_id,
+        "author_name": staff.chat_alias.strip() or staff.name,
+        "preview": title[:160],
+        "assignee_ids": sorted(requested_ids),
+    }, staff_ids=recipients)
+    _queue_internal_task_pushes(
+        db, background, thread, staff, title, requested_ids, item.id,
+    )
+    return _serialize_staff_task(db, item, staff.external_id)
+
+
+@router.patch("/staff/internal/tasks/{task_id}/completion")
+def update_staff_task_completion(
+    task_id: str, data: StaffTaskCompletionIn,
+    staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
+):
+    task = db.get(MessagingStaffTask, task_id)
+    if not task:
+        raise HTTPException(404, "Tarea no encontrada")
+    thread = _staff_thread(db, task.thread_id, staff)
+    _require_writable_staff_thread(db, thread)
+    assignment = db.scalar(select(MessagingStaffTaskAssignment).where(
+        MessagingStaffTaskAssignment.task_id == task.id,
+        MessagingStaffTaskAssignment.staff_external_id == staff.external_id,
+    ))
+    if not assignment:
+        raise HTTPException(403, "Esta tarea no esta asignada a tu usuario")
+    assignment.completed_at = utcnow() if data.completed else None
+    assignment.completed_by_staff_external_id = staff.external_id if data.completed else ""
+    assignment.completed_by_name = (
+        staff.chat_alias.strip() or staff.name
+    ) if data.completed else ""
+    task.updated_at = utcnow()
+    db.add(assignment)
+    db.add(task)
+    _add_staff_task_event(db, thread)
+    recipients = _staff_thread_recipient_ids(db, thread)
+    db.commit()
+    db.refresh(task)
+    hub.publish({
+        "type": "task.updated", "thread_id": thread.id, "task_id": task.id,
+    }, staff_ids=recipients)
+    return _serialize_staff_task(db, task, staff.external_id)
 
 
 def _queue_internal_pushes(
@@ -5755,7 +5961,7 @@ async def events(audience: str, request: Request, after: int = 0, db: Session = 
                         elif row.actor_type != "client" and not (event_staff and event_staff.role == "admin"):
                             # Eventos antiguos sin lector: no exponer metadatos ambiguos.
                             continue
-                    if audience == "staff" and (row.event_type in {"internal_message", "internal_states_updated"}
+                    if audience == "staff" and (row.event_type in {"internal_message", "internal_states_updated", "internal_task"}
                                                or (row.event_type == "read_updated" and not row.organization_id)):
                         thread = event_db.get(MessagingStaffThread, row.conversation_id)
                         event_staff = event_db.get(MessagingStaff, staff_id)

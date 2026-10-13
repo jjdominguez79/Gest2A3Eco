@@ -974,6 +974,76 @@ def test_chats_internos_privados_y_grupos_respetan_permisos(tmp_path):
     assert [row["body"] for row in private_messages] == ["Respuesta privada"]
 
 
+def test_tareas_internas_permiten_asignar_a_todos_y_completar_por_persona(tmp_path):
+    client = _client(tmp_path)
+    internal = {"X-API-Key": "test-secret"}
+    users = (
+        ("admin", "Administrador", "admin", ["laboral", "fiscal"]),
+        ("labor", "Laura Laboral", "empleado", ["laboral"]),
+        ("fiscal", "Felipe Fiscal", "empleado", ["fiscal"]),
+    )
+    for user_id, name, role, channels in users:
+        assert client.put(
+            f"/api/v1/messaging/internal/staff/{user_id}", headers=internal,
+            json={
+                "external_id": user_id, "name": name,
+                "email": f"{user_id}@gestinem.es", "role": role,
+                "active": True, "channels": channels,
+            },
+        ).status_code == 200
+    device = client.post(
+        "/api/v1/messaging/internal/devices/puesto-tareas", headers=internal,
+    ).json()
+
+    def auth(user_id):
+        return {
+            **internal, "X-Device-Id": "puesto-tareas",
+            "X-Device-Token": device["device_token"], "X-Staff-Id": user_id,
+        }
+
+    threads = client.get(
+        "/api/v1/messaging/staff/internal/threads", headers=auth("admin"),
+    ).json()
+    labor_thread = next(row for row in threads if row["title"] == "Equipo Laboral")
+    created = client.post(
+        f"/api/v1/messaging/staff/internal/threads/{labor_thread['id']}/tasks",
+        headers=auth("admin"),
+        json={"title": "Revisar nominas", "assign_all": True},
+    )
+    assert created.status_code == 201, created.text
+    task = created.json()
+    assert task["completed"] is False
+    assert task["assignee_count"] == 2
+    assert {row["staff_id"] for row in task["assignments"]} == {"admin", "labor"}
+
+    completed_by_labor = client.patch(
+        f"/api/v1/messaging/staff/internal/tasks/{task['id']}/completion",
+        headers=auth("labor"), json={"completed": True},
+    )
+    assert completed_by_labor.status_code == 200
+    assert completed_by_labor.json()["completed_count"] == 1
+    assert completed_by_labor.json()["completed"] is False
+    assert completed_by_labor.json()["my_completed"] is True
+    assert client.patch(
+        f"/api/v1/messaging/staff/internal/tasks/{task['id']}/completion",
+        headers=auth("fiscal"), json={"completed": True},
+    ).status_code == 403
+
+    completed_by_admin = client.patch(
+        f"/api/v1/messaging/staff/internal/tasks/{task['id']}/completion",
+        headers=auth("admin"), json={"completed": True},
+    )
+    assert completed_by_admin.status_code == 200
+    assert completed_by_admin.json()["completed"] is True
+    listed = client.get(
+        f"/api/v1/messaging/staff/internal/threads/{labor_thread['id']}/tasks",
+        headers=auth("labor"),
+    )
+    assert listed.status_code == 200
+    assert listed.json()[0]["title"] == "Revisar nominas"
+    assert listed.json()[0]["completed_count"] == 2
+
+
 def test_chat_privado_transporte_local_y_auditoria_descarga(tmp_path, monkeypatch):
     client = _client(tmp_path)
     internal = {"X-API-Key": "test-secret"}

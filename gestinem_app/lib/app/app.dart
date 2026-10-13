@@ -375,6 +375,43 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
 
   void _handleRealtime(Map<String, dynamic> event) {
     if (event['type'] == 'ping') return;
+    if (event['type'] == 'task.created' || event['type'] == 'task.updated') {
+      final threadId = event['thread_id'] as String?;
+      if (threadId != null && threadId.isNotEmpty) {
+        ref.invalidate(internalTasksProvider(threadId));
+      } else {
+        ref.invalidate(internalTasksProvider);
+      }
+      if (event['type'] == 'task.created') {
+        final session = ref.read(sessionProvider).valueOrNull;
+        final assigneeIds =
+            (event['assignee_ids'] as List<dynamic>? ?? const [])
+                .map((value) => value.toString())
+                .toSet();
+        final authorId = event['author_id']?.toString() ?? '';
+        if (session != null &&
+            authorId != session.profile.id &&
+            assigneeIds.contains(session.profile.id) &&
+            threadId != null &&
+            threadId.isNotEmpty) {
+          final authorName = event['author_name']?.toString().trim() ?? '';
+          unawaited(
+            ref
+                .read(notificationsServiceProvider)
+                .showDesktop(
+                  title: authorName.isEmpty
+                      ? 'Nueva tarea en Gestinem'
+                      : 'Nueva tarea de $authorName',
+                  body:
+                      event['preview']?.toString() ?? 'Tienes una tarea nueva',
+                  targetType: 'internal_thread',
+                  targetId: threadId,
+                ),
+          );
+        }
+      }
+      return;
+    }
     if (event['type'] == 'message.states_updated') {
       ref.invalidate(conversationsProvider);
       ref.invalidate(unifiedConversationProvider);

@@ -18,6 +18,7 @@ import '../../auth/presentation/auth_controller.dart';
 import '../domain/conversation.dart';
 import '../domain/message.dart';
 import 'emoji_picker.dart';
+import 'internal_tasks_sheet.dart';
 import 'message_bubble.dart';
 import 'message_edit_dialogs.dart';
 import 'messaging_providers.dart';
@@ -66,6 +67,17 @@ class ConversationScreen extends ConsumerWidget {
                 conversation: conversation,
                 isStaff: profile?.type == UserType.staff,
               ),
+        actions: [
+          if (internal)
+            IconButton(
+              key: const Key('internal-tasks-button'),
+              tooltip: 'Tareas del chat',
+              onPressed: thread == null
+                  ? null
+                  : () => showInternalTasksSheet(context, thread),
+              icon: const Icon(Icons.checklist_rounded),
+            ),
+        ],
       ),
       body: ConversationView(
         conversationId: conversationId,
@@ -1353,12 +1365,23 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
             color: Theme.of(context).colorScheme.surface,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: _InternalThreadIdentity(
-                  thread: internalThread,
-                  avatarRadius: 20,
-                ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _InternalThreadIdentity(
+                      thread: internalThread,
+                      avatarRadius: 20,
+                    ),
+                  ),
+                  TextButton.icon(
+                    key: const Key('internal-tasks-button'),
+                    onPressed: internalThread == null
+                        ? null
+                        : () => showInternalTasksSheet(context, internalThread),
+                    icon: const Icon(Icons.checklist_rounded),
+                    label: const Text('Tareas'),
+                  ),
+                ],
               ),
             ),
           ),

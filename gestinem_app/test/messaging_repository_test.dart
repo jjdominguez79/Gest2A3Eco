@@ -34,6 +34,19 @@ final class _TestPlatformFile extends PlatformFile {
 }
 
 void main() {
+  test('repository carga las tareas de un chat interno', () async {
+    final adapter = JsonAdapter(<Object>[]);
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+    )..httpClientAdapter = adapter;
+    final api = ApiClient(dio: dio, tokenProvider: () => testSession.token);
+
+    final rows = await MessagingRepository(api).internalTasks('thread-1');
+
+    expect(rows, isEmpty);
+    expect(adapter.lastRequest!.path, '/staff/internal/threads/thread-1/tasks');
+  });
+
   test('repository carga conversaciones cliente con token Bearer', () async {
     final adapter = JsonAdapter([
       {

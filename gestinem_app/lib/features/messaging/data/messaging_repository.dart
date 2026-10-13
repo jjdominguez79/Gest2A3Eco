@@ -11,6 +11,7 @@ import '../../auth/domain/user_profile.dart';
 import '../domain/client_organization.dart';
 import '../domain/conversation.dart';
 import '../domain/invitation_content.dart';
+import '../domain/internal_task.dart';
 import '../domain/message.dart';
 
 class MessagingRepository {
@@ -424,6 +425,45 @@ class MessagingRepository {
 
   Future<void> markInternalRead(String threadId) =>
       _api.dio.post<void>('/staff/internal/threads/$threadId/read');
+
+  Future<List<InternalTask>> internalTasks(String threadId) async {
+    final response = await _api.dio.get<List<dynamic>>(
+      '/staff/internal/threads/$threadId/tasks',
+    );
+    return response.data!
+        .map((item) => InternalTask.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
+  Future<InternalTask> createInternalTask(
+    String threadId, {
+    required String title,
+    String details = '',
+    bool assignAll = false,
+    List<String> assigneeIds = const [],
+  }) async {
+    final response = await _api.dio.post<Map<String, dynamic>>(
+      '/staff/internal/threads/$threadId/tasks',
+      data: {
+        'title': title,
+        'details': details,
+        'assign_all': assignAll,
+        'assignee_ids': assigneeIds,
+      },
+    );
+    return InternalTask.fromJson(response.data!);
+  }
+
+  Future<InternalTask> setInternalTaskCompleted(
+    String taskId,
+    bool completed,
+  ) async {
+    final response = await _api.dio.patch<Map<String, dynamic>>(
+      '/staff/internal/tasks/$taskId/completion',
+      data: {'completed': completed},
+    );
+    return InternalTask.fromJson(response.data!);
+  }
 
   Future<Message> sendInternal(
     String threadId,
