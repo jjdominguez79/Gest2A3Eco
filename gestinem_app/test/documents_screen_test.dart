@@ -52,6 +52,36 @@ void main() {
     expect(find.text('Inicio'), findsOneWidget);
   });
 
+  testWidgets('documento no PDF se descarga sin ofrecer previsualizacion', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          documentDetailProvider('doc-office').overrideWith(
+            (_) async => const ClientDocument(
+              id: 'doc-office',
+              documentType: 'laboral',
+              displayName: 'Informe laboral',
+              fileName: 'informe.docx',
+              contentType:
+                  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+              status: 'published',
+            ),
+          ),
+          documentReadProvider('doc-office').overrideWith((_) async {}),
+        ],
+        child: const MaterialApp(
+          home: DocumentDetailScreen(documentId: 'doc-office'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Previsualizar'), findsNothing);
+    expect(find.text('Guardar archivo'), findsOneWidget);
+  });
+
   group('DocumentsScreen - feature gate', () {
     testWidgets('muestra mensaje cuando documents esta desactivado', (
       tester,

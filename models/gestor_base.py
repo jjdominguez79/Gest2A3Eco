@@ -529,6 +529,12 @@ CREATE TABLE IF NOT EXISTS documentos_archivo (
   ultima_impresion_at TEXT,
   ultima_impresion_por TEXT,
   veces_impresa INTEGER NOT NULL DEFAULT 0,
+  area_cliente_estado TEXT NOT NULL DEFAULT '',
+  area_cliente_documento_id TEXT,
+  area_cliente_version INTEGER NOT NULL DEFAULT 0,
+  area_cliente_sha256 TEXT,
+  area_cliente_error TEXT,
+  area_cliente_actualizado TEXT,
   creado_por TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -822,6 +828,16 @@ class GestorBase:
         self._ensure_column(
             "documentos_archivo", "veces_impresa", "INTEGER NOT NULL DEFAULT 0",
         )
+        self._ensure_column(
+            "documentos_archivo", "area_cliente_estado", "TEXT NOT NULL DEFAULT ''",
+        )
+        self._ensure_column("documentos_archivo", "area_cliente_documento_id", "TEXT")
+        self._ensure_column(
+            "documentos_archivo", "area_cliente_version", "INTEGER NOT NULL DEFAULT 0",
+        )
+        self._ensure_column("documentos_archivo", "area_cliente_sha256", "TEXT")
+        self._ensure_column("documentos_archivo", "area_cliente_error", "TEXT")
+        self._ensure_column("documentos_archivo", "area_cliente_actualizado", "TEXT")
         self.conn.execute(
             "UPDATE documentos_archivo SET metodo_contabilizacion="
             "CASE "
@@ -4223,6 +4239,50 @@ class GestorBase:
             (str(documento_id),),
         ).fetchone()
         return self._row_to_dict(row) if row else None
+
+    def encolar_publicacion_documento_archivo(
+        self, documento_id: str, sha256: str,
+    ) -> bool:
+        documento = self.get_documento_archivo(documento_id)
+        if not documento:
+            raise ValueError("Documento no encontrado.")
+        if (
+            str(documento.get("area_cliente_estado") or "").lower() == "publicado"
+            and str(documento.get("area_cliente_sha256") or "") == str(sha256)
+        ):
+            return False
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        self.conn.execute(
+            "UPDATE documentos_archivo SET area_cliente_estado='pendiente',"
+            "area_cliente_sha256=?,area_cliente_error='',"
+            "area_cliente_actualizado=?,updated_at=? WHERE id=?",
+            (sha256, now, now, documento_id),
+        )
+        self.conn.commit()
+        return True
+
+    def marcar_publicacion_documento_archivo_exitosa(
+        self, documento_id: str, client_document_id: str, version: int,
+    ) -> None:
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        self.conn.execute(
+            "UPDATE documentos_archivo SET area_cliente_estado='publicado',"
+            "area_cliente_documento_id=?,area_cliente_version=?,"
+            "area_cliente_error='',area_cliente_actualizado=?,updated_at=? WHERE id=?",
+            (client_document_id, int(version), now, now, documento_id),
+        )
+        self.conn.commit()
+
+    def marcar_publicacion_documento_archivo_fallida(
+        self, documento_id: str, error: str,
+    ) -> None:
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        self.conn.execute(
+            "UPDATE documentos_archivo SET area_cliente_estado='error',"
+            "area_cliente_error=?,area_cliente_actualizado=?,updated_at=? WHERE id=?",
+            (str(error)[:2000], now, now, documento_id),
+        )
+        self.conn.commit()
 
     def reclasificar_documento_archivo(
         self, documento_id: str, categoria_id: str, *, ruta: str,

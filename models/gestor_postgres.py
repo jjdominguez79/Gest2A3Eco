@@ -470,6 +470,18 @@ class GestorPostgres(GestorBase):
                 "documentos_archivo", "veces_impresa",
                 "INTEGER NOT NULL DEFAULT 0",
             ),
+            (
+                "documentos_archivo", "area_cliente_estado",
+                "TEXT NOT NULL DEFAULT ''",
+            ),
+            ("documentos_archivo", "area_cliente_documento_id", "TEXT"),
+            (
+                "documentos_archivo", "area_cliente_version",
+                "INTEGER NOT NULL DEFAULT 0",
+            ),
+            ("documentos_archivo", "area_cliente_sha256", "TEXT"),
+            ("documentos_archivo", "area_cliente_error", "TEXT"),
+            ("documentos_archivo", "area_cliente_actualizado", "TEXT"),
             ("facturas_recibidas_ocr", "tipo_operacion_iva", "TEXT"),
             ("facturas_recibidas_ocr", "fecha_contable", "TEXT"),
             ("facturas_recibidas_ocr", "pagada", "INTEGER NOT NULL DEFAULT 0"),
@@ -1010,6 +1022,11 @@ class GestorPostgres(GestorBase):
                   numero_asiento TEXT,observaciones_contables TEXT,
                   ultima_impresion_at TEXT,ultima_impresion_por TEXT,
                   veces_impresa INTEGER NOT NULL DEFAULT 0,
+                  area_cliente_estado TEXT NOT NULL DEFAULT '',
+                  area_cliente_documento_id TEXT,
+                  area_cliente_version INTEGER NOT NULL DEFAULT 0,
+                  area_cliente_sha256 TEXT,area_cliente_error TEXT,
+                  area_cliente_actualizado TEXT,
                   creado_por TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
                   UNIQUE(codigo_empresa,hash_archivo)
                 )

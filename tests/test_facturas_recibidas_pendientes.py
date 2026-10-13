@@ -387,3 +387,13 @@ def test_gestion_documental_muestra_columna_de_asiento():
 
     assert '("asiento", "Asiento", 95)' in contenido
     assert 'row.get("numero_asiento") or ""' in contenido
+
+
+def test_gestion_documental_muestra_estado_del_area_cliente():
+    assert UIGestionDocumental._area_cliente_label({}) == "No compartido"
+    assert UIGestionDocumental._area_cliente_label({
+        "area_cliente_estado": "publicado",
+    }) == "Publicado"
+    assert UIGestionDocumental._area_cliente_label({
+        "area_cliente_estado": "error",
+    }) == "Error"

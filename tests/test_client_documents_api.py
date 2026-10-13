@@ -234,6 +234,33 @@ def _build_app(db=None, storage=None, override_internal_auth=False):
 # ---------- tests publicacion interna ----------
 
 class TestPublishDocument:
+    def test_publica_documento_office(self):
+        db = _InMemoryDb()
+        storage = _FakeStorage()
+        client = TestClient(
+            _build_app(db, storage=storage, override_internal_auth=True),
+        )
+
+        response = client.post(
+            "/api/v1/messaging/client/documents/internal/publish",
+            data={
+                "organization_id": "org-1",
+                "document_type": "laboral",
+                "source_system": "desktop_archive",
+                "source_id": "archivo-1",
+                "display_name": "Informe laboral",
+            },
+            files={
+                "file": (
+                    "informe.docx", b"PK\x03\x04contenido",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ),
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["content_type"].endswith("wordprocessingml.document")
+
     def test_resuelve_organizacion_por_empresa_emisora(self):
         db = _InMemoryDb()
         db._org = _FakeOrg(company_code="E00006")

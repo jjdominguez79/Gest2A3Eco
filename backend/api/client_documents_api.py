@@ -7,6 +7,7 @@ Endpoints de cliente para listado, descarga y lectura.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
@@ -42,6 +43,53 @@ router = APIRouter(prefix="/api/v1/messaging/client/documents", tags=["client-do
 MAX_CLIENT_DOCUMENT_BYTES = 50 * 1024 * 1024
 LOG = logging.getLogger(__name__)
 
+ALLOWED_CLIENT_DOCUMENT_TYPES = {
+    ".pdf": "application/pdf",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".ppt": "application/vnd.ms-powerpoint",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".odt": "application/vnd.oasis.opendocument.text",
+    ".ods": "application/vnd.oasis.opendocument.spreadsheet",
+    ".odp": "application/vnd.oasis.opendocument.presentation",
+    ".rtf": "application/rtf",
+    ".txt": "text/plain",
+    ".csv": "text/csv",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+}
+
+
+def _validated_content_type(filename: str, content: bytes) -> str:
+    """Valida una lista cerrada de formatos descargables y devuelve su MIME."""
+    suffix = Path(filename or "").suffix.lower()
+    content_type = ALLOWED_CLIENT_DOCUMENT_TYPES.get(suffix)
+    if not content_type:
+        raise HTTPException(
+            status_code=415,
+            detail="Formato no permitido para el area documental",
+        )
+    if suffix == ".pdf" and not content.startswith(b"%PDF-"):
+        raise HTTPException(status_code=415, detail="El archivo no es un PDF valido")
+    if suffix in {".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp"}:
+        if not content.startswith(b"PK"):
+            raise HTTPException(status_code=415, detail="El archivo ofimatico no es valido")
+    if suffix in {".doc", ".xls", ".ppt"}:
+        if not content.startswith(bytes.fromhex("D0CF11E0A1B11AE1")):
+            raise HTTPException(status_code=415, detail="El archivo ofimatico no es valido")
+    if suffix in {".jpg", ".jpeg"} and not content.startswith(b"\xff\xd8\xff"):
+        raise HTTPException(status_code=415, detail="La imagen JPEG no es valida")
+    if suffix == ".png" and not content.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise HTTPException(status_code=415, detail="La imagen PNG no es valida")
+    if suffix in {".txt", ".csv"} and b"\x00" in content[:8192]:
+        raise HTTPException(status_code=415, detail="El archivo de texto no es valido")
+    if suffix == ".rtf" and not content.lstrip().startswith(b"{\\rtf"):
+        raise HTTPException(status_code=415, detail="El archivo RTF no es valido")
+    return content_type
+
 _storage: ClientDocumentStorage | None = None
 
 
@@ -54,7 +102,7 @@ def _document_folder(document_type: str) -> str:
         return "certificados"
     if "nomina" in value or "payroll" in value:
         return "nominas"
-    if any(token in value for token in ("impuesto", "tribut", "modelo_")):
+    if any(token in value for token in ("impuesto", "tribut", "modelo_", "fiscal")):
         return "impuestos"
     if "contrato" in value or "contract" in value:
         return "contratos"
@@ -322,11 +370,7 @@ async def publish_document(
         raise HTTPException(status_code=400, detail="Archivo vacio")
     if len(content) > MAX_CLIENT_DOCUMENT_BYTES:
         raise HTTPException(status_code=413, detail="Archivo demasiado grande")
-    if not content.startswith(b"%PDF-"):
-        raise HTTPException(status_code=415, detail="El archivo no es un PDF valido")
-    content_type = (file.content_type or "").lower().split(";", 1)[0].strip()
-    if content_type not in {"", "application/pdf", "application/octet-stream"}:
-        raise HTTPException(status_code=415, detail="Tipo de archivo no permitido")
+    content_type = _validated_content_type(file.filename or "", content)
 
     storage = _get_storage()
     sha256 = storage.compute_sha256(content)
@@ -417,8 +461,8 @@ async def publish_document(
         fiscal_year=fiscal_year,
         amount=parsed_amount,
         currency=currency,
-        file_name=file.filename or "documento.pdf",
-        content_type="application/pdf",
+        file_name=file.filename or "documento",
+        content_type=content_type,
         file_size=len(content),
         sha256=sha256,
         blob_key=blob_key,
@@ -491,11 +535,7 @@ async def replace_document(
         raise HTTPException(status_code=400, detail="Archivo vacio")
     if len(content) > MAX_CLIENT_DOCUMENT_BYTES:
         raise HTTPException(status_code=413, detail="Archivo demasiado grande")
-    if not content.startswith(b"%PDF-"):
-        raise HTTPException(status_code=415, detail="El archivo no es un PDF valido")
-    content_type = (file.content_type or "").lower().split(";", 1)[0].strip()
-    if content_type not in {"", "application/pdf", "application/octet-stream"}:
-        raise HTTPException(status_code=415, detail="Tipo de archivo no permitido")
+    content_type = _validated_content_type(file.filename or old_doc.file_name, content)
 
     storage = _get_storage()
     sha256 = storage.compute_sha256(content)
@@ -515,7 +555,7 @@ async def replace_document(
         amount=old_doc.amount,
         currency=old_doc.currency,
         file_name=file.filename or old_doc.file_name,
-        content_type="application/pdf",
+        content_type=content_type,
         file_size=len(content),
         sha256=sha256,
         blob_key=blob_key,

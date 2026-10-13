@@ -43,7 +43,7 @@ class ClientDocument(Base):
 
     # Tipo de documento visible para el cliente (factura, nomina, certificado...)
     document_type: Mapped[str] = mapped_column(String(40), index=True)
-    # Sistema origen: desktop_invoice | client_invoice
+    # Sistema origen: desktop_invoice | desktop_archive | client_invoice
     source_system: Mapped[str] = mapped_column(String(30), index=True)
     source_id: Mapped[str] = mapped_column(String(120), index=True)
     source_version: Mapped[int] = mapped_column(Integer, default=1)

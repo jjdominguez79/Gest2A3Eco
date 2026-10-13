@@ -88,6 +88,9 @@ class ClientDocument {
   bool get isPublished => status == 'published';
   bool get isReplaced => status == 'replaced';
   bool get isWithdrawn => status == 'withdrawn';
+  bool get isPdf =>
+      contentType.toLowerCase().split(';').first.trim() == 'application/pdf' ||
+      fileName.toLowerCase().endsWith('.pdf');
 
   factory ClientDocument.fromJson(Map<String, dynamic> json) {
     final documentType = json['document_type'] as String? ?? '';

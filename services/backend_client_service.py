@@ -7,6 +7,7 @@ accede a rutas locales del puesto de trabajo.
 from __future__ import annotations
 
 import os
+import mimetypes
 import re
 from pathlib import Path
 
@@ -78,7 +79,8 @@ class BackendClientService:
         source_system: str = "desktop_invoice",
         source_version: int = 1,
         display_name: str,
-        pdf_path: str,
+        pdf_path: str = "",
+        file_path: str = "",
         company_code: str = "",
         previous_document_id: str = "",
         customer_tax_id: str = "",
@@ -88,13 +90,14 @@ class BackendClientService:
         description: str = "",
         expected_sha256: str = "",
     ) -> dict:
-        """Sube un PDF al area documental del cliente por multipart."""
+        """Sube un archivo al area documental del cliente por multipart."""
         self._ensure_configured()
         url = f"{self.base_url}/api/v1/messaging/client/documents/internal/publish"
 
-        p = Path(pdf_path)
+        document_path = file_path or pdf_path
+        p = Path(document_path)
         if not p.is_file():
-            raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
+            raise FileNotFoundError(f"Documento no encontrado: {document_path}")
 
         fields = {
             "source_system": source_system,
@@ -120,15 +123,16 @@ class BackendClientService:
         # emisora. customer_tax_id identifica al destinatario de la factura y
         # no debe utilizarse para decidir en que area documental se publica.
 
-        with open(pdf_path, "rb") as f:
+        content_type = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+        with p.open("rb") as f:
             resp = self.http.post(
                 url,
                 headers=self._headers(),
                 data=fields,
-                files={"file": (p.name, f, "application/pdf")},
+                files={"file": (p.name, f, content_type)},
                 timeout=60,
             )
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         return resp.json()
 
     # ----- Sincronizacion de perfil empresarial -----

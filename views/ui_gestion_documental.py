@@ -13,6 +13,9 @@ from services.facturas_recibidas_manual_service import (
     FacturasRecibidasManualService,
 )
 from services.gestion_documental_service import GestionDocumentalService
+from services.documento_archivo_publication_service import (
+    DocumentoArchivoPublicationService,
+)
 from services.estado_facturas_recibidas import etiqueta_estado
 from services.firma.firma_service import FirmaService
 from services.firma.provider import build_firma_provider
@@ -362,7 +365,7 @@ class UIGestionDocumental(ttk.Frame):
             self,
             columns=(
                 "fecha", "categoria", "nombre", "origen", "remitente",
-                "estado", "asiento", "impresiones",
+                "estado", "area_cliente", "asiento", "impresiones",
             ),
             show="headings", selectmode="extended",
         )
@@ -370,6 +373,7 @@ class UIGestionDocumental(ttk.Frame):
             ("fecha", "Fecha", 165), ("categoria", "Categoria", 175),
             ("nombre", "Documento", 360), ("origen", "Origen", 100),
             ("remitente", "Remitente", 220), ("estado", "Estado", 230),
+            ("area_cliente", "Area cliente", 105),
             ("asiento", "Asiento", 95),
             ("impresiones", "Impresas", 72),
         ):
@@ -382,6 +386,10 @@ class UIGestionDocumental(ttk.Frame):
         ttk.Button(actions, text="Abrir", command=self._open).pack(side="left")
         ttk.Button(
             actions, text="Cambiar categoria", command=self._change_category,
+        ).pack(side="left", padx=(6, 0))
+        ttk.Button(
+            actions, text="Compartir con cliente",
+            command=self._share_with_client,
         ).pack(side="left", padx=(6, 0))
         ttk.Button(
             actions, text="Imprimir facturas",
@@ -423,6 +431,7 @@ class UIGestionDocumental(ttk.Frame):
                 row.get("nombre_original") or "", self._origen_label(row),
                 row.get("correo_remitente") or "",
                 self._estado_documental_label(row),
+                self._area_cliente_label(row),
                 (
                     row.get("numero_asiento") or ""
                     if row.get("categoria_id") == "facturas_recibidas"
@@ -474,6 +483,15 @@ class UIGestionDocumental(ttk.Frame):
         if row.get("ocr_documento_id"):
             return "En OCR"
         return str(row.get("estado") or "Archivado").replace("_", " ").capitalize()
+
+    @staticmethod
+    def _area_cliente_label(row: dict) -> str:
+        estado = str(row.get("area_cliente_estado") or "").strip().lower()
+        return {
+            "publicado": "Publicado",
+            "pendiente": "Pendiente",
+            "error": "Error",
+        }.get(estado, "No compartido")
 
     def _pending_messaging_rows(self):
         if hasattr(self._gestor, "listar_entradas_documentales"):
@@ -847,6 +865,62 @@ class UIGestionDocumental(ttk.Frame):
             self.after(0, self._finish_ocr, sent, errors)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _share_with_client(self):
+        selected = list(self._tree.selection())
+        if not selected:
+            messagebox.showwarning(
+                "Gestion documental", "Selecciona uno o varios documentos.",
+                parent=self,
+            )
+            return
+        names = [self._rows[item]["nombre_original"] for item in selected]
+        preview = "\n".join(f"- {name}" for name in names[:8])
+        if len(names) > 8:
+            preview += f"\n- ... y {len(names) - 8} mas"
+        if not messagebox.askyesno(
+            "Compartir con el cliente",
+            "Los documentos quedaran disponibles en el area privada del cliente "
+            "y se le notificara la publicacion:\n\n" + preview,
+            parent=self,
+        ):
+            return
+        self.winfo_toplevel().configure(cursor="watch")
+
+        def worker():
+            service = DocumentoArchivoPublicationService(self._gestor)
+            published = 0
+            errors = []
+            for document_id in selected:
+                try:
+                    result = service.publicar(document_id)
+                    if result.estado == "publicado":
+                        published += 1
+                    else:
+                        errors.append(
+                            f"{self._rows[document_id]['nombre_original']}: "
+                            f"{result.error}"
+                        )
+                except Exception as exc:
+                    errors.append(
+                        f"{self._rows[document_id]['nombre_original']}: {exc}"
+                    )
+            try:
+                self.after(0, self._finish_share_with_client, published, errors)
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_share_with_client(self, published: int, errors: list[str]):
+        self.winfo_toplevel().configure(cursor="")
+        self._refresh()
+        text = f"Documentos disponibles para el cliente: {published}"
+        if errors:
+            text += "\n\nNo se pudieron publicar:\n- " + "\n- ".join(errors[:8])
+            messagebox.showwarning("Compartir con el cliente", text, parent=self)
+        else:
+            messagebox.showinfo("Compartir con el cliente", text, parent=self)
 
     def _send_firma(self):
         security = getattr(self._gestor, "security", None)

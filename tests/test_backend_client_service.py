@@ -68,6 +68,30 @@ def test_publish_document_accepts_aapp_source_system(monkeypatch, tmp_path):
     assert session.post.call_args.kwargs["data"]["source_system"] == "desktop_aapp"
 
 
+def test_publish_document_preserves_office_content_type(monkeypatch, tmp_path):
+    document = tmp_path / "informe.docx"
+    document.write_bytes(b"PK\x03\x04contenido")
+    response = MagicMock()
+    response.json.return_value = {"id": "doc-office"}
+    session = MagicMock()
+    session.post.return_value = response
+
+    _service(monkeypatch, session).publish_document(
+        source_type="laboral",
+        source_system="desktop_archive",
+        source_id="archivo-1",
+        display_name="Informe laboral",
+        file_path=str(document),
+        company_code="E00006",
+    )
+
+    uploaded = session.post.call_args.kwargs["files"]["file"]
+    assert uploaded[0] == "informe.docx"
+    assert uploaded[2] == (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+
+
 def test_unconfigured_service_fails_before_http(monkeypatch):
     monkeypatch.setattr(
         "utils.credential_store.get_workstation_token",

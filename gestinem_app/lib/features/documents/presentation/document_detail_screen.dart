@@ -113,15 +113,16 @@ class _DocumentDetailScreenState extends ConsumerState<DocumentDetailScreen> {
                   spacing: 10,
                   runSpacing: 10,
                   children: [
-                    ElevatedButton.icon(
-                      onPressed: _downloading
-                          ? null
-                          : () => context.push(
-                              '/documents/${widget.documentId}/preview',
-                            ),
-                      icon: const Icon(Icons.visibility_outlined),
-                      label: const Text('Previsualizar'),
-                    ),
+                    if (doc.isPdf)
+                      ElevatedButton.icon(
+                        onPressed: _downloading
+                            ? null
+                            : () => context.push(
+                                '/documents/${widget.documentId}/preview',
+                              ),
+                        icon: const Icon(Icons.visibility_outlined),
+                        label: const Text('Previsualizar'),
+                      ),
                     ElevatedButton.icon(
                       onPressed: _downloading ? null : () => _download(doc),
                       icon: _downloading
@@ -131,7 +132,7 @@ class _DocumentDetailScreenState extends ConsumerState<DocumentDetailScreen> {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.download),
-                      label: const Text('Guardar PDF'),
+                      label: const Text('Guardar archivo'),
                     ),
                     OutlinedButton.icon(
                       onPressed: _downloading ? null : () => _share(doc),
@@ -166,14 +167,14 @@ class _DocumentDetailScreenState extends ConsumerState<DocumentDetailScreen> {
       final repo = ref.read(documentsRepositoryProvider);
       final bytes = await repo.downloadDocument(widget.documentId);
       final uri = await FilePicker.saveFile(
-        dialogTitle: 'Guardar factura',
+        dialogTitle: 'Guardar documento',
         fileName: doc.fileName,
         bytes: bytes,
       );
       if (uri == null) return;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('PDF guardado correctamente')),
+          const SnackBar(content: Text('Documento guardado correctamente')),
         );
       }
       if (!kIsWeb && uri.scheme == 'file') {
@@ -202,7 +203,7 @@ class _DocumentDetailScreenState extends ConsumerState<DocumentDetailScreen> {
           files: [
             XFile.fromData(
               bytes,
-              mimeType: 'application/pdf',
+              mimeType: doc.contentType,
               name: doc.fileName,
             ),
           ],
