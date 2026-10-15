@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import delete, select, text, update
 from sqlalchemy.orm import Session, selectinload
 
-from backend.api.database import Base, SessionLocal, engine
+from backend.api.database import Base, SessionLocal, engine, get_db
 from backend.api.config import get_settings
 from backend.api.models import (
     Comunicacion,
@@ -225,240 +225,10 @@ STAFF_APP_CODE_PURPOSE_DDL = (
 
 @app.on_event("startup")
 def startup():
-    Base.metadata.create_all(engine)
-    with engine.begin() as conn:
-        startup_tables_sql = ", ".join(
-            f"'{table}'" for table in sorted(STARTUP_COLUMN_TABLES)
-        )
-        existing_columns = set(conn.execute(text(
-            "SELECT table_name, column_name FROM information_schema.columns "
-            "WHERE table_schema=current_schema() "
-            f"AND table_name IN ({startup_tables_sql})"
-        )).tuples())
-        column_migrations = {
-            ("msg_messages", "edited_at"): "ALTER TABLE msg_messages ADD COLUMN edited_at TIMESTAMPTZ",
-            ("msg_staff_thread_messages", "edited_at"): "ALTER TABLE msg_staff_thread_messages ADD COLUMN edited_at TIMESTAMPTZ",
-            ("dgt_documentos", "dataprius_json"): (
-                "ALTER TABLE dgt_documentos "
-                "ADD COLUMN dataprius_json JSONB NOT NULL DEFAULT '{}'"
-            ),
-            **CLIENT_PLATFORM_ORGANIZATION_COLUMN_MIGRATIONS,
-            **APP_DEVICE_TARGET_COLUMN_MIGRATIONS,
-            ("msg_staff", "email"): (
-                "ALTER TABLE msg_staff ADD COLUMN email VARCHAR(254) NOT NULL DEFAULT ''"
-            ),
-            ("msg_staff", "entra_oid"): (
-                "ALTER TABLE msg_staff ADD COLUMN entra_oid VARCHAR(64) NOT NULL DEFAULT ''"
-            ),
-            ("msg_staff", "desktop_user_id"): (
-                "ALTER TABLE msg_staff ADD COLUMN desktop_user_id VARCHAR(64) NOT NULL DEFAULT ''"
-            ),
-            ("msg_staff", "chat_alias"): (
-                "ALTER TABLE msg_staff ADD COLUMN chat_alias VARCHAR(160) NOT NULL DEFAULT ''"
-            ),
-            ("msg_staff", "mostrar_estados_mensajes"): (
-                "ALTER TABLE msg_staff ADD COLUMN mostrar_estados_mensajes BOOLEAN NOT NULL DEFAULT TRUE"
-            ),
-            ("msg_staff", "avatar_storage_key"): (
-                "ALTER TABLE msg_staff ADD COLUMN avatar_storage_key VARCHAR(500) NOT NULL DEFAULT ''"
-            ),
-            ("msg_staff", "avatar_content_type"): (
-                "ALTER TABLE msg_staff ADD COLUMN avatar_content_type VARCHAR(120) NOT NULL DEFAULT ''"
-            ),
-            ("msg_staff", "password_hash"): (
-                "ALTER TABLE msg_staff ADD COLUMN password_hash VARCHAR(300) NOT NULL DEFAULT ''"
-            ),
-            ("msg_staff", "review_only"): (
-                "ALTER TABLE msg_staff ADD COLUMN review_only BOOLEAN NOT NULL DEFAULT FALSE"
-            ),
-            ("msg_messages", "reply_to_message_id"): (
-                "ALTER TABLE msg_messages ADD COLUMN reply_to_message_id VARCHAR(36) "
-                "REFERENCES msg_messages(id) ON DELETE SET NULL"
-            ),
-            ("msg_messages", "deleted_at"): "ALTER TABLE msg_messages ADD COLUMN deleted_at TIMESTAMPTZ",
-            ("msg_messages", "deleted_by"): "ALTER TABLE msg_messages ADD COLUMN deleted_by VARCHAR(64) NOT NULL DEFAULT ''",
-            ("msg_messages", "deleted_by_type"): "ALTER TABLE msg_messages ADD COLUMN deleted_by_type VARCHAR(16) NOT NULL DEFAULT ''",
-            ("msg_messages", "delete_reason"): "ALTER TABLE msg_messages ADD COLUMN delete_reason VARCHAR(500) NOT NULL DEFAULT ''",
-            ("msg_staff_thread_messages", "reply_to_message_id"): (
-                "ALTER TABLE msg_staff_thread_messages ADD COLUMN reply_to_message_id VARCHAR(36) "
-                "REFERENCES msg_staff_thread_messages(id) ON DELETE SET NULL"
-            ),
-            ("msg_staff_thread_messages", "deleted_at"): "ALTER TABLE msg_staff_thread_messages ADD COLUMN deleted_at TIMESTAMPTZ",
-            ("msg_staff_thread_messages", "deleted_by"): "ALTER TABLE msg_staff_thread_messages ADD COLUMN deleted_by VARCHAR(64) NOT NULL DEFAULT ''",
-            ("msg_staff_thread_messages", "deleted_by_type"): "ALTER TABLE msg_staff_thread_messages ADD COLUMN deleted_by_type VARCHAR(16) NOT NULL DEFAULT ''",
-            ("msg_staff_thread_messages", "delete_reason"): "ALTER TABLE msg_staff_thread_messages ADD COLUMN delete_reason VARCHAR(500) NOT NULL DEFAULT ''",
-            ("msg_attachments", "withdrawn_at"): (
-                "ALTER TABLE msg_attachments "
-                "ADD COLUMN withdrawn_at TIMESTAMPTZ"
-            ),
-            ("msg_attachments", "withdrawn_by"): (
-                "ALTER TABLE msg_attachments "
-                "ADD COLUMN withdrawn_by VARCHAR(64) NOT NULL DEFAULT ''"
-            ),
-            ("msg_attachments", "withdrawal_reason"): (
-                "ALTER TABLE msg_attachments "
-                "ADD COLUMN withdrawal_reason VARCHAR(500) NOT NULL DEFAULT ''"
-            ),
-            ("msg_attachments", "internal_message_id"): (
-                "ALTER TABLE msg_attachments ADD COLUMN internal_message_id VARCHAR(36) "
-                "REFERENCES msg_staff_thread_messages(id) ON DELETE CASCADE"
-            ),
-            ("msg_websocket_tickets", "staff_session_id"): (
-                "ALTER TABLE msg_websocket_tickets ADD COLUMN staff_session_id VARCHAR(36) "
-                "REFERENCES msg_staff_sessions(id) ON DELETE CASCADE"
-            ),
-            ("msg_downloads", "completed_at"): (
-                "ALTER TABLE msg_downloads "
-                "ADD COLUMN completed_at TIMESTAMPTZ"
-            ),
-            ("msg_conversations", "started_at"): (
-                "ALTER TABLE msg_conversations ADD COLUMN started_at TIMESTAMPTZ"
-            ),
-            ("msg_staff_app_codes", "purpose"): (
-                STAFF_APP_CODE_PURPOSE_DDL
-            ),
-            ("msg_organizations", "is_test"): (
-                "ALTER TABLE msg_organizations "
-                "ADD COLUMN is_test BOOLEAN NOT NULL DEFAULT FALSE"
-            ),
-            ("msg_cleanup_audit", "storage_keys_json"): (
-                "ALTER TABLE msg_cleanup_audit "
-                "ADD COLUMN storage_keys_json TEXT NOT NULL DEFAULT '[]'"
-            ),
-        }
-        for column, ddl in column_migrations.items():
-            if column not in existing_columns:
-                conn.execute(text(ddl))
-        conn.execute(text("ALTER TABLE msg_attachments ALTER COLUMN message_id DROP NOT NULL"))
-        conn.execute(text(
-            "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint "
-            "WHERE conname='ck_msg_attachments_single_parent') THEN "
-            "ALTER TABLE msg_attachments ADD CONSTRAINT ck_msg_attachments_single_parent "
-            "CHECK ((message_id IS NOT NULL AND internal_message_id IS NULL) OR "
-            "(message_id IS NULL AND internal_message_id IS NOT NULL)); END IF; END $$"
-        ))
+    # Las migraciones DDL y backfills se ejecutan en backend/migrate.py
+    # como pre-deploy command de Railway. El startup solo valida configuracion
+    # y realiza operaciones seguras de inicializacion de runtime.
 
-        existing_indexes = set(conn.execute(text(
-            "SELECT indexname FROM pg_indexes WHERE schemaname=current_schema() "
-
-            "AND tablename IN ('msg_staff', 'msg_downloads', 'msg_conversations', "
-            "'msg_attachments', 'msg_websocket_tickets', 'msg_app_devices', "
-            "'msg_staff_presence_connections', "
-            "'msg_organizations')"
-        )).scalars())
-        index_migrations = {
-            "ix_msg_staff_email": "CREATE INDEX ix_msg_staff_email ON msg_staff(email)",
-            "ix_msg_staff_entra_oid": "CREATE INDEX ix_msg_staff_entra_oid ON msg_staff(entra_oid)",
-            "ix_msg_staff_desktop_user_id": (
-                "CREATE INDEX ix_msg_staff_desktop_user_id ON msg_staff(desktop_user_id)"
-            ),
-            "ux_msg_staff_desktop_user_id_asignado": (
-                "CREATE UNIQUE INDEX ux_msg_staff_desktop_user_id_asignado "
-                "ON msg_staff(desktop_user_id) WHERE desktop_user_id <> ''"
-            ),
-            "ux_msg_staff_entra_oid_asignado": (
-                "CREATE UNIQUE INDEX ux_msg_staff_entra_oid_asignado "
-                "ON msg_staff(entra_oid) WHERE entra_oid <> ''"
-            ),
-            "idx_msg_downloads_completed": (
-                "CREATE INDEX idx_msg_downloads_completed "
-                "ON msg_downloads(attachment_id, completed_at)"
-            ),
-            "ix_msg_conversations_started_at": (
-                "CREATE INDEX ix_msg_conversations_started_at "
-                "ON msg_conversations(started_at DESC)"
-            ),
-            "ix_msg_attachments_internal_message_id": (
-                "CREATE INDEX ix_msg_attachments_internal_message_id "
-                "ON msg_attachments(internal_message_id)"
-            ),
-            "ix_msg_websocket_tickets_staff_session_id": (
-                "CREATE INDEX ix_msg_websocket_tickets_staff_session_id "
-                "ON msg_websocket_tickets(staff_session_id)"
-            ),
-            "ix_msg_app_devices_active_target": (
-                "CREATE INDEX ix_msg_app_devices_active_target "
-                "ON msg_app_devices(active_target_type, active_target_id)"
-            ),
-            "ix_msg_organizations_is_test": (
-                "CREATE INDEX ix_msg_organizations_is_test "
-                "ON msg_organizations(is_test)"
-            ),
-        }
-        for index_name, ddl in index_migrations.items():
-            if index_name not in existing_indexes:
-                conn.execute(text(ddl))
-        conn.execute(text(
-            "UPDATE msg_staff AS staff SET entra_oid=staff.external_id "
-            "WHERE staff.entra_oid='' AND staff.email<>'' AND EXISTS ("
-            "SELECT 1 FROM msg_staff_sessions AS session "
-            "WHERE session.staff_external_id=staff.external_id)"
-        ))
-        conn.execute(text(
-            "UPDATE msg_organizations SET is_test=TRUE "
-            "WHERE UPPER(TRIM(company_code)) IN ('E0000', 'E00000')"
-        ))
-        conn.execute(text(
-            "UPDATE msg_conversations AS conversation SET started_at=COALESCE(("
-            "SELECT MIN(message.created_at) FROM msg_messages AS message "
-            "WHERE message.conversation_id=conversation.id), conversation.updated_at) "
-            "WHERE conversation.started_at IS NULL AND EXISTS (SELECT 1 FROM msg_messages AS message "
-            "WHERE message.conversation_id=conversation.id)"
-        ))
-    # Migrar tabla de auditoria de feature flags (012)
-    _mig_012 = Path(__file__).resolve().parent.parent / "migrations" / "012_feature_flag_audit.sql"
-    if _mig_012.exists():
-        with engine.begin() as conn:
-            _existing_tables = set(conn.execute(text(
-                "SELECT table_name FROM information_schema.tables "
-                "WHERE table_schema=current_schema()"
-            )).scalars())
-            if "client_feature_flag_audit" not in _existing_tables:
-                conn.execute(text(_mig_012.read_text(encoding="utf-8")))
-
-    # Migrar notification_log (013) y columnas de claim token (014)
-    for _mig_name in (
-        "013_notification_log.sql",
-        "014_notification_log_claim.sql",
-        "015_client_customer_desktop_sync.sql",
-        "016_profile_change_requests.sql",
-        "017_organization_logo.sql",
-        "018_client_certificate_requests.sql",
-        "019_client_certificate_secrets.sql",
-        "020_aapp_document_fiscal_year.sql",
-        "021_dehu_notifications.sql",
-        "022_dehu_automatic_sync.sql",
-        "023_dehu_new_notifications.sql",
-        "024_message_receipts.sql",
-        "025_read_receipt_privacy.sql",
-        "026_aeat_certificate_followup.sql",
-        "027_dehu_daily_sync_time.sql",
-        "028_dev_notifications.sql",
-        "029_dehu_activation_history.sql",
-        "030_general_client_channel.sql",
-        "031_invitation_content.sql",
-        "032_group_avatars.sql",
-        "033_profile_change_system_messages.sql",
-        "034_subvenciones.sql",
-        "035_subvenciones_boletines.sql",
-        "036_subvenciones_finalidad_texto.sql",
-    ):
-        _mig_path = Path(__file__).resolve().parent.parent / "migrations" / _mig_name
-        if _mig_path.exists():
-            with engine.begin() as conn:
-                conn.execute(text(_mig_path.read_text(encoding="utf-8")))
-
-    with SessionLocal() as db:
-        for org in db.scalars(select(messaging_models.MessagingOrganization)).all():
-            existing = set(db.scalars(select(messaging_models.MessagingConversation.kind).where(
-                messaging_models.MessagingConversation.organization_id == org.id,
-            )))
-            for channel in ("general", "private"):
-                if channel not in existing:
-                    db.add(messaging_models.MessagingConversation(
-                        organization_id=org.id, kind=channel,
-                    ))
-        db.commit()
     # Validar Azure cuando algun flag global de cliente esta activo
     cfg = get_settings()
     if cfg.client_documents_enabled or cfg.client_invoicing_enabled:
@@ -469,12 +239,11 @@ def startup():
                 "Para desarrollo/tests usa CLIENT_DOCUMENTS_ALLOW_LOCAL_STORAGE=true "
                 "y desactiva los flags globales."
             )
-        # Verificar que el contenedor es accesible
         try:
             from azure.storage.blob import BlobServiceClient
             svc = BlobServiceClient.from_connection_string(cfg.client_documents_azure_connection_string)
             container = svc.get_container_client(cfg.client_documents_azure_container)
-            container.get_container_properties()  # lanza si no existe o sin permisos
+            container.get_container_properties()
         except Exception as exc:
             raise RuntimeError(
                 f"Azure Blob no accesible (contenedor '{cfg.client_documents_azure_container}'): {exc}. "
@@ -493,8 +262,6 @@ def startup():
     try:
         cleanup_expired_attachments()
     except Exception:
-        # La limpieza no debe impedir que el servicio arranque; se reintentara
-        # en el siguiente despliegue/arranque.
         pass
 
 
@@ -529,14 +296,6 @@ async def stop_attachment_cleanup_loop() -> None:
     except asyncio.CancelledError:
         pass
     _attachment_cleanup_task = None
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 internal = Depends(require_internal_key)
@@ -604,6 +363,28 @@ async def _guardar_documento_aportado(
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/health/live")
+def health_live():
+    """Liveness: el proceso esta vivo. No consulta la base de datos."""
+    return {"status": "live"}
+
+
+@app.get("/health/ready")
+def health_ready():
+    """Readiness: comprueba que PostgreSQL responde. Falla rapido si no hay conexion."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as exc:
+        logger_app = __import__("logging").getLogger("gest2a3eco.health")
+        logger_app.warning("health_ready: PostgreSQL no disponible: %s", type(exc).__name__)
+        return JSONResponse(
+            status_code=503,
+            content={"status": "not_ready", "detail": "PostgreSQL no disponible"},
+        )
+    return {"status": "ready"}
 
 
 @app.get("/api/v1/integrations/status", dependencies=[workstation_or_internal])

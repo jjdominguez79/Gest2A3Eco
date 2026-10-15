@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from backend.api.client_access import revoke_organization_client_access
 from backend.api.config import get_settings
-from backend.api.database import SessionLocal
+from backend.api.database import SessionLocal, get_db
 from backend.api.messaging_models import (
     MessagingAttachment, MessagingClient, MessagingConversation, MessagingConversationAlias, MessagingDevice, MessagingDownload,
     MessagingAppDevice, MessagingCampaign, MessagingCampaignRecipient,
@@ -81,14 +81,6 @@ def _is_voice_attachment(item: MessagingAttachment) -> bool:
     return content_type.startswith("audio/") or suffix in {
         ".aac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".webm",
     }
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 def _send_push_and_handle(
@@ -5927,25 +5919,41 @@ async def messaging_websocket(websocket: WebSocket, audience: str, ticket: str =
 
 
 @router.get("/{audience}/events")
-async def events(audience: str, request: Request, after: int = 0, db: Session = Depends(get_db)):
-    actor = _resolve_actor(audience, request, db)
-    org_id = actor.organization_id if audience == "client" else None
-    staff_id = actor.external_id if audience == "staff" else ""
-    if audience == "client":
-        presence = db.get(MessagingPresence, actor.id) or MessagingPresence(client_id=actor.id, connected_until=utcnow())
-        presence.connected_until = utcnow() + timedelta(seconds=35)
-        db.add(presence); db.commit()
+async def events(audience: str, request: Request, after: int = 0):
+    # Sesion corta solo para autenticacion y presencia inicial.
+    # Se cierra completamente antes de construir el StreamingResponse.
+    with SessionLocal() as db:
+        actor = _resolve_actor(audience, request, db)
+        # Extraer valores primitivos: los objetos ORM no son validos fuera de la sesion.
+        org_id: str = str(actor.organization_id) if audience == "client" else ""
+        staff_id: str = str(actor.external_id) if audience == "staff" else ""
+        actor_id: str = str(actor.id) if audience == "client" else ""
+        if audience == "client":
+            presence = db.get(MessagingPresence, actor_id) or MessagingPresence(
+                client_id=actor_id, connected_until=utcnow()
+            )
+            presence.connected_until = utcnow() + timedelta(seconds=35)
+            db.add(presence)
+            db.commit()
+    # Sesion de autenticacion cerrada aqui. El streaming empieza sin conexion abierta.
 
     async def stream():
         cursor = after
         for _ in range(25):
+            # Acumular payloads dentro del context manager; ceder FUERA.
+            payloads: list[str] = []
             with SessionLocal() as event_db:
                 if audience == "client":
-                    presence = event_db.get(MessagingPresence, actor.id)
+                    presence = event_db.get(MessagingPresence, actor_id)
                     if presence:
                         presence.connected_until = utcnow() + timedelta(seconds=35)
                         event_db.commit()
-                rows = event_db.scalars(select(MessagingEvent).where(MessagingEvent.id > cursor).order_by(MessagingEvent.id).limit(100)).all()
+                rows = event_db.scalars(
+                    select(MessagingEvent)
+                    .where(MessagingEvent.id > cursor)
+                    .order_by(MessagingEvent.id)
+                    .limit(100)
+                ).all()
                 for row in rows:
                     cursor = max(cursor, row.id)
                     if org_id and row.organization_id != org_id:
@@ -5961,15 +5969,19 @@ async def events(audience: str, request: Request, after: int = 0, db: Session = 
                         elif row.actor_type != "client" and not (event_staff and event_staff.role == "admin"):
                             # Eventos antiguos sin lector: no exponer metadatos ambiguos.
                             continue
-                    if audience == "staff" and (row.event_type in {"internal_message", "internal_states_updated", "internal_task"}
-                                               or (row.event_type == "read_updated" and not row.organization_id)):
+                    if audience == "staff" and (
+                        row.event_type in {"internal_message", "internal_states_updated", "internal_task"}
+                        or (row.event_type == "read_updated" and not row.organization_id)
+                    ):
                         thread = event_db.get(MessagingStaffThread, row.conversation_id)
                         event_staff = event_db.get(MessagingStaff, staff_id)
                         if not thread or not event_staff or not _can_access_staff_thread(
                             event_db, thread, event_staff,
                         ):
                             continue
-                        yield f"id: {row.id}\nevent: {row.event_type}\ndata: {json.dumps({'thread_id': row.conversation_id})}\n\n"
+                        payloads.append(
+                            f"id: {row.id}\nevent: {row.event_type}\ndata: {json.dumps({'thread_id': row.conversation_id})}\n\n"
+                        )
                         continue
                     conv = event_db.get(MessagingConversation, row.conversation_id) if row.conversation_id else None
                     if audience == "staff" and conv:
@@ -5978,7 +5990,12 @@ async def events(audience: str, request: Request, after: int = 0, db: Session = 
                             event_db, conv, event_staff,
                         ):
                             continue
-                    yield f"id: {row.id}\nevent: {row.event_type}\ndata: {json.dumps({'conversation_id': row.conversation_id})}\n\n"
+                    payloads.append(
+                        f"id: {row.id}\nevent: {row.event_type}\ndata: {json.dumps({'conversation_id': row.conversation_id})}\n\n"
+                    )
+            # Sesion cerrada. Ahora es seguro ceder al cliente.
+            for payload in payloads:
+                yield payload
             yield ": keepalive\n\n"
             await asyncio.sleep(1)
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})

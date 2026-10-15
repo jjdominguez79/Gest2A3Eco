@@ -11,3 +11,7 @@ healthcheckPath = "/health"
 healthcheckTimeout = 120
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
+# preDeployCommand se activa en Etapa B (ver DEPLOY_PLAN.md).
+# Etapa A (actual): sin preDeployCommand; sin DDL en startup ni pre-deploy.
+# Etapa B: anadir preDeployCommand = "python -m backend.migrate"
+#          y cambiar healthcheckPath = "/health/ready".
