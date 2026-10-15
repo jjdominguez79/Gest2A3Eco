@@ -158,7 +158,7 @@ class _UnifiedConversationScreenState
               key: const Key('unified-share-contact-option'),
               leading: const Icon(Icons.contact_phone_outlined),
               title: const Text('Contacto'),
-              subtitle: const Text('Compartir nombre, teléfono o email'),
+              subtitle: const Text('Elegir un contacto de la agenda'),
               onTap: () => Navigator.pop(context, 'contact'),
             ),
           ],
@@ -169,7 +169,7 @@ class _UnifiedConversationScreenState
     if (action == 'file') {
       await _pickFiles();
     } else if (action == 'contact') {
-      final contact = await showSharedContactDialog(context);
+      final contact = await seleccionarContactoCompartido(context);
       if (contact != null) await _sendContact(contact);
     }
   }
@@ -192,7 +192,7 @@ class _UnifiedConversationScreenState
               key: const Key('unified-compact-share-contact-option'),
               leading: const Icon(Icons.contact_phone_outlined),
               title: const Text('Contacto'),
-              subtitle: const Text('Compartir nombre, teléfono o email'),
+              subtitle: const Text('Elegir un contacto de la agenda'),
               onTap: () => Navigator.pop(context, 'contact'),
             ),
             ListTile(
@@ -211,7 +211,7 @@ class _UnifiedConversationScreenState
         await _pickFiles();
         return;
       case 'contact':
-        final contact = await showSharedContactDialog(context);
+        final contact = await seleccionarContactoCompartido(context);
         if (contact != null) await _sendContact(contact);
         return;
       case 'emoji':

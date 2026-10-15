@@ -331,7 +331,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
               key: const Key('share-contact-option'),
               leading: const Icon(Icons.contact_phone_outlined),
               title: const Text('Contacto'),
-              subtitle: const Text('Compartir nombre, teléfono o email'),
+              subtitle: const Text('Elegir un contacto de la agenda'),
               onTap: () => Navigator.pop(context, 'contact'),
             ),
           ],
@@ -342,7 +342,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     if (action == 'file') {
       await _pickFiles();
     } else if (action == 'contact') {
-      final contact = await showSharedContactDialog(context);
+      final contact = await seleccionarContactoCompartido(context);
       if (contact != null) await _sendContact(contact);
     }
   }
@@ -365,7 +365,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
               key: const Key('compact-share-contact-option'),
               leading: const Icon(Icons.contact_phone_outlined),
               title: const Text('Contacto'),
-              subtitle: const Text('Compartir nombre, teléfono o email'),
+              subtitle: const Text('Elegir un contacto de la agenda'),
               onTap: () => Navigator.pop(context, 'contact'),
             ),
             ListTile(
@@ -391,7 +391,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
         await _pickFiles();
         return;
       case 'contact':
-        final contact = await showSharedContactDialog(context);
+        final contact = await seleccionarContactoCompartido(context);
         if (contact != null) await _sendContact(contact);
         return;
       case 'emoji':
