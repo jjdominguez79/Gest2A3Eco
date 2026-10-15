@@ -297,6 +297,8 @@ class FirmaService:
         status = str(raw.get("status") or raw.get("estado") or "").lower()
         if status in {"signed", "completed", "firmado"}:
             return "firmado"
+        if status in {"partially_signed", "parcialmente_firmado"}:
+            return "parcialmente_firmado"
         if status in {"declined", "rejected", "rechazado"}:
             return "rechazado"
         if status in {"cancelled", "canceled", "cancelado"}:

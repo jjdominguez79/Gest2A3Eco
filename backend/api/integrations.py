@@ -13,6 +13,36 @@ class ProviderError(RuntimeError):
 
 
 class SignRequestBackend:
+    _ESTADOS = {
+        "co": "processing",
+        "converting": "processing",
+        "ne": "sent",
+        "new": "sent",
+        "se": "sent",
+        "sent": "sent",
+        "vi": "sent",
+        "viewed": "sent",
+        "si": "signed",
+        "signed": "signed",
+        "completed": "signed",
+        "firmado": "signed",
+        "do": "signed",
+        "downloaded": "signed",
+        "sd": "signed",
+        "signed_and_downloaded": "signed",
+        "ca": "cancelled",
+        "cancelled": "cancelled",
+        "canceled": "cancelled",
+        "de": "declined",
+        "declined": "declined",
+        "rejected": "declined",
+        "xp": "expired",
+        "expired": "expired",
+        "ec": "incidencia",
+        "es": "incidencia",
+        "error": "incidencia",
+    }
+
     def __init__(self, session=None):
         cfg = get_settings()
         self.token = cfg.signrequest_token
@@ -69,18 +99,37 @@ class SignRequestBackend:
             return {"status": "desconocido"}
         documento = self._json("GET", document_url)
         log = documento.get("signing_log") or {}
-        estado = "signed" if documento.get("pdf") and log.get("pdf") else str(documento.get("status") or "sent")
-        if estado == "se":
-            estado = "sent"
         firmantes = [
             {
                 "email": item.get("email") or "", "order": int(item.get("order") or 0),
+                "needs_to_sign": item.get("needs_to_sign") is not False,
                 "emailed": bool(item.get("emailed")), "email_viewed": bool(item.get("email_viewed")),
                 "viewed": bool(item.get("viewed")), "signed": bool(item.get("signed")),
                 "declined": bool(item.get("declined")),
             }
             for item in (solicitud.get("signers") or documento.get("signrequest", {}).get("signers") or [])
         ]
+        estado_proveedor = self._ESTADOS.get(
+            str(documento.get("status") or "sent").strip().lower(),
+            str(documento.get("status") or "sent").strip().lower(),
+        )
+        obligatorios = [item for item in firmantes if item["needs_to_sign"]]
+        firmados = sum(1 for item in obligatorios if item["signed"] and not item["declined"])
+        if any(item["declined"] for item in obligatorios):
+            estado = "declined"
+        elif estado_proveedor in {"cancelled", "declined", "expired", "incidencia"}:
+            estado = estado_proveedor
+        elif obligatorios and firmados == len(obligatorios):
+            if estado_proveedor == "signed" and documento.get("pdf") and log.get("pdf"):
+                estado = "signed"
+            else:
+                estado = "processing"
+        elif firmados:
+            estado = "partially_signed"
+        else:
+            # Un PDF descargable no sustituye la confirmacion individual de
+            # todos los firmantes obligatorios.
+            estado = "sent" if estado_proveedor == "signed" else estado_proveedor
         return {
             "status": estado,
             "firmantes": sorted(firmantes, key=lambda item: item["order"]),

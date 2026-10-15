@@ -551,6 +551,10 @@ class TramitesDgtService:
                     "documento_id": str(doc.get("id")),
                     "tipo_documento": tipo,
                     "estado": resultado.get("status") or "sent",
+                    "firmantes_esperados": [
+                        str(item.get("email") or "").strip().lower()
+                        for item in firmantes
+                    ],
                 }
             )
         expediente["firma_estado"] = "enviado"
@@ -581,7 +585,25 @@ class TramitesDgtService:
         for solicitud in solicitudes:
             data = self._firma_client.consultar(solicitud["request_id"])
             estado = str(data.get("status") or "desconocido")
+            firmantes = list(data.get("firmantes") or [])
+            esperados = {
+                str(email or "").strip().lower()
+                for email in solicitud.get("firmantes_esperados") or []
+                if str(email or "").strip()
+            }
+            confirmados = {
+                str(item.get("email") or "").strip().lower()
+                for item in firmantes
+                if item.get("needs_to_sign") is not False
+                and item.get("signed")
+                and not item.get("declined")
+            }
+            pendientes = sorted(esperados - confirmados)
+            if estado.lower() in {"signed", "completed"} and pendientes:
+                estado = "partially_signed"
             solicitud["estado"] = estado
+            solicitud["firmantes"] = firmantes
+            solicitud["firmantes_pendientes"] = pendientes
             solicitud["actualizado_at"] = self._now()
             if estado.lower() in {"signed", "completed"} and not solicitud.get("ruta_firmado"):
                 tipo = str(solicitud.get("tipo_documento") or "documento")
@@ -596,9 +618,9 @@ class TramitesDgtService:
         normalizados = {estado.lower() for estado in estados}
         if normalizados and normalizados <= {"signed", "completed"}:
             estado_global = "firmado"
-        elif normalizados & {"declined", "cancelled", "expired"}:
+        elif normalizados & {"declined", "cancelled", "expired", "incidencia"}:
             estado_global = "incidencia"
-        elif normalizados & {"signed", "completed"}:
+        elif normalizados & {"signed", "completed", "partially_signed"}:
             estado_global = "parcialmente_firmado"
         else:
             estado_global = "enviado"
@@ -976,6 +998,22 @@ class TramitesDgtService:
             run.font.size = Pt(18)
             paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
+        def normalizar_tag_celda(cell, signer_index: int) -> None:
+            patron = re.compile(r"\[\[s\|\d+[^\]]*\]\]")
+            destino = None
+            for paragraph in cell.paragraphs:
+                texto = paragraph.text
+                limpio = patron.sub("", texto)
+                if limpio == texto:
+                    continue
+                if destino is None:
+                    destino = paragraph
+                for run in paragraph.runs:
+                    run.text = ""
+                if limpio:
+                    paragraph.add_run(limpio)
+            add_tag(destino or cell.add_paragraph(), signer_index)
+
         if tipo == "contrato_compraventa":
             if not document.tables or len(document.tables[-1].rows[-1].cells) < 2:
                 raise ValueError(
@@ -983,12 +1021,12 @@ class TramitesDgtService:
                     "las zonas de firma de vendedor y comprador."
                 )
             cells = document.tables[-1].rows[-1].cells
-            for cell, signer_index in zip(cells[:2], (1, 2)):
-                if not any(
-                    f"[[s|{signer_index}" in paragraph.text
-                    for paragraph in cell.paragraphs
-                ):
-                    add_tag(cell.add_paragraph(), signer_index)
+            # SignRequest numera desde cero a las personas que deben firmar.
+            # El orden de los marcadores sigue el de los contactos, no el
+            # orden secuencial de firma. Normalizar tambien corrige plantillas
+            # compartidas antiguas que contenian s|1 y s|2.
+            for cell, signer_index in zip(cells[:2], (0, 1)):
+                normalizar_tag_celda(cell, signer_index)
         elif tipo == "mandato_dgt_comprador":
             assignments = {"EL MANDANTE": 1, "EL MANDATARIO": 0}
             for heading, signer_index in assignments.items():
