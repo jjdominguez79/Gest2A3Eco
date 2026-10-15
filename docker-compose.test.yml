@@ -1,0 +1,24 @@
+# docker-compose.test.yml
+# PostgreSQL aislado para ejecutar los tests @needs_postgres.
+#
+# Uso:
+#   docker compose -f docker-compose.test.yml up -d postgres_test
+#   TEST_DATABASE_URL=postgresql://gest_test:gest_test@localhost:5433/gest_test \
+#       pytest tests/test_db_pool_stability.py -v
+#   docker compose -f docker-compose.test.yml down -v
+services:
+  postgres_test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: gest_test
+      POSTGRES_PASSWORD: gest_test
+      POSTGRES_DB: gest_test
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gest_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
