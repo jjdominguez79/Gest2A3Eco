@@ -1,8 +1,65 @@
 import 'package:flutter/material.dart';
 
 import '../domain/message.dart';
+import 'selector_contacto_nativo_stub.dart'
+    if (dart.library.io) 'selector_contacto_nativo.dart';
 
-Future<SharedContact?> showSharedContactDialog(BuildContext context) {
+Future<SharedContact?> seleccionarContactoCompartido(
+  BuildContext context,
+) async {
+  if (!selectorContactoNativoDisponible) {
+    return _mostrarFormularioContacto(context);
+  }
+
+  try {
+    final contacto = await seleccionarContactoNativo();
+    if (contacto == null || !context.mounted) return null;
+    return await _confirmarContacto(context, contacto);
+  } catch (error) {
+    debugPrint('No se pudo abrir el selector nativo de contactos: $error');
+    if (!context.mounted) return null;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'No se pudo abrir la agenda. Puedes introducir el contacto manualmente.',
+        ),
+      ),
+    );
+    return _mostrarFormularioContacto(context);
+  }
+}
+
+Future<SharedContact?> _confirmarContacto(
+  BuildContext context,
+  SharedContact contacto,
+) {
+  return showDialog<SharedContact>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Compartir contacto'),
+      content: ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: const CircleAvatar(child: Icon(Icons.person_outline)),
+        title: Text(contacto.name),
+        subtitle: Text(contacto.phone),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton.icon(
+          key: const Key('share-selected-contact'),
+          onPressed: () => Navigator.pop(context, contacto),
+          icon: const Icon(Icons.send),
+          label: const Text('Compartir'),
+        ),
+      ],
+    ),
+  );
+}
+
+Future<SharedContact?> _mostrarFormularioContacto(BuildContext context) {
   return showDialog<SharedContact>(
     context: context,
     builder: (_) => const _SharedContactDialog(),

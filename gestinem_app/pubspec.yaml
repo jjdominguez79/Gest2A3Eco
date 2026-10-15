@@ -51,6 +51,7 @@ dependencies:
   pdfx: ^2.11.0
   record: ^7.1.1
   audioplayers: ^6.8.1
+  flutter_native_contact_picker: 0.0.12
 
 dev_dependencies:
   flutter_test:
