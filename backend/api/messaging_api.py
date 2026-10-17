@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import io
 import json
+import logging
 import mimetypes
 import re
 import secrets
@@ -56,6 +57,7 @@ from backend.api.security import require_internal_key, require_workstation_or_in
 
 
 router = APIRouter(prefix="/api/v1/messaging", tags=["messaging"])
+logger = logging.getLogger("gest2a3eco.messaging.ws")
 MAX_ATTACHMENT = 50 * 1024 * 1024
 MAX_AVATAR = 5 * 1024 * 1024
 MAX_INVITATION_MANUAL = 15 * 1024 * 1024
@@ -5802,50 +5804,139 @@ def create_websocket_ticket(
     return {"ticket": token, "expires_in": 60}
 
 
-@router.websocket("/ws/{audience}")
-async def messaging_websocket(websocket: WebSocket, audience: str, ticket: str = Query(default="")):
-    if audience not in {"client", "staff"} or not ticket:
-        await websocket.close(code=4401)
-        return
-    presence_id = ""
-    presence_staff_id = ""
-    with SessionLocal() as db:
+# ---------------------------------------------------------------------------
+# Helpers sincrónicos para el WebSocket de mensajería.
+# Cada función abre, opera y cierra su propia sesión; nunca se llaman con un
+# await activo. Se ejecutan fuera del event loop mediante asyncio.to_thread.
+# ---------------------------------------------------------------------------
+
+def _ws_auth(ticket_hash: str, audience: str) -> dict | None:
+    """
+    Autentica el ticket WebSocket y registra la presencia inicial (staff).
+
+    Retorna un dict con los datos del actor si la autenticacion es correcta,
+    o None en cualquier caso de rechazo. La sesion se abre, opera y cierra
+    completamente dentro de esta funcion; nunca queda abierta durante un await.
+    """
+    db: Session = SessionLocal()
+    try:
         ws_ticket = db.scalar(select(MessagingWebSocketTicket).where(
-            MessagingWebSocketTicket.token_hash == hash_token(ticket),
+            MessagingWebSocketTicket.token_hash == ticket_hash,
             MessagingWebSocketTicket.user_type == audience,
         ))
         if not ws_ticket or ws_ticket.used_at or is_expired(ws_ticket.expires_at):
-            await websocket.close(code=4401)
-            return
+            return None
         ws_ticket.used_at = utcnow()
         if audience == "client":
             actor = db.get(MessagingClient, ws_ticket.user_id)
             if not actor or not actor.active:
-                await websocket.close(code=4401)
-                return
-            subscription = hub.subscribe(
-                audience="client", actor_id=actor.id, organization_id=actor.organization_id,
-            )
+                return None
+            db.commit()
+            return {"actor_id": str(actor.id), "org_id": str(actor.organization_id)}
         else:
             actor = db.get(MessagingStaff, ws_ticket.user_id)
             staff_session = db.get(MessagingStaffSession, ws_ticket.staff_session_id)
             if (not actor or not actor.active or not staff_session
                     or staff_session.revoked_at or is_expired(staff_session.expires_at)):
-                await websocket.close(code=4401)
-                return
-            presence_id = ws_ticket.id
-            presence_staff_id = actor.external_id
+                return None
             db.add(MessagingStaffPresenceConnection(
-                id=presence_id, staff_external_id=actor.external_id,
+                id=ws_ticket.id, staff_external_id=actor.external_id,
                 staff_session_id=staff_session.id,
                 connected_until=utcnow() + timedelta(seconds=35),
             ))
-            subscription = hub.subscribe(
-                audience="staff", actor_id=actor.external_id,
-                channels={"general"},
-            )
+            db.commit()
+            return {"actor_id": str(actor.external_id), "presence_id": str(ws_ticket.id)}
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def _ws_heartbeat(presence_id: str, presence_staff_id: str) -> bool:
+    """
+    Verifica que la sesion del empleado sigue valida y renueva el TTL de presencia.
+
+    Retorna True si la sesion es valida; False si el WebSocket debe cerrarse.
+    La sesion de BD se abre y cierra completamente; nunca queda abierta durante await.
+    """
+    db: Session = SessionLocal()
+    try:
+        presence = db.get(MessagingStaffPresenceConnection, presence_id)
+        session = db.get(MessagingStaffSession, presence.staff_session_id) if presence else None
+        staff = db.get(MessagingStaff, presence_staff_id)
+        if (not presence or not session or session.revoked_at
+                or is_expired(session.expires_at) or not staff or not staff.active):
+            return False
+        presence.connected_until = utcnow() + timedelta(seconds=35)
         db.commit()
-    tareas = set()
+        return True
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def _ws_cleanup_presence(presence_id: str, presence_staff_id: str) -> bool:
+    """
+    Elimina la entrada de presencia y devuelve si el empleado sigue conectado
+    en otra sesion concurrente.
+
+    La sesion de BD se abre y cierra completamente; nunca queda abierta durante await.
+    Tras commit(), la misma sesion puede leer el estado actualizado abriendo una
+    nueva transaccion READ COMMITTED; no es necesaria una segunda adquisicion del pool.
+    """
+    db: Session = SessionLocal()
+    try:
+        presence = db.get(MessagingStaffPresenceConnection, presence_id)
+        if presence:
+            db.delete(presence)
+            db.commit()
+        return _staff_online(db, presence_staff_id)
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@router.websocket("/ws/{audience}")
+async def messaging_websocket(websocket: WebSocket, audience: str, ticket: str = Query(default="")):
+    if audience not in {"client", "staff"} or not ticket:
+        await websocket.close(code=4401)
+        return
+
+    # Autenticar en un hilo: la sesion se abre y cierra fuera del event loop.
+    # Ningun await ocurre mientras la sesion esta abierta.
+    ticket_hash = hash_token(ticket)
+    try:
+        auth = await asyncio.to_thread(_ws_auth, ticket_hash, audience)
+    except Exception:
+        await websocket.close(code=4401)
+        return
+    if auth is None:
+        await websocket.close(code=4401)
+        return
+
+    # Suscribir al hub de eventos en memoria (no requiere base de datos).
+    if audience == "client":
+        subscription = hub.subscribe(
+            audience="client",
+            actor_id=auth["actor_id"],
+            organization_id=auth["org_id"],
+        )
+    else:
+        subscription = hub.subscribe(
+            audience="staff",
+            actor_id=auth["actor_id"],
+            channels={"general"},
+        )
+
+    presence_id: str = auth.get("presence_id", "")
+    presence_staff_id: str = auth["actor_id"] if audience == "staff" else ""
+
+    tareas: set = set()
     try:
         await websocket.accept()
         if presence_staff_id:
@@ -5873,20 +5964,19 @@ async def messaging_websocket(websocket: WebSocket, audience: str, ticket: str =
                 tareas.add(recepcion)
             # El plazo no se reinicia al recibir eventos del chat.
             if reloj.time() >= proxima_renovacion:
+                # send_json antes de la operacion de BD: no hay await mientras
+                # la sesion esta abierta.
                 await websocket.send_json({"type": "ping"})
                 if presence_id:
-                    with SessionLocal() as presence_db:
-                        presence = presence_db.get(MessagingStaffPresenceConnection, presence_id)
-                        session = presence_db.get(
-                            MessagingStaffSession, presence.staff_session_id,
-                        ) if presence else None
-                        staff = presence_db.get(MessagingStaff, presence_staff_id)
-                        if (not presence or not session or session.revoked_at
-                                or is_expired(session.expires_at) or not staff or not staff.active):
-                            await websocket.close(code=4401)
-                            break
-                        presence.connected_until = utcnow() + timedelta(seconds=35)
-                        presence_db.commit()
+                    try:
+                        ok = await asyncio.to_thread(
+                            _ws_heartbeat, presence_id, presence_staff_id,
+                        )
+                    except Exception:
+                        ok = False
+                    if not ok:
+                        await websocket.close(code=4401)
+                        break
                 proxima_renovacion = reloj.time() + INTERVALO_PRESENCIA_WS
             if siguiente_evento in completadas:
                 await websocket.send_json(siguiente_evento.result())
@@ -5898,23 +5988,44 @@ async def messaging_websocket(websocket: WebSocket, audience: str, ticket: str =
     finally:
         for tarea in tareas:
             tarea.cancel()
-        # Limpiar antes de esperar: el servidor puede cancelar de nuevo al apagar.
         hub.unsubscribe(subscription)
+        # Limpieza de presencia: best-effort en hilo aparte para no bloquear el
+        # event loop. El evento presence.updated se publica siempre a traves del
+        # done-callback de la tarea, incluso si la tarea principal recibe
+        # CancelledError (p.ej. del anyio CancelScope del TestClient o al cerrar
+        # el servidor). Las excepciones ordinarias se registran. CancelledError
+        # se propaga.
         if presence_id:
-            with SessionLocal() as presence_db:
-                presence = presence_db.get(MessagingStaffPresenceConnection, presence_id)
-                if presence:
-                    presence_db.delete(presence)
-                    presence_db.commit()
-                online = _staff_online(presence_db, presence_staff_id)
-            hub.publish(
-                {"type": "presence.updated", "staff_id": presence_staff_id, "online": online},
+            _cleanup_future: asyncio.Future = asyncio.ensure_future(
+                asyncio.to_thread(
+                    _ws_cleanup_presence, presence_id, presence_staff_id,
+                )
             )
+
+            def _on_cleanup_done(fut: asyncio.Future) -> None:
+                online = False
+                try:
+                    online = fut.result()
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    logger.exception(
+                        "ws cleanup presence error staff_id=%s", presence_staff_id,
+                    )
+                hub.publish(
+                    {"type": "presence.updated", "staff_id": presence_staff_id, "online": online},
+                )
+
+            _cleanup_future.add_done_callback(_on_cleanup_done)
+            try:
+                await asyncio.shield(_cleanup_future)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass  # Registrado en _on_cleanup_done.
         try:
             await asyncio.gather(*tareas, return_exceptions=True)
         except asyncio.CancelledError:
-            # El cierre del servidor puede cancelar de nuevo mientras se esperan
-            # las tareas hijas; la suscripcion y la presencia ya estan limpias.
             pass
 
 

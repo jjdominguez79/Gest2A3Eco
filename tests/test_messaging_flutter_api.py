@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import time
 from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
@@ -19,7 +20,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from backend.api import messaging_api
 from backend.api.client_profile_api import (
@@ -58,9 +58,16 @@ def _api(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MESSAGING_STORAGE_DIR", str(tmp_path / "cloud"))
     monkeypatch.setenv("MESSAGING_PUBLIC_BASE_URL", "https://api.example.test")
     monkeypatch.setenv("MESSAGING_APP_WEB_URL", "https://app.example.test")
+    # Usar SQLite en archivo (tmp_path) en lugar de StaticPool en memoria.
+    # StaticPool comparte una unica conexion entre hilos, lo que causa
+    # "cannot start a transaction within a transaction" cuando asyncio.to_thread
+    # accede a la BD desde un hilo del ThreadPoolExecutor mientras el event loop
+    # tiene la conexion en estado de autobegin. Con un fichero SQLite, cada
+    # checkout obtiene su propia conexion y el aislamiento es correcto.
+    db_path = tmp_path / "messaging_test.db"
     engine = create_engine(
-        "sqlite+pysqlite://", connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
+        f"sqlite+pysqlite:///{db_path}",
+        connect_args={"check_same_thread": False},
     )
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
@@ -1224,15 +1231,34 @@ def test_cerrar_una_pestana_conserva_presencia_de_la_otra(tmp_path, monkeypatch)
         publish(payload, **kwargs)
 
     monkeypatch.setattr(bus, "publish", publicar)
+
+    def _esperar_evento_online(valor: bool, timeout: float = 2.0):
+        """Espera hasta que el ultimo evento presence.updated tenga online=valor."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            relevantes = [
+                e for e in eventos
+                if e.get("type") == "presence.updated"
+                and e.get("staff_id") == "employee"
+            ]
+            if relevantes and relevantes[-1]["online"] is valor:
+                return
+            time.sleep(0.01)
+        raise AssertionError(
+            f"Tiempo agotado esperando presence.updated online={valor}. "
+            f"Eventos recibidos: {eventos}"
+        )
+
     with client:
         with client.websocket_connect("/api/v1/messaging/ws/staff?ticket=ticket-uno") as uno:
             assert uno.receive_json()["type"] == "connected"
             with client.websocket_connect("/api/v1/messaging/ws/staff?ticket=ticket-dos") as dos:
                 assert dos.receive_json()["type"] == "connected"
-            assert eventos[-1]["online"] is True
-            with factory() as db:
-                assert messaging_api._staff_online(db, "employee") is True
-    assert eventos[-1]["online"] is False
+            # Cleanup de 'dos': _ws_cleanup_presence usa la misma sesion para el
+            # delete y la consulta (READ COMMITTED), por lo que despues del commit
+            # ve la presencia de 'uno' y publica online=True correctamente.
+            _esperar_evento_online(True)
+    _esperar_evento_online(False)
     with factory() as db:
         assert messaging_api._staff_online(db, "employee") is False
     assert not bus._subscriptions
