@@ -34,6 +34,28 @@ final class _TestPlatformFile extends PlatformFile {
 }
 
 void main() {
+  test('repository pagina los mensajes del chat interno de 20 en 20', () async {
+    final adapter = JsonAdapter(<Object>[]);
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+    )..httpClientAdapter = adapter;
+    final api = ApiClient(dio: dio, tokenProvider: () => testSession.token);
+
+    final rows = await MessagingRepository(
+      api,
+    ).internalMessages('thread-1', beforeMessageId: 'message-20');
+
+    expect(rows, isEmpty);
+    expect(
+      adapter.lastRequest!.path,
+      '/staff/internal/threads/thread-1/messages',
+    );
+    expect(adapter.lastRequest!.queryParameters, {
+      'limit': 20,
+      'before_message_id': 'message-20',
+    });
+  });
+
   test('repository carga las tareas de un chat interno', () async {
     final adapter = JsonAdapter(<Object>[]);
     final dio = Dio(

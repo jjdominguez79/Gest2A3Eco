@@ -67,10 +67,11 @@ final messagesProvider = FutureProvider.autoDispose
       return ref.watch(messagingRepositoryProvider).messages(profile, id);
     });
 
-final internalThreadsProvider =
-    FutureProvider.autoDispose<List<InternalThread>>((ref) {
-      return ref.watch(messagingRepositoryProvider).internalThreads();
-    });
+final internalThreadsProvider = FutureProvider<List<InternalThread>>((ref) {
+  final session = ref.watch(sessionProvider).valueOrNull;
+  if (session == null) return const <InternalThread>[];
+  return ref.watch(messagingRepositoryProvider).internalThreads();
+});
 
 /// Numero total que debe mostrarse en el icono de la barra de tareas.
 ///
@@ -94,10 +95,14 @@ final pendingMessagesCountProvider = FutureProvider.autoDispose<int>((
   return total;
 });
 
-final internalMessagesProvider = FutureProvider.autoDispose
-    .family<List<Message>, String>((ref, id) {
-      return ref.watch(messagingRepositoryProvider).internalMessages(id);
-    });
+final internalMessagesProvider = FutureProvider.family<List<Message>, String>((
+  ref,
+  id,
+) {
+  final session = ref.watch(sessionProvider).valueOrNull;
+  if (session == null) return const <Message>[];
+  return ref.watch(messagingRepositoryProvider).internalMessages(id);
+});
 
 final internalTasksProvider = FutureProvider.autoDispose
     .family<List<InternalTask>, String>((ref, id) {

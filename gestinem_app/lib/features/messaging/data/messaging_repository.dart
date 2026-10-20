@@ -414,9 +414,14 @@ class MessagingRepository {
     return InternalThread.fromJson(response.data!);
   }
 
-  Future<List<Message>> internalMessages(String threadId) async {
+  Future<List<Message>> internalMessages(
+    String threadId, {
+    int limit = 20,
+    String? beforeMessageId,
+  }) async {
     final response = await _api.dio.get<List<dynamic>>(
       '/staff/internal/threads/$threadId/messages',
+      queryParameters: {'limit': limit, 'before_message_id': ?beforeMessageId},
     );
     return response.data!
         .map((item) => Message.fromJson(item as Map<String, dynamic>))

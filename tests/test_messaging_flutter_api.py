@@ -46,6 +46,7 @@ from backend.api.messaging_models import (
     MessagingStaffPresenceConnection,
     MessagingStaffSession,
     MessagingStaffThread,
+    MessagingStaffThreadMessage,
     MessagingStaffThreadMention,
     MessagingWebSocketTicket,
 )
@@ -228,6 +229,67 @@ def test_contacto_compartido_y_reaccion_en_chat_interno(tmp_path, monkeypatch):
     assert client.get(path, headers=staff_headers("admin")).json()[0][
         "reactions"
     ][0]["mine"] is False
+
+
+def test_chat_interno_devuelve_ultimos_20_y_pagina_hacia_atras(
+    tmp_path, monkeypatch,
+):
+    client, factory, staff_headers, _, _, _ = _setup(tmp_path, monkeypatch)
+    admin = staff_headers("admin")
+    thread = client.post(
+        "/api/v1/messaging/staff/internal/direct/employee",
+        headers=admin,
+    ).json()
+    path = f"/api/v1/messaging/staff/internal/threads/{thread['id']}/messages"
+    now = utcnow()
+    with factory() as db:
+        rows = [
+            MessagingStaffThreadMessage(
+                id=f"internal-page-{index:02d}",
+                thread_id=thread["id"],
+                author_staff_external_id="admin",
+                author_name="Admin",
+                body=f"Mensaje {index:02d}",
+                idempotency_key=f"internal-page-{index:02d}",
+                created_at=now + timedelta(seconds=index),
+            )
+            for index in range(25)
+        ]
+        db.add_all(rows)
+        db.commit()
+    sent_ids = [f"internal-page-{index:02d}" for index in range(25)]
+
+    selects = []
+
+    def capture_selects(_conn, _cursor, statement, _parameters, _context, _many):
+        if statement.lstrip().upper().startswith("SELECT"):
+            selects.append(statement)
+
+    engine = factory.kw["bind"]
+    event.listen(engine, "before_cursor_execute", capture_selects)
+    try:
+        latest = client.get(path, headers=admin)
+    finally:
+        event.remove(engine, "before_cursor_execute", capture_selects)
+    assert latest.status_code == 200
+    assert [row["id"] for row in latest.json()] == sent_ids[-20:]
+    # El numero de consultas es constante por pagina, no crece por mensaje.
+    assert len(selects) <= 25
+
+    previous = client.get(
+        path,
+        headers=admin,
+        params={"limit": 20, "before_message_id": latest.json()[0]["id"]},
+    )
+    assert previous.status_code == 200
+    assert [row["id"] for row in previous.json()] == sent_ids[:5]
+
+    invalid_cursor = client.get(
+        path,
+        headers=admin,
+        params={"before_message_id": "mensaje-que-no-existe"},
+    )
+    assert invalid_cursor.status_code == 422
 
 
 def test_mencion_estructurada_en_grupo_identifica_y_avisa_al_destinatario(
