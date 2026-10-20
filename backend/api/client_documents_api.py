@@ -296,11 +296,22 @@ async def publish_document(
     previous_document_id: str = Form(""),
     customer_tax_id: str = Form(""),
     expected_sha256: str = Form(""),
-    publish_to_client: bool = Form(True),
+    publish_to_client: str = Form("true"),
     db: Session = Depends(_db),
     _auth: str = Depends(require_document_publisher),
 ):
     """Publica un documento en el area del cliente. Idempotente por source."""
+    publish_to_client_value = publish_to_client.strip().lower()
+    if publish_to_client_value in {"true", "1", "yes", "on"}:
+        publish_to_client_enabled = True
+    elif publish_to_client_value in {"false", "0", "no", "off"}:
+        publish_to_client_enabled = False
+    else:
+        raise HTTPException(
+            status_code=422,
+            detail="publish_to_client debe ser true o false",
+        )
+
     is_desktop_invoice = source_system.strip().lower() == "desktop_invoice"
     # La empresa emisora determina el area documental. El NIF recibido en
     # customer_tax_id pertenece al destinatario de la factura y solo se
@@ -356,7 +367,7 @@ async def publish_document(
     # Los resultados solicitados desde el escritorio se custodian primero como
     # borrador. El area documental solo tiene que estar habilitada cuando el
     # documento vaya a hacerse visible al cliente.
-    if publish_to_client:
+    if publish_to_client_enabled:
         require_documents_enabled(db, organization_id)
     elif source_system.strip().lower() != "aapp_worker":
         raise HTTPException(
@@ -466,7 +477,7 @@ async def publish_document(
         file_size=len(content),
         sha256=sha256,
         blob_key=blob_key,
-        status="published" if publish_to_client else "draft",
+        status="published" if publish_to_client_enabled else "draft",
         published_at=utcnow(),
     )
     db.add(doc)
@@ -485,7 +496,7 @@ async def publish_document(
             pass
         raise
     db.refresh(doc)
-    if publish_to_client:
+    if publish_to_client_enabled:
         _notify_document_published(db, doc)
     return _doc_to_dict(doc)
 
