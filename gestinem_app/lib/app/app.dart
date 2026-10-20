@@ -309,6 +309,7 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
       return;
     }
     ref.invalidate(conversationsProvider);
+    ref.invalidate(staffInboxProvider);
     ref.invalidate(unifiedConversationProvider);
     ref.invalidate(unifiedMessagesProvider);
     if (event.conversationId.isNotEmpty) {
@@ -403,6 +404,7 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
       }
       return;
     }
+    ref.invalidate(staffInboxProvider);
     if (event['type'] == 'message.states_updated') {
       ref.invalidate(conversationsProvider);
       ref.invalidate(unifiedConversationProvider);
@@ -410,6 +412,12 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
       ref.invalidate(messagesProvider);
       ref.invalidate(internalThreadsProvider);
       ref.invalidate(internalMessagesProvider);
+      return;
+    }
+    if (event['type'] == 'inbox.metadata_updated') {
+      ref.invalidate(conversationsProvider);
+      ref.invalidate(internalThreadsProvider);
+      ref.invalidate(chatLabelsProvider);
       return;
     }
     if (event['type'] == 'presence.updated' ||

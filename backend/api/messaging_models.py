@@ -112,6 +112,73 @@ class MessagingStaffThread(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, index=True)
 
 
+class MessagingChatPreference(Base):
+    __tablename__ = "msg_chat_preferences"
+    __table_args__ = (
+        UniqueConstraint("staff_external_id", "target_type", "target_id"),
+        CheckConstraint(
+            "target_type IN ('conversation', 'internal_thread')",
+            name="ck_msg_chat_preferences_target_type",
+        ),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    staff_external_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_staff.external_id", ondelete="CASCADE"), index=True,
+    )
+    target_type: Mapped[str] = mapped_column(String(24), index=True)
+    target_id: Mapped[str] = mapped_column(String(36), index=True)
+    favorite: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class MessagingChatLabel(Base):
+    __tablename__ = "msg_chat_labels"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(80), unique=True)
+    color: Mapped[str] = mapped_column(
+        String(7), default="#6750A4", server_default=text("'#6750A4'"),
+    )
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class MessagingChatLabelLink(Base):
+    __tablename__ = "msg_chat_label_links"
+    __table_args__ = (
+        UniqueConstraint("label_id", "target_type", "target_id"),
+        CheckConstraint(
+            "target_type IN ('conversation', 'internal_thread')",
+            name="ck_msg_chat_label_links_target_type",
+        ),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    label_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_chat_labels.id", ondelete="CASCADE"), index=True,
+    )
+    target_type: Mapped[str] = mapped_column(String(24), index=True)
+    target_id: Mapped[str] = mapped_column(String(36), index=True)
+    assigned_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
 class MessagingStaffThreadMessage(Base):
     __tablename__ = "msg_staff_thread_messages"
     __table_args__ = (UniqueConstraint("thread_id", "idempotency_key"),)

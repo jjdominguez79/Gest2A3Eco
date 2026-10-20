@@ -999,11 +999,11 @@ def test_migrate_segunda_ejecucion_no_emite_ddl_pg():
 
 
 @needs_postgres
-def test_migrate_baseline_separa_baseline_de_038():
+def test_migrate_baseline_separa_baseline_de_migraciones_pendientes():
     """
     --baseline-existing registra exactamente 39 archivos (BASELINE_FILES) y
-    devuelve 0 sin aplicar 038.
-    Una ejecucion normal posterior aplica 038 y deja 40 registros en total.
+    devuelve 0 sin aplicar 038 ni 039.
+    Una ejecucion normal posterior aplica ambas y deja 41 registros en total.
     Simula la base de produccion: esquema 001-037 presente, schema_migrations ausente.
     """
     import sqlalchemy as sa
@@ -1058,6 +1058,10 @@ def test_migrate_baseline_separa_baseline_de_038():
                 "SELECT COUNT(*) FROM schema_migrations "
                 "WHERE filename = '038_transition_legacy_startup.sql'"
             )).scalar()
+            tiene_039_tras_baseline = conn.execute(sa.text(
+                "SELECT COUNT(*) FROM schema_migrations "
+                "WHERE filename = '039_chat_inbox_preferences.sql'"
+            )).scalar()
         eng3.dispose()
 
         assert n_baseline == 39, (
@@ -1066,11 +1070,15 @@ def test_migrate_baseline_separa_baseline_de_038():
         assert tiene_038_tras_baseline == 0, (
             "038 NO debe estar en schema_migrations tras el baseline"
         )
+        assert tiene_039_tras_baseline == 0, (
+            "039 NO debe estar en schema_migrations tras el baseline"
+        )
 
-        # --- Paso B.3: ejecucion normal → aplica 038 ---
+        # --- Paso B.3: ejecucion normal → aplica 038 y 039 ---
         count_normal = migrate.run_migrations(schema_url)
-        assert count_normal == 1, (
-            f"Ejecucion normal debe aplicar exactamente 038, aplico {count_normal}"
+        assert count_normal == 2, (
+            "Ejecucion normal debe aplicar exactamente 038 y 039, "
+            f"aplico {count_normal}"
         )
 
         eng4 = sa.create_engine(pg_url_s, pool_pre_ping=True, pool_size=1, max_overflow=0)
@@ -1082,12 +1090,17 @@ def test_migrate_baseline_separa_baseline_de_038():
                 "SELECT COUNT(*) FROM schema_migrations "
                 "WHERE filename = '038_transition_legacy_startup.sql'"
             )).scalar()
+            tiene_039_final = conn.execute(sa.text(
+                "SELECT COUNT(*) FROM schema_migrations "
+                "WHERE filename = '039_chat_inbox_preferences.sql'"
+            )).scalar()
         eng4.dispose()
 
-        assert n_final == 40, (
-            f"Tras 038 deben existir 40 registros, hay {n_final}"
+        assert n_final == 41, (
+            f"Tras 038 y 039 deben existir 41 registros, hay {n_final}"
         )
         assert tiene_038_final == 1, "038 debe estar registrado tras la ejecucion normal"
+        assert tiene_039_final == 1, "039 debe estar registrado tras la ejecucion normal"
 
         # --- Idempotencia: segunda ejecucion normal ---
         count_idem = migrate.run_migrations(schema_url)

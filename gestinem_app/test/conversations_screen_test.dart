@@ -41,7 +41,7 @@ class _SesionConCierre extends FakeSessionController {
 }
 
 void main() {
-  testWidgets('bandeja muestra grupos empleados y clientes en vertical', (
+  testWidgets('bandeja muestra una lista unificada con filtros', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1200, 800));
@@ -87,6 +87,13 @@ void main() {
           ),
           conversationsProvider.overrideWith((ref) async => []),
           internalThreadsProvider.overrideWith((ref) async => threads),
+          staffInboxProvider.overrideWith(
+            (ref) async => StaffInboxData(
+              conversations: const [],
+              threads: threads,
+              labels: const [],
+            ),
+          ),
           realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
           notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
         ],
@@ -95,17 +102,126 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('inbox-section-groups')), findsOneWidget);
-    expect(find.byKey(const Key('inbox-section-employees')), findsOneWidget);
-    expect(find.byKey(const Key('inbox-section-clients')), findsOneWidget);
-    expect(
-      find.byKey(const Key('inbox-section-historical-groups')),
-      findsNothing,
-    );
+    expect(find.byKey(const Key('inbox-unified-list')), findsOneWidget);
+    expect(find.byKey(const Key('inbox-filter-all')), findsOneWidget);
+    expect(find.byKey(const Key('inbox-filter-unread')), findsOneWidget);
+    expect(find.byKey(const Key('inbox-filter-favorites')), findsOneWidget);
+    expect(find.byKey(const Key('inbox-filter-groups')), findsOneWidget);
+    expect(find.byKey(const Key('inbox-filter-labels')), findsOneWidget);
     expect(find.text('Grupo histórico oculto'), findsNothing);
     await tester.tap(find.byIcon(Icons.menu));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('drawer-groups')), findsOneWidget);
+  });
+
+  testWidgets('ordena por actividad y filtra favoritos grupos y etiquetas', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    const profile = UserProfile(
+      id: 'staff-1',
+      name: 'Empleada',
+      email: 'empleada@gestinem.es',
+      type: UserType.staff,
+      staffRole: StaffRole.empleado,
+    );
+    const session = AuthSession(token: 'staff-token', profile: profile);
+    const urgent = ChatLabel(id: 'urgent', name: 'Urgente', color: '#D32F2F');
+    final conversations = [
+      Conversation(
+        id: 'client-recent',
+        companyCode: 'E00001',
+        companyName: 'Cliente reciente',
+        kind: 'general',
+        state: 'pendiente',
+        unreadCount: 0,
+        updatedAt: DateTime(2026, 10, 20, 12),
+        labels: const [urgent],
+      ),
+    ];
+    final threads = [
+      InternalThread(
+        id: 'direct-middle',
+        kind: 'direct',
+        channel: '',
+        title: 'Empleado favorito',
+        unreadCount: 2,
+        updatedAt: DateTime(2026, 10, 19, 12),
+        counterpartId: 'staff-2',
+        isFavorite: true,
+      ),
+      InternalThread(
+        id: 'group-old',
+        kind: 'group',
+        channel: '',
+        title: 'Grupo antiguo',
+        unreadCount: 0,
+        updatedAt: DateTime(2026, 10, 18, 12),
+      ),
+    ];
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionProvider.overrideWith(
+            (ref) => FakeSessionController(ref, session),
+          ),
+          apiClientProvider.overrideWithValue(
+            ApiClient(
+              dio: Dio(BaseOptions(baseUrl: 'https://example.test')),
+              tokenProvider: () => session.token,
+            ),
+          ),
+          conversationsProvider.overrideWith((ref) async => conversations),
+          internalThreadsProvider.overrideWith((ref) async => threads),
+          chatLabelsProvider.overrideWith((ref) async => const [urgent]),
+          staffInboxProvider.overrideWith(
+            (ref) async => StaffInboxData(
+              conversations: conversations,
+              threads: threads,
+              labels: const [urgent],
+            ),
+          ),
+          realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
+          notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
+        ],
+        child: const MaterialApp(home: ConversationsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final client = find.byKey(const Key('conversation-client-recent'));
+    final direct = find.byKey(const Key('internal-thread-direct-middle'));
+    final group = find.byKey(const Key('internal-thread-group-old'));
+    expect(
+      tester.getTopLeft(client).dy,
+      lessThan(tester.getTopLeft(direct).dy),
+    );
+    expect(tester.getTopLeft(direct).dy, lessThan(tester.getTopLeft(group).dy));
+
+    await tester.tap(find.byKey(const Key('inbox-filter-favorites')));
+    await tester.pump();
+    expect(direct, findsOneWidget);
+    expect(client, findsNothing);
+    expect(group, findsNothing);
+
+    await tester.tap(find.byKey(const Key('inbox-filter-groups')));
+    await tester.pump();
+    expect(group, findsOneWidget);
+    expect(direct, findsNothing);
+
+    await tester.tap(find.byKey(const Key('inbox-filter-unread')));
+    await tester.pump();
+    expect(direct, findsOneWidget);
+    expect(group, findsNothing);
+
+    await tester.tap(find.byKey(const Key('inbox-filter-labels')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('filter-label-urgent')));
+    await tester.pumpAndSettle();
+    expect(client, findsOneWidget);
+    expect(direct, findsNothing);
   });
 
   testWidgets('cliente ve Canal general y Tu asesor sin buscador', (
@@ -310,6 +426,13 @@ void main() {
             ),
             conversationsProvider.overrideWith((_) async => []),
             internalThreadsProvider.overrideWith((_) async => []),
+            staffInboxProvider.overrideWith(
+              (_) async => const StaffInboxData(
+                conversations: [],
+                threads: [],
+                labels: [],
+              ),
+            ),
             realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
             notificationsServiceProvider.overrideWithValue(
               _FakeNotifications(),
@@ -386,6 +509,14 @@ void main() {
           ),
           conversationsProvider.overrideWith((ref) async => rows),
           internalThreadsProvider.overrideWith((ref) async => []),
+          chatLabelsProvider.overrideWith((ref) async => const []),
+          staffInboxProvider.overrideWith(
+            (ref) async => StaffInboxData(
+              conversations: rows,
+              threads: const [],
+              labels: const [],
+            ),
+          ),
           realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
           notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
         ],
@@ -395,7 +526,7 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(find.byKey(const Key('conversation-list')), findsOneWidget);
+    expect(find.byKey(const Key('inbox-unified-list')), findsOneWidget);
     expect(find.text('Gestor'), findsOneWidget);
     expect(find.text('Enrique Gonzalez Leal'), findsNWidgets(2));
     expect(find.text('General'), findsOneWidget);
@@ -446,6 +577,13 @@ void main() {
           conversationsProvider.overrideWith((ref) async => []),
           conversationTargetsProvider.overrideWith((ref) async => [target]),
           internalThreadsProvider.overrideWith((ref) async => []),
+          staffInboxProvider.overrideWith(
+            (ref) async => const StaffInboxData(
+              conversations: [],
+              threads: [],
+              labels: [],
+            ),
+          ),
           realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
           notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
         ],
@@ -524,6 +662,13 @@ void main() {
           conversationTargetsProvider.overrideWith((ref) async => targets),
           messagesProvider.overrideWith((ref, id) async => []),
           internalThreadsProvider.overrideWith((ref) async => []),
+          staffInboxProvider.overrideWith(
+            (ref) async => const StaffInboxData(
+              conversations: [],
+              threads: [],
+              labels: [],
+            ),
+          ),
           realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
           notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
         ],
@@ -574,6 +719,13 @@ void main() {
           ),
           conversationsProvider.overrideWith((ref) async => []),
           internalThreadsProvider.overrideWith((ref) async => []),
+          staffInboxProvider.overrideWith(
+            (ref) async => const StaffInboxData(
+              conversations: [],
+              threads: [],
+              labels: [],
+            ),
+          ),
           realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
           notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
         ],
@@ -649,6 +801,13 @@ void main() {
           ),
           conversationsProvider.overrideWith((ref) async => conversations),
           internalThreadsProvider.overrideWith((ref) async => threads),
+          staffInboxProvider.overrideWith(
+            (ref) async => StaffInboxData(
+              conversations: conversations,
+              threads: threads,
+              labels: const [],
+            ),
+          ),
           realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
           notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
         ],
@@ -659,11 +818,11 @@ void main() {
 
     expect(find.text('CG'), findsWidgets);
     expect(find.text('LA'), findsNothing);
-    expect(find.text('Todos'), findsNothing);
+    expect(find.text('Todos'), findsOneWidget);
     expect(find.text('Equipo nóminas'), findsOneWidget);
     expect(find.text('Grupos'), findsOneWidget);
-    expect(find.text('Empleados'), findsOneWidget);
-    expect(find.text('Clientes'), findsOneWidget);
+    expect(find.text('Empleados'), findsNothing);
+    expect(find.text('Clientes'), findsNothing);
     expect(find.byKey(const Key('internal-thread-group-1')), findsOneWidget);
     expect(find.byKey(const Key('internal-thread-direct-1')), findsOneWidget);
     expect(find.text('Juan José'), findsOneWidget);
@@ -739,6 +898,13 @@ void main() {
           ),
           conversationsProvider.overrideWith((ref) async => []),
           internalThreadsProvider.overrideWith((ref) async => threads),
+          staffInboxProvider.overrideWith(
+            (ref) async => StaffInboxData(
+              conversations: const [],
+              threads: threads,
+              labels: const [],
+            ),
+          ),
           realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
           notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
         ],
@@ -814,6 +980,13 @@ void main() {
           ),
           conversationsProvider.overrideWith((ref) async => []),
           internalThreadsProvider.overrideWith((ref) async => threads),
+          staffInboxProvider.overrideWith(
+            (ref) async => StaffInboxData(
+              conversations: const [],
+              threads: threads,
+              labels: const [],
+            ),
+          ),
           realtimeServiceProvider.overrideWithValue(_FakeRealtime()),
           notificationsServiceProvider.overrideWithValue(_FakeNotifications()),
         ],

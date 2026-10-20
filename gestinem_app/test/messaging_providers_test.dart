@@ -55,30 +55,31 @@ void main() {
         sessionProvider.overrideWith(
           (ref) => FakeSessionController(ref, staffSession),
         ),
-        conversationsProvider.overrideWith(
-          (ref) async => [
-            Conversation(
-              id: 'conversation-1',
-              companyCode: 'E1',
-              companyName: 'Empresa',
-              kind: 'general',
-              state: 'pendiente',
-              unreadCount: 3,
-              updatedAt: now,
-            ),
-          ],
-        ),
-        internalThreadsProvider.overrideWith(
-          (ref) async => [
-            InternalThread(
-              id: 'thread-1',
-              kind: 'direct',
-              channel: 'internal',
-              title: 'Chat interno',
-              unreadCount: 2,
-              updatedAt: now,
-            ),
-          ],
+        staffInboxProvider.overrideWith(
+          (ref) async => StaffInboxData(
+            conversations: [
+              Conversation(
+                id: 'conversation-1',
+                companyCode: 'E1',
+                companyName: 'Empresa',
+                kind: 'general',
+                state: 'pendiente',
+                unreadCount: 3,
+                updatedAt: now,
+              ),
+            ],
+            threads: [
+              InternalThread(
+                id: 'thread-1',
+                kind: 'direct',
+                channel: 'internal',
+                title: 'Chat interno',
+                unreadCount: 2,
+                updatedAt: now,
+              ),
+            ],
+            labels: const [],
+          ),
         ),
       ],
     );

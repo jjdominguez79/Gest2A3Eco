@@ -407,6 +407,49 @@ class MessagingRepository {
         .toList(growable: false);
   }
 
+  Future<StaffInboxData> staffInbox() async {
+    final response = await _api.dio.get<Map<String, dynamic>>('/staff/inbox');
+    return StaffInboxData.fromJson(response.data!);
+  }
+
+  Future<List<ChatLabel>> chatLabels() async {
+    final response = await _api.dio.get<List<dynamic>>('/staff/chat-labels');
+    return response.data!
+        .map((item) => ChatLabel.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
+  Future<ChatLabel> createChatLabel(String name, String color) async {
+    final response = await _api.dio.post<Map<String, dynamic>>(
+      '/staff/chat-labels',
+      data: {'name': name, 'color': color},
+    );
+    return ChatLabel.fromJson(response.data!);
+  }
+
+  Future<void> setChatFavorite(
+    String targetType,
+    String targetId,
+    bool favorite,
+  ) => _api.dio.put<void>(
+    '/staff/chats/$targetType/$targetId/favorite',
+    data: {'favorite': favorite},
+  );
+
+  Future<List<ChatLabel>> setChatLabels(
+    String targetType,
+    String targetId,
+    List<String> labelIds,
+  ) async {
+    final response = await _api.dio.put<List<dynamic>>(
+      '/staff/chats/$targetType/$targetId/labels',
+      data: {'label_ids': labelIds},
+    );
+    return response.data!
+        .map((item) => ChatLabel.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
   Future<InternalThread> startEmployeeChat(String employeeId) async {
     final response = await _api.dio.post<Map<String, dynamic>>(
       '/staff/internal/direct/$employeeId',

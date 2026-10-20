@@ -29,6 +29,7 @@ from backend.api.database import SessionLocal, get_db
 from backend.api.messaging_models import (
     MessagingAttachment, MessagingClient, MessagingConversation, MessagingConversationAlias, MessagingDevice, MessagingDownload,
     MessagingAppDevice, MessagingCampaign, MessagingCampaignRecipient,
+    MessagingChatLabel, MessagingChatLabelLink, MessagingChatPreference,
     MessagingDeletionAudit, MessagingEvent, MessagingGroup, MessagingGroupMember,
     MessagingInvitation, MessagingInvitationContent, MessagingMessage, MessagingMessageReaction, MessagingMessageVersion, MessagingOrganization,
     MessagingPasswordReset, MessagingPresence, MessagingRead, MessagingReceipt, MessagingSession, MessagingStaff,
@@ -232,6 +233,19 @@ class MessageDeleteIn(BaseModel):
 
 class MessageReactionIn(BaseModel):
     emoji: str = Field(default="", max_length=16)
+
+
+class ChatFavoriteIn(BaseModel):
+    favorite: bool
+
+
+class ChatLabelsIn(BaseModel):
+    label_ids: list[str] = Field(default_factory=list, max_length=50)
+
+
+class ChatLabelIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    color: str = Field(default="#6750A4", pattern=r"^#[0-9A-Fa-f]{6}$")
 
 
 class StaffTaskIn(BaseModel):
@@ -2398,6 +2412,186 @@ def _serialize_staff_thread(
     }
 
 
+def _chat_label_json(item: MessagingChatLabel) -> dict:
+    return {"id": item.id, "name": item.name, "color": item.color}
+
+
+def _add_chat_metadata(
+    db: Session,
+    items: list[dict],
+    *,
+    target_type: str,
+    staff_id: str,
+) -> None:
+    """Anade favoritos personales y etiquetas compartidas en consultas por lote."""
+    target_ids = [item["id"] for item in items]
+    if not target_ids:
+        return
+    favorites = {
+        preference.target_id: preference.favorite
+        for preference in db.scalars(select(MessagingChatPreference).where(
+            MessagingChatPreference.staff_external_id == staff_id,
+            MessagingChatPreference.target_type == target_type,
+            MessagingChatPreference.target_id.in_(target_ids),
+        ))
+    }
+    labels_by_target: dict[str, list[dict]] = {}
+    label_rows = db.execute(
+        select(MessagingChatLabelLink, MessagingChatLabel)
+        .join(
+            MessagingChatLabel,
+            MessagingChatLabel.id == MessagingChatLabelLink.label_id,
+        )
+        .where(
+            MessagingChatLabelLink.target_type == target_type,
+            MessagingChatLabelLink.target_id.in_(target_ids),
+            MessagingChatLabel.active.is_(True),
+        )
+        .order_by(func.lower(MessagingChatLabel.name), MessagingChatLabel.id)
+    ).all()
+    for link, label in label_rows:
+        labels_by_target.setdefault(link.target_id, []).append(
+            _chat_label_json(label),
+        )
+    for item in items:
+        item["is_favorite"] = bool(favorites.get(item["id"], False))
+        item["labels"] = labels_by_target.get(item["id"], [])
+
+
+def _require_chat_target(
+    db: Session,
+    staff: MessagingStaff,
+    target_type: str,
+    target_id: str,
+) -> None:
+    if target_type == "conversation":
+        _conversation_for_staff(db, target_id, staff)
+        return
+    if target_type == "internal_thread":
+        _staff_thread(db, target_id, staff)
+        return
+    raise HTTPException(422, "Tipo de chat no valido")
+
+
+@router.get("/staff/chat-labels")
+def list_chat_labels(
+    _staff_item: MessagingStaff = Depends(_staff),
+    db: Session = Depends(get_db),
+):
+    rows = db.scalars(select(MessagingChatLabel).where(
+        MessagingChatLabel.active.is_(True),
+    ).order_by(func.lower(MessagingChatLabel.name), MessagingChatLabel.id)).all()
+    return [_chat_label_json(item) for item in rows]
+
+
+@router.post("/staff/chat-labels", status_code=201)
+def create_chat_label(
+    payload: ChatLabelIn,
+    staff: MessagingStaff = Depends(_staff),
+    db: Session = Depends(get_db),
+):
+    name = " ".join(payload.name.split())
+    if not name:
+        raise HTTPException(422, "La etiqueta necesita un nombre")
+    existing = db.scalar(select(MessagingChatLabel).where(
+        func.lower(MessagingChatLabel.name) == name.lower(),
+    ))
+    if existing and existing.active:
+        raise HTTPException(409, "Ya existe una etiqueta con ese nombre")
+    if existing:
+        existing.name = name
+        existing.color = payload.color.upper()
+        existing.active = True
+        existing.created_by = staff.external_id
+        item = existing
+    else:
+        item = MessagingChatLabel(
+            name=name,
+            color=payload.color.upper(),
+            created_by=staff.external_id,
+        )
+        db.add(item)
+    db.commit()
+    db.refresh(item)
+    hub.publish({"type": "inbox.metadata_updated"})
+    return _chat_label_json(item)
+
+
+@router.put("/staff/chats/{target_type}/{target_id}/favorite")
+def set_chat_favorite(
+    target_type: str,
+    target_id: str,
+    payload: ChatFavoriteIn,
+    staff: MessagingStaff = Depends(_staff),
+    db: Session = Depends(get_db),
+):
+    _require_chat_target(db, staff, target_type, target_id)
+    item = db.scalar(select(MessagingChatPreference).where(
+        MessagingChatPreference.staff_external_id == staff.external_id,
+        MessagingChatPreference.target_type == target_type,
+        MessagingChatPreference.target_id == target_id,
+    ))
+    if item is None:
+        item = MessagingChatPreference(
+            staff_external_id=staff.external_id,
+            target_type=target_type,
+            target_id=target_id,
+        )
+        db.add(item)
+    item.favorite = payload.favorite
+    db.commit()
+    hub.publish(
+        {
+            "type": "inbox.metadata_updated",
+            "target_type": target_type,
+            "target_id": target_id,
+        },
+        staff_ids={staff.external_id},
+    )
+    return {"ok": True, "favorite": item.favorite}
+
+
+@router.put("/staff/chats/{target_type}/{target_id}/labels")
+def set_chat_labels(
+    target_type: str,
+    target_id: str,
+    payload: ChatLabelsIn,
+    staff: MessagingStaff = Depends(_staff),
+    db: Session = Depends(get_db),
+):
+    _require_chat_target(db, staff, target_type, target_id)
+    label_ids = set(payload.label_ids)
+    labels = list(db.scalars(select(MessagingChatLabel).where(
+        MessagingChatLabel.id.in_(label_ids),
+        MessagingChatLabel.active.is_(True),
+    ))) if label_ids else []
+    if {label.id for label in labels} != label_ids:
+        raise HTTPException(422, "Alguna etiqueta no existe o esta inactiva")
+    current = list(db.scalars(select(MessagingChatLabelLink).where(
+        MessagingChatLabelLink.target_type == target_type,
+        MessagingChatLabelLink.target_id == target_id,
+    )))
+    current_by_label = {link.label_id: link for link in current}
+    for label_id, link in current_by_label.items():
+        if label_id not in label_ids:
+            db.delete(link)
+    for label_id in label_ids - current_by_label.keys():
+        db.add(MessagingChatLabelLink(
+            label_id=label_id,
+            target_type=target_type,
+            target_id=target_id,
+            assigned_by=staff.external_id,
+        ))
+    db.commit()
+    ordered = sorted(labels, key=lambda label: (label.name.lower(), label.id))
+    hub.publish({
+        "type": "inbox.metadata_updated",
+        "target_type": target_type,
+        "target_id": target_id,
+    })
+    return [_chat_label_json(label) for label in ordered]
+
+
 @router.get("/staff/internal/threads")
 def list_staff_threads(
     staff: MessagingStaff = Depends(_staff), db: Session = Depends(get_db),
@@ -2426,7 +2620,25 @@ def list_staff_threads(
             ):
                 continue
         result.append(_serialize_staff_thread(db, row, staff))
+    _add_chat_metadata(
+        db, result, target_type="internal_thread", staff_id=staff.external_id,
+    )
     return result
+
+
+@router.get("/staff/inbox")
+def staff_inbox(
+    staff: MessagingStaff = Depends(_staff),
+    db: Session = Depends(get_db),
+):
+    """Bandeja del personal en una sola sesion y una sola conexion de BD."""
+    return {
+        "conversations": staff_conversations(
+            active_only=True, staff=staff, db=db,
+        ),
+        "threads": list_staff_threads(staff=staff, db=db),
+        "labels": list_chat_labels(_staff_item=staff, db=db),
+    }
 
 
 @router.post("/staff/internal/direct/{member_external_id}", status_code=201)
@@ -2441,7 +2653,11 @@ def create_staff_direct_thread(
     ):
         raise HTTPException(404, "Empleado no disponible")
     thread = _get_or_create_staff_direct_thread(db, admin, member)
-    return _serialize_staff_thread(db, thread, admin)
+    result = _serialize_staff_thread(db, thread, admin)
+    _add_chat_metadata(
+        db, [result], target_type="internal_thread", staff_id=admin.external_id,
+    )
+    return result
 
 
 @router.get("/staff/internal/threads/{thread_id}/messages")
@@ -4343,6 +4559,9 @@ def staff_conversations(
         item = _serialize_conversation(db, row, access=access)
         item["unread_count"] = _unread_count(db, row, "staff", staff.external_id)
         result.append(item)
+    _add_chat_metadata(
+        db, result, target_type="conversation", staff_id=staff.external_id,
+    )
     return result
 
 

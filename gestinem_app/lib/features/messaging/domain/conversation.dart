@@ -1,5 +1,43 @@
 import 'message.dart';
 
+class ChatLabel {
+  const ChatLabel({required this.id, required this.name, required this.color});
+
+  factory ChatLabel.fromJson(Map<String, dynamic> json) => ChatLabel(
+    id: json['id'] as String,
+    name: json['name'] as String? ?? '',
+    color: json['color'] as String? ?? '#6750A4',
+  );
+
+  final String id;
+  final String name;
+  final String color;
+}
+
+class StaffInboxData {
+  const StaffInboxData({
+    required this.conversations,
+    required this.threads,
+    required this.labels,
+  });
+
+  factory StaffInboxData.fromJson(Map<String, dynamic> json) => StaffInboxData(
+    conversations: (json['conversations'] as List<dynamic>? ?? const [])
+        .map((item) => Conversation.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false),
+    threads: (json['threads'] as List<dynamic>? ?? const [])
+        .map((item) => InternalThread.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false),
+    labels: (json['labels'] as List<dynamic>? ?? const [])
+        .map((item) => ChatLabel.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false),
+  );
+
+  final List<Conversation> conversations;
+  final List<InternalThread> threads;
+  final List<ChatLabel> labels;
+}
+
 class ClientGroup {
   const ClientGroup({
     required this.companyCode,
@@ -74,6 +112,8 @@ class Conversation {
     required this.updatedAt,
     this.startedAt,
     this.lastMessage,
+    this.isFavorite = false,
+    this.labels = const [],
   });
 
   factory Conversation.fromJson(Map<String, dynamic> json) => Conversation(
@@ -97,6 +137,10 @@ class Conversation {
     lastMessage: json['last_message'] is Map<String, dynamic>
         ? Message.fromJson(json['last_message'] as Map<String, dynamic>)
         : null,
+    isFavorite: json['is_favorite'] as bool? ?? false,
+    labels: (json['labels'] as List<dynamic>? ?? const [])
+        .map((item) => ChatLabel.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false),
   );
 
   final String id;
@@ -114,6 +158,8 @@ class Conversation {
   final DateTime updatedAt;
   final DateTime? startedAt;
   final Message? lastMessage;
+  final bool isFavorite;
+  final List<ChatLabel> labels;
 
   String get displayChannelLabel => channelLabel.isNotEmpty
       ? channelLabel
@@ -194,6 +240,8 @@ class InternalThread {
     this.counterpartOnline = false,
     this.members = const [],
     this.lastMessage,
+    this.isFavorite = false,
+    this.labels = const [],
   });
 
   factory InternalThread.fromJson(Map<String, dynamic> json) => InternalThread(
@@ -218,6 +266,10 @@ class InternalThread {
     lastMessage: json['last_message'] is Map<String, dynamic>
         ? Message.fromJson(json['last_message'] as Map<String, dynamic>)
         : null,
+    isFavorite: json['is_favorite'] as bool? ?? false,
+    labels: (json['labels'] as List<dynamic>? ?? const [])
+        .map((item) => ChatLabel.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false),
   );
 
   final String id;
@@ -234,6 +286,8 @@ class InternalThread {
   final bool counterpartOnline;
   final List<InternalThreadMember> members;
   final Message? lastMessage;
+  final bool isFavorite;
+  final List<ChatLabel> labels;
 }
 
 class InternalThreadMember {

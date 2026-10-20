@@ -34,6 +34,79 @@ final class _TestPlatformFile extends PlatformFile {
 }
 
 void main() {
+  test(
+    'repository carga la bandeja del personal en una sola peticion',
+    () async {
+      final adapter = JsonAdapter({
+        'conversations': <Object>[],
+        'threads': <Object>[],
+        'labels': [
+          {'id': 'urgent', 'name': 'Urgente', 'color': '#D32F2F'},
+        ],
+      });
+      final dio = Dio(
+        BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+      )..httpClientAdapter = adapter;
+
+      final inbox = await MessagingRepository(
+        ApiClient(dio: dio, tokenProvider: () => testSession.token),
+      ).staffInbox();
+
+      expect(inbox.conversations, isEmpty);
+      expect(inbox.threads, isEmpty);
+      expect(inbox.labels.single.name, 'Urgente');
+      expect(adapter.lastRequest!.path, '/staff/inbox');
+    },
+  );
+
+  test('repository actualiza favoritos y etiquetas de la bandeja', () async {
+    final adapter = JsonAdapter(<Object>[]);
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+    )..httpClientAdapter = adapter;
+    final repository = MessagingRepository(
+      ApiClient(dio: dio, tokenProvider: () => testSession.token),
+    );
+
+    await repository.setChatFavorite('internal_thread', 'thread-1', true);
+    expect(
+      adapter.lastRequest!.path,
+      '/staff/chats/internal_thread/thread-1/favorite',
+    );
+    expect(adapter.lastRequest!.method, 'PUT');
+    expect(adapter.lastRequest!.data, {'favorite': true});
+
+    await repository.setChatLabels('conversation', 'conversation-1', [
+      'urgent',
+    ]);
+    expect(
+      adapter.lastRequest!.path,
+      '/staff/chats/conversation/conversation-1/labels',
+    );
+    expect(adapter.lastRequest!.data, {
+      'label_ids': ['urgent'],
+    });
+  });
+
+  test('repository crea una etiqueta compartida', () async {
+    final adapter = JsonAdapter({
+      'id': 'urgent',
+      'name': 'Urgente',
+      'color': '#D32F2F',
+    });
+    final dio = Dio(
+      BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
+    )..httpClientAdapter = adapter;
+
+    final label = await MessagingRepository(
+      ApiClient(dio: dio, tokenProvider: () => testSession.token),
+    ).createChatLabel('Urgente', '#D32F2F');
+
+    expect(label.id, 'urgent');
+    expect(adapter.lastRequest!.path, '/staff/chat-labels');
+    expect(adapter.lastRequest!.data, {'name': 'Urgente', 'color': '#D32F2F'});
+  });
+
   test('repository pagina los mensajes del chat interno de 20 en 20', () async {
     final adapter = JsonAdapter(<Object>[]);
     final dio = Dio(
