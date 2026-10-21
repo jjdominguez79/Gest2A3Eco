@@ -4,6 +4,7 @@ import sys
 import pytest
 
 from release_utils import (
+    _json_para_consola,
     build_download_url,
     build_installer_name,
     build_release_metadata,
@@ -177,3 +178,13 @@ def test_write_json_creates_valid_json(tmp_path) -> None:
     path = tmp_path / "out" / "release_metadata.json"
     write_json(path, payload)
     assert json.loads(path.read_text(encoding="utf-8")) == payload
+
+
+def test_json_para_consola_escapa_unicode_no_representable_en_windows() -> None:
+    payload = {"changelog": "Navegar con Ctrl + \u2190 y Ctrl + \u2192"}
+
+    texto = _json_para_consola(payload, encoding="cp1252")
+
+    assert "\\u2190" in texto
+    assert "\\u2192" in texto
+    assert json.loads(texto) == payload

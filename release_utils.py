@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -188,6 +189,17 @@ def read_json(path: Path) -> dict[str, Any]:
     return data
 
 
+def _json_para_consola(payload: dict[str, Any], encoding: str | None = None) -> str:
+    """Serializa JSON sin romper consolas Windows con paginas ANSI/OEM."""
+    texto = json.dumps(payload, ensure_ascii=False, indent=2)
+    encoding_salida = encoding or getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        texto.encode(encoding_salida)
+    except (LookupError, UnicodeEncodeError):
+        return json.dumps(payload, ensure_ascii=True, indent=2)
+    return texto
+
+
 def validate_tag(tag: str) -> str:
     if not tag.startswith("v"):
         raise ValueError(f"El tag debe empezar por 'v' minuscula: {tag}")
@@ -325,7 +337,7 @@ def _command_validate_release_state(args: argparse.Namespace) -> int:
         setup_file=Path(args.setup_file),
         metadata_file=Path(args.metadata_file),
     )
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    print(_json_para_consola(payload))
     return 0
 
 
