@@ -55,15 +55,23 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
       final service = ref.read(notificationsServiceProvider);
       final profile = ref.read(sessionProvider).valueOrNull?.profile;
       if (profile == null) return;
+      if (profile.type == UserType.staff) {
+        final inbox = await ref.read(staffInboxProvider.future);
+        for (final item in inbox.conversations.where(
+          (item) => item.unreadCount == 0,
+        )) {
+          await service.cancelTarget('conversation', item.id);
+        }
+        for (final item in inbox.threads.where(
+          (item) => item.unreadCount == 0,
+        )) {
+          await service.cancelTarget('internal_thread', item.id);
+        }
+        return;
+      }
       final conversations = await ref.read(conversationsProvider.future);
       for (final item in conversations.where((item) => item.unreadCount == 0)) {
         await service.cancelTarget('conversation', item.id);
-      }
-      if (profile.type == UserType.staff) {
-        final threads = await ref.read(internalThreadsProvider.future);
-        for (final item in threads.where((item) => item.unreadCount == 0)) {
-          await service.cancelTarget('internal_thread', item.id);
-        }
       }
     } catch (_) {
       // La limpieza es oportunista; la bandeja sigue funcionando sin red.
@@ -75,6 +83,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     ref.invalidate(unifiedConversationProvider);
     ref.invalidate(unifiedMessagesProvider);
     ref.invalidate(internalThreadsProvider);
+    ref.invalidate(staffInboxProvider);
     if (conversationId != null && conversationId.isNotEmpty) {
       ref.invalidate(messagesProvider(conversationId));
     }
@@ -126,6 +135,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
           .startConversation(selected.id);
       ref.invalidate(conversationTargetsProvider);
       ref.invalidate(conversationsProvider);
+      ref.invalidate(staffInboxProvider);
       if (mounted) _navigateToConversation(started.id);
     } catch (error) {
       if (mounted) {
@@ -147,6 +157,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
         await repo.markUnread(profile, conversation.id);
       }
       ref.invalidate(conversationsProvider);
+      ref.invalidate(staffInboxProvider);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -162,11 +173,10 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
   Widget build(BuildContext context) {
     final profile = ref.watch(sessionProvider).valueOrNull?.profile;
     if (profile == null) return const SizedBox.shrink();
-    final conversations = ref.watch(conversationsProvider);
     if (profile.type == UserType.client) {
-      return _buildClientScreen(profile, conversations);
+      return _buildClientScreen(profile, ref.watch(conversationsProvider));
     }
-    final internalThreads = ref.watch(internalThreadsProvider);
+    final inbox = ref.watch(staffInboxProvider);
     final apiBaseUrl = ref
         .read(apiClientProvider)
         .dio
@@ -177,7 +187,18 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
     final wide = MediaQuery.sizeOf(context).width >= 900;
     return Scaffold(
       appBar: AppBar(
-        title: Text(profile.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Chats'),
+            Text(
+              profile.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
         actions: [
           IconButton(
             key: const Key('new-chat-button'),
@@ -220,13 +241,13 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
                     controller: _search,
                     decoration: const InputDecoration(
                       prefixIcon: Icon(Icons.search),
-                      hintText: 'Buscar por código o nombre',
+                      hintText: 'Buscar chats',
                     ),
                     onChanged: (_) => setState(() {}),
                   ),
                 ),
                 Expanded(
-                  child: conversations.when(
+                  child: inbox.when(
                     loading: () =>
                         const Center(child: CircularProgressIndicator()),
                     error: (error, _) => Center(
@@ -237,25 +258,21 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
                     ),
                     data: (items) {
                       final query = _search.text.trim().toLowerCase();
-
-                      if (profile.type == UserType.staff) {
-                        return _StaffInbox(
-                          query: query,
-                          conversations: items,
-                          threads: internalThreads,
-                          currentUserId: profile.id,
-                          selectedId: _selected,
-                          selectedInternal: _selectedInternal,
-                          baseUrl: apiBaseUrl,
-                          authToken: authToken,
-                          onConversation: _navigateToConversation,
-                          onInternal: _navigateToInternal,
-                          onToggleRead: _toggleRead,
-                          onRefresh: () async => _refreshMessaging(),
-                        );
-                      }
-
-                      return const SizedBox.shrink();
+                      return _StaffInbox(
+                        query: query,
+                        conversations: items.conversations,
+                        threads: AsyncData(items.threads),
+                        labels: items.labels,
+                        currentUserId: profile.id,
+                        selectedId: _selected,
+                        selectedInternal: _selectedInternal,
+                        baseUrl: apiBaseUrl,
+                        authToken: authToken,
+                        onConversation: _navigateToConversation,
+                        onInternal: _navigateToInternal,
+                        onToggleRead: _toggleRead,
+                        onRefresh: () async => _refreshMessaging(),
+                      );
                     },
                   ),
                 ),
@@ -382,11 +399,45 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
   );
 }
 
-class _StaffInbox extends StatelessWidget {
+enum _InboxFilter { all, unread, favorites, groups }
+
+enum _InboxAction { favorite, labels }
+
+class _InboxEntry {
+  const _InboxEntry.conversation(this.conversation) : thread = null;
+  const _InboxEntry.thread(this.thread) : conversation = null;
+
+  final Conversation? conversation;
+  final InternalThread? thread;
+
+  String get id => conversation?.id ?? thread!.id;
+  String get targetType =>
+      conversation != null ? 'conversation' : 'internal_thread';
+  String get title => conversation?.title ?? thread!.title;
+  String get searchText => [
+    title,
+    conversation?.companyCode ?? '',
+    ...labels.map((label) => label.name),
+  ].join(' ').toLowerCase();
+  int get unreadCount => conversation?.unreadCount ?? thread!.unreadCount;
+  DateTime get updatedAt =>
+      conversation?.lastMessage?.createdAt ??
+      conversation?.startedAt ??
+      conversation?.updatedAt ??
+      thread?.lastMessage?.createdAt ??
+      thread?.updatedAt ??
+      DateTime(0);
+  bool get isGroup => thread != null && thread!.kind != 'direct';
+  bool get isFavorite => conversation?.isFavorite ?? thread!.isFavorite;
+  List<ChatLabel> get labels => conversation?.labels ?? thread!.labels;
+}
+
+class _StaffInbox extends ConsumerStatefulWidget {
   const _StaffInbox({
     required this.query,
     required this.conversations,
     required this.threads,
+    required this.labels,
     required this.currentUserId,
     required this.selectedId,
     required this.selectedInternal,
@@ -401,6 +452,7 @@ class _StaffInbox extends StatelessWidget {
   final String query;
   final List<Conversation> conversations;
   final AsyncValue<List<InternalThread>> threads;
+  final List<ChatLabel> labels;
   final String currentUserId;
   final String? selectedId;
   final bool selectedInternal;
@@ -411,11 +463,259 @@ class _StaffInbox extends StatelessWidget {
   final ValueChanged<Conversation> onToggleRead;
   final Future<void> Function() onRefresh;
 
+  @override
+  ConsumerState<_StaffInbox> createState() => _StaffInboxState();
+}
+
+class _StaffInboxState extends ConsumerState<_StaffInbox> {
+  static const _labelColors = <String>[
+    '#D32F2F',
+    '#F57C00',
+    '#FBC02D',
+    '#388E3C',
+    '#1976D2',
+    '#6750A4',
+    '#C2185B',
+  ];
+  _InboxFilter _filter = _InboxFilter.all;
+  String? _labelId;
+
   bool _matches(String value) =>
-      query.isEmpty || value.toLowerCase().contains(query);
+      widget.query.isEmpty || value.toLowerCase().contains(widget.query);
+
+  void _selectFilter(_InboxFilter value) {
+    setState(() {
+      _filter = value;
+      _labelId = null;
+    });
+  }
+
+  Future<void> _toggleFavorite(_InboxEntry entry) async {
+    try {
+      await ref
+          .read(messagingRepositoryProvider)
+          .setChatFavorite(entry.targetType, entry.id, !entry.isFavorite);
+      _refreshEntry(entry);
+    } catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _editLabels(_InboxEntry entry, List<ChatLabel> available) async {
+    if (available.isEmpty) {
+      final created = await _createLabel(selectFilter: false);
+      if (created == null) return;
+      try {
+        await ref.read(messagingRepositoryProvider).setChatLabels(
+          entry.targetType,
+          entry.id,
+          [created.id],
+        );
+        _refreshEntry(entry);
+      } catch (error) {
+        _showError(error);
+      }
+      return;
+    }
+    final selected = entry.labels.map((label) => label.id).toSet();
+    final result = await showDialog<Set<String>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('Etiquetas de ${entry.title}'),
+          content: SizedBox(
+            width: 360,
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                for (final label in available)
+                  CheckboxListTile(
+                    key: Key('assign-label-${label.id}'),
+                    value: selected.contains(label.id),
+                    secondary: Icon(
+                      Icons.label,
+                      color: _chatLabelColor(label.color),
+                    ),
+                    title: Text(label.name),
+                    onChanged: (checked) => setDialogState(() {
+                      if (checked ?? false) {
+                        selected.add(label.id);
+                      } else {
+                        selected.remove(label.id);
+                      }
+                    }),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, selected),
+              child: const Text('Guardar'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null) return;
+    try {
+      await ref
+          .read(messagingRepositoryProvider)
+          .setChatLabels(entry.targetType, entry.id, result.toList());
+      _refreshEntry(entry);
+    } catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<ChatLabel?> _createLabel({bool selectFilter = true}) async {
+    final controller = TextEditingController();
+    var color = _labelColors.first;
+    final value = await showDialog<(String, String)>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Nueva etiqueta compartida'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                key: const Key('new-chat-label-name'),
+                controller: controller,
+                autofocus: true,
+                maxLength: 80,
+                decoration: const InputDecoration(labelText: 'Nombre'),
+              ),
+              const SizedBox(height: 8),
+              const Text('Color'),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 10,
+                children: [
+                  for (final candidate in _labelColors)
+                    InkWell(
+                      key: Key('chat-label-color-$candidate'),
+                      borderRadius: BorderRadius.circular(20),
+                      onTap: () => setDialogState(() => color = candidate),
+                      child: CircleAvatar(
+                        radius: 16,
+                        backgroundColor: _chatLabelColor(candidate),
+                        child: candidate == color
+                            ? const Icon(Icons.check, color: Colors.white)
+                            : null,
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final name = controller.text.trim();
+                if (name.isNotEmpty) Navigator.pop(context, (name, color));
+              },
+              child: const Text('Crear'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (value == null) return null;
+    try {
+      final created = await ref
+          .read(messagingRepositoryProvider)
+          .createChatLabel(value.$1, value.$2);
+      ref.invalidate(chatLabelsProvider);
+      ref.invalidate(staffInboxProvider);
+      if (mounted && selectFilter) {
+        setState(() {
+          _filter = _InboxFilter.all;
+          _labelId = created.id;
+        });
+      }
+      return created;
+    } catch (error) {
+      _showError(error);
+      return null;
+    }
+  }
+
+  Future<void> _chooseLabelFilter(List<ChatLabel> labels) async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(
+              leading: Icon(Icons.label_outline),
+              title: Text('Filtrar por etiqueta'),
+            ),
+            ListTile(
+              key: const Key('filter-label-all'),
+              leading: const Icon(Icons.clear_all),
+              title: const Text('Todas las etiquetas'),
+              onTap: () => Navigator.pop(context, '__all__'),
+            ),
+            for (final label in labels)
+              ListTile(
+                key: Key('filter-label-${label.id}'),
+                leading: Icon(Icons.label, color: _chatLabelColor(label.color)),
+                title: Text(label.name),
+                trailing: _labelId == label.id ? const Icon(Icons.check) : null,
+                onTap: () => Navigator.pop(context, label.id),
+              ),
+            const Divider(),
+            ListTile(
+              key: const Key('create-chat-label'),
+              leading: const Icon(Icons.add),
+              title: const Text('Crear etiqueta compartida'),
+              onTap: () => Navigator.pop(context, '__new__'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || selected == null) return;
+    if (selected == '__new__') {
+      await _createLabel();
+      return;
+    }
+    setState(() {
+      _filter = _InboxFilter.all;
+      _labelId = selected == '__all__' ? null : selected;
+    });
+  }
+
+  void _refreshEntry(_InboxEntry entry) {
+    ref.invalidate(staffInboxProvider);
+    if (entry.conversation != null) {
+      ref.invalidate(conversationsProvider);
+    } else {
+      ref.invalidate(internalThreadsProvider);
+    }
+  }
+
+  void _showError(Object error) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(apiErrorMessage(error))));
+  }
 
   @override
-  Widget build(BuildContext context) => threads.when(
+  Widget build(BuildContext context) => widget.threads.when(
     loading: () => const Center(child: CircularProgressIndicator()),
     error: (error, _) => Center(
       child: Text(
@@ -424,208 +724,155 @@ class _StaffInbox extends StatelessWidget {
       ),
     ),
     data: (threadItems) {
-      final normalizedUserId = currentUserId.trim().toLowerCase();
-      final groups =
-          threadItems
-              .where(
-                (item) =>
-                    item.kind != 'direct' &&
-                    item.active &&
-                    _matches(item.title),
-              )
-              .toList()
-            ..sort(_compareThreads);
-      final directThreads =
-          threadItems
-              .where(
-                (item) =>
-                    item.kind == 'direct' &&
-                    item.counterpartActive &&
-                    item.counterpartId.trim().toLowerCase() !=
-                        normalizedUserId &&
-                    _matches(item.title),
-              )
-              .toList()
-            ..sort(_compareThreads);
-      final onlineThreads = directThreads
-          .where((item) => item.counterpartOnline)
-          .toList(growable: false);
-      final offlineThreads = directThreads
-          .where((item) => !item.counterpartOnline)
-          .toList(growable: false);
-      final clients = conversations.where((item) {
-        return _matches(item.companyCode) || _matches(item.companyName);
-      }).toList()..sort(_compareConversations);
-
-      final children = <Widget>[
-        const _InboxSectionHeader(
-          key: Key('inbox-section-groups'),
-          title: 'Grupos',
-          icon: Icons.groups_outlined,
-        ),
-        if (groups.isEmpty)
-          const _EmptySection('No hay grupos')
-        else
-          for (final thread in groups)
-            _InternalThreadTile(
-              thread: thread,
-              selected: selectedInternal && selectedId == thread.id,
-              baseUrl: baseUrl,
-              authToken: authToken,
-              onTap: () => onInternal(thread.id),
-            ),
-        const _InboxSectionHeader(
-          key: Key('inbox-section-employees'),
-          title: 'Empleados',
-          icon: Icons.badge_outlined,
-        ),
-      ];
-
-      if (directThreads.isNotEmpty) {
-        children.addAll([
-          if (onlineThreads.isNotEmpty)
-            _EmployeePresenceHeader(
-              title: 'En linea',
-              count: onlineThreads.length,
-              online: true,
-            ),
-          for (final thread in onlineThreads)
-            _InternalThreadTile(
-              thread: thread,
-              selected: selectedInternal && selectedId == thread.id,
-              baseUrl: baseUrl,
-              authToken: authToken,
-              onTap: () => onInternal(thread.id),
-            ),
-          if (offlineThreads.isNotEmpty)
-            _EmployeePresenceHeader(
-              title: 'Desconectados',
-              count: offlineThreads.length,
-              online: false,
-            ),
-          for (final thread in offlineThreads)
-            _InternalThreadTile(
-              thread: thread,
-              selected: selectedInternal && selectedId == thread.id,
-              baseUrl: baseUrl,
-              authToken: authToken,
-              onTap: () => onInternal(thread.id),
-            ),
-        ]);
-      } else {
-        children.add(const _EmptySection('No hay empleados disponibles'));
-      }
-
-      children.add(
-        const _InboxSectionHeader(
-          key: Key('inbox-section-clients'),
-          title: 'Clientes',
-          icon: Icons.business_outlined,
-        ),
-      );
-      if (clients.isEmpty) {
-        children.add(const _EmptySection('No hay conversaciones de clientes'));
-      } else {
-        children.addAll([
-          for (final conversation in clients)
-            Dismissible(
-              key: Key('swipe-conversation-${conversation.id}'),
-              direction: DismissDirection.endToStart,
-              confirmDismiss: (_) async {
-                onToggleRead(conversation);
+      final normalizedUserId = widget.currentUserId.trim().toLowerCase();
+      final entries =
+          <_InboxEntry>[
+              for (final thread in threadItems)
+                if (thread.active &&
+                    (thread.kind != 'direct' ||
+                        (thread.counterpartActive &&
+                            thread.counterpartId.trim().toLowerCase() !=
+                                normalizedUserId)))
+                  _InboxEntry.thread(thread),
+              for (final conversation in widget.conversations)
+                _InboxEntry.conversation(conversation),
+            ].where((entry) {
+              if (!_matches(entry.searchText)) return false;
+              if (_labelId != null &&
+                  !entry.labels.any((label) => label.id == _labelId)) {
                 return false;
-              },
-              background: Container(
-                color: Colors.blue,
-                alignment: Alignment.centerRight,
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: const Icon(
-                  Icons.mark_chat_read_outlined,
-                  color: Colors.white,
+              }
+              return switch (_filter) {
+                _InboxFilter.all => true,
+                _InboxFilter.unread => entry.unreadCount > 0,
+                _InboxFilter.favorites => entry.isFavorite,
+                _InboxFilter.groups => entry.isGroup,
+              };
+            }).toList()
+            ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+
+      final labels = widget.labels;
+      final bottomPadding = MediaQuery.viewPaddingOf(context).bottom;
+      return Column(
+        children: [
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+            child: Row(
+              children: [
+                ChoiceChip(
+                  key: const Key('inbox-filter-all'),
+                  label: const Text('Todos'),
+                  selected: _filter == _InboxFilter.all && _labelId == null,
+                  onSelected: (_) => _selectFilter(_InboxFilter.all),
                 ),
-              ),
-              child: _ClientConversationTile(
-                conversation: conversation,
-                selected: !selectedInternal && selectedId == conversation.id,
-                baseUrl: baseUrl,
-                authToken: authToken,
-                onTap: () => onConversation(conversation.id),
+                const SizedBox(width: 8),
+                ChoiceChip(
+                  key: const Key('inbox-filter-unread'),
+                  label: const Text('No leídos'),
+                  selected: _filter == _InboxFilter.unread,
+                  onSelected: (_) => _selectFilter(_InboxFilter.unread),
+                ),
+                const SizedBox(width: 8),
+                ChoiceChip(
+                  key: const Key('inbox-filter-favorites'),
+                  label: const Text('Favoritos'),
+                  selected: _filter == _InboxFilter.favorites,
+                  onSelected: (_) => _selectFilter(_InboxFilter.favorites),
+                ),
+                const SizedBox(width: 8),
+                ChoiceChip(
+                  key: const Key('inbox-filter-groups'),
+                  label: const Text('Grupos'),
+                  selected: _filter == _InboxFilter.groups,
+                  onSelected: (_) => _selectFilter(_InboxFilter.groups),
+                ),
+                const SizedBox(width: 8),
+                FilterChip(
+                  key: const Key('inbox-filter-labels'),
+                  avatar: const Icon(Icons.label_outline, size: 18),
+                  label: Text(
+                    labels
+                            .where((label) => label.id == _labelId)
+                            .firstOrNull
+                            ?.name ??
+                        'Etiquetas',
+                  ),
+                  selected: _labelId != null,
+                  onSelected: (_) => _chooseLabelFilter(labels),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: () async {
+                ref.invalidate(chatLabelsProvider);
+                await widget.onRefresh();
+              },
+              child: ListView.builder(
+                key: const Key('inbox-unified-list'),
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: EdgeInsets.only(bottom: bottomPadding),
+                itemCount: entries.isEmpty ? 1 : entries.length,
+                itemBuilder: (context, index) {
+                  if (entries.isEmpty) {
+                    return const _EmptySection(
+                      'No hay chats que coincidan con el filtro',
+                    );
+                  }
+                  final entry = entries[index];
+                  final conversation = entry.conversation;
+                  if (conversation != null) {
+                    return Dismissible(
+                      key: Key('swipe-conversation-${conversation.id}'),
+                      direction: DismissDirection.endToStart,
+                      confirmDismiss: (_) async {
+                        widget.onToggleRead(conversation);
+                        return false;
+                      },
+                      background: Container(
+                        color: Colors.blue,
+                        alignment: Alignment.centerRight,
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: const Icon(
+                          Icons.mark_chat_read_outlined,
+                          color: Colors.white,
+                        ),
+                      ),
+                      child: _ClientConversationTile(
+                        conversation: conversation,
+                        selected:
+                            !widget.selectedInternal &&
+                            widget.selectedId == conversation.id,
+                        baseUrl: widget.baseUrl,
+                        authToken: widget.authToken,
+                        onTap: () => widget.onConversation(conversation.id),
+                        onFavorite: () => _toggleFavorite(entry),
+                        onLabels: () => _editLabels(entry, labels),
+                      ),
+                    );
+                  }
+                  final thread = entry.thread!;
+                  return _InternalThreadTile(
+                    thread: thread,
+                    selected:
+                        widget.selectedInternal &&
+                        widget.selectedId == thread.id,
+                    baseUrl: widget.baseUrl,
+                    authToken: widget.authToken,
+                    onTap: () => widget.onInternal(thread.id),
+                    onFavorite: () => _toggleFavorite(entry),
+                    onLabels: () => _editLabels(entry, labels),
+                  );
+                },
               ),
             ),
-        ]);
-      }
-      final bottomPadding = MediaQuery.viewPaddingOf(context).bottom;
-      return RefreshIndicator(
-        onRefresh: onRefresh,
-        child: ListView(
-          key: const Key('conversation-list'),
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: EdgeInsets.only(bottom: bottomPadding),
-          children: children,
-        ),
+          ),
+        ],
       );
     },
-  );
-}
-
-int _compareThreads(InternalThread a, InternalThread b) {
-  final unread = (b.unreadCount > 0 ? 1 : 0) - (a.unreadCount > 0 ? 1 : 0);
-  return unread != 0
-      ? unread
-      : (b.updatedAt ?? DateTime(0)).compareTo(a.updatedAt ?? DateTime(0));
-}
-
-int _compareConversations(Conversation a, Conversation b) {
-  final unread = (b.unreadCount > 0 ? 1 : 0) - (a.unreadCount > 0 ? 1 : 0);
-  return unread != 0 ? unread : b.updatedAt.compareTo(a.updatedAt);
-}
-
-class _InboxSectionHeader extends StatelessWidget {
-  const _InboxSectionHeader({
-    super.key,
-    required this.title,
-    required this.icon,
-  });
-  final String title;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) => ColoredBox(
-    color: Theme.of(context).colorScheme.surfaceContainerLow,
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-      child: Row(
-        children: [
-          Icon(icon, size: 18),
-          const SizedBox(width: 8),
-          Text(title, style: Theme.of(context).textTheme.titleSmall),
-        ],
-      ),
-    ),
-  );
-}
-
-class _EmployeePresenceHeader extends StatelessWidget {
-  const _EmployeePresenceHeader({
-    required this.title,
-    required this.count,
-    required this.online,
-  });
-
-  final String title;
-  final int count;
-  final bool online;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(18, 9, 14, 3),
-    child: Row(
-      children: [
-        Icon(Icons.circle, size: 9, color: online ? Colors.green : Colors.grey),
-        const SizedBox(width: 7),
-        Text('$title ($count)', style: Theme.of(context).textTheme.labelMedium),
-      ],
-    ),
   );
 }
 
@@ -652,12 +899,16 @@ class _InternalThreadTile extends StatelessWidget {
     required this.baseUrl,
     required this.authToken,
     required this.onTap,
+    required this.onFavorite,
+    required this.onLabels,
   });
   final InternalThread thread;
   final bool selected;
   final String baseUrl;
   final String authToken;
   final VoidCallback onTap;
+  final VoidCallback onFavorite;
+  final VoidCallback onLabels;
 
   @override
   Widget build(BuildContext context) => ListTile(
@@ -694,19 +945,29 @@ class _InternalThreadTile extends StatelessWidget {
           ),
       ],
     ),
-    title: Text(thread.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+    title: _InboxTitle(
+      title: thread.title,
+      favorite: thread.isFavorite,
+      labels: thread.labels,
+    ),
     subtitle: Text(
-      !thread.active
-          ? 'Histórico · solo lectura'
-          : thread.lastMessage?.deleted == true
-          ? 'Mensaje eliminado'
-          : thread.lastMessage?.body ?? 'Sin mensajes',
+      _labeledPreview(
+        thread.labels,
+        !thread.active
+            ? 'Histórico · solo lectura'
+            : thread.lastMessage?.deleted == true
+            ? 'Mensaje eliminado'
+            : thread.lastMessage?.body ?? 'Sin mensajes',
+      ),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
     ),
     trailing: _InboxTrailing(
       updatedAt: thread.updatedAt,
       unreadCount: thread.unreadCount,
+      favorite: thread.isFavorite,
+      onFavorite: onFavorite,
+      onLabels: onLabels,
     ),
   );
 }
@@ -718,12 +979,16 @@ class _ClientConversationTile extends StatelessWidget {
     required this.baseUrl,
     required this.authToken,
     required this.onTap,
+    required this.onFavorite,
+    required this.onLabels,
   });
   final Conversation conversation;
   final bool selected;
   final String baseUrl;
   final String authToken;
   final VoidCallback onTap;
+  final VoidCallback onFavorite;
+  final VoidCallback onLabels;
 
   @override
   Widget build(BuildContext context) => ListTile(
@@ -738,10 +1003,10 @@ class _ClientConversationTile extends StatelessWidget {
       fallbackText: _initials(conversation.title),
       cacheVersion: conversation.channelAvatarVersion,
     ),
-    title: Text(
-      conversation.title,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
+    title: _InboxTitle(
+      title: conversation.title,
+      favorite: conversation.isFavorite,
+      labels: conversation.labels,
     ),
     subtitle: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -754,9 +1019,12 @@ class _ClientConversationTile extends StatelessWidget {
           ),
         ),
         Text(
-          conversation.lastMessage?.deleted == true
-              ? 'Mensaje eliminado'
-              : conversation.lastMessage?.body ?? 'Sin mensajes',
+          _labeledPreview(
+            conversation.labels,
+            conversation.lastMessage?.deleted == true
+                ? 'Mensaje eliminado'
+                : conversation.lastMessage?.body ?? 'Sin mensajes',
+          ),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
@@ -766,26 +1034,115 @@ class _ClientConversationTile extends StatelessWidget {
     trailing: _InboxTrailing(
       updatedAt: conversation.updatedAt,
       unreadCount: conversation.unreadCount,
+      favorite: conversation.isFavorite,
+      onFavorite: onFavorite,
+      onLabels: onLabels,
     ),
   );
 }
 
-class _InboxTrailing extends StatelessWidget {
-  const _InboxTrailing({required this.updatedAt, required this.unreadCount});
-  final DateTime? updatedAt;
-  final int unreadCount;
+class _InboxTitle extends StatelessWidget {
+  const _InboxTitle({
+    required this.title,
+    required this.favorite,
+    required this.labels,
+  });
+
+  final String title;
+  final bool favorite;
+  final List<ChatLabel> labels;
 
   @override
-  Widget build(BuildContext context) => Column(
-    mainAxisAlignment: MainAxisAlignment.center,
-    crossAxisAlignment: CrossAxisAlignment.end,
+  Widget build(BuildContext context) => Row(
     children: [
-      Text(
-        _conversationTime(updatedAt),
-        style: Theme.of(context).textTheme.labelSmall,
+      Expanded(
+        child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
-      const SizedBox(height: 4),
-      if (unreadCount > 0) Badge(label: Text('$unreadCount')),
+      if (favorite) ...[
+        const SizedBox(width: 4),
+        Icon(
+          Icons.star,
+          size: 16,
+          color: Theme.of(context).colorScheme.primary,
+        ),
+      ],
+      for (final label in labels.take(2)) ...[
+        const SizedBox(width: 4),
+        Tooltip(
+          message: label.name,
+          child: Icon(
+            Icons.label,
+            size: 15,
+            color: _chatLabelColor(label.color),
+          ),
+        ),
+      ],
+    ],
+  );
+}
+
+class _InboxTrailing extends StatelessWidget {
+  const _InboxTrailing({
+    required this.updatedAt,
+    required this.unreadCount,
+    required this.favorite,
+    required this.onFavorite,
+    required this.onLabels,
+  });
+  final DateTime? updatedAt;
+  final int unreadCount;
+  final bool favorite;
+  final VoidCallback onFavorite;
+  final VoidCallback onLabels;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            _conversationTime(updatedAt),
+            style: Theme.of(context).textTheme.labelSmall,
+          ),
+          const SizedBox(height: 4),
+          if (unreadCount > 0) Badge(label: Text('$unreadCount')),
+        ],
+      ),
+      PopupMenuButton<_InboxAction>(
+        tooltip: 'Organizar chat',
+        padding: EdgeInsets.zero,
+        icon: const Icon(Icons.more_vert, size: 20),
+        onSelected: (action) {
+          if (action == _InboxAction.favorite) {
+            onFavorite();
+          } else {
+            onLabels();
+          }
+        },
+        itemBuilder: (context) => [
+          PopupMenuItem(
+            value: _InboxAction.favorite,
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(favorite ? Icons.star : Icons.star_outline),
+              title: Text(
+                favorite ? 'Quitar de favoritos' : 'Añadir a favoritos',
+              ),
+            ),
+          ),
+          const PopupMenuItem(
+            value: _InboxAction.labels,
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.label_outline),
+              title: Text('Gestionar etiquetas'),
+            ),
+          ),
+        ],
+      ),
     ],
   );
 }
@@ -909,6 +1266,17 @@ String _channelLabel(String kind) => switch (kind) {
   'private' => 'Tu asesor',
   _ => 'Canal',
 };
+
+String _labeledPreview(List<ChatLabel> labels, String message) {
+  if (labels.isEmpty) return message;
+  return '${labels.map((label) => label.name).take(2).join(' · ')} · $message';
+}
+
+Color _chatLabelColor(String value) {
+  final normalized = value.replaceFirst('#', '');
+  final parsed = int.tryParse(normalized, radix: 16);
+  return parsed == null ? const Color(0xFF6750A4) : Color(0xFF000000 | parsed);
+}
 
 String _conversationTime(DateTime? value) {
   if (value == null) return '';

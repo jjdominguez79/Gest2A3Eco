@@ -37,7 +37,6 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
   StreamSubscription<Map<String, dynamic>>? _realtimeEvents;
   RealtimeService? _realtime;
   String? _realtimeOwner;
-  Timer? _presenceRefresh;
   final NotificationOpenGuard _notificationOpenGuard = NotificationOpenGuard();
   bool _checkingUpdate = false;
   bool _updateDialogVisible = false;
@@ -310,6 +309,7 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
       return;
     }
     ref.invalidate(conversationsProvider);
+    ref.invalidate(staffInboxProvider);
     ref.invalidate(unifiedConversationProvider);
     ref.invalidate(unifiedMessagesProvider);
     if (event.conversationId.isNotEmpty) {
@@ -340,12 +340,6 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
     final owner = '${session.profile.type.name}:${session.profile.id}';
     if (_realtimeOwner == owner) return;
     _realtimeOwner = owner;
-    if (session.profile.type == UserType.staff) {
-      _presenceRefresh ??= Timer.periodic(const Duration(seconds: 30), (_) {
-        ref.invalidate(internalThreadsProvider);
-        ref.invalidate(empleadosProvider);
-      });
-    }
     unawaited(_replaceRealtime(owner, session));
   }
 
@@ -363,8 +357,6 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
   void _stopRealtime() {
     if (_realtimeOwner == null) return;
     _realtimeOwner = null;
-    _presenceRefresh?.cancel();
-    _presenceRefresh = null;
     final events = _realtimeEvents;
     final realtime = _realtime;
     _realtimeEvents = null;
@@ -412,6 +404,7 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
       }
       return;
     }
+    ref.invalidate(staffInboxProvider);
     if (event['type'] == 'message.states_updated') {
       ref.invalidate(conversationsProvider);
       ref.invalidate(unifiedConversationProvider);
@@ -419,6 +412,12 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
       ref.invalidate(messagesProvider);
       ref.invalidate(internalThreadsProvider);
       ref.invalidate(internalMessagesProvider);
+      return;
+    }
+    if (event['type'] == 'inbox.metadata_updated') {
+      ref.invalidate(conversationsProvider);
+      ref.invalidate(internalThreadsProvider);
+      ref.invalidate(chatLabelsProvider);
       return;
     }
     if (event['type'] == 'presence.updated' ||
@@ -520,7 +519,6 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
     _notifications?.cancel();
     _realtimeEvents?.cancel();
     _realtime?.close();
-    _presenceRefresh?.cancel();
     super.dispose();
   }
 

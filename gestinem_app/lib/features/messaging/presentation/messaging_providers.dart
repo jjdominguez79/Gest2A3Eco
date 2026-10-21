@@ -67,10 +67,27 @@ final messagesProvider = FutureProvider.autoDispose
       return ref.watch(messagingRepositoryProvider).messages(profile, id);
     });
 
-final internalThreadsProvider =
-    FutureProvider.autoDispose<List<InternalThread>>((ref) {
-      return ref.watch(messagingRepositoryProvider).internalThreads();
-    });
+final internalThreadsProvider = FutureProvider<List<InternalThread>>((ref) {
+  final session = ref.watch(sessionProvider).valueOrNull;
+  if (session == null) return const <InternalThread>[];
+  return ref.watch(messagingRepositoryProvider).internalThreads();
+});
+
+final staffInboxProvider = FutureProvider<StaffInboxData>((ref) {
+  final session = ref.watch(sessionProvider).valueOrNull;
+  if (session == null || session.profile.type != UserType.staff) {
+    return const StaffInboxData(conversations: [], threads: [], labels: []);
+  }
+  return ref.watch(messagingRepositoryProvider).staffInbox();
+});
+
+final chatLabelsProvider = FutureProvider<List<ChatLabel>>((ref) {
+  final session = ref.watch(sessionProvider).valueOrNull;
+  if (session == null || session.profile.type != UserType.staff) {
+    return const <ChatLabel>[];
+  }
+  return ref.watch(messagingRepositoryProvider).chatLabels();
+});
 
 /// Numero total que debe mostrarse en el icono de la barra de tareas.
 ///
@@ -82,22 +99,29 @@ final pendingMessagesCountProvider = FutureProvider.autoDispose<int>((
   final session = ref.watch(sessionProvider).valueOrNull;
   if (session == null) return 0;
 
+  if (session.profile.type == UserType.staff) {
+    final inbox = await ref.watch(staffInboxProvider.future);
+    return inbox.conversations.fold<int>(
+          0,
+          (sum, conversation) => sum + conversation.unreadCount,
+        ) +
+        inbox.threads.fold<int>(0, (sum, thread) => sum + thread.unreadCount);
+  }
   final conversations = await ref.watch(conversationsProvider.future);
-  var total = conversations.fold<int>(
+  return conversations.fold<int>(
     0,
     (sum, conversation) => sum + conversation.unreadCount,
   );
-  if (session.profile.type == UserType.staff) {
-    final threads = await ref.watch(internalThreadsProvider.future);
-    total += threads.fold<int>(0, (sum, thread) => sum + thread.unreadCount);
-  }
-  return total;
 });
 
-final internalMessagesProvider = FutureProvider.autoDispose
-    .family<List<Message>, String>((ref, id) {
-      return ref.watch(messagingRepositoryProvider).internalMessages(id);
-    });
+final internalMessagesProvider = FutureProvider.family<List<Message>, String>((
+  ref,
+  id,
+) {
+  final session = ref.watch(sessionProvider).valueOrNull;
+  if (session == null) return const <Message>[];
+  return ref.watch(messagingRepositoryProvider).internalMessages(id);
+});
 
 final internalTasksProvider = FutureProvider.autoDispose
     .family<List<InternalTask>, String>((ref, id) {

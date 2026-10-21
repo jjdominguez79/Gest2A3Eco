@@ -60,17 +60,18 @@ BACKEND_DATABASE_URL="postgresql://..." \
 # Registra los 39 archivos de BASELINE_FILES en schema_migrations sin ejecutarlos.
 # Termina sin aplicar migraciones pendientes (devuelve 0).
 # Verificar: SELECT COUNT(*) FROM schema_migrations; -- debe ser exactamente 39
-# Verificar ausencia de 038:
-#   SELECT filename FROM schema_migrations WHERE filename LIKE '038%'; -- 0 filas
+# Verificar ausencia de 038 y 039:
+#   SELECT filename FROM schema_migrations WHERE filename >= '038'; -- 0 filas
 ```
 
 **B.3 — Migración de transición**
 ```bash
 BACKEND_DATABASE_URL="postgresql://..." \
     python -m backend.migrate
-# Aplica 038_transition_legacy_startup.sql (unica migracion pendiente).
-# Logs esperados: "Aplicando 038_transition_legacy_startup.sql ..." "OK (nueva)"
-# Verificar: SELECT COUNT(*) FROM schema_migrations; -- debe ser exactamente 40
+# Aplica, en orden, 038_transition_legacy_startup.sql y
+# 039_chat_inbox_preferences.sql.
+# Logs esperados: ambas migraciones terminan con "OK (nueva)".
+# Verificar: SELECT COUNT(*) FROM schema_migrations; -- debe ser exactamente 41
 ```
 
 **B.4 — Verificar idempotencia (no DDL en segunda ejecución)**
@@ -101,10 +102,10 @@ PGPASSWORD=... psql $BACKEND_DATABASE_URL -c "DROP TABLE IF EXISTS schema_migrat
 # Corregir el problema e intentar de nuevo con --baseline-existing.
 ```
 
-**Si falla B.3 (migración 038)**:
+**Si falla B.3 (migraciones 038 o 039)**:
 ```bash
 # La migración falló y fue revertida automáticamente (rollback por excepción).
-# schema_migrations tiene 001-037 registrados pero 038 NO está.
+# La transaccion fallida no queda registrada en schema_migrations.
 # Para rollback completo de la etapa B:
 PGPASSWORD=... psql $BACKEND_DATABASE_URL -c "DROP TABLE IF EXISTS schema_migrations;"
 # Revertir railway.toml al estado sin preDeployCommand.
@@ -115,7 +116,7 @@ PGPASSWORD=... psql $BACKEND_DATABASE_URL -c "DROP TABLE IF EXISTS schema_migrat
 ```bash
 # Revertir railway.toml eliminando preDeployCommand.
 railway redeploy <commit-anterior-con-preDeployCommand-desactivado>
-# El schema permanece en estado post-038 (estable).
+# El schema permanece en el ultimo estado migrado correctamente.
 ```
 
 ---

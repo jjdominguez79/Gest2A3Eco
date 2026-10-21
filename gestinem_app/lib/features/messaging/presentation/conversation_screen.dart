@@ -207,10 +207,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   }
 
   void _loadEarlierWhenNeeded() {
-    if (widget.internal ||
-        !_scroll.hasClients ||
-        _loadingEarlier ||
-        !_hasEarlier) {
+    if (!_scroll.hasClients || _loadingEarlier || !_hasEarlier) {
       return;
     }
     if (_scroll.position.pixels >= _scroll.position.maxScrollExtent - 160) {
@@ -223,19 +220,31 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
     if (before == null || _loadingEarlier || !_hasEarlier) return;
     setState(() => _loadingEarlier = true);
     try {
-      final profile = ref.read(sessionProvider).valueOrNull?.profile;
-      if (profile == null) return;
-      final page = await ref
-          .read(messagingRepositoryProvider)
-          .messages(profile, widget.conversationId, beforeMessageId: before);
+      final repository = ref.read(messagingRepositoryProvider);
+      final List<Message> page;
+      if (widget.internal) {
+        page = await repository.internalMessages(
+          widget.conversationId,
+          beforeMessageId: before,
+        );
+      } else {
+        final profile = ref.read(sessionProvider).valueOrNull?.profile;
+        if (profile == null) return;
+        page = await repository.messages(
+          profile,
+          widget.conversationId,
+          beforeMessageId: before,
+        );
+      }
       if (!mounted) return;
+      final pageSize = widget.internal ? 20 : 100;
       final known = _olderMessages.map((message) => message.id).toSet();
       setState(() {
         _olderMessages.insertAll(
           0,
           page.where((message) => known.add(message.id)),
         );
-        _hasEarlier = page.length == 100;
+        _hasEarlier = page.length == pageSize;
         if (_olderMessages.isNotEmpty) {
           _oldestMessageId = _olderMessages.first.id;
         }
@@ -1419,7 +1428,8 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                   return byDate != 0 ? byDate : a.id.compareTo(b.id);
                 });
               _oldestMessageId = messages.firstOrNull?.id;
-              if (_olderMessages.isEmpty && latestMessages.length < 100) {
+              final pageSize = widget.internal ? 20 : 100;
+              if (_olderMessages.isEmpty && latestMessages.length < pageSize) {
                 _hasEarlier = false;
               }
               _scrollToBottomWhenOpened(messages);
