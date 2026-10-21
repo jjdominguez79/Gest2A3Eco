@@ -197,6 +197,35 @@ def test_normalizacion_backend_caso_real():
     assert result["total"]          == pytest.approx(340.00, abs=0.01)
 
 
+def test_normalizacion_backend_campos_fiscales_configurables():
+    doc = SimpleNamespace(fields={
+        "FechaOperacion": _field_string("20/10/2026"),
+        "TipoIva": _field_string("21%"),
+        "BaseIva": _field_string("100,00"),
+        "CuotaIva": _field_string("21,00"),
+        "TipoRecargo": _field_string("5,2%"),
+        "CuotaRecargo": _field_string("5,20"),
+        "BaseRetencion": _field_string("100,00"),
+        "TipoRetencion": _field_string("15%"),
+        "ImporteRetencion": _field_string("15,00"),
+        "ClaseRetencion": _field_string("PROFESIONAL"),
+        "Suplidos": _field_string("12,00"),
+    })
+
+    result = _mapear_documento(doc, model_id="modelo-servidor")
+
+    assert result["fecha_operacion"] == "2026-10-20"
+    assert result["suplidos"] == 12.0
+    assert result["bases_iva"][0] == {
+        "tipo_iva": 21.0, "base": 100.0, "cuota_iva": 21.0,
+        "tipo_recargo": 5.2, "cuota_recargo": 5.2, "deducible": True,
+        "porcentaje_deduccion": 100.0, "cuenta_gasto": "",
+        "tipo_operacion_iva": "INTERIOR_DEDUCIBLE",
+    }
+    assert result["retencion_total"] == 15.0
+    assert result["retenciones"][0]["clase_retencion"] == "PROFESIONAL"
+
+
 def test_normalizacion_campos_no_existen():
     """Caso 5: campos no existen → valores cero/vacios, no excepcion."""
     doc = SimpleNamespace(fields={})

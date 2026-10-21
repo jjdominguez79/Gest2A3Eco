@@ -108,6 +108,8 @@ def doc_to_rows(doc: dict, lineas: list[dict] | None = None) -> list[dict]:
         row["Cuota Recargo Equivalencia"]  = linea.get("cuota_recargo") or 0.0
         row["Porcentaje Retencion IRPF"]   = linea.get("tipo_retencion") or 0.0
         row["Cuota Retencion IRPF"]        = linea.get("cuota_retencion") or 0.0
+        row["Clase Retencion"]              = linea.get("clase_retencion") or ""
+        row["Modelo Retencion"]             = linea.get("modelo_retencion") or ""
         row["Suplidos"]                    = (doc.get("suplidos") or 0.0) if indice == 0 else 0.0
         # Cuentas contables a nivel de linea (opcionales)
         if linea.get("cuenta_base"):

@@ -1073,6 +1073,7 @@ def worker_publish_document(
     doc = ClientDocument(
         organization_id=inv.organization_id,
         document_type="factura_emitida_online",
+        folder="facturas",
         source_system="client_invoice",
         source_id=inv.id,
         source_version=1,

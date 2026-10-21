@@ -533,6 +533,7 @@ CREATE TABLE IF NOT EXISTS documentos_archivo (
   area_cliente_documento_id TEXT,
   area_cliente_version INTEGER NOT NULL DEFAULT 0,
   area_cliente_sha256 TEXT,
+  area_cliente_categoria TEXT,
   area_cliente_error TEXT,
   area_cliente_actualizado TEXT,
   creado_por TEXT,
@@ -836,6 +837,7 @@ class GestorBase:
             "documentos_archivo", "area_cliente_version", "INTEGER NOT NULL DEFAULT 0",
         )
         self._ensure_column("documentos_archivo", "area_cliente_sha256", "TEXT")
+        self._ensure_column("documentos_archivo", "area_cliente_categoria", "TEXT")
         self._ensure_column("documentos_archivo", "area_cliente_error", "TEXT")
         self._ensure_column("documentos_archivo", "area_cliente_actualizado", "TEXT")
         self.conn.execute(
@@ -1286,6 +1288,9 @@ class GestorBase:
                 pagada            INTEGER DEFAULT 0,
                 suplidos          REAL DEFAULT 0,
                 cuenta_suplidos   TEXT,
+                cuenta_proveedor  TEXT,
+                cuenta_gasto      TEXT,
+                cuenta_iva        TEXT,
                 total_factura     REAL,
                 base_total        REAL,
                 iva_total         REAL,
@@ -1321,7 +1326,8 @@ class GestorBase:
                 base_retencion      REAL DEFAULT 0,
                 tipo_retencion      REAL DEFAULT 0,
                 importe_retencion   REAL DEFAULT 0,
-                clase_retencion     TEXT DEFAULT 'PROFESIONAL'
+                clase_retencion     TEXT DEFAULT 'PROFESIONAL',
+                modelo_retencion    TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_fror_factura
                 ON facturas_recibidas_ocr_retenciones(factura_id);
@@ -1376,7 +1382,8 @@ class GestorBase:
                 base_retencion      REAL DEFAULT 0,
                 tipo_retencion      REAL DEFAULT 0,
                 importe_retencion   REAL DEFAULT 0,
-                clase_retencion     TEXT DEFAULT 'PROFESIONAL'
+                clase_retencion     TEXT DEFAULT 'PROFESIONAL',
+                modelo_retencion    TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_feor_factura
                 ON facturas_emitidas_ocr_retenciones(factura_id);
@@ -1458,6 +1465,10 @@ class GestorBase:
         self._ensure_column("facturas_recibidas_ocr", "pagada", "INTEGER DEFAULT 0")
         self._ensure_column("facturas_recibidas_ocr", "suplidos", "REAL DEFAULT 0")
         self._ensure_column("facturas_recibidas_ocr", "cuenta_suplidos", "TEXT")
+        self._ensure_column("facturas_recibidas_ocr", "cuenta_proveedor", "TEXT")
+        self._ensure_column("facturas_recibidas_ocr", "cuenta_gasto", "TEXT")
+        self._ensure_column("facturas_recibidas_ocr", "cuenta_iva", "TEXT")
+        self._ensure_column("facturas_recibidas_ocr_retenciones", "modelo_retencion", "TEXT")
         self._ensure_column("facturas_recibidas", "pct_fraccion", "INTEGER")
         self._ensure_column("facturas_emitidas", "pct_fraccion", "INTEGER")
         self._ensure_column("ocr_aprendizaje_ejemplos", "marcas_json", "TEXT NOT NULL DEFAULT '{}'")
@@ -1466,6 +1477,7 @@ class GestorBase:
         self._ensure_column("facturas_emitidas_ocr", "subcuenta_cliente", "TEXT")
         self._ensure_column("facturas_emitidas_ocr", "cuenta_ingreso", "TEXT")
         self._ensure_column("facturas_emitidas_ocr", "cuenta_iva", "TEXT")
+        self._ensure_column("facturas_emitidas_ocr_retenciones", "modelo_retencion", "TEXT")
         self.conn.commit()
         self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS cuotas_periodicas (
@@ -4241,7 +4253,7 @@ class GestorBase:
         return self._row_to_dict(row) if row else None
 
     def encolar_publicacion_documento_archivo(
-        self, documento_id: str, sha256: str,
+        self, documento_id: str, sha256: str, categoria_area_cliente: str = "",
     ) -> bool:
         documento = self.get_documento_archivo(documento_id)
         if not documento:
@@ -4249,14 +4261,16 @@ class GestorBase:
         if (
             str(documento.get("area_cliente_estado") or "").lower() == "publicado"
             and str(documento.get("area_cliente_sha256") or "") == str(sha256)
+            and str(documento.get("area_cliente_categoria") or "")
+            == str(categoria_area_cliente)
         ):
             return False
         now = datetime.now().astimezone().isoformat(timespec="seconds")
         self.conn.execute(
             "UPDATE documentos_archivo SET area_cliente_estado='pendiente',"
-            "area_cliente_sha256=?,area_cliente_error='',"
+            "area_cliente_sha256=?,area_cliente_categoria=?,area_cliente_error='',"
             "area_cliente_actualizado=?,updated_at=? WHERE id=?",
-            (sha256, now, now, documento_id),
+            (sha256, categoria_area_cliente, now, now, documento_id),
         )
         self.conn.commit()
         return True
@@ -6715,9 +6729,10 @@ class GestorBase:
               (id, documento_id, empresa_id, proveedor_id, nif_proveedor,
                nombre_proveedor, numero_factura, fecha_factura, fecha_operacion,
                fecha_vencimiento, fecha_contable, pagada, suplidos, cuenta_suplidos,
+               cuenta_proveedor, cuenta_gasto, cuenta_iva,
                total_factura, base_total, iva_total,
                retencion_total, tipo_operacion_iva, estado_validacion, observaciones)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
               proveedor_id=excluded.proveedor_id,
               nif_proveedor=excluded.nif_proveedor,
@@ -6730,6 +6745,9 @@ class GestorBase:
               pagada=excluded.pagada,
               suplidos=excluded.suplidos,
               cuenta_suplidos=excluded.cuenta_suplidos,
+              cuenta_proveedor=excluded.cuenta_proveedor,
+              cuenta_gasto=excluded.cuenta_gasto,
+              cuenta_iva=excluded.cuenta_iva,
               total_factura=excluded.total_factura,
               base_total=excluded.base_total,
               iva_total=excluded.iva_total,
@@ -6748,6 +6766,9 @@ class GestorBase:
                 1 if factura.get("pagada") else 0,
                 float(factura.get("suplidos") or 0.0),
                 factura.get("cuenta_suplidos") or "",
+                factura.get("cuenta_proveedor") or "",
+                factura.get("cuenta_gasto") or "",
+                factura.get("cuenta_iva") or "",
                 float(factura.get("total_factura") or 0.0),
                 float(factura.get("base_total") or 0.0),
                 float(factura.get("iva_total") or 0.0),
@@ -6834,8 +6855,9 @@ class GestorBase:
         cur = self.conn.execute(
             """
             INSERT INTO facturas_recibidas_ocr_retenciones
-              (factura_id, base_retencion, tipo_retencion, importe_retencion, clase_retencion)
-            VALUES (?,?,?,?,?)
+              (factura_id, base_retencion, tipo_retencion, importe_retencion,
+               clase_retencion, modelo_retencion)
+            VALUES (?,?,?,?,?,?)
             """,
             (
                 str(ret["factura_id"]),
@@ -6843,6 +6865,7 @@ class GestorBase:
                 float(ret.get("tipo_retencion") or 0.0),
                 float(ret.get("importe_retencion") or 0.0),
                 ret.get("clase_retencion", "PROFESIONAL"),
+                ret.get("modelo_retencion"),
             ),
         )
         self.conn.commit()
@@ -6994,8 +7017,9 @@ class GestorBase:
         cur = self.conn.execute(
             """
             INSERT INTO facturas_emitidas_ocr_retenciones
-              (factura_id, base_retencion, tipo_retencion, importe_retencion, clase_retencion)
-            VALUES (?,?,?,?,?)
+              (factura_id, base_retencion, tipo_retencion, importe_retencion,
+               clase_retencion, modelo_retencion)
+            VALUES (?,?,?,?,?,?)
             """,
             (
                 str(ret["factura_id"]),
@@ -7003,6 +7027,7 @@ class GestorBase:
                 float(ret.get("tipo_retencion") or 0.0),
                 float(ret.get("importe_retencion") or 0.0),
                 ret.get("clase_retencion", "PROFESIONAL"),
+                ret.get("modelo_retencion"),
             ),
         )
         self.conn.commit()

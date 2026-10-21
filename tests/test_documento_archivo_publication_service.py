@@ -17,8 +17,10 @@ class _Gestor:
     def get_documento_archivo(self, _documento_id):
         return dict(self.documento)
 
-    def encolar_publicacion_documento_archivo(self, documento_id, sha256):
-        self.encolado = (documento_id, sha256)
+    def encolar_publicacion_documento_archivo(
+        self, documento_id, sha256, categoria_area_cliente="",
+    ):
+        self.encolado = (documento_id, sha256, categoria_area_cliente)
         return True
 
     def marcar_publicacion_documento_archivo_exitosa(self, *args):
@@ -61,12 +63,37 @@ def test_publica_documento_archivado_con_identidad_estable(tmp_path):
 
     assert result.estado == "publicado"
     assert result.client_document_id == "client-doc-1"
-    assert gestor.encolado == ("archivo-1", digest)
+    assert gestor.encolado == ("archivo-1", digest, "otros")
     assert gestor.exito == ("archivo-1", "client-doc-1", 2)
     assert backend.kwargs["source_system"] == "desktop_archive"
     assert backend.kwargs["source_id"] == "archivo-1"
     assert backend.kwargs["file_path"] == str(path)
     assert backend.kwargs["company_code"] == "E00006"
+    assert backend.kwargs["client_folder"] == "otros"
+
+
+def test_publica_en_la_categoria_flutter_elegida(tmp_path):
+    path = tmp_path / "informe.pdf"
+    path.write_bytes(b"%PDF-1.4 contenido")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    gestor = _Gestor({
+        "id": "archivo-2",
+        "codigo_empresa": "E00006",
+        "ejercicio": 2026,
+        "categoria_id": "laboral",
+        "nombre_original": "Nomina.pdf",
+        "ruta": str(path),
+        "hash_archivo": digest,
+    })
+    backend = _Backend()
+
+    DocumentoArchivoPublicationService(gestor, backend).publicar(
+        "archivo-2", categoria_area_cliente="nominas",
+    )
+
+    assert gestor.encolado == ("archivo-2", digest, "nominas")
+    assert backend.kwargs["source_type"] == "laboral"
+    assert backend.kwargs["client_folder"] == "nominas"
 
 
 def test_no_publica_si_el_archivo_ya_no_coincide_con_el_archivado(tmp_path):

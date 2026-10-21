@@ -209,13 +209,15 @@ def _mapear_documento(doc, model_id: str, texto: str = "") -> dict:
     # Numero y fechas
     numero_factura = _campo(f, "InvoiceId", "NumeroFactura", "numero_factura")
     fecha_factura = _campo_fecha(f, "InvoiceDate", "FechaFactura", "fecha_factura")
+    fecha_operacion = _campo_fecha(f, "FechaOperacion", "fecha_operacion")
     fecha_vencimiento = _campo_fecha(f, "DueDate", "FechaVencimiento", "fecha_vencimiento")
 
     # Importes globales
     total = _campo_float(f, "InvoiceTotal", "TotalFactura", "total_factura")
     base_total = _campo_float(f, "SubTotal", "BaseTotal", "base_total")
     iva_total = _campo_float(f, "TotalTax", "IvaTotal", "iva_total")
-    retencion_total = 0.0
+    retencion_total = _campo_float(f, "RetencionTotal", "retencion_total")
+    suplidos = _campo_float(f, "Suplidos", "suplidos")
 
     # Lineas de IVA desde TaxDetails
     bases_iva = []
@@ -247,13 +249,30 @@ def _mapear_documento(doc, model_id: str, texto: str = "") -> dict:
                 "tipo_iva": _campo_float(item_f, "TipoIva", "tipo_iva"),
                 "base": _campo_float(item_f, "Base", "base"),
                 "cuota_iva": _campo_float(item_f, "CuotaIva", "cuota_iva"),
-                "tipo_recargo": 0.0,
-                "cuota_recargo": 0.0,
+                "tipo_recargo": _campo_float(item_f, "TipoRecargo", "tipo_recargo"),
+                "cuota_recargo": _campo_float(item_f, "CuotaRecargo", "cuota_recargo"),
                 "deducible": True,
                 "porcentaje_deduccion": 100.0,
                 "cuenta_gasto": "",
                 "tipo_operacion_iva": "INTERIOR_DEDUCIBLE",
             })
+
+    # Algunos modelos personalizados etiquetan un unico tramo como campos
+    # simples en lugar de una tabla.
+    if not bases_iva and any(
+        nombre in f for nombre in ("TipoIva", "BaseIva", "CuotaIva", "TipoRecargo", "CuotaRecargo")
+    ):
+        bases_iva.append({
+            "tipo_iva": _campo_float(f, "TipoIva", "tipo_iva"),
+            "base": _campo_float(f, "BaseIva", "base_iva") or base_total,
+            "cuota_iva": _campo_float(f, "CuotaIva", "cuota_iva"),
+            "tipo_recargo": _campo_float(f, "TipoRecargo", "tipo_recargo"),
+            "cuota_recargo": _campo_float(f, "CuotaRecargo", "cuota_recargo"),
+            "deducible": True,
+            "porcentaje_deduccion": 100.0,
+            "cuenta_gasto": "",
+            "tipo_operacion_iva": "INTERIOR_DEDUCIBLE",
+        })
 
     # Fallback: una linea desde totales
     if not bases_iva and base_total:
@@ -269,6 +288,36 @@ def _mapear_documento(doc, model_id: str, texto: str = "") -> dict:
             "cuenta_gasto": "",
             "tipo_operacion_iva": "INTERIOR_DEDUCIBLE",
         })
+
+    retenciones = []
+    for item in _azure_value(f.get("Retenciones")) or []:
+        item_f = _azure_value(item) or {}
+        if not isinstance(item_f, dict):
+            continue
+        retenciones.append({
+            "base_retencion": _campo_float(item_f, "BaseRetencion", "base_retencion"),
+            "tipo_retencion": _campo_float(item_f, "TipoRetencion", "tipo_retencion"),
+            "importe_retencion": _campo_float(
+                item_f, "ImporteRetencion", "importe_retencion",
+            ),
+            "clase_retencion": _campo(
+                item_f, "ClaseRetencion", "clase_retencion",
+            ) or "PROFESIONAL",
+        })
+    if not retenciones and any(
+        nombre in f
+        for nombre in ("BaseRetencion", "TipoRetencion", "ImporteRetencion", "ClaseRetencion")
+    ):
+        retenciones.append({
+            "base_retencion": _campo_float(f, "BaseRetencion", "base_retencion"),
+            "tipo_retencion": _campo_float(f, "TipoRetencion", "tipo_retencion"),
+            "importe_retencion": _campo_float(f, "ImporteRetencion", "importe_retencion"),
+            "clase_retencion": _campo(f, "ClaseRetencion", "clase_retencion") or "PROFESIONAL",
+        })
+    if not retencion_total and retenciones:
+        retencion_total = round(
+            sum(item["importe_retencion"] for item in retenciones), 2,
+        )
 
     # Confianza: media de campos clave
     campos_clave = [f.get(k) for k in ("VendorName", "InvoiceId", "InvoiceDate", "InvoiceTotal")]
@@ -297,13 +346,15 @@ def _mapear_documento(doc, model_id: str, texto: str = "") -> dict:
         "cliente_nif": cliente_nif,
         "numero_factura": numero_factura,
         "fecha_factura": fecha_factura,
+        "fecha_operacion": fecha_operacion,
         "fecha_vencimiento": fecha_vencimiento,
         "total": total,
         "base_total": base_total,
         "iva_total": iva_total,
         "retencion_total": retencion_total,
+        "suplidos": suplidos,
         "bases_iva": bases_iva,
-        "retenciones": [],
+        "retenciones": retenciones,
         "texto": texto,
         "raw_json": raw_json,
         "confianza": confianza,

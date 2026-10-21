@@ -60,16 +60,24 @@ Tesseract cuando esta instalado. No existe acceso directo a Azure desde el puest
 | `VendorTaxId` | `proveedor_nif` | NIF/CIF/VAT del emisor |
 | `InvoiceId` | `numero_factura` | Serie y numero |
 | `InvoiceDate` | `fecha_factura` | Fecha ISO |
+| `FechaOperacion` | `fecha_operacion` | Fecha de operacion ISO |
 | `DueDate` | `fecha_vencimiento` | Fecha ISO |
 | `InvoiceTotal` | `total` | Total con impuestos |
 | `SubTotal` | `base_total` | Base imponible total |
 | `TotalTax` | `iva_total` | Cuota total de IVA |
 | `TaxDetails` | `bases_iva` | Desglose fiscal si Azure lo identifica |
+| `RetencionTotal` | `retencion_total` | Total retenido |
+| `Suplidos` | `suplidos` | Importe de suplidos |
+| `Retenciones` | `retenciones` | Desglose de bases, tipos, importes y clase |
 | confianza | `confianza` | Valor normalizado entre 0 y 1 |
 
 El motor tambien reconoce los nombres del modelo personalizado:
-`ProveedorNif`, `ProveedorNombre`, `NumeroFactura`, `FechaFactura`,
-`BaseTotal`, `IvaTotal`, `TotalFactura` y `LineasIva`.
+`ProveedorNif`, `ProveedorNombre`, `EmisorNif`, `EmisorNombre`, `ClienteNif`,
+`ClienteNombre`, `NumeroFactura`, `FechaFactura`, `FechaOperacion`,
+`FechaVencimiento`, `BaseTotal`, `IvaTotal`, `RetencionTotal`, `Suplidos`,
+`TotalFactura`, `LineasIva` y `Retenciones`. Para un unico tramo tambien admite
+`TipoIva`, `BaseIva`, `CuotaIva`, `TipoRecargo`, `CuotaRecargo`,
+`BaseRetencion`, `TipoRetencion`, `ImporteRetencion` y `ClaseRetencion`.
 
 ## Modelo personalizado y aprendizaje
 

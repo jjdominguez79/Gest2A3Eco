@@ -643,6 +643,7 @@ _COLUMNAS_ESENCIALES = {
     ("documentos_archivo", "area_cliente_documento_id"),
     ("documentos_archivo", "area_cliente_version"),
     ("documentos_archivo", "area_cliente_sha256"),
+    ("documentos_archivo", "area_cliente_categoria"),
     ("documentos_archivo", "area_cliente_error"),
     ("documentos_archivo", "area_cliente_actualizado"),
     ("facturas_emitidas_ocr", "subcuenta_cliente"),

@@ -9,6 +9,36 @@ from pathlib import Path
 from services.backend_client_service import BackendClientService
 
 
+CATEGORIAS_AREA_CLIENTE = (
+    ("facturas", "Facturas"),
+    ("certificados", "Certificados"),
+    ("nominas", "Nominas"),
+    ("impuestos", "Impuestos"),
+    ("contratos", "Contratos"),
+    ("otros", "Otros documentos"),
+)
+CATEGORIAS_AREA_CLIENTE_IDS = {
+    categoria_id for categoria_id, _nombre in CATEGORIAS_AREA_CLIENTE
+}
+
+
+def categoria_area_cliente_sugerida(documento: dict) -> str:
+    """Propone una carpeta Flutter sin confundirla con la categoria interna."""
+    guardada = str(
+        documento.get("area_cliente_categoria") or ""
+    ).strip().lower()
+    if guardada in CATEGORIAS_AREA_CLIENTE_IDS:
+        return guardada
+    categoria = str(documento.get("categoria_id") or "").strip().lower()
+    if categoria in {"facturas_recibidas", "facturas_emitidas"}:
+        return "facturas"
+    if categoria == "fiscal":
+        return "impuestos"
+    if categoria == "contratos":
+        return "contratos"
+    return "otros"
+
+
 @dataclass(frozen=True)
 class ResultadoPublicacionDocumento:
     documento_id: str
@@ -33,10 +63,18 @@ class DocumentoArchivoPublicationService:
                 digest.update(chunk)
         return digest.hexdigest()
 
-    def publicar(self, documento_id: str) -> ResultadoPublicacionDocumento:
+    def publicar(
+        self, documento_id: str, *, categoria_area_cliente: str = "",
+    ) -> ResultadoPublicacionDocumento:
         documento = self._gestor.get_documento_archivo(str(documento_id))
         if not documento:
             raise ValueError("Documento no encontrado.")
+        categoria_area_cliente = (
+            str(categoria_area_cliente or "").strip().lower()
+            or categoria_area_cliente_sugerida(documento)
+        )
+        if categoria_area_cliente not in CATEGORIAS_AREA_CLIENTE_IDS:
+            raise ValueError("La categoria del area de cliente no es valida.")
         path = Path(str(documento.get("ruta") or ""))
         if not path.is_file():
             raise FileNotFoundError(f"El archivo no se encuentra en: {path}")
@@ -49,7 +87,7 @@ class DocumentoArchivoPublicationService:
             )
 
         queued = self._gestor.encolar_publicacion_documento_archivo(
-            str(documento_id), digest,
+            str(documento_id), digest, categoria_area_cliente,
         )
         if not queued:
             return ResultadoPublicacionDocumento(
@@ -68,6 +106,7 @@ class DocumentoArchivoPublicationService:
                 )
             response = self._backend.publish_document(
                 source_type=str(documento.get("categoria_id") or "documento"),
+                client_folder=categoria_area_cliente,
                 source_system="desktop_archive",
                 source_id=str(documento_id),
                 source_version=max(

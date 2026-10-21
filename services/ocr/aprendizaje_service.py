@@ -9,6 +9,8 @@ import uuid
 from pathlib import Path
 from datetime import datetime
 
+from services.ocr.types import OcrRetentionLine, OcrVatLine
+
 
 class AprendizajeOcrService:
     """Convierte una factura validada en un ejemplo listo para entrenamiento.
@@ -30,26 +32,68 @@ class AprendizajeOcrService:
         es_emitida = tipo_documento == "factura_emitida"
         if es_emitida:
             lineas = self._gestor.listar_lineas_iva_emitida_ocr(str(factura["id"]))
+            listar_retenciones = getattr(
+                self._gestor, "listar_retenciones_emitida_ocr", lambda _factura_id: [],
+            )
         else:
             lineas = self._gestor.listar_lineas_iva_ocr(str(factura["id"]))
+            listar_retenciones = getattr(
+                self._gestor, "listar_retenciones_ocr", lambda _factura_id: [],
+            )
+        retenciones = listar_retenciones(str(factura["id"]))
         datos_ocr = self._datos_ocr_documento(documento)
         datos = {
             "TipoDocumento": tipo_documento,
             "NumeroFactura": str(factura.get("numero_factura") or ""),
             "FechaFactura": str(factura.get("fecha_factura") or ""),
+            "FechaOperacion": str(factura.get("fecha_operacion") or ""),
             "FechaVencimiento": str(factura.get("fecha_vencimiento") or ""),
             "BaseTotal": float(factura.get("base_total") or 0.0),
             "IvaTotal": float(factura.get("iva_total") or 0.0),
+            "RetencionTotal": float(factura.get("retencion_total") or 0.0),
+            "Suplidos": float(factura.get("suplidos") or 0.0),
             "TotalFactura": float(factura.get("total_factura") or 0.0),
             "LineasIva": [
                 {
                     "TipoIva": float(linea.get("tipo_iva") or 0.0),
                     "Base": float(linea.get("base") or 0.0),
                     "CuotaIva": float(linea.get("cuota_iva") or 0.0),
+                    "TipoRecargo": float(linea.get("tipo_recargo") or 0.0),
+                    "CuotaRecargo": float(linea.get("cuota_recargo") or 0.0),
                 }
                 for linea in lineas
             ],
+            "Retenciones": [
+                {
+                    "BaseRetencion": float(retencion.get("base_retencion") or 0.0),
+                    "TipoRetencion": float(retencion.get("tipo_retencion") or 0.0),
+                    "ImporteRetencion": float(retencion.get("importe_retencion") or 0.0),
+                    "ClaseRetencion": str(
+                        retencion.get("clase_retencion") or "PROFESIONAL"
+                    ),
+                }
+                for retencion in retenciones
+            ],
         }
+        if lineas:
+            primera = lineas[0]
+            datos.update({
+                "TipoIva": float(primera.get("tipo_iva") or 0.0),
+                "BaseIva": float(primera.get("base") or 0.0),
+                "CuotaIva": float(primera.get("cuota_iva") or 0.0),
+                "TipoRecargo": float(primera.get("tipo_recargo") or 0.0),
+                "CuotaRecargo": float(primera.get("cuota_recargo") or 0.0),
+            })
+        if retenciones:
+            primera = retenciones[0]
+            datos.update({
+                "BaseRetencion": float(primera.get("base_retencion") or 0.0),
+                "TipoRetencion": float(primera.get("tipo_retencion") or 0.0),
+                "ImporteRetencion": float(primera.get("importe_retencion") or 0.0),
+                "ClaseRetencion": str(
+                    primera.get("clase_retencion") or "PROFESIONAL"
+                ),
+            })
         if es_emitida:
             datos.update({
                 "EmisorNif": str(datos_ocr.get("proveedor_nif") or ""),
@@ -208,12 +252,14 @@ class AprendizajeOcrService:
         mapa = {
             "ProveedorNif": "proveedor_nif",
             "ProveedorNombre": "proveedor_nombre",
+            "EmisorNif": "proveedor_nif", "EmisorNombre": "proveedor_nombre",
             "ClienteNif": "cliente_nif", "ClienteNombre": "cliente_nombre",
             "NumeroFactura": "numero_factura", "FechaFactura": "fecha_factura",
-            "FechaVencimiento": "fecha_vencimiento",
+            "FechaOperacion": "fecha_operacion", "FechaVencimiento": "fecha_vencimiento",
         }
         importes = {
             "BaseTotal": "base_total", "IvaTotal": "iva_total",
+            "RetencionTotal": "retencion_total", "Suplidos": "suplidos",
             "TotalFactura": "total",
         }
         for campo, atributo in mapa.items():
@@ -221,6 +267,48 @@ class AprendizajeOcrService:
             if valor:
                 setattr(resultado, atributo, valor)
                 aplicados[campo] = valor
+        campos_iva = {
+            "TipoIva": "tipo_iva", "BaseIva": "base", "CuotaIva": "cuota_iva",
+            "TipoRecargo": "tipo_recargo", "CuotaRecargo": "cuota_recargo",
+        }
+        valores_iva = {
+            atributo: self._importe(extraidos.get(campo))
+            for campo, atributo in campos_iva.items()
+        }
+        if any(valor is not None for valor in valores_iva.values()):
+            lineas_iva = getattr(resultado, "bases_iva", None)
+            if lineas_iva is None:
+                lineas_iva = []
+                resultado.bases_iva = lineas_iva
+            if not lineas_iva:
+                lineas_iva.append(OcrVatLine())
+            for atributo, valor in valores_iva.items():
+                if valor is not None:
+                    setattr(lineas_iva[0], atributo, valor)
+                    aplicados[next(c for c, a in campos_iva.items() if a == atributo)] = valor
+        campos_retencion = {
+            "BaseRetencion": "base_retencion", "TipoRetencion": "tipo_retencion",
+            "ImporteRetencion": "importe_retencion",
+        }
+        valores_retencion = {
+            atributo: self._importe(extraidos.get(campo))
+            for campo, atributo in campos_retencion.items()
+        }
+        clase_retencion = str(extraidos.get("ClaseRetencion") or "").strip()
+        if any(valor is not None for valor in valores_retencion.values()) or clase_retencion:
+            retenciones = getattr(resultado, "retenciones", None)
+            if retenciones is None:
+                retenciones = []
+                resultado.retenciones = retenciones
+            if not retenciones:
+                retenciones.append(OcrRetentionLine())
+            for atributo, valor in valores_retencion.items():
+                if valor is not None:
+                    setattr(retenciones[0], atributo, valor)
+                    aplicados[next(c for c, a in campos_retencion.items() if a == atributo)] = valor
+            if clase_retencion:
+                retenciones[0].clase_retencion = clase_retencion
+                aplicados["ClaseRetencion"] = clase_retencion
         for campo, atributo in importes.items():
             valor = self._importe(extraidos.get(campo))
             if valor is not None:

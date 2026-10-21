@@ -91,6 +91,9 @@ def _validated_content_type(filename: str, content: bytes) -> str:
     return content_type
 
 _storage: ClientDocumentStorage | None = None
+CLIENT_DOCUMENT_FOLDERS = {
+    "facturas", "certificados", "nominas", "impuestos", "contratos", "otros",
+}
 
 
 def _document_folder(document_type: str) -> str:
@@ -107,6 +110,18 @@ def _document_folder(document_type: str) -> str:
     if "contrato" in value or "contract" in value:
         return "contratos"
     return "otros"
+
+
+def _validated_document_folder(folder: str, document_type: str) -> str:
+    value = str(folder or "").strip().lower()
+    if not value:
+        return _document_folder(document_type)
+    if value not in CLIENT_DOCUMENT_FOLDERS:
+        raise HTTPException(
+            status_code=422,
+            detail="Categoria documental del area de cliente no valida",
+        )
+    return value
 
 
 def _get_storage() -> ClientDocumentStorage:
@@ -168,7 +183,8 @@ def _doc_to_dict(doc: ClientDocument, is_read: bool = False) -> dict:
     result = {
         "id": doc.id,
         "document_type": doc.document_type,
-        "folder": _document_folder(doc.document_type),
+        "folder": str(getattr(doc, "folder", "") or "")
+        or _document_folder(doc.document_type),
         "source_system": doc.source_system,
         "source_version": doc.source_version,
         "sha256": doc.sha256,
@@ -203,7 +219,8 @@ def _notify_document_published(db: Session, doc: ClientDocument) -> None:
             "target_id": doc.id,
             "document_id": doc.id,
             "document_type": doc.document_type,
-            "folder": _document_folder(doc.document_type),
+            "folder": str(getattr(doc, "folder", "") or "")
+            or _document_folder(doc.document_type),
             "type": "document.published",
         }
 
@@ -283,6 +300,7 @@ async def publish_document(
     file: UploadFile = File(...),
     organization_id: str = Form(""),
     document_type: str = Form(...),
+    folder: str = Form(""),
     source_system: str = Form(...),
     source_id: str = Form(...),
     source_version: int = Form(1),
@@ -301,6 +319,7 @@ async def publish_document(
     _auth: str = Depends(require_document_publisher),
 ):
     """Publica un documento en el area del cliente. Idempotente por source."""
+    client_folder = _validated_document_folder(folder, document_type)
     publish_to_client_value = publish_to_client.strip().lower()
     if publish_to_client_value in {"true", "1", "yes", "on"}:
         publish_to_client_enabled = True
@@ -421,6 +440,7 @@ async def publish_document(
             if old_doc.source_version in used_versions:
                 old_doc.source_version = max(used_versions, default=0) + 1
             old_doc.organization_id = organization_id
+            old_doc.folder = client_folder
             old_doc.updated_at = utcnow()
             repaired_document = old_doc
             db.commit()
@@ -429,6 +449,11 @@ async def publish_document(
             return _doc_to_dict(repaired_document)
 
     if same_content:
+        if str(getattr(same_content, "folder", "") or "") != client_folder:
+            same_content.folder = client_folder
+            same_content.updated_at = utcnow()
+            db.commit()
+            db.refresh(same_content)
         return _doc_to_dict(same_content)
 
     latest = db.scalar(select(ClientDocument).where(
@@ -463,6 +488,7 @@ async def publish_document(
     doc = ClientDocument(
         organization_id=organization_id,
         document_type=document_type,
+        folder=client_folder,
         source_system=source_system,
         source_id=source_id,
         source_version=effective_version,
@@ -556,6 +582,8 @@ async def replace_document(
     new_doc = ClientDocument(
         organization_id=old_doc.organization_id,
         document_type=old_doc.document_type,
+        folder=str(getattr(old_doc, "folder", "") or "")
+        or _document_folder(old_doc.document_type),
         source_system=old_doc.source_system,
         source_id=old_doc.source_id,
         source_version=old_doc.source_version + 1,

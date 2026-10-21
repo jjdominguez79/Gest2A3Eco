@@ -60,6 +60,7 @@ class _FakeDoc:
     def __init__(self, **kw):
         defaults = dict(
             id="doc-1", organization_id="org-1", document_type="factura",
+            folder="facturas",
             source_system="desktop_invoice", source_id="FAC-001",
             source_version=1, display_name="Factura 001",
             description="", document_date=_utcnow(),
@@ -260,6 +261,52 @@ class TestPublishDocument:
 
         assert response.status_code == 200
         assert response.json()["content_type"].endswith("wordprocessingml.document")
+
+    def test_respeta_categoria_flutter_explicita(self):
+        db = _InMemoryDb()
+        client = TestClient(
+            _build_app(db, storage=_FakeStorage(), override_internal_auth=True),
+        )
+
+        response = client.post(
+            "/api/v1/messaging/client/documents/internal/publish",
+            data={
+                "organization_id": "org-1",
+                "document_type": "laboral",
+                "folder": "nominas",
+                "source_system": "desktop_archive",
+                "source_id": "archivo-nomina",
+                "display_name": "Nomina septiembre",
+            },
+            files={"file": ("nomina.pdf", b"%PDF-1.4 nomina", "application/pdf")},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["document_type"] == "laboral"
+        assert response.json()["folder"] == "nominas"
+
+    def test_rechaza_categoria_flutter_desconocida(self):
+        client = TestClient(
+            _build_app(
+                _InMemoryDb(), storage=_FakeStorage(),
+                override_internal_auth=True,
+            ),
+        )
+
+        response = client.post(
+            "/api/v1/messaging/client/documents/internal/publish",
+            data={
+                "organization_id": "org-1",
+                "document_type": "laboral",
+                "folder": "laboral_interna",
+                "source_system": "desktop_archive",
+                "source_id": "archivo-1",
+                "display_name": "Informe",
+            },
+            files={"file": ("informe.pdf", b"%PDF-1.4 informe", "application/pdf")},
+        )
+
+        assert response.status_code == 422
 
     def test_resuelve_organizacion_por_empresa_emisora(self):
         db = _InMemoryDb()

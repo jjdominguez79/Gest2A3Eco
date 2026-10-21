@@ -34,6 +34,11 @@ class ClientDocument(Base):
             "organization_id", "source_system", "source_id", "source_version",
             name="uq_client_documents_source",
         ),
+        CheckConstraint(
+            "folder IN ('facturas','certificados','nominas','impuestos',"
+            "'contratos','otros')",
+            name="ck_client_documents_folder",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -43,6 +48,10 @@ class ClientDocument(Base):
 
     # Tipo de documento visible para el cliente (factura, nomina, certificado...)
     document_type: Mapped[str] = mapped_column(String(40), index=True)
+    # Carpeta funcional elegida al publicar en Flutter.
+    folder: Mapped[str] = mapped_column(
+        String(20), default="otros", server_default="otros", index=True,
+    )
     # Sistema origen: desktop_invoice | desktop_archive | client_invoice
     source_system: Mapped[str] = mapped_column(String(30), index=True)
     source_id: Mapped[str] = mapped_column(String(120), index=True)

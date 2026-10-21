@@ -14,7 +14,9 @@ from services.facturas_recibidas_manual_service import (
 )
 from services.gestion_documental_service import GestionDocumentalService
 from services.documento_archivo_publication_service import (
+    CATEGORIAS_AREA_CLIENTE,
     DocumentoArchivoPublicationService,
+    categoria_area_cliente_sugerida,
 )
 from services.estado_facturas_recibidas import etiqueta_estado
 from services.firma.firma_service import FirmaService
@@ -40,6 +42,7 @@ class _MultipleImportDialog(tk.Toplevel):
         self._categories = {item["nombre"]: item for item in categories}
         self._on_import = on_import
         self._paths: dict[str, Path] = {}
+        self._category_ids: dict[str, str] = {}
         self._path_keys: set[str] = set()
         self._next_id = 1
         self._busy = False
@@ -58,8 +61,8 @@ class _MultipleImportDialog(tk.Toplevel):
         ttk.Label(
             frame,
             text=(
-                "Todos los archivos del lote se guardaran en la categoria "
-                "seleccionada. Puedes revisar la lista antes de incorporarlos."
+                "Selecciona uno o varios documentos de la lista y asignales su "
+                "categoria. Cada archivo se guardara en el destino indicado."
             ),
             wraplength=810,
         ).pack(anchor="w", pady=(2, 10))
@@ -83,13 +86,14 @@ class _MultipleImportDialog(tk.Toplevel):
         table.pack(fill="both", expand=True)
         self._tree = ttk.Treeview(
             table,
-            columns=("archivo", "carpeta", "tamano"),
+            columns=("archivo", "categoria", "carpeta", "tamano"),
             show="headings",
             selectmode="extended",
         )
         for key, title, width, anchor in (
             ("archivo", "Documento", 330, "w"),
-            ("carpeta", "Carpeta de origen", 360, "w"),
+            ("categoria", "Categoria", 170, "w"),
+            ("carpeta", "Carpeta de origen", 250, "w"),
             ("tamano", "Tamano", 90, "e"),
         ):
             self._tree.heading(key, text=title)
@@ -118,9 +122,8 @@ class _MultipleImportDialog(tk.Toplevel):
 
         bottom = ttk.Frame(frame)
         bottom.pack(fill="x", pady=(12, 0))
-        ttk.Label(bottom, text="Categoria").pack(side="left")
-        first = next(iter(self._categories), "")
-        self._category = tk.StringVar(value=first)
+        ttk.Label(bottom, text="Asignar a seleccionados").pack(side="left")
+        self._category = tk.StringVar(value="")
         self._category_combo = ttk.Combobox(
             bottom,
             textvariable=self._category,
@@ -129,6 +132,10 @@ class _MultipleImportDialog(tk.Toplevel):
             width=30,
         )
         self._category_combo.pack(side="left", padx=(6, 12))
+        self._assign_button = ttk.Button(
+            bottom, text="Asignar", command=self._assign_category,
+        )
+        self._assign_button.pack(side="left")
         self._status = ttk.Label(bottom, text="")
         self._status.pack(side="left", fill="x", expand=True)
         ttk.Button(bottom, text="Cancelar", command=self._close).pack(side="right")
@@ -151,6 +158,8 @@ class _MultipleImportDialog(tk.Toplevel):
             self._add_paths(paths)
 
     def _add_paths(self, paths) -> int:
+        if not hasattr(self, "_category_ids"):
+            self._category_ids = {}
         added = 0
         ignored = 0
         for raw in paths:
@@ -169,9 +178,10 @@ class _MultipleImportDialog(tk.Toplevel):
             iid = f"archivo-{self._next_id}"
             self._next_id += 1
             self._paths[iid] = path
+            self._category_ids[iid] = ""
             self._path_keys.add(key)
             self._tree.insert("", "end", iid=iid, values=(
-                path.name, str(path.parent), self._format_size(size),
+                path.name, "Sin asignar", str(path.parent), self._format_size(size),
             ))
             added += 1
         self._update_summary()
@@ -194,6 +204,7 @@ class _MultipleImportDialog(tk.Toplevel):
     def _remove_selected(self):
         for iid in self._tree.selection():
             path = self._paths.pop(iid, None)
+            getattr(self, "_category_ids", {}).pop(iid, None)
             if path is not None:
                 self._path_keys.discard(self._path_key(path))
             self._tree.delete(iid)
@@ -202,6 +213,7 @@ class _MultipleImportDialog(tk.Toplevel):
     def _clear(self):
         self._tree.delete(*self._tree.get_children())
         self._paths.clear()
+        getattr(self, "_category_ids", {}).clear()
         self._path_keys.clear()
         self._update_summary()
 
@@ -272,27 +284,63 @@ class _MultipleImportDialog(tk.Toplevel):
             ),
         )
 
-    def _start_import(self):
+    def _assign_category(self):
         category = self._categories.get(self._category.get())
+        selected = list(self._tree.selection())
+        if not selected:
+            messagebox.showwarning(
+                "Asignar categoria", "Selecciona uno o varios documentos.",
+                parent=self,
+            )
+            return
+        if not category:
+            messagebox.showwarning(
+                "Asignar categoria", "Selecciona la categoria que quieres asignar.",
+                parent=self,
+            )
+            return
+        for iid in selected:
+            self._category_ids[iid] = str(category["id"])
+            values = list(self._tree.item(iid, "values"))
+            values[1] = str(category["nombre"])
+            self._tree.item(iid, values=values)
+        self._status.configure(
+            text=f"Categoria asignada a {len(selected)} documento(s).",
+        )
+
+    def _start_import(self):
         if not self._paths:
             messagebox.showwarning(
                 "Incorporar documentos", "Anade al menos un archivo.", parent=self,
             )
             return
-        if not category:
+        pending = [
+            iid for iid in self._paths if not self._category_ids.get(iid)
+        ]
+        if pending:
+            self._tree.selection_set(*pending)
+            self._tree.see(pending[0])
             messagebox.showwarning(
-                "Incorporar documentos", "Selecciona una categoria.", parent=self,
+                "Incorporar documentos",
+                f"Asigna una categoria a los {len(pending)} documento(s) marcados.",
+                parent=self,
             )
             return
         self.set_busy(True)
-        self._on_import(list(self._paths.values()), category["id"], self)
+        self._on_import([
+            {
+                "source": path,
+                "categoria_id": self._category_ids[iid],
+            }
+            for iid, path in self._paths.items()
+        ], self)
 
     def set_busy(self, busy: bool):
         self._busy = busy
         state = "disabled" if busy else "normal"
         for button in (
             self._add_button, self._remove_button,
-            self._clear_button, self._import_button,
+            self._clear_button, self._assign_button, self._import_button,
         ):
             button.configure(state=state)
         self._category_combo.configure(state="disabled" if busy else "readonly")
@@ -308,6 +356,121 @@ class _MultipleImportDialog(tk.Toplevel):
                 parent=self,
             )
             return
+        self.destroy()
+
+
+class _ClientPublicationDialog(tk.Toplevel):
+    """Asigna la carpeta de Flutter a cada documento seleccionado."""
+
+    def __init__(self, parent, documents: list[dict]):
+        super().__init__(parent)
+        self.title("Categorias del area de cliente")
+        self.geometry("800x440")
+        self.minsize(650, 360)
+        self.transient(parent.winfo_toplevel())
+        self.result = None
+        self._documents = {str(row["id"]): row for row in documents}
+        self._category_names = dict(CATEGORIAS_AREA_CLIENTE)
+        self._categories_by_name = {
+            name: category_id for category_id, name in CATEGORIAS_AREA_CLIENTE
+        }
+        self._assignments = {
+            document_id: categoria_area_cliente_sugerida(row)
+            for document_id, row in self._documents.items()
+        }
+        self._build()
+        self.grab_set()
+
+    def _build(self):
+        frame = ttk.Frame(self, padding=14)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame,
+            text="Elegir categorias visibles en Flutter",
+            font=("Segoe UI", 14, "bold"),
+        ).pack(anchor="w")
+        ttk.Label(
+            frame,
+            text=(
+                "La categoria del area de cliente es independiente de la "
+                "clasificacion interna. Selecciona filas para cambiar su destino."
+            ),
+            wraplength=750,
+        ).pack(anchor="w", pady=(2, 10))
+
+        self._tree = ttk.Treeview(
+            frame,
+            columns=("documento", "categoria_interna", "categoria_cliente"),
+            show="headings",
+            selectmode="extended",
+        )
+        for key, title, width in (
+            ("documento", "Documento", 350),
+            ("categoria_interna", "Categoria interna", 180),
+            ("categoria_cliente", "Categoria en Flutter", 180),
+        ):
+            self._tree.heading(key, text=title)
+            self._tree.column(key, width=width, anchor="w")
+        self._tree.pack(fill="both", expand=True)
+        for document_id, row in self._documents.items():
+            category_id = self._assignments[document_id]
+            self._tree.insert("", "end", iid=document_id, values=(
+                row.get("nombre_original") or "",
+                row.get("categoria_nombre") or "",
+                self._category_names[category_id],
+            ))
+        self._tree.selection_set(*self._documents)
+
+        assignment = ttk.Frame(frame)
+        assignment.pack(fill="x", pady=(10, 0))
+        ttk.Label(assignment, text="Asignar a seleccionados").pack(side="left")
+        self._category = tk.StringVar(value="")
+        ttk.Combobox(
+            assignment,
+            textvariable=self._category,
+            values=list(self._categories_by_name),
+            state="readonly",
+            width=24,
+        ).pack(side="left", padx=6)
+        ttk.Button(
+            assignment, text="Asignar", command=self._assign_category,
+        ).pack(side="left")
+        ttk.Button(
+            assignment, text="Cancelar", command=self.destroy,
+        ).pack(side="right")
+        ttk.Button(
+            assignment, text="Continuar", command=self._accept,
+        ).pack(side="right", padx=(0, 7))
+
+    def _assign_category(self):
+        category_id = self._categories_by_name.get(self._category.get())
+        selected = list(self._tree.selection())
+        if not selected:
+            messagebox.showwarning(
+                "Categorias del area de cliente",
+                "Selecciona uno o varios documentos.", parent=self,
+            )
+            return
+        if not category_id:
+            messagebox.showwarning(
+                "Categorias del area de cliente",
+                "Selecciona una categoria de Flutter.", parent=self,
+            )
+            return
+        for document_id in selected:
+            self._assignments[document_id] = category_id
+            values = list(self._tree.item(document_id, "values"))
+            values[2] = self._category_names[category_id]
+            self._tree.item(document_id, values=values)
+
+    def _accept(self):
+        self.result = [
+            {
+                "documento_id": document_id,
+                "categoria_area_cliente": self._assignments[document_id],
+            }
+            for document_id in self._documents
+        ]
         self.destroy()
 
 
@@ -794,16 +957,15 @@ class UIGestionDocumental(ttk.Frame):
     def _add_file(self):
         _MultipleImportDialog(self, self._categories, self._import_files)
 
-    def _import_files(self, paths: list[Path], category_id: str, dialog) -> None:
+    def _import_files(self, decisiones: list[dict], dialog) -> None:
         self.winfo_toplevel().configure(cursor="watch")
 
         def worker():
             try:
-                summary = self._service.importar_archivos(
+                summary = self._service.importar_archivos_clasificados(
                     codigo_empresa=self._codigo,
                     ejercicio=self._ejercicio,
-                    categoria_id=category_id,
-                    sources=paths,
+                    decisiones=decisiones,
                     usuario=getattr(
                         getattr(self._session, "user", None), "nombre", "",
                     ),
@@ -874,10 +1036,21 @@ class UIGestionDocumental(ttk.Frame):
                 parent=self,
             )
             return
-        names = [self._rows[item]["nombre_original"] for item in selected]
-        preview = "\n".join(f"- {name}" for name in names[:8])
-        if len(names) > 8:
-            preview += f"\n- ... y {len(names) - 8} mas"
+        category_dialog = _ClientPublicationDialog(
+            self, [self._rows[item] for item in selected],
+        )
+        self.wait_window(category_dialog)
+        if not category_dialog.result:
+            return
+        decisions = category_dialog.result
+        category_names = dict(CATEGORIAS_AREA_CLIENTE)
+        preview = "\n".join(
+            f"- {self._rows[item['documento_id']]['nombre_original']} "
+            f"-> {category_names[item['categoria_area_cliente']]}"
+            for item in decisions[:8]
+        )
+        if len(decisions) > 8:
+            preview += f"\n- ... y {len(decisions) - 8} mas"
         if not messagebox.askyesno(
             "Compartir con el cliente",
             "Los documentos quedaran disponibles en el area privada del cliente "
@@ -891,9 +1064,13 @@ class UIGestionDocumental(ttk.Frame):
             service = DocumentoArchivoPublicationService(self._gestor)
             published = 0
             errors = []
-            for document_id in selected:
+            for decision in decisions:
+                document_id = decision["documento_id"]
                 try:
-                    result = service.publicar(document_id)
+                    result = service.publicar(
+                        document_id,
+                        categoria_area_cliente=decision["categoria_area_cliente"],
+                    )
                     if result.estado == "publicado":
                         published += 1
                     else:

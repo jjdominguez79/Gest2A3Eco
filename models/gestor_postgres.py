@@ -480,6 +480,7 @@ class GestorPostgres(GestorBase):
                 "INTEGER NOT NULL DEFAULT 0",
             ),
             ("documentos_archivo", "area_cliente_sha256", "TEXT"),
+            ("documentos_archivo", "area_cliente_categoria", "TEXT"),
             ("documentos_archivo", "area_cliente_error", "TEXT"),
             ("documentos_archivo", "area_cliente_actualizado", "TEXT"),
             ("facturas_recibidas_ocr", "tipo_operacion_iva", "TEXT"),
@@ -487,6 +488,11 @@ class GestorPostgres(GestorBase):
             ("facturas_recibidas_ocr", "pagada", "INTEGER NOT NULL DEFAULT 0"),
             ("facturas_recibidas_ocr", "suplidos", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
             ("facturas_recibidas_ocr", "cuenta_suplidos", "TEXT"),
+            ("facturas_recibidas_ocr", "cuenta_proveedor", "TEXT"),
+            ("facturas_recibidas_ocr", "cuenta_gasto", "TEXT"),
+            ("facturas_recibidas_ocr", "cuenta_iva", "TEXT"),
+            ("facturas_recibidas_ocr_retenciones", "modelo_retencion", "TEXT"),
+            ("facturas_emitidas_ocr_retenciones", "modelo_retencion", "TEXT"),
             ("facturas_recibidas_docs", "pagada", "INTEGER NOT NULL DEFAULT 0"),
             ("facturas_recibidas_docs", "suplidos", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
             ("facturas_recibidas_docs", "cuenta_suplidos", "TEXT"),
@@ -878,7 +884,8 @@ class GestorPostgres(GestorBase):
                   base_retencion    DOUBLE PRECISION DEFAULT 0,
                   tipo_retencion    DOUBLE PRECISION DEFAULT 0,
                   importe_retencion DOUBLE PRECISION DEFAULT 0,
-                  clase_retencion   TEXT DEFAULT 'PROFESIONAL'
+                  clase_retencion   TEXT DEFAULT 'PROFESIONAL',
+                  modelo_retencion  TEXT
                 )
                 """
             )
@@ -1025,7 +1032,8 @@ class GestorPostgres(GestorBase):
                   area_cliente_estado TEXT NOT NULL DEFAULT '',
                   area_cliente_documento_id TEXT,
                   area_cliente_version INTEGER NOT NULL DEFAULT 0,
-                  area_cliente_sha256 TEXT,area_cliente_error TEXT,
+                  area_cliente_sha256 TEXT,area_cliente_categoria TEXT,
+                  area_cliente_error TEXT,
                   area_cliente_actualizado TEXT,
                   creado_por TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
                   UNIQUE(codigo_empresa,hash_archivo)

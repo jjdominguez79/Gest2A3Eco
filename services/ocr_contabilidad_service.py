@@ -9,6 +9,26 @@ from utils.validaciones import normalizar_nif_cif
 logger = logging.getLogger(__name__)
 
 
+RETENCION_MODELOS = {
+    "PROFESIONAL": "111",
+    "ARRENDAMIENTO": "115",
+    "CAPITAL": "123",
+}
+
+
+def normalizar_clase_retencion(value) -> str:
+    """Devuelve la clase fiscal canonica aunque la UI muestre tambien el modelo."""
+    texto = str(value or "").strip().upper()
+    for clase in RETENCION_MODELOS:
+        if texto.startswith(clase):
+            return clase
+    return "PROFESIONAL"
+
+
+def modelo_retencion_para_clase(value) -> str:
+    return RETENCION_MODELOS[normalizar_clase_retencion(value)]
+
+
 class OcrContabilidadService:
     """Convierte documentos OCR revisados en documentos contables."""
 
@@ -25,8 +45,30 @@ class OcrContabilidadService:
 
     def _build_payload(self, documento: dict, factura: dict) -> dict:
         doc_id = str(documento.get("id") or "")
-        lineas = self._lineas_iva(str(factura.get("id") or ""), factura)
         proveedor_id, relacion = self._resolver_relacion_proveedor(factura)
+        cuenta_gasto = str(
+            factura.get("cuenta_gasto")
+            or relacion.get("subcuenta_gasto")
+            or ""
+        ).strip()
+        lineas = self._lineas_fiscales(
+            str(factura.get("id") or ""), factura, cuenta_gasto,
+        )
+        retenciones = [
+            {
+                "base_retencion": float(item.get("base_retencion") or 0.0),
+                "tipo_retencion": float(item.get("tipo_retencion") or 0.0),
+                "importe_retencion": float(item.get("importe_retencion") or 0.0),
+                "clase_retencion": normalizar_clase_retencion(
+                    item.get("clase_retencion")
+                ),
+                "modelo_retencion": str(
+                    item.get("modelo_retencion")
+                    or modelo_retencion_para_clase(item.get("clase_retencion"))
+                ),
+            }
+            for item in self._retenciones(str(factura.get("id") or ""))
+        ]
         ruta = str(documento.get("ruta_original") or "")
         tipo_operacion = factura.get("tipo_operacion_iva") or "INTERIOR_DEDUCIBLE"
         fecha_contable = factura.get("fecha_contable") or factura.get("fecha_factura") or ""
@@ -50,9 +92,7 @@ class OcrContabilidadService:
                 or ""
             ),
             "cuenta_gasto": (
-                factura.get("cuenta_gasto")
-                or relacion.get("subcuenta_gasto")
-                or ""
+                cuenta_gasto
             ),
             "cuenta_iva": factura.get("cuenta_iva") or "",
             "proveedor_nif": factura.get("nif_proveedor") or "",
@@ -84,10 +124,13 @@ class OcrContabilidadService:
                 "pagada": bool(factura.get("pagada")),
                 "suplidos": suplidos,
                 "cuenta_suplidos": cuenta_suplidos,
+                "retenciones": retenciones,
             },
         }
 
-    def _lineas_iva(self, factura_id: str, factura: dict) -> list[dict]:
+    def _lineas_fiscales(
+        self, factura_id: str, factura: dict, cuenta_gasto: str,
+    ) -> list[dict]:
         lineas = []
         try:
             for item in self._gestor.listar_lineas_iva_ocr(factura_id):
@@ -97,7 +140,7 @@ class OcrContabilidadService:
                     "cuota_iva": item.get("cuota_iva") or 0.0,
                     "tipo_recargo": item.get("tipo_recargo") or 0.0,
                     "cuota_recargo": item.get("cuota_recargo") or 0.0,
-                    "cuenta_base": item.get("cuenta_gasto") or "",
+                    "cuenta_base": item.get("cuenta_gasto") or cuenta_gasto,
                     "tipo_operacion_iva": (
                         item.get("tipo_operacion_iva")
                         or factura.get("tipo_operacion_iva")
@@ -105,7 +148,40 @@ class OcrContabilidadService:
                 })
         except Exception as exc:
             logger.warning("[OCR] No se pudieron obtener las lineas IVA: %s", exc)
+
+        retenciones = self._retenciones(factura_id)
+        for indice, item in enumerate(retenciones):
+            clase = normalizar_clase_retencion(item.get("clase_retencion"))
+            datos_retencion = {
+                "tipo_retencion": item.get("tipo_retencion") or 0.0,
+                "cuota_retencion": item.get("importe_retencion") or 0.0,
+                "clase_retencion": clase,
+                "modelo_retencion": (
+                    item.get("modelo_retencion")
+                    or modelo_retencion_para_clase(clase)
+                ),
+            }
+            if indice == 0 and lineas:
+                lineas[0].update(datos_retencion)
+            else:
+                lineas.append({
+                    "base_imponible": 0.0,
+                    "tipo_iva": 0.0,
+                    "cuota_iva": 0.0,
+                    "tipo_recargo": 0.0,
+                    "cuota_recargo": 0.0,
+                    "cuenta_base": cuenta_gasto,
+                    "tipo_operacion_iva": factura.get("tipo_operacion_iva"),
+                    **datos_retencion,
+                })
         return lineas
+
+    def _retenciones(self, factura_id: str) -> list[dict]:
+        try:
+            return list(self._gestor.listar_retenciones_ocr(factura_id) or [])
+        except Exception as exc:
+            logger.warning("[OCR] No se pudieron obtener las retenciones: %s", exc)
+            return []
 
     def _resolver_relacion_proveedor(self, factura: dict) -> tuple[str, dict]:
         proveedor_id = str(factura.get("proveedor_id") or "").strip()

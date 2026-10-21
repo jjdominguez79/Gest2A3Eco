@@ -60,7 +60,12 @@ def test_registrar_factura_validada_crea_ejemplo_privado_y_estructurado():
     assert row["empresa_id"] == "E00001"
     assert data["NumeroFactura"] == "F-1"
     assert data["TipoDocumento"] == "factura_recibida"
-    assert data["LineasIva"] == [{"Base": 100.0, "CuotaIva": 21.0, "TipoIva": 21.0}]
+    assert data["LineasIva"] == [{
+        "Base": 100.0, "CuotaIva": 21.0, "CuotaRecargo": 0.0,
+        "TipoIva": 21.0, "TipoRecargo": 0.0,
+    }]
+    assert data["BaseIva"] == 100.0
+    assert data["Retenciones"] == []
     assert service.resumen() == {"pendientes": 1, "por_proveedor": {"A123": 1}}
 
 
@@ -90,7 +95,10 @@ def test_registrar_factura_emitida_separa_emisor_cliente_y_lineas():
     assert data["ClienteNif"] == "B22222222"
     assert "ProveedorNif" not in data
     assert data["LineasIva"] == [
-        {"Base": 200.0, "CuotaIva": 42.0, "TipoIva": 21.0}
+        {
+            "Base": 200.0, "CuotaIva": 42.0, "CuotaRecargo": 0.0,
+            "TipoIva": 21.0, "TipoRecargo": 0.0,
+        }
     ]
     assert row["proveedor_nif"] == "B22222222"
 
@@ -134,19 +142,31 @@ def test_entrenamiento_local_normaliza_marcas_y_las_aplica(monkeypatch):
     assert campos["NumeroFactura"]["x"] == round(150 / 900, 6)
 
     monkeypatch.setattr(
-        service, "_extraer_campos", lambda _path, _campos: {"NumeroFactura": "F-2026-15"},
+        service, "_extraer_campos", lambda _path, _campos: {
+            "NumeroFactura": "F-2026-15", "FechaOperacion": "2026-10-20",
+            "TipoIva": "21", "BaseIva": "100,00", "CuotaIva": "21,00",
+            "TipoRetencion": "15", "ImporteRetencion": "15,00",
+            "ClaseRetencion": "PROFESIONAL", "Suplidos": "12,00",
+        },
     )
     resultado = SimpleNamespace(
         proveedor_nif="B12345678", texto="", numero_factura="",
         proveedor_nombre="", cliente_nif="", cliente_nombre="",
         fecha_factura="", fecha_vencimiento="", base_total=0.0,
-        iva_total=0.0, total=0.0, raw_json={}, motor="azure_backend",
-        confianza=0.6,
+        fecha_operacion="", iva_total=0.0, retencion_total=0.0, suplidos=0.0,
+        total=0.0, bases_iva=[], retenciones=[], raw_json={},
+        motor="azure_backend", confianza=0.6,
     )
 
     service.aplicar_modelo_local("factura.pdf", resultado)
 
     assert resultado.numero_factura == "F-2026-15"
+    assert resultado.fecha_operacion == "2026-10-20"
+    assert resultado.bases_iva[0].base == 100.0
+    assert resultado.bases_iva[0].cuota_iva == 21.0
+    assert resultado.retenciones[0].importe_retencion == 15.0
+    assert resultado.retenciones[0].clase_retencion == "PROFESIONAL"
+    assert resultado.suplidos == 12.0
     assert resultado.motor == "azure_backend+modelo_local_v1"
     assert resultado.raw_json["modelo_local"]["tercero_nif"] == "B12345678"
 

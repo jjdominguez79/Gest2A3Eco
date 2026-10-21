@@ -89,6 +89,7 @@ class BackendClientService:
         document_date: str | None = None,
         description: str = "",
         expected_sha256: str = "",
+        client_folder: str = "",
     ) -> dict:
         """Sube un archivo al area documental del cliente por multipart."""
         self._ensure_configured()
@@ -118,6 +119,8 @@ class BackendClientService:
             fields["document_date"] = str(document_date)
         if description:
             fields["description"] = description
+        if client_folder:
+            fields["folder"] = client_folder
 
         # El backend resuelve la organizacion por el codigo de la empresa
         # emisora. customer_tax_id identifica al destinatario de la factura y

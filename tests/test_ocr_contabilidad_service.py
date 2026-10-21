@@ -15,6 +15,15 @@ def test_proyecta_factura_validada_a_documento_contable():
                 "tipo_operacion_iva": "INTERIOR_DEDUCIBLE",
             }]
 
+        def listar_retenciones_ocr(self, factura_id):
+            assert factura_id == "fac-1"
+            return [{
+                "base_retencion": 100.0,
+                "tipo_retencion": 15.0,
+                "importe_retencion": 15.0,
+                "clase_retencion": "PROFESIONAL",
+            }]
+
         def listar_terceros_por_empresa(self, codigo, ejercicio):
             assert (codigo, ejercicio) == ("E00570", 2026)
             return [{"id": "ter-1", "nif": "B12345678"}]
@@ -58,6 +67,10 @@ def test_proyecta_factura_validada_a_documento_contable():
     assert payload["cuenta_proveedor"] == "40000001"
     assert payload["cuenta_gasto"] == "62900001"
     assert payload["lineas"][0]["base_imponible"] == 100.0
+    assert payload["lineas"][0]["cuenta_base"] == "62900001"
+    assert payload["lineas"][0]["cuota_retencion"] == 15.0
+    assert payload["lineas"][0]["modelo_retencion"] == "111"
+    assert payload["datos_extra"]["retenciones"][0]["modelo_retencion"] == "111"
     assert payload["datos_extra"]["documento_ocr_id"] == "doc-1"
     assert payload["fecha_asiento"] == "2026-08-12"
     assert payload["pagada"] == 1

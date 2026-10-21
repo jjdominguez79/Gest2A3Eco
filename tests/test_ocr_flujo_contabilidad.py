@@ -249,3 +249,50 @@ def test_generar_asiento_no_marca_la_factura_como_contabilizada(monkeypatch):
     controller.generar_asiento()
 
     assert gestor.factura["estado_contable"] == "pendiente_contabilizar"
+
+
+def test_asiento_visual_respeta_la_subcuenta_de_cada_tramo_ocr():
+    doc = {
+        "id": "doc-cuentas", "codigo_empresa": "E00570", "ejercicio": 2026,
+        "numero_factura": "F-25", "fecha_factura": "2026-05-16",
+        "cuenta_proveedor": "40000001", "cuenta_gasto": "62900000",
+        "cuenta_iva": "47200000", "proveedor_nif": "B12345678",
+        "base_imponible": 150.0, "cuota_iva": 26.0, "total": 176.0,
+        "lineas": [
+            {
+                "base_imponible": 100.0, "tipo_iva": 21.0,
+                "cuota_iva": 21.0, "cuenta_base": "62100001",
+            },
+            {
+                "base_imponible": 50.0, "tipo_iva": 10.0,
+                "cuota_iva": 5.0, "cuenta_base": "62800002",
+            },
+        ],
+    }
+
+    class Gestor:
+        def upsert_asiento_contable(self, asiento):
+            self.asiento = asiento
+
+        def upsert_factura_recibida_doc(self, factura):
+            self.factura = factura
+
+    gestor = Gestor()
+    controller = UIContabilidadController(gestor, "E00570", 2026, object())
+
+    controller._generar_asiento_documento(
+        doc,
+        {
+            "cuenta_gasto_por_defecto": "62900000",
+            "cuenta_iva_soportado_defecto": "47200000",
+            "cuenta_proveedor_prefijo": "400",
+        },
+        {"digitos_plan": 8},
+    )
+
+    cuentas_debe = {
+        linea["subcuenta"]
+        for linea in gestor.asiento["lineas"]
+        if linea["dh"] == "D"
+    }
+    assert {"62100001", "62800002"}.issubset(cuentas_debe)

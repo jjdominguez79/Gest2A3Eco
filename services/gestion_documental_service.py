@@ -503,9 +503,25 @@ class GestionDocumentalService:
         sources: list[str | Path], usuario: str = "",
     ) -> ArchiveSummary:
         """Incorpora un lote y conserva los errores individuales del resto."""
+        return self.importar_archivos_clasificados(
+            codigo_empresa=codigo_empresa,
+            ejercicio=ejercicio,
+            decisiones=[
+                {"source": source, "categoria_id": categoria_id}
+                for source in sources
+            ],
+            usuario=usuario,
+        )
+
+    def importar_archivos_clasificados(
+        self, *, codigo_empresa: str, ejercicio: int,
+        decisiones: list[dict], usuario: str = "",
+    ) -> ArchiveSummary:
+        """Incorpora un lote cuya categoria se decide archivo por archivo."""
         summary = ArchiveSummary()
-        for source in sources:
-            path = Path(source)
+        for decision in decisiones:
+            path = Path(decision.get("source") or "")
+            categoria_id = str(decision.get("categoria_id") or "")
             try:
                 document_id = self.importar_archivo(
                     codigo_empresa=codigo_empresa,

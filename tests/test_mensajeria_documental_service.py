@@ -320,3 +320,28 @@ def test_importacion_multiple_conserva_exitos_y_errores_individuales(tmp_path):
     assert summary.document_ids == ["doc-1"]
     assert summary.errors == ["segundo.pdf: documento duplicado"]
     assert service.importar_archivo.call_count == 2
+
+
+def test_importacion_multiple_respeta_categoria_por_documento(tmp_path):
+    factura = tmp_path / "factura.pdf"
+    contrato = tmp_path / "contrato.pdf"
+    factura.write_bytes(b"factura")
+    contrato.write_bytes(b"contrato")
+    service = object.__new__(GestionDocumentalService)
+    service.importar_archivo = MagicMock(side_effect=["doc-1", "doc-2"])
+
+    summary = service.importar_archivos_clasificados(
+        codigo_empresa="E00001",
+        ejercicio=2026,
+        decisiones=[
+            {"source": factura, "categoria_id": "facturas_recibidas"},
+            {"source": contrato, "categoria_id": "contratos"},
+        ],
+        usuario="Empleado",
+    )
+
+    assert summary.document_ids == ["doc-1", "doc-2"]
+    assert [
+        call.kwargs["categoria_id"]
+        for call in service.importar_archivo.call_args_list
+    ] == ["facturas_recibidas", "contratos"]

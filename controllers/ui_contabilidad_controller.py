@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from procesos.facturas_recibidas import generar_asiento_recibida
 from services.ocr_recibidas_service import (
-    doc_to_row,
+    doc_to_rows,
     generate_suenlace_for_docs,
     mark_docs_as_generated,
     resolve_recibidas_template,
@@ -92,9 +92,13 @@ class UIContabilidadController:
         self, doc: dict, plantilla: dict, empresa: dict,
     ) -> None:
         self._completar_cuentas_desde_tercero(doc)
-        lineas = generar_asiento_recibida(
-            doc_to_row(doc), self._configuracion_asiento(doc, plantilla, empresa),
-        )
+        filas = doc_to_rows(doc, doc.get("lineas") or [])
+        configuracion = self._configuracion_asiento(doc, plantilla, empresa)
+        lineas = [
+            linea
+            for fila in filas
+            for linea in generar_asiento_recibida(fila, configuracion)
+        ]
         payload_lineas = [
             {
                 "fecha": linea.fecha,

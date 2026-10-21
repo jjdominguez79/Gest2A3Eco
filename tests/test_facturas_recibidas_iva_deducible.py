@@ -95,3 +95,35 @@ def test_suenlace_incluye_detalle_separado_para_suplidos(monkeypatch):
     assert detalles[-1]["cuenta_base_iva"] == "55509999"
     assert detalles[-1]["pct_iva"] == 0.0
     assert detalles[-1]["base"] == 15.0
+
+
+def test_suenlace_respeta_la_subcuenta_elegida_en_cada_linea(monkeypatch):
+    detalles = []
+    monkeypatch.setattr(
+        "procesos.facturas_recibidas.render_a3_tipo12_cabecera",
+        lambda **kwargs: "CABECERA",
+    )
+    monkeypatch.setattr(
+        "procesos.facturas_recibidas.render_a3_tipo9_detalle",
+        lambda **kwargs: detalles.append(kwargs) or "DETALLE",
+    )
+    comunes = {
+        "Numero Factura": "F-2",
+        "NIF Cliente Proveedor": "B12345678",
+        "Nombre Cliente Proveedor": "Proveedor",
+    }
+    generar_recibidas_suenlace(
+        [
+            _base_row(**comunes, **{"Cuenta Compras Ventas": "62100001"}),
+            _base_row(**comunes, **{
+                "Base": 50.0, "Cuota IVA": 5.0,
+                "Cuenta Compras Ventas": "62800002",
+            }),
+        ],
+        {**_base_conf(), "subtipo_recibidas": "01"},
+        "E00001",
+        8,
+    )
+    assert [detalle["cuenta_base_iva"] for detalle in detalles] == [
+        "62100001", "62800002",
+    ]

@@ -87,6 +87,7 @@ class OcrInvoiceResult:
     # Numero y fechas
     numero_factura: str = ""
     fecha_factura: str = ""         # ISO YYYY-MM-DD o formato original
+    fecha_operacion: str = ""
     fecha_vencimiento: str = ""
 
     # Importes globales (calculados desde lineas si estan disponibles)
@@ -94,6 +95,7 @@ class OcrInvoiceResult:
     base_total: float = 0.0
     iva_total: float = 0.0
     retencion_total: float = 0.0
+    suplidos: float = 0.0
 
     # Lineas de detalle
     bases_iva: list[OcrVatLine] = field(default_factory=list)
@@ -150,11 +152,13 @@ class OcrInvoiceResult:
             "cliente_nif":       self.cliente_nif,
             "numero_factura":    self.numero_factura,
             "fecha_factura":     self.fecha_factura,
+            "fecha_operacion":   self.fecha_operacion,
             "fecha_vencimiento": self.fecha_vencimiento,
             "total":             self.total,
             "base_total":        self.base_total,
             "iva_total":         self.iva_total,
             "retencion_total":   self.retencion_total,
+            "suplidos":          self.suplidos,
             "bases_iva": [
                 {
                     "tipo_iva":           l.tipo_iva,
@@ -192,8 +196,9 @@ class OcrInvoiceResult:
     def from_dict(cls, d: dict) -> "OcrInvoiceResult":
         r = cls()
         for k in ("proveedor_nombre", "proveedor_nif", "cliente_nombre", "cliente_nif", "numero_factura",
-                   "fecha_factura", "fecha_vencimiento", "total", "base_total",
-                   "iva_total", "retencion_total", "texto", "confianza", "motor"):
+                   "fecha_factura", "fecha_operacion", "fecha_vencimiento", "total",
+                   "base_total", "iva_total", "retencion_total", "suplidos", "texto",
+                   "confianza", "motor"):
             if k in d:
                 setattr(r, k, d[k])
         r.raw_json  = d.get("raw_json") or {}

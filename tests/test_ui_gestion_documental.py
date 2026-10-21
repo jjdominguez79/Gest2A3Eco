@@ -6,9 +6,20 @@ from views.ui_gestion_documental import _MultipleImportDialog
 class _Tree:
     def __init__(self):
         self.rows = {}
+        self.selected = ()
 
     def insert(self, _parent, _position, *, iid, values):
         self.rows[iid] = values
+
+    def selection(self):
+        return self.selected
+
+    def item(self, iid, option=None, **values):
+        if "values" in values:
+            self.rows[iid] = values["values"]
+        if option == "values":
+            return self.rows[iid]
+        return {"values": self.rows[iid]}
 
 
 class _Label:
@@ -59,3 +70,34 @@ def test_arrastre_devuelve_la_accion_de_windows(tmp_path):
 
     assert result == "copy"
     assert list(dialog._paths.values()) == [document]
+
+
+def test_asigna_categoria_solo_a_los_documentos_marcados(tmp_path):
+    first = tmp_path / "factura.pdf"
+    second = tmp_path / "contrato.pdf"
+    first.write_bytes(b"uno")
+    second.write_bytes(b"dos")
+    dialog = object.__new__(_MultipleImportDialog)
+    dialog._paths = {}
+    dialog._path_keys = set()
+    dialog._category_ids = {}
+    dialog._next_id = 1
+    dialog._tree = _Tree()
+    dialog._summary = _Label()
+    dialog._status = _Label()
+    dialog._categories = {
+        "Facturas recibidas": {
+            "id": "facturas_recibidas", "nombre": "Facturas recibidas",
+        },
+    }
+    dialog._category = SimpleNamespace(get=lambda: "Facturas recibidas")
+    _MultipleImportDialog._add_paths(dialog, [first, second])
+    dialog._tree.selected = ("archivo-1",)
+
+    _MultipleImportDialog._assign_category(dialog)
+
+    assert dialog._category_ids == {
+        "archivo-1": "facturas_recibidas", "archivo-2": "",
+    }
+    assert dialog._tree.rows["archivo-1"][1] == "Facturas recibidas"
+    assert dialog._tree.rows["archivo-2"][1] == "Sin asignar"

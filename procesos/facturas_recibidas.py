@@ -152,7 +152,8 @@ def generar_asiento_recibida(row: Dict[str, Any], conf: Dict[str, Any]) -> List[
     c_prov = _resolver_cuenta_proveedor(row, conf)
 
     c_gasto = (
-        row.get("_cuenta_py_gv_override")
+        row.get("Cuenta Compras Ventas")
+        or row.get("_cuenta_py_gv_override")
         or conf.get("cuenta_gasto_por_defecto", "62900000")
     )
     c_gasto = _ajustar_cuenta(c_gasto, nd)
@@ -420,6 +421,13 @@ def generar_recibidas_suenlace(
         for i, rr in enumerate(grecs):
             base  = _fv(rr.get("Base"))
             cuota = _fv(rr.get("Cuota IVA"))
+            cuenta_gasto_linea = _ajustar_cuenta(
+                rr.get("Cuenta Compras Ventas")
+                or rr.get("_cuenta_py_gv_override")
+                or c_gasto_ter
+                or cta_gasto,
+                ndig,
+            )
 
             # Si no hay base ni IVA ni recargo ni retenci¢n, se omite
             re_pct = _fv_pct(rr.get("Porcentaje Recargo Equivalencia"), pct_fraccion)
@@ -445,7 +453,7 @@ def generar_recibidas_suenlace(
                 render_a3_tipo9_detalle(
                     codigo_empresa=codigo_empresa,
                     fecha=fecha,
-                    cuenta_base_iva=cta_gasto,
+                    cuenta_base_iva=cuenta_gasto_linea,
                     ndig_plan=ndig,
                     num_factura=num_fact,
                     desc_apunte=desc_det,
