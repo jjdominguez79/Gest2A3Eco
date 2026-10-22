@@ -7,7 +7,7 @@ import re
 import threading
 import tkinter as tk
 from html.parser import HTMLParser
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from services.backend_mail_service import BackendMailService
 from services.documentos_correo_service import DocumentosCorreoService
@@ -15,7 +15,6 @@ from utils.utilidades import (
     load_app_config,
     load_user_config,
     get_packaged_resource_path,
-    save_app_config,
     save_user_config,
 )
 
@@ -293,11 +292,6 @@ class UIComunicaciones(ttk.Frame):
         top = ttk.Frame(self)
         top.pack(fill="x", pady=(0, 10))
         ttk.Label(top, text="Comunicaciones", font=("Segoe UI", 16, "bold")).pack(side="left")
-        if self._session and self._session.is_admin():
-            ttk.Button(
-                top, text="Configurar cuenta personal Microsoft 365",
-                command=self._configure,
-            ).pack(side="right")
         ttk.Button(top, text="Configurar firma", command=self._configure_signature).pack(side="right", padx=6)
         ttk.Button(top, text="Nuevo correo", command=self._compose).pack(side="right", padx=6)
         ttk.Button(top, text="Ver conversacion", command=self._detail).pack(side="right", padx=6)
@@ -328,31 +322,6 @@ class UIComunicaciones(ttk.Frame):
                 remitente, row.get("estado") or "",
                 row.get("mensajes") or 0,
             ))
-
-    def _configure(self):
-        cfg = load_app_config()
-        graph = dict(cfg.get("microsoft_graph") or {})
-        tenant = simpledialog.askstring(
-            "Microsoft 365", "Tenant ID de Microsoft Entra:",
-            initialvalue=graph.get("tenant_id", ""), parent=self,
-        )
-        if tenant is None:
-            return
-        client = simpledialog.askstring(
-            "Microsoft 365", "Application (client) ID:",
-            initialvalue=graph.get("client_id", ""), parent=self,
-        )
-        if client is None:
-            return
-        shared = simpledialog.askstring(
-            "Microsoft 365", "Buzon compartido:",
-            initialvalue=graph.get("shared_mailbox", "Oficina@gestinem.es"), parent=self,
-        )
-        graph.update(tenant_id=tenant.strip(), client_id=client.strip(),
-                     shared_mailbox=(shared or "Oficina@gestinem.es").strip())
-        cfg["microsoft_graph"] = graph
-        save_app_config(cfg)
-        messagebox.showinfo("Microsoft 365", "Configuracion guardada. No se ha almacenado ninguna contraseña.", parent=self)
 
     def _configure_signature(self):
         cfg = load_user_config()
