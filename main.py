@@ -435,7 +435,29 @@ def _set_window_geometry(root: tk.Tk, width: int, height: int, *, resizable: boo
     root.resizable(resizable, resizable)
 
 
+def _comprobar_motor_pdf() -> int:
+    """Prueba minima del motor PDF dentro del ejecutable distribuido."""
+    try:
+        import fitz
+        from PIL import Image
+
+        pdf = fitz.open()
+        try:
+            pagina = pdf.new_page()
+            pagina.insert_text((72, 72), "Gest2A3Eco PDF smoke test")
+            pix = pagina.get_pixmap(matrix=fitz.Matrix(1.0, 1.0), alpha=False)
+            imagen = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        finally:
+            pdf.close()
+        return 0 if imagen.width > 0 and imagen.height > 0 else 1
+    except Exception as exc:
+        print(f"PDF_SMOKE_TEST_ERROR: {exc}", file=sys.stderr)
+        return 1
+
+
 def main():
+    if "--smoke-test-pdf" in sys.argv:
+        return _comprobar_motor_pdf()
     ensure_template_file()  # Crea plantillas/email_factura.html si no existe
     try:
         from tkinterdnd2 import TkinterDnD
@@ -875,4 +897,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

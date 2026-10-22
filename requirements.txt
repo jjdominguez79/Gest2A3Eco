@@ -5,7 +5,9 @@ python-docx
 pillow
 docxtpl
 pypdf
-pymupdf
+# 2.0 rompe la carga de la API PDF dentro del ejecutable PyInstaller.
+# Mantener la version validada hasta completar y probar la migracion.
+pymupdf==1.28.2
 tkinterdnd2
 pywin32
 requests

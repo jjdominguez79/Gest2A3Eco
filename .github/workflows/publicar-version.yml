@@ -99,6 +99,10 @@ jobs:
           if (-not (Test-Path $exePath)) {
             throw "No se ha generado el ejecutable esperado: $exePath"
           }
+          & $exePath --smoke-test-pdf
+          if ($LASTEXITCODE -ne 0) {
+            throw "El ejecutable generado no puede importar y renderizar PDF con PyMuPDF."
+          }
 
       - name: Instalar Inno Setup 6
         shell: pwsh

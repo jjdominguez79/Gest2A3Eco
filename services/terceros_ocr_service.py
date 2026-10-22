@@ -237,47 +237,74 @@ class TercerosOcrService:
           tipo_tercero: "proveedor" | "acreedor" | "cliente"
         Devuelve el dict del tercero con la subcuenta asignada.
         """
+        if tipo_tercero not in PREFIJOS:
+            raise ValueError("Tipo de tercero no valido para crear la subcuenta.")
+
+        subcuenta = str(subcuenta or "").strip()
+        empresa = gestor.get_empresa(codigo, ejercicio) or {}
+        ndig = int(empresa.get("digitos_plan") or 8)
+        prefijo = PREFIJOS[tipo_tercero]
+        if not _es_subcuenta_valida(subcuenta, prefijo, ndig):
+            raise ValueError(
+                f"La subcuenta debe tener {ndig} digitos y comenzar por {prefijo}."
+            )
+
         nif = normalizar_nif_cif(datos.get("nif") or "")
 
         # Anti-duplicado: si ya existe por NIF, reusar su id
         tercero_id: str | None = None
+        tercero_existente: dict = {}
         if nif:
             for t in gestor.listar_terceros():
                 if _norm_nif(t.get("nif")) == _norm_nif(nif):
                     tercero_id = str(t["id"])
+                    tercero_existente = dict(t)
                     break
 
+        cuenta_existente = gestor.get_maestro_subcuenta_por_subcuenta(
+            codigo, subcuenta,
+        )
+        cuenta_tercero_id = str(
+            (cuenta_existente or {}).get("tercero_id") or ""
+        ).strip()
+        if cuenta_existente and (
+            not tercero_id or cuenta_tercero_id != str(tercero_id)
+        ):
+            raise ValueError(
+                f"La subcuenta {subcuenta} ya existe en el plan de la empresa."
+            )
+
         tercero = {
+            **tercero_existente,
             "id":        tercero_id,
-            "nif":       nif,
-            "nombre":    str(datos.get("nombre") or "").strip(),
-            "direccion": datos.get("direccion") or "",
-            "cp":        datos.get("cp") or "",
-            "poblacion": datos.get("poblacion") or "",
-            "provincia": datos.get("provincia") or "",
-            "telefono":  datos.get("telefono") or "",
-            "email":     datos.get("email") or "",
-            "contacto":  datos.get("contacto") or "",
+            "nif":       nif or tercero_existente.get("nif") or "",
+            "nombre":    (
+                str(datos.get("nombre") or "").strip()
+                or tercero_existente.get("nombre")
+                or tercero_existente.get("nombre_legal")
+                or ""
+            ),
             "tipo":      None,   # campo legacy; el tipo real viene de la subcuenta asignada
         }
+        for campo in (
+            "direccion", "cp", "poblacion", "provincia", "telefono",
+            "email", "contacto",
+        ):
+            if datos.get(campo):
+                tercero[campo] = datos[campo]
         tid = gestor.upsert_tercero(tercero)
 
         campo = CAMPO_SUBCUENTA.get(tipo_tercero, "subcuenta_proveedor")
-        rel = {
+        rel = gestor.get_tercero_empresa(codigo, str(tid), ejercicio) or {}
+        rel.update({
             "codigo_empresa":   codigo,
             "ejercicio":        ejercicio,
             "tercero_id":       tid,
-            "subcuenta_cliente":   subcuenta if campo == "subcuenta_cliente" else None,
-            "subcuenta_proveedor": subcuenta if campo == "subcuenta_proveedor" else None,
-            "subcuenta_ingreso":   None,
-            "subcuenta_gasto":     None,
-            "cliente_tipo_operacion_iva": DEFAULT_REL_CONFIG["cliente_tipo_operacion_iva"],
-            "cliente_iva_deducible": DEFAULT_REL_CONFIG["cliente_iva_deducible"],
-            "cliente_porcentaje_deduccion_iva": DEFAULT_REL_CONFIG["cliente_porcentaje_deduccion_iva"],
-            "proveedor_tipo_operacion_iva": DEFAULT_REL_CONFIG["proveedor_tipo_operacion_iva"],
-            "proveedor_iva_deducible": DEFAULT_REL_CONFIG["proveedor_iva_deducible"],
-            "proveedor_porcentaje_deduccion_iva": DEFAULT_REL_CONFIG["proveedor_porcentaje_deduccion_iva"],
-        }
+            campo:                subcuenta,
+        })
+        for clave, valor in DEFAULT_REL_CONFIG.items():
+            if rel.get(clave) in (None, ""):
+                rel[clave] = valor
         gestor.upsert_tercero_empresa(rel)
 
         # Sincronizar con maestro_subcuentas_empresa (Fase 2+)

@@ -548,7 +548,8 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             side="left", padx=2,
         )
         ttk.Button(
-            proveedor_acciones, text="Alta", width=8, command=self._alta_proveedor,
+            proveedor_acciones, text="Alta + cuenta", width=13,
+            command=self._alta_proveedor,
         ).pack(
             side="left", padx=2,
         )
@@ -1479,7 +1480,10 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             (self._doc_seleccionado or {}).get("tipo_documento") or ""
         ) == "factura_emitida"
         dialog = tk.Toplevel(self)
-        dialog.title("Alta de cliente" if es_emitida else "Alta de proveedor / acreedor")
+        dialog.title(
+            "Alta de cliente y subcuenta"
+            if es_emitida else "Alta de proveedor / acreedor y subcuenta"
+        )
         dialog.transient(self.winfo_toplevel())
         dialog.grab_set()
         frame = ttk.Frame(dialog, padding=12)
@@ -1491,11 +1495,48 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             ttk.Label(frame, text=texto).grid(row=fila, column=0, sticky="e", padx=(0, 6), pady=3)
             ttk.Entry(frame, textvariable=var, width=42).grid(row=fila, column=1, sticky="ew", pady=3)
         ttk.Label(frame, text="Clase").grid(row=2, column=0, sticky="e", padx=(0, 6), pady=3)
-        ttk.Combobox(
+        selector_clase = ttk.Combobox(
             frame, textvariable=clase,
             values=(("cliente",) if es_emitida else ("proveedor", "acreedor")),
             state="readonly", width=18,
-        ).grid(row=2, column=1, sticky="w", pady=3)
+        )
+        selector_clase.grid(row=2, column=1, sticky="w", pady=3)
+
+        subcuenta = tk.StringVar()
+
+        def sugerir_subcuenta(_event=None):
+            try:
+                subcuenta.set(self._terceros_svc.proponer_subcuenta(
+                    self._gestor, clase.get(), self._codigo, self._ejercicio,
+                ))
+            except Exception as exc:
+                messagebox.showerror(
+                    "OCR", f"No se pudo proponer la subcuenta: {exc}", parent=dialog,
+                )
+
+        ttk.Label(frame, text="Subcuenta").grid(
+            row=3, column=0, sticky="e", padx=(0, 6), pady=3,
+        )
+        subcuenta_fila = ttk.Frame(frame)
+        subcuenta_fila.grid(row=3, column=1, sticky="ew", pady=3)
+        ttk.Entry(subcuenta_fila, textvariable=subcuenta, width=24).pack(
+            side="left", fill="x", expand=True,
+        )
+        ttk.Button(
+            subcuenta_fila, text="Sugerir", command=sugerir_subcuenta,
+        ).pack(side="left", padx=(6, 0))
+        ttk.Label(
+            frame,
+            text=(
+                "Se creara la subcuenta con los datos detectados y quedara "
+                "pendiente de alta en A3."
+            ),
+            foreground="#555",
+            wraplength=390,
+            justify="left",
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(5, 0))
+        selector_clase.bind("<<ComboboxSelected>>", sugerir_subcuenta)
+        sugerir_subcuenta()
 
         def guardar():
             nif_val = normalizar_nif_cif(nif.get())
@@ -1504,8 +1545,14 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                 messagebox.showwarning("OCR", "Indica NIF y nombre.", parent=dialog)
                 return
             try:
-                tercero_id = self._gestor.upsert_tercero({"nif": nif_val, "nombre": nombre_val})
-                tercero = self._gestor.get_tercero(str(tercero_id)) or {"id": tercero_id, "nif": nif_val, "nombre": nombre_val}
+                tercero = self._terceros_svc.crear_tercero(
+                    self._gestor,
+                    {"nif": nif_val, "nombre": nombre_val},
+                    subcuenta.get(),
+                    clase.get(),
+                    self._codigo,
+                    self._ejercicio,
+                )
             except Exception as exc:
                 messagebox.showerror("OCR", f"No se pudo dar de alta: {exc}", parent=dialog)
                 return
@@ -1514,9 +1561,12 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             self._aplicar_proveedor_maestro(tercero)
 
         botones = ttk.Frame(frame)
-        botones.grid(row=3, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        botones.grid(row=5, column=0, columnspan=2, sticky="e", pady=(10, 0))
         ttk.Button(botones, text="Cancelar", command=dialog.destroy).pack(side="left", padx=(0, 5))
-        ttk.Button(botones, text="Dar de alta", style="Primary.TButton", command=guardar).pack(side="left")
+        ttk.Button(
+            botones, text="Crear tercero y subcuenta",
+            style="Primary.TButton", command=guardar,
+        ).pack(side="left")
         frame.columnconfigure(1, weight=1)
 
     def _mostrar_estado_aprendizaje(self):
