@@ -680,6 +680,95 @@ def test_resumen_dehu_espera_la_reconsulta_e_informa_los_intentos(monkeypatch):
     assert "<td>2</td>" in sent[0][2]
 
 
+def test_resumen_dehu_explica_el_certificado_que_requiere_intervencion(monkeypatch):
+    client, _, _, _ = _setup(monkeypatch)
+    sent = []
+    monkeypatch.setattr(
+        "backend.api.client_certificates_api.messaging_mail.send_mail",
+        lambda to, subject, html: sent.append((to, subject, html)) or True,
+    )
+    assert client.put(
+        "/api/v1/messaging/client/certificates/internal/dehu-mailboxes/E00001",
+        json={
+            "mailbox_id": "mailbox-1",
+            "mailbox_name": "DEHu Cliente Uno",
+            "active": True,
+            "periodicity": "DIARIA",
+            "notification_email": "avisos@gestinem.es",
+        },
+    ).status_code == 200
+    claimed = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/claim",
+    ).json()["item"]
+
+    failed = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/requests/"
+        f"{claimed['id']}/fail",
+        json={
+            "claim_token": claimed["claim_token"],
+            "error_code": "certificate_material_unavailable",
+            "error_message": (
+                "El certificado digital del cliente caduco el 21/10/2026. "
+                "Cargue el certificado renovado y vuelva a ejecutar la consulta."
+            ),
+            "needs_action": True,
+        },
+    )
+
+    assert failed.status_code == 200
+    assert failed.json()["status"] == "needs_action"
+    assert len(sent) == 1
+    assert "Cliente Uno" in sent[0][2]
+    assert "caduco el 21/10/2026" in sent[0][2]
+    assert "Cargue el certificado renovado" in sent[0][2]
+
+
+@pytest.mark.parametrize(
+    ("certificate_state", "expected_detail"),
+    [
+        ("missing", "no tiene un certificado digital configurado"),
+        ("expired", "certificado digital del cliente caduco"),
+        ("not_yet_valid", "aun no es valido"),
+    ],
+)
+def test_material_worker_describe_certificado_inutilizable(
+    monkeypatch, certificate_state, expected_detail,
+):
+    client, factory, org_id, _ = _setup(monkeypatch)
+    created = client.post(
+        "/api/v1/messaging/client/certificates/internal/requests",
+        params={"company_code": "E00001"},
+        json={"certificate_type": "DEHU_SYNC"},
+    )
+    assert created.status_code == 201
+    claimed = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/claim",
+    ).json()["item"]
+    with factory() as db:
+        secret = db.scalar(select(ClientCertificateSecret).where(
+            ClientCertificateSecret.organization_id == org_id,
+        ))
+        if certificate_state == "missing":
+            db.delete(secret)
+        elif certificate_state == "expired":
+            secret.valid_until = utcnow() - timedelta(days=1)
+        else:
+            secret.valid_from = utcnow() + timedelta(days=1)
+        db.commit()
+
+    response = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/certificate-material",
+        json={
+            "request_id": claimed["id"],
+            "claim_token": claimed["claim_token"],
+        },
+    )
+
+    assert response.status_code == 409
+    assert expected_detail in response.json()["detail"]
+    assert "certificado" in response.json()["detail"].lower()
+
+
 def test_programacion_automatica_dehu_permite_desactivar_email_interno(monkeypatch):
     client, _, _, _ = _setup(monkeypatch)
     response = client.put(

@@ -7,7 +7,7 @@ import tempfile
 import threading
 from pathlib import Path
 
-from aapp_worker.backend_client import AappBackendClient
+from aapp_worker.backend_client import AappBackendClient, CertificateMaterialError
 from aapp_worker.config import AappWorkerConfig
 from services.aapp.base import OpcionesSync
 from services.aapp.base import obtener_conector
@@ -47,6 +47,20 @@ class AappWorker:
             return False
         try:
             self._process(item)
+        except CertificateMaterialError as exc:
+            LOG.warning(
+                "No se puede usar el certificado de la solicitud %s: %s",
+                item.get("id"), exc,
+            )
+            self.backend.fail(
+                item,
+                str(exc),
+                code="certificate_material_unavailable",
+                needs_action=exc.needs_action,
+                retry_after_seconds=(
+                    None if exc.needs_action else _espera_reintento_segundos(item)
+                ),
+            )
         except Exception as exc:
             LOG.exception("Fallo procesando la solicitud %s", item.get("id"))
             self.backend.fail(

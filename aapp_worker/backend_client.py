@@ -9,6 +9,14 @@ import requests
 from aapp_worker.config import AappWorkerConfig
 
 
+class CertificateMaterialError(RuntimeError):
+    """Fallo al obtener el PFX con un mensaje apto para el resumen del buzon."""
+
+    def __init__(self, message: str, *, needs_action: bool = False):
+        super().__init__(message)
+        self.needs_action = needs_action
+
+
 class AappBackendClient:
     def __init__(self, config: AappWorkerConfig, session=None):
         self.config = config
@@ -38,7 +46,28 @@ class AappBackendClient:
             json={"request_id": item["id"], "claim_token": item["claim_token"]},
             timeout=self.config.request_timeout_seconds,
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            detail = ""
+            try:
+                payload = response.json()
+                if isinstance(payload, dict):
+                    detail = str(payload.get("detail") or "").strip()
+            except (TypeError, ValueError):
+                pass
+            if not detail:
+                detail = (
+                    "No se pudo obtener el certificado digital del cliente "
+                    "desde el almacen seguro."
+                )
+            raise CertificateMaterialError(
+                detail,
+                needs_action=(
+                    getattr(response, "status_code", 0) == 409
+                    and "certificado" in detail.lower()
+                ),
+            ) from exc
         return response.json()
 
     def publish_pdf(self, item: dict, pdf_path: Path) -> dict:

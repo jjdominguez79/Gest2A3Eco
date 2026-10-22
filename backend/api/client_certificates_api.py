@@ -1735,12 +1735,27 @@ def _try_send_dehu_batch_summary(db: Session, batch_id: str | None) -> None:
             return "Correcto tras reintento" if intentos > 1 else "Correcto"
         return "Error tras reintentos" if intentos > 1 else "Error"
 
+    def _detalle_consulta(item: ClientCertificateRequest) -> str:
+        detail = str(item.result_summary or item.error_message or "").strip()
+        if detail:
+            return detail
+        if item.status == "needs_action":
+            return (
+                "La consulta requiere revision manual. Compruebe el certificado "
+                "digital y la configuracion del buzon."
+            )
+        if item.status == "failed":
+            return "La consulta no pudo completarse tras agotar los reintentos."
+        if item.status == "cancelled":
+            return "La consulta fue cancelada."
+        return "Consulta completada correctamente."
+
     details = "".join(
         "<tr>"
         f"<td>{escape(org.name or org.company_code)}</td>"
         f"<td>{escape(_resultado_consulta(item))}</td>"
         f"<td>{max(1, int(item.attempt_count or 0))}</td>"
-        f"<td>{escape(item.result_summary or item.error_message or item.status)}</td>"
+        f"<td>{escape(_detalle_consulta(item))}</td>"
         "</tr>"
         for item, org in rows
     )
@@ -1917,13 +1932,49 @@ def get_worker_certificate_material(
         ClientCertificateSecret.organization_id == item.organization_id,
         ClientCertificateSecret.active.is_(True),
     ))
-    if not secret:
-        raise HTTPException(status_code=409, detail="Certificado digital no configurado")
+    certificate_state = _secret_status(secret)
+    if not certificate_state["configured"]:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "El buzon esta activo, pero el cliente no tiene un certificado "
+                "digital configurado. Cargue un certificado valido y vuelva a "
+                "ejecutar la consulta."
+            ),
+        )
+    if certificate_state["status"] == "expired":
+        expiry = secret.valid_until
+        expiry_text = expiry.strftime("%d/%m/%Y") if expiry else "una fecha desconocida"
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"El certificado digital del cliente caduco el {expiry_text}. "
+                "Cargue el certificado renovado y vuelva a ejecutar la consulta."
+            ),
+        )
+    if certificate_state["status"] == "not_yet_valid":
+        valid_from = secret.valid_from
+        valid_from_text = (
+            valid_from.strftime("%d/%m/%Y") if valid_from else "una fecha futura"
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "El certificado digital del cliente aun no es valido; su vigencia "
+                f"comienza el {valid_from_text}. Revise el certificado configurado."
+            ),
+        )
     try:
         encrypted = ClientCertificateVaultStorage().get(secret.encrypted_blob_key)
         pfx, password = decrypt_material(encrypted, item.organization_id)
     except (OSError, RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=503, detail="No se pudo obtener el certificado") from exc
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "No se pudo recuperar el certificado digital del almacen seguro. "
+                "La consulta se reintentara automaticamente."
+            ),
+        ) from exc
     secret.last_used_at = utcnow()
     secret.updated_at = utcnow()
     db.commit()

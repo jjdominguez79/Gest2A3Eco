@@ -9,7 +9,7 @@ from aapp_worker.config import AappWorkerConfig
 from aapp_worker.worker import AappWorker, _espera_reintento_segundos
 from services.aapp.base import NotificacionDTO, ResultadoSync
 from services.aapp.certificados import ResultadoCertificado
-from aapp_worker.backend_client import AappBackendClient
+from aapp_worker.backend_client import AappBackendClient, CertificateMaterialError
 
 
 class _Backend:
@@ -162,6 +162,36 @@ def test_worker_sin_trabajo_no_hace_nada(tmp_path):
     assert backend.failed is None
 
 
+def test_worker_no_reintenta_un_certificado_que_requiere_intervencion(tmp_path):
+    item = {
+        "id": "request-dehu-certificado-caducado",
+        "organization_id": "org-1",
+        "certificate_type": "DEHU_SYNC",
+        "claim_token": "claim-token-valido",
+        "attempt_count": 1,
+        "parameters": {},
+    }
+    backend = _Backend(item)
+
+    def material_no_disponible(_item):
+        raise CertificateMaterialError(
+            "El certificado digital del cliente caduco el 21/10/2026. "
+            "Cargue el certificado renovado y vuelva a ejecutar la consulta.",
+            needs_action=True,
+        )
+
+    backend.certificate_material = material_no_disponible
+
+    assert AappWorker(_config(tmp_path), backend=backend).run_once() is True
+    assert backend.completed is None
+    assert backend.failed[2] == {
+        "code": "certificate_material_unavailable",
+        "needs_action": True,
+        "retry_after_seconds": None,
+    }
+    assert "caduco el 21/10/2026" in backend.failed[1]
+
+
 @pytest.mark.parametrize(
     ("intento", "espera"),
     [
@@ -213,6 +243,37 @@ def test_cliente_worker_envia_protocolo_vigente(tmp_path):
     assert backend.claim() is None
     assert session.headers["X-AAPP-Worker-Protocol"] == "4"
     assert session.headers["X-AAPP-Worker-Role"] == "certificates"
+
+
+def test_cliente_worker_conserva_el_detalle_del_error_de_certificado(tmp_path):
+    class Response:
+        status_code = 409
+
+        def raise_for_status(self):
+            import requests
+            raise requests.HTTPError("Conflict", response=self)
+
+        def json(self):
+            return {
+                "detail": (
+                    "El buzon esta activo, pero el cliente no tiene un "
+                    "certificado digital configurado."
+                ),
+            }
+
+    class Session:
+        def post(self, _url, **_kwargs):
+            return Response()
+
+    backend = AappBackendClient(_config(tmp_path), session=Session())
+
+    with pytest.raises(CertificateMaterialError) as raised:
+        backend.certificate_material({
+            "id": "request-1", "claim_token": "claim-token-valido",
+        })
+
+    assert raised.value.needs_action is True
+    assert "no tiene un certificado digital configurado" in str(raised.value)
 
 
 def test_publicacion_automatica_solo_para_solicitudes_flutter(tmp_path):
