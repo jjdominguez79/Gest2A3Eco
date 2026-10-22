@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../core/notifications/notifications_service.dart';
 import '../core/notifications/web_permission_state.dart';
 import '../core/notifications/windows_taskbar_badge.dart';
+import '../core/sharing/android_share_receiver.dart';
 import '../core/websocket/realtime_service.dart';
 import '../features/app_update/domain/app_update_policy.dart';
 import '../features/auth/domain/user_profile.dart';
@@ -18,6 +20,7 @@ import '../features/empleados/presentation/empleados_screen.dart';
 import '../features/documents/presentation/documents_providers.dart';
 import '../features/subvenciones/presentation/subvenciones_providers.dart';
 import '../features/messaging/presentation/messaging_providers.dart';
+import '../features/messaging/presentation/share_target_sheet.dart';
 import 'router.dart';
 
 class GestinemApp extends ConsumerStatefulWidget {
@@ -34,6 +37,8 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
   );
 
   StreamSubscription<NotificationEvent>? _notifications;
+  StreamSubscription<SharedContent>? _sharedContentEvents;
+  final Queue<SharedContent> _pendingSharedContent = Queue<SharedContent>();
   StreamSubscription<Map<String, dynamic>>? _realtimeEvents;
   RealtimeService? _realtime;
   String? _realtimeOwner;
@@ -44,6 +49,8 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
   DateTime? _lastUpdateCheck;
   int? _scheduledTaskbarBadgeCount;
   int? _appliedTaskbarBadgeCount;
+  bool _shareSheetVisible = false;
+  bool _shareConsumptionScheduled = false;
 
   @override
   void initState() {
@@ -53,6 +60,9 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
         .read(notificationsServiceProvider)
         .events
         .listen(_handleNotification);
+    final shareReceiver = ref.read(androidShareReceiverProvider);
+    _sharedContentEvents = shareReceiver.events.listen(_handleSharedContent);
+    unawaited(shareReceiver.initialize());
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => unawaited(_checkAppUpdate(force: true)),
     );
@@ -287,6 +297,76 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
     await launchUrl(storeUrl, mode: LaunchMode.externalApplication);
   }
 
+  void _handleSharedContent(SharedContent content) {
+    _pendingSharedContent.add(content);
+    _scheduleSharedContentConsumption();
+  }
+
+  void _scheduleSharedContentConsumption() {
+    if (_shareConsumptionScheduled || !mounted) return;
+    _shareConsumptionScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _shareConsumptionScheduled = false;
+      unawaited(_consumeSharedContent());
+    });
+  }
+
+  Future<void> _consumeSharedContent() async {
+    if (!mounted ||
+        _shareSheetVisible ||
+        _pendingSharedContent.isEmpty ||
+        ref.read(sessionProvider).valueOrNull == null) {
+      return;
+    }
+    final navigator = ref.read(rootNavigatorKeyProvider).currentState;
+    if (navigator == null || !navigator.mounted) {
+      _scheduleSharedContentConsumption();
+      return;
+    }
+    final content = _pendingSharedContent.removeFirst();
+    final receiver = ref.read(androidShareReceiverProvider);
+    final error = content.error?.trim() ?? '';
+    if (content.files.isEmpty) {
+      ScaffoldMessenger.of(navigator.context).showSnackBar(
+        SnackBar(
+          content: Text(
+            error.isEmpty ? 'No se recibio ningun archivo valido.' : error,
+          ),
+        ),
+      );
+      await receiver.discard(content);
+      _scheduleSharedContentConsumption();
+      return;
+    }
+
+    _shareSheetVisible = true;
+    SharedSendResult? sent;
+    try {
+      sent = await showShareTargetSheet(
+        context: navigator.context,
+        content: content,
+      );
+    } finally {
+      _shareSheetVisible = false;
+      await receiver.discard(content);
+    }
+    if (sent != null && mounted) {
+      ref.invalidate(conversationsProvider);
+      ref.invalidate(staffInboxProvider);
+      ref.invalidate(unifiedConversationProvider);
+      ref.invalidate(unifiedMessagesProvider);
+      if (sent.targetType == 'internal_thread') {
+        ref.invalidate(internalThreadsProvider);
+        ref.invalidate(internalMessagesProvider(sent.targetId));
+        ref.read(routerProvider).go('/internal/${sent.targetId}');
+      } else {
+        ref.invalidate(messagesProvider(sent.targetId));
+        ref.read(routerProvider).go('/conversation/${sent.targetId}');
+      }
+    }
+    _scheduleSharedContentConsumption();
+  }
+
   void _handleNotification(NotificationEvent event) {
     final subvencionId = event.subvencionId;
     if (subvencionId != null && subvencionId.isNotEmpty) {
@@ -517,6 +597,7 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _notifications?.cancel();
+    _sharedContentEvents?.cancel();
     _realtimeEvents?.cancel();
     _realtime?.close();
     super.dispose();
@@ -558,6 +639,7 @@ class _GestinemAppState extends ConsumerState<GestinemApp>
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => _consumePendingNotification(),
       );
+      _scheduleSharedContentConsumption();
     } else {
       _stopRealtime();
     }

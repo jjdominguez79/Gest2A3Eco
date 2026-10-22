@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/config/app_config.dart';
+import '../../../core/sharing/android_share_receiver.dart';
 import '../../../core/widgets/authenticated_avatar.dart';
 import '../../auth/domain/user_profile.dart';
 import '../../auth/presentation/auth_controller.dart';
@@ -356,6 +358,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   subtitle: Text(profile.staffRole!.name),
                 ),
               const _SendWithEnterSwitch(),
+              if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
+                const _AndroidNotificationSoundTile(),
               ListTile(
                 key: const Key('privacy-policy-link'),
                 leading: const Icon(Icons.policy_outlined),
@@ -561,6 +565,11 @@ class _ClientAreaContent extends ConsumerWidget {
               ),
               const Divider(height: 1),
               const _SendWithEnterSwitch(),
+              if (!kIsWeb &&
+                  defaultTargetPlatform == TargetPlatform.android) ...[
+                const Divider(height: 1),
+                const _AndroidNotificationSoundTile(),
+              ],
               const Divider(height: 1),
               ListTile(
                 key: const Key('privacy-policy-link'),
@@ -646,6 +655,35 @@ class _SendWithEnterSwitch extends ConsumerWidget {
                 }
               }
             },
+    );
+  }
+}
+
+class _AndroidNotificationSoundTile extends ConsumerWidget {
+  const _AndroidNotificationSoundTile();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return ListTile(
+      key: const Key('android-notification-sound'),
+      leading: const Icon(Icons.notifications_active_outlined),
+      title: const Text('Sonido de los mensajes'),
+      subtitle: const Text('Elige el tono en los ajustes de Android'),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: () async {
+        final opened = await ref
+            .read(androidShareReceiverProvider)
+            .openMessageSoundSettings();
+        if (!opened && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'No se pudieron abrir los ajustes de notificaciones.',
+              ),
+            ),
+          );
+        }
+      },
     );
   }
 }
