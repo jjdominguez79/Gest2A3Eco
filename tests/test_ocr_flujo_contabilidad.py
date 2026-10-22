@@ -16,13 +16,20 @@ def test_ocr_no_expone_generacion_de_suenlace():
     assert "generar suenlace" not in contenido
 
 
-def test_contabilidad_conserva_la_exportacion_de_suenlace():
+def test_contabilidad_exporta_suenlace_y_gestion_documental_centraliza_acciones():
     assert callable(getattr(UIContabilidadController, "exportar_suenlace", None))
     assert callable(getattr(UIContabilidadController, "capturar_numero_asiento_desde_a3", None))
-    contenido = (ROOT / "views" / "ui_contabilidad.py").read_text(encoding="utf-8").lower()
-    assert "exportar suenlace.dat" in contenido
-    assert "imprimir seleccionadas" in contenido
-    assert "comprobar asiento en a3" in contenido
+    contabilidad = (ROOT / "views" / "ui_contabilidad.py").read_text(
+        encoding="utf-8"
+    ).lower()
+    documental = (ROOT / "views" / "ui_gestion_documental.py").read_text(
+        encoding="utf-8"
+    ).lower()
+    assert "exportar suenlace.dat" in contabilidad
+    assert "imprimir seleccionadas" not in contabilidad
+    assert "comprobar asiento en a3" not in contabilidad
+    assert "imprimir facturas" in documental
+    assert "comprobar asiento en a3" in documental
 
 
 def test_captura_asiento_recibida_desde_a3(monkeypatch):

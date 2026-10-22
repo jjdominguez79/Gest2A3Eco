@@ -47,20 +47,6 @@ def test_catalogo_iva_y_resumen_fiscal_incluyen_suplidos_y_retenciones():
     assert not _totales_coherentes(118.06, resumen)
 
 
-def test_drag_enter_y_leave_aceptan_la_accion_de_windows():
-    class Zona:
-        def configure(self, **_kwargs):
-            pass
-
-    vista = SimpleNamespace(zona=Zona())
-    vista._zona_arrastre = vista.zona
-    vista._restaurar_texto_arrastre = lambda: None
-    evento = SimpleNamespace(action="copy")
-
-    assert UIFacturasRecibidasOcr._on_dnd_enter(vista, evento) == "copy"
-    assert UIFacturasRecibidasOcr._on_dnd_leave(vista, evento) == "copy"
-
-
 def test_campos_aprendizaje_cambian_segun_tipo_factura():
     recibida = _campos_aprendizaje("factura_recibida")
     emitida = _campos_aprendizaje("factura_emitida")

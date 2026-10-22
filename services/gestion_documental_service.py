@@ -66,6 +66,13 @@ class GestionDocumentalService:
         return self._gestor.listar_categorias_documentales()
 
     @staticmethod
+    def _tipo_documento_ocr(documento: dict) -> str:
+        """Traduce la categoria documental al tipo entendido por OCR."""
+        if str(documento.get("categoria_id") or "") == "facturas_emitidas":
+            return "factura_emitida"
+        return "factura_recibida"
+
+    @staticmethod
     def _mailbox_entrada(entrada: dict) -> str:
         mailbox = str(entrada.get("mailbox") or "").strip().lower()
         if not mailbox:
@@ -642,6 +649,7 @@ class GestionDocumentalService:
                 empresa_id=str(document["codigo_empresa"]),
                 ejercicio=int(document["ejercicio"]),
                 ruta_origen=str(document["ruta"]),
+                tipo_documento=self._tipo_documento_ocr(document),
                 documento_archivo_id=str(documento_id),
                 usuario=usuario,
             )
@@ -663,6 +671,7 @@ class GestionDocumentalService:
         result = OcrService(
             self._gestor, document["codigo_empresa"], int(document["ejercicio"]),
             usuario=usuario,
+            tipo_documento=self._tipo_documento_ocr(document),
         ).procesar_archivo(document["ruta"])
         ocr_id = str(result.get("documento_id") or "")
         if ocr_id:

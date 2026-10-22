@@ -120,12 +120,12 @@ class _MultipleImportDialog(tk.Toplevel):
         self._summary = ttk.Label(list_actions, text="0 documentos")
         self._summary.pack(side="right")
 
-        bottom = ttk.Frame(frame)
-        bottom.pack(fill="x", pady=(12, 0))
-        ttk.Label(bottom, text="Asignar a seleccionados").pack(side="left")
+        assignment = ttk.Frame(frame)
+        assignment.pack(fill="x", pady=(8, 0))
+        ttk.Label(assignment, text="Asignar a seleccionados").pack(side="left")
         self._category = tk.StringVar(value="")
         self._category_combo = ttk.Combobox(
-            bottom,
+            assignment,
             textvariable=self._category,
             values=list(self._categories),
             state="readonly",
@@ -133,14 +133,19 @@ class _MultipleImportDialog(tk.Toplevel):
         )
         self._category_combo.pack(side="left", padx=(6, 12))
         self._assign_button = ttk.Button(
-            bottom, text="Asignar", command=self._assign_category,
+            assignment, text="Asignar", command=self._assign_category,
         )
         self._assign_button.pack(side="left")
-        self._status = ttk.Label(bottom, text="")
-        self._status.pack(side="left", fill="x", expand=True)
-        ttk.Button(bottom, text="Cancelar", command=self._close).pack(side="right")
+
+        self._status = ttk.Label(frame, text="", anchor="w")
+        self._status.pack(fill="x", pady=(6, 0))
+
+        footer = ttk.Frame(frame)
+        footer.pack(fill="x", pady=(6, 0))
+        ttk.Button(footer, text="Cancelar", command=self._close).pack(side="right")
         self._import_button = ttk.Button(
-            bottom, text="Incorporar documentos", command=self._start_import,
+            footer, text="Incorporar documentos", style="Primary.TButton",
+            command=self._start_import,
         )
         self._import_button.pack(side="right", padx=(0, 7))
 
@@ -503,7 +508,8 @@ class UIGestionDocumental(ttk.Frame):
             font=("Segoe UI", 16, "bold"),
         ).pack(side="left")
         ttk.Button(
-            top, text="Incorporar documentos", command=self._add_file,
+            top, text="Incorporar documentos", style="Primary.TButton",
+            command=self._add_file,
         ).pack(side="right")
         self._messaging_button = ttk.Button(
             top, text="Entradas pendientes", command=self._open_messaging_incoming,

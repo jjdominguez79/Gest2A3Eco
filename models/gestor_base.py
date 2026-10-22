@@ -1532,6 +1532,7 @@ class GestorBase:
     def _seed_categorias_documentales(self) -> None:
         categorias = (
             ("facturas_recibidas", "Facturas recibidas", "FACTURAS_RECIBIDAS", 1, 10),
+            ("facturas_emitidas", "Facturas emitidas", "FACTURAS_EMITIDAS", 1, 15),
             ("fiscal", "Fiscal", "FISCAL", 0, 20),
             ("contable", "Contable", "CONTABLE", 0, 30),
             ("laboral", "Laboral", "LABORAL", 0, 40),

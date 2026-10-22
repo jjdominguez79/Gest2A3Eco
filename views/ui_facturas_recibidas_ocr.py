@@ -25,7 +25,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 import tkinter as tk
 
 from services.terceros_empresa_fiscal_service import PROVEEDOR_TIPOS_IVA
@@ -318,7 +318,6 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         self._cuota_iva_manual = False
         self._actualizando_retencion = False
         self._tipo_doc_var = tk.StringVar(value="factura_recibida")
-        self._fecha_contable_modo_var = tk.StringVar(value="Fecha de factura")
         self._formato_fecha_var = tk.StringVar(value="DD/MM/AAAA")
         self._revision_doc_ids: list[str] = []
         self._revision_indice = -1
@@ -351,59 +350,34 @@ class UIFacturasRecibidasOcr(ttk.Frame):
 
         btn_frame = ttk.Frame(hdr)
         btn_frame.pack(fill="x", pady=(6, 0))
-        self._btn_importar = ttk.Button(
-            btn_frame, text="Importar PDF / imagen",
-            style="Primary.TButton",
-            command=self._importar,
-        )
-        self._btn_importar.pack(side="left", padx=4)
-        ttk.Separator(btn_frame, orient="vertical").pack(side="left", padx=6, fill="y")
-        ttk.Label(btn_frame, text="Documento:").pack(side="left", padx=(0, 2))
+        ttk.Label(btn_frame, text="Mostrar:").pack(side="left", padx=(0, 2))
         self._radio_recibida = ttk.Radiobutton(
-            btn_frame, text="Factura de proveedor",
+            btn_frame, text="Facturas recibidas",
             variable=self._tipo_doc_var, value="factura_recibida",
             command=self._on_tipo_doc_changed,
         )
         self._radio_recibida.pack(side="left")
         self._radio_emitida = ttk.Radiobutton(
-            btn_frame, text="Factura de cliente",
+            btn_frame, text="Facturas emitidas",
             variable=self._tipo_doc_var, value="factura_emitida",
             command=self._on_tipo_doc_changed,
         )
         self._radio_emitida.pack(side="left", padx=(0, 4))
-        ttk.Label(btn_frame, text="Fecha contable:").pack(side="left", padx=(8, 2))
-        self._cb_fecha_contable_modo = ttk.Combobox(
+        ttk.Label(
             btn_frame,
-            textvariable=self._fecha_contable_modo_var,
-            values=("Fecha de factura", "Hoy"),
-            state="normal",
-            width=16,
-        )
-        self._cb_fecha_contable_modo.pack(side="left", padx=(0, 4))
-        self._hacer_combobox_filtrable(
-            self._cb_fecha_contable_modo, lambda: ("Fecha de factura", "Hoy"),
-        )
+            text="Los documentos se incorporan y se envian desde Gestion documental.",
+            foreground="#64748b",
+        ).pack(side="right")
 
         # La pantalla inicial solo es el listado de estados. La revision se
         # abre en una ventana propia al seleccionar una factura.
         lista = ttk.Frame(self)
         lista.pack(fill="both", expand=True, padx=10, pady=4)
-        self._frm_lista = lista
-        self._zona_arrastre = ttk.Label(
-            lista,
-            text="Arrastra aquí uno o varios PDF o imágenes, o pulsa «Importar PDF / imagen»",
-            style="DropZone.TLabel",
-            anchor="center",
-        )
-        self._zona_arrastre.pack(fill="x", pady=(0, 6))
-        self._zona_arrastre.bind("<Button-1>", lambda _event: self._importar())
         self._build_bandejas(lista)
 
         # Barra de estado
         self._lbl_status = ttk.Label(self, text="", foreground="#555")
         self._lbl_status.pack(fill="x", padx=10, pady=(0, 6))
-
-        self._setup_drag_and_drop()
 
     def _crear_editor_desplazable(self, parent: ttk.Frame) -> ttk.Frame:
         """Crea un formulario vertical desplazable para no comprimir sus campos."""
@@ -443,8 +417,6 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             self._build_bandeja_toolbar(bar, estado)
 
             # Treeview
-            # En "Contabilizadas" se pueden seleccionar varias facturas para
-            # capturar sus numeros de asiento desde A3 de una sola vez.
             tv = ttk.Treeview(frame, columns=COL_IDS, show="headings", selectmode="extended")
             for col_id, titulo_col, w, anchor in COLS_LISTA:
                 tv.heading(col_id, text=titulo_col)
@@ -465,7 +437,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
 
     def _build_bandeja_toolbar(self, bar: ttk.Frame, estado: str):
         if estado == "procesando":
-            ttk.Label(bar, text="Procesamiento automatico al importar.").pack(side="left")
+            ttk.Label(bar, text="Procesamiento OCR en curso.").pack(side="left")
             return
         if estado == "error":
             ttk.Button(bar, text="Reprocesar",
@@ -487,12 +459,11 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             ).pack(side="left", padx=2)
         elif estado == "exportada_a3":
             ttk.Label(
-                bar, text="Exportada a suenlace.dat. Importala en A3 y captura el asiento para confirmarla."
+                bar, text=(
+                    "Exportada a suenlace.dat. Importala en A3 y comprueba el "
+                    "asiento desde Gestion documental."
+                )
             ).pack(side="left", padx=2)
-            ttk.Button(
-                bar, text="Capturar asiento de A3", style="Primary.TButton",
-                command=self._capturar_asiento_a3,
-            ).pack(side="left", padx=6)
         elif estado == "contabilizada":
             ttk.Label(
                 bar, text=(
@@ -2400,167 +2371,10 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         self._lbl_cuenta_resultado.configure(text="Ingreso" if es_emitida else "Gasto")
         self._chk_pagada.configure(text="Cobrada" if es_emitida else "Pagada")
 
-    # ── Drag & Drop ───────────────────────────────────────────────────────────
-
-    def _setup_drag_and_drop(self):
-        """Registra la zona de arrastre en el panel de bandejas."""
-        raiz = self.winfo_toplevel()
-        if getattr(raiz, "_dnd_available", True) is False:
-            detalle = str(getattr(raiz, "_dnd_error", "") or "").strip()
-            self._mostrar_dnd_no_disponible(detalle)
-            return
-        try:
-            from tkinterdnd2 import DND_FILES
-            targets = [self._zona_arrastre, *self._tvs.values(), self._nb, self._frm_lista, self]
-            registrados = 0
-            ultimo_error = None
-            for target in targets:
-                try:
-                    target.drop_target_register(DND_FILES)
-                    target.dnd_bind("<<Drop>>", self._on_dnd_drop)
-                    target.dnd_bind("<<DragEnter>>", self._on_dnd_enter)
-                    target.dnd_bind("<<DragLeave>>", self._on_dnd_leave)
-                    registrados += 1
-                except Exception as exc:
-                    ultimo_error = exc
-            if not registrados:
-                raise RuntimeError(str(ultimo_error or "No se pudo registrar la zona de arrastre."))
-            raiz._dnd_available = True
-        except Exception as exc:
-            logger.warning("[OCR] Arrastre no disponible: %s", exc)
-            self._mostrar_dnd_no_disponible(str(exc))
-
-    def _mostrar_dnd_no_disponible(self, detalle: str = ""):
-        texto = "Arrastre no disponible. Haz clic aquí para seleccionar PDF o imágenes."
-        self._zona_arrastre.configure(text=texto)
-        self._lbl_status.configure(
-            text=(
-                "No se pudo activar el arrastre de Windows. Puedes importar con un clic."
-                + (f" Detalle: {detalle}" if detalle else "")
-            )
-        )
-
-    def _on_dnd_enter(self, event):
-        try:
-            self._zona_arrastre.configure(text="Suelta los documentos para procesarlos")
-        except Exception:
-            pass
-        return getattr(event, "action", "copy")
-
-    def _on_dnd_leave(self, event):
-        try:
-            self._restaurar_texto_arrastre()
-        except Exception:
-            pass
-        return getattr(event, "action", "copy")
-
-    def _on_dnd_drop(self, event):
-        try:
-            self._restaurar_texto_arrastre()
-        except Exception:
-            pass
-        paths = self._parse_dnd_paths(event.data)
-        validos = [p for p in paths if Path(p).suffix.lower() in {".pdf", ".png", ".jpg", ".jpeg"}]
-        if not validos:
-            messagebox.showwarning("OCR", "Ningun fichero soportado arrastrado.")
-            return getattr(event, "action", "copy")
-        self._iniciar_procesamiento(validos)
-        return getattr(event, "action", "copy")
-
-    def _restaurar_texto_arrastre(self):
-        self._zona_arrastre.configure(
-            text="Arrastra aquí uno o varios PDF o imágenes, o pulsa «Importar PDF / imagen»"
-        )
-
-    @staticmethod
-    def _parse_dnd_paths(raw: str) -> list[str]:
-        """Parsea el formato Tcl list de tkinterdnd2 (paths con espacios entre llaves)."""
-        import re
-        paths = []
-        for m in re.finditer(r'\{([^}]+)\}|(\S+)', raw):
-            p = m.group(1) or m.group(2)
-            if p:
-                paths.append(p)
-        return paths
-
-    # ── Importar ──────────────────────────────────────────────────────────────
-
-    def _importar(self):
-        paths = filedialog.askopenfilenames(
-            title="Seleccionar documentos",
-            filetypes=[
-                ("Documentos soportados", "*.pdf *.png *.jpg *.jpeg"),
-                ("PDF", "*.pdf"),
-                ("Imagenes", "*.png *.jpg *.jpeg"),
-            ],
-        )
-        if not paths:
-            return
-        validos = [p for p in paths if Path(p).suffix.lower() in {".pdf", ".png", ".jpg", ".jpeg"}]
-        if not validos:
-            messagebox.showwarning("OCR", "Ningun fichero soportado seleccionado.")
-            return
-        self._iniciar_procesamiento(validos)
-
-    def _iniciar_procesamiento(self, paths: list[str]):
-        if self._ocr_thread and self._ocr_thread.is_alive():
-            messagebox.showwarning("OCR", "Ya hay documentos procesándose.")
-            return
-        tipo_documento = self._tipo_doc_var.get()
-        fecha_contable = (
-            datetime.now().strftime("%Y-%m-%d")
-            if self._fecha_contable_modo_var.get() == "Hoy"
-            else ""
-        )
-        self._lbl_status.configure(text=f"Procesando {len(paths)} documento(s)...")
-        self._ocr_mensajes = []
-        self._bloquear_opciones_importacion(True)
-        t = threading.Thread(
-            target=self._worker_ocr,
-            args=(paths, tipo_documento, fecha_contable),
-            daemon=True,
-        )
-        self._ocr_thread = t
-        t.start()
-        self.after(75, self._poll_ocr)
-
-    def _bloquear_opciones_importacion(self, bloquear: bool):
+    def _bloquear_filtros_tipo(self, bloquear: bool):
         estado = "disabled" if bloquear else "normal"
-        self._btn_importar.configure(state=estado)
         self._radio_recibida.configure(state=estado)
         self._radio_emitida.configure(state=estado)
-        self._cb_fecha_contable_modo.configure(
-            state="disabled" if bloquear else "readonly"
-        )
-
-    def _worker_ocr(
-        self, paths: list[str], tipo_documento: str, fecha_contable: str,
-    ):
-        try:
-            from services.ocr import OcrService
-            svc = OcrService(
-                gestor=self._gestor,
-                empresa_id=self._codigo,
-                ejercicio=self._ejercicio,
-                usuario=getattr(self._session, "usuario", ""),
-                tipo_documento=tipo_documento,
-                fecha_contable=fecha_contable,
-            )
-            for path in paths:
-                try:
-                    resultado = svc.procesar_archivo(
-                        path,
-                        progress_callback=lambda documento: self._ocr_q.put(
-                            ("progress", documento)
-                        ),
-                    )
-                    self._ocr_q.put(("ok", resultado))
-                except Exception as exc:
-                    self._ocr_q.put(("error", str(exc)))
-        except Exception as exc:
-            self._ocr_q.put(("error", f"Error al iniciar OcrService: {exc}"))
-        finally:
-            self._ocr_q.put(("done", None))
 
     def _poll_ocr(self):
         changed = False
@@ -2607,7 +2421,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
                 text=" · ".join(dict.fromkeys(mensajes)) if mensajes else "Procesamiento finalizado."
             )
             self._ocr_thread = None
-            self._bloquear_opciones_importacion(False)
+            self._bloquear_filtros_tipo(False)
         else:
             self.after(300, self._poll_ocr)
 
@@ -2623,7 +2437,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
             return
         self._lbl_status.configure(text="Reprocesando...")
         self._ocr_mensajes = []
-        self._bloquear_opciones_importacion(True)
+        self._bloquear_filtros_tipo(True)
         t = threading.Thread(target=self._worker_reprocesar, args=(doc_id,), daemon=True)
         self._ocr_thread = t
         t.start()
@@ -2948,60 +2762,6 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         self._refresh_all()
 
     # ── Utilidades ────────────────────────────────────────────────────────────
-
-    def _capturar_asiento_a3(self):
-        """Lee desde A3 el numero de asiento de las facturas exportadas."""
-        from services.import_a3_empresa import leer_numero_asiento_desde_a3
-
-        tv = self._tvs.get("exportada_a3")
-        seleccionados = list(tv.selection()) if tv else []
-        if not seleccionados:
-            messagebox.showwarning(
-                "OCR", "Selecciona al menos una factura contabilizada.",
-                parent=self.winfo_toplevel(),
-            )
-            return
-
-        codigo_digitos = "".join(ch for ch in str(self._codigo or "") if ch.isdigit())
-        codigo_a3 = f"E{(codigo_digitos.zfill(5) if codigo_digitos else '00000')[:5]}"
-        ejercicio = int(self._ejercicio)
-        actualizadas, no_encontradas = [], []
-        for documento_id in seleccionados:
-            doc = self._gestor.get_factura_recibida_doc(documento_id)
-            if not doc or doc.get("estado_contable") not in {"exportada_a3", "contabilizada"}:
-                no_encontradas.append(str((doc or {}).get("numero_factura") or documento_id))
-                continue
-            numero = str(doc.get("numero_factura") or "").strip()[:10]
-            descripcion = str(doc.get("descripcion") or f"Su Fra Nº. {numero}").strip()
-            fecha = str(doc.get("fecha_asiento") or doc.get("fecha_factura") or "")
-            mes = None
-            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
-                try:
-                    from datetime import datetime
-                    mes = datetime.strptime(fecha, fmt).month
-                    break
-                except ValueError:
-                    pass
-            asiento = leer_numero_asiento_desde_a3(
-                codigo_a3, ejercicio, numero, descripcion, mes=mes,
-            )
-            if asiento and self._gestor.actualizar_numero_asiento_factura_recibida(
-                self._codigo, documento_id, asiento,
-            ):
-                actualizadas.append(f"{numero} -> asiento {asiento}")
-            else:
-                no_encontradas.append(numero or documento_id)
-
-        self._refresh_all()
-        partes = []
-        if actualizadas:
-            partes.append("Asientos capturados:\n" + "\n".join(actualizadas))
-        if no_encontradas:
-            partes.append(
-                "No encontradas en A3ECO (importa primero el suenlace):\n"
-                + "\n".join(no_encontradas)
-            )
-        messagebox.showinfo("OCR", "\n\n".join(partes) or "Sin cambios.", parent=self.winfo_toplevel())
 
     def _get_selected_id(self) -> str | None:
         try:

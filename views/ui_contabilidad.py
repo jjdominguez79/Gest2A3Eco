@@ -67,15 +67,7 @@ class UIContabilidad(ttk.Frame):
         bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 2))
         ttk.Button(bar, text="Generar asiento", style="Primary.TButton", command=self.controller.generar_asiento).pack(side=tk.LEFT)
         ttk.Button(bar, text="Editar asiento", command=self.controller.editar_asiento).pack(side=tk.LEFT, padx=(6, 0))
-        ttk.Button(
-            bar, text="Imprimir seleccionadas",
-            command=self.controller.imprimir_facturas,
-        ).pack(side=tk.LEFT, padx=(6, 0))
         ttk.Button(bar, text="Exportar suenlace.dat", command=self.controller.exportar_suenlace).pack(side=tk.LEFT, padx=6)
-        ttk.Button(
-            bar, text="Comprobar asiento en A3",
-            command=self.controller.capturar_numero_asiento_desde_a3,
-        ).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(
             bar, text="Devolver a Errores OCR",
             command=self.controller.devolver_a_ocr,
