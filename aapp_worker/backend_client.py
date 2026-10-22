@@ -18,7 +18,8 @@ class AappBackendClient:
     def _headers(self) -> dict:
         return {
             "X-API-Key": self.config.api_key,
-            "X-AAPP-Worker-Protocol": "3",
+            "X-AAPP-Worker-Protocol": "4",
+            "X-AAPP-Worker-Role": self.config.role,
         }
 
     def claim(self) -> dict | None:

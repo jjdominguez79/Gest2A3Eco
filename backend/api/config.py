@@ -125,6 +125,8 @@ class Settings:
     client_certificates_storage_dir: str
     client_certificates_allow_local_storage: bool
     aapp_worker_api_key: str
+    aapp_certificates_worker_api_key: str
+    aapp_notifications_worker_api_key: str
     client_master_sync_api_key: str
     # Permitir almacenamiento local como fallback (solo para tests/desarrollo)
     client_documents_allow_local_storage: bool
@@ -340,6 +342,12 @@ def get_settings() -> Settings:
             "CLIENT_CERTIFICATES_ALLOW_LOCAL_STORAGE", "false",
         ).strip().lower() in {"1", "true", "yes", "si"},
         aapp_worker_api_key=os.getenv("AAPP_WORKER_API_KEY", "").strip(),
+        aapp_certificates_worker_api_key=os.getenv(
+            "AAPP_CERTIFICATES_WORKER_API_KEY", "",
+        ).strip(),
+        aapp_notifications_worker_api_key=os.getenv(
+            "AAPP_NOTIFICATIONS_WORKER_API_KEY", "",
+        ).strip(),
         client_master_sync_api_key=os.getenv("CLIENT_MASTER_SYNC_API_KEY", ""),
         client_documents_allow_local_storage=os.getenv(
             "CLIENT_DOCUMENTS_ALLOW_LOCAL_STORAGE", "false",

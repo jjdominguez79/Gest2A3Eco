@@ -17,7 +17,12 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from backend.api.client_certificates_api import _db, _next_dehu_sync, router
+from backend.api.client_certificates_api import (
+    _db,
+    _next_dehu_sync,
+    claim_next_request,
+    router,
+)
 from backend.api.client_models import (
     ClientCertificateRequest,
     ClientCertificateSecret,
@@ -38,6 +43,7 @@ from backend.api.messaging_models import (
 )
 from backend.api.messaging_security import hash_token, utcnow
 from backend.api.security import (
+    require_aapp_worker_claim_role,
     require_aapp_worker_claim_protocol,
     require_aapp_worker_key,
     require_workstation_or_internal,
@@ -99,8 +105,59 @@ def _setup(monkeypatch, *, enabled=True):
     app.dependency_overrides[_db] = override_db
     app.dependency_overrides[require_workstation_or_internal] = lambda: "test"
     app.dependency_overrides[require_aapp_worker_key] = lambda: "test-worker"
+    app.dependency_overrides[require_aapp_worker_claim_role] = lambda: "all"
     app.dependency_overrides[require_aapp_worker_claim_protocol] = lambda: "test-protocol"
     return TestClient(app), factory, org_id, {"Authorization": f"Bearer {token}"}
+
+
+def test_workers_reclaman_solo_los_trabajos_de_su_rol(monkeypatch):
+    _client, factory, org_id, _ = _setup(monkeypatch)
+    now = utcnow()
+    with factory() as db:
+        old_retry = ClientCertificateRequest(
+            organization_id=org_id,
+            requester_type="staff",
+            certificate_type="DEHU_SYNC",
+            idempotency_key="separacion-dehu-antiguo",
+            attempt_count=5,
+            created_at=now - timedelta(minutes=10),
+        )
+        notification = ClientCertificateRequest(
+            organization_id=org_id,
+            requester_type="staff",
+            certificate_type="DEV_SYNC",
+            idempotency_key="separacion-dev-nuevo",
+            created_at=now - timedelta(minutes=5),
+        )
+        certificate = ClientCertificateRequest(
+            organization_id=org_id,
+            requester_type="staff",
+            certificate_type="AEAT_CENSAL",
+            idempotency_key="separacion-certificado",
+            created_at=now,
+        )
+        db.add_all((old_retry, notification, certificate))
+        db.commit()
+        notification_id = notification.id
+        certificate_id = certificate.id
+
+    with factory() as db:
+        claimed_certificate = claim_next_request(
+            db=db,
+            worker_role="certificates",
+            _protocol="test-protocol",
+        )["item"]
+    with factory() as db:
+        claimed_notification = claim_next_request(
+            db=db,
+            worker_role="notifications",
+            _protocol="test-protocol",
+        )["item"]
+
+    assert claimed_certificate["id"] == certificate_id
+    assert claimed_certificate["certificate_type"] == "AEAT_CENSAL"
+    assert claimed_notification["id"] == notification_id
+    assert claimed_notification["certificate_type"] == "DEV_SYNC"
 
 
 def test_cliente_crea_y_lista_solicitud(monkeypatch):

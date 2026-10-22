@@ -62,10 +62,15 @@ def test_aapp_worker_synology_es_aislado_y_usa_secreto_montado():
     requirements = (root / "requirements.txt").read_text(encoding="utf-8")
 
     assert "container_name:" not in compose
-    assert "image: gest2a3eco-aapp-worker:2026.09.25.1" in compose
+    assert "image: gest2a3eco-aapp-worker:2026.10.22.1" in compose
     assert "playwright==1.61.0" in requirements
     assert "AAPP_WORKER_API_KEY_FILE" in compose
-    assert "aapp_worker_api_key.txt" in compose
+    assert 'AAPP_WORKER_ROLE: "certificates"' in compose
+    assert 'AAPP_WORKER_ROLE: "notifications"' in compose
+    assert "aapp_certificates_worker_api_key.txt" in compose
+    assert "aapp_notifications_worker_api_key.txt" in compose
+    assert "aapp-certificates-worker:" in compose
+    assert "aapp-notifications-worker:" in compose
     assert "read_only: true" in compose
     assert "cap_drop:" in compose
     assert "COPY aapp_worker /app/aapp_worker" in dockerfile

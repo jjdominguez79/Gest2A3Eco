@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+WORKER_ROLES = {"certificates", "notifications"}
+
+
 def _required(name: str) -> str:
     value = str(os.environ.get(name) or "").strip()
     if not value:
@@ -26,6 +29,7 @@ def _secret(name: str) -> str:
 class AappWorkerConfig:
     backend_url: str
     api_key: str
+    role: str
     interval_seconds: int
     request_timeout_seconds: int
     headless: bool
@@ -35,9 +39,15 @@ class AappWorkerConfig:
     def from_environment(cls) -> "AappWorkerConfig":
         interval = max(10, int(os.environ.get("AAPP_INTERVAL_SECONDS", "30")))
         diagnostic = str(os.environ.get("AAPP_DIAGNOSTIC_DIR") or "").strip()
+        role = _required("AAPP_WORKER_ROLE").lower()
+        if role not in WORKER_ROLES:
+            raise ValueError(
+                "AAPP_WORKER_ROLE debe ser 'certificates' o 'notifications'"
+            )
         return cls(
             backend_url=_required("AAPP_BACKEND_URL").rstrip("/"),
             api_key=_secret("AAPP_WORKER_API_KEY_FILE"),
+            role=role,
             interval_seconds=interval,
             request_timeout_seconds=max(
                 30, int(os.environ.get("AAPP_REQUEST_TIMEOUT_SECONDS", "120")),

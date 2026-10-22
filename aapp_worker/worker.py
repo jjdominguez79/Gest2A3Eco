@@ -377,5 +377,5 @@ def main() -> None:
     worker = AappWorker(AappWorkerConfig.from_environment())
     signal.signal(signal.SIGTERM, worker.stop)
     signal.signal(signal.SIGINT, worker.stop)
-    LOG.info("Iniciando worker AAPP")
+    LOG.info("Iniciando worker AAPP con rol %s", worker.config.role)
     worker.run_forever()

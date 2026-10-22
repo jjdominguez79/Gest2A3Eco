@@ -57,6 +57,7 @@ from backend.api.messaging_models import (
 from backend.api.messaging_security import hash_token, is_expired, utcnow
 from backend.api.security import (
     require_aapp_worker_claim_protocol,
+    require_aapp_worker_claim_role,
     require_aapp_worker_key,
     require_workstation_or_internal,
 )
@@ -1853,32 +1854,45 @@ def _try_send_dehu_batch_summary(db: Session, batch_id: str | None) -> None:
 @router.post("/internal/worker/claim")
 def claim_next_request(
     db: Session = Depends(_db),
-    _auth: str = Depends(require_aapp_worker_key),
+    worker_role: str = Depends(require_aapp_worker_claim_role),
     _protocol: str = Depends(require_aapp_worker_claim_protocol),
 ):
     now = utcnow()
-    _enqueue_due_dehu_mailboxes(db, now)
-    _enqueue_due_dev_mailboxes(db, now)
+    if worker_role in {"notifications", "all"}:
+        _enqueue_due_dehu_mailboxes(db, now)
+        _enqueue_due_dev_mailboxes(db, now)
     stale_before = now - timedelta(minutes=15)
-    item = db.scalar(
-        select(ClientCertificateRequest).where(
-            or_(
-                and_(
-                    ClientCertificateRequest.status.in_({"queued", "awaiting_issuance"}),
-                    (
-                        ClientCertificateRequest.next_attempt_at.is_(None)
-                        | (ClientCertificateRequest.next_attempt_at <= now)
-                    ),
-                ),
-                and_(
-                    ClientCertificateRequest.status == "processing",
-                    ClientCertificateRequest.claimed_at < stale_before,
+    statement = select(ClientCertificateRequest).where(
+        or_(
+            and_(
+                ClientCertificateRequest.status.in_({"queued", "awaiting_issuance"}),
+                (
+                    ClientCertificateRequest.next_attempt_at.is_(None)
+                    | (ClientCertificateRequest.next_attempt_at <= now)
                 ),
             ),
-        ).order_by(ClientCertificateRequest.created_at).with_for_update(
-            skip_locked=True,
-        ).limit(1)
+            and_(
+                ClientCertificateRequest.status == "processing",
+                ClientCertificateRequest.claimed_at < stale_before,
+            ),
+        ),
     )
+    if worker_role == "certificates":
+        statement = statement.where(
+            ClientCertificateRequest.certificate_type.in_(tuple(CERTIFICATE_TYPES)),
+        ).order_by(ClientCertificateRequest.created_at)
+    elif worker_role == "notifications":
+        statement = statement.where(
+            ClientCertificateRequest.certificate_type.in_(
+                tuple(INTERNAL_OPERATION_TYPES),
+            ),
+        ).order_by(
+            ClientCertificateRequest.attempt_count,
+            ClientCertificateRequest.created_at,
+        )
+    else:
+        statement = statement.order_by(ClientCertificateRequest.created_at)
+    item = db.scalar(statement.with_for_update(skip_locked=True).limit(1))
     if not item:
         return {"item": None}
     item.status = "processing"

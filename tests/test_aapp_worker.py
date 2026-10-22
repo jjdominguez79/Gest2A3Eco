@@ -80,11 +80,26 @@ def _config(tmp_path):
     return AappWorkerConfig(
         backend_url="https://api.example.test",
         api_key="test",
+        role="certificates",
         interval_seconds=30,
         request_timeout_seconds=60,
         headless=True,
         diagnostic_dir=tmp_path / "diagnostico",
     )
+
+
+def test_configuracion_exige_un_rol_valido(monkeypatch, tmp_path):
+    secret = tmp_path / "worker-key.txt"
+    secret.write_text("worker-secret", encoding="utf-8")
+    monkeypatch.setenv("AAPP_BACKEND_URL", "https://api.example.test")
+    monkeypatch.setenv("AAPP_WORKER_API_KEY_FILE", str(secret))
+    monkeypatch.delenv("AAPP_WORKER_ROLE", raising=False)
+
+    with pytest.raises(ValueError, match="AAPP_WORKER_ROLE"):
+        AappWorkerConfig.from_environment()
+
+    monkeypatch.setenv("AAPP_WORKER_ROLE", "notifications")
+    assert AappWorkerConfig.from_environment().role == "notifications"
 
 
 def test_worker_publica_y_elimina_material_temporal(monkeypatch, tmp_path):
@@ -196,7 +211,8 @@ def test_cliente_worker_envia_protocolo_vigente(tmp_path):
     backend = AappBackendClient(_config(tmp_path), session=session)
 
     assert backend.claim() is None
-    assert session.headers["X-AAPP-Worker-Protocol"] == "3"
+    assert session.headers["X-AAPP-Worker-Protocol"] == "4"
+    assert session.headers["X-AAPP-Worker-Role"] == "certificates"
 
 
 def test_publicacion_automatica_solo_para_solicitudes_flutter(tmp_path):

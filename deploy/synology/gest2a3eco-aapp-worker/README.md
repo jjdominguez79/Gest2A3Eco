@@ -1,7 +1,9 @@
 # Gest2A3Eco AAPP worker
 
-Worker aislado para procesar en Synology las solicitudes de certificados AEAT
-y TGSS creadas desde el escritorio o Flutter.
+Imagen compartida por dos workers aislados en Synology: certificados AEAT/TGSS
+y notificaciones DEHu/DGT-DEV. Cada proceso usa una credencial y una cola
+distintas, de modo que un fallo prolongado de un portal de notificaciones no
+bloquea las solicitudes de certificados.
 
 La version 2026.09.18.2 ofrece tambien el certificado digital al origen exacto
 `https://ipce.seg-social.es`, utilizado por el login del tramite TGSS. Es
@@ -13,7 +15,7 @@ El diagnostico omite sesiones y tickets de las URL y prioriza controles no ocult
 
 La version 2026.09.18.4 distingue el PDF resguardo AEAT del certificado final
 mediante pypdf y conserva los dos documentos con identidades independientes.
-Usa el protocolo de cola 3: el backend rechaza workers anteriores para evitar
+Usa el protocolo de cola 4: el backend rechaza workers anteriores para evitar
 que una comprobacion de expediente se convierta en una nueva solicitud.
 El backend necesita la migracion 026_aeat_certificate_followup.sql. Desplegar
 backend y worker conjuntamente (y despues Flutter); no reiniciar una imagen vieja.
@@ -40,14 +42,16 @@ historico previo al alta. Nunca abre ni descarga documentos. Si una bandeja
 falla, no se importa un resultado parcial; el error incluye el estado HTTP
 cuando esta disponible.
 
-Antes de arrancar, crear `secrets/aapp_worker_api_key.txt` con el mismo valor de
-`AAPP_WORKER_API_KEY` configurado en Railway, sin comillas ni espacios.
+Antes de arrancar, crear `secrets/aapp_certificates_worker_api_key.txt` y
+`secrets/aapp_notifications_worker_api_key.txt` con los valores de
+`AAPP_CERTIFICATES_WORKER_API_KEY` y `AAPP_NOTIFICATIONS_WORKER_API_KEY`
+configurados en Railway. Deben ser diferentes y no llevar comillas ni espacios.
 
 ```sh
 docker compose config
-docker compose -p gest2a3eco-aapp-worker-v3 up --build -d
+docker compose -p gest2a3eco-aapp-worker-v4 up --build -d
 docker compose ps
-docker compose -p gest2a3eco-aapp-worker-v3 logs --tail=100 aapp-worker
+docker compose -p gest2a3eco-aapp-worker-v4 logs --tail=100 aapp-certificates-worker aapp-notifications-worker
 ```
 
 Los certificados de cliente y sus contrasenas solo existen durante cada

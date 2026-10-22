@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timedelta
 import json
 import re
+import secrets
 
 from pathlib import Path
 
@@ -251,10 +252,24 @@ def startup():
             ) from exc
 
     if cfg.client_certificates_enabled:
-        if not cfg.aapp_worker_api_key:
+        dedicated_worker_keys = (
+            cfg.aapp_certificates_worker_api_key,
+            cfg.aapp_notifications_worker_api_key,
+        )
+        if not cfg.aapp_worker_api_key and not all(dedicated_worker_keys):
             raise RuntimeError(
-                "AAPP_WORKER_API_KEY es obligatoria cuando "
-                "CLIENT_CERTIFICATES_ENABLED es true."
+                "AAPP_CERTIFICATES_WORKER_API_KEY y "
+                "AAPP_NOTIFICATIONS_WORKER_API_KEY son obligatorias cuando "
+                "CLIENT_CERTIFICATES_ENABLED es true (AAPP_WORKER_API_KEY "
+                "solo se admite durante la migracion)."
+            )
+        if (
+            all(dedicated_worker_keys)
+            and secrets.compare_digest(*dedicated_worker_keys)
+        ):
+            raise RuntimeError(
+                "Las credenciales de los workers de certificados y "
+                "notificaciones deben ser diferentes."
             )
         from backend.api.client_certificate_vault import validate_vault_configuration
         validate_vault_configuration()

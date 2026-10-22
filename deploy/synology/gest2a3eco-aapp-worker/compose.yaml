@@ -1,6 +1,6 @@
 services:
-  aapp-worker:
-    image: gest2a3eco-aapp-worker:2026.09.25.1
+  aapp-certificates-worker:
+    image: gest2a3eco-aapp-worker:2026.10.22.1
     build:
       context: .
       dockerfile: Dockerfile
@@ -11,7 +11,8 @@ services:
     shm_size: "512m"
     environment:
       AAPP_BACKEND_URL: "https://gest2a3eco-production.up.railway.app"
-      AAPP_WORKER_API_KEY_FILE: "/run/secrets/aapp_worker_api_key"
+      AAPP_WORKER_API_KEY_FILE: "/run/secrets/aapp_certificates_worker_api_key"
+      AAPP_WORKER_ROLE: "certificates"
       AAPP_INTERVAL_SECONDS: "10"
       AAPP_REQUEST_TIMEOUT_SECONDS: "120"
       AAPP_HEADLESS: "true"
@@ -19,17 +20,44 @@ services:
     # Un volumen gestionado conserva el propietario 10001 de la imagen. Los
     # bind mounts creados por DSM quedan como root y bloquean las capturas.
     volumes:
-      - "aapp-worker-diagnostico:/data/diagnostico"
+      - "aapp-certificates-diagnostico:/data/diagnostico"
     secrets:
-      - aapp_worker_api_key
+      - aapp_certificates_worker_api_key
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  aapp-notifications-worker:
+    image: gest2a3eco-aapp-worker:2026.10.22.1
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    shm_size: "512m"
+    environment:
+      AAPP_BACKEND_URL: "https://gest2a3eco-production.up.railway.app"
+      AAPP_WORKER_API_KEY_FILE: "/run/secrets/aapp_notifications_worker_api_key"
+      AAPP_WORKER_ROLE: "notifications"
+      AAPP_INTERVAL_SECONDS: "10"
+      AAPP_REQUEST_TIMEOUT_SECONDS: "120"
+      AAPP_HEADLESS: "true"
+      AAPP_DIAGNOSTIC_DIR: "/data/diagnostico"
+    volumes:
+      - "aapp-notifications-diagnostico:/data/diagnostico"
+    secrets:
+      - aapp_notifications_worker_api_key
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
 
 secrets:
-  aapp_worker_api_key:
-    file: ./secrets/aapp_worker_api_key.txt
+  aapp_certificates_worker_api_key:
+    file: ./secrets/aapp_certificates_worker_api_key.txt
+  aapp_notifications_worker_api_key:
+    file: ./secrets/aapp_notifications_worker_api_key.txt
 
 volumes:
-  aapp-worker-diagnostico:
+  aapp-certificates-diagnostico:
+  aapp-notifications-diagnostico:

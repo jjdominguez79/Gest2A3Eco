@@ -140,11 +140,13 @@ Copiar `dist_synology/gest2a3eco-aapp-worker` a
 `/volume1/docker/gest2a3eco-aapp-worker` y crear:
 
 ```text
-secrets/aapp_worker_api_key.txt
+secrets/aapp_certificates_worker_api_key.txt
+secrets/aapp_notifications_worker_api_key.txt
 ```
 
-El fichero debe contener exactamente el valor de Railway
-`AAPP_WORKER_API_KEY`, sin comillas. El PFX y su contrasena no se guardan en el
+Los ficheros deben contener exactamente los valores de Railway
+`AAPP_CERTIFICATES_WORKER_API_KEY` y `AAPP_NOTIFICATIONS_WORKER_API_KEY`, sin
+comillas y con valores diferentes. El PFX y su contrasena no se guardan en el
 NAS: el worker los descarga cifrados para una solicitud reclamada, los usa en
 `tmpfs` y los elimina al terminar.
 
@@ -153,5 +155,5 @@ cd /volume1/docker/gest2a3eco-aapp-worker
 docker compose config
 docker compose up --build -d
 docker compose ps
-docker compose logs --tail=100 aapp-worker
+docker compose logs --tail=100 aapp-certificates-worker aapp-notifications-worker
 ```

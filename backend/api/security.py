@@ -78,34 +78,72 @@ def require_workstation_or_internal(x_api_key: str = Header(default="")) -> str:
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credencial no valida")
 
 
+def _aapp_worker_identity(x_api_key: str) -> str | None:
+    settings = get_settings()
+    configured = (
+        (
+            "certificates",
+            getattr(settings, "aapp_certificates_worker_api_key", ""),
+        ),
+        (
+            "notifications",
+            getattr(settings, "aapp_notifications_worker_api_key", ""),
+        ),
+        ("legacy", getattr(settings, "aapp_worker_api_key", "")),
+    )
+    for identity, expected in configured:
+        if expected and secrets.compare_digest(x_api_key, expected):
+            return identity
+    return None
+
+
 def require_aapp_worker_key(x_api_key: str = Header(default="")) -> str:
-    """Credencial exclusiva del worker que maneja certificados privados."""
-    expected = get_settings().aapp_worker_api_key
-    if not expected or not secrets.compare_digest(x_api_key, expected):
+    """Acepta las credenciales independientes de los workers AAPP."""
+    identity = _aapp_worker_identity(x_api_key)
+    if identity is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Credencial del worker AAPP no valida",
         )
-    return "aapp-worker"
+    return identity
 
 
 def require_aapp_worker_claim_protocol(
     x_aapp_worker_protocol: str = Header(default=""),
 ) -> str:
     """Impide que workers obsoletos reclamen nuevas solicitudes."""
-    if not secrets.compare_digest(x_aapp_worker_protocol, "3"):
+    if not secrets.compare_digest(x_aapp_worker_protocol, "4"):
         raise HTTPException(
             status_code=status.HTTP_426_UPGRADE_REQUIRED,
             detail="El worker AAPP debe actualizarse antes de reclamar solicitudes",
         )
-    return "aapp-worker-protocol-3"
+    return "aapp-worker-protocol-4"
+
+
+def require_aapp_worker_claim_role(
+    x_aapp_worker_role: str = Header(default=""),
+    identity: str = Depends(require_aapp_worker_key),
+) -> str:
+    """Limita cada credencial a la cola asignada a su contenedor."""
+    role = (x_aapp_worker_role or "").strip().lower()
+    if role not in {"certificates", "notifications"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Rol del worker AAPP no valido",
+        )
+    if identity not in {"legacy", role}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="La credencial no esta autorizada para este rol AAPP",
+        )
+    return role
 
 
 def require_document_publisher(x_api_key: str = Header(default="")) -> str:
     """Publicadores autorizados: escritorio/interno y worker AAPP."""
-    worker_key = get_settings().aapp_worker_api_key
-    if worker_key and secrets.compare_digest(x_api_key, worker_key):
-        return "aapp-worker"
+    worker_identity = _aapp_worker_identity(x_api_key)
+    if worker_identity is not None:
+        return f"aapp-worker-{worker_identity}"
     return require_workstation_or_internal(x_api_key)
 
 
