@@ -138,10 +138,16 @@ class _ShareTargetSheetState extends ConsumerState<_ShareTargetSheet> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    final bottomPadding = MediaQuery.paddingOf(context).bottom;
     return FractionallySizedBox(
       heightFactor: 0.9,
       child: Padding(
-        padding: EdgeInsets.fromLTRB(16, 8, 16, 16 + bottomInset),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          8,
+          16,
+          16 + bottomInset + bottomPadding,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
