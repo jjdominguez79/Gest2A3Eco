@@ -1,6 +1,6 @@
 {
-  "version": "1.9.11",
-  "tag": "v1.9.11",
-  "changelog": "# Changelog — 22 de octubre de 2026\n\n## Revisión OCR\n\n### Corregido\n\n- Restaurada la vista previa de PDF en la aplicación de escritorio fijando una versión de PyMuPDF compatible con el ejecutable.\n- El alta desde una factura OCR crea conjuntamente el tercero y su subcuenta contable, también cuando la empresa utiliza el plan genérico.\n- La nueva subcuenta recibe automáticamente el NIF y el nombre detectados, queda vinculada al tercero y se marca como pendiente de alta en A3.\n- Al reutilizar un tercero existente se conservan sus datos y su configuración fiscal previa.\n\n## Calidad\n\n- Añadidas pruebas del cálculo de la siguiente subcuenta libre y de la creación y vinculación completa desde OCR.\n- Bloqueada la reutilización accidental de una subcuenta ya asignada.",
+  "version": "1.9.12",
+  "tag": "v1.9.12",
+  "changelog": "Se quitan varios botones que no son necesarios.",
   "force_update": true
 }
