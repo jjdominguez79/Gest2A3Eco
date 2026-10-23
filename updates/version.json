@@ -1,7 +1,7 @@
 {
-  "latest_version": "1.9.12",
-  "minimum_required_version": "1.9.12",
-  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.9.12/Setup_Gest2A3Eco_1.9.12.exe",
-  "changelog": "Se quitan varios botones que no son necesarios.",
+  "latest_version": "1.9.13",
+  "minimum_required_version": "1.9.13",
+  "download_url": "https://github.com/jjdominguez79/Gest2A3Eco/releases/download/v1.9.13/Setup_Gest2A3Eco_1.9.13.exe",
+  "changelog": "Gestion interna de etiquetas de clientes y campanas segmentadas por etiquetas.",
   "force_update": true
 }
