@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    pull_policy: build
     container_name: gest2a3eco-master-data-sync
     restart: unless-stopped
     read_only: true
