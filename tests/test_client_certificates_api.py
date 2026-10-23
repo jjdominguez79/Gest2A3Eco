@@ -825,6 +825,45 @@ def test_programacion_automatica_encola_todos_los_buzones_activos(monkeypatch):
         assert db.scalars(select(ClientDehuSyncBatch)).one().total_mailboxes == 2
 
 
+def test_programacion_dehu_reutiliza_solicitud_activa_sin_duplicarla(monkeypatch):
+    client, factory, org_id, _ = _setup(monkeypatch)
+    vencida = utcnow() - timedelta(minutes=1)
+    with factory() as db:
+        active_request = ClientCertificateRequest(
+            organization_id=org_id,
+            requester_type="staff",
+            requester_id="dehu-scheduler",
+            certificate_type="DEHU_SYNC",
+            parameters_json='{"company_code":"E00001"}',
+            idempotency_key="dehu-ya-activa",
+            status="queued",
+        )
+        config = ClientDehuMailboxConfig(
+            organization_id=org_id,
+            mailbox_id="mailbox-1",
+            active=True,
+            periodicity="DIARIA",
+            next_sync_at=vencida,
+        )
+        db.add_all([active_request, config])
+        db.commit()
+        active_request_id = active_request.id
+
+    response = client.post(
+        "/api/v1/messaging/client/certificates/internal/worker/claim",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["item"]["id"] == active_request_id
+    with factory() as db:
+        requests = list(db.scalars(select(ClientCertificateRequest)).all())
+        config = db.get(ClientDehuMailboxConfig, org_id)
+        assert len(requests) == 1
+        assert config.last_request_id == active_request_id
+        assert config.next_sync_at.replace(tzinfo=timezone.utc) > vencida
+        assert db.scalar(select(ClientDehuSyncBatch)) is None
+
+
 def test_hora_diaria_dehu_sigue_hora_de_madrid_con_cambio_estacional():
     invierno = datetime(2026, 1, 15, 8, 0, tzinfo=timezone.utc)
     verano = datetime(2026, 7, 15, 8, 0, tzinfo=timezone.utc)

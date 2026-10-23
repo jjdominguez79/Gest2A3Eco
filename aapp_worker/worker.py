@@ -375,7 +375,15 @@ class AappWorker:
 
     def run_forever(self) -> None:
         while not self.stop_event.is_set():
-            processed = self.run_once()
+            try:
+                processed = self.run_once()
+            except Exception:
+                LOG.exception(
+                    "No se pudo consultar la cola del backend; se reintentara en %s segundos",
+                    self.config.interval_seconds,
+                )
+                self.stop_event.wait(self.config.interval_seconds)
+                continue
             if not processed:
                 self.stop_event.wait(self.config.interval_seconds)
 

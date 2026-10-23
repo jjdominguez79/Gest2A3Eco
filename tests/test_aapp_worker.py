@@ -162,6 +162,28 @@ def test_worker_sin_trabajo_no_hace_nada(tmp_path):
     assert backend.failed is None
 
 
+def test_worker_sigue_vivo_si_el_backend_falla_temporalmente(monkeypatch, tmp_path):
+    worker = AappWorker(_config(tmp_path), backend=_Backend(None))
+    calls = 0
+
+    def run_once():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("500 Server Error")
+        worker.stop()
+        return False
+
+    waits = []
+    monkeypatch.setattr(worker, "run_once", run_once)
+    monkeypatch.setattr(worker.stop_event, "wait", lambda seconds: waits.append(seconds))
+
+    worker.run_forever()
+
+    assert calls == 2
+    assert waits == [30, 30]
+
+
 def test_worker_no_reintenta_un_certificado_que_requiere_intervencion(tmp_path):
     item = {
         "id": "request-dehu-certificado-caducado",

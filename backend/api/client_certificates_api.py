@@ -1615,6 +1615,26 @@ def _enqueue_due_dehu_mailboxes(db: Session, now: datetime) -> None:
     ).all()
     by_email: dict[str, list[tuple[ClientDehuMailboxConfig, MessagingOrganization]]] = {}
     for config, org in due:
+        active_request = db.scalar(
+            select(ClientCertificateRequest)
+            .where(
+                ClientCertificateRequest.organization_id == org.id,
+                ClientCertificateRequest.certificate_type == "DEHU_SYNC",
+                ClientCertificateRequest.status.in_(ACTIVE_STATUSES),
+            )
+            .order_by(ClientCertificateRequest.created_at.desc())
+            .limit(1)
+        )
+        if active_request is not None:
+            # La restriccion de la base de datos solo permite una operacion
+            # activa del mismo tipo por cliente. Si la anterior sigue en cola
+            # o procesandose, no debe impedir que el worker consulte el resto.
+            config.last_request_id = active_request.id
+            config.next_sync_at = _next_dehu_sync(
+                now, config.periodicity, config.daily_sync_time,
+            )
+            config.updated_at = now
+            continue
         by_email.setdefault(config.notification_email, []).append((config, org))
     for email, mailboxes in by_email.items():
         batch = ClientDehuSyncBatch(
@@ -1669,6 +1689,23 @@ def _enqueue_due_dev_mailboxes(db: Session, now: datetime) -> None:
         .with_for_update(skip_locked=True)
     ).all()
     for config, org in due:
+        active_request = db.scalar(
+            select(ClientCertificateRequest)
+            .where(
+                ClientCertificateRequest.organization_id == org.id,
+                ClientCertificateRequest.certificate_type == "DEV_SYNC",
+                ClientCertificateRequest.status.in_(ACTIVE_STATUSES),
+            )
+            .order_by(ClientCertificateRequest.created_at.desc())
+            .limit(1)
+        )
+        if active_request is not None:
+            config.last_request_id = active_request.id
+            config.next_sync_at = _next_dehu_sync(
+                now, config.periodicity, config.daily_sync_time,
+            )
+            config.updated_at = now
+            continue
         request_item = ClientCertificateRequest(
             organization_id=org.id,
             requester_type="staff",
