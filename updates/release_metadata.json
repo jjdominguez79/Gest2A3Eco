@@ -1,6 +1,6 @@
 {
-  "version": "1.9.12",
-  "tag": "v1.9.12",
-  "changelog": "Se quitan varios botones que no son necesarios.",
+  "version": "1.9.13",
+  "tag": "v1.9.13",
+  "changelog": "Gestion interna de etiquetas de clientes y campanas segmentadas por etiquetas.",
   "force_update": true
 }
