@@ -1,3 +1,5 @@
+import 'client_tag.dart';
+
 class ClientOrganization {
   const ClientOrganization({
     required this.companyCode,
@@ -12,6 +14,7 @@ class ClientOrganization {
     this.contactEmail = '',
     this.organizationEmail = '',
     this.invitationExpiresAt,
+    this.tags = const [],
   });
 
   factory ClientOrganization.fromJson(Map<String, dynamic> json) =>
@@ -31,6 +34,9 @@ class ClientOrganization {
         invitationExpiresAt: DateTime.tryParse(
           json['invitation_expires_at'] as String? ?? '',
         )?.toLocal(),
+        tags: (json['tags'] as List<dynamic>? ?? const [])
+            .map((item) => ClientTag.fromJson(item as Map<String, dynamic>))
+            .toList(growable: false),
       );
 
   final String companyCode;
@@ -45,6 +51,7 @@ class ClientOrganization {
   final String contactEmail;
   final String organizationEmail;
   final DateTime? invitationExpiresAt;
+  final List<ClientTag> tags;
 
   String get displayName => name.isEmpty ? companyCode : name;
 }

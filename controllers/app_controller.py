@@ -948,6 +948,18 @@ class AppController:
         dialog.controller = controller
         controller.refresh()
 
+    def open_client_tags_admin(self):
+        from views.ui_etiquetas_clientes import UIEtiquetasClientes
+
+        try:
+            self.authorization.ensure_admin()
+        except PermissionError as exc:
+            messagebox.showerror("Etiquetas", str(exc), parent=self._content.winfo_toplevel())
+            return
+        self._show(lambda parent: UIEtiquetasClientes(
+            parent, self._gestor, self._session, self.open_empresas,
+        ))
+
 
 # ── Contenedor OCR ────────────────────────────────────────────────────────────
 

@@ -40,7 +40,14 @@ class CampaignsScreen extends ConsumerWidget {
     final body = TextEditingController();
     var allClients = false;
     final groupIds = <String>{};
+    final tagIds = <String>{};
     final clientIds = <String>{};
+    final tagsById = {
+      for (final client in clients)
+        for (final tag in client.tags) tag.id: tag,
+    };
+    final tags = tagsById.values.toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     final accepted = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -84,6 +91,31 @@ class CampaignsScreen extends ConsumerWidget {
                         setState(() => allClients = value ?? false),
                   ),
                   if (!allClients) ...[
+                    if (tags.isNotEmpty) ...[
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Etiquetas',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      for (final tag in tags)
+                        CheckboxListTile(
+                          key: Key('broadcast-tag-${tag.id}'),
+                          value: tagIds.contains(tag.id),
+                          secondary: Icon(
+                            Icons.label,
+                            color: _tagColor(tag.color),
+                          ),
+                          title: Text(tag.name),
+                          dense: true,
+                          onChanged: (selected) => setState(
+                            () => selected == true
+                                ? tagIds.add(tag.id)
+                                : tagIds.remove(tag.id),
+                          ),
+                        ),
+                    ],
                     if (groups.isNotEmpty)
                       const Align(
                         alignment: Alignment.centerLeft,
@@ -147,6 +179,7 @@ class CampaignsScreen extends ConsumerWidget {
                   name.text.trim().isNotEmpty &&
                       body.text.trim().isNotEmpty &&
                       (allClients ||
+                          tagIds.isNotEmpty ||
                           groupIds.isNotEmpty ||
                           clientIds.isNotEmpty)
                   ? () => Navigator.pop(context, true)
@@ -167,6 +200,7 @@ class CampaignsScreen extends ConsumerWidget {
               channel: 'general',
               allClients: allClients,
               groupIds: groupIds.toList(),
+              tagIds: tagIds.toList(),
               clientIds: clientIds.toList(),
             );
         ref.invalidate(campaignsProvider);
@@ -245,4 +279,10 @@ class CampaignsScreen extends ConsumerWidget {
       ),
     );
   }
+}
+
+Color _tagColor(String value) {
+  final normalized = value.replaceFirst('#', '');
+  final parsed = int.tryParse(normalized, radix: 16);
+  return parsed == null ? const Color(0xFF6750A4) : Color(0xFF000000 | parsed);
 }

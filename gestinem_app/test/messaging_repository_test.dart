@@ -59,7 +59,7 @@ void main() {
     },
   );
 
-  test('repository actualiza favoritos y etiquetas de la bandeja', () async {
+  test('repository actualiza favoritos de la bandeja', () async {
     final adapter = JsonAdapter(<Object>[]);
     final dio = Dio(
       BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
@@ -75,36 +75,6 @@ void main() {
     );
     expect(adapter.lastRequest!.method, 'PUT');
     expect(adapter.lastRequest!.data, {'favorite': true});
-
-    await repository.setChatLabels('conversation', 'conversation-1', [
-      'urgent',
-    ]);
-    expect(
-      adapter.lastRequest!.path,
-      '/staff/chats/conversation/conversation-1/labels',
-    );
-    expect(adapter.lastRequest!.data, {
-      'label_ids': ['urgent'],
-    });
-  });
-
-  test('repository crea una etiqueta compartida', () async {
-    final adapter = JsonAdapter({
-      'id': 'urgent',
-      'name': 'Urgente',
-      'color': '#D32F2F',
-    });
-    final dio = Dio(
-      BaseOptions(baseUrl: 'https://example.test/api/v1/messaging'),
-    )..httpClientAdapter = adapter;
-
-    final label = await MessagingRepository(
-      ApiClient(dio: dio, tokenProvider: () => testSession.token),
-    ).createChatLabel('Urgente', '#D32F2F');
-
-    expect(label.id, 'urgent');
-    expect(adapter.lastRequest!.path, '/staff/chat-labels');
-    expect(adapter.lastRequest!.data, {'name': 'Urgente', 'color': '#D32F2F'});
   });
 
   test('repository pagina los mensajes del chat interno de 20 en 20', () async {

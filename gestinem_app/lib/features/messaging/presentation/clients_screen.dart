@@ -21,6 +21,7 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
   final _search = TextEditingController();
   final Set<String> _selected = {};
   String _status = 'all';
+  String? _tagId;
   bool _selecting = false;
   bool _bulkSending = false;
 
@@ -247,6 +248,15 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
               ),
               data: (rows) {
                 final query = _search.text.trim().toLowerCase();
+                final tagsById = {
+                  for (final row in rows)
+                    for (final tag in row.tags) tag.id: tag,
+                };
+                final tags = tagsById.values.toList()
+                  ..sort(
+                    (a, b) =>
+                        a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+                  );
                 final filtered =
                     rows.where((row) {
                         if (!row.active) return false;
@@ -255,8 +265,14 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
                         final matchesSearch =
                             query.isEmpty ||
                             row.companyCode.toLowerCase().contains(query) ||
-                            row.name.toLowerCase().contains(query);
-                        return matchesStatus && matchesSearch;
+                            row.name.toLowerCase().contains(query) ||
+                            row.tags.any(
+                              (tag) => tag.name.toLowerCase().contains(query),
+                            );
+                        final matchesTag =
+                            _tagId == null ||
+                            row.tags.any((tag) => tag.id == _tagId);
+                        return matchesStatus && matchesSearch && matchesTag;
                       }).toList()
                       ..sort((a, b) => a.displayName.compareTo(b.displayName));
                 final selectable = filtered.where(_canBulkInvite).toList();
@@ -273,6 +289,48 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
                 }
                 return Column(
                   children: [
+                    if (tags.isNotEmpty)
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                        child: Row(
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 3,
+                              ),
+                              child: FilterChip(
+                                key: const Key('clients-tag-all'),
+                                label: const Text('Todas las etiquetas'),
+                                selected: _tagId == null,
+                                onSelected: (_) =>
+                                    setState(() => _tagId = null),
+                              ),
+                            ),
+                            for (final tag in tags)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 3,
+                                ),
+                                child: FilterChip(
+                                  key: Key('clients-tag-${tag.id}'),
+                                  avatar: Icon(
+                                    Icons.label,
+                                    size: 16,
+                                    color: _clientTagColor(tag.color),
+                                  ),
+                                  label: Text(tag.name),
+                                  selected: _tagId == tag.id,
+                                  onSelected: (_) => setState(
+                                    () => _tagId = _tagId == tag.id
+                                        ? null
+                                        : tag.id,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
                     if (_selecting)
                       Material(
                         color: Theme.of(context).colorScheme.surfaceContainer,
@@ -352,7 +410,10 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
                               subtitle: Text(
                                 _selecting && !canInvite
                                     ? '${row.companyCode} · $unavailableReason'
-                                    : row.companyCode,
+                                    : [
+                                        row.companyCode,
+                                        ...row.tags.map((tag) => tag.name),
+                                      ].join(' · '),
                               ),
                               trailing: _selecting
                                   ? null
@@ -385,6 +446,11 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
       ),
     );
   }
+}
+
+Color _clientTagColor(String value) {
+  final parsed = int.tryParse(value.replaceFirst('#', ''), radix: 16);
+  return parsed == null ? const Color(0xFF6750A4) : Color(0xFF000000 | parsed);
 }
 
 const _filters = <(String, String)>[

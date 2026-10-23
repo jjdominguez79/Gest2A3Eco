@@ -164,6 +164,15 @@ class UIConfiguracionEmpresa(ttk.Frame):
         nb.pack(fill="both", expand=True, padx=16, pady=(0, 12))
 
         self._build_general_tab(ttk.Frame(nb, padding=14), nb)
+        role = str(
+            getattr(
+                getattr(self._session, "role", ""),
+                "value",
+                getattr(self._session, "role", ""),
+            )
+        ).lower()
+        if role in {"admin", "empleado"}:
+            self._build_etiquetas_tab(ttk.Frame(nb, padding=14), nb)
         self._build_exercises_tab(ttk.Frame(nb, padding=14), nb)
         self._build_banks_tab(ttk.Frame(nb, padding=14), nb)
         self._build_notificaciones_tab(ttk.Frame(nb, padding=14), nb)
@@ -241,6 +250,63 @@ class UIConfiguracionEmpresa(ttk.Frame):
         self.txt_a3_preview.configure(yscrollcommand=scroll.set)
 
     # ── Pestana Ejercicios ─────────────────────────────────────────────────────
+
+    def _build_etiquetas_tab(self, tab, nb):
+        nb.add(tab, text="Etiquetas internas")
+        tab.columnconfigure(0, weight=1)
+        ttk.Label(
+            tab,
+            text=(
+                "Clasificacion privada del despacho. Estas etiquetas nunca son "
+                "visibles para los clientes."
+            ),
+            wraplength=760,
+        ).grid(row=0, column=0, sticky="w", pady=(0, 12))
+        self.lbl_etiquetas_cliente = ttk.Label(
+            tab, text="", font=("Segoe UI", 10, "bold"), wraplength=760,
+        )
+        self.lbl_etiquetas_cliente.grid(row=1, column=0, sticky="nw")
+        self.btn_etiquetas_cliente = ttk.Button(
+            tab, text="Asignar etiquetas", command=self._assign_client_tags,
+        )
+        self.btn_etiquetas_cliente.grid(row=2, column=0, sticky="w", pady=(16, 0))
+        if not (self._session and self._session.is_admin()) or not self._codigo:
+            self.btn_etiquetas_cliente.state(["disabled"])
+        self._refresh_client_tags()
+
+    def _refresh_client_tags(self):
+        if not hasattr(self, "lbl_etiquetas_cliente"):
+            return
+        rows = self._gestor.listar_etiquetas_empresa(self._codigo) if self._codigo else []
+        text = "  ·  ".join(
+            str(row.get("nombre") or "") for row in rows
+        ) or "Sin etiquetas asignadas"
+        self.lbl_etiquetas_cliente.configure(text=text)
+
+    def _assign_client_tags(self):
+        if not self._session or not self._session.is_admin() or not self._codigo:
+            return
+        from views.ui_etiquetas_clientes import seleccionar_etiquetas
+
+        current = {
+            str(row.get("etiqueta_id") or "")
+            for row in self._gestor.listar_etiquetas_empresa(self._codigo)
+        }
+        selected = seleccionar_etiquetas(
+            self.winfo_toplevel(), self._gestor, current,
+            titulo=f"Etiquetas de {self._empresa.get('nombre') or self._codigo}",
+        )
+        if selected is None:
+            return
+        usuario = str(getattr(getattr(self._session, "user", None), "nombre", "") or "")
+        try:
+            self._gestor.actualizar_etiquetas_empresas(
+                [self._codigo], list(selected), "reemplazar", usuario,
+            )
+        except Exception as exc:
+            messagebox.showerror("Etiquetas", str(exc), parent=self.winfo_toplevel())
+            return
+        self._refresh_client_tags()
 
     def _build_exercises_tab(self, tab, nb):
         nb.add(tab, text="Ejercicios")

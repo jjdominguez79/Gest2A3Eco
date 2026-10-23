@@ -27,11 +27,11 @@ from backend.api.client_access import revoke_organization_client_access
 from backend.api.config import get_settings
 from backend.api.database import SessionLocal, get_db
 from backend.api.messaging_models import (
-    MessagingAttachment, MessagingClient, MessagingConversation, MessagingConversationAlias, MessagingDevice, MessagingDownload,
+    MessagingAttachment, MessagingClient, MessagingClientTag, MessagingConversation, MessagingConversationAlias, MessagingDevice, MessagingDownload,
     MessagingAppDevice, MessagingCampaign, MessagingCampaignRecipient,
     MessagingChatLabel, MessagingChatLabelLink, MessagingChatPreference,
     MessagingDeletionAudit, MessagingEvent, MessagingGroup, MessagingGroupMember,
-    MessagingInvitation, MessagingInvitationContent, MessagingMessage, MessagingMessageReaction, MessagingMessageVersion, MessagingOrganization,
+    MessagingInvitation, MessagingInvitationContent, MessagingMessage, MessagingMessageReaction, MessagingMessageVersion, MessagingOrganization, MessagingOrganizationTag,
     MessagingPasswordReset, MessagingPresence, MessagingRead, MessagingReceipt, MessagingSession, MessagingStaff,
     MessagingProfileChangeRequest,
     MessagingStaffAuthFlow, MessagingStaffChannel, MessagingStaffSession,
@@ -282,6 +282,7 @@ class CampaignIn(BaseModel):
     channel: str = "general"
     all_clients: bool = False
     group_ids: list[str] = Field(default_factory=list)
+    tag_ids: list[str] = Field(default_factory=list)
     client_ids: list[str] = Field(default_factory=list)
     scheduled_at: datetime | None = None
 
@@ -2416,6 +2417,33 @@ def _chat_label_json(item: MessagingChatLabel) -> dict:
     return {"id": item.id, "name": item.name, "color": item.color}
 
 
+def _client_tag_json(item: MessagingClientTag) -> dict:
+    return {"id": item.id, "name": item.name, "color": item.color}
+
+
+def _client_tags_by_organization(
+    db: Session, organization_ids: set[str],
+) -> dict[str, list[dict]]:
+    if not organization_ids:
+        return {}
+    rows = db.execute(
+        select(MessagingOrganizationTag.organization_id, MessagingClientTag)
+        .join(
+            MessagingClientTag,
+            MessagingClientTag.id == MessagingOrganizationTag.tag_id,
+        )
+        .where(
+            MessagingOrganizationTag.organization_id.in_(organization_ids),
+            MessagingClientTag.active.is_(True),
+        )
+        .order_by(func.lower(MessagingClientTag.name), MessagingClientTag.id)
+    ).all()
+    result: dict[str, list[dict]] = {}
+    for organization_id, tag in rows:
+        result.setdefault(organization_id, []).append(_client_tag_json(tag))
+    return result
+
+
 def _add_chat_metadata(
     db: Session,
     items: list[dict],
@@ -2436,23 +2464,39 @@ def _add_chat_metadata(
         ))
     }
     labels_by_target: dict[str, list[dict]] = {}
-    label_rows = db.execute(
-        select(MessagingChatLabelLink, MessagingChatLabel)
-        .join(
-            MessagingChatLabel,
-            MessagingChatLabel.id == MessagingChatLabelLink.label_id,
+    if target_type == "conversation":
+        conversations = db.execute(select(
+            MessagingConversation.id, MessagingConversation.organization_id,
+        ).where(MessagingConversation.id.in_(target_ids))).all()
+        organization_by_target = {
+            conversation_id: organization_id
+            for conversation_id, organization_id in conversations
+        }
+        by_organization = _client_tags_by_organization(
+            db, set(organization_by_target.values()),
         )
-        .where(
-            MessagingChatLabelLink.target_type == target_type,
-            MessagingChatLabelLink.target_id.in_(target_ids),
-            MessagingChatLabel.active.is_(True),
-        )
-        .order_by(func.lower(MessagingChatLabel.name), MessagingChatLabel.id)
-    ).all()
-    for link, label in label_rows:
-        labels_by_target.setdefault(link.target_id, []).append(
-            _chat_label_json(label),
-        )
+        labels_by_target = {
+            target_id: by_organization.get(organization_id, [])
+            for target_id, organization_id in organization_by_target.items()
+        }
+    else:
+        label_rows = db.execute(
+            select(MessagingChatLabelLink, MessagingChatLabel)
+            .join(
+                MessagingChatLabel,
+                MessagingChatLabel.id == MessagingChatLabelLink.label_id,
+            )
+            .where(
+                MessagingChatLabelLink.target_type == target_type,
+                MessagingChatLabelLink.target_id.in_(target_ids),
+                MessagingChatLabel.active.is_(True),
+            )
+            .order_by(func.lower(MessagingChatLabel.name), MessagingChatLabel.id)
+        ).all()
+        for link, label in label_rows:
+            labels_by_target.setdefault(link.target_id, []).append(
+                _chat_label_json(label),
+            )
     for item in items:
         item["is_favorite"] = bool(favorites.get(item["id"], False))
         item["labels"] = labels_by_target.get(item["id"], [])
@@ -2478,43 +2522,18 @@ def list_chat_labels(
     _staff_item: MessagingStaff = Depends(_staff),
     db: Session = Depends(get_db),
 ):
-    rows = db.scalars(select(MessagingChatLabel).where(
-        MessagingChatLabel.active.is_(True),
-    ).order_by(func.lower(MessagingChatLabel.name), MessagingChatLabel.id)).all()
-    return [_chat_label_json(item) for item in rows]
+    rows = db.scalars(select(MessagingClientTag).where(
+        MessagingClientTag.active.is_(True),
+    ).order_by(func.lower(MessagingClientTag.name), MessagingClientTag.id)).all()
+    return [_client_tag_json(item) for item in rows]
 
 
 @router.post("/staff/chat-labels", status_code=201)
 def create_chat_label(
-    payload: ChatLabelIn,
-    staff: MessagingStaff = Depends(_staff),
-    db: Session = Depends(get_db),
+    _payload: ChatLabelIn,
+    _staff_item: MessagingStaff = Depends(_staff),
 ):
-    name = " ".join(payload.name.split())
-    if not name:
-        raise HTTPException(422, "La etiqueta necesita un nombre")
-    existing = db.scalar(select(MessagingChatLabel).where(
-        func.lower(MessagingChatLabel.name) == name.lower(),
-    ))
-    if existing and existing.active:
-        raise HTTPException(409, "Ya existe una etiqueta con ese nombre")
-    if existing:
-        existing.name = name
-        existing.color = payload.color.upper()
-        existing.active = True
-        existing.created_by = staff.external_id
-        item = existing
-    else:
-        item = MessagingChatLabel(
-            name=name,
-            color=payload.color.upper(),
-            created_by=staff.external_id,
-        )
-        db.add(item)
-    db.commit()
-    db.refresh(item)
-    hub.publish({"type": "inbox.metadata_updated"})
-    return _chat_label_json(item)
+    raise HTTPException(409, "Las etiquetas de clientes se administran desde Gest2A3Eco")
 
 
 @router.put("/staff/chats/{target_type}/{target_id}/favorite")
@@ -2555,41 +2574,14 @@ def set_chat_favorite(
 def set_chat_labels(
     target_type: str,
     target_id: str,
-    payload: ChatLabelsIn,
+    _payload: ChatLabelsIn,
     staff: MessagingStaff = Depends(_staff),
     db: Session = Depends(get_db),
 ):
     _require_chat_target(db, staff, target_type, target_id)
-    label_ids = set(payload.label_ids)
-    labels = list(db.scalars(select(MessagingChatLabel).where(
-        MessagingChatLabel.id.in_(label_ids),
-        MessagingChatLabel.active.is_(True),
-    ))) if label_ids else []
-    if {label.id for label in labels} != label_ids:
-        raise HTTPException(422, "Alguna etiqueta no existe o esta inactiva")
-    current = list(db.scalars(select(MessagingChatLabelLink).where(
-        MessagingChatLabelLink.target_type == target_type,
-        MessagingChatLabelLink.target_id == target_id,
-    )))
-    current_by_label = {link.label_id: link for link in current}
-    for label_id, link in current_by_label.items():
-        if label_id not in label_ids:
-            db.delete(link)
-    for label_id in label_ids - current_by_label.keys():
-        db.add(MessagingChatLabelLink(
-            label_id=label_id,
-            target_type=target_type,
-            target_id=target_id,
-            assigned_by=staff.external_id,
-        ))
-    db.commit()
-    ordered = sorted(labels, key=lambda label: (label.name.lower(), label.id))
-    hub.publish({
-        "type": "inbox.metadata_updated",
-        "target_type": target_type,
-        "target_id": target_id,
-    })
-    return [_chat_label_json(label) for label in ordered]
+    raise HTTPException(
+        409, "Las etiquetas de clientes se asignan desde Gest2A3Eco",
+    )
 
 
 @router.get("/staff/internal/threads")
@@ -3357,6 +3349,9 @@ def staff_organizations(
         .where(MessagingOrganization.active.is_(True))
         .order_by(MessagingOrganization.name)
     ).all()
+    tags_by_organization = _client_tags_by_organization(
+        db, {row.id for row in rows},
+    )
     result = []
     for row in rows:
         if (
@@ -3378,6 +3373,7 @@ def staff_organizations(
             "contact_name": access["contact_name"],
             "contact_email": access["contact_email"],
             "invitation_expires_at": access["invitation_expires_at"],
+            "tags": tags_by_organization.get(row.id, []),
         })
     return result
 
@@ -5984,11 +5980,15 @@ def campaign_client_targets(
         .where(MessagingClient.active.is_(True))
         .order_by(MessagingClient.name, MessagingClient.email)
     ).all()
+    tags_by_organization = _client_tags_by_organization(
+        db, {client.organization_id for client, _organization in rows},
+    )
     return [{
         "id": client.id, "name": client.name, "email": client.email,
         "organization_id": client.organization_id,
         "company_code": organization.company_code if organization else "",
         "company_name": organization.name if organization else "",
+        "tags": tags_by_organization.get(client.organization_id, []),
     } for client, organization in rows]
 
 
@@ -6022,6 +6022,21 @@ def create_campaign(
         client_ids.update(db.scalars(select(MessagingGroupMember.member_id).where(
             MessagingGroupMember.group_id.in_(valid_groups),
             MessagingGroupMember.member_type == "client",
+        )))
+    if payload.tag_ids:
+        tag_ids = set(payload.tag_ids)
+        valid_tags = set(db.scalars(select(MessagingClientTag.id).where(
+            MessagingClientTag.id.in_(tag_ids),
+            MessagingClientTag.active.is_(True),
+        )))
+        if valid_tags != tag_ids:
+            raise HTTPException(422, "Alguna etiqueta de clientes no es valida")
+        organization_ids = select(MessagingOrganizationTag.organization_id).where(
+            MessagingOrganizationTag.tag_id.in_(valid_tags),
+        )
+        client_ids.update(db.scalars(select(MessagingClient.id).where(
+            MessagingClient.organization_id.in_(organization_ids),
+            MessagingClient.active.is_(True),
         )))
     existing_clients = set(db.scalars(select(MessagingClient.id).where(
         MessagingClient.id.in_(client_ids), MessagingClient.active.is_(True),

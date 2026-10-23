@@ -47,6 +47,40 @@ class MessagingOrganization(Base):
     client_subsidies_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 
+class MessagingClientTag(Base):
+    """Clasificacion interna de organizaciones mantenida por el escritorio."""
+
+    __tablename__ = "msg_client_tags"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(80), unique=True)
+    color: Mapped[str] = mapped_column(
+        String(7), default="#6750A4", server_default=text("'#6750A4'"),
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=text("now()"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow,
+        server_default=text("now()"),
+    )
+
+
+class MessagingOrganizationTag(Base):
+    __tablename__ = "msg_organization_tags"
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_organizations.id", ondelete="CASCADE"), primary_key=True,
+    )
+    tag_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_client_tags.id", ondelete="CASCADE"), primary_key=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=text("now()"),
+    )
+
+
 class MessagingStaff(Base):
     __tablename__ = "msg_staff"
     external_id: Mapped[str] = mapped_column(String(64), primary_key=True)

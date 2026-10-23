@@ -62,16 +62,24 @@ def test_worker_publica_perfil_clientes_y_serie_solo_hacia_backend(monkeypatch):
         "tax_id": "A12345678", "legal_name": "Cliente", "active": True,
         "desktop_tercero_id": "ter-1", "desktop_subcuenta": "43000001",
     }])
+    monkeypatch.setattr(worker, "_load_client_tags", lambda: ([{
+        "id": "tag-debt", "name": "Cuota pendiente",
+        "color": "#D32F2F", "active": True,
+    }], {"E00006": ["tag-debt"]}))
 
     assert worker.run_once() == {
         "companies": 1, "customers": 1, "staff": 1, "logos": 0,
+        "tags": 1, "tag_assignments": 1,
     }
-    assert [method for method, *_ in session.calls] == ["PUT", "PUT", "POST", "POST"]
+    assert [method for method, *_ in session.calls] == [
+        "PUT", "PUT", "POST", "POST", "PUT",
+    ]
 
     snapshot = session.calls[0][2]["json"]
     profile = session.calls[1][2]["json"]
     customers = session.calls[2][2]["json"]
     series = session.calls[3][2]["json"]
+    tags = session.calls[4][2]["json"]
     assert snapshot["staff"][0]["email"] == "ana@example.com"
     assert profile["company_code"] == "E00006"
     assert customers == {
@@ -84,6 +92,16 @@ def test_worker_publica_perfil_clientes_y_serie_solo_hacia_backend(monkeypatch):
     }
     assert series["series_code"] == "APP"
     assert series["fiscal_year"] == 2026
+    assert tags == {
+        "tags": [{
+            "id": "tag-debt", "name": "Cuota pendiente",
+            "color": "#D32F2F", "active": True,
+        }],
+        "assignments": [{
+            "company_code": "E00006", "tag_ids": ["tag-debt"],
+        }],
+        "full_snapshot": True,
+    }
     assert all(call[2]["headers"]["X-API-Key"] == "secret" for call in session.calls)
 
 
@@ -120,6 +138,7 @@ def test_worker_envia_la_baja_de_la_empresa_al_backend(monkeypatch):
     }])
     monkeypatch.setattr(worker, "_load_staff", lambda: [])
     monkeypatch.setattr(worker, "_load_customers", lambda _code: [])
+    monkeypatch.setattr(worker, "_load_client_tags", lambda: ([], {}))
 
     worker.run_once()
 
@@ -145,6 +164,7 @@ def test_worker_publica_logo_desde_assets_compartidos(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(worker, "_load_staff", lambda: [])
     monkeypatch.setattr(worker, "_load_customers", lambda _code: [])
+    monkeypatch.setattr(worker, "_load_client_tags", lambda: ([], {}))
     monkeypatch.setattr(worker, "_load_companies", lambda: [{
         "codigo": "E00006", "ejercicio": 2026, "nombre": "Empresa Demo",
         "activo": True, "cif": "B12345678", "direccion": "", "cp": "",

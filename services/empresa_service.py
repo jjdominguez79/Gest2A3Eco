@@ -17,6 +17,28 @@ class EmpresaService:
                 continue
             grouped.setdefault(codigo, []).append(dict(row))
 
+        etiquetas_por_empresa: dict[str, list[dict]] = {}
+        security = getattr(self._gestor, "security", None)
+        session = getattr(security, "session", None)
+        role = str(
+            getattr(
+                getattr(session, "role", ""),
+                "value",
+                getattr(session, "role", ""),
+            )
+        ).lower()
+        listar_asignaciones = None if role == "cliente" else getattr(
+            self._gestor, "listar_asignaciones_etiquetas_clientes", None,
+        )
+        asignaciones = listar_asignaciones() if callable(listar_asignaciones) else []
+        for row in asignaciones:
+            codigo = str(row.get("codigo_empresa") or "").strip()
+            etiquetas_por_empresa.setdefault(codigo, []).append({
+                "id": str(row.get("etiqueta_id") or ""),
+                "nombre": str(row.get("nombre") or ""),
+                "color": str(row.get("color") or "#6750A4"),
+            })
+
         filtro = str(query or "").strip().lower()
         out = []
         for codigo, items in grouped.items():
@@ -39,6 +61,7 @@ class EmpresaService:
                 "ejercicios_txt": ", ".join(str(x) for x in ejercicios),
                 "permiso": permiso,
                 "estado_configuracion": estado,
+                "etiquetas": etiquetas_por_empresa.get(codigo, []),
             }
             if not include_inactive and not item["activo"]:
                 continue
@@ -48,6 +71,7 @@ class EmpresaService:
                     item["nombre"],
                     item["cif"],
                     item["ejercicios_txt"],
+                    " ".join(tag["nombre"] for tag in item["etiquetas"]),
                 ]
             ).lower()
             if filtro and filtro not in text:
@@ -55,6 +79,23 @@ class EmpresaService:
             out.append(item)
         out.sort(key=lambda row: (str(row.get("nombre") or "").lower(), str(row.get("codigo") or "")))
         return out
+
+    def listar_etiquetas_clientes(self) -> list[dict]:
+        return self._gestor.listar_etiquetas_clientes()
+
+    def actualizar_etiquetas_empresas(
+        self,
+        codigos: list[str],
+        etiqueta_ids: list[str],
+        modo: str,
+        usuario: str = "",
+    ) -> int:
+        return int(
+            self._gestor.actualizar_etiquetas_empresas(
+                codigos, etiqueta_ids, modo, usuario,
+            )
+            or 0
+        )
 
     def actualizar_estado_empresas(
         self,

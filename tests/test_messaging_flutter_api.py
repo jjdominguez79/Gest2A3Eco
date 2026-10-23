@@ -292,10 +292,10 @@ def test_chat_interno_devuelve_ultimos_20_y_pagina_hacia_atras(
     assert invalid_cursor.status_code == 422
 
 
-def test_bandeja_guarda_favoritos_personales_y_etiquetas_compartidas(
+def test_etiquetas_de_empresa_son_privadas_y_solo_se_gestionan_desde_escritorio(
     tmp_path, monkeypatch,
 ):
-    client, _, staff_headers, _, _, conv_id = _setup(tmp_path, monkeypatch)
+    client, _, staff_headers, auth, _, conv_id = _setup(tmp_path, monkeypatch)
     admin = staff_headers("admin")
     employee = staff_headers("employee")
     thread = client.post(
@@ -303,32 +303,40 @@ def test_bandeja_guarda_favoritos_personales_y_etiquetas_compartidas(
         headers=admin,
     ).json()
 
-    created = client.post(
+    blocked = client.post(
         "/api/v1/messaging/staff/chat-labels",
         headers=admin,
         json={"name": "Urgente", "color": "#d32f2f"},
     )
-    assert created.status_code == 201
-    label = created.json()
-    assert label["color"] == "#D32F2F"
-    assert client.post(
-        "/api/v1/messaging/staff/chat-labels",
-        headers=employee,
-        json={"name": "urgente", "color": "#1976D2"},
-    ).status_code == 409
+    assert blocked.status_code == 409
+
+    synced = client.put(
+        "/api/v1/messaging/client/internal/client-tags-snapshot",
+        headers={"X-API-Key": "test-secret"},
+        json={
+            "tags": [{
+                "id": "tag-debt", "name": "Cuota pendiente",
+                "color": "#D32F2F", "active": True,
+            }],
+            "assignments": [{
+                "company_code": "E10001", "tag_ids": ["tag-debt"],
+            }],
+            "full_snapshot": True,
+        },
+    )
+    assert synced.status_code == 200
+    label = {
+        "id": "tag-debt", "name": "Cuota pendiente", "color": "#D32F2F",
+    }
 
     target = f"/api/v1/messaging/staff/chats/internal_thread/{thread['id']}"
     assert client.put(
         f"{target}/favorite", headers=admin, json={"favorite": True},
     ).status_code == 200
-    assigned = client.put(
-        f"{target}/labels",
-        headers=admin,
+    assert client.put(
+        f"{target}/labels", headers=admin,
         json={"label_ids": [label["id"]]},
-    )
-    assert assigned.status_code == 200
-    assert assigned.json() == [label]
-
+    ).status_code == 409
     admin_thread = next(
         item for item in client.get(
             "/api/v1/messaging/staff/internal/threads", headers=admin,
@@ -336,7 +344,7 @@ def test_bandeja_guarda_favoritos_personales_y_etiquetas_compartidas(
         if item["id"] == thread["id"]
     )
     assert admin_thread["is_favorite"] is True
-    assert admin_thread["labels"] == [label]
+    assert admin_thread["labels"] == []
 
     employee_thread = next(
         item for item in client.get(
@@ -345,7 +353,7 @@ def test_bandeja_guarda_favoritos_personales_y_etiquetas_compartidas(
         if item["id"] == thread["id"]
     )
     assert employee_thread["is_favorite"] is False
-    assert employee_thread["labels"] == [label]
+    assert employee_thread["labels"] == []
 
     conversation_target = (
         f"/api/v1/messaging/staff/chats/conversation/{conv_id}"
@@ -359,7 +367,7 @@ def test_bandeja_guarda_favoritos_personales_y_etiquetas_compartidas(
         f"{conversation_target}/labels",
         headers=admin,
         json={"label_ids": [label["id"]]},
-    ).status_code == 200
+    ).status_code == 409
     conversation = next(
         item for item in client.get(
             "/api/v1/messaging/staff/conversations", headers=admin,
@@ -382,6 +390,74 @@ def test_bandeja_guarda_favoritos_personales_y_etiquetas_compartidas(
     assert client.get(
         "/api/v1/messaging/staff/chat-labels", headers=employee,
     ).json() == [label]
+
+    organizations = client.get(
+        "/api/v1/messaging/staff/organizations", headers=employee,
+    )
+    assert organizations.status_code == 200
+    assert organizations.json()[0]["tags"] == [label]
+
+    # La API del cliente nunca expone la clasificacion interna.
+    client_conversations = client.get(
+        "/api/v1/messaging/client/conversations",
+        headers=auth,
+    )
+    assert client_conversations.status_code == 200
+    assert all("labels" not in row and "tags" not in row for row in client_conversations.json())
+
+    cleared = client.put(
+        "/api/v1/messaging/client/internal/client-tags-snapshot",
+        headers={"X-API-Key": "test-secret"},
+        json={
+            "tags": [],
+            "assignments": [{"company_code": "E10001", "tag_ids": []}],
+            "full_snapshot": True,
+        },
+    )
+    assert cleared.status_code == 200
+    assert client.get(
+        "/api/v1/messaging/staff/chat-labels", headers=admin,
+    ).json() == []
+
+
+def test_campana_admite_destinatarios_por_etiqueta_de_empresa(
+    tmp_path, monkeypatch,
+):
+    client, _, staff_headers, _, _, _ = _setup(tmp_path, monkeypatch)
+    internal = {"X-API-Key": "test-secret"}
+    assert client.put(
+        "/api/v1/messaging/client/internal/client-tags-snapshot",
+        headers=internal,
+        json={
+            "tags": [{
+                "id": "tag-fiscal", "name": "Campana fiscal",
+                "color": "#1976D2", "active": True,
+            }],
+            "assignments": [{
+                "company_code": "E10001", "tag_ids": ["tag-fiscal"],
+            }],
+            "full_snapshot": True,
+        },
+    ).status_code == 200
+
+    created = client.post(
+        "/api/v1/messaging/staff/admin/campaigns",
+        headers=staff_headers("admin"),
+        json={
+            "name": "Aviso fiscal", "body": "Mensaje de prueba",
+            "tag_ids": ["tag-fiscal"],
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["recipient_count"] == 1
+    assert client.post(
+        "/api/v1/messaging/staff/admin/campaigns",
+        headers=staff_headers("admin"),
+        json={
+            "name": "Invalida", "body": "Mensaje de prueba",
+            "tag_ids": ["tag-inexistente"],
+        },
+    ).status_code == 422
 
 
 def test_mencion_estructurada_en_grupo_identifica_y_avisa_al_destinatario(
@@ -2049,6 +2125,7 @@ def test_selector_clientes_usa_un_join_y_mantiene_contrato(tmp_path, monkeypatch
         "organization_id": response.json()[0]["organization_id"],
         "company_code": "E10001",
         "company_name": "Cliente Uno",
+        "tags": [],
     }]
     target_queries = [
         statement for statement in statements

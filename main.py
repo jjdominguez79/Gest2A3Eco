@@ -89,6 +89,7 @@ def _build_header(
     on_open_empresas=None,
     on_open_config=None,
     on_open_users=None,
+    on_open_client_tags=None,
     on_open_terceros=None,
     on_open_control_facturas=None,
     on_open_firmas=None,
@@ -373,6 +374,8 @@ def _build_header(
         admin_menu.append(("Configuración", on_open_config))
     if on_open_users and session.is_admin():
         admin_menu.append(("Gestión de usuarios", on_open_users))
+    if on_open_client_tags and session.is_admin():
+        admin_menu.append(("Gestión de etiquetas", on_open_client_tags))
     if admin_menu:
         _hmenu("Administración", admin_menu)
 
@@ -783,6 +786,7 @@ def main():
             ),
             on_open_config=_show_config_menu,
             on_open_users=controller.open_user_admin,
+            on_open_client_tags=controller.open_client_tags_admin,
             on_logout=_logout,
             db_label=db_label,
             word_tpl_dir=word_tpl_dir,

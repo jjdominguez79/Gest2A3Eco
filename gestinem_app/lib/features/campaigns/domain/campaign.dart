@@ -1,3 +1,5 @@
+import '../../messaging/domain/client_tag.dart';
+
 class Campaign {
   const Campaign({
     required this.id,
@@ -24,6 +26,7 @@ class CampaignClientTarget {
     required this.company,
     this.email = '',
     this.companyCode = '',
+    this.tags = const [],
   });
   factory CampaignClientTarget.fromJson(Map<String, dynamic> json) =>
       CampaignClientTarget(
@@ -32,12 +35,16 @@ class CampaignClientTarget {
         company: json['company_name'] as String? ?? '',
         email: json['email'] as String? ?? '',
         companyCode: json['company_code'] as String? ?? '',
+        tags: (json['tags'] as List<dynamic>? ?? const [])
+            .map((item) => ClientTag.fromJson(item as Map<String, dynamic>))
+            .toList(growable: false),
       );
   final String id;
   final String name;
   final String company;
   final String email;
   final String companyCode;
+  final List<ClientTag> tags;
 
   String get displayName => name.isEmpty ? company : name;
 }

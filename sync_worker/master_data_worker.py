@@ -149,6 +149,35 @@ class MasterDataWorker:
             "desktop_subcuenta": row["subcuenta_cliente"] or "",
         } for row in rows if str(row["nif"] or "").strip()]
 
+    def _load_client_tags(self) -> tuple[list[dict], dict[str, list[str]]]:
+        """Carga el catalogo privado y todas sus asignaciones por empresa."""
+        with psycopg.connect(self.config.postgres_dsn, row_factory=dict_row) as conn:
+            tags = conn.execute(
+                """
+                SELECT id,nombre,color,activo
+                  FROM etiquetas_clientes
+                 ORDER BY LOWER(nombre),id
+                """
+            ).fetchall()
+            links = conn.execute(
+                """
+                SELECT codigo_empresa,etiqueta_id
+                  FROM empresas_etiquetas
+                 ORDER BY codigo_empresa,etiqueta_id
+                """
+            ).fetchall()
+        assignments: dict[str, list[str]] = {}
+        for row in links:
+            assignments.setdefault(
+                str(row["codigo_empresa"] or "").strip().upper(), [],
+            ).append(str(row["etiqueta_id"] or ""))
+        return ([{
+            "id": str(row["id"]),
+            "name": str(row["nombre"] or ""),
+            "color": str(row["color"] or "#6750A4"),
+            "active": bool(row["activo"]),
+        } for row in tags], assignments)
+
     def _logo_path(self, company: dict) -> Path | None:
         """Resuelve una ruta Windows de BD dentro del montaje del NAS."""
         raw = _optional_database_text(company.get("logo_path"))
@@ -213,6 +242,7 @@ class MasterDataWorker:
         )
         response.raise_for_status()
         companies = self._load_companies()
+        tags, tag_assignments = self._load_client_tags()
         customer_count = 0
         logo_count = 0
         for company in companies:
@@ -278,11 +308,35 @@ class MasterDataWorker:
             )
             response.raise_for_status()
 
+        company_codes = [
+            str(company.get("codigo") or "").strip().upper()
+            for company in companies
+            if str(company.get("codigo") or "").strip()
+        ]
+        response = self.http.put(
+            self._url("/internal/client-tags-snapshot"),
+            headers=self._headers,
+            json={
+                "tags": tags,
+                "assignments": [{
+                    "company_code": code,
+                    "tag_ids": tag_assignments.get(code, []),
+                } for code in company_codes],
+                "full_snapshot": True,
+            },
+            timeout=45,
+        )
+        response.raise_for_status()
+
         result = {
             "companies": len(companies),
             "customers": customer_count,
             "staff": len(staff),
             "logos": logo_count,
+            "tags": len(tags),
+            "tag_assignments": sum(
+                len(tag_assignments.get(code, [])) for code in company_codes
+            ),
         }
         LOG.info("Sincronizacion maestra completada: %s", result)
         return result

@@ -31,6 +31,7 @@ class CampaignsRepository {
     required String channel,
     required bool allClients,
     required List<String> groupIds,
+    required List<String> tagIds,
     required List<String> clientIds,
   }) => _api.dio.post<void>(
     '/staff/admin/campaigns',
@@ -40,6 +41,7 @@ class CampaignsRepository {
       'channel': channel,
       'all_clients': allClients,
       'group_ids': groupIds,
+      'tag_ids': tagIds,
       'client_ids': clientIds,
     },
   );

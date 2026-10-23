@@ -401,7 +401,7 @@ class _ConversationsScreenState extends ConsumerState<ConversationsScreen>
 
 enum _InboxFilter { all, unread, favorites, groups }
 
-enum _InboxAction { favorite, labels }
+enum _InboxAction { favorite }
 
 class _InboxEntry {
   const _InboxEntry.conversation(this.conversation) : thread = null;
@@ -468,15 +468,6 @@ class _StaffInbox extends ConsumerStatefulWidget {
 }
 
 class _StaffInboxState extends ConsumerState<_StaffInbox> {
-  static const _labelColors = <String>[
-    '#D32F2F',
-    '#F57C00',
-    '#FBC02D',
-    '#388E3C',
-    '#1976D2',
-    '#6750A4',
-    '#C2185B',
-  ];
   _InboxFilter _filter = _InboxFilter.all;
   String? _labelId;
 
@@ -498,156 +489,6 @@ class _StaffInboxState extends ConsumerState<_StaffInbox> {
       _refreshEntry(entry);
     } catch (error) {
       _showError(error);
-    }
-  }
-
-  Future<void> _editLabels(_InboxEntry entry, List<ChatLabel> available) async {
-    if (available.isEmpty) {
-      final created = await _createLabel(selectFilter: false);
-      if (created == null) return;
-      try {
-        await ref.read(messagingRepositoryProvider).setChatLabels(
-          entry.targetType,
-          entry.id,
-          [created.id],
-        );
-        _refreshEntry(entry);
-      } catch (error) {
-        _showError(error);
-      }
-      return;
-    }
-    final selected = entry.labels.map((label) => label.id).toSet();
-    final result = await showDialog<Set<String>>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text('Etiquetas de ${entry.title}'),
-          content: SizedBox(
-            width: 360,
-            child: ListView(
-              shrinkWrap: true,
-              children: [
-                for (final label in available)
-                  CheckboxListTile(
-                    key: Key('assign-label-${label.id}'),
-                    value: selected.contains(label.id),
-                    secondary: Icon(
-                      Icons.label,
-                      color: _chatLabelColor(label.color),
-                    ),
-                    title: Text(label.name),
-                    onChanged: (checked) => setDialogState(() {
-                      if (checked ?? false) {
-                        selected.add(label.id);
-                      } else {
-                        selected.remove(label.id);
-                      }
-                    }),
-                  ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancelar'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, selected),
-              child: const Text('Guardar'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (result == null) return;
-    try {
-      await ref
-          .read(messagingRepositoryProvider)
-          .setChatLabels(entry.targetType, entry.id, result.toList());
-      _refreshEntry(entry);
-    } catch (error) {
-      _showError(error);
-    }
-  }
-
-  Future<ChatLabel?> _createLabel({bool selectFilter = true}) async {
-    final controller = TextEditingController();
-    var color = _labelColors.first;
-    final value = await showDialog<(String, String)>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Nueva etiqueta compartida'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TextField(
-                key: const Key('new-chat-label-name'),
-                controller: controller,
-                autofocus: true,
-                maxLength: 80,
-                decoration: const InputDecoration(labelText: 'Nombre'),
-              ),
-              const SizedBox(height: 8),
-              const Text('Color'),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 10,
-                children: [
-                  for (final candidate in _labelColors)
-                    InkWell(
-                      key: Key('chat-label-color-$candidate'),
-                      borderRadius: BorderRadius.circular(20),
-                      onTap: () => setDialogState(() => color = candidate),
-                      child: CircleAvatar(
-                        radius: 16,
-                        backgroundColor: _chatLabelColor(candidate),
-                        child: candidate == color
-                            ? const Icon(Icons.check, color: Colors.white)
-                            : null,
-                      ),
-                    ),
-                ],
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancelar'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final name = controller.text.trim();
-                if (name.isNotEmpty) Navigator.pop(context, (name, color));
-              },
-              child: const Text('Crear'),
-            ),
-          ],
-        ),
-      ),
-    );
-    controller.dispose();
-    if (value == null) return null;
-    try {
-      final created = await ref
-          .read(messagingRepositoryProvider)
-          .createChatLabel(value.$1, value.$2);
-      ref.invalidate(chatLabelsProvider);
-      ref.invalidate(staffInboxProvider);
-      if (mounted && selectFilter) {
-        setState(() {
-          _filter = _InboxFilter.all;
-          _labelId = created.id;
-        });
-      }
-      return created;
-    } catch (error) {
-      _showError(error);
-      return null;
     }
   }
 
@@ -676,22 +517,11 @@ class _StaffInboxState extends ConsumerState<_StaffInbox> {
                 trailing: _labelId == label.id ? const Icon(Icons.check) : null,
                 onTap: () => Navigator.pop(context, label.id),
               ),
-            const Divider(),
-            ListTile(
-              key: const Key('create-chat-label'),
-              leading: const Icon(Icons.add),
-              title: const Text('Crear etiqueta compartida'),
-              onTap: () => Navigator.pop(context, '__new__'),
-            ),
           ],
         ),
       ),
     );
     if (!mounted || selected == null) return;
-    if (selected == '__new__') {
-      await _createLabel();
-      return;
-    }
     setState(() {
       _filter = _InboxFilter.all;
       _labelId = selected == '__all__' ? null : selected;
@@ -850,7 +680,6 @@ class _StaffInboxState extends ConsumerState<_StaffInbox> {
                         authToken: widget.authToken,
                         onTap: () => widget.onConversation(conversation.id),
                         onFavorite: () => _toggleFavorite(entry),
-                        onLabels: () => _editLabels(entry, labels),
                       ),
                     );
                   }
@@ -864,7 +693,6 @@ class _StaffInboxState extends ConsumerState<_StaffInbox> {
                     authToken: widget.authToken,
                     onTap: () => widget.onInternal(thread.id),
                     onFavorite: () => _toggleFavorite(entry),
-                    onLabels: () => _editLabels(entry, labels),
                   );
                 },
               ),
@@ -900,7 +728,6 @@ class _InternalThreadTile extends StatelessWidget {
     required this.authToken,
     required this.onTap,
     required this.onFavorite,
-    required this.onLabels,
   });
   final InternalThread thread;
   final bool selected;
@@ -908,7 +735,6 @@ class _InternalThreadTile extends StatelessWidget {
   final String authToken;
   final VoidCallback onTap;
   final VoidCallback onFavorite;
-  final VoidCallback onLabels;
 
   @override
   Widget build(BuildContext context) => ListTile(
@@ -967,7 +793,6 @@ class _InternalThreadTile extends StatelessWidget {
       unreadCount: thread.unreadCount,
       favorite: thread.isFavorite,
       onFavorite: onFavorite,
-      onLabels: onLabels,
     ),
   );
 }
@@ -980,7 +805,6 @@ class _ClientConversationTile extends StatelessWidget {
     required this.authToken,
     required this.onTap,
     required this.onFavorite,
-    required this.onLabels,
   });
   final Conversation conversation;
   final bool selected;
@@ -988,7 +812,6 @@ class _ClientConversationTile extends StatelessWidget {
   final String authToken;
   final VoidCallback onTap;
   final VoidCallback onFavorite;
-  final VoidCallback onLabels;
 
   @override
   Widget build(BuildContext context) => ListTile(
@@ -1036,7 +859,6 @@ class _ClientConversationTile extends StatelessWidget {
       unreadCount: conversation.unreadCount,
       favorite: conversation.isFavorite,
       onFavorite: onFavorite,
-      onLabels: onLabels,
     ),
   );
 }
@@ -1087,13 +909,11 @@ class _InboxTrailing extends StatelessWidget {
     required this.unreadCount,
     required this.favorite,
     required this.onFavorite,
-    required this.onLabels,
   });
   final DateTime? updatedAt;
   final int unreadCount;
   final bool favorite;
   final VoidCallback onFavorite;
-  final VoidCallback onLabels;
 
   @override
   Widget build(BuildContext context) => Row(
@@ -1115,13 +935,7 @@ class _InboxTrailing extends StatelessWidget {
         tooltip: 'Organizar chat',
         padding: EdgeInsets.zero,
         icon: const Icon(Icons.more_vert, size: 20),
-        onSelected: (action) {
-          if (action == _InboxAction.favorite) {
-            onFavorite();
-          } else {
-            onLabels();
-          }
-        },
+        onSelected: (_) => onFavorite(),
         itemBuilder: (context) => [
           PopupMenuItem(
             value: _InboxAction.favorite,
@@ -1131,14 +945,6 @@ class _InboxTrailing extends StatelessWidget {
               title: Text(
                 favorite ? 'Quitar de favoritos' : 'Añadir a favoritos',
               ),
-            ),
-          ),
-          const PopupMenuItem(
-            value: _InboxAction.labels,
-            child: ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.label_outline),
-              title: Text('Gestionar etiquetas'),
             ),
           ),
         ],

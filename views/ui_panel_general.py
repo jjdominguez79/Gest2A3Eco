@@ -26,9 +26,15 @@ class UIPanelGeneral(ttk.Frame):
         self._on_open_profile_requests = on_open_profile_requests
         self._on_open_control_facturas = on_open_control_facturas
         self._on_open_firmas = on_open_firmas
+        role = str(
+            getattr(session.role, "value", session.role)
+        ).lower()
+        self._can_view_tags = role in {"admin", "empleado"}
         self._empresas = []
         self.var_buscar = tk.StringVar()
         self.var_ver_bajas = tk.BooleanVar(value=False)
+        self.var_etiqueta = tk.StringVar(value="Todas las etiquetas")
+        self._etiquetas_por_nombre: dict[str, str] = {}
         self._build()
         self.refresh()
 
@@ -52,6 +58,16 @@ class UIPanelGeneral(ttk.Frame):
             variable=self.var_ver_bajas,
             command=self.refresh,
         ).pack(side=tk.LEFT, padx=(12, 0))
+        if self._can_view_tags:
+            ttk.Label(filtros, text="Etiqueta").pack(side=tk.LEFT, padx=(12, 4))
+            self.cmb_etiqueta = ttk.Combobox(
+                filtros, textvariable=self.var_etiqueta, state="readonly", width=22,
+                values=("Todas las etiquetas",),
+            )
+            self.cmb_etiqueta.pack(side=tk.LEFT)
+            self.cmb_etiqueta.bind(
+                "<<ComboboxSelected>>", lambda _event: self.refresh(),
+            )
         if self._on_create_company is not None:
             ttk.Button(
                 filtros,
@@ -91,28 +107,45 @@ class UIPanelGeneral(ttk.Frame):
                 text="Reactivar seleccion",
                 command=lambda: self._change_selected_status(True),
             ).pack(side=tk.RIGHT)
+            if self._session.is_admin():
+                ttk.Button(
+                    acciones, text="Retirar etiquetas",
+                    command=lambda: self._change_selected_tags("retirar"),
+                ).pack(side=tk.RIGHT, padx=(6, 0))
+                ttk.Button(
+                    acciones, text="Anadir etiquetas",
+                    command=lambda: self._change_selected_tags("agregar"),
+                ).pack(side=tk.RIGHT, padx=(6, 0))
 
         tree_wrap = ttk.Frame(self)
         tree_wrap.pack(fill="both", expand=True, padx=12, pady=(0, 10))
         tree_wrap.columnconfigure(0, weight=1)
         tree_wrap.rowconfigure(0, weight=1)
 
+        columns = ["codigo", "nombre", "cif"]
+        if self._can_view_tags:
+            columns.append("etiquetas")
+        columns.extend(("ultimo_ejercicio", "digitos", "permiso", "estado"))
         self.tv = ttk.Treeview(
             tree_wrap,
-            columns=("codigo", "nombre", "cif", "ultimo_ejercicio", "digitos", "permiso", "estado"),
+            columns=columns,
             show="headings",
             selectmode="extended",
             height=16,
         )
-        headers = (
+        headers = [
             ("codigo", "Codigo A3", 110, "w"),
             ("nombre", "Empresa", 320, "w"),
             ("cif", "NIF/CIF", 120, "w"),
+        ]
+        if self._can_view_tags:
+            headers.append(("etiquetas", "Etiquetas", 260, "w"))
+        headers.extend((
             ("ultimo_ejercicio", "Ult. ejercicio", 110, "center"),
             ("digitos", "Digitos", 80, "center"),
             ("permiso", "Acceso", 100, "center"),
             ("estado", "Configuracion", 120, "center"),
-        )
+        ))
         for col, text, width, anchor in headers:
             self.tv.heading(col, text=text)
             self.tv.column(col, width=width, anchor=anchor)
@@ -126,22 +159,51 @@ class UIPanelGeneral(ttk.Frame):
         query = self.var_buscar.get()
         include_inactive = bool(self.var_ver_bajas.get())
         self._empresas = self._empresa_service.listar_empresas_panel(query, include_inactive)
+        if self._can_view_tags:
+            etiquetas = self._empresa_service.listar_etiquetas_clientes()
+            self._etiquetas_por_nombre = {
+                str(item.get("nombre") or ""): str(item.get("id") or "")
+                for item in etiquetas
+            }
+            values = ("Todas las etiquetas", *self._etiquetas_por_nombre.keys())
+            self.cmb_etiqueta.configure(values=values)
+            if self.var_etiqueta.get() not in values:
+                self.var_etiqueta.set("Todas las etiquetas")
+            selected_tag_id = self._etiquetas_por_nombre.get(
+                self.var_etiqueta.get(), "",
+            )
+            if selected_tag_id:
+                self._empresas = [
+                    item for item in self._empresas
+                    if any(
+                        str(tag.get("id") or "") == selected_tag_id
+                        for tag in item.get("etiquetas") or []
+                    )
+                ]
         self.tv.delete(*self.tv.get_children())
         for item in self._empresas:
             iid = f"{item.get('codigo')}::{item.get('ejercicio')}"
+            row_values = [
+                item.get("codigo", ""),
+                item.get("nombre", ""),
+                item.get("cif", ""),
+            ]
+            if self._can_view_tags:
+                row_values.append(", ".join(
+                    tag.get("nombre", "")
+                    for tag in item.get("etiquetas") or []
+                ))
+            row_values.extend([
+                item.get("ultimo_ejercicio", ""),
+                item.get("digitos_plan", 8),
+                item.get("permiso", ""),
+                item.get("estado_configuracion", ""),
+            ])
             self.tv.insert(
                 "",
                 "end",
                 iid=iid,
-                values=(
-                    item.get("codigo", ""),
-                    item.get("nombre", ""),
-                    item.get("cif", ""),
-                    item.get("ultimo_ejercicio", ""),
-                    item.get("digitos_plan", 8),
-                    item.get("permiso", ""),
-                    item.get("estado_configuracion", ""),
-                ),
+                values=row_values,
             )
         estado = "incluyendo bajas" if include_inactive else "activas"
         self.lbl_resumen.configure(text=f"Empresas {estado}: {len(self._empresas)}")
@@ -221,4 +283,37 @@ class UIPanelGeneral(ttk.Frame):
             f"Empresas actualizadas: {actualizadas}.{detalle}",
             parent=self.winfo_toplevel(),
         )
+        self.refresh()
+
+    def _change_selected_tags(self, modo: str):
+        seleccionadas = self.get_selected_companies()
+        if not seleccionadas:
+            messagebox.showinfo(
+                "Etiquetas", "Selecciona al menos una empresa.",
+                parent=self.winfo_toplevel(),
+            )
+            return
+        from views.ui_etiquetas_clientes import seleccionar_etiquetas
+
+        ids = seleccionar_etiquetas(
+            self.winfo_toplevel(), self._empresa_service,
+            titulo=("Anadir etiquetas" if modo == "agregar" else "Retirar etiquetas"),
+        )
+        if ids is None:
+            return
+        if not ids:
+            messagebox.showinfo(
+                "Etiquetas", "No has seleccionado ninguna etiqueta.",
+                parent=self.winfo_toplevel(),
+            )
+            return
+        usuario = str(getattr(getattr(self._session, "user", None), "nombre", "") or "")
+        try:
+            self._empresa_service.actualizar_etiquetas_empresas(
+                [str(item.get("codigo") or "") for item in seleccionadas],
+                list(ids), modo, usuario,
+            )
+        except Exception as exc:
+            messagebox.showerror("Etiquetas", str(exc), parent=self.winfo_toplevel())
+            return
         self.refresh()

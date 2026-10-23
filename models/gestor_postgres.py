@@ -420,6 +420,38 @@ class GestorPostgres(GestorBase):
         self._migrate_prefijo_ingreso_empresa()
         self.conn.commit()
 
+    def _asegurar_esquema_etiquetas_clientes(self) -> None:
+        """Crea el maestro privado de etiquetas y su relacion con empresas."""
+        self.conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS etiquetas_clientes (
+                id TEXT PRIMARY KEY,
+                nombre TEXT NOT NULL,
+                color TEXT NOT NULL DEFAULT '#6750A4',
+                activo INTEGER NOT NULL DEFAULT 1,
+                creado_por TEXT NOT NULL DEFAULT '',
+                actualizado_por TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_etiquetas_clientes_nombre_lower
+                ON etiquetas_clientes(LOWER(nombre));
+            CREATE INDEX IF NOT EXISTS idx_etiquetas_clientes_activo
+                ON etiquetas_clientes(activo, nombre);
+            CREATE TABLE IF NOT EXISTS empresas_etiquetas (
+                codigo_empresa TEXT NOT NULL,
+                etiqueta_id TEXT NOT NULL REFERENCES etiquetas_clientes(id)
+                    ON DELETE CASCADE,
+                asignado_por TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (codigo_empresa, etiqueta_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_empresas_etiquetas_etiqueta
+                ON empresas_etiquetas(etiqueta_id, codigo_empresa);
+            """
+        )
+        self.conn.commit()
+
     def _aplicar_migraciones_esenciales_postgres(self) -> None:
         """Crea elementos de seguridad y modulos añadidos tras el esquema base.
 
@@ -434,6 +466,7 @@ class GestorPostgres(GestorBase):
         self._asegurar_esquema_plantillas_firma()
         self._asegurar_esquema_mensajeria_local()
         self._asegurar_esquema_cuotas_periodicas()
+        self._asegurar_esquema_etiquetas_clientes()
         columnas = (
             ("empresas", "cuenta_bancaria", "TEXT"),
             ("empresas", "cuentas_bancarias", "TEXT"),

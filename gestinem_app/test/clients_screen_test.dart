@@ -9,6 +9,7 @@ import 'package:gestinem/features/company_profile/domain/company_profile.dart';
 import 'package:gestinem/features/company_profile/domain/profile_change_request.dart';
 import 'package:gestinem/features/company_profile/presentation/company_profile_providers.dart';
 import 'package:gestinem/features/messaging/domain/client_organization.dart';
+import 'package:gestinem/features/messaging/domain/client_tag.dart';
 import 'package:gestinem/features/messaging/presentation/client_detail_screen.dart';
 import 'package:gestinem/features/messaging/presentation/clients_screen.dart';
 import 'package:gestinem/features/messaging/presentation/messaging_providers.dart';
@@ -37,6 +38,9 @@ void main() {
         accessActive: true,
         hasAcceptedAccess: true,
         clientCount: 1,
+        tags: [
+          ClientTag(id: 'tag-debt', name: 'Cuota pendiente', color: '#D32F2F'),
+        ],
       ),
       ClientOrganization(
         companyCode: 'E00002',
@@ -46,6 +50,9 @@ void main() {
         accessActive: false,
         hasAcceptedAccess: false,
         clientCount: 1,
+        tags: [
+          ClientTag(id: 'tag-fiscal', name: 'Campaña fiscal', color: '#1976D2'),
+        ],
       ),
       ClientOrganization(
         companyCode: 'E00003',
@@ -92,6 +99,13 @@ void main() {
     expect(find.byKey(const Key('client-E00004')), findsNothing);
     expect(find.byKey(const Key('clients-back-button')), findsOneWidget);
     expect(find.byKey(const Key('clients-bulk-invite-button')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('clients-tag-tag-debt')));
+    await tester.pump();
+    expect(find.byKey(const Key('client-E00001')), findsOneWidget);
+    expect(find.byKey(const Key('client-E00002')), findsNothing);
+    await tester.tap(find.byKey(const Key('clients-tag-all')));
+    await tester.pump();
 
     await tester.tap(find.byKey(const Key('clients-bulk-invite-button')));
     await tester.pump();

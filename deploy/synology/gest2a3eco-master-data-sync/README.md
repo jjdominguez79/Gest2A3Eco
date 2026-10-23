@@ -1,8 +1,9 @@
 # gest2a3eco-master-data-sync
 
 Worker unidireccional de datos maestros: PostgreSQL del escritorio hacia el
-backend Railway. Sincroniza empleados, empresas, clientes contables, logotipos
-y la serie `APP`. El logotipo maestro se lee de `assets/logos` en el repositorio
+backend Railway. Sincroniza empleados, empresas, clientes contables, etiquetas
+internas y sus asignaciones, logotipos y la serie `APP`. El logotipo maestro se
+lee de `assets/logos` en el repositorio
 compartido; Azure conserva solo la copia publicada que consume Flutter. Las
 bajas de empleados revocan el acceso, pero nunca eliminan su historial de
 mensajeria.
@@ -33,4 +34,5 @@ los permisos generales del worker:
 
 ```sql
 GRANT SELECT ON TABLE usuarios TO gest2a3eco_sync;
+GRANT SELECT ON TABLE etiquetas_clientes, empresas_etiquetas TO gest2a3eco_sync;
 ```

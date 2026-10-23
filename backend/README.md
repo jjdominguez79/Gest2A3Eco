@@ -346,3 +346,9 @@ El escritorio aplica la solicitud a la ficha y guarda el logotipo maestro en
 proyecta posteriormente la ficha y una copia del logotipo al backend para que
 Flutter los muestre. PostgreSQL del escritorio y el repositorio compartido son
 la fuente de verdad; Azure contiene solo la copia publicada para Flutter.
+
+Las etiquetas de empresa tambien son datos maestros del escritorio. Solo el
+administrador puede crearlas o asignarlas; el personal puede verlas y usarlas
+como filtro, pero nunca se incluyen en respuestas autenticadas como cliente.
+Las difusiones admiten la union de listas manuales, etiquetas y destinatarios
+individuales, eliminando duplicados antes de crear los envios.

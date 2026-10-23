@@ -30,6 +30,59 @@ class SecuredGestor:
             return rows
         return [row for row in rows if self.security.can_read_company(str(row.get("codigo") or ""))]
 
+    def _ensure_etiquetas_internas_read(self) -> None:
+        role = str(
+            getattr(
+                self.security.session.role,
+                "value",
+                self.security.session.role,
+            )
+        ).lower()
+        if role not in {"admin", "empleado"}:
+            raise PermissionError(
+                "Las etiquetas de clientes son informacion interna del despacho."
+            )
+
+    def listar_etiquetas_clientes(self, incluir_inactivas: bool = False):
+        self._ensure_etiquetas_internas_read()
+        method = getattr(self._base, "listar_etiquetas_clientes", None)
+        return method(incluir_inactivas) if callable(method) else []
+
+    def listar_asignaciones_etiquetas_clientes(self):
+        self._ensure_etiquetas_internas_read()
+        method = getattr(
+            self._base, "listar_asignaciones_etiquetas_clientes", None,
+        )
+        rows = method() if callable(method) else []
+        if self.security.session.is_admin():
+            return rows
+        return [
+            row for row in rows
+            if self.security.can_read_company(str(row.get("codigo_empresa") or ""))
+        ]
+
+    def listar_etiquetas_empresa(self, codigo_empresa: str):
+        self._ensure_etiquetas_internas_read()
+        self.security.ensure_company_read(codigo_empresa)
+        return self._base.listar_etiquetas_empresa(codigo_empresa)
+
+    def guardar_etiqueta_cliente(self, datos: dict, usuario: str = ""):
+        self.security.ensure_admin("Solo el administrador puede gestionar etiquetas.")
+        return self._base.guardar_etiqueta_cliente(datos, usuario)
+
+    def desactivar_etiqueta_cliente(self, etiqueta_id: str, usuario: str = ""):
+        self.security.ensure_admin("Solo el administrador puede gestionar etiquetas.")
+        return self._base.desactivar_etiqueta_cliente(etiqueta_id, usuario)
+
+    def actualizar_etiquetas_empresas(
+        self, codigos_empresa: list[str], etiqueta_ids: list[str],
+        modo: str = "reemplazar", usuario: str = "",
+    ):
+        self.security.ensure_admin("Solo el administrador puede asignar etiquetas.")
+        return self._base.actualizar_etiquetas_empresas(
+            codigos_empresa, etiqueta_ids, modo, usuario,
+        )
+
     def get_empresa(self, codigo: str, ejercicio: int | None = None):
         self.security.ensure_company_read(codigo)
         return self._base.get_empresa(codigo, ejercicio)

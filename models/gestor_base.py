@@ -1858,6 +1858,145 @@ class GestorBase:
                 np = dict(p, codigo_empresa=codigo, ejercicio=ej_dest)
                 self.upsert_recibida(np)
 
+    # ---------- ETIQUETAS INTERNAS DE CLIENTES ----------
+    @staticmethod
+    def _normalizar_color_etiqueta(color: str | None) -> str:
+        value = str(color or "#6750A4").strip().upper()
+        if not re.fullmatch(r"#[0-9A-F]{6}", value):
+            raise ValueError("El color de la etiqueta debe tener formato #RRGGBB.")
+        return value
+
+    def listar_etiquetas_clientes(self, incluir_inactivas: bool = False) -> list[dict]:
+        sql = "SELECT * FROM etiquetas_clientes"
+        if not incluir_inactivas:
+            sql += " WHERE activo=1"
+        sql += " ORDER BY LOWER(nombre),id"
+        return [self._row_to_dict(row) for row in self.conn.execute(sql).fetchall()]
+
+    def guardar_etiqueta_cliente(
+        self, datos: dict, usuario: str = "",
+    ) -> str:
+        nombre = " ".join(str(datos.get("nombre") or "").split())
+        if not nombre or len(nombre) > 80:
+            raise ValueError("La etiqueta necesita un nombre de hasta 80 caracteres.")
+        color = self._normalizar_color_etiqueta(datos.get("color"))
+        etiqueta_id = str(datos.get("id") or uuid.uuid4())
+        duplicada = self.conn.execute(
+            "SELECT id FROM etiquetas_clientes WHERE LOWER(nombre)=LOWER(?) AND id<>?",
+            (nombre, etiqueta_id),
+        ).fetchone()
+        if duplicada:
+            raise ValueError("Ya existe una etiqueta con ese nombre.")
+        now = self._utc_now()
+        self.conn.execute(
+            """
+            INSERT INTO etiquetas_clientes
+              (id,nombre,color,activo,creado_por,actualizado_por,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+              nombre=excluded.nombre,color=excluded.color,activo=excluded.activo,
+              actualizado_por=excluded.actualizado_por,updated_at=excluded.updated_at
+            """,
+            (
+                etiqueta_id, nombre, color,
+                1 if datos.get("activo", True) else 0,
+                str(usuario or ""), str(usuario or ""), now, now,
+            ),
+        )
+        self.conn.commit()
+        return etiqueta_id
+
+    def desactivar_etiqueta_cliente(self, etiqueta_id: str, usuario: str = "") -> None:
+        now = self._utc_now()
+        self.conn.execute(
+            "UPDATE etiquetas_clientes SET activo=0,actualizado_por=?,updated_at=? WHERE id=?",
+            (str(usuario or ""), now, str(etiqueta_id)),
+        )
+        self.conn.execute(
+            "DELETE FROM empresas_etiquetas WHERE etiqueta_id=?",
+            (str(etiqueta_id),),
+        )
+        self.conn.commit()
+
+    def listar_asignaciones_etiquetas_clientes(self) -> list[dict]:
+        rows = self.conn.execute(
+            """
+            SELECT ee.codigo_empresa,ee.etiqueta_id,e.nombre,e.color,e.activo
+              FROM empresas_etiquetas ee
+              JOIN etiquetas_clientes e ON e.id=ee.etiqueta_id
+             WHERE e.activo=1
+             ORDER BY ee.codigo_empresa,LOWER(e.nombre),e.id
+            """
+        ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    def listar_etiquetas_empresa(self, codigo_empresa: str) -> list[dict]:
+        codigo = normalizar_codigo_empresa_a3(codigo_empresa)
+        return [
+            row for row in self.listar_asignaciones_etiquetas_clientes()
+            if str(row.get("codigo_empresa") or "") == codigo
+        ]
+
+    def actualizar_etiquetas_empresas(
+        self,
+        codigos_empresa: list[str],
+        etiqueta_ids: list[str],
+        modo: str = "reemplazar",
+        usuario: str = "",
+    ) -> int:
+        codigos = list(dict.fromkeys(
+            normalizar_codigo_empresa_a3(value) for value in codigos_empresa or []
+            if normalizar_codigo_empresa_a3(value)
+        ))
+        ids = {str(value or "").strip() for value in etiqueta_ids or [] if str(value or "").strip()}
+        if modo not in {"agregar", "retirar", "reemplazar"}:
+            raise ValueError("Modo de asignacion de etiquetas no valido.")
+        if codigos:
+            marks = ",".join("?" for _ in codigos)
+            empresas_existentes = {
+                str(row["codigo"]) for row in self.conn.execute(
+                    f"SELECT DISTINCT codigo FROM empresas WHERE codigo IN ({marks})",
+                    tuple(codigos),
+                ).fetchall()
+            }
+            faltantes = set(codigos) - empresas_existentes
+            if faltantes:
+                raise ValueError(
+                    "No existen las empresas: " + ", ".join(sorted(faltantes))
+                )
+        existentes = {
+            str(row["id"]) for row in self.conn.execute(
+                "SELECT id FROM etiquetas_clientes WHERE activo=1"
+            ).fetchall()
+        }
+        if not ids.issubset(existentes):
+            raise ValueError("Alguna etiqueta no existe o esta inactiva.")
+        now = self._utc_now()
+        for codigo in codigos:
+            if modo == "reemplazar":
+                self.conn.execute(
+                    "DELETE FROM empresas_etiquetas WHERE codigo_empresa=?",
+                    (codigo,),
+                )
+            elif modo == "retirar" and ids:
+                marks = ",".join("?" for _ in ids)
+                self.conn.execute(
+                    f"DELETE FROM empresas_etiquetas WHERE codigo_empresa=? AND etiqueta_id IN ({marks})",
+                    (codigo, *sorted(ids)),
+                )
+                continue
+            for etiqueta_id in sorted(ids):
+                self.conn.execute(
+                    """
+                    INSERT INTO empresas_etiquetas
+                      (codigo_empresa,etiqueta_id,asignado_por,created_at)
+                    VALUES (?,?,?,?) ON CONFLICT(codigo_empresa,etiqueta_id) DO NOTHING
+                    """,
+                    (codigo, etiqueta_id, str(usuario or ""), now),
+                )
+        self.conn.commit()
+        return len(codigos)
+
     # ---------- EMPRESAS ----------
     def listar_empresas(self):
         cur = self.conn.execute(

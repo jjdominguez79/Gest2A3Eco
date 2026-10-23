@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import re
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, HTTPException, Request, Response, UploadFile
@@ -18,15 +19,18 @@ from backend.api.config import get_settings
 from backend.api.database import SessionLocal
 from backend.api.messaging_models import (
     MessagingClient,
+    MessagingClientTag,
     MessagingAttachment,
     MessagingConversation,
     MessagingOrganization,
+    MessagingOrganizationTag,
     MessagingProfileChangeRequest,
     MessagingSession,
     MessagingStaff,
     MessagingStaffPresenceConnection,
     MessagingStaffSession,
 )
+from backend.api.messaging_realtime import hub
 from backend.api.messaging_security import hash_token, is_expired, utcnow
 from backend.api.messaging_storage import MessagingStorage, safe_name
 from backend.api.security import require_master_sync_or_workstation_internal
@@ -503,4 +507,106 @@ def sync_company_profile(
         "company_code": company_code,
         "organization_id": org.id,
         "logo_sha256": org.logo_sha256,
+    }
+
+
+@router.put("/internal/client-tags-snapshot")
+def sync_client_tags_snapshot(
+    payload: dict = Body(...),
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_master_sync_or_workstation_internal),
+):
+    """Sustituye la clasificacion interna enviada por el escritorio."""
+    raw_tags = payload.get("tags")
+    raw_assignments = payload.get("assignments")
+    if not isinstance(raw_tags, list) or not isinstance(raw_assignments, list):
+        raise HTTPException(422, "tags y assignments deben ser listas")
+
+    tags_by_id: dict[str, dict] = {}
+    names: set[str] = set()
+    for raw in raw_tags:
+        tag_id = str(raw.get("id") or "").strip()
+        name = " ".join(str(raw.get("name") or "").split())
+        color = str(raw.get("color") or "#6750A4").strip().upper()
+        if not tag_id or len(tag_id) > 36 or not name or len(name) > 80:
+            raise HTTPException(422, "Etiqueta maestra no valida")
+        if not re.fullmatch(r"#[0-9A-F]{6}", color):
+            raise HTTPException(422, f"Color no valido para {name}")
+        normalized_name = name.casefold()
+        if tag_id in tags_by_id or normalized_name in names:
+            raise HTTPException(409, "La fotografia contiene etiquetas duplicadas")
+        names.add(normalized_name)
+        tags_by_id[tag_id] = {
+            "name": name,
+            "color": color,
+            "active": bool(raw.get("active", True)),
+        }
+
+    assignments_by_code: dict[str, set[str]] = {}
+    for raw in raw_assignments:
+        company_code = str(raw.get("company_code") or "").strip().upper()
+        tag_ids = {str(value or "").strip() for value in raw.get("tag_ids") or []}
+        if not company_code or "" in tag_ids or not tag_ids.issubset(tags_by_id):
+            raise HTTPException(422, "Asignacion de etiquetas no valida")
+        if company_code in assignments_by_code:
+            raise HTTPException(409, f"Asignacion duplicada para {company_code}")
+        assignments_by_code[company_code] = tag_ids
+
+    organizations = {
+        row.company_code.strip().upper(): row
+        for row in db.scalars(select(MessagingOrganization).where(
+            MessagingOrganization.company_code.in_(assignments_by_code),
+        )).all()
+    } if assignments_by_code else {}
+    missing = set(assignments_by_code) - set(organizations)
+    if missing:
+        raise HTTPException(
+            422,
+            "No existen organizaciones para: " + ", ".join(sorted(missing)),
+        )
+
+    existing_tags = {
+        row.id: row for row in db.scalars(select(MessagingClientTag)).all()
+    }
+    for tag_id, data in tags_by_id.items():
+        item = existing_tags.get(tag_id)
+        if item is None:
+            item = MessagingClientTag(id=tag_id)
+            db.add(item)
+        item.name = data["name"]
+        item.color = data["color"]
+        item.active = data["active"]
+        item.updated_at = utcnow()
+    if bool(payload.get("full_snapshot", True)):
+        for tag_id, item in existing_tags.items():
+            if tag_id not in tags_by_id:
+                item.active = False
+                item.updated_at = utcnow()
+
+    full_snapshot = bool(payload.get("full_snapshot", True))
+    organization_ids = {row.id for row in organizations.values()}
+    if full_snapshot or organization_ids:
+        links_query = select(MessagingOrganizationTag)
+        if not full_snapshot:
+            links_query = links_query.where(
+                MessagingOrganizationTag.organization_id.in_(organization_ids),
+            )
+        for link in db.scalars(links_query).all():
+            db.delete(link)
+        db.flush()
+        for company_code, tag_ids in assignments_by_code.items():
+            organization_id = organizations[company_code].id
+            for tag_id in sorted(tag_ids):
+                if tags_by_id[tag_id]["active"]:
+                    db.add(MessagingOrganizationTag(
+                        organization_id=organization_id,
+                        tag_id=tag_id,
+                    ))
+    db.commit()
+    hub.publish({"type": "inbox.metadata_updated"})
+    return {
+        "status": "ok",
+        "tags": len(tags_by_id),
+        "organizations": len(assignments_by_code),
+        "assignments": sum(len(values) for values in assignments_by_code.values()),
     }
