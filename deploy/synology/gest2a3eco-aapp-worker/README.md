@@ -87,3 +87,7 @@ La version 2026.09.23.1 reintenta automaticamente los buzones DEHu que fallen
 en seis consultas escalonadas durante casi cuatro horas. El correo del lote no
 se envia hasta que esas reconsultas terminan e indica los buzones reconsultados
 y el numero de intentos utilizado por cada uno.
+
+La version 2026.10.23.1 mantiene ambos procesos activos cuando el backend
+responde con un error temporal al consultar la cola. Espera el intervalo
+configurado y vuelve a intentarlo sin reiniciar el contenedor.

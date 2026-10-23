@@ -1,6 +1,6 @@
 services:
   aapp-certificates-worker:
-    image: gest2a3eco-aapp-worker:2026.10.22.1
+    image: gest2a3eco-aapp-worker:2026.10.23.1
     build:
       context: .
       dockerfile: Dockerfile
@@ -29,7 +29,7 @@ services:
       - ALL
 
   aapp-notifications-worker:
-    image: gest2a3eco-aapp-worker:2026.10.22.1
+    image: gest2a3eco-aapp-worker:2026.10.23.1
     restart: unless-stopped
     read_only: true
     tmpfs:

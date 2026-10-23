@@ -3,7 +3,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/aapp-worker/Dockerfile
-    image: gest2a3eco-aapp-worker:2026.10.22.1
+    image: gest2a3eco-aapp-worker:2026.10.23.1
     container_name: gest2a3eco-aapp-certificates-worker
     restart: unless-stopped
     read_only: true
@@ -28,7 +28,7 @@ services:
       - ALL
 
   aapp-notifications-worker:
-    image: gest2a3eco-aapp-worker:2026.10.22.1
+    image: gest2a3eco-aapp-worker:2026.10.23.1
     container_name: gest2a3eco-aapp-notifications-worker
     restart: unless-stopped
     read_only: true
