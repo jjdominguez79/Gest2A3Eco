@@ -62,6 +62,74 @@ def test_campos_aprendizaje_cambian_segun_tipo_factura():
     }.issubset(recibida)
 
 
+def test_actualizar_campos_aprendizaje_ignora_selector_de_ventana_cerrada():
+    class Variable:
+        def __init__(self, valor):
+            self.valor = valor
+
+        def get(self):
+            return self.valor
+
+        def set(self, valor):
+            self.valor = valor
+
+    class ComboboxDestruido:
+        def winfo_exists(self):
+            return False
+
+        def configure(self, **_kwargs):
+            raise AssertionError("No se debe configurar un widget destruido")
+
+    vista = SimpleNamespace(
+        _cb_campo_marcado=ComboboxDestruido(),
+        _campo_marcado_var=Variable("ProveedorNif"),
+    )
+
+    UIFacturasRecibidasOcr._actualizar_campos_aprendizaje(
+        vista, "factura_emitida",
+    )
+
+    assert vista._cb_campo_marcado is None
+    assert vista._campo_marcado_var.get() == "EmisorNif"
+
+
+def test_cambio_a_emitidas_recarga_las_bandejas_con_ventana_cerrada():
+    class Variable:
+        def __init__(self, valor):
+            self.valor = valor
+
+        def get(self):
+            return self.valor
+
+        def set(self, valor):
+            self.valor = valor
+
+    class ComboboxDestruido:
+        def winfo_exists(self):
+            return False
+
+    eventos = []
+    vista = SimpleNamespace(
+        _tipo_doc_var=Variable("factura_emitida"),
+        _campo_marcado_var=Variable("ProveedorNif"),
+        _cb_campo_marcado=ComboboxDestruido(),
+    )
+    vista._actualizar_campos_aprendizaje = lambda tipo: (
+        UIFacturasRecibidasOcr._actualizar_campos_aprendizaje(vista, tipo)
+    )
+    vista._actualizar_cabeceras_listado = (
+        lambda tipo: eventos.append(("cabeceras", tipo))
+    )
+    vista._refresh_all = lambda: eventos.append(("recarga", None))
+
+    UIFacturasRecibidasOcr._on_tipo_doc_changed(vista)
+
+    assert eventos == [
+        ("cabeceras", "factura_emitida"),
+        ("recarga", None),
+    ]
+
+
 def test_texto_marcado_rellena_cabecera_iva_y_retencion():
     class Variable:
         def __init__(self):

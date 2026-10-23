@@ -303,6 +303,7 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         self._proveedor_id_seleccionado = ""
         self._cuentas_plan_por_etiqueta: dict[str, str] = {}
         self._revision_window: tk.Toplevel | None = None
+        self._cb_campo_marcado: ttk.Combobox | None = None
         self._editor_activo = False
         self._entries: dict[str, tk.Variable] = {}
         self._campo_marcado_var = tk.StringVar(value="ProveedorNif")
@@ -2127,6 +2128,14 @@ class UIFacturasRecibidasOcr(ttk.Frame):
         recorrer(contenedor)
 
     def _cerrar_ventana_revision(self):
+        if self._preview_fit_after is not None:
+            try:
+                self.after_cancel(self._preview_fit_after)
+            except tk.TclError:
+                pass
+            self._preview_fit_after = None
+        self._preview_imagen_original = None
+        self._cb_campo_marcado = None
         if self._revision_window and self._revision_window.winfo_exists():
             self._revision_window.destroy()
         self._revision_window = None
@@ -2355,9 +2364,15 @@ class UIFacturasRecibidasOcr(ttk.Frame):
     def _actualizar_campos_aprendizaje(self, tipo_documento: str):
         """Muestra etiquetas de proveedor o cliente segun el documento."""
         campos = _campos_aprendizaje(tipo_documento)
-        combobox = getattr(self, "_cb_campo_marcado", None)
+        combobox = self._cb_campo_marcado
         if combobox is not None:
-            combobox.configure(values=campos)
+            try:
+                if combobox.winfo_exists():
+                    combobox.configure(values=campos)
+                else:
+                    self._cb_campo_marcado = None
+            except tk.TclError:
+                self._cb_campo_marcado = None
         if self._campo_marcado_var.get() not in campos:
             self._campo_marcado_var.set(campos[0])
 
