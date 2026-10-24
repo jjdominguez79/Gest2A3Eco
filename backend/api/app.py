@@ -62,6 +62,7 @@ from backend.api import messaging_models  # noqa: F401 - registra tablas SQLAlch
 from backend.api import client_models  # noqa: F401 - registra tablas area cliente
 from backend.api import subvenciones_models  # noqa: F401 - registra tablas de ayudas
 from backend.api.messaging_api import cleanup_expired_attachments, router as messaging_router
+from backend.api.dgt_staff_api import router as dgt_staff_router
 from backend.api.mail_api import router as mail_router
 from backend.api.client_profile_api import router as client_profile_router
 from backend.api.client_documents_api import router as client_documents_router
@@ -113,6 +114,7 @@ WEB_DIR = Path(__file__).with_name("web")
 templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
 app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
 app.include_router(messaging_router)
+app.include_router(dgt_staff_router)
 app.include_router(mail_router)
 app.include_router(client_profile_router)
 app.include_router(client_documents_router)

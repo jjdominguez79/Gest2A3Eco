@@ -86,7 +86,7 @@ def siguiente_referencia(db: Session) -> str:
     return f"{prefix}{max(nums, default=0) + 1:04d}"
 
 
-def crear_expediente(db: Session, payload) -> Expediente:
+def crear_expediente(db: Session, payload, actor: str = "gest2a3eco") -> Expediente:
     referencia = siguiente_referencia(db)
     item = Expediente(
         referencia=referencia,
@@ -95,18 +95,33 @@ def crear_expediente(db: Session, payload) -> Expediente:
         observaciones=payload.observaciones,
     )
     item.partes = [
-        Parte(rol="vendedor", email=payload.vendedor_email, telefono=payload.vendedor_telefono),
-        Parte(rol="comprador", email=payload.comprador_email, telefono=payload.comprador_telefono),
+        Parte(
+            rol="vendedor",
+            nombre=payload.vendedor_nombre,
+            email=payload.vendedor_email,
+            telefono=payload.vendedor_telefono,
+        ),
+        Parte(
+            rol="comprador",
+            nombre=payload.comprador_nombre,
+            email=payload.comprador_email,
+            telefono=payload.comprador_telefono,
+        ),
     ]
     item.vehiculo = Vehiculo(datos={})
     item.operacion = Operacion(datos={})
     db.add(item)
     db.flush()
-    registrar_evento(db, item.id, "expediente_creado", "gest2a3eco")
+    registrar_evento(db, item.id, "expediente_creado", actor)
     return item
 
 
-def crear_enlace(db: Session, item: Expediente, rol: str) -> dict:
+def crear_enlace(
+    db: Session,
+    item: Expediente,
+    rol: str,
+    actor: str = "gest2a3eco",
+) -> dict:
     if rol not in ROLES:
         raise HTTPException(422, "Rol no valido")
     now = utcnow()
@@ -117,7 +132,7 @@ def crear_enlace(db: Session, item: Expediente, rol: str) -> dict:
     token = new_token()
     expires_at = now + timedelta(hours=get_settings().token_ttl_hours)
     db.add(Enlace(expediente_id=item.id, rol=rol, token_hash=hash_token(token), expires_at=expires_at))
-    registrar_evento(db, item.id, "enlace_generado", "gest2a3eco", {"rol": rol})
+    registrar_evento(db, item.id, "enlace_generado", actor, {"rol": rol})
     return {
         "rol": rol,
         "url": f"{get_settings().public_base_url}/t/{item.referencia}/{rol}?token={token}",

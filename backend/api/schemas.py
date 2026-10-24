@@ -9,8 +9,10 @@ class ExpedienteCreate(BaseModel):
     titulo: str = ""
     responsable: str = ""
     observaciones: str = ""
+    vendedor_nombre: str = ""
     vendedor_email: str = ""
     vendedor_telefono: str = ""
+    comprador_nombre: str = ""
     comprador_email: str = ""
     comprador_telefono: str = ""
 

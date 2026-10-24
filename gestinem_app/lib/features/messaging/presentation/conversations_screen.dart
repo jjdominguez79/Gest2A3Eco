@@ -1355,6 +1355,13 @@ class _AppDrawer extends ConsumerWidget {
             ),
           if (profile.isAdmin)
             ListTile(
+              key: const Key('drawer-dgt'),
+              leading: const Icon(Icons.directions_car_outlined),
+              title: const Text('Trámites DGT'),
+              onTap: () => _navigate(context, '/dgt'),
+            ),
+          if (profile.isAdmin)
+            ListTile(
               key: const Key('drawer-broadcasts'),
               leading: const Icon(Icons.campaign_outlined),
               title: const Text('Difusiones'),

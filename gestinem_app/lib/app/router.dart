@@ -31,6 +31,7 @@ import '../features/documents/presentation/documents_screen.dart';
 import '../features/documents/presentation/documentation_screen.dart';
 import '../features/documents/presentation/document_detail_screen.dart';
 import '../features/documents/presentation/document_preview_screen.dart';
+import '../features/dgt/presentation/dgt_screen.dart';
 import '../features/certificates/presentation/certificates_screen.dart';
 import '../features/certificates/presentation/staff_certificate_preview_screen.dart';
 import '../features/subvenciones/presentation/subvencion_detail_screen.dart';
@@ -148,6 +149,9 @@ final routerProvider = Provider<GoRouter>((ref) {
           profile?.type != UserType.staff) {
         return '/';
       }
+      if (state.matchedLocation == '/dgt' && profile?.isAdmin != true) {
+        return '/';
+      }
       if (state.matchedLocation == '/invitation-content' &&
           profile?.isAdmin != true) {
         return '/';
@@ -236,6 +240,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/groups', builder: (_, _) => const GroupsScreen()),
       GoRoute(path: '/campaigns', builder: (_, _) => const CampaignsScreen()),
       GoRoute(path: '/employees', builder: (_, _) => const EmpleadosScreen()),
+      GoRoute(path: '/dgt', builder: (_, _) => const DgtScreen()),
       GoRoute(
         path: '/admin/subvenciones',
         builder: (_, _) => const SubvencionesAdminScreen(),

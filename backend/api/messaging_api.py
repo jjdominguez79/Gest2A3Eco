@@ -356,6 +356,14 @@ def _staff(
     return _staff_from_request(db, request)
 
 
+def require_messaging_staff(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> MessagingStaff:
+    """Dependencia publica para modulos usados por empleados de Flutter."""
+    return _staff_from_request(db, request)
+
+
 def _channels_for_staff(db: Session, staff: MessagingStaff) -> set[str]:
     return set(db.scalars(select(MessagingStaffChannel.channel).where(
         MessagingStaffChannel.staff_external_id == staff.external_id,
