@@ -392,7 +392,7 @@ def test_etiquetas_de_empresa_son_privadas_y_solo_se_gestionan_desde_escritorio(
     ).json() == [label]
 
     organizations = client.get(
-        "/api/v1/messaging/staff/organizations", headers=employee,
+        "/api/v1/messaging/staff/admin/organizations", headers=admin,
     )
     assert organizations.status_code == 200
     assert organizations.json()[0]["tags"] == [label]

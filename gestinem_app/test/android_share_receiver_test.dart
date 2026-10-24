@@ -14,7 +14,7 @@ void main() {
       expect(content.files, hasLength(1));
       expect(content.files.single.name, 'factura.pdf');
       expect(await content.files.single.length(), 321);
-      expect(content.files.single.path, contains('factura.pdf'));
+      expect(content.files.single.xFile.path, contains('factura.pdf'));
     });
 
     test('ignora entradas incompletas y conserva el error nativo', () {
