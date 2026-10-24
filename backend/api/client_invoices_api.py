@@ -40,6 +40,7 @@ from backend.api.client_invoice_service import (
 )
 from backend.api.client_models import (
     ClientInvoice,
+    ClientInvoiceAccountingQueue,
     ClientInvoiceCustomer,
     ClientInvoiceEvent,
     ClientInvoiceLine,
@@ -677,14 +678,12 @@ def issue_invoice(
     customer = db.get(ClientInvoiceCustomer, inv.customer_id)
     if not customer:
         raise HTTPException(status_code=400, detail="Cliente no encontrado")
-    if customer.pending_desktop_import or not customer.desktop_subcuenta:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "El cliente esta pendiente de validacion por Gestinem y aun "
-                "no tiene subcuenta asignada"
-            ),
-        )
+    # Que el escritorio todavia no haya asignado tercero/subcuenta 430 a
+    # este cliente (`pending_desktop_import`/`desktop_subcuenta`) es
+    # exclusivamente un metadato contable: nunca condiciona la emision
+    # fiscal desde Flutter (ADR 0001, seccion 2.2 y 5). La importacion
+    # contable se resuelve despues, de forma asincrona, en
+    # ClientInvoiceAccountingQueue.
     configured_series = _configured_online_series(db, org.id, inv.fiscal_year)
     if inv.series_code != configured_series.series_code:
         raise HTTPException(
@@ -721,13 +720,23 @@ def issue_invoice(
         actor_type="client", actor_id=client.id,
     )
 
-    # Encolar para procesamiento
+    # Encolar para procesamiento fiscal/PDF/entrega (billing_worker, cloud)
+    # y, por separado, para la importacion contable (invoice_worker,
+    # escritorio). Son dos outbox independientes: un error en uno nunca
+    # afecta al otro (ADR 0001, seccion 5).
     queue_item = ClientInvoiceProcessingQueue(
         invoice_id=inv.id,
         organization_id=org.id,
         queue_status="pending",
     )
     db.add(queue_item)
+
+    accounting_item = ClientInvoiceAccountingQueue(
+        invoice_id=inv.id,
+        organization_id=org.id,
+        queue_status="pending",
+    )
+    db.add(accounting_item)
 
     db.commit()
     db.refresh(inv)
@@ -1760,3 +1769,152 @@ def worker_customer_error(
     customer.desktop_lease_expires_at = customer.updated_at + timedelta(minutes=5)
     db.commit()
     return {"status": "ok", "retryable": True, "retry_after_seconds": 300}
+
+
+# ===== COLA CONTABLE (invoice_worker, independiente del pipeline fiscal/PDF) =====
+#
+# ADR 0001, seccion 5: esta cola es exclusiva de invoice_worker (escritorio).
+# Un error aqui solo puede mover ClientInvoice.accounting_sync_status; nunca
+# invoice_status, fiscal_status, pdf_status ni delivery_status. billing_worker
+# nunca reclama de aqui, e invoice_worker nunca reclama de
+# ClientInvoiceProcessingQueue.
+
+
+@router.post("/worker/accounting/claim")
+def worker_claim_accounting(
+    payload: dict = Body(...),
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    """Reclama el siguiente trabajo contable pendiente (lease con SKIP LOCKED)."""
+    worker_id = str(payload.get("worker_id") or "unknown")[:120]
+    lease_minutes = max(1, min(int(payload.get("lease_minutes") or 10), 60))
+    now = utcnow()
+
+    item = db.scalar(
+        select(ClientInvoiceAccountingQueue)
+        .where(
+            ClientInvoiceAccountingQueue.queue_status.in_(["pending", "error"]),
+        )
+        .where(
+            (ClientInvoiceAccountingQueue.lease_expires_at.is_(None))
+            | (ClientInvoiceAccountingQueue.lease_expires_at < now)
+        )
+        .where(
+            ClientInvoiceAccountingQueue.retry_count
+            < ClientInvoiceAccountingQueue.max_retries
+        )
+        .order_by(ClientInvoiceAccountingQueue.created_at)
+        .with_for_update(skip_locked=True)
+        .limit(1)
+    )
+    if not item:
+        return {"claimed": False}
+
+    item.queue_status = "claimed"
+    item.claimed_by = worker_id
+    item.claimed_at = now
+    item.lease_expires_at = now + timedelta(minutes=lease_minutes)
+    item.updated_at = now
+
+    inv = db.get(ClientInvoice, item.invoice_id)
+    if inv:
+        inv.accounting_sync_status = "processing"
+        create_invoice_event(
+            db, inv.id, "accounting_claimed", inv.accounting_sync_status,
+            "processing", actor_type="worker", actor_id=worker_id,
+        )
+
+    db.commit()
+    return {"claimed": True, "queue_id": item.id, "invoice_id": item.invoice_id}
+
+
+@router.post("/worker/accounting/{invoice_id}/confirm")
+def worker_confirm_accounting(
+    invoice_id: str,
+    payload: dict = Body(...),
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    """Confirma que la factura se importo a contabilidad. Idempotente."""
+    inv = db.get(ClientInvoice, invoice_id)
+    if not inv:
+        raise HTTPException(status_code=404)
+
+    item = db.scalar(
+        select(ClientInvoiceAccountingQueue).where(
+            ClientInvoiceAccountingQueue.invoice_id == invoice_id,
+        )
+    )
+    if item and item.queue_status == "completed":
+        return {"status": "ok", "already_imported": True}
+
+    if item:
+        item.queue_status = "completed"
+        item.desktop_tercero_id = str(payload.get("desktop_tercero_id") or "")[:64]
+        item.desktop_subcuenta = str(payload.get("desktop_subcuenta") or "")[:20]
+        item.desktop_invoice_ref = str(payload.get("desktop_invoice_ref") or "")[:64]
+        item.claimed_by = ""
+        item.claimed_at = None
+        item.lease_expires_at = None
+        item.updated_at = utcnow()
+
+    old_status = inv.accounting_sync_status
+    inv.accounting_sync_status = "imported"
+    create_invoice_event(
+        db, inv.id, "accounting_imported", old_status, "imported",
+        actor_type="worker",
+        detail=str(payload.get("desktop_invoice_ref") or ""),
+    )
+    db.commit()
+    return {"status": "ok"}
+
+
+@router.post("/worker/accounting/{invoice_id}/error")
+def worker_accounting_error(
+    invoice_id: str,
+    payload: dict = Body(...),
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    """Libera el lease contable para reintento o revision manual.
+
+    Un error aqui nunca cambia invoice_status/fiscal_status/pdf_status ni
+    delivery_status: la factura sigue siendo fiscalmente valida aunque la
+    importacion contable falle (ADR 0001, seccion 5/16).
+    """
+    inv = db.get(ClientInvoice, invoice_id)
+    if not inv:
+        raise HTTPException(status_code=404)
+
+    error_msg = str(payload.get("error") or "Error desconocido")[:2000]
+    needs_review = bool(payload.get("needs_review", False))
+
+    item = db.scalar(
+        select(ClientInvoiceAccountingQueue).where(
+            ClientInvoiceAccountingQueue.invoice_id == invoice_id,
+        )
+    )
+    retryable = False
+    if item:
+        item.error_message = error_msg
+        item.claimed_by = ""
+        item.lease_expires_at = None
+        item.updated_at = utcnow()
+        if needs_review:
+            item.queue_status = "review_required"
+        else:
+            item.retry_count += 1
+            retryable = item.retry_count < item.max_retries
+            item.queue_status = "error" if retryable else "review_required"
+
+    old_status = inv.accounting_sync_status
+    inv.accounting_sync_status = (
+        "review_required" if (needs_review or not retryable) else "error"
+    )
+    create_invoice_event(
+        db, inv.id, "accounting_error", old_status, inv.accounting_sync_status,
+        actor_type="worker", detail=error_msg,
+    )
+    db.commit()
+    return {"status": "ok", "retryable": retryable}

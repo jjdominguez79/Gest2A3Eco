@@ -10,7 +10,7 @@ Prefijo comun: `/api/v1/messaging/client/invoicing`.
 | GET | `/config` | existente | flags + series + (Etapa 9) perfil fiscal del emisor |
 | GET/POST | `/customers` | existente | alta inmediata, sin requerir escritorio |
 | GET/POST/PUT/DELETE | `/drafts`, `/drafts/{id}` | existente | CRUD de borradores |
-| POST | `/drafts/{id}/issue` | existente, **Etapa 3 quita el bloqueo por escritorio** | header `Idempotency-Key` obligatorio |
+| POST | `/drafts/{id}/issue` | **Etapa 3: bloqueo por escritorio eliminado** | header `Idempotency-Key` obligatorio; `pending_desktop_import`/`desktop_subcuenta` ya no condicionan la emision |
 | GET | `/invoices`, `/invoices/{id}` | existente | **Etapa 2** anade los 5 estados separados a la respuesta |
 | GET/POST | `/catalog/items` | **Etapa 4 (nuevo)** | catalogo de productos/servicios |
 | POST | `/invoices/{id}/rectify` | **Etapa 7 (nuevo)** | crea factura rectificativa referenciando la original |
@@ -45,9 +45,9 @@ encargo).
 | POST | `/worker/customer/{id}/confirm` | confirma tercero+subcuenta 430 |
 | POST | `/worker/customer/{id}/error` | libera para reintento, registra discrepancia |
 | POST | `/worker/customer-sync`, `/worker/series-sync` | snapshot periodico (sin cambios) |
-| POST | `/worker/accounting/claim` | **Etapa 3 (nuevo)**: reclama `ClientInvoiceAccountingQueue` |
-| POST | `/worker/accounting/{id}/confirm` | **Etapa 3 (nuevo)**: `create_accounting_export` completado |
-| POST | `/worker/accounting/{id}/error` | **Etapa 3 (nuevo)**: libera para reintento |
+| POST | `/worker/accounting/claim` | **Etapa 3, implementado**: reclama `ClientInvoiceAccountingQueue` (`SELECT FOR UPDATE SKIP LOCKED`) |
+| POST | `/worker/accounting/{id}/confirm` | **Etapa 3, implementado**: `create_accounting_export` completado; idempotente |
+| POST | `/worker/accounting/{id}/error` | **Etapa 3, implementado**: libera para reintento o marca `review_required`; nunca toca `invoice_status`/`fiscal_status`/`pdf_status`/`delivery_status` |
 | POST | `/worker/desktop-invoices/sync` | **Etapa 10 (nuevo)**: proyecta cabeceras de facturas desktop |
 
 ## 4. Reglas de autoria (sin cambios, confirmadas en el codigo)
